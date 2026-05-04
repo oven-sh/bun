@@ -1,3 +1,5 @@
+use bumpalo::Bump;
+
 use crate::ast::NameMinifier;
 use crate::ast::g;
 
@@ -62,7 +64,7 @@ impl CharFreq {
         }
     }
 
-    pub fn compile(&self) -> NameMinifier {
+    pub fn compile<'bump>(&self, bump: &'bump Bump) -> NameMinifier<'bump> {
         let array: CharAndCountArray = 'brk: {
             let mut arr: [CharAndCount; CHAR_FREQ_COUNT] = [CharAndCount::default(); CHAR_FREQ_COUNT];
 
@@ -92,7 +94,7 @@ impl CharFreq {
             break 'brk arr;
         };
 
-        let mut minifier = NameMinifier::init();
+        let mut minifier = NameMinifier::init(bump);
         minifier
             .head
             .reserve_exact(NameMinifier::DEFAULT_HEAD.len().saturating_sub(minifier.head.len()));
@@ -168,5 +170,5 @@ pub use g::Class;
 //   source:     src/js_parser/ast/CharFreq.zig (137 lines)
 //   confidence: medium
 //   todos:      0
-//   notes:      dropped allocator param from compile(); NameMinifier field/const names assumed (DEFAULT_HEAD/DEFAULT_TAIL, head/tail as Vec<u8>); align(1) on freqs not preserved
+//   notes:      compile() threads &'bump Bump to NameMinifier::init (arena-backed per caller in bundler/linker_context); NameMinifier assumed <'bump> with head/tail as bumpalo::collections::Vec<'bump, u8> and DEFAULT_HEAD/DEFAULT_TAIL consts; align(1) on freqs not preserved
 // ──────────────────────────────────────────────────────────────────────────

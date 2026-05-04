@@ -109,8 +109,12 @@ impl Collection {
             let active_scope: &DescribeScope = unsafe { self.active_scope.as_ref() };
             self.current_scope_callback_queue.push(QueuedDescribe {
                 // TODO(port): lifetime — see note on Collection field; transmuting borrow to 'static here.
+                // SAFETY: borrow points into root_scope's tree which outlives every QueuedDescribe
+                // stored in self; 'static is a Phase-A placeholder (see TODO above).
                 active_scope: unsafe { core::mem::transmute::<&DescribeScope, &'static DescribeScope>(active_scope) },
                 callback: Strong::new(cb),
+                // SAFETY: borrow points into root_scope's tree which outlives every QueuedDescribe
+                // stored in self; 'static is a Phase-A placeholder (see TODO above).
                 new_scope: unsafe { core::mem::transmute::<&DescribeScope, &'static DescribeScope>(new_scope) },
             });
         }
@@ -170,26 +174,17 @@ impl Collection {
         // TODO(port): ConsoleObject.Formatter construction — verify Rust ctor shape.
 
         // append queued callbacks, in reverse order because items will be pop()ed from the end
-        let mut i: usize = this.current_scope_callback_queue.len();
-        while i > 0 {
-            i -= 1;
-            // PORT NOTE: reshaped for borrowck — index then conditionally move out.
-            if this.current_scope_callback_queue[i].new_scope.failed {
+        // PORT NOTE: reshaped for borrowck — Zig indexed `items[i]` then clearRetainingCapacity;
+        // drain(..).rev() moves each item out exactly once and leaves capacity intact.
+        for item in this.current_scope_callback_queue.drain(..).rev() {
+            if item.new_scope.failed {
                 // if there was an error in the describe callback, don't run any describe callbacks in this scope
-                // (Drop on QueuedDescribe handles callback.deinit())
+                drop(item); // Zig: item.deinit() — Strong released here
             } else {
-                // TODO(port): Zig indexed `&items[i]` then later clearRetainingCapacity; here we cannot
-                // move out of a Vec by index without removal. Phase B: consider draining instead.
-                let item = unsafe { core::ptr::read(&this.current_scope_callback_queue[i]) };
                 this.describe_callback_queue.push(item);
             }
         }
-        // SAFETY for the ptr::read above: every element was either dropped-in-place by the
-        // `failed` arm (no — Zig called deinit; here we rely on clear() below to drop the
-        // failed ones, and the moved ones are bitwise-taken so clear() must NOT double-drop).
-        // TODO(port): this loop's ownership transfer is subtle; rewrite as drain().rev() in Phase B.
-        unsafe { this.current_scope_callback_queue.set_len(0) };
-        // PERF(port): was clearRetainingCapacity — capacity retained via set_len(0).
+        // PERF(port): was clearRetainingCapacity — drain(..) retains capacity.
 
         while !this.describe_callback_queue.is_empty() {
             group::log(format_args!("runOne -> call next"));
@@ -256,6 +251,6 @@ impl Collection {
 // PORT STATUS
 //   source:     src/test_runner/Collection.zig (170 lines)
 //   confidence: medium
-//   todos:      10
-//   notes:      QueuedDescribe<'a> is self-referential into root_scope tree — Phase B likely needs NonNull instead of &'a; reverse-append loop ownership needs drain().rev() rewrite; group.begin/end/log debug-tracing API shape guessed.
+//   todos:      8
+//   notes:      QueuedDescribe<'a> is self-referential into root_scope tree — Phase B likely needs NonNull instead of &'a; group.begin/end/log debug-tracing API shape guessed.
 // ──────────────────────────────────────────────────────────────────────────

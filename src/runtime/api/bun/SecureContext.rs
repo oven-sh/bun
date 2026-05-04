@@ -77,6 +77,7 @@ impl SecureContext {
             // enum is still `.none`; surface the library error stack instead of
             // throwing an empty placeholder.
             if err == uws::create_bun_socket_error_t::None {
+                // SAFETY: FFI; ERR_get_error reads the thread-local BoringSSL error queue, no preconditions.
                 let code = unsafe { boringssl::ERR_get_error() };
                 if code != 0 {
                     return Err(global.throw_value(bun_boringssl::err_to_js(global, code)));
@@ -110,6 +111,7 @@ impl SecureContext {
         let d = ctx_opts.digest();
         let key = u64::from_le_bytes(d[0..8].try_into().unwrap());
 
+        // SAFETY: FFI; `global` is a valid &JSGlobalObject for the duration of the call.
         let cached = unsafe { cpp::Bun__SecureContextCache__get(global, key) };
         if !cached.is_empty() {
             if let Some(existing) = Self::from_js(cached) {
@@ -123,6 +125,7 @@ impl SecureContext {
 
         let sc = Self::create_with_digest(global, ctx_opts, d)?;
         let value = sc.to_js(global);
+        // SAFETY: FFI; `global` is valid, `value` is a live JSValue rooted on the stack.
         unsafe { cpp::Bun__SecureContextCache__set(global, key, value) };
         Ok(value)
     }
@@ -155,6 +158,7 @@ impl SecureContext {
     /// `SSL_CTX_new` was called O(1) times, not O(connections).
     #[bun_jsc::host_fn]
     pub fn js_live_count(_global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+        // SAFETY: FFI; reads a global atomic counter, no preconditions.
         Ok(JSValue::js_number(unsafe { c::us_ssl_ctx_live_count() }))
     }
 }

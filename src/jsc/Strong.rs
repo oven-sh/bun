@@ -44,7 +44,8 @@ impl Strong {
 impl Drop for Strong {
     /// Release the strong reference.
     fn drop(&mut self) {
-        Impl::deinit(self.handle);
+        // SAFETY: `self.handle` came from `Impl::init` and is consumed exactly once here.
+        unsafe { Impl::destroy(self.handle) };
         // Zig: `if (Environment.isDebug) strong.* = undefined;` — Rust drop
         // already invalidates the binding; no poison needed.
     }
@@ -136,7 +137,8 @@ impl Drop for Optional {
     /// Frees memory for the underlying Strong reference.
     fn drop(&mut self) {
         let Some(r) = self.handle.take() else { return };
-        Impl::deinit(r);
+        // SAFETY: `r` came from `Impl::init` and is consumed exactly once here.
+        unsafe { Impl::destroy(r) };
     }
 }
 
@@ -174,9 +176,9 @@ impl Impl {
         unsafe { Bun__StrongRef__clear(this.as_ptr()) };
     }
 
-    pub fn deinit(this: NonNull<Impl>) {
+    /// SAFETY: `this` must be a valid handle from `init`; consumed here (do not reuse).
+    pub unsafe fn destroy(this: NonNull<Impl>) {
         crate::mark_binding!();
-        // SAFETY: `this` is a valid handle from `init`; consumed here.
         unsafe { Bun__StrongRef__delete(this.as_ptr()) };
     }
 }
@@ -197,5 +199,5 @@ pub use crate::deprecated_strong as deprecated;
 //   source:     src/jsc/Strong.zig (153 lines)
 //   confidence: high
 //   todos:      2
-//   notes:      field `impl` renamed to `handle` (Rust keyword); deinit→Drop; mark_binding! assumed macro
+//   notes:      field `impl` renamed to `handle` (Rust keyword); deinit→Drop; Impl::deinit→unsafe destroy (FFI); mark_binding! assumed macro
 // ──────────────────────────────────────────────────────────────────────────

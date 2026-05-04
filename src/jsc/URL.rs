@@ -111,7 +111,7 @@ impl URL {
         NonNull::new(unsafe { URL__fromString(&mut input) })
     }
     // TODO(port): from_js/from_string/from_utf8 return an owned C++ heap pointer that
-    // the caller must deinit(). Consider an RAII wrapper in Phase B instead of NonNull<URL>.
+    // the caller must destroy(). Consider an RAII wrapper in Phase B instead of NonNull<URL>.
 
     pub fn protocol(&self) -> String {
         // SAFETY: self is a valid *URL handle from C++
@@ -171,11 +171,11 @@ impl URL {
         unsafe { URL__port(self as *const URL as *mut URL) }
     }
 
-    // PORT NOTE: kept as explicit method (not Drop) — URL is an opaque FFI handle
-    // constructed/destroyed across the C++ boundary.
-    pub fn deinit(&mut self) {
-        // SAFETY: self is a valid *URL handle from C++; C++ side frees it
-        unsafe { URL__deinit(self as *mut URL) }
+    // PORT NOTE: kept as explicit destroy (not Drop) — URL is an opaque #[repr(C)] FFI
+    // handle constructed/destroyed across the C++ boundary.
+    pub unsafe fn destroy(this: *mut Self) {
+        // SAFETY: `this` is a valid *URL from C++; freed exactly once
+        unsafe { URL__deinit(this) }
     }
 
     pub fn pathname(&self) -> String {

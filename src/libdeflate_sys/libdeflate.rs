@@ -94,7 +94,7 @@ impl Compressor {
     }
 
     /// Frees the compressor. `this` must not be used afterward.
-    pub unsafe fn deinit(this: *mut Compressor) {
+    pub unsafe fn destroy(this: *mut Compressor) {
         // SAFETY: caller guarantees `this` was returned by libdeflate_alloc_compressor[_ex]
         // and is not used after this call.
         unsafe { libdeflate_free_compressor(this) }
@@ -188,7 +188,7 @@ impl Decompressor {
     }
 
     /// Frees the decompressor. `this` must not be used afterward.
-    pub unsafe fn deinit(this: *mut Decompressor) {
+    pub unsafe fn destroy(this: *mut Decompressor) {
         // SAFETY: caller guarantees `this` was returned by libdeflate_alloc_decompressor[_ex]
         // and is not used after this call.
         unsafe { libdeflate_free_decompressor(this) }
@@ -376,5 +376,5 @@ pub type libdeflate_decompressor = Decompressor;
 //   source:     src/libdeflate_sys/libdeflate.zig (150 lines)
 //   confidence: high
 //   todos:      1
-//   notes:      opaque FFI handles keep explicit unsafe deinit (no Drop); Status uses #[repr(u32)] for c_uint; mi_malloc/mi_free path assumed in bun_alloc::mimalloc
+//   notes:      opaque FFI handles keep explicit unsafe destroy (no Drop); Status uses #[repr(u32)] for c_uint; mi_malloc/mi_free path assumed in bun_alloc::mimalloc
 // ──────────────────────────────────────────────────────────────────────────

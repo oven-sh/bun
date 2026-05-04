@@ -21,11 +21,16 @@ pub use bun_js_parser::Ref;
 type IndexInt = bun_js_parser::index::Int;
 
 pub struct Graph {
-    // TODO(port): lifetime — `*ThreadPool` backref into BundleV2; LIFETIMES.tsv has no row.
+    // TODO(port): lifetime — no direct LIFETIMES.tsv row for Graph.pool, but row 170
+    // (ThreadPool.v2, BACKREF) evidence states "BundleV2.graph.pool owns ThreadPool".
+    // bundle_v2.zig:992 allocates it from `this.allocator()` (the `self.heap` arena) and
+    // bundle_v2.zig:2248 calls `pool.deinit()`, so this is arena-owned but self-referential
+    // (sibling field). Phase B: decide between `Box<ThreadPool>` vs arena handle.
     pub pool: NonNull<ThreadPool>,
     pub heap: ThreadLocalArena,
 
     /// Mapping user-specified entry points to their Source Index
+    // PERF(port): arena-fed ArrayList (self.heap) — self-referential, revisit in Phase B
     pub entry_points: Vec<Index>,
     /// Maps entry point source indices to their original specifiers (for virtual entries resolved by plugins)
     pub entry_point_original_names: IndexStringMap,
@@ -74,6 +79,7 @@ pub struct Graph {
     /// pre-allocations without re-iterating the file listing.
     pub css_file_count: usize,
 
+    // PERF(port): arena-fed ArrayList (self.heap) — self-referential, revisit in Phase B
     pub additional_output_files: Vec<options::OutputFile>,
 
     pub kit_referenced_server_data: bool,
@@ -151,5 +157,5 @@ impl Graph {
 //   source:     src/bundler/Graph.zig (140 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      `pool` lifetime unclassified (no LIFETIMES.tsv row); nested Zig types `Index.Int` / `ServerComponentBoundary.List` mapped to module paths Phase B must verify.
+//   notes:      `pool` is arena-owned (self.heap) per LIFETIMES.tsv:170 transitive evidence — self-referential, kept as NonNull; nested Zig types `Index.Int` / `ServerComponentBoundary.List` mapped to module paths Phase B must verify.
 // ──────────────────────────────────────────────────────────────────────────

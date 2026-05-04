@@ -19,11 +19,12 @@ pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLibTask) {
             .cast::<PendingPartRange>()
     };
     let ctx = &part_range.ctx;
-    // SAFETY: ctx.c is the `linker` field embedded in the bundler ThreadPool owner.
+    // SAFETY: ctx.c is the `linker` field embedded in BundleV2 (bundle_v2.zig:117 `linker: LinkerContext`);
+    // Zig `@fieldParentPtr("linker", ctx.c)` recovers *BundleV2, which Worker::get expects.
     let worker = Worker::get(unsafe {
         &mut *(ctx.c as *mut LinkerContext as *mut u8)
-            .sub(offset_of!(crate::ThreadPool, linker))
-            .cast::<crate::ThreadPool>()
+            .sub(offset_of!(crate::BundleV2, linker))
+            .cast::<crate::BundleV2>()
     });
     // `defer worker.unget()` — Worker::get returns an RAII guard; Drop calls unget().
 
@@ -210,5 +211,5 @@ pub use crate::ThreadPool;
 //   source:     src/bundler/linker_context/generateCompileResultForCssChunk.zig (178 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      @fieldParentPtr intrusive recovery kept raw; allocating_writer→Vec<u8>; toCssWithWriter ImportInfo struct + MultiArrayList .items() accessor shapes are guesses; ctx.c/ctx.chunk treated as raw ptrs per BACKREF semantics
+//   notes:      @fieldParentPtr intrusive recovery kept raw (parent=BundleV2 per Worker::get sig); allocating_writer→Vec<u8>; toCssWithWriter ImportInfo struct + MultiArrayList .items() accessor shapes are guesses; ctx.c/ctx.chunk treated as raw ptrs per BACKREF semantics
 // ──────────────────────────────────────────────────────────────────────────

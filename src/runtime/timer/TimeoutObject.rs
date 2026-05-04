@@ -148,14 +148,14 @@ impl TimeoutObject {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_destroyed(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::from(this.internals.get_destroyed())
+    pub fn get_destroyed(this: &Self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(JSValue::from(this.internals.get_destroyed()))
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn close(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JSValue {
+    pub fn close(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.internals.cancel(global.bun_vm());
-        frame.this()
+        Ok(frame.this())
     }
 
     // TODO(port): cached-property getters/setters — codegen passes `this_value` (the JS

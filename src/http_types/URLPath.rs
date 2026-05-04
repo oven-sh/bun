@@ -195,26 +195,27 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
         core::mem::transmute::<&[u8], &'static [u8]>(s)
     }
 
-    Ok(URLPath {
-        extname: unsafe { extend(if !is_source_map { extname } else { backup_extname }) },
-        is_source_map,
-        pathname: unsafe { extend(decoded_pathname) },
-        first_segment: unsafe { extend(first_segment) },
-        path: unsafe {
-            extend(if decoded_pathname.len() == 1 {
+    // SAFETY: every slice passed to `extend` below borrows either the caller's
+    // input or the threadlocal scratch buffer; see TODO(port) above. Laundering
+    // to 'static is a Phase-A placeholder until URLPath grows a real lifetime.
+    Ok(unsafe {
+        URLPath {
+            extname: extend(if !is_source_map { extname } else { backup_extname }),
+            is_source_map,
+            pathname: extend(decoded_pathname),
+            first_segment: extend(first_segment),
+            path: extend(if decoded_pathname.len() == 1 {
                 b"."
             } else {
                 path
-            })
-        },
-        query_string: unsafe {
-            extend(if question_mark_i > -1 {
+            }),
+            query_string: extend(if question_mark_i > -1 {
                 &decoded_pathname[usize::try_from(question_mark_i).unwrap()..decoded_pathname.len()]
             } else {
                 b""
-            })
-        },
-        needs_redirect,
+            }),
+            needs_redirect,
+        }
     })
 }
 

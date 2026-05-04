@@ -31,6 +31,7 @@ macro_rules! define_statfs_type {
                 if $big {
                     // TODO(port): bun.jsc.fromJSHostCall wraps an extern call with
                     // JSC exception-scope checking; map to the Rust equivalent.
+                    // SAFETY: FFI call into C++ binding; global is a valid &JSGlobalObject.
                     return bun_jsc::from_js_host_call(global, || unsafe {
                         Bun__createJSBigIntStatFSObject(
                             global as *const _ as *mut _,
@@ -79,18 +80,17 @@ macro_rules! define_statfs_type {
                 #[cfg(target_arch = "wasm32")]
                 compile_error!("Unsupported OS");
 
-                // @truncate(@as(i64, @intCast(x))) — widen to i64 then truncate to Int.
-                // PORT NOTE: Zig @intCast asserts the value fits in i64; here the
-                // immediate @truncate makes the combined op "take low bits as $Int",
-                // so `as i64 as $Int` matches runtime behavior.
+                // @truncate(@as(i64, @intCast(x))) — @intCast to i64 then @truncate to Int.
+                // PORT NOTE: inner @intCast → i64::try_from(..).unwrap() (debug-asserts
+                // fit, matching Zig); outer @truncate → bare `as $Int` (intentional wrap).
                 Self {
-                    _fstype: fstype_ as i64 as $Int,
-                    _bsize: bsize_ as i64 as $Int,
-                    _blocks: blocks_ as i64 as $Int,
-                    _bfree: bfree_ as i64 as $Int,
-                    _bavail: bavail_ as i64 as $Int,
-                    _files: files_ as i64 as $Int,
-                    _ffree: ffree_ as i64 as $Int,
+                    _fstype: i64::try_from(fstype_).unwrap() as $Int,
+                    _bsize: i64::try_from(bsize_).unwrap() as $Int,
+                    _blocks: i64::try_from(blocks_).unwrap() as $Int,
+                    _bfree: i64::try_from(bfree_).unwrap() as $Int,
+                    _bavail: i64::try_from(bavail_).unwrap() as $Int,
+                    _files: i64::try_from(files_).unwrap() as $Int,
+                    _ffree: i64::try_from(ffree_).unwrap() as $Int,
                 }
             }
         }

@@ -12,10 +12,11 @@ use super::json;
 use super::postgres_string as string;
 use super::r#bool;
 
-// PERF(port): was `comptime T: Tag` monomorphization — profile in Phase B.
+// `comptime T: Tag` → const generic per PORTING.md (requires
+// `#[derive(ConstParamTy, PartialEq, Eq)]` on `Tag` at its definition site).
 // TODO(port): narrow error set (Zig inferred `error{UnsupportedArrayType}`).
-pub fn to_js_typed_array_type(t: Tag) -> Result<JSType, bun_core::Error> {
-    match t {
+pub fn to_js_typed_array_type<const T: Tag>() -> Result<JSType, bun_core::Error> {
+    match T {
         Tag::Int4Array => Ok(JSType::Int32Array),
         // Tag::Int2Array => Ok(JSType::Uint2Array),
         Tag::Float4Array => Ok(JSType::Float32Array),

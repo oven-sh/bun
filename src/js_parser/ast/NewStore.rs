@@ -190,11 +190,13 @@ macro_rules! new_store {
                 }
 
                 // PORT NOTE: not `impl Drop` — `Store` is a field inside the `PreAlloc`
-                // heap allocation and `deinit` frees that enclosing allocation. The
-                // caller holds `*mut Store`, not `Box<Store>`.
+                // heap allocation and this frees that enclosing allocation via
+                // @fieldParentPtr-style recovery. The caller holds `*mut Store`, not
+                // `Box<Store>`, so per PORTING.md this is the raw-pointer `destroy`
+                // escape hatch rather than `Drop`.
                 /// SAFETY: `store` must have been returned by `Store::init()` and not
-                /// yet deinit'd.
-                pub unsafe fn deinit(store: *mut Store) {
+                /// yet destroyed.
+                pub unsafe fn destroy(store: *mut Store) {
                     ::bun_output::scoped_log!(Store, "deinit");
                     // do not free `store.head`
                     // SAFETY: caller contract.
@@ -341,5 +343,5 @@ macro_rules! new_store {
 //   source:     src/js_parser/ast/NewStore.zig (171 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      type-list comptime fn → macro_rules!; Block buffer alignment needs Phase-B fix (repr(align) wants literal); deinit kept explicit (frees enclosing PreAlloc, not Drop-shaped); upstream `store.head` assertion is dead Zig.
+//   notes:      type-list comptime fn → macro_rules!; Block buffer alignment needs Phase-B fix (repr(align) wants literal); deinit→unsafe destroy(*mut) (frees enclosing PreAlloc, not Drop-shaped); upstream `store.head` assertion is dead Zig.
 // ──────────────────────────────────────────────────────────────────────────

@@ -105,8 +105,7 @@ impl Symlinker {
                                     #[cfg(not(windows))]
                                     let is_dir =
                                         if let Some(st) = bun_sys::lstat(self.dest.slice_z()).ok() {
-                                            // TODO(port): @intCast(st.mode) — target width of S.ISDIR arg
-                                            bun_sys::posix::s_isdir(st.mode as _)
+                                            bun_sys::posix::s_isdir(u32::try_from(st.mode).unwrap())
                                         } else {
                                             false
                                         };
@@ -169,6 +168,6 @@ pub enum Strategy {
 // PORT STATUS
 //   source:     src/install/isolated_install/Symlinker.zig (143 lines)
 //   confidence: medium
-//   todos:      2
-//   notes:      bun_paths::Path/RelPath/AbsPath sep-config generics, Errno variant names, and S.ISDIR mapping need Phase B verification
+//   todos:      1
+//   notes:      bun_paths::Path/RelPath/AbsPath sep-config generics and Errno variant names need Phase B verification
 // ──────────────────────────────────────────────────────────────────────────

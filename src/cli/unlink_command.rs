@@ -62,9 +62,7 @@ fn unlink(ctx: Command::Context) -> Result<(), bun_core::Error> {
             let package_json_source = &(match File::to_source(
                 &manager.original_package_json_path,
                 Default::default(),
-            )
-            .unwrap()
-            {
+            ) {
                 Ok(s) => s,
                 Err(err) => {
                     Output::err_generic(format_args!(
@@ -169,8 +167,9 @@ fn unlink(ctx: Command::Context) -> Result<(), bun_core::Error> {
             let mut link_dest_buf = PathBuffer::uninit();
             let mut link_rel_buf = PathBuffer::uninit();
 
+            // `bun.AbsPath(.{})` is a type-generator (default const-generic opts); `.initFdPath` is the associated ctor.
             let node_modules_path =
-                match AbsPath::default().init_fd_path(bun_sys::Fd::from_std_dir(&node_modules)) {
+                match AbsPath::init_fd_path(bun_sys::Fd::from_std_dir(&node_modules)) {
                     Ok(p) => p,
                     Err(err) => {
                         if manager.options.log_level != Options::LogLevel::Silent {

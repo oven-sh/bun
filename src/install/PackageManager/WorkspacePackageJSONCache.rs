@@ -97,10 +97,11 @@ impl WorkspacePackageJSONCache {
             return GetResult::Entry(entry.value_ptr);
         }
 
-        // TODO(port): Zig used dupeZ to get a NUL-terminated owned key for both the map
-        // key and File::to_source. StringHashMap key ownership semantics in Rust TBD.
+        // TODO(port): Zig used a single dupeZ for both the map key and File::to_source.
+        // Here we allocate a ZStr for to_source and a separate Box<[u8]> for the map key
+        // (assigned after success below, matching get_with_source). StringHashMap key
+        // ownership semantics in Rust TBD.
         let key = bun_str::ZStr::from_bytes(path);
-        *entry.key_ptr = key.as_bytes();
 
         let source = match File::to_source(&key, Default::default()) {
             Ok(s) => s,
@@ -141,6 +142,8 @@ impl WorkspacePackageJSONCache {
             source,
             indentation: parsed.indentation,
         };
+
+        *entry.key_ptr = Box::<[u8]>::from(path);
 
         GetResult::Entry(entry.value_ptr)
     }
@@ -213,5 +216,5 @@ impl WorkspacePackageJSONCache {
 //   source:     src/install/PackageManager/WorkspacePackageJSONCache.zig (161 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      get_or_put entry borrow overlaps self.map.remove on error path — Phase B must reshape (remove-then-reinsert or raw entry API); StringHashMap key ownership (Box<[u8]> vs ZStr) TBD; comptime GetJSONOptions demoted to runtime
+//   notes:      get_or_put entry borrow overlaps self.map.remove on error path — Phase B must reshape (remove-then-reinsert or raw entry API); StringHashMap key ownership TBD (both fns now store owned Box<[u8]>); comptime GetJSONOptions demoted to runtime
 // ──────────────────────────────────────────────────────────────────────────

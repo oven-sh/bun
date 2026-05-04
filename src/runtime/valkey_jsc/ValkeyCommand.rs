@@ -7,8 +7,10 @@ use crate::node;
 type Slice = bun_str::ZigString_Slice; // TODO(port): exact path for jsc.ZigString.Slice
 
 // PORT NOTE: `Command` is a transient view struct (Zig `deinit` is a no-op); fields
-// borrow caller-owned data for the duration of serialization. Classified as
-// BORROW_PARAM → struct gets a `<'a>` lifetime.
+// borrow caller-owned data for the duration of serialization.
+// TODO(port): borrow-view struct — `<'a>` on a struct is disallowed in Phase A (no
+// LIFETIMES.tsv entry for ValkeyCommand.Command/Args); revisit in Phase B and either
+// add a TSV row or retype as raw `*const [u8]` per the UNKNOWN class.
 pub struct Command<'a> {
     pub command: &'a [u8],
     pub args: Args<'a>,
@@ -87,7 +89,7 @@ impl<'a> core::fmt::Display for Command<'a> {
         // Phase B should route Display through a byte-writing adapter or drop Display entirely.
         let mut buf: Vec<u8> = Vec::new();
         self.write(&mut buf).map_err(|_| core::fmt::Error)?;
-        f.write_str(&bstr::BStr::new(&buf).to_string())
+        write!(f, "{}", bstr::BStr::new(&buf))
     }
 }
 
@@ -235,6 +237,6 @@ impl PromisePair {
 // PORT STATUS
 //   source:     src/runtime/valkey_jsc/ValkeyCommand.zig (170 lines)
 //   confidence: medium
-//   todos:      11
-//   notes:      Command<'a> is a borrow view (Zig deinit no-op); bun_io::Write/CountingWriter, LinearFifo, JSPromiseStrong, JsTerminated need Phase-B path fixes; inherent assoc type aliases (Entry::Queue) are unstable — may need free-standing type aliases.
+//   todos:      13
+//   notes:      Command<'a> is a borrow view (Zig deinit no-op) — no LIFETIMES.tsv entry, revisit; bun_io::Write/CountingWriter, LinearFifo, JSPromiseStrong, JsTerminated need Phase-B path fixes; inherent assoc type aliases (Entry::Queue) are unstable — may need free-standing type aliases.
 // ──────────────────────────────────────────────────────────────────────────

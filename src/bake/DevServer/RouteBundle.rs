@@ -130,7 +130,7 @@ pub enum UnresolvedIndex<'a> {
 
 impl RouteBundle {
     pub fn source_map_id(&self) -> SourceMapStore::Key {
-        SourceMapStore::Key::init((self.client_script_generation as u64) << 32)
+        SourceMapStore::Key::init(u64::from(self.client_script_generation) << 32)
     }
 
     pub fn invalidate_client_bundle(&mut self, dev: &mut DevServer) {

@@ -203,19 +203,22 @@ impl<'a> Binary<'a> {
         self.parent.child_done(self, exit_code)
     }
 
-    // TODO(port): not `impl Drop` — this is a self-destroying deinit that frees `self` via the
-    // parent's allocator (parent-owned arena allocation). Drop cannot take params or destroy
-    // its own backing storage. Phase B: reconcile with StatePtrUnion ownership model.
-    pub fn deinit(&mut self) {
-        if let Some(child) = self.currently_executing.take() {
+    // TODO(port): not `impl Drop` — this is a self-destroying teardown that frees the allocation
+    // via the parent's allocator (parent-owned arena allocation). Drop cannot take params or
+    // destroy its own backing storage. Phase B: reconcile with StatePtrUnion ownership model.
+    pub unsafe fn destroy(this: *mut Self) {
+        // SAFETY: caller guarantees `this` points to a live, parent-allocated Binary and will
+        // not access it after return.
+        let this = unsafe { &mut *this };
+        if let Some(child) = this.currently_executing.take() {
             child.deinit();
         }
-        self.io.deinit();
-        self.base.end_scope();
-        // SAFETY: `self` was allocated by `parent.create(Binary)` from this allocator;
-        // after this call `self` is freed and must not be accessed.
+        this.io.deinit();
+        this.base.end_scope();
+        // SAFETY: `this` was allocated by `parent.create(Binary)` from this allocator;
+        // after this call `this` is freed and must not be accessed.
         unsafe {
-            self.parent.allocator().destroy(self);
+            this.parent.allocator().destroy(this);
         }
     }
 }

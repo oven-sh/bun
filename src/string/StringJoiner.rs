@@ -59,17 +59,15 @@ impl Node {
         unsafe { &*self.slice }
     }
 
-    /// Frees the owned slice (if any) and the node allocation itself.
-    /// `node` must have been produced by `Box::into_raw(Node::init(..))`.
-    unsafe fn deinit(node: *mut Node) {
-        // SAFETY: caller guarantees `node` came from Box::into_raw and is uniquely owned.
-        let boxed = unsafe { Box::from_raw(node) };
-        if boxed.owns_slice {
+}
+
+impl Drop for Node {
+    fn drop(&mut self) {
+        if self.owns_slice {
             // SAFETY: when owns_slice is true, slice was produced by Box::<[u8]>::into_raw
             // in `push_cloned` and has not been freed.
-            drop(unsafe { Box::from_raw(boxed.slice as *mut [u8]) });
+            drop(unsafe { Box::from_raw(self.slice as *mut [u8]) });
         }
-        drop(boxed);
     }
 }
 
@@ -145,10 +143,12 @@ impl StringJoiner {
             return Ok(Box::default());
         };
         self.tail = None;
+        let len = self.len;
+        self.len = 0;
         let mut current: *mut Node = Box::into_raw(head);
 
         // allocator.alloc(u8, this.len)
-        let mut slice = vec![0u8; self.len].into_boxed_slice();
+        let mut slice = vec![0u8; len].into_boxed_slice();
 
         let mut remaining: &mut [u8] = &mut slice[..];
         while !current.is_null() {
@@ -163,7 +163,7 @@ impl StringJoiner {
             let prev = current;
             current = node.next;
             // SAFETY: `prev` is a Box-allocated node not yet freed.
-            unsafe { Node::deinit(prev) };
+            drop(unsafe { Box::from_raw(prev) });
         }
 
         debug_assert!(remaining.is_empty());
@@ -184,9 +184,11 @@ impl StringJoiner {
             return Ok(Box::default());
         };
         self.tail = None;
+        let len = self.len;
+        self.len = 0;
         let mut current: *mut Node = Box::into_raw(head);
 
-        let mut slice = vec![0u8; self.len + end.len()].into_boxed_slice();
+        let mut slice = vec![0u8; len + end.len()].into_boxed_slice();
 
         let mut remaining: &mut [u8] = &mut slice[..];
         while !current.is_null() {
@@ -201,7 +203,7 @@ impl StringJoiner {
             let prev = current;
             current = node.next;
             // SAFETY: `prev` is a Box-allocated node not yet freed.
-            unsafe { Node::deinit(prev) };
+            drop(unsafe { Box::from_raw(prev) });
         }
 
         debug_assert!(remaining.len() == end.len());
@@ -257,7 +259,7 @@ impl Drop for StringJoiner {
             // SAFETY: `current` walks the singly-linked chain of Box-allocated nodes.
             let next = unsafe { (*current).next };
             // SAFETY: each node was Box-allocated and not yet freed.
-            unsafe { Node::deinit(current) };
+            drop(unsafe { Box::from_raw(current) });
             current = next;
         }
     }
@@ -268,5 +270,5 @@ impl Drop for StringJoiner {
 //   source:     src/string/StringJoiner.zig (180 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      NullableAllocator collapsed to `owns_slice: bool`; borrowed-slice lifetime unexpressed (raw *const [u8]); head=Box/tail=NonNull/next=*mut per LIFETIMES.tsv requires Box::into_raw round-trips.
+//   notes:      NullableAllocator collapsed to `owns_slice: bool` + impl Drop for Node; borrowed-slice lifetime unexpressed (raw *const [u8]); done()/done_with_end() reset len=0 so Drop's debug_assert holds; head=Box/tail=NonNull/next=*mut per LIFETIMES.tsv requires Box::into_raw round-trips.
 // ──────────────────────────────────────────────────────────────────────────

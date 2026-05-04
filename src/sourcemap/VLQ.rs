@@ -48,7 +48,7 @@ const VLQ_MAX_IN_BYTES: usize = 7;
 
 pub fn encode(value: i32) -> VLQ {
     if value >= 0 && value <= 255 {
-        VLQ_LOOKUP_TABLE[value as usize]
+        VLQ_LOOKUP_TABLE[usize::try_from(value).unwrap()]
     } else {
         encode_slow_path(value)
     }

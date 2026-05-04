@@ -109,7 +109,7 @@ impl AnyRequestContext {
         dispatch!(self, false, |_T, ctx| ctx.set_timeout(seconds))
     }
 
-    pub fn set_cookies(self, cookie_map: Option<*mut CookieMap>) {
+    pub fn set_cookies(self, cookie_map: Option<&mut CookieMap>) {
         dispatch!(self, (), |_T, ctx| ctx.set_cookies(cookie_map))
     }
 
@@ -168,7 +168,7 @@ impl AnyRequestContext {
         dispatch!(self, (), |_T, ctx| ctx.set_signal_aborted(reason))
     }
 
-    pub fn dev_server(self) -> Option<*mut bun_bake::DevServer> {
+    pub fn dev_server(self) -> Option<&mut bun_bake::DevServer> {
         dispatch!(self, None, |_T, ctx| ctx.dev_server())
     }
 

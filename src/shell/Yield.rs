@@ -191,7 +191,7 @@ impl<'a> Yield<'a> {
             return None;
         }
         let mut i: i64 = i64::try_from(pipeline_stack.len()).unwrap() - 1;
-        while i >= 0 && (i as usize) < pipeline_stack.len() {
+        while i >= 0 && usize::try_from(i).unwrap() < pipeline_stack.len() {
             // SAFETY: `pipeline_stack` only holds pointers pushed in `run()` above from
             // live `&'a mut Pipeline` borrows that have not yet reached `.done` (which
             // deinits). The Zig invariant is that a pipeline is removed from the stack

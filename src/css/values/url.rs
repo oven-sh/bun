@@ -133,9 +133,9 @@ impl Url {
         Ok(())
     }
 
-    pub fn deep_clone(&self, allocator: &dyn bun_alloc::Allocator) -> Self {
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // TODO(port): css::implement_deep_clone is reflection-based in Zig (@typeInfo); Phase B should derive or hand-impl
-        css::implement_deep_clone(self, allocator)
+        css::implement_deep_clone(self, bump)
     }
 
     // TODO: dedupe import records??

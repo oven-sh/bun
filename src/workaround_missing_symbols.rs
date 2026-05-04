@@ -188,12 +188,13 @@ pub use windows as current;
 pub use darwin as current;
 #[cfg(target_os = "freebsd")]
 pub use freebsd as current;
-// TODO(port): wasm arm was an empty struct in Zig; add `pub mod current {}` under cfg(target_family = "wasm") if needed
+#[cfg(target_family = "wasm")]
+pub mod current {}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/workaround_missing_symbols.zig (136 lines)
 //   confidence: medium
-//   todos:      3
+//   todos:      2
 //   notes:      bun_sys::linux must expose raw-syscall fstatat/fstat/statx returning usize + AT_* consts; errno lvalue accessor needed; windows fstat sig matches Zig verbatim (looks like upstream copy-paste)
 // ──────────────────────────────────────────────────────────────────────────

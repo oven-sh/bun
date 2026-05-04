@@ -42,10 +42,14 @@ const WEBP_MUX_OK: c_int = 1;
 /// Memory is `WebPMalloc`-owned when libwebp writes to it (e.g.
 /// `WebPMuxAssemble` output) and caller-owned when libwebp reads it.
 #[repr(C)]
-#[derive(Default)]
 struct WebPData {
     bytes: *const u8,
     size: usize,
+}
+impl Default for WebPData {
+    fn default() -> Self {
+        Self { bytes: core::ptr::null(), size: 0 }
+    }
 }
 
 /// `struct WebPChunkIterator` — cursor into a VP8X chunk list. Only `chunk`
@@ -107,14 +111,17 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     if ptr.is_null() {
         return Err(codecs::Error::DecodeFailed);
     }
-    let _free_ptr = scopeguard::guard(ptr, |p| unsafe { WebPFree(p.cast::<c_void>()) });
+    let _free_ptr = scopeguard::guard(ptr, |p| {
+        // SAFETY: p was returned by WebPDecodeRGBA above; WebPFree is the matching deallocator.
+        unsafe { WebPFree(p.cast::<c_void>()) }
+    });
     // `bytes` is a borrowed view of a JS ArrayBuffer the user can still WRITE
     // (the pin only blocks detach), so a hostile caller can swap in a smaller
     // WebP between WebPGetInfo and WebPDecodeRGBA. libwebp re-parses on the
     // second call and writes the actual decoded dims back into cw/ch — reject
     // any mismatch instead of trusting the probe and over-reading the
     // smaller allocation. (Same race the CG shim guards at :298.)
-    if cw as u32 != w || ch as u32 != h {
+    if u32::try_from(cw).ok() != Some(w) || u32::try_from(ch).ok() != Some(h) {
         return Err(codecs::Error::DecodeFailed);
     }
     let len: usize = (w as usize) * (h as usize) * 4;
@@ -140,7 +147,10 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
         if dmux.is_null() {
             break 'blk None;
         }
-        let _free_dmux = scopeguard::guard(dmux, |d| unsafe { WebPDemuxDelete(d) });
+        let _free_dmux = scopeguard::guard(dmux, |d| {
+            // SAFETY: d was returned by WebPDemuxInternal above and is non-null; matching destructor.
+            unsafe { WebPDemuxDelete(d) }
+        });
         // SAFETY: dmux is a live demuxer handle.
         if unsafe { WebPDemuxGetI(dmux, WEBP_FF_FORMAT_FLAGS) } & ICCP_FLAG == 0 {
             break 'blk None;
@@ -151,7 +161,10 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
         if unsafe { WebPDemuxGetChunk(dmux, b"ICCP".as_ptr(), 1, &mut iter) } == 0 {
             break 'blk None;
         }
-        let _free_iter = scopeguard::guard((), |_| unsafe { WebPDemuxReleaseChunkIterator(&mut iter) });
+        let _free_iter = scopeguard::guard((), |_| {
+            // SAFETY: iter was populated by WebPDemuxGetChunk above; matching release call.
+            unsafe { WebPDemuxReleaseChunkIterator(&mut iter) }
+        });
         if iter.chunk.bytes.is_null() {
             break 'blk None;
         }
@@ -196,13 +209,19 @@ pub fn encode(rgba: &[u8], w: u32, h: u32, quality: u8, lossless: bool, icc_prof
     // `copy_data = 0` the mux borrows our buffers until `WebPMuxAssemble`
     // returns, so `bitstream`/`profile` must outlive the assemble call
     // (both do — `bitstream` is freed below, `profile` is caller-owned).
-    let _free_bitstream = scopeguard::guard(bitstream.as_mut_ptr(), |p| unsafe { WebPFree(p.cast::<c_void>()) });
+    let _free_bitstream = scopeguard::guard(bitstream.as_mut_ptr(), |p| {
+        // SAFETY: p is the buffer returned by WebPEncode*RGBA above; WebPFree is the matching deallocator.
+        unsafe { WebPFree(p.cast::<c_void>()) }
+    });
     // SAFETY: WebPNewInternal has no preconditions.
     let mux = unsafe { WebPNewInternal(WEBP_MUX_ABI_VERSION) };
     if mux.is_null() {
         return Err(codecs::Error::OutOfMemory);
     }
-    let _free_mux = scopeguard::guard(mux, |m| unsafe { WebPMuxDelete(m) });
+    let _free_mux = scopeguard::guard(mux, |m| {
+        // SAFETY: m was returned by WebPNewInternal above and is non-null; matching destructor.
+        unsafe { WebPMuxDelete(m) }
+    });
     let img = WebPData { bytes: bitstream.as_ptr(), size: bitstream.len() };
     // SAFETY: mux is live; img points to valid borrowed data.
     if unsafe { WebPMuxSetImage(mux, &img, 0) } != WEBP_MUX_OK {

@@ -106,8 +106,7 @@ impl<'a, const OPTIONS: JSPropertyIteratorOptions> JSPropertyIterator<'a, OPTION
             self.iter_i += 1;
             let mut name = bstr::String::DEAD;
             if OPTIONS.include_value {
-                // SAFETY: `len > 0` here (checked above), so `impl_` is Some per init() invariant.
-                let iter = unsafe { self.impl_.unwrap_unchecked() }.as_ptr();
+                let iter = self.impl_.expect("len > 0 implies impl_ is Some").as_ptr();
                 let current: JSValue = if OPTIONS.observable {
                     JSPropertyIteratorImpl::get_name_and_value(
                         iter,
@@ -132,8 +131,7 @@ impl<'a, const OPTIONS: JSPropertyIteratorOptions> JSPropertyIterator<'a, OPTION
                 self.value = current;
             } else {
                 // Exception check is unnecessary here because it won't throw.
-                // SAFETY: `len > 0` here, so `impl_` is Some per init() invariant.
-                let iter = unsafe { self.impl_.unwrap_unchecked() }.as_ptr();
+                let iter = self.impl_.expect("len > 0 implies impl_ is Some").as_ptr();
                 // SAFETY: `iter` is a live FFI handle; `name` is a valid out-param.
                 unsafe { JSPropertyIteratorImpl::get_name(iter, &mut name, i) };
             }

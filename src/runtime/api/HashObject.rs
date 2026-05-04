@@ -76,9 +76,9 @@ impl HashAlgorithm for Crc32 {
             let remaining = input.len() - offset;
             let max_len: usize = u32::MAX as usize;
             let chunk_len: u32 = if remaining > max_len {
-                max_len as u32
+                u32::MAX
             } else {
-                remaining as u32
+                u32::try_from(remaining).unwrap()
             };
             // SAFETY: offset < input.len() and chunk_len <= remaining, so the
             // pointer range [ptr+offset, ptr+offset+chunk_len) is in-bounds.

@@ -35,8 +35,8 @@ impl ZigStackTrace {
             source_lines_to_collect: 0,
 
             frames_ptr: frames_slice.as_mut_ptr(),
-            frames_len: frames_slice.len().min(u8::MAX as usize) as u8,
-            frames_cap: frames_slice.len().min(u8::MAX as usize) as u8,
+            frames_len: u8::try_from(frames_slice.len().min(usize::from(u8::MAX))).unwrap(),
+            frames_cap: u8::try_from(frames_slice.len().min(usize::from(u8::MAX))).unwrap(),
 
             referenced_source_provider: None,
         }

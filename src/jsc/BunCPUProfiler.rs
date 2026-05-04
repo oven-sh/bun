@@ -159,7 +159,7 @@ fn build_output_path(
                     .write_all(config.name)
                     .and_then(|_| cursor.write_all(ext))
                     .map_err(|_| ProfilerError::FilenameTooLong)?;
-                let len = cursor.position() as usize;
+                let len = usize::try_from(cursor.position()).unwrap();
                 break 'blk &filename_buf[..len];
             } else {
                 break 'blk config.name;
@@ -207,7 +207,7 @@ fn generate_default_filename(
     let mut cursor = std::io::Cursor::new(&mut buf[..]);
     write!(cursor, "CPU.{}.{}{}", epoch_microseconds, pid, extension)
         .map_err(|_| ProfilerError::FilenameTooLong)?;
-    let len = cursor.position() as usize;
+    let len = usize::try_from(cursor.position()).unwrap();
     Ok(&buf[..len])
 }
 

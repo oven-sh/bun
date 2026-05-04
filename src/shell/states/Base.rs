@@ -4,7 +4,7 @@
 
 use core::marker::PhantomData;
 
-use bun_alloc::{Allocator, AllocationScope};
+use bun_alloc::AllocationScope;
 use bun_jsc::EventLoopHandle;
 use bun_sys;
 
@@ -23,7 +23,9 @@ macro_rules! enable_alloc_scopes {
 pub struct Base<'a> {
     pub kind: StateKind,
     // BACKREF: Interpreter owns the state tree and passes itself in.
-    pub interpreter: *const Interpreter,
+    // Stored `*mut` (not `*const`) because `try_`/`take_err` stash error state on it.
+    // TODO(port): LIFETIMES.tsv lists this as BACKREF→*const; Phase B should update TSV to *mut.
+    pub interpreter: *mut Interpreter,
     /// This type is borrowed or owned in specific cases. This affects whether or
     /// not this state node should be responsible for deinitializing this
     /// `*ShellExecEnv`.
@@ -43,7 +45,7 @@ pub struct Base<'a> {
     /// children of a `Pipeline`.
     pub shell: *mut ShellExecEnv, // TODO(port): lifetime — enum Owned(Box)/Borrowed(&'a) per LIFETIMES.tsv
     #[cfg(debug_assertions)]
-    __alloc_scope: AllocScope<'a>,
+    __alloc_scope: Option<AllocScope<'a>>,
     #[cfg(not(debug_assertions))]
     __alloc_scope: (),
     _p: PhantomData<&'a ()>,
@@ -56,31 +58,8 @@ enum AllocScope<'a> {
 
 impl<'a> AllocScope<'a> {
     // NOTE: Zig `deinit` only frees the `.owned` arm. In Rust, dropping the enum
-    // drops `Owned(AllocationScope)` automatically and `Borrowed` is a `&mut` (no-op).
-    // Kept as an explicit method because `Base::end_scope` triggers it mid-lifetime,
-    // not at scope exit.
-    // TODO(port): consider modeling `end_scope` as taking the scope by value instead.
-    fn deinit(&mut self) {
-        if enable_alloc_scopes!() {
-            if let AllocScope::Owned(scope) = self {
-                // TODO(port): AllocationScope teardown — relies on Drop in Rust;
-                // explicit call kept for parity with Zig's `this.owned.deinit()`.
-                core::mem::drop(core::mem::replace(
-                    scope,
-                    // SAFETY: placeholder; Phase B should restructure so we don't
-                    // need a dummy value here (e.g. Option<AllocScope>).
-                    unsafe { core::mem::zeroed() },
-                ));
-            }
-        }
-    }
-
-    fn allocator(&mut self) -> &dyn Allocator {
-        match self {
-            AllocScope::Borrowed(scope) => scope.allocator(),
-            AllocScope::Owned(scope) => scope.allocator(),
-        }
-    }
+    // drops `Owned(AllocationScope)` automatically and `Borrowed` is a `&mut` (no-op),
+    // so no explicit `deinit` is needed — `Base::end_scope` drops via `Option::take`.
 
     fn scoped_allocator(&mut self) -> &mut AllocationScope {
         match self {
@@ -104,15 +83,15 @@ impl<'a> Base<'a> {
     /// Creates a _new_ allocation scope for this state node.
     pub fn init_with_new_alloc_scope(
         kind: StateKind,
-        interpreter: *const Interpreter,
-        shell: *mut ShellExecEnv,
+        interpreter: &mut Interpreter,
+        shell: &mut ShellExecEnv,
     ) -> Self {
         Self {
             kind,
-            interpreter,
-            shell,
+            interpreter: interpreter as *mut _,
+            shell: shell as *mut _,
             #[cfg(debug_assertions)]
-            __alloc_scope: AllocScope::Owned(AllocationScope::init()),
+            __alloc_scope: Some(AllocScope::Owned(AllocationScope::init())),
             #[cfg(not(debug_assertions))]
             __alloc_scope: (),
             _p: PhantomData,
@@ -123,15 +102,15 @@ impl<'a> Base<'a> {
     #[cfg(debug_assertions)]
     pub fn init_borrowed_alloc_scope(
         kind: StateKind,
-        interpreter: *const Interpreter,
-        shell: *mut ShellExecEnv,
+        interpreter: &mut Interpreter,
+        shell: &mut ShellExecEnv,
         scope: &'a mut AllocationScope,
     ) -> Self {
         Self {
             kind,
-            interpreter,
-            shell,
-            __alloc_scope: AllocScope::Borrowed(scope),
+            interpreter: interpreter as *mut _,
+            shell: shell as *mut _,
+            __alloc_scope: Some(AllocScope::Borrowed(scope)),
             _p: PhantomData,
         }
     }
@@ -139,14 +118,14 @@ impl<'a> Base<'a> {
     #[cfg(not(debug_assertions))]
     pub fn init_borrowed_alloc_scope(
         kind: StateKind,
-        interpreter: *const Interpreter,
-        shell: *mut ShellExecEnv,
+        interpreter: &mut Interpreter,
+        shell: &mut ShellExecEnv,
         _scope: (),
     ) -> Self {
         Self {
             kind,
-            interpreter,
-            shell,
+            interpreter: interpreter as *mut _,
+            shell: shell as *mut _,
             __alloc_scope: (),
             _p: PhantomData,
         }
@@ -160,7 +139,8 @@ impl<'a> Base<'a> {
     pub fn end_scope(&mut self) {
         #[cfg(debug_assertions)]
         {
-            self.__alloc_scope.deinit();
+            // Dropping the enum frees `Owned(AllocationScope)` and no-ops `Borrowed`.
+            self.__alloc_scope.take();
         }
     }
 
@@ -180,17 +160,14 @@ impl<'a> Base<'a> {
     /// See `ThisInterpreter.try_` — this is sugar for `this.interpreter.try_(m)`.
     #[inline]
     pub fn try_<T>(&mut self, m: bun_sys::Result<T>) -> Result<T, TryError> {
-        // SAFETY: backref; see `event_loop`. Cast to mut because `try_` stashes
-        // the error on the interpreter.
-        // TODO(port): LIFETIMES.tsv classifies `interpreter` as `*const`, but
-        // `try_`/`take_err` require &mut — Phase B should reconcile (likely *mut).
-        unsafe { (*(self.interpreter as *mut Interpreter)).try_(m) }
+        // SAFETY: backref; see `event_loop`. `try_` stashes the error on the interpreter.
+        unsafe { (*self.interpreter).try_(m) }
     }
 
     #[inline]
     pub fn take_err(&mut self) -> bun_sys::Error {
         // SAFETY: see `try_`.
-        unsafe { (*(self.interpreter as *mut Interpreter)).take_err() }
+        unsafe { (*self.interpreter).take_err() }
     }
 
     pub fn root_io(&self) -> &IO {
@@ -198,26 +175,16 @@ impl<'a> Base<'a> {
         unsafe { (*self.interpreter).root_io() }
     }
 
-    pub fn allocator(&mut self) -> &dyn Allocator {
-        #[cfg(debug_assertions)]
-        {
-            return self.__alloc_scope.allocator();
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            // Zig: `bun.default_allocator` — global mimalloc.
-            // TODO(port): callers should drop the allocator param entirely outside
-            // alloc-scope builds; kept for structural parity.
-            bun_alloc::default_allocator()
-        }
-    }
+    // PORT NOTE: Zig `allocator()` returned `bun.default_allocator` (release) or the
+    // AllocationScope's allocator (debug). shell/states is non-AST → callers use the
+    // global mimalloc directly; only `alloc_scope()` is kept for debug tracking.
 
     #[cfg(debug_assertions)]
     pub fn alloc_scope(&mut self) -> &mut AllocationScope {
-        match &mut self.__alloc_scope {
-            AllocScope::Borrowed(scope) => scope,
-            AllocScope::Owned(scope) => scope,
-        }
+        self.__alloc_scope
+            .as_mut()
+            .expect("alloc_scope() after end_scope()")
+            .scoped_allocator()
     }
 
     #[cfg(not(debug_assertions))]
@@ -227,7 +194,9 @@ impl<'a> Base<'a> {
     pub fn leak_slice<T>(&mut self, memory: &[T]) {
         #[cfg(debug_assertions)]
         {
-            self.__alloc_scope.leak_slice(memory);
+            if let Some(scope) = self.__alloc_scope.as_mut() {
+                scope.leak_slice(memory);
+            }
         }
         #[cfg(not(debug_assertions))]
         {
@@ -248,6 +217,6 @@ pub enum TryError {
 // PORT STATUS
 //   source:     src/shell/states/Base.zig (150 lines)
 //   confidence: medium
-//   todos:      6
-//   notes:      enableAllocScopes mapped to cfg(debug_assertions); interpreter backref *const but try_/take_err need mut; shell ownership left raw per TSV UNKNOWN
+//   todos:      3
+//   notes:      enableAllocScopes mapped to cfg(debug_assertions); interpreter backref stored *mut (TSV says *const — update in Phase B); allocator() accessor dropped (non-AST → global mimalloc); shell ownership left raw per TSV UNKNOWN
 // ──────────────────────────────────────────────────────────────────────────

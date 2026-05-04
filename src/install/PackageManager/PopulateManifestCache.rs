@@ -21,11 +21,7 @@ impl From<bun_alloc::AllocError> for StartManifestTaskError {
         Self::OutOfMemory
     }
 }
-impl From<StartManifestTaskError> for bun_core::Error {
-    fn from(e: StartManifestTaskError) -> Self {
-        bun_core::err!(e)
-    }
-}
+// `Into<bun_core::Error>` is auto-derived for thiserror enums (see PORTING.md type map).
 
 fn start_manifest_task(
     manager: &mut PackageManager,

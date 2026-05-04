@@ -29,8 +29,8 @@ pub struct StaticPipeWriter<P> {
     pub event_loop: EventLoopHandle,
     /// Slice into `self.source`'s storage, advanced as bytes are written.
     // TODO(port): lifetime — self-borrow into `self.source`; Phase B may store an
-    // offset instead of a borrowed slice. `&'static` is a placeholder, not accurate.
-    pub buffer: &'static [u8],
+    // offset+len pair and re-slice from `self.source` instead of a raw self-pointer.
+    pub buffer: *const [u8],
 }
 
 // Zig: `const WriterRefCount = bun.ptr.RefCount(@This(), "ref_count", _deinit, .{});`
@@ -61,7 +61,9 @@ impl<P> StaticPipeWriter<P> {
     }
 
     pub fn get_buffer(&self) -> &[u8] {
-        self.buffer
+        // SAFETY: `buffer` always points into `self.source`'s storage (or the empty
+        // literal), which is kept alive for the lifetime of `self`.
+        unsafe { &*self.buffer }
     }
 
     pub fn close(&mut self) {
@@ -74,7 +76,7 @@ impl<P> StaticPipeWriter<P> {
     }
 
     pub fn flush(&mut self) {
-        if !self.buffer.is_empty() {
+        if self.buffer.len() > 0 {
             self.writer.write();
         }
     }
@@ -93,7 +95,7 @@ impl<P> StaticPipeWriter<P> {
             source,
             process: subprocess,
             event_loop: EventLoopHandle::init(event_loop),
-            buffer: b"",
+            buffer: b"" as *const [u8],
         }));
         // SAFETY: `this` was just allocated above and is non-null.
         let this_ref = unsafe { &mut *this };
@@ -115,7 +117,7 @@ impl<P> StaticPipeWriter<P> {
         // TODO(port): `self.ref_()` — intrusive-refcount increment (Zig `this.ref()`).
         bun_ptr::intrusive_ref(self);
         // TODO(port): self-borrow — see `buffer` field note.
-        self.buffer = self.source.slice();
+        self.buffer = self.source.slice() as *const [u8];
         #[cfg(windows)]
         {
             return self.writer.start_with_current_pipe();
@@ -145,8 +147,10 @@ impl<P> StaticPipeWriter<P> {
             amount,
             status
         );
-        self.buffer = &self.buffer[amount.min(self.buffer.len())..];
-        if status == WriteStatus::EndOfFile || self.buffer.is_empty() {
+        let len = self.buffer.len();
+        // SAFETY: `buffer` points into `self.source`'s storage, alive for `self`'s lifetime.
+        self.buffer = unsafe { &(*self.buffer)[amount.min(len)..] } as *const [u8];
+        if status == WriteStatus::EndOfFile || self.buffer.len() == 0 {
             self.writer.close();
         }
     }
@@ -189,7 +193,7 @@ impl<P> StaticPipeWriter<P> {
     }
 
     pub fn watch(&mut self) {
-        if !self.buffer.is_empty() {
+        if self.buffer.len() > 0 {
             self.writer.watch();
         }
     }
@@ -213,5 +217,5 @@ impl<P> Drop for StaticPipeWriter<P> {
 //   source:     src/runtime/api/bun/subprocess/StaticPipeWriter.zig (142 lines)
 //   confidence: medium
 //   todos:      5
-//   notes:      buffer self-borrows source (placeholder &'static); IntrusiveRc/BufferedWriterHandler wiring + P trait bound deferred to Phase B
+//   notes:      buffer self-borrows source (raw *const [u8], Phase B may switch to offset+len); IntrusiveRc/BufferedWriterHandler wiring + P trait bound deferred to Phase B
 // ──────────────────────────────────────────────────────────────────────────

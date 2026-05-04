@@ -103,11 +103,13 @@ unsafe extern "C" {
 mod musl {
     use core::ffi::c_int;
     // TODO(port): Zig used @cImport(@cInclude("setjmp.h")).jmp_buf — confirm
-    // exact musl jmp_buf layout/size for the target arch in Phase B.
-    #[repr(C)]
+    // exact musl jmp_buf size/align per target arch in Phase B. This is a
+    // STACK VALUE (`var ctx = std.mem.zeroes(Context); setjmp(&ctx)`), not an
+    // opaque handle, so it must reserve real storage — a ZST would let setjmp
+    // scribble past the allocation. 32×u64 over-reserves vs every musl arch.
+    #[repr(C, align(16))]
     pub struct jmp_buf {
-        _opaque: [u8; 0],
-        _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+        _buf: [u64; 32],
     }
     unsafe extern "C" {
         pub fn setjmp(env: *mut jmp_buf) -> c_int;

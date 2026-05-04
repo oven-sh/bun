@@ -58,7 +58,9 @@ impl Cd {
         if args.len() == 1 {
             // SAFETY: args[0] is a NUL-terminated C string from argsSlice()
             let first_arg: &ZStr = unsafe { ZStr::from_ptr(args[0]) };
-            match first_arg.as_bytes()[0] {
+            // PORT NOTE: Zig `first_arg[0]` on `[:0]const u8` reads NUL (0) for empty args and
+            // falls into `else`; ZStr::as_bytes() excludes the NUL, so emulate with unwrap_or(0).
+            match first_arg.as_bytes().first().copied().unwrap_or(0) {
                 b'-' => {
                     // PORT NOTE: reshaped for borrowck — Zig calls self.bltn() twice in one expr
                     let base = &mut self.bltn().parent_cmd().base;

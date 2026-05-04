@@ -37,9 +37,10 @@ impl Binding {
 // ──────────────────────────────────────────────────────────────────────────
 // ToExpr — Zig: `fn ToExpr(comptime expr_type: type, comptime func_type: anytype) type`
 // Returns a struct whose `wrapIdentifier` calls the comptime `func_type`.
-// Rust cannot take a fn as a const generic on stable, so the fn is stored as a
-// field (ZST when monomorphized over a fn item). The duck-typed `wrapper` param
-// of `to_expr` is expressed as the `ToExprWrapper` trait below.
+// Rust cannot take a fn as a const generic, so `func_type` becomes a generic
+// `F: Fn(...)` field — when callers pass a fn item, `F` is a ZST and the call
+// monomorphizes (matching Zig's zero-cost comptime dispatch). The duck-typed
+// `wrapper` param of `to_expr` is expressed as the `ToExprWrapper` trait below.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Trait expressing the duck-typed `wrapper: anytype` parameter of `to_expr`.
@@ -49,16 +50,23 @@ pub trait ToExprWrapper<'bump> {
     fn bump(&self) -> &'bump Arena;
 }
 
-pub struct ToExpr<'a, 'bump, ExprType> {
+pub struct ToExpr<'a, 'bump, ExprType, F>
+where
+    F: Fn(&mut ExprType, logger::Loc, Ref) -> Expr,
+{
     // LIFETIMES.tsv: BORROW_PARAM → &'a mut ExprType
     pub context: &'a mut ExprType,
     // Zig: `allocator: std.mem.Allocator` — AST crate, arena-fed → &'bump Bump
     pub bump: &'bump Arena,
-    // Zig: comptime `func_type` captured by the generated type.
-    func: fn(&mut ExprType, logger::Loc, Ref) -> Expr,
+    // Zig: comptime `func_type` captured by the generated type. Generic `F` so a
+    // fn-item caller monomorphizes to a ZST + direct call (no indirect fn-ptr).
+    func: F,
 }
 
-impl<'a, 'bump, ExprType> ToExpr<'a, 'bump, ExprType> {
+impl<'a, 'bump, ExprType, F> ToExpr<'a, 'bump, ExprType, F>
+where
+    F: Fn(&mut ExprType, logger::Loc, Ref) -> Expr,
+{
     pub fn wrap_identifier(&mut self, loc: logger::Loc, ref_: Ref) -> Expr {
         // PORT NOTE: reshaped for borrowck — Zig took `*const Context` but passed
         // a mutable `*ExprType` through; Rust needs `&mut self` to reborrow `context`.
@@ -68,16 +76,15 @@ impl<'a, 'bump, ExprType> ToExpr<'a, 'bump, ExprType> {
     // TODO(port): Zig `init` reads `context.allocator` (duck-typed). Callers must
     // now pass the arena explicitly alongside `func`. Phase B may introduce a
     // `HasArena` trait if many `ExprType`s share that field.
-    pub fn init(
-        context: &'a mut ExprType,
-        bump: &'bump Arena,
-        func: fn(&mut ExprType, logger::Loc, Ref) -> Expr,
-    ) -> Self {
+    pub fn init(context: &'a mut ExprType, bump: &'bump Arena, func: F) -> Self {
         Self { context, bump, func }
     }
 }
 
-impl<'a, 'bump, ExprType> ToExprWrapper<'bump> for ToExpr<'a, 'bump, ExprType> {
+impl<'a, 'bump, ExprType, F> ToExprWrapper<'bump> for ToExpr<'a, 'bump, ExprType, F>
+where
+    F: Fn(&mut ExprType, logger::Loc, Ref) -> Expr,
+{
     fn wrap_identifier(&mut self, loc: logger::Loc, ref_: Ref) -> Expr {
         ToExpr::wrap_identifier(self, loc, ref_)
     }
@@ -167,9 +174,14 @@ impl Binding {
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum Tag {
+    // strum serialize = Zig @tagName output (JSON/snapshot compat).
+    #[strum(serialize = "b_identifier")]
     BIdentifier,
+    #[strum(serialize = "b_array")]
     BArray,
+    #[strum(serialize = "b_object")]
     BObject,
+    #[strum(serialize = "b_missing")]
     BMissing,
 }
 
@@ -260,5 +272,5 @@ pub trait JsonWriter {
 //   source:     src/js_parser/ast/Binding.zig (171 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      ToExpr comptime-fn param stored as fn ptr; @TypeOf dispatch → BindingInit/BindingAlloc traits; B/E/G variant paths are guesses pending sibling ports; Expr.Data.Store is typed_arena per §Allocators — `alloc()` here uses bumpalo, revisit if B nodes live in the typed Store.
+//   notes:      ToExpr comptime-fn → generic `F: Fn` param (ZST when fn item); @TypeOf dispatch → BindingInit/BindingAlloc traits; B/E/G variant paths are guesses pending sibling ports; Expr.Data.Store is typed_arena per §Allocators — `alloc()` here uses bumpalo, revisit if B nodes live in the typed Store.
 // ──────────────────────────────────────────────────────────────────────────

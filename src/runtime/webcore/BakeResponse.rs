@@ -50,6 +50,8 @@ pub extern "C" fn BakeResponseClass__constructForSSR(
     bake_ssr_has_jsx: *mut c_int,
     js_this: JSValue,
 ) -> *mut c_void {
+    // SAFETY: caller (C++) guarantees `bake_ssr_has_jsx` is a valid, exclusive out-pointer for the call.
+    let bake_ssr_has_jsx = unsafe { &mut *bake_ssr_has_jsx };
     match constructor(global_object, call_frame, bake_ssr_has_jsx, js_this) {
         Ok(response) => Box::into_raw(response) as *mut c_void,
         Err(JsError::Thrown) => core::ptr::null_mut(),
@@ -64,7 +66,7 @@ pub extern "C" fn BakeResponseClass__constructForSSR(
 pub fn constructor(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
-    bake_ssr_has_jsx: *mut c_int,
+    bake_ssr_has_jsx: &mut c_int,
     js_this: JSValue,
 ) -> JsResult<Box<Response>> {
     let arguments: [JSValue; 2] = callframe.arguments_as_array::<2>();
@@ -72,8 +74,7 @@ pub fn constructor(
     // Allow `return new Response(<jsx> ... </jsx>, { ... }`
     // inside of a react component
     if !arguments[0].is_undefined_or_null() && arguments[0].is_object() {
-        // SAFETY: caller (C++) guarantees `bake_ssr_has_jsx` is a valid out-pointer.
-        unsafe { *bake_ssr_has_jsx = 0 };
+        *bake_ssr_has_jsx = 0;
         if arguments[0].is_jsx_element(global_this)? {
             let vm = global_this.bun_vm();
             if let Some(async_local_storage) = vm.get_dev_server_async_local_storage()? {
@@ -83,8 +84,7 @@ pub fn constructor(
                     b"new Response(<jsx />, { ... })",
                 )?;
             }
-            // SAFETY: caller (C++) guarantees `bake_ssr_has_jsx` is a valid out-pointer.
-            unsafe { *bake_ssr_has_jsx = 1 };
+            *bake_ssr_has_jsx = 1;
         }
     }
 
@@ -112,8 +112,10 @@ pub fn construct_redirect(
     // Check if dev_server_async_local_storage is set (indicating we're in Bun dev server)
     if let Some(async_local_storage) = vm.get_dev_server_async_local_storage()? {
         assert_streaming_disabled(global_this, async_local_storage, b"Response.redirect")?;
-        return Ok(to_js_for_ssr(&mut ptr, global_this, SSRKind::Redirect));
-        // TODO(port): ownership — Zig leaks `ptr` into the JS wrapper here; Box drop must not run.
+        let js = to_js_for_ssr(&mut ptr, global_this, SSRKind::Redirect);
+        // TODO(port): ownership — verify JS wrapper adopts `*mut Response`; Box must not Drop here.
+        core::mem::forget(ptr);
+        return Ok(js);
     }
 
     Ok(ptr.to_js(global_this))
@@ -243,5 +245,5 @@ fn assert_streaming_disabled(
 //   source:     src/runtime/webcore/BakeResponse.zig (146 lines)
 //   confidence: medium
 //   todos:      8
-//   notes:      jsc.conv ABI on exports/imports needs Phase-B shim; Box<Response> ownership transferred to JS wrapper via into_raw/forget — verify against Response::to_js contract.
+//   notes:      jsc.conv ABI on exports/imports needs Phase-B shim; Box<Response> handed to JS wrapper via into_raw/forget in all SSR paths — verify against Response::to_js contract.
 // ──────────────────────────────────────────────────────────────────────────

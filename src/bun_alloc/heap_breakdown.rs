@@ -40,11 +40,26 @@ pub fn allocator<T: HeapLabel>() -> &'static dyn crate::Allocator {
 /// call site — see the `get_zone!` macro below. This function is a thin wrapper
 /// that defers to that macro at call sites; here we expose the runtime half.
 pub fn named_allocator(name: &'static str) -> &'static dyn crate::Allocator {
-    // TODO(port): callers should prefer `get_zone!("Name").allocator()` directly so
-    // the OnceLock is per-name. This runtime path falls back to a process-global
+    // TODO(port): callers should prefer `named_allocator!("Name")` / `get_zone!` directly
+    // so the OnceLock is per-name. This runtime path falls back to a process-global
     // map and is not zero-cost like the Zig comptime version.
     // PERF(port): was comptime monomorphization — profile in Phase B
-    get_zone_runtime(name).allocator()
+    //
+    // Zig: `getZone("Bun__" ++ name)` — the "Bun__" prefix is applied HERE, not in
+    // `getZone`/`get_zone_runtime`. Leak the prefixed name (zones live forever).
+    let mut prefixed = String::with_capacity(5 + name.len());
+    prefixed.push_str("Bun__");
+    prefixed.push_str(name);
+    let prefixed: &'static str = Box::leak(prefixed.into_boxed_str());
+    get_zone_runtime(prefixed).allocator()
+}
+
+/// Comptime-literal form of `named_allocator` — expands a per-name `OnceLock`.
+#[macro_export]
+macro_rules! named_allocator {
+    ($name:literal) => {
+        $crate::get_zone!(concat!("Bun__", $name)).allocator()
+    };
 }
 
 /// Zig: `pub fn getZoneT(comptime T: type) *Zone`
@@ -65,9 +80,11 @@ macro_rules! get_zone {
             ::std::sync::OnceLock::new();
         *ZONE.get_or_init(|| {
             // SAFETY: concat!($name, "\0") is a valid NUL-terminated C string literal.
+            // NOTE: no "Bun__" prefix here — Zig `getZone(name)` passes `name` verbatim;
+            // only `namedAllocator` prepends the prefix.
             let cstr = unsafe {
                 ::core::ffi::CStr::from_bytes_with_nul_unchecked(
-                    concat!("Bun__", $name, "\0").as_bytes(),
+                    concat!($name, "\0").as_bytes(),
                 )
             };
             $crate::heap_breakdown::Zone::init(cstr)
@@ -90,9 +107,8 @@ fn get_zone_runtime(name: &'static str) -> &'static Zone {
     if let Some(z) = map.get(name.as_bytes()) {
         return *z;
     }
-    // "Bun__" ++ name, NUL-terminated, leaked for 'static (zones live forever).
-    let mut owned = Vec::with_capacity(5 + name.len() + 1);
-    owned.extend_from_slice(b"Bun__");
+    // `name` verbatim (no prefix — matches Zig `getZone`), NUL-terminated, leaked for 'static.
+    let mut owned = Vec::with_capacity(name.len() + 1);
     owned.extend_from_slice(name.as_bytes());
     owned.push(0);
     let leaked: &'static [u8] = Box::leak(owned.into_boxed_slice());
@@ -114,6 +130,8 @@ pub struct Zone {
 
 impl Zone {
     /// Zig: `pub fn init(comptime name: [:0]const u8) *Zone`
+    // TODO(port): [:0]const u8 → &ZStr per type map; using &CStr because only `.ptr` is consumed
+    // by `malloc_set_zone_name` and callers already construct CStr. Revisit if length is needed.
     pub fn init(name: &'static core::ffi::CStr) -> &'static Zone {
         // SAFETY: malloc_create_zone is safe to call with (0, 0); returns a
         // process-lifetime zone pointer. malloc_set_zone_name stores the pointer
@@ -269,6 +287,6 @@ unsafe extern "C" {
 // PORT STATUS
 //   source:     src/bun_alloc/heap_breakdown.zig (146 lines)
 //   confidence: medium
-//   todos:      7
-//   notes:      comptime per-name static (`getZone`) → macro + runtime fallback; `heapLabel` reflection → `HeapLabel` trait; vtable → `impl crate::Allocator`; `is_instance` stubbed.
+//   todos:      8
+//   notes:      comptime per-name static (`getZone`) → macro + runtime fallback; `heapLabel` reflection → `HeapLabel` trait; vtable → `impl crate::Allocator`; `is_instance` stubbed; "Bun__" prefix scoped to `named_allocator` only (matches Zig).
 // ──────────────────────────────────────────────────────────────────────────

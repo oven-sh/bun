@@ -23,18 +23,21 @@ pub enum BackendError {
     TooManyPixels,
     #[error("OutOfMemory")]
     OutOfMemory,
-    // TODO(port): narrow error set — confirm full variant list of codecs::Error
+    #[error("UnknownFormat")]
+    UnknownFormat,
+    #[error("UnsupportedOnPlatform")]
+    UnsupportedOnPlatform,
 }
 
 impl From<codecs::Error> for BackendError {
     fn from(e: codecs::Error) -> Self {
-        // TODO(port): exhaustive match once codecs::Error is ported
-        match <&'static str>::from(e) {
-            "DecodeFailed" => Self::DecodeFailed,
-            "EncodeFailed" => Self::EncodeFailed,
-            "TooManyPixels" => Self::TooManyPixels,
-            "OutOfMemory" => Self::OutOfMemory,
-            _ => Self::BackendUnavailable,
+        match e {
+            codecs::Error::DecodeFailed => Self::DecodeFailed,
+            codecs::Error::EncodeFailed => Self::EncodeFailed,
+            codecs::Error::TooManyPixels => Self::TooManyPixels,
+            codecs::Error::OutOfMemory => Self::OutOfMemory,
+            codecs::Error::UnknownFormat => Self::UnknownFormat,
+            codecs::Error::UnsupportedOnPlatform => Self::UnsupportedOnPlatform,
         }
     }
 }
@@ -281,6 +284,6 @@ pub fn clipboard_change_count() -> i64 {
 // PORT STATUS
 //   source:     src/runtime/image/backend_coregraphics.zig (155 lines)
 //   confidence: medium
-//   todos:      5
-//   notes:      BackendError hand-expanded from codecs::Error union; vec![0u8;n] zero-fills where Zig left uninit (PERF-tagged); externs left in-file pending *_sys crate
+//   todos:      4
+//   notes:      BackendError hand-expanded from full codecs::Error union (6 variants); vec![0u8;n] zero-fills where Zig left uninit (PERF-tagged); externs left in-file pending *_sys crate
 // ──────────────────────────────────────────────────────────────────────────

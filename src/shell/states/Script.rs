@@ -139,6 +139,8 @@ impl<'a> Script<'a> {
     // TODO(port): self-destroying state node — kept as explicit method, not Drop.
     // `parent.destroy(this)` frees the allocation that `self` lives in, so this
     // cannot be expressed as `impl Drop` (which would run again on the freed slot).
+    // Phase B: hoist `parent.destroy(self)` to call sites and convert the remaining
+    // body (io.deref / conditional shell.deinit / end_scope) into `impl Drop for Script`.
     pub fn deinit(&mut self) {
         log!("Script(0x{:x}) deinit", self as *mut _ as usize);
         self.io.deref();

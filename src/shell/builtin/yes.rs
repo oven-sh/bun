@@ -100,12 +100,14 @@ impl Yes {
                 concurrent_task: EventLoopTask::from_event_loop(evtloop),
             };
             self.state = State::WaitingIo;
-            // PORT NOTE: reshaped for borrowck — capture buffer slice bounds before re-borrowing bltn()
-            let buf_ptr = self.buffer.as_ptr();
-            let buf_len = self.buffer_used;
-            // SAFETY: self.buffer outlives the enqueue call; bounds checked above
-            let buf = unsafe { core::slice::from_raw_parts(buf_ptr, buf_len) };
-            return self.bltn().stdout.enqueue(self, buf, safeguard);
+            // TODO(port): borrowck — bltn() yields an intrusive &mut Builtin that overlaps
+            // &self.buffer (and the `self` ctx arg). Phase B must reshape the API (e.g.
+            // bltn() -> *mut Builtin, or move `buffer` off `Yes`). Do NOT paper over with
+            // from_raw_parts — guide forbids raw pointers as a borrowck escape hatch.
+            return self
+                .bltn()
+                .stdout
+                .enqueue(self, &self.buffer[..self.buffer_used], safeguard);
         }
 
         let evtloop = self.bltn().event_loop();
@@ -138,13 +140,13 @@ impl Yes {
     }
 
     fn write_once_no_io(&mut self) -> Option<Yield> {
-        // PORT NOTE: reshaped for borrowck — Zig passed `buf: []const u8` separately, but
-        // every callsite passes self.buffer[0..self.buffer_used], so derive it here.
-        let buf_ptr = self.buffer.as_ptr();
-        let buf_len = self.buffer_used;
-        // SAFETY: buffer_used <= buffer.len() by construction in start()
-        let buf = unsafe { core::slice::from_raw_parts(buf_ptr, buf_len) };
-        match self.bltn().write_no_io(BuiltinFd::Stdout, buf) {
+        // PORT NOTE: Zig passed `buf: []const u8` separately, but every callsite passes
+        // self.buffer[0..self.buffer_used], so derive it here.
+        // TODO(port): borrowck — bltn() aliases &self.buffer; see start() for details.
+        match self
+            .bltn()
+            .write_no_io(BuiltinFd::Stdout, &self.buffer[..self.buffer_used])
+        {
             Ok(_) => {}
             Err(e) => {
                 self.state = State::WaitingWriteErr;
@@ -168,9 +170,8 @@ impl Yes {
     }
 
     pub fn on_io_writer_chunk(&mut self, _: usize, maybe_e: Option<SystemError>) -> Yield {
-        if let Some(e) = maybe_e {
-            // Zig: `defer e.deref()` — SystemError's Drop handles the deref.
-            drop(e);
+        if let Some(_e) = maybe_e {
+            // Zig `defer e.deref()` → SystemError's Drop derefs at scope exit (after return).
             self.state = State::Err;
             return self.bltn().done(1);
         }
@@ -178,14 +179,12 @@ impl Yes {
             return self.bltn().done(1);
         }
         debug_assert!(self.bltn().stdout.needs_io().is_some());
-        // PORT NOTE: reshaped for borrowck
-        let buf_ptr = self.buffer.as_ptr();
-        let buf_len = self.buffer_used;
-        // SAFETY: buffer_used <= buffer.len() by construction in start()
-        let buf = unsafe { core::slice::from_raw_parts(buf_ptr, buf_len) };
-        self.bltn()
-            .stdout
-            .enqueue(self, buf, OutputNeedsIo::OutputNeedsIo)
+        // TODO(port): borrowck — bltn() aliases &self.buffer; see start() for details.
+        self.bltn().stdout.enqueue(
+            self,
+            &self.buffer[..self.buffer_used],
+            OutputNeedsIo::OutputNeedsIo,
+        )
     }
 
     #[inline]
@@ -265,6 +264,6 @@ use bun_shell::interpreter::{BuiltinFd, BuiltinKind, ConcurrentTaskDeinit, Outpu
 // PORT STATUS
 //   source:     src/shell/builtin/yes.zig (181 lines)
 //   confidence: medium
-//   todos:      3
-//   notes:      heavy borrowck reshaping around bltn()/buffer aliasing; AllocScope ownership and EventLoopHandle/Task variant shapes need Phase B confirmation
+//   todos:      6
+//   notes:      bltn()/self.buffer aliasing left as natural slices + TODO (raw-ptr workaround removed per guide); AllocScope ownership and EventLoopHandle/Task variant shapes need Phase B confirmation
 // ──────────────────────────────────────────────────────────────────────────

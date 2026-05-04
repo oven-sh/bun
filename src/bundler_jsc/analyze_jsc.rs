@@ -58,7 +58,7 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
 
     let mut offset: usize = 0;
     for (index, &len) in res.strings_lens.iter().enumerate() {
-        let len = len as usize;
+        let len = usize::from(len);
         if res.strings_buf.len() < offset + len {
             return core::ptr::null_mut(); // error!
         }
@@ -127,9 +127,9 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
             uv => module_record.add_requested_module_host_defined(
                 identifiers,
                 reqk,
-                // TODO(port): confirm StringID and RequestedModuleValue share repr; Zig: @enumFromInt(@intFromEnum(uv))
-                // SAFETY: both enums are #[repr(u32)] with overlapping discriminant space per analyze_transpiled_module.
-                unsafe { core::mem::transmute::<RequestedModuleValue, StringID>(uv) },
+                // TODO(port): confirm StringID is #[repr(u32)]; Zig: @enumFromInt(@intFromEnum(uv))
+                // SAFETY: StringID is #[repr(u32)] per analyze_transpiled_module; discriminant is in-range (host-defined values are StringID indices).
+                unsafe { core::mem::transmute::<u32, StringID>(uv as u32) },
             ),
         }
     }

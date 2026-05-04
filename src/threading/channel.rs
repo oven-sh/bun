@@ -103,19 +103,23 @@ impl<T, const BUFFER_TYPE: LinearFifoBufferType> Channel<T, BUFFER_TYPE> {
         self.getters.broadcast();
     }
 
+    // TODO(port): narrow error set
     pub fn try_write_item(&self, item: T) -> Result<bool, ChannelError> {
         let wrote = self.write(core::slice::from_ref(&item))?;
         Ok(wrote == 1)
     }
 
+    // TODO(port): narrow error set
     pub fn write_item(&self, item: T) -> Result<(), ChannelError> {
         self.write_all(core::slice::from_ref(&item))
     }
 
+    // TODO(port): narrow error set
     pub fn write(&self, items: &[T]) -> Result<usize, ChannelError> {
         self.write_items(items, false)
     }
 
+    // TODO(port): narrow error set
     pub fn try_read_item(&self) -> Result<Option<T>, ChannelError> {
         let mut items: [MaybeUninit<T>; 1] = [MaybeUninit::uninit()];
         // SAFETY: `read` only writes initialized `T` into the first `n` slots
@@ -128,6 +132,7 @@ impl<T, const BUFFER_TYPE: LinearFifoBufferType> Channel<T, BUFFER_TYPE> {
         Ok(Some(unsafe { items[0].assume_init_read() }))
     }
 
+    // TODO(port): narrow error set
     pub fn read_item(&self) -> Result<T, ChannelError> {
         let mut items: [MaybeUninit<T>; 1] = [MaybeUninit::uninit()];
         // SAFETY: see try_read_item.
@@ -137,22 +142,26 @@ impl<T, const BUFFER_TYPE: LinearFifoBufferType> Channel<T, BUFFER_TYPE> {
         Ok(unsafe { items[0].assume_init_read() })
     }
 
+    // TODO(port): narrow error set
     pub fn read(&self, items: &mut [T]) -> Result<usize, ChannelError> {
         self.read_items(items, false)
     }
 
+    // TODO(port): narrow error set
     pub fn write_all(&self, items: &[T]) -> Result<(), ChannelError> {
         let n = self.write_items(items, true)?;
         debug_assert!(n == items.len());
         Ok(())
     }
 
+    // TODO(port): narrow error set
     pub fn read_all(&self, items: &mut [T]) -> Result<(), ChannelError> {
         let n = self.read_items(items, true)?;
         debug_assert!(n == items.len());
         Ok(())
     }
 
+    // TODO(port): narrow error set
     fn write_items(&self, items: &[T], should_block: bool) -> Result<usize, ChannelError> {
         let _guard = self.mutex.lock();
         // SAFETY: mutex is held for the duration of this fn.
@@ -195,6 +204,7 @@ impl<T, const BUFFER_TYPE: LinearFifoBufferType> Channel<T, BUFFER_TYPE> {
         Ok(pushed)
     }
 
+    // TODO(port): narrow error set
     fn read_items(&self, items: &mut [T], should_block: bool) -> Result<usize, ChannelError> {
         let _guard = self.mutex.lock();
         // SAFETY: mutex is held for the duration of this fn.
@@ -237,6 +247,6 @@ impl<T, const BUFFER_TYPE: LinearFifoBufferType> Channel<T, BUFFER_TYPE> {
 // PORT STATUS
 //   source:     src/threading/channel.zig (172 lines)
 //   confidence: medium
-//   todos:      4
-//   notes:      const-generic enum BUFFER_TYPE + UnsafeCell interior mutability; Mutex/Condition guard API and LinearFifo crate path need Phase B verification
+//   todos:      14
+//   notes:      const-generic enum BUFFER_TYPE + UnsafeCell interior mutability; Mutex/Condition guard API and LinearFifo crate path need Phase B verification; ChannelError pre-narrowed from Zig `!T` (verify against inferred set)
 // ──────────────────────────────────────────────────────────────────────────

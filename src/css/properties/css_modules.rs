@@ -27,7 +27,7 @@ impl Composes {
         let loc2 = input.current_source_location();
         let mut names = CustomIdentList::default();
         while let Some(name) = input.try_parse(Self::parse_one_ident).ok() {
-            names.append(input.allocator(), name);
+            names.push(name);
         }
 
         if names.len() == 0 {
@@ -128,7 +128,10 @@ impl Specifier {
             Specifier::Global => dest.write_str(b"global"),
             Specifier::ImportRecordIndex(import_record_index) => {
                 let url = dest.get_import_record_url(*import_record_index)?;
-                css::serializer::serialize_string(url, dest).map_err(|_| dest.add_fmt_error())
+                let Ok(()) = css::serializer::serialize_string(url, dest) else {
+                    return dest.add_fmt_error();
+                };
+                Ok(())
             }
             // .source_index => {},
         }

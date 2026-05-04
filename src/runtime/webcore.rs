@@ -82,26 +82,24 @@ impl Pipe {
     }
 }
 
-// TODO(port): `std.mem.Allocator` param kept to match LIFETIMES.tsv verbatim; per §Allocators
-// (non-AST crate) it should likely be dropped in Phase B.
-pub type Function = fn(ctx: NonNull<()>, stream: streams::Result, allocator: &dyn bun_alloc::Allocator);
+pub type Function = fn(ctx: NonNull<()>, stream: streams::Result);
 
 // TODO(port): Zig `Wrap(comptime Type, comptime function)` takes a *comptime fn pointer* as a
 // generic argument, which stable Rust cannot express. Reshaped: callers implement `PipeHandler`
 // for their type instead of passing a free fn. Phase B should audit call sites
 // (`Wrap(Foo, Foo.onPipe).init(self)` → `Wrap::<Foo>::init(self)`).
 pub trait PipeHandler {
-    fn on_pipe(&mut self, stream: streams::Result, allocator: &dyn bun_alloc::Allocator);
+    fn on_pipe(&mut self, stream: streams::Result);
 }
 
 pub struct Wrap<T: PipeHandler>(core::marker::PhantomData<T>);
 
 impl<T: PipeHandler> Wrap<T> {
-    pub fn pipe(self_: NonNull<()>, stream: streams::Result, allocator: &dyn bun_alloc::Allocator) {
+    pub fn pipe(self_: NonNull<()>, stream: streams::Result) {
         // SAFETY: `self_` was produced from `NonNull::from(&mut T)` in `init` below; caller
         // guarantees the pointee outlives the Pipe and is exclusively borrowed here.
         let this = unsafe { self_.cast::<T>().as_mut() };
-        this.on_pipe(stream, allocator);
+        this.on_pipe(stream);
     }
 
     pub fn init(self_: &mut T) -> Pipe {
@@ -135,6 +133,6 @@ pub enum Lifetime {
 // PORT STATUS
 //   source:     src/runtime/webcore.zig (129 lines)
 //   confidence: medium
-//   todos:      4
+//   todos:      3
 //   notes:      Mostly thin re-exports → `pub mod`/`pub use`. `Pipe.Wrap` reshaped to a trait (no comptime-fn generics in Rust); ObjectPool/ByteList crate paths guessed.
 // ──────────────────────────────────────────────────────────────────────────

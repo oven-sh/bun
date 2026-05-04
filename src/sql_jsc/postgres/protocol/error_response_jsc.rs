@@ -1,7 +1,7 @@
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_sql::postgres::protocol::error_response::{ErrorResponse, FieldMessage};
 use bun_str::String;
-use bun_core::StringBuilder;
+use bun_str::StringBuilder;
 
 use crate::postgres::error_jsc::{create_postgres_error, PostgresErrorFields};
 
@@ -86,7 +86,7 @@ pub fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSValue {
 
     let errno: Option<&[u8]> = if !code.is_empty() { Some(code.byte_slice()) } else { None };
     // syntax error - https://www.postgresql.org/docs/8.1/errcodes-appendix.html
-    let error_code: &'static [u8] = if code.byte_slice() == b"42601" {
+    let error_code: &'static [u8] = if code.eql(b"42601") {
         b"ERR_POSTGRES_SYNTAX_ERROR"
     } else {
         b"ERR_POSTGRES_SERVER_ERROR"

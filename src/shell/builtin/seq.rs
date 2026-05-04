@@ -7,6 +7,8 @@ use bun_jsc::SystemError;
 use crate::interpreter::Builtin;
 // TODO(port): exact path for Builtin's nested `Impl` union — Zig: `Interpreter.Builtin.Impl`
 use crate::interpreter::builtin::Impl as BuiltinImpl;
+// TODO(port): exact path for Builtin's stdout/stderr selector enum — Zig: anon `.stdout` / `.stderr`
+use crate::interpreter::builtin::OutKind;
 use crate::Yield;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -23,9 +25,9 @@ pub struct Seq {
     _start: f32,
     _end: f32,
     increment: f32,
-    // TODO(port): lifetime — these borrow from Builtin's argv (`[*:0]const u8` slices), not truly 'static
-    separator: &'static [u8],
-    terminator: &'static [u8],
+    // TODO(port): lifetime — BACKREF: borrows Builtin's argv (`[*:0]const u8` slices); argv outlives Seq
+    separator: *const [u8],
+    terminator: *const [u8],
     fixed_width: bool,
 }
 
@@ -37,8 +39,8 @@ impl Default for Seq {
             _start: 1.0,
             _end: 1.0,
             increment: 1.0,
-            separator: b"\n",
-            terminator: b"",
+            separator: b"\n" as *const [u8],
+            terminator: b"" as *const [u8],
             fixed_width: false,
         }
     }
@@ -61,11 +63,11 @@ impl Seq {
                     return self.fail(b"seq: option requires an argument -- s\n");
                 };
                 // SAFETY: argv entries are NUL-terminated C strings
-                self.separator = unsafe { CStr::from_ptr(next) }.to_bytes();
+                self.separator = unsafe { CStr::from_ptr(next) }.to_bytes() as *const [u8];
                 continue;
             }
             if arg.starts_with(b"-s") {
-                self.separator = &arg[2..];
+                self.separator = &arg[2..] as *const [u8];
                 continue;
             }
 
@@ -74,11 +76,11 @@ impl Seq {
                     return self.fail(b"seq: option requires an argument -- t\n");
                 };
                 // SAFETY: argv entries are NUL-terminated C strings
-                self.terminator = unsafe { CStr::from_ptr(next) }.to_bytes();
+                self.terminator = unsafe { CStr::from_ptr(next) }.to_bytes() as *const [u8];
                 continue;
             }
             if arg.starts_with(b"-t") {
-                self.terminator = &arg[2..];
+                self.terminator = &arg[2..] as *const [u8];
                 continue;
             }
 
@@ -160,7 +162,8 @@ impl Seq {
             self.state = State::Err;
             return self.bltn().stderr.enqueue(self, msg, safeguard);
         }
-        let _ = self.bltn().write_no_io(.stderr, msg);
+        // TODO(port): exact enum path for Builtin output kind (Zig: `.stderr`)
+        let _ = self.bltn().write_no_io(OutKind::Stderr, msg);
         self.bltn().done(1)
     }
 
@@ -170,8 +173,9 @@ impl Seq {
         let mut scratch: Vec<u8> = Vec::new();
 
         // PORT NOTE: reshaped for borrowck — copied separator/terminator out of self before &mut self.print()
-        let sep = self.separator;
-        let term = self.terminator;
+        // SAFETY: BACKREF — argv slices outlive Seq (owned by Builtin)
+        let sep = unsafe { &*self.separator };
+        let term = unsafe { &*self.terminator };
 
         while if self.increment > 0.0 { current <= self._end } else { current >= self._end } {
             scratch.clear();
@@ -196,7 +200,8 @@ impl Seq {
             self.buf.extend_from_slice(msg);
             return;
         }
-        let _ = self.bltn().write_no_io(.stdout, msg);
+        // TODO(port): exact enum path for Builtin output kind (Zig: `.stdout`)
+        let _ = self.bltn().write_no_io(OutKind::Stdout, msg);
     }
 
     pub fn on_io_writer_chunk(&mut self, _: usize, maybe_e: Option<SystemError>) -> Yield {
@@ -241,6 +246,6 @@ fn parse_f32(bytes: &[u8]) -> Result<f32, ()> {
 // PORT STATUS
 //   source:     src/shell/builtin/seq.zig (148 lines)
 //   confidence: medium
-//   todos:      6
-//   notes:      separator/terminator borrow argv (not 'static); bltn() @fieldParentPtr aliasing needs raw-ptr reshape; .stderr/.stdout enum-tag args need real Rust syntax
+//   todos:      9
+//   notes:      separator/terminator are raw *const [u8] BACKREF into Builtin's argv; bltn() @fieldParentPtr aliasing needs raw-ptr reshape; OutKind enum path is a guess
 // ──────────────────────────────────────────────────────────────────────────

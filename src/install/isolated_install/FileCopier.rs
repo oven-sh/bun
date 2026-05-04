@@ -235,8 +235,11 @@ impl FileCopier {
                     };
                     // SAFETY: fchmod is safe to call with any fd + mode; errors are ignored (`_ =`).
                     unsafe {
-                        // TODO(port): @intCast target type for mode (libc::mode_t)
-                        let _ = bun_sys::c::fchmod(dest.handle(), stat.mode as _);
+                        // TODO(port): confirm @intCast target type for mode (libc::mode_t vs bun_sys::Mode)
+                        let _ = bun_sys::c::fchmod(
+                            dest.handle(),
+                            libc::mode_t::try_from(stat.mode).unwrap(),
+                        );
                     }
                 }
 

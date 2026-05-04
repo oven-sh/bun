@@ -52,7 +52,7 @@ impl IniTestingAPIs {
                 },
             )?;
 
-            envmap.reserve(object_iter.len as usize);
+            envmap.reserve(usize::from(object_iter.len));
 
             while let Some(key) = object_iter.next()? {
                 let keyslice = key.to_owned_slice()?;

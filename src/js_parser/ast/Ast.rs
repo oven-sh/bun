@@ -17,7 +17,6 @@ use bun_options_types::import_record::List as ImportRecordList;
 
 pub type TopLevelSymbolToParts = ArrayHashMap<Ref, BabyList<u32>>;
 
-#[derive(Default)]
 pub struct Ast {
     pub approximate_newline_count: usize,
     pub has_lazy_export: bool,
@@ -95,6 +94,54 @@ pub struct Ast {
     pub import_meta_ref: Ref,
 }
 
+// PORT NOTE: Zig field defaults reference named constants (`Ref.None`, `logger.Range.None`,
+// `ExportsKind.none`, `Target.browser`) whose equivalence to the Rust types' `Default::default()`
+// is unverified across crates, so spell them out here instead of `#[derive(Default)]`.
+impl Default for Ast {
+    fn default() -> Self {
+        Self {
+            approximate_newline_count: 0,
+            has_lazy_export: false,
+            runtime_imports: Default::default(),
+            nested_scope_slot_counts: SlotCounts::default(),
+            runtime_import_record_id: None,
+            needs_runtime: false,
+            has_top_level_return: false,
+            uses_exports_ref: false,
+            uses_module_ref: false,
+            uses_require_ref: false,
+            commonjs_module_exports_assigned_deoptimized: false,
+            force_cjs_to_esm: false,
+            exports_kind: ExportsKind::None,
+            import_keyword: logger::Range::NONE,
+            export_keyword: logger::Range::NONE,
+            top_level_await_keyword: logger::Range::NONE,
+            import_records: Default::default(),
+            hashbang: b"",
+            directive: None,
+            parts: Default::default(),
+            symbols: Default::default(),
+            module_scope: Scope::default(),
+            char_freq: None,
+            exports_ref: Ref::NONE,
+            module_ref: Ref::NONE,
+            wrapper_ref: Ref::NONE,
+            require_ref: Ref::NONE,
+            named_imports: Default::default(),
+            named_exports: Default::default(),
+            export_star_import_records: Box::default(),
+            top_level_symbols_to_parts: Default::default(),
+            commonjs_named_exports: Default::default(),
+            redirect_import_record_index: None,
+            target: bun_bundler::options::Target::Browser,
+            ts_enums: Default::default(),
+            has_commonjs_export_names: false,
+            has_import_meta: false,
+            import_meta_ref: Ref::NONE,
+        }
+    }
+}
+
 pub struct CommonJSNamedExport {
     pub loc_ref: LocRef,
     pub needs_decl: bool,
@@ -162,6 +209,6 @@ pub use crate::ast::g::Class;
 // PORT STATUS
 //   source:     src/js_parser/ast/Ast.zig (143 lines)
 //   confidence: medium
-//   todos:      6
-//   notes:      Zig nested `.List` types referenced via module paths; hashbang/directive/export_star_import_records ownership needs Phase-B lifetime decision; deinit folded into Drop semantics of field types.
+//   todos:      7
+//   notes:      Zig nested `.List` types referenced via module paths; hashbang/directive/export_star_import_records ownership needs Phase-B lifetime decision; deinit folded into Drop semantics of field types; manual `impl Default` spells out Ref::NONE / Range::NONE / ExportsKind::None / Target::Browser to match Zig field defaults.
 // ──────────────────────────────────────────────────────────────────────────

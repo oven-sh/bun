@@ -32,17 +32,21 @@ impl<'arena> Stmt<'arena> {
         // In Rust the `Into<ParentPtr>` bound covers both (ParentPtr: Into<ParentPtr> is reflexive).
         let parent_ptr: ParentPtr = parent.into();
         // TODO(port): in-place init — `parent_ptr.create::<Stmt>()` returns a pre-allocated slot
-        // from the interpreter's state arena/pool; keep raw-ptr factory shape.
+        // from the interpreter's state arena/pool; keep raw-ptr factory shape (Phase B: consider
+        // `&mut MaybeUninit<Self>`).
         let script: *mut Stmt<'arena> = parent_ptr.create::<Stmt>();
-        // SAFETY: `create` returns a valid uninitialized slot owned by the parent's allocator.
+        // SAFETY: `create` returns a valid *uninitialized* slot owned by the parent's allocator.
+        // Whole-struct `ptr::write` — per-field `(*script).f = ...` would drop garbage prior values.
         unsafe {
-            (*script).base = State::init_with_new_alloc_scope(StateKind::Stmt, interpreter, shell_state);
-            (*script).node = node;
-            (*script).parent = parent_ptr;
-            (*script).idx = 0;
-            (*script).last_exit_code = None;
-            (*script).currently_executing = None;
-            (*script).io = io;
+            script.write(Stmt {
+                base: State::init_with_new_alloc_scope(StateKind::Stmt, interpreter, shell_state),
+                node,
+                parent: parent_ptr,
+                idx: 0,
+                last_exit_code: None,
+                currently_executing: None,
+                io,
+            });
         }
         log!("Stmt(0x{:x}) init", script as usize);
         script

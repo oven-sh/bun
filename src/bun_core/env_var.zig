@@ -66,6 +66,10 @@ pub const BUN_INSPECT_PRELOAD = New(kind.string, "BUN_INSPECT_PRELOAD", .{});
 pub const BUN_INSTALL = New(kind.string, "BUN_INSTALL", .{});
 pub const BUN_INSTALL_BIN = New(kind.string, "BUN_INSTALL_BIN", .{});
 pub const BUN_INSTALL_GLOBAL_DIR = New(kind.string, "BUN_INSTALL_GLOBAL_DIR", .{});
+/// Forces the hoisted installer to link packages serially on the main
+/// thread instead of fanning out to the thread pool. Escape hatch for
+/// debugging / benchmarking the parallel path.
+pub const BUN_INSTALL_SERIAL_HOISTED = New(kind.boolean, "BUN_INSTALL_SERIAL_HOISTED", .{ .default = false });
 /// Minimum response `Content-Length` (in bytes) for `bun install` to
 /// stream a tarball directly into libarchive instead of buffering the
 /// whole body first. Smaller tarballs stay on the buffered path where
@@ -207,6 +211,13 @@ pub const feature_flag = struct {
     pub const BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS = newFeatureFlag("BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS", .{});
     pub const BUN_INSTRUMENTS = newFeatureFlag("BUN_INSTRUMENTS", .{});
     pub const BUN_INTERNAL_BUNX_INSTALL = newFeatureFlag("BUN_INTERNAL_BUNX_INSTALL", .{});
+    /// Test-only: make completeParallelInstalls() emit a
+    /// "[ParallelHoistedInstall] N tasks" stderr marker so the
+    /// parallel-hoisted-install.test.ts suite can deterministically
+    /// assert the parallel path was taken. Dedicated flag (not
+    /// INTERNAL_FOR_TESTING) so other install tests' stderr snapshots
+    /// are unaffected.
+    pub const BUN_INTERNAL_PARALLEL_HOISTED_MARKER = newFeatureFlag("BUN_INTERNAL_PARALLEL_HOISTED_MARKER", .{});
     pub const BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN = newFeatureFlag("BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN", .{});
     pub const BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT = newFeatureFlag("BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT", .{});
     pub const BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF = newFeatureFlag("BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF", .{});

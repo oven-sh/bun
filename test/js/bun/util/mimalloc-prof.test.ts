@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync, unlinkSync } from "fs";
+import { join } from "path";
+import { tmpdirSync } from "harness";
 
 // @ts-expect-error unsafe is not in the public types
 const prof = Bun.unsafe.mimallocProf;
+
+const longA = Buffer.alloc(256, "x").toString();
+const longB = Buffer.alloc(500, "x").toString();
 
 describe("Bun.unsafe.mimallocProf", () => {
   test("API surface", () => {
@@ -15,8 +21,8 @@ describe("Bun.unsafe.mimallocProf", () => {
     prof.start(4096);
     // generate native allocations that go through mimalloc (URL parser, inspect formatter)
     const keep: unknown[] = [];
-    for (let i = 0; i < 1000; i++) keep.push(new URL("https://example.com/p/" + i + "?q=" + "x".repeat(256)));
-    for (let i = 0; i < 1000; i++) keep.push(Bun.inspect({ i, s: "x".repeat(500) }));
+    for (let i = 0; i < 1000; i++) keep.push(new URL("https://example.com/p/" + i + "?q=" + longA));
+    for (let i = 0; i < 1000; i++) keep.push(Bun.inspect({ i, s: longB }));
     const pb = prof.stop();
     expect(Buffer.isBuffer(pb)).toBe(true);
     expect(pb.length).toBeGreaterThan(500);
@@ -31,14 +37,14 @@ describe("Bun.unsafe.mimallocProf", () => {
 
   test("reset clears samples", () => {
     prof.start(1024);
-    for (let i = 0; i < 1000; i++) Bun.inspect({ i, s: "x".repeat(200) });
-    prof.reset();
-    prof.stop();
-    // after reset, a fresh start should not include prior samples
+    for (let i = 0; i < 1000; i++) Bun.inspect({ i, s: longB });
+    const pb0 = prof.stop();
     prof.start(1024);
+    prof.reset();
     const pb1 = prof.stop();
-    // mostly-empty profile (just headers/mappings); should be small
+    // pb1 has no samples (only headers/mappings/strings), pb0 has ~hundreds
     expect(pb1.length).toBeGreaterThan(0);
+    expect(pb1.length).toBeLessThan(pb0.length / 2);
   });
 
   test("start with default rate", () => {
@@ -54,12 +60,13 @@ describe("Bun.unsafe.mimallocProf", () => {
   });
 
   test("snapshot writes a file", () => {
-    const path = `/tmp/bun-mimalloc-snapshot-${process.pid}.bin`;
+    const dir = tmpdirSync();
+    const path = join(dir, `mimalloc-snapshot.bin`);
     const ok = prof.snapshot(path);
     expect(ok).toBe(true);
-    const data = require("fs").readFileSync(path);
+    const data = readFileSync(path);
     // snapshot magic 'MIHS' little-endian
     expect(data.readUInt32LE(0)).toBe(0x5348494d);
-    require("fs").unlinkSync(path);
+    unlinkSync(path);
   });
 });

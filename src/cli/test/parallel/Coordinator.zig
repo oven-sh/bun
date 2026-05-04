@@ -1,7 +1,8 @@
 //! Process-pool coordinator for `bun test --parallel`. Owns the worker slice,
 //! drives the event loop, routes IPC frames to per-test output, and handles
-//! crash retry / bail / lazy scale-up. Construction and the run loop entry
-//! live in `runner.zig`; this file is the per-run state and its methods.
+//! crash accounting / panic-abort / bail / lazy scale-up. Construction and
+//! the run loop entry live in `runner.zig`; this file is the per-run state
+//! and its methods.
 
 pub const Coordinator = struct {
     vm: *jsc.VirtualMachine,
@@ -357,8 +358,11 @@ pub const Coordinator = struct {
     /// as opposed to the test calling process.exit() or being SIGKILL'd by
     /// the OOM killer. Bun's panic handler ends in @trap() → SIGILL on
     /// POSIX; JSC/WTF assertion failures abort() → SIGABRT. On Windows
-    /// abort() surfaces as exit code 3 and STATUS_* fault codes map through
-    /// uv to the POSIX signal equivalents, so the same check covers both.
+    /// neither surfaces as a signal — abort() is exit code 3 and NTSTATUS
+    /// fault codes arrive as a plain exit status, both indistinguishable
+    /// from process.exit(N) — so this classification is effectively
+    /// POSIX-only and Windows worker crashes fall into the non-panic
+    /// per-file-failure branch.
     fn isPanicStatus(status: bun.spawn.Status) bool {
         const sig = status.signalCode() orelse return false;
         return switch (sig) {
@@ -391,13 +395,13 @@ pub const Coordinator = struct {
             .{ describeStatus(&buf, status), this.relPath(file_idx) },
         );
         Output.flush();
-        if (this.bailed) return;
-        this.bailed = true;
         // .shutdown() only takes effect between files, so a worker that's
         // mid-file would keep producing output after the panic banner.
         // Terminate the whole process group (same as the SIGINT path) so the
         // run ends now; reapWorker() will account each inflight file as a
-        // crash when the exit arrives.
+        // crash when the exit arrives. Runs even if --bail already set
+        // `bailed`, since bailOut() only shutdown()s idle workers and would
+        // leave inflight ones running past the banner.
         for (this.workers[0..this.spawned_count]) |*other| {
             if (!other.alive) continue;
             if (other.process) |p| {
@@ -408,6 +412,8 @@ pub const Coordinator = struct {
                 }
             }
         }
+        if (this.bailed) return;
+        this.bailed = true;
         this.abortQueuedFiles("aborted: worker panicked");
     }
 

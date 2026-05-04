@@ -41,7 +41,7 @@ test.skipIf(isWindows)(
 
     function done() {
       for (const w of watchers) w.close();
-      // Allow the close tasks (also routed via enqueue) to drain.
+      // Allow any in-flight watcher-thread tasks to drain.
       setImmediate(() => {
         console.log("OK " + received);
         process.exit(0);
@@ -59,8 +59,8 @@ test.skipIf(isWindows)(
       while (received === 0) {
         write();
         await new Promise(r => setImmediate(r));
-        // Give up waiting for delivery after a generous bound; the assertion /
-        // heap check is still exercised by close() even if no events arrived.
+        // Give up after a generous bound; the regression signal is the
+        // assertion / no heap corruption, not delivery count, so still pass.
         if (Date.now() - started > 10_000) return done();
       }
       // Phase 2: now that enqueue() is known to be firing, stress it.

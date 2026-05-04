@@ -106,6 +106,33 @@ test("AsyncDisposableStack.disposeAsync awaits adopt() callbacks", async () => {
   expect(disposed).toBe(true);
 });
 
+// https://github.com/oven-sh/bun/issues/24277
+//
+// The same broken GetDisposeMethod implementation checked isCallable before
+// checking for undefined/null, so passing a resource that only defined
+// [Symbol.dispose] (no [Symbol.asyncDispose]) threw "@@asyncDispose must be
+// callable" instead of falling back to the sync dispose method per
+// https://tc39.es/proposal-explicit-resource-management/#sec-getdisposemethod.
+test("AsyncDisposableStack.use falls back to Symbol.dispose when Symbol.asyncDispose is absent", async () => {
+  const events: string[] = [];
+
+  const stack = new AsyncDisposableStack();
+  stack.use({
+    async [Symbol.asyncDispose]() {
+      events.push("async dispose");
+    },
+  });
+  // Previously threw "TypeError: @@asyncDispose must be callable" at use().
+  stack.use({
+    [Symbol.dispose]() {
+      events.push("sync dispose");
+    },
+  });
+
+  await stack.disposeAsync();
+  expect(events).toEqual(["sync dispose", "async dispose"]);
+});
+
 test("AsyncDisposableStack.disposeAsync awaits defer() callbacks", async () => {
   const events: string[] = [];
   const d = Promise.withResolvers<void>();

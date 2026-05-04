@@ -266,6 +266,8 @@ jobs:
           labels: ${{ steps.metadata.outputs.labels }}
           build-args: |
             BUN_VERSION=${{ env.BUN_VERSION }}
+          cache-from: type=gha,scope=docker-${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=docker-${{ matrix.variant }}
   homebrew:
     name: Release to Homebrew
     runs-on: ubuntu-latest

@@ -195,6 +195,15 @@ pub const FileSystemRouter = struct {
             return;
         };
 
+        // Snapshot the subdirectory `*Entry` pointers before recursing. With
+        // the `DirEntry.stale` mechanism a concurrent watcher-thread bust of
+        // `path` can cause the `readDirInfo(child)` call below (on this same
+        // thread) to rewrite `entries.data` in place while we're mid-iteration.
+        // `*Entry` values live in the append-only `EntryStore`, so the
+        // pointers (and their `dir`/`base` strings) stay valid across that.
+        var subdirs: std.ArrayList(*Fs.FileSystem.Entry) = .empty;
+        defer subdirs.deinit(bun.default_allocator);
+
         if (root_dir_info) |dir| {
             if (dir.getEntriesConst()) |entries| {
                 var iter = entries.data.iterator();
@@ -209,15 +218,18 @@ pub const FileSystemRouter = struct {
                                 continue :outer;
                             }
                         }
-
-                        var abs_parts_con = [_]string{ entry.dir, entry.base() };
-                        const full_path = vm.transpiler.fs.abs(&abs_parts_con);
-
-                        _ = vm.transpiler.resolver.bustDirCache(strings.withoutTrailingSlashWindowsPath(full_path));
-                        bustDirCacheRecursive(this, globalThis, full_path);
+                        bun.handleOom(subdirs.append(bun.default_allocator, entry));
                     }
                 }
             }
+        }
+
+        for (subdirs.items) |entry| {
+            var abs_parts_con = [_]string{ entry.dir, entry.base() };
+            const full_path = vm.transpiler.fs.abs(&abs_parts_con);
+
+            _ = vm.transpiler.resolver.bustDirCache(strings.withoutTrailingSlashWindowsPath(full_path));
+            bustDirCacheRecursive(this, globalThis, full_path);
         }
 
         _ = vm.transpiler.resolver.bustDirCache(path);
@@ -256,10 +268,19 @@ pub const FileSystemRouter = struct {
             return globalThis.throw("Unable to find directory: {s}", .{this.router.config.dir});
         };
 
+        // `allocator.dupe(string, ...)` copies the slice headers but leaves
+        // each element pointing into the previous arena, which is about to be
+        // freed below. Deep-copy so the new router owns its extension strings.
+        const extensions = allocator.alloc(string, this.router.config.extensions.len) catch unreachable;
+        for (this.router.config.extensions, extensions) |src, *dst| {
+            dst.* = allocator.dupe(u8, src) catch unreachable;
+        }
+
         var router = Router.init(vm.transpiler.fs, allocator, .{
             .dir = allocator.dupe(u8, this.router.config.dir) catch unreachable,
-            .extensions = allocator.dupe(string, this.router.config.extensions) catch unreachable,
-            .asset_prefix_path = this.router.config.asset_prefix_path,
+            .extensions = extensions,
+            // Same as `extensions`: the old value lives in the previous arena.
+            .asset_prefix_path = allocator.dupe(u8, this.router.config.asset_prefix_path) catch unreachable,
         }) catch unreachable;
         router.loadRoutes(&log, root_dir_info, Resolver, &vm.transpiler.resolver, router.config.dir) catch {
             // Build the JS error before freeing the arena: `log` is backed by the arena allocator.

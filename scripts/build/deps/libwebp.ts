@@ -2,6 +2,13 @@
  * libwebp — Google's reference WebP codec. Backs Bun.Image WebP
  * decode/encode plus the SharpYUV RGB→YUV converter the encoder prefers.
  *
+ * mux/demux are the RIFF-container helpers: demux reads VP8X chunks (ICCP,
+ * EXIF, XMP) out of an input WebP without touching the bitstream; mux
+ * wraps a raw VP8/VP8L encode in a VP8X container so those chunks can be
+ * attached on output. Only the ICCP chunk is used today (ICC profile
+ * carry-through for #30197), but the full mux/demux is linked since the
+ * TUs are tiny and the EXIF/XMP chunks will need the same plumbing later.
+ *
  * DirectBuild: no config.h, no codegen. Every dsp/*_{sse2,sse41,neon,msa,
  * mips}*.c file self-guards on WEBP_USE_<ISA> (derived from compiler arch
  * macros in src/dsp/cpu.h), so the off-target ones compile to empty TUs —
@@ -68,6 +75,14 @@ const UTILS = [
   "rescaler_utils", "thread_utils", "utils",
 ];
 
+// RIFF container read/write — extracts/attaches the ICCP chunk so a
+// non-sRGB source (Display P3, Adobe RGB, Jpegli XYB) keeps its colour
+// meaning through a WebP re-encode. anim_* are linked only because the
+// other mux/demux TUs reference their symbols; Bun never encodes
+// animation.
+const DEMUX = ["demux", "anim_decode"];
+const MUX = ["muxedit", "muxinternal", "muxread", "anim_encode"];
+
 // prettier-ignore
 const SHARPYUV = [
   "sharpyuv", "sharpyuv_cpu", "sharpyuv_csp", "sharpyuv_dsp",
@@ -113,6 +128,8 @@ export const libwebp: Dependency = {
       ...ENC.map(f => `src/enc/${f}.c`),
       ...DSP.map(f => simd(`src/dsp/${f}.c`, cfg.x64)),
       ...UTILS.map(f => `src/utils/${f}.c`),
+      ...DEMUX.map(f => `src/demux/${f}.c`),
+      ...MUX.map(f => `src/mux/${f}.c`),
       ...SHARPYUV.map(f => simd(`sharpyuv/${f}.c`, cfg.x64)),
     ],
     // src/webp/*.h is the public API; internal headers use "src/..."

@@ -195,11 +195,11 @@ BunString toString(const char* bytes, size_t length)
 
 BunString fromJS(JSC::JSGlobalObject* globalObject, JSValue value)
 {
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::String str = value.toWTFString(globalObject);
-    if (str.isNull()) [[unlikely]] {
-        return { BunStringTag::Dead };
-    }
-    if (str.length() == 0) [[unlikely]] {
+    RETURN_IF_EXCEPTION(scope, { BunStringTag::Dead });
+    if (str.isEmpty()) [[unlikely]] {
         return { BunStringTag::Empty };
     }
 
@@ -230,11 +230,11 @@ BunString toString(JSC::JSGlobalObject* globalObject, JSValue value)
 
 BunString toStringRef(JSC::JSGlobalObject* globalObject, JSValue value)
 {
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto str = value.toWTFString(globalObject);
-    if (str.isNull()) [[unlikely]] {
-        return { BunStringTag::Dead };
-    }
-    if (str.length() == 0) [[unlikely]] {
+    RETURN_IF_EXCEPTION(scope, { BunStringTag::Dead });
+    if (str.isEmpty()) [[unlikely]] {
         return { BunStringTag::Empty };
     }
 

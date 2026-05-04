@@ -391,16 +391,21 @@ describe("node:http Agent socket accounting", () => {
 
   test("flushHeaders() on a bodiless GET that gets a response before end() releases the slot", async () => {
     const agent = new http.Agent({ maxSockets: 1 });
-    const server = http.createServer((req, res) => res.end("ok"));
+    const { promise: serverGotRequest, resolve: onServerRequest } = Promise.withResolvers<void>();
+    const server = http.createServer((req, res) => {
+      res.end("ok");
+      onServerRequest();
+    });
     server.listen(0);
     try {
       await once(server, "listening");
       const port = (server.address() as AddressInfo).port;
       const name = agent.getName({ port });
 
-      let gotResponse = false;
+      const { promise: responseEnded, resolve: onResponseEnd } = Promise.withResolvers<void>();
       const req = http.request({ port, agent }, res => {
-        gotResponse = true;
+        res.on("end", onResponseEnd);
+        res.on("error", onResponseEnd);
         res.resume();
       });
       req.on("error", () => {});
@@ -410,16 +415,20 @@ describe("node:http Agent socket accounting", () => {
       // handleResponse() (which installs the res 'end'/'close' release
       // hooks) would never be called.
       req.flushHeaders();
-      // Wait for the response to arrive.
-      for (let i = 0; i < 50 && !gotResponse; i++) {
-        await new Promise<void>(r => setImmediate(r));
-      }
+      // Wait for the server to have responded. There is no JS-observable
+      // signal that the client's .then handler has stashed handleResponse
+      // (that's the point of this test), so after the server fires we
+      // yield real time to the OS scheduler so the HTTP client thread can
+      // post the response — setImmediate alone would only yield to other
+      // JS tasks on this thread.
+      await serverGotRequest;
+      for (let i = 0; i < 20; i++) await Bun.sleep(1);
       req.end();
 
-      for (let i = 0; i < 50 && agent.totalSocketCount > 0; i++) {
-        await new Promise<void>(r => setImmediate(r));
-      }
-      expect(gotResponse).toBe(true);
+      // After end(), send() reassigns onEnd and calls it, which invokes
+      // handleResponse → 'response' fires → res consumed → slot released.
+      await responseEnded;
+      while (agent.totalSocketCount > 0) await Bun.sleep(1);
       expect(agent.totalSocketCount).toBe(0);
       expect(name in agent.sockets).toBe(false);
     } finally {

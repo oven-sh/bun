@@ -60,8 +60,13 @@ pub fn lenOfNumber(value: f64) u32 {
         return neg_prefix + int_len;
     }
 
-    var buf: [64]u8 = undefined;
-    const s = std.fmt.bufPrint(&buf, "{d}", .{abs_value}) catch return neg_prefix + 24;
+    // Zig's `{d}` for f64 emits fixed-point (no exponent) — worst-case
+    // f64 (~1.8e308) is 309 integer digits, plus room for a decimal point
+    // and 17 significant digits. 350 bytes clears that with headroom so
+    // `bufPrint` never truncates and hands us back a misleadingly short
+    // length. If it somehow did, bias toward rejecting the fold.
+    var buf: [350]u8 = undefined;
+    const s = std.fmt.bufPrint(&buf, "{d}", .{abs_value}) catch return neg_prefix + @as(u32, buf.len);
     return neg_prefix + @as(u32, @intCast(s.len));
 }
 

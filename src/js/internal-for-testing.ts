@@ -265,6 +265,15 @@ export const lsanDoLeakCheck = $newCppFunction("InternalForTesting.cpp", "jsFunc
 
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);
 
+// Drives the `windowsEnv` builtin — the wrapper that turns the process env
+// object into a case-insensitive Proxy on Windows. Exposed for
+// cross-platform testing of the Proxy's trap semantics (see #30226).
+export const createWindowsEnvProxyForTesting: (
+  internalEnv: Record<string, string>,
+  envMapList: string[],
+  editCb: (k: string, v: string | null) => void,
+) => any = $newCppFunction("InternalForTesting.cpp", "jsFunction_createWindowsEnvProxyForTesting", 3);
+
 export const BunString_toThreadSafeRefCountDelta: () => number = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_BunString_toThreadSafeRefCountDelta",

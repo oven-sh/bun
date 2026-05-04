@@ -407,8 +407,18 @@ export function windowsEnv(
   };
 
   return new Proxy(internalEnv, {
-    get(_, p) {
-      return typeof p === "string" ? internalEnv[p.toUpperCase()] : undefined;
+    get(target, p, receiver) {
+      if (typeof p === "string") {
+        // Case-insensitive env var lookup wins first (matches Windows semantics).
+        const envValue = internalEnv[p.toUpperCase()];
+        if (envValue !== undefined) return envValue;
+        // Fall back to the target's own/inherited properties so that
+        // `env.hasOwnProperty`, `env.toString`, `env.toJSON`, the custom
+        // inspect symbol, etc. resolve via `Object.prototype` just like on
+        // POSIX (where process.env is a plain object, not a Proxy).
+        return Reflect.get(target, p, receiver);
+      }
+      return Reflect.get(target, p, receiver);
     },
     set(_, p, value) {
       const k = String(p).toUpperCase();

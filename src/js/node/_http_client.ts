@@ -363,9 +363,23 @@ function ClientRequest(input, options, cb) {
               };
             });
 
+            // Yield any remaining chunks that may have been pushed
+            // between the Promise resolving and now (race condition fix)
+            while (self[kBodyChunks]?.length > 0) {
+              yield self[kBodyChunks].shift();
+            }
+
             if (self[kBodyChunks]?.length === 0) {
               self.emit("drain");
             }
+          }
+
+          // After the loop exits (self.finished is true), there may still
+          // be chunks in the buffer that were pushed before/during the
+          // self.finished check. Yield any remaining chunks to ensure
+          // all data is sent.
+          while (self[kBodyChunks]?.length > 0) {
+            yield self[kBodyChunks].shift();
           }
 
           handleResponse?.();

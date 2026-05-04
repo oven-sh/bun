@@ -97,6 +97,9 @@ export interface MySQLDotZig {
       count: number,
       queries: any,
       is_last: boolean,
+      last_insert_rowid: number | bigint,
+      affected_rows: number,
+      statement: Bun.SQL.ResultStatement | undefined,
     ) => void,
     onRejectQuery: (query: Query<any, any>, err: Error, queries) => void,
   ) => void;

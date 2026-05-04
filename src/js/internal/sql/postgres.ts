@@ -307,6 +307,7 @@ export interface PostgresDotZig {
       count: number,
       queries: any,
       is_last: boolean,
+      statement: Bun.SQL.ResultStatement | undefined,
     ) => void,
     onRejectQuery: (query: Query<any, any>, err: Error, queries) => void,
   ) => void;

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync, unlinkSync } from "fs";
-import { join } from "path";
 import { tmpdirSync } from "harness";
+import { join } from "path";
 
 // @ts-expect-error unsafe is not in the public types
 const prof = Bun.unsafe.mimallocProf;

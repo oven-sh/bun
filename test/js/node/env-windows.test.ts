@@ -59,8 +59,8 @@ test.if(isWindows)("process.env inherits Object.prototype methods on windows (#3
   expect("hasOwnProperty" in process.env).toBe(true);
   expect("__NOT_A_REAL_ENV_VAR_30226__" in process.env).toBe(false);
 
-  // `JSON.stringify(process.env)` must round-trip via ownKeys and not leak a
-  // `toJSON` property (matches Node on Windows).
+  // `JSON.stringify(process.env)` must not leak an internal `toJSON` key into
+  // the serialized output, and env vars round-trip (matches Node on Windows).
   const roundTrip = JSON.parse(JSON.stringify(process.env));
   expect(roundTrip).not.toHaveProperty("toJSON");
   expect(roundTrip.PATH ?? roundTrip.Path ?? roundTrip.path).toBeDefined();
@@ -84,11 +84,13 @@ test.if(isWindows)("process.env inherits Object.prototype methods on windows (#3
   } finally {
     if (original === undefined) {
       delete process.env.HASOWNPROPERTY;
+      // With no env var, the inherited method is visible again.
+      expect(typeof process.env.hasOwnProperty).toBe("function");
     } else {
       process.env.HASOWNPROPERTY = original;
+      // A pre-existing env var keeps shadowing the prototype method.
+      expect(process.env.hasOwnProperty).toBe(original);
     }
-    // Once the env var is gone, the inherited method comes back.
-    expect(typeof process.env.hasOwnProperty).toBe("function");
   }
 });
 
@@ -131,12 +133,11 @@ test("windowsEnv Proxy falls back to Object.prototype for hasOwnProperty (#30226
   expect(env.path).toBe("/usr/bin");
   expect(env.PaTh).toBe("/usr/bin");
 
-  // `JSON.stringify(process.env)` must enumerate via ownKeys and emit the
-  // *original-case* names from envMapList (not the uppercased backing keys).
-  // This used to be broken by a stale `toJSON` assignment on the backing
-  // object that returned `{ ...internalEnv }` — uppercase keys.
-  expect(env.toJSON).toBeUndefined();
+  // `JSON.stringify(process.env)` must emit the *original-case* names from
+  // envMapList (not the uppercased backing keys). A naive `toJSON` returning
+  // `{ ...internalEnv }` would leak the canonical UPPERCASE storage keys.
   expect(JSON.stringify(env)).toBe('{"Path":"/usr/bin","Bacon":"yummy"}');
+  expect(Object.keys(JSON.parse(JSON.stringify(env)))).toEqual(["Path", "Bacon"]);
 
   // Set/delete still round-trip through the edit callback.
   env.NEW_VAR = "hello";

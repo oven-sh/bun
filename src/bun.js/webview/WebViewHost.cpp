@@ -671,7 +671,7 @@ static WTF::Vector<uint8_t, 512> pack2(const WTF::String& a, const WTF::String& 
     WTF::CString ca = a.utf8(), cb = b.utf8();
     uint32_t na = static_cast<uint32_t>(ca.length()), nb = static_cast<uint32_t>(cb.length());
     WTF::Vector<uint8_t, 512> out;
-    out.grow(8 + na + nb);
+    out.grow(static_cast<size_t>(8) + static_cast<size_t>(na) + static_cast<size_t>(nb));
     uint8_t* p = out.mutableSpan().data();
     memcpy(p, &na, 4);
     p += 4;

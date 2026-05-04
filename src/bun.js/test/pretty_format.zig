@@ -1307,14 +1307,19 @@ pub const JestPrettyFormat = struct {
                     writer.writeAll(comptime Output.prettyFmt("<cyan>" ++ fmt ++ "<r>", enable_ansi_colors));
                 },
                 .Map => {
+                    const is_weak = value.jsType() == .WeakMap;
+                    const map_name = if (is_weak) "WeakMap" else "Map";
+
+                    if (is_weak) {
+                        return writer.print("{s} {{}}", .{map_name});
+                    }
+
                     const length_value = try value.get(this.globalThis, "size") orelse jsc.JSValue.jsNumberFromInt32(0);
                     const length = length_value.toInt32();
 
                     const prev_quote_strings = this.quote_strings;
                     this.quote_strings = true;
                     defer this.quote_strings = prev_quote_strings;
-
-                    const map_name = if (value.jsType() == .WeakMap) "WeakMap" else "Map";
 
                     if (length == 0) {
                         return writer.print("{s} {{}}", .{map_name});
@@ -1335,6 +1340,14 @@ pub const JestPrettyFormat = struct {
                     writer.writeAll("\n");
                 },
                 .Set => {
+                    const is_weak = value.jsType() == .WeakSet;
+                    const set_name = if (is_weak) "WeakSet" else "Set";
+
+                    if (is_weak) {
+                        this.writeIndent(Writer, writer_) catch {};
+                        return writer.print("{s} {{}}", .{set_name});
+                    }
+
                     const length_value = try value.get(this.globalThis, "size") orelse jsc.JSValue.jsNumberFromInt32(0);
                     const length = length_value.toInt32();
 
@@ -1343,8 +1356,6 @@ pub const JestPrettyFormat = struct {
                     defer this.quote_strings = prev_quote_strings;
 
                     this.writeIndent(Writer, writer_) catch {};
-
-                    const set_name = if (value.jsType() == .WeakSet) "WeakSet" else "Set";
 
                     if (length == 0) {
                         return writer.print("{s} {{}}", .{set_name});

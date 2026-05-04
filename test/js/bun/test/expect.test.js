@@ -3528,6 +3528,18 @@ describe("expect()", () => {
       expect(a1).not.toMatchObject({ 1: 1 });
       expect(a1).toMatchObject(a1);
     });
+
+    test("WeakMap/WeakSet with user-set size property does not crash diff formatter", () => {
+      const wm = new WeakMap();
+      wm.size = 2;
+      expect(() => expect(wm).toMatchObject({ 0: 1 })).toThrow();
+      expect(wm).not.toMatchObject({ 0: 1 });
+
+      const ws = new WeakSet();
+      ws.size = 2;
+      expect(() => expect(ws).toMatchObject({ 0: 1 })).toThrow();
+      expect(ws).not.toMatchObject({ 0: 1 });
+    });
   });
 
   describe("toMatch()", () => {

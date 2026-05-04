@@ -364,6 +364,16 @@ it("inspect", () => {
     value: "not a number",
   });
   expect(Bun.inspect(mapWithOverriddenSize)).toBe("Map {}");
+
+  // Regression test: WeakMap/WeakSet are not iterable, so a user-set size
+  // property must not cause the formatter to attempt iteration.
+  const weakMapWithSize = new WeakMap();
+  weakMapWithSize.size = 2;
+  expect(Bun.inspect(weakMapWithSize)).toBe("WeakMap {}");
+
+  const weakSetWithSize = new WeakSet();
+  weakSetWithSize.size = 2;
+  expect(Bun.inspect(weakSetWithSize)).toBe("WeakSet {}");
   expect(Bun.inspect(<div>foo</div>)).toBe("<div>foo</div>");
   expect(Bun.inspect(<div hello>foo</div>)).toBe("<div hello=true>foo</div>");
   expect(Bun.inspect(<div hello={1}>foo</div>)).toBe("<div hello=1>foo</div>");

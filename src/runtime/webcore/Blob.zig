@@ -1657,8 +1657,21 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
 
         // Check for Archive - allows Bun.write() and S3 writes to accept Archive instances
         if (data.as(Archive)) |archive| {
-            archive.store.ref();
-            break :brk Blob.initWithStore(archive.store, globalThis);
+            switch (archive.compress) {
+                .none => {
+                    archive.store.ref();
+                    break :brk Blob.initWithStore(archive.store, globalThis);
+                },
+                .gzip => |opts| {
+                    // Compress the tarball bytes so the destination (local file,
+                    // Bun.file, or S3) receives the gzipped form that
+                    // `archive.bytes()` / `Bun.Archive.write` would produce.
+                    const compressed = Archive.compressGzip(archive.store.sharedView(), opts.level) catch |err| {
+                        return globalThis.throwError(err, "Failed to gzip archive");
+                    };
+                    break :brk Blob.createWithBytesAndAllocator(compressed, bun.default_allocator, globalThis, false);
+                },
+            }
         }
 
         break :brk try Blob.get(

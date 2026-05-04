@@ -1,4 +1,4 @@
-import { expect, test, mock } from "bun:test";
+import { expect, mock, test } from "bun:test";
 
 // When Bun.write(s3File, ..., options) fails while parsing `options`, the
 // returned promise must be rejected with the underlying Error instance and

@@ -1,10 +1,13 @@
 let sab;
 let received = [];
+let bc;
 
 self.onmessage = e => {
   const msg = e.data;
   if (msg.kind === "init") {
     sab = new Int32Array(msg.sab);
+    bc = new BroadcastChannel(msg.channel);
+    bc.onmessage = handleBroadcast;
     self.postMessage({ kind: "ready" });
     // Block here until main has posted the entire first burst. This
     // guarantees all N messages are in concurrent_tasks before the next
@@ -15,9 +18,13 @@ self.onmessage = e => {
   }
   if (msg.kind === "finalize") {
     self.postMessage({ kind: "done", received: received.slice().sort((a, b) => a - b) });
+    bc.close();
     return;
   }
+};
 
+function handleBroadcast(e) {
+  const msg = e.data;
   const id = msg.id;
   received.push(id);
 
@@ -49,4 +56,4 @@ self.onmessage = e => {
       Atomics.notify(sab, 2);
     }
   }
-};
+}

@@ -6,13 +6,19 @@ import { expect, test } from "bun:test";
 // contiguous chunk and the loop `break`ed early, leaking the remaining tasks
 // and never running their wrapped CppTask/EventLoopTask.
 //
-// Reproduction: a Worker's onmessage handler triggers HTMLRewriter.transform()
-// with an async element handler. HTMLRewriter calls waitForPromise() which
-// reenters tick() -> tickConcurrent() while earlier sibling tasks are still in
-// the FIFO (so head > 0 and count > 0). A SharedArrayBuffer coordinates the
-// main thread to post a second burst of messages precisely before the reentrant
-// tickConcurrent runs, so the popped batch exceeds the first contiguous writable
-// chunk but still fits in total writable capacity (no realloc).
+// Reproduction: a Worker's BroadcastChannel onmessage handler triggers
+// HTMLRewriter.transform() with an async element handler. HTMLRewriter calls
+// waitForPromise() which reenters tick() -> tickConcurrent() while earlier
+// sibling tasks are still in the FIFO (so head > 0 and count > 0). A
+// SharedArrayBuffer coordinates the main thread to post a second burst of
+// messages precisely before the reentrant tickConcurrent runs, so the popped
+// batch exceeds the first contiguous writable chunk but still fits in total
+// writable capacity (no realloc).
+//
+// BroadcastChannel is used (not Worker.postMessage) because BroadcastChannel
+// creates one ConcurrentTask per postMessage per subscriber with no batching,
+// whereas Worker.postMessage batches all queued messages into a single drain
+// task.
 test("tickConcurrent does not drop tasks when the FIFO writable region wraps", async () => {
   // The tasks FIFO has an initial capacity of 64. Choose N so that after the
   // worker pops the first burst and reads reenterDepth tasks, the remaining
@@ -32,15 +38,17 @@ test("tickConcurrent does not drop tasks when the FIFO writable region wraps", a
 
   const sab = new SharedArrayBuffer(16);
   const flags = new Int32Array(sab);
+  const channel = "concurrent-task-fifo-wrap-" + Math.random().toString(36).slice(2);
 
   const worker = new Worker(new URL("./concurrent-task-fifo-wrap-worker.js", import.meta.url));
+  const bc = new BroadcastChannel(channel);
   try {
     await new Promise<void>((resolve, reject) => {
       worker.onerror = reject;
       worker.onmessage = e => {
         if (e.data.kind === "ready") resolve();
       };
-      worker.postMessage({ kind: "init", sab });
+      worker.postMessage({ kind: "init", sab, channel });
     });
 
     const doneP = new Promise<number[]>((resolve, reject) => {
@@ -50,12 +58,13 @@ test("tickConcurrent does not drop tasks when the FIFO writable region wraps", a
       };
     });
 
-    // First burst: N messages. These become N ConcurrentTasks that the worker
-    // pops in one tickConcurrent() into its tasks FIFO. The worker is blocked
-    // spinning inside its "init" handler until flags[3] is set below, so all
-    // N land in concurrent_tasks before any are popped.
+    // First burst: N messages. BroadcastChannel creates one ConcurrentTask per
+    // postMessage (no batching), pushed synchronously onto the worker's
+    // concurrent_tasks queue before postMessage returns. The worker is blocked
+    // spinning inside its "init" handler until flags[3] is set below, so all N
+    // land in concurrent_tasks before any are popped.
     for (let i = 0; i < N; i++) {
-      worker.postMessage({ kind: "msg", id: i, reenterDepth: REENTER_DEPTH });
+      bc.postMessage({ id: i, reenterDepth: REENTER_DEPTH });
     }
     Atomics.store(flags, 3, 1);
 
@@ -70,21 +79,22 @@ test("tickConcurrent does not drop tasks when the FIFO writable region wraps", a
     // Second burst: M messages. These land in the worker's concurrent_tasks
     // queue and are popped by the reentrant tickConcurrent().
     for (let i = N; i < TOTAL; i++) {
-      worker.postMessage({ kind: "msg", id: i, reenterDepth: REENTER_DEPTH });
+      bc.postMessage({ id: i, reenterDepth: REENTER_DEPTH });
     }
     Atomics.store(flags, 1, 1);
 
     // Wait for the worker to finish its reentrant processing before probing.
     expect(Atomics.wait(flags, 2, 0, 10_000)).not.toBe("timed-out");
 
-    // The finalize probe goes through a fresh tickConcurrent() with head=0, so
-    // it is never itself subject to the wrap. The worker replies with every
-    // message id it actually received.
+    // The finalize probe goes through Worker.postMessage (batched, fresh
+    // tickConcurrent with head=0), so it is never itself subject to the wrap.
+    // The worker replies with every message id it actually received.
     worker.postMessage({ kind: "finalize" });
 
     const received = await doneP;
     expect(received).toEqual(Array.from({ length: TOTAL }, (_, i) => i));
   } finally {
+    bc.close();
     worker.terminate();
   }
 });

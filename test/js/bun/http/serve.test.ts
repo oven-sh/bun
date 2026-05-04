@@ -10,6 +10,8 @@ import {
   isIntelMacOS,
   isIPv4,
   isIPv6,
+  isLinux,
+  isMacOS,
   isPosix,
   libcPathForDlopen,
   tempDir,
@@ -1584,7 +1586,10 @@ describe("server.requestFD", () => {
     return Response.json({ fd, rc, addrLen: addrLen[0] });
   };
 
-  it.if(isPosix)("returns an fd usable with getsockname() via FFI", async () => {
+  // Gate FFI tests on linux/macOS only: `isPosix` also includes FreeBSD, but
+  // `libcPathForDlopen()` only handles linux/darwin today and would throw on
+  // any other POSIX platform.
+  it.if(isLinux || isMacOS)("returns an fd usable with getsockname() via FFI", async () => {
     using server = Bun.serve({ port: 0, fetch: getsocknameHandler });
     const response = await fetch(server.url.origin).then(x => x.json());
     expect(response.fd).toBeGreaterThanOrEqual(0);
@@ -1592,7 +1597,7 @@ describe("server.requestFD", () => {
     expect(response.addrLen).toBeGreaterThan(0);
   });
 
-  it.if(isPosix)("returns an OS fd for an HTTPS (TLS) request, not the SSL pointer", async () => {
+  it.if(isLinux || isMacOS)("returns an OS fd for an HTTPS (TLS) request, not the SSL pointer", async () => {
     using server = Bun.serve({ port: 0, tls, fetch: getsocknameHandler });
     const response = await fetch(server.url.origin, { tls: { rejectUnauthorized: false } }).then(x => x.json());
     // If requestFD had returned the SSL* heap pointer (the regression this test

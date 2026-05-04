@@ -1031,6 +1031,9 @@ declare module "bun" {
      * if the underlying TCP connection is kept alive for a subsequent request.
      * Call this from inside the `fetch` handler to get a usable fd.
      *
+     * Always returns `null` for HTTP/3 requests: HTTP/3 multiplexes streams over
+     * a single shared UDP socket, so there is no meaningful per-request fd.
+     *
      * Useful for per-connection low-level socket operations via FFI, such as
      * `getsockopt(TCP_INFO)`, `setsockopt(TCP_CORK)`, `SO_RCVBUF`, etc.
      *

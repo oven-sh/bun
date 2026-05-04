@@ -591,6 +591,7 @@ pub const TransformTask = struct {
     }
 
     pub fn deinit(this: *TransformTask) void {
+        for (this.log.msgs.items) |*msg| msg.deinit(bun.default_allocator);
         this.log.deinit();
         this.input_code.deinitAndUnprotect();
         this.output_code.deref();

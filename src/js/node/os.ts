@@ -27,10 +27,18 @@ var tmpdir = function () {
 // os.homedir() honors live mutations of $HOME (POSIX) / %USERPROFILE%
 // (Windows), matching Node. The env check must run on every call — Bun's
 // cached env-var accessors snapshot at first read, which is why the Zig
-// binding alone isn't enough. The binding is still used as the fallback
-// when the env var is unset (passwd entry on POSIX, GetUserProfileDirectoryW
-// via libuv on Windows). os.userInfo().homedir continues to call the binding
-// directly, matching Node's behavior of ignoring $HOME there.
+// binding alone isn't enough on POSIX.
+//
+// On POSIX, the binding is the passwd fallback when HOME is unset, and
+// os.userInfo().homedir calls the binding directly — ignoring HOME and
+// reading passwd — which matches Node's uv_os_get_passwd.
+//
+// On Windows, libuv's uv_os_homedir already reads USERPROFILE live and
+// falls back to GetUserProfileDirectoryW, so os.homedir() delegates to the
+// binding unconditionally. Note that os.userInfo() also delegates through
+// the same binding today, so os.userInfo().homedir on Windows still tracks
+// USERPROFILE — whereas Node's os.userInfo() uses uv_os_get_passwd and
+// ignores USERPROFILE. That's a known Windows-only divergence (follow-up).
 function homedirFactory(bindingHomedir) {
   if (process.platform === "win32") {
     return function homedir() {

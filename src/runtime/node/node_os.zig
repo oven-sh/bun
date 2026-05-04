@@ -374,9 +374,14 @@ pub fn homedir(global: *jsc.JSGlobalObject) !bun.String {
     // `src/js/node/os.ts` so it reads `process.env` on every call instead of
     // using Bun's cached env-var accessor, which snapshots at first read.
     //
-    // This function is the fallback path when the env var is not set, and it
+    // On POSIX, this function is the passwd fallback when `HOME` is unset and
     // is also called directly by `userInfo()` — which must ignore `HOME` and
-    // return the passwd entry, matching Node's behavior.
+    // return the passwd entry, matching Node's `uv_os_get_passwd`. On Windows
+    // this function delegates to `uv_os_homedir`, which reads `USERPROFILE`
+    // first and only falls back to `GetUserProfileDirectoryW`; so
+    // `userInfo().homedir` here tracks `USERPROFILE` mutations, whereas Node's
+    // `userInfo()` (via `uv_os_get_passwd`) ignores `USERPROFILE` entirely.
+    // That Windows divergence is a known follow-up.
     if (Environment.isWindows) {
         var out: bun.PathBuffer = undefined;
         var size: usize = out.len;

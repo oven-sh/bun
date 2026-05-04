@@ -44,7 +44,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ ASAN ] test/cli/test/parallel.test.ts [ TIMEOUT ] # 24 spawns × N workers each × LSAN exit overhead
 [ ASAN ] test/cli/test/isolation.test.ts [ TIMEOUT ] # 14 spawns × LSAN exit overhead
 [ ASAN ] test/js/bun/typescript/type-export.test.ts [ TIMEOUT ] # bun build --compile is slow under ASAN
-[ ASAN ] test/js/bun/resolve/load-file-loader-a-lot.test.ts [ TIMEOUT ] # 100k sequential imports × ASAN allocator overhead
 
 # Tests failed due to memory leaks
 [ ASAN ] test/js/node/url/pathToFileURL.test.ts [ LEAK ] # pathToFileURL doesn't leak memory

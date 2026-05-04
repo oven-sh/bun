@@ -374,7 +374,10 @@ pub const Coordinator = struct {
     fn describeStatus(buf: []u8, status: bun.spawn.Status) []const u8 {
         return switch (status) {
             .exited => |e| std.fmt.bufPrint(buf, "exit code {d}", .{e.code}) catch unreachable,
-            .signaled => |sig| @tagName(sig),
+            // SignalCode is non-exhaustive (`_`); @tagName on an unnamed value
+            // (e.g. Linux RT signals 32–64) is safety-checked illegal behavior.
+            .signaled => |sig| sig.name() orelse
+                std.fmt.bufPrint(buf, "signal {d}", .{@intFromEnum(sig)}) catch unreachable,
             .err => |e| @tagName(e.getErrno()),
             .running => "running",
         };

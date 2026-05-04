@@ -84,7 +84,10 @@ describe("#30205", () => {
     return files;
   }
 
-  test.concurrent(
+  // collectContinuously is prohibitively slow under Windows CI (same as the
+  // 29519 regression test); the swap/finalizer path being exercised is
+  // platform-agnostic, so POSIX coverage is sufficient.
+  test.skipIf(isWindows).concurrent(
     "--isolate: deferred napi finalizers from the previous global don't write to its dead cell",
     async () => {
       using dir = tempDir("isolate-napi-uaf", makeFixtures(8));
@@ -107,7 +110,7 @@ describe("#30205", () => {
     120_000,
   );
 
-  test.concurrent(
+  test.skipIf(isWindows).concurrent(
     "--parallel: same scenario via the worker path",
     async () => {
       using dir = tempDir("parallel-napi-uaf", makeFixtures(8));
@@ -145,8 +148,13 @@ describe("#30205", () => {
         "ok.test.js": `import {test,expect} from "bun:test"; test("ok",()=>expect(1).toBe(1));`,
         "boom.test.js": `import {test} from "bun:test"; test("boom",()=>process.kill(process.pid, "SIGABRT"));`,
       });
+      // CI lanes with coredump-upload flag any new core file in coresDir as a
+      // test failure — including the one the worker deliberately produces
+      // here. ulimit -c 0 on the coordinator is inherited by the workers;
+      // the test is POSIX-only so /bin/sh is available. Same reasoning as
+      // the setrlimit(RLIMIT_CORE, {0,0}) in BunProcess.cpp's execve path.
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "--parallel=2", "."],
+        cmd: ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", bunExe(), "test", "--parallel=2", "."],
         env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
         cwd: String(dir),
         stdout: "pipe",

@@ -146,6 +146,11 @@ pub const PublishCommand = struct {
                                     }
                                 },
                                 .no_extension => {
+                                    // `README` matches case-insensitively, so a
+                                    // case-sensitive FS can legally have both
+                                    // `README` and `readme` in the same tarball.
+                                    // Pick the lexicographically-smallest for
+                                    // determinism, matching the markdown branch.
                                     const bytes = switch (try next.readEntryData(ctx.allocator, iter.archive)) {
                                         .err => |err| {
                                             Output.errGeneric("{s}: {s}", .{ err.message, err.archive.errorString() });
@@ -153,7 +158,11 @@ pub const PublishCommand = struct {
                                         },
                                         .result => |bytes| bytes,
                                     };
-                                    if (readme_fallback_name == null) {
+                                    const take = readme_fallback_name == null or
+                                        cmpOsPathAsc(filename, readme_fallback_name.?);
+                                    if (take) {
+                                        if (readme_fallback_name) |old| ctx.allocator.free(old);
+                                        if (readme_fallback_bytes) |old| ctx.allocator.free(old);
                                         readme_fallback_name = try ctx.allocator.dupe(bun.OSPathChar, filename);
                                         readme_fallback_bytes = bytes;
                                     } else {
@@ -1234,10 +1243,11 @@ pub const PublishCommand = struct {
                     }
                 },
                 .no_extension => {
-                    // Only one extensionless `README` variant can exist on a
-                    // case-sensitive filesystem, and a case-insensitive FS will
-                    // only report one readdir entry.
-                    if (fallback_name == null) {
+                    // On a case-sensitive filesystem `README` and `readme` can
+                    // coexist; apply the same lexicographic tie-breaker as the
+                    // markdown branch so the picked name is deterministic.
+                    if (fallback_name == null or strings.cmpStringsAsc({}, name, fallback_name.?)) {
+                        if (fallback_name) |old| allocator.free(old);
                         fallback_name = try allocator.dupe(u8, name);
                     }
                 },

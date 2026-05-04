@@ -1060,6 +1060,35 @@ describe("readme", async () => {
       readmeFilename: "README",
     });
   });
+
+  test("multiple extensionless READMEs pick lexicographically-smallest", async () => {
+    // Case-sensitive filesystems (Linux) can have `README` and `readme` as
+    // separate files. Picking by sort order keeps the selection deterministic
+    // regardless of readdir order.
+    const packageDir = tmpdirSync();
+    const { server, lastBody } = startMockRegistry();
+    using mock = server;
+
+    const upperContents = "upper";
+    const lowerContents = "lower";
+    await Promise.all([
+      writeBunfig(packageDir, mock.port),
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "readme-pkg-7", version: "7.0.0" })),
+      write(join(packageDir, "README"), upperContents),
+      write(join(packageDir, "readme"), lowerContents),
+    ]);
+
+    const { err, exitCode } = await publish(env, packageDir);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const body = lastBody();
+    // 'README' sorts before 'readme' in ASCII.
+    expect(body.versions["7.0.0"]).toMatchObject({
+      readme: upperContents,
+      readmeFilename: "README",
+    });
+  });
 });
 
 describe("--tolerate-republish", async () => {

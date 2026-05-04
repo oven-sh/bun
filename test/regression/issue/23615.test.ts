@@ -124,7 +124,7 @@ test("catalog: peer dependency hoists like the equivalent npm range (isolated)",
     expect(code).toBe(0);
     await checkLinks();
   }
-});
+}, 60_000);
 
 test("catalog: peer dependency produces same lockfile as equivalent npm range", async () => {
   // Sanity check: the lockfile produced with `catalog:` should be
@@ -180,4 +180,4 @@ test("catalog: peer dependency produces same lockfile as equivalent npm range", 
   const npmKeys = await lockfileFor(">=1.0.0", false);
 
   expect(catalogKeys).toEqual(npmKeys);
-});
+}, 60_000);

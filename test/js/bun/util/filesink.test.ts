@@ -218,6 +218,27 @@ it("ignores non-string path and invalid fd in options", async () => {
   }
 });
 
+it("does not leak native FileSink when options getter throws", async () => {
+  const x = tmpdirSync();
+  const file = Bun.file(path.join(x, "test.txt"));
+  const options = {
+    get highWaterMark(): number {
+      throw new Error("boom");
+    },
+  };
+
+  const baseline = fileSinkInternals.liveCount();
+  for (let i = 0; i < 8; i++) {
+    expect(() => file.writer(options)).toThrow("boom");
+  }
+  for (let i = 0; i < 50; i++) {
+    Bun.gc(true);
+    if (fileSinkInternals.liveCount() <= baseline) break;
+    await Bun.sleep(10);
+  }
+  expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
+});
+
 if (isWindows) {
   it("ENOENT, Windows", () => {
     expect(() => Bun.file("A:\\this-does-not-exist.txt").writer()).toThrow(

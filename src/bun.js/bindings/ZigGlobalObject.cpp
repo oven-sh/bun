@@ -617,6 +617,13 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     Bun__setDefaultGlobalObject(globalObject);
     JSC::gcProtect(globalObject);
 
+    // NapiEnv holds a raw Zig::GlobalObject*; deferred napi finalizers for
+    // the old global's objects run on the next event-loop tick — after this
+    // function returns and the old global is collectable — and would write
+    // into the dead cell via NapiHandleScope::open. Point those envs at the
+    // new global and adopt the refs before unprotecting the old one.
+    globalObject->adoptNapiEnvsForTestIsolation(oldGlobal);
+
     // Drop the permanent root on the previous global so its module registry,
     // require.cache, and user objects become collectable. JSC's CodeCache and
     // Bun's RuntimeTranspilerCache are VM/process scoped and survive.
@@ -3795,6 +3802,29 @@ bool GlobalObject::hasNapiFinalizers() const
     }
 
     return false;
+}
+
+// `bun test --isolate`: the old global is about to be gcUnprotect()'d and
+// collected, but its NapiEnvs may outlive it — GC-enqueued NapiFinalizerTasks
+// hold Ref<NapiEnv> and run on the event loop while loading the *next* file.
+// NapiEnv::m_globalObject is a raw pointer; Finalizer.run opens a
+// NapiHandleScope through it, which writes m_currentNapiHandleScopeImpl on the
+// dead old global and trips `ASSERT(isMarked(cell))` in
+// Heap::addToRememberedSet (release: the concurrent marker later visits it and
+// segfaults at offset 0x68/0xD0). Retarget every env to the new global and
+// take ownership of the refs so ~GlobalObject on the old one doesn't drop
+// them — the envs stay valid for late finalizers and for the process-exit
+// cleanup hooks in rare_data.cleanup_hooks (which hold raw NapiEnv* in .ctx).
+void GlobalObject::adoptNapiEnvsForTestIsolation(GlobalObject* oldGlobal)
+{
+    if (oldGlobal->m_napiEnvs.isEmpty())
+        return;
+    for (auto& env : oldGlobal->m_napiEnvs)
+        env->retargetGlobalObject(this);
+    // Ref<NapiEnv> is move-only; the rvalue appendVector overload moves each
+    // element out, and we make the source explicitly empty afterwards so
+    // ~GlobalObject on the old cell is a no-op here.
+    m_napiEnvs.appendVector(std::exchange(oldGlobal->m_napiEnvs, {}));
 }
 
 void GlobalObject::setNodeWorkerEnvironmentData(JSMap* data) { m_nodeWorkerEnvironmentData.set(vm(), this, data); }

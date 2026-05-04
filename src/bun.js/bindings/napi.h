@@ -380,6 +380,21 @@ public:
     }
 
     inline Zig::GlobalObject* globalObject() const { return m_globalObject; }
+    // `bun test --isolate` creates a fresh Zig::GlobalObject per file and
+    // gcUnprotect()s the previous one. NapiEnv outlives its owning global —
+    // GC-enqueued NapiFinalizerTasks hold a Ref<NapiEnv> and run on the event
+    // loop *after* the swap. Finalizer.run opens a NapiHandleScope via
+    // env->globalObject(), which would write m_currentNapiHandleScopeImpl on
+    // the now-dead old global and trip a write barrier on an unmarked cell
+    // (debug: `ASSERT(isMarked(cell))` in Heap::addToRememberedSet; release:
+    // segfault when the marker later walks it). The isolation swap calls this
+    // to point surviving envs at the new global before unprotecting the old
+    // one.
+    inline void retargetGlobalObject(Zig::GlobalObject* newGlobal)
+    {
+        ASSERT(&JSC::getVM(newGlobal) == &m_vm);
+        m_globalObject = newGlobal;
+    }
     inline const napi_module& napiModule() const { return m_napiModule; }
     inline JSC::VM& vm() const { return m_vm; }
     inline std::optional<JSC::JSValue> pendingException() const

@@ -2571,14 +2571,30 @@ pub fn swapGlobalForTestIsolation(this: *VirtualMachine) void {
     this.main_resolved_path = bun.String.empty;
     this.unhandled_error_counter = 0;
 
-    const new_global = JSGlobalObject.createForTestIsolation(this.global, this.console);
+    const old_global = this.global;
+    const new_global = JSGlobalObject.createForTestIsolation(old_global, this.console);
     this.global = new_global;
     VMHolder.cached_global_object = new_global;
     this.regular_event_loop.global = new_global;
+    // macro_event_loop.global is assigned once from this.global at construction
+    // and would otherwise keep the first file's dead global across the whole run.
+    this.macro_event_loop.global = new_global;
     this.has_loaded_constructors = true;
     if (this.ipc) |ipc| if (ipc == .initialized) {
         ipc.initialized.globalThis = new_global;
     };
+    // NapiEnv cleanup hooks registered via napi_internal_register_cleanup_zig
+    // captured the old global in CleanupHook.globalThis; the C++ side has
+    // already retargeted env->m_globalObject to the new global, so only the
+    // Zig-side bookkeeping pointer is stale. Nothing currently reads it
+    // (execute() only calls func(ctx) and there's no per-entry removal
+    // path), but repoint it anyway so the field doesn't dangle at a freed
+    // GC cell.
+    if (this.rare_data) |rare| {
+        for (rare.cleanup_hooks.items) |*hook| {
+            if (hook.globalThis == old_global) hook.globalThis = new_global;
+        }
+    }
 
     // TODO(isolate): drain HTTPThread's keepalive pool. It lives on a separate
     // thread with its own uws loop; pooled sockets are JS-invisible and bounded

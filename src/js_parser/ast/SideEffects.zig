@@ -265,19 +265,13 @@ pub const SideEffects = enum(u1) {
                     // than `knownPrimitive`, whose recursion through
                     // `.bin_add` stack-overflows on a million-deep
                     // `a+a+a+…` chain (see
-                    // `transpiler-stack-overflow.test.ts`).
+                    // `transpiler-stack-overflow.test.ts`). For the tags
+                    // that match, `simplifyUnusedExpr` is already a plain
+                    // `null` return (literal fast-path above), so no
+                    // recursion is needed.
                     .bin_add, .bin_sub, .bin_mul, .bin_div, .bin_rem, .bin_pow => {
                         if (bin.left.data.extractNumericValue() != null and bin.right.data.extractNumericValue() != null) {
-                            const left_simplified = simplifyUnusedExpr(p, bin.left);
-                            const right_simplified = simplifyUnusedExpr(p, bin.right);
-                            if (left_simplified == null and right_simplified == null) {
-                                return null;
-                            }
-                            return Expr.joinWithComma(
-                                left_simplified orelse bin.left.toEmpty(),
-                                right_simplified orelse bin.right.toEmpty(),
-                                p.allocator,
-                            );
+                            return null;
                         }
                     },
 

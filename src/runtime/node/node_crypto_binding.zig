@@ -188,21 +188,26 @@ fn CryptoJob(comptime Ctx: type) type {
 
 const random = struct {
     const JobCtx = struct {
+        /// The user-supplied destination (randomFill) or `.zero` when we
+        /// create the result ourselves (randomBytes).
         value: JSValue,
         /// Bun-owned scratch buffer filled on the threadpool. We do *not* hold
         /// a raw pointer into the JS ArrayBuffer backing store here because
         /// user code can synchronously detach it (e.g. `buf.buffer.transfer()`)
         /// while the task is queued/running, which would free that storage and
         /// turn the threadpool write into a use-after-free. Instead we fill
-        /// this buffer off-thread and copy it into the JS view back on the
-        /// main thread in `runFromJS`.
+        /// this buffer off-thread and either (randomFill) copy it into the JS
+        /// view back on the main thread, or (randomBytes) hand it off to a
+        /// fresh JS Buffer via `createBuffer`, which takes ownership.
         bytes: []u8,
         offset: u32,
 
         result: void = {},
 
         fn init(this: *JobCtx, _: *JSGlobalObject) JSError!void {
-            this.value.protect();
+            if (this.value != .zero) {
+                this.value.protect();
+            }
         }
 
         fn runTask(this: *JobCtx, _: void) void {
@@ -210,6 +215,17 @@ const random = struct {
         }
 
         fn runFromJS(this: *JobCtx, global: *JSGlobalObject, callback: JSValue) void {
+            const vm = global.bunVM();
+            if (this.value == .zero) {
+                // randomBytes: wrap the scratch buffer directly — no memcpy,
+                // no second allocation. `createBuffer` takes ownership via
+                // the mimalloc deallocator, so clear `bytes` before `deinit`
+                // runs to avoid a double-free.
+                const buf = JSValue.createBuffer(global, this.bytes);
+                this.bytes = &.{};
+                vm.eventLoop().runCallback(callback, global, .js_undefined, &.{ .null, buf });
+                return;
+            }
             if (this.value.asArrayBuffer(global)) |buf| {
                 const dest = buf.slice();
                 // If the buffer was detached or shrunk while the task ran,
@@ -219,13 +235,14 @@ const random = struct {
                     @memcpy(dest[this.offset..][0..this.bytes.len], this.bytes);
                 }
             }
-            const vm = global.bunVM();
             vm.eventLoop().runCallback(callback, global, .js_undefined, &.{ .null, this.value });
         }
 
         fn deinit(this: *JobCtx) void {
             bun.default_allocator.free(this.bytes);
-            this.value.unprotect();
+            if (this.value != .zero) {
+                this.value.unprotect();
+            }
         }
     };
 
@@ -341,20 +358,17 @@ const random = struct {
 
         const size = try assertSize(global, size_value, 1, 0, max_possible_length + 1);
 
-        if (!callback.isUndefined()) {
-            _ = try validators.validateFunction(global, "callback", callback);
-        }
-
-        const result, const bytes = try jsc.ArrayBuffer.alloc(global, .ArrayBuffer, size);
-
         if (callback.isUndefined()) {
             // sync
+            const result, const bytes = try jsc.ArrayBuffer.alloc(global, .ArrayBuffer, size);
             bun.csprng(bytes);
             return result;
         }
 
+        _ = try validators.validateFunction(global, "callback", callback);
+
         const ctx: JobCtx = .{
-            .value = result,
+            .value = .zero,
             .bytes = bun.handleOom(bun.default_allocator.alloc(u8, size)),
             .offset = 0,
         };

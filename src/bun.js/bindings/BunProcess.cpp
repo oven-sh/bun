@@ -941,8 +941,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime, (JSC::JSGlobalObject * globalOb
         }
         if (relativeArray->length() != 2) return Bun::ERR::OUT_OF_RANGE(throwScope, globalObject_, "time"_s, "2"_s, jsNumber(relativeArray->length()));
 
-        JSValue relativeSecondsValue = relativeArray->getIndexQuickly(0);
-        JSValue relativeNanosecondsValue = relativeArray->getIndexQuickly(1);
+        JSValue relativeSecondsValue = relativeArray->getIndex(globalObject, 0);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        JSValue relativeNanosecondsValue = relativeArray->getIndex(globalObject, 1);
+        RETURN_IF_EXCEPTION(throwScope, {});
 
         int64_t relativeSeconds = JSC__JSValue__toInt64(JSC::JSValue::encode(relativeSecondsValue));
         int64_t relativeNanoseconds = JSC__JSValue__toInt64(JSC::JSValue::encode(relativeNanosecondsValue));
@@ -3093,7 +3095,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetgroups, (JSGlobalObject * globalObje
     if (count > 64) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "groups.length"_s, 0, 64, groups);
 
     for (unsigned i = 0; i < count; i++) {
-        auto item = groupsArray->getIndexQuickly(i);
+        auto item = groupsArray->getIndex(globalObject, i);
+        RETURN_IF_EXCEPTION(scope, {});
         auto name = makeString("groups["_s, i, "]"_s);
 
         if (item.isNumber()) {

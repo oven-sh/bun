@@ -49,29 +49,13 @@ pub fn lenOfNumber(value: f64) u32 {
     const floored: f64 = @floor(abs_value);
     const is_integer = (abs_value - floored) == 0;
     if (abs_value < std.math.maxInt(u52) and is_integer) {
-        const val = @as(u64, @intFromFloat(abs_value));
+        const val: u64 = @intFromFloat(abs_value);
+        // Powers of ten from 10^4..10^9 print as `1eN` (3 bytes) instead
+        // of their decimal form — see `printNonNegativeFloat`.
         const int_len: u32 = switch (val) {
-            0...9 => 1,
-            10...99 => 2,
-            100...999 => 3,
-            1_000...9_999 => 4,
-            10_000 => 3, // "1e4"
-            100_000 => 3, // "1e5"
-            1_000_000 => 3, // "1e6"
-            10_000_000 => 3, // "1e7"
-            100_000_000 => 3, // "1e8"
-            1_000_000_000 => 3, // "1e9"
-            10_001...99_999 => 5,
-            100_001...999_999 => 6,
-            1_000_001...9_999_999 => 7,
-            10_000_001...99_999_999 => 8,
-            100_000_001...999_999_999 => 9,
-            1_000_000_001...9_999_999_999 => 10,
-            else => blk: {
-                var buf: [32]u8 = undefined;
-                const s = std.fmt.bufPrint(&buf, "{d}", .{val}) catch break :blk 20;
-                break :blk @intCast(s.len);
-            },
+            10_000, 100_000, 1_000_000, 10_000_000, 100_000_000, 1_000_000_000 => 3,
+            // https://lemire.me/blog/2021/06/03/computing-the-number-of-digits-of-an-integer-even-faster/
+            else => @intCast(bun.fmt.fastDigitCount(val)),
         };
         return neg_prefix + int_len;
     }

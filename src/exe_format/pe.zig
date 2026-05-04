@@ -142,11 +142,70 @@ pub const PEFile = struct {
     const IMAGE_SCN_MEM_EXECUTE = 0x20000000;
 
     // Directory indices and DLL characteristics
+    const IMAGE_DIRECTORY_ENTRY_EXPORT: usize = 0;
+    const IMAGE_DIRECTORY_ENTRY_IMPORT: usize = 1;
+    const IMAGE_DIRECTORY_ENTRY_EXCEPTION: usize = 3;
     const IMAGE_DIRECTORY_ENTRY_SECURITY: usize = 4;
+    const IMAGE_DIRECTORY_ENTRY_BASERELOC: usize = 5;
+    const IMAGE_DIRECTORY_ENTRY_TLS: usize = 9;
+    const IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG: usize = 10;
+    const IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT: usize = 13;
     const IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY: u16 = 0x0080;
+
+    // Base-relocation types (high 4 bits of each 16-bit entry)
+    const IMAGE_REL_BASED_ABSOLUTE: u16 = 0;
+    const IMAGE_REL_BASED_DIR64: u16 = 10;
+
+    // Import-thunk ordinal flag (PE32+)
+    const IMAGE_ORDINAL_FLAG64: u64 = 0x8000000000000000;
+
+    // Windows page-protection constants (for LinkedAddon.sections[].final_protect)
+    const PAGE_READONLY: u32 = 0x02;
+    const PAGE_READWRITE: u32 = 0x04;
+    const PAGE_EXECUTE_READ: u32 = 0x20;
+    const PAGE_EXECUTE_READWRITE: u32 = 0x40;
+
+    const ImageImportDescriptor = extern struct {
+        original_first_thunk: u32, // RVA of ILT
+        time_date_stamp: u32,
+        forwarder_chain: u32,
+        name: u32, // RVA of null-terminated DLL name
+        first_thunk: u32, // RVA of IAT
+    };
+
+    const ImageDelayloadDescriptor = extern struct {
+        attributes: u32,
+        dll_name_rva: u32,
+        module_handle_rva: u32,
+        import_address_table_rva: u32,
+        import_name_table_rva: u32,
+        bound_import_address_table_rva: u32,
+        unload_information_table_rva: u32,
+        time_date_stamp: u32,
+    };
+
+    const ImageExportDirectory = extern struct {
+        characteristics: u32,
+        time_date_stamp: u32,
+        major_version: u16,
+        minor_version: u16,
+        name: u32,
+        base: u32,
+        number_of_functions: u32,
+        number_of_names: u32,
+        address_of_functions: u32, // RVA of u32[number_of_functions]
+        address_of_names: u32, // RVA of u32[number_of_names] (each an RVA to a name)
+        address_of_name_ordinals: u32, // RVA of u16[number_of_names]
+    };
+
+    const ImageBaseRelocation = extern struct {
+        virtual_address: u32, // page RVA
+        size_of_block: u32, // includes this header
+    };
 
     // Section name constant for exact comparison
     const BUN_SECTION_NAME = [_]u8{ '.', 'b', 'u', 'n', 0, 0, 0, 0 };
+    const BUNL_SECTION_NAME = [_]u8{ '.', 'b', 'u', 'n', 'L', 0, 0, 0 };
 
     // Safe access helpers for unaligned views
     fn viewAtConst(comptime T: type, buf: []const u8, off: usize) !*align(1) const T {
@@ -568,6 +627,816 @@ pub const PEFile = struct {
         try self.recomputePEChecksum();
     }
 
+    /// Per-addon metadata produced by `addLinkedAddon` for use at runtime.
+    ///
+    /// Instead of writing the `.node` DLL to a temp file and calling
+    /// `LoadLibraryExW` (which requires real disk I/O and leaves a file
+    /// behind until reboot via `MOVEFILE_DELAY_UNTIL_REBOOT`), we merge the
+    /// addon's sections into bun.exe at compile time so the Windows loader
+    /// maps them with the rest of the image.  At `process.dlopen` the
+    /// runtime applies the ASLR delta, binds the IAT, fixes page
+    /// protections, registers `.pdata`, and calls the addon's entry point
+    /// manually.  No temp file, no `LoadLibrary`.
+    ///
+    /// All RVAs here are relative to bun.exe's image base.  The addon's own
+    /// preferred base is irrelevant after `addLinkedAddon` has applied the
+    /// build-time delta; only the runtime ASLR delta
+    /// (`GetModuleHandle(NULL) - preferred_base`) still needs applying.
+    pub const LinkedAddon = struct {
+        /// `$bunfs/...` virtual path, so runtime can match `process.dlopen`
+        /// arguments to this metadata.
+        name: []const u8,
+        /// bun.exe RVA where the addon's RVA 0 lands.  Every RVA copied
+        /// from the addon has had this added already; stored here only for
+        /// diagnostics / thread-attach calls.
+        rva_base: u32,
+        /// The addon's original `SizeOfImage`.  Together with `rva_base`
+        /// this is the span to flush/protect.
+        image_size: u32,
+        /// bun-relative RVA of the addon's `AddressOfEntryPoint`
+        /// (`_DllMainCRTStartup`), or 0 if the addon has none.
+        entry_point: u32,
+        /// bun.exe's `OptionalHeader.ImageBase` at the time the merge was
+        /// done.  Runtime computes `delta = GetModuleHandle(NULL) -
+        /// preferred_base` and applies it to `relocs`.
+        preferred_base: u64,
+
+        sections: []SectionInfo,
+        /// Raw `IMAGE_BASE_RELOCATION` blocks copied from the addon with
+        /// their page RVAs already rebased to bun-relative.  Runtime walks
+        /// these and adds `delta` to each `DIR64` slot.
+        relocs: []const u8,
+        imports: []ImportLib,
+        /// bun-relative RVA of the addon's `.pdata` (already rebased); fed
+        /// to `RtlAddFunctionTable` so SEH/C++ exceptions inside the addon
+        /// unwind correctly.
+        pdata_rva: u32,
+        pdata_count: u32,
+        /// bun-relative RVAs of the symbols `process.dlopen` needs.  Zero
+        /// means "not exported by this addon".
+        export_register: u32, // napi_register_module_v1
+        export_api_version: u32, // node_api_module_get_api_version_v1
+        export_plugin_name: u32, // BUN_PLUGIN_NAME
+
+        pub const SectionInfo = extern struct {
+            rva: u32,
+            size: u32,
+            /// Windows `PAGE_*` constant to `VirtualProtect` this range to
+            /// once relocs + IAT are written.  The on-disk section is RW so
+            /// the runtime can patch it; this restores the addon's
+            /// intended protection.
+            final_protect: u32,
+        };
+
+        pub const ImportLib = struct {
+            /// DLL name as it appeared in the addon's import descriptor.
+            name: []const u8,
+            /// True when the DLL is the host process (node.exe / bun.exe /
+            /// the delay-load hook target).  Runtime resolves these against
+            /// `GetModuleHandle(NULL)` instead of `LoadLibraryA(name)`.
+            is_host: bool,
+            entries: []Entry,
+
+            pub const Entry = struct {
+                /// bun-relative RVA of the IAT slot to overwrite.
+                iat_rva: u32,
+                ordinal: u16,
+                /// Empty when importing by ordinal.
+                name: []const u8,
+            };
+        };
+
+        pub fn deinit(self: *LinkedAddon, allocator: Allocator) void {
+            allocator.free(self.sections);
+            allocator.free(self.relocs);
+            for (self.imports) |*lib| {
+                for (lib.entries) |*e| if (e.name.len > 0) allocator.free(e.name);
+                allocator.free(lib.entries);
+                allocator.free(lib.name);
+            }
+            allocator.free(self.imports);
+        }
+    };
+
+    /// Read-only view over an addon PE for `addLinkedAddon`. Uses file
+    /// offsets into `bytes` rather than a loaded image, so every "RVA"
+    /// access goes through `rvaToOff`.
+    const AddonView = struct {
+        bytes: []const u8,
+        pe: *align(1) const PEHeader,
+        opt: *align(1) const OptionalHeader64,
+        sections: []align(1) const SectionHeader,
+
+        fn init(bytes: []const u8) !AddonView {
+            if (bytes.len < @sizeOf(DOSHeader)) return error.InvalidPEFile;
+            const dos = try viewAtConst(DOSHeader, bytes, 0);
+            if (dos.e_magic != DOS_SIGNATURE) return error.InvalidDOSSignature;
+            if (dos.e_lfanew < @sizeOf(DOSHeader) or
+                dos.e_lfanew > bytes.len -| @sizeOf(PEHeader)) return error.InvalidPEFile;
+            const pe = try viewAtConst(PEHeader, bytes, dos.e_lfanew);
+            if (pe.signature != PE_SIGNATURE) return error.InvalidPESignature;
+            const opt_off = @as(usize, dos.e_lfanew) + @sizeOf(PEHeader);
+            if (pe.size_of_optional_header < @sizeOf(OptionalHeader64)) return error.UnsupportedPEFormat;
+            const opt = try viewAtConst(OptionalHeader64, bytes, opt_off);
+            if (opt.magic != OPTIONAL_HEADER_MAGIC_64) return error.UnsupportedPEFormat;
+            const sh_off = opt_off + pe.size_of_optional_header;
+            const n: usize = pe.number_of_sections;
+            if (sh_off + n * @sizeOf(SectionHeader) > bytes.len) return error.InvalidPEFile;
+            const sh: [*]align(1) const SectionHeader = @ptrCast(bytes[sh_off..].ptr);
+            return .{ .bytes = bytes, .pe = pe, .opt = opt, .sections = sh[0..n] };
+        }
+
+        /// Translate an addon-relative RVA to a file offset. Section
+        /// header fields are attacker-controlled so every add is
+        /// saturating; callers then reject via the bytes.len check.
+        fn rvaToOff(self: *const AddonView, rva: u32) !u32 {
+            for (self.sections) |s| {
+                const vs = @max(s.virtual_size, s.size_of_raw_data);
+                if (rva >= s.virtual_address and rva < s.virtual_address +| vs) {
+                    const delta = rva - s.virtual_address;
+                    if (delta >= s.size_of_raw_data) return error.OutOfBounds; // bss / past raw
+                    const off = s.pointer_to_raw_data +| delta;
+                    if (off >= self.bytes.len) return error.OutOfBounds;
+                    return off;
+                }
+            }
+            return error.OutOfBounds;
+        }
+
+        fn sliceAtRva(self: *const AddonView, rva: u32, len: u32) ![]const u8 {
+            const off = try self.rvaToOff(rva);
+            if (@as(u64, off) + len > self.bytes.len) return error.OutOfBounds;
+            return self.bytes[off..][0..len];
+        }
+
+        fn cstrAtRva(self: *const AddonView, rva: u32) ![]const u8 {
+            const off = try self.rvaToOff(rva);
+            const max = self.bytes.len - off;
+            const z = std.mem.indexOfScalar(u8, self.bytes[off..][0..max], 0) orelse return error.OutOfBounds;
+            return self.bytes[off..][0..z];
+        }
+
+        fn dir(self: *const AddonView, idx: usize) DataDirectory {
+            if (idx >= self.opt.number_of_rva_and_sizes) return .{ .virtual_address = 0, .size = 0 };
+            return self.opt.data_directories[idx];
+        }
+    };
+
+    /// DLL names an addon may import its napi/uv symbols from. These are
+    /// all satisfied by bun.exe's own export table, so at runtime they are
+    /// resolved against `GetModuleHandle(NULL)` rather than a real
+    /// `LoadLibrary`.
+    fn isHostImport(dll_name: []const u8) bool {
+        // node-gyp emits a delay-load against "node.exe"; napi-rs against
+        // "node.dll"; some toolchains against the literal host name.
+        const lower_eq = std.ascii.eqlIgnoreCase;
+        if (lower_eq(dll_name, "node.exe")) return true;
+        if (lower_eq(dll_name, "node.dll")) return true;
+        if (lower_eq(dll_name, "bun.exe")) return true;
+        if (dll_name.len >= 4 and lower_eq(dll_name[0..4], "bun-")) return true;
+        return false;
+    }
+
+    fn sectionFinalProtect(ch: u32) u32 {
+        const x = ch & IMAGE_SCN_MEM_EXECUTE != 0;
+        const w = ch & IMAGE_SCN_MEM_WRITE != 0;
+        if (x and w) return PAGE_EXECUTE_READWRITE;
+        if (x) return PAGE_EXECUTE_READ;
+        if (w) return PAGE_READWRITE;
+        return PAGE_READONLY;
+    }
+
+    /// Merge one `.node` PE into this image as a single new section, apply
+    /// the build-time relocation delta, and collect the runtime metadata.
+    ///
+    /// The addon's internal RVA layout is preserved: its RVA 0 maps to the
+    /// new section's `virtual_address`, so every intra-addon reference is a
+    /// single constant add.  The new section is marked RW (not executable)
+    /// on disk; runtime flips each original-section range to its real
+    /// protection via `VirtualProtect` after binding.
+    ///
+    /// Returns `null` when the addon uses a feature we do not merge (static
+    /// TLS).  Caller should then keep the raw bytes so runtime can fall back
+    /// to the extract-to-tempfile path.
+    pub fn addLinkedAddon(
+        self: *PEFile,
+        allocator: Allocator,
+        addon_bytes: []const u8,
+        addon_index: u32,
+        virtual_path: []const u8,
+    ) !?LinkedAddon {
+        const addon = AddonView.init(addon_bytes) catch return null;
+
+        // Refuse anything we would get wrong. The extract-to-tempfile
+        // path stays as the behavioural fallback.
+        //
+        // A wrong-architecture addon (e.g. an x64 prebuild bundled into
+        // a --target=bun-windows-arm64 build) would merge structurally
+        // — ARM64 PE32+ uses IMAGE_REL_BASED_DIR64 just like x64 — and
+        // then crash with STATUS_ILLEGAL_INSTRUCTION when DllMain runs.
+        // The tempfile path gets a clean ERROR_BAD_EXE_FORMAT instead.
+        if (addon.pe.machine != (try self.getPEHeader()).machine) return null;
+        //
+        // Implicit TLS (`__declspec(thread)`, Rust `thread_local!`) needs
+        // an index reserved in the loader's private `LdrpTlsBitmap` and a
+        // template installed in every existing thread's
+        // `ThreadLocalStoragePointer` array. Neither has a userspace API;
+        // faking it invites index collisions with later `LoadLibrary`
+        // calls and misses threads that already exist. Let `LoadLibraryExW`
+        // handle those via the fallback.
+        //
+        // However: MSVC's `_DllMainCRTStartup` pulls in `tlssup.obj`, so
+        // essentially every MSVC-built DLL has an IMAGE_TLS_DIRECTORY64
+        // even with no `__declspec(thread)` data of its own. That
+        // directory has an *empty template* (`StartAddressOfRawData ==
+        // EndAddressOfRawData` and `SizeOfZeroFill == 0`) and its
+        // callback array holds only the CRT's `__dyn_tls_init`/`_dtor`,
+        // which with no `.CRT$XD*` dynamic initializers are no-ops that
+        // never touch `ThreadLocalStoragePointer`. Such an addon needs
+        // no index and no per-thread install, so it is safe to merge
+        // and simply ignore the directory at runtime.
+        const tls_dir = addon.dir(IMAGE_DIRECTORY_ENTRY_TLS);
+        if (tls_dir.size != 0 or tls_dir.virtual_address != 0) {
+            const TLS_DIR64_SIZE: u32 = 40; // IMAGE_TLS_DIRECTORY64
+            if (tls_dir.size < TLS_DIR64_SIZE) return null;
+            const dir_bytes = addon.sliceAtRva(tls_dir.virtual_address, TLS_DIR64_SIZE) catch
+                return null;
+            const raw_start = std.mem.readInt(u64, dir_bytes[0..8], .little);
+            const raw_end = std.mem.readInt(u64, dir_bytes[8..16], .little);
+            const zero_fill = std.mem.readInt(u32, dir_bytes[32..36], .little);
+            // Nonzero template → real __declspec(thread) storage.
+            if (raw_end != raw_start or zero_fill != 0) return null;
+            // Empty template → CRT stub; merge and ignore it.
+        }
+        // Without base relocations we cannot rebase the addon's absolute
+        // addresses into bun.exe's image. A DLL built with /FIXED would
+        // also fail LoadLibrary unless its preferred base happened to be
+        // free, so falling back is no loss of functionality.
+        const IMAGE_FILE_RELOCS_STRIPPED: u16 = 0x0001;
+        if (addon.pe.characteristics & IMAGE_FILE_RELOCS_STRIPPED != 0) return null;
+
+        const host_opt = try self.getOptionalHeader();
+        const sect_align = host_opt.section_alignment;
+        const file_align = host_opt.file_alignment;
+        const preferred_base = host_opt.image_base;
+
+        // Work out where the new section goes.
+        var last_file_end: u32 = 0;
+        var last_va_end: u32 = 0;
+        const host_sections = try self.getSectionHeaders();
+        for (host_sections) |s| {
+            const fend = s.pointer_to_raw_data + s.size_of_raw_data;
+            if (fend > last_file_end) last_file_end = fend;
+            const vs = @max(s.virtual_size, s.size_of_raw_data);
+            const vend = s.virtual_address + (try alignUpU32(vs, sect_align));
+            if (vend > last_va_end) last_va_end = vend;
+        }
+
+        // Header slack: this addon's section, the trailing `.bunL`
+        // metadata section, and the final `.bun` module-graph section.
+        // If we consumed a slot that `.bunL`/`.bun` will need later the
+        // build would hard-fail in addLinkedAddonSection/addBunSection
+        // instead of falling back, so refuse *here* while the caller
+        // can still skip this addon and keep going. Mirror both of
+        // `addBunSection`'s gates: the hard 96-section PE cap, and the
+        // `alignUp(SizeOfHeaders, file_align) <= first_raw` byte-slack
+        // check.
+        const want_sections: u32 = self.num_sections + 3;
+        if (want_sections > 96) return error.InsufficientHeaderSpace;
+        const new_headers_end = self.section_headers_offset + @sizeOf(SectionHeader) * want_sections;
+        const reserved_headers = try alignUpU32(@intCast(new_headers_end), file_align);
+        var first_raw: u32 = @intCast(self.data.items.len);
+        for (host_sections) |s| if (s.size_of_raw_data > 0 and s.pointer_to_raw_data < first_raw) {
+            first_raw = s.pointer_to_raw_data;
+        };
+        if (reserved_headers > first_raw) return error.InsufficientHeaderSpace;
+
+        // The addon's RVA 0 maps to this RVA in bun.exe.
+        const rva_base = try alignUpU32(last_va_end, sect_align);
+        const addon_image = addon.opt.size_of_image;
+        // AddressOfEntryPoint is attacker-controlled. A value outside
+        // the image we are about to copy would make the runtime jump
+        // into unrelated bun.exe code or unmapped memory. Check here,
+        // before any host mutation, so a skip leaves the host image
+        // untouched.
+        const entry_rva = addon.opt.address_of_entry_point;
+        if (entry_rva != 0 and entry_rva >= addon_image) return null;
+        // SizeOfImage is attacker-controlled. Refuse anything that would
+        // either blow the build-time allocation or push bun.exe's own
+        // SizeOfImage past 2 GiB (RVAs are signed in several Windows
+        // structures). The tempfile fallback has no such limit.
+        if (addon_image == 0) return null;
+        if (addon_image > 512 * 1024 * 1024) return null;
+        if (@as(u64, rva_base) + addon_image > std.math.maxInt(i32)) return null;
+
+        // Build a memory-image of the addon (zero-filled then sections
+        // copied in at their original RVAs) so the on-disk section is laid
+        // out exactly as the addon expects to find itself at runtime.
+        var image = try allocator.alloc(u8, addon_image);
+        defer allocator.free(image);
+        @memset(image, 0);
+
+        // The three intermediate lists are `defer`-deinit'd (not
+        // `errdefer`) so every `return null` path below cleans up the
+        // same as an error return; `toOwnedSlice()` on the success
+        // path empties each list first, so the trailing `deinit()` is
+        // a no-op there. Both current callers pass an arena
+        // allocator, so this is belt-and-braces.
+        var section_infos = std.array_list.Managed(LinkedAddon.SectionInfo).init(allocator);
+        defer section_infos.deinit();
+
+        for (addon.sections) |s| {
+            if (s.virtual_address >= addon_image) return null;
+            // A section whose raw bytes lie past EOF is malformed. Do
+            // not merge a zeroed stand-in and then trust the rest of
+            // the metadata — fail closed so the tempfile path handles
+            // it (where LoadLibrary will also reject it, but loudly).
+            if (s.size_of_raw_data > 0 and
+                @as(u64, s.pointer_to_raw_data) + s.size_of_raw_data > addon_bytes.len)
+            {
+                return null;
+            }
+            const copy_len = @min(s.size_of_raw_data, addon_image - s.virtual_address);
+            if (copy_len > 0) {
+                @memcpy(
+                    image[s.virtual_address..][0..copy_len],
+                    addon_bytes[s.pointer_to_raw_data..][0..copy_len],
+                );
+            }
+            const vs = @max(s.virtual_size, s.size_of_raw_data);
+            if (vs == 0) continue;
+            // Clamp the VirtualProtect span to what we actually copied
+            // (and therefore what the loader will map). A section header
+            // that lies about its virtual size cannot make the runtime
+            // protect pages outside the merged addon.
+            try section_infos.append(.{
+                .rva = rva_base + s.virtual_address,
+                .size = @min(vs, addon_image - s.virtual_address),
+                .final_protect = sectionFinalProtect(s.characteristics),
+            });
+        }
+
+        // Apply the build-time relocation delta so absolute addresses in
+        // the copied image point at bun.exe's preferred base. Also rewrite
+        // the reloc blocks' page RVAs to be bun-relative so the runtime can
+        // apply the remaining ASLR delta without a translation table.
+        const addon_base = addon.opt.image_base;
+        const build_delta: i64 = @as(i64, @bitCast(preferred_base + rva_base)) - @as(i64, @bitCast(addon_base));
+
+        var relocs_out = std.array_list.Managed(u8).init(allocator);
+        defer relocs_out.deinit();
+
+        const reloc_dir = addon.dir(IMAGE_DIRECTORY_ENTRY_BASERELOC);
+        if (reloc_dir.size > 0) {
+            const reloc_bytes = addon.sliceAtRva(reloc_dir.virtual_address, reloc_dir.size) catch return null;
+            var off: usize = 0;
+            while (off + @sizeOf(ImageBaseRelocation) <= reloc_bytes.len) {
+                const block: *align(1) const ImageBaseRelocation = @ptrCast(reloc_bytes[off..].ptr);
+                const block_size = block.size_of_block;
+                // A zero-sized (terminator) or malformed block mid-stream
+                // means we cannot know whether more relocations follow,
+                // and stopping here would leave a half-relocated image
+                // that looks valid. Some linkers emit a single zero block
+                // as the terminator, which this also covers.
+                if (block_size == 0 and block.virtual_address == 0) break;
+                if (block_size < @sizeOf(ImageBaseRelocation) or
+                    off + @as(usize, block_size) > reloc_bytes.len)
+                {
+                    return null;
+                }
+                const page_rva = block.virtual_address;
+                const n_entries = (block_size - @sizeOf(ImageBaseRelocation)) / 2;
+                const entries: [*]align(1) const u16 = @ptrCast(reloc_bytes[off + @sizeOf(ImageBaseRelocation) ..].ptr);
+
+                // A block whose page RVA lies outside the image cannot
+                // describe any slot we copied. Skip the whole addon —
+                // quietly applying only some relocations would leave a
+                // half-relocated image.
+                if (page_rva >= addon_image) return null;
+
+                // Emit header with bun-relative page RVA.
+                var out_hdr: ImageBaseRelocation = .{
+                    .virtual_address = rva_base + page_rva,
+                    .size_of_block = block_size,
+                };
+                try relocs_out.appendSlice(std.mem.asBytes(&out_hdr));
+
+                var i: usize = 0;
+                while (i < n_entries) : (i += 1) {
+                    const entry = entries[i];
+                    try relocs_out.appendSlice(std.mem.asBytes(&entry));
+                    const typ: u16 = entry >> 12;
+                    if (typ == IMAGE_REL_BASED_ABSOLUTE) continue; // padding
+                    if (typ != IMAGE_REL_BASED_DIR64) {
+                        // Unknown fixup kind on PE32+ — do not risk it.
+                        return null;
+                    }
+                    const in_page: u32 = entry & 0x0FFF;
+                    // page_rva < addon_image and in_page < 0x1000, so
+                    // this cannot wrap; just guard the 8-byte write.
+                    const target_rva = page_rva + in_page;
+                    if (@as(u64, target_rva) + 8 > addon_image) return null;
+                    const slot = image[target_rva..][0..8];
+                    const old = std.mem.readInt(u64, slot, .little);
+                    std.mem.writeInt(u64, slot, @bitCast(@as(i64, @bitCast(old)) +% build_delta), .little);
+                }
+                off += block_size;
+            }
+        }
+
+        // Imports: record what the runtime needs to bind, and zero the IAT
+        // slots in the image so it is obvious if binding is skipped.
+        var imports = std.array_list.Managed(LinkedAddon.ImportLib).init(allocator);
+        defer {
+            // Empty after toOwnedSlice() on success, so this only
+            // does work on a `return null` / error path.
+            for (imports.items) |*lib| {
+                for (lib.entries) |*e| if (e.name.len > 0) allocator.free(e.name);
+                allocator.free(lib.entries);
+                allocator.free(lib.name);
+            }
+            imports.deinit();
+        }
+
+        if (try self.collectImports(allocator, &addon, &imports, image, rva_base, false)) return null;
+        if (try self.collectImports(allocator, &addon, &imports, image, rva_base, true)) return null;
+
+        // Exception table. The RUNTIME_FUNCTION array and every RVA inside
+        // the UNWIND_INFO structures it points at (chained unwind entries,
+        // language-specific handler RVAs) are all interpreted relative to
+        // the single BaseAddress passed to RtlAddFunctionTable. Rebasing
+        // only the outer array would leave the inner RVAs wrong, so keep
+        // the whole thing addon-relative and have the runtime pass
+        // `exe_base + rva_base` as BaseAddress instead.
+        //
+        // .pdata entry size is architecture-dependent: x64 RUNTIME_FUNCTION
+        // is {begin, end, unwind_info} = 12 bytes; ARM64
+        // IMAGE_ARM64_RUNTIME_FUNCTION_ENTRY is {begin, packed_unwind} =
+        // 8 bytes. RtlAddFunctionTable's EntryCount counts native-sized
+        // entries, so dividing by the wrong one would register only the
+        // first ⌊2N/3⌋ functions on ARM64 and leave the rest with no
+        // unwind data. The machine-type gate above already guarantees
+        // addon.pe.machine == host.pe.machine.
+        var pdata_rva: u32 = 0;
+        var pdata_count: u32 = 0;
+        const pdata_dir = addon.dir(IMAGE_DIRECTORY_ENTRY_EXCEPTION);
+        const IMAGE_FILE_MACHINE_ARM64: u16 = 0xAA64;
+        const pdata_entry_size: u32 = if (addon.pe.machine == IMAGE_FILE_MACHINE_ARM64) 8 else 12;
+        if (pdata_dir.size >= pdata_entry_size and
+            @as(u64, pdata_dir.virtual_address) + pdata_dir.size <= addon_image)
+        {
+            pdata_rva = rva_base + pdata_dir.virtual_address;
+            pdata_count = pdata_dir.size / pdata_entry_size;
+        }
+
+        // Exports we care about.
+        var export_register: u32 = 0;
+        var export_api_version: u32 = 0;
+        var export_plugin_name: u32 = 0;
+        const exp_dir = addon.dir(IMAGE_DIRECTORY_ENTRY_EXPORT);
+        if (exp_dir.size >= @sizeOf(ImageExportDirectory)) blk: {
+            const exp_bytes = addon.sliceAtRva(exp_dir.virtual_address, @sizeOf(ImageExportDirectory)) catch break :blk;
+            const exp: *align(1) const ImageExportDirectory = @ptrCast(exp_bytes.ptr);
+            // Counts are attacker-controlled. Saturate the multiplies so a
+            // hostile number_of_names=0x40000000 turns into a length that
+            // sliceAtRva cleanly rejects instead of wrapping to a small
+            // value and succeeding on the wrong bytes.
+            const n_names = exp.number_of_names;
+            const n_funcs = exp.number_of_functions;
+            const names = addon.sliceAtRva(exp.address_of_names, n_names *| 4) catch break :blk;
+            const ords = addon.sliceAtRva(exp.address_of_name_ordinals, n_names *| 2) catch break :blk;
+            const funcs = addon.sliceAtRva(exp.address_of_functions, n_funcs *| 4) catch break :blk;
+            var i: u32 = 0;
+            while (i < n_names) : (i += 1) {
+                const name_rva = std.mem.readInt(u32, names[i * 4 ..][0..4], .little);
+                const name = addon.cstrAtRva(name_rva) catch continue;
+                const ord = std.mem.readInt(u16, ords[i * 2 ..][0..2], .little);
+                if (ord >= n_funcs) continue;
+                const fn_rva = std.mem.readInt(u32, funcs[@as(u32, ord) * 4 ..][0..4], .little);
+                // A forwarder or deliberately bogus RVA can point past
+                // the addon image; clamp so the rebase cannot wrap.
+                if (fn_rva == 0 or fn_rva >= addon_image) continue;
+                const bun_rva = rva_base + fn_rva;
+                if (std.mem.eql(u8, name, "napi_register_module_v1")) {
+                    export_register = bun_rva;
+                } else if (std.mem.eql(u8, name, "node_api_module_get_api_version_v1")) {
+                    export_api_version = bun_rva;
+                } else if (std.mem.eql(u8, name, "BUN_PLUGIN_NAME")) {
+                    export_plugin_name = bun_rva;
+                }
+            }
+        }
+
+        // Write the merged section to self.
+        const raw_size = try alignUpU32(addon_image, file_align);
+        const new_raw = try alignUpU32(last_file_end, file_align);
+        const new_file_size = @as(usize, new_raw) + raw_size;
+        try self.data.resize(new_file_size);
+        @memset(self.data.items[new_raw..new_file_size], 0);
+        @memcpy(self.data.items[new_raw..][0..addon_image], image);
+
+        var name_buf: [8]u8 = .{ '.', 'b', 'n', 0, 0, 0, 0, 0 };
+        _ = std.fmt.bufPrint(name_buf[3..], "{d}", .{addon_index}) catch {};
+        const sh = SectionHeader{
+            .name = name_buf,
+            .virtual_size = addon_image,
+            .virtual_address = rva_base,
+            .size_of_raw_data = raw_size,
+            .pointer_to_raw_data = new_raw,
+            .pointer_to_relocations = 0,
+            .pointer_to_line_numbers = 0,
+            .number_of_relocations = 0,
+            .number_of_line_numbers = 0,
+            // RW so runtime can apply ASLR relocs and bind the IAT without
+            // an initial VirtualProtect. Not executable yet — runtime
+            // promotes the addon's .text range after binding.
+            .characteristics = IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE,
+        };
+        const sh_off = self.section_headers_offset + @sizeOf(SectionHeader) * self.num_sections;
+        std.mem.copyForwards(u8, self.data.items[sh_off..][0..@sizeOf(SectionHeader)], std.mem.asBytes(&sh));
+
+        const pe_hdr = try self.getPEHeaderMut();
+        pe_hdr.number_of_sections += 1;
+        self.num_sections += 1;
+
+        const opt_after = try self.getOptionalHeaderMut();
+        opt_after.size_of_image = try alignUpU32(rva_base + addon_image, sect_align);
+
+        return LinkedAddon{
+            .name = virtual_path,
+            .rva_base = rva_base,
+            .image_size = addon_image,
+            .entry_point = if (entry_rva != 0) rva_base + entry_rva else 0,
+            .preferred_base = preferred_base,
+            .sections = try section_infos.toOwnedSlice(),
+            .relocs = try relocs_out.toOwnedSlice(),
+            .imports = try imports.toOwnedSlice(),
+            .pdata_rva = pdata_rva,
+            .pdata_count = pdata_count,
+            .export_register = export_register,
+            .export_api_version = export_api_version,
+            .export_plugin_name = export_plugin_name,
+        };
+    }
+
+    /// Walk either the normal or the delay-load import directory of `addon`
+    /// and append `ImportLib` descriptors to `out`.  Returns true when the
+    /// directory is malformed enough that we should abandon the merge.
+    fn collectImports(
+        self: *PEFile,
+        allocator: Allocator,
+        addon: *const AddonView,
+        out: *std.array_list.Managed(LinkedAddon.ImportLib),
+        image: []u8,
+        rva_base: u32,
+        comptime delay: bool,
+    ) !bool {
+        _ = self;
+        const Desc = if (delay) ImageDelayloadDescriptor else ImageImportDescriptor;
+        const dir_idx = if (delay) IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT else IMAGE_DIRECTORY_ENTRY_IMPORT;
+        const dir = addon.dir(dir_idx);
+        if (dir.size == 0 or dir.virtual_address == 0) return false;
+
+        // Walk at most as many descriptors as the directory claims to
+        // hold, plus one for the terminator. A hostile image that points
+        // the directory into a region with no zero terminator cannot make
+        // us loop past that.
+        const max_descs: u32 = dir.size / @sizeOf(Desc) +| 1;
+
+        var desc_rva = dir.virtual_address;
+        var di: u32 = 0;
+        while (di < max_descs) : ({
+            di += 1;
+            desc_rva +|= @sizeOf(Desc);
+        }) {
+            const desc_bytes = addon.sliceAtRva(desc_rva, @sizeOf(Desc)) catch return true;
+            const desc: *align(1) const Desc = @ptrCast(desc_bytes.ptr);
+            const name_rva: u32 = if (delay) desc.dll_name_rva else desc.name;
+            if (name_rva == 0) break; // terminator
+            const dll_name = addon.cstrAtRva(name_rva) catch return true;
+
+            // Some toolchains emit a v1 delayload descriptor (no RVA
+            // attribute bit) with VA-style pointers. We only handle the
+            // modern RVA form; treat the legacy form as "extract instead".
+            if (delay and (desc.attributes & 1) == 0) return true;
+
+            const ilt_rva: u32 = if (delay)
+                desc.import_name_table_rva
+            else if (desc.original_first_thunk != 0)
+                desc.original_first_thunk
+            else
+                desc.first_thunk; // some linkers omit the ILT
+            const iat_rva: u32 = if (delay) desc.import_address_table_rva else desc.first_thunk;
+            if (ilt_rva == 0 or iat_rva == 0) return true;
+
+            var entries = std.array_list.Managed(LinkedAddon.ImportLib.Entry).init(allocator);
+            defer {
+                // Empty after toOwnedSlice() on success, so this only
+                // does work on a `return true` / error path.
+                for (entries.items) |*e| if (e.name.len > 0) allocator.free(e.name);
+                entries.deinit();
+            }
+
+            // Thunks are walked until a zero terminator. Bound the walk
+            // by the addon image so a missing terminator cannot run us
+            // off the end or allocate unbounded entries; any real addon
+            // with more imports than fit in its own image is malformed.
+            const max_thunks: u32 = addon.opt.size_of_image / 8 +| 1;
+
+            var idx: u32 = 0;
+            while (idx < max_thunks) : (idx += 1) {
+                const thunk_rva = ilt_rva +| idx *| 8;
+                const thunk_bytes = addon.sliceAtRva(thunk_rva, 8) catch return true;
+                const thunk = std.mem.readInt(u64, thunk_bytes[0..8], .little);
+                if (thunk == 0) break;
+                const slot_rva = iat_rva +| idx *| 8;
+                // The IAT slot the runtime will bind must live inside the
+                // merged image, or we would later write through a bogus
+                // pointer.
+                if (slot_rva >= image.len or slot_rva + 8 > image.len) return true;
+                // Zero it so a missed bind is an obvious null-deref
+                // rather than a jump into junk.
+                @memset(image[slot_rva..][0..8], 0);
+
+                if (thunk & IMAGE_ORDINAL_FLAG64 != 0) {
+                    try entries.append(.{
+                        .iat_rva = rva_base + slot_rva,
+                        .ordinal = @truncate(thunk & 0xFFFF),
+                        .name = "",
+                    });
+                } else {
+                    // IMAGE_IMPORT_BY_NAME: u16 hint then NUL-terminated
+                    // name. The PE spec reserves bits 62:31 of a
+                    // by-name thunk as zero; anything there is
+                    // malformed and truncating it would resolve the
+                    // wrong symbol instead of falling back.
+                    if (thunk >> 31 != 0) return true;
+                    const hint_rva: u32 = @intCast(thunk);
+                    const name = addon.cstrAtRva(hint_rva +| 2) catch return true;
+                    // MSVC C++ `throw` calls vcruntime's
+                    // `_CxxThrowException`, which does
+                    // `RtlPcToFileHeader(pThrowInfo, &ThrowImageBase)`
+                    // to learn the image base the 32-bit
+                    // `_ThrowInfo` / `_CatchableTypeArray` RVAs are
+                    // relative to. `RtlPcToFileHeader` only walks
+                    // `PEB->Ldr` — not `RtlAddFunctionTable`
+                    // registrations — and the addon's `.rdata` sits
+                    // inside bun.exe's grown `SizeOfImage`, so it
+                    // returns `exe_base` instead of
+                    // `exe_base + rva_base`. `__CxxFrameHandler3/4`
+                    // then resolves the throw-side catchable-type
+                    // list against the wrong base and walks garbage
+                    // → AV or `std::terminate()`. Stack unwinding
+                    // and SEH `__try`/`__except` are fine (they use
+                    // `DispatcherContext->ImageBase`, which
+                    // `RtlAddFunctionTable` sets); only C++
+                    // `throw`/`catch` type matching breaks. Fall
+                    // back so node-addon-api `NAPI_CPP_EXCEPTIONS`
+                    // addons keep working.
+                    if (std.mem.eql(u8, name, "_CxxThrowException")) return true;
+                    try entries.append(.{
+                        .iat_rva = rva_base + slot_rva,
+                        .ordinal = 0,
+                        .name = try allocator.dupe(u8, name),
+                    });
+                }
+            } else return true; // no terminator within bounds
+
+            try out.append(.{
+                .name = try allocator.dupe(u8, dll_name),
+                .is_host = isHostImport(dll_name),
+                .entries = try entries.toOwnedSlice(),
+            });
+        } else return true; // dir.size under-reports: no terminator
+        return false;
+    }
+
+    /// Flatten a set of `LinkedAddon`s into the on-disk `.bunL` blob.
+    ///
+    /// The format is deliberately dumb: little-endian fixed-width integers
+    /// and length-prefixed byte strings, walked front-to-back.  It never
+    /// needs to be seekable or patchable and is only ever produced by the
+    /// same build of bun that consumes it (mismatch falls back to tmpfile
+    /// extraction), so there is no attempt at forward compatibility beyond
+    /// the magic+version gate.
+    pub const linked_magic: u32 = 0x4B4E4C42; // 'BLNK'
+    pub const linked_version: u32 = 1;
+
+    pub fn serializeLinkedAddons(allocator: Allocator, addons: []const LinkedAddon) ![]u8 {
+        var buf = std.array_list.Managed(u8).init(allocator);
+        errdefer buf.deinit();
+        const W = struct {
+            fn u32_(b: *std.array_list.Managed(u8), v: u32) !void {
+                try b.appendSlice(std.mem.asBytes(&v));
+            }
+            fn u64_(b: *std.array_list.Managed(u8), v: u64) !void {
+                try b.appendSlice(std.mem.asBytes(&v));
+            }
+            fn str(b: *std.array_list.Managed(u8), s: []const u8) !void {
+                try u32_(b, @intCast(s.len));
+                try b.appendSlice(s);
+            }
+        };
+        try W.u32_(&buf, linked_magic);
+        try W.u32_(&buf, linked_version);
+        try W.u32_(&buf, @intCast(addons.len));
+        for (addons) |a| {
+            try W.str(&buf, a.name);
+            try W.u32_(&buf, a.rva_base);
+            try W.u32_(&buf, a.image_size);
+            try W.u32_(&buf, a.entry_point);
+            try W.u64_(&buf, a.preferred_base);
+            try W.u32_(&buf, a.pdata_rva);
+            try W.u32_(&buf, a.pdata_count);
+            try W.u32_(&buf, a.export_register);
+            try W.u32_(&buf, a.export_api_version);
+            try W.u32_(&buf, a.export_plugin_name);
+            try W.u32_(&buf, @intCast(a.sections.len));
+            try buf.appendSlice(std.mem.sliceAsBytes(a.sections));
+            try W.str(&buf, a.relocs);
+            try W.u32_(&buf, @intCast(a.imports.len));
+            for (a.imports) |lib| {
+                try W.str(&buf, lib.name);
+                try buf.append(@intFromBool(lib.is_host));
+                try W.u32_(&buf, @intCast(lib.entries.len));
+                for (lib.entries) |e| {
+                    try W.u32_(&buf, e.iat_rva);
+                    var ord_bytes: [2]u8 = undefined;
+                    std.mem.writeInt(u16, &ord_bytes, e.ordinal, .little);
+                    try buf.appendSlice(&ord_bytes);
+                    try W.str(&buf, e.name);
+                }
+            }
+        }
+        return buf.toOwnedSlice();
+    }
+
+    /// Append the `.bunL` section carrying serialized `LinkedAddon`
+    /// metadata.  Layout mirrors `.bun`: `[u64 len][blob][pad]`.  Must be
+    /// called after all `addLinkedAddon` calls and before `addBunSection`
+    /// (which finalises the checksum and security directory).
+    pub fn addLinkedAddonSection(self: *PEFile, blob: []const u8) !void {
+        const opt = try self.getOptionalHeader();
+        const sect_align = opt.section_alignment;
+        const file_align = opt.file_alignment;
+
+        var last_file_end: u32 = 0;
+        var last_va_end: u32 = 0;
+        var first_raw: u32 = @intCast(self.data.items.len);
+        const sections = try self.getSectionHeaders();
+        for (sections) |s| {
+            if (s.size_of_raw_data > 0 and s.pointer_to_raw_data < first_raw) first_raw = s.pointer_to_raw_data;
+            const fend = s.pointer_to_raw_data + s.size_of_raw_data;
+            if (fend > last_file_end) last_file_end = fend;
+            const vs = @max(s.virtual_size, s.size_of_raw_data);
+            const vend = s.virtual_address + (try alignUpU32(vs, sect_align));
+            if (vend > last_va_end) last_va_end = vend;
+        }
+
+        // Reserve room for this section *and* the `.bun` section that
+        // `addBunSection` will append next. Taking the last slot here
+        // would turn a skippable merge into a hard build failure.
+        // Mirror both of `addBunSection`'s gates: the 96-section PE
+        // cap and the file-aligned byte-slack check.
+        if (self.num_sections + 2 > 96) return error.InsufficientHeaderSpace;
+        const new_headers_end = self.section_headers_offset + @sizeOf(SectionHeader) * (self.num_sections + 2);
+        const reserved_headers = try alignUpU32(@intCast(new_headers_end), file_align);
+        if (reserved_headers > first_raw) return error.InsufficientHeaderSpace;
+
+        if (blob.len > std.math.maxInt(u32) - 8) return error.Overflow;
+        const payload: u32 = @intCast(blob.len + 8);
+        const raw_size = try alignUpU32(payload, file_align);
+        const new_va = try alignUpU32(last_va_end, sect_align);
+        const new_raw = try alignUpU32(last_file_end, file_align);
+        const new_file_size = @as(usize, new_raw) + raw_size;
+        try self.data.resize(new_file_size);
+        @memset(self.data.items[new_raw..new_file_size], 0);
+        std.mem.writeInt(u64, self.data.items[new_raw..][0..8], blob.len, .little);
+        @memcpy(self.data.items[new_raw + 8 ..][0..blob.len], blob);
+
+        const sh = SectionHeader{
+            .name = BUNL_SECTION_NAME,
+            .virtual_size = payload,
+            .virtual_address = new_va,
+            .size_of_raw_data = raw_size,
+            .pointer_to_raw_data = new_raw,
+            .pointer_to_relocations = 0,
+            .pointer_to_line_numbers = 0,
+            .number_of_relocations = 0,
+            .number_of_line_numbers = 0,
+            .characteristics = IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ,
+        };
+        const sh_off = self.section_headers_offset + @sizeOf(SectionHeader) * self.num_sections;
+        std.mem.copyForwards(u8, self.data.items[sh_off..][0..@sizeOf(SectionHeader)], std.mem.asBytes(&sh));
+
+        const pe_hdr = try self.getPEHeaderMut();
+        pe_hdr.number_of_sections += 1;
+        self.num_sections += 1;
+
+        const opt_after = try self.getOptionalHeaderMut();
+        opt_after.size_of_image = try alignUpU32(new_va + payload, sect_align);
+    }
+
     /// Find the .bun section and return its data
     pub fn getBunSectionData(self: *const PEFile) ![]const u8 {
         const section_headers = try self.getSectionHeaders();
@@ -712,6 +1581,67 @@ pub const PEFile = struct {
 
         // If checksum recomputed, field should be non-zero
         // (Unless we intentionally write zero, which is allowed)
+    }
+};
+
+/// Direct access to `addLinkedAddon` for adversarial tests. Lets tests
+/// feed malformed / hostile addon images on any platform without needing
+/// a Windows bun.exe template or a `bun build --compile` round-trip, and
+/// assert that the merge either (a) produces a well-formed PE or (b) is
+/// cleanly skipped — never hangs, never corrupts the host image.
+pub const TestingAPIs = struct {
+    const jsc = bun.jsc;
+
+    pub fn linkAddon(global: *jsc.JSGlobalObject, call: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const args = call.arguments();
+        if (args.len < 3) return global.throwNotEnoughArguments("linkAddon", 3, args.len);
+
+        const host_slice = args[0].asArrayBuffer(global) orelse
+            return global.throwInvalidArgumentType("linkAddon", "host", "Uint8Array");
+        const addon_slice = args[1].asArrayBuffer(global) orelse
+            return global.throwInvalidArgumentType("linkAddon", "addon", "Uint8Array");
+        const name_str = try args[2].toBunString(global);
+        defer name_str.deref();
+        const name_utf8 = name_str.toUTF8(bun.default_allocator);
+        defer name_utf8.deinit();
+
+        var arena = bun.ArenaAllocator.init(bun.default_allocator);
+        defer arena.deinit();
+        const alloc = arena.allocator();
+
+        const result = jsc.JSValue.createEmptyObject(global, 5);
+        const putErr = struct {
+            fn do(g: *jsc.JSGlobalObject, r: jsc.JSValue, comptime where: []const u8, e: anyerror) bun.JSError!jsc.JSValue {
+                var msg = try bun.String.createFormat(where ++ ": {s}", .{@errorName(e)});
+                r.put(g, jsc.ZigString.static("error"), try msg.transferToJS(g));
+                return r;
+            }
+        }.do;
+
+        var host = PEFile.init(alloc, host_slice.byteSlice()) catch |err| return putErr(global, result, "host", err);
+        defer host.deinit();
+
+        const linked = host.addLinkedAddon(alloc, addon_slice.byteSlice(), 0, name_utf8.slice()) catch |err|
+            return putErr(global, result, "addon", err);
+        if (linked == null) {
+            result.put(global, jsc.ZigString.static("skipped"), .true);
+            return result;
+        }
+        var la = linked.?;
+        defer la.deinit(alloc);
+
+        const meta = PEFile.serializeLinkedAddons(alloc, &.{la}) catch |err|
+            return putErr(global, result, "serialize", err);
+        host.addLinkedAddonSection(meta) catch |err|
+            return putErr(global, result, "bunL", err);
+        host.validate() catch |err|
+            return putErr(global, result, "validate", err);
+
+        result.put(global, jsc.ZigString.static("skipped"), .false);
+        result.put(global, jsc.ZigString.static("output"), try jsc.ArrayBuffer.createBuffer(global, host.data.items));
+        result.put(global, jsc.ZigString.static("metadata"), try jsc.ArrayBuffer.createBuffer(global, meta));
+        result.put(global, jsc.ZigString.static("rvaBase"), jsc.JSValue.jsNumber(la.rva_base));
+        return result;
     }
 };
 

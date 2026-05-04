@@ -1468,6 +1468,13 @@ comptime {
     _ = @import("./cli/upgrade_command.zig").Version;
     _ = @import("./jsc/resolve_path_jsc.zig");
     _ = @import("./jsc/resolver_jsc.zig");
+    if (Environment.isWindows) {
+        // Force analysis so the `@export` of `Bun__initLinkedNodeModule`
+        // is emitted even though nothing else references the module by
+        // name. The module guards everything on `Environment.isWindows`
+        // already, but there is no reason to analyse it elsewhere.
+        _ = @import("./jsc/LinkedNodeModule.zig");
+    }
 }
 
 pub fn DebugOnlyDisabler(comptime Type: type) type {

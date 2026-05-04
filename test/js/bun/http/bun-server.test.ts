@@ -1526,7 +1526,9 @@ describe.concurrent("node:http socket.fd (Bun extension)", () => {
     expect(observedFromConnection).toBe(observedFromFetch);
   });
 
-  test.if(isPosix)("socket.fd works with getsockname() via FFI", async () => {
+  // Gate on linux/macOS only: `isPosix` also includes FreeBSD, but
+  // `libcPathForDlopen()` only handles linux/darwin today.
+  test.if(isLinux || isMacOS)("socket.fd works with getsockname() via FFI", async () => {
     const libc = dlopen(libcPathForDlopen(), {
       getsockname: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
     });

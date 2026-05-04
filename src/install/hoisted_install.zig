@@ -353,6 +353,16 @@ pub fn installHoistedPackages(
                         closure.err = err;
                     };
                     if (closure.err != null) return true;
+
+                    closure.manager.reportSlowLifecycleScripts();
+
+                    if (PackageManager.verbose_install) {
+                        const pending_task_count = closure.manager.pendingTaskCount();
+                        if (pending_task_count > 0 and PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) {
+                            Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{pending_task_count});
+                        }
+                    }
+
                     return closure.manager.pendingTaskCount() == 0;
                 }
             };

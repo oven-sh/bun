@@ -644,6 +644,19 @@ function ClientRequest(input, options, cb) {
             }
           }
 
+          // Drain chunks queued while `resolveNextChunk` was momentarily
+          // `undefined`. The main loop delivers exactly one chunk per
+          // `resolveNextChunk` wake, so back-to-back synchronous writes
+          // — e.g. `socket.write(A); socket.write(B); socket.end()` on the
+          // hijacked Duplex — leave B in `kBodyChunks`; when `socket.end()`
+          // flushes synchronously, `_final()` → `kEndUpgradeBody()` sets
+          // `upgradeBodyEnded = true` before the generator can re-park,
+          // and the loop check above exits without yielding B. Same shape
+          // applies to `req.end()` on non-upgrade streaming requests.
+          while (self[kBodyChunks]?.length > 0) {
+            yield self[kBodyChunks].shift();
+          }
+
           handleResponse?.();
         };
       }

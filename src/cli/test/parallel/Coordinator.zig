@@ -341,9 +341,10 @@ pub const Coordinator = struct {
 
     fn accountCrash(this: *Coordinator, file_idx: u32, status: bun.spawn.Status) void {
         this.breakDots();
+        var buf: [32]u8 = undefined;
         Output.prettyError("<r><red>✗<r> <b>{s}<r> <d>(worker crashed: {s})<r>\n", .{
             this.relPath(file_idx),
-            describeStatus(status),
+            describeStatus(&buf, status),
         });
         this.reporter.summary().fail += 1;
         this.reporter.summary().files += 1;
@@ -366,9 +367,9 @@ pub const Coordinator = struct {
         };
     }
 
-    fn describeStatus(status: bun.spawn.Status) []const u8 {
+    fn describeStatus(buf: []u8, status: bun.spawn.Status) []const u8 {
         return switch (status) {
-            .exited => |e| bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "exit code {d}", .{e.code})),
+            .exited => |e| std.fmt.bufPrint(buf, "exit code {d}", .{e.code}) catch unreachable,
             .signaled => |sig| @tagName(sig),
             .err => |e| @tagName(e.getErrno()),
             .running => "running",
@@ -383,10 +384,11 @@ pub const Coordinator = struct {
     /// last meaningful output, not buried under hundreds of later passes.
     fn abortOnWorkerPanic(this: *Coordinator, file_idx: u32, status: bun.spawn.Status) void {
         this.breakDots();
+        var buf: [32]u8 = undefined;
         Output.prettyError(
             "\n<red>error<r>: a test worker process crashed with <b>{s}<r> while running <b>{s}<r>.\n" ++
                 "This indicates a bug in Bun or in a native addon, not in the test itself. Aborting.\n",
-            .{ describeStatus(status), this.relPath(file_idx) },
+            .{ describeStatus(&buf, status), this.relPath(file_idx) },
         );
         Output.flush();
         if (this.bailed) return;

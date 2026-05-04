@@ -638,11 +638,11 @@ describe("bundler", () => {
     capture: ["0.3333333333333333", "1 / 3"],
   });
   // https://github.com/oven-sh/bun/issues/30203
-  // A \`const\` initializer that loses the size-aware check would stay as
-  // \`E.Binary\`, which \`canBeConstValue\` rejects — so the ref wouldn't make
-  // it into \`const_values\` and use-site inlining + the DCE it enables
+  // A `const` initializer that loses the size-aware check would stay as
+  // `E.Binary`, which `canBeConstValue` rejects — so the ref wouldn't make
+  // it into `const_values` and use-site inlining + the DCE it enables
   // would silently stop working. Force the fold for const decls when
-  // \`features.inlining\` is on so DCE of the else branch still happens.
+  // `features.inlining` is on so DCE of the else branch still happens.
   itBundled("minify/ConstantFoldingConstInitializerFoldsForInlining", {
     files: {
       "/entry.ts": `
@@ -656,8 +656,8 @@ describe("bundler", () => {
   });
   // https://github.com/oven-sh/bun/issues/30203
   // The const-decl force-fold flag must not leak through the function or
-  // arrow body. A nested \`() => 1/3\` runs at call time, not when the
-  // surrounding \`const\` is visited, so its arithmetic should obey the
+  // arrow body. A nested `() => 1/3` runs at call time, not when the
+  // surrounding `const` is visited, so its arithmetic should obey the
   // ordinary size-aware gate and stay unfolded.
   itBundled("minify/ConstantFoldingConstArrowBodyDoesNotForceFold", {
     files: {
@@ -680,8 +680,8 @@ describe("bundler", () => {
   });
   // https://github.com/oven-sh/bun/issues/30203
   // Class bodies — field initializers and static blocks — don't route
-  // through \`visitFunc\` or the arrow visitor, so they need their own
-  // reset of \`fold_numeric_constants_unconditionally\`. Without it, a
+  // through `visitFunc` or the arrow visitor, so they need their own
+  // reset of `fold_numeric_constants_unconditionally`. Without it, a
   // caller (e.g. const-decl inlining) that force-folded would leak into
   // the class body and re-introduce the #30203 inflation.
   itBundled("minify/ConstantFoldingConstClassBodyDoesNotForceFold", {

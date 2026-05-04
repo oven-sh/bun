@@ -830,6 +830,79 @@ describe("Bun.Image", () => {
         expect((await new Bun.Image(out).metadata()).format).toBe(fmt);
       });
     }
+
+    // Regression for #30235. ImageIO's CGImageSourceCreateImageAtIndex hands
+    // back pixels in their *stored* orientation — iPhone HEIC (and any EXIF/
+    // TIFF orientation-carrying container) looks rotated 90° vs how Preview /
+    // Photos render it. The auto-orient gate used to be JPEG-only because
+    // exif.zig's walker is JPEG-only; now the gate queries the system backend
+    // (ImageIO on macOS, WIC on Windows) for HEIC/TIFF/AVIF and then runs the
+    // existing flip→flop→rotate pipeline, so Bun matches Sharp.
+    //
+    // TIFF is the test vehicle because (a) it routes through the same system
+    // backend on macOS/Windows, and (b) it's the only orientation-carrying
+    // format simple enough to hand-craft without a codec. A bug in the system
+    // backend shows up identically for HEIC.
+    test.skipIf(!isMacOS)("TIFF Orientation=6 auto-rotates via system backend", async () => {
+      // Hand-roll a 4×2 uncompressed RGB TIFF with Orientation=6. Little-
+      // endian ("II"), 10 IFD entries, BitsPerSample stored inline at byte
+      // 134 (count=3 * sizeof(SHORT) > 4 → offset), pixels at byte 140.
+      // Tags must be sorted by ID per TIFF §2.
+      const tiff = new Uint8Array(164);
+      const dv = new DataView(tiff.buffer);
+      tiff.set([0x49, 0x49, 0x2a, 0x00], 0); // "II" + magic 42
+      dv.setUint32(4, 8, true); // IFD0 at byte 8
+      dv.setUint16(8, 10, true); // 10 entries
+      const writeEntry = (i: number, tag: number, type: number, count: number, value: number) => {
+        const e = 10 + i * 12;
+        dv.setUint16(e, tag, true);
+        dv.setUint16(e + 2, type, true);
+        dv.setUint32(e + 4, count, true);
+        dv.setUint32(e + 8, value, true);
+      };
+      //          tag   type        count  value/offset
+      writeEntry(0, 0x0100, 4, 1, 4); //    ImageWidth      = 4
+      writeEntry(1, 0x0101, 4, 1, 2); //    ImageLength     = 2
+      writeEntry(2, 0x0102, 3, 3, 134); //  BitsPerSample   → offset 134
+      writeEntry(3, 0x0103, 3, 1, 1); //    Compression     = none
+      writeEntry(4, 0x0106, 3, 1, 2); //    PhotoInterp     = RGB
+      writeEntry(5, 0x0111, 4, 1, 140); //  StripOffsets    → offset 140
+      writeEntry(6, 0x0112, 3, 1, 6); //    Orientation     = 6 (rotate 90° CW)
+      writeEntry(7, 0x0115, 3, 1, 3); //    SamplesPerPixel = 3
+      writeEntry(8, 0x0116, 4, 1, 2); //    RowsPerStrip    = 2
+      writeEntry(9, 0x0117, 4, 1, 24); //   StripByteCounts = 24
+      dv.setUint32(130, 0, true); // next IFD = 0
+      // BitsPerSample: 3 × u16 = 8, 8, 8
+      dv.setUint16(134, 8, true);
+      dv.setUint16(136, 8, true);
+      dv.setUint16(138, 8, true);
+      // 4×2 RGB pixels — distinctive so a misread shows up as a crash or
+      // wrong-colour PNG, not a silently equal output.
+      const pixels = [
+        255, 0, 0, 0, 255, 0, 0, 0, 255, 128, 128, 128, //
+        64, 64, 64, 200, 200, 200, 32, 64, 96, 100, 150, 200,
+      ];
+      for (let i = 0; i < pixels.length; i++) tiff[140 + i] = pixels[i];
+
+      // Without my fix: reports stored dims 4×2. With the fix: orientation
+      // swaps the axes so dims come back as 2×4.
+      const oriented = await new Bun.Image(tiff).metadata();
+      expect(oriented).toEqual({ width: 2, height: 4, format: "tiff" });
+
+      // Opting out of auto-orient should still land on the stored dims, so
+      // the fix didn't silently hard-wire the rotation into the decoder.
+      const raw = await new Bun.Image(tiff, { autoOrient: false }).metadata();
+      expect(raw).toEqual({ width: 4, height: 2, format: "tiff" });
+
+      // End-to-end: the reported fix workflow — resize → webp encode — must
+      // produce a WebP with the swapped aspect ratio, not the stored one.
+      // Source is 2:4 upright; fit:"inside" into 100×100 gives 50×100 (height
+      // hits the cap first), so a passing build has height > width — whereas
+      // the un-fixed stored-orientation path would hand back 100×50.
+      const webp = await new Bun.Image(tiff).resize(100, 100, { fit: "inside" }).webp({ quality: 80 }).bytes();
+      const reMeta = await new Bun.Image(webp).metadata();
+      expect(reMeta.height).toBeGreaterThan(reMeta.width);
+    });
   });
 
   // @intFromFloat on NaN/Inf is UB; these used to abort the process.

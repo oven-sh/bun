@@ -72,7 +72,9 @@ struct Syms {
     const uint8_t* (*CFDataGetBytePtr)(CFRef);
     CFRef (*CFStringCreateWithCString)(CFRef, const char*, uint32_t);
     CFRef (*CFNumberCreate)(CFRef, int, const void*);
+    bool (*CFNumberGetValue)(CFRef, int, void*);
     CFRef (*CFDictionaryCreate)(CFRef, const void**, const void**, long, const void*, const void*);
+    const void* (*CFDictionaryGetValue)(CFRef, const void*);
     // CoreGraphics
     CFRef (*CGColorSpaceCreateDeviceRGB)();
     void (*CGColorSpaceRelease)(CFRef);
@@ -85,6 +87,7 @@ struct Syms {
     // ImageIO
     CFRef (*CGImageSourceCreateWithData)(CFRef, CFRef);
     CFRef (*CGImageSourceCreateImageAtIndex)(CFRef, size_t, CFRef);
+    CFRef (*CGImageSourceCopyPropertiesAtIndex)(CFRef, size_t, CFRef);
     CFRef (*CGImageDestinationCreateWithData)(CFRef, CFRef, size_t, CFRef);
     void (*CGImageDestinationAddImage)(CFRef, CFRef, CFRef);
     bool (*CGImageDestinationFinalize)(CFRef);
@@ -98,6 +101,7 @@ struct Syms {
     // address and dereference at use-site).
     CFRef* kCFAllocatorNull;
     CFRef* kCGImageDestinationLossyCompressionQuality;
+    CFRef* kCGImagePropertyOrientation;
     const void* kCFTypeDictionaryKeyCallBacks;
     const void* kCFTypeDictionaryValueCallBacks;
 };
@@ -119,7 +123,9 @@ constexpr struct {
     SYM(CFDataGetBytePtr),
     SYM(CFStringCreateWithCString),
     SYM(CFNumberCreate),
+    SYM(CFNumberGetValue),
     SYM(CFDictionaryCreate),
+    SYM(CFDictionaryGetValue),
     SYM(CGColorSpaceCreateDeviceRGB),
     SYM(CGColorSpaceRelease),
     SYM(CGImageCreate),
@@ -130,6 +136,7 @@ constexpr struct {
     SYM(CGDataProviderRelease),
     SYM(CGImageSourceCreateWithData),
     SYM(CGImageSourceCreateImageAtIndex),
+    SYM(CGImageSourceCopyPropertiesAtIndex),
     SYM(CGImageDestinationCreateWithData),
     SYM(CGImageDestinationAddImage),
     SYM(CGImageDestinationFinalize),
@@ -140,6 +147,7 @@ constexpr struct {
     SYM(vImageVerticalReflect_ARGB8888),
     SYM(kCFAllocatorNull),
     SYM(kCGImageDestinationLossyCompressionQuality),
+    SYM(kCGImagePropertyOrientation),
     SYM(kCFTypeDictionaryKeyCallBacks),
     SYM(kCFTypeDictionaryValueCallBacks),
 };
@@ -180,6 +188,9 @@ const Syms* load()
 constexpr uint32_t kBunCGImageAlphaLast = 3; // straight RGBA, A in byte 3
 constexpr uint32_t kBunCFStringEncodingUTF8 = 0x08000100;
 constexpr int kBunCFNumberDoubleType = 13;
+// CFNumberGetValue type for SInt32 — orientation is stored as a small int in
+// the image-source properties dict.
+constexpr int kBunCFNumberSInt32Type = 3;
 // vImage_Flags — values copied verbatim from <Accelerate/vImage_Types.h>;
 // keep them in sync, the kvImageNoAllocate one used to be wrong (4 vs 512)
 // and silently turned every CG decode into 0xAA garbage in debug builds.
@@ -209,6 +220,31 @@ template<class R, class... A>
 inline R msg(const Syms* s, CFRef recv, CFRef sel, A... a)
 {
     return reinterpret_cast<R (*)(CFRef, CFRef, A...)>(s->objc_msgSend)(recv, sel, a...);
+}
+
+// EXIF orientation (TIFF tag 0x0112) for the first image in `src`. Values
+// 1..8 per EXIF spec; 1 (no-op) is returned for missing/invalid/out-of-range,
+// matching Sharp/libvips's "advisory, never fail decode" treatment.
+//
+// ImageIO parses this out of the container (EXIF TIFF IFD0 for
+// JPEG/TIFF/WebP; HEIC `irot`/`imir` transform properties mapped to EXIF
+// orientation) and exposes it via the properties dict. Apple documents that
+// CGImageSourceCreateImageAtIndex itself does NOT apply the orientation to
+// the returned pixels — the caller is expected to either draw through a
+// transform or rotate the decoded buffer, which is what we do below.
+inline int readOrientation(const Syms* s, CFRef src)
+{
+    CFRef props = s->CGImageSourceCopyPropertiesAtIndex(src, 0, nullptr);
+    if (!props) return 1;
+    int o = 1;
+    CFRef v = const_cast<void*>(s->CFDictionaryGetValue(props, *s->kCGImagePropertyOrientation));
+    if (v) {
+        int32_t raw = 0;
+        if (s->CFNumberGetValue(v, kBunCFNumberSInt32Type, &raw) && raw >= 1 && raw <= 8)
+            o = raw;
+    }
+    s->CFRelease(props);
+    return o;
 }
 
 // Image UTIs in preference order. PNG first (lossless, compact); then formats
@@ -309,6 +345,13 @@ int32_t bun_coregraphics_decode(const uint8_t* bytes, size_t len, uint64_t max_p
     // non-premultiplied alpha, which CGBitmapContext refuses — so the result
     // is straight RGBA with no premul→unpremul quantisation. kvImageNoAllocate
     // makes it write into the caller's bun.default_allocator buffer.
+    //
+    // Pixels come back in their *stored* orientation — EXIF/TIFF orientation
+    // tags (common on iPhone HEIC with Orientation=6) are NOT applied here.
+    // Callers that want Sharp's "auto-orient" behaviour call
+    // bun_coregraphics_orientation() and apply the transform with the
+    // existing flip/rotate vImage kernels, matching the JPEG codepath that
+    // reads the tag in Zig and rotates post-decode. (#30235)
     VBuf buf { out, h, w, w * 4 };
     VFmt fmt { 8, 32, r.cs, kBunCGImageAlphaLast, 0, nullptr, 0 };
     auto rc = s->vImageBuffer_InitWithCGImage(&buf, &fmt, nullptr, r.img, kBunVImageNoAllocate);
@@ -318,6 +361,29 @@ int32_t bun_coregraphics_decode(const uint8_t* bytes, size_t len, uint64_t max_p
     // 0xAA — that's the garbage we shipped before the constant was fixed.
     if (rc != 0 || buf.data != out) return CG_DECODE_FAILED;
     return CG_OK;
+}
+
+// Read EXIF/TIFF orientation tag (IFD0 0x0112) from the first image in the
+// container. Returns 1..8 per EXIF spec; 1 (identity) for missing/invalid/
+// loader-failure, matching Sharp/libvips's "advisory, never fail" policy.
+//
+// Kept separate from decode so the Zig side owns the "apply or skip" decision
+// — `new Bun.Image(..., { autoOrient: false })` still wants raw stored pixels,
+// and the existing JPEG codepath already reads the tag in Zig and rotates
+// post-decode via `Image.applyOrientation`. One small ImageIO query here keeps
+// HEIC/TIFF/AVIF on the same Zig gate.
+int32_t bun_coregraphics_orientation(const uint8_t* bytes, size_t len)
+{
+    auto s = load();
+    if (!s) return 1;
+    Pool pool(s);
+    CFRef data = s->CFDataCreateWithBytesNoCopy(nullptr, bytes, static_cast<long>(len), *s->kCFAllocatorNull);
+    if (!data) return 1;
+    CFRef src = s->CGImageSourceCreateWithData(data, nullptr);
+    int o = src ? readOrientation(s, src) : 1;
+    if (src) s->CFRelease(src);
+    s->CFRelease(data);
+    return o;
 }
 
 // Encode RGBA8 → format. format: 0=jpeg, 1=png, 2=webp, 3=heic, 4=avif.
@@ -559,6 +625,7 @@ int64_t bun_coregraphics_clipboard_change_count()
 // Environment.isMac so they're dead code, but LTO needs the definitions.
 extern "C" int bun_coregraphics_decode(const void*, unsigned long, unsigned long long, void*, void*, void*) { return 1; }
 extern "C" int bun_coregraphics_encode(const void*, unsigned, unsigned, int, int, void*, void*) { return 1; }
+extern "C" int bun_coregraphics_orientation(const void*, unsigned long) { return 1; }
 extern "C" int bun_coregraphics_scale(const void*, unsigned, unsigned, void*, unsigned, unsigned) { return 1; }
 extern "C" int bun_coregraphics_rotate90(const void*, unsigned, unsigned, void*, unsigned) { return 1; }
 extern "C" int bun_coregraphics_reflect(const void*, unsigned, unsigned, void*, int) { return 1; }

@@ -956,8 +956,8 @@ pub const PipelineTask = struct {
             if (codecs.probe(input, this.max_pixels)) |p| {
                 var w = p.width;
                 var h = p.height;
-                if (this.auto_orient and p.format == .jpeg) {
-                    const t = exif.readJpeg(input).transform();
+                if (this.auto_orient) {
+                    const t = readOrientation(input, p.format).transform();
                     if (t.rotate == 90 or t.rotate == 270) std.mem.swap(u32, &w, &h);
                 }
                 this.result = .{ .meta = .{ .w = w, .h = h, .format = p.format } };
@@ -973,6 +973,11 @@ pub const PipelineTask = struct {
             }
         }
 
+        // Sniff once up front — every orientation query below needs the
+        // format, and the sniffer is already looking at the same bytes the
+        // decoder will.
+        const src_format = codecs.Format.sniff(input) orelse .png;
+
         // Decode-time downscale hint. The IDCT picker constrains in *stored*
         // axes, so any 90/270 rotate that runs before resize — explicit OR
         // EXIF auto-orient — needs the hint axes swapped, otherwise one axis
@@ -985,7 +990,7 @@ pub const PipelineTask = struct {
             var th = if (r.h != 0) r.h else r.w;
             const swap_explicit = this.pipeline.rotate == 90 or this.pipeline.rotate == 270;
             const swap_exif = this.auto_orient and blk2: {
-                const t = exif.readJpeg(input).transform();
+                const t = readOrientation(input, src_format).transform();
                 break :blk2 t.rotate == 90 or t.rotate == 270;
             };
             if (swap_explicit != swap_exif) std.mem.swap(u32, &tw, &th);
@@ -998,12 +1003,13 @@ pub const PipelineTask = struct {
         };
         defer decoded.deinit();
 
-        const src_format = codecs.Format.sniff(input) orelse .png;
-
         // EXIF auto-orient: applied BEFORE any user op so resize targets and
         // metadata report the visually-upright dimensions, the way Sharp does.
-        if (this.auto_orient and src_format == .jpeg) {
-            const orient = exif.readJpeg(input);
+        // Covers JPEG via the Zig APP1 walker and HEIC/TIFF/AVIF via the
+        // system backend (ImageIO/WIC), whose decoders hand back pixels in
+        // their *stored* orientation. (#30235)
+        if (this.auto_orient) {
+            const orient = readOrientation(input, src_format);
             if (orient != .normal) applyOrientation(&decoded, orient) catch |e| {
                 this.result = .{ .err = e };
                 return;
@@ -1242,6 +1248,32 @@ pub const PipelineTask = struct {
         }
         if (r.without_enlargement and (w > sw or h > sh)) return .{ .w = sw, .h = sh };
         return .{ .w = w, .h = h };
+    }
+
+    /// EXIF Orientation for whatever container `input` is. The Zig reader in
+    /// `exif.zig` covers JPEG (APP1/Exif walker — simple enough that a pure-
+    /// Zig parser is worthwhile, and it's the JPEG path that runs on Linux
+    /// where no ImageIO exists). HEIC, TIFF, and AVIF all store orientation
+    /// inside containers with nothing in common with JPEG markers — HEIF's
+    /// `irot`/`imir` transform properties live behind an ISOBMFF box walk,
+    /// and HEIC's Exif item is reached via `iloc`/`iinf` — so we delegate
+    /// to the system backend (ImageIO/WIC), which has already parsed all of
+    /// them. Backends without a reader (or unused `backend == .bun`) return
+    /// 1, matching JPEG's "no Exif segment" fallthrough. (#30235)
+    fn readOrientation(input: []const u8, fmt: codecs.Format) exif.Orientation {
+        const v: u8 = switch (fmt) {
+            .jpeg => @intFromEnum(exif.readJpeg(input)),
+            .heic, .avif, .tiff => blk: {
+                if (codecs.system_backend) |b| if (@hasDecl(b, "orientation"))
+                    if (codecs.backend == .system) break :blk b.orientation(input);
+                break :blk 1;
+            },
+            // PNG eXIf / WebP EXIF chunks exist but are rare (no major
+            // consumer writes them by default). Leaving them at identity
+            // mirrors exif.zig's comment at the top of the file.
+            .png, .webp, .bmp, .gif => 1,
+        };
+        return if (v >= 1 and v <= 8) @enumFromInt(v) else .normal;
     }
 
     fn applyOrientation(d: *codecs.Decoded, orient: exif.Orientation) codecs.Error!void {

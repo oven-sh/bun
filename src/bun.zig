@@ -2148,10 +2148,13 @@ pub fn appendOptionsEnv(env: []const u8, comptime ArgType: type, args: *std.arra
     }
 }
 
-/// Kind of flag in `NODE_OPTIONS`: either a boolean flag (no value) or an
-/// option that takes a value. Used by `appendNodeOptionsEnv` to decide
-/// whether the next token should be consumed as a value.
-const NodeOptionKind = enum { bool_flag, option };
+/// Kind of flag in `NODE_OPTIONS`. Controls how the filter treats a bare
+/// (no `=value`) occurrence of the flag:
+///   - `bool_flag`: no value expected; emit bare.
+///   - `required_value`: must have a value. If no value token follows in
+///     `NODE_OPTIONS`, the flag is DROPPED — never emitted bare, to avoid
+///     binding a later argv token (e.g. the entrypoint) as the missing value.
+const NodeOptionKind = enum { bool_flag, required_value };
 
 /// Allowlist of flags supported by Bun that may appear in `NODE_OPTIONS`.
 ///
@@ -2175,34 +2178,38 @@ pub const node_options_allowlist = ComptimeStringMap(NodeOptionKind, .{
     .{ "--heap-prof", .bool_flag },
     .{ "--heap-prof-md", .bool_flag },
 
-    // Options that take a value
-    .{ "--conditions", .option },
-    .{ "-C", .option },
-    .{ "--cpu-prof-dir", .option },
-    .{ "--cpu-prof-interval", .option },
-    .{ "--cpu-prof-name", .option },
-    .{ "--dns-result-order", .option },
-    .{ "--heap-prof-dir", .option },
-    .{ "--heap-prof-name", .option },
-    .{ "--import", .option },
-    .{ "--inspect", .option },
-    .{ "--inspect-brk", .option },
-    .{ "--inspect-wait", .option },
-    .{ "--max-http-header-size", .option },
-    .{ "--require", .option },
-    .{ "-r", .option },
-    .{ "--title", .option },
-    .{ "--unhandled-rejections", .option },
+    // Options that take a value. All treated as required_value: bare form
+    // (no `=value` and no following value token) is dropped to prevent
+    // binding the user's entrypoint as the missing value.
+    .{ "--conditions", .required_value },
+    .{ "-C", .required_value },
+    .{ "--cpu-prof-dir", .required_value },
+    .{ "--cpu-prof-interval", .required_value },
+    .{ "--cpu-prof-name", .required_value },
+    .{ "--dns-result-order", .required_value },
+    .{ "--heap-prof-dir", .required_value },
+    .{ "--heap-prof-name", .required_value },
+    .{ "--import", .required_value },
+    .{ "--inspect", .required_value },
+    .{ "--inspect-brk", .required_value },
+    .{ "--inspect-wait", .required_value },
+    .{ "--max-http-header-size", .required_value },
+    .{ "--require", .required_value },
+    .{ "-r", .required_value },
+    .{ "--title", .required_value },
+    .{ "--unhandled-rejections", .required_value },
 });
 
 /// Parses `NODE_OPTIONS` env var into command-line tokens filtered by
 /// `node_options_allowlist` and inserts them into `args` starting at
-/// `offset` (after argv[0]).
+/// index 1 (after argv[0]).
 ///
 /// Splits on whitespace with support for single/double quotes and backslash
-/// escapes, matching Node.js's NODE_OPTIONS parsing behavior. Positional
-/// (non-flag) tokens and unrecognized flags are dropped to prevent
-/// unintended script execution via the environment.
+/// escapes (POSIX semantics: backslash has no special meaning inside single
+/// quotes). Positional (non-flag) tokens and unrecognized flags are dropped
+/// to prevent unintended script execution via the environment. Required-value
+/// flags that appear without a value are also dropped, so a bare
+/// `NODE_OPTIONS="--require"` cannot hijack the user's entrypoint.
 pub fn appendNodeOptionsEnv(env: []const u8, args: *std.array_list.Managed([:0]const u8)) !void {
     // First, tokenize the NODE_OPTIONS string (quote- and escape-aware).
     var tokens = std.array_list.Managed([]u8).init(bun.default_allocator);
@@ -2229,12 +2236,24 @@ pub fn appendNodeOptionsEnv(env: []const u8, args: *std.array_list.Managed([:0]c
             continue;
         }
 
-        if (ch == '\\') {
-            escape = true;
-            continue;
-        }
-
+        // Single quotes suppress all escaping (POSIX). Handle the in-quote
+        // branch before the backslash branch so `\` inside `'…'` is literal.
         if (in_quote) |q| {
+            if (q == '\'') {
+                // Single-quoted: no escapes, only the matching quote closes.
+                if (ch == '\'') {
+                    in_quote = null;
+                } else {
+                    try buf.append(ch);
+                    has_token = true;
+                }
+                continue;
+            }
+            // Double-quoted: backslash escapes the next character.
+            if (ch == '\\') {
+                escape = true;
+                continue;
+            }
             if (ch == q) {
                 in_quote = null;
             } else {
@@ -2244,8 +2263,15 @@ pub fn appendNodeOptionsEnv(env: []const u8, args: *std.array_list.Managed([:0]c
             continue;
         }
 
+        if (ch == '\\') {
+            escape = true;
+            continue;
+        }
+
         if (ch == '\'' or ch == '"') {
             in_quote = ch;
+            // Mark that we've seen a token even if the quoted body is empty,
+            // so `--flag ""` preserves the empty string as a distinct token.
             has_token = true;
             continue;
         }
@@ -2281,21 +2307,33 @@ pub fn appendNodeOptionsEnv(env: []const u8, args: *std.array_list.Managed([:0]c
 
         const kind = node_options_allowlist.get(flag_name) orelse continue;
 
+        if (kind == .required_value and eq_idx == null) {
+            // Required-value flag without inline =value: look for a following
+            // value token. If there isn't one (or the next token is itself a
+            // flag), DROP this flag entirely — never emit a bare required-value
+            // flag, or clap would bind the user's entrypoint as the value.
+            if (j + 1 >= tokens.items.len) continue;
+            const next_tok = tokens.items[j + 1];
+            // An empty quoted value (`--flag ""`) is legitimate; reject only
+            // tokens that start with `-`, which would be another flag.
+            if (next_tok.len > 0 and next_tok[0] == '-') continue;
+
+            const token_z = try bun.default_allocator.dupeZ(u8, token);
+            try args.insert(offset, token_z);
+            offset += 1;
+
+            const next_z = try bun.default_allocator.dupeZ(u8, next_tok);
+            try args.insert(offset, next_z);
+            offset += 1;
+            j += 1;
+            continue;
+        }
+
+        // bool_flag, or required_value with inline `--flag=value`: safe to
+        // emit the token as-is.
         const token_z = try bun.default_allocator.dupeZ(u8, token);
         try args.insert(offset, token_z);
         offset += 1;
-
-        // If this is a value-taking option and the value wasn't inline
-        // (`--flag value` form), consume the next token as its value.
-        if (kind == .option and eq_idx == null and j + 1 < tokens.items.len) {
-            const next_tok = tokens.items[j + 1];
-            if (next_tok.len > 0 and next_tok[0] != '-') {
-                const next_z = try bun.default_allocator.dupeZ(u8, next_tok);
-                try args.insert(offset, next_z);
-                offset += 1;
-                j += 1;
-            }
-        }
     }
 }
 
@@ -2369,11 +2407,15 @@ pub fn initArgv() !void {
 
     // NODE_OPTIONS: Node.js-compatible env var for injecting CLI flags.
     // Filtered through an allowlist — unknown flags are dropped.
+    // Counted toward `bun_options_argc` so standalone binaries compute the
+    // correct passthrough offset (see offset_for_passthrough in cli.zig).
     if (bun.env_var.NODE_OPTIONS.get()) |opts| {
         if (opts.len > 0) {
+            const before = argv.len;
             var argv_list = std.array_list.Managed([:0]const u8).fromOwnedSlice(bun.default_allocator, argv);
             try appendNodeOptionsEnv(opts, &argv_list);
             argv = argv_list.items;
+            bun_options_argc += argv.len - before;
         }
     }
 }

@@ -1,6 +1,4 @@
-// Regression test for https://github.com/oven-sh/bun/issues/28817
-// Bun should honor NODE_OPTIONS=--dns-result-order and other Node-compatible
-// flags set via the NODE_OPTIONS environment variable.
+// https://github.com/oven-sh/bun/issues/28817
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 
@@ -81,6 +79,30 @@ describe("NODE_OPTIONS", () => {
     // process.title is unreliable on Windows (varies by OS version); skip there.
     const r = await runWith("--title=my-bun-app", "console.log(process.title);");
     expect(r.stdout).toBe("my-bun-app");
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("bare required-value flag does not hijack the entrypoint", async () => {
+    // Regression guard for a `--require` / `--dns-result-order` etc. with no
+    // value following in NODE_OPTIONS. A bare required-value flag must be
+    // DROPPED; otherwise clap would bind the user's -e script (or entrypoint)
+    // as the flag's value and the script would never run.
+    const r = await runWith("--dns-result-order", 'console.log("ran");');
+    expect(r.stdout).toBe("ran");
+    expect(r.exitCode).toBe(0);
+
+    // Same with --require — must not consume the -e script as the path.
+    const r2 = await runWith("--require", 'console.log("still ran");');
+    expect(r2.stdout).toBe("still ran");
+    expect(r2.exitCode).toBe(0);
+  });
+
+  test("bare required-value flag followed by another flag is dropped", async () => {
+    // `--dns-result-order` has no value, then `--expose-gc` follows — which
+    // starts with `-`, so the first flag must not consume it. Result: the
+    // first flag is dropped; --expose-gc still takes effect.
+    const r = await runWith("--dns-result-order --expose-gc", "console.log(typeof gc);");
+    expect(r.stdout).toBe("function");
     expect(r.exitCode).toBe(0);
   });
 });

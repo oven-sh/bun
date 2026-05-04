@@ -617,21 +617,30 @@ pub fn hasAnyHandleWork(this: *EventLoop) bool {
 /// variant. On POSIX, uws timers don't bump the uws `active` counter, so
 /// the forever_timer is invisible to `isActive()` and this is equivalent
 /// to `hasAnyHandleWork`.
+///
+/// Windows parity with `uv_loop_alive()`: also consider
+/// `active_reqs.count`, `pending_reqs_tail`, and `endgame_handles`. A
+/// native addon submitting a raw uv request via `napi_get_uv_event_loop`
+/// bumps `active_reqs.count` without touching `active_handles` or any
+/// Bun-side liveness signal, and we must not drop such work on the floor
+/// (the false-negative direction is unrecoverable: we'd tear down the
+/// module registry while the addon's uv_after_work_cb was still pending).
 pub fn hasAnyHandleWorkIgnoringForeverTimer(this: *EventLoop) bool {
     if (comptime Environment.isWindows) {
         const vm = this.virtual_machine;
-        // `event_loop_handle` on Windows is the libuv `uv.Loop`. Subtract
-        // the forever_timer's contribution — it's always 1 ref'd handle
-        // when present. Note this is a heuristic only: another handle
-        // closing as we sample would underreport, but the common case
-        // (no closes in flight at reload time) is accurate and the fall-
-        // back on a false positive is simply "defer the reload once more",
-        // which is recoverable.
+        // Subtract the forever_timer's contribution from
+        // `active_handles` — it's always 1 ref'd handle when present.
+        // Note this is a heuristic: another handle closing as we sample
+        // would underreport, but the fall-back on a false positive is
+        // simply "defer the reload once more", which is recoverable.
         const uv_loop = vm.event_loop_handle.?;
         const active = uv_loop.active_handles;
         const forever_timer_contribution: u32 = if (this.forever_timer != null) 1 else 0;
         const effective_active = if (active > forever_timer_contribution) active - forever_timer_contribution else 0;
         return effective_active > 0 or
+            uv_loop.active_reqs.count > 0 or
+            uv_loop.pending_reqs_tail != null or
+            uv_loop.endgame_handles != null or
             vm.active_tasks > 0 or
             this.tasks.count > 0 or
             this.hasPendingRefs() or

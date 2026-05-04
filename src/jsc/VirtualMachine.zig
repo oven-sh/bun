@@ -720,7 +720,24 @@ pub fn reportExceptionInHotReloadedModuleIfNeeded(this: *jsc.VirtualMachine) voi
     var promise = this.pending_internal_promise orelse return;
 
     switch (promise.status()) {
-        .pending => return,
+        .pending => {
+            // A prior `reload()` deferred because a ref'd await was in
+            // flight, and the await has now resolved into another
+            // pending state that the loop can no longer make progress
+            // on (e.g. `await Bun.sleep(N).then(() => new Promise(() =>
+            // {}))`). In that case `loadEntryPoint`'s watcher loop has
+            // already bailed out with the promise still `.pending` and
+            // no work to settle it — `hot_reload_deferred` would remain
+            // stranded and the deferred save silently dropped. Consume
+            // the flag here and let `reload()` re-evaluate (it'll
+            // observe the abandoned state and proceed). Guarded on the
+            // same "nothing ref'd but forever_timer" check `reload()`
+            // itself uses so we don't interrupt live ref'd work.
+            if (this.hot_reload_deferred and !this.eventLoop().hasAnyHandleWorkIgnoringForeverTimer()) {
+                this.reload(null);
+            }
+            return;
+        },
         .rejected => if (this.pending_internal_promise_reported_at != this.hot_reload_counter) {
             this.pending_internal_promise_reported_at = this.hot_reload_counter;
             this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.toJS());

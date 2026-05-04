@@ -904,7 +904,7 @@ fn startFilesTask(globalThis: *jsc.JSGlobalObject, store: *jsc.WebCore.Blob.Stor
 // Helpers
 // ============================================================================
 
-fn compressGzip(data: []const u8, level: u8) ![]u8 {
+pub fn compressGzip(data: []const u8, level: u8) ![]u8 {
     libdeflate.load();
 
     const compressor = libdeflate.Compressor.alloc(@intCast(level)) orelse return error.GzipInitFailed;

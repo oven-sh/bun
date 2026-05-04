@@ -574,8 +574,12 @@ it("FileSystemRouter finalize does not leak", async () => {
   // FileSystemRouter.finalize previously called arena.deinit() but never freed the
   // heap-allocated ArenaAllocator struct or the FileSystemRouter struct itself,
   // leaking both on every GC'd instance.
+  //
+  // Use an empty pages dir so Route.parse is never called — that path appends to
+  // the global DirnameStore (separate, pre-existing behavior) which would add
+  // noise to the RSS measurement.
   using dir = tempDir("fsr-finalize-leak", {
-    "pages/index.tsx": "export default 1;",
+    "pages/.keep": "",
   });
 
   const code = /* ts */ `
@@ -583,19 +587,19 @@ it("FileSystemRouter finalize does not leak", async () => {
 
     function churn(n) {
       for (let i = 0; i < n; i++) {
-        new Bun.FileSystemRouter({ dir: pages, style: "nextjs", fileExtensions: [".tsx"] });
+        new Bun.FileSystemRouter({ dir: pages, style: "nextjs" });
       }
       Bun.gc(true);
     }
 
     // warm up (directory cache, JIT, allocator pools)
-    churn(2000);
+    churn(5000);
     const before = process.memoryUsage.rss();
 
-    churn(50000);
+    churn(80000);
     const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
     console.error("RSS growth: " + growthMB.toFixed(2) + "MB");
-    if (growthMB > 20) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
+    if (growthMB > 16) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
   `;
 
   await using proc = Bun.spawn({

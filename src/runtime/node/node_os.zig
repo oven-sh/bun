@@ -368,6 +368,20 @@ pub fn getPriority(global: *jsc.JSGlobalObject, pid: i32) bun.JSError!i32 {
 
 pub fn homedir(global: *jsc.JSGlobalObject) !bun.String {
     // In Node.js, this is a wrapper around uv_os_homedir.
+    //
+    // The public `os.homedir()` entry point honors live mutations of `HOME`
+    // (POSIX) / `USERPROFILE` (Windows). That check lives in
+    // `src/js/node/os.ts` so it reads `process.env` on every call instead of
+    // using Bun's cached env-var accessor, which snapshots at first read.
+    //
+    // On POSIX, this function is the passwd fallback when `HOME` is unset and
+    // is also called directly by `userInfo()` — which must ignore `HOME` and
+    // return the passwd entry, matching Node's `uv_os_get_passwd`. On Windows
+    // this function delegates to `uv_os_homedir`, which reads `USERPROFILE`
+    // first and only falls back to `GetUserProfileDirectoryW`; so
+    // `userInfo().homedir` here tracks `USERPROFILE` mutations, whereas Node's
+    // `userInfo()` (via `uv_os_get_passwd`) ignores `USERPROFILE` entirely.
+    // That Windows divergence is a known follow-up.
     if (Environment.isWindows) {
         var out: bun.PathBuffer = undefined;
         var size: usize = out.len;
@@ -376,14 +390,6 @@ pub fn homedir(global: *jsc.JSGlobalObject) !bun.String {
         }
         return bun.String.cloneUTF8(out[0..size]);
     } else {
-
-        // The posix implementation of uv_os_homedir first checks the HOME
-        // environment variable, then falls back to reading the passwd entry.
-        if (bun.env_var.HOME.get()) |home| {
-            if (home.len > 0)
-                return bun.String.init(home);
-        }
-
         // From libuv:
         // > Calling sysconf(_SC_GETPW_R_SIZE_MAX) would get the suggested size, but it
         // > is frequently 1024 or 4096, so we can just use that directly. The pwent
@@ -399,8 +405,12 @@ pub fn homedir(global: *jsc.JSGlobalObject) !bun.String {
         var result: ?*bun.c.passwd = null;
 
         const ret = while (true) {
+            // libuv's uv__getpwuid_r uses the real UID (getuid), and userInfo()
+            // below reports uid = getuid(). Using geteuid here would desync the
+            // two in a setuid process — reporting uid=1000 with homedir="/root"
+            // when run as setuid-root by an unprivileged caller.
             const ret = bun.c.getpwuid_r(
-                bun.c.geteuid(),
+                bun.c.getuid(),
                 &pw,
                 string_bytes.ptr,
                 string_bytes.len,
@@ -410,11 +420,18 @@ pub fn homedir(global: *jsc.JSGlobalObject) !bun.String {
             if (ret == @intFromEnum(bun.sys.E.INTR))
                 continue;
 
-            // If the system call wants more memory, double it.
+            // If the system call wants more memory, double it. On the first
+            // ERANGE, `string_bytes` still points to the on-stack 4096-byte
+            // buffer, so the free must be guarded by the same pointer check
+            // used in the `defer` above. Between the free and the new alloc
+            // we reset `string_bytes` to the stack buffer so that if the
+            // alloc fails, `defer`'s pointer check prevents a double-free /
+            // free-of-dangling-pointer.
             if (ret == @intFromEnum(bun.sys.E.RANGE)) {
                 const len = string_bytes.len;
-                bun.default_allocator.free(string_bytes);
-                string_bytes = "";
+                if (string_bytes.ptr != &stack_string_bytes)
+                    bun.default_allocator.free(string_bytes);
+                string_bytes = &stack_string_bytes;
                 string_bytes = try bun.default_allocator.alloc(u8, len * 2);
                 continue;
             }

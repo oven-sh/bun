@@ -182,6 +182,15 @@ test("new Request(base, otherRequest) reads otherRequest.referrer as init.referr
   expect(new Request(base, otherReq).referrer).toBe("https://bar.example/");
 });
 
+test("new Request(req, req) — aliased args keep referrer", () => {
+  // Regression: the "is this the base iter?" check must use the loop
+  // index, not JSValue identity. When the same Request is passed as
+  // both args, identity can't distinguish iter 0 (init) from iter 1
+  // (base); Node returns req.referrer (step 14 reads init's getter).
+  const r = new Request("https://a.example/", { referrer: "https://foo.example/" });
+  expect(new Request(r, r).referrer).toBe("https://foo.example/");
+});
+
 // Spec step 12 keys on presence of any WebIDL-recognized RequestInit member,
 // not on whether Bun actually parses it. Members like `signal: null`,
 // `credentials`, `referrerPolicy`, `duplex`, `window` also trigger the

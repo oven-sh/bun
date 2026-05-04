@@ -720,7 +720,7 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
         }
         break :blk false;
     };
-    for (values_to_try) |value| {
+    for (values_to_try, 0..) |value, iter_idx| {
         const value_type = value.jsType();
         const explicit_check = values_to_try.len == 2 and value_type == .FinalObject and values_to_try[1].jsType() == .DOMWrapper;
         if (value_type == .DOMWrapper) {
@@ -777,8 +777,11 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
                 // Request getter (which would return the wrapped
                 // Request's own URL).
                 if (!fields.contains(.referrer)) {
-                    const is_base_iter = values_to_try.len == 2 and
-                        @intFromEnum(value) == @intFromEnum(values_to_try[values_to_try.len - 1]);
+                    // Use loop index, not JSValue identity: aliasing
+                    // (`new Request(req, req)`) puts the same value in
+                    // both slots, and identity would misclassify iter 0
+                    // as the base iter.
+                    const is_base_iter = values_to_try.len == 2 and iter_idx == values_to_try.len - 1;
                     const skip_copy = is_base_iter and init_has_key;
                     if (!skip_copy and !request.referrer.isEmpty()) {
                         req.referrer = request.referrer.dupeRef();

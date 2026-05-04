@@ -708,7 +708,10 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         removeFromCJS = true;
         cjsModuleObject = dynamicDowncast<Bun::JSCommonJSModule>(entryValue);
         if (cjsModuleObject && !originalSnapshot) {
+            // exportsObject() is a potentially-throwing JSObject::get — check
+            // before declaring a nested ThrowScope inside buildOriginalSnapshot.
             JSValue cjsExports = cjsModuleObject->exportsObject();
+            RETURN_IF_EXCEPTION(scope, {});
             originalSnapshot = buildOriginalSnapshot(cjsExports);
             RETURN_IF_EXCEPTION(scope, {});
         }

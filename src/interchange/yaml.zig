@@ -282,24 +282,39 @@ pub fn Parser(comptime enc: Encoding) type {
 
         // anchors: Anchors,
         anchors: bun.StringHashMap(Expr),
-        // aliases: PendingAliases,
+        pending_aliases: std.array_list.Managed(PendingAlias),
+        unresolved_alias: ?UnresolvedAlias,
 
         tag_handles: bun.StringHashMap(void),
-
-        // const PendingAliases = struct {
-        //     list: std.array_list.Managed(State),
-
-        //     const State = struct {
-        //         name: String.Range,
-        //         index: usize,
-        //         prop: enum { key, value },
-        //         collection_node: *Node,
-        //     };
-        // };
 
         whitespace_buf: std.array_list.Managed(Whitespace),
 
         stack_check: bun.StackCheck,
+
+        /// When `parseNode` encounters an alias that has not yet been anchored
+        /// (a cyclic reference into a parent collection), it cannot return a real
+        /// `Expr`. Instead, it sets `unresolved_alias` and returns `undefined`. The
+        /// immediate caller (a collection parser) appends the `undefined` to its
+        /// items/properties and pushes a `PendingAlias` recording the index. Once
+        /// the collection's backing buffer is at its final size (no more reallocs),
+        /// the index is converted to a stable `*Expr` slot. When the anchor is
+        /// later registered via `putAnchor`, all pending slots for that name are
+        /// filled in.
+        const PendingAlias = struct {
+            name: []const u8,
+            start: Pos,
+            /// `null` only between push and the owning collection's finalize step.
+            /// The `index` field is used to compute it. Once non-null, points at
+            /// stable memory inside an `E.Array.items` or `E.Object.properties`
+            /// buffer (the buffer is moved, not copied, by `moveFromList`).
+            slot: ?*Expr,
+            index: u32,
+        };
+
+        const UnresolvedAlias = struct {
+            name: []const u8,
+            start: Pos,
+        };
 
         const Whitespace = union(enum) {
             source: struct {
@@ -324,7 +339,8 @@ pub fn Parser(comptime enc: Encoding) type {
                 .explicit_document_start_line = null,
                 // .anchors = .{ .map = .init(allocator) },
                 .anchors = .init(allocator),
-                // .aliases = .{ .list = .init(allocator) },
+                .pending_aliases = .init(allocator),
+                .unresolved_alias = null,
                 .tag_handles = .init(allocator),
                 .whitespace_buf = .init(allocator),
                 .stack_check = .init(),
@@ -335,9 +351,32 @@ pub fn Parser(comptime enc: Encoding) type {
             self.context.list.deinit();
             self.block_indents.list.deinit();
             self.anchors.deinit();
+            self.pending_aliases.deinit();
             self.tag_handles.deinit();
             self.whitespace_buf.deinit();
             // std.debug.assert(self.future == null);
+        }
+
+        fn takeUnresolvedAlias(self: *@This()) ?UnresolvedAlias {
+            defer self.unresolved_alias = null;
+            return self.unresolved_alias;
+        }
+
+        fn putAnchor(self: *@This(), name: []const u8, value: Expr) OOM!void {
+            try self.anchors.put(name, value);
+
+            var i: usize = 0;
+            while (i < self.pending_aliases.items.len) {
+                const pending = self.pending_aliases.items[i];
+                if (bun.strings.eql(pending.name, name)) {
+                    var copy = value;
+                    copy.loc = pending.start.loc();
+                    pending.slot.?.* = copy;
+                    _ = self.pending_aliases.swapRemove(i);
+                } else {
+                    i += 1;
+                }
+            }
         }
 
         pub const ParseResult = union(enum) {
@@ -683,6 +722,8 @@ pub fn Parser(comptime enc: Encoding) type {
             var directives: std.array_list.Managed(Directive) = .init(self.allocator);
 
             self.anchors.clearRetainingCapacity();
+            self.pending_aliases.clearRetainingCapacity();
+            self.unresolved_alias = null;
             self.tag_handles.clearRetainingCapacity();
 
             var has_yaml_directive = false;
@@ -710,6 +751,16 @@ pub fn Parser(comptime enc: Encoding) type {
             }
 
             const root = try self.parseNode(.{});
+
+            if (self.takeUnresolvedAlias()) |unresolved| {
+                self.token.start = unresolved.start;
+                return error.UnresolvedAlias;
+            }
+
+            if (self.pending_aliases.items.len > 0) {
+                self.token.start = self.pending_aliases.items[0].start;
+                return error.UnresolvedAlias;
+            }
 
             // If document_start it needs to create a new document.
             // If document_end, consume as many as possible. They should
@@ -747,6 +798,8 @@ pub fn Parser(comptime enc: Encoding) type {
 
             var seq: std.array_list.Managed(Expr) = .init(self.allocator);
 
+            const pending_start = self.pending_aliases.items.len;
+
             {
                 try self.context.set(.flow_in);
                 defer self.context.unset(.flow_in);
@@ -755,6 +808,14 @@ pub fn Parser(comptime enc: Encoding) type {
                 while (self.token.data != .sequence_end) {
                     const item = try self.parseNode(.{});
                     try seq.append(item);
+                    if (self.takeUnresolvedAlias()) |unresolved| {
+                        try self.pending_aliases.append(.{
+                            .name = unresolved.name,
+                            .start = unresolved.start,
+                            .slot = null,
+                            .index = @intCast(seq.items.len - 1),
+                        });
+                    }
 
                     if (self.token.data == .sequence_end) {
                         break;
@@ -765,6 +826,12 @@ pub fn Parser(comptime enc: Encoding) type {
                     }
 
                     try self.scan(.{});
+                }
+            }
+
+            for (self.pending_aliases.items[pending_start..]) |*pending| {
+                if (pending.slot == null) {
+                    pending.slot = &seq.items[pending.index];
                 }
             }
 
@@ -782,6 +849,8 @@ pub fn Parser(comptime enc: Encoding) type {
 
             var props: MappingProps = .init(self.allocator);
 
+            const pending_start = self.pending_aliases.items.len;
+
             {
                 try self.context.set(.flow_in);
                 defer self.context.unset(.flow_in);
@@ -798,6 +867,11 @@ pub fn Parser(comptime enc: Encoding) type {
                         defer self.context.unset(.flow_key);
                         break :key try self.parseNode(.{});
                     };
+
+                    if (self.takeUnresolvedAlias()) |unresolved| {
+                        self.token.start = unresolved.start;
+                        return error.UnresolvedAlias;
+                    }
 
                     switch (self.token.data) {
                         .collect_entry => {
@@ -838,7 +912,11 @@ pub fn Parser(comptime enc: Encoding) type {
                         });
                     } else {
                         const value = try self.parseNode(.{});
-                        try props.appendMaybeMerge(key, value);
+                        if (self.takeUnresolvedAlias()) |unresolved| {
+                            try self.appendPendingAliasValue(&props, key, unresolved);
+                        } else {
+                            try props.appendMaybeMerge(key, value);
+                        }
                     }
 
                     if (self.token.data == .collect_entry) {
@@ -849,9 +927,33 @@ pub fn Parser(comptime enc: Encoding) type {
                 }
             }
 
+            for (self.pending_aliases.items[pending_start..]) |*pending| {
+                if (pending.slot == null) {
+                    pending.slot = props.valueSlotAt(pending.index);
+                }
+            }
+
             try self.scan(.{});
 
             return .init(E.Object, .{ .properties = props.moveList() }, mapping_start.loc());
+        }
+
+        fn appendPendingAliasValue(self: *@This(), props: *MappingProps, key: Expr, unresolved: UnresolvedAlias) ParseError!void {
+            if (switch (key.data) {
+                .e_string => |key_str| key_str.eqlComptime("<<"),
+                else => false,
+            }) {
+                self.token.start = unresolved.start;
+                return error.UnresolvedAlias;
+            }
+
+            try props.append(.{ .key = key, .value = @as(Expr, undefined) });
+            try self.pending_aliases.append(.{
+                .name = unresolved.name,
+                .start = unresolved.start,
+                .slot = null,
+                .index = @intCast(props.len() - 1),
+            });
         }
 
         fn parseBlockSequence(self: *@This()) ParseError!Expr {
@@ -863,6 +965,8 @@ pub fn Parser(comptime enc: Encoding) type {
             defer self.block_indents.pop();
 
             var seq: std.array_list.Managed(Expr) = .init(self.allocator);
+
+            const pending_start = self.pending_aliases.items.len;
 
             var prev_line: Line = .from(0);
 
@@ -959,6 +1063,20 @@ pub fn Parser(comptime enc: Encoding) type {
                     };
 
                     try seq.append(item);
+                    if (self.takeUnresolvedAlias()) |unresolved| {
+                        try self.pending_aliases.append(.{
+                            .name = unresolved.name,
+                            .start = unresolved.start,
+                            .slot = null,
+                            .index = @intCast(seq.items.len - 1),
+                        });
+                    }
+                }
+            }
+
+            for (self.pending_aliases.items[pending_start..]) |*pending| {
+                if (pending.slot == null) {
+                    pending.slot = &seq.items[pending.index];
                 }
             }
 
@@ -1040,6 +1158,14 @@ pub fn Parser(comptime enc: Encoding) type {
             pub fn moveList(self: *MappingProps) G.Property.List {
                 return .moveFromList(&self.#list);
             }
+
+            pub fn len(self: *const MappingProps) usize {
+                return self.#list.items().len;
+            }
+
+            pub fn valueSlotAt(self: *MappingProps, index: usize) *Expr {
+                return &self.#list.items()[index].value.?;
+            }
         };
 
         fn parseBlockMapping(
@@ -1060,6 +1186,8 @@ pub fn Parser(comptime enc: Encoding) type {
             defer self.block_indents.pop();
 
             var props: MappingProps = .init(self.allocator);
+
+            const pending_start = self.pending_aliases.items.len;
 
             {
                 // try self.context.set(.block_in);
@@ -1104,10 +1232,19 @@ pub fn Parser(comptime enc: Encoding) type {
                     },
                 };
 
-                try props.appendMaybeMerge(first_key, value);
+                if (self.takeUnresolvedAlias()) |unresolved| {
+                    try self.appendPendingAliasValue(&props, first_key, unresolved);
+                } else {
+                    try props.appendMaybeMerge(first_key, value);
+                }
             }
 
             if (self.context.get() == .flow_in) {
+                for (self.pending_aliases.items[pending_start..]) |*pending| {
+                    if (pending.slot == null) {
+                        pending.slot = props.valueSlotAt(pending.index);
+                    }
+                }
                 return .init(E.Object, .{ .properties = props.moveList() }, mapping_start.loc());
             }
 
@@ -1128,6 +1265,11 @@ pub fn Parser(comptime enc: Encoding) type {
                 const explicit_key = self.token.data == .mapping_key;
 
                 const key = try self.parseNode(.{ .current_mapping_indent = mapping_indent });
+
+                if (self.takeUnresolvedAlias()) |unresolved| {
+                    self.token.start = unresolved.start;
+                    return error.UnresolvedAlias;
+                }
 
                 switch (self.token.data) {
                     .eof,
@@ -1190,7 +1332,17 @@ pub fn Parser(comptime enc: Encoding) type {
                     },
                 };
 
-                try props.appendMaybeMerge(key, value);
+                if (self.takeUnresolvedAlias()) |unresolved| {
+                    try self.appendPendingAliasValue(&props, key, unresolved);
+                } else {
+                    try props.appendMaybeMerge(key, value);
+                }
+            }
+
+            for (self.pending_aliases.items[pending_start..]) |*pending| {
+                if (pending.slot == null) {
+                    pending.slot = props.valueSlotAt(pending.index);
+                }
             }
 
             return .init(E.Object, .{ .properties = props.moveList() }, mapping_start.loc());
@@ -1366,14 +1518,31 @@ pub fn Parser(comptime enc: Encoding) type {
                     }
 
                     var copy = self.anchors.get(alias.slice(self.input)) orelse {
-                        // we failed to find the alias, but it might be cyclic and
-                        // and available later. to resolve this we need to check
-                        // nodes for parent collection types. this alias is added
-                        // to a list with a pointer to *Mapping or *Sequence, an
-                        // index (and whether is key/value), and the alias name.
-                        // then, when we actually have Node for the parent we
-                        // fill in the data pointer at the index with the node.
-                        return error.UnresolvedAlias;
+                        // We failed to find the alias, but it might be cyclic and
+                        // available later. The parent collection parser will leave
+                        // the slot for this value uninitialized and record a
+                        // `PendingAlias`. When the anchor is later registered via
+                        // `putAnchor` the slot is filled in. If no parent collection
+                        // consumes `unresolved_alias` (or no anchor ever registers
+                        // for this name), `parseDocument` reports `UnresolvedAlias`.
+                        try self.scan(.{});
+
+                        if (self.token.data == .mapping_value) {
+                            self.token.start = alias_start;
+                            return error.UnresolvedAlias;
+                        }
+
+                        if (node_props.has_anchor != null or node_props.has_tag != null) {
+                            self.token.start = alias_start;
+                            return error.UnresolvedAlias;
+                        }
+
+                        self.unresolved_alias = .{
+                            .name = alias.slice(self.input),
+                            .start = alias_start,
+                        };
+
+                        return undefined;
                     };
 
                     // update position from the anchor node to the alias node.
@@ -1433,7 +1602,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         const implicit_key_anchors = node_props.implicitKeyAnchors(sequence_line);
 
                         if (implicit_key_anchors.key_anchor) |key_anchor| {
-                            try self.anchors.put(key_anchor.slice(self.input), seq);
+                            try self.putAnchor(key_anchor.slice(self.input), seq);
                         }
 
                         const map = try self.parseBlockMapping(
@@ -1444,7 +1613,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         );
 
                         if (implicit_key_anchors.mapping_anchor) |mapping_anchor| {
-                            try self.anchors.put(mapping_anchor.slice(self.input), map);
+                            try self.putAnchor(mapping_anchor.slice(self.input), map);
                         }
 
                         return map;
@@ -1500,7 +1669,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         const implicit_key_anchors = node_props.implicitKeyAnchors(mapping_line);
 
                         if (implicit_key_anchors.key_anchor) |key_anchor| {
-                            try self.anchors.put(key_anchor.slice(self.input), map);
+                            try self.putAnchor(key_anchor.slice(self.input), map);
                         }
 
                         const parent_map = try self.parseBlockMapping(
@@ -1511,7 +1680,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         );
 
                         if (implicit_key_anchors.mapping_anchor) |mapping_anchor| {
-                            try self.anchors.put(mapping_anchor.slice(self.input), parent_map);
+                            try self.putAnchor(mapping_anchor.slice(self.input), parent_map);
                         }
 
                         break :node parent_map;
@@ -1538,6 +1707,11 @@ pub fn Parser(comptime enc: Encoding) type {
                         .explicit_mapping_key = true,
                         .current_mapping_indent = opts.current_mapping_indent orelse mapping_indent,
                     });
+
+                    if (self.takeUnresolvedAlias()) |unresolved| {
+                        self.token.start = unresolved.start;
+                        return error.UnresolvedAlias;
+                    }
 
                     self.block_indents.pop();
 
@@ -1636,7 +1810,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         const implicit_key_anchors = node_props.implicitKeyAnchors(scalar_line);
 
                         if (implicit_key_anchors.key_anchor) |key_anchor| {
-                            try self.anchors.put(key_anchor.slice(self.input), implicit_key);
+                            try self.putAnchor(key_anchor.slice(self.input), implicit_key);
                         }
 
                         const mapping = try self.parseBlockMapping(
@@ -1647,7 +1821,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         );
 
                         if (implicit_key_anchors.mapping_anchor) |mapping_anchor| {
-                            try self.anchors.put(mapping_anchor.slice(self.input), mapping);
+                            try self.putAnchor(mapping_anchor.slice(self.input), mapping);
                         }
 
                         return mapping;
@@ -1679,7 +1853,7 @@ pub fn Parser(comptime enc: Encoding) type {
             };
 
             if (node_props.anchor()) |anchor| {
-                try self.anchors.put(anchor.slice(self.input), resolved);
+                try self.putAnchor(anchor.slice(self.input), resolved);
             }
 
             return resolved;

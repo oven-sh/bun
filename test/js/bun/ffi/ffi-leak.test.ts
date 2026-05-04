@@ -11,8 +11,10 @@ const isFFIUnavailable = isWindows && isArm64;
 // We GC periodically so that, when finalize() does its job, the freed
 // native memory is reused by the next batch and RSS stays flat. When
 // finalize() is a no-op the TCC state simply piles up and RSS climbs.
-test.skipIf(isFFIUnavailable)("linkSymbols() does not leak FFI struct and TCC state on GC", async () => {
-  const code = /* js */ `
+test.skipIf(isFFIUnavailable)(
+  "linkSymbols() does not leak FFI struct and TCC state on GC",
+  async () => {
+    const code = /* js */ `
     const { linkSymbols, JSCallback } = require("bun:ffi");
 
     const cb = new JSCallback(() => 42, { returns: "int32_t", args: [] });
@@ -40,22 +42,24 @@ test.skipIf(isFFIUnavailable)("linkSymbols() does not leak FFI struct and TCC st
     cb.close();
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--smol", "-e", code],
-    env: bunEnv,
-    stderr: "pipe",
-    stdout: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  const { growthMB } = JSON.parse(stdout.trim());
-  // Without the finalize fix this grows >30 MB (release) / >100 MB (debug+ASAN).
-  // With the fix it stays under ~10 MB.
-  expect(growthMB).toBeLessThan(25);
-  expect(exitCode).toBe(0);
-}, 30_000);
+    expect(stderr).toBe("");
+    const { growthMB } = JSON.parse(stdout.trim());
+    // Without the finalize fix this grows >30 MB (release) / >100 MB (debug+ASAN).
+    // With the fix it stays under ~10 MB.
+    expect(growthMB).toBeLessThan(25);
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
 
 // Extracting a symbol and dropping the FFI wrapper must not free the TCC
 // trampoline while the symbol is still callable. The JSFFIFunction keeps a

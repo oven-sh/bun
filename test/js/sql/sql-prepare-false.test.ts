@@ -132,4 +132,34 @@ describe("PostgreSQL prepare: false", async () => {
       expect(actual).toBe(expected);
     }
   });
+
+  // Regression test for https://github.com/oven-sh/bun/issues/30221 —
+  // with `prepare: false`, object parameters bound to a jsonb/json cast
+  // used to be stringified via Object.prototype.toString() ("[object Object]")
+  // instead of JSON.stringify. Matches the `prepare: true` behavior.
+  test("object parameter serializes as JSON for ::jsonb cast", async () => {
+    await using db = new SQL(options);
+    const [row] = await db`SELECT ${{ hello: "world" }}::jsonb AS value`;
+    expect(row).toEqual({ value: { hello: "world" } });
+  });
+
+  test("object parameter serializes as JSON for ::json cast", async () => {
+    await using db = new SQL(options);
+    const [row] = await db`SELECT ${{ a: 1, b: "two" }}::json AS value`;
+    expect(row).toEqual({ value: { a: 1, b: "two" } });
+  });
+
+  test("nested object parameter serializes as JSON for ::jsonb cast", async () => {
+    await using db = new SQL(options);
+    const payload = { user: { id: 7, tags: ["admin", "beta"] }, active: true };
+    const [row] = await db`SELECT ${payload}::jsonb AS value`;
+    expect(row).toEqual({ value: payload });
+  });
+
+  test("array parameter serializes as JSON for ::jsonb cast", async () => {
+    await using db = new SQL(options);
+    const arr = [1, 2, { three: 3 }];
+    const [row] = await db`SELECT ${arr}::jsonb AS value`;
+    expect(row).toEqual({ value: arr });
+  });
 });

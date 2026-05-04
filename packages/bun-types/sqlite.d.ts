@@ -336,6 +336,43 @@ declare module "bun:sqlite" {
     static setCustomSQLite(path: string): boolean;
 
     /**
+     * Maximum number of prepared statements the {@link Database.query}
+     * cache will retain. Older entries are evicted FIFO once the cap is
+     * hit. Set to `0` to disable `db.query()` caching entirely.
+     *
+     * Writable at runtime; changes apply to subsequent `db.query()` calls.
+     *
+     * @default 20
+     */
+    static MAX_QUERY_CACHE_SIZE: number;
+
+    /**
+     * Total cached SQL text size the {@link Database.query} cache is
+     * allowed to pin across all entries. Measured in UTF-16 code units
+     * (`String#length`), which equals UTF-8 byte count for ASCII SQL —
+     * the common case. Non-ASCII SQL (CJK identifiers, localized string
+     * literals) can use up to 3 UTF-8 bytes per code unit, so the
+     * actual pinned memory may be up to 3× this value for such workloads.
+     *
+     * Writable at runtime; changes apply to subsequent `db.query()` calls.
+     *
+     * @default 2 * 1024 * 1024
+     */
+    static MAX_QUERY_CACHE_BYTES: number;
+
+    /**
+     * A single query whose SQL text exceeds this (measured in UTF-16
+     * code units; see {@link Database.MAX_QUERY_CACHE_BYTES}) is never
+     * cached by `db.query()`. Reuse value is marginal and the per-entry
+     * cost of a pinned prepared-statement plan can be many MB.
+     *
+     * Writable at runtime; changes apply to subsequent `db.query()` calls.
+     *
+     * @default 64 * 1024
+     */
+    static MAX_QUERY_CACHE_ENTRY_BYTES: number;
+
+    /**
      * Closes the database when using the async resource proposal
      *
      * @example

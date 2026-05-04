@@ -695,9 +695,9 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
     // Probing is up-front rather than inferred from what the parsing loop
     // stores, because the spec's "is not empty" test keys on member
     // *presence* — including members we don't read (credentials,
-    // referrerPolicy, duplex, priority, window) and members filtered by
-    // our loop (signal: null is dropped by getTruthy, but it IS a present
-    // WebIDL member).
+    // referrerPolicy, duplex, window) and members filtered by our loop
+    // (signal: null is dropped by getTruthy, but it IS a present WebIDL
+    // member).
     const init_has_key: bool = blk: {
         if (values_to_try.len != 2) break :blk false;
         const init_obj = values_to_try[0];

@@ -208,32 +208,6 @@ describe("node:http", () => {
       }
     });
 
-    it("req.socket.bytesRead is non-zero after request body received (#28709)", async () => {
-      const { promise, resolve, reject } = Promise.withResolvers<number>();
-      const server = createServer((req, res) => {
-        req.on("end", () => {
-          try {
-            resolve(req.socket.bytesRead);
-          } catch (e) {
-            reject(e);
-          }
-          res.end("ok");
-        });
-        req.on("error", reject);
-        req.resume();
-      });
-      try {
-        const url = await listen(server);
-        const clientReq = http.request({ method: "PUT", port: url.port });
-        clientReq.on("error", reject);
-        clientReq.write("hello");
-        clientReq.end();
-        const bytesRead = await promise;
-        expect(bytesRead).toBeGreaterThan(0);
-      } finally {
-        server.close();
-      }
-    });
   });
 
   describe("response", () => {

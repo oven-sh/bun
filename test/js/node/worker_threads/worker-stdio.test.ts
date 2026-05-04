@@ -35,8 +35,8 @@ describe("worker stdio", () => {
       data += c;
     });
     const [code] = await once(w, "exit");
-    expect(code).toBe(0);
     expect(data).toBe("hello world");
+    expect(code).toBe(0);
   });
 
   test("process.stderr.write in worker flows to Worker#stderr", async () => {
@@ -51,8 +51,8 @@ describe("worker stdio", () => {
       data += c;
     });
     const [code] = await once(w, "exit");
-    expect(code).toBe(0);
     expect(data).toBe("err!");
+    expect(code).toBe(0);
   });
 
   test("Worker#stdin pipes to process.stdin in worker", async () => {
@@ -72,8 +72,8 @@ describe("worker stdio", () => {
     w.stdin!.write("hello from parent");
     w.stdin!.end();
     const [code] = await once(w, "exit");
-    expect(code).toBe(0);
     expect(data).toBe("ECHO:hello from parent");
+    expect(code).toBe(0);
   });
 
   test("process.stdin in worker ends immediately when stdin:false", async () => {
@@ -89,8 +89,8 @@ describe("worker stdio", () => {
       data += c;
     });
     const [code] = await once(w, "exit");
-    expect(code).toBe(0);
     expect(data).toBe("ended");
+    expect(code).toBe(0);
   });
 
   test("worker with stdio streams exits cleanly when idle", async () => {

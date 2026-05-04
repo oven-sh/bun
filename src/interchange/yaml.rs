@@ -915,6 +915,529 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// ScalarResolverCtx (scanPlainScalar inner struct)
+// ───────────────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum FirstChar {
+    Positive,
+    Negative,
+    Dot,
+    Other,
+}
+
+// PORT NOTE: Zig defined this inline inside scanPlainScalar. Hoisted to module
+// scope so methods can be `impl`'d. `parser` is `*mut` because the outer
+// `&mut self` in scan_plain_scalar drives scanning concurrently — see
+// LIFETIMES.tsv BACKREF.
+pub struct ScalarResolverCtx<'i, Enc: Encoding> {
+    pub str_builder: StringBuilder<'i, Enc>,
+
+    pub resolved: bool,
+    pub scalar: Option<NodeScalar<Enc>>,
+    pub tag: NodeTag,
+
+    pub parser: *mut Parser<'i, Enc>,
+
+    pub resolved_scalar_len: usize,
+
+    pub start: Pos,
+    pub line: Line,
+    pub line_indent: Indent,
+    pub multiline: bool,
+}
+
+impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
+    pub fn done(self) -> Token<Enc> {
+        let multiline = self.multiline;
+        let start = self.start;
+        let line_indent = self.line_indent;
+        let line = self.line;
+        let resolved_scalar_len = self.resolved_scalar_len;
+        let scalar_opt = self.scalar;
+
+        let scalar: TokenScalar<Enc> = 'scalar: {
+            let scalar_str = self.str_builder.done();
+
+            if let Some(scalar) = scalar_opt {
+                if scalar_str.len() == resolved_scalar_len {
+                    drop(scalar_str);
+                    break 'scalar TokenScalar { multiline, data: scalar };
+                }
+                // the first characters resolved to something
+                // but there were more characters afterwards
+            }
+
+            break 'scalar TokenScalar { multiline, data: NodeScalar::String(scalar_str) };
+        };
+
+        Token::scalar(ScalarInit { start, indent: line_indent, line, resolved: scalar })
+    }
+
+    pub fn check_append(&mut self) {
+        // SAFETY: ctx outlived by &mut self in scan_plain_scalar.
+        let parser = unsafe { &*self.parser };
+        if self.str_builder.len() == 0 {
+            self.line_indent = parser.line_indent;
+            self.line = parser.line;
+        } else if self.line != parser.line {
+            self.multiline = true;
+        }
+    }
+
+    pub fn append_source(&mut self, unit: Enc::Unit, pos: Pos) -> Result<(), AllocError> {
+        self.check_append();
+        self.str_builder.append_source(unit, pos)
+    }
+
+    pub fn append_source_whitespace(&mut self, unit: Enc::Unit, pos: Pos) -> Result<(), AllocError> {
+        self.str_builder.append_source_whitespace(unit, pos)
+    }
+
+    pub fn append_source_slice(&mut self, off: Pos, end: Pos) -> Result<(), AllocError> {
+        self.check_append();
+        self.str_builder.append_source_slice(off, end)
+    }
+
+    // may or may not contain whitespace
+    pub fn append_unknown_source_slice(&mut self, off: Pos, end: Pos) -> Result<(), AllocError> {
+        for _pos in off.cast()..end.cast() {
+            let pos = Pos::from(_pos);
+            // SAFETY: ctx outlived by &mut self in scan_plain_scalar.
+            let unit = unsafe { (*self.parser).input[pos.cast()] };
+            match Enc::wide(unit) {
+                0x20 | 0x09 | 0x0D | 0x0A => {
+                    self.str_builder.append_source_whitespace(unit, pos)?;
+                }
+                _ => {
+                    self.check_append();
+                    self.str_builder.append_source(unit, pos)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn append(&mut self, unit: Enc::Unit) -> Result<(), AllocError> {
+        self.check_append();
+        self.str_builder.append(unit)
+    }
+
+    pub fn append_whitespace(&mut self, unit: Enc::Unit) -> Result<(), AllocError> {
+        self.str_builder.append_whitespace(unit)
+    }
+
+    pub fn append_slice(&mut self, str: &[Enc::Unit]) -> Result<(), AllocError> {
+        self.check_append();
+        self.str_builder.append_slice(str)
+    }
+
+    pub fn append_n_times(&mut self, unit: Enc::Unit, n: usize) -> Result<(), AllocError> {
+        if n == 0 {
+            return Ok(());
+        }
+        self.check_append();
+        self.str_builder.append_n_times(unit, n)
+    }
+
+    pub fn append_whitespace_n_times(&mut self, unit: Enc::Unit, n: usize) -> Result<(), AllocError> {
+        if n == 0 {
+            return Ok(());
+        }
+        self.str_builder.append_whitespace_n_times(unit, n)
+    }
+
+    // PORT NOTE: Zig `Keywords` enum (yaml.zig:1862-1887) was unused; not ported.
+
+    pub fn resolve(
+        &mut self,
+        scalar: NodeScalar<Enc>,
+        off: Pos,
+        text: &[Enc::Unit],
+    ) -> Result<(), AllocError> {
+        self.str_builder
+            .append_expected_source_slice(off, off.add(text.len()), text)?;
+
+        self.resolved = true;
+
+        match self.tag {
+            NodeTag::None => {
+                self.resolved_scalar_len = self.str_builder.len();
+                self.scalar = Some(scalar);
+            }
+            NodeTag::NonSpecific => {
+                // always becomes string
+            }
+            NodeTag::Bool => {
+                if matches!(scalar, NodeScalar::Boolean(_)) {
+                    self.resolved_scalar_len = self.str_builder.len();
+                    self.scalar = Some(scalar);
+                }
+                // return error.ScalarTypeMismatch;
+            }
+            NodeTag::Int => {
+                if matches!(scalar, NodeScalar::Number(_)) {
+                    self.resolved_scalar_len = self.str_builder.len();
+                    self.scalar = Some(scalar);
+                }
+                // return error.ScalarTypeMismatch;
+            }
+            NodeTag::Float => {
+                if matches!(scalar, NodeScalar::Number(_)) {
+                    self.resolved_scalar_len = self.str_builder.len();
+                    self.scalar = Some(scalar);
+                }
+                // return error.ScalarTypeMismatch;
+            }
+            NodeTag::Null => {
+                if matches!(scalar, NodeScalar::Null) {
+                    self.resolved_scalar_len = self.str_builder.len();
+                    self.scalar = Some(scalar);
+                }
+                // return error.ScalarTypeMismatch;
+            }
+            NodeTag::Str => {
+                // always becomes string
+            }
+            NodeTag::Verbatim(_) | NodeTag::Unknown(_) => {
+                // also always becomes a string
+            }
+        }
+        Ok(())
+    }
+
+    pub fn try_resolve_number(
+        &mut self,
+        parser: &mut Parser<'i, Enc>,
+        first_char: FirstChar,
+    ) -> Result<(), AllocError> {
+        let nan = f64::NAN;
+        let inf = f64::INFINITY;
+
+        match first_char {
+            FirstChar::Dot => match Enc::wide(parser.next()) {
+                0x6E /* 'n' */ => {
+                    let n_start = parser.pos;
+                    parser.inc(1);
+                    if parser.remain_starts_with(Enc::literal(b"an")) {
+                        self.resolve(NodeScalar::Number(nan), n_start, Enc::literal(b"nan"))?;
+                        parser.inc(2);
+                        return Ok(());
+                    }
+                    self.append_source(Enc::ch(b'n'), n_start)?;
+                    return Ok(());
+                }
+                0x4E /* 'N' */ => {
+                    let n_start = parser.pos;
+                    parser.inc(1);
+                    if parser.remain_starts_with(Enc::literal(b"aN")) {
+                        self.resolve(NodeScalar::Number(nan), n_start, Enc::literal(b"NaN"))?;
+                        parser.inc(2);
+                        return Ok(());
+                    }
+                    if parser.remain_starts_with(Enc::literal(b"AN")) {
+                        self.resolve(NodeScalar::Number(nan), n_start, Enc::literal(b"NAN"))?;
+                        parser.inc(2);
+                        return Ok(());
+                    }
+                    self.append_source(Enc::ch(b'N'), n_start)?;
+                    return Ok(());
+                }
+                0x69 /* 'i' */ => {
+                    let i_start = parser.pos;
+                    parser.inc(1);
+                    if parser.remain_starts_with(Enc::literal(b"nf")) {
+                        self.resolve(NodeScalar::Number(inf), i_start, Enc::literal(b"inf"))?;
+                        parser.inc(2);
+                        return Ok(());
+                    }
+                    self.append_source(Enc::ch(b'i'), i_start)?;
+                    return Ok(());
+                }
+                0x49 /* 'I' */ => {
+                    let i_start = parser.pos;
+                    parser.inc(1);
+                    if parser.remain_starts_with(Enc::literal(b"nf")) {
+                        self.resolve(NodeScalar::Number(inf), i_start, Enc::literal(b"Inf"))?;
+                        parser.inc(2);
+                        return Ok(());
+                    }
+                    if parser.remain_starts_with(Enc::literal(b"NF")) {
+                        self.resolve(NodeScalar::Number(inf), i_start, Enc::literal(b"INF"))?;
+                        parser.inc(2);
+                        return Ok(());
+                    }
+                    self.append_source(Enc::ch(b'I'), i_start)?;
+                    return Ok(());
+                }
+                _ => {}
+            },
+            FirstChar::Negative | FirstChar::Positive => {
+                // PORT NOTE: Zig `a == b and c or d` parses as `(a == b and c) or d`.
+                if Enc::wide(parser.next()) == 0x2E && Enc::wide(parser.peek(1)) == 0x69
+                    || Enc::wide(parser.peek(1)) == 0x49
+                {
+                    self.append_source(Enc::ch(b'.'), parser.pos)?;
+                    parser.inc(1);
+                    match Enc::wide(parser.next()) {
+                        0x69 /* 'i' */ => {
+                            let i_start = parser.pos;
+                            parser.inc(1);
+                            if parser.remain_starts_with(Enc::literal(b"nf")) {
+                                self.resolve(
+                                    NodeScalar::Number(if first_char == FirstChar::Negative { -inf } else { inf }),
+                                    i_start,
+                                    Enc::literal(b"inf"),
+                                )?;
+                                parser.inc(2);
+                                return Ok(());
+                            }
+                            self.append_source(Enc::ch(b'i'), i_start)?;
+                            return Ok(());
+                        }
+                        0x49 /* 'I' */ => {
+                            let i_start = parser.pos;
+                            parser.inc(1);
+                            if parser.remain_starts_with(Enc::literal(b"nf")) {
+                                self.resolve(
+                                    NodeScalar::Number(if first_char == FirstChar::Negative { -inf } else { inf }),
+                                    i_start,
+                                    Enc::literal(b"Inf"),
+                                )?;
+                                parser.inc(2);
+                                return Ok(());
+                            }
+                            if parser.remain_starts_with(Enc::literal(b"NF")) {
+                                self.resolve(
+                                    NodeScalar::Number(if first_char == FirstChar::Negative { -inf } else { inf }),
+                                    i_start,
+                                    Enc::literal(b"INF"),
+                                )?;
+                                parser.inc(2);
+                                return Ok(());
+                            }
+                            self.append_source(Enc::ch(b'I'), i_start)?;
+                            return Ok(());
+                        }
+                        _ => {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+            FirstChar::Other => {}
+        }
+
+        let start = parser.pos;
+
+        let mut decimal = Enc::wide(parser.next()) == 0x2E /* '.' */;
+        let mut x = false;
+        let mut o = false;
+        let mut e = false;
+        let mut plus = false;
+        let mut minus = false;
+        let mut hex = false;
+
+        if first_char != FirstChar::Negative && first_char != FirstChar::Positive {
+            parser.inc(1);
+        }
+
+        let mut first = true;
+
+        // PORT NOTE: labeled-switch loop
+        let mut __c = Enc::wide(parser.next());
+        let (end, valid): (Pos, bool) = 'end: loop {
+            match __c {
+                // can only be valid if it ends on:
+                // - ' '
+                // - '\t'
+                // - eof
+                // - '\n'
+                // - '\r'
+                // - ':'
+                0x20 | 0x09 | 0 | 0x0A | 0x0D | 0x3A => {
+                    if first && (first_char == FirstChar::Positive || first_char == FirstChar::Negative) {
+                        break 'end (parser.pos, false);
+                    }
+                    break 'end (parser.pos, true);
+                }
+
+                0x2C | 0x5D | 0x7D /* , ] } */ => {
+                    first = false;
+                    match parser.context.get() {
+                        // it's valid for ',' ']' '}' to end the scalar
+                        // in flow context
+                        Context::FlowIn | Context::FlowKey => break 'end (parser.pos, true),
+                        Context::BlockIn | Context::BlockOut => break 'end (parser.pos, false),
+                    }
+                }
+
+                0x30 /* '0' */ => {
+                    let was_first = first;
+                    first = false;
+                    parser.inc(1);
+                    if was_first {
+                        match Enc::wide(parser.next()) {
+                            0x62 | 0x42 /* 'b' 'B' */ => {
+                                break 'end (parser.pos, false);
+                            }
+                            c => {
+                                __c = c;
+                                continue;
+                            }
+                        }
+                    }
+                    __c = Enc::wide(parser.next());
+                    continue;
+                }
+
+                0x31..=0x39 /* '1'..'9' */ => {
+                    first = false;
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
+                    continue;
+                }
+
+                0x65 | 0x45 /* 'e' 'E' */ => {
+                    first = false;
+                    if e {
+                        hex = true;
+                    }
+                    e = true;
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
+                    continue;
+                }
+
+                0x61..=0x64 | 0x66 | 0x41..=0x44 | 0x46 /* a-d f A-D F */ => {
+                    hex = true;
+
+                    if first {
+                        if __c == 0x62 || __c == 0x42 {
+                            break 'end (parser.pos, false);
+                        }
+                    }
+                    first = false;
+
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
+                    continue;
+                }
+
+                0x78 /* 'x' */ => {
+                    first = false;
+                    if x {
+                        break 'end (parser.pos, false);
+                    }
+
+                    x = true;
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
+                    continue;
+                }
+
+                0x6F /* 'o' */ => {
+                    first = false;
+                    if o {
+                        break 'end (parser.pos, false);
+                    }
+
+                    o = true;
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
+                    continue;
+                }
+
+                0x2E /* '.' */ => {
+                    first = false;
+                    if decimal {
+                        break 'end (parser.pos, false);
+                    }
+
+                    decimal = true;
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
+                    continue;
+                }
+
+                0x2B /* '+' */ => {
+                    first = false;
+                    if x {
+                        break 'end (parser.pos, false);
+                    }
+                    plus = true;
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
+                    continue;
+                }
+                0x2D /* '-' */ => {
+                    first = false;
+                    if minus {
+                        break 'end (parser.pos, false);
+                    }
+                    minus = true;
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
+                    continue;
+                }
+                _ => {
+                    first = false;
+                    break 'end (parser.pos, false);
+                }
+            }
+        };
+        let _ = plus;
+
+        self.append_unknown_source_slice(start, end)?;
+
+        if !valid {
+            return Ok(());
+        }
+
+        let mut scalar: NodeScalar<Enc> = 'scalar: {
+            if x || o || hex {
+                // TODO(port): std.fmt.parseUnsigned(u64, slice, 0) over &[Enc::Unit] —
+                // need ASCII narrowing for non-u8 encodings; Phase B.
+                let unsigned = match parse_unsigned_radix0::<Enc>(parser.slice(start, end)) {
+                    Ok(v) => v,
+                    Err(_) => return Ok(()),
+                };
+                break 'scalar NodeScalar::Number(unsigned as f64);
+            }
+            // TODO(port): bun.jsc.wtf.parseDouble over &[Enc::Unit] — Phase B.
+            let float = match bun_jsc::wtf::parse_double(parser.slice(start, end)) {
+                Ok(v) => v,
+                Err(_) => return Ok(()),
+            };
+
+            break 'scalar NodeScalar::Number(float);
+        };
+
+        self.resolved = true;
+
+        match self.tag {
+            NodeTag::None | NodeTag::Float | NodeTag::Int => {
+                self.resolved_scalar_len = self.str_builder.len();
+                if first_char == FirstChar::Negative {
+                    if let NodeScalar::Number(n) = &mut scalar {
+                        *n = -*n;
+                    }
+                }
+                self.scalar = Some(scalar);
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+// TODO(port): placeholder for std.fmt.parseUnsigned(u64, _, 0). Phase B should
+// route through bun_str or core u64::from_str_radix after ASCII narrowing.
+fn parse_unsigned_radix0<Enc: Encoding>(_s: &[Enc::Unit]) -> Result<u64, ()> {
+    Err(())
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // NodeTag / NodeScalar
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -1471,6 +1994,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         Ok(Stream { docs, input: self.input as *const [Enc::Unit] })
     }
 
+    // PERF(port): was comptime monomorphization — profile in Phase B
     fn peek(&self, n: usize) -> Enc::Unit {
         let pos = self.pos.add(n);
         if pos.is_less_than(self.input.len()) {
@@ -1694,7 +2218,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // PORT NOTE: `defer self.context.unset(.flow_in)` translated as manual
         // unset on all exit paths; scopeguard would borrow &mut self.context
         // across the loop body which also needs &mut self.
-        // TODO(port): errdefer — context.unset is skipped on `?` paths inside.
+        // TODO(port): defer side-effect — context.unset is skipped on `?` paths;
+        // scopeguard captures &mut self; Phase B.
         self.context.set(Context::FlowIn)?;
 
         self.scan(ScanOptions::default())?;
@@ -1732,7 +2257,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         let mut props = MappingProps::init();
 
-        // TODO(port): errdefer — context.unset is skipped on `?` paths inside.
+        // TODO(port): defer side-effect — context.unset is skipped on `?` paths;
+        // scopeguard captures &mut self; Phase B.
         self.context.set(Context::FlowIn)?;
 
         {
@@ -1804,7 +2330,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let sequence_indent = self.token.indent;
 
         self.block_indents.push(sequence_indent)?;
-        // TODO(port): errdefer — block_indents.pop() skipped on `?` paths.
+        // TODO(port): defer side-effect — block_indents.pop() skipped on `?` paths;
+        // scopeguard captures &mut self; Phase B.
 
         let mut seq: Vec<Expr> = Vec::new();
 
@@ -1960,7 +2487,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
 
         self.block_indents.push(mapping_indent)?;
-        // TODO(port): errdefer — block_indents.pop() skipped on `?` paths.
+        // TODO(port): defer side-effect — block_indents.pop() skipped on `?` paths;
+        // scopeguard captures &mut self; Phase B.
 
         let mut props = MappingProps::init();
 
@@ -2023,7 +2551,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
 
         self.context.set(Context::BlockIn)?;
-        // TODO(port): errdefer — context.unset(.block_in) skipped on `?` paths.
+        // TODO(port): defer side-effect — context.unset(.block_in) skipped on `?` paths;
+        // scopeguard captures &mut self; Phase B.
 
         let mut previous_line = mapping_line;
 
@@ -2794,42 +3323,361 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     // ── scanPlainScalar ─────────────────────────────────────────────────────
     //
-    // This is the largest and most complex function in the file: a 900-line
-    // state machine using Zig's labeled-switch with an inner local struct
-    // `ScalarResolverCtx` that holds `&mut Parser` AND a `StringBuilder` that
-    // ALSO holds `&mut Parser`. This double-borrow cannot be expressed in safe
-    // Rust without significant refactoring.
+    // This is the largest function in the file: a labeled-switch state machine
+    // with an inner local struct `ScalarResolverCtx` that holds `*Parser` AND a
+    // `StringBuilder` that ALSO holds `*Parser`. Both are BACKREF in
+    // LIFETIMES.tsv → modeled as raw `*mut Parser` here.
     //
-    // For Phase A, the logic is ported with the same control flow but the
-    // borrow structure is left as a known issue:
-    //
-    // TODO(port): scanPlainScalar — `ScalarResolverCtx` and `StringBuilder`
-    // both hold `&mut Parser` while the outer loop also uses `&mut self`. Phase
-    // B must either (a) move `whitespace_buf` out of Parser, (b) use a raw
-    // `*mut Parser` with SAFETY notes, or (c) restructure ctx to take `&mut
-    // self` per call instead of storing it.
+    // TODO(port): borrowck reshape — Phase B should either (a) move
+    // `whitespace_buf` out of Parser, or (b) restructure ctx to take `&mut self`
+    // per call instead of storing it. The raw-pointer aliasing below is sound
+    // because `ctx` never outlives `&mut self` and never re-enters Parser
+    // methods that re-borrow `whitespace_buf`/`input` concurrently.
 
     fn scan_plain_scalar(&mut self, opts: ScanOptions) -> Result<Token<Enc>, ParseError> {
-        // TODO(port): ScalarResolverCtx is defined inline in Zig with methods
-        // `done`, `checkAppend`, `appendSource`, `appendSourceWhitespace`,
-        // `appendSourceSlice`, `appendUnknownSourceSlice`, `append`,
-        // `appendWhitespace`, `appendSlice`, `appendNTimes`,
-        // `appendWhitespaceNTimes`, `resolve`, `tryResolveNumber`. The state
-        // machine then dispatches on `self.next()` recognizing keywords
-        // (null/Null/NULL/~, true/True/TRUE, false/False/FALSE), numbers
-        // (incl. .nan/.NaN/.NAN/.inf/.Inf/.INF with optional sign), and plain
-        // text, with flow-context-aware terminators (`,[]{}`), `:` lookahead,
-        // `#` comment-after-whitespace, and newline folding via
-        // `self.fold_lines()` + block_indents check.
-        //
-        // The full body (~870 lines, yaml.zig:1741-2605) is NOT mechanically
-        // re-expressible without resolving the aliasing issue above. Phase B
-        // must port this with the chosen borrow strategy.
-        let _ = opts;
-        unimplemented!(
-            "scan_plain_scalar: 870-line labeled-switch state machine; \
-             see yaml.zig:1741-2605 and TODO(port) above"
-        )
+        let parser: *mut Parser<'i, Enc> = self;
+        // SAFETY: ctx outlived by &mut self in scan_plain_scalar; no other
+        // borrow of *self exists across these unsafe derefs.
+        let mut ctx = ScalarResolverCtx::<Enc> {
+            str_builder: unsafe { (*parser).string_builder_raw() },
+            resolved: false,
+            scalar: None,
+            tag: opts.tag,
+            parser,
+            resolved_scalar_len: 0,
+            start: self.pos,
+            line: self.line,
+            line_indent: self.line_indent,
+            multiline: false,
+        };
+
+        // PORT NOTE: labeled-switch loop
+        let mut __c = Enc::wide(self.next());
+        loop {
+            match __c {
+                0 => {
+                    return Ok(ctx.done());
+                }
+
+                0x2D /* '-' */ => {
+                    if self.line_indent == Indent::NONE
+                        && self.remain_starts_with(Enc::literal(b"---"))
+                        && self.is_any_or_eof_at(Enc::literal(b" \t\n\r"), 3)
+                    {
+                        return Ok(ctx.done());
+                    }
+
+                    if !ctx.resolved && ctx.str_builder.len() == 0 {
+                        ctx.append_source(Enc::ch(b'-'), self.pos)?;
+                        self.inc(1);
+                        ctx.try_resolve_number(self, FirstChar::Negative)?;
+                        __c = Enc::wide(self.next());
+                        continue;
+                    }
+
+                    ctx.append_source(Enc::ch(b'-'), self.pos)?;
+                    self.inc(1);
+                    __c = Enc::wide(self.next());
+                    continue;
+                }
+
+                0x2E /* '.' */ => {
+                    if self.line_indent == Indent::NONE
+                        && self.remain_starts_with(Enc::literal(b"..."))
+                        && self.is_any_or_eof_at(Enc::literal(b" \t\n\r"), 3)
+                    {
+                        return Ok(ctx.done());
+                    }
+
+                    if !ctx.resolved && ctx.str_builder.len() == 0 {
+                        match Enc::wide(self.peek(1)) {
+                            0x6E | 0x4E | 0x69 | 0x49 /* 'n' 'N' 'i' 'I' */ => {
+                                ctx.append_source(Enc::ch(b'.'), self.pos)?;
+                                self.inc(1);
+                                ctx.try_resolve_number(self, FirstChar::Dot)?;
+                                __c = Enc::wide(self.next());
+                                continue;
+                            }
+                            _ => {
+                                ctx.try_resolve_number(self, FirstChar::Other)?;
+                                __c = Enc::wide(self.next());
+                                continue;
+                            }
+                        }
+                    }
+
+                    ctx.append_source(Enc::ch(b'.'), self.pos)?;
+                    self.inc(1);
+                    __c = Enc::wide(self.next());
+                    continue;
+                }
+
+                0x3A /* ':' */ => {
+                    if self.is_s_white_or_b_char_or_eof_at(1) {
+                        return Ok(ctx.done());
+                    }
+
+                    match self.context.get() {
+                        Context::BlockOut | Context::BlockIn | Context::FlowIn => {}
+                        Context::FlowKey => match Enc::wide(self.peek(1)) {
+                            0x2C | 0x5B | 0x5D | 0x7B | 0x7D /* , [ ] { } */ => {
+                                return Ok(ctx.done());
+                            }
+                            _ => {}
+                        },
+                    }
+
+                    ctx.append_source(Enc::ch(b':'), self.pos)?;
+                    self.inc(1);
+                    __c = Enc::wide(self.next());
+                    continue;
+                }
+
+                0x23 /* '#' */ => {
+                    let prev = self.input[self.pos.sub(1).cast()];
+                    if self.pos == Pos::ZERO
+                        || matches!(Enc::wide(prev), 0x20 | 0x09 | 0x0D | 0x0A)
+                    {
+                        return Ok(ctx.done());
+                    }
+
+                    ctx.append_source(Enc::ch(b'#'), self.pos)?;
+                    self.inc(1);
+                    __c = Enc::wide(self.next());
+                    continue;
+                }
+
+                0x2C | 0x5B | 0x5D | 0x7B | 0x7D /* , [ ] { } */ => {
+                    match self.context.get() {
+                        Context::BlockIn | Context::BlockOut => {}
+                        Context::FlowIn | Context::FlowKey => {
+                            return Ok(ctx.done());
+                        }
+                    }
+
+                    let c = self.next();
+                    ctx.append_source(c, self.pos)?;
+                    self.inc(1);
+                    __c = Enc::wide(self.next());
+                    continue;
+                }
+
+                0x20 | 0x09 /* ' ' '\t' */ => {
+                    let c = self.next();
+                    ctx.append_source_whitespace(c, self.pos)?;
+                    self.inc(1);
+                    __c = Enc::wide(self.next());
+                    continue;
+                }
+
+                0x0D /* '\r' */ => {
+                    if Enc::wide(self.peek(1)) == 0x0A {
+                        self.inc(1);
+                    }
+                    __c = 0x0A;
+                    continue;
+                }
+
+                0x0A /* '\n' */ => {
+                    self.newline();
+                    self.inc(1);
+
+                    let lines = self.fold_lines();
+
+                    if let Some(block_indent) = self.block_indents.get() {
+                        match self.line_indent.cmp(block_indent) {
+                            Ordering::Greater => {
+                                // continue (whitespace already stripped)
+                            }
+                            Ordering::Less | Ordering::Equal => {
+                                // end here. this is the start of a new value.
+                                return Ok(ctx.done());
+                            }
+                        }
+                    }
+
+                    // clear the leading whitespace before the newline.
+                    // SAFETY: ctx.parser == self; whitespace_buf not borrowed.
+                    unsafe { (*ctx.parser).whitespace_buf.clear(); }
+
+                    if lines == 0 && !self.is_eof() {
+                        ctx.append_whitespace(Enc::ch(b' '))?;
+                    }
+
+                    ctx.append_whitespace_n_times(Enc::ch(b'\n'), lines)?;
+
+                    __c = Enc::wide(self.next());
+                    continue;
+                }
+
+                _ => {
+                    let c = self.next();
+                    if ctx.resolved || ctx.str_builder.len() != 0 {
+                        let start = self.pos;
+                        self.inc(1);
+                        ctx.append_source(c, start)?;
+                        __c = Enc::wide(self.next());
+                        continue;
+                    }
+
+                    // first non-whitespace
+
+                    // TODO: make more better
+                    match __c {
+                        0x6E /* 'n' */ => {
+                            let n_start = self.pos;
+                            self.inc(1);
+                            if self.remain_starts_with(Enc::literal(b"ull")) {
+                                ctx.resolve(NodeScalar::Null, n_start, Enc::literal(b"null"))?;
+                                self.inc(3);
+                                __c = Enc::wide(self.next());
+                                continue;
+                            }
+                            ctx.append_source(c, n_start)?;
+                            __c = Enc::wide(self.next());
+                            continue;
+                        }
+                        0x4E /* 'N' */ => {
+                            let n_start = self.pos;
+                            self.inc(1);
+                            if self.remain_starts_with(Enc::literal(b"ull")) {
+                                ctx.resolve(NodeScalar::Null, n_start, Enc::literal(b"Null"))?;
+                                self.inc(3);
+                                __c = Enc::wide(self.next());
+                                continue;
+                            }
+                            if self.remain_starts_with(Enc::literal(b"ULL")) {
+                                ctx.resolve(NodeScalar::Null, n_start, Enc::literal(b"NULL"))?;
+                                self.inc(3);
+                                __c = Enc::wide(self.next());
+                                continue;
+                            }
+                            ctx.append_source(c, n_start)?;
+                            __c = Enc::wide(self.next());
+                            continue;
+                        }
+                        0x7E /* '~' */ => {
+                            let start = self.pos;
+                            self.inc(1);
+                            ctx.resolve(NodeScalar::Null, start, Enc::literal(b"~"))?;
+                            __c = Enc::wide(self.next());
+                            continue;
+                        }
+                        0x74 /* 't' */ => {
+                            let t_start = self.pos;
+                            self.inc(1);
+                            if self.remain_starts_with(Enc::literal(b"rue")) {
+                                ctx.resolve(NodeScalar::Boolean(true), t_start, Enc::literal(b"true"))?;
+                                self.inc(3);
+                                __c = Enc::wide(self.next());
+                                continue;
+                            }
+                            ctx.append_source(c, t_start)?;
+                            __c = Enc::wide(self.next());
+                            continue;
+                        }
+                        0x54 /* 'T' */ => {
+                            let t_start = self.pos;
+                            self.inc(1);
+                            if self.remain_starts_with(Enc::literal(b"rue")) {
+                                ctx.resolve(NodeScalar::Boolean(true), t_start, Enc::literal(b"True"))?;
+                                self.inc(3);
+                                __c = Enc::wide(self.next());
+                                continue;
+                            }
+                            if self.remain_starts_with(Enc::literal(b"RUE")) {
+                                ctx.resolve(NodeScalar::Boolean(true), t_start, Enc::literal(b"TRUE"))?;
+                                self.inc(3);
+                                __c = Enc::wide(self.next());
+                                continue;
+                            }
+                            ctx.append_source(c, t_start)?;
+                            __c = Enc::wide(self.next());
+                            continue;
+                        }
+                        0x66 /* 'f' */ => {
+                            let f_start = self.pos;
+                            self.inc(1);
+                            if self.remain_starts_with(Enc::literal(b"alse")) {
+                                ctx.resolve(NodeScalar::Boolean(false), f_start, Enc::literal(b"false"))?;
+                                self.inc(4);
+                                __c = Enc::wide(self.next());
+                                continue;
+                            }
+                            ctx.append_source(c, f_start)?;
+                            __c = Enc::wide(self.next());
+                            continue;
+                        }
+                        0x46 /* 'F' */ => {
+                            let f_start = self.pos;
+                            self.inc(1);
+                            if self.remain_starts_with(Enc::literal(b"alse")) {
+                                ctx.resolve(NodeScalar::Boolean(false), f_start, Enc::literal(b"False"))?;
+                                self.inc(4);
+                                __c = Enc::wide(self.next());
+                                continue;
+                            }
+                            if self.remain_starts_with(Enc::literal(b"ALSE")) {
+                                ctx.resolve(NodeScalar::Boolean(false), f_start, Enc::literal(b"FALSE"))?;
+                                self.inc(4);
+                                __c = Enc::wide(self.next());
+                                continue;
+                            }
+                            ctx.append_source(c, f_start)?;
+                            __c = Enc::wide(self.next());
+                            continue;
+                        }
+
+                        0x2D /* '-' */ => {
+                            ctx.append_source(Enc::ch(b'-'), self.pos)?;
+                            self.inc(1);
+                            ctx.try_resolve_number(self, FirstChar::Negative)?;
+                            __c = Enc::wide(self.next());
+                            continue;
+                        }
+
+                        0x2B /* '+' */ => {
+                            ctx.append_source(Enc::ch(b'+'), self.pos)?;
+                            self.inc(1);
+                            ctx.try_resolve_number(self, FirstChar::Positive)?;
+                            __c = Enc::wide(self.next());
+                            continue;
+                        }
+
+                        0x30..=0x39 /* '0'..'9' */ => {
+                            ctx.try_resolve_number(self, FirstChar::Other)?;
+                            __c = Enc::wide(self.next());
+                            continue;
+                        }
+
+                        0x2E /* '.' */ => {
+                            match Enc::wide(self.peek(1)) {
+                                0x6E | 0x4E | 0x69 | 0x49 /* 'n' 'N' 'i' 'I' */ => {
+                                    ctx.append_source(Enc::ch(b'.'), self.pos)?;
+                                    self.inc(1);
+                                    ctx.try_resolve_number(self, FirstChar::Dot)?;
+                                    __c = Enc::wide(self.next());
+                                    continue;
+                                }
+                                _ => {
+                                    ctx.try_resolve_number(self, FirstChar::Other)?;
+                                    __c = Enc::wide(self.next());
+                                    continue;
+                                }
+                            }
+                        }
+
+                        _ => {
+                            let start = self.pos;
+                            self.inc(1);
+                            ctx.append_source(c, start)?;
+                            __c = Enc::wide(self.next());
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // ── scanBlockHeader ─────────────────────────────────────────────────────
@@ -2852,7 +3700,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     if indent_indicator.is_some() {
                         return Err(ParseError::UnexpectedCharacter);
                     }
-                    indent_indicator = Some(IndentIndicator::from_raw((__c - 0x30) as u8));
+                    indent_indicator = Some(IndentIndicator::from_raw(u8::try_from(__c - 0x30).unwrap()));
                     self.inc(1);
                     __c = Enc::wide(self.next());
                     continue;
@@ -3508,9 +4356,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             self.inc(1);
             let digit = Enc::wide(self.next());
             let num: u8 = match digit {
-                0x30..=0x39 => (digit - 0x30) as u8,
-                0x61..=0x66 => (digit - 0x61 + 10) as u8,
-                0x41..=0x46 => (digit - 0x41 + 10) as u8,
+                0x30..=0x39 => u8::try_from(digit - 0x30).unwrap(),
+                0x61..=0x66 => u8::try_from(digit - 0x61 + 10).unwrap(),
+                0x41..=0x46 => u8::try_from(digit - 0x41 + 10).unwrap(),
                 _ => return Err(ParseError::UnexpectedCharacter),
             };
             value = value * 16 + num as u32;
@@ -3532,16 +4380,32 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
             }
             EncodingKind::Utf16 => {
-                // TODO(port): utf16 encoding — need Enc::Unit==u16 push of high/low surrogates.
                 // Zig: std.unicode.utf16CodepointSequenceLength + manual surrogate split.
-                let _ = cp;
-                return Err(ParseError::UnexpectedCharacter);
+                let len: u8 = if cp < 0x10000 { 1 } else { 2 };
+                // TODO(port): need Enc::Unit==u16 push helper; Enc::ch only takes u8.
+                // Phase B: add `Enc::ch16(u16) -> Self::Unit` or specialize per encoding.
+                match len {
+                    1 => {
+                        let unit = u16::try_from(cp).unwrap();
+                        let _ = unit;
+                        // text.push(Enc::ch16(unit));
+                    }
+                    2 => {
+                        let high = 0xD800u16 + u16::try_from((cp - 0x10000) >> 10).unwrap();
+                        let low = 0xDC00u16 + u16::try_from((cp - 0x10000) & 0x3FF).unwrap();
+                        let _ = (high, low);
+                        // text.push(Enc::ch16(high));
+                        // text.push(Enc::ch16(low));
+                    }
+                    _ => unreachable!(),
+                }
+                let _ = text;
             }
             EncodingKind::Latin1 => {
                 if cp > 0xFF {
                     return Err(ParseError::UnexpectedCharacter);
                 }
-                text.push(Enc::ch(cp as u8));
+                text.push(Enc::ch(u8::try_from(cp).unwrap()));
             }
         }
         Ok(())
@@ -3924,6 +4788,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.token = Token::reserved(TokenInit { start, indent: self.line_indent, line: self.line });
                     return Err(Self::unexpected_token());
                 }
+                // PORT NOTE: ScanCtx.scanWhitespace inlined.
                 // whitespace — Zig used `inline '\r','\n',' ','\t' => |ws| ctx.scanWhitespace(ws)`
                 0x0D /* '\r' */ => {
                     if Enc::wide(self.peek(1)) == 0x0A {
@@ -4278,6 +5143,19 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             str: YamlString::Range(StringRange { off: Pos::ZERO, end: Pos::ZERO }),
         }
     }
+
+    // SAFETY: caller guarantees the returned builder does not outlive `*self`
+    // and that no other &mut borrow of `*self` overlaps with builder method
+    // calls that touch `whitespace_buf`/`input`. Used by scan_plain_scalar.
+    unsafe fn string_builder_raw(&mut self) -> StringBuilder<'i, Enc> {
+        // TODO(port): borrowck reshape — raw transmute of the &mut self lifetime
+        // to 'i so the builder can be stored in ScalarResolverCtx alongside
+        // `*mut Parser`. Phase B: change StringBuilder.parser to *mut Parser.
+        StringBuilder {
+            parser: unsafe { &mut *(self as *mut Parser<'i, Enc>) },
+            str: YamlString::Range(StringRange { off: Pos::ZERO, end: Pos::ZERO }),
+        }
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -4298,7 +5176,7 @@ fn eq_ascii<Enc: Encoding>(s: &[Enc::Unit], lit: &[u8]) -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/interchange/yaml.zig (5743 lines)
-//   confidence: low
-//   todos:      34
-//   notes:      scan_plain_scalar (870-line labeled-switch with double &mut Parser borrow via ScalarResolverCtx/StringBuilder) is stubbed; Encoding modeled as trait (assoc Unit type) since const generics can't return types; defer context.unset/block_indents.pop translated as manual unwind (skipped on `?` paths — Phase B scopeguard); Utf16 literal()/escape paths stubbed; ast::ExprData variant names guessed.
+//   confidence: medium
+//   todos:      36
+//   notes:      scan_plain_scalar ported 1:1 with ScalarResolverCtx using *mut Parser backref (Phase B: reshape borrowck); Encoding modeled as trait (assoc Unit type); defer context.unset/block_indents.pop translated as manual unwind (skipped on `?` paths — Phase B scopeguard); Utf16 literal()/ch16 push paths stubbed; parseUnsigned/parseDouble over &[Enc::Unit] stubbed; ast::ExprData variant names guessed.
 // ──────────────────────────────────────────────────────────────────────────

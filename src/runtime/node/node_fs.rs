@@ -887,6 +887,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
     ) -> bool {
         // SAFETY: callers NUL-terminate at src_dir_len/dest_dir_len before calling
         let src = unsafe { ZStr::from_raw(src_buf.as_ptr().cast(), src_dir_len as usize) };
+        // SAFETY: dest_buf[dest_dir_len] == 0 written by caller
         let dest = unsafe { ZStr::from_raw(dest_buf.as_ptr().cast(), dest_dir_len as usize) };
 
         #[cfg(target_os = "macos")]
@@ -2417,7 +2418,7 @@ pub mod args {
                     }
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
                         if let Some(signal) = AbortSignal::from_js(value) {
-                            abort_signal = Some(signal.ref_());
+                            *abort_signal = Some(signal.ref_());
                             signal.pending_activity_ref();
                         } else {
                             path.deinit();
@@ -2441,6 +2442,7 @@ pub mod args {
             let is_async = false;
             let data = StringOrBuffer::from_js_with_encoding_maybe_async(ctx, data_value, encoding, is_async, allow_string_object)?
                 .ok_or_else(|| { path.deinit(); ctx.err_invalid_arg_type("The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView").throw() })?;
+            let abort_signal = scopeguard::ScopeGuard::into_inner(abort_signal);
             Ok(WriteFile { file: path, encoding, flag, mode, data, dirfd: FD::cwd(), signal: abort_signal, flush })
         }
         pub fn aborted(&self) -> bool {
@@ -4645,6 +4647,6 @@ impl i52 { const MIN: i64 = -(1i64 << 51); }
 // PORT STATUS
 //   source:     src/runtime/node/node_fs.zig (7344 lines)
 //   confidence: low
-//   todos:      52
-//   notes:      Very large file. Full structure preserved; ~6 large bodies stubbed (read_file_with_options, _copy_single_file_sync, cp_sync_inner, readdir_with_entries{,_recursive_{sync,async}}, zig_delete_tree*, Windows UVFSRequest::create branches, Windows symlink). Const-generic dispatch (NodeFSFunctionEnum) needs Phase-B wiring. FreeBSD copyFileInner stubbed. errdefer cleanup in args::*::from_js partially inlined.
+//   todos:      50
+//   notes:      Very large file. Full structure preserved; ~6 large bodies stubbed (read_file_with_options, _copy_single_file_sync, cp_sync_inner, readdir_with_entries{,_recursive_{sync,async}}, zig_delete_tree*, Windows UVFSRequest::create branches, Windows symlink). Const-generic dispatch (NodeFSFunctionEnum) needs Phase-B wiring. FreeBSD copyFileInner stubbed. Task types use `unsafe fn destroy(*mut Self)` (FFI-style). args::*::deinit kept as inherent fns pending PathLike: Drop (cross-file). errdefer cleanup in args::*::from_js partially inlined.
 // ──────────────────────────────────────────────────────────────────────────

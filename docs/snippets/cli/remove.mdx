@@ -30,6 +30,11 @@ bun remove <package>
   Add to <code>trustedDependencies</code> in the project's <code>package.json</code> and install the package(s)
 </ParamField>
 
+<ParamField path="--filter" type="string">
+  Remove packages from the matching workspaces instead of the root <code>package.json</code>. Accepts a workspace name,
+  a glob like <code>@scope/*</code>, or a relative path like <code>./packages/api</code>. Alias: <code>-F</code>
+</ParamField>
+
 ### Lockfile Behavior
 
 <ParamField path="--yarn" type="boolean">

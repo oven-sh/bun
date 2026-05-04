@@ -34,6 +34,11 @@ bun add <package> <@version>
   Add the exact version instead of the <code>^</code> range. Alias: <code>-E</code>
 </ParamField>
 
+<ParamField path="--filter" type="string">
+  Add packages to the matching workspaces instead of the root <code>package.json</code>. Accepts a workspace name, a
+  glob like <code>@scope/*</code>, or a relative path like <code>./packages/api</code>. Alias: <code>-F</code>
+</ParamField>
+
 <ParamField path="--only-missing" type="boolean">
   Only add dependencies to <code>package.json</code> if they are not already present
 </ParamField>

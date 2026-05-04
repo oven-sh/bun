@@ -36,47 +36,56 @@ pub const SideEffectsData = struct {
 
 /// A temporary threadlocal buffer with a lifetime more than the current
 /// function call.
-const bufs = struct {
-    // Experimenting with making this one struct instead of a bunch of different
-    // threadlocal vars yielded no performance improvement on macOS when
-    // bundling 10 copies of Three.js. It may be worthwhile for more complicated
-    // packages but we lack a decent module resolution benchmark right now.
-    // Potentially revisit after https://github.com/oven-sh/bun/issues/2716
-    pub threadlocal var extension_path: bun.PathBuffer = undefined;
-    pub threadlocal var tsconfig_match_full_buf: bun.PathBuffer = undefined;
-    pub threadlocal var tsconfig_match_full_buf2: bun.PathBuffer = undefined;
-    pub threadlocal var tsconfig_match_full_buf3: bun.PathBuffer = undefined;
+///
+/// These used to be individual `threadlocal var x: bun.PathBuffer = undefined`
+/// declarations. On Windows each `PathBuffer` is 96 KB (vs 4 KB on POSIX) and
+/// PE/COFF has no TLS-BSS, so 25 of them here cost ~2.5 MB of raw zeros in
+/// bun.exe and in every thread's TLS block. Grouping them behind a lazily
+/// allocated pointer brings that down to 8 bytes. See `bun.ThreadlocalBuffers`.
+///
+/// Experimenting with making this one struct instead of a bunch of different
+/// threadlocal vars yielded no performance improvement on macOS when bundling
+/// 10 copies of Three.js. Potentially revisit after https://github.com/oven-sh/bun/issues/2716
+const Bufs = struct {
+    extension_path: bun.PathBuffer = undefined,
+    tsconfig_match_full_buf: bun.PathBuffer = undefined,
+    tsconfig_match_full_buf2: bun.PathBuffer = undefined,
+    tsconfig_match_full_buf3: bun.PathBuffer = undefined,
 
-    pub threadlocal var esm_subpath: [512]u8 = undefined;
-    pub threadlocal var esm_absolute_package_path: bun.PathBuffer = undefined;
-    pub threadlocal var esm_absolute_package_path_joined: bun.PathBuffer = undefined;
+    esm_subpath: [512]u8 = undefined,
+    esm_absolute_package_path: bun.PathBuffer = undefined,
+    esm_absolute_package_path_joined: bun.PathBuffer = undefined,
 
-    pub threadlocal var dir_entry_paths_to_resolve: [256]DirEntryResolveQueueItem = undefined;
-    pub threadlocal var open_dirs: [256]FD = undefined;
-    pub threadlocal var resolve_without_remapping: bun.PathBuffer = undefined;
-    pub threadlocal var index: bun.PathBuffer = undefined;
-    pub threadlocal var dir_info_uncached_filename: bun.PathBuffer = undefined;
-    pub threadlocal var node_bin_path: bun.PathBuffer = undefined;
-    pub threadlocal var dir_info_uncached_path: bun.PathBuffer = undefined;
-    pub threadlocal var tsconfig_base_url: bun.PathBuffer = undefined;
-    pub threadlocal var relative_abs_path: bun.PathBuffer = undefined;
-    pub threadlocal var load_as_file_or_directory_via_tsconfig_base_path: bun.PathBuffer = undefined;
-    pub threadlocal var node_modules_check: bun.PathBuffer = undefined;
-    pub threadlocal var field_abs_path: bun.PathBuffer = undefined;
-    pub threadlocal var tsconfig_path_abs: bun.PathBuffer = undefined;
-    pub threadlocal var check_browser_map: bun.PathBuffer = undefined;
-    pub threadlocal var remap_path: bun.PathBuffer = undefined;
-    pub threadlocal var load_as_file: bun.PathBuffer = undefined;
-    pub threadlocal var remap_path_trailing_slash: bun.PathBuffer = undefined;
-    pub threadlocal var path_in_global_disk_cache: bun.PathBuffer = undefined;
-    pub threadlocal var abs_to_rel: bun.PathBuffer = undefined;
-    pub threadlocal var node_modules_paths_buf: bun.PathBuffer = undefined;
-    pub threadlocal var import_path_for_standalone_module_graph: bun.PathBuffer = undefined;
+    dir_entry_paths_to_resolve: [256]DirEntryResolveQueueItem = undefined,
+    open_dirs: [256]FD = undefined,
+    resolve_without_remapping: bun.PathBuffer = undefined,
+    index: bun.PathBuffer = undefined,
+    dir_info_uncached_filename: bun.PathBuffer = undefined,
+    node_bin_path: bun.PathBuffer = undefined,
+    dir_info_uncached_path: bun.PathBuffer = undefined,
+    tsconfig_base_url: bun.PathBuffer = undefined,
+    relative_abs_path: bun.PathBuffer = undefined,
+    load_as_file_or_directory_via_tsconfig_base_path: bun.PathBuffer = undefined,
+    node_modules_check: bun.PathBuffer = undefined,
+    field_abs_path: bun.PathBuffer = undefined,
+    tsconfig_path_abs: bun.PathBuffer = undefined,
+    check_browser_map: bun.PathBuffer = undefined,
+    remap_path: bun.PathBuffer = undefined,
+    load_as_file: bun.PathBuffer = undefined,
+    remap_path_trailing_slash: bun.PathBuffer = undefined,
+    path_in_global_disk_cache: bun.PathBuffer = undefined,
+    abs_to_rel: bun.PathBuffer = undefined,
+    node_modules_paths_buf: bun.PathBuffer = undefined,
+    import_path_for_standalone_module_graph: bun.PathBuffer = undefined,
 
-    pub inline fn bufs(comptime field: std.meta.DeclEnum(@This())) *@TypeOf(@field(@This(), @tagName(field))) {
-        return &@field(@This(), @tagName(field));
-    }
-}.bufs;
+    win32_normalized_dir_info_cache: if (Environment.isWindows) [bun.MAX_PATH_BYTES * 2]u8 else void = undefined,
+};
+
+const bufs_storage = bun.ThreadlocalBuffers(Bufs);
+
+inline fn bufs(comptime field: std.meta.FieldEnum(Bufs)) *@FieldType(Bufs, @tagName(field)) {
+    return &@field(bufs_storage.get(), @tagName(field));
+}
 
 pub const PathPair = struct {
     primary: Path,
@@ -2689,7 +2698,6 @@ pub const Resolver = struct {
         };
     }
 
-    threadlocal var win32_normalized_dir_info_cache_buf: if (Environment.isWindows) [bun.MAX_PATH_BYTES * 2]u8 else void = undefined;
     fn dirInfoCachedMaybeLog(r: *ThisResolver, raw_input_path: string, comptime enable_logging: bool, comptime follow_symlinks: bool) !?*DirInfo {
         r.mutex.lock();
         defer r.mutex.unlock();
@@ -2705,12 +2713,13 @@ pub const Resolver = struct {
         if (input_path.len > bun.MAX_PATH_BYTES) return null;
 
         if (comptime Environment.isWindows) {
-            input_path = r.fs.normalizeBuf(&win32_normalized_dir_info_cache_buf, input_path);
+            const win32_normalized_dir_info_cache_buf = bufs(.win32_normalized_dir_info_cache);
+            input_path = r.fs.normalizeBuf(win32_normalized_dir_info_cache_buf, input_path);
             // kind of a patch on the fact normalizeBuf isn't 100% perfect what we want
             if ((input_path.len == 2 and input_path[1] == ':') or
                 (input_path.len == 3 and input_path[1] == ':' and input_path[2] == '.'))
             {
-                bun.unsafeAssert(input_path.ptr == &win32_normalized_dir_info_cache_buf);
+                bun.unsafeAssert(input_path.ptr == win32_normalized_dir_info_cache_buf);
                 win32_normalized_dir_info_cache_buf[2] = '\\';
                 input_path.len = 3;
             }

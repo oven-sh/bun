@@ -480,14 +480,14 @@ pub const RuntimeTranspilerCache = struct {
     }
 
     // Only do this at most once per-thread.
-    threadlocal var runtime_transpiler_cache_static_buffer: bun.PathBuffer = undefined;
+    const cache_dir_bufs = bun.ThreadlocalBuffers(struct { buf: bun.PathBuffer = undefined });
     threadlocal var runtime_transpiler_cache: ?[:0]const u8 = null;
     pub var is_disabled = false;
 
     fn getCacheDir(buf: *bun.PathBuffer) ![:0]const u8 {
         if (is_disabled) return error.CacheDisabled;
         const path = runtime_transpiler_cache orelse path: {
-            const path = reallyGetCacheDir(&runtime_transpiler_cache_static_buffer);
+            const path = reallyGetCacheDir(&cache_dir_bufs.get().buf);
             if (path.len == 0) {
                 is_disabled = true;
                 return error.CacheDisabled;

@@ -295,6 +295,46 @@ pub const path_buffer_pool = paths.path_buffer_pool;
 pub const w_path_buffer_pool = paths.w_path_buffer_pool;
 pub const os_path_buffer_pool = paths.os_path_buffer_pool;
 
+/// A lazily heap-allocated per-thread instance of `T`.
+///
+/// Use this instead of `threadlocal var x: T = undefined` when `T` is
+/// large (`bun.PathBuffer`, fixed arrays, structs of buffers). PE/COFF has
+/// no TLS-BSS equivalent, so on Windows every zero-initialized threadlocal
+/// is written into bun.exe's `.tls` section as raw zeros — with ~50
+/// `bun.PathBuffer` threadlocals (96 KB each on Windows vs 4 KB on POSIX)
+/// that was ~5 MB of the binary and ~5 MB copied into every thread's TLS
+/// block at thread creation whether or not it ever touched the resolver.
+/// Behind a pointer, the per-thread footprint is 8 bytes on disk and the
+/// backing memory is allocated only on first use.
+///
+/// `T` is typically an anonymous struct literal, which gives each
+/// instantiation a distinct `threadlocal var ptr` even if the field layout
+/// happens to match another call site.
+///
+/// The allocation is intentionally never freed; it lives for the thread's
+/// lifetime like the static threadlocals it replaces.
+pub fn ThreadlocalBuffers(comptime T: type) type {
+    return struct {
+        threadlocal var instance: ?*T = null;
+
+        pub inline fn get() *T {
+            return instance orelse alloc();
+        }
+
+        noinline fn alloc() *T {
+            @branchHint(.cold);
+            const p = default_allocator.create(T) catch outOfMemory();
+            // Apply field default values. For the common case of
+            // `field: PathBuffer = undefined` this is a no-op in release
+            // builds; for wrappers around structs with real defaults (e.g.
+            // `NodeFS{ .vm = null }`) it's required for correctness.
+            p.* = .{};
+            instance = p;
+            return p;
+        }
+    };
+}
+
 pub inline fn cast(comptime To: type, value: anytype) To {
     if (@typeInfo(@TypeOf(value)) == .int) {
         return @ptrFromInt(@as(usize, value));

@@ -269,7 +269,17 @@ extern "C" void on_before_reload_process_linux()
 
 #define LSHPACK_MAX_HEADER_SIZE 65536
 
-static thread_local char shared_header_buffer[LSHPACK_MAX_HEADER_SIZE];
+// Lazily heap-allocated so it doesn't land in the .tls section on Windows
+// (PE has no TLS BSS; a static thread_local char[65536] ships as 64 KB of
+// zeros in bun.exe and is copied into every thread's TLS block at creation).
+static char* shared_header_buffer_get()
+{
+    static thread_local char* buffer = nullptr;
+    if (!buffer) [[unlikely]] {
+        buffer = new char[LSHPACK_MAX_HEADER_SIZE];
+    }
+    return buffer;
+}
 
 extern "C" {
 typedef void* (*lshpack_wrapper_alloc)(size_t size);
@@ -312,6 +322,7 @@ size_t lshpack_wrapper_encode(lshpack_wrapper* self,
     if (name_len + val_len > LSHPACK_MAX_HEADER_SIZE)
         return 0;
 
+    char* shared_header_buffer = shared_header_buffer_get();
     lsxpack_header_t hdr;
     memset(&hdr, 0, sizeof(lsxpack_header_t));
     memcpy(&shared_header_buffer[0], name, name_len);
@@ -333,7 +344,7 @@ size_t lshpack_wrapper_decode(lshpack_wrapper* self,
 {
     lsxpack_header_t hdr;
     memset(&hdr, 0, sizeof(lsxpack_header_t));
-    lsxpack_header_prepare_decode(&hdr, &shared_header_buffer[0], 0, LSHPACK_MAX_HEADER_SIZE);
+    lsxpack_header_prepare_decode(&hdr, shared_header_buffer_get(), 0, LSHPACK_MAX_HEADER_SIZE);
 
     const unsigned char* s = src;
 

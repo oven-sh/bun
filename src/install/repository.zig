@@ -1,7 +1,9 @@
-threadlocal var final_path_buf: bun.PathBuffer = undefined;
-threadlocal var ssh_path_buf: bun.PathBuffer = undefined;
-threadlocal var folder_name_buf: bun.PathBuffer = undefined;
-threadlocal var json_path_buf: bun.PathBuffer = undefined;
+const tl_bufs = bun.ThreadlocalBuffers(struct {
+    final_path_buf: bun.PathBuffer = undefined,
+    ssh_path_buf: bun.PathBuffer = undefined,
+    folder_name_buf: bun.PathBuffer = undefined,
+    json_path_buf: bun.PathBuffer = undefined,
+});
 
 const SloppyGlobalGitConfig = struct {
     has_askpass: bool = false,
@@ -390,6 +392,7 @@ pub const Repository = extern struct {
     }
 
     pub fn trySSH(url: string) ?string {
+        const ssh_path_buf = &tl_bufs.get().ssh_path_buf;
         // Do not cast explicit http(s) URLs to SSH
         if (strings.hasPrefixComptime(url, "http")) {
             return null;
@@ -452,6 +455,7 @@ pub const Repository = extern struct {
     }
 
     pub fn tryHTTPS(url: string) ?string {
+        const final_path_buf = &tl_bufs.get().final_path_buf;
         if (strings.hasPrefixComptime(url, "http")) {
             return url;
         }
@@ -500,7 +504,7 @@ pub const Repository = extern struct {
         attempt: u8,
     ) !std.fs.Dir {
         bun.analytics.Features.git_dependencies += 1;
-        const folder_name = try std.fmt.bufPrintZ(&folder_name_buf, "{f}.git", .{
+        const folder_name = try std.fmt.bufPrintZ(&tl_bufs.get().folder_name_buf, "{f}.git", .{
             bun.fmt.hexIntLower(task_id.get()),
         });
 
@@ -562,7 +566,7 @@ pub const Repository = extern struct {
         committish: string,
         task_id: Install.Task.Id,
     ) !string {
-        const path = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{try std.fmt.bufPrint(&folder_name_buf, "{f}.git", .{
+        const path = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{try std.fmt.bufPrint(&tl_bufs.get().folder_name_buf, "{f}.git", .{
             bun.fmt.hexIntLower(task_id.get()),
         })}, .auto);
 
@@ -598,7 +602,8 @@ pub const Repository = extern struct {
         resolved: string,
     ) !ExtractData {
         bun.analytics.Features.git_dependencies += 1;
-        const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, resolved, null);
+        const bufs = tl_bufs.get();
+        const folder_name = PackageManager.cachedGitFolderNamePrint(&bufs.folder_name_buf, resolved, null);
 
         var package_dir = bun.openDir(cache_dir, folder_name) catch |not_found| brk: {
             if (not_found != error.ENOENT) return not_found;
@@ -612,7 +617,7 @@ pub const Repository = extern struct {
                 "core.longpaths=true",
                 "--quiet",
                 "--no-checkout",
-                try bun.getFdPath(.fromStdDir(repo_dir), &final_path_buf),
+                try bun.getFdPath(.fromStdDir(repo_dir), &bufs.final_path_buf),
                 target,
             }) catch |err| {
                 log.addErrorFmt(
@@ -673,7 +678,7 @@ pub const Repository = extern struct {
         defer json_file.close();
 
         const json_path = json_file.getPath(
-            &json_path_buf,
+            &bufs.json_path_buf,
         ).unwrap() catch |err| {
             log.addErrorFmt(
                 null,

@@ -4597,7 +4597,17 @@ impl<'a> HTTPClient<'a> {
                         let is_same_origin;
 
                         {
-                            if let Some(i) = strings::index_of(location, b"://") {
+                            // Only treat the Location as an absolute URL if "://" appears
+                            // in scheme position. Per RFC 3986 a scheme cannot contain
+                            // '/', '?' or '#', so if any of those occur before "://" the
+                            // match is inside a path/query/fragment (e.g. a relative
+                            // "/login?next=https://app.example.com") and must be resolved
+                            // against the request URL via jsc::URL::join below.
+                            let scheme_end = strings::index_of(location, b"://").filter(|&i| {
+                                strings::index_of_any(&location[..i], b"/?#").is_none()
+                            });
+
+                            if let Some(i) = scheme_end {
                                 let mut string_builder = StringBuilder::default();
 
                                 let is_protocol_relative = i == 0;
@@ -4606,8 +4616,9 @@ impl<'a> HTTPClient<'a> {
                                 } else {
                                     &location[0..i]
                                 };
-                                let is_http = protocol_name == b"http";
-                                if is_http || protocol_name == b"https" {
+                                // RFC 3986 section 3.1: scheme comparison is case-insensitive.
+                                let is_http = strings::eql_case_insensitive_ascii(protocol_name, b"http", true);
+                                if is_http || strings::eql_case_insensitive_ascii(protocol_name, b"https", true) {
                                 } else {
                                     return Err(err!(UnsupportedRedirectProtocol));
                                 }
@@ -4682,7 +4693,8 @@ impl<'a> HTTPClient<'a> {
                                     return Err(err!(RedirectURLTooLong));
                                 }
 
-                                let is_http = protocol_name == b"http";
+                                // RFC 3986 section 3.1: scheme comparison is case-insensitive.
+                                let is_http = strings::eql_case_insensitive_ascii(protocol_name, b"http", true);
 
                                 if is_http {
                                     string_builder.count(b"http:");

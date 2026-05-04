@@ -58,6 +58,33 @@ test("fetch(url, RequestSubclass)", async () => {
   expect(headers.get("hello")).toBe("world");
 });
 
+// Regression: Request exposes a `keepalive` getter (default false) per the
+// Fetch spec. Bun's fetch() has a separately-named `keepalive` option that
+// controls HTTP connection pooling. When a Request is passed as the second
+// fetch argument, the extractor must NOT treat the spec accessor as "turn
+// off pooling" — same-origin requests should still reuse the TCP connection.
+test("fetch(url, requestObj) preserves HTTP connection pooling", async () => {
+  using srv = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req, server) {
+      return new Response(String(server.requestIP(req)?.port ?? 0));
+    },
+  });
+  const url = `http://127.0.0.1:${srv.port}/`;
+  const init = new Request(url);
+
+  const ports: number[] = [];
+  for (let i = 0; i < 6; i++) {
+    const res = await fetch(url, init);
+    ports.push(parseInt(await res.text(), 10));
+  }
+
+  // Pooling on → connections reuse → at most 2 unique source ports
+  // (one reconnect allowed). Pooling off (the bug) → 6 distinct ports.
+  expect(new Set(ports).size).toBeLessThanOrEqual(2);
+});
+
 test("fetch({toString throwing}, {headers} isn't accessed)", async () => {
   const obj = {
     headers: null,

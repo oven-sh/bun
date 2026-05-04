@@ -84,11 +84,13 @@ test.if(isWindows)("process.env inherits Object.prototype methods on windows (#3
   } finally {
     if (original === undefined) {
       delete process.env.HASOWNPROPERTY;
+      // With no env var, the inherited method is visible again.
+      expect(typeof process.env.hasOwnProperty).toBe("function");
     } else {
       process.env.HASOWNPROPERTY = original;
+      // A pre-existing env var keeps shadowing the prototype method.
+      expect(process.env.hasOwnProperty).toBe(original);
     }
-    // Once the env var is gone, the inherited method comes back.
-    expect(typeof process.env.hasOwnProperty).toBe("function");
   }
 });
 

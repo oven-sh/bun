@@ -2148,6 +2148,195 @@ pub fn appendOptionsEnv(env: []const u8, comptime ArgType: type, args: *std.arra
     }
 }
 
+/// Kind of flag in `NODE_OPTIONS`. Controls how the filter treats a bare
+/// (no `=value`) occurrence of the flag:
+///   - `bool_flag`: no value expected; emit bare.
+///   - `required_value`: must have a value. If no value token follows in
+///     `NODE_OPTIONS`, the flag is DROPPED — never emitted bare, to avoid
+///     binding a later argv token (e.g. the entrypoint) as the missing value.
+const NodeOptionKind = enum { bool_flag, required_value };
+
+/// Allowlist of flags supported by Bun that may appear in `NODE_OPTIONS`.
+///
+/// Matches Node.js's behavior of restricting `NODE_OPTIONS` to a subset of
+/// flags (for security and predictability). We include only flags that Bun
+/// actually implements — unknown flags are silently ignored.
+pub const node_options_allowlist = ComptimeStringMap(NodeOptionKind, .{
+    // Boolean flags (no value)
+    .{ "--expose-gc", .bool_flag },
+    .{ "--no-addons", .bool_flag },
+    .{ "--no-deprecation", .bool_flag },
+    .{ "--preserve-symlinks", .bool_flag },
+    .{ "--preserve-symlinks-main", .bool_flag },
+    .{ "--throw-deprecation", .bool_flag },
+    .{ "--use-bundled-ca", .bool_flag },
+    .{ "--use-openssl-ca", .bool_flag },
+    .{ "--use-system-ca", .bool_flag },
+    .{ "--zero-fill-buffers", .bool_flag },
+    .{ "--cpu-prof", .bool_flag },
+    .{ "--cpu-prof-md", .bool_flag },
+    .{ "--heap-prof", .bool_flag },
+    .{ "--heap-prof-md", .bool_flag },
+
+    // Options that take a value. All treated as required_value: bare form
+    // (no `=value` and no following value token) is dropped to prevent
+    // binding the user's entrypoint as the missing value.
+    .{ "--conditions", .required_value },
+    .{ "-C", .required_value },
+    .{ "--cpu-prof-dir", .required_value },
+    .{ "--cpu-prof-interval", .required_value },
+    .{ "--cpu-prof-name", .required_value },
+    .{ "--dns-result-order", .required_value },
+    .{ "--heap-prof-dir", .required_value },
+    .{ "--heap-prof-name", .required_value },
+    .{ "--import", .required_value },
+    .{ "--inspect", .required_value },
+    .{ "--inspect-brk", .required_value },
+    .{ "--inspect-wait", .required_value },
+    .{ "--max-http-header-size", .required_value },
+    .{ "--require", .required_value },
+    .{ "-r", .required_value },
+    .{ "--title", .required_value },
+    .{ "--unhandled-rejections", .required_value },
+});
+
+/// Parses `NODE_OPTIONS` env var into command-line tokens filtered by
+/// `node_options_allowlist` and inserts them into `args` starting at
+/// index 1 (after argv[0]).
+///
+/// Splits on whitespace with support for single/double quotes and backslash
+/// escapes (POSIX semantics: backslash has no special meaning inside single
+/// quotes). Positional (non-flag) tokens and unrecognized flags are dropped
+/// to prevent unintended script execution via the environment. Required-value
+/// flags that appear without a value are also dropped, so a bare
+/// `NODE_OPTIONS="--require"` cannot hijack the user's entrypoint.
+pub fn appendNodeOptionsEnv(env: []const u8, args: *std.array_list.Managed([:0]const u8)) !void {
+    // First, tokenize the NODE_OPTIONS string (quote- and escape-aware).
+    var tokens = std.array_list.Managed([]u8).init(bun.default_allocator);
+    defer {
+        for (tokens.items) |t| bun.default_allocator.free(t);
+        tokens.deinit();
+    }
+
+    var buf = std.array_list.Managed(u8).init(bun.default_allocator);
+    defer buf.deinit();
+
+    var in_quote: ?u8 = null;
+    var escape = false;
+    var has_token = false;
+
+    var i: usize = 0;
+    while (i < env.len) : (i += 1) {
+        const ch = env[i];
+
+        if (escape) {
+            try buf.append(ch);
+            escape = false;
+            has_token = true;
+            continue;
+        }
+
+        // Single quotes suppress all escaping (POSIX). Handle the in-quote
+        // branch before the backslash branch so `\` inside `'…'` is literal.
+        if (in_quote) |q| {
+            if (q == '\'') {
+                // Single-quoted: no escapes, only the matching quote closes.
+                if (ch == '\'') {
+                    in_quote = null;
+                } else {
+                    try buf.append(ch);
+                    has_token = true;
+                }
+                continue;
+            }
+            // Double-quoted: backslash escapes the next character.
+            if (ch == '\\') {
+                escape = true;
+                continue;
+            }
+            if (ch == q) {
+                in_quote = null;
+            } else {
+                try buf.append(ch);
+                has_token = true;
+            }
+            continue;
+        }
+
+        if (ch == '\\') {
+            escape = true;
+            continue;
+        }
+
+        if (ch == '\'' or ch == '"') {
+            in_quote = ch;
+            // Mark that we've seen a token even if the quoted body is empty,
+            // so `--flag ""` preserves the empty string as a distinct token.
+            has_token = true;
+            continue;
+        }
+
+        if (std.ascii.isWhitespace(ch)) {
+            if (has_token) {
+                try tokens.append(try buf.toOwnedSlice());
+                has_token = false;
+            }
+            continue;
+        }
+
+        try buf.append(ch);
+        has_token = true;
+    }
+    if (has_token) {
+        try tokens.append(try buf.toOwnedSlice());
+    }
+
+    // Now filter tokens through the allowlist and insert into args.
+    var offset: usize = 1;
+    var j: usize = 0;
+    while (j < tokens.items.len) : (j += 1) {
+        const token = tokens.items[j];
+        if (token.len == 0 or token[0] != '-') {
+            // Positional args are not allowed in NODE_OPTIONS.
+            continue;
+        }
+
+        // Split --flag=value into name and value.
+        const eq_idx = std.mem.indexOfScalar(u8, token, '=');
+        const flag_name = if (eq_idx) |idx| token[0..idx] else token;
+
+        const kind = node_options_allowlist.get(flag_name) orelse continue;
+
+        if (kind == .required_value and eq_idx == null) {
+            // Required-value flag without inline =value: look for a following
+            // value token. If there isn't one (or the next token is itself a
+            // flag), DROP this flag entirely — never emit a bare required-value
+            // flag, or clap would bind the user's entrypoint as the value.
+            if (j + 1 >= tokens.items.len) continue;
+            const next_tok = tokens.items[j + 1];
+            // An empty quoted value (`--flag ""`) is legitimate; reject only
+            // tokens that start with `-`, which would be another flag.
+            if (next_tok.len > 0 and next_tok[0] == '-') continue;
+
+            const token_z = try bun.default_allocator.dupeZ(u8, token);
+            try args.insert(offset, token_z);
+            offset += 1;
+
+            const next_z = try bun.default_allocator.dupeZ(u8, next_tok);
+            try args.insert(offset, next_z);
+            offset += 1;
+            j += 1;
+            continue;
+        }
+
+        // bool_flag, or required_value with inline `--flag=value`: safe to
+        // emit the token as-is.
+        const token_z = try bun.default_allocator.dupeZ(u8, token);
+        try args.insert(offset, token_z);
+        offset += 1;
+    }
+}
+
 pub fn initArgv() !void {
     if (comptime Environment.isPosix) {
         argv = try bun.default_allocator.alloc([:0]const u8, std.os.argv.len);
@@ -2214,6 +2403,20 @@ pub fn initArgv() !void {
         try appendOptionsEnv(opts, [:0]const u8, &argv_list);
         argv = argv_list.items;
         bun_options_argc = argv.len - original_len;
+    }
+
+    // NODE_OPTIONS: Node.js-compatible env var for injecting CLI flags.
+    // Filtered through an allowlist — unknown flags are dropped.
+    // Counted toward `bun_options_argc` so standalone binaries compute the
+    // correct passthrough offset (see offset_for_passthrough in cli.zig).
+    if (bun.env_var.NODE_OPTIONS.get()) |opts| {
+        if (opts.len > 0) {
+            const before = argv.len;
+            var argv_list = std.array_list.Managed([:0]const u8).fromOwnedSlice(bun.default_allocator, argv);
+            try appendNodeOptionsEnv(opts, &argv_list);
+            argv = argv_list.items;
+            bun_options_argc += argv.len - before;
+        }
     }
 }
 

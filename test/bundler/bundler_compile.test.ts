@@ -716,23 +716,33 @@ describe("bundler", () => {
     },
     run: { stdout: new Array(7).fill("true").join("\n") },
   });
-  // `import.meta?.main` (optional chain) is not constant-folded by the
-  // transpiler, so it falls through to the JS builtin at runtime. On Windows
-  // standalone binaries, `Bun.main` uses forward slashes (`B:/~BUN/root/...`)
-  // while `import.meta.path` uses backslashes (WebKit `URL::fileSystemPath()`
-  // converts `/` → `\`), so the builtin's string compare used to always
-  // return false. See https://github.com/oven-sh/bun/issues/30084.
+  // `import.meta?.main` (optional chain) used to skip the transpiler's
+  // constant-fold for `import.meta.main`, so compiled binaries evaluated
+  // it at runtime via the builtin — which compares `this.path === Bun.main`.
+  // On Windows standalone binaries those two disagree on `/` vs `\`, making
+  // the check always false. Since `import.meta` is always a non-null object,
+  // the optional chain is a no-op and the transpiler can fold through it.
+  // See https://github.com/oven-sh/bun/issues/30084.
   itBundled("compile/ImportMetaMainOptionalChain", {
     compile: true,
     backend: "cli",
     files: {
       "/entry.ts": /* js */ `
-        // Hit the runtime JS builtin, not the transpile-time inlining.
-        if (!import.meta?.main) throw new Error("import.meta?.main should be true, got " + import.meta?.main);
-        console.log("ok");
+        import { isModuleMain } from './sub/mod';
+        // Use toString on an arrow so we can observe what the transpiler folded.
+        // With --compile, optional chain now folds to 'true' for the entry and
+        // 'false' for any other module.
+        console.log((() => import.meta?.main).toString().includes('true'));
+        console.log((() => !import.meta?.main).toString().includes('false'));
+        console.log((() => import.meta?.main).toString().includes('import.meta'));
+        console.log(isModuleMain);
+      `,
+      "/sub/mod.ts": /* js */ `
+        // Non-entry module: import.meta?.main must fold to false here.
+        export const isModuleMain = (() => import.meta?.main).toString().includes('false');
       `,
     },
-    run: { stdout: "ok" },
+    run: { stdout: "true\ntrue\nfalse\ntrue" },
   });
   itBundled("compile/SourceMap", {
     target: "bun",

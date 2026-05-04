@@ -18,7 +18,10 @@ import {
   setHandler,
 } from "./dummy.registry";
 
-beforeAll(() => setDefaultTimeout(1000 * 60 * 5));
+// Must be module-scope: setDefaultTimeout inside beforeAll is a no-op because
+// it() calls register with the default 5s before any beforeAll hook runs.
+setDefaultTimeout(1000 * 60 * 5);
+
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
 beforeEach(async () => {

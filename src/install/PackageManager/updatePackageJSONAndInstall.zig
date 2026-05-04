@@ -758,18 +758,17 @@ fn updatePackageJSONAndInstallWithFilter(
 
     var any_remove_changes = false;
 
-    // `PackageJSONEditor.edit` can shrink and reorder `updates` in place
-    // (e.g. with `--only-missing` when the dependency already exists it
-    // swap-removes from the slice). Take a deep copy of the elements so each
-    // workspace starts from the same set of requests, unaffected by any
-    // in-place mutation the previous workspace's edit performed.
+    // `PackageJSONEditor.edit` mutates `UpdateRequest` entries in place
+    // (currently `request.e_string`, used as an "already handled" sentinel
+    // pointing into the edited workspace's AST). Take a deep copy so each
+    // workspace and the install step start from the same pristine request
+    // set, insulated from any per-request state the previous edit left behind.
     const original_updates = bun.handleOom(manager.allocator.dupe(UpdateRequest, updates.*));
 
     // Pre-install: edit each matching workspace's package.json in memory.
     for (workspaces) |*workspace| {
-        // `PackageJSONEditor.edit` uses `request.e_string` as a sentinel for
-        // "already handled"; reset it between workspaces so every workspace
-        // actually gets the dependency added.
+        // Reset per-request state between workspaces so `edit` treats every
+        // request as unhandled for this workspace.
         @memcpy(updates.*.ptr[0..original_updates.len], original_updates);
         updates.*.len = original_updates.len;
         for (updates.*) |*request| request.e_string = null;
@@ -849,10 +848,10 @@ fn updatePackageJSONAndInstallWithFilter(
     manager.original_package_json_path = workspaces[0].package_json_path;
 
     manager.to_update = false;
-    // Always give the install step the full request list. The pre-install loop
-    // may have left `updates.*` shrunk (if the last workspace already had every
-    // requested dependency with `--only-missing`), which would cause
-    // `cleanWithLogger` to skip populating `package_id` on the requests.
+    // Restore the pristine request list for the install step: the per-workspace
+    // edit loop above left each request's `e_string` pointing into the last
+    // workspace's AST, and `cleanWithLogger` needs fresh requests to populate
+    // `package_id` from the resolved lockfile.
     @memcpy(updates.*.ptr[0..original_updates.len], original_updates);
     updates.*.len = original_updates.len;
     for (updates.*) |*request| request.e_string = null;

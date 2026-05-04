@@ -67,15 +67,46 @@ pub fn renderToAnsi(
             }
         }
         // `cwd` is the base directory used to resolve relative image
-        // `src` paths when kittyGraphics is on. Lives in the arena so
-        // the slice handed to theme.image_base_dir stays valid until
-        // rendering finishes (arena is deinit'd at function exit).
+        // `src` paths when kittyGraphics is on. Must be stored as an
+        // absolute path — downstream, `resolveLocalImagePath` feeds it
+        // to `bun.path.joinAbsString`, which takes its `cwd` argument
+        // as already-absolute (on Windows `_joinAbsStringBufWindows`
+        // even asserts `isAbsoluteWindows(cwd)` in debug builds). A
+        // relative value like `"./assets"` would otherwise resolve
+        // against `/` on POSIX or panic on Windows. Resolve it against
+        // the process cwd here, mirroring the CLI caller in
+        // `src/cli/run_command.zig:renderMarkdownFileAndExit`. The
+        // resolved slice lives in the arena so it stays valid until
+        // the renderer returns (arena.deinit() runs at function exit).
         if (try theme_value.get(globalThis, "cwd")) |cwd_val| {
             if (cwd_val.isString()) {
                 var cwd_str = try cwd_val.toSlice(globalThis, arena.allocator());
                 const cwd_owned = try cwd_str.intoOwnedSlice(arena.allocator());
                 if (cwd_owned.len > 0) {
-                    theme.image_base_dir = cwd_owned;
+                    if (std.fs.path.isAbsolute(cwd_owned)) {
+                        theme.image_base_dir = cwd_owned;
+                    } else {
+                        var cwd_buf: bun.PathBuffer = undefined;
+                        switch (bun.sys.getcwd(&cwd_buf)) {
+                            .result => |process_cwd| {
+                                var base_buf: bun.PathBuffer = undefined;
+                                const joined = bun.path.joinAbsStringBuf(
+                                    process_cwd,
+                                    &base_buf,
+                                    &.{cwd_owned},
+                                    .auto,
+                                );
+                                // Dupe into the arena so the slice
+                                // outlives the stack buffer.
+                                const absolute = try arena.allocator().dupe(u8, joined);
+                                theme.image_base_dir = absolute;
+                            },
+                            // getcwd failure: leave image_base_dir null
+                            // so the renderer falls back to the process
+                            // cwd (same as if `cwd` wasn't passed).
+                            .err => {},
+                        }
+                    }
                 }
             }
         }

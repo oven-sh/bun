@@ -176,10 +176,17 @@ test("--hot reload proceeds after a hanging top-level await", async () => {
   const decoder = new TextDecoder();
   const seen: string[] = [];
   let round = 0;
+  // Buffer across chunk boundaries — matches the pattern in
+  // test/cli/hot/hot.test.ts. A 4-byte "v=N\n" write is realistically
+  // never torn on either platform here, but making the reader robust
+  // costs nothing and keeps it consistent with the other --hot readers.
+  let buf = "";
 
   for await (const chunk of runner.stdout) {
-    const text = decoder.decode(chunk);
-    for (const line of text.split("\n")) {
+    buf += decoder.decode(chunk, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";
+    for (const line of lines) {
       if (!line.startsWith("v=")) continue;
       seen.push(line);
       round++;

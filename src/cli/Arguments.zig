@@ -354,13 +354,17 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
     var config_path_: []const u8 = user_config_path_ orelse "";
 
     var auto_loaded: bool = false;
+    const first_positional = if (ctx.positionals.len > 0) ctx.positionals[0] else "";
+    const first_positional_is_absolute = first_positional.len > 0 and std.fs.path.isAbsolute(first_positional);
     if (config_path_.len == 0 and (user_config_path_ != null or
         Command.Tag.always_loads_config.get(cmd) or
         (cmd == .AutoCommand and
             // "bun"
             (ctx.positionals.len == 0 or
                 // "bun file.js"
-                ctx.positionals.len > 0 and options.defaultLoaders.has(std.fs.path.extension(ctx.positionals[0]))))))
+                ctx.positionals.len > 0 and
+                    options.defaultLoaders.has(std.fs.path.extension(first_positional)) and
+                    !first_positional_is_absolute))))
     {
         config_path_ = "bunfig.toml";
         auto_loaded = true;

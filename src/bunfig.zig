@@ -133,19 +133,30 @@ pub const Bunfig = struct {
                 errdefer preloads.deinit();
                 while (array.next()) |item| {
                     try this.expectString(item);
-                    if (item.data.e_string.len() > 0)
-                        preloads.appendAssumeCapacity(try item.data.e_string.string(allocator));
+                    if (item.data.e_string.len() > 0) {
+                        const specifier = try item.data.e_string.string(allocator);
+                        preloads.appendAssumeCapacity(try this.resolvePreloadSpecifier(allocator, specifier));
+                    }
                 }
                 this.ctx.preloads = preloads.items;
             } else if (expr.data == .e_string) {
                 if (expr.data.e_string.len() > 0) {
                     var preloads = try allocator.alloc(string, 1);
-                    preloads[0] = try expr.data.e_string.string(allocator);
+                    preloads[0] = try this.resolvePreloadSpecifier(allocator, try expr.data.e_string.string(allocator));
                     this.ctx.preloads = preloads;
                 }
             } else if (expr.data != .e_null) {
                 try this.addError(expr.loc, "Expected preload to be an array");
             }
+        }
+
+        fn resolvePreloadSpecifier(this: *Parser, allocator: std.mem.Allocator, specifier: string) !string {
+            if (std.fs.path.isAbsolute(specifier) or resolver.isPackagePath(specifier)) {
+                return specifier;
+            }
+
+            const source_dir = std.fs.path.dirname(this.source.path.text) orelse return specifier;
+            return try allocator.dupe(u8, resolve_path.joinAbsString(source_dir, &[_]string{specifier}, .auto));
         }
 
         fn loadEnvConfig(this: *Parser, expr: js_ast.Expr) !void {
@@ -1296,6 +1307,7 @@ const string = []const u8;
 
 const options = @import("./options.zig");
 const resolver = @import("./resolver/resolver.zig");
+const resolve_path = @import("./resolver/resolve_path.zig");
 const std = @import("std");
 const Command = @import("./cli.zig").Command;
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;

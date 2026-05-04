@@ -1684,7 +1684,24 @@ pub const RunCommand = struct {
         }
 
         if (!ctx.debug.loaded_bunfig) {
-            bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
+            if (std.fs.path.isAbsolute(target_name)) {
+                const loader = options.defaultLoaders.get(std.fs.path.extension(target_name));
+                if (loader != null and loader.?.canBeRunByBun()) {
+                    var config_path_buf: bun.PathBuffer = undefined;
+                    const entry_dir = std.fs.path.dirname(target_name) orelse target_name;
+                    const entry_config_path = resolve_path.joinAbsStringBufZ(
+                        entry_dir,
+                        &config_path_buf,
+                        &[_]string{"bunfig.toml"},
+                        .auto,
+                    );
+                    bun.cli.Arguments.loadConfigPath(ctx.allocator, true, entry_config_path, ctx, .RunCommand) catch {};
+                } else {
+                    bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
+                }
+            } else {
+                bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
+            }
         }
 
         // try fast run (check if the file exists and is not a folder, then run it)

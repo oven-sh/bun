@@ -1,6 +1,6 @@
+import { spawnSync } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
-import { spawnSync } from "bun";
 
 // Regression: a watcher thread dispatches through the resolver's BSSMap
 // singletons (dir_cache, etc.). When `VirtualMachine.globalExit` /

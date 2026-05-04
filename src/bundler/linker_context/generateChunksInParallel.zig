@@ -439,7 +439,10 @@ pub fn generateChunksInParallel(
 
     // Don't write to disk if compile mode is enabled - we need buffer values for compilation
     const is_compile = bundler.transpiler.options.compile;
-    if (root_path.len > 0 and !is_compile) {
+    // When --compress is enabled, generate everything in memory so the buffers
+    // can be handed to the thread-pool compressor below.
+    const want_compress = c.resolver.opts.compress.any() and !is_standalone and !is_compile;
+    if (root_path.len > 0 and !is_compile and !want_compress) {
         try c.writeOutputFilesToDisk(root_path, chunks, &output_files, standalone_chunk_contents);
     } else {
         // In-memory build (also used for standalone mode)
@@ -758,6 +761,12 @@ pub fn generateChunksInParallel(
         }
     }
 
+    if (want_compress) {
+        var result = output_files.take();
+        try compress_outputs.compressOutputFilesInParallel(c, &result, root_path);
+        return result;
+    }
+
     if (is_standalone) {
         // For standalone mode, filter to only HTML output files.
         // Deinit dropped items to free their heap allocations (paths, buffers).
@@ -783,6 +792,7 @@ pub const ThreadPool = bun.bundle_v2.ThreadPool;
 const debugPartRanges = Output.scoped(.PartRanges, .hidden);
 
 const analyze_transpiled_module = @import("../../analyze_transpiled_module.zig");
+const compress_outputs = @import("../compress_outputs.zig");
 const std = @import("std");
 
 const bun = @import("bun");

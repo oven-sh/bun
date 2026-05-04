@@ -740,6 +740,58 @@ To granularly enable certain minifications:
   </Tab>
 </Tabs>
 
+### compress
+
+Emit precompressed `.gz` / `.br` / `.zst` copies of every output file alongside the originals. Useful for serving with `nginx` (`gzip_static` / `brotli_static`), CDNs, or `Bun.serve` static assets without compressing on every request. Compression runs in Bun's thread pool after bundling.
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      compress: ['gzip', 'br', 'zstd'],
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --compress=gzip,br,zstd
+    ```
+  </Tab>
+</Tabs>
+
+`compress` accepts:
+
+- `true` — gzip only
+- `"gzip" | "br" | "zstd"` — a single algorithm
+- an array of the above
+- an object to control the compression level
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      compress: {
+        gzip: true,
+        brotli: true,
+        zstd: true,
+        level: 'max', // or a number
+      },
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --compress=all --compress-level=max
+    ```
+  </Tab>
+</Tabs>
+
+Compressed paths are the original output path plus a suffix (`out/index.js` → `out/index.js.gz`). They show up in `result.outputs` with `kind: "compressed"`. Entry points, chunks, assets, and sourcemaps are compressed; bytecode and metafiles are not.
+
 ### external
 
 A list of import paths to consider external. Defaults to `[]`.
@@ -1443,7 +1495,7 @@ interface BuildOutput {
 }
 
 interface BuildArtifact extends Blob {
-  kind: "entry-point" | "chunk" | "asset" | "sourcemap";
+  kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode" | "compressed";
   path: string;
   loader: Loader;
   hash: string | null;
@@ -1467,13 +1519,13 @@ for (const output of build.outputs) {
 
 Each artifact also contains the following properties:
 
-| Property    | Description                                                                                                                                                  |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `kind`      | What kind of build output this file is. A build generates bundled entrypoints, code-split "chunks", sourcemaps, bytecode, and copied assets (like images).   |
-| `path`      | Absolute path to the file on disk                                                                                                                            |
-| `loader`    | The loader was used to interpret the file. See [Bundler > Loaders](/bundler/loaders) to see how Bun maps file extensions to the appropriate built-in loader. |
-| `hash`      | The hash of the file contents. Always defined for assets.                                                                                                    |
-| `sourcemap` | The sourcemap file corresponding to this file, if generated. Only defined for entrypoints and chunks.                                                        |
+| Property    | Description                                                                                                                                                                                                             |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `kind`      | What kind of build output this file is. A build generates bundled entrypoints, code-split "chunks", sourcemaps, bytecode, copied assets (like images), and `compressed` copies when [`compress`](#compress) is enabled. |
+| `path`      | Absolute path to the file on disk                                                                                                                                                                                       |
+| `loader`    | The loader was used to interpret the file. See [Bundler > Loaders](/bundler/loaders) to see how Bun maps file extensions to the appropriate built-in loader.                                                            |
+| `hash`      | The hash of the file contents. Always defined for assets.                                                                                                                                                               |
+| `sourcemap` | The sourcemap file corresponding to this file, if generated. Only defined for entrypoints and chunks.                                                                                                                   |
 
 Similar to `BunFile`, `BuildArtifact` objects can be passed directly into `new Response()`.
 
@@ -1717,6 +1769,18 @@ interface BuildConfig {
         syntax?: boolean;
         identifiers?: boolean;
       };
+  compress?:
+    | boolean
+    | "gzip"
+    | "br"
+    | "zstd"
+    | Array<"gzip" | "br" | "zstd">
+    | {
+        gzip?: boolean;
+        brotli?: boolean;
+        zstd?: boolean;
+        level?: number | "max";
+      };
   /**
    * Ignore dead code elimination/tree-shaking annotations such as @__PURE__ and package.json
    * "sideEffects" fields. This should only be used as a temporary workaround for incorrect
@@ -1785,7 +1849,7 @@ interface BuildArtifact extends Blob {
   path: string;
   loader: Loader;
   hash: string | null;
-  kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode";
+  kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode" | "compressed";
   sourcemap: BuildArtifact | null;
 }
 

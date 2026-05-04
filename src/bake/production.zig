@@ -434,6 +434,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
                     .sourcemap => {},
                     .module_info => {},
                     .@"metafile-json", .@"metafile-markdown" => {},
+                    .compressed => {},
                 }
             },
         }

@@ -195,6 +195,8 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--entry-naming <STR>             Customize entry point filenames. Defaults to \"[dir]/[name].[ext]\"") catch unreachable,
     clap.parseParam("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
     clap.parseParam("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
+    clap.parseParam("--compress <STR>...              Additionally emit compressed copies of output files - 'gzip', 'br', 'zstd'") catch unreachable,
+    clap.parseParam("--compress-level <STR>           Compression level for --compress, or 'max' for the highest level") catch unreachable,
     clap.parseParam("--react-fast-refresh             Enable React Fast Refresh transform (does not emit hot-module code, use this for testing)") catch unreachable,
     clap.parseParam("--no-bundle                      Transpile file only, do not bundle") catch unreachable,
     clap.parseParam("--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed.") catch unreachable,
@@ -1497,6 +1499,35 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
         if (args.option("--asset-naming")) |asset_naming| {
             ctx.bundler_options.asset_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(asset_naming) });
+        }
+
+        for (args.options("--compress")) |compress| {
+            var it = std.mem.splitScalar(u8, compress, ',');
+            while (it.next()) |part_| {
+                const part = std.mem.trim(u8, part_, " ");
+                if (part.len == 0) continue;
+                if (strings.eqlComptime(part, "all")) {
+                    ctx.bundler_options.compress.gzip = true;
+                    ctx.bundler_options.compress.brotli = true;
+                    ctx.bundler_options.compress.zstd = true;
+                } else if (options.CompressionOptions.Algorithm.map.get(part)) |algo| {
+                    ctx.bundler_options.compress.enable(algo);
+                } else {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> Invalid value for --compress: \"{s}\". Must be one of \"gzip\", \"br\", \"zstd\"", .{part});
+                    Global.exit(1);
+                }
+            }
+        }
+
+        if (args.option("--compress-level")) |level| {
+            if (strings.eqlComptime(level, "max")) {
+                ctx.bundler_options.compress.level = .max;
+            } else if (std.fmt.parseInt(u8, level, 10)) |n| {
+                ctx.bundler_options.compress.level = .{ .value = n };
+            } else |_| {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> Invalid --compress-level: \"{s}\". Must be a number or \"max\"", .{level});
+                Global.exit(1);
+            }
         }
 
         if (args.flag("--server-components")) {

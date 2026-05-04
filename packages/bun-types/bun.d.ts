@@ -2747,6 +2747,29 @@ declare module "bun" {
         };
 
     /**
+     * Additionally emit compressed (`.gz` / `.br` / `.zst`) copies of each
+     * output file. Compression runs in Bun's thread pool after bundling.
+     *
+     * - `true` enables gzip
+     * - a string or array of strings selects specific algorithms
+     * - an object lets you pick algorithms and a `level` (`"max"` or a number)
+     *
+     * @default false
+     */
+    compress?:
+      | boolean
+      | "gzip"
+      | "br"
+      | "zstd"
+      | Array<"gzip" | "br" | "zstd">
+      | {
+          gzip?: boolean;
+          brotli?: boolean;
+          zstd?: boolean;
+          level?: number | "max";
+        };
+
+    /**
      * Ignore dead code elimination/tree-shaking annotations such as @__PURE__ and package.json
      * "sideEffects" fields. This should only be used as a temporary workaround for incorrect
      * annotations in libraries.
@@ -3603,7 +3626,7 @@ declare module "bun" {
     path: string;
     loader: Loader;
     hash: string | null;
-    kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode";
+    kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode" | "compressed";
     sourcemap: BuildArtifact | null;
   }
 

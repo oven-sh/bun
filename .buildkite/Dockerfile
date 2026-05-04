@@ -27,11 +27,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
    software-properties-common apt-transport-https \
    ca-certificates gnupg lsb-release unzip xz-utils \
    libxml2-dev ruby ruby-dev bison gawk perl make golang ccache qemu-user-static \
-   && add-apt-repository ppa:ubuntu-toolchain-r/test \
-   && apt-get update \
-   && apt-get install -y gcc-13 g++-13 libgcc-13-dev libstdc++-13-dev \
-       libasan6 libubsan1 libatomic1 libtsan0 liblsan0 \
-       libgfortran5 libc6-dev \
+   libc6-dev \
+   # gcc-13 on focal: Launchpad ppa:ubuntu-toolchain-r/test times out / 503s
+   # often enough to break image builds, so install from a mirrored snapshot
+   # of the PPA's .debs instead. See oven-sh/WebKit release gcc-13-focal-debs.
+   && mkdir /tmp/gcc13 \
+   && wget -qO- "https://github.com/oven-sh/WebKit/releases/download/gcc-13-focal-debs/gcc-13-focal-${TARGETARCH}.tar.gz" \
+      | tar -xz -C /tmp/gcc13 \
+   && apt-get install -y --no-install-recommends /tmp/gcc13/*.deb \
+   && rm -rf /tmp/gcc13 \
    && wget https://apt.llvm.org/llvm.sh \
    && chmod +x llvm.sh \
    && ./llvm.sh ${LLVM_VERSION} all \

@@ -1115,6 +1115,50 @@ interface ArrayConstructor {
   ): Promise<Awaited<U>[]>;
 }
 
+interface Map<K, V> {
+  /**
+   * If an entry with the given `key` already exists, its value is returned.
+   * Otherwise, a new entry is added with the given `key` mapped to `defaultValue`,
+   * and `defaultValue` is returned.
+   *
+   * @param key The key of the element to return from the `Map` object.
+   * @param defaultValue The value to insert and return if no entry exists for `key`.
+   */
+  getOrInsert(key: K, defaultValue: V): V;
+
+  /**
+   * If an entry with the given `key` already exists, its value is returned.
+   * Otherwise, `callback` is called with `key`, a new entry is added mapping `key`
+   * to the callback's return value, and that value is returned.
+   *
+   * @param key The key of the element to return from the `Map` object.
+   * @param callback The function to compute a value for `key` if no entry exists.
+   */
+  getOrInsertComputed(key: K, callback: (key: K) => V): V;
+}
+
+interface WeakMap<K extends WeakKey, V> {
+  /**
+   * If an entry with the given `key` already exists, its value is returned.
+   * Otherwise, a new entry is added with the given `key` mapped to `defaultValue`,
+   * and `defaultValue` is returned.
+   *
+   * @param key The key of the element to return from the `WeakMap` object.
+   * @param defaultValue The value to insert and return if no entry exists for `key`.
+   */
+  getOrInsert(key: K, defaultValue: V): V;
+
+  /**
+   * If an entry with the given `key` already exists, its value is returned.
+   * Otherwise, `callback` is called with `key`, a new entry is added mapping `key`
+   * to the callback's return value, and that value is returned.
+   *
+   * @param key The key of the element to return from the `WeakMap` object.
+   * @param callback The function to compute a value for `key` if no entry exists.
+   */
+  getOrInsertComputed(key: K, callback: (key: K) => V): V;
+}
+
 interface ConsoleOptions {
   stdout: import("stream").Writable;
   stderr?: import("stream").Writable;

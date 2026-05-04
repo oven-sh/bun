@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/29546
@@ -207,7 +207,12 @@ test("--hot reload proceeds after a hanging top-level await", async () => {
   }
 
   expect(seen).toEqual(["v=1", "v=2", "v=3"]);
-});
+  // Subprocess spawn + two full file-watcher round-trips can exceed the
+  // 5s default on debug/ASAN builds and the Windows `ReadDirectoryChanges`
+  // watcher. Match the `test/cli/hot/hot.test.ts` convention so a slow
+  // lane doesn't produce the same timeout signature as the regression
+  // this test guards against.
+}, isDebug ? Infinity : 30_000);
 
 test("unhandledRejection handler that resolves the TLA runs to completion", async () => {
   // The default `.bun` unhandled-rejection path calls

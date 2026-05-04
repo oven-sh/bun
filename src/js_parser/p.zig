@@ -4273,16 +4273,26 @@ pub fn NewParser_(
                             }
                         },
 
-                        // Arithmetic between two statically-known numbers has
-                        // no `valueOf`/`toString` side effects and cannot
-                        // throw — treat as removable when both sides are.
-                        // Pre-PR this never fired because every such node was
-                        // folded to `.e_number` before reaching here; with
-                        // size-aware folding the `.e_binary` survives (e.g.
-                        // `export class C { ratio = 1/3 }`) and without this
-                        // arm the unused export no longer tree-shakes.
+                        // Arithmetic between two numeric literals (or inlined
+                        // enum numbers) has no `valueOf`/`toString` side
+                        // effects and cannot throw — removable when both
+                        // sides are. Pre-PR this never fired because every
+                        // such node was folded to `.e_number` before reaching
+                        // here; with size-aware folding the `.e_binary`
+                        // survives (e.g. `export class C { ratio = 1/3 }`)
+                        // and without this arm the unused export no longer
+                        // tree-shakes.
+                        //
+                        // `extractNumericValue` is a non-recursive shallow
+                        // match on `.e_number`/inlined enum — not
+                        // `knownPrimitive`, whose recursion through
+                        // `.bin_add` would stack-overflow on the
+                        // million-deep `a+a+a+…` chain in
+                        // `transpiler-stack-overflow.test.ts` (where `a` is
+                        // an identifier and the outer shape is irrelevant
+                        // anyway).
                         .bin_add, .bin_sub, .bin_mul, .bin_div, .bin_rem, .bin_pow => {
-                            if (ex.left.knownPrimitive() == .number and ex.right.knownPrimitive() == .number) {
+                            if (ex.left.data.extractNumericValue() != null and ex.right.data.extractNumericValue() != null) {
                                 return p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.left) and
                                     p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.right);
                             }

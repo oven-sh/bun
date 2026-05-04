@@ -815,3 +815,61 @@ test.concurrent("beforeExit handler scheduling a self-closing immediate runs exa
   // Exactly one "bye" — the handler must not re-dispatch after close.
   expect(JSON.parse(stdout.trim())).toEqual(["bye"]);
 });
+
+test.concurrent("BroadcastChannel messages queued before self.close() in a handler are discarded", async () => {
+  // `BunBroadcastChannelRegistry::post` enqueues ONE CppTask per
+  // subscriber (not a batched drain like drainInbox), so two messages
+  // published to the same channel land as two separate CppTasks in the
+  // worker's concurrent queue. `tickQueueWithCount` runs them
+  // back-to-back with no close-flag check between iterations — only
+  // `error.JSTerminated` breaks it, which self.close() deliberately
+  // doesn't arm. Without a per-dispatch-site gate in
+  // `BroadcastChannel::dispatchMessage`, the second message fires even
+  // though WHATWG "close a worker" step 1 says it must be discarded.
+  using dir = tempDir("issue-29186-bc-close", {
+    "worker.mjs": `
+      const bc = new BroadcastChannel("ch");
+      bc.onmessage = ({ data }) => {
+        self.postMessage("got-" + data);
+        if (data === 1) self.close();
+      };
+      // Signal readiness; the parent then posts both messages in one
+      // synchronous pass so they coalesce into one worker vm.tick().
+      self.postMessage("ready");
+    `,
+    "main.mjs": `
+      const worker = new Worker(new URL("./worker.mjs", import.meta.url).href, { type: "module" });
+      const events = [];
+      const { promise, resolve, reject } = Promise.withResolvers();
+      worker.onerror = (e) => reject(new Error("worker error: " + (e.message || e)));
+      worker.onmessage = ({ data }) => {
+        if (data === "ready") {
+          const bc = new BroadcastChannel("ch");
+          bc.postMessage(1);
+          bc.postMessage(2);
+          bc.close();
+          return;
+        }
+        events.push(data);
+      };
+      worker.addEventListener("close", () => resolve());
+      await promise;
+      console.log(JSON.stringify(events));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 10_000,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
+  // Only message 1 — the second BroadcastChannel message must be
+  // discarded once self.close() set requested_close.
+  expect(JSON.parse(stdout.trim())).toEqual(["got-1"]);
+});

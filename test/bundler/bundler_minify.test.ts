@@ -638,6 +638,23 @@ describe("bundler", () => {
     capture: ["0.3333333333333333", "1 / 3"],
   });
   // https://github.com/oven-sh/bun/issues/30203
+  // A \`const\` initializer that loses the size-aware check would stay as
+  // \`E.Binary\`, which \`canBeConstValue\` rejects — so the ref wouldn't make
+  // it into \`const_values\` and use-site inlining + the DCE it enables
+  // would silently stop working. Force the fold for const decls when
+  // \`features.inlining\` is on so DCE of the else branch still happens.
+  itBundled("minify/ConstantFoldingConstInitializerFoldsForInlining", {
+    files: {
+      "/entry.ts": `
+        const RATIO = 16 / 9;
+        if (RATIO > 1) capture("big"); else capture("small");
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    capture: [`"big"`],
+  });
+  // https://github.com/oven-sh/bun/issues/30203
   // Enum bodies must still fully fold so the emitted table has numeric
   // values, and so later members can reference earlier numeric members.
   itBundled("minify/ConstantFoldingEnumBodyAlwaysFolds", {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { tmpdirSync } from "harness";
-import { readFileSync, rmSync } from "node:fs";
+import { tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // Bun.write with a non-BlobPart value falls through Blob.fromJSWithoutDeferGC's
@@ -12,8 +12,6 @@ import { join } from "node:path";
 // path and the exception-propagation path; the fuzzer-only null-without-
 // exception state cannot be reproduced from JavaScript.
 describe("Bun.write stringifies non-BlobPart values via Bun::fromJS", () => {
-  const dir = tmpdirSync();
-
   test.each([
     ["native constructor", ArrayBuffer],
     ["typed-array constructor", Float64Array],
@@ -21,16 +19,17 @@ describe("Bun.write stringifies non-BlobPart values via Bun::fromJS", () => {
     ["plain function", function foo() {}],
     ["plain object", { a: 1 }],
   ] as const)("%s", async (_, value) => {
-    const p = join(dir, `out-${Bun.hash(String(value))}.txt`);
+    using dir = tempDir("blob-fromjs-stringify", {});
+    const p = join(dir, "out.txt");
     Bun.gc(true);
     const n = await Bun.write(p, value as any);
     const expected = String(value);
     expect(n).toBe(expected.length);
     expect(readFileSync(p, "utf8")).toBe(expected);
-    rmSync(p);
   });
 
   test("propagates exception thrown from toString()", () => {
+    using dir = tempDir("blob-fromjs-stringify", {});
     const err = new TypeError("boom");
     const value = {
       toString() {
@@ -41,10 +40,10 @@ describe("Bun.write stringifies non-BlobPart values via Bun::fromJS", () => {
   });
 
   test("empty result from toString()", async () => {
+    using dir = tempDir("blob-fromjs-stringify", {});
     const p = join(dir, "empty.txt");
     const n = await Bun.write(p, { toString: () => "" } as any);
     expect(n).toBe(0);
     expect(readFileSync(p, "utf8")).toBe("");
-    rmSync(p);
   });
 });

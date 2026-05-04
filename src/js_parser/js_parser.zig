@@ -81,6 +81,11 @@ pub const Flags = struct {
         is_static,
         was_shorthand,
         is_spread,
+        /// True for a `.get`/`.set` that was synthesized from an
+        /// `accessor x = ...` field. The legacy-decorator metadata emitter
+        /// uses this to emit only `design:type` (matching tsc's
+        /// PropertyDeclaration behavior), not `design:paramtypes`.
+        is_auto_accessor_rewrite,
 
         pub inline fn init(fields: Fields) Set {
             return Set.init(fields);

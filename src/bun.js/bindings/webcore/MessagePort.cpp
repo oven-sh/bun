@@ -57,6 +57,17 @@ MessagePort::~MessagePort()
 {
     if (!m_isDetached)
         m_pipe->close(m_side);
+    // Third teardown path alongside close() and disentangle(): a ref'd port
+    // (onmessage / .ref()) whose peer has closed is GC-collectible via
+    // hasPendingActivity() → PeerClosed, and we reach here with
+    // m_isRefingEventLoop still set. scriptExecutionContext() is still valid
+    // — ContextDestructionObserver's destructor runs after this body, and if
+    // the context died first contextDestroyed() already routed through
+    // close() → updateEventLoopRef().
+    if (m_isRefingEventLoop) {
+        if (auto* context = scriptExecutionContext())
+            context->unrefEventLoop();
+    }
 }
 
 ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSValue messageValue, StructuredSerializeOptions&& options)

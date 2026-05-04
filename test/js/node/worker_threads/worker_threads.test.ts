@@ -613,6 +613,34 @@ test("process.emit returns false when there are no listeners", () => {
   expect(called).toBe(true);
 });
 
+test("GC of a ref'd MessagePort whose peer closed releases its event-loop ref", async () => {
+  // port1.onmessage = fn takes an event-loop ref. port2.close() sets PeerClosed on
+  // port1's pipe side so hasPendingActivity() → false and port1's wrapper is
+  // collectible. ~MessagePort() used to not release the event-loop ref → hang.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* js */ `
+        (() => {
+          const { port1, port2 } = new MessageChannel();
+          port1.onmessage = () => {};
+          port2.close();
+        })();
+        Bun.gc(true);
+        setTimeout(() => { Bun.gc(true); console.log("DONE"); }, 50);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("DONE");
+  expect(exitCode).toBe(0);
+});
+
 test("transferring a ref'd MessagePort releases its event-loop ref on the source thread", async () => {
   // port1.onmessage = fn takes an event-loop ref; transferring port1 detaches it from the
   // source context. disentangle() used to leave that ref behind, so the source process hung.

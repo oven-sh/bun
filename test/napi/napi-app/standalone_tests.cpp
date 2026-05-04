@@ -2351,6 +2351,252 @@ static napi_value test_napi_create_tsfn_async_context_frame(const Napi::Callback
   return env.Undefined();
 }
 
+// https://github.com/oven-sh/bun/issues/22259
+// napi_create_error must succeed even when a VM-level exception is pending.
+// This test uses napi_run_script("throw ...") to create a VM-level exception,
+// not Napi::Error::New which only sets a NAPI env-level pending exception
+// (m_pendingException) and would not actually exercise the RETURN_IF_EXCEPTION
+// code path. RETURN_IF_EXCEPTION checks vm.m_exception specifically (via
+// vm.hasExceptionsAfterHandlingTraps()), and napi_run_script sets vm.m_exception
+// via JSC::evaluate() before calling scheduleException() which only sets
+// m_pendingException.
+static napi_value test_issue_22259(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_status status;
+
+  // Prepare string values before triggering a VM-level exception,
+  // so this test doesn't depend on napi_create_string_utf8 behavior
+  // while an exception is pending.
+  napi_value error_msg;
+  status = napi_create_string_utf8(env, "test error", NAPI_AUTO_LENGTH, &error_msg);
+  if (status != napi_ok) {
+    printf("napi_create_string_utf8 (error_msg) failed: %d\n", status);
+    return nullptr;
+  }
+
+  napi_value error_code;
+  status = napi_create_string_utf8(env, "ERR_TEST", NAPI_AUTO_LENGTH, &error_code);
+  if (status != napi_ok) {
+    printf("napi_create_string_utf8 (error_code) failed: %d\n", status);
+    return nullptr;
+  }
+
+  // Create a VM-level exception by running a script that throws.
+  // This sets vm.m_exception, which RETURN_IF_EXCEPTION checks.
+  napi_value throw_script;
+  status = napi_create_string_utf8(env, "throw new Error('vm-level')", NAPI_AUTO_LENGTH, &throw_script);
+  if (status != napi_ok) {
+    printf("napi_create_string_utf8 (throw_script) failed: %d\n", status);
+    return nullptr;
+  }
+
+  napi_value throw_result;
+  status = napi_run_script(env, throw_script, &throw_result);
+  // napi_run_script should return napi_pending_exception since the script threw
+  if (status != napi_pending_exception) {
+    printf("napi_run_script unexpected status: %d (expected %d)\n", status, napi_pending_exception);
+    return nullptr;
+  }
+
+  // Verify the VM exception is pending (CodeRabbit review comment)
+  bool is_pending = false;
+  status = napi_is_exception_pending(env, &is_pending);
+  if (status != napi_ok || !is_pending) {
+    printf("napi_is_exception_pending: expected true, got false (status %d)\n", status);
+    return nullptr;
+  }
+  puts("Verified: VM exception is pending");
+
+  // Now with a VM-level exception pending, napi_create_error must still succeed.
+  // Before the fix, RETURN_IF_EXCEPTION would return napi_pending_exception here.
+  napi_value error_val;
+  status = napi_create_error(env, error_code, error_msg, &error_val);
+  if (status != napi_ok) {
+    printf("napi_create_error failed with VM-level exception pending: %d\n", status);
+    return nullptr;
+  }
+
+  napi_value type_error_val;
+  status = napi_create_type_error(env, error_code, error_msg, &type_error_val);
+  if (status != napi_ok) {
+    printf("napi_create_type_error failed with VM-level exception pending: %d\n", status);
+    return nullptr;
+  }
+
+  napi_value range_error_val;
+  status = napi_create_range_error(env, error_code, error_msg, &range_error_val);
+  if (status != napi_ok) {
+    printf("napi_create_range_error failed with VM-level exception pending: %d\n", status);
+    return nullptr;
+  }
+
+  napi_value syntax_error_val;
+  status = node_api_create_syntax_error(env, error_code, error_msg, &syntax_error_val);
+  if (status != napi_ok) {
+    printf("node_api_create_syntax_error failed with VM-level exception pending: %d\n", status);
+    return nullptr;
+  }
+
+  puts("napi_create_error functions succeeded with VM-level exception pending");
+  return ok(env);
+}
+
+  napi_value error_code;
+  status = napi_create_string_utf8(env, "ERR_TEST", NAPI_AUTO_LENGTH, &error_code);
+  if (status != napi_ok) {
+    printf("napi_create_string_utf8 (error_code) failed: %d\n", status);
+    return nullptr;
+  }
+
+  // Create a VM-level exception by running a script that throws.
+  // This sets vm.m_exception, which RETURN_IF_EXCEPTION checks.
+  napi_value throw_script;
+  status = napi_create_string_utf8(env, "throw new Error('vm-level')", NAPI_AUTO_LENGTH, &throw_script);
+  if (status != napi_ok) {
+    printf("napi_create_string_utf8 (throw_script) failed: %d\n", status);
+    return nullptr;
+  }
+
+  napi_value throw_result;
+  status = napi_run_script(env, throw_script, &throw_result);
+  // napi_run_script should return napi_pending_exception since the script threw
+  if (status != napi_pending_exception) {
+    printf("napi_run_script unexpected status: %d (expected %d)\n", status, napi_pending_exception);
+    return nullptr;
+  }
+
+  // Verify the VM exception is pending and is the "vm-level" error.
+  // After running throw_script and BEFORE clearing the exception, explicitly verify:
+  // 1) napi_is_exception_pending returns true
+  // 2) napi_get_and_clear_last_exception returns the original "vm-level" error
+  bool is_pending = false;
+  status = napi_is_exception_pending(env, &is_pending);
+  if (status != napi_ok || !is_pending) {
+    printf("napi_is_exception_pending: expected true, got false (status %d)\n", status);
+    return nullptr;
+  }
+
+  // Now clear and validate the pending exception
+  napi_value pending_exception;
+  status = napi_get_and_clear_last_exception(env, &pending_exception);
+  if (status != napi_ok) {
+    printf("napi_get_and_clear_last_exception failed: %d\n", status);
+    return nullptr;
+  }
+
+  napi_value message_prop;
+  status = napi_get_named_property(env, pending_exception, "message", &message_prop);
+  if (status != napi_ok) {
+    printf("Failed to get 'message' property of pending exception\n");
+    return nullptr;
+  }
+
+  char msg[64] = {0};
+  size_t len;
+  status = napi_get_value_string_utf8(env, message_prop, msg, sizeof(msg), &len);
+  if (status != napi_ok || strcmp(msg, "vm-level") != 0) {
+    printf("Pending exception has wrong message: '%s' (expected 'vm-level', status %d)\n", msg, status);
+    return nullptr;
+  }
+  puts("Verified VM exception is pending with 'vm-level' message");
+
+  // Re-create the VM exception for the napi_create_* tests
+  status = napi_run_script(env, throw_script, &throw_result);
+  if (status != napi_pending_exception) {
+    printf("Re-creating VM exception failed: status %d (expected %d)\n", status, napi_pending_exception);
+    return nullptr;
+  }
+
+  // Now with a VM-level exception pending, napi_create_error must still succeed.
+  // Before the fix, RETURN_IF_EXCEPTION would return napi_pending_exception here.
+  napi_value error_val;
+  status = napi_create_error(env, error_code, error_msg, &error_val);
+  if (status != napi_ok) {
+    printf("napi_create_error failed with VM-level exception pending: %d\n", status);
+    return nullptr;
+  }
+
+  napi_value type_error_val;
+  status = napi_create_type_error(env, error_code, error_msg, &type_error_val);
+  if (status != napi_ok) {
+    printf("napi_create_type_error failed with VM-level exception pending: %d\n", status);
+    return nullptr;
+  }
+
+  napi_value range_error_val;
+  status = napi_create_range_error(env, error_code, error_msg, &range_error_val);
+  if (status != napi_ok) {
+    printf("napi_create_range_error failed with VM-level exception pending: %d\n", status);
+    return nullptr;
+  }
+
+  napi_value syntax_error_val;
+  status = node_api_create_syntax_error(env, error_code, error_msg, &syntax_error_val);
+  if (status != napi_ok) {
+    printf("node_api_create_syntax_error failed with VM-level exception pending: %d\n", status);
+    return nullptr;
+  }
+
+  puts("napi_create_error functions succeeded with VM-level exception pending");
+
+  // Loop test: call napi_create_error multiple times with VM exception still pending.
+  // This ensures the function is safe to call repeatedly without accumulating issues
+  // or corrupting the pending exception state.
+  for (int i = 0; i < 5; i++) {
+    napi_value loop_error_val;
+    status = napi_create_error(env, error_code, error_msg, &loop_error_val);
+    if (status != napi_ok) {
+      printf("napi_create_error loop iteration %d failed: %d\n", i, status);
+      return nullptr;
+    }
+    napi_valuetype loop_type;
+    status = napi_typeof(env, loop_error_val, &loop_type);
+    if (status != napi_ok || loop_type != napi_object) {
+      printf("napi_create_error loop iteration %d: unexpected type %d (status %d)\n", i, loop_type, status);
+      return nullptr;
+    }
+  }
+  puts("napi_create_error loop test passed (5 iterations with VM exception pending)");
+
+  // Clear the pending exception so we can validate the created objects
+  status = napi_get_and_clear_last_exception(env, &pending_exception);
+  if (status != napi_ok) {
+    printf("napi_get_and_clear_last_exception failed: %d\n", status);
+    return nullptr;
+  }
+
+  // Verify each created error is a proper object
+  napi_valuetype type;
+
+  status = napi_typeof(env, error_val, &type);
+  if (status != napi_ok || type != napi_object) {
+    printf("error_val: unexpected type %d (status %d)\n", type, status);
+    return nullptr;
+  }
+
+  status = napi_typeof(env, type_error_val, &type);
+  if (status != napi_ok || type != napi_object) {
+    printf("type_error_val: unexpected type %d (status %d)\n", type, status);
+    return nullptr;
+  }
+
+  status = napi_typeof(env, range_error_val, &type);
+  if (status != napi_ok || type != napi_object) {
+    printf("range_error_val: unexpected type %d (status %d)\n", type, status);
+    return nullptr;
+  }
+
+  status = napi_typeof(env, syntax_error_val, &type);
+  if (status != napi_ok || type != napi_object) {
+    printf("syntax_error_val: unexpected type %d (status %d)\n", type, status);
+    return nullptr;
+  }
+
+  puts("napi_create_error produced valid error objects");
+
+  return ok(env);
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_issue_7685);
   REGISTER_FUNCTION(env, exports, test_issue_11949);
@@ -2394,6 +2640,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_issue_25933);
   REGISTER_FUNCTION(env, exports, test_napi_make_callback_async_context_frame);
   REGISTER_FUNCTION(env, exports, test_napi_create_tsfn_async_context_frame);
+  REGISTER_FUNCTION(env, exports, test_issue_22259);
 }
 
 } // namespace napitests

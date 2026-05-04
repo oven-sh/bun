@@ -612,6 +612,7 @@ describe.concurrent("napi", () => {
 
   it("behaves as expected when performing operations with an exception pending", async () => {
     await checkSameOutput("test_deferred_exceptions", []);
+    await checkSameOutput("test_issue_22259", []);
   });
 
   it("behaves as expected when performing operations with numeric string keys", async () => {

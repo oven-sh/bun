@@ -162,13 +162,24 @@ const Generator = struct {
         integrity: Integrity,
     };
 
-    const Scope = enum {
-        required,
-        optional,
-        excluded,
+    /// Ordered from strongest to weakest. A path from the root inherits
+    /// the weakest edge along it; a package's final scope is the strongest
+    /// over all paths that reach it.
+    const Scope = enum(u2) {
+        required = 0,
+        optional = 1,
+        excluded = 2,
 
         fn toCycloneDX(this: Scope) []const u8 {
             return @tagName(this);
+        }
+
+        fn isStrongerThan(a: Scope, b: Scope) bool {
+            return @intFromEnum(a) < @intFromEnum(b);
+        }
+
+        fn weakenBy(path: Scope, edge: Scope) Scope {
+            return if (@intFromEnum(edge) > @intFromEnum(path)) edge else path;
         }
     };
 
@@ -199,39 +210,48 @@ const Generator = struct {
         const pkg_dependencies = packages.items(.dependencies);
         const pkg_dep_resolutions = packages.items(.resolutions);
 
-        // Track how each package was depended on so we can mark dev/optional
-        // packages appropriately. A package is `excluded` only if every edge
-        // that reaches it is a dev dependency; it's `optional` if every
-        // non-dev edge is optional.
-        const PkgFlags = packed struct(u8) {
-            required: bool = false,
-            optional: bool = false,
-            dev: bool = false,
-            _: u5 = 0,
-        };
-        const pkg_flags = try allocator.alloc(PkgFlags, lockfile.packages.len);
-        defer allocator.free(pkg_flags);
-        @memset(pkg_flags, .{});
-
-        for (pkg_dependencies, pkg_dep_resolutions) |dep_list, res_list| {
-            const deps = dep_list.get(deps_buf);
-            const resolved = res_list.get(resolutions_buf);
-            for (deps, resolved) |dep, resolved_id| {
-                if (resolved_id == invalid_package_id or resolved_id >= pkg_flags.len) continue;
-                // `isOptional()` excludes optional peer deps (it checks
-                // `optional and !peer`), so check `isOptionalPeer()` too.
-                if (dep.behavior.isDev()) {
-                    pkg_flags[resolved_id].dev = true;
-                } else if (dep.behavior.isOptional() or dep.behavior.isOptionalPeer()) {
-                    pkg_flags[resolved_id].optional = true;
-                } else {
-                    pkg_flags[resolved_id].required = true;
+        // Compute a scope for each package based on how it's reachable from
+        // the root. A package's scope is the strongest (required > optional >
+        // excluded) over all paths from the root, where a path's scope is the
+        // weakest edge along it:
+        //   - any dev edge on the path -> that path contributes `.excluded`
+        //   - else any optional/optional-peer edge -> `.optional`
+        //   - else -> `.required`
+        // This matches what `bun install --production` would actually
+        // install: transitive dependencies of a root devDependency are only
+        // reachable via a dev edge, so they're all `.excluded` unless some
+        // other prod path also reaches them.
+        const root_id = pm.root_package_id.get(lockfile, pm.workspace_name_hash);
+        const pkg_scope = try allocator.alloc(Scope, lockfile.packages.len);
+        @memset(pkg_scope, .excluded);
+        if (root_id < pkg_scope.len) pkg_scope[root_id] = .required;
+        {
+            var queue: std.ArrayListUnmanaged(PackageID) = .{};
+            if (root_id < pkg_scope.len) try queue.append(allocator, root_id);
+            while (queue.pop()) |parent| {
+                const parent_scope = pkg_scope[parent];
+                const deps = pkg_dependencies[parent].get(deps_buf);
+                const resolved = pkg_dep_resolutions[parent].get(resolutions_buf);
+                for (deps, resolved) |dep, child| {
+                    if (child == invalid_package_id or child >= pkg_scope.len or child == parent) continue;
+                    // `isOptional()` excludes optional peer deps (it checks
+                    // `optional and !peer`), so check `isOptionalPeer()` too.
+                    const edge: Scope = if (dep.behavior.isDev())
+                        .excluded
+                    else if (dep.behavior.isOptional() or dep.behavior.isOptionalPeer())
+                        .optional
+                    else
+                        .required;
+                    const path_scope = parent_scope.weakenBy(edge);
+                    if (path_scope.isStrongerThan(pkg_scope[child])) {
+                        pkg_scope[child] = path_scope;
+                        try queue.append(allocator, child);
+                    }
                 }
             }
         }
 
         // Build the root component from the root package in the lockfile.
-        const root_id = pm.root_package_id.get(lockfile, pm.workspace_name_hash);
         {
             var root_name: []const u8 = if (root_id < pkg_names.len and pkg_names[root_id].len() > 0)
                 pkg_names[root_id].slice(string_bytes)
@@ -372,24 +392,6 @@ const Generator = struct {
             }
             try seen_spdx_ids.put(spdx_id, {});
 
-            const flags = pkg_flags[idx];
-            // `required` if any required (prod/peer/workspace) edge reaches it.
-            // `excluded` only when every edge is a dev dependency.
-            // `optional` when there's at least one optional edge and no required edge.
-            // Workspace members are reached via the root's `workspaces`
-            // declaration, which is a non-dev/non-optional edge, so they
-            // naturally end up `.required` via the flag accumulation above —
-            // no special-casing on `res.tag` is needed (and doing so would
-            // contradict the per-edge SPDX relationship types).
-            const scope: Scope = if (flags.required or res.tag == .root)
-                .required
-            else if (flags.dev and !flags.optional)
-                .excluded
-            else if (flags.optional)
-                .optional
-            else
-                .required;
-
             this.id_to_component[pkg_id] = @intCast(this.components.items.len);
             try this.components.append(.{
                 .package_id = pkg_id,
@@ -399,7 +401,7 @@ const Generator = struct {
                 .version = version,
                 .purl = purl,
                 .download_url = download_url,
-                .scope = scope,
+                .scope = if (res.tag == .root) .required else pkg_scope[idx],
                 .integrity = pkg_metas[idx].integrity,
             });
         }

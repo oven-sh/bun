@@ -108,13 +108,50 @@ describe("bun pm sbom", () => {
         dependencies: { "@types/no-deps": "1.0.0" },
       });
 
-      const { stdout, exitCode } = await sbom(dir);
+      const { stdout, stderr, exitCode } = await sbom(dir);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
 
       const bom = JSON.parse(stdout);
       const scoped = bom.components.find((c: any) => c.name === "@types/no-deps");
       expect(scoped).toBeDefined();
       expect(scoped.purl).toBe("pkg:npm/%40types/no-deps@1.0.0");
+    });
+
+    test("marks transitive deps of a devDependency as excluded", async () => {
+      // one-dep depends on no-deps@1.0.1. As a root devDependency, both
+      // one-dep AND its transitive dep no-deps must be `excluded` (neither
+      // would be installed under --production).
+      const dir = await setup("sbom-trans-dev", {
+        devDependencies: { "one-dep": "1.0.0" },
+      });
+
+      const { stdout, stderr, exitCode } = await sbom(dir);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+
+      const bom = JSON.parse(stdout);
+      const byRef = Object.fromEntries(bom.components.map((c: any) => [c["bom-ref"], c]));
+      expect(byRef["one-dep@1.0.0"].scope).toBe("excluded");
+      expect(byRef["no-deps@1.0.1"].scope).toBe("excluded");
+    });
+
+    test("a package reachable via both a prod path and a transitive-dev path is required", async () => {
+      // no-deps@1.0.1 is reachable via root -> one-dep (dev) -> no-deps,
+      // AND directly via root -> no-deps (prod). The prod path wins.
+      const dir = await setup("sbom-mixed", {
+        dependencies: { "no-deps": "1.0.1" },
+        devDependencies: { "one-dep": "1.0.0" },
+      });
+
+      const { stdout, stderr, exitCode } = await sbom(dir);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+
+      const bom = JSON.parse(stdout);
+      const byRef = Object.fromEntries(bom.components.map((c: any) => [c["bom-ref"], c]));
+      expect(byRef["one-dep@1.0.0"].scope).toBe("excluded");
+      expect(byRef["no-deps@1.0.1"].scope).toBe("required");
     });
   });
 
@@ -242,7 +279,8 @@ describe("bun pm sbom", () => {
     );
     await runBunInstall(bunEnv, packageDir);
 
-    const { stdout, exitCode } = await sbom(packageDir);
+    const { stdout, stderr, exitCode } = await sbom(packageDir);
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     const bom = JSON.parse(stdout);
 
@@ -279,7 +317,8 @@ describe("bun pm sbom", () => {
   test("--format=spdx syntax works", async () => {
     const dir = await setup("sbom-eqfmt", { dependencies: { "no-deps": "1.0.0" } });
 
-    const { stdout, exitCode } = await sbom(dir, ["--format=spdx"]);
+    const { stdout, stderr, exitCode } = await sbom(dir, ["--format=spdx"]);
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     expect(JSON.parse(stdout).spdxVersion).toBe("SPDX-2.3");
   });

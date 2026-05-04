@@ -91,11 +91,17 @@ void WebWorker__releaseParentPollRef(void* worker);
 // Free the Zig WebWorker struct. Called from ~Worker.
 void WebWorker__destroy(void* worker);
 
-// Atomic ref/unref of a VM's event loop from any thread. Safe to call with a
-// VM pointer cached at construction time, even concurrently with that VM's
-// teardown (just an atomic inc/dec + wakeup). This is the thread-safe
-// alternative to ScriptExecutionContext::refEventLoop() which dereferences
-// the context pointer.
+// Atomic ref/unref of a VM's event loop from any thread. The inc/dec itself
+// is an atomic + wakeup, but the helper still dereferences the VM struct to
+// reach its inline event_loop field, so the caller must guarantee the VM
+// outlives every call site. This holds for the parent-VM uses below: the
+// parent thread is the main thread (or an ancestor worker) and the Bun VM
+// lives until that thread exits, which we rely on blocking-until-worker-
+// done to ensure. (Nested workers don't stop+join their children before
+// arena teardown — a known limitation noted at the Worker class level.)
+// Used in preference to ScriptExecutionContext::refEventLoop(), which
+// additionally dereferences the context pointer and so can't be called
+// from the worker thread against a parent context that may have been freed.
 void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 
 } // extern "C"
@@ -329,9 +335,10 @@ static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* gl
             auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), nullptr, WTF::move(ports));
             dispatch(event.event);
             // Balance the per-message refEventLoop taken in enqueueTo{Worker,Parent}.
-            // Uses the cached parent VM + atomic helper so it's safe whether
-            // this runs on the parent thread (drainToParent) or the worker
-            // thread (drainToWorker; parent context may be freed concurrently).
+            // Uses the cached VM + atomic helper so we don't deref the
+            // parent ScriptExecutionContext (which can be freed concurrently
+            // when drainToWorker runs on the worker thread). The VM itself
+            // is assumed live — see the note on the extern declaration.
             Bun__eventLoop__incrementRefConcurrently(parentBunVM, -1);
 
             if (globalObject->drainMicrotasks()) {
@@ -597,8 +604,9 @@ bool Worker::dispatchExit(int32_t exitCode)
     if (!posted) {
         // Parent context already torn down (nested-worker case). The ref/poll
         // leak is documented above as bounded. But unref the queued-message
-        // refs ourselves: they go to the parent VM, which may outlive the
-        // parent context, and the atomic helper is safe from this thread.
+        // refs ourselves: they go to the parent VM, not the context, and
+        // the atomic helper can be called from this thread (see the note on
+        // the extern declaration; the parent VM is assumed live).
         for (size_t i = 0; i < leakedToWorkerRefs; i++)
             Bun__eventLoop__incrementRefConcurrently(m_parentBunVM, -1);
     }

@@ -900,36 +900,39 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
         }
 
         // Extract integrity option (spec: `init["integrity"] !== undefined`
-        // then request.integrity = String(init.integrity)).
+        // then request.integrity = String(init.integrity)). Compute the new
+        // String before dropping the old one so a throwing fromJS doesn't
+        // leave req.integrity in an inconsistent state for the errdefer path.
         if (!fields.contains(.integrity)) {
             if (try value.get(globalThis, "integrity")) |integrity_value| {
+                const s = try bun.String.fromJS(integrity_value, globalThis);
                 req.integrity.deref();
-                req.integrity = try bun.String.fromJS(integrity_value, globalThis);
+                req.integrity = s;
                 fields.insert(.integrity);
             }
         }
 
         // Extract referrer option (spec: `init["referrer"] !== undefined`
-        // then: "" → "no-referrer"; else parse as URL, failure throws TypeError)
+        // then: "" → "no-referrer"; else parse as URL, failure throws TypeError).
+        // Matches the integrity pattern: compute first, then swap.
         if (!fields.contains(.referrer)) {
             if (try value.get(globalThis, "referrer")) |referrer_value| {
                 var referrer_str = try bun.String.fromJS(referrer_value, globalThis);
-                if (referrer_str.isEmpty()) {
+                const new_referrer: bun.String = if (referrer_str.isEmpty()) blk: {
                     referrer_str.deref();
-                    req.referrer.deref();
                     // Static: no allocation. Getter maps this sentinel to "".
-                    req.referrer = bun.String.static(no_referrer_sentinel);
-                } else {
+                    break :blk bun.String.static(no_referrer_sentinel);
+                } else blk: {
                     const parsed = bun.jsc.URL.hrefFromString(referrer_str);
+                    referrer_str.deref();
                     if (parsed.isEmpty()) {
-                        referrer_str.deref();
                         parsed.deref();
                         return globalThis.throwTypeError("Referrer is not a valid URL.", .{});
                     }
-                    referrer_str.deref();
-                    req.referrer.deref();
-                    req.referrer = parsed;
-                }
+                    break :blk parsed;
+                };
+                req.referrer.deref();
+                req.referrer = new_referrer;
                 fields.insert(.referrer);
             }
         }

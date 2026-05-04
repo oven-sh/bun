@@ -612,8 +612,7 @@ describe("resolving external URL specifiers with non-ASCII characters", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("AddressSanitizer");
-    expect(stderr).not.toContain("panic");
+    expect(stderr).toBe("");
     expect(stdout).toContain("caught");
     expect(exitCode).toBe(0);
   });

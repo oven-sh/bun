@@ -68,6 +68,10 @@ force: bool = false,
 top_only: bool = false,
 depth: ?usize = null,
 
+// `bun pm sbom` command options
+sbom_format: ?string = null,
+sbom_outfile: ?string = null,
+
 /// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
 node_linker: NodeLinker = .auto,
 
@@ -678,6 +682,10 @@ pub fn load(
         // `bun pm why` command options
         this.top_only = cli.top_only;
         this.depth = cli.depth;
+
+        // `bun pm sbom` command options
+        this.sbom_format = cli.sbom_format;
+        this.sbom_outfile = cli.sbom_outfile;
     } else {
         this.log_level = if (default_disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
         PackageManager.verbose_install = false;

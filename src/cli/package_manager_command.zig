@@ -105,6 +105,9 @@ pub const PackageManagerCommand = struct {
             \\  <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder
             \\  <b><green>bun<r> <blue>list<r>                  list the dependency tree according to the current lockfile
             \\  <d>└<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile
+            \\  <b><green>bun pm<r> <blue>sbom<r>                 generate a Software Bill of Materials (SBOM)
+            \\  <d>├<r> <cyan>--format<r>                  cyclonedx (default) or spdx
+            \\  <d>└<r> <cyan>-o, --outfile<r>             write the SBOM to a file instead of stdout
             \\  <b><green>bun pm<r> <blue>why<r> <d>\<pkg\><r>            show dependency tree explaining why a package is installed
             \\  <b><green>bun pm<r> <blue>whoami<r>               print the current npm username
             \\  <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>
@@ -439,6 +442,9 @@ pub const PackageManagerCommand = struct {
         } else if (strings.eqlComptime(subcommand, "why")) {
             try PmWhyCommand.exec(ctx, pm, pm.options.positionals);
             Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "sbom")) {
+            try PmSbomCommand.exec(ctx, pm, cwd);
+            Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "pkg")) {
             try PmPkgCommand.exec(ctx, pm, pm.options.positionals, cwd);
             Global.exit(0);
@@ -596,6 +602,7 @@ const PmViewCommand = @import("./pm_view_command.zig");
 const std = @import("std");
 const Command = @import("./cli.zig").Command;
 const PmPkgCommand = @import("./pm_pkg_command.zig").PmPkgCommand;
+const PmSbomCommand = @import("./pm_sbom_command.zig").PmSbomCommand;
 const PmVersionCommand = @import("./pm_version_command.zig").PmVersionCommand;
 const PmWhyCommand = @import("./pm_why_command.zig").PmWhyCommand;
 

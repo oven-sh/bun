@@ -90,6 +90,8 @@ pub const pm_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--preid <STR>                          Identifier to be used to prefix premajor, preminor, prepatch or prerelease version increments") catch unreachable,
     clap.parseParam("--top                                Show only the first level of dependencies") catch unreachable,
     clap.parseParam("--depth <NUM>                          Maximum depth of the dependency tree to display") catch unreachable,
+    clap.parseParam("--format <STR>                         SBOM output format: cyclonedx (default) or spdx") catch unreachable,
+    clap.parseParam("-o, --outfile <STR>                    Write the SBOM to a file instead of stdout") catch unreachable,
     clap.parseParam("<POS> ...                         ") catch unreachable,
 });
 
@@ -244,6 +246,10 @@ message: ?string = null,
 // `bun pm why` options
 top_only: bool = false,
 depth: ?usize = null,
+
+// `bun pm sbom` options
+sbom_format: ?string = null,
+sbom_outfile: ?string = null,
 
 // `bun audit` options
 audit_level: ?AuditLevel = null,
@@ -1123,6 +1129,10 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         if (args.option("--message")) |message| {
             cli.message = message;
         }
+
+        // `bun pm sbom` command options
+        cli.sbom_format = args.option("--format");
+        cli.sbom_outfile = args.option("--outfile");
     }
 
     // `bun pm why` and `bun why` options

@@ -194,6 +194,17 @@ it("end does close when not backed by a file descriptor", async () => {
   await Bun.sleep(10); // For the file descriptor leak checker.
 });
 
+it("ignores non-string path / non-int fd in options instead of crashing", async () => {
+  const dir = tmpdirSync();
+  for (const options of [{ path: {} }, { fd: "not-an-int" }, { path: 123 }]) {
+    const file = Bun.file(join(dir, "writer-invalid-options.txt"));
+    const writer = file.writer(options as any);
+    writer.write("ok");
+    await writer.end();
+    expect(await file.text()).toBe("ok");
+  }
+});
+
 it("write result is not cumulative", async () => {
   using _ = fileDescriptorLeakChecker();
   const x = tmpdirSync();

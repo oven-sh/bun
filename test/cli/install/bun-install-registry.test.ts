@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { copyFileSync, mkdirSync, rmSync } from "fs";
+import { copyFileSync, mkdirSync, realpathSync, rmSync } from "fs";
 import { cp, exists, lstat, mkdir, readlink, rm, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
@@ -49,7 +49,13 @@ function stderrWithoutASANWarning(stderr: string): string {
     .trim();
 }
 
-function findWritableSecondDrive(currentDrive: string): string | null {
+function driveFromRealPath(path: string): string {
+  return realpathSync.native(path).slice(0, 2).toUpperCase();
+}
+
+function findWritableSecondDrive(basePath: string): string | null {
+  const currentDrive = driveFromRealPath(basePath);
+
   for (const letter of "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
     const drive = `${letter}:`;
     if (drive === currentDrive) continue;
@@ -57,8 +63,14 @@ function findWritableSecondDrive(currentDrive: string): string | null {
     const candidate = join(`${drive}\\`, `bun-cross-drive-bin-probe-${process.pid}-${Date.now()}`);
     try {
       mkdirSync(candidate, { recursive: true });
-      rmSync(candidate, { recursive: true, force: true });
-      return drive;
+      try {
+        const candidateDrive = driveFromRealPath(candidate);
+        if (candidateDrive !== currentDrive) {
+          return drive;
+        }
+      } finally {
+        rmSync(candidate, { recursive: true, force: true });
+      }
     } catch {}
   }
 
@@ -2681,17 +2693,15 @@ describe("binaries", () => {
     }
   });
 
-  const tempDrive = resolve(process.env.TEMP ?? process.env.TMP ?? process.cwd()).slice(0, 2).toUpperCase();
-  const secondDrive = isWindows ? findWritableSecondDrive(tempDrive) : null;
-  test.skipIf(!isWindows || secondDrive === null)(
+  const hasSecondDrive = isWindows && findWritableSecondDrive(resolve(process.env.TEMP ?? process.env.TMP ?? process.cwd())) !== null;
+  test.skipIf(!isWindows || !hasSecondDrive)(
     "can globally link bins when BUN_INSTALL_BIN is on another drive",
     async () => {
-      const currentDrive = resolve(packageDir).slice(0, 2).toUpperCase();
       let globalBinDir = "";
 
       // subst-backed drives are canonicalized before shim encoding, so this
       // regression needs a real second volume to exercise absolute targets.
-      const drive = secondDrive !== currentDrive ? secondDrive : findWritableSecondDrive(currentDrive);
+      const drive = findWritableSecondDrive(packageDir);
       if (drive === null) {
         throw new Error("cross-drive Windows bin-linking regression requires a writable second drive");
       }

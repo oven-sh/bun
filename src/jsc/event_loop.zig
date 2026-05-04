@@ -243,13 +243,13 @@ pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) vo
     this.next_immediate_tasks = .{};
 
     // If close() was set before this batch — e.g. by a CppTask in the
-    // preceding `vm.tick()`, or in a prior iteration's drainTimers when
-    // the caller (specifically `VirtualMachine.onBeforeExit`) doesn't
-    // gate `autoTickActive()` on `shouldExitLoop()` — every queued
-    // immediate is a "queued task" at the time the closing flag was set
-    // per WHATWG "close a worker" step 1. Release each without firing
-    // the callback. (`spin()` and `waitForPromiseWithTermination` do
-    // gate every `autoTickActive()` call on `!shouldExitLoop()`, so
+    // preceding `vm.tick()` when the caller has no `shouldExitLoop()`
+    // check between `tick()` and `autoTickActive()` (specifically
+    // `VirtualMachine.onBeforeExit`) — every queued immediate is a
+    // "queued task" at the time the closing flag was set per WHATWG
+    // "close a worker" step 1. Release each without firing the
+    // callback. (`spin()` and `waitForPromiseWithTermination` do check
+    // `shouldExitLoop()` between `tick()` and `autoTickActive()`, so
     // they can't trigger this branch.)
     const close_already_requested = if (virtual_machine.worker) |worker| worker.hasRequestedClose() else false;
     if (close_already_requested) {

@@ -1,4 +1,5 @@
 import type { ServerWebSocket, Socket, WebSocketHandler, Server as WebSocketServer } from "bun";
+
 const enum FramerState {
   WaitingForLength,
   WaitingForMessage,
@@ -95,6 +96,29 @@ type CreateBackendFn = (
   receive: (...messages: string[]) => void,
 ) => unknown;
 
+type SetInspectorUrlFn = (url?: string) => void;
+type ReportErrorFn = (message: string) => void;
+
+let activeDebugger: Debugger | undefined;
+
+function safeCallSetInspectorUrl(fn: SetInspectorUrlFn | undefined, url?: string) {
+  if (!fn) return;
+  try {
+    fn(url);
+  } catch {
+    // ignore
+  }
+}
+
+function safeCallReportError(fn: ReportErrorFn | undefined, message: string) {
+  if (!fn) return;
+  try {
+    fn(message);
+  } catch {
+    // ignore
+  }
+}
+
 export default function (
   executionContextId: number,
   url: string,
@@ -103,18 +127,61 @@ export default function (
   close: () => void,
   isAutomatic: boolean,
   urlIsServer: boolean,
+  setInspectorUrl?: SetInspectorUrlFn,
+  reportError?: ReportErrorFn,
+  fatalOnError: boolean = true,
 ): void {
+  // Stop command: url empty or only whitespace.
+  if (!url || url.trim().length === 0) {
+    try {
+      activeDebugger?.stop();
+    } catch {
+      // ignore
+    } finally {
+      activeDebugger = undefined;
+    }
+
+    safeCallSetInspectorUrl(setInspectorUrl, undefined);
+    return;
+  }
+
+  // Programmatic use can call into this multiple times. Make it safe.
+  // Avoid port conflicts by stopping the previous server first.
+  if (activeDebugger) {
+    try {
+      activeDebugger.stop();
+    } catch {
+      // ignore
+    } finally {
+      activeDebugger = undefined;
+    }
+  }
+
   if (urlIsServer) {
-    connectToUnixServer(executionContextId, url, createBackend, send, close);
+    // Connect mode (VSCode extension style). There is no listening URL to report.
+    connectToUnixServer(executionContextId, url, createBackend, send, close, fatalOnError, reportError);
+    safeCallSetInspectorUrl(setInspectorUrl, undefined);
     return;
   }
 
   let debug: Debugger | undefined;
   try {
     debug = new Debugger(executionContextId, url, createBackend, send, close);
+    activeDebugger = debug;
   } catch (error) {
-    exit("Failed to start inspector:\n", error);
+    const message = "Failed to start inspector:\n" + (error instanceof Error ? (error.stack ?? error.message) : String(error));
+
+    if (fatalOnError) {
+      exit(message);
+    } else {
+      safeCallReportError(reportError, message);
+      safeCallSetInspectorUrl(setInspectorUrl, undefined);
+      return;
+    }
   }
+
+  // Report the final URL (handles port=0).
+  safeCallSetInspectorUrl(setInspectorUrl, debug.url?.href);
 
   // If the user types --inspect, we print the URL to the console.
   // If the user is using an editor extension, don't print anything.
@@ -167,6 +234,7 @@ function unescapeUnixSocketUrl(href: string) {
 
 class Debugger {
   #url?: URL;
+  #server?: WebSocketServer;
   #createBackend: (refEventLoop: boolean, receive: (...messages: string[]) => void) => Backend;
 
   constructor(
@@ -229,6 +297,19 @@ class Debugger {
     return this.#url;
   }
 
+  stop(): void {
+    const server = this.#server;
+    this.#server = undefined;
+
+    if (server) {
+      try {
+        server.stop();
+      } catch {
+        // ignore
+      }
+    }
+  }
+
   #listen(): void {
     const { protocol, hostname, port, pathname } = this.#url!;
 
@@ -240,17 +321,21 @@ class Debugger {
         websocket: this.#websocket,
       });
 
+      this.#server = server;
+
       this.#url!.hostname = server.hostname;
       this.#url!.port = `${server.port}`;
       return;
     }
 
     if (protocol === "ws+unix:") {
-      Bun.serve({
+      const server = Bun.serve({
         unix: pathname,
         fetch: this.#fetch.bind(this),
         websocket: this.#websocket,
       });
+
+      this.#server = server;
       return;
     }
 
@@ -356,7 +441,7 @@ class Debugger {
       return new Response(null, {
         status: 426, // Upgrade Required
         headers: {
-          "Upgrade": "websocket",
+          Upgrade: "websocket",
         },
       });
     }
@@ -410,6 +495,8 @@ async function connectToUnixServer(
   createBackend: CreateBackendFn,
   send: (message: string) => void,
   close: () => void,
+  fatalOnError: boolean,
+  reportError?: ReportErrorFn,
 ) {
   // Windows uses TCP.
   // POSIX uses Unix sockets.
@@ -434,7 +521,9 @@ async function connectToUnixServer(
         port: Number(port),
       };
     } catch {
-      exit("Invalid tcp: URL:" + unix);
+      const msg = "Invalid tcp: URL:" + unix;
+      if (fatalOnError) exit(msg);
+      else safeCallReportError(reportError, msg);
       return;
     }
   } else if (unix.startsWith("/")) {
@@ -442,9 +531,13 @@ async function connectToUnixServer(
   } else if (unix.startsWith("fd:")) {
     connectionOptions = { fd: Number(unix.substring("fd:".length)) };
   } else {
-    $debug("Invalid inspector URL:" + unix);
+    const msg = "Invalid inspector URL:" + unix;
+    if (fatalOnError) exit(msg);
+    else safeCallReportError(reportError, msg);
     return;
   }
+
+  let backendRaw: any;
 
   const socket = await Bun.connect<{ framer: SocketFramer; backend: Backend }>({
     ...connectionOptions,
@@ -454,7 +547,7 @@ async function connectToUnixServer(
           backend.write(message);
         });
 
-        const backendRaw = createBackend(executionContextId, true, (...messages: string[]) => {
+        backendRaw = createBackend(executionContextId, true, (...messages: string[]) => {
           for (const message of messages) {
             framer.send(socket, message);
           }
@@ -498,10 +591,20 @@ async function connectToUnixServer(
     },
   }).catch(error => {
     // Force it to close
-    const backendRaw = createBackend(executionContextId, true, () => {});
-    close.$call(backendRaw);
+    if (backendRaw) {
+      try {
+        close.$call(backendRaw);
+      } catch {
+        // ignore
+      }
+    }
+
+    const msg = "Failed to connect inspector:\n" + String(error);
+    if (fatalOnError) exit(msg);
+    else safeCallReportError(reportError, msg);
 
     $debug("error:", error);
+    return undefined;
   });
 
   return socket;
@@ -510,7 +613,7 @@ async function connectToUnixServer(
 function versionInfo(): unknown {
   return {
     "Protocol-Version": "1.3",
-    "Browser": "Bun",
+    Browser: "Bun",
     "User-Agent": navigator.userAgent,
     "WebKit-Version": process.versions.webkit,
     "Bun-Version": Bun.version,

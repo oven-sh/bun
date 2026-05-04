@@ -238,6 +238,44 @@ describe("mock()", () => {
     const obj = { fn };
     expect(obj.fn()).toBe(obj);
   });
+  test("Reflect.construct on mock with no implementation returns an object", () => {
+    const fn = jest.fn();
+    const result = Reflect.construct(fn, []);
+    expect(typeof result).toBe("object");
+    expect(result).not.toBeNull();
+  });
+  test("Reflect.construct on mock returning a primitive returns an object", () => {
+    const fn = jest.fn(() => 42);
+    const result = Reflect.construct(fn, []);
+    expect(typeof result).toBe("object");
+    expect(result).not.toBeNull();
+
+    const fn2 = jest.fn().mockReturnValue("hello");
+    const result2 = Reflect.construct(fn2, []);
+    expect(typeof result2).toBe("object");
+    expect(result2).not.toBeNull();
+  });
+  test("Reflect.construct on mock returning an object returns that object", () => {
+    const obj = { foo: "bar" };
+    const fn = jest.fn(() => obj);
+    expect(Reflect.construct(fn, [])).toBe(obj);
+    expect(new fn()).toBe(obj);
+  });
+  test("Reflect.construct on mock uses newTarget prototype", () => {
+    function NewTarget() {}
+    NewTarget.prototype = { marker: true };
+    const fn = jest.fn();
+    const result = Reflect.construct(fn, [], NewTarget);
+    expect(Object.getPrototypeOf(result)).toBe(NewTarget.prototype);
+  });
+  test("new on mock passes this to the implementation", () => {
+    const fn = jest.fn(function () {
+      this.x = 1;
+    });
+    const result = new fn();
+    expect(result).toEqual({ x: 1 });
+    expect(fn.mock.contexts[0]).toBe(result);
+  });
   if (isBun) {
     test("jest.fn(10) return value shorthand", () => {
       expect(jest.fn(10)()).toBe(10);

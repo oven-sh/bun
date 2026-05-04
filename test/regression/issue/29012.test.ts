@@ -511,3 +511,59 @@ test.if(!isWindows)(
     }
   },
 );
+
+test.if(!isWindows)(
+  "http.request upgrade: back-to-back socket.write + socket.end() delivers every chunk",
+  async () => {
+    // Regression: the async-generator request body delivers one chunk per
+    // `resolveNextChunk` wake. Back-to-back synchronous writes followed by
+    // `socket.end()` on the hijacked Duplex — an idiomatic net.Socket
+    // pattern — used to leave later chunks stranded in `kBodyChunks`:
+    // `_final()` → `kEndUpgradeBody()` flipped the exit flag before the
+    // generator could re-park, so the loop exited after yielding only the
+    // first chunk and the rest were silently dropped from the wire.
+    const { socketPath, close } = await spawnEchoUpgradeServer();
+    try {
+      const req = http.request({
+        socketPath,
+        method: "GET",
+        path: "/",
+        headers: { Connection: "Upgrade", Upgrade: "echo" },
+      });
+
+      const { promise: upgradePromise, resolve, reject } = Promise.withResolvers<{
+        socket: import("node:stream").Duplex;
+      }>();
+      req.on("upgrade", (_res, socket) => resolve({ socket }));
+      req.on("error", reject);
+      req.end();
+
+      const { socket } = await upgradePromise;
+
+      // Collect echoed bytes until we see the full concatenated payload.
+      const expected = "AAA" + "BBB" + "CCC";
+      const chunks: Buffer[] = [];
+      const got = new Promise<void>((res2, rej2) => {
+        socket.on("data", (c: Buffer) => {
+          chunks.push(c);
+          if (Buffer.concat(chunks).toString("utf8").endsWith(expected)) res2();
+        });
+        socket.on("error", rej2);
+      });
+
+      // Three back-to-back synchronous writes + end. Under the bug,
+      // the server echoes only the first chunk ("AAA") and the test
+      // hangs waiting for the full string.
+      socket.write("AAA");
+      socket.write("BBB");
+      socket.end("CCC");
+
+      await got;
+      expect(Buffer.concat(chunks).toString("utf8").endsWith(expected)).toBe(true);
+
+      socket.destroy();
+    } finally {
+      close();
+    }
+  },
+);

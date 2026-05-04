@@ -1124,8 +1124,14 @@ pub const RunCommand = struct {
                             }
                         }
 
-                        if (strings.startsWith(key, "post") or strings.startsWith(key, "pre")) {
-                            continue :loop;
+                        // npm-style lifecycle hooks: a script named `pre<X>` or `post<X>` runs
+                        // automatically around `<X>`, so there's no reason to list it as a
+                        // completion target. But `prettier`, `prebuild`-with-no-`build`,
+                        // `postgres`, etc. are standalone scripts — keep them.
+                        if (strings.hasPrefixComptime(key, "pre")) {
+                            if (scripts.contains(key["pre".len..])) continue :loop;
+                        } else if (strings.hasPrefixComptime(key, "post")) {
+                            if (scripts.contains(key["post".len..])) continue :loop;
                         }
 
                         const entry_item = results.getOrPutAssumeCapacity(key);

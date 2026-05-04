@@ -461,9 +461,12 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
         arena: bun.ArenaAllocator,
         tracker: jsc.Debugger.AsyncTaskTracker,
         has_result: std.atomic.Value(bool),
-        /// On each creation of a `AsyncCpSingleFileTask`, this is incremented.
-        /// When each task is finished, decrement.
-        /// The maintask thread starts this at 1 and decrements it at the end, to avoid the promise being resolved while new tasks may be added.
+        /// Number of in-flight references to `this`. Starts at 1 for the main
+        /// directory-scan task; incremented for each `SingleTask` spawned. Every
+        /// holder calls `onSubtaskDone` exactly once when finished (regardless of
+        /// success or error). `runFromJSThread` — which destroys `this` — is only
+        /// enqueued once the count reaches zero, so subtasks still running on the
+        /// thread pool never dereference a freed parent.
         subtask_count: std.atomic.Value(usize),
 
         shelltask: ShellTaskT,
@@ -496,17 +499,18 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
 
             fn workPoolCallback(task: *jsc.WorkPoolTask) void {
                 var this: *ThisSingleTask = @fieldParentPtr("task", task);
+                const parent = this.cp_task;
 
                 // TODO: error strings on node_fs will die
                 var node_fs = NodeFS{};
 
-                const args = this.cp_task.args;
+                const args = parent.args;
                 const result = node_fs._copySingleFileSync(
                     this.src,
                     this.dest,
                     @enumFromInt((if (args.flags.errorOnExist or !args.flags.force) constants.COPYFILE_EXCL else @as(u8, 0))),
                     null,
-                    this.cp_task.args,
+                    parent.args,
                 );
 
                 brk: {
@@ -515,22 +519,18 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                             if (err.errno == @intFromEnum(E.EXIST) and !args.flags.errorOnExist) {
                                 break :brk;
                             }
-                            this.cp_task.finishConcurrently(result);
-                            this.deinit();
-                            return;
+                            parent.finishConcurrently(result);
                         },
                         .result => {
-                            this.cp_task.onCopy(this.src, this.dest);
+                            parent.onCopy(this.src, this.dest);
                         },
                     }
                 }
 
-                const old_count = this.cp_task.subtask_count.fetchSub(1, .monotonic);
-                if (old_count == 1) {
-                    this.cp_task.finishConcurrently(.success);
-                }
-
                 this.deinit();
+                // Must be the very last use of `parent`: when the count reaches
+                // zero, runFromJSThread is enqueued and may destroy the parent.
+                parent.onSubtaskDone();
             }
 
             pub fn deinit(this: *ThisSingleTask) void {
@@ -631,7 +631,11 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             ThisAsyncCpTask.cpAsync(&node_fs, this);
         }
 
-        /// May be called from any thread (the subtasks)
+        /// May be called from any thread (the subtasks).
+        /// Records the result (first caller wins). Does NOT schedule destruction —
+        /// `runFromJSThread` is only enqueued from `onSubtaskDone` once every
+        /// in-flight subtask has dropped its reference, so that subtasks still
+        /// running on the thread pool don't dereference a freed parent.
         fn finishConcurrently(this: *ThisAsyncCpTask, result: Maybe(Return.Cp)) void {
             if (this.has_result.cmpxchgStrong(false, true, .monotonic, .monotonic)) |_| {
                 return;
@@ -641,6 +645,22 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
 
             if (this.result == .err) {
                 this.result.err = this.result.err.clone(bun.default_allocator);
+            }
+        }
+
+        /// Called exactly once by the main directory-scan task and once by each
+        /// `SingleTask` when it is done touching `this`. The last caller (count
+        /// drops to zero) enqueues `runFromJSThread`, which resolves the promise
+        /// and destroys `this`.
+        fn onSubtaskDone(this: *ThisAsyncCpTask) void {
+            const old_count = this.subtask_count.fetchSub(1, .acq_rel);
+            bun.assert(old_count > 0);
+            if (old_count != 1) return;
+
+            // All subtasks have finished. If none reported an error, the copy succeeded.
+            if (!this.has_result.load(.monotonic)) {
+                this.has_result.store(true, .monotonic);
+                this.result = .success;
             }
 
             if (this.evtloop == .js) {
@@ -706,6 +726,12 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             nodefs: *NodeFS,
             this: *ThisAsyncCpTask,
         ) void {
+            // The directory-scan task holds one reference in `subtask_count`
+            // (initialized to 1 in create*). Drop it on return. `runFromJSThread`
+            // (which destroys `this`) is only enqueued once this reference and
+            // every spawned SingleTask's reference have been dropped.
+            defer this.onSubtaskDone();
+
             const args = this.args;
             var src_buf: bun.OSPathBuffer = undefined;
             var dest_buf: bun.OSPathBuffer = undefined;
@@ -781,11 +807,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                 return;
             }
 
-            const success = ThisAsyncCpTask._cpAsyncDirectory(nodefs, args.flags, this, &src_buf, @intCast(src.len), &dest_buf, @intCast(dest.len));
-            const old_count = this.subtask_count.fetchSub(1, .monotonic);
-            if (success and old_count == 1) {
-                this.finishConcurrently(.success);
-            }
+            _ = ThisAsyncCpTask._cpAsyncDirectory(nodefs, args.flags, this, &src_buf, @intCast(src.len), &dest_buf, @intCast(dest.len));
         }
 
         // returns boolean `should_continue`
@@ -1298,10 +1320,12 @@ pub const Arguments = struct {
             const old_path = try PathLike.fromJS(ctx, arguments) orelse {
                 return ctx.throwInvalidArgumentTypeValue("oldPath", "string or an instance of Buffer or URL", arguments.next() orelse .js_undefined);
             };
+            errdefer old_path.deinit();
 
             const new_path = try PathLike.fromJS(ctx, arguments) orelse {
                 return ctx.throwInvalidArgumentTypeValue("newPath", "string or an instance of Buffer or URL", arguments.next() orelse .js_undefined);
             };
+            errdefer new_path.deinit();
 
             return Rename{ .old_path = old_path, .new_path = new_path };
         }
@@ -1811,10 +1835,12 @@ pub const Arguments = struct {
             const old_path = try PathLike.fromJS(ctx, arguments) orelse {
                 return ctx.throwInvalidArguments("oldPath must be a string or TypedArray", .{});
             };
+            errdefer old_path.deinit();
 
             const new_path = try PathLike.fromJS(ctx, arguments) orelse {
                 return ctx.throwInvalidArguments("newPath must be a string or TypedArray", .{});
             };
+            errdefer new_path.deinit();
 
             return Link{ .old_path = old_path, .new_path = new_path };
         }
@@ -1854,10 +1880,12 @@ pub const Arguments = struct {
             const old_path = try PathLike.fromJS(ctx, arguments) orelse {
                 return ctx.throwInvalidArguments("target must be a string or TypedArray", .{});
             };
+            errdefer old_path.deinit();
 
             const new_path = try PathLike.fromJS(ctx, arguments) orelse {
                 return ctx.throwInvalidArguments("path must be a string or TypedArray", .{});
             };
+            errdefer new_path.deinit();
 
             // The type argument is only available on Windows and
             // ignored on other platforms. It can be set to 'dir',
@@ -5007,7 +5035,7 @@ pub const NodeFS = struct {
                     for (entries.items) |*result| {
                         switch (ExpectedType) {
                             bun.jsc.Node.Dirent => {
-                                result.name.deref();
+                                result.deref();
                             },
                             Buffer => {
                                 result.destroy();
@@ -6370,6 +6398,59 @@ pub const NodeFS = struct {
         return result;
     }
 
+    /// Recreate the symlink at `src` as a symlink at `dest`.
+    ///
+    /// Used by `_copySingleFileSync` when `open(src, O_NOFOLLOW)` fails with
+    /// ELOOP/EMLINK. The previous implementation called `symlink(src, dest)`,
+    /// which created a link whose *target string* was the path of the source
+    /// symlink instead of the target that the source symlink pointed at, so
+    /// every copied link pointed back into the source tree.
+    ///
+    /// The native fast path only runs when `verbatimSymlinks` is not set (the
+    /// JS fallback handles that option), so we match Node's default here:
+    /// `readlink(src)`, then resolve a relative target against `dirname(src)`.
+    fn _cpSymlink(this: *NodeFS, src: [:0]const u8, dest: [:0]const u8) Maybe(Return.CopyFile) {
+        var target_buf: bun.PathBuffer = undefined;
+        const link_target = switch (Syscall.readlink(src, &target_buf)) {
+            .result => |result| result,
+            .err => |err| {
+                @memcpy(this.sync_error_buf[0..src.len], src);
+                return .{ .err = err.withPath(this.sync_error_buf[0..src.len]) };
+            },
+        };
+
+        if (std.fs.path.isAbsolute(link_target)) {
+            return Syscall.symlink(link_target, dest);
+        }
+
+        var cwd_buf: bun.PathBuffer = undefined;
+        var resolved_buf: bun.PathBuffer = undefined;
+        const src_dir = bun.path.dirname(src, .posix);
+        const cwd = bun.getcwd(&cwd_buf) catch {
+            // If we can't resolve cwd, preserve the link target as-is rather
+            // than pointing the copied link back at the source path.
+            return Syscall.symlink(link_target, dest);
+        };
+        // link_target is user-controlled and can approach PATH_MAX on its own,
+        // so prepending src_dir may exceed resolved_buf. Use the bounds-checked
+        // join and surface ENAMETOOLONG instead of corrupting the stack.
+        const resolved = bun.path.joinAbsStringBufChecked(
+            cwd,
+            resolved_buf[0 .. resolved_buf.len - 1],
+            &.{ src_dir, link_target },
+            .posix,
+        ) orelse {
+            @memcpy(this.sync_error_buf[0..src.len], src);
+            return .{ .err = .{
+                .errno = @intFromEnum(E.NAMETOOLONG),
+                .syscall = .symlink,
+                .path = this.sync_error_buf[0..src.len],
+            } };
+        };
+        resolved_buf[resolved.len] = 0;
+        return Syscall.symlink(resolved_buf[0..resolved.len :0], dest);
+    }
+
     /// This is `copyFile`, but it copies symlinks as-is
     pub fn _copySingleFileSync(
         this: *NodeFS,
@@ -6510,7 +6591,7 @@ pub const NodeFS = struct {
                     if (err.getErrno() == .LOOP) {
                         // ELOOP is returned when you open a symlink with NOFOLLOW.
                         // as in, it does not actually let you open it.
-                        return Syscall.symlink(src, dest);
+                        return this._cpSymlink(src, dest);
                     }
 
                     return .{ .err = err };
@@ -6657,9 +6738,11 @@ pub const NodeFS = struct {
             const src_fd = switch (Syscall.open(src, bun.O.RDONLY | bun.O.NOFOLLOW, 0o644)) {
                 .result => |result| result,
                 .err => |err| {
-                    // ELOOP from O_NOFOLLOW on a symlink → recreate the link.
-                    if (err.getErrno() == .LOOP) {
-                        return Syscall.symlink(src, dest);
+                    // O_NOFOLLOW on a symlink → recreate the link. FreeBSD's
+                    // open(2) returns EMLINK for this case, though POSIX
+                    // specifies ELOOP; accept either.
+                    if (err.getErrno() == .MLINK or err.getErrno() == .LOOP) {
+                        return this._cpSymlink(src, dest);
                     }
                     return .{ .err = err };
                 },
@@ -6782,6 +6865,7 @@ pub const NodeFS = struct {
                     .err => |err| return .{ .err = err },
                     .result => |src_fd| src_fd,
                 };
+                defer handle.close();
                 const wbuf = bun.os_path_buffer_pool.get();
                 defer bun.os_path_buffer_pool.put(wbuf);
                 const len = bun.windows.GetFinalPathNameByHandleW(handle.cast(), wbuf, wbuf.len, 0);

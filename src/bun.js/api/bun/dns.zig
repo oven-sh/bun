@@ -231,21 +231,38 @@ const LibUVBackend = struct {
         port_buf[port_len] = 0;
         const portZ = port_buf[0..port_len :0];
         var hostname: bun.PathBuffer = undefined;
-        _ = strings.copy(hostname[0..], query.name);
-        hostname[query.name.len] = 0;
-        const host = hostname[0..query.name.len :0];
+        // Reserve the last byte for the NUL terminator so the index below can never
+        // exceed the buffer even if the upstream length guard in `doLookup` is bypassed.
+        const copied = strings.copy(hostname[0 .. hostname.len - 1], query.name);
+        hostname[copied.len] = 0;
+        const host = hostname[0..copied.len :0];
 
         request.backend.libc.uv.data = request;
         const promise = request.head.promise.value();
-        if (libuv.uv_getaddrinfo(
+        const rc = libuv.uv_getaddrinfo(
             this.vm.uvLoop(),
             &request.backend.libc.uv,
             &onRawLibUVComplete,
             host.ptr,
             portZ.ptr,
             if (hints) |*hint| hint else null,
-        ).errEnum()) |_| {
-            @panic("TODO: handle error");
+        );
+        if (rc.int() < 0) {
+            // uv_getaddrinfo can fail synchronously before it queues any work
+            // (e.g. UV_EINVAL from the 256-byte IDNA buffer for long hostnames,
+            // or UV_ENOMEM). Route the error through the same path the async
+            // completion would have taken so the pending-cache slot is released
+            // and the promise is rejected with a DNSException.
+            if (request.resolver_for_caching) |resolver| {
+                if (request.cache.pending_cache) {
+                    resolver.drainPendingHostNative(request.cache.pos_in_pending, request.head.globalThis, rc.int(), .{ .addrinfo = null });
+                    return promise;
+                }
+            }
+            var head = request.head;
+            head.processGetAddrInfoNative(rc.int(), null);
+            head.globalThis.allocator().destroy(request);
+            return promise;
         }
         return promise;
     }
@@ -763,10 +780,13 @@ pub const GetAddrInfoRequest = struct {
                     port_buf[port_len] = 0;
                     const portZ = port_buf[0..port_len :0];
                     var hostname: bun.PathBuffer = undefined;
-                    _ = strings.copy(hostname[0..], query.name);
-                    hostname[query.name.len] = 0;
+                    // Reserve the last byte for the NUL terminator so the index below
+                    // can never exceed the buffer even if the upstream length guard in
+                    // `doLookup` is bypassed.
+                    const copied = strings.copy(hostname[0 .. hostname.len - 1], query.name);
+                    hostname[copied.len] = 0;
                     var addrinfo: ?*std.c.addrinfo = null;
-                    const host = hostname[0..query.name.len :0];
+                    const host = hostname[0..copied.len :0];
                     const debug_timer = bun.Output.DebugTimer.start();
                     const err = std.c.getaddrinfo(
                         host.ptr,
@@ -1655,19 +1675,19 @@ pub const internal = struct {
     ) callconv(.c) void {
         const req: *Request = bun.cast(*Request, arg);
         const status_int: c_int = @intCast(status);
-        if (status == @intFromEnum(std.c.EAI.NONAME) and req.can_retry_for_addrconfig) {
+        if (status == @intFromEnum(std.c.EAI.NONAME) and req.can_retry_for_addrconfig) retry: {
             req.can_retry_for_addrconfig = false;
             var service_buf: [bun.fmt.fastDigitCount(std.math.maxInt(u16)) + 2]u8 = undefined;
             const service: ?[*:0]const u8 = if (req.key.port > 0)
                 (std.fmt.bufPrintZ(&service_buf, "{d}", .{req.key.port}) catch unreachable).ptr
             else
                 null;
-            const getaddrinfo_async_start_ = LibInfo.getaddrinfo_async_start() orelse return;
+            const getaddrinfo_async_start_ = LibInfo.getaddrinfo_async_start() orelse break :retry;
             var machport: bun.mach_port = 0;
             var hints = getHints();
             hints.flags.ADDRCONFIG = false;
 
-            _ = getaddrinfo_async_start_(
+            const errno = getaddrinfo_async_start_(
                 &machport,
                 if (req.key.host) |host| host.ptr else null,
                 service,
@@ -1676,11 +1696,34 @@ pub const internal = struct {
                 req,
             );
 
-            switch (req.libinfo.file_poll.?.register(bun.uws.Loop.get(), .machport, true)) {
-                .err => log("libinfoCallback: failed to register poll", .{}),
-                .result => {
-                    return;
+            if (errno != 0 or machport == 0) {
+                log("libinfoCallback: getaddrinfo_async_start retry failed (errno={d})", .{errno});
+                break :retry;
+            }
+
+            // Each getaddrinfo_async_start() call allocates a fresh receive
+            // port via mach_port_allocate(MACH_PORT_RIGHT_RECEIVE) inside
+            // libinfo's si_async_workunit_create() (si_module.c) — it is NOT
+            // the per-thread MIG reply port and is not reused across calls.
+            // libinfo's "async" API is just a libdispatch worker running sync
+            // getaddrinfo and signalling completion via a send-once right on
+            // this port; getaddrinfo_async_handle_reply() then destroys the
+            // receive right after invoking us. So by the time we are here:
+            //   - the first request's port is already dead (no leak, no need
+            //     to mach_port_deallocate it ourselves), and
+            //   - its kqueue knote is gone (it was EV_ONESHOT, and EVFILT_
+            //     MACHPORT knotes are dropped when the receive right dies).
+            // Store the new port and re-register the existing FilePoll on it,
+            // otherwise we'd never see the retry's reply.
+            req.libinfo.machport = machport;
+            const poll = req.libinfo.file_poll.?;
+            poll.fd = .fromNative(@bitCast(machport));
+            switch (poll.register(bun.uws.Loop.get(), .machport, true)) {
+                .err => {
+                    log("libinfoCallback: failed to register poll", .{});
+                    break :retry;
                 },
+                .result => return,
             }
         }
         afterResult(req, addr_info, @intCast(status_int));
@@ -2843,6 +2886,17 @@ pub const Resolver = struct {
     }
 
     pub fn doLookup(this: *Resolver, name: []const u8, port: u16, options: GetAddrInfo.Options, globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+        // The system backends copy the hostname into a fixed `bun.PathBuffer` on the
+        // stack before null-terminating it. Reject anything that cannot fit so we never
+        // index past that buffer. RFC 1035 caps hostnames at 253 octets and NI_MAXHOST
+        // is 1025, so this never rejects a name that could have resolved.
+        if (name.len >= bun.MAX_PATH_BYTES) {
+            var promise = jsc.JSPromise.Strong.init(globalThis);
+            const promise_value = promise.value();
+            c_ares.Error.ENOTFOUND.toDeferred("getaddrinfo", name, &promise).rejectLater(globalThis);
+            return promise_value;
+        }
+
         var opts = options;
         var backend = opts.backend;
         const normalized = normalizeDNSName(name, &backend);

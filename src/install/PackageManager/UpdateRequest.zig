@@ -125,10 +125,14 @@ fn parseWithError(
     outer: for (positionals) |positional| {
         var input: []u8 = bun.handleOom(bun.default_allocator.dupe(u8, std.mem.trim(u8, positional, " \n\r\t")));
         {
-            var temp: [2048]u8 = undefined;
-            const len = std.mem.replace(u8, input, "\\\\", "/", &temp);
-            bun.path.platformToPosixInPlace(u8, &temp);
+            // Replacing "\\\\" (2 bytes) with "/" (1 byte) never grows the string, so a
+            // buffer of `input.len` bytes is always sufficient. Previously this was a
+            // fixed `[2048]u8` stack array which overflowed for longer positionals.
+            const temp = bun.handleOom(bun.default_allocator.alloc(u8, input.len));
+            defer bun.default_allocator.free(temp);
+            const len = std.mem.replace(u8, input, "\\\\", "/", temp);
             const input2 = temp[0 .. input.len - len];
+            bun.path.platformToPosixInPlace(u8, input2);
             @memcpy(input[0..input2.len], input2);
             input.len = input2.len;
         }

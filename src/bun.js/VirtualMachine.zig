@@ -1855,7 +1855,7 @@ pub fn resolve(
     global: *JSGlobalObject,
     specifier: bun.String,
     source: bun.String,
-    query_string: ?*ZigString,
+    query_string: ?*bun.String,
     is_esm: bool,
 ) !void {
     try resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true, false);
@@ -1874,7 +1874,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
     global: *JSGlobalObject,
     specifier: bun.String,
     source: bun.String,
-    query_string: ?*ZigString,
+    query_string: ?*bun.String,
     is_esm: bool,
     comptime is_a_file_path: bool,
     is_user_require_resolve: bool,
@@ -2001,7 +2001,13 @@ pub fn resolveMaybeNeedsTrailingSlash(
     };
 
     if (query_string) |query| {
-        query.* = ZigString.init(result.query_string);
+        // `result.query_string` is a slice into `specifier_utf8`, which is freed by
+        // `defer specifier_utf8.deinit()` before callers (C++ or Zig) read the out-param.
+        // Clone into an owned bun.String so it survives this function returning.
+        query.* = if (result.query_string.len > 0)
+            bun.String.cloneUTF8(result.query_string)
+        else
+            bun.String.empty;
     }
 
     res.* = ErrorableString.ok(bun.String.init(result.path));
@@ -3882,7 +3888,6 @@ pub const IPCInstanceUnion = union(enum) {
 
 pub const IPCInstance = struct {
     pub const new = bun.TrivialNew(@This());
-    pub const deinit = bun.TrivialDeinit(@This());
 
     globalThis: *JSGlobalObject,
     /// Embedded per-VM group on `RareData.spawn_ipc_group`; this is just a
@@ -3896,6 +3901,18 @@ pub const IPCInstance = struct {
     pub fn ipc(this: *IPCInstance) ?*IPC.SendQueue {
         return &this.data;
     }
+
+    /// Only reached from the `getIPCInstance` error path. On Windows,
+    /// `windowsConfigureClient` sets `data.socket = .open` before calling
+    /// `uv_read_start`; if that fails it calls `closeSocket()` which queues
+    /// the tracked `_onAfterIPCClosed` task holding `*SendQueue` — so
+    /// `SendQueue.deinit()` must run here to cancel it before this
+    /// allocation (and the embedded `SendQueue`) is freed.
+    pub fn deinit(this: *IPCInstance) void {
+        this.data.deinit();
+        bun.destroy(this);
+    }
+
     pub fn getGlobalThis(this: *IPCInstance) ?*JSGlobalObject {
         return this.globalThis;
     }

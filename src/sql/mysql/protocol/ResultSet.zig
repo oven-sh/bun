@@ -174,7 +174,7 @@ pub const Row = struct {
                     value.* = SQLDataCell{ .tag = .null, .value = .{ .null = 0 } };
                 } else {
                     if (this.raw) {
-                        var data = try reader.rawEncodeLenData();
+                        var data = try reader.encodeLenString();
                         defer data.deinit();
                         value.* = SQLDataCell.raw(&data);
                     } else {

@@ -896,7 +896,7 @@ pub const JSGlobalObject = opaque {
         return Zig__GlobalObject__resetModuleRegistryMap(global, map);
     }
 
-    pub fn resolve(res: *ErrorableString, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, query: *ZigString) callconv(.c) void {
+    pub fn resolve(res: *ErrorableString, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, query: *bun.String) callconv(.c) void {
         jsc.markBinding(@src());
         return jsc.VirtualMachine.resolve(res, global, specifier.*, source.*, query, true) catch {
             bun.debugAssert(res.success == false);

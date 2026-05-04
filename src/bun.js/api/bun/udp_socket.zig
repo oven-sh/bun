@@ -601,6 +601,40 @@ pub const UDPSocket = struct {
     }
 
     pub fn sendMany(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        // Iterating the input array can run arbitrary user JS: `iter.next()`'s
+        // slow path hits `JSObject.getIndex`, and `parseAddr` calls
+        // `port.coerceToInt32()` / `address.toBunString()`. That JS can drop
+        // the last reference to an earlier payload and force a GC, or detach
+        // an earlier ArrayBuffer (`.transfer(n)` frees its backing store
+        // synchronously), leaving borrowed pointers in `payloads[]` dangling
+        // before `socket.send` reads them.
+        //
+        // Root every payload JSValue in a MarkedArgumentBuffer for the
+        // duration of the call so GC cannot collect them, and split the work
+        // into two phases: phase 1 collects/validates payloads and runs all
+        // user JS; phase 2 borrows byte slices only once no more user JS
+        // sits between capture and `socket.send`.
+        const Ctx = struct {
+            this: *UDPSocket,
+            globalThis: *JSGlobalObject,
+            callframe: *CallFrame,
+            result: bun.JSError!JSValue,
+
+            pub fn run(ctx: *@This(), payload_roots: *jsc.MarkedArgumentBuffer) callconv(.c) void {
+                ctx.result = sendManyImpl(ctx.this, ctx.globalThis, ctx.callframe, payload_roots);
+            }
+        };
+        var ctx: Ctx = .{
+            .this = this,
+            .globalThis = globalThis,
+            .callframe = callframe,
+            .result = .js_undefined,
+        };
+        jsc.MarkedArgumentBuffer.run(Ctx, &ctx, &Ctx.run);
+        return ctx.result;
+    }
+
+    fn sendManyImpl(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame, payload_roots: *jsc.MarkedArgumentBuffer) bun.JSError!JSValue {
         if (this.closed) {
             return globalThis.throw("Socket is closed", .{});
         }
@@ -634,6 +668,7 @@ pub const UDPSocket = struct {
         defer arena.deinit();
         const alloc = arena.allocator();
 
+        var payload_vals = bun.handleOom(alloc.alloc(JSValue, len));
         var payloads = bun.handleOom(alloc.alloc([*]const u8, len));
         var lens = bun.handleOom(alloc.alloc(usize, len));
         var addr_ptrs = bun.handleOom(alloc.alloc(?*const anyopaque, len));
@@ -641,6 +676,11 @@ pub const UDPSocket = struct {
 
         var iter = try arg.arrayIterator(globalThis);
 
+        // Phase 1: collect and validate payload JSValues, resolve addresses.
+        // All user-JS re-entrance happens here. Root each payload in the
+        // MarkedArgumentBuffer so GC cannot collect it, but do NOT yet borrow
+        // raw pointers into backing stores — user JS on a later iteration
+        // could otherwise free or detach that storage.
         var i: u32 = 0;
         var port: JSValue = .zero;
         while (try iter.next()) |val| : (i += 1) {
@@ -649,17 +689,20 @@ pub const UDPSocket = struct {
             }
             const slice_idx = if (connected) i else i / 3;
             if (connected or i % 3 == 0) {
-                const slice = brk: {
-                    if (val.asArrayBuffer(globalThis)) |arrayBuffer| {
-                        break :brk arrayBuffer.slice();
-                    } else if (val.isString()) {
-                        break :brk (try val.toJSString(globalThis)).toSlice(globalThis, alloc).slice();
-                    } else {
-                        return globalThis.throwInvalidArguments("Expected ArrayBufferView or string as payload", .{});
-                    }
+                const payload_val: JSValue = blk: {
+                    if (val.asArrayBuffer(globalThis) != null) break :blk val;
+                    // `isString()` is `isStringLike()` and accepts boxed
+                    // `StringObject` / `DerivedStringObject`; calling
+                    // `toJSString` on those in phase 2 would run user
+                    // `toString()`/`valueOf()` via `toPrimitive`. Resolve to
+                    // the primitive JSString here — where user-JS re-entrance
+                    // is expected — and root that, so phase 2 only ever sees
+                    // primitive JSString cells.
+                    if (val.isString()) break :blk (try val.toJSString(globalThis)).toJS();
+                    return globalThis.throwInvalidArguments("Expected ArrayBufferView or string as payload", .{});
                 };
-                payloads[slice_idx] = slice.ptr;
-                lens[slice_idx] = slice.len;
+                payload_roots.append(payload_val);
+                payload_vals[slice_idx] = payload_val;
             }
             if (connected) {
                 addr_ptrs[slice_idx] = null;
@@ -679,6 +722,34 @@ pub const UDPSocket = struct {
         if (i != array_len) {
             return globalThis.throwInvalidArguments("Mismatch between array length property and number of items", .{});
         }
+
+        // Phase 2: borrow byte slices now that no more user JS will run before
+        // `socket.send`. Every `payload_vals` entry is either an
+        // ArrayBufferView or a *primitive* JSString (boxed strings were
+        // resolved in phase 1), so nothing here reaches `toPrimitive`. Rope
+        // resolution / UTF-16 conversion may allocate and GC, but every
+        // payload is rooted so borrowed WTFStringImpl / backing-store
+        // pointers stay valid. An ArrayBuffer detached during phase 1 now
+        // reports a zero-length slice rather than a dangling pointer.
+        const empty: []const u8 = "";
+        for (payload_vals, 0..) |val, slice_idx| {
+            const slice: []const u8 = brk: {
+                if (val.asArrayBuffer(globalThis)) |arrayBuffer| {
+                    // `byteSlice()` returns `&.{}` for a detached view; its
+                    // `.ptr` is Zig's zero-length sentinel which the kernel
+                    // rejects with EFAULT even though `iov_len == 0`. Hand
+                    // sendmmsg a valid static address instead.
+                    if (arrayBuffer.isDetached()) break :brk empty;
+                    break :brk arrayBuffer.slice();
+                }
+                // Phase 1 stored the primitive JSString; `asString()` is a
+                // plain cast (no `toPrimitive`, no user JS).
+                break :brk val.asString().toSlice(globalThis, alloc).slice();
+            };
+            payloads[slice_idx] = slice.ptr;
+            lens[slice_idx] = slice.len;
+        }
+
         const socket = this.socket orelse return globalThis.throw("Socket is closed", .{});
         const res = socket.send(payloads, lens, addr_ptrs);
         if (getUSError(res, .send, true)) |err| {
@@ -712,20 +783,13 @@ pub const UDPSocket = struct {
             }
         };
 
-        const payload_arg = arguments.ptr[0];
-        var payload_str = jsc.ZigString.Slice.empty;
-        defer payload_str.deinit();
-        const payload = brk: {
-            if (payload_arg.asArrayBuffer(globalThis)) |array_buffer| {
-                break :brk array_buffer.slice();
-            } else if (payload_arg.isString()) {
-                payload_str = payload_arg.asString().toSlice(globalThis, bun.default_allocator);
-                break :brk payload_str.slice();
-            } else {
-                return globalThis.throwInvalidArguments("Expected ArrayBufferView or string as first argument", .{});
-            }
-        };
-
+        // Resolve the destination before touching the payload. `parseAddr`
+        // calls `port.coerceToInt32()` / `address.toBunString()` which can
+        // run user JS that detaches the payload's ArrayBuffer
+        // (`.transfer(n)`) or closes this socket. Doing this first means no
+        // JSC safepoint sits between capturing `payload.ptr` and handing it
+        // to `socket.send`, so a borrowed pointer cannot be freed out from
+        // under us. `payload_arg` itself stays rooted in the callframe.
         var addr: std.posix.sockaddr.storage = std.mem.zeroes(std.posix.sockaddr.storage);
         const addr_ptr = brk: {
             if (dst) |dest| {
@@ -735,6 +799,28 @@ pub const UDPSocket = struct {
                 break :brk &addr;
             } else {
                 break :brk null;
+            }
+        };
+
+        const payload_arg = arguments.ptr[0];
+        var payload_str = jsc.ZigString.Slice.empty;
+        defer payload_str.deinit();
+        const payload = brk: {
+            if (payload_arg.asArrayBuffer(globalThis)) |array_buffer| {
+                break :brk array_buffer.slice();
+            } else if (payload_arg.isString()) {
+                // `isString()` is `isStringLike()` and accepts boxed
+                // `StringObject`/`DerivedStringObject`; `asString()` is a raw
+                // `static_cast<JSString*>` that asserts/type-confuses on those.
+                // `toJSString` resolves them via `toPrimitive` — safe here:
+                // `parseAddr` already ran, there is only one payload so
+                // `toPrimitive` cannot invalidate an earlier captured pointer,
+                // and `this.socket orelse throw` below handles a
+                // close-during-`toPrimitive`.
+                payload_str = (try payload_arg.toJSString(globalThis)).toSlice(globalThis, bun.default_allocator);
+                break :brk payload_str.slice();
+            } else {
+                return globalThis.throwInvalidArguments("Expected ArrayBufferView or string as first argument", .{});
             }
         };
 
@@ -899,9 +985,9 @@ pub const UDPSocket = struct {
         globalThis: *JSGlobalObject,
     ) bun.JSError!JSValue {
         return switch (this.config.binary_type) {
-            .Buffer => bun.String.static("buffer").toJS(globalThis),
-            .Uint8Array => bun.String.static("uint8array").toJS(globalThis),
-            .ArrayBuffer => bun.String.static("arraybuffer").toJS(globalThis),
+            .Buffer => globalThis.commonStrings().buffer(),
+            .Uint8Array => globalThis.commonStrings().uint8array(),
+            .ArrayBuffer => globalThis.commonStrings().arraybuffer(),
             else => @panic("Invalid binary type"),
         };
     }

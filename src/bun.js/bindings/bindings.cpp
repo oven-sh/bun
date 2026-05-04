@@ -3261,6 +3261,7 @@ bool JSC__JSValue__asArrayBuffer(
         out->byte_len = view->byteLength();
         out->cell_type = type;
         out->shared = view->isShared();
+        out->resizable = view->isResizableOrGrowableShared();
         break;
     }
     case JSC::JSType::ArrayBufferType: {
@@ -3270,6 +3271,7 @@ bool JSC__JSValue__asArrayBuffer(
         out->byte_len = buffer->byteLength();
         out->cell_type = JSC::JSType::ArrayBufferType;
         out->shared = buffer->isShared();
+        out->resizable = buffer->isResizableOrGrowableShared();
         break;
     }
     case JSC::JSType::ObjectType:
@@ -3280,6 +3282,7 @@ bool JSC__JSValue__asArrayBuffer(
             out->byte_len = view->byteLength();
             out->cell_type = view->type();
             out->shared = view->isShared();
+            out->resizable = view->isResizableOrGrowableShared();
         } else if (JSC::JSArrayBuffer* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
             JSC::ArrayBuffer* buffer = jsBuffer->impl();
             if (!buffer)
@@ -3289,6 +3292,7 @@ bool JSC__JSValue__asArrayBuffer(
             out->byte_len = buffer->byteLength();
             out->cell_type = JSC::JSType::ArrayBufferType;
             out->shared = buffer->isShared();
+            out->resizable = buffer->isResizableOrGrowableShared();
         } else {
             return false;
         }
@@ -3301,6 +3305,85 @@ bool JSC__JSValue__asArrayBuffer(
     out->_value = JSValue::encode(value);
     out->ptr = static_cast<char*>(data);
     return true;
+}
+
+// Pin/unpin the backing ArrayBuffer of a JSArrayBuffer or JSArrayBufferView so
+// transfer()/detach() throw while a native borrower holds a slice into it.
+// `pin` is a no-op on SharedArrayBuffer (already non-detachable). Returns
+// false if `value` has no ArrayBuffer impl.
+static JSC::ArrayBuffer* arrayBufferImpl(JSC::JSValue value)
+{
+    if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
+        return jb->impl();
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value))
+        return view->possiblySharedBuffer();
+    return nullptr;
+}
+CPP_DECL bool JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
+{
+    if (auto* buf = arrayBufferImpl(JSC::JSValue::decode(v))) {
+        buf->pin();
+        return true;
+    }
+    return false;
+}
+CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
+{
+    if (auto* buf = arrayBufferImpl(JSC::JSValue::decode(v)))
+        buf->unpin();
+}
+
+// Borrow `v`'s byte storage for off-thread reading. Splits out only the
+// `FastTypedArray` case from `pinArrayBuffer`, because that's the one mode
+// where `possiblySharedBuffer()` actually COPIES data
+// (`ArrayBuffer::tryCreate(span())`) — and it's ≤ fastSizeLimit elements, so
+// the caller dupes instead. Every other mode either already has a real
+// ArrayBuffer or, for `OversizeTypedArray`, is ADOPTED in-place by
+// `slowDownAndWasteMemory()` (`ArrayBuffer::createAdopted` — wraps the
+// existing fastMalloc pointer; zero byte copy, just a wrapper + butterfly
+// alloc), so `possiblySharedBuffer()` + `pin()` is the right and cheap thing.
+// Oversize MUST be pinned: once adopted (which JS can trigger via `.buffer`
+// at any moment) it becomes detachable, and a `transfer()` would free the
+// storage the worker is reading.
+//
+//   0  Detached/null — nothing to read.
+//   1  `FastTypedArray` — ≤ fastSizeLimit elements, GC-movable. Caller
+//      should dupe `out_ptr[0..out_len]`; no unpin.
+//   2  Everything else — `pin()`ed via `possiblySharedBuffer()`; caller
+//      MUST `unpinArrayBuffer(v)` when done.
+//
+// `out_ptr`/`out_len` describe the VIEW's byte range (offset+length).
+CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, const uint8_t** out_ptr, size_t* out_len)
+{
+    auto value = JSC::JSValue::decode(v);
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
+        if (view->isDetached()) return 0;
+        if (view->mode() == JSC::FastTypedArray) {
+            *out_ptr = static_cast<const uint8_t*>(view->vector());
+            *out_len = view->byteLength();
+            return 1;
+        }
+        // Oversize/Wasteful/DataView: possiblySharedBuffer() is either a
+        // getter or an in-place adopt (Oversize → createAdopted) — never a
+        // byte copy past this point. vector() is read AFTER because adoption
+        // can in principle repoint m_vector (it doesn't today, but the API
+        // contract allows it).
+        auto* buf = view->possiblySharedBuffer();
+        if (!buf) return 0;
+        buf->pin();
+        *out_ptr = static_cast<const uint8_t*>(view->vector());
+        *out_len = view->byteLength();
+        return 2;
+    }
+    if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
+        auto* buf = jb->impl();
+        if (!buf || buf->isDetached()) return 0;
+        buf->pin();
+        *out_ptr = static_cast<const uint8_t*>(buf->data());
+        *out_len = buf->byteLength();
+        return 2;
+    }
+    return 0;
 }
 
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__createEmptyArray(JSC::JSGlobalObject* arg0, size_t length)
@@ -6507,4 +6590,5 @@ extern "C" void JSC__ArrayBuffer__asBunArrayBuffer(JSC::ArrayBuffer* self, Bun__
     out->_value = 0;
     out->cell_type = JSC::JSType::ArrayBufferType;
     out->shared = self->isShared();
+    out->resizable = self->isResizableOrGrowableShared();
 }

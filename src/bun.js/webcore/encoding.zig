@@ -459,7 +459,15 @@ pub fn constructFromU8(input: [*]const u8, len: usize, allocator: std.mem.Alloca
                 return &[_]u8{};
 
             var to = allocator.alloc(u8, len / 2) catch return &[_]u8{};
-            return to[0..strings.decodeHexToBytesTruncate(to, u8, input[0..len])];
+            const wrote = strings.decodeHexToBytesTruncate(to, u8, input[0..len]);
+            if (wrote == 0) {
+                // No valid hex pairs were decoded (e.g. Buffer.from("zz", "hex")). The
+                // allocation is unreachable once we return a zero-length slice, so free
+                // it here instead of leaking it.
+                allocator.free(to);
+                return &[_]u8{};
+            }
+            return to[0..wrote];
         },
 
         .base64, .base64url => {
@@ -470,6 +478,10 @@ pub fn constructFromU8(input: [*]const u8, len: usize, allocator: std.mem.Alloca
             const to = allocator.alloc(u8, outlen) catch return &[_]u8{};
 
             const wrote = bun.base64.decode(to[0..outlen], slice).count;
+            if (wrote == 0) {
+                allocator.free(to);
+                return &[_]u8{};
+            }
             return to[0..wrote];
         },
     }
@@ -496,8 +508,16 @@ pub fn constructFromU16(input: [*]const u16, len: usize, allocator: std.mem.Allo
         },
 
         .hex => {
-            var to = allocator.alloc(u8, len * 2) catch return &[_]u8{};
-            return to[0..strings.decodeHexToBytesTruncate(to, u16, input[0..len])];
+            if (len < 2)
+                return &[_]u8{};
+
+            var to = allocator.alloc(u8, len / 2) catch return &[_]u8{};
+            const wrote = strings.decodeHexToBytesTruncate(to, u16, input[0..len]);
+            if (wrote == 0) {
+                allocator.free(to);
+                return &[_]u8{};
+            }
+            return to[0..wrote];
         },
 
         .base64, .base64url => {

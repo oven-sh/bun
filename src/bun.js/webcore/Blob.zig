@@ -180,6 +180,105 @@ pub fn NewInternalReadFileHandler(comptime Context: type, comptime Function: any
     };
 }
 
+/// Read this Blob's bytes — file (`ReadFile`/`ReadFileUV`), S3 (`S3.download`),
+/// or in-memory — and deliver them to `Handler.onReadBytes(ctx, result)` on the
+/// JS thread without ever materialising a JSValue. `.ok` bytes are
+/// `bun.default_allocator`-OWNED by the callback. The point is to give callers
+/// the same store-agnostic dispatch as `.bytes()` while staying in Zig land,
+/// so e.g. `Bun.Image` can read a `Bun.file`/`Bun.s3` source straight into its
+/// `.owned` buffer with no JS-heap copy in between.
+///
+/// In-memory stores are duped before the callback so the ownership contract is
+/// uniform (and so the source Blob can outlive or be re-sliced independently);
+/// callers that already special-case `sharedView()` can keep doing that and
+/// only call this when it's empty.
+pub fn readBytesToHandler(this: *Blob, comptime Handler: type, ctx: *Handler, global: *JSGlobalObject) bun.JSTerminated!void {
+    if (this.needsToReadFile()) {
+        const Adapter = struct {
+            fn run(c: *Handler, r: read_file.ReadFileResultType) void {
+                Handler.onReadBytes(c, switch (r) {
+                    // `.is_temporary` ⇒ `r.buf` is the ReadFile ArrayList's
+                    // items handed over (default_allocator) — we own it.
+                    .result => |b| .{ .ok = b.buf },
+                    .err => |e| .{ .err = e },
+                });
+            }
+        };
+        return this.doReadFileInternal(*Handler, ctx, Adapter.run, global);
+    }
+    if (this.isS3()) {
+        const Task = struct {
+            ctx: *Handler,
+            blob: Blob, // dupe for store ref + offset/size
+            poll: bun.Async.KeepAlive = .{},
+            vm: *jsc.VirtualMachine,
+
+            fn done(t: *@This(), r: ReadBytesResult) void {
+                t.poll.unref(t.vm);
+                t.blob.deinit();
+                const c = t.ctx;
+                bun.destroy(t);
+                Handler.onReadBytes(c, r);
+            }
+            fn cb(result: S3.S3DownloadResult, opaque_self: *anyopaque) bun.JSTerminated!void {
+                const t: *@This() = @ptrCast(@alignCast(opaque_self));
+                switch (result) {
+                    // `body` is owned by us (simple_request.zig:20); take the
+                    // ArrayList's items as-is.
+                    .success => |response| t.done(.{ .ok = response.body.list.items }),
+                    // S3Error has its own JS-error builder; flatten to a
+                    // SystemError so the callback has one shape to handle.
+                    inline .not_found, .failure => |e| t.done(.{ .err = .{
+                        .code = bun.String.cloneUTF8(e.code),
+                        .message = bun.String.cloneUTF8(e.message),
+                        .path = bun.String.cloneUTF8(t.blob.store.?.getPath() orelse ""),
+                        .syscall = bun.String.static("fetch"),
+                    } }),
+                }
+            }
+        };
+        var t = bun.new(Task, .{ .ctx = ctx, .blob = this.dupe(), .vm = global.bunVM() });
+        t.poll.ref(t.vm);
+        const env = t.vm.transpiler.env;
+        const cred = t.blob.store.?.data.s3.getCredentials();
+        const path = t.blob.store.?.data.s3.path();
+        const proxy = if (env.getHttpProxy(true, null, null)) |p| p.href else null;
+        const payer = t.blob.store.?.data.s3.request_payer;
+        if (this.offset > 0 or this.size != Blob.max_size) {
+            const len: ?usize = if (this.size != Blob.max_size) @intCast(this.size) else null;
+            try S3.downloadSlice(cred, path, @intCast(this.offset), len, @ptrCast(&Task.cb), t, proxy, payer);
+        } else {
+            try S3.download(cred, path, @ptrCast(&Task.cb), t, proxy, payer);
+        }
+        return;
+    }
+    // In-memory or detached.
+    const view = this.sharedView();
+    const owned = bun.default_allocator.dupe(u8, view) catch {
+        Handler.onReadBytes(ctx, .{ .err = .{
+            .code = bun.String.static("ENOMEM"),
+            .message = bun.String.static("Out of memory"),
+            .syscall = bun.String.static("read"),
+        } });
+        return;
+    };
+    Handler.onReadBytes(ctx, .{ .ok = owned });
+}
+
+pub const ReadBytesResult = union(enum) {
+    /// `bun.default_allocator`-owned by the callback.
+    ok: []u8,
+    err: jsc.SystemError,
+};
+
+/// `Bun.file("…").image(opts?)` ≡ `new Bun.Image(this, opts?)`. Lives here so
+/// the proto entry covers Blob/BunFile/S3File in one place; the actual
+/// construction is `Image.fromBlobJS` so Blob.zig doesn't grow image
+/// knowledge.
+pub fn doImage(_: *Blob, global: *JSGlobalObject, cf: *jsc.CallFrame) bun.JSError!JSValue {
+    return Image.fromBlobJS(global, cf.this(), cf.argument(0));
+}
+
 pub fn doReadFileInternal(this: *Blob, comptime Handler: type, ctx: Handler, comptime Function: anytype, global: *JSGlobalObject) void {
     if (Environment.isWindows) {
         const ReadFileHandler = NewInternalReadFileHandler(Handler, Function);
@@ -407,9 +506,10 @@ fn readSlice(
     len: usize,
     allocator: std.mem.Allocator,
 ) ![]u8 {
-    var slice = try allocator.alloc(u8, len);
-    slice = slice[0..try reader.read(slice)];
-    if (slice.len != len) return error.TooSmall;
+    const slice = try allocator.alloc(u8, len);
+    errdefer allocator.free(slice);
+    const n = try reader.read(slice);
+    if (n != len) return error.TooSmall;
     return slice;
 }
 
@@ -426,7 +526,14 @@ fn _onStructuredCloneDeserialize(
 
     const content_type_len = try reader.readInt(u32, .little);
 
-    const content_type = try readSlice(reader, content_type_len, allocator);
+    var content_type: []u8 = try readSlice(reader, content_type_len, allocator);
+    // Ownership transfers to `blob.content_type` at the end of the success
+    // path below; until then this errdefer is responsible for it. Once the
+    // blob takes ownership we null the slice out so an error between that
+    // point and the final return (there is none today — `toJS` is
+    // infallible — but this keeps it structurally safe) cannot double-free
+    // via both this errdefer and `blob.deinit()`.
+    errdefer allocator.free(content_type);
 
     const content_type_was_set: bool = try reader.readInt(u8, .little) != 0;
 
@@ -437,7 +544,11 @@ fn _onStructuredCloneDeserialize(
             const bytes_len = try reader.readInt(u32, .little);
             const bytes = try readSlice(reader, bytes_len, allocator);
 
-            const blob = Blob.init(bytes, allocator, globalThis);
+            var blob = Blob.init(bytes, allocator, globalThis);
+            // `blob` now owns `bytes` (via its Store when non-empty). If any
+            // of the remaining reads fail before we heap-promote it, release
+            // the store so the payload bytes don't leak.
+            errdefer blob.deinit();
 
             versions: {
                 if (version == 1) break :versions;
@@ -445,10 +556,15 @@ fn _onStructuredCloneDeserialize(
                 const name_len = try reader.readInt(u32, .little);
                 const name = try readSlice(reader, name_len, allocator);
 
+                var name_consumed = false;
                 if (blob.store) |store| switch (store.data) {
-                    .bytes => |*bytes_store| bytes_store.stored_name = bun.PathString.init(name),
+                    .bytes => |*bytes_store| {
+                        bytes_store.stored_name = bun.PathString.init(name);
+                        name_consumed = true;
+                    },
                     else => {},
                 };
+                if (!name_consumed) allocator.free(name);
 
                 if (version == 2) break :versions;
             }
@@ -496,6 +612,11 @@ fn _onStructuredCloneDeserialize(
         },
         .empty => Blob.new(Blob.initEmpty(globalThis)),
     };
+    // `blob` is heap-allocated past this point; on any remaining error
+    // (truncated trailer fields) tear down both the heap object and its
+    // store. `content_type` is handled by its own errdefer above since it
+    // hasn't been attached to `blob` yet.
+    errdefer blob.deinit();
 
     versions: {
         if (version == 1) break :versions;
@@ -517,12 +638,30 @@ fn _onStructuredCloneDeserialize(
     }
 
     bun.assertf(blob.isHeapAllocated(), "expected blob to be heap-allocated", .{});
-    blob.offset = @as(u52, @intCast(offset));
+
+    // `offset` comes from untrusted bytes. Clamp it so a crafted payload cannot
+    // make sharedView() slice past the end of the backing store (OOB heap read
+    // in ReleaseFast). For bytes stores this also keeps `size` within bounds;
+    // file/s3 stores report `max_size` here and are bounded by the filesystem
+    // read path instead.
+    blob.offset = @as(SizeType, @truncate(offset));
+    if (blob.store) |store| {
+        const store_size = store.size();
+        if (store_size != Blob.max_size) {
+            blob.offset = @min(blob.offset, store_size);
+            blob.size = @min(blob.size, store_size - blob.offset);
+        }
+    } else {
+        blob.offset = 0;
+    }
+
     if (content_type.len > 0) {
         blob.content_type = content_type;
         blob.content_type_allocated = true;
         blob.content_type_was_set = content_type_was_set;
     }
+    // Ownership handed to `blob` (or it was empty); disarm the errdefer.
+    content_type = &.{};
 
     return blob.toJS(globalThis);
 }
@@ -3599,7 +3738,9 @@ pub fn sharedView(this: *const Blob) []const u8 {
     if (this.size == 0 or this.store == null) return "";
     var slice_ = this.store.?.sharedView();
     if (slice_.len == 0) return "";
-    slice_ = slice_[this.offset..];
+    // Defensive: `offset` may originate from untrusted structured-clone data.
+    // Never index past the store's actual length regardless of caller state.
+    slice_ = slice_[@min(@as(usize, this.offset), slice_.len)..];
 
     return slice_[0..@min(slice_.len, @as(usize, this.size))];
 }
@@ -3739,7 +3880,11 @@ pub fn toJSON(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime)
 
 pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const u8, comptime lifetime: Lifetime) bun.JSError!JSValue {
     const bom, const buf = strings.BOM.detectAndSplit(raw_bytes);
-    if (buf.len == 0) return global.createSyntaxErrorInstance("Unexpected end of JSON input", .{});
+    if (buf.len == 0) {
+        // If all it contained was the bom, we still need to free the bytes
+        if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
+        return global.createSyntaxErrorInstance("Unexpected end of JSON input", .{});
+    }
 
     if (bom == .utf16_le) {
         var out = bun.String.cloneUTF16(bun.reinterpretSlice(u16, buf));
@@ -3751,7 +3896,9 @@ pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const 
     // null == unknown
     // false == can't be
     const could_be_all_ascii = this.isAllASCII() orelse this.store.?.is_all_ascii;
-    defer if (comptime lifetime == .temporary) bun.default_allocator.free(@constCast(buf));
+    // When a BOM is present `buf` is an interior slice of `raw_bytes`; we must
+    // free the original allocation, not the offset pointer.
+    defer if (comptime lifetime == .temporary) bun.default_allocator.free(raw_bytes);
 
     if (could_be_all_ascii == null or !could_be_all_ascii.?) {
         var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
@@ -4976,6 +5123,7 @@ const string = []const u8;
 
 const Archive = @import("../api/Archive.zig");
 const Environment = @import("../../env.zig");
+const Image = @import("../../image/Image.zig");
 const S3File = @import("./S3File.zig");
 const std = @import("std");
 

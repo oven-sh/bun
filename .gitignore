@@ -194,3 +194,4 @@ scratch*.{js,ts,tsx,cjs,mjs}
 scripts/lldb-inline
 
 test/integration/bun-types/fixture/bun.lock
+.claude/scheduled_tasks.lock

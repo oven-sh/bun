@@ -206,7 +206,9 @@ pub const Tag = enum(short) {
             first_value: T,
 
             pub fn slice(this: *@This()) []T {
-                if (this.len == 0) return &.{};
+                // `len` is server-controlled; callers must validate it against
+                // the backing buffer length before calling this.
+                if (this.len <= 0) return &.{};
 
                 var head = @as([*]T, @ptrCast(&this.first_value));
                 var current = head;

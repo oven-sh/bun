@@ -561,7 +561,12 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
     }
     const vm = globalObject.bunVM();
 
-    var socket_config = try SocketConfig.fromJS(vm, opts, globalObject, true);
+    // is_server=false: this is the client connect path. Handlers.mode must be
+    // .client so markInactive() takes the allocator.destroy branch — the
+    // .server branch does @fieldParentPtr("handlers", this) to reach a
+    // Listener, but here handlers live in a standalone allocator.create()
+    // block (see below), so that would read past the allocation.
+    var socket_config = try SocketConfig.fromJS(vm, opts, globalObject, false);
     defer socket_config.deinitExcludingHandlers();
 
     const handlers = &socket_config.handlers;
@@ -654,6 +659,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
 
             const handlers_ptr = bun.handleOom(handlers.vm.allocator.create(Handlers));
             handlers_ptr.* = handlers.*;
+            handlers_ptr.mode = .client;
 
             var promise = jsc.JSPromise.create(globalObject);
             const promise_value = promise.toJS();
@@ -731,7 +737,14 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                     }
                     prev.handlers = handlers_ptr;
                     bun.assert(prev.socket.socket == .detached);
-                    bun.assert(prev.connection == null);
+                    // Adopt `connection` (heap-owned for .unix) so the socket's
+                    // deinit frees it; matches the TLS arm above and the
+                    // non-pipe arm below. Previously `.connection = null`
+                    // dropped the duped pipe-path bytes on the floor.
+                    if (prev.connection) |old_connection| {
+                        old_connection.deinit();
+                    }
+                    prev.connection = connection;
                     bun.assert(prev.protos == null);
                     bun.assert(prev.server_name == null);
                     break :blk prev;
@@ -739,7 +752,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                     .ref_count = .init(),
                     .handlers = handlers_ptr,
                     .socket = TCPSocket.Socket.detached,
-                    .connection = null,
+                    .connection = connection,
                     .protos = null,
                     .server_name = null,
                 });
@@ -851,7 +864,12 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
             socket.flags.allow_half_open = socket_config.allowHalfOpen;
             socket.doConnect(connection) catch {
                 socket.handleConnectError(@intFromEnum(if (port == null) bun.sys.SystemErrno.ENOENT else bun.sys.SystemErrno.ECONNREFUSED)) catch {};
-                if (maybe_previous == null) socket.deref();
+                // Balance the unconditional `socket.ref()` above. `handleConnectError`
+                // only derefs when the socket was attached (`needs_deref`), which is
+                // never true on this synchronous-failure path — the socket is still
+                // `.detached`. This applies to reused (`prev`) sockets as well; the
+                // guard that skipped them leaked one ref per failed reconnect.
+                socket.deref();
                 return promise_value;
             };
 

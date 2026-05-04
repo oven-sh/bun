@@ -239,7 +239,9 @@ pub fn NewSocket(comptime ssl: bool) type {
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
             var scope = handlers.enter();
-            defer scope.exit();
+            defer if (scope.exit()) {
+                this.handlers = null;
+            };
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
             _ = handlers.callErrorHandler(this_value, &.{ this_value, err_value });
@@ -267,7 +269,9 @@ pub fn NewSocket(comptime ssl: bool) type {
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
             var scope = handlers.enter();
-            defer scope.exit();
+            defer if (scope.exit()) {
+                this.handlers = null;
+            };
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
@@ -290,7 +294,9 @@ pub fn NewSocket(comptime ssl: bool) type {
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
             var scope = handlers.enter();
-            defer scope.exit();
+            defer if (scope.exit()) {
+                this.handlers = null;
+            };
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
@@ -340,7 +346,13 @@ pub fn NewSocket(comptime ssl: bool) type {
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
             var scope = handlers.enter();
-            defer scope.exit();
+            defer if (scope.exit()) {
+                // Connection never opened (`is_active == false`), so the
+                // scope's decrement is what brings client handlers to zero
+                // and frees them. Null the field so a retry via
+                // `connectInner` doesn't double-free.
+                this.handlers = null;
+            };
 
             if (callback == .zero) {
                 // Connection failed before open; allow the wrapper to be GC'd
@@ -444,21 +456,23 @@ pub fn NewSocket(comptime ssl: bool) type {
                     return;
                 }
                 const handlers = this.getHandlers();
-                // Non-`.server` `Handlers` are heap-allocated per-socket and
-                // `Handlers.markInactive` frees that allocation once
-                // `active_connections` hits zero. Capture the mode first and
-                // null our pointer after so JS-facing accessors (`.listener`,
-                // `setServername` → `isServer`) and the reconnection path in
-                // `Listener.connect` don't dereference freed memory on a
-                // closed socket.
-                const listener_owned = handlers.mode == .server;
-                handlers.markInactive();
-                if (!listener_owned) this.handlers = null;
+                if (handlers.markInactive()) {
+                    // Client-mode handlers are allocated per-connection and
+                    // `Handlers.markInactive` just freed them. Null the field
+                    // so `connectInner` (net.Socket reconnect path) and
+                    // `getListener` don't dereference/destroy freed memory.
+                    this.handlers = null;
+                }
                 this.poll_ref.unref(vm);
             }
         }
 
         pub fn isServer(this: *const This) bool {
+            // `handlers` is null on detached sockets and on closed client
+            // sockets (markInactive nulls it once the allocation is freed).
+            // JS-callable TLS accessors (`setServername`, `getPeerCertificate`,
+            // `getEphemeralKeyInfo`, `setVerifyMode`) consult this on sockets
+            // whose connection may already be gone.
             const handlers = this.handlers orelse return false;
             return handlers.mode.isServer();
         }
@@ -535,7 +549,9 @@ pub fn NewSocket(comptime ssl: bool) type {
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
             var scope = handlers.enter();
-            defer scope.exit();
+            defer if (scope.exit()) {
+                this.handlers = null;
+            };
             const result = callback.call(globalObject, this_value, &[_]JSValue{this_value}) catch |err| globalObject.takeException(err);
 
             if (result.toError()) |err| {
@@ -586,7 +602,9 @@ pub fn NewSocket(comptime ssl: bool) type {
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
             var scope = handlers.enter();
-            defer scope.exit();
+            defer if (scope.exit()) {
+                this.handlers = null;
+            };
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
@@ -626,7 +644,9 @@ pub fn NewSocket(comptime ssl: bool) type {
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
             var scope = handlers.enter();
-            defer scope.exit();
+            defer if (scope.exit()) {
+                this.handlers = null;
+            };
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
@@ -700,7 +720,9 @@ pub fn NewSocket(comptime ssl: bool) type {
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
             var scope = handlers.enter();
-            defer scope.exit();
+            defer if (scope.exit()) {
+                this.handlers = null;
+            };
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
@@ -742,7 +764,9 @@ pub fn NewSocket(comptime ssl: bool) type {
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
             var scope = handlers.enter();
-            defer scope.exit();
+            defer if (scope.exit()) {
+                this.handlers = null;
+            };
 
             // const encoding = handlers.encoding;
             _ = callback.call(globalObject, this_value, &[_]JSValue{

@@ -990,3 +990,116 @@ it("TLS client: flush() after end() does not double-teardown before deferred onC
   expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0);
 }, 30_000); // debug subprocess startup + ASAN symbolication on failure is slow
+
+// Bun.connect() on a Windows named pipe takes a dedicated early branch in
+// Listener.connectInner that heap-allocates a standalone Handlers block. That
+// block's `.mode` must be `.client` so Handlers.markInactive() destroys it on
+// close; the `.server` path does `@fieldParentPtr("handlers", ...)` expecting
+// a surrounding Listener struct and would read past the standalone
+// allocation (heap-buffer-overflow under ASAN) and leak the block.
+describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", () => {
+  it("open → close cleans up without reading past the Handlers allocation", async () => {
+    const src = /* js */ `
+      const pipe = "\\\\\\\\.\\\\pipe\\\\bun-test-connect-" + Math.random().toString(36).slice(2);
+
+      const closed = Promise.withResolvers();
+      const opened = Promise.withResolvers();
+
+      using server = Bun.listen({
+        unix: pipe,
+        socket: {
+          data() {},
+          open(s) { s.end(); },
+          close() {},
+          error() {},
+        },
+      });
+
+      const client = await Bun.connect({
+        unix: pipe,
+        socket: {
+          data() {},
+          open() { opened.resolve(); },
+          close() { closed.resolve(); },
+          error() {},
+        },
+      });
+
+      await opened.promise;
+      client.end();
+      await closed.promise;
+      server.stop(true);
+
+      Bun.gc(true);
+      console.log("OK");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15_000,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({
+      stdout: stdout.trim(),
+      stderr: stderr.trim(),
+      exitCode,
+      signalCode: proc.signalCode ?? null,
+    }).toMatchObject({
+      stdout: "OK",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  it("failed connect to a non-existent pipe rejects and cleans up", async () => {
+    const src = /* js */ `
+      const pipe = "\\\\\\\\.\\\\pipe\\\\bun-test-missing-" + Math.random().toString(36).slice(2);
+
+      let rejected = false;
+      await Bun.connect({
+        unix: pipe,
+        socket: {
+          data() {},
+          open() {},
+          close() {},
+          connectError() {},
+          error() {},
+        },
+      }).catch(() => { rejected = true; });
+
+      if (!rejected) {
+        console.error("expected Bun.connect to reject for a non-existent pipe");
+        process.exit(1);
+      }
+
+      Bun.gc(true);
+      console.log("OK");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15_000,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({
+      stdout: stdout.trim(),
+      stderr: stderr.trim(),
+      exitCode,
+      signalCode: proc.signalCode ?? null,
+    }).toMatchObject({
+      stdout: "OK",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});

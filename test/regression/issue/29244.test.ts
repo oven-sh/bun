@@ -67,15 +67,28 @@ test.concurrent.skipIf(isWindows)("os.homedir() honors HOME from parent env (#29
   expect(exitCode).toBe(0);
 });
 
-test.concurrent.skipIf(isWindows)("os.homedir() falls back to passwd when HOME is empty (#29244)", async () => {
-  // An empty HOME should be treated as unset — fall through to the
-  // passwd entry, matching libuv's uv_os_homedir. The fallback must
-  // return a non-empty absolute path, not "".
+test.concurrent.skipIf(isWindows)("os.homedir() returns '' when HOME is set to empty string (#29244)", async () => {
+  // Match Node / libuv: uv_os_homedir returns whatever getenv("HOME") gives
+  // when non-NULL, including "". Only an absent HOME falls through to the
+  // passwd entry. Previously Bun treated "" as unset — divergent and now
+  // fixed.
   const { stdout, exitCode } = await runBun(
     `
         process.env.HOME = '';
-        const os = require('node:os');
-        const h = os.homedir();
+        console.log(JSON.stringify(require('node:os').homedir()));
+      `,
+  );
+  expect(JSON.parse(stdout)).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent.skipIf(isWindows)("os.homedir() falls back to passwd when HOME is deleted (#29244)", async () => {
+  // Deleted HOME (getenv returns NULL) is the one case that should fall
+  // through to the passwd entry, matching libuv's UV_ENOENT branch.
+  const { stdout, exitCode } = await runBun(
+    `
+        delete process.env.HOME;
+        const h = require('node:os').homedir();
         console.log(JSON.stringify({ h, len: h.length, abs: h.startsWith('/') }));
       `,
   );

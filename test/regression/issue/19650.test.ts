@@ -28,3 +28,24 @@ test.concurrent.each(["$", "sql", "SQL", "postgres"] as const)(
     expect([0, 1]).toContain(exitCode);
   },
 );
+
+test.concurrent.each(["$", "sql", "SQL", "postgres"] as const)(
+  "accessing Bun.%s after clobbering Symbol does not crash",
+  async key => {
+    const src = `
+      globalThis.Symbol = NaN;
+      try { Bun[${JSON.stringify(key)}]; } catch {}
+      try { Bun[${JSON.stringify(key)}]; } catch {}
+      Bun.gc(true);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const exitCode = await proc.exited;
+    expect(proc.signalCode).toBeNull();
+    expect([0, 1]).toContain(exitCode);
+  },
+);

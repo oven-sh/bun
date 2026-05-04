@@ -313,6 +313,11 @@ fn fetchImpl(
         if (options.isUndefinedOrNull()) break :brk null;
         if (options.isObject() or options.jsType() == .DOMWrapper) break :brk options;
         is_error = true;
+        // `defer url_str.deref()` hasn't run yet on this early return, and the
+        // function-scope defer above doesn't track it — release the +1 ref
+        // from StringOrURL.fromJS here to avoid leaking a WTFStringImpl per
+        // bad-init call.
+        if (url_str_optional) |s| s.deref();
         const err = ctx.toTypeError(.INVALID_ARG_TYPE, "The \"init\" argument must be of type object, undefined, or null.", .{});
         return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
     };

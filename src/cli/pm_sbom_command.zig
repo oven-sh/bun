@@ -459,19 +459,33 @@ const Generator = struct {
     }
 
     fn makePurl(allocator: std.mem.Allocator, name: []const u8, version: []const u8) ![]const u8 {
-        // purl-spec: `pkg:npm/namespace/name@version`. For scoped packages the
-        // `@` in the scope must be percent-encoded.
+        // purl-spec: `pkg:npm/namespace/name@version`. For scoped packages
+        // the `@` in the scope must be percent-encoded. The version must
+        // also be percent-encoded (semver build metadata `+` -> `%2B`).
         if (name.len > 0 and name[0] == '@') {
             if (strings.indexOfChar(name, '/')) |slash| {
-                return std.fmt.allocPrint(allocator, "pkg:npm/%40{s}/{s}@{s}", .{
+                return std.fmt.allocPrint(allocator, "pkg:npm/%40{s}/{s}@{f}", .{
                     name[1..slash],
                     name[slash + 1 ..],
-                    version,
+                    PurlEncode{ .s = version },
                 });
             }
         }
-        return std.fmt.allocPrint(allocator, "pkg:npm/{s}@{s}", .{ name, version });
+        return std.fmt.allocPrint(allocator, "pkg:npm/{s}@{f}", .{ name, PurlEncode{ .s = version } });
     }
+
+    /// Percent-encodes bytes outside the RFC 3986 unreserved set
+    /// (`A-Za-z0-9-._~`) for use in purl components. Matches what
+    /// packageurl-js does via `encodeURIComponent()`.
+    const PurlEncode = struct {
+        s: []const u8,
+        pub fn format(this: PurlEncode, w: *std.Io.Writer) !void {
+            for (this.s) |c| switch (c) {
+                'A'...'Z', 'a'...'z', '0'...'9', '-', '.', '_', '~' => try w.writeByte(c),
+                else => try w.print("%{X:0>2}", .{c}),
+            };
+        }
+    };
 
     fn makeISOTimestamp(out: *[20]u8) void {
         const secs: u64 = @intCast(@max(@divFloor(std.time.milliTimestamp(), 1000), 0));

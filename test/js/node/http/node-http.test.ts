@@ -207,6 +207,59 @@ describe("node:http", () => {
         server.close();
       }
     });
+
+    // RFC 7231 §5.1.1: the expectation-name is a case-insensitive token.
+    // Apache HttpComponents httpcore 4.x sends "100-Continue" literally and PHP
+    // Guzzle did the same; those requests previously hit the 417 Expectation
+    // Failed fallback (issue #20415) or silently missed the interim response.
+    describe.each(["100-continue", "100-Continue", "100-CONTINUE", "100-cOnTiNuE"])(
+      "Expect: %s is matched case-insensitively",
+      expectValue => {
+        it("emits 100 Continue and routes the request", async () => {
+          const server = createServer((req, res) => {
+            req.on("data", () => {});
+            req.on("end", () => {
+              res.writeHead(200, { "Content-Type": "text/plain" });
+              res.end("ok");
+            });
+          });
+          try {
+            const url = await listen(server);
+            const { promise, resolve, reject } = Promise.withResolvers<string>();
+            let received = "";
+            const socket = connect(Number(url.port), url.hostname, () => {
+              socket.write(
+                "POST /test HTTP/1.1\r\n" +
+                  `Host: ${url.host}\r\n` +
+                  "Content-Length: 5\r\n" +
+                  `Expect: ${expectValue}\r\n` +
+                  "\r\n" +
+                  "hello",
+              );
+            });
+            socket.on("data", chunk => {
+              received += chunk.toString("utf8");
+              // Success: server echoed the body after 100 Continue. Failure:
+              // server returned 417 Expectation Failed. Either way the
+              // interesting bytes have arrived — close so the test doesn't
+              // hang on HTTP/1.1 keep-alive.
+              if (received.includes("\r\n\r\nok") || received.includes(" 417 ")) {
+                socket.end();
+              }
+            });
+            socket.on("error", reject);
+            socket.on("close", () => resolve(received));
+
+            const output = await promise;
+            expect(output).toContain("HTTP/1.1 100 Continue\r\n");
+            expect(output).toContain("HTTP/1.1 200 OK");
+            expect(output).not.toContain("417");
+          } finally {
+            server.close();
+          }
+        });
+      },
+    );
   });
 
   describe("response", () => {

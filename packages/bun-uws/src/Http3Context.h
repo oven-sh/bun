@@ -7,6 +7,7 @@
 #include "Http3Request.h"
 #include "Http3Response.h"
 #include "Http3ResponseData.h"
+#include "Utilities.h"
 
 namespace uWS {
 
@@ -29,7 +30,8 @@ struct Http3Context {
             rd->reset();
 
             Http3Request req(s);
-            if (req.getHeader("expect") == "100-continue") res->writeContinue();
+            /* RFC 7231 §5.1.1: expectation-name is a case-insensitive token. */
+            if (utils::asciiIEquals(req.getHeader("expect"), "100-continue")) res->writeContinue();
             cd->router.getUserData() = {res, &req};
             if (!cd->router.route(req.getMethod(), req.getUrl())) {
                 res->writeStatus("404 Not Found")->end();

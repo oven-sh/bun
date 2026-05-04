@@ -8,7 +8,7 @@ import { bunEnv, bunExe } from "harness";
 // as `bun:internal-for-testing`), the module loader should resolve
 // `internal/<name>` specifiers against that registry.
 
-test("internal/errors is requireable under the testing flag", async () => {
+test.concurrent("internal/errors is requireable under the testing flag", async () => {
   // bunEnv already sets BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING + the GC flag
   // that unlocks it; the gate's stash-and-test wrapper will exercise the
   // "module not found" path on a build without the fix.
@@ -86,7 +86,7 @@ test("internal/errors is requireable under the testing flag", async () => {
   });
 });
 
-test("internal/errors is importable (ESM) under the testing flag", async () => {
+test.concurrent("internal/errors is importable (ESM) under the testing flag", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

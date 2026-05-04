@@ -152,10 +152,7 @@ it("bun add --filter='*' adds to every workspace in a large monorepo", async () 
   );
   for (const name of names) {
     await mkdir(join(package_dir, "packages", name), { recursive: true });
-    await writeFile(
-      join(package_dir, "packages", name, "package.json"),
-      JSON.stringify({ name, version: "1.0.0" }),
-    );
+    await writeFile(join(package_dir, "packages", name, "package.json"), JSON.stringify({ name, version: "1.0.0" }));
   }
 
   const { stdout, stderr, exited } = spawn({

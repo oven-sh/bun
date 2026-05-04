@@ -6,7 +6,7 @@ import { bunEnv, bunExe } from "harness";
 // overflow), the callback previously returned an empty JSValue, which JSC's
 // reifyStaticProperty passes straight to putDirect without an exception
 // check, crashing on a null JSCell dereference.
-test.each(["$", "sql", "SQL", "postgres"] as const)(
+test.concurrent.each(["$", "sql", "SQL", "postgres"] as const)(
   "accessing Bun.%s near stack overflow does not crash",
   async key => {
     const src = `

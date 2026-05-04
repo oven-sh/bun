@@ -710,6 +710,36 @@ describe("bundler", () => {
     },
   });
   // https://github.com/oven-sh/bun/issues/30203
+  // Unused exports whose initializer arithmetic no longer folds to a number
+  // literal (e.g. `1/3` rejected by the size-aware check) must still be
+  // tree-shakable. `exprCanBeRemovedIfUnusedWithoutDCECheck` /
+  // `simplifyUnusedExpr` treat `number op number` arithmetic as
+  // side-effect-free so `classCanBeRemovedIfUnused` /
+  // `stmtsCanBeRemovedIfUnused` still answer true.
+  itBundled("minify/ConstantFoldingTreeShakesUnusedArithmetic", {
+    files: {
+      "/entry.ts": `
+        import { used } from "./lib";
+        console.log(used);
+      `,
+      "/lib.ts": `
+        export class Unused { ratio = 1 / 3; }
+        export let unusedLet = 1 / 3;
+        export var unusedVar = 16 / 9;
+        export const used = "hello";
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).not.toContain("Unused");
+      expect(code).not.toContain("unusedLet");
+      expect(code).not.toContain("unusedVar");
+      expect(code).toContain("hello");
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/30203
   // Enum bodies must still fully fold so the emitted table has numeric
   // values, and so later members can reference earlier numeric members.
   itBundled("minify/ConstantFoldingEnumBodyAlwaysFolds", {

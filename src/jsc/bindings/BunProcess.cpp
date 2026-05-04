@@ -544,6 +544,30 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
         }
     }
 
+#if OS(WINDOWS)
+    // When this thread is the one that ran bind() (did_bind),
+    // LinkedNodeModule.lock is still held so a concurrent Worker on
+    // the cached-hit path is blocked inside init() and cannot reach
+    // DLHandleMap.get() until we have .add()ed. Release exactly
+    // once, after publishing to DLHandleMap and before any
+    // re-entrant user code (executePendingNapiModule /
+    // napi_register_module_v1, which can dlopen another addon and
+    // would deadlock on the non-recursive lock). The scope-exit
+    // below catches early-return / exception-throw paths that never
+    // reach the explicit release — declared here so the
+    // RETURN_IF_EXCEPTION and UTF-8-validation early returns below
+    // are covered from the moment Bun__initLinkedNodeModule hands
+    // the lock back.
+    bool binderLockHeld = usedLinkedAddon && linkedResolved.did_bind;
+    const auto releaseBinderLock = [&] {
+        if (binderLockHeld) {
+            binderLockHeld = false;
+            Bun__linkedNodeModuleUnlock();
+        }
+    };
+    auto binderLockGuard = WTF::makeScopeExit([&] { releaseBinderLock(); });
+#endif
+
     RETURN_IF_EXCEPTION(scope, {});
 
     // For bun build --compile, we copy the .node file to a temp directory.
@@ -619,25 +643,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     // BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK=1 to take the tempfile
     // path instead.
     void* dlopenHandleForMeta = usedLinkedAddon ? nullptr : handle;
-
-    // When this thread is the one that ran bind() (did_bind),
-    // LinkedNodeModule.lock is still held so a concurrent Worker on
-    // the cached-hit path is blocked inside init() and cannot reach
-    // DLHandleMap.get() until we have .add()ed. Release exactly
-    // once, after publishing to DLHandleMap and before any
-    // re-entrant user code (executePendingNapiModule /
-    // napi_register_module_v1, which can dlopen another addon and
-    // would deadlock on the non-recursive lock). The scope-exit
-    // below catches early-return / exception-throw paths that never
-    // reach the explicit release.
-    bool binderLockHeld = usedLinkedAddon && linkedResolved.did_bind;
-    const auto releaseBinderLock = [&] {
-        if (binderLockHeld) {
-            binderLockHeld = false;
-            Bun__linkedNodeModuleUnlock();
-        }
-    };
-    auto binderLockGuard = WTF::makeScopeExit([&] { releaseBinderLock(); });
 
 // On Windows, we use GetLastError() for error messages, so we can only delete after checking for errors
 #else

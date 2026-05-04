@@ -357,6 +357,17 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
 
     const { list: depsList } = parseEsmDependencies(mod, deps, loadModuleSync);
     mod.imports = depsList.map(getEsmExports);
+    // Patch import bindings from the hoistOnly scope. During hoistOnlyCall,
+    // import vars were undefined (imports=[]). Now that deps are loaded,
+    // update them via the updateImport callbacks so hoisted functions exported
+    // for cyclic resolution have correct non-cyclic imports (e.g. lodash).
+    if (mod.updateImport) {
+      for (let i = 0; i < mod.updateImport.length; i++) {
+        if (mod.imports[i] !== undefined) {
+          mod.updateImport[i](mod.imports[i]);
+        }
+      }
+    }
     load(mod);
     mod.imports = depsList;
     mod.cjs = null;
@@ -497,6 +508,14 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
 function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HMRModule[]) {
   try {
     mod.imports = modules.map(getEsmExports);
+    // Patch hoistOnly scope's import bindings (see loadModuleSync for details).
+    if (mod.updateImport) {
+      for (let i = 0; i < mod.updateImport.length; i++) {
+        if (mod.imports[i] !== undefined) {
+          mod.updateImport[i](mod.imports[i]);
+        }
+      }
+    }
     const shouldPatchImporters = !mod.selfAccept || mod.selfAccept === implicitAcceptFunction;
     const p = load(mod);
     mod.imports = modules;

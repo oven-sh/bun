@@ -3496,6 +3496,27 @@ pub const BundleV2 = struct {
             sub_bundler.sub_build_cache.append(entry) catch {};
         }
         defer {
+            // Propagate child's cache entries BACK to the parent.
+            // When the child builds nested sub-builds (e.g. worker.ts builds
+            // frontend.tsx internally), those results must be available to
+            // the parent so that subsequent sibling sub-builds (e.g. the
+            // main build's own frontend.tsx) can hit the cache instead of
+            // rebuilding with different hashes.
+            for (sub_bundler.sub_build_cache.items) |child_entry| {
+                var dominated = false;
+                for (this.sub_build_cache.items) |parent_entry| {
+                    if (bun.strings.eql(child_entry.entry_point, parent_entry.entry_point) and
+                        bundleConfigEql(child_entry.config, parent_entry.config))
+                    {
+                        dominated = true;
+                        break;
+                    }
+                }
+                if (!dominated) {
+                    this.sub_build_cache.append(child_entry) catch {};
+                }
+            }
+
             // If we created our own oneshot pipeline, free it.
             if (sub_bundler.pipeline != null and
                 (this.pipeline == null or sub_bundler.pipeline.? != this.pipeline.?))

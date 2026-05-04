@@ -3699,12 +3699,20 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
     ASSERT_WITH_MESSAGE(arg0->status() == JSC::JSPromise::Status::Pending, "Promise is already resolved or rejected");
 
     auto& vm = JSC::getVM(arg1);
-    arg0->rejectAsHandled(vm, arg1, JSC::JSValue::decode(JSValue2));
+    JSValue value = JSC::JSValue::decode(JSValue2);
+    if (auto* exception = dynamicDowncast<JSC::Exception>(value)) {
+        arg0->rejectAsHandled(vm, arg1, exception);
+        return;
+    }
+    arg0->rejectAsHandled(vm, arg1, value);
 }
 
 JSC::JSPromise* JSC__JSPromise__rejectedPromise(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1)
 {
-    return JSC::JSPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1));
+    JSValue value = JSC::JSValue::decode(JSValue1);
+    if (auto* exception = dynamicDowncast<JSC::Exception>(value))
+        value = exception->value();
+    return JSC::JSPromise::rejectedPromise(arg0, value);
 }
 
 [[ZIG_EXPORT(check_slow)]] void JSC__JSPromise__resolve(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
@@ -3859,7 +3867,12 @@ void JSC__JSInternalPromise__rejectAsHandled(JSC::JSPromise* arg0,
     JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
 {
     auto& vm = JSC::getVM(arg1);
-    arg0->rejectAsHandled(vm, arg1, JSC::JSValue::decode(JSValue2));
+    JSValue value = JSC::JSValue::decode(JSValue2);
+    if (auto* exception = dynamicDowncast<JSC::Exception>(value)) {
+        arg0->rejectAsHandled(vm, arg1, exception);
+        return;
+    }
+    arg0->rejectAsHandled(vm, arg1, value);
 }
 void JSC__JSInternalPromise__rejectAsHandledException(JSC::JSPromise* arg0,
     JSC::JSGlobalObject* arg1,
@@ -3872,7 +3885,10 @@ void JSC__JSInternalPromise__rejectAsHandledException(JSC::JSPromise* arg0,
 JSC::JSPromise* JSC__JSInternalPromise__rejectedPromise(JSC::JSGlobalObject* arg0,
     JSC::EncodedJSValue JSValue1)
 {
-    return JSC::JSPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1));
+    JSValue value = JSC::JSValue::decode(JSValue1);
+    if (auto* exception = dynamicDowncast<JSC::Exception>(value))
+        value = exception->value();
+    return JSC::JSPromise::rejectedPromise(arg0, value);
 }
 
 [[ZIG_EXPORT(check_slow)]]
@@ -5031,11 +5047,14 @@ JSC::EncodedJSValue JSC__JSPromise__rejectedPromiseValue(JSC::JSGlobalObject* gl
     JSC::EncodedJSValue JSValue1)
 {
     auto& vm = JSC::getVM(globalObject);
+    JSValue value = JSC::JSValue::decode(JSValue1);
+    if (auto* exception = dynamicDowncast<JSC::Exception>(value))
+        value = exception->value();
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(static_cast<unsigned>(JSC::JSPromise::Status::Rejected)));
-    promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, JSC::JSValue::decode(JSValue1));
+    promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, value);
     JSC::ensureStillAliveHere(promise);
-    JSC::ensureStillAliveHere(JSC::JSValue::decode(JSValue1));
+    JSC::ensureStillAliveHere(value);
     return JSC::JSValue::encode(promise);
 }
 

@@ -620,6 +620,24 @@ describe("bundler", () => {
     capture: ["1.25", "1 / 3"],
   });
   // https://github.com/oven-sh/bun/issues/30203
+  // Macro args must always fold to a concrete value, even under `--minify`
+  // where the size-aware check would otherwise reject the fold — the macro
+  // runner calls `Expr.Data.toJS` which only handles literal AST nodes.
+  // Size-aware folding at the call-site itself (outside the macro) still
+  // applies.
+  itBundled("minify/ConstantFoldingMacroArgsAlwaysFold", {
+    files: {
+      "/entry.ts": `
+        import { show } from "./macro" with { type: "macro" };
+        capture(show(1 / 3));
+        capture(1 / 3);
+      `,
+      "/macro.ts": `export function show(x: number): number { return x; }`,
+    },
+    minifySyntax: true,
+    capture: ["0.3333333333333333", "1 / 3"],
+  });
+  // https://github.com/oven-sh/bun/issues/30203
   // Enum bodies must still fully fold so the emitted table has numeric
   // values, and so later members can reference earlier numeric members.
   itBundled("minify/ConstantFoldingEnumBodyAlwaysFolds", {

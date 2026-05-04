@@ -1150,8 +1150,16 @@ pub fn VisitExpr(
                 // const binding = await import(`./${process.platform}-${process.arch}.node`);
                 //
                 const prev_should_fold_typescript_constant_expressions = true;
-                defer p.should_fold_typescript_constant_expressions = prev_should_fold_typescript_constant_expressions;
+                const prev_fold_numeric_constants_unconditionally = p.fold_numeric_constants_unconditionally;
+                defer {
+                    p.should_fold_typescript_constant_expressions = prev_should_fold_typescript_constant_expressions;
+                    p.fold_numeric_constants_unconditionally = prev_fold_numeric_constants_unconditionally;
+                }
                 p.should_fold_typescript_constant_expressions = true;
+                // Import path arithmetic (rare but legal: `import("./a" + 1)`) must
+                // reach `transposeRequire`/`transposeImport` as a string, not a
+                // size-preserved `E.Binary` — the module resolver can't handle AST.
+                p.fold_numeric_constants_unconditionally = true;
 
                 e_.expr = p.visitExpr(e_.expr);
                 e_.options = p.visitExpr(e_.options);
@@ -1262,7 +1270,11 @@ pub fn VisitExpr(
                     const old_ce = p.options.ignore_dce_annotations;
                     defer p.options.ignore_dce_annotations = old_ce;
                     const old_should_fold_typescript_constant_expressions = p.should_fold_typescript_constant_expressions;
-                    defer p.should_fold_typescript_constant_expressions = old_should_fold_typescript_constant_expressions;
+                    const old_fold_numeric_constants_unconditionally = p.fold_numeric_constants_unconditionally;
+                    defer {
+                        p.should_fold_typescript_constant_expressions = old_should_fold_typescript_constant_expressions;
+                        p.fold_numeric_constants_unconditionally = old_fold_numeric_constants_unconditionally;
+                    }
                     const old_is_control_flow_dead = p.is_control_flow_dead;
 
                     // We want to forcefully fold constants inside of
@@ -1278,6 +1290,11 @@ pub fn VisitExpr(
                     {
                         p.options.ignore_dce_annotations = true;
                         p.should_fold_typescript_constant_expressions = true;
+                        // These callers consume the arg as a concrete value
+                        // (`Expr.Data.toJS` for macros; module-resolver string
+                        // for require/import). A size-preserved `E.Binary`
+                        // breaks both — always fold here.
+                        p.fold_numeric_constants_unconditionally = true;
                     }
 
                     // When a value is targeted by `--drop`, it will be removed.

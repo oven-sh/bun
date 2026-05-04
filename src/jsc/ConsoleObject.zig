@@ -3730,6 +3730,7 @@ pub fn timeLog(
         .stack_check = bun.StackCheck.init(),
         .can_throw_stack_overflow = true,
     };
+    defer fmt.deinit();
     const writer = console.error_writer;
     const Writer = @TypeOf(writer);
     for (args[0..args_len]) |arg| {

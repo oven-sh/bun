@@ -781,6 +781,7 @@ public:
     Ref<NapiEnv> makeNapiEnv(const napi_module&);
     napi_env makeNapiEnvForFFI();
     bool hasNapiFinalizers() const;
+    void adoptNapiEnvsForTestIsolation(GlobalObject* fromGlobal);
 
 private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);

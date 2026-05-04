@@ -617,6 +617,11 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     Bun__setDefaultGlobalObject(globalObject);
     JSC::gcProtect(globalObject);
 
+    // NapiEnv holds a raw Zig::GlobalObject*; deferred NAPI finalizers from the
+    // previous file still reference those envs after this swap. Repoint and
+    // re-own them before the old global becomes collectable.
+    globalObject->adoptNapiEnvsForTestIsolation(oldGlobal);
+
     // Drop the permanent root on the previous global so its module registry,
     // require.cache, and user objects become collectable. JSC's CodeCache and
     // Bun's RuntimeTranspilerCache are VM/process scoped and survive.
@@ -3770,6 +3775,25 @@ bool GlobalObject::hasNapiFinalizers() const
     }
 
     return false;
+}
+
+// `bun test --isolate` creates a fresh Zig::GlobalObject per test file on the
+// same JSC::VM and gcUnprotect()s the previous one. NapiEnvs created by the
+// previous file are still referenced from queued NapiFinalizerTasks and from
+// weak-handle owners that fire during later GCs, but NapiEnv::m_globalObject
+// is a raw pointer — once the old global is swept, every env->globalObject()
+// call (handle-scope open, Finalizer.run, napi_async_work completion, …)
+// dereferences freed memory. Repoint the envs at the new global and move
+// ownership so the new global keeps them alive and reports their pending
+// finalizers via hasNapiFinalizers().
+void GlobalObject::adoptNapiEnvsForTestIsolation(GlobalObject* fromGlobal)
+{
+    ASSERT(&vm() == &fromGlobal->vm());
+    ASSERT(m_napiEnvs.isEmpty());
+    for (auto& env : fromGlobal->m_napiEnvs) {
+        env->setGlobalObject(this);
+    }
+    m_napiEnvs = std::exchange(fromGlobal->m_napiEnvs, {});
 }
 
 void GlobalObject::setNodeWorkerEnvironmentData(JSMap* data) { m_nodeWorkerEnvironmentData.set(vm(), this, data); }

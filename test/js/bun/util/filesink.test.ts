@@ -268,3 +268,34 @@ it.skipIf(!isPosix)("does not leak native FileSink when a pending write fails (E
   // more than that indicates a native leak.
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
 });
+
+it("Bun.file().writer() ignores invalid path/fd in options instead of crashing", async () => {
+  const dir = tmpdirSync();
+
+  // `fd` in options is not an integer: previously this panicked accessing the
+  // wrong union field after `fromJSWithTag` returned `.err`.
+  {
+    const file = Bun.file(join(dir, "a.txt")) as any;
+    file.fd = Int16Array;
+    const writer = file.writer(file);
+    writer.write("a");
+    await writer.end();
+    expect(await Bun.file(join(dir, "a.txt")).text()).toBe("a");
+  }
+
+  // Explicit non-integer `fd` in options object.
+  {
+    const writer = Bun.file(join(dir, "b.txt")).writer({ fd: "nope" } as any);
+    writer.write("b");
+    await writer.end();
+    expect(await Bun.file(join(dir, "b.txt")).text()).toBe("b");
+  }
+
+  // Non-string `path` in options object.
+  {
+    const writer = Bun.file(join(dir, "c.txt")).writer({ path: 123 } as any);
+    writer.write("c");
+    await writer.end();
+    expect(await Bun.file(join(dir, "c.txt")).text()).toBe("c");
+  }
+});

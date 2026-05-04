@@ -389,6 +389,21 @@ describe("node:http Agent socket accounting", () => {
     }
   });
 
+  test("agent.on('keylog', ...) does not throw when sockets are tracked", () => {
+    // maybeEnableKeylog iterates Object.values(this.sockets), which is
+    // Socket[][] — each value is an array of sockets. Before agent.sockets
+    // was populated this was dead code; now calling .on() on an array
+    // would throw.
+    const agent = new http.Agent();
+    try {
+      http.get({ host: "127.0.0.1", agent }, () => {}).on("error", () => {});
+      expect(Object.keys(agent.sockets).length).toBeGreaterThan(0);
+      expect(() => agent.on("keylog", () => {})).not.toThrow();
+    } finally {
+      agent.destroy();
+    }
+  });
+
   test("flushHeaders() on a bodiless GET that gets a response before end() releases the slot", async () => {
     const agent = new http.Agent({ maxSockets: 1 });
     const { promise: serverGotRequest, resolve: onServerRequest } = Promise.withResolvers<void>();

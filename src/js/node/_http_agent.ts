@@ -126,9 +126,13 @@ function maybeEnableKeylog(this: Agent, eventName) {
       agent.emit("keylog", keylog, this);
     };
     // Existing sockets will start listening on keylog now.
+    // this.sockets is { name: Socket[] }, so Object.values returns Socket[][].
     const sockets = Object.values(this.sockets);
     for (let i = 0; i < sockets.length; i++) {
-      sockets[i]!.on("keylog", this[kOnKeylog]);
+      const list = sockets[i]!;
+      for (let j = 0; j < list.length; j++) {
+        list[j].on("keylog", this[kOnKeylog]);
+      }
     }
   }
 }

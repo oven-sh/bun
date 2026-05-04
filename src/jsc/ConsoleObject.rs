@@ -4751,6 +4751,6 @@ pub extern "C" fn Bun__ConsoleObject__messageWithTypeAndLevel(
 // PORT STATUS
 //   source:     src/jsc/ConsoleObject.zig (3833 lines)
 //   confidence: low
-//   todos:      14
-//   notes:      Heavy borrowck reshaping around WrappedWriter (borrows self.estimated_line_length); print_as arms hoisted to helpers; Output::pretty_fmt! assumed macro; self-ref writer fields restructured as getters per LIFETIMES.tsv; const-generic Tag dispatch needs ConstParamTy; f16 path stubbed.
+//   todos:      15
+//   notes:      Heavy borrowck reshaping around WrappedWriter (borrows self.estimated_line_length); print_as arms hoisted to helpers; Output::pretty_fmt! assumed macro; self-ref writer fields restructured as getters per LIFETIMES.tsv; const-generic Tag dispatch needs ConstParamTy; f16 path stubbed. WrappedWriter kept dyn (PERF-tagged) — generic cascade touches iterator ctxs.
 // ──────────────────────────────────────────────────────────────────────────

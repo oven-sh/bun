@@ -161,12 +161,11 @@ pub enum ShellResult<T> {
 }
 
 impl<T: Default> ShellResult<T> {
-    pub const fn success() -> Self
-    where
-        T: Copy,
-    {
-        // TODO(port): Zig used std.mem.zeroes(T); Default is the safe Rust mapping
-        ShellResult::Result(unsafe { core::mem::zeroed() })
+    pub fn success() -> Self {
+        // PORT NOTE: Zig used std.mem.zeroes(T). PORTING.md forbids zeroed::<T>() for generic T
+        // (no #[repr(C)] POD guarantee, may contain NonNull/NonZero/enum). Default is the safe
+        // mapping; dropped `const` since Default::default is not const-callable on generic T.
+        ShellResult::Result(T::default())
     }
 }
 
@@ -212,6 +211,8 @@ unsafe extern "C" {
 
 fn set_env(name: *const c_char, value: *const c_char) {
     // TODO: windows
+    // SAFETY: name/value are valid NUL-terminated C strings provided by callers; setenv is
+    // not called concurrently with getenv on this thread (single-threaded JS event loop).
     unsafe {
         let _ = setenv(name, value, 1);
     }
@@ -1230,6 +1231,8 @@ impl<'bump> Parser<'bump> {
             strpool: self.strpool,
             tokens: self.tokens,
             alloc: self.alloc,
+            // SAFETY: parent does not access self.jsobjs while the subparser is alive; the
+            // borrow is logically transferred and restored in continue_from_subparser.
             jsobjs: unsafe { core::slice::from_raw_parts_mut(self.jsobjs.as_mut_ptr(), self.jsobjs.len()) },
             // TODO(port): borrowck — jsobjs is shared between parent/sub; raw reborrow.
             current: self.current,
@@ -2851,9 +2854,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                     }
                                     match p2.char {
                                         c2 if matches!(
-                                            c2 as u8,
-                                            b' ' | b'\r' | b'\n' | b'\t' | b';' | b'&' | b'|'
-                                                | b'>'
+                                            u8::try_from(c2),
+                                            Ok(b' ' | b'\r' | b'\n' | b'\t' | b';' | b'&' | b'|'
+                                                | b'>')
                                         ) =>
                                         {
                                             self.break_word(true)?;
@@ -3256,11 +3259,13 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
     fn append_char_to_str_pool(&mut self, char: u32) -> Result<(), LexerError> {
         if ENCODING == StringEncoding::Ascii {
-            self.strpool.push(char as u8);
+            // PERF(port): @intCast — ENCODING==Ascii guarantees char < 256
+            self.strpool.push(u8::try_from(char).unwrap());
             self.j += 1;
         } else {
             if char <= 0x7F {
-                self.strpool.push(char as u8);
+                // PERF(port): @intCast — guarded by char <= 0x7F
+                self.strpool.push(u8::try_from(char).unwrap());
                 self.j += 1;
                 return Ok(());
             } else {
@@ -3272,11 +3277,12 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
     #[cold]
     fn append_unicode_char_to_str_pool(&mut self, char: u32) -> Result<(), LexerError> {
-        let ichar: i32 = char as i32;
+        let ichar: i32 = i32::try_from(char).unwrap();
         let mut bytes = [0u8; 4];
+        // Zig encodeWTF8Rune returns u3; Rust port returns a small uint — widen with From.
         let n = strings::encode_wtf8_rune(&mut bytes, ichar);
-        self.j += n as u32;
-        self.strpool.extend_from_slice(&bytes[..n as usize]);
+        self.j += u32::from(n);
+        self.strpool.extend_from_slice(&bytes[..usize::from(n)]);
         Ok(())
     }
 
@@ -3482,7 +3488,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 c if (b'0' as u32..=b'9' as u32).contains(&c) => {
                     // Codepoint int casts are safe here because the digits are in the ASCII range
                     let mut count: usize = 1;
-                    let mut buf = [first.char as u8; 32];
+                    let mut buf = [u8::try_from(first.char).unwrap(); 32];
 
                     while let Some(peeked) = self.peek() {
                         let char = peeked.char;
@@ -3492,7 +3498,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 if count >= 32 {
                                     return None;
                                 }
-                                buf[count] = char as u8;
+                                buf[count] = u8::try_from(char).unwrap();
                                 count += 1;
                                 continue;
                             }
@@ -3500,10 +3506,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                         }
                     }
 
-                    let num = match core::str::from_utf8(&buf[..count])
-                        .ok()
-                        .and_then(|s| s.parse::<usize>().ok())
-                    {
+                    let num = match buf[..count].iter().try_fold(0usize, |acc, &d| {
+                        acc.checked_mul(10).and_then(|a| a.checked_add((d - b'0') as usize))
+                    }) {
                         Some(n) => n,
                         // This means the number was really large, meaning it
                         // probably was supposed to be a string
@@ -3594,7 +3599,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     if count >= 32 {
                         return None;
                     }
-                    buf[count] = char as u8;
+                    buf[count] = u8::try_from(char).unwrap();
                     count += 1;
                     continue;
                 }
@@ -3607,10 +3612,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             return None;
         }
 
-        let num = match core::str::from_utf8(&buf[..count])
-            .ok()
-            .and_then(|s| s.parse::<usize>().ok())
-        {
+        let num = match buf[..count].iter().try_fold(0usize, |acc, &d| {
+            acc.checked_mul(10).and_then(|a| a.checked_add((d - b'0') as usize))
+        }) {
             Some(n) => n,
             None => {
                 self.backtrack(snap);
@@ -3783,10 +3787,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 return None;
             }
 
-            let idx = match core::str::from_utf8(&digit_buf[..digit_buf_count as usize])
-                .ok()
-                .and_then(|s| s.parse::<usize>().ok())
-            {
+            let idx = match digit_buf[..digit_buf_count as usize].iter().try_fold(0usize, |acc, &d| {
+                acc.checked_mul(10).and_then(|a| a.checked_add((d - b'0') as usize))
+            }) {
                 Some(n) => n,
                 None => {
                     let mut e = Vec::new();
@@ -4343,8 +4346,8 @@ pub struct CmdEnvValue<'a> {
 
 impl fmt::Display for CmdEnvValue<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(bstr::BStr::new(self.val.as_bytes()).to_string().as_str())
-        // TODO(port): write bytes without UTF-8 lossiness — use bstr Display directly.
+        // BStr already implements Display over raw bytes (no heap alloc, no lossy UTF-8 round-trip).
+        write!(f, "{}", bstr::BStr::new(self.val.as_bytes()))
     }
 }
 
@@ -4469,6 +4472,8 @@ pub fn shell_cmd_from_js(
     global: &JSGlobalObject,
     string_args: JSValue,
     template_args: &mut JSArrayIterator,
+    // SAFETY: every JSValue pushed into out_jsobjs is also appended to marked_argument_buffer
+    // (a GC root); the heap-backed Vec is index storage only, mirroring the Zig 1:1.
     out_jsobjs: &mut Vec<JSValue>,
     jsstrings: &mut Vec<BunString>,
     out_script: &mut Vec<u8>,
@@ -4517,6 +4522,8 @@ pub fn shell_cmd_from_js(
 pub fn handle_template_value(
     global: &JSGlobalObject,
     template_value: JSValue,
+    // SAFETY: every JSValue pushed into out_jsobjs is also appended to marked_argument_buffer
+    // (a GC root); the heap-backed Vec is index storage only.
     out_jsobjs: &mut Vec<JSValue>,
     out_script: &mut Vec<u8>,
     jsstrings: &mut Vec<BunString>,
@@ -5011,6 +5018,7 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
     }
 
     pub fn slice_mut(&mut self) -> &mut [T] {
+        // SAFETY: first `self.len` elements are initialized; pointer is valid for `len` reads/writes.
         unsafe {
             core::slice::from_raw_parts_mut(self.items.as_mut_ptr() as *mut T, self.len as usize)
         }
@@ -5039,6 +5047,7 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
         }
         // SAFETY: idx < len, elements initialized
         let removed = unsafe { self.items[idx].assume_init_read() };
+        // SAFETY: src/dst ranges lie within `items[..len]` (initialized); ptr::copy permits overlap.
         unsafe {
             core::ptr::copy(
                 self.items.as_ptr().add(idx + 1),
@@ -5056,6 +5065,7 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
         if self.len as usize - 1 == idx {
             return self.pop();
         }
+        // SAFETY: idx < self.len; slot is initialized.
         let old_item = unsafe { self.items[idx].assume_init_read() };
         let last = self.pop();
         self.items[idx].write(last);
@@ -5064,6 +5074,7 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
     }
 
     pub fn pop(&mut self) -> T {
+        // SAFETY: caller guarantees self.len > 0; slot at len-1 is initialized.
         let ret = unsafe { self.items[self.len as usize - 1].assume_init_read() };
         self.len -= 1;
         ret
@@ -5266,6 +5277,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
                 if cfg!(debug_assertions) && idx >= i.len as usize {
                     panic!("Index out of bounds");
                 }
+                // SAFETY: idx < i.len (debug-asserted above); slot is initialized.
                 unsafe { i.items[idx].assume_init_ref() }
             }
             SmolList::Heap(h) => &h.slice()[idx],
@@ -5415,6 +5427,7 @@ pub mod testing_apis {
             }
         });
         // TODO(port): scopeguard captures &mut over the same Vec used below — borrowck conflict.
+        // SAFETY: every JSValue pushed here is also rooted in marked_argument_buffer.
         let mut jsobjs: Vec<JSValue> = Vec::new();
 
         let mut script: Vec<u8> = Vec::new();
@@ -5498,6 +5511,7 @@ pub mod testing_apis {
         // PERF(port): was stack-fallback
         let mut jsstrings: Vec<BunString> = Vec::with_capacity(4);
         // TODO(port): defer-loop dereffing jsstrings (same scopeguard issue as above)
+        // SAFETY: every JSValue pushed here is also rooted in marked_argument_buffer.
         let mut jsobjs: Vec<JSValue> = Vec::new();
         let mut script: Vec<u8> = Vec::new();
         shell_cmd_from_js(
@@ -5555,6 +5569,6 @@ pub use subproc::ShellSubprocess;
 // PORT STATUS
 //   source:     src/shell/shell.zig (4706 lines)
 //   confidence: medium
-//   todos:      55
-//   notes:      Arena ('bump) lifetimes threaded through AST/Parser/Lexer; Lexer<const ENCODING> uses runtime Src enum (Zig comptime type-switch); SmolList uses MaybeUninit; lex() control-flow models Zig `break :escaped`+trailing-`continue` via fell_through flag; sublexer/subparser ArrayList copy-by-value reshaped to mem::replace; several jsc/WebCore/json APIs stubbed.
+//   todos:      53
+//   notes:      Arena ('bump) lifetimes threaded through AST/Parser/Lexer; Lexer<const ENCODING> uses runtime Src enum (Zig comptime type-switch); SmolList uses MaybeUninit; lex() control-flow models Zig `break :escaped`+trailing-`continue` via fell_through flag; sublexer/subparser ArrayList copy-by-value reshaped to mem::replace; Vec<JSValue> sites all dual-rooted in MarkedArgumentBuffer; several jsc/WebCore/json APIs stubbed.
 // ──────────────────────────────────────────────────────────────────────────

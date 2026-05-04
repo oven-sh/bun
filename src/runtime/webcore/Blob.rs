@@ -4810,12 +4810,12 @@ impl Internal {
             // TODO(port): Zig used `catch &[_]u16{}` to swallow alloc errors into empty.
             let return_value = ZigString::to_external_u16(out.as_ptr(), out.len(), global_this);
             return_value.ensure_still_alive();
-            self.deinit();
+            self.bytes = Vec::new();
             return Ok(return_value);
         } else if bytes_without_bom.len() != self.bytes.len() {
             // If there was a UTF8 BOM, we clone it
             let out = BunString::clone_latin1(&self.bytes[3..]);
-            self.deinit();
+            self.bytes = Vec::new();
             return out.to_js(global_this);
         } else {
             let mut str = ZigString::init(&self.to_owned_slice());
@@ -4827,18 +4827,13 @@ impl Internal {
     pub fn to_json(&mut self, global_this: &JSGlobalObject) -> JSValue {
         let str_bytes = ZigString::init(strings::without_utf8_bom(&self.bytes)).with_encoding();
         let json = str_bytes.to_json_object(global_this);
-        self.deinit();
+        self.bytes = Vec::new();
         json
     }
 
     #[inline]
     pub fn slice_const(&self) -> &[u8] {
         &self.bytes
-    }
-
-    pub fn deinit(&mut self) {
-        self.bytes.clear();
-        self.bytes.shrink_to_fit();
     }
 
     #[inline]
@@ -4848,16 +4843,10 @@ impl Internal {
 
     pub fn to_owned_slice(&mut self) -> Vec<u8> {
         if self.bytes.is_empty() && self.bytes.capacity() > 0 {
-            self.bytes.clear();
-            self.bytes.shrink_to_fit();
+            self.bytes = Vec::new();
             return Vec::new();
         }
         core::mem::take(&mut self.bytes)
-    }
-
-    pub fn clear_and_free(&mut self) {
-        self.bytes.clear();
-        self.bytes.shrink_to_fit();
     }
 
     pub fn content_type(&self) -> &'static [u8] {
@@ -5209,6 +5198,6 @@ pub extern "C" fn Blob__deref(self_: &mut Blob) {
 // PORT STATUS
 //   source:     src/runtime/webcore/Blob.zig (5155 lines)
 //   confidence: low
-//   todos:      46
-//   notes:      Huge JSC class; comptime-fn dispatch (do_read_file/lifetime_wrap), Store intrusive-vs-Arc semantics (transfer/ref), content_type dual-ownership, S3 locked-body upload paths, FileSink open branches, and Windows libuv FileOpener all need Phase B attention.
+//   todos:      45
+//   notes:      Huge JSC class; comptime-fn dispatch (do_read_file/lifetime_wrap), Store intrusive-vs-Arc semantics (transfer/ref), content_type dual-ownership, S3 locked-body upload paths, FileSink open branches, and Windows libuv FileOpener all need Phase B attention. fromJS stack uses on-stack ArrayVec<JSValue,128> for GC safety (Zig spilled to heap past 128).
 // ──────────────────────────────────────────────────────────────────────────

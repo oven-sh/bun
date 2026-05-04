@@ -209,12 +209,12 @@ it("write result is not cumulative", async () => {
 
 it("ignores non-string path and invalid fd in options", async () => {
   const x = tmpdirSync();
-  const file = Bun.file(path.join(x, "test.txt"));
-  for (const options of [{ path: {} }, { path: 123 }, { fd: "not a number" }, file]) {
+  for (const [i, options] of [{ path: {} }, { path: 123 }, { fd: "not a number" }, Bun.file(path.join(x, "3.txt"))].entries()) {
+    const file = Bun.file(path.join(x, `${i}.txt`));
     const writer = file.writer(options as any);
-    await writer.write("hello");
+    await writer.write("hello" + i);
     await writer.end();
-    expect(await file.text()).toBe("hello");
+    expect(await file.text()).toBe("hello" + i);
   }
 });
 

@@ -400,8 +400,12 @@ pub fn homedir(global: *jsc.JSGlobalObject) !bun.String {
         var result: ?*bun.c.passwd = null;
 
         const ret = while (true) {
+            // libuv's uv__getpwuid_r uses the real UID (getuid), and userInfo()
+            // below reports uid = getuid(). Using geteuid here would desync the
+            // two in a setuid process — reporting uid=1000 with homedir="/root"
+            // when run as setuid-root by an unprivileged caller.
             const ret = bun.c.getpwuid_r(
-                bun.c.geteuid(),
+                bun.c.getuid(),
                 &pw,
                 string_bytes.ptr,
                 string_bytes.len,

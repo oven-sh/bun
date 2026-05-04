@@ -308,6 +308,42 @@ describe("bun", () => {
     });
   });
 
+  test("respect dependency order with devDependencies", () => {
+    const dir = tempDirWithFiles("testworkspace", {
+      dep0: {
+        "index.js": [
+          "await new Promise((resolve) => setTimeout(resolve, 100))",
+          "Bun.write('out.txt', 'success')",
+        ].join(";"),
+        "package.json": JSON.stringify({
+          name: "dep0",
+          scripts: {
+            script: `${bunExe()} run index.js`,
+          },
+        }),
+      },
+      dep1: {
+        "index.js": 'console.log(await Bun.file("../dep0/out.txt").text())',
+        "package.json": JSON.stringify({
+          name: "dep1",
+          devDependencies: {
+            dep0: "*",
+          },
+          scripts: {
+            script: `${bunExe()} run index.js`,
+          },
+        }),
+      },
+    });
+    runInCwdSuccess({
+      cwd: dir,
+      pattern: "*",
+      target_pattern: [/success/],
+      antipattern: [/not found/],
+      command: ["script"],
+    });
+  });
+
   test("respect dependency order when dependency name is larger than 8 characters", () => {
     const largeNamePkgName = "larger-than-8-char";
     const fileContent = `${largeNamePkgName} - ${new Date().getTime()}`;

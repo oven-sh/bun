@@ -965,6 +965,13 @@ pub fn globalExit(this: *VirtualMachine) noreturn {
 
     if (this.shouldDestructMainThreadOnExit()) {
         if (this.eventLoop().forever_timer) |t| t.deinit(true);
+        // File-watcher threads dispatch through the same BSSMap singletons
+        // (dir_cache, etc.) that transpiler.deinit() below frees. Stop them
+        // under their own mutex so any in-flight bustDirCache completes
+        // before we start freeing. Also closes the watcher's platform fd so
+        // the loop exits. `Global.exit` calls this again later to cover the
+        // non-DESTRUCT path; stopAllForExit is idempotent.
+        bun.Watcher.stopAllForExit();
         // Detached worker threads may still be in startVM()/spin() using the
         // process-global resolver BSSMap singletons (dir_cache, dirname_store,
         // etc.). transpiler.deinit() below frees those singletons, so request

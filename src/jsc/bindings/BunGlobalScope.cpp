@@ -8,6 +8,8 @@
 #include "JavaScriptCore/LazyClassStructure.h"
 #include "JavaScriptCore/LazyClassStructureInlines.h"
 #include "BunClientData.h"
+#include "CallSite.h"
+#include "CallSitePrototype.h"
 
 namespace Bun {
 
@@ -31,6 +33,15 @@ void GlobalScope::finishCreation(JSC::VM& vm)
             RELEASE_ASSERT(offset == 1);
             init.set(structure);
         });
+
+    m_callSiteStructure.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
+            auto& vm = init.vm;
+            auto* globalObject = init.owner;
+            auto* prototype = Zig::CallSitePrototype::create(vm, Zig::CallSitePrototype::createStructure(vm, globalObject, globalObject->objectPrototype()), globalObject);
+            auto* structure = Zig::CallSite::createStructure(vm, globalObject, prototype);
+            init.set(structure);
+        });
 }
 
 DEFINE_VISIT_CHILDREN(GlobalScope);
@@ -43,6 +54,7 @@ void GlobalScope::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
 
     thisObject->m_encodeIntoObjectStructure.visit(visitor);
+    thisObject->m_callSiteStructure.visit(visitor);
 }
 
 const JSC::ClassInfo GlobalScope::s_info = { "GlobalScope"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(GlobalScope) };

@@ -178,7 +178,15 @@ describe("worker stdio", () => {
         stdio: ["ignore", "pipe", "pipe"],
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
+      // Keep the stderr check — the validateExceptionChecks assertion this
+      // test also guards against writes to stderr without changing the exit
+      // code. Filter the ASAN/JSC startup banner that debug+ASAN builds may
+      // emit (not suppressed by BUN_DEBUG_QUIET_LOGS since it comes from
+      // WebKit's Options.cpp, not Zig).
+      const stderrLines = stderr
+        .split("\n")
+        .filter(l => l && !l.startsWith("WARNING: ASAN interferes with JSC signal handlers"));
+      expect(stderrLines).toEqual([]);
       expect(stdout).toBe("ok");
       expect(exitCode).toBe(0);
     }

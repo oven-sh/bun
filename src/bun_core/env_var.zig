@@ -207,6 +207,12 @@ pub const feature_flag = struct {
     pub const BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS = newFeatureFlag("BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS", .{});
     pub const BUN_INSTRUMENTS = newFeatureFlag("BUN_INSTRUMENTS", .{});
     pub const BUN_INTERNAL_BUNX_INSTALL = newFeatureFlag("BUN_INTERNAL_BUNX_INSTALL", .{});
+    /// Testing hook for `Bun.dns.lookup` on macOS: force `LibInfo.lookup`'s
+    /// call to `getaddrinfo_async_start` to be treated as having failed
+    /// synchronously so the pending-cache error path runs. The real failure
+    /// is only observable under mach-port exhaustion. See the UAF fixed in
+    /// https://github.com/oven-sh/bun/pull/30005.
+    pub const BUN_INTERNAL_DNS_FORCE_LIBINFO_START_ERROR = newFeatureFlag("BUN_INTERNAL_DNS_FORCE_LIBINFO_START_ERROR", .{});
     pub const BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN = newFeatureFlag("BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN", .{});
     pub const BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT = newFeatureFlag("BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT", .{});
     pub const BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF = newFeatureFlag("BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF", .{});

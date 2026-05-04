@@ -116,6 +116,18 @@ function pushDataToSocket(self, buffer) {
     return true;
   }
 }
+// Like `self.emit(event, ...args)`, but routes a listener throw to
+// `uncaughtException` via `reportError` instead of letting it unwind back
+// through the Zig socket callback — which catches it and funnels it into
+// `Handlers.callErrorHandler`, the socket's 'error' event, or (for `onOpen`)
+// tears down the connection. Same rationale as `pushDataToSocket`.
+function emitToSocket(self, event, ...args) {
+  try {
+    self.emit(event, ...args);
+  } catch (e) {
+    reportError(e);
+  }
+}
 // in node's code this callback is called 'onReadableStreamEnd' but that seemed confusing when `ReadableStream`s now exist
 function onSocketEnd() {
   if (!this.allowHalfOpen) {
@@ -248,8 +260,8 @@ const SocketHandlers: SocketHandler = {
       self[kBytesWritten] = socket.bytesWritten;
       // this is not actually emitted on nodejs when socket used on the connection
       // this is already emmited on non-TLS socket and on TLS socket is emmited secureConnect after handshake
-      self.emit("connect", self);
-      self.emit("ready");
+      emitToSocket(self, "connect", self);
+      emitToSocket(self, "ready");
     }
 
     SocketHandlers.drain(socket);
@@ -266,7 +278,7 @@ const SocketHandlers: SocketHandler = {
     self.secureConnecting = false;
     self._secureEstablished = !!success;
 
-    self.emit("secure", self);
+    emitToSocket(self, "secure", self);
     self.alpnProtocol = socket.alpnProtocol;
     const { checkServerIdentity } = self[bunTLSConnectOptions];
     if (!verifyError && typeof checkServerIdentity === "function") {
@@ -290,14 +302,14 @@ const SocketHandlers: SocketHandler = {
     } else {
       self.authorized = true;
     }
-    self.emit("secureConnect", verifyError);
+    emitToSocket(self, "secureConnect", verifyError);
     self.removeListener("end", onConnectEnd);
   },
   timeout(socket) {
     const self = socket.data;
     if (!self) return;
 
-    self.emit("timeout", self);
+    emitToSocket(self, "timeout", self);
   },
   binaryType: "buffer",
 } as const;
@@ -406,7 +418,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         self.prependOnceListener("connection", connectionListener);
       }
     }
-    self.emit("connection", _socket);
+    emitToSocket(self, "connection", _socket);
     // the duplex implementation start paused, so we resume when pauseOnConnect is falsy
     if (!pauseOnConnect && !isTLS) {
       _socket.resume();
@@ -436,7 +448,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         server.emit("tlsClientError", verifyError, self);
         if (self._rejectUnauthorized) {
           // if we reject we still need to emit secure
-          self.emit("secure", self);
+          emitToSocket(self, "secure", self);
           self.destroy(verifyError);
           return;
         }
@@ -450,10 +462,10 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     if (typeof connectionListener === "function") {
       server.prependOnceListener("secureConnection", connectionListener);
     }
-    server.emit("secureConnection", self);
+    emitToSocket(server, "secureConnection", self);
     // after secureConnection event we emmit secure and secureConnect
-    self.emit("secure", self);
-    self.emit("secureConnect", verifyError);
+    emitToSocket(self, "secure", self);
+    emitToSocket(self, "secureConnect", verifyError);
     if (server.pauseOnConnect) {
       self.pause();
     } else {
@@ -581,7 +593,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     self.secureConnecting = false;
     self._secureEstablished = !!success;
 
-    self.emit("secure", self);
+    emitToSocket(self, "secure", self);
     self.alpnProtocol = socket.alpnProtocol;
     const { checkServerIdentity } = self[bunTLSConnectOptions];
     if (!verifyError && typeof checkServerIdentity === "function") {
@@ -605,7 +617,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     } else {
       self.authorized = true;
     }
-    self.emit("secureConnect", verifyError);
+    emitToSocket(self, "secureConnect", verifyError);
     self.removeListener("end", onConnectEnd);
   },
   error(socket, error) {
@@ -626,7 +638,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
   timeout(socket) {
     $debug("Bun.Socket timeout");
     const { self } = socket.data;
-    self.emit("timeout", self);
+    emitToSocket(self, "timeout", self);
   },
   connectError(socket, error) {
     $debug("Bun.Socket connectError");
@@ -1995,8 +2007,8 @@ function afterConnect(status, handle, req, readable, writable) {
       self._handle.setKeepAlive(true, self[kSetKeepAliveInitialDelay]);
     }
 
-    self.emit("connect");
-    self.emit("ready");
+    emitToSocket(self, "connect");
+    emitToSocket(self, "ready");
 
     // Start the first read, or get an immediate EOF.
     // this doesn't actually consume any bytes, because len=0.

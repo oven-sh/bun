@@ -1001,4 +1001,115 @@ describe.concurrent("uncaughtException in socket listener", () => {
     expect(stdout).not.toContain("SOCKET_ERROR:");
     expect(exitCode).toBe(0);
   });
+
+  it("surfaces a throw from a client 'connect' listener as uncaughtException and leaves the socket alive", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          const server = net.createServer((socket) => {
+            socket.on("data", (d) => console.log("SERVER_RECV:" + d));
+          });
+          server.listen(0, () => {
+            const port = server.address().port;
+            const client = net.createConnection({ port });
+            client.on("error", (err) => console.log("SOCKET_ERROR:" + err.message));
+            client.on("connect", () => {
+              console.log("CONNECT-FIRED");
+              throw new Error("CONNECT-BOOM");
+            });
+            // After uncaughtException handles the throw, the socket must still be writable
+            // — Node leaves it alone; Bun used to tear it down via onOpen's error-routing.
+            setTimeout(() => {
+              console.log("WRITABLE:" + client.writable);
+              client.write("hi-after-throw");
+              client.end();
+              server.close(() => process.exit(0));
+            }, 50);
+          });
+          process.on("uncaughtException", (err) => console.log("UNCAUGHT:" + err.message));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toContain("CONNECT-FIRED");
+    expect(stdout).toContain("UNCAUGHT:CONNECT-BOOM");
+    expect(stdout).toContain("WRITABLE:true");
+    expect(stdout).toContain("SERVER_RECV:hi-after-throw");
+    expect(stdout).not.toContain("SOCKET_ERROR:");
+    expect(exitCode).toBe(0);
+  });
+
+  it("surfaces a throw from a client 'ready' listener as uncaughtException", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          const server = net.createServer((socket) => {});
+          server.listen(0, () => {
+            const port = server.address().port;
+            const client = net.createConnection({ port });
+            client.on("error", (err) => console.log("SOCKET_ERROR:" + err.message));
+            client.on("ready", () => {
+              console.log("READY-FIRED");
+              throw new Error("READY-BOOM");
+            });
+          });
+          process.on("uncaughtException", (err) => {
+            console.log("UNCAUGHT:" + err.message);
+            process.exit(0);
+          });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toContain("READY-FIRED");
+    expect(stdout).toContain("UNCAUGHT:READY-BOOM");
+    expect(stdout).not.toContain("SOCKET_ERROR:");
+    expect(exitCode).toBe(0);
+  });
+
+  it("surfaces a throw from a server 'connection' listener as uncaughtException", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          const server = net.createServer((socket) => {
+            console.log("CONNECTION-FIRED");
+            throw new Error("CONNECTION-BOOM");
+          });
+          server.on("error", (err) => console.log("SERVER_ERROR:" + err.message));
+          server.listen(0, () => {
+            const port = server.address().port;
+            const client = net.createConnection({ port });
+            client.on("error", () => {});
+          });
+          process.on("uncaughtException", (err) => {
+            console.log("UNCAUGHT:" + err.message);
+            process.exit(0);
+          });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toContain("CONNECTION-FIRED");
+    expect(stdout).toContain("UNCAUGHT:CONNECTION-BOOM");
+    expect(stdout).not.toContain("SERVER_ERROR:");
+    expect(exitCode).toBe(0);
+  });
 });

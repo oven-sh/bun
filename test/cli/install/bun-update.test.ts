@@ -15,12 +15,12 @@ import {
   setHandler,
 } from "./dummy.registry.js";
 
-beforeAll(() => {
-  // ASAN + slow CI filesystems can push individual install spawns past the
-  // default 5s timeout. Match the convention other install test files use.
-  setDefaultTimeout(1000 * 60 * 5);
-  return dummyBeforeAll();
-});
+// ASAN + slow CI filesystems can push individual install spawns past the
+// default 5s timeout. `setDefaultTimeout` is read at `it()` call time, so it
+// must run during module load (before the `it()` declarations below), not
+// inside `beforeAll`. Match the convention other install test files use.
+setDefaultTimeout(1000 * 60 * 5);
+beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
 beforeEach(async () => {
   await dummyBeforeEach();

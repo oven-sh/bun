@@ -422,13 +422,20 @@ fn pruneStaleWorkspaceNodeModules(
     var workspaces_to_walk = std.ArrayList(WorkspaceEntry){};
     var workspace_fs_path_by_pkg_id = std.AutoHashMap(PackageID, []const u8).init(scratch);
     {
+        // Iterate by reference: short `String` values store the bytes inline
+        // in the struct, and `.slice()` on an inline copy returns a pointer
+        // that dies with the iteration scope. Walking by pointer keeps the
+        // slice live and `scratch.dupe`ing it below pins it for the rest of
+        // this function.
         const workspace_hashes = lockfile.workspace_paths.keys();
         const workspace_paths = lockfile.workspace_paths.values();
-        for (workspace_hashes, workspace_paths) |name_hash, ws_path| {
+        for (workspace_hashes, 0..) |name_hash, i| {
+            const ws_path_ptr = &workspace_paths[i];
             const pkg_id = lockfile.getWorkspacePackageID(name_hash);
             if (pkg_id == 0) continue;
-            const fs_path = ws_path.slice(string_buf);
-            if (fs_path.len == 0) continue;
+            const fs_path_slice = ws_path_ptr.slice(string_buf);
+            if (fs_path_slice.len == 0) continue;
+            const fs_path = try scratch.dupe(u8, fs_path_slice);
             try workspace_fs_path_by_pkg_id.put(pkg_id, fs_path);
             try workspaces_to_walk.append(scratch, .{ .pkg_id = pkg_id, .fs_path = fs_path });
         }
@@ -466,7 +473,13 @@ fn pruneStaleWorkspaceNodeModules(
         const tree_deps = tree.dependencies.get(tree_dep_ids);
         for (tree_deps) |dep_id| {
             if (dep_id >= deps.len) continue;
-            const dep_name = deps[dep_id].name.slice(string_buf);
+            // `.name` is a `String` stored inline in the Dependency struct,
+            // and `.slice()` on an inline string returns a pointer into the
+            // struct itself. Bind the indexed element through a pointer so
+            // the slice stays backed by `deps[dep_id]` (which lives for the
+            // whole function) rather than by a short-lived temporary.
+            const dep_ptr: *const install.Dependency = &deps[dep_id];
+            const dep_name = dep_ptr.name.slice(string_buf);
             if (dep_name.len == 0) continue;
             try gop.value_ptr.put(try scratch.dupe(u8, dep_name), {});
         }

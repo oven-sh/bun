@@ -423,3 +423,41 @@ test.concurrent("anonymous `export default class` with an accessor does not pani
   expect(stdout).toBe("x= 1\nx= 42\n");
   expect(exitCode).toBe(0);
 });
+
+test.concurrent(
+  "anonymous `export default class` with instance-only accessor keeps .name === 'default' under experimentalDecorators",
+  async () => {
+    // Under legacy decorators, an instance `accessor x = ...` lowers to a
+    // private field + `get/set` pair that references `this.#storage` — it
+    // never reads `class.class_name`. The name-injection at visitStmt should
+    // NOT fire here, so the class stays anonymous and `.name === "default"`,
+    // matching tsc's behavior for an anonymous default-exported class.
+    using dir = tempDir("bun-issue-29197-anon-instance-legacy", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          experimentalDecorators: true,
+          target: "es2022",
+        },
+      }),
+      "base.ts": "export default class { accessor x = 1; }\n",
+      "main.ts":
+        "import Base from './base';\n" +
+        "const b = new Base() as any;\n" +
+        "console.log('name=', (Base as any).name);\n" +
+        "console.log('x=', b.x);\n",
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "main.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("panic");
+    expect(stdout).toBe("name= default\nx= 1\n");
+    expect(exitCode).toBe(0);
+  },
+);

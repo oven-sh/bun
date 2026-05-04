@@ -679,6 +679,30 @@ describe("bundler", () => {
     },
   });
   // https://github.com/oven-sh/bun/issues/30203
+  // Class bodies — field initializers and static blocks — don't route
+  // through \`visitFunc\` or the arrow visitor, so they need their own
+  // reset of \`fold_numeric_constants_unconditionally\`. Without it, a
+  // caller (e.g. const-decl inlining) that force-folded would leak into
+  // the class body and re-introduce the #30203 inflation.
+  itBundled("minify/ConstantFoldingConstClassBodyDoesNotForceFold", {
+    files: {
+      "/entry.ts": `
+        const C = class {
+          ratio = 1 / 3;
+          static { globalThis.staticRatio = 1 / 3; }
+        };
+        export { C };
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("1 / 3");
+      expect(code).not.toContain("0.3333333333333333");
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/30203
   // Enum bodies must still fully fold so the emitted table has numeric
   // values, and so later members can reference earlier numeric members.
   itBundled("minify/ConstantFoldingEnumBodyAlwaysFolds", {

@@ -590,7 +590,17 @@ pub fn Visit(
 
             {
                 p.pushScopeForVisitPass(.class_body, class.body_loc) catch unreachable;
+                // Reset `fold_numeric_constants_unconditionally` across the
+                // class boundary: class-body visits (field initializers,
+                // static blocks) don't route through `visitFunc` or the arrow
+                // visitor, so a caller that force-folded for the enclosing
+                // decl would otherwise leak into those contexts. `canBeConst`
+                // rejects `.e_class` anyway, so the force-fold buys nothing
+                // here — reset matches the `visitFunc` / `e_arrow` handling.
+                const old_fold_numeric_constants_unconditionally = p.fold_numeric_constants_unconditionally;
+                p.fold_numeric_constants_unconditionally = false;
                 defer {
+                    p.fold_numeric_constants_unconditionally = old_fold_numeric_constants_unconditionally;
                     p.popScope();
                     p.enclosing_class_keyword = old_enclosing_class_keyword;
                 }

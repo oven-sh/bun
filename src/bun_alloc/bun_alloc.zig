@@ -595,6 +595,26 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             return self.atIndex(index);
         }
 
+        /// Read-only lookup that never inserts. Returns the resolved status
+        /// without requiring the caller's coarse lock; it still takes this
+        /// map's own mutex, so it is safe but not literally lock-free.
+        pub fn peek(self: *Self, denormalized_key: []const u8) ?Result {
+            const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, std.fs.path.sep_str) else denormalized_key;
+            const _key = bun.hash(key);
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            const index = self.index.get(_key) orelse return null;
+            return Result{
+                .hash = _key,
+                .index = index,
+                .status = switch (index.index) {
+                    NotFound.index => .not_found,
+                    Unassigned.index => .unknown,
+                    else => .exists,
+                },
+            };
+        }
+
         pub fn markNotFound(self: *Self, result: Result) void {
             self.mutex.lock();
             defer self.mutex.unlock();
@@ -615,7 +635,21 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         pub fn put(self: *Self, result: *Result, value: ValueType) !*ValueType {
             self.mutex.lock();
             defer self.mutex.unlock();
+            const ptr = try self.reserveLocked(result, value);
+            self.index.put(self.allocator, result.hash, result.index) catch unreachable;
+            return ptr;
+        }
 
+        /// Allocate backing storage and assign `result.index`, but leave the
+        /// hash→index map at `Unassigned` so concurrent `peek()`s still see
+        /// `.unknown`. Pair with `publish()` once the value is fully populated.
+        pub fn reserve(self: *Self, result: *Result, value: ValueType) !*ValueType {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            return self.reserveLocked(result, value);
+        }
+
+        fn reserveLocked(self: *Self, result: *Result, value: ValueType) !*ValueType {
             if (result.index.index == NotFound.index or result.index.index == Unassigned.index) {
                 result.index.is_overflow = instance.backing_buf_used > max_index;
                 if (result.index.is_overflow) {
@@ -625,8 +659,6 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
                     instance.backing_buf_used += 1;
                 }
             }
-
-            try self.index.put(self.allocator, result.hash, result.index);
 
             if (result.index.is_overflow) {
                 if (self.overflow_list.len() == result.index.index) {
@@ -641,6 +673,13 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
 
                 return &instance.backing_buf[result.index.index];
             }
+        }
+
+        /// Make a previously `reserve`d entry visible to `peek()`/`get()`.
+        pub fn publish(self: *Self, result: Result) void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            self.index.put(self.allocator, result.hash, result.index) catch unreachable;
         }
 
         /// Returns true if the entry was removed

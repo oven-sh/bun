@@ -2318,7 +2318,8 @@ pub const Resolver = struct {
 
         // We must initialize it as empty so that the result index is correct.
         // This is important so that browser_scope has a valid index.
-        const dir_info_ptr = r.dir_cache.put(&dir_cache_info_result, .{}) catch unreachable;
+        const dir_info_ptr = r.dir_cache.reserve(&dir_cache_info_result, .{}) catch unreachable;
+        errdefer r.dir_cache.publish(dir_cache_info_result);
 
         // `dir_path` is a slice into the threadlocal `bufs(.path_in_global_disk_cache)` buffer,
         // which gets overwritten on the next auto-install resolution. `dirInfoUncached` stores
@@ -2337,6 +2338,7 @@ pub const Resolver = struct {
             open_dir,
             package_id,
         );
+        r.dir_cache.publish(dir_cache_info_result);
         return dir_info_ptr;
     }
 
@@ -2699,8 +2701,6 @@ pub const Resolver = struct {
     }
 
     fn dirInfoCachedMaybeLog(r: *ThisResolver, raw_input_path: string, comptime enable_logging: bool, comptime follow_symlinks: bool) !?*DirInfo {
-        r.mutex.lock();
-        defer r.mutex.unlock();
         var input_path = raw_input_path;
 
         if (isDotSlash(input_path) or strings.eqlComptime(input_path, ".")) {
@@ -2738,6 +2738,20 @@ pub const Resolver = struct {
 
         const path_without_trailing_slash = strings.withoutTrailingSlashWindowsPath(input_path);
         assertValidCacheKey(path_without_trailing_slash);
+
+        // Fast path: most calls hit an already-resolved entry. The cache has
+        // its own fine-grained mutex, so a read-only peek is safe without the
+        // coarse `r.mutex`. Only fall through to the exclusive section when
+        // the directory hasn't been visited yet.
+        if (r.dir_cache.peek(path_without_trailing_slash)) |hit| {
+            if (hit.status != .unknown) {
+                return r.dir_cache.atIndex(hit.index);
+            }
+        }
+
+        r.mutex.lock();
+        defer r.mutex.unlock();
+
         const top_result = try r.dir_cache.getOrPut(path_without_trailing_slash);
         if (top_result.status != .unknown) {
             return r.dir_cache.atIndex(top_result.index);
@@ -3020,7 +3034,11 @@ pub const Resolver = struct {
 
             // We must initialize it as empty so that the result index is correct.
             // This is important so that browser_scope has a valid index.
-            const dir_info_ptr = try r.dir_cache.put(&queue_top.result, DirInfo{});
+            // `reserve` assigns the index and storage but keeps the entry hidden
+            // from `peek()` until we `publish` after population, so the
+            // dirInfoCached fast path never observes a half-initialized entry.
+            const dir_info_ptr = try r.dir_cache.reserve(&queue_top.result, DirInfo{});
+            errdefer r.dir_cache.publish(queue_top.result);
 
             try r.dirInfoUncached(
                 dir_info_ptr,
@@ -3033,6 +3051,7 @@ pub const Resolver = struct {
                 open_dir,
                 null,
             );
+            r.dir_cache.publish(queue_top.result);
 
             if (queue_slice.len == 0) {
                 return dir_info_ptr;

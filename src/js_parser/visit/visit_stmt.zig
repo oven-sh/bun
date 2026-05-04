@@ -452,16 +452,24 @@ pub fn VisitStmt(
                                 data.default_name = createDefaultName(p, stmt.loc) catch unreachable;
                             }
 
-                            // Inject the default name into the class when it has decorators,
-                            // or when it has any `accessor` field. The latter catches
-                            // `export default class { static accessor x = 1 }` — accessor
-                            // lowering (both standard and legacy) needs to reference the
-                            // class by name, so without injection `class.class_name` stays
-                            // null and the statement path panics at `class_name.?.ref.?`.
+                            // Inject the default name into the class when a downstream
+                            // lowering will actually dereference `class.class_name`:
+                            //   - when it has decorators (existing behavior), or
+                            //   - when standard-decorator lowering will run and deref the
+                            //     name unconditionally (`lowerStandardDecoratorsStmt`), or
+                            //   - when it has a *static* `accessor` field, whose synthesized
+                            //     getter/setter dereferences through the class binding to
+                            //     avoid subclass brand-check failures.
+                            // Instance-only legacy `accessor` fields use `E.This{}` and
+                            // never read `class.class_name`, so leaving the class anonymous
+                            // preserves `.name === "default"` to match tsc.
                             var needs_default_name = class.class.has_decorators;
                             if (!needs_default_name) {
                                 for (class.class.properties) |prop| {
-                                    if (prop.kind == .auto_accessor) {
+                                    if (prop.kind == .auto_accessor and
+                                        (p.options.features.standard_decorators or
+                                            prop.flags.contains(.is_static)))
+                                    {
                                         needs_default_name = true;
                                         break;
                                     }

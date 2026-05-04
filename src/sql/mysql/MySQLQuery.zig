@@ -217,8 +217,9 @@ fn runPreparedQuery(
     }
 }
 
+/// Takes ownership of `query` (caller must have already ref'd it, e.g. via
+/// `JSValue.toBunString`). `cleanup()` will deref it exactly once.
 pub fn init(query: bun.String, bigint: bool, simple: bool) @This() {
-    query.ref();
     return .{
         .#query = query,
         .#status = .pending,

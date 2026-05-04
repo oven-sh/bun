@@ -1381,6 +1381,30 @@ pub fn fastDigitCount(x: u64) u64 {
         return 1;
     }
 
+    // The lemire table only covers the u32 range (indices 0..31).
+    // For larger values, count by comparing against powers of ten — a u64
+    // has at most 20 decimal digits (max u64 is 18446744073709551615).
+    if (x > std.math.maxInt(u32)) {
+        const powers_of_ten = [_]u64{
+            10_000_000_000,
+            100_000_000_000,
+            1_000_000_000_000,
+            10_000_000_000_000,
+            100_000_000_000_000,
+            1_000_000_000_000_000,
+            10_000_000_000_000_000,
+            100_000_000_000_000_000,
+            1_000_000_000_000_000_000,
+            10_000_000_000_000_000_000,
+        };
+        var digits: u64 = 10;
+        for (powers_of_ten) |p| {
+            if (x < p) return digits;
+            digits += 1;
+        }
+        return digits; // covers max u64 (20 digits)
+    }
+
     const table = [_]u64{
         4294967296,
         8589934582,

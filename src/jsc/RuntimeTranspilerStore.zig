@@ -383,6 +383,9 @@ pub const RuntimeTranspilerStore = struct {
                 else => .unknown,
             };
 
+            // Per-file JSX/decorator settings follow the nearest enclosing tsconfig.json, not just the root.
+            const per_file = transpiler.perFileFeatures(path);
+
             var parse_options = Transpiler.ParseOptions{
                 .allocator = allocator,
                 .path = path,
@@ -392,9 +395,9 @@ pub const RuntimeTranspilerStore = struct {
                 .file_fd_ptr = &input_file_fd,
                 .file_hash = hash,
                 .macro_remappings = macro_remappings,
-                .jsx = transpiler.options.jsx,
-                .emit_decorator_metadata = transpiler.options.emit_decorator_metadata,
-                .experimental_decorators = transpiler.options.experimental_decorators,
+                .jsx = per_file.jsx,
+                .emit_decorator_metadata = per_file.emit_decorator_metadata,
+                .experimental_decorators = per_file.experimental_decorators,
                 .virtual_source = null,
                 .dont_bundle_twice = true,
                 .allow_commonjs = true,

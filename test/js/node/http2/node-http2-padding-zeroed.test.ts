@@ -71,10 +71,14 @@ async function captureClientFrames(
   const chunks: Buffer[] = [];
   let gotEndStream = false;
   const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers<void>();
-  const { promise: captured, resolve: capturedResolve } = Promise.withResolvers<void>();
+  const { promise: captured, resolve: capturedResolve, reject: capturedReject } = Promise.withResolvers<void>();
+
+  const fail = (err: unknown) => capturedReject(err instanceof Error ? err : new Error(String(err)));
 
   const server = net.createServer(socket => {
-    socket.on("error", () => {});
+    // ECONNRESET here is expected once the client is torn down in close();
+    // by then `captured` is already settled so this is a no-op.
+    socket.once("error", fail);
     // Speak enough HTTP/2 to let the client proceed: empty SETTINGS + ACK.
     socket.write(new http2utils.SettingsFrame(false).data);
     socket.write(new http2utils.SettingsFrame(true).data);
@@ -88,6 +92,7 @@ async function captureClientFrames(
       if (gotEndStream) capturedResolve();
     });
   });
+  server.once("error", fail);
   server.listen(0, "127.0.0.1", () => serverResolve());
   await serverListening;
 
@@ -95,14 +100,23 @@ async function captureClientFrames(
   const client = http2.connect(url, {
     paddingStrategy: http2.constants.PADDING_STRATEGY_MAX,
   });
-  client.on("error", () => {});
+  // Surface session failures as a test error instead of a generic timeout.
+  client.once("error", fail);
+  client.once("close", () => {
+    if (!gotEndStream) fail(new Error("HTTP/2 session closed before END_STREAM was captured"));
+  });
   client.on("connect", () => configure(client));
 
   const close = () => {
     client.destroy();
     server.close();
   };
-  await captured;
+  try {
+    await captured;
+  } catch (e) {
+    close();
+    throw e;
+  }
   return { frames: parseFrames(Buffer.concat(chunks)), close };
 }
 

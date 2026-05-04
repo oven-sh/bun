@@ -782,18 +782,32 @@ pub fn reload(this: *VirtualMachine, _: ?*HotReloader.Task) void {
     if (this.pending_internal_promise) |p| {
         switch (p.status()) {
             .pending => {
-                // Normally defer — the C++ loader chain is still draining.
-                // But if `loadEntryPoint` already exited via
-                // `waitForPromiseOrLoopExit`'s break (unsettled TLA with no
-                // ref'd handle), the promise is permanently `.pending` and
-                // nothing can make it progress. In that case the deferral
-                // would be permanent because
-                // `reportExceptionInHotReloadedModuleIfNeeded` returns on
-                // `.pending` before consuming `hot_reload_deferred`. Treat
-                // it as stale and proceed with the reload.
-                if (this.eventLoop().hasAnyHandleWork()) {
-                    this.hot_reload_deferred = true;
-                    return;
+                // The defer-on-pending exists for a narrow case: a watcher
+                // event arrived while the C++ loader chain (fetch → link →
+                // evaluate) was still in flight on the microtask queue.
+                // Starting a second clearAll + load now would let the two
+                // chains interleave through one registry.
+                //
+                // Drain the microtask queue first. If the loader chain was
+                // in flight, the drain runs it to completion and the
+                // promise resolves or rejects (and we fall through to the
+                // corresponding arm below). If it's still `.pending` after
+                // the drain, the only thing keeping it pending is external
+                // (a hanging TLA, a pending timer, etc.) and no further
+                // microtask settling is possible — deferring would be
+                // permanent because `reportExceptionInHotReloadedModuleIfNeeded`
+                // early-returns on `.pending` before ever consuming
+                // `hot_reload_deferred`. Proceed with the reload in that
+                // case (matches what `bun --hot` does on the rejected-path
+                // and what users expect when they save a file).
+                this.eventLoop().drainMicrotasksWithGlobal(this.global, this.jsc_vm) catch {};
+                switch (p.status()) {
+                    .pending => {},
+                    .rejected => if (this.pending_internal_promise_reported_at != this.hot_reload_counter) {
+                        this.hot_reload_deferred = true;
+                        return;
+                    },
+                    .fulfilled => {},
                 }
             },
             .rejected => if (this.pending_internal_promise_reported_at != this.hot_reload_counter) {

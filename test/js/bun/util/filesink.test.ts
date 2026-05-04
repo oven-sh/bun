@@ -268,3 +268,21 @@ it.skipIf(!isPosix)("does not leak native FileSink when a pending write fails (E
   // more than that indicates a native leak.
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
 });
+
+it("Bun.file().writer() with invalid path/fd in options does not crash", async () => {
+  const dir = tmpdirSync();
+  const target = join(dir, "out.txt");
+  const blob = Bun.file(target);
+
+  // These previously panicked with "access of union field 'FileSink' while
+  // field 'err' is active" because fromJSWithTag returns .err for a
+  // non-string path / non-integer fd and the caller assumed .FileSink.
+  for (const options of [{ path: 123 }, { fd: "nope" }, { fd: {} }]) {
+    // @ts-expect-error intentionally bogus options
+    const sink = blob.writer(options);
+    sink.write("hello");
+    await sink.end();
+    expect(await Bun.file(target).text()).toBe("hello");
+    await Bun.file(target).unlink();
+  }
+});

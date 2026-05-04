@@ -335,7 +335,7 @@ test("Response#blob() slice().type doesn't read freed store.mime_type after GC",
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
-  expect(["\"\"", "\"application/javascript\""]).toContain(stdout);
+  expect(['""', '"application/javascript"']).toContain(stdout);
   expect(exitCode).toBe(0);
 });
 

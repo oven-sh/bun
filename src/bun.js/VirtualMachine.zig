@@ -2582,9 +2582,10 @@ pub fn swapGlobalForTestIsolation(this: *VirtualMachine) void {
     // NapiEnv cleanup hooks registered via napi_internal_register_cleanup_zig
     // captured the old global in CleanupHook.globalThis; the C++ side has
     // already retargeted env->m_globalObject to the new global, so only the
-    // Zig-side bookkeeping pointer is stale. It isn't dereferenced (execute
-    // only calls func(ctx)), but eql() compares on it — keep it accurate so
-    // a later remove_env_cleanup_hook from the same addon matches.
+    // Zig-side bookkeeping pointer is stale. Nothing currently reads it
+    // (execute() only calls func(ctx) and there's no per-entry removal
+    // path), but repoint it anyway so the field doesn't dangle at a freed
+    // GC cell.
     if (this.rare_data) |rare| {
         for (rare.cleanup_hooks.items) |*hook| {
             if (hook.globalThis == old_global) hook.globalThis = new_global;

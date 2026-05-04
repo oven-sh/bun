@@ -190,10 +190,13 @@ fn tryOpenExtractDir(abs_buf: *bun.PathBuffer, tmpdir_path: []const u8, subdir_n
     // %TEMP%'s per-user ACL, which CreateDirectory inherits.
     if (comptime Environment.isPosix) {
         // mkdir's mode arg is masked by the caller's umask, so a restrictive
-        // umask (e.g. 0o277) could leave the dir unwritable by us. Force the
-        // exact mode we need on the dir we just created; EXIST dirs we don't
-        // own mustn't be touched, they're checked below instead.
-        if (just_created) _ = bun.sys.fchmod(fd, 0o700);
+        // umask (e.g. 0o277) could leave the dir unwritable by us. Force
+        // 0o700; on a real POSIX FS this sets the exact mode (or fails with
+        // EPERM on a dir we don't own, which the uid check below catches).
+        // On a lax-mode mount (CIFS/SMB, vfat, WSL1 DrvFs, Docker
+        // bind-mounts from Windows/macOS) fchmod is silently no-op'd and
+        // the mount's static mode stays.
+        _ = bun.sys.fchmod(fd, 0o700);
 
         const st = switch (bun.sys.fstat(fd)) {
             .result => |s| s,
@@ -202,23 +205,25 @@ fn tryOpenExtractDir(abs_buf: *bun.PathBuffer, tmpdir_path: []const u8, subdir_n
                 return null;
             },
         };
-        // For EXIST (someone else made this dir) we require exact 0o700 +
-        // our-uid: anything looser could be an attacker pre-squatting the
-        // predictable name with a permissive mode. For just_created we made
-        // it a moment ago, fchmod'd it to 0o700 above, and the mount
-        // enforces its own global security boundary — so if the FS ignores
-        // mode bits (CIFS/SMB, vfat, WSL1 DrvFs, some Docker bind-mounts
-        // from Windows/macOS hosts) we accept whatever it reports as long
-        // as no group/other write is permitted, and skip the st.uid check
-        // (mounts that pin uid via `uid=` mount-option show a fixed owner
-        // that wouldn't match our euid).
-        const mode_ok = if (just_created)
-            (st.mode & 0o022) == 0
-        else
-            (st.mode & 0o777) == 0o700;
-        const uid_ok = just_created or st.uid == uid;
-        if (!bun.S.ISDIR(st.mode) or !uid_ok or !mode_ok) {
+        // Accept either strict (real POSIX FS, dir is 0o700 and ours) or
+        // lax (lax-mode mount where fchmod didn't take): require the dir
+        // is ours and the reported mode denies group/other write. This
+        // keeps cross-restart dedup working on CIFS/vfat/DrvFs (gap 1 in
+        // claude[bot] review #3181961762) without reopening CWE-377 on
+        // normal /tmp — an attacker-squatted dir fails `st.uid == uid`.
+        //
+        // `just_created` implies the dir is ours even on uid-pinned
+        // mounts (`uid=` mount-option) where st.uid is a fixed mount uid
+        // we may not match.
+        const dir_is_ours = just_created or st.uid == uid;
+        const mode_denies_shared_write = (st.mode & 0o022) == 0;
+        if (!bun.S.ISDIR(st.mode) or !dir_is_ours or !mode_denies_shared_write) {
             fd.close();
+            // Clean up a dir we just mkdir'd but can't use — otherwise
+            // the 8-iteration random fallback leaks one empty dir per try
+            // on filesystems that report a group/other-writable mode
+            // (gap 2 in the same review).
+            if (just_created) _ = bun.sys.rmdir(abs_z);
             return null;
         }
     }

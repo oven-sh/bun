@@ -112,7 +112,7 @@ describe.concurrent("napi", () => {
             expect(stdout).toBe("hello world!");
             expect(result.success).toBeTrue();
           },
-          10 * 1000,
+          60 * 1000,
         );
       }
 

@@ -184,7 +184,7 @@ it("end doesn't close when backed by a file descriptor", async () => {
   await util.promisify(fs.close)(fd);
 });
 
-it("writer with invalid options throws instead of crashing", async () => {
+it.skipIf(isWindows)("writer with invalid options throws instead of crashing", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

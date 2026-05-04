@@ -53,6 +53,18 @@ test.if(isWindows)("process.env inherits Object.prototype methods on windows (#3
   expect(process.env.hasOwnProperty("__NOT_A_REAL_ENV_VAR_30226__")).toBe(false);
   expect(process.env.toString()).toBe("[object Object]");
 
+  // `in` matches Node: reports env vars (case-insensitive) and inherited methods.
+  expect("PATH" in process.env).toBe(true);
+  expect("path" in process.env).toBe(true);
+  expect("hasOwnProperty" in process.env).toBe(true);
+  expect("__NOT_A_REAL_ENV_VAR_30226__" in process.env).toBe(false);
+
+  // `JSON.stringify(process.env)` must round-trip via ownKeys and not leak a
+  // `toJSON` property (matches Node on Windows).
+  const roundTrip = JSON.parse(JSON.stringify(process.env));
+  expect(roundTrip).not.toHaveProperty("toJSON");
+  expect(roundTrip.PATH ?? roundTrip.Path ?? roundTrip.path).toBeDefined();
+
   // A case-insensitive env var should still be reported by hasOwnProperty.
   process.env.HAS_OWN_TEST_30226 = "1";
   try {
@@ -85,8 +97,10 @@ test.if(isWindows)("process.env inherits Object.prototype methods on windows (#3
 // broken `windowsEnv` Proxy — the Windows-only test above is skipped on CI
 // lanes that don't run on Windows.
 test("windowsEnv Proxy falls back to Object.prototype for hasOwnProperty (#30226)", () => {
+  // Matches Windows semantics: `internalEnv` stores UPPERCASE keys, while
+  // `envMapList` preserves the original-case names from the OS.
   const internalEnv: Record<string, string> = { PATH: "/usr/bin", BACON: "yummy" };
-  const envMapList = ["PATH", "BACON"];
+  const envMapList = ["Path", "Bacon"];
   const edits: Array<[string, string | null]> = [];
   const env = createWindowsEnvProxyForTesting(internalEnv, envMapList, (k, v) => {
     edits.push([k, v]);
@@ -104,10 +118,25 @@ test("windowsEnv Proxy falls back to Object.prototype for hasOwnProperty (#30226
   expect(env.hasOwnProperty("__definitely_not_set__")).toBe(false);
   expect(env.toString()).toBe("[object Object]");
 
+  // `in` reports both env vars (case-insensitive) and inherited prototype
+  // methods, matching Node.js and the `get` trap.
+  expect("PATH" in env).toBe(true);
+  expect("path" in env).toBe(true);
+  expect("hasOwnProperty" in env).toBe(true);
+  expect("toString" in env).toBe(true);
+  expect("__definitely_not_set__" in env).toBe(false);
+
   // Case-insensitive env lookup still wins over the prototype chain.
   expect(env.PATH).toBe("/usr/bin");
   expect(env.path).toBe("/usr/bin");
   expect(env.PaTh).toBe("/usr/bin");
+
+  // `JSON.stringify(process.env)` must enumerate via ownKeys and emit the
+  // *original-case* names from envMapList (not the uppercased backing keys).
+  // This used to be broken by a stale `toJSON` assignment on the backing
+  // object that returned `{ ...internalEnv }` — uppercase keys.
+  expect(env.toJSON).toBeUndefined();
+  expect(JSON.stringify(env)).toBe('{"Path":"/usr/bin","Bacon":"yummy"}');
 
   // Set/delete still round-trip through the edit callback.
   env.NEW_VAR = "hello";

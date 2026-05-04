@@ -286,42 +286,38 @@ const SocketHandlers: SocketHandler = {
     self.secureConnecting = false;
     self._secureEstablished = !!success;
 
-    safelyInvokeListeners(() => {
-      self.emit("secure", self);
-      self.alpnProtocol = socket.alpnProtocol;
-      const { checkServerIdentity } = self[bunTLSConnectOptions];
-      if (!verifyError && typeof checkServerIdentity === "function") {
-        const hostname = self.servername || self._host || "localhost";
-        const cert = self.getPeerCertificate(true);
-        if (cert) {
-          verifyError = checkServerIdentity(hostname, cert);
-        }
+    self.emit("secure", self);
+    self.alpnProtocol = socket.alpnProtocol;
+    const { checkServerIdentity } = self[bunTLSConnectOptions];
+    if (!verifyError && typeof checkServerIdentity === "function") {
+      const hostname = self.servername || self._host || "localhost";
+      const cert = self.getPeerCertificate(true);
+      if (cert) {
+        verifyError = checkServerIdentity(hostname, cert);
       }
-      if (self._requestCert || self._rejectUnauthorized) {
-        if (verifyError) {
-          self.authorized = false;
-          self.authorizationError = verifyError.code || verifyError.message;
-          if (self._rejectUnauthorized) {
-            self.destroy(verifyError);
-            return;
-          }
-        } else {
-          self.authorized = true;
+    }
+    if (self._requestCert || self._rejectUnauthorized) {
+      if (verifyError) {
+        self.authorized = false;
+        self.authorizationError = verifyError.code || verifyError.message;
+        if (self._rejectUnauthorized) {
+          self.destroy(verifyError);
+          return;
         }
       } else {
         self.authorized = true;
       }
-      self.emit("secureConnect", verifyError);
-      self.removeListener("end", onConnectEnd);
-    });
+    } else {
+      self.authorized = true;
+    }
+    self.emit("secureConnect", verifyError);
+    self.removeListener("end", onConnectEnd);
   },
   timeout(socket) {
     const self = socket.data;
     if (!self) return;
 
-    safelyInvokeListeners(() => {
-      self.emit("timeout", self);
-    });
+    self.emit("timeout", self);
   },
   binaryType: "buffer",
 } as const;
@@ -455,38 +451,36 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     self.servername = socket.getServername();
     const server = self.server!;
     self.alpnProtocol = socket.alpnProtocol;
-    safelyInvokeListeners(() => {
-      if (self._requestCert || self._rejectUnauthorized) {
-        if (verifyError) {
-          self.authorized = false;
-          self.authorizationError = verifyError.code || verifyError.message;
-          server.emit("tlsClientError", verifyError, self);
-          if (self._rejectUnauthorized) {
-            // if we reject we still need to emit secure
-            self.emit("secure", self);
-            self.destroy(verifyError);
-            return;
-          }
-        } else {
-          self.authorized = true;
+    if (self._requestCert || self._rejectUnauthorized) {
+      if (verifyError) {
+        self.authorized = false;
+        self.authorizationError = verifyError.code || verifyError.message;
+        server.emit("tlsClientError", verifyError, self);
+        if (self._rejectUnauthorized) {
+          // if we reject we still need to emit secure
+          self.emit("secure", self);
+          self.destroy(verifyError);
+          return;
         }
       } else {
         self.authorized = true;
       }
-      const connectionListener = server[bunSocketServerOptions]?.connectionListener;
-      if (typeof connectionListener === "function") {
-        server.prependOnceListener("secureConnection", connectionListener);
-      }
-      server.emit("secureConnection", self);
-      // after secureConnection event we emmit secure and secureConnect
-      self.emit("secure", self);
-      self.emit("secureConnect", verifyError);
-      if (server.pauseOnConnect) {
-        self.pause();
-      } else {
-        self.resume();
-      }
-    });
+    } else {
+      self.authorized = true;
+    }
+    const connectionListener = server[bunSocketServerOptions]?.connectionListener;
+    if (typeof connectionListener === "function") {
+      server.prependOnceListener("secureConnection", connectionListener);
+    }
+    server.emit("secureConnection", self);
+    // after secureConnection event we emmit secure and secureConnect
+    self.emit("secure", self);
+    self.emit("secureConnect", verifyError);
+    if (server.pauseOnConnect) {
+      self.pause();
+    } else {
+      self.resume();
+    }
   },
   error(socket, error) {
     const data = this.data;
@@ -609,34 +603,32 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     self.secureConnecting = false;
     self._secureEstablished = !!success;
 
-    safelyInvokeListeners(() => {
-      self.emit("secure", self);
-      self.alpnProtocol = socket.alpnProtocol;
-      const { checkServerIdentity } = self[bunTLSConnectOptions];
-      if (!verifyError && typeof checkServerIdentity === "function") {
-        const hostname = self.servername || self._host || "localhost";
-        const cert = self.getPeerCertificate(true);
-        if (cert) {
-          verifyError = checkServerIdentity(hostname, cert);
-        }
+    self.emit("secure", self);
+    self.alpnProtocol = socket.alpnProtocol;
+    const { checkServerIdentity } = self[bunTLSConnectOptions];
+    if (!verifyError && typeof checkServerIdentity === "function") {
+      const hostname = self.servername || self._host || "localhost";
+      const cert = self.getPeerCertificate(true);
+      if (cert) {
+        verifyError = checkServerIdentity(hostname, cert);
       }
-      if (self._requestCert || self._rejectUnauthorized) {
-        if (verifyError) {
-          self.authorized = false;
-          self.authorizationError = verifyError.code || verifyError.message;
-          if (self._rejectUnauthorized) {
-            self.destroy(verifyError);
-            return;
-          }
-        } else {
-          self.authorized = true;
+    }
+    if (self._requestCert || self._rejectUnauthorized) {
+      if (verifyError) {
+        self.authorized = false;
+        self.authorizationError = verifyError.code || verifyError.message;
+        if (self._rejectUnauthorized) {
+          self.destroy(verifyError);
+          return;
         }
       } else {
         self.authorized = true;
       }
-      self.emit("secureConnect", verifyError);
-      self.removeListener("end", onConnectEnd);
-    });
+    } else {
+      self.authorized = true;
+    }
+    self.emit("secureConnect", verifyError);
+    self.removeListener("end", onConnectEnd);
   },
   error(socket, error) {
     $debug("Bun.Socket error");
@@ -656,9 +648,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
   timeout(socket) {
     $debug("Bun.Socket timeout");
     const { self } = socket.data;
-    safelyInvokeListeners(() => {
-      self.emit("timeout", self);
-    });
+    self.emit("timeout", self);
   },
   connectError(socket, error) {
     $debug("Bun.Socket connectError");

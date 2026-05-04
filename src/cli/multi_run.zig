@@ -349,23 +349,37 @@ const State = struct {
 };
 
 const AbortHandler = struct {
-    var should_abort = false;
+    /// Accessed atomically because the Windows ctrl handler runs on a separate thread.
+    var should_abort: bool = false;
+
+    /// On Windows, a reference to the uv event loop so the ctrl handler can wake it.
+    var uv_loop: if (Environment.isWindows) ?*bun.windows.libuv.Loop else void =
+        if (Environment.isWindows) null else {};
+
+    fn shouldAbort() bool {
+        return @atomicLoad(bool, &should_abort, .acquire);
+    }
 
     fn posixSignalHandler(sig: i32, info: *const std.posix.siginfo_t, _: ?*const anyopaque) callconv(.c) void {
         _ = sig;
         _ = info;
-        should_abort = true;
+        @atomicStore(bool, &should_abort, true, .release);
     }
 
     fn windowsCtrlHandler(dwCtrlType: std.os.windows.DWORD) callconv(.winapi) std.os.windows.BOOL {
         if (dwCtrlType == std.os.windows.CTRL_C_EVENT) {
-            should_abort = true;
+            @atomicStore(bool, &should_abort, true, .release);
+            // Wake the event loop so the main thread can observe the abort flag.
+            // uv_async_send is thread-safe and designed for cross-thread wakeups.
+            if (uv_loop) |loop| {
+                loop.wakeup();
+            }
             return std.os.windows.TRUE;
         }
         return std.os.windows.FALSE;
     }
 
-    pub fn install() void {
+    pub fn install(event_loop: *bun.jsc.MiniEventLoop) void {
         if (Environment.isPosix) {
             const action = std.posix.Sigaction{
                 .handler = .{ .sigaction = AbortHandler.posixSignalHandler },
@@ -374,6 +388,7 @@ const AbortHandler = struct {
             };
             std.posix.sigaction(std.posix.SIG.INT, &action, null);
         } else {
+            uv_loop = event_loop.loop.uv_loop;
             const res = bun.c.SetConsoleCtrlHandler(windowsCtrlHandler, std.os.windows.TRUE);
             if (res == 0) {
                 if (Environment.isDebug) {
@@ -810,10 +825,10 @@ pub fn run(ctx: Command.Context) !noreturn {
         }
     }
 
-    AbortHandler.install();
+    AbortHandler.install(event_loop);
 
     while (!state.isDone()) {
-        if (AbortHandler.should_abort and !state.aborted) {
+        if (AbortHandler.shouldAbort() and !state.aborted) {
             AbortHandler.uninstall();
             state.abort();
         }

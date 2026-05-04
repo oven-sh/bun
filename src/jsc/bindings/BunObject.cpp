@@ -317,10 +317,16 @@ static JSValue defaultBunSQLObject(VM& vm, JSObject* bunObject)
     auto* globalObject = defaultGlobalObject(bunObject->globalObject());
     JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
 #if BUN_DEBUG
-    if (scope.exception()) globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
+    if (auto* exception = scope.exception()) {
+        globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        if (!scope.exception()) throwException(globalObject, scope, exception);
+    }
 #endif
-    RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword));
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
+    if (!sqlValue || !sqlValue.isObject()) [[unlikely]] return jsUndefined();
+    JSValue result = sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword);
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
+    return result ? result : jsUndefined();
 }
 
 static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
@@ -329,11 +335,17 @@ static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
     auto* globalObject = defaultGlobalObject(bunObject->globalObject());
     JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
 #if BUN_DEBUG
-    if (scope.exception()) globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
+    if (auto* exception = scope.exception()) {
+        globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        if (!scope.exception()) throwException(globalObject, scope, exception);
+    }
 #endif
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
+    if (!sqlValue || !sqlValue.isObject()) [[unlikely]] return jsUndefined();
     auto clientData = WebCore::clientData(vm);
-    RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, clientData->builtinNames().SQLPublicName()));
+    JSValue result = sqlValue.getObject()->get(globalObject, clientData->builtinNames().SQLPublicName());
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
+    return result ? result : jsUndefined();
 }
 
 extern "C" JSC::EncodedJSValue JSPasswordObject__create(JSGlobalObject*);

@@ -1801,7 +1801,13 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                     // `archive.bytes()` / `Bun.Archive.write` already take,
                     // so large archives don't stall the JS thread.
                     archive.store.ref();
-                    errdefer archive.store.deref();
+                    errdefer {
+                        // Other error-returns in this `brk` block detach
+                        // `destination_blob` before returning; match that
+                        // invariant on the OOM path out of task creation.
+                        archive.store.deref();
+                        destination_blob.detach();
+                    }
                     const task = try ArchiveCompressAndWriteTask.create(
                         globalThis,
                         archive.store,

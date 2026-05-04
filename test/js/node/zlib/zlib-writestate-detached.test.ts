@@ -151,3 +151,46 @@ test.concurrent("brotli: writeSync does not write through stale writeState point
   expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0);
 });
+
+const zstdFixture = /* js */ `
+  const zlib = require("zlib");
+
+  const z = zlib.createZstdCompress();
+  const handle = z._handle;
+
+  const state = new Uint32Array(8);
+  void state.buffer;
+  // Zstd init(initParamsArray, pledgedSrcSize, writeState, processCallback)
+  const params = new Uint32Array(0);
+  handle.init(params, undefined, state, () => {});
+
+  const inBuf = Buffer.from("hello");
+  const outBuf = Buffer.alloc(1024);
+  handle.writeSync(0, inBuf, 0, inBuf.length, outBuf, 0, outBuf.length);
+
+  const stolen = new Uint32Array(state.buffer.transfer());
+  stolen.fill(0xdeadbeef);
+
+  handle.writeSync(0, inBuf, 0, inBuf.length, outBuf, 0, outBuf.length);
+
+  for (let i = 0; i < stolen.length; i++) {
+    if (stolen[i] !== 0xdeadbeef) {
+      console.log("CORRUPTED", i, stolen[i].toString(16));
+      process.exit(1);
+    }
+  }
+  console.log("OK");
+`;
+
+test.concurrent("zstd: writeSync does not write through stale writeState pointer after detach", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", zstdFixture],
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0);
+});

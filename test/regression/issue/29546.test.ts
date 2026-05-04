@@ -149,8 +149,13 @@ test("--hot reload proceeds after a hanging top-level await", async () => {
   // status and permanently defer via `hot_reload_deferred = true`, but
   // `reportExceptionInHotReloadedModuleIfNeeded` early-returns on
   // `.pending` before consuming the flag — so every subsequent file save
-  // was silently dropped. Guard the defer with `hasAnyHandleWork()` so a
-  // stale-pending promise doesn't block reloads forever.
+  // was silently dropped. `reload()` now distinguishes "loader chain /
+  // ref'd await still in flight" from "abandoned TLA" by consulting
+  // `hasAnyHandleWorkIgnoringForeverTimer()` — the `forever_timer` carve-
+  // out matters because the --hot main loop holds a ref'd uv timer on
+  // Windows which would otherwise keep the liveness check permanently
+  // true. Test asserts the behavior, not the mechanism: three back-to-
+  // back reloads must each actually run.
   using dir = tempDir("hot-tla", {
     "entry.ts": `
       console.log("v=" + (globalThis.__tag || 1));

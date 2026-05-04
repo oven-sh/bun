@@ -782,32 +782,34 @@ pub fn reload(this: *VirtualMachine, _: ?*HotReloader.Task) void {
     if (this.pending_internal_promise) |p| {
         switch (p.status()) {
             .pending => {
-                // The defer-on-pending exists for a narrow case: a watcher
-                // event arrived while the C++ loader chain (fetch → link →
-                // evaluate) was still in flight on the microtask queue.
-                // Starting a second clearAll + load now would let the two
-                // chains interleave through one registry.
+                // Normally defer: the C++ loader chain is still draining
+                // microtasks, or a ref'd await (timer / network / fs) will
+                // settle the promise, and the old continuation should run
+                // before we tear down the module registry. The defer is
+                // then consumed by `reportExceptionInHotReloadedModuleIf
+                // Needed` once the promise settles.
                 //
-                // Drain the microtask queue first. If the loader chain was
-                // in flight, the drain runs it to completion and the
-                // promise resolves or rejects (and we fall through to the
-                // corresponding arm below). If it's still `.pending` after
-                // the drain, the only thing keeping it pending is external
-                // (a hanging TLA, a pending timer, etc.) and no further
-                // microtask settling is possible — deferring would be
-                // permanent because `reportExceptionInHotReloadedModuleIfNeeded`
-                // early-returns on `.pending` before ever consuming
-                // `hot_reload_deferred`. Proceed with the reload in that
-                // case (matches what `bun --hot` does on the rejected-path
-                // and what users expect when they save a file).
-                this.eventLoop().drainMicrotasksWithGlobal(this.global, this.jsc_vm) catch {};
-                switch (p.status()) {
-                    .pending => {},
-                    .rejected => if (this.pending_internal_promise_reported_at != this.hot_reload_counter) {
-                        this.hot_reload_deferred = true;
-                        return;
-                    },
-                    .fulfilled => {},
+                // Abandoned-TLA exception: when `loadEntryPoint` bailed
+                // out because the event loop had no work that could
+                // settle the promise (e.g. `await new Promise(() => {})`),
+                // or when the --hot outer loop reached the same quiet
+                // state after a subsequent hot-reload's module body also
+                // TLA-hangs, nothing will ever make the promise progress.
+                // Deferring is permanent: `reportException…` early-
+                // returns on `.pending` before ever consuming
+                // `hot_reload_deferred`, so --hot would go silently dead
+                // after the first hanging TLA.
+                //
+                // Distinguish the two by checking the same signal
+                // `loadEntryPoint` used for its break — but via
+                // `hasAnyHandleWorkIgnoringForeverTimer` because by the
+                // time this runs under --hot the outer loop has already
+                // installed `forever_timer` as a ref'd uv handle on
+                // Windows, which would make the plain `hasAnyHandleWork`
+                // permanently true.
+                if (this.eventLoop().hasAnyHandleWorkIgnoringForeverTimer()) {
+                    this.hot_reload_deferred = true;
+                    return;
                 }
             },
             .rejected => if (this.pending_internal_promise_reported_at != this.hot_reload_counter) {

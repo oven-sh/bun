@@ -603,6 +603,45 @@ pub fn hasAnyHandleWork(this: *EventLoop) bool {
         this.next_immediate_tasks.items.len > 0;
 }
 
+/// Like `hasAnyHandleWork`, but ignores the outer `--hot` main-loop's
+/// `forever_timer` when counting active uv handles.
+///
+/// On Windows, `tickPossiblyForever` creates `forever_timer` as a ref'd
+/// `uv_timer_t` specifically so `uv_run(UV_RUN_ONCE)` blocks on file-
+/// watcher wakeups without immediately returning on a dead loop. Because
+/// the handle is ref'd, `uv_loop_alive()` (and therefore
+/// `event_loop_handle.isActive()`) reports the loop as "alive" even when
+/// there's no real work to settle a pending promise. Callers that need
+/// to distinguish "only forever_timer is holding the loop open" from
+/// "a user-held ref'd handle is holding the loop open" should use this
+/// variant. On POSIX, uws timers don't bump the uws `active` counter, so
+/// the forever_timer is invisible to `isActive()` and this is equivalent
+/// to `hasAnyHandleWork`.
+pub fn hasAnyHandleWorkIgnoringForeverTimer(this: *EventLoop) bool {
+    if (comptime Environment.isWindows) {
+        const vm = this.virtual_machine;
+        // `event_loop_handle` on Windows is the libuv `uv.Loop`. Subtract
+        // the forever_timer's contribution — it's always 1 ref'd handle
+        // when present. Note this is a heuristic only: another handle
+        // closing as we sample would underreport, but the common case
+        // (no closes in flight at reload time) is accurate and the fall-
+        // back on a false positive is simply "defer the reload once more",
+        // which is recoverable.
+        const uv_loop = vm.event_loop_handle.?;
+        const active = uv_loop.active_handles;
+        const forever_timer_contribution: u32 = if (this.forever_timer != null) 1 else 0;
+        const effective_active = if (active > forever_timer_contribution) active - forever_timer_contribution else 0;
+        return effective_active > 0 or
+            vm.active_tasks > 0 or
+            this.tasks.count > 0 or
+            this.hasPendingRefs() or
+            !this.concurrent_tasks.isEmpty() or
+            this.immediate_tasks.items.len > 0 or
+            this.next_immediate_tasks.items.len > 0;
+    }
+    return this.hasAnyHandleWork();
+}
+
 /// Like `waitForPromise`, but returns early when the event loop has nothing
 /// left that could resolve the promise (see `hasAnyHandleWork`). Used by the
 /// top-level-await entry points where the promise may be "unsettled" — e.g.

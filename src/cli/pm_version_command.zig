@@ -273,17 +273,18 @@ pub const PmVersionCommand = struct {
 
         while (true) {
             const git_path_z = bun.path.joinAbsStringBufZ(current_dir, &probe_buf, &.{".git"}, .auto);
-            // Accept both file (submodule / worktree pointer) and directory
-            // (normal repository). `existsAt` on Windows only matches files,
-            // so we use `existsAtType` and check both variants explicitly.
-            if (bun.FD.cwd().existsAtType(git_path_z).asValue()) |entry| {
-                switch (entry) {
-                    .file, .directory => {
-                        const len = current_dir.len;
-                        @memcpy(out_buf[0..len], current_dir);
-                        return out_buf[0..len];
-                    },
-                }
+            // `.git` can be a directory (normal repo) or a file (submodule /
+            // worktree pointer). Check both. On Windows `existsAt` only
+            // matches files, so pair it with `directoryExistsAt` rather
+            // than use `existsAtType`, which has platform-specific quirks
+            // that caused `bun pm version` to exit non-zero for plain
+            // no-git directories on Windows CI.
+            const exists = bun.FD.cwd().existsAt(git_path_z) or
+                bun.FD.cwd().directoryExistsAt(git_path_z).isTrue();
+            if (exists) {
+                const len = current_dir.len;
+                @memcpy(out_buf[0..len], current_dir);
+                return out_buf[0..len];
             }
 
             const parent = bun.path.dirname(current_dir, .auto);

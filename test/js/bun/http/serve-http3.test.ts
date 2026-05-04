@@ -140,6 +140,11 @@ const server = serve({
     if (url.pathname === "/remote") {
       return Response.json(server.requestIP(req));
     }
+    if (url.pathname === "/fd") {
+      // H3 multiplexes streams over one UDP socket, so there is no per-request
+      // OS fd. This must return null rather than panicking.
+      return Response.json({ fd: server.requestFD(req) });
+    }
     return new Response("not found: " + url.pathname, { status: 404 });
   },
 });
@@ -735,6 +740,15 @@ describe("Bun.serve HTTP/3 adversarial", () => {
       expect(["127.0.0.1", "::1"]).toContain(ip.address);
       expect(["IPv4", "IPv6"]).toContain(ip.family);
       expect(typeof ip.port).toBe("number");
+    });
+  });
+
+  // bughunt: server.requestFD(req) must return null for H3 (no per-request fd)
+  // instead of panicking through AnyRequestContext.getFd's else branch.
+  test("server.requestFD(req) returns null for HTTP/3 requests", async () => {
+    await withServer(async port => {
+      const res = (await fetchH3(port, "/fd").then(r => r.json())) as { fd: number | null };
+      expect(res.fd).toBeNull();
     });
   });
 

@@ -551,6 +551,20 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
         globalObject->requireMap()->clear(globalObject);
         scope.exception(); // TODO: handle or assert none?
         vm.deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
+        // Take the context out of the global map now rather than relying on
+        // the collect below to finalize ~GlobalObject and do it. That collect
+        // is best-effort: any JSC::Strong, conservative stack root, or
+        // DOM object with hasPendingActivity (e.g. an entangled MessagePort
+        // with a listener) keeps the global marked, so ~GlobalObject may not
+        // run before shutdown() proceeds to vm.deinit() and sets
+        // has_terminated. A nested child worker's dispatchExit posting to
+        // this context between those two points would then trip the
+        // enqueueTaskConcurrent has_terminated assert. Removing the entry
+        // here makes postTaskTo() return false instead. ~GlobalObject's
+        // later removeFromContextsMap() is a no-op once m_isInContextsMap
+        // is cleared.
+        if (auto* ctx = globalObject->scriptExecutionContext())
+            ctx->removeFromContextsMap();
         gcUnprotect(globalObject);
         globalObject = nullptr;
     }

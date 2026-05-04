@@ -138,6 +138,13 @@ private:
     JSC::JSGlobalObject* m_globalObject = nullptr;
     WTF::URL m_url = WTF::URL();
     ScriptExecutionContextIdentifier m_identifier;
+    // Tracks whether m_identifier is currently registered in the global
+    // contexts map. Worker teardown removes the entry explicitly (so child
+    // workers' dispatchExit sees the context as gone instead of posting to a
+    // terminated VM) and ~GlobalObject may try again once GC finally collects
+    // the global; the flag makes the second call a no-op. Only written on the
+    // context's own thread.
+    bool m_isInContextsMap { false };
 
     UncheckedKeyHashSet<ContextDestructionObserver*> m_destructionObservers;
 

@@ -19,6 +19,7 @@
 #include <uv.h>
 #include <windows.h>
 #include <corecrt_io.h>
+#include <psapi.h>
 #endif // !OS(WINDOWS)
 #include <lshpack.h>
 
@@ -426,6 +427,71 @@ extern "C" ssize_t pwritev2(int fd, const struct iovec* iov, int iovcnt,
 #endif
 
 extern "C" void Bun__onExit();
+
+#if OS(WINDOWS)
+// Bun links the CRT statically (/MT). Any module that links a *dynamic* CRT
+// (ucrtbase.dll, msvcrt.dll — e.g. injected DLLs or /MD-built addons) has its
+// own stdio FILE* table that Bun's _flushall() cannot reach. Walk loaded
+// modules and call each exported _flushall so those streams drain before a
+// TerminateProcess.
+//
+// This does NOT cover node-gyp addons: common.gypi defaults to /MT, so each
+// .node carries its own static CRT whose _flushall is not exported and is
+// unreachable from here. Flushing those requires running the DLL's
+// DLL_PROCESS_DETACH — see Bun__exitProcessWindows.
+//
+// GetModuleHandle/GetProcAddress/EnumProcessModules are loader-data reads and
+// safe to call here (no loader lock held; nothing has been detached yet).
+extern "C" void Bun__flushAllCRTs()
+{
+    // Our own static CRT first. stdout/stderr are _IONBF (set in
+    // bun_initialize_process) so this is normally a no-op, but cheap.
+    _flushall();
+
+    HMODULE mods[512];
+    DWORD needed = 0;
+    if (!EnumProcessModules(GetCurrentProcess(), mods, sizeof(mods), &needed)) {
+        return;
+    }
+    const DWORD count = needed / sizeof(HMODULE);
+    using flushall_t = int(__cdecl*)(void);
+    for (DWORD i = 0; i < count && i < (sizeof(mods) / sizeof(mods[0])); i++) {
+        if (auto fn = reinterpret_cast<flushall_t>(GetProcAddress(mods[i], "_flushall"))) {
+            fn();
+        }
+    }
+}
+
+// ExitProcess wrapped in SEH: try a normal exit (every loaded DLL — including
+// /MT-linked .node addons with private CRTs — runs DLL_PROCESS_DETACH and
+// flushes its own stdio). If a DETACH handler faults (e.g. a native addon
+// statically bundling its own allocator that crashes on teardown, or an
+// injected AV/overlay DLL), swallow the exception and hard-terminate with the
+// intended code instead of surfacing a crash dialog / wrong status.
+//
+// DETACH handlers run on this thread under the loader lock, so the __try frame
+// is live for the fault. After ExitProcess has begun all other threads are
+// already terminated and TerminateProcess does not need the loader lock, so
+// calling it from the filter is safe even with LDR state half-torn-down.
+//
+// Kept free of C++ objects so __try/__except is valid here under /EHsc.
+extern "C" __declspec(noreturn) void Bun__exitProcessWindows(UINT code)
+{
+    // Flush reachable dynamic CRTs first so that if a DETACH handler faults
+    // before they run, /MD output still made it out.
+    Bun__flushAllCRTs();
+
+    __try {
+        ExitProcess(code);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        TerminateProcess(GetCurrentProcess(), code);
+    }
+    // Neither call returns on the current process; satisfy noreturn.
+    for (;;) {
+    }
+}
+#endif
+
 extern "C" int32_t bun_stdio_tty[3];
 #if !OS(WINDOWS)
 static termios termios_to_restore_later[3];

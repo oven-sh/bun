@@ -782,8 +782,19 @@ pub fn reload(this: *VirtualMachine, _: ?*HotReloader.Task) void {
     if (this.pending_internal_promise) |p| {
         switch (p.status()) {
             .pending => {
-                this.hot_reload_deferred = true;
-                return;
+                // Normally defer — the C++ loader chain is still draining.
+                // But if `loadEntryPoint` already exited via
+                // `waitForPromiseOrLoopExit`'s break (unsettled TLA with no
+                // ref'd handle), the promise is permanently `.pending` and
+                // nothing can make it progress. In that case the deferral
+                // would be permanent because
+                // `reportExceptionInHotReloadedModuleIfNeeded` returns on
+                // `.pending` before consuming `hot_reload_deferred`. Treat
+                // it as stale and proceed with the reload.
+                if (this.eventLoop().hasAnyHandleWork()) {
+                    this.hot_reload_deferred = true;
+                    return;
+                }
             },
             .rejected => if (this.pending_internal_promise_reported_at != this.hot_reload_counter) {
                 this.hot_reload_deferred = true;

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/29546
 //
@@ -139,6 +140,61 @@ test("unhandled rejection mid-TLA does not abandon an in-flight wait", async () 
   // concern here; we just need to prove the wait wasn't abandoned.)
   expect(stdout).toBe("elapsed=ok\n");
   expect(exitCode).toBe(1);
+});
+
+test("--hot reload proceeds after a hanging top-level await", async () => {
+  // With the TLA exit-on-no-work fix, `loadEntryPoint` returns with the
+  // internal promise still in `.pending` when a TLA never settles (e.g.
+  // `await new Promise(() => {})`). `reload()` used to see that pending
+  // status and permanently defer via `hot_reload_deferred = true`, but
+  // `reportExceptionInHotReloadedModuleIfNeeded` early-returns on
+  // `.pending` before consuming the flag — so every subsequent file save
+  // was silently dropped. Guard the defer with `hasAnyHandleWork()` so a
+  // stale-pending promise doesn't block reloads forever.
+  using dir = tempDir("hot-tla", {
+    "entry.ts": `
+      console.log("v=" + (globalThis.__tag || 1));
+      await new Promise(() => {});
+    `,
+  });
+  const entry = join(String(dir), "entry.ts");
+
+  await using runner = Bun.spawn({
+    cmd: [bunExe(), "--hot", "run", entry],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "ignore",
+    stdin: "ignore",
+  });
+
+  const decoder = new TextDecoder();
+  const seen: string[] = [];
+  let round = 0;
+
+  for await (const chunk of runner.stdout) {
+    const text = decoder.decode(chunk);
+    for (const line of text.split("\n")) {
+      if (!line.startsWith("v=")) continue;
+      seen.push(line);
+      round++;
+      if (round === 3) {
+        runner.kill();
+        break;
+      }
+      await Bun.write(
+        entry,
+        `
+          globalThis.__tag = ${round + 1};
+          console.log("v=" + globalThis.__tag);
+          await new Promise(() => {});
+        `,
+      );
+    }
+    if (round === 3) break;
+  }
+
+  expect(seen).toEqual(["v=1", "v=2", "v=3"]);
 });
 
 test("unhandledRejection handler that resolves the TLA runs to completion", async () => {

@@ -1951,4 +1951,491 @@ describe("global virtual store", () => {
     expect(lstatSync(workspace).isSymbolicLink()).toBe(false);
     expect(await file(edited).text()).toBe("module.exports = 'USER_EDITS';\n");
   });
+
+  test("packages that ship TypeScript declarations stay project-local (#29727)", async () => {
+    // A package whose `.d.ts` references peer types it never declared (the
+    // canonical React-component-typings pattern, see `next-yak@9.4.1`) needs
+    // its realpath to sit under the project's `node_modules/.bun/` — not
+    // in `<cache>/links/` — so TypeScript's ancestor walk from the
+    // declaration file can still reach `node_modules/.bun/node_modules/`
+    // and resolve the project's hoisted `@types/*`. When the global store
+    // is enabled, a package that ships types (top-level `"types"` or
+    // `"typings"`, or a `"types"` key under `"exports"`) is materialized
+    // as a real directory under `node_modules/.bun/`; a package without
+    // any of those signals stays on the shared-store fast path as a
+    // symlink into `<cache>/links/`.
+    //
+    // Fixtures are packed with `bun pm pack` and served from an in-process
+    // HTTP registry so the test doesn't depend on the shared Verdaccio.
+    using fixtures = tempDir("ships-types-fixtures-", {
+      "top-types/package.json": JSON.stringify({
+        name: "top-types",
+        version: "1.0.0",
+        types: "./index.d.ts",
+      }),
+      "top-types/index.js": "module.exports = {};\n",
+      "top-types/index.d.ts": "export {};\n",
+
+      "top-typings/package.json": JSON.stringify({
+        name: "top-typings",
+        version: "1.0.0",
+        typings: "./index.d.ts",
+      }),
+      "top-typings/index.js": "module.exports = {};\n",
+      "top-typings/index.d.ts": "export {};\n",
+
+      "exports-types/package.json": JSON.stringify({
+        name: "exports-types",
+        version: "1.0.0",
+        exports: {
+          ".": {
+            types: "./index.d.ts",
+            default: "./index.js",
+          },
+        },
+      }),
+      "exports-types/index.js": "module.exports = {};\n",
+      "exports-types/index.d.ts": "export {};\n",
+
+      // Dual-package types: a `"types"` key whose value is itself a
+      // conditional object — the format TypeScript recommends for
+      // packages shipping both `.d.mts` and `.d.cts`. Must still be
+      // detected.
+      "exports-types-dual/package.json": JSON.stringify({
+        name: "exports-types-dual",
+        version: "1.0.0",
+        exports: {
+          ".": {
+            types: {
+              import: "./index.d.mts",
+              require: "./index.d.cts",
+            },
+            import: "./index.mjs",
+            require: "./index.cjs",
+          },
+        },
+      }),
+      "exports-types-dual/index.mjs": "export default {};\n",
+      "exports-types-dual/index.cjs": "module.exports = {};\n",
+      "exports-types-dual/index.d.mts": "export {};\n",
+      "exports-types-dual/index.d.cts": "export {};\n",
+
+      // Array-of-fallbacks: the Node resolution spec lets any target be a
+      // list of alternatives tried in order. A `"types"` key buried inside
+      // such an array still means the package ships types.
+      "exports-types-array/package.json": JSON.stringify({
+        name: "exports-types-array",
+        version: "1.0.0",
+        exports: {
+          ".": [{ types: "./index.d.ts", default: "./index.js" }, "./fallback.js"],
+        },
+      }),
+      "exports-types-array/index.js": "module.exports = {};\n",
+      "exports-types-array/index.d.ts": "export {};\n",
+      "exports-types-array/fallback.js": "module.exports = {};\n",
+
+      // `typesVersions` ships version-gated declarations; some packages
+      // use it as their sole subpath-mapping mechanism and omit the
+      // top-level `"types"` field entirely.
+      "types-versions/package.json": JSON.stringify({
+        name: "types-versions",
+        version: "1.0.0",
+        typesVersions: {
+          ">=4.0": { "*": ["ts4/*"] },
+        },
+      }),
+      "types-versions/index.js": "module.exports = {};\n",
+      "types-versions/ts4/index.d.ts": "export {};\n",
+
+      // No `exports`, no `types`/`typings`, no `typesVersions` — but an
+      // `index.d.ts` sits at the package root. TS's no-`exports` fallback
+      // finds it, so the ATW-style resolver must too.
+      "implicit-index/package.json": JSON.stringify({
+        name: "implicit-index",
+        version: "1.0.0",
+      }),
+      "implicit-index/index.js": "module.exports = {};\n",
+      "implicit-index/index.d.ts": "export {};\n",
+
+      // node10 main-sibling: classic `tsc --declaration --outDir lib`
+      // shape. No `exports`/`types`/`typings`/`typesVersions`, no root
+      // `index.d.ts`, but `"main"` points at `./lib/index.js` and
+      // `lib/index.d.ts` sits next to it. TypeScript's legacy `node`
+      // resolution strips the `.js` extension from `main` and probes
+      // `<stem>.d.ts` → finds the declaration.
+      "main-sibling/package.json": JSON.stringify({
+        name: "main-sibling",
+        version: "1.0.0",
+        main: "./lib/index.js",
+      }),
+      "main-sibling/lib/index.js": "module.exports = {};\n",
+      "main-sibling/lib/index.d.ts": "export {};\n",
+
+      // `"exports"` set without a `types` condition, but the resolved
+      // JS target has a sibling `.d.ts` — TS picks that up via the
+      // JS-to-declaration pairing. Common for packages that haven't
+      // migrated to explicit `types` conditions yet.
+      "sibling-dts/package.json": JSON.stringify({
+        name: "sibling-dts",
+        version: "1.0.0",
+        exports: {
+          ".": {
+            import: "./index.mjs",
+            require: "./index.cjs",
+          },
+        },
+      }),
+      "sibling-dts/index.mjs": "export default {};\n",
+      "sibling-dts/index.cjs": "module.exports = {};\n",
+      "sibling-dts/index.d.mts": "export {};\n",
+      "sibling-dts/index.d.cts": "export {};\n",
+
+      // `"exports"` maps every condition to a plain JS file that has NO
+      // sibling declaration. The field-scan heuristic would have
+      // false-positive-d on the old `typesVersions`-presence check; ATW
+      // resolution correctly reports no types exposed.
+      "exports-no-types/package.json": JSON.stringify({
+        name: "exports-no-types",
+        version: "1.0.0",
+        exports: {
+          ".": {
+            import: "./index.mjs",
+            require: "./index.cjs",
+          },
+        },
+      }),
+      "exports-no-types/index.mjs": "export default {};\n",
+      "exports-no-types/index.cjs": "module.exports = {};\n",
+
+      // Subpath-only `"exports"` — no `"."` entry. Component libraries
+      // often ship like this, forcing consumers onto specific subpaths.
+      // ATW checks every entry point in the exports map, so any
+      // subpath that resolves to a declaration file counts as type-
+      // shipping.
+      "subpath-only/package.json": JSON.stringify({
+        name: "subpath-only",
+        version: "1.0.0",
+        exports: {
+          "./Button": { types: "./Button.d.ts", default: "./Button.js" },
+          "./Card": { types: "./Card.d.ts", default: "./Card.js" },
+        },
+      }),
+      "subpath-only/Button.js": "module.exports = {};\n",
+      "subpath-only/Button.d.ts": "export {};\n",
+      "subpath-only/Card.js": "module.exports = {};\n",
+      "subpath-only/Card.d.ts": "export {};\n",
+
+      // `"exports"` is set and resolves WITHOUT types (no `types`
+      // condition, no sibling `.d.*`), but top-level `"types"` points
+      // at a real declaration file in a separate directory. node16
+      // consumers miss these types, but `moduleResolution: node10`
+      // (still the commonjs default) reads top-level `"types"` and
+      // resolves them — so the package IS type-shipping for that
+      // audience.
+      "exports-no-types-top-types/package.json": JSON.stringify({
+        name: "exports-no-types-top-types",
+        version: "1.0.0",
+        exports: {
+          ".": "./dist/index.js",
+        },
+        types: "./types/index.d.ts",
+      }),
+      "exports-no-types-top-types/dist/index.js": "module.exports = {};\n",
+      "exports-no-types-top-types/types/index.d.ts": "export {};\n",
+
+      // Pathologically long `"types"` path — exercises the two
+      // `bufPrint(&buf, "{s}{s}", ...) catch return false` guards in
+      // `pathExposesTypes`:
+      //   1. `.js` suffix (with no literal sibling `.d.ts`) routes
+      //      through the `js_to_dts_pairs` sibling-concatenation site.
+      //   2. Extensionless path routes through the
+      //      `.d.ts`/`.d.mts`/`.d.cts` append-extension site.
+      // 5000 chars exceeds both macOS's 1024-byte and Linux's 4096-
+      // byte `PathBuffer` ceilings, so the `bufPrint` actually fails
+      // with `NoSpaceLeft` and the guard returns false on every
+      // platform. Without the guards this would overflow the stack
+      // buffer with attacker-controlled bytes (ReleaseFast) or
+      // panic (Debug / ReleaseSafe).
+      "long-types-js/package.json": JSON.stringify({
+        name: "long-types-js",
+        version: "1.0.0",
+        types: "./" + "a".repeat(5000) + ".js",
+      }),
+      "long-types-js/index.js": "module.exports = {};\n",
+
+      "long-types-bare/package.json": JSON.stringify({
+        name: "long-types-bare",
+        version: "1.0.0",
+        types: "./" + "a".repeat(5000),
+      }),
+      "long-types-bare/index.js": "module.exports = {};\n",
+
+      // Wildcard subpath `"exports"` — component libraries publishing
+      // per-component entry points often use this shape. The `*` in
+      // the target path can't be fstat'd literally; the resolver
+      // trusts the declared extension so any wildcard target ending
+      // in `.d.ts` / `.d.mts` / `.d.cts` / `.ts` / `.tsx` / `.mts` /
+      // `.cts` counts as type-shipping.
+      "wildcard-types/package.json": JSON.stringify({
+        name: "wildcard-types",
+        version: "1.0.0",
+        exports: {
+          "./icons/*": { types: "./icons/*.d.ts", default: "./icons/*.js" },
+        },
+      }),
+      "wildcard-types/icons/Heart.js": "module.exports = {};\n",
+      "wildcard-types/icons/Heart.d.ts": "export {};\n",
+
+      // Wildcard subpath whose target has NO `types` condition and
+      // whose pattern ends in `.js`. We don't try to prove a sibling
+      // `.d.ts` exists for wildcard JS targets (would require globbing
+      // the extracted tree) — if the author wanted types treated, the
+      // convention is to add a `types` condition. Matches pre-PR
+      // behavior: no detected types signal → package is eligible.
+      "wildcard-no-types/package.json": JSON.stringify({
+        name: "wildcard-no-types",
+        version: "1.0.0",
+        exports: {
+          "./icons/*": "./icons/*.js",
+        },
+      }),
+      "wildcard-no-types/icons/Heart.js": "module.exports = {};\n",
+
+      "pure-js/package.json": JSON.stringify({
+        name: "pure-js",
+        version: "1.0.0",
+      }),
+      "pure-js/index.js": "module.exports = {};\n",
+    });
+
+    async function pack(subdir: string): Promise<Buffer> {
+      await using proc = spawn({
+        cmd: [bunExe(), "pm", "pack", "--destination", String(fixtures)],
+        cwd: join(String(fixtures), subdir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) throw new Error(`bun pm pack failed: ${stderr}`);
+      return Buffer.from(await Bun.file(join(String(fixtures), `${subdir}-1.0.0.tgz`)).arrayBuffer());
+    }
+
+    const fixtureNames = [
+      "top-types",
+      "top-typings",
+      "exports-types",
+      "exports-types-dual",
+      "exports-types-array",
+      "types-versions",
+      "implicit-index",
+      "main-sibling",
+      "sibling-dts",
+      "subpath-only",
+      "exports-no-types-top-types",
+      "wildcard-types",
+      "exports-no-types",
+      "wildcard-no-types",
+      "long-types-js",
+      "long-types-bare",
+      "pure-js",
+    ] as const;
+    // Pack all fixtures in parallel — each `bun pm pack` is a debug-build
+    // subprocess launch (~2-3s cold); serialising ten of them makes this
+    // test needlessly flaky under load.
+    const packed = await Promise.all(fixtureNames.map(n => pack(n)));
+    const tarballs: Record<string, Buffer> = Object.fromEntries(fixtureNames.map((n, i) => [n, packed[i]]));
+
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        const tarballMatch = url.pathname.match(/^\/([^/]+)\/-\/([^/]+)\.tgz$/);
+        if (tarballMatch) {
+          const tgz = tarballs[tarballMatch[1]];
+          if (!tgz) return new Response("Not found", { status: 404 });
+          return new Response(tgz, { headers: { "Content-Type": "application/octet-stream" } });
+        }
+        const name = decodeURIComponent(url.pathname.slice(1));
+        const tgz = tarballs[name];
+        if (!tgz) return new Response("Not found", { status: 404 });
+        return new Response(
+          JSON.stringify({
+            name,
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name,
+                version: "1.0.0",
+                dist: {
+                  tarball: `http://localhost:${server.port}/${name}/-/${name}-1.0.0.tgz`,
+                },
+              },
+            },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      },
+    });
+
+    using packageDir = tempDir("ships-types-test-", {});
+    const cacheDir = join(String(packageDir), ".bun-cache");
+    await write(
+      join(String(packageDir), "bunfig.toml"),
+      `[install]\ncache = "${cacheDir.replaceAll("\\", "\\\\")}"\nregistry = "http://localhost:${server.port}/"\nlinker = "isolated"\n`,
+    );
+    await write(
+      join(String(packageDir), "package.json"),
+      JSON.stringify({
+        name: "ships-types-consumer",
+        dependencies: {
+          "top-types": "1.0.0",
+          "top-typings": "1.0.0",
+          "exports-types": "1.0.0",
+          "exports-types-dual": "1.0.0",
+          "exports-types-array": "1.0.0",
+          "types-versions": "1.0.0",
+          "implicit-index": "1.0.0",
+          "main-sibling": "1.0.0",
+          "sibling-dts": "1.0.0",
+          "subpath-only": "1.0.0",
+          "exports-no-types-top-types": "1.0.0",
+          "wildcard-types": "1.0.0",
+          "exports-no-types": "1.0.0",
+          "wildcard-no-types": "1.0.0",
+          "long-types-js": "1.0.0",
+          "long-types-bare": "1.0.0",
+          "pure-js": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, String(packageDir));
+
+    const bunDir = join(String(packageDir), "node_modules", ".bun");
+
+    // Packages without any resolvable declaration file stay in the
+    // global store → symlinked into `<cache>/links/<storepath>-<hash>`.
+    //   * `pure-js`: no types-related package.json signals at all.
+    //   * `exports-no-types`: `"exports"` map whose resolved JS targets
+    //      have no sibling `.d.*` and no `"types"` condition — exactly
+    //      the case where the earlier field-scan heuristic would have
+    //      false-positive-d on the presence of `"exports"` alone.
+    //   * `wildcard-no-types`: wildcard subpath whose target has no
+    //     types condition; we don't glob-expand JS patterns so no
+    //     types signal fires.
+    //   * `long-types-js`: `types: "./<5000 'a's>.js"` — routes into
+    //     the `js_to_dts_pairs` bufPrint site with a combined length
+    //     that overflows both macOS (1024) and Linux (4096) `PathBuffer`
+    //     ceilings. The guard returns false; install succeeds; package
+    //     stays symlinked.
+    //   * `long-types-bare`: `types: "./<5000 'a's>"` (no extension) —
+    //     same thing for the extensionless append-`.d.*` site.
+    for (const name of [
+      "pure-js",
+      "exports-no-types",
+      "wildcard-no-types",
+      "long-types-js",
+      "long-types-bare",
+    ] as const) {
+      const entry = join(bunDir, `${name}@1.0.0`);
+      expect(lstatSync(entry).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(entry)).toMatch(new RegExp(`links[/\\\\]${name}@1\\.0\\.0-[0-9a-f]{16}$`));
+    }
+
+    // Every path through the ATW-style resolver lands on a declaration
+    // file:
+    //   * top-level `"types"` / `"typings"` → string points at .d.ts
+    //   * `"exports"` walk with types-priority conditions → .d.ts
+    //   * `"exports"` walk into a nested conditional `types` object
+    //     (dual .d.mts/.d.cts) → .d.*
+    //   * `"exports"` walk into an array fallback containing a types
+    //     condition → .d.ts
+    //   * non-empty `"typesVersions"` (TS resolves through version
+    //     mappings) → true
+    //   * no `"exports"`/`"types"`/`"typesVersions"` but implicit
+    //     `index.d.ts` at package root → true
+    //   * `"exports"` with no `"types"` condition but the JS target
+    //     has a sibling `.d.ts`/`.d.mts`/`.d.cts` → true
+    // Each fixture is forced project-local as a real directory.
+    const typeShippingNames = [
+      "top-types",
+      "top-typings",
+      "exports-types",
+      "exports-types-dual",
+      "exports-types-array",
+      "types-versions",
+      "implicit-index",
+      // node10 `main`-sibling: no explicit `types` field, but
+      // `main: "./lib/index.js"` has `lib/index.d.ts` next to it. The
+      // classic `tsc --declaration --outDir lib` output shape.
+      "main-sibling",
+      "sibling-dts",
+      // Every subpath carries a `types` condition → at least one entry
+      // point exposes declarations → package ships types.
+      "subpath-only",
+      // `"exports"` resolves without types, but top-level `"types"`
+      // points at a real .d.ts for node10 consumers. The fall-through
+      // after the exports walk catches this.
+      "exports-no-types-top-types",
+      // Wildcard subpath whose target has a `types` condition — the
+      // pattern can't be fstat'd literally but the declared `.d.ts`
+      // extension is enough of a signal.
+      "wildcard-types",
+    ] as const;
+    for (const name of typeShippingNames) {
+      const entry = join(bunDir, `${name}@1.0.0`);
+      expect(lstatSync(entry).isSymbolicLink()).toBe(false);
+      expect(lstatSync(entry).isDirectory()).toBe(true);
+      expect(existsSync(join(entry, "node_modules", name, "package.json"))).toBe(true);
+    }
+
+    // CI scenario: fresh runner with a committed lockfile but no
+    // pre-warmed package cache. On the no-diff / frozen-lockfile path,
+    // `installWithManager` never enqueues any download or extract
+    // tasks before handing off to `installIsolatedPackages`
+    // (`pendingTaskCount() == 0` → the wait block is skipped), so the
+    // eligibility DFS runs against an empty cache. A naive
+    // `readFrom(<cache>/<pkg>/package.json)` hits ENOENT and, without
+    // the conservative fallback, would return "no types" → eligible →
+    // the type-shipping package lands in `<cache>/links/` anyway,
+    // resurrecting #29727. The fallback treats unreadable packages
+    // as ineligible, keeping type-shipping packages project-local
+    // even on the cold-cache CI path.
+    await rm(join(String(packageDir), "node_modules"), { recursive: true, force: true });
+    await rm(cacheDir, { recursive: true, force: true });
+    await runBunInstall(bunEnv, String(packageDir), { savesLockfile: false, frozenLockfile: true });
+    for (const name of typeShippingNames) {
+      const entry = join(bunDir, `${name}@1.0.0`);
+      expect(lstatSync(entry).isSymbolicLink()).toBe(false);
+      expect(lstatSync(entry).isDirectory()).toBe(true);
+      expect(existsSync(join(entry, "node_modules", name, "package.json"))).toBe(true);
+    }
+
+    // Warm-cache re-install (lockfile unchanged, per-package cache
+    // populated by the previous install). The DFS can now read every
+    // `package.json` and reaches the real decision: type-shippers stay
+    // project-local, and `pure-js` — which has no types signal of any
+    // kind — flips back to a symlink into `<cache>/links/`. This
+    // guards against a regression where the conservative fallback ends
+    // up sticky and forces every package project-local forever.
+    await rm(join(String(packageDir), "node_modules"), { recursive: true, force: true });
+    await runBunInstall(bunEnv, String(packageDir), { savesLockfile: false, frozenLockfile: true });
+    for (const name of typeShippingNames) {
+      const entry = join(bunDir, `${name}@1.0.0`);
+      expect(lstatSync(entry).isSymbolicLink()).toBe(false);
+      expect(lstatSync(entry).isDirectory()).toBe(true);
+    }
+    for (const name of [
+      "pure-js",
+      "exports-no-types",
+      "wildcard-no-types",
+      "long-types-js",
+      "long-types-bare",
+    ] as const) {
+      const entry = join(bunDir, `${name}@1.0.0`);
+      expect(lstatSync(entry).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(entry)).toMatch(new RegExp(`links[/\\\\]${name}@1\\.0\\.0-[0-9a-f]{16}$`));
+    }
+  });
 });

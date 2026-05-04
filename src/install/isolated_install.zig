@@ -854,10 +854,25 @@ pub fn installIsolatedPackages(
     //
     // Eligibility propagates: an entry is only global-store-eligible (hash != 0)
     // when the package itself comes from an immutable cache (npm/git/tarball,
-    // unpatched, no lifecycle scripts) *and* every dependency it links to is
-    // also eligible. The second condition matters because dep symlinks live
-    // inside the global entry; baking a project-local path (workspace, folder)
-    // into a shared directory would break for every other consumer.
+    // unpatched, no lifecycle scripts, does not ship TypeScript declarations)
+    // *and* every dependency it links to is also eligible. The dep-closure
+    // condition matters because dep symlinks live inside the global entry;
+    // baking a project-local path (workspace, folder) into a shared directory
+    // would break for every other consumer.
+    //
+    // The "ships TypeScript declarations" carve-out exists because TypeScript
+    // resolves peer type references (e.g. `React.FunctionComponent` inside a
+    // package's `.d.ts` that never declares `@types/react` as a peerDep) by
+    // walking `node_modules` ancestors from the file's *realpath*. A package
+    // in `<cache>/links/<pkg>@<ver>-<hash>/` has no ancestor `node_modules`
+    // under which the project's `@types/*` devDependencies are visible, so
+    // the peer type silently resolves to `any`. Keeping type-shipping
+    // packages project-local puts their realpath back under
+    // `node_modules/.bun/<pkg>@<ver>/`, whose ancestor walk reaches the
+    // hidden hoisted layer at `node_modules/.bun/node_modules/`.
+    var pkg_ships_types_cache: std.AutoHashMapUnmanaged(PackageID, bool) = .empty;
+    defer pkg_ships_types_cache.deinit(manager.allocator);
+
     const WyhashWriter = struct {
         hasher: *std.hash.Wyhash,
         const E = error{};
@@ -974,6 +989,15 @@ pub fn installIsolatedPackages(
                             if (lockfile.hasTrustedDependency(dep_name, &pkg_res) or
                                 trusted_from_update.contains(@truncate(dep_name_hash)))
                             {
+                                break :eligible false;
+                            }
+                            if (packageShipsTypeDeclarations(manager, pkg_id, &pkg_ships_types_cache)) {
+                                // See the block comment on the eligibility DFS: a
+                                // package whose `.d.ts` references peer types it
+                                // never declared (the usual React-component pattern)
+                                // needs its realpath to sit under the project's
+                                // `node_modules/.bun/` so TypeScript's ancestor walk
+                                // can reach the hidden hoisted `@types/*` layer.
                                 break :eligible false;
                             }
                             break :eligible true;
@@ -1927,15 +1951,420 @@ pub fn installIsolatedPackages(
     }
 }
 
+/// Does the package at `pkg_id` expose TypeScript declarations to
+/// consumers?
+///
+/// Runs the same resolution algorithm TypeScript uses to discover a
+/// package's declarations (modelled on arethetypeswrong.github.io), on
+/// the extracted `<cache>/<folder>/package.json`. We want the union of
+/// everything ATW inspects — a `true` from any branch means some real
+/// consumer (node16, node10, bundler) would resolve a declaration file
+/// out of this package:
+///
+///   1. If `"exports"` is set, walk EVERY entry point in the exports
+///      tree — not just `"."` — with condition priority `[types, import,
+///      require, default]`, the same order `tsc --moduleResolution
+///      node16/bundler` uses when `"types"` is in its condition set. If
+///      any target resolves to (or has a sibling) declaration file, the
+///      package exposes types. This catches subpath-only shapes like
+///      `{ "./Button": { ... }, "./Card": { ... } }` that omit `"."`.
+///   2. Also check top-level `"types"` / `"typings"` — these are what
+///      `moduleResolution: node10` (still the default under `module:
+///      "commonjs"`) consults, and ATW reports against them in its
+///      separate "node10" column. A package shaped `{ exports: { ".":
+///      "./dist/index.js" }, types: "./types/index.d.ts" }` ships types
+///      to node10 consumers even if the exports walk says no.
+///   3. node10 `"main"`-sibling — when neither `"types"` nor `"typings"`
+///      is set, TS strips the extension from `"main"` and probes
+///      `<stem>.d.ts`. A package shaped `{ "main": "./lib/index.js" }`
+///      with `lib/index.d.ts` present ships types this way even when
+///      the package root has no `index.d.ts`.
+///   4. If `"typesVersions"` is present and non-empty, TS treats the
+///      package as type-shipping regardless of subpath content (it'll
+///      pick the matching range and look up subpaths there).
+///   5. Last resort — implicit `index.d.ts` in the package root, the
+///      conventional no-`exports` / no-`types` fallback.
+///
+/// Any positive hit means the package's declaration file(s) are what a
+/// consuming TypeScript project would try to resolve. If the package's
+/// realpath sits in `<cache>/links/<pkg>@<ver>-<hash>/`, that declaration
+/// file's ancestor walk for peer types (`React`, `csstype`, etc.) never
+/// reaches the project's `@types/*` — which is the #29727 regression. So
+/// any type-exposing package is forced project-local.
+///
+/// Results are memoized in `cache`; each distinct package is resolved at
+/// most once per install.
+///
+/// Cold-cache / frozen-lockfile caveat: on a `--frozen-lockfile` install
+/// with an empty `<cache>/<folder>/`, the eligibility DFS runs before
+/// extraction has populated the per-package cache. We can't consult the
+/// npm registry manifest either — Bun fetches the `install-v1+json`
+/// manifest, which strips `"types"`/`"typings"`/`"exports"` from each
+/// version. When the package.json can't be read, we conservatively
+/// report "ineligible" (the package materializes project-locally on this
+/// install; a subsequent warm-cache install recomputes the real answer).
+/// The alternative — defaulting to eligible — silently routes type-
+/// shipping packages into the global store and resurrects #29727 for
+/// every CI runner that hits the no-diff path.
+fn packageShipsTypeDeclarations(
+    manager: *PackageManager,
+    pkg_id: PackageID,
+    cache: *std.AutoHashMapUnmanaged(PackageID, bool),
+) bool {
+    const gop = bun.handleOom(cache.getOrPut(manager.allocator, pkg_id));
+    if (gop.found_existing) return gop.value_ptr.*;
+    gop.value_ptr.* = false;
+
+    const pkgs = manager.lockfile.packages.slice();
+    const pkg_names = pkgs.items(.name);
+    const pkg_resolutions = pkgs.items(.resolution);
+    const string_buf = manager.lockfile.buffers.string_bytes.items;
+
+    const pkg_res: Resolution = pkg_resolutions[pkg_id];
+    var folder_buf: bun.PathBuffer = undefined;
+    const folder: [:0]const u8 = switch (pkg_res.tag) {
+        .npm => manager.cachedNPMPackageFolderNamePrint(
+            &folder_buf,
+            pkg_names[pkg_id].slice(string_buf),
+            pkg_res.value.npm.version,
+            null,
+        ),
+        .git => PackageManager.cachedGitFolderNamePrint(&folder_buf, manager.lockfile.str(&pkg_res.value.git.resolved), null),
+        .github => PackageManager.cachedGitHubFolderNamePrint(&folder_buf, manager.lockfile.str(&pkg_res.value.github.resolved), null),
+        .local_tarball => PackageManager.cachedTarballFolderNamePrint(&folder_buf, manager.lockfile.str(&pkg_res.value.local_tarball), null),
+        .remote_tarball => PackageManager.cachedTarballFolderNamePrint(&folder_buf, manager.lockfile.str(&pkg_res.value.remote_tarball), null),
+        else => return false,
+    };
+
+    const cache_dir, const cache_dir_path = manager.getCacheDirectoryAndAbsPath();
+    defer cache_dir_path.deinit();
+
+    var rel: bun.RelPath(.{ .sep = .auto }) = .from(folder);
+    defer rel.deinit();
+    rel.append("package.json");
+
+    const source_bytes = switch (bun.sys.File.readFrom(cache_dir, rel.sliceZ(), manager.allocator)) {
+        .result => |b| b,
+        .err => {
+            // See the cold-cache caveat above. Conservative memoize —
+            // the package goes project-local on this install and the
+            // next install re-runs the full resolver against a warm
+            // cache.
+            gop.value_ptr.* = true;
+            return true;
+        },
+    };
+    defer manager.allocator.free(source_bytes);
+
+    gop.value_ptr.* = resolvePackageExposesTypes(source_bytes, cache_dir, folder);
+    return gop.value_ptr.*;
+}
+
+const type_decl_extensions = [_][]const u8{ ".d.ts", ".d.mts", ".d.cts" };
+/// TS pairs JS extensions with declaration file extensions when falling
+/// back to sibling lookup: `foo.js` ↔ `foo.d.ts`, `foo.mjs` ↔ `foo.d.mts`,
+/// `foo.cjs` ↔ `foo.d.cts`. Source-file extensions (`.ts`, `.mts`, `.cts`,
+/// `.tsx`) are themselves type-carrying, handled in `pathExposesTypes`.
+const js_to_dts_pairs = [_]struct { js: []const u8, dts: []const u8 }{
+    .{ .js = ".mjs", .dts = ".d.mts" },
+    .{ .js = ".cjs", .dts = ".d.cts" },
+    .{ .js = ".js", .dts = ".d.ts" },
+    .{ .js = ".jsx", .dts = ".d.ts" },
+};
+
+/// The ATW-style resolver. Parses `package.json` and applies the same
+/// entry-point resolution rules TypeScript uses, returning true if any
+/// resolved path produces (or has a sibling) declaration file. See
+/// `packageShipsTypeDeclarations` for the scenarios each branch covers.
+fn resolvePackageExposesTypes(source_bytes: []const u8, cache_dir: FD, folder: []const u8) bool {
+    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+    defer arena.deinit();
+    const arena_allocator = arena.allocator();
+
+    var log_sink: logger.Log = .init(arena_allocator);
+    defer log_sink.deinit();
+
+    const source = logger.Source.initPathString("package.json", source_bytes);
+
+    install.initializeStore();
+    const json = JSON.parsePackageJSONUTF8(&source, &log_sink, arena_allocator) catch |err| switch (err) {
+        // OOM aborts the process rather than being swallowed into a
+        // mis-classification. Any other parse error (truncated, garbled,
+        // or just not JSON) is treated conservatively — the package is
+        // kept project-local, same as when the file itself can't be
+        // read. Returning `false` here would quietly route a type-
+        // shipping package with a corrupted cache into the global
+        // store, resurrecting #29727 for that subset.
+        error.OutOfMemory => bun.outOfMemory(),
+        else => return true,
+    };
+
+    // 1. `"exports"` — walk the conditional tree with types-priority
+    //    conditions. Covers `moduleResolution: node16 / nodenext /
+    //    bundler` consumers.
+    if (json.asProperty("exports")) |prop| {
+        if (exportsExposesTypes(prop.expr, cache_dir, folder)) return true;
+        // When `exports` doesn't resolve to a declaration, fall through
+        // to the top-level signals: `moduleResolution: node10` (still
+        // the default under `module: "commonjs"`, and what ATW's
+        // "node10" column reports against) ignores `"exports"` entirely
+        // and resolves declarations via top-level `"types"` / `"typings"`
+        // / implicit `index.d.ts`. Skipping those fields here would
+        // silently route packages shaped `{ exports: { ".": "./dist/index.js" },
+        // types: "./types/index.d.ts" }` (where `dist/index.d.ts`
+        // doesn't exist) into the global store and resurrect #29727 for
+        // node10 consumers.
+    }
+
+    // 2. Top-level `"types"` / `"typings"` — TS honors `types` first,
+    //    then `typings` (the legacy name).
+    inline for (.{ "types", "typings" }) |field| {
+        if (json.asProperty(field)) |prop| {
+            if (prop.expr.asString(arena_allocator)) |s| {
+                if (pathExposesTypes(s, cache_dir, folder)) return true;
+            }
+        }
+    }
+
+    // 3. node10 `"main"`-sibling — when no `types`/`typings` field is
+    //    set, TypeScript's legacy `node` module resolution (still the
+    //    default under `module: "commonjs"`, and ATW's "node10" column)
+    //    strips the extension from `"main"` and probes
+    //    `<main-stem>.d.ts` before falling back to `./index.d.ts`.
+    //    Catches the classic `tsc --declaration --outDir lib` shape
+    //    (`{ "main": "./lib/index.js" }` with `lib/index.d.ts` on disk
+    //    and no explicit `"types"` field). `pathExposesTypes` handles
+    //    the `.js`→sibling-`.d.ts` pairing via `js_to_dts_pairs`.
+    if (json.asProperty("main")) |prop| {
+        if (prop.expr.asString(arena_allocator)) |s| {
+            if (pathExposesTypes(s, cache_dir, folder)) return true;
+        }
+    }
+
+    // 4. `"typesVersions"` — presence-only. TS resolves subpaths through
+    //    whichever version range matches the consumer's TS version; we
+    //    have no TS version to match here, so treat any non-empty map as
+    //    a type-shipping signal.
+    if (json.asProperty("typesVersions")) |prop| {
+        if (prop.expr.data == .e_object and prop.expr.data.e_object.properties.len > 0) return true;
+    }
+
+    // 5. Implicit `index.d.ts` — the no-`exports`/no-`types` fallback.
+    if (cacheFileExists(cache_dir, folder, "index.d.ts")) return true;
+
+    return false;
+}
+
+/// Walk an `"exports"` tree and check whether any reachable target is
+/// (or has a sibling) declaration file. Returns true on the first hit.
+///
+/// ATW inspects every entry point in the exports map, not just `"."` —
+/// a package whose only declared subpaths are `"./Button"` and
+/// `"./Card"` still ships types to any consumer doing
+/// `import … from "pkg/Button"`.
+fn exportsExposesTypes(expr: bun.js_parser.Expr, cache_dir: FD, folder: []const u8) bool {
+    // `exports` can be:
+    //   "exports": "./index.js"                       → string (shorthand for `.`)
+    //   "exports": [ ... ]                            → array of fallbacks (shorthand for `.`)
+    //   "exports": { ".": ..., "./sub": ... }         → subpath map
+    //   "exports": { "import": ..., "require": ... }  → condition map (shorthand for `.`)
+    switch (expr.data) {
+        .e_string, .e_array => return resolveTargetExposesTypes(expr, cache_dir, folder, 0),
+        .e_object => |obj| {
+            var has_dot_keys = false;
+            for (obj.properties.slice()) |prop| {
+                const key = prop.key orelse continue;
+                if (key.data != .e_string) continue;
+                const s = key.data.e_string.data;
+                if (s.len > 0 and s[0] == '.') {
+                    has_dot_keys = true;
+                    break;
+                }
+            }
+            if (has_dot_keys) {
+                // Subpath map: walk every subpath's target. A package
+                // shaped `{ "./Button": { ... }, "./Card": { ... } }`
+                // with no `"."` entry still ships types if any of its
+                // subpath targets resolve to a declaration file.
+                //
+                // Wildcard subpaths (`"./*"`, `"./icons/*"`) are handled
+                // inside `pathExposesTypes`: a pattern target whose
+                // literal path contains `*` can't be fstat'd, so we
+                // trust the declared extension — any wildcard whose
+                // target ends in `.d.ts` / `.d.mts` / `.d.cts` / `.ts`
+                // / `.tsx` / `.mts` / `.cts` counts as type-shipping.
+                for (obj.properties.slice()) |prop| {
+                    const value = prop.value orelse continue;
+                    if (resolveTargetExposesTypes(value, cache_dir, folder, 0)) return true;
+                }
+                return false;
+            }
+            // No subpath keys: the whole object is the condition tree
+            // for `.` (shorthand).
+            return resolveTargetExposesTypes(expr, cache_dir, folder, 0);
+        },
+        else => return false,
+    }
+}
+
+/// Walk a conditional-exports target (string, array, or condition object)
+/// looking for a resolvable declaration file. Mirrors the Node.js
+/// `PACKAGE_EXPORTS_RESOLVE` + `PACKAGE_TARGET_RESOLVE` algorithms, with
+/// condition priority set to prefer `"types"` the way `tsc` does when
+/// `types` is in the condition set.
+fn resolveTargetExposesTypes(
+    target: bun.js_parser.Expr,
+    cache_dir: FD,
+    folder: []const u8,
+    depth: u8,
+) bool {
+    if (depth > 16) return false;
+    switch (target.data) {
+        .e_string => |str| {
+            if (str.data.len == 0) return false;
+            return pathExposesTypes(str.data, cache_dir, folder);
+        },
+        .e_array => |array| {
+            // Fallback array: try each alternative in order; the first
+            // resolvable target wins. For our yes/no question the order
+            // doesn't matter — any alternative exposing types is enough.
+            for (array.items.slice()) |item| {
+                if (resolveTargetExposesTypes(item, cache_dir, folder, depth + 1)) return true;
+            }
+            return false;
+        },
+        .e_object => |obj| {
+            // Condition object: the Node spec says walk keys in
+            // declaration order, descending into the first key whose
+            // condition matches. TS treats `"types"` as its highest
+            // priority condition, then falls back to the module-system
+            // conditions. Our "does it expose types at all" question
+            // isn't order-sensitive in the same way the runtime
+            // resolver is: we just need to know whether ANY condition
+            // branch leads to a declaration file. So try `"types"`
+            // first (the fast path for dual-package type entry points)
+            // and fall back to all other conditions.
+            for (obj.properties.slice()) |prop| {
+                const key = prop.key orelse continue;
+                const value = prop.value orelse continue;
+                if (key.data != .e_string) continue;
+                if (key.data.e_string.eqlComptime("types")) {
+                    if (resolveTargetExposesTypes(value, cache_dir, folder, depth + 1)) return true;
+                }
+            }
+            for (obj.properties.slice()) |prop| {
+                const key = prop.key orelse continue;
+                const value = prop.value orelse continue;
+                if (key.data != .e_string) continue;
+                if (key.data.e_string.eqlComptime("types")) continue;
+                if (resolveTargetExposesTypes(value, cache_dir, folder, depth + 1)) return true;
+            }
+            return false;
+        },
+        else => return false,
+    }
+}
+
+/// A path exposes TS types if it IS a declaration file (`.d.ts` /
+/// `.d.mts` / `.d.cts`) or a TS source file (`.ts` / `.tsx` / `.mts` /
+/// `.cts`), OR its JS sibling has a matching declaration file on disk.
+fn pathExposesTypes(path: []const u8, cache_dir: FD, folder: []const u8) bool {
+    if (path.len == 0) return false;
+
+    // Normalize leading "./"
+    const rel = if (bun.strings.hasPrefixComptime(path, "./")) path[2..] else path;
+
+    // Wildcard subpath targets (`"./icons/*.d.ts"`) can't be
+    // `existsAt`-checked literally — the `*` stands for a consumer-
+    // supplied name the resolver substitutes at import time. Trust the
+    // declared extension: a pattern ending in a declaration or TS
+    // source extension means the author wrote a types entry point for
+    // those subpaths. We don't try to match JS patterns against hidden
+    // sibling `.d.ts` files — if the author wanted that treated as
+    // type-shipping they'd have added a `types` condition.
+    if (bun.strings.containsChar(rel, '*')) {
+        return hasTypeExtension(rel);
+    }
+
+    // Strip any trailing "/" — `"types": "./dist/"` points at a directory
+    // whose resolver fallback is implicit `index.d.ts` inside it.
+    if (rel.len > 0 and rel[rel.len - 1] == '/') {
+        const dir = rel[0 .. rel.len - 1];
+        return cacheFileExistsJoin(cache_dir, folder, dir, "index.d.ts");
+    }
+
+    // Extension-carrying paths:
+    for (type_decl_extensions) |ext| {
+        if (bun.strings.endsWith(rel, ext)) {
+            return cacheFileExists(cache_dir, folder, rel);
+        }
+    }
+    // TypeScript source files are themselves typed — the bundler/tsgo
+    // resolver picks them up directly.
+    for ([_][]const u8{ ".ts", ".tsx", ".mts", ".cts" }) |ext| {
+        if (bun.strings.endsWith(rel, ext)) {
+            return cacheFileExists(cache_dir, folder, rel);
+        }
+    }
+    // JavaScript paths → look for the parallel declaration file.
+    //
+    // `rel` comes straight from an untrusted `package.json` string;
+    // bound the concatenation the same way `cacheFileExists` /
+    // `cacheFileExistsJoin` do further down — `bufPrintZ` returns an
+    // error when the combined length doesn't fit, which we treat as
+    // "path too long to plausibly exist, skip".
+    for (js_to_dts_pairs) |pair| {
+        if (bun.strings.endsWith(rel, pair.js)) {
+            const stem = rel[0 .. rel.len - pair.js.len];
+            var buf: bun.PathBuffer = undefined;
+            const sibling = std.fmt.bufPrint(&buf, "{s}{s}", .{ stem, pair.dts }) catch return false;
+            return cacheFileExists(cache_dir, folder, sibling);
+        }
+    }
+    // Extensionless: could be a directory-as-entry-point with implicit
+    // `index.d.ts`, or a TypeScript subpath target ("exports": "./src").
+    if (cacheFileExistsJoin(cache_dir, folder, rel, "index.d.ts")) return true;
+    inline for (.{ ".d.ts", ".d.mts", ".d.cts" }) |ext| {
+        var buf: bun.PathBuffer = undefined;
+        const with_ext = std.fmt.bufPrint(&buf, "{s}{s}", .{ rel, ext }) catch return false;
+        if (cacheFileExists(cache_dir, folder, with_ext)) return true;
+    }
+    return false;
+}
+
+fn hasTypeExtension(rel: []const u8) bool {
+    for (type_decl_extensions) |ext| {
+        if (bun.strings.endsWith(rel, ext)) return true;
+    }
+    for ([_][]const u8{ ".ts", ".tsx", ".mts", ".cts" }) |ext| {
+        if (bun.strings.endsWith(rel, ext)) return true;
+    }
+    return false;
+}
+
+fn cacheFileExists(cache_dir: FD, folder: []const u8, subpath: []const u8) bool {
+    var buf: bun.PathBuffer = undefined;
+    const joined = std.fmt.bufPrintZ(&buf, "{s}/{s}", .{ folder, subpath }) catch return false;
+    return bun.sys.existsAt(cache_dir, joined);
+}
+
+fn cacheFileExistsJoin(cache_dir: FD, folder: []const u8, dir: []const u8, file: []const u8) bool {
+    var buf: bun.PathBuffer = undefined;
+    const joined = std.fmt.bufPrintZ(&buf, "{s}/{s}/{s}", .{ folder, dir, file }) catch return false;
+    return bun.sys.existsAt(cache_dir, joined);
+}
+
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const FD = bun.FD;
 const Global = bun.Global;
+const JSON = bun.json;
 const OOM = bun.OOM;
 const Output = bun.Output;
 const Progress = bun.Progress;
+const logger = bun.logger;
 const sys = bun.sys;
 const Command = bun.cli.Command;
 

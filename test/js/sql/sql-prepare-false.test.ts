@@ -44,10 +44,13 @@ describe("issue #30221: prepare:false JSON-stringifies object parameters", () =>
   const backendKeyData = msg("K", Buffer.concat([i32(1), i32(2)]));
   const readyForQuery = msg("Z", Buffer.from([0x49])); // 'I' = idle
   const parseComplete = msg("1", Buffer.alloc(0));
-  // Report the parameters back to the client as OID 0 (unspecified), so the
-  // Bind encoding still uses the signature-inferred format. This mirrors
-  // what a real server does when Parse was sent with OID 0 and there's a
-  // `::jsonb` / `::json` cast in the query.
+  // The OID reported here doesn't affect the captured Bind: with
+  // `prepare: false` the client writes Parse+Describe+Bind+Execute+Sync
+  // in one batch before reading any reply, so the first Bind is built
+  // from `statement.signature.fields` (OID 0 for json-shaped values)
+  // before this ParameterDescription arrives. A real Postgres would
+  // resolve the `::jsonb` cast and return 3802 here; tests pass any
+  // OID just to keep the client happy for subsequent-run caching.
   const paramDescription = (oids: number[]) => msg("t", Buffer.concat([i16(oids.length), ...oids.map(i32)]));
   const noData = msg("n", Buffer.alloc(0));
   const bindComplete = msg("2", Buffer.alloc(0));

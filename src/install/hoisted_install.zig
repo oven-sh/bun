@@ -407,26 +407,34 @@ fn pruneStaleWorkspaceNodeModules(
     defer arena.deinit();
     const scratch = arena.allocator();
 
-    // Build a lookup from workspace package id → filesystem-relative path of
-    // the workspace. We need this because a tree whose `dependency_id` points
-    // to a workspace dep represents that workspace's `node_modules`, but the
-    // tree's iterator path uses the dependency's **package name**
-    // (`node_modules/@repro/backend/node_modules`) whereas on disk the
-    // workspace lives at its filesystem path (`packages/backend/node_modules`).
+    // Resolve every workspace to both its package id and its filesystem path.
+    // The walk below only touches workspaces that land in this list — if
+    // `getWorkspacePackageID` returns 0 for any reason (name hash collision,
+    // stale lockfile, workspace dropped from `packages`), we'd rather leave
+    // that directory alone than walk it with an empty expected set and wipe
+    // everything inside it. The full-lockfile invariant is that every
+    // `workspace_paths` entry resolves cleanly, so a 0 here is a sign of
+    // corrupted lockfile state that the prune has no business acting on.
+    const WorkspaceEntry = struct {
+        pkg_id: PackageID,
+        fs_path: []const u8,
+    };
+    var workspaces_to_walk = std.ArrayList(WorkspaceEntry){};
     var workspace_fs_path_by_pkg_id = std.AutoHashMap(PackageID, []const u8).init(scratch);
     {
         const workspace_hashes = lockfile.workspace_paths.keys();
         const workspace_paths = lockfile.workspace_paths.values();
         for (workspace_hashes, workspace_paths) |name_hash, ws_path| {
             const pkg_id = lockfile.getWorkspacePackageID(name_hash);
-            if (pkg_id == 0) continue; // getWorkspacePackageID returns 0 when not found.
+            if (pkg_id == 0) continue;
             const fs_path = ws_path.slice(string_buf);
             if (fs_path.len == 0) continue;
             try workspace_fs_path_by_pkg_id.put(pkg_id, fs_path);
+            try workspaces_to_walk.append(scratch, .{ .pkg_id = pkg_id, .fs_path = fs_path });
         }
     }
 
-    if (workspace_fs_path_by_pkg_id.count() == 0) return;
+    if (workspaces_to_walk.items.len == 0) return;
 
     // Map of workspace filesystem-relative `node_modules` path (posix
     // separators) to the set of folder names the tree places directly in that
@@ -464,18 +472,14 @@ fn pruneStaleWorkspaceNodeModules(
         }
     }
 
-    // For each workspace, walk its node_modules and drop any entry that the
-    // tree layout doesn't place there. A workspace with no tree entry in the
-    // lockfile (no deps anywhere in the layout) still gets walked — empty
-    // expected set means every non-dotfile entry is stale, which matches the
-    // reported bug: a leftover workspace-local package after everything
-    // hoisted out.
-    const workspace_paths = lockfile.workspace_paths.values();
-    for (workspace_paths) |ws_path_str| {
-        const ws_path = ws_path_str.slice(string_buf);
-        if (ws_path.len == 0) continue;
-
-        const key = try workspaceNodeModulesKey(scratch, ws_path);
+    // Walk only the workspaces we fully resolved above. A workspace with no
+    // tree entry in the lockfile (everything hoisted out) still gets walked
+    // with an empty expected set — deleting the leftover workspace-local
+    // package is exactly the bug this fixes. A workspace whose
+    // `getWorkspacePackageID` lookup failed is *not* here, so we don't risk
+    // wiping its `node_modules/` based on a stale view of the lockfile.
+    for (workspaces_to_walk.items) |entry| {
+        const key = try workspaceNodeModulesKey(scratch, entry.fs_path);
         const expected: ?*const bun.StringHashMap(void) = if (expected_by_ws_path.getPtr(key)) |p| p else null;
 
         pruneNodeModulesAt(key, expected) catch continue;
@@ -520,13 +524,28 @@ fn pruneNodeModulesAt(
     };
     defer dir.close();
 
+    // Snapshot the directory listing before doing any deletions. `deleteTree`
+    // mutates the parent directory, and the platform `getdents`/`getdirentries`
+    // iterators all read in batches — deleting the current entry is fine for
+    // a batch already in the userspace buffer, but asking the kernel for the
+    // next batch after a delete can re-surface entries we already processed
+    // on some filesystems. Iterating a flat, owned list keeps the loop
+    // independent of the underlying directory shape.
+    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+    var names = std.ArrayList([]const u8){};
+
     var iter = bun.DirIterator.iterate(dir, .u8);
     while (iter.next().unwrap() catch return) |entry| {
         const name = entry.name.slice();
         if (name.len == 0) continue;
         // Skip hidden / metadata entries (`.bin`, `.cache`, `.modules.yaml`, etc.)
         if (name[0] == '.') continue;
+        names.append(scratch, try scratch.dupe(u8, name)) catch return;
+    }
 
+    for (names.items) |name| {
         if (name[0] == '@') {
             // Scoped package directory. Recurse one level to look at `@scope/<pkg>`
             // entries; the expected set stores them as `@scope/pkg`.
@@ -554,6 +573,13 @@ fn pruneScopedNodeModules(
     };
     defer scope_dir.close();
 
+    // See the same explanation in `pruneNodeModulesAt`: snapshot before
+    // deleting so the iteration doesn't race with the mutation.
+    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+    var names = std.ArrayList([]const u8){};
+
     var has_remaining: bool = false;
     var iter = bun.DirIterator.iterate(scope_dir, .u8);
     while (iter.next().unwrap() catch return) |entry| {
@@ -563,7 +589,10 @@ fn pruneScopedNodeModules(
             has_remaining = true;
             continue;
         }
+        names.append(scratch, try scratch.dupe(u8, name)) catch return;
+    }
 
+    for (names.items) |name| {
         var full_name_buf: bun.PathBuffer = undefined;
         @memcpy(full_name_buf[0..scope.len], scope);
         full_name_buf[scope.len] = '/';

@@ -743,6 +743,22 @@ function ClientRequest(input, options, cb) {
                   // socket's `_destroy` path calls `req.destroy()` when
                   // the user is done, which emits `'close'` on `req` at
                   // the correct time.
+                  //
+                  // `head` is always `Buffer.alloc(0)` here, diverging from
+                  // Node.js which passes any bytes llhttp read past the 101
+                  // `\r\n\r\n` in the same TCP segment. Bun's fetch-routed
+                  // architecture enqueues those bytes into `response.body`
+                  // before `handleResponse()` runs, so they flow through
+                  // `res` (the `IncomingMessage`) → `createUpgradeSocket`'s
+                  // `res.on('data', …)` bridge and arrive as the first
+                  // `socket.on('data')` chunk instead. Standard upgrade
+                  // consumers (`ws`, dockerode-modem, the `websocket` npm
+                  // package) do `if (head.length) socket.unshift(head)` and
+                  // then read from the socket, so they're unaffected — the
+                  // only code that diverges is code that synchronously
+                  // inspects `head` for protocol bytes before subscribing
+                  // to `'data'`, which is already fragile under Node since
+                  // TCP packet boundaries are not guaranteed.
                   self.emit("upgrade", res, socket, Buffer.alloc(0));
                 }
               },

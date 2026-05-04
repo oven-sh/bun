@@ -2129,17 +2129,63 @@ describe("global virtual store", () => {
       "exports-no-types-top-types/dist/index.js": "module.exports = {};\n",
       "exports-no-types-top-types/types/index.d.ts": "export {};\n",
 
-      // Pathologically long `"types"` path (well over macOS's 1024-byte
-      // PathBuffer). Must not stack-overflow the sibling `@memcpy` /
-      // `bufPrint` in `pathExposesTypes`; must not crash `bun install`
-      // either. Resolves as "no types" because the long path doesn't
-      // exist on disk, so the package lands in the global store.
-      "long-types/package.json": JSON.stringify({
-        name: "long-types",
+      // Pathologically long `"types"` path — exercises the two
+      // `bufPrint(&buf, "{s}{s}", ...) catch return false` guards in
+      // `pathExposesTypes`:
+      //   1. `.js` suffix (with no literal sibling `.d.ts`) routes
+      //      through the `js_to_dts_pairs` sibling-concatenation site.
+      //   2. Extensionless path routes through the
+      //      `.d.ts`/`.d.mts`/`.d.cts` append-extension site.
+      // 5000 chars exceeds both macOS's 1024-byte and Linux's 4096-
+      // byte `PathBuffer` ceilings, so the `bufPrint` actually fails
+      // with `NoSpaceLeft` and the guard returns false on every
+      // platform. Without the guards this would overflow the stack
+      // buffer with attacker-controlled bytes (ReleaseFast) or
+      // panic (Debug / ReleaseSafe).
+      "long-types-js/package.json": JSON.stringify({
+        name: "long-types-js",
         version: "1.0.0",
-        types: "./" + "a".repeat(2048) + ".d.ts",
+        types: "./" + "a".repeat(5000) + ".js",
       }),
-      "long-types/index.js": "module.exports = {};\n",
+      "long-types-js/index.js": "module.exports = {};\n",
+
+      "long-types-bare/package.json": JSON.stringify({
+        name: "long-types-bare",
+        version: "1.0.0",
+        types: "./" + "a".repeat(5000),
+      }),
+      "long-types-bare/index.js": "module.exports = {};\n",
+
+      // Wildcard subpath `"exports"` — component libraries publishing
+      // per-component entry points often use this shape. The `*` in
+      // the target path can't be fstat'd literally; the resolver
+      // trusts the declared extension so any wildcard target ending
+      // in `.d.ts` / `.d.mts` / `.d.cts` / `.ts` / `.tsx` / `.mts` /
+      // `.cts` counts as type-shipping.
+      "wildcard-types/package.json": JSON.stringify({
+        name: "wildcard-types",
+        version: "1.0.0",
+        exports: {
+          "./icons/*": { types: "./icons/*.d.ts", default: "./icons/*.js" },
+        },
+      }),
+      "wildcard-types/icons/Heart.js": "module.exports = {};\n",
+      "wildcard-types/icons/Heart.d.ts": "export {};\n",
+
+      // Wildcard subpath whose target has NO `types` condition and
+      // whose pattern ends in `.js`. We don't try to prove a sibling
+      // `.d.ts` exists for wildcard JS targets (would require globbing
+      // the extracted tree) — if the author wanted types treated, the
+      // convention is to add a `types` condition. Matches pre-PR
+      // behavior: no detected types signal → package is eligible.
+      "wildcard-no-types/package.json": JSON.stringify({
+        name: "wildcard-no-types",
+        version: "1.0.0",
+        exports: {
+          "./icons/*": "./icons/*.js",
+        },
+      }),
+      "wildcard-no-types/icons/Heart.js": "module.exports = {};\n",
 
       "pure-js/package.json": JSON.stringify({
         name: "pure-js",
@@ -2172,8 +2218,11 @@ describe("global virtual store", () => {
       "sibling-dts",
       "subpath-only",
       "exports-no-types-top-types",
+      "wildcard-types",
       "exports-no-types",
-      "long-types",
+      "wildcard-no-types",
+      "long-types-js",
+      "long-types-bare",
       "pure-js",
     ] as const;
     // Pack all fixtures in parallel — each `bun pm pack` is a debug-build
@@ -2235,8 +2284,11 @@ describe("global virtual store", () => {
           "sibling-dts": "1.0.0",
           "subpath-only": "1.0.0",
           "exports-no-types-top-types": "1.0.0",
+          "wildcard-types": "1.0.0",
           "exports-no-types": "1.0.0",
-          "long-types": "1.0.0",
+          "wildcard-no-types": "1.0.0",
+          "long-types-js": "1.0.0",
+          "long-types-bare": "1.0.0",
           "pure-js": "1.0.0",
         },
       }),
@@ -2248,16 +2300,28 @@ describe("global virtual store", () => {
 
     // Packages without any resolvable declaration file stay in the
     // global store → symlinked into `<cache>/links/<storepath>-<hash>`.
-    // `pure-js` has no types-related package.json signals at all;
-    // `exports-no-types` has an `"exports"` map whose resolved JS
-    // targets have no sibling `.d.*` and no `"types"` condition —
-    // exactly the case where the earlier field-scan heuristic would
-    // have false-positive-d on the presence of `"exports"` alone.
-    // `long-types` declares `"types": "./aaaa…a.d.ts"` longer than
-    // `PathBuffer` — the sibling/bufPrint paths must handle overflow
-    // gracefully, treat it as non-existent, and leave the package
-    // symlinked.
-    for (const name of ["pure-js", "exports-no-types", "long-types"] as const) {
+    //   * `pure-js`: no types-related package.json signals at all.
+    //   * `exports-no-types`: `"exports"` map whose resolved JS targets
+    //      have no sibling `.d.*` and no `"types"` condition — exactly
+    //      the case where the earlier field-scan heuristic would have
+    //      false-positive-d on the presence of `"exports"` alone.
+    //   * `wildcard-no-types`: wildcard subpath whose target has no
+    //     types condition; we don't glob-expand JS patterns so no
+    //     types signal fires.
+    //   * `long-types-js`: `types: "./<5000 'a's>.js"` — routes into
+    //     the `js_to_dts_pairs` bufPrint site with a combined length
+    //     that overflows both macOS (1024) and Linux (4096) `PathBuffer`
+    //     ceilings. The guard returns false; install succeeds; package
+    //     stays symlinked.
+    //   * `long-types-bare`: `types: "./<5000 'a's>"` (no extension) —
+    //     same thing for the extensionless append-`.d.*` site.
+    for (const name of [
+      "pure-js",
+      "exports-no-types",
+      "wildcard-no-types",
+      "long-types-js",
+      "long-types-bare",
+    ] as const) {
       const entry = join(bunDir, `${name}@1.0.0`);
       expect(lstatSync(entry).isSymbolicLink()).toBe(true);
       expect(readlinkSync(entry)).toMatch(new RegExp(`links[/\\\\]${name}@1\\.0\\.0-[0-9a-f]{16}$`));
@@ -2294,6 +2358,10 @@ describe("global virtual store", () => {
       // points at a real .d.ts for node10 consumers. The fall-through
       // after the exports walk catches this.
       "exports-no-types-top-types",
+      // Wildcard subpath whose target has a `types` condition — the
+      // pattern can't be fstat'd literally but the declared `.d.ts`
+      // extension is enough of a signal.
+      "wildcard-types",
     ] as const;
     for (const name of typeShippingNames) {
       const entry = join(bunDir, `${name}@1.0.0`);
@@ -2338,7 +2406,13 @@ describe("global virtual store", () => {
       expect(lstatSync(entry).isSymbolicLink()).toBe(false);
       expect(lstatSync(entry).isDirectory()).toBe(true);
     }
-    for (const name of ["pure-js", "exports-no-types", "long-types"] as const) {
+    for (const name of [
+      "pure-js",
+      "exports-no-types",
+      "wildcard-no-types",
+      "long-types-js",
+      "long-types-bare",
+    ] as const) {
       const entry = join(bunDir, `${name}@1.0.0`);
       expect(lstatSync(entry).isSymbolicLink()).toBe(true);
       expect(readlinkSync(entry)).toMatch(new RegExp(`links[/\\\\]${name}@1\\.0\\.0-[0-9a-f]{16}$`));

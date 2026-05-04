@@ -2165,11 +2165,14 @@ fn exportsExposesTypes(expr: bun.js_parser.Expr, cache_dir: FD, folder: []const 
                 // Subpath map: walk every subpath's target. A package
                 // shaped `{ "./Button": { ... }, "./Card": { ... } }`
                 // with no `"."` entry still ships types if any of its
-                // subpath targets resolve to a declaration file. Same
-                // goes for wildcard subpaths (`./*`) — we can't
-                // statically resolve the pattern, but if the target
-                // object contains a `"types"` condition it counts as
-                // type-shipping just like a non-wildcard subpath.
+                // subpath targets resolve to a declaration file.
+                //
+                // Wildcard subpaths (`"./*"`, `"./icons/*"`) are handled
+                // inside `pathExposesTypes`: a pattern target whose
+                // literal path contains `*` can't be fstat'd, so we
+                // trust the declared extension — any wildcard whose
+                // target ends in `.d.ts` / `.d.mts` / `.d.cts` / `.ts`
+                // / `.tsx` / `.mts` / `.cts` counts as type-shipping.
                 for (obj.properties.slice()) |prop| {
                     const value = prop.value orelse continue;
                     if (resolveTargetExposesTypes(value, cache_dir, folder, allocator, 0)) return true;
@@ -2252,6 +2255,18 @@ fn pathExposesTypes(path: []const u8, cache_dir: FD, folder: []const u8) bool {
     // Normalize leading "./"
     const rel = if (bun.strings.hasPrefixComptime(path, "./")) path[2..] else path;
 
+    // Wildcard subpath targets (`"./icons/*.d.ts"`) can't be
+    // `existsAt`-checked literally — the `*` stands for a consumer-
+    // supplied name the resolver substitutes at import time. Trust the
+    // declared extension: a pattern ending in a declaration or TS
+    // source extension means the author wrote a types entry point for
+    // those subpaths. We don't try to match JS patterns against hidden
+    // sibling `.d.ts` files — if the author wanted that treated as
+    // type-shipping they'd have added a `types` condition.
+    if (bun.strings.containsChar(rel, '*')) {
+        return hasTypeExtension(rel);
+    }
+
     // Strip any trailing "/" — `"types": "./dist/"` points at a directory
     // whose resolver fallback is implicit `index.d.ts` inside it.
     if (rel.len > 0 and rel[rel.len - 1] == '/') {
@@ -2294,6 +2309,16 @@ fn pathExposesTypes(path: []const u8, cache_dir: FD, folder: []const u8) bool {
         var buf: bun.PathBuffer = undefined;
         const with_ext = std.fmt.bufPrint(&buf, "{s}{s}", .{ rel, ext }) catch return false;
         if (cacheFileExists(cache_dir, folder, with_ext)) return true;
+    }
+    return false;
+}
+
+fn hasTypeExtension(rel: []const u8) bool {
+    for (type_decl_extensions) |ext| {
+        if (bun.strings.endsWith(rel, ext)) return true;
+    }
+    for ([_][]const u8{ ".ts", ".tsx", ".mts", ".cts" }) |ext| {
+        if (bun.strings.endsWith(rel, ext)) return true;
     }
     return false;
 }

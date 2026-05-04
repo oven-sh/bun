@@ -469,7 +469,7 @@ test.concurrent(
     // With a newline, `accessor` must be parsed as a plain field name
     // terminated by ASI, and the following `y = 1` becomes a second
     // data field — NOT a single auto-accessor `y`. Matches tsc/esbuild.
-    const { stdout, stderr, exitCode } = await runTS(`
+    const { stdout, exitCode } = await runTS(`
       class C {
         accessor
         y = 1
@@ -481,7 +481,6 @@ test.concurrent(
       console.log("y:", c.y);
     `);
 
-    expect(stderr).toBe("");
     // Both fields should be own data props on the instance.
     expect(stdout).toBe("keys: accessor,y\naccessor: undefined\ny: 1\n");
     expect(exitCode).toBe(0);
@@ -515,7 +514,9 @@ test.concurrent(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
+    // Don't assert stderr is empty — ASAN debug builds emit a startup warning.
+    // Still guard against an accidental panic.
+    expect(stderr).not.toContain("panic");
     expect(stdout).toBe("first\nsecond\nthird\n");
     expect(exitCode).toBe(0);
   },

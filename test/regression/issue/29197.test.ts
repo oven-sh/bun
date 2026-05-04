@@ -320,6 +320,11 @@ test.concurrent("decorator metadata: accessor field records its declared type", 
   expect(out).toContain('"design:type", String');
   expect(out).toContain('"design:type", Number');
   expect(out).toContain('"design:type", Boolean');
+  // tsc treats an `accessor x: T` as a PropertyDeclaration and emits only
+  // `design:type`, not the `design:paramtypes = []` it emits for a real
+  // getter. Bun must match that, otherwise `Reflect.getMetadata("design:paramtypes", proto, "str")`
+  // returns `[]` under Bun and `undefined` under tsc.
+  expect(out).not.toContain('"design:paramtypes"');
   // Sanity check: the accessor must have been lowered to a backing private
   // field, not left as the raw `accessor` keyword (JSC doesn't parse it).
   expect(out).toContain("_accessor_storage");

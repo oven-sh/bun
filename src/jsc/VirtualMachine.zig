@@ -739,6 +739,24 @@ pub fn addMainToWatcherIfNeeded(this: *jsc.VirtualMachine) void {
         const main = this.main;
         if (main.len == 0) return;
         _ = this.bun_watcher.addFileByPathSlow(main, this.transpiler.options.loader(std.fs.path.extension(main)));
+        // Test-only: also watch the entrypoint's directory so file
+        // create/delete events fire the `.directory` branch of
+        // `hot_reloader.onFileUpdate` — the bustDirCache path the
+        // watcher-vs-exit race regression test needs to exercise.
+        if (comptime bun.Environment.allow_assert) {
+            if (bun.env_var.BUN_INTERNAL_WATCHER_WATCH_ENTRYPOINT_DIR.get()) {
+                const dir = std.fs.path.dirname(main) orelse return;
+                const hash = bun.Watcher.getHash(dir);
+                const dir_fd: bun.FD = switch (bun.sys.openA(dir, bun.O.RDONLY | bun.O.DIRECTORY, 0)) {
+                    .result => |fd| fd,
+                    .err => return,
+                };
+                switch (this.bun_watcher) {
+                    inline .hot, .watch => |w| _ = w.addDirectory(dir_fd, dir, hash, false),
+                    .none => {},
+                }
+            }
+        }
     }
 }
 
@@ -965,6 +983,23 @@ pub fn globalExit(this: *VirtualMachine) noreturn {
 
     if (this.shouldDestructMainThreadOnExit()) {
         if (this.eventLoop().forever_timer) |t| t.deinit(true);
+        // File-watcher threads dispatch through the same BSSMap singletons
+        // (dir_cache, etc.) that transpiler.deinit() below frees. Stop them
+        // under their own mutex so any in-flight bustDirCache completes
+        // before we start freeing. Also closes the watcher's platform fd so
+        // the loop exits. `Global.exit` calls this again later to cover the
+        // non-DESTRUCT path; stopAllForExit is idempotent.
+        bun.Watcher.stopAllForExit();
+        // Test-only fast path: skip the worker/socket/JSC drain ops and jump
+        // straight to transpiler.deinit so the watcher-exit-race regression
+        // test can deterministically free the BSSMap singletons while a
+        // watcher-thread bustDirCache is still sleeping in its delay hook.
+        if (comptime bun.Environment.allow_assert) {
+            if (bun.env_var.BUN_INTERNAL_GLOBALEXIT_FAST_PATH_TO_TRANSPILER_DEINIT.get()) {
+                this.transpiler.deinit();
+                bun.Global.exit(this.exit_handler.exit_code);
+            }
+        }
         // Detached worker threads may still be in startVM()/spin() using the
         // process-global resolver BSSMap singletons (dir_cache, dirname_store,
         // etc.). transpiler.deinit() below frees those singletons, so request
@@ -4059,6 +4094,15 @@ pub fn getLoaders(vm: *VirtualMachine) *bun.options.Loader.HashTable {
 
 /// To satisfy the interface from NewHotReloader()
 pub fn bustDirCache(vm: *VirtualMachine, path: []const u8) bool {
+    // Test-only hook for the watcher-vs-exit race regression test: let the
+    // test widen the window between the watcher dispatching into bustDirCache
+    // (under watcher.mutex) and the actual BSSMap access, so the main thread
+    // has time to reach transpiler.deinit. Behind a BUN_INTERNAL_* env var
+    // and a debug build so release/canary is unaffected.
+    if (comptime bun.Environment.allow_assert) {
+        const delay_ms = bun.env_var.BUN_INTERNAL_WATCHER_BUSTDIRCACHE_DELAY_MS.get() orelse 0;
+        if (delay_ms != 0) std.Thread.sleep(@as(u64, delay_ms) * std.time.ns_per_ms);
+    }
     return vm.transpiler.resolver.bustDirCache(path);
 }
 

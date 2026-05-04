@@ -122,6 +122,30 @@ pub const NODE_CHANNEL_FD = New(kind.string, "NODE_CHANNEL_FD", .{});
 /// child's cli.zig checks this before anything else and hands off to C++
 /// Bun__WebView__hostMain. Never returns — no JSC, no VM.
 pub const BUN_INTERNAL_WEBVIEW_HOST = New(kind.string, "BUN_INTERNAL_WEBVIEW_HOST", .{});
+/// Test-only: in debug builds, have `VirtualMachine.bustDirCache` sleep for
+/// this many milliseconds under the watcher's mutex before doing the actual
+/// cache bust. Widens the race window between the watcher thread and
+/// `Global.exit` / `VirtualMachine.globalExit` teardown so the regression
+/// test for the watcher-vs-exit race can deterministically trigger the UAP
+/// that this PR's `stopAllForExit` call prevents.
+pub const BUN_INTERNAL_WATCHER_BUSTDIRCACHE_DELAY_MS = New(kind.unsigned, "BUN_INTERNAL_WATCHER_BUSTDIRCACHE_DELAY_MS", .{});
+/// Test-only companion to the above: in debug builds, skip the
+/// worker-terminate / socket-drain / JSC-destruct path in
+/// `VirtualMachine.globalExit` and jump straight to `transpiler.deinit()`.
+/// Pairs with the delay hook above: the watcher stays asleep inside
+/// bustDirCache while the main thread races to free the BSSMap singleton
+/// the watcher is about to touch.
+pub const BUN_INTERNAL_GLOBALEXIT_FAST_PATH_TO_TRANSPILER_DEINIT = New(kind.boolean, "BUN_INTERNAL_GLOBALEXIT_FAST_PATH_TO_TRANSPILER_DEINIT", .{ .default = false });
+/// Test-only: in debug builds, when --hot is enabled, add the entrypoint's
+/// directory to the watcher so file create/delete events in the dir fire
+/// the `.directory` branch of `hot_reloader.onFileUpdate` — which is the
+/// bustDirCache call path the original CI crash took.
+pub const BUN_INTERNAL_WATCHER_WATCH_ENTRYPOINT_DIR = New(kind.boolean, "BUN_INTERNAL_WATCHER_WATCH_ENTRYPOINT_DIR", .{ .default = false });
+/// Test-only: in debug builds, linger in `Global.exit` for this many ms
+/// after the VM is torn down but before `std.c.exit` so the watcher
+/// thread's delayed bustDirCache actually touches the freed BSSMap before
+/// the process goes away.
+pub const BUN_INTERNAL_GLOBALEXIT_LINGER_MS = New(kind.unsigned, "BUN_INTERNAL_GLOBALEXIT_LINGER_MS", .{});
 pub const NODE_PRESERVE_SYMLINKS_MAIN = New(kind.boolean, "NODE_PRESERVE_SYMLINKS_MAIN", .{ .default = false });
 pub const NODE_USE_SYSTEM_CA = New(kind.boolean, "NODE_USE_SYSTEM_CA", .{ .default = false });
 pub const npm_lifecycle_event = New(kind.string, "npm_lifecycle_event", .{});

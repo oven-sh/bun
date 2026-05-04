@@ -113,8 +113,23 @@ pub fn exit(code: u32) noreturn {
     is_exiting.store(true, .monotonic);
     _ = @atomicRmw(usize, &bun.analytics.Features.exited, .Add, 1, .monotonic);
 
+    // Test-only: linger before tearing the process down so the
+    // watcher-vs-exit race regression test can observe the watcher
+    // thread's delayed bustDirCache reaching the BSSMap that
+    // `transpiler.deinit()` just freed.
+    if (comptime Environment.allow_assert) {
+        const linger_ms = bun.env_var.BUN_INTERNAL_GLOBALEXIT_LINGER_MS.get() orelse 0;
+        if (linger_ms != 0) std.Thread.sleep(@as(u64, linger_ms) * std.time.ns_per_ms);
+    }
+
     // If we are crashing, allow the crash handler to finish it's work.
     bun.crash_handler.sleepForeverIfAnotherThreadIsCrashing();
+
+    // Stop any file watcher threads before we tear down the heap. Under ASAN,
+    // `std.c.exit` runs mimalloc's cleanup which poisons freed memory; a live
+    // watcher thread would then touch the resolver's BSSMap singleton and
+    // trip use-after-poison. This is a no-op when no watcher is active.
+    bun.Watcher.stopAllForExit();
 
     if (Environment.isDebug) {
         bun.assert(bun.debug_allocator_data.backing.?.deinit() == .ok);

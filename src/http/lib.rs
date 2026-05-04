@@ -4407,7 +4407,18 @@ impl<'a> HTTPClient<'a> {
 
                         {
                             // PERF(port): was ArenaAllocator + stackFallback(4096) — profile if hot.
-                            if let Some(i) = strings::index_of(location, b"://") {
+
+                            // Only treat the Location as an absolute URL if "://" appears
+                            // in scheme position. Per RFC 3986 a scheme cannot contain
+                            // '/', '?' or '#', so if any of those occur before "://" the
+                            // match is inside a path/query/fragment (e.g. a relative
+                            // "/login?next=https://app.example.com") and must be resolved
+                            // against the request URL via jsc::URL::join below.
+                            let scheme_end = strings::index_of(location, b"://").filter(|&i| {
+                                strings::index_of_any(&location[..i], b"/?#").is_none()
+                            });
+
+                            if let Some(i) = scheme_end {
                                 let mut string_builder = StringBuilder::default();
 
                                 let is_protocol_relative = i == 0;

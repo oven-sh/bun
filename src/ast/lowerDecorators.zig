@@ -55,8 +55,32 @@ pub fn LowerDecorators(
             return p.callRuntime(l, name, a);
         }
 
-        /// newSymbol + scope.generated.append in one call.
+        /// newSymbol + scope.generated.append for internal decorator
+        /// helper variables (_init, _dec, _base, _class, etc.). Uses a
+        /// dedicated decorator_sym_count (not temp_ref_count, which
+        /// resets per function body) to ensure names are unique across
+        /// multiple class lowerings. The unique original_name prevents
+        /// collisions for the non-bundled path (NoOpRenamer never
+        /// renames), and recordDeclaredSymbol ensures the bundler's
+        /// NumberRenamer processes them via addTopLevelDeclaredSymbols.
+        ///
+        /// Callers must pass constant base names (e.g. "_dec", not
+        /// "_dec2") to avoid suffix collisions. Must NOT be used for
+        /// semantic identifiers like `arguments` or inferred class
+        /// names — use newPlainSym for those.
         fn newSym(p: *P, kind: Symbol.Kind, name: []const u8) Ref {
+            p.decorator_sym_count += 1;
+            const unique_name = bun.handleOom(std.fmt.allocPrint(p.allocator, "{s}{d}", .{ name, p.decorator_sym_count }));
+            const ref = p.newSymbol(kind, unique_name) catch unreachable;
+            bun.handleOom(p.current_scope.generated.append(p.allocator, ref));
+            p.recordDeclaredSymbol(ref) catch unreachable;
+            return ref;
+        }
+
+        /// newSymbol + scope.generated.append without counter suffix.
+        /// For semantic identifiers (arguments, inferred class names)
+        /// that must keep their exact name.
+        fn newPlainSym(p: *P, kind: Symbol.Kind, name: []const u8) Ref {
             const ref = p.newSymbol(kind, name) catch unreachable;
             bun.handleOom(p.current_scope.generated.append(p.allocator, ref));
             return ref;
@@ -169,11 +193,6 @@ pub fn LowerDecorators(
                 .set => 3,
                 else => 1,
             };
-        }
-
-        /// Get fn variable suffix for a given kind code.
-        fn fnSuffix(k: u8) []const u8 {
-            return if (k == 2) "_get" else if (k == 3) "_set" else "_fn";
         }
 
         // ── Generic tree rewriter ────────────────────────────
@@ -568,7 +587,7 @@ pub fn LowerDecorators(
                     class_name_loc = loc;
                     expr_class_is_anonymous = true;
                     if (name_from_context) |name| {
-                        class.class_name = .{ .ref = newSym(p, .other, name), .loc = loc };
+                        class.class_name = .{ .ref = newPlainSym(p, .other, name), .loc = loc };
                     }
                 }
             } else {
@@ -578,8 +597,7 @@ pub fn LowerDecorators(
 
             var inner_class_ref: Ref = class_name_ref;
             if (!is_expr) {
-                const cns = p.symbols.items[class_name_ref.innerIndex()].original_name;
-                inner_class_ref = newSym(p, .other, std.fmt.allocPrint(p.allocator, "_{s}", .{cns}) catch unreachable);
+                inner_class_ref = newSym(p, .other, "_innerClass");
             }
 
             const class_decorators = class.ts_decorators;
@@ -599,12 +617,10 @@ pub fn LowerDecorators(
             }
 
             // ── Phase 2: Pre-evaluate decorators/keys ────────
-            var dec_counter: usize = 0;
             var class_dec_ref: ?Ref = null;
             var class_dec_stmt: Stmt = Stmt.empty();
             var class_dec_assign_expr: ?Expr = null;
             if (class_decorators.len > 0) {
-                dec_counter += 1;
                 class_dec_ref = newSym(p, .other, "_dec");
                 const arr = p.newExpr(E.Array{ .items = class_decorators }, loc);
                 if (is_expr) {
@@ -616,19 +632,11 @@ pub fn LowerDecorators(
             }
 
             var prop_dec_refs = std.AutoHashMapUnmanaged(usize, Ref){};
-            var computed_key_refs = std.AutoHashMapUnmanaged(usize, Ref){};
             var pre_eval_stmts = ListManaged(Stmt).init(p.allocator);
-            var computed_key_counter: usize = 0;
-
             for (class.properties, 0..) |*prop, prop_idx| {
                 if (prop.kind == .class_static_block) continue;
                 if (prop.ts_decorators.len > 0) {
-                    dec_counter += 1;
-                    const dec_name = if (dec_counter == 1)
-                        "_dec"
-                    else
-                        std.fmt.allocPrint(p.allocator, "_dec{d}", .{dec_counter}) catch unreachable;
-                    const dec_ref = newSym(p, .other, dec_name);
+                    const dec_ref = newSym(p, .other, "_dec");
                     prop_dec_refs.put(p.allocator, prop_idx, dec_ref) catch unreachable;
                     if (is_expr) {
                         expr_var_decls.append(.{ .binding = p.b(B.Identifier{ .ref = dec_ref }, loc) }) catch unreachable;
@@ -636,13 +644,7 @@ pub fn LowerDecorators(
                     pre_eval_stmts.append(varDecl(p, dec_ref, p.newExpr(E.Array{ .items = prop.ts_decorators }, loc), loc)) catch unreachable;
                 }
                 if (prop.flags.contains(.is_computed) and prop.key != null and prop.ts_decorators.len > 0) {
-                    computed_key_counter += 1;
-                    const key_name = if (computed_key_counter == 1)
-                        "_computedKey"
-                    else
-                        std.fmt.allocPrint(p.allocator, "_computedKey{d}", .{computed_key_counter}) catch unreachable;
-                    const key_ref = newSym(p, .other, key_name);
-                    computed_key_refs.put(p.allocator, prop_idx, key_ref) catch unreachable;
+                    const key_ref = newSym(p, .other, "_computedKey");
                     if (is_expr) {
                         expr_var_decls.append(.{ .binding = p.b(B.Identifier{ .ref = key_ref }, loc) }) catch unreachable;
                     }
@@ -718,7 +720,6 @@ pub fn LowerDecorators(
             var extracted_static_blocks = ListManaged(*G.ClassStaticBlock).init(p.allocator);
             var prefix_stmts = ListManaged(Stmt).init(p.allocator);
             var private_lowered_map = PrivateLoweredMap{};
-            var accessor_storage_counter: usize = 0;
             var emitted_private_adds = std.AutoHashMapUnmanaged(u32, void){};
             var static_private_add_blocks = ListManaged(Property).init(p.allocator);
 
@@ -752,7 +753,6 @@ pub fn LowerDecorators(
                         prop.kind != .auto_accessor)
                     {
                         const nk_expr = prop.key.?;
-                        const npriv_orig = p.symbols.items[nk_expr.data.e_private_identifier.ref.innerIndex()].original_name;
                         const npriv_inner = nk_expr.data.e_private_identifier.ref.innerIndex();
 
                         if (prop.flags.contains(.is_method)) {
@@ -760,10 +760,9 @@ pub fn LowerDecorators(
                             const nk = methodKind(prop);
                             const existing = private_lowered_map.get(npriv_inner);
                             const ws_ref = if (existing) |ex| ex.storage_ref else brk: {
-                                break :brk newSym(p, .other, std.fmt.allocPrint(p.allocator, "_{s}", .{npriv_orig[1..]}) catch unreachable);
+                                break :brk newSym(p, .other, "_privSet");
                             };
-                            const fn_nm = std.fmt.allocPrint(p.allocator, "_{s}{s}", .{ npriv_orig[1..], fnSuffix(nk) }) catch unreachable;
-                            const fn_ref = newSym(p, .other, fn_nm);
+                            const fn_ref = newSym(p, .other, "_privFn");
 
                             var new_info = if (existing) |ex| ex else PrivateLoweredInfo{ .storage_ref = ws_ref };
                             if (nk == 1) new_info.method_fn_ref = fn_ref else if (nk == 2) new_info.getter_fn_ref = fn_ref else new_info.setter_fn_ref = fn_ref;
@@ -788,8 +787,7 @@ pub fn LowerDecorators(
                             continue;
                         } else {
                             // Non-decorated private field → WeakMap
-                            const wm_nm = std.fmt.allocPrint(p.allocator, "_{s}", .{npriv_orig[1..]}) catch unreachable;
-                            const wm_ref = newSym(p, .other, wm_nm);
+                            const wm_ref = newSym(p, .other, "_privMap");
                             private_lowered_map.put(p.allocator, npriv_inner, .{ .storage_ref = wm_ref }) catch unreachable;
                             prefix_stmts.append(varDecl(p, wm_ref, newWeakMapExpr(p, loc), loc)) catch unreachable;
 
@@ -818,14 +816,7 @@ pub fn LowerDecorators(
                     }
                     // Undecorated auto-accessor → WeakMap + getter/setter
                     if (prop.kind == .auto_accessor) {
-                        const accessor_name = brk: {
-                            if (prop.key.?.data == .e_string)
-                                break :brk std.fmt.allocPrint(p.allocator, "_{s}", .{prop.key.?.data.e_string.data}) catch unreachable;
-                            const name = std.fmt.allocPrint(p.allocator, "_accessor_storage{d}", .{accessor_storage_counter}) catch unreachable;
-                            accessor_storage_counter += 1;
-                            break :brk name;
-                        };
-                        const wm_ref = newSym(p, .other, accessor_name);
+                        const wm_ref = newSym(p, .other, "_accStorage");
                         prefix_stmts.append(varDecl(p, wm_ref, newWeakMapExpr(p, loc), loc)) catch unreachable;
 
                         // Getter: get foo() { return __privateGet(this, _foo); }
@@ -838,7 +829,7 @@ pub fn LowerDecorators(
                         get_fn.* = .{ .body = .{ .stmts = get_body, .loc = loc } };
 
                         // Setter: set foo(v) { __privateSet(this, _foo, v); }
-                        const setter_param_ref = newSym(p, .other, "v");
+                        const setter_param_ref = newPlainSym(p, .other, "v");
                         const set_body = bun.handleOom(p.allocator.alloc(Stmt, 1));
                         set_body[0] = p.s(S.SExpr{ .value = callRt(p, loc, "__privateSet", &[_]Expr{
                             p.newExpr(E.This{}, loc),
@@ -927,15 +918,14 @@ pub fn LowerDecorators(
                 var private_method_fn_ref: ?Ref = null;
 
                 if (is_private) {
-                    const private_orig = p.symbols.items[key_expr.data.e_private_identifier.ref.innerIndex()].original_name;
                     const priv_inner = key_expr.data.e_private_identifier.ref.innerIndex();
 
                     if (k >= 1 and k <= 3) {
                         // Decorated private method/getter/setter → WeakSet
                         const existing = private_lowered_map.get(priv_inner);
-                        const ws_ref = if (existing) |ex| ex.storage_ref else newSym(p, .other, std.fmt.allocPrint(p.allocator, "_{s}", .{private_orig[1..]}) catch unreachable);
+                        const ws_ref = if (existing) |ex| ex.storage_ref else newSym(p, .other, "_privSet");
                         private_storage_ref = ws_ref;
-                        const fn_ref = newSym(p, .other, std.fmt.allocPrint(p.allocator, "_{s}{s}", .{ private_orig[1..], fnSuffix(k) }) catch unreachable);
+                        const fn_ref = newSym(p, .other, "_privFn");
                         private_method_fn_ref = fn_ref;
 
                         var new_info = if (existing) |ex| ex else PrivateLoweredInfo{ .storage_ref = ws_ref };
@@ -950,16 +940,16 @@ pub fn LowerDecorators(
                         dec_arg_count = 6;
                     } else if (k == 5) {
                         // Decorated private field → WeakMap
-                        const wm_ref = newSym(p, .other, std.fmt.allocPrint(p.allocator, "_{s}", .{private_orig[1..]}) catch unreachable);
+                        const wm_ref = newSym(p, .other, "_privMap");
                         private_storage_ref = wm_ref;
                         private_lowered_map.put(p.allocator, priv_inner, .{ .storage_ref = wm_ref }) catch unreachable;
                         prefix_stmts.append(varDecl(p, wm_ref, newWeakMapExpr(p, loc), loc)) catch unreachable;
                         dec_arg_count = 5;
                     } else if (k == 4) {
                         // Decorated private auto-accessor → WeakMap + descriptor
-                        const wm_ref = newSym(p, .other, std.fmt.allocPrint(p.allocator, "_{s}", .{private_orig[1..]}) catch unreachable);
+                        const wm_ref = newSym(p, .other, "_privMap");
                         private_storage_ref = wm_ref;
-                        const acc_ref = newSym(p, .other, std.fmt.allocPrint(p.allocator, "_{s}_acc", .{private_orig[1..]}) catch unreachable);
+                        const acc_ref = newSym(p, .other, "_privAcc");
                         private_method_fn_ref = acc_ref;
                         private_lowered_map.put(p.allocator, priv_inner, .{
                             .storage_ref = wm_ref,
@@ -970,14 +960,7 @@ pub fn LowerDecorators(
                     }
                 } else if (k == 4) {
                     // Decorated public auto-accessor → WeakMap
-                    const accessor_name = brk: {
-                        if (key_expr.data == .e_string)
-                            break :brk std.fmt.allocPrint(p.allocator, "_{s}", .{key_expr.data.e_string.data}) catch unreachable;
-                        const name = std.fmt.allocPrint(p.allocator, "_accessor_storage{d}", .{accessor_storage_counter}) catch unreachable;
-                        accessor_storage_counter += 1;
-                        break :brk name;
-                    };
-                    const wm_ref = newSym(p, .other, accessor_name);
+                    const wm_ref = newSym(p, .other, "_accStorage");
                     private_extra_ref = wm_ref;
                     prefix_stmts.append(varDecl(p, wm_ref, newWeakMapExpr(p, loc), loc)) catch unreachable;
                     dec_arg_count = 6;
@@ -1339,7 +1322,7 @@ pub fn LowerDecorators(
                     var ctor_stmts = ListManaged(Stmt).init(p.allocator);
                     if (class.extends != null) {
                         const target = p.newExpr(E.Super{}, loc);
-                        const args_ref = newSym(p, .unbound, arguments_str);
+                        const args_ref = newPlainSym(p, .unbound, arguments_str);
                         const spread = p.newExpr(E.Spread{ .value = p.newExpr(E.Identifier{ .ref = args_ref }, loc) }, loc);
                         const call_args = bun.handleOom(ExprNodeList.initOne(p.allocator, spread));
                         ctor_stmts.append(

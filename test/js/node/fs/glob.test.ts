@@ -366,9 +366,8 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
 
   it("self-referential symlink as cwd / absolute literal target returns [] (not ELOOP)", () => {
     // These two shapes hit ELOOP at the *walker's own* cwd open — not via
-    // readdir — so they exercise the `swallow_missing_cwd` branches that
-    // this PR added to `Iterator.init()`. Without those branches, the
-    // error would surface as a thrown ELOOP in both shapes.
+    // readdir — so they exercise the `swallow_missing_cwd` branches in
+    // `Iterator.init()`. Without those, the error surfaces as a thrown ELOOP.
     //   * cwd IS the loop       — `fs.globSync('*.txt', {cwd: '/abs/loop'})`
     //     (main cwd-open branch in `Iterator.init`)
     //   * absolute all-literal  — `fs.globSync('/abs/loop/inside.txt')`

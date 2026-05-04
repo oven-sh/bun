@@ -1,6 +1,6 @@
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { fileDescriptorLeakChecker, isPosix, isWindows, tmpdirSync } from "harness";
+import { fileDescriptorLeakChecker, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -280,7 +280,7 @@ it("start() without path/fd on an already-open writer does not crash", async () 
 });
 
 it("Bun.file().writer() ignores invalid path/fd in options instead of crashing", async () => {
-  const dir = tmpdirSync();
+  using dir = tempDir("filesink-writer-invalid-options", {});
 
   // `fd` in options is not an integer: previously this panicked accessing the
   // wrong union field after `fromJSWithTag` returned `.err`.
@@ -307,5 +307,13 @@ it("Bun.file().writer() ignores invalid path/fd in options instead of crashing",
     writer.write("c");
     await writer.end();
     expect(await Bun.file(join(dir, "c.txt")).text()).toBe("c");
+  }
+
+  // String `path` in options is parsed but overridden by the Blob's own path.
+  {
+    const writer = Bun.file(join(dir, "d.txt")).writer({ path: join(dir, "ignored.txt") } as any);
+    writer.write("d");
+    await writer.end();
+    expect(await Bun.file(join(dir, "d.txt")).text()).toBe("d");
   }
 });

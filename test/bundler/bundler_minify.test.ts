@@ -686,11 +686,11 @@ describe("bundler", () => {
   // the class body and re-introduce the #30203 inflation.
   itBundled("minify/ConstantFoldingConstClassBodyDoesNotForceFold", {
     files: {
-      // \`const C\` must come first so \`is_after_const_local_prefix\` is still
-      // false when it's visited and \`want_unconditional_numeric_fold\` fires;
+      // `const C` must come first so `is_after_const_local_prefix` is still
+      // false when it's visited and `want_unconditional_numeric_fold` fires;
       // otherwise the visitClass reset has nothing to reset and the test
       // passes via the ordinary size-aware path instead of exercising the
-      // fix. \`function mixin\` is hoisted, so the extends reference still
+      // fix. `function mixin` is hoisted, so the extends reference still
       // resolves.
       "/entry.ts": `
         const C = class extends mixin(1 / 3) {

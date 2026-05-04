@@ -328,8 +328,7 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
     // active set narrows descent, but the terminal `*` in the full active
     // set also matches the symlink name directly. Both `a/a/a` (the symlink
     // itself) and `a/a/a/leaf.txt` (from the descent) should be returned —
-    // matching Node. Before this fix the walker narrowed descent but skipped
-    // the terminal-match check on the full set.
+    // matching Node.
     using dir = tempDir("glob-leaf-and-descent", {
       a: { a: {} },
       target: { "leaf.txt": "x" },
@@ -357,10 +356,15 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
   it("self-referential symlink in the literal prefix returns [] (not ELOOP)", () => {
     // Opening `loop/` as a directory throws ELOOP for a self-referential
     // symlink `loop -> loop`. Node swallows this and returns `[]`; so do we.
+    // Covers three shapes of cwd open that may hit ELOOP:
+    //   * relative with wildcard tail  — `loop/*.txt`  (main cwd open)
+    //   * relative all-literal         — `loop/inside.txt` (main cwd open)
+    //   * absolute all-literal         — `/abs/loop/inside.txt` (fast path)
     using dir = tempDir("glob-loop", {});
     fs.symlinkSync("loop", path.join(String(dir), "loop"), "dir");
     expect(fs.globSync("loop/*.txt", { cwd: String(dir) })).toStrictEqual([]);
     expect(fs.globSync("loop/inside.txt", { cwd: String(dir) })).toStrictEqual([]);
+    expect(fs.globSync(path.join(String(dir), "loop/inside.txt"))).toStrictEqual([]);
   });
 
   it("brace alternative that names a symlink still descends", () => {

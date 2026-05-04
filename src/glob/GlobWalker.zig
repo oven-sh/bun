@@ -498,6 +498,16 @@ pub fn GlobWalker_(
                                         this.iter_state = .get_next;
                                         return .success;
                                     }
+                                    // Symlink cycle — Node's `fs.glob` returns
+                                    // `[]` for absolute-literal patterns that
+                                    // traverse a self-referential symlink. The
+                                    // non-fast-path cwd-open at line ~532 is
+                                    // already covered by `swallow_missing_cwd`;
+                                    // mirror that here so both codepaths agree.
+                                    if (this.walker.swallow_missing_cwd and e.getErrno() == bun.sys.E.LOOP) {
+                                        this.iter_state = .get_next;
+                                        return .success;
+                                    }
                                     return .{ .err = e.withPath(path) };
                                 },
                                 .result => |fd| fd,

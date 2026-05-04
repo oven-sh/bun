@@ -542,6 +542,9 @@ pub const AnyResponse = union(enum) {
 
     pub fn getFd(this: AnyResponse) bun.FD {
         return switch (this) {
+            // HTTP/3 multiplexes streams over one UDP socket — there is no
+            // per-response OS fd. Match `getNativeHandle` above.
+            .H3 => bun.invalid_fd,
             inline else => |resp| resp.getFd(),
         };
     }

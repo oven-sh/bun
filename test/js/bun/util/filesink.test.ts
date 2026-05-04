@@ -268,3 +268,13 @@ it.skipIf(!isPosix)("does not leak native FileSink when a pending write fails (E
   // more than that indicates a native leak.
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
 });
+
+it("writer() throws instead of crashing when options has a non-string path", () => {
+  const file = Bun.file(join(tmpdirSync(), "writer-invalid-path.txt"));
+  expect(() => file.writer({ path: Int32Array } as any)).toThrow();
+});
+
+it("writer() throws instead of crashing when options has an invalid fd", () => {
+  const file = Bun.file(join(tmpdirSync(), "writer-invalid-fd.txt"));
+  expect(() => file.writer({ fd: "not-a-number" } as any)).toThrow();
+});

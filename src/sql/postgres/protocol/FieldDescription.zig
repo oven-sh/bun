@@ -27,7 +27,10 @@ pub fn toJS(this: *const @This(), globalObject: *jsc.JSGlobalObject) bun.JSError
     obj.put(globalObject, jsc.ZigString.static("name"), try bun.String.createUTF8ForJS(globalObject, this.name.slice()));
     obj.put(globalObject, jsc.ZigString.static("type"), JSValue.jsNumber(this.type_oid));
     obj.put(globalObject, jsc.ZigString.static("table"), JSValue.jsNumber(this.table_oid));
-    obj.put(globalObject, jsc.ZigString.static("number"), JSValue.jsNumber(this.column_index));
+    // Wire protocol defines the column attribute number as signed Int16
+    // (system columns like ctid have negative attnums); `short` is u16 so
+    // bitcast to match postgres.js' readInt16BE behaviour.
+    obj.put(globalObject, jsc.ZigString.static("number"), JSValue.jsNumber(@as(i16, @bitCast(this.column_index))));
     return obj;
 }
 

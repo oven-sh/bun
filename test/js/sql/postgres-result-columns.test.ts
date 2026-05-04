@@ -91,11 +91,12 @@ test("result.columns exposes RowDescription name/type/table/number", async () =>
     socket.write(
       Buffer.concat([
         rowDescription([
+          { name: "ctid", typeOid: 27, tableOid: 16388, column: -1 }, // tid, system column (negative attnum)
           { name: "id", typeOid: 23, tableOid: 16388, column: 1 }, // int4
           { name: "data", typeOid: 3802 }, // jsonb
           { name: "tags", typeOid: 1009 }, // text[]
         ]),
-        dataRow(["1", '["a","b"]', "{a,b}"]),
+        dataRow(["(0,1)", "1", '["a","b"]', "{a,b}"]),
         commandComplete("SELECT 1"),
         readyForQuery,
       ]),
@@ -104,13 +105,14 @@ test("result.columns exposes RowDescription name/type/table/number", async () =>
 
   const sql = new SQL({ url: `postgres://u@127.0.0.1:${port}/db`, max: 1, idleTimeout: 5, connectionTimeout: 5 });
   try {
-    const result = await sql`select id, data, tags from posts`.simple();
+    const result = await sql`select ctid, id, data, tags from posts`.simple();
     expect(result.columns).toEqual([
+      { name: "ctid", type: 27, table: 16388, number: -1 },
       { name: "id", type: 23, table: 16388, number: 1 },
       { name: "data", type: 3802, table: 0, number: 0 },
       { name: "tags", type: 1009, table: 0, number: 0 },
     ]);
-    expect(result.statement.string).toBe("select id, data, tags from posts");
+    expect(result.statement.string).toBe("select ctid, id, data, tags from posts");
     expect(result.statement.columns).toBe(result.columns);
   } finally {
     await sql.close();

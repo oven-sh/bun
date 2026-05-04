@@ -77,11 +77,7 @@ describe.skipIf(isWindows)("bun test --isolate with NAPI finalizers pending acro
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // The addon's finalizer prints "finalizer" to stdout for every wrapped
     // object. Seeing them proves deferred finalizers actually ran (against a

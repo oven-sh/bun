@@ -271,3 +271,27 @@ test("factory argument preserves callable CJS exports (`module.exports = functio
   expect(typeof stubbedFn).toBe("function");
   expect(stubbedFn()).toBe("wrapped: callable-real");
 });
+
+test("factory argument prefers CJS exports when a module was both imported and required", async () => {
+  // When a .cjs module is loaded via BOTH `import()` and `require()`, the ESM
+  // namespace is a wrapper `{ default, length, name, prototype }` around the
+  // callable `module.exports`. The factory should still see the bare callable
+  // as `original`, not the ESM wrapper — otherwise `original()` fails.
+  await import("./mock-module-callable-cjs-mixed-fixture.cjs");
+  const realFn: any = require("./mock-module-callable-cjs-mixed-fixture.cjs");
+  expect(typeof realFn).toBe("function");
+  expect(realFn()).toBe("callable-mixed-real");
+
+  let receivedOriginal: any;
+  mock.module("./mock-module-callable-cjs-mixed-fixture.cjs", original => {
+    receivedOriginal = original;
+    return function wrapped() {
+      return `wrapped: ${original()}`;
+    };
+  });
+
+  expect(typeof receivedOriginal).toBe("function");
+  expect(receivedOriginal()).toBe("callable-mixed-real");
+  const stubbedFn: any = require("./mock-module-callable-cjs-mixed-fixture.cjs");
+  expect(stubbedFn()).toBe("wrapped: callable-mixed-real");
+});

@@ -13,6 +13,7 @@
 #endif
 
 extern "C" void BunString__toThreadSafe(BunString* str);
+extern "C" bool BunString__fromJS(JSC::JSGlobalObject*, JSC::EncodedJSValue, BunString*);
 
 namespace Bun {
 
@@ -74,6 +75,45 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_BunString_toThreadSafeRefCountDelta, (JSC::J
 
     const unsigned after = original->refCount();
     return JSValue::encode(jsNumber(static_cast<int32_t>(after) - static_cast<int32_t>(before)));
+}
+
+// Synthesize the state Fuzzilli observed (fingerprints cb01d84a, 16d4efee,
+// 4d4492f1, eac903bf): toWTFString yields a null WTF::String while no VM
+// exception is pending. An exhaustive trace of JSC's toWTFString call chain
+// shows every null-return site throws first, so this cannot be produced from
+// JavaScript; we fabricate it by nulling a JSString's m_fiber so the
+// isString() fast path in toWTFString returns valueInternal() = null without
+// touching any throw scope. Then call BunString__fromJS (the actual binding
+// String.fromJS uses) and report whether it returned Dead with no exception —
+// the exact combination that trips `bun.debugAssert(has_exception)` and
+// propagates a phantom error.JSError to host_fn.zig.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_BunString_fromJSNullNoException, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    JSString* s = jsNontrivialString(vm, "placeholder"_s);
+    // Null the backing StringImpl* so valueInternal() is a null String and
+    // isRope() is false (bit 0 clear). toWTFString(globalObject) on this
+    // returns a null String without entering any throw scope.
+    uintptr_t* fiber = std::bit_cast<uintptr_t*>(std::bit_cast<char*>(s) + JSString::offsetOfValue());
+    uintptr_t saved = *fiber;
+    *fiber = 0;
+
+    BunString out { BunStringTag::Dead, {} };
+    bool ok = BunString__fromJS(globalObject, JSValue::encode(s), &out);
+    bool hasException = !!scope.exception();
+    if (hasException)
+        scope.clearException();
+
+    // Restore so GC/destruction sees a valid JSString.
+    *fiber = saved;
+
+    JSObject* result = constructEmptyObject(globalObject);
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "ok"_s), jsBoolean(ok));
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "dead"_s), jsBoolean(out.tag == BunStringTag::Dead));
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "hasException"_s), jsBoolean(hasException));
+    return JSValue::encode(result);
 }
 
 }

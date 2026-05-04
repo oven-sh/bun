@@ -190,6 +190,13 @@ test(
       buf = lines.pop() ?? "";
       for (const line of lines) {
         if (!line.startsWith("v=")) continue;
+        // Watcher double-fire guard (FSEvents on macOS / ReadDirectoryChangesW
+        // on Windows can deliver two events for one write): if the same
+        // `v=N` repeats, the second fire re-evaluated the same file before
+        // our next `Bun.write` landed — ignore the duplicate and keep
+        // waiting for the next round. Mirrors the stale-reload handling
+        // in test/cli/hot/hot.test.ts:driveErrorReloadCycle.
+        if (line === seen.at(-1)) continue;
         seen.push(line);
         round++;
         if (round === 3) {

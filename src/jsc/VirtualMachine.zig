@@ -782,34 +782,48 @@ pub fn reload(this: *VirtualMachine, _: ?*HotReloader.Task) void {
     if (this.pending_internal_promise) |p| {
         switch (p.status()) {
             .pending => {
-                // Normally defer: the C++ loader chain is still draining
-                // microtasks, or a ref'd await (timer / network / fs) will
-                // settle the promise, and the old continuation should run
-                // before we tear down the module registry. The defer is
-                // then consumed by `reportExceptionInHotReloadedModuleIf
-                // Needed` once the promise settles.
+                // Normally defer. A watcher event arrived while either:
+                //   (a) the C++ module loader / transpile chain is still
+                //       draining on the microtask queue,
+                //   (b) a user ref'd await (timer / network / fs) is
+                //       pending and will settle the promise.
+                // Both cases need the current continuation to run first;
+                // tearing down the module registry now would let the two
+                // chains interleave through one registry, or leave a
+                // zombie continuation firing against the freshly-reset
+                // global.
                 //
-                // Abandoned-TLA exception: when `loadEntryPoint` bailed
-                // out because the event loop had no work that could
-                // settle the promise (e.g. `await new Promise(() => {})`),
-                // or when the --hot outer loop reached the same quiet
-                // state after a subsequent hot-reload's module body also
-                // TLA-hangs, nothing will ever make the promise progress.
-                // Deferring is permanent: `reportException…` early-
-                // returns on `.pending` before ever consuming
-                // `hot_reload_deferred`, so --hot would go silently dead
-                // after the first hanging TLA.
+                // The defer is consumed by
+                // `reportExceptionInHotReloadedModuleIfNeeded` once the
+                // promise settles. But `reportException…` early-returns
+                // on `.pending`, so if the promise NEVER settles (an
+                // abandoned top-level await — `await new Promise(() =>
+                // {})` or an unref'd `AbortSignal.timeout`) the deferral
+                // would be permanent and --hot would go silently dead.
                 //
-                // Distinguish the two by checking the same signal
-                // `loadEntryPoint` used for its break — but via
-                // `hasAnyHandleWorkIgnoringForeverTimer` because by the
-                // time this runs under --hot the outer loop has already
-                // installed `forever_timer` as a ref'd uv handle on
-                // Windows, which would make the plain `hasAnyHandleWork`
-                // permanently true.
-                if (this.eventLoop().hasAnyHandleWorkIgnoringForeverTimer()) {
-                    this.hot_reload_deferred = true;
-                    return;
+                // Drain microtasks first to collapse case (a): if a
+                // loader chain microtask flips the status to settled,
+                // one of the other arms handles it. If status is still
+                // `.pending` after the drain, check whether any source
+                // of work could advance it — using the
+                // `hasAnyHandleWorkIgnoringForeverTimer` variant because
+                // the --hot main loop holds a ref'd `forever_timer` on
+                // Windows that would otherwise make plain
+                // `hasAnyHandleWork`/`isActive` permanently true.
+                this.eventLoop().drainMicrotasksWithGlobal(this.global, this.jsc_vm) catch {};
+                switch (p.status()) {
+                    .pending => if (this.eventLoop().hasAnyHandleWorkIgnoringForeverTimer()) {
+                        // case (b): ref'd I/O will settle the promise.
+                        this.hot_reload_deferred = true;
+                        return;
+                    },
+                    // Fell through case (a) during the drain — let the
+                    // matching arm decide.
+                    .rejected => if (this.pending_internal_promise_reported_at != this.hot_reload_counter) {
+                        this.hot_reload_deferred = true;
+                        return;
+                    },
+                    .fulfilled => {},
                 }
             },
             .rejected => if (this.pending_internal_promise_reported_at != this.hot_reload_counter) {

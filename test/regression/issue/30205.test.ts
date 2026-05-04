@@ -11,8 +11,8 @@
 
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 const napiAppDir = join(import.meta.dir, "..", "..", "napi", "napi-app");

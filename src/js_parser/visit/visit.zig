@@ -551,6 +551,20 @@ pub fn Visit(
                 @compileError("only_scan_imports_and_do_not_visit must not run this.");
             }
 
+            // Reset `fold_numeric_constants_unconditionally` across the class
+            // boundary: class-level TS decorators, the `extends` clause, and
+            // the class body (field initializers, static blocks) visit
+            // through `p.visitExpr`/`p.visitStmts` directly without routing
+            // through `visitFunc` or the arrow visitor, so a caller that
+            // force-folded for the enclosing decl (const-decl inlining,
+            // macro/require args) would otherwise leak into any of those
+            // contexts. `canBeConstValue` rejects `.e_class` anyway, so the
+            // force-fold buys nothing here — reset matches the `visitFunc` /
+            // `e_arrow` handling.
+            const old_fold_numeric_constants_unconditionally = p.fold_numeric_constants_unconditionally;
+            p.fold_numeric_constants_unconditionally = false;
+            defer p.fold_numeric_constants_unconditionally = old_fold_numeric_constants_unconditionally;
+
             class.ts_decorators = p.visitTSDecorators(class.ts_decorators);
 
             if (class.class_name) |name| {
@@ -590,17 +604,7 @@ pub fn Visit(
 
             {
                 p.pushScopeForVisitPass(.class_body, class.body_loc) catch unreachable;
-                // Reset `fold_numeric_constants_unconditionally` across the
-                // class boundary: class-body visits (field initializers,
-                // static blocks) don't route through `visitFunc` or the arrow
-                // visitor, so a caller that force-folded for the enclosing
-                // decl would otherwise leak into those contexts. `canBeConst`
-                // rejects `.e_class` anyway, so the force-fold buys nothing
-                // here — reset matches the `visitFunc` / `e_arrow` handling.
-                const old_fold_numeric_constants_unconditionally = p.fold_numeric_constants_unconditionally;
-                p.fold_numeric_constants_unconditionally = false;
                 defer {
-                    p.fold_numeric_constants_unconditionally = old_fold_numeric_constants_unconditionally;
                     p.popScope();
                     p.enclosing_class_keyword = old_enclosing_class_keyword;
                 }

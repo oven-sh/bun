@@ -1956,22 +1956,29 @@ pub fn installIsolatedPackages(
 ///
 /// Runs the same resolution algorithm TypeScript uses to discover a
 /// package's declarations (modelled on arethetypeswrong.github.io), on
-/// the extracted `<cache>/<folder>/package.json`:
+/// the extracted `<cache>/<folder>/package.json`. We want the union of
+/// everything ATW inspects — a `true` from any branch means some real
+/// consumer (node16, node10, bundler) would resolve a declaration file
+/// out of this package:
 ///
-///   1. If `"exports"` is set, walk the conditional-exports tree for the
-///      `"."` subpath with condition priority `[types, import, require,
-///      default]` — the same order `tsc --moduleResolution node16/bundler`
-///      uses when `"types"` is in its condition set. If the first string
-///      target reached is a declaration file, or has a sibling declaration
-///      file, the package exposes types.
-///   2. Otherwise, check top-level `"types"` / `"typings"` — resolve the
-///      path relative to the package root and apply the same is-or-has-
-///      sibling-declaration rule.
-///   3. Otherwise, if `"typesVersions"` is present and non-empty, TS
-///      treats the package as type-shipping regardless of subpath content
-///      (it'll pick the matching range and look up subpaths there).
-///   4. Otherwise, fall back to implicit `index.d.ts` in the package
-///      root (the conventional no-`exports` / no-`types` path).
+///   1. If `"exports"` is set, walk EVERY entry point in the exports
+///      tree — not just `"."` — with condition priority `[types, import,
+///      require, default]`, the same order `tsc --moduleResolution
+///      node16/bundler` uses when `"types"` is in its condition set. If
+///      any target resolves to (or has a sibling) declaration file, the
+///      package exposes types. This catches subpath-only shapes like
+///      `{ "./Button": { ... }, "./Card": { ... } }` that omit `"."`.
+///   2. Also check top-level `"types"` / `"typings"` — these are what
+///      `moduleResolution: node10` (still the default under `module:
+///      "commonjs"`) consults, and ATW reports against them in its
+///      separate "node10" column. A package shaped `{ exports: { ".":
+///      "./dist/index.js" }, types: "./types/index.d.ts" }` ships types
+///      to node10 consumers even if the exports walk says no.
+///   3. If `"typesVersions"` is present and non-empty, TS treats the
+///      package as type-shipping regardless of subpath content (it'll
+///      pick the matching range and look up subpaths there).
+///   4. Last resort — implicit `index.d.ts` in the package root, the
+///      conventional no-`exports` / no-`types` fallback.
 ///
 /// Any positive hit means the package's declaration file(s) are what a
 /// consuming TypeScript project would try to resolve. If the package's
@@ -2087,19 +2094,25 @@ fn resolvePackageExposesTypes(source_bytes: []const u8, cache_dir: FD, folder: [
         else => return true,
     };
 
-    // 1. `"exports"` — walk the conditional tree for the `.` subpath
-    //    with types-priority conditions.
+    // 1. `"exports"` — walk the conditional tree with types-priority
+    //    conditions. Covers `moduleResolution: node16 / nodenext /
+    //    bundler` consumers.
     if (json.asProperty("exports")) |prop| {
         if (exportsExposesTypes(prop.expr, cache_dir, folder, arena_allocator)) return true;
-        // When `exports` is set, per the Node resolution spec only
-        // subpaths listed there are visible to consumers — `types` /
-        // `typings` / `typesVersions` / implicit `index.d.ts` are NOT
-        // consulted. Fall through to return false.
-        return false;
+        // When `exports` doesn't resolve to a declaration, fall through
+        // to the top-level signals: `moduleResolution: node10` (still
+        // the default under `module: "commonjs"`, and what ATW's
+        // "node10" column reports against) ignores `"exports"` entirely
+        // and resolves declarations via top-level `"types"` / `"typings"`
+        // / implicit `index.d.ts`. Skipping those fields here would
+        // silently route packages shaped `{ exports: { ".": "./dist/index.js" },
+        // types: "./types/index.d.ts" }` (where `dist/index.d.ts`
+        // doesn't exist) into the global store and resurrect #29727 for
+        // node10 consumers.
     }
 
     // 2. Top-level `"types"` / `"typings"` — TS honors `types` first,
-    //    then `typings` (the legacy name) when no `exports`.
+    //    then `typings` (the legacy name).
     inline for (.{ "types", "typings" }) |field| {
         if (json.asProperty(field)) |prop| {
             if (prop.expr.asString(arena_allocator)) |s| {
@@ -2122,39 +2135,53 @@ fn resolvePackageExposesTypes(source_bytes: []const u8, cache_dir: FD, folder: [
     return false;
 }
 
-/// Resolve the `.` subpath of an `"exports"` tree with condition priority
-/// `[types, import, require, default]` and check the resolved target.
-/// Returns true iff the target path (or one of its declaration siblings)
-/// exists in the extracted cache.
+/// Walk an `"exports"` tree and check whether any reachable target is
+/// (or has a sibling) declaration file. Returns true on the first hit.
+///
+/// ATW inspects every entry point in the exports map, not just `"."` —
+/// a package whose only declared subpaths are `"./Button"` and
+/// `"./Card"` still ships types to any consumer doing
+/// `import … from "pkg/Button"`.
 fn exportsExposesTypes(expr: bun.js_parser.Expr, cache_dir: FD, folder: []const u8, allocator: std.mem.Allocator) bool {
     // `exports` can be:
     //   "exports": "./index.js"                       → string (shorthand for `.`)
     //   "exports": [ ... ]                            → array of fallbacks (shorthand for `.`)
     //   "exports": { ".": ..., "./sub": ... }         → subpath map
     //   "exports": { "import": ..., "require": ... }  → condition map (shorthand for `.`)
-    const root_target: bun.js_parser.Expr = switch (expr.data) {
-        .e_string, .e_array => expr,
-        .e_object => |obj| blk: {
+    switch (expr.data) {
+        .e_string, .e_array => return resolveTargetExposesTypes(expr, cache_dir, folder, allocator, 0),
+        .e_object => |obj| {
             var has_dot_keys = false;
-            var dot_value: ?bun.js_parser.Expr = null;
             for (obj.properties.slice()) |prop| {
                 const key = prop.key orelse continue;
                 if (key.data != .e_string) continue;
                 const s = key.data.e_string.data;
                 if (s.len > 0 and s[0] == '.') {
                     has_dot_keys = true;
-                    if (s.len == 1) dot_value = prop.value;
+                    break;
                 }
             }
-            // If every key is a subpath (`./x`), the map is purely a
-            // subpath map and only the `.` entry resolves to the root.
-            // Otherwise the whole object is the condition tree for `.`.
-            break :blk if (has_dot_keys) (dot_value orelse return false) else expr;
+            if (has_dot_keys) {
+                // Subpath map: walk every subpath's target. A package
+                // shaped `{ "./Button": { ... }, "./Card": { ... } }`
+                // with no `"."` entry still ships types if any of its
+                // subpath targets resolve to a declaration file. Same
+                // goes for wildcard subpaths (`./*`) — we can't
+                // statically resolve the pattern, but if the target
+                // object contains a `"types"` condition it counts as
+                // type-shipping just like a non-wildcard subpath.
+                for (obj.properties.slice()) |prop| {
+                    const value = prop.value orelse continue;
+                    if (resolveTargetExposesTypes(value, cache_dir, folder, allocator, 0)) return true;
+                }
+                return false;
+            }
+            // No subpath keys: the whole object is the condition tree
+            // for `.` (shorthand).
+            return resolveTargetExposesTypes(expr, cache_dir, folder, allocator, 0);
         },
         else => return false,
-    };
-
-    return resolveTargetExposesTypes(root_target, cache_dir, folder, allocator, 0);
+    }
 }
 
 /// Walk a conditional-exports target (string, array, or condition object)
@@ -2246,13 +2273,17 @@ fn pathExposesTypes(path: []const u8, cache_dir: FD, folder: []const u8) bool {
         }
     }
     // JavaScript paths → look for the parallel declaration file.
+    //
+    // `rel` comes straight from an untrusted `package.json` string;
+    // bound the concatenation the same way `cacheFileExists` /
+    // `cacheFileExistsJoin` do further down — `bufPrintZ` returns an
+    // error when the combined length doesn't fit, which we treat as
+    // "path too long to plausibly exist, skip".
     for (js_to_dts_pairs) |pair| {
         if (bun.strings.endsWith(rel, pair.js)) {
-            const stem_len = rel.len - pair.js.len;
+            const stem = rel[0 .. rel.len - pair.js.len];
             var buf: bun.PathBuffer = undefined;
-            @memcpy(buf[0..stem_len], rel[0..stem_len]);
-            @memcpy(buf[stem_len..][0..pair.dts.len], pair.dts);
-            const sibling = buf[0 .. stem_len + pair.dts.len];
+            const sibling = std.fmt.bufPrint(&buf, "{s}{s}", .{ stem, pair.dts }) catch return false;
             return cacheFileExists(cache_dir, folder, sibling);
         }
     }
@@ -2261,9 +2292,7 @@ fn pathExposesTypes(path: []const u8, cache_dir: FD, folder: []const u8) bool {
     if (cacheFileExistsJoin(cache_dir, folder, rel, "index.d.ts")) return true;
     inline for (.{ ".d.ts", ".d.mts", ".d.cts" }) |ext| {
         var buf: bun.PathBuffer = undefined;
-        @memcpy(buf[0..rel.len], rel);
-        @memcpy(buf[rel.len..][0..ext.len], ext);
-        const with_ext = buf[0 .. rel.len + ext.len];
+        const with_ext = std.fmt.bufPrint(&buf, "{s}{s}", .{ rel, ext }) catch return false;
         if (cacheFileExists(cache_dir, folder, with_ext)) return true;
     }
     return false;

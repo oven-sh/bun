@@ -2093,6 +2093,54 @@ describe("global virtual store", () => {
       "exports-no-types/index.mjs": "export default {};\n",
       "exports-no-types/index.cjs": "module.exports = {};\n",
 
+      // Subpath-only `"exports"` — no `"."` entry. Component libraries
+      // often ship like this, forcing consumers onto specific subpaths.
+      // ATW checks every entry point in the exports map, so any
+      // subpath that resolves to a declaration file counts as type-
+      // shipping.
+      "subpath-only/package.json": JSON.stringify({
+        name: "subpath-only",
+        version: "1.0.0",
+        exports: {
+          "./Button": { types: "./Button.d.ts", default: "./Button.js" },
+          "./Card": { types: "./Card.d.ts", default: "./Card.js" },
+        },
+      }),
+      "subpath-only/Button.js": "module.exports = {};\n",
+      "subpath-only/Button.d.ts": "export {};\n",
+      "subpath-only/Card.js": "module.exports = {};\n",
+      "subpath-only/Card.d.ts": "export {};\n",
+
+      // `"exports"` is set and resolves WITHOUT types (no `types`
+      // condition, no sibling `.d.*`), but top-level `"types"` points
+      // at a real declaration file in a separate directory. node16
+      // consumers miss these types, but `moduleResolution: node10`
+      // (still the commonjs default) reads top-level `"types"` and
+      // resolves them — so the package IS type-shipping for that
+      // audience.
+      "exports-no-types-top-types/package.json": JSON.stringify({
+        name: "exports-no-types-top-types",
+        version: "1.0.0",
+        exports: {
+          ".": "./dist/index.js",
+        },
+        types: "./types/index.d.ts",
+      }),
+      "exports-no-types-top-types/dist/index.js": "module.exports = {};\n",
+      "exports-no-types-top-types/types/index.d.ts": "export {};\n",
+
+      // Pathologically long `"types"` path (well over macOS's 1024-byte
+      // PathBuffer). Must not stack-overflow the sibling `@memcpy` /
+      // `bufPrint` in `pathExposesTypes`; must not crash `bun install`
+      // either. Resolves as "no types" because the long path doesn't
+      // exist on disk, so the package lands in the global store.
+      "long-types/package.json": JSON.stringify({
+        name: "long-types",
+        version: "1.0.0",
+        types: "./" + "a".repeat(2048) + ".d.ts",
+      }),
+      "long-types/index.js": "module.exports = {};\n",
+
       "pure-js/package.json": JSON.stringify({
         name: "pure-js",
         version: "1.0.0",
@@ -2122,7 +2170,10 @@ describe("global virtual store", () => {
       "types-versions",
       "implicit-index",
       "sibling-dts",
+      "subpath-only",
+      "exports-no-types-top-types",
       "exports-no-types",
+      "long-types",
       "pure-js",
     ] as const;
     // Pack all fixtures in parallel — each `bun pm pack` is a debug-build
@@ -2182,7 +2233,10 @@ describe("global virtual store", () => {
           "types-versions": "1.0.0",
           "implicit-index": "1.0.0",
           "sibling-dts": "1.0.0",
+          "subpath-only": "1.0.0",
+          "exports-no-types-top-types": "1.0.0",
           "exports-no-types": "1.0.0",
+          "long-types": "1.0.0",
           "pure-js": "1.0.0",
         },
       }),
@@ -2199,7 +2253,11 @@ describe("global virtual store", () => {
     // targets have no sibling `.d.*` and no `"types"` condition —
     // exactly the case where the earlier field-scan heuristic would
     // have false-positive-d on the presence of `"exports"` alone.
-    for (const name of ["pure-js", "exports-no-types"] as const) {
+    // `long-types` declares `"types": "./aaaa…a.d.ts"` longer than
+    // `PathBuffer` — the sibling/bufPrint paths must handle overflow
+    // gracefully, treat it as non-existent, and leave the package
+    // symlinked.
+    for (const name of ["pure-js", "exports-no-types", "long-types"] as const) {
       const entry = join(bunDir, `${name}@1.0.0`);
       expect(lstatSync(entry).isSymbolicLink()).toBe(true);
       expect(readlinkSync(entry)).toMatch(new RegExp(`links[/\\\\]${name}@1\\.0\\.0-[0-9a-f]{16}$`));
@@ -2229,6 +2287,13 @@ describe("global virtual store", () => {
       "types-versions",
       "implicit-index",
       "sibling-dts",
+      // Every subpath carries a `types` condition → at least one entry
+      // point exposes declarations → package ships types.
+      "subpath-only",
+      // `"exports"` resolves without types, but top-level `"types"`
+      // points at a real .d.ts for node10 consumers. The fall-through
+      // after the exports walk catches this.
+      "exports-no-types-top-types",
     ] as const;
     for (const name of typeShippingNames) {
       const entry = join(bunDir, `${name}@1.0.0`);
@@ -2273,7 +2338,7 @@ describe("global virtual store", () => {
       expect(lstatSync(entry).isSymbolicLink()).toBe(false);
       expect(lstatSync(entry).isDirectory()).toBe(true);
     }
-    for (const name of ["pure-js", "exports-no-types"] as const) {
+    for (const name of ["pure-js", "exports-no-types", "long-types"] as const) {
       const entry = join(bunDir, `${name}@1.0.0`);
       expect(lstatSync(entry).isSymbolicLink()).toBe(true);
       expect(readlinkSync(entry)).toMatch(new RegExp(`links[/\\\\]${name}@1\\.0\\.0-[0-9a-f]{16}$`));

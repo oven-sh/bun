@@ -488,12 +488,19 @@ fn findFilteredWorkspaces(
     var log = logger.Log.init(allocator);
     defer log.deinit();
 
+    // `root_entry` points into `workspace_package_json_cache`'s HashMapUnmanaged value
+    // storage. `processNamesArray` inserts into that same map (via `processWorkspaceName`
+    // -> `json_cache.getWithPath`) for every workspace it discovers, so a rehash would
+    // leave `&root_entry.source` dangling mid-enumeration. Take a stack copy first.
+    // https://github.com/oven-sh/bun/issues/12288
+    const root_source = root_entry.source;
+
     _ = workspace_map.processNamesArray(
         allocator,
         &manager.workspace_package_json_cache,
         &log,
         workspaces_array.?,
-        &root_entry.source,
+        &root_source,
         logger.Loc.Empty,
         null,
     ) catch |err| {

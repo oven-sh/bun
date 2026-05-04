@@ -3,7 +3,7 @@
 // matching workspace's package.json, not the root package.json.
 
 import { file, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env } from "harness";
 import { join } from "path";
@@ -16,8 +16,9 @@ import {
   package_dir,
   root_url,
   setHandler,
-} from "../../cli/install/dummy.registry.js";
+} from "./dummy.registry";
 
+beforeAll(() => setDefaultTimeout(1000 * 60 * 5));
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
 beforeEach(async () => {
@@ -130,6 +131,64 @@ it("bun add --filter='*' adds to every workspace", async () => {
 
   // Even with two matched workspaces, there should be exactly one install
   // (one metadata request, one tarball fetch).
+  expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
+});
+
+it("bun add --filter='*' adds to every workspace in a large monorepo", async () => {
+  // Enough workspaces to force the workspace_package_json_cache HashMap to
+  // rehash mid-enumeration (minimal_capacity = 8, ~80% load factor). Guards
+  // against passing a pointer into the map's value storage across inserts.
+  // https://github.com/oven-sh/bun/issues/12288
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": {} }));
+  const names = Array.from({ length: 12 }, (_, i) => `pkg-${String.fromCharCode(97 + i)}`);
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "monorepo",
+      version: "0.0.0",
+      workspaces: ["packages/*"],
+    }),
+  );
+  for (const name of names) {
+    await mkdir(join(package_dir, "packages", name), { recursive: true });
+    await writeFile(
+      join(package_dir, "packages", name, "package.json"),
+      JSON.stringify({ name, version: "1.0.0" }),
+    );
+  }
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "baz", "--filter", "*"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const err = await stderr.text();
+  const out = await stdout.text();
+  expect(err).not.toContain("error:");
+  expect(out).toContain("installed baz@0.0.3");
+  expect(await exited).toBe(0);
+
+  // Root package.json should be untouched.
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "monorepo",
+    version: "0.0.0",
+    workspaces: ["packages/*"],
+  });
+
+  // Every workspace should have the dependency with the resolved version.
+  for (const name of names) {
+    expect(await file(join(package_dir, "packages", name, "package.json")).json()).toEqual({
+      name,
+      version: "1.0.0",
+      dependencies: { baz: "^0.0.3" },
+    });
+  }
+
+  // Still a single install run.
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
 });
 

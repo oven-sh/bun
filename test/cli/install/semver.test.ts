@@ -356,6 +356,13 @@ describe("Bun.semver.satisfies()", () => {
 
     testSatisfies("^3.0.0-next.0||^3.0.0", "3.0.0-next.2", true);
 
+    // prerelease versions do NOT satisfy ranges without a prerelease comparator
+    // on the same major.minor.patch (strict semver behavior, matches node-semver default)
+    testSatisfies(">=14.0.4", "56.0.0-canary.1", false);
+    testSatisfies("*", "56.0.0-canary.1", false);
+    testSatisfies(">=0.0.0", "56.0.0-canary.1", false);
+    testSatisfies("^19.0.0", "19.0.0-rc.1", false);
+
     const notPassing = [
       "0.1.0",
       "0.10.0",

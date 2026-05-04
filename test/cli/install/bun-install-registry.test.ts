@@ -7687,6 +7687,54 @@ describe("yarn tests", () => {
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
   });
 
+  test("it should not warn when a prerelease version satisfies a non-prerelease peer range", async () => {
+    // Regression: before the fix, bun's peer-dep validator used strict semver
+    // (`List.satisfiesPre` gated on `pre_matched`), which rejected any
+    // prerelease version against a peer range without a prerelease comparator
+    // on the same major.minor.patch. `5.0.0-alpha.150` against `>=1.0.0` is
+    // the canonical case — npm (includePrerelease: true) and yarn v1
+    // (satisfiesWithPrereleases) accept it.
+    await mkdir(join(packageDir, "has-prerelease-peer"));
+    await writeFile(
+      join(packageDir, "has-prerelease-peer", "package.json"),
+      JSON.stringify({
+        name: "has-prerelease-peer",
+        version: "1.0.0",
+        peerDependencies: {
+          "prereleases-3": ">=1.0.0",
+        },
+      }),
+    );
+
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "has-prerelease-peer": "file:./has-prerelease-peer",
+          "prereleases-3": "5.0.0-alpha.150",
+        },
+      }),
+    );
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await stderr.text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("incorrect peer dependency");
+    expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+  });
+
   test("it should install in such a way that two identical packages with different peer dependencies are different instances", async () => {
     await writeFile(
       packageJson,

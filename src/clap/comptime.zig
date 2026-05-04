@@ -192,7 +192,7 @@ pub fn ComptimeClap(
 }
 
 const bun = @import("bun");
-const clap = @import("../clap.zig");
+const clap = @import("./clap.zig");
 
 const std = @import("std");
 const debug = std.debug;

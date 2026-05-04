@@ -705,11 +705,11 @@ pub const Repository = extern struct {
 const string = []const u8;
 
 const Dependency = @import("./dependency.zig");
-const DotEnv = @import("../env_loader.zig");
-const Environment = @import("../env.zig");
+const DotEnv = @import("../dotenv/env_loader.zig");
+const Environment = @import("../bun_core/env.zig");
 const hosted_git_info = @import("./hosted_git_info.zig");
 const std = @import("std");
-const FileSystem = @import("../fs.zig").FileSystem;
+const FileSystem = @import("../resolver/fs.zig").FileSystem;
 
 const Install = @import("./install.zig");
 const ExtractData = Install.ExtractData;

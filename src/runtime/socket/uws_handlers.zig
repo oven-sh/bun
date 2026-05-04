@@ -316,11 +316,11 @@ pub const SpawnIPC = struct {
     }
 };
 
-const IPC = @import("../../bun.js/ipc.zig");
-const js_valkey = @import("../../valkey/js_valkey.zig");
-const mysql = @import("../../sql/mysql.zig");
-const websocket_client = @import("../../http/websocket_client.zig");
-const websocket_upgrade_client = @import("../../http/websocket_client/WebSocketUpgradeClient.zig");
+const IPC = @import("../../jsc/ipc.zig");
+const js_valkey = @import("../valkey_jsc/js_valkey.zig");
+const mysql = @import("../../sql_jsc/mysql.zig");
+const websocket_client = @import("../../http_jsc/websocket_client.zig");
+const websocket_upgrade_client = @import("../../http_jsc/websocket_client/WebSocketUpgradeClient.zig");
 
 const bun = @import("bun");
 const api = bun.jsc.API;

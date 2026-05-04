@@ -263,8 +263,8 @@ pub const FileCopier = @import("./isolated_install/FileCopier.zig").FileCopier;
 pub const PnpmMatcher = @import("./PnpmMatcher.zig");
 pub const PostinstallOptimizer = @import("./postinstall_optimizer.zig").PostinstallOptimizer;
 
-pub const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
-pub const IdentityContext = @import("../identity_context.zig").IdentityContext;
+pub const ArrayIdentityContext = @import("../collections/identity_context.zig").ArrayIdentityContext;
+pub const IdentityContext = @import("../collections/identity_context.zig").IdentityContext;
 
 pub const external = @import("./ExternalSlice.zig");
 pub const ExternalPackageNameHashList = external.ExternalPackageNameHashList;

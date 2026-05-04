@@ -1,4 +1,4 @@
-pub const alloc = @import("./safety/alloc.zig");
+pub const alloc = @import("./alloc.zig");
 pub const CheckedAllocator = alloc.CheckedAllocator;
-pub const CriticalSection = @import("./safety/CriticalSection.zig");
-pub const ThreadLock = @import("./safety/ThreadLock.zig");
+pub const CriticalSection = @import("./CriticalSection.zig");
+pub const ThreadLock = @import("./ThreadLock.zig");

@@ -179,11 +179,11 @@ pub const Linker = struct {
                                 linker.log,
                                 import_record.range.loc,
                                 if (is_bun)
-                                    jsc.JSGlobalObject.BunPluginTarget.bun
+                                    .bun
                                 else if (linker.options.target == .browser)
-                                    jsc.JSGlobalObject.BunPluginTarget.browser
+                                    .browser
                                 else
-                                    jsc.JSGlobalObject.BunPluginTarget.node,
+                                    .node,
                             )) |path| {
                                 import_record.path = try linker.generateImportPath(
                                     source_dir,
@@ -396,16 +396,16 @@ pub const Linker = struct {
 
 const string = []const u8;
 
-const Fs = @import("./fs.zig");
+const Fs = @import("../resolver/fs.zig");
 const Options = @import("./options.zig");
 const std = @import("std");
-const URL = @import("./url.zig").URL;
+const URL = @import("../url/url.zig").URL;
 
-const _import_record = @import("./import_record.zig");
-const ImportRecord = _import_record.ImportRecord;
-
-const Resolver = @import("./resolver/resolver.zig");
+const Resolver = @import("../resolver/resolver.zig");
 const ResolverType = Resolver.Resolver;
+
+const _import_record = @import("../options_types/import_record.zig");
+const ImportRecord = _import_record.ImportRecord;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

@@ -1139,7 +1139,7 @@ fn extractToDiskFiltered(
 }
 
 const libarchive = @import("../../libarchive/libarchive.zig");
-const libdeflate = @import("../../deps/libdeflate.zig");
+const libdeflate = @import("../../libdeflate_sys/libdeflate.zig");
 const std = @import("std");
 
 const bun = @import("bun");

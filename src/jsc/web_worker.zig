@@ -969,7 +969,7 @@ comptime {
 }
 
 const std = @import("std");
-const WTFStringImpl = @import("../string.zig").WTFStringImpl;
+const WTFStringImpl = @import("../string/string.zig").WTFStringImpl;
 
 const bun = @import("bun");
 const Async = bun.Async;

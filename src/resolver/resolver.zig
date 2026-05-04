@@ -3492,78 +3492,8 @@ pub const Resolver = struct {
         };
     }
 
-    pub fn nodeModulePathsForJS(globalThis: *bun.jsc.JSGlobalObject, callframe: *bun.jsc.CallFrame) bun.JSError!jsc.JSValue {
-        bun.jsc.markBinding(@src());
-        const argument: bun.jsc.JSValue = callframe.argument(0);
-
-        if (argument == .zero or !argument.isString()) {
-            return globalThis.throwInvalidArgumentType("nodeModulePaths", "path", "string");
-        }
-
-        const in_str = try argument.toBunString(globalThis);
-        defer in_str.deref();
-        return nodeModulePathsJSValue(in_str, globalThis, false);
-    }
-
-    pub export fn Resolver__propForRequireMainPaths(globalThis: *bun.jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
-        bun.jsc.markBinding(@src());
-
-        const in_str = bun.String.init(".");
-        return nodeModulePathsJSValue(in_str, globalThis, false);
-    }
-
-    pub fn nodeModulePathsJSValue(in_str: bun.String, globalObject: *bun.jsc.JSGlobalObject, use_dirname: bool) callconv(.c) bun.jsc.JSValue {
-        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
-        defer arena.deinit();
-        var stack_fallback_allocator = std.heap.stackFallback(1024, arena.allocator());
-        const alloc = stack_fallback_allocator.get();
-
-        var list = std.array_list.Managed(bun.String).init(alloc);
-        defer list.deinit();
-
-        const sliced = in_str.toUTF8(bun.default_allocator);
-        defer sliced.deinit();
-        const base_path = if (use_dirname) std.fs.path.dirname(sliced.slice()) orelse sliced.slice() else sliced.slice();
-        const buf = bufs(.node_modules_paths_buf);
-
-        const full_path = bun.path.joinAbsStringBuf(
-            bun.fs.FileSystem.instance.top_level_dir,
-            buf,
-            &.{base_path},
-            .auto,
-        );
-        const root_index = switch (bun.Environment.os) {
-            .windows => bun.path.windowsFilesystemRoot(full_path).len,
-            else => 1,
-        };
-        var root_path: []const u8 = full_path[0..root_index];
-        if (full_path.len > root_path.len) {
-            var it = std.mem.splitBackwardsScalar(u8, full_path[root_index..], std.fs.path.sep);
-            while (it.next()) |part| {
-                if (strings.eqlComptime(part, "node_modules"))
-                    continue;
-
-                list.append(bun.String.createFormat(
-                    "{s}{s}" ++ std.fs.path.sep_str ++ "node_modules",
-                    .{
-                        root_path,
-                        it.buffer[0 .. (if (it.index) |i| i + 1 else 0) + part.len],
-                    },
-                ) catch |err| bun.handleOom(err)) catch |err| bun.handleOom(err);
-            }
-        }
-
-        while (root_path.len > 0 and bun.path.Platform.auto.isSeparator(root_path[root_path.len - 1])) {
-            root_path.len -= 1;
-        }
-
-        list.append(bun.String.createFormat(
-            "{s}" ++ std.fs.path.sep_str ++ "node_modules",
-            .{root_path},
-        ) catch |err| bun.handleOom(err)) catch |err| bun.handleOom(err);
-
-        return bun.String.toJSArray(globalObject, list.items) catch .zero;
-    }
+    // nodeModulePathsForJS / Resolver__propForRequireMainPaths: see src/jsc/resolver_jsc.zig
+    // (no Zig callers; exported to C++ only)
 
     pub fn loadAsIndex(r: *ThisResolver, dir_info: *DirInfo, extension_order: []const string) ?MatchResult {
         // Try the "index" file with extensions
@@ -4409,82 +4339,30 @@ pub const RootPathPair = struct {
     package_json: *const PackageJSON,
 };
 
-pub const GlobalCache = enum {
-    allow_install,
-    read_only,
-    auto,
-    force,
-    fallback,
-    disable,
-
-    pub const Map = bun.ComptimeStringMap(GlobalCache, .{
-        .{ "auto", GlobalCache.auto },
-        .{ "force", GlobalCache.force },
-        .{ "disable", GlobalCache.disable },
-        .{ "fallback", GlobalCache.fallback },
-    });
-
-    pub fn allowVersionSpecifier(this: GlobalCache) bool {
-        return this == .force;
-    }
-
-    pub fn canUse(this: GlobalCache, has_a_node_modules_folder: bool) bool {
-        // When there is a node_modules folder, we default to false
-        // When there is NOT a node_modules folder, we default to true
-        // That is the difference between these two branches.
-        if (has_a_node_modules_folder) {
-            return switch (this) {
-                .fallback, .allow_install, .force => true,
-                .read_only, .disable, .auto => false,
-            };
-        } else {
-            return switch (this) {
-                .read_only, .fallback, .allow_install, .auto, .force => true,
-                .disable => false,
-            };
-        }
-    }
-
-    pub fn isEnabled(this: GlobalCache) bool {
-        return this != .disable;
-    }
-
-    pub fn canInstall(this: GlobalCache) bool {
-        return switch (this) {
-            .auto, .allow_install, .force, .fallback => true,
-            else => false,
-        };
-    }
-};
-
-comptime {
-    _ = Resolver.Resolver__propForRequireMainPaths;
-    @export(&jsc.toJSHostFn(Resolver.nodeModulePathsForJS), .{ .name = "Resolver__nodeModulePathsForJS" });
-    @export(&Resolver.nodeModulePathsJSValue, .{ .name = "Resolver__nodeModulePathsJSValue" });
-}
+pub const GlobalCache = @import("../options_types/GlobalCache.zig").GlobalCache;
 
 const string = []const u8;
 
 const Dependency = @import("../install/dependency.zig");
-const DotEnv = @import("../env_loader.zig");
-const NodeFallbackModules = @import("../node_fallbacks.zig");
-const ResolvePath = @import("./resolve_path.zig");
-const ast = @import("../import_record.zig");
-const options = @import("../options.zig");
+const DotEnv = @import("../dotenv/env_loader.zig");
+const NodeFallbackModules = @import("./node_fallbacks.zig");
+const ResolvePath = @import("../paths/resolve_path.zig");
+const ast = @import("../options_types/import_record.zig");
+const options = @import("../bundler/options.zig");
 const std = @import("std");
 const Package = @import("../install/lockfile.zig").Package;
 const Resolution = @import("../install/resolution.zig").Resolution;
 const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
-const Timer = @import("../system_timer.zig").Timer;
+const Timer = @import("../perf/system_timer.zig").Timer;
 
-const cache = @import("../cache.zig");
+const cache = @import("../bundler/cache.zig");
 const CacheSet = cache.Set;
-
-const Fs = @import("../fs.zig");
-const Path = Fs.Path;
 
 const Install = @import("../install/install.zig");
 const PackageManager = @import("../install/install.zig").PackageManager;
+
+const Fs = @import("./fs.zig");
+const Path = Fs.Path;
 
 const BrowserMap = @import("./package_json.zig").BrowserMap;
 const ESModule = @import("./package_json.zig").ESModule;

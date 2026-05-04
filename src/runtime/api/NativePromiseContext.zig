@@ -1,6 +1,6 @@
 //! Zig bindings for the NativePromiseContext JSCell.
 //!
-//! See src/bun.js/bindings/NativePromiseContext.h for the rationale. Short
+//! See src/jsc/bindings/NativePromiseContext.h for the rationale. Short
 //! version: when native code `.then()`s a user Promise and needs a context
 //! pointer, wrap the pointer in this GC-managed cell instead of passing it
 //! raw. If the Promise never settles, GC collects the cell and the destructor

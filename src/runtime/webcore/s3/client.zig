@@ -1,10 +1,10 @@
-pub const ACL = @import("./acl.zig").ACL;
+pub const ACL = @import("../../../s3_signing/acl.zig").ACL;
 pub const S3HttpDownloadStreamingTask = @import("./download_stream.zig").S3HttpDownloadStreamingTask;
 pub const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
 pub const MultiPartUpload = @import("./multipart.zig").MultiPartUpload;
-pub const StorageClass = @import("./storage_class.zig").StorageClass;
+pub const StorageClass = @import("../../../s3_signing/storage_class.zig").StorageClass;
 
-pub const Error = @import("./error.zig");
+pub const Error = @import("../../../s3_signing/error.zig");
 pub const throwSignError = Error.throwSignError;
 pub const getJSSignError = Error.getJSSignError;
 
@@ -350,7 +350,7 @@ pub const S3UploadStreamWrapper = struct {
     const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
-    pub const ResumableSink = @import("../bun.js/webcore/ResumableSink.zig").ResumableS3UploadSink;
+    pub const ResumableSink = @import("../ResumableSink.zig").ResumableS3UploadSink;
     const log = bun.Output.scoped(.S3UploadStream, .visible);
 
     ref_count: RefCount,
@@ -734,7 +734,7 @@ pub fn readableStream(
     return readable_value;
 }
 
-const Credentials = @import("./credentials.zig");
+const Credentials = @import("../../../s3_signing/credentials.zig");
 const S3ListObjects = @import("./list_objects.zig");
 const S3SimpleRequest = @import("./simple_request.zig");
 const std = @import("std");

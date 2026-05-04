@@ -872,7 +872,7 @@ pub const SHA512_256 = StaticCryptoHasher(Hashers.SHA512_256, "SHA512_256");
 
 const string = []const u8;
 
-const Hashers = @import("../../../sha.zig");
+const Hashers = @import("../../sha_hmac/sha.zig");
 const std = @import("std");
 
 const bun = @import("bun");

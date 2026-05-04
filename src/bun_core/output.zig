@@ -176,7 +176,7 @@ pub const Source = struct {
             const stdout = std.os.windows.GetStdHandle(std.os.windows.STD_OUTPUT_HANDLE) catch w.INVALID_HANDLE_VALUE;
             const stderr = std.os.windows.GetStdHandle(std.os.windows.STD_ERROR_HANDLE) catch w.INVALID_HANDLE_VALUE;
 
-            const fd_internals = @import("./fd.zig");
+            const fd_internals = @import("../sys/fd.zig");
             const INVALID_HANDLE_VALUE = std.os.windows.INVALID_HANDLE_VALUE;
             fd_internals.windows_cached_stderr = if (stderr != INVALID_HANDLE_VALUE) .fromSystem(stderr) else .invalid;
             fd_internals.windows_cached_stdout = if (stdout != INVALID_HANDLE_VALUE) .fromSystem(stdout) else .invalid;
@@ -1369,7 +1369,7 @@ pub const Synchronized = struct {
 const Environment = @import("./env.zig");
 const root = @import("root");
 const std = @import("std");
-const SystemTimer = @import("./system_timer.zig").Timer;
+const SystemTimer = @import("../perf/system_timer.zig").Timer;
 
 const bun = @import("bun");
 const ComptimeStringMap = bun.ComptimeStringMap;

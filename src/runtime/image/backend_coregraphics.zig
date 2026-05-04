@@ -1,6 +1,6 @@
 //! macOS ImageIO/CoreGraphics backend.
 //!
-//! All framework calls live in `src/bun.js/bindings/image_coregraphics_shim.cpp`
+//! All framework calls live in `src/jsc/bindings/image_coregraphics_shim.cpp`
 //! — see the header comment there for why (Zig→dlsym'd-function-pointer calls
 //! into CG segfaulted on x86_64 even after thunking the obvious by-value
 //! struct, so the whole dispatch is in C++ where clang owns the ABI). This

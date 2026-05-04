@@ -5122,8 +5122,8 @@ const NewReadFileHandler = read_file.NewReadFileHandler;
 const string = []const u8;
 
 const Archive = @import("../api/Archive.zig");
-const Environment = @import("../../env.zig");
-const Image = @import("../../image/Image.zig");
+const Environment = @import("../../bun_core/env.zig");
+const Image = @import("../image/Image.zig");
 const S3File = @import("./S3File.zig");
 const std = @import("std");
 

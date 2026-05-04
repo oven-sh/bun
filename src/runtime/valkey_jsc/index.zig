@@ -8,7 +8,7 @@
 // Import modules
 pub const valkey = @import("./valkey.zig");
 pub const js_valkey = @import("./js_valkey.zig");
-pub const protocol = @import("./valkey_protocol.zig");
+pub const protocol = @import("../../valkey/valkey_protocol.zig");
 
 // Export JS client
 pub const JSValkeyClient = js_valkey.JSValkeyClient;

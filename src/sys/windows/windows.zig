@@ -87,15 +87,9 @@ pub const HANDLE = win32.HANDLE;
 pub const HMODULE = win32.HMODULE;
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
-pub extern "kernel32" fn GetFileInformationByHandle(
-    hFile: HANDLE,
-    lpFileInformation: *windows.BY_HANDLE_FILE_INFORMATION,
-) callconv(.winapi) BOOL;
+pub const GetFileInformationByHandle = @import("../../windows_sys/externs.zig").GetFileInformationByHandle;
 
-pub extern "kernel32" fn CommandLineToArgvW(
-    lpCmdLine: win32.LPCWSTR,
-    pNumArgs: *c_int,
-) callconv(.winapi) ?[*]win32.LPWSTR;
+pub const CommandLineToArgvW = @import("../../windows_sys/externs.zig").CommandLineToArgvW;
 
 pub fn GetFileType(hFile: win32.HANDLE) win32.DWORD {
     const function = struct {
@@ -117,12 +111,9 @@ pub const FILE_TYPE_CHAR = 0x0002;
 pub const FILE_TYPE_PIPE = 0x0003;
 pub const FILE_TYPE_REMOTE = 0x8000;
 
-pub const LPDWORD = *win32.DWORD;
+pub const LPDWORD = @import("../../windows_sys/externs.zig").LPDWORD;
 
-pub extern "kernel32" fn GetBinaryTypeW(
-    lpApplicationName: win32.LPCWSTR,
-    lpBinaryType: LPDWORD,
-) callconv(.winapi) win32.BOOL;
+pub const GetBinaryTypeW = @import("../../windows_sys/externs.zig").GetBinaryTypeW;
 
 /// A 32-bit Windows-based application
 pub const SCS_32BIT_BINARY = 0;
@@ -145,12 +136,10 @@ pub const SCS_POSIX_BINARY = 4;
 /// The current directory is shared by all threads of the process: If one thread changes the current directory, it affects all threads in the process. Multithreaded applications and shared library code should avoid calling the SetCurrentDirectory function due to the risk of affecting relative path calculations being performed by other threads. Conversely, multithreaded applications and shared library code should avoid using relative paths so that they are unaffected by changes to the current directory performed by other threads.
 ///
 /// Note that the current directory for a process is locked while the process is executing. This will prevent the directory from being deleted, moved, or renamed.
-pub extern "kernel32" fn SetCurrentDirectoryW(
-    lpPathName: win32.LPCWSTR,
-) callconv(.winapi) win32.BOOL;
+pub const SetCurrentDirectoryW = @import("../../windows_sys/externs.zig").SetCurrentDirectoryW;
 pub const SetCurrentDirectory = SetCurrentDirectoryW;
 pub extern "ntdll" fn RtlNtStatusToDosError(win32.NTSTATUS) callconv(.winapi) Win32Error;
-pub extern "advapi32" fn SaferiIsExecutableFileType(szFullPathname: win32.LPCWSTR, bFromShellExecute: win32.BOOLEAN) callconv(.winapi) win32.BOOL;
+pub const SaferiIsExecutableFileType = @import("../../windows_sys/externs.zig").SaferiIsExecutableFileType;
 // This was originally copied from Zig's standard library
 /// Codes are from https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/18d8fbe8-a967-4f1c-ae50-99ca8e491d2d
 pub const Win32Error = enum(u16) {
@@ -2975,12 +2964,9 @@ pub const Win32Error = enum(u16) {
     }
 };
 
-pub const libuv = @import("./deps/libuv.zig");
+pub const libuv = @import("../../libuv_sys/libuv.zig");
 
-pub extern fn GetProcAddress(
-    ptr: ?*anyopaque,
-    [*:0]const u16,
-) ?*anyopaque;
+pub const GetProcAddress = @import("../../windows_sys/externs.zig").GetProcAddress;
 
 pub fn GetProcAddressA(
     ptr: ?*anyopaque,
@@ -2990,9 +2976,7 @@ pub fn GetProcAddressA(
     return GetProcAddress(ptr, bun.strings.toWPath(&wbuf, utf8).ptr);
 }
 
-pub extern fn LoadLibraryA(
-    [*:0]const u8,
-) ?*anyopaque;
+pub const LoadLibraryA = @import("../../windows_sys/externs.zig").LoadLibraryA;
 
 pub const CreateHardLinkW = struct {
     pub fn wrapper(newFileName: LPCWSTR, existingFileName: LPCWSTR, securityAttributes: ?*win32.SECURITY_ATTRIBUTES) BOOL {
@@ -3018,18 +3002,9 @@ pub const CreateHardLinkW = struct {
     }
 }.wrapper;
 
-pub extern "kernel32" fn CopyFileW(
-    source: LPCWSTR,
-    dest: LPCWSTR,
-    bFailIfExists: BOOL,
-) BOOL;
+pub const CopyFileW = @import("../../windows_sys/externs.zig").CopyFileW;
 
-pub extern "kernel32" fn SetFileInformationByHandle(
-    file: HANDLE,
-    fileInformationClass: FILE_INFO_BY_HANDLE_CLASS,
-    fileInformation: LPVOID,
-    bufferSize: DWORD,
-) BOOL;
+pub const SetFileInformationByHandle = @import("../../windows_sys/externs.zig").SetFileInformationByHandle;
 
 pub fn getLastErrno() bun.sys.E {
     return (bun.sys.SystemErrno.init(bun.windows.kernel32.GetLastError()) orelse SystemErrno.EUNKNOWN).toE();
@@ -3075,30 +3050,16 @@ pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.sys.E {
     };
 }
 
-pub extern "kernel32" fn GetHostNameW(
-    lpBuffer: PWSTR,
-    nSize: c_int,
-) callconv(.winapi) BOOL;
+pub const GetHostNameW = @import("../../windows_sys/externs.zig").GetHostNameW;
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw
-pub extern "kernel32" fn GetTempPathW(
-    nBufferLength: DWORD, // [in]
-    lpBuffer: LPCWSTR, // [out]
-) DWORD;
+pub const GetTempPathW = @import("../../windows_sys/externs.zig").GetTempPathW;
 
-pub extern "kernel32" fn CreateJobObjectA(
-    lpJobAttributes: ?*anyopaque, // [in, optional]
-    lpName: ?LPCSTR, // [in, optional]
-) callconv(.winapi) ?HANDLE;
+pub const CreateJobObjectA = @import("../../windows_sys/externs.zig").CreateJobObjectA;
 
-pub extern "kernel32" fn AssignProcessToJobObject(
-    hJob: HANDLE, // [in]
-    hProcess: HANDLE, // [in]
-) callconv(.winapi) BOOL;
+pub const AssignProcessToJobObject = @import("../../windows_sys/externs.zig").AssignProcessToJobObject;
 
-pub extern "kernel32" fn ResumeThread(
-    hJob: HANDLE, // [in]
-) callconv(.winapi) DWORD;
+pub const ResumeThread = @import("../../windows_sys/externs.zig").ResumeThread;
 
 pub const JOBOBJECT_ASSOCIATE_COMPLETION_PORT = extern struct {
     CompletionKey: windows.PVOID,
@@ -3139,12 +3100,7 @@ pub const JOBOBJECT_BASIC_LIMIT_INFORMATION = extern struct {
 pub const JobObjectAssociateCompletionPortInformation: DWORD = 7;
 pub const JobObjectExtendedLimitInformation: DWORD = 9;
 
-pub extern "kernel32" fn SetInformationJobObject(
-    hJob: HANDLE,
-    JobObjectInformationClass: DWORD,
-    lpJobObjectInformation: LPVOID,
-    cbJobObjectInformationLength: DWORD,
-) callconv(.winapi) BOOL;
+pub const SetInformationJobObject = @import("../../windows_sys/externs.zig").SetInformationJobObject;
 
 // Found experimentally:
 // #include <stdio.h>
@@ -3161,11 +3117,7 @@ pub extern "kernel32" fn SetInformationJobObject(
 pub const JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO = 4;
 pub const JOB_OBJECT_MSG_EXIT_PROCESS = 7;
 
-pub extern "kernel32" fn OpenProcess(
-    dwDesiredAccess: DWORD,
-    bInheritHandle: BOOL,
-    dwProcessId: DWORD,
-) callconv(.winapi) ?HANDLE;
+pub const OpenProcess = @import("../../windows_sys/externs.zig").OpenProcess;
 
 // https://learn.microsoft.com/en-us/windows/win32/procthread/process-security-and-access-rights
 pub const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;
@@ -3217,51 +3169,13 @@ pub const INPUT_RECORD = extern struct {
     },
 };
 
-fn Bun__UVSignalHandle__init(
-    global: *bun.jsc.JSGlobalObject,
-    signal_num: i32,
-    callback: *const fn (sig: *libuv.uv_signal_t, num: c_int) callconv(.c) void,
-) callconv(.c) ?*libuv.uv_signal_t {
-    const signal = bun.new(libuv.uv_signal_t, undefined);
-
-    var rc = libuv.uv_signal_init(global.bunVM().uvLoop(), signal);
-    if (rc.errno()) |_| {
-        bun.destroy(signal);
-        return null;
-    }
-
-    rc = libuv.uv_signal_start(signal, callback, signal_num);
-    if (rc.errno()) |_| {
-        libuv.uv_close(@ptrCast(signal), &freeWithDefaultAllocator);
-        return null;
-    }
-
-    libuv.uv_unref(@ptrCast(signal));
-
-    return signal;
-}
-
-fn freeWithDefaultAllocator(signal: *anyopaque) callconv(.c) void {
-    bun.destroy(@as(*libuv.uv_signal_t, @ptrCast(@alignCast(signal))));
-}
-
-fn Bun__UVSignalHandle__close(signal: *libuv.uv_signal_t) callconv(.c) void {
-    _ = libuv.uv_signal_stop(signal);
-    libuv.uv_close(@ptrCast(signal), &freeWithDefaultAllocator);
-}
+// Bun__UVSignalHandle__{init,close}: see src/runtime/node/uv_signal_handle_windows.zig
 
 comptime {
     if (Environment.isWindows) {
-        @export(&Bun__UVSignalHandle__init, .{ .name = "Bun__UVSignalHandle__init" });
-        @export(&Bun__UVSignalHandle__close, .{ .name = "Bun__UVSignalHandle__close" });
         @export(&@"windows process.dlopen", .{ .name = "Bun__LoadLibraryBunString" });
     }
 }
-
-extern fn GetUserNameW(
-    lpBuffer: bun.windows.LPWSTR,
-    pcbBuffer: bun.windows.LPDWORD,
-) bun.windows.BOOL;
 
 /// Is not the actual UID of the user, but just a hash of username.
 pub fn userUniqueId() u32 {
@@ -3395,11 +3309,7 @@ pub fn WSAGetLastError() ?SystemErrno {
 //   [in]           LPCWSTR               lpNewDirectory,
 //   [in, optional] LPSECURITY_ATTRIBUTES lpSecurityAttributes
 // );
-pub extern "kernel32" fn CreateDirectoryExW(
-    lpTemplateDirectory: [*:0]const u16,
-    lpNewDirectory: [*:0]const u16,
-    lpSecurityAttributes: ?*win32.SECURITY_ATTRIBUTES,
-) callconv(.winapi) BOOL;
+pub const CreateDirectoryExW = @import("../../windows_sys/externs.zig").CreateDirectoryExW;
 
 pub fn GetFinalPathNameByHandle(
     hFile: HANDLE,
@@ -3438,18 +3348,6 @@ pub fn GetFinalPathNameByHandle(
     return ret;
 }
 
-extern "kernel32" fn GetModuleHandleExW(
-    dwFlags: u32, // [in]
-    lpModuleName: ?*anyopaque, // [in, optional]
-    phModule: *HMODULE, // [out]
-) BOOL;
-
-extern "kernel32" fn GetModuleFileNameW(
-    hModule: HMODULE, // [in]
-    lpFilename: LPWSTR, // [out]
-    nSize: DWORD, // [in]
-) BOOL;
-
 const GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS = 0x00000004;
 
 pub fn getModuleHandleFromAddress(addr: usize) ?HMODULE {
@@ -3469,10 +3367,7 @@ pub fn getModuleNameW(module: HMODULE, buf: []u16) ?[]const u16 {
     return buf[0..@intCast(rc)];
 }
 
-pub extern "kernel32" fn GetThreadDescription(
-    thread: ?*anyopaque, // [in]
-    *PWSTR, // [out]
-) std.os.windows.HRESULT;
+pub const GetThreadDescription = @import("../../windows_sys/externs.zig").GetThreadDescription;
 
 pub const ENABLE_ECHO_INPUT = 0x004;
 pub const ENABLE_LINE_INPUT = 0x002;
@@ -3481,10 +3376,10 @@ pub const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x200;
 pub const ENABLE_WRAP_AT_EOL_OUTPUT = 0x0002;
 pub const ENABLE_PROCESSED_OUTPUT = 0x0001;
 
-pub extern fn SetStdHandle(nStdHandle: u32, hHandle: *anyopaque) u32;
-pub extern fn GetConsoleOutputCP() u32;
-pub extern fn GetConsoleCP() u32;
-pub extern "kernel32" fn SetConsoleCP(wCodePageID: std.os.windows.UINT) callconv(.winapi) std.os.windows.BOOL;
+pub const SetStdHandle = @import("../../windows_sys/externs.zig").SetStdHandle;
+pub const GetConsoleOutputCP = @import("../../windows_sys/externs.zig").GetConsoleOutputCP;
+pub const GetConsoleCP = @import("../../windows_sys/externs.zig").GetConsoleCP;
+pub const SetConsoleCP = @import("../../windows_sys/externs.zig").SetConsoleCP;
 
 pub const DeleteFileOptions = struct {
     dir: ?HANDLE,
@@ -3605,45 +3500,23 @@ pub const STARTUPINFOEXW = extern struct {
     lpAttributeList: [*]u8,
 };
 
-pub extern "kernel32" fn InitializeProcThreadAttributeList(
-    lpAttributeList: ?[*]u8,
-    dwAttributeCount: DWORD,
-    dwFlags: DWORD,
-    size: *usize,
-) BOOL;
+pub const InitializeProcThreadAttributeList = @import("../../windows_sys/externs.zig").InitializeProcThreadAttributeList;
 
-pub extern "kernel32" fn UpdateProcThreadAttribute(
-    lpAttributeList: [*]u8, // [in, out]
-    dwFlags: DWORD, // [in]
-    Attribute: windows.DWORD_PTR, // [in]
-    lpValue: *const anyopaque, // [in]
-    cbSize: usize, // [in]
-    lpPreviousValue: ?*anyopaque, // [out, optional]
-    lpReturnSize: ?*usize, // [in, optional]
-) BOOL;
+pub const UpdateProcThreadAttribute = @import("../../windows_sys/externs.zig").UpdateProcThreadAttribute;
 
-pub extern "kernel32" fn IsProcessInJob(process: HANDLE, job: HANDLE, result: *BOOL) BOOL;
+pub const IsProcessInJob = @import("../../windows_sys/externs.zig").IsProcessInJob;
 
 pub const EXTENDED_STARTUPINFO_PRESENT = 0x80000;
 pub const PROC_THREAD_ATTRIBUTE_JOB_LIST = 0x2000D;
 
 /// Handle to a Windows pseudoconsole (ConPTY).
-pub const HPCON = *anyopaque;
+pub const HPCON = @import("../../windows_sys/externs.zig").HPCON;
 
-pub extern "kernel32" fn CreatePseudoConsole(
-    size: COORD,
-    hInput: HANDLE,
-    hOutput: HANDLE,
-    dwFlags: DWORD,
-    phPC: *HPCON,
-) callconv(.winapi) std.os.windows.HRESULT;
+pub const CreatePseudoConsole = @import("../../windows_sys/externs.zig").CreatePseudoConsole;
 
-pub extern "kernel32" fn ResizePseudoConsole(
-    hPC: HPCON,
-    size: COORD,
-) callconv(.winapi) std.os.windows.HRESULT;
+pub const ResizePseudoConsole = @import("../../windows_sys/externs.zig").ResizePseudoConsole;
 
-pub extern "kernel32" fn ClosePseudoConsole(hPC: HPCON) callconv(.winapi) void;
+pub const ClosePseudoConsole = @import("../../windows_sys/externs.zig").ClosePseudoConsole;
 
 pub const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
 pub const JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION = 0x400;
@@ -3780,15 +3653,15 @@ pub const rescle = struct {
     }
 };
 
-pub extern "kernel32" fn CloseHandle(hObject: HANDLE) callconv(.winapi) BOOL;
-pub extern "kernel32" fn GetFinalPathNameByHandleW(hFile: HANDLE, lpszFilePath: [*]u16, cchFilePath: DWORD, dwFlags: DWORD) callconv(.winapi) DWORD;
-pub extern "kernel32" fn DeleteFileW(lpFileName: [*:0]const u16) callconv(.winapi) BOOL;
-pub extern "kernel32" fn CreateSymbolicLinkW(lpSymlinkFileName: [*:0]const u16, lpTargetFileName: [*:0]const u16, dwFlags: DWORD) callconv(.winapi) BOOLEAN;
-pub extern "kernel32" fn GetCurrentThread() callconv(.winapi) HANDLE;
-pub extern "kernel32" fn GetCommandLineW() callconv(.winapi) LPWSTR;
-pub extern "kernel32" fn CreateDirectoryW(lpPathName: [*:0]const u16, lpSecurityAttributes: ?*windows.SECURITY_ATTRIBUTES) callconv(.winapi) BOOL;
-pub extern "kernel32" fn SetEndOfFile(hFile: HANDLE) callconv(.winapi) BOOL;
-pub extern "kernel32" fn GetProcessTimes(in_hProcess: HANDLE, out_lpCreationTime: *FILETIME, out_lpExitTime: *FILETIME, out_lpKernelTime: *FILETIME, out_lpUserTime: *FILETIME) callconv(.winapi) BOOL;
+pub const CloseHandle = @import("../../windows_sys/externs.zig").CloseHandle;
+pub const GetFinalPathNameByHandleW = @import("../../windows_sys/externs.zig").GetFinalPathNameByHandleW;
+pub const DeleteFileW = @import("../../windows_sys/externs.zig").DeleteFileW;
+pub const CreateSymbolicLinkW = @import("../../windows_sys/externs.zig").CreateSymbolicLinkW;
+pub const GetCurrentThread = @import("../../windows_sys/externs.zig").GetCurrentThread;
+pub const GetCommandLineW = @import("../../windows_sys/externs.zig").GetCommandLineW;
+pub const CreateDirectoryW = @import("../../windows_sys/externs.zig").CreateDirectoryW;
+pub const SetEndOfFile = @import("../../windows_sys/externs.zig").SetEndOfFile;
+pub const GetProcessTimes = @import("../../windows_sys/externs.zig").GetProcessTimes;
 
 /// Returns the original mode, or null on failure
 pub fn updateStdioModeFlags(i: bun.FD.Stdio, opts: struct { set: DWORD = 0, unset: DWORD = 0 }) !DWORD {
@@ -3808,7 +3681,7 @@ const watcherChildEnv: [:0]const u16 = bun.strings.toUTF16Literal("_BUN_WATCHER_
 // this was randomly generated - we need to avoid using a common exit code that might be used by the script itself
 pub const watcher_reload_exit: DWORD = 3224497970;
 
-pub const spawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
+pub const spawn = @import("../../runtime/api/bun/spawn.zig").PosixSpawn;
 
 pub fn isWatcherChild() bool {
     var buf: [1]u16 = undefined;
@@ -4002,7 +3875,7 @@ fn @"windows process.dlopen"(str: *bun.String) callconv(.c) ?*anyopaque {
     return bun.windows.kernel32.LoadLibraryExW(buf[0..data.len :0].ptr, null, LOAD_WITH_ALTERED_SEARCH_PATH);
 }
 
-pub extern fn windows_enable_stdio_inheritance() void;
+pub const windows_enable_stdio_inheritance = @import("../../windows_sys/externs.zig").windows_enable_stdio_inheritance;
 
 /// Extracted from standard library except this takes an open file descriptor
 ///
@@ -4212,10 +4085,14 @@ pub fn GetEnvironmentVariableW(lpName: LPWSTR, lpBuffer: [*]u16, nSize: DWORD) G
     return rc;
 }
 
-pub const env = @import("./windows/env.zig");
+pub const env = @import("./env.zig");
 
 const builtin = @import("builtin");
 const std = @import("std");
+
+const GetModuleFileNameW = @import("../../windows_sys/externs.zig").GetModuleFileNameW;
+const GetModuleHandleExW = @import("../../windows_sys/externs.zig").GetModuleHandleExW;
+const GetUserNameW = @import("../../windows_sys/externs.zig").GetUserNameW;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

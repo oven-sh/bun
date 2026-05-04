@@ -1778,8 +1778,8 @@ const WebSocketProxyTunnel = @import("./websocket_client/WebSocketProxyTunnel.zi
 const std = @import("std");
 const CppWebSocket = @import("./websocket_client/CppWebSocket.zig").CppWebSocket;
 
-const Opcode = @import("./websocket.zig").Opcode;
-const WebsocketHeader = @import("./websocket.zig").WebsocketHeader;
+const Opcode = @import("../http/websocket.zig").Opcode;
+const WebsocketHeader = @import("../http/websocket.zig").WebsocketHeader;
 
 const bun = @import("bun");
 const Async = bun.Async;

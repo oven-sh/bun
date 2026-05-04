@@ -22,7 +22,7 @@ pub const BunObject = struct {
     pub const gzipSync = toJSCallback(JSZlib.gzipSync);
     pub const indexOfLine = toJSCallback(Bun.indexOfLine);
     pub const inflateSync = toJSCallback(JSZlib.inflateSync);
-    pub const jest = toJSCallback(@import("../test/jest.zig").Jest.call);
+    pub const jest = toJSCallback(@import("../../test_runner/jest.zig").Jest.call);
     pub const listen = toJSCallback(host_fn.wrapStaticMethod(api.Listener, "listen", false));
     pub const mmap = toJSCallback(Bun.mmapFile);
     pub const nanoseconds = toJSCallback(Bun.nanoseconds);
@@ -992,7 +992,7 @@ pub fn indexOfLine(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     return jsc.JSValue.jsNumberFromInt32(-1);
 }
 
-pub const Crypto = @import("./crypto.zig");
+pub const Crypto = @import("../crypto/crypto.zig");
 
 pub fn nanoseconds(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const ns = globalThis.bunVM().origin_timer.read();
@@ -1322,7 +1322,7 @@ pub fn setTLSDefaultCiphers(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject, c
 }
 
 pub fn getValkeyDefaultClient(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
-    const SubscriptionCtx = @import("../../valkey/js_valkey.zig").SubscriptionCtx;
+    const SubscriptionCtx = @import("../valkey_jsc/js_valkey.zig").SubscriptionCtx;
 
     var valkey = jsc.API.Valkey.createNoJsNoPubsub(globalThis, &.{.js_undefined}) catch |err| {
         if (err != error.JSError) {
@@ -1411,13 +1411,13 @@ const CSRFObject = struct {
         object.put(
             globalThis,
             ZigString.static("generate"),
-            jsc.JSFunction.create(globalThis, "generate", @import("../../csrf.zig").csrf__generate, 1, .{}),
+            jsc.JSFunction.create(globalThis, "generate", @import("./csrf_jsc.zig").csrf__generate, 1, .{}),
         );
 
         object.put(
             globalThis,
             ZigString.static("verify"),
-            jsc.JSFunction.create(globalThis, "verify", @import("../../csrf.zig").csrf__verify, 1, .{}),
+            jsc.JSFunction.create(globalThis, "verify", @import("./csrf_jsc.zig").csrf__verify, 1, .{}),
         );
 
         return object;
@@ -2089,7 +2089,7 @@ pub const JSZstd = struct {
 
 comptime {
     _ = Crypto.JSPasswordObject.JSPasswordObject__create;
-    _ = @import("../../btjs.zig").dumpBtjsTrace;
+    _ = @import("../../jsc/btjs.zig").dumpBtjsTrace;
     BunObject.exportAll();
 }
 
@@ -2126,13 +2126,13 @@ pub fn createBunStdout(globalThis: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue
     return blob.toJS(globalThis);
 }
 
-const Braces = @import("../../shell/braces.zig");
-const Which = @import("../../which.zig");
-const options = @import("../../options.zig");
+const Braces = @import("../../shell_parser/braces.zig");
+const Which = @import("../../which/which.zig");
+const options = @import("../../bundler/options.zig");
 const std = @import("std");
-const zlib = @import("../../zlib.zig");
-const Editor = @import("../../open.zig").Editor;
-const URL = @import("../../url.zig").URL;
+const zlib = @import("../../zlib/zlib.zig");
+const Editor = @import("../../cli/open.zig").Editor;
+const URL = @import("../../url/url.zig").URL;
 const conv = std.builtin.CallingConvention.Unspecified;
 
 const bun = @import("bun");

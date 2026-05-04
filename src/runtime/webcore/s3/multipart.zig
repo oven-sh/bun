@@ -785,11 +785,11 @@ pub const MultiPartUpload = struct {
 };
 
 const std = @import("std");
-const ACL = @import("./acl.zig").ACL;
+const ACL = @import("../../../s3_signing/acl.zig").ACL;
 const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
-const S3Credentials = @import("./credentials.zig").S3Credentials;
-const S3Error = @import("./error.zig").S3Error;
-const Storageclass = @import("./storage_class.zig").StorageClass;
+const S3Credentials = @import("../../../s3_signing/credentials.zig").S3Credentials;
+const S3Error = @import("../../../s3_signing/error.zig").S3Error;
+const Storageclass = @import("../../../s3_signing/storage_class.zig").StorageClass;
 
 const S3SimpleRequest = @import("./simple_request.zig");
 const executeSimpleS3Request = S3SimpleRequest.executeSimpleS3Request;

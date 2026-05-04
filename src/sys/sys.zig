@@ -11,13 +11,13 @@ const This = @This();
 // into methods on `bun.FD`, and keeping this namespace to just overall stuff
 // like `Error`, `Maybe`, `Tag`, and so on.
 const platform_defs = switch (Environment.os) {
-    .windows => @import("./errno/windows_errno.zig"),
-    .linux => @import("./errno/linux_errno.zig"),
-    .mac => @import("./errno/darwin_errno.zig"),
-    .freebsd => @import("./errno/freebsd_errno.zig"),
+    .windows => @import("../errno/windows_errno.zig"),
+    .linux => @import("../errno/linux_errno.zig"),
+    .mac => @import("../errno/darwin_errno.zig"),
+    .freebsd => @import("../errno/freebsd_errno.zig"),
     .wasm => {},
 };
-pub const workaround_symbols = @import("./workaround_missing_symbols.zig").current;
+pub const workaround_symbols = @import("../workaround_missing_symbols.zig").current;
 /// Enum of `errno` values
 pub const E = platform_defs.E;
 /// Namespace of (potentially polyfilled) libuv `errno` values.
@@ -331,8 +331,8 @@ pub const Tag = enum(u8) {
     pub var strings = std.EnumMap(Tag, jsc.C.JSStringRef).initFull(null);
 };
 
-pub const Error = @import("./sys/Error.zig");
-pub const PosixStat = @import("./sys/PosixStat.zig").PosixStat;
+pub const Error = @import("./Error.zig");
+pub const PosixStat = @import("./PosixStat.zig").PosixStat;
 
 pub fn Maybe(comptime ReturnTypeT: type) type {
     return bun.api.node.Maybe(ReturnTypeT, Error);
@@ -4167,8 +4167,8 @@ pub fn isPollable(mode: mode_t) bool {
 pub const Dir = @import("./dir.zig");
 const FILE_SHARE = w.FILE_SHARE_WRITE | w.FILE_SHARE_READ | w.FILE_SHARE_DELETE;
 
-pub const libuv_error_map = @import("./sys/libuv_error_map.zig").libuv_error_map;
-pub const coreutils_error_map = @import("./sys/coreutils_error_map.zig").coreutils_error_map;
+pub const libuv_error_map = @import("./libuv_error_map.zig").libuv_error_map;
+pub const coreutils_error_map = @import("./coreutils_error_map.zig").coreutils_error_map;
 
 extern fn getRSS(rss: *usize) c_int;
 pub fn selfProcessMemoryUsage() ?usize {
@@ -4602,24 +4602,9 @@ pub const umask = switch (Environment.os) {
     .windows => @extern(*const fn (mode: u16) callconv(.c) u16, .{ .name = "_umask" }),
 };
 
-pub const TestingAPIs = struct {
-    /// Exposes libuv -> `bun.sys.E` translation so tests can feed out-of-range
-    /// negative values and verify it does not panic. Windows-only.
-    pub fn translateUVErrorToE(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const arguments = callframe.arguments();
-        if (arguments.len < 1 or !arguments[0].isNumber()) {
-            return globalThis.throw("translateUVErrorToE: expected 1 number argument", .{});
-        }
-        if (comptime !Environment.isWindows) {
-            return .js_undefined;
-        }
-        const code: c_int = arguments[0].toInt32();
-        const result = bun.windows.libuv.translateUVErrorToE(code);
-        return bun.String.createUTF8ForJS(globalThis, @tagName(result));
-    }
-};
+pub const TestingAPIs = @import("../sys_jsc/error_jsc.zig").TestingAPIs;
 
-pub const File = @import("./sys/File.zig");
+pub const File = @import("./File.zig");
 
 const builtin = @import("builtin");
 const sys = @This(); // to avoid ambiguous references.

@@ -6377,13 +6377,13 @@ pub fn serializeModuleInfo(module_info: ?*analyze_transpiled_module.ModuleInfo) 
 
 const string = []const u8;
 
-const SourceMap = @import("./sourcemap/sourcemap.zig");
-const analyze_transpiled_module = @import("./analyze_transpiled_module.zig");
-const fs = @import("./fs.zig");
-const importRecord = @import("./import_record.zig");
-const options = @import("./options.zig");
+const SourceMap = @import("../sourcemap/sourcemap.zig");
+const analyze_transpiled_module = @import("../bundler/analyze_transpiled_module.zig");
+const fs = @import("../resolver/fs.zig");
+const importRecord = @import("../options_types/import_record.zig");
+const options = @import("../bundler/options.zig");
 const rename = @import("./renamer.zig");
-const runtime = @import("./runtime.zig");
+const runtime = @import("../js_parser/runtime.zig");
 const std = @import("std");
 
 const bun = @import("bun");

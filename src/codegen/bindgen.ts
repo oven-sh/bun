@@ -1284,7 +1284,7 @@ for (const type of typeHashToReachableType.values()) {
 for (const [filename, { functions, typedefs }] of files) {
   const namespaceVar = fileMap.get(filename)!;
   assert(namespaceVar, `namespaceVar not found for ${filename}, ${inspect(fileMap)}`);
-  zigInternal.line(`const import_${namespaceVar} = @import(${str(path.relative(src + "/bun.js", filename))});`);
+  zigInternal.line(`const import_${namespaceVar} = @import(${str("../../" + filename)});`);
 
   zig.line(`/// Generated for "src/${filename}"`);
   zig.line(`pub const ${namespaceVar} = struct {`);
@@ -1588,7 +1588,7 @@ writeIfNotChanged(
   path.join(codegenRoot, "GeneratedBindings.cpp"),
   [...headers].map(name => `#include ${str(name)}\n`).join("") + "\n" + cppInternal.buffer + "\n" + cpp.buffer,
 );
-writeIfNotChanged(path.join(src, "bun.js/bindings/GeneratedBindings.zig"), zig.buffer + zigInternal.buffer);
+writeIfNotChanged(path.join(src, "jsc/bindings/GeneratedBindings.zig"), zig.buffer + zigInternal.buffer);
 
 // Headers
 for (const [filename, { functions, typedefs }] of files) {

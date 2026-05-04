@@ -190,20 +190,15 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             return null;
         }
 
-        /// Throws if toString() throws.
-        pub fn fromJS(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue) bun.JSError!?V {
-            const str = try bun.String.fromJS(input, globalThis);
-            bun.assert(str.tag != .Dead);
-            defer str.deref();
-            return getWithEql(str, bun.String.eqlComptime);
+        /// Throws if toString() throws. Typed `anytype` so `collections/` has
+        /// no JSC references; the body lives in `jsc/comptime_string_map_jsc.zig`.
+        pub fn fromJS(globalThis: anytype, input: anytype) bun.JSError!?V {
+            return @import("../jsc/comptime_string_map_jsc.zig").fromJS(@This(), globalThis, input);
         }
 
         /// Throws if toString() throws.
-        pub fn fromJSCaseInsensitive(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue) bun.JSError!?V {
-            const str = try bun.String.fromJS(input, globalThis);
-            bun.assert(str.tag != .Dead);
-            defer str.deref();
-            return str.inMapCaseInsensitive(@This());
+        pub fn fromJSCaseInsensitive(globalThis: anytype, input: anytype) bun.JSError!?V {
+            return @import("../jsc/comptime_string_map_jsc.zig").fromJSCaseInsensitive(@This(), globalThis, input);
         }
 
         pub fn fromString(str: bun.String) ?V {
@@ -552,7 +547,6 @@ const TestEnum2 = enum {
 };
 
 const bun = @import("bun");
-const jsc = bun.jsc;
 const strings = bun.strings;
 
 const std = @import("std");

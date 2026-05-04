@@ -366,7 +366,7 @@ extern fn Bun__assignStreamIntoResumableSink(globalThis: *jsc.JSGlobalObject, st
 
 const std = @import("std");
 const FetchTasklet = @import("./fetch.zig").FetchTasklet;
-const S3UploadStreamWrapper = @import("../../s3/client.zig").S3UploadStreamWrapper;
+const S3UploadStreamWrapper = @import("./s3/client.zig").S3UploadStreamWrapper;
 
 const bun = @import("bun");
 const jsc = bun.jsc;

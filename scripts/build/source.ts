@@ -111,7 +111,7 @@ export type Source =
   | {
       /**
        * Source lives in the bun repo itself, not vendor/. Used for sqlite
-       * (src/bun.js/bindings/sqlite/). The path IS the source dir — no fetch,
+       * (src/jsc/bindings/sqlite/). The path IS the source dir — no fetch,
        * build output still goes to buildDir/deps/<name>/.
        */
       kind: "in-tree";

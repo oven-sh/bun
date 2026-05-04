@@ -50,69 +50,69 @@ import { slash } from "./shell.ts";
 const noUnify: readonly string[] = [
   // Heavy single-file TUs that already saturate a core. Bundling them with
   // siblings would serialize work that should run in parallel.
-  "src/bun.js/bindings/ZigGlobalObject.cpp",
-  "src/bun.js/bindings/BunObject.cpp",
-  "src/bun.js/bindings/bindings.cpp",
-  "src/bun.js/bindings/BunProcess.cpp",
-  "src/bun.js/bindings/JSBuffer.cpp",
-  "src/bun.js/bindings/napi.cpp",
-  "src/bun.js/bindings/webcore/SerializedScriptValue.cpp",
-  "src/bun.js/bindings/webcore/HTTPParsers.cpp",
+  "src/jsc/bindings/ZigGlobalObject.cpp",
+  "src/jsc/bindings/BunObject.cpp",
+  "src/jsc/bindings/bindings.cpp",
+  "src/jsc/bindings/BunProcess.cpp",
+  "src/jsc/bindings/JSBuffer.cpp",
+  "src/jsc/bindings/napi.cpp",
+  "src/jsc/bindings/webcore/SerializedScriptValue.cpp",
+  "src/jsc/bindings/webcore/HTTPParsers.cpp",
 
   // Duplicates static MIME-parsing helpers from JSMIMEParams.cpp verbatim;
   // both end up in the same bundle. TODO: extract helpers to a shared header.
-  "src/bun.js/bindings/webcore/JSMIMEType.cpp",
+  "src/jsc/bindings/webcore/JSMIMEType.cpp",
 
   // These instantiate JSDOMConvert templates with JSC::* types whose toJS()
   // overloads live in namespace WebCore — ADL can't find them, so they rely
   // on ordinary lookup at template definition time. That fails if an earlier
   // file in the bundle already parsed JSDOMConvertInterface.h /
   // JSDOMWrapperCache.h before the overload was visible.
-  "src/bun.js/bindings/webcore/JSWasmStreamingCompiler.cpp",
-  "src/bun.js/bindings/webcore/JSDOMPromiseDeferred.cpp",
-  "src/bun.js/bindings/webcore/JSMessageEventCustom.cpp",
-  "src/bun.js/bindings/sqlite/JSSQLStatement.cpp",
+  "src/jsc/bindings/webcore/JSWasmStreamingCompiler.cpp",
+  "src/jsc/bindings/webcore/JSDOMPromiseDeferred.cpp",
+  "src/jsc/bindings/webcore/JSMessageEventCustom.cpp",
+  "src/jsc/bindings/sqlite/JSSQLStatement.cpp",
 
   // WebKit-derived crypto algorithm impls share file-static helper names
   // (`aesAlgorithm`, `cryptEncrypt`, `ALG128`, `IVSIZE`, ...) — upstream
   // also compiles these outside unified sources. The remaining ~70
   // webcrypto files (JS bindings, key types) bundle cleanly.
-  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_CBC.cpp",
-  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_CBCOpenSSL.cpp",
-  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_CFB.cpp",
-  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_CFBOpenSSL.cpp",
-  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_CTR.cpp",
-  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_CTROpenSSL.cpp",
-  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_GCM.cpp",
-  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_GCMOpenSSL.cpp",
-  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_KW.cpp",
-  "src/bun.js/bindings/webcrypto/CryptoAlgorithmECDSA.cpp",
-  "src/bun.js/bindings/webcrypto/CryptoAlgorithmHMAC.cpp",
-  "src/bun.js/bindings/webcrypto/CryptoAlgorithmRSAES_PKCS1_v1_5.cpp",
-  "src/bun.js/bindings/webcrypto/CryptoAlgorithmRSASSA_PKCS1_v1_5.cpp",
-  "src/bun.js/bindings/webcrypto/CryptoAlgorithmRSA_OAEP.cpp",
-  "src/bun.js/bindings/webcrypto/CryptoAlgorithmRSA_PSS.cpp",
-  "src/bun.js/bindings/webcrypto/SubtleCrypto.cpp",
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CBC.cpp",
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CBCOpenSSL.cpp",
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CFB.cpp",
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CFBOpenSSL.cpp",
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CTR.cpp",
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CTROpenSSL.cpp",
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_GCM.cpp",
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_GCMOpenSSL.cpp",
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_KW.cpp",
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmECDSA.cpp",
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmHMAC.cpp",
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmRSAES_PKCS1_v1_5.cpp",
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmRSASSA_PKCS1_v1_5.cpp",
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmRSA_OAEP.cpp",
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmRSA_PSS.cpp",
+  "src/jsc/bindings/webcrypto/SubtleCrypto.cpp",
 
   // Redefines ~80 errno/EAI_* macros (the EAI_* ones unconditionally, the
   // rest via `#if !defined`) and uses them to build a switch. The defines
   // leak forward; an earlier sibling pulling <netdb.h>/<errno.h> changes
   // which conditional branches fire.
-  "src/bun.js/bindings/ProcessBindingUV.cpp",
+  "src/jsc/bindings/ProcessBindingUV.cpp",
 
   // Uses `#ifdef S_IFBLK` / `#ifdef S_IFSOCK` etc. to decide which constants
   // to expose in `fs.constants` — Node.js omits these on Windows. When
   // bundled after NodeFSStatBinding.cpp (which `#define`s them for its own
   // S_IS*() helpers on Windows), the ifdefs fire and the constants leak into
   // `fs.constants`, breaking Node.js parity and test/js/node/fs/fs.test.ts.
-  "src/bun.js/bindings/ProcessBindingConstants.cpp",
+  "src/jsc/bindings/ProcessBindingConstants.cpp",
 
   // Defines extern "C" replacements for platform symbols (strncasecmp,
   // fstat64, environ, ...). On Windows an earlier sibling can leak
   // `#define strncasecmp _strnicmp`, turning the definition here into a
   // duplicate of the CRT's _strnicmp. Independent of the flags-override
   // exclusion, which is linux-lto-only.
-  "src/bun.js/bindings/workaround-missing-symbols.cpp",
+  "src/jsc/bindings/workaround-missing-symbols.cpp",
 
   // Platform cert loaders include OS crypto headers (<wincrypt.h>,
   // <Security/Security.h>) and deliberately avoid OpenSSL. wincrypt
@@ -127,15 +127,15 @@ const noUnify: readonly string[] = [
   // bundled after highway_strings.cpp it doesn't re-expand and only the
   // baseline ISA namespace exists for image_resize → HWY_EXPORT can't find
   // N_AVX2/N_AVX3/etc. variants.
-  "src/bun.js/bindings/image_resize.cpp",
+  "src/jsc/bindings/image_resize.cpp",
   // Declares its own minimal CGRect/kCFStringEncodingUTF8/kCFNumberDoubleType
   // so it doesn't pull a CoreGraphics load command; bundled with files that
   // include the real CF headers those names become ambiguous.
-  "src/bun.js/bindings/image_coregraphics_shim.cpp",
+  "src/jsc/bindings/image_coregraphics_shim.cpp",
   // Includes <windows.h> + <ocidl.h> for the real VARIANT/IPropertyBag2 ABI;
   // keeping it out of unified bundles avoids the macro pollution (`min`/`max`
   // /`ERROR`/etc.) leaking into siblings.
-  "src/bun.js/bindings/image_wic_shim.cpp",
+  "src/jsc/bindings/image_wic_shim.cpp",
 ];
 
 /**

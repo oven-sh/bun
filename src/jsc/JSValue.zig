@@ -1365,7 +1365,7 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__eqlCell(this, other);
     }
 
-    /// This must match the enum in C++ in src/bun.js/bindings/bindings.cpp BuiltinNamesMap
+    /// This must match the enum in C++ in src/jsc/bindings/bindings.cpp BuiltinNamesMap
     pub const BuiltinName = enum(u8) {
         method,
         headers,
@@ -2488,7 +2488,7 @@ const string = []const u8;
 
 const FFI = @import("./FFI.zig");
 const std = @import("std");
-const JestPrettyFormat = @import("../test/pretty_format.zig").JestPrettyFormat;
+const JestPrettyFormat = @import("../test_runner/pretty_format.zig").JestPrettyFormat;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

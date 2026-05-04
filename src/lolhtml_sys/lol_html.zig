@@ -609,11 +609,7 @@ pub const HTMLString = extern struct {
         return bun.String.cloneUTF8(bytes);
     }
 
-    pub fn toJS(this: HTMLString, globalThis: *bun.jsc.JSGlobalObject) bun.JSError!bun.jsc.JSValue {
-        var str = this.toString();
-        defer str.deref();
-        return try str.toJS(globalThis);
-    }
+    pub const toJS = @import("../runtime/api/lolhtml_jsc.zig").htmlStringToJS;
 };
 
 pub const EndTag = opaque {

@@ -2021,13 +2021,13 @@ pub const BuildArtifact = struct {
 
 const string = []const u8;
 
-const CompileTarget = @import("../../compile_target.zig");
-const Fs = @import("../../fs.zig");
+const CompileTarget = @import("../../options_types/CompileTarget.zig");
+const Fs = @import("../../resolver/fs.zig");
 const _resolver = @import("../../resolver/resolver.zig");
-const resolve_path = @import("../../resolver/resolve_path.zig");
+const resolve_path = @import("../../paths/resolve_path.zig");
 const std = @import("std");
 
-const options = @import("../../options.zig");
+const options = @import("../../bundler/options.zig");
 const Loader = options.Loader;
 const Target = options.Target;
 

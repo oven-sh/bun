@@ -4858,7 +4858,7 @@ pub const H2FrameParser = struct {
 
 extern fn Bun__wrapAbortError(globalObject: *jsc.JSGlobalObject, cause: jsc.JSValue) jsc.JSValue;
 
-const lshpack = @import("./lshpack.zig");
+const lshpack = @import("../../../http/lshpack.zig");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 

@@ -4,7 +4,7 @@ pub const AutoAbsPath = paths.AutoAbsPath;
 pub const RelPath = paths.RelPath;
 pub const AutoRelPath = paths.AutoRelPath;
 
-pub const EnvPath = @import("./paths/EnvPath.zig").EnvPath;
+pub const EnvPath = @import("./EnvPath.zig").EnvPath;
 
 pub const path_buffer_pool = pools.path_buffer_pool;
 pub const w_path_buffer_pool = pools.w_path_buffer_pool;
@@ -19,8 +19,8 @@ pub const OSPathSliceZ = [:0]const OSPathChar;
 pub const OSPathSlice = []const OSPathChar;
 pub const OSPathBuffer = if (Environment.isWindows) WPathBuffer else PathBuffer;
 
-const paths = @import("./paths/Path.zig");
-const pools = @import("./paths/path_buffer_pool.zig");
+const paths = @import("./Path.zig");
+const pools = @import("./path_buffer_pool.zig");
 const std = @import("std");
 
 const bun = @import("bun");

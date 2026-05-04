@@ -1,51 +1,50 @@
-const uws = @This();
-
-pub const us_socket_t = @import("./uws/us_socket_t.zig").us_socket_t;
-pub const SocketTLS = @import("./uws/socket.zig").SocketTLS;
-pub const SocketTCP = @import("./uws/socket.zig").SocketTCP;
-pub const InternalSocket = @import("./uws/socket.zig").InternalSocket;
+pub const us_socket_t = @import("../uws_sys/us_socket_t.zig").us_socket_t;
+pub const us_socket_stream_buffer_t = @import("../uws_sys/us_socket_t.zig").us_socket_stream_buffer_t;
+pub const SocketTLS = @import("../uws_sys/socket.zig").SocketTLS;
+pub const SocketTCP = @import("../uws_sys/socket.zig").SocketTCP;
+pub const InternalSocket = @import("../uws_sys/socket.zig").InternalSocket;
 pub const Socket = us_socket_t;
-pub const Timer = @import("./uws/Timer.zig").Timer;
-pub const SocketGroup = @import("./uws/SocketGroup.zig").SocketGroup;
-pub const SocketKind = @import("./uws/SocketKind.zig").SocketKind;
-pub const vtable = @import("./uws/vtable.zig");
-pub const dispatch = @import("./uws/dispatch.zig");
+pub const Timer = @import("../uws_sys/Timer.zig").Timer;
+pub const SocketGroup = @import("../uws_sys/SocketGroup.zig").SocketGroup;
+pub const SocketKind = @import("../uws_sys/SocketKind.zig").SocketKind;
+pub const vtable = @import("../uws_sys/vtable.zig");
+pub const dispatch = @import("../runtime/socket/uws_dispatch.zig");
 /// The opaque `us_socket_context_t` is gone; this namespace now only carries
 /// the SSL-options extern struct (`SSLConfig.asUSockets()` return type).
-pub const SocketContext = @import("./uws/SocketContext.zig");
+pub const SocketContext = @import("../uws_sys/SocketContext.zig");
 /// Bare BoringSSL `SSL_CTX`. `SSL_CTX_up_ref`/`SSL_CTX_free` is the refcount;
 /// policy (verify mode, reneg limits) is encoded on the SSL_CTX itself via
 /// `us_ssl_ctx_from_options`, so there's no wrapper struct. `?*SslCtx` is what
 /// listen/connect/adopt take.
 pub const SslCtx = bun.BoringSSL.c.SSL_CTX;
-pub const ConnectingSocket = @import("./uws/ConnectingSocket.zig").ConnectingSocket;
-pub const InternalLoopData = @import("./uws/InternalLoopData.zig").InternalLoopData;
-pub const WindowsNamedPipe = @import("./uws/WindowsNamedPipe.zig");
-pub const PosixLoop = @import("./uws/Loop.zig").PosixLoop;
-pub const WindowsLoop = @import("./uws/Loop.zig").WindowsLoop;
-pub const Request = @import("./uws/Request.zig").Request;
-pub const AnyRequest = @import("./uws/Request.zig").AnyRequest;
-pub const AnyResponse = @import("./uws/Response.zig").AnyResponse;
-pub const NewApp = @import("./uws/App.zig").NewApp;
-pub const uws_res = @import("./uws/Response.zig").uws_res;
-pub const RawWebSocket = @import("./uws/WebSocket.zig").RawWebSocket;
-pub const AnyWebSocket = @import("./uws/WebSocket.zig").AnyWebSocket;
-pub const WebSocketBehavior = @import("./uws/WebSocket.zig").WebSocketBehavior;
+pub const ConnectingSocket = @import("../uws_sys/ConnectingSocket.zig").ConnectingSocket;
+pub const InternalLoopData = @import("../uws_sys/InternalLoopData.zig").InternalLoopData;
+pub const WindowsNamedPipe = @import("../runtime/socket/WindowsNamedPipe.zig");
+pub const PosixLoop = @import("../uws_sys/Loop.zig").PosixLoop;
+pub const WindowsLoop = @import("../uws_sys/Loop.zig").WindowsLoop;
+pub const Request = @import("../uws_sys/Request.zig").Request;
+pub const AnyRequest = @import("../uws_sys/Request.zig").AnyRequest;
+pub const AnyResponse = @import("../uws_sys/Response.zig").AnyResponse;
+pub const NewApp = @import("../uws_sys/App.zig").NewApp;
+pub const uws_res = @import("../uws_sys/Response.zig").uws_res;
+pub const RawWebSocket = @import("../uws_sys/WebSocket.zig").RawWebSocket;
+pub const AnyWebSocket = @import("../uws_sys/WebSocket.zig").AnyWebSocket;
+pub const WebSocketBehavior = @import("../uws_sys/WebSocket.zig").WebSocketBehavior;
 /// uWS C++ `WebSocketContext<SSL,true,UserData>*`. Only ever produced by the
 /// upgrade-handler thunk and round-tripped to `uws_res_upgrade`; Zig never
 /// dereferences it. Typed as a named opaque so it can't be confused with the
 /// dozen other handles that flow through the upgrade path.
 pub const WebSocketUpgradeContext = opaque {};
-pub const AnySocket = @import("./uws/socket.zig").AnySocket;
-pub const NewSocketHandler = @import("./uws/socket.zig").NewSocketHandler;
-pub const UpgradedDuplex = @import("./uws/UpgradedDuplex.zig");
-pub const ListenSocket = @import("./uws/ListenSocket.zig").ListenSocket;
-pub const State = @import("./uws/Response.zig").State;
-pub const Loop = @import("./uws/Loop.zig").Loop;
-pub const udp = @import("./uws/udp.zig");
-pub const BodyReaderMixin = @import("./uws/BodyReaderMixin.zig").BodyReaderMixin;
-pub const H3 = @import("./uws/h3.zig");
-pub const quic = @import("./uws/quic.zig");
+pub const AnySocket = @import("../uws_sys/socket.zig").AnySocket;
+pub const NewSocketHandler = @import("../uws_sys/socket.zig").NewSocketHandler;
+pub const UpgradedDuplex = @import("../runtime/socket/UpgradedDuplex.zig");
+pub const ListenSocket = @import("../uws_sys/ListenSocket.zig").ListenSocket;
+pub const State = @import("../uws_sys/Response.zig").State;
+pub const Loop = @import("../uws_sys/Loop.zig").Loop;
+pub const udp = @import("../uws_sys/udp.zig");
+pub const BodyReaderMixin = @import("../uws_sys/BodyReaderMixin.zig").BodyReaderMixin;
+pub const H3 = @import("../uws_sys/h3.zig");
+pub const quic = @import("../uws_sys/quic.zig");
 
 /// Recovers the concrete uWS response type from `*anyopaque` across the
 /// Zig→C++ boundary. Mirrors `UWSResponseKind` in headers-handwritten.h.
@@ -112,19 +111,7 @@ pub const create_bun_socket_error_t = enum(c_int) {
         };
     }
 
-    pub fn toJS(this: create_bun_socket_error_t, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
-        return switch (this) {
-            // us_ssl_ctx_from_options only sets *err for the CA/cipher cases;
-            // bad cert/key/DH return NULL with .none and the detail is on the
-            // BoringSSL error queue. Surfacing it here keeps every
-            // `createSSLContext(...) orelse return err.toJS()` site correct.
-            .none => bun.BoringSSL.ERR_toJS(globalObject, bun.BoringSSL.c.ERR_get_error()),
-            .load_ca_file => globalObject.ERR(.BORINGSSL, "Failed to load CA file", .{}).toJS(),
-            .invalid_ca_file => globalObject.ERR(.BORINGSSL, "Invalid CA file", .{}).toJS(),
-            .invalid_ca => globalObject.ERR(.BORINGSSL, "Invalid CA", .{}).toJS(),
-            .invalid_ciphers => globalObject.ERR(.BORINGSSL, "Invalid ciphers", .{}).toJS(),
-        };
-    }
+    pub const toJS = @import("../runtime/socket/uws_jsc.zig").createBunSocketErrorToJS;
 };
 
 pub const us_bun_verify_error_t = extern struct {
@@ -132,17 +119,7 @@ pub const us_bun_verify_error_t = extern struct {
     code: [*c]const u8 = null,
     reason: [*c]const u8 = null,
 
-    pub fn toJS(this: *const us_bun_verify_error_t, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
-        const code = if (this.code == null) "" else this.code[0..bun.len(this.code)];
-        const reason = if (this.reason == null) "" else this.reason[0..bun.len(this.reason)];
-
-        const fallback = jsc.SystemError{
-            .code = bun.String.cloneUTF8(code),
-            .message = bun.String.cloneUTF8(reason),
-        };
-
-        return fallback.toErrorInstance(globalObject);
-    }
+    pub const toJS = @import("../runtime/socket/uws_jsc.zig").verifyErrorToJS;
 };
 
 pub const SocketAddress = struct {
@@ -198,4 +175,3 @@ pub fn get_default_ciphers() [:0]const u8 {
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const jsc = bun.jsc;

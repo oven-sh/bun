@@ -430,7 +430,7 @@ pub fn jsFunctionColor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFram
 
 const std = @import("std");
 
-const color = @import("./color.zig");
+const color = @import("../css/values/color.zig");
 const HSL = color.HSL;
 const LAB = color.LAB;
 const RGBA = color.RGBA;

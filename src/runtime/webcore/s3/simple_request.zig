@@ -449,14 +449,14 @@ pub fn executeSimpleS3Request(
 
 const ListObjects = @import("./list_objects.zig");
 const std = @import("std");
-const ACL = @import("./acl.zig").ACL;
-const StorageClass = @import("./storage_class.zig").StorageClass;
+const ACL = @import("../../../s3_signing/acl.zig").ACL;
+const StorageClass = @import("../../../s3_signing/storage_class.zig").StorageClass;
 
-const S3Credentials = @import("./credentials.zig").S3Credentials;
-const SignResult = @import("./credentials.zig").S3Credentials.SignResult;
+const S3Credentials = @import("../../../s3_signing/credentials.zig").S3Credentials;
+const SignResult = @import("../../../s3_signing/credentials.zig").S3Credentials.SignResult;
 
-const S3Error = @import("./error.zig").S3Error;
-const getSignErrorCodeAndMessage = @import("./error.zig").getSignErrorCodeAndMessage;
+const S3Error = @import("../../../s3_signing/error.zig").S3Error;
+const getSignErrorCodeAndMessage = @import("../../../s3_signing/error.zig").getSignErrorCodeAndMessage;
 
 const bun = @import("bun");
 const jsc = bun.jsc;

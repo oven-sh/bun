@@ -606,7 +606,7 @@ pub const Runner = struct {
 
 const string = []const u8;
 
-const DotEnv = @import("../env_loader.zig");
+const DotEnv = @import("../dotenv/env_loader.zig");
 const std = @import("std");
 
 const MacroRemap = @import("../resolver/package_json.zig").MacroMap;

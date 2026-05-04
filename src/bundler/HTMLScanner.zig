@@ -297,11 +297,11 @@ pub fn HTMLProcessor(
     };
 }
 
-const lol = @import("./deps/lol-html.zig");
+const lol = @import("../lolhtml_sys/lol_html.zig");
 const std = @import("std");
 
-const ImportKind = @import("./import_record.zig").ImportKind;
-const ImportRecord = @import("./import_record.zig").ImportRecord;
+const ImportKind = @import("../options_types/import_record.zig").ImportKind;
+const ImportRecord = @import("../options_types/import_record.zig").ImportRecord;
 
 const bun = @import("bun");
 const fs = bun.fs;

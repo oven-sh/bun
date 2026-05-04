@@ -922,7 +922,7 @@ pub fn websocketDeflate(this: *RareData) *WebSocketDeflate.RareData {
     };
 }
 
-pub const SpawnSyncEventLoop = @import("./event_loop/SpawnSyncEventLoop.zig");
+pub const SpawnSyncEventLoop = @import("../event_loop/SpawnSyncEventLoop.zig");
 
 pub fn spawnSyncEventLoop(this: *RareData, vm: *jsc.VirtualMachine) *SpawnSyncEventLoop {
     return this.#spawn_sync_event_loop.get() orelse brk: {
@@ -934,14 +934,14 @@ pub fn spawnSyncEventLoop(this: *RareData, vm: *jsc.VirtualMachine) *SpawnSyncEv
 }
 
 const UUID = @import("./uuid.zig");
-const WebSocketDeflate = @import("../http/websocket_client/WebSocketDeflate.zig");
+const WebSocketDeflate = @import("../http_jsc/websocket_client/WebSocketDeflate.zig");
 const std = @import("std");
-const EditorContext = @import("../open.zig").EditorContext;
-const FSWatcher = @import("./node/node_fs_watcher.zig").FSWatcher;
-const ValkeyContext = @import("../valkey/valkey.zig").ValkeyContext;
+const EditorContext = @import("../cli/open.zig").EditorContext;
+const FSWatcher = @import("../runtime/node/node_fs_watcher.zig").FSWatcher;
+const ValkeyContext = @import("../runtime/valkey_jsc/valkey.zig").ValkeyContext;
 
-const StatWatcher = @import("./node/node_fs_stat_watcher.zig").StatWatcher;
-const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
+const StatWatcher = @import("../runtime/node/node_fs_stat_watcher.zig").StatWatcher;
+const StatWatcherScheduler = @import("../runtime/node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 
 const bun = @import("bun");
 const Async = bun.Async;

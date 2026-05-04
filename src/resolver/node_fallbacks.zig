@@ -92,7 +92,7 @@ const string = []const u8;
 
 const Fs = @import("./fs.zig");
 const std = @import("std");
-const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
+const PackageJSON = @import("./package_json.zig").PackageJSON;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

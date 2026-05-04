@@ -380,8 +380,8 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame
 
 const string = []const u8;
 
-const ResolvePath = @import("../../resolver/resolve_path.zig");
-const Syscall = @import("../../sys.zig");
+const ResolvePath = @import("../../paths/resolve_path.zig");
+const Syscall = @import("../../sys/sys.zig");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Arena = std.heap.ArenaAllocator;

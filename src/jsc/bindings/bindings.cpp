@@ -5058,7 +5058,7 @@ JSC::EncodedJSValue JSC__JSValue__createUninitializedUint8Array(JSC::JSGlobalObj
     return JSC::JSValue::encode(value);
 }
 
-// This enum must match the zig enum in src/bun.js/bindings/JSValue.zig JSValue.BuiltinName
+// This enum must match the zig enum in src/jsc/bindings/JSValue.zig JSValue.BuiltinName
 enum class BuiltinNamesMap : uint8_t {
     method,
     headers,

@@ -300,7 +300,7 @@ pub const Parser = struct {
 
     fn has_eq_sign(self: *Parser, str: []const u8) ?u32 {
         _ = self;
-        return @import("./shell.zig").hasEqSign(str);
+        return @import("../shell/shell.zig").hasEqSign(str);
     }
 
     fn advance(self: *Parser) Token {
@@ -724,10 +724,10 @@ test Lexer {
     }
 }
 
-const SmolStr = @import("../string.zig").SmolStr;
+const SmolStr = @import("../string/string.zig").SmolStr;
 
-const Encoding = @import("./shell.zig").StringEncoding;
-const NewChars = @import("./shell.zig").ShellCharIter;
+const Encoding = @import("../shell/shell.zig").StringEncoding;
+const NewChars = @import("../shell/shell.zig").ShellCharIter;
 
 const bun = @import("bun");
 const assert = bun.assert;

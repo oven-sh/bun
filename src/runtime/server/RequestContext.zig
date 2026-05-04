@@ -2694,13 +2694,13 @@ fn getContentType(headers: ?*WebCore.FetchHeaders, blob: *const WebCore.Blob.Any
     return .{ content_type, needs_content_type, content_type_needs_free };
 }
 
-const welcome_page_html_gz = @embedFile("../welcome-page.html.gz");
+const welcome_page_html_gz = @embedFile("../api/welcome-page.html.gz");
 
 const ctxLog = Output.scoped(.RequestContext, .visible);
 const string = []const u8;
 
 const std = @import("std");
-const Fallback = @import("../../../runtime.zig").Fallback;
+const Fallback = @import("../../js_parser/runtime.zig").Fallback;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

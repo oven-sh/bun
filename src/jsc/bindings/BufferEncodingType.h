@@ -4,7 +4,7 @@
 
 namespace WebCore {
 
-// must match src/bun.js/node/types.zig#Encoding
+// must match src/runtime/node/types.zig#Encoding
 enum class BufferEncodingType : uint8_t {
     utf8 = 0,
     ucs2 = 1,

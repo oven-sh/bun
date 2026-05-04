@@ -887,7 +887,7 @@ pub fn headerStr(this: *const HTTPClient, ptr: api.StringPointer) string {
     return this.header_buf[ptr.offset..][0..ptr.length];
 }
 
-pub const HeaderBuilder = @import("./http/HeaderBuilder.zig");
+pub const HeaderBuilder = @import("./HeaderBuilder.zig");
 
 pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var header_count: usize = 0;
@@ -3211,37 +3211,37 @@ pub const ThreadlocalAsyncHTTP = struct {
     async_http: AsyncHTTP,
 };
 
-pub const ETag = @import("./http/ETag.zig");
-pub const Method = @import("./http/Method.zig").Method;
-pub const Headers = @import("./http/Headers.zig");
-pub const MimeType = @import("./http/MimeType.zig");
-pub const URLPath = @import("./http/URLPath.zig");
-pub const Encoding = @import("./http/Encoding.zig").Encoding;
-pub const Decompressor = @import("./http/Decompressor.zig").Decompressor;
-pub const Signals = @import("./http/Signals.zig");
-pub const ThreadSafeStreamBuffer = @import("./http/ThreadSafeStreamBuffer.zig");
-pub const HTTPThread = @import("./http/HTTPThread.zig");
-pub const NewHTTPContext = @import("./http/HTTPContext.zig").NewHTTPContext;
-pub const AsyncHTTP = @import("./http/AsyncHTTP.zig");
-pub const InternalState = @import("./http/InternalState.zig");
-pub const CertificateInfo = @import("./http/CertificateInfo.zig");
-pub const FetchRedirect = @import("./http/FetchRedirect.zig").FetchRedirect;
-pub const FetchCacheMode = @import("./http/FetchCacheMode.zig").FetchCacheMode;
-pub const FetchRequestMode = @import("./http/FetchRequestMode.zig").FetchRequestMode;
-pub const InitError = @import("./http/InitError.zig").InitError;
-pub const HTTPRequestBody = @import("./http/HTTPRequestBody.zig").HTTPRequestBody;
-pub const SendFile = @import("./http/SendFile.zig");
-pub const HeaderValueIterator = @import("./http/HeaderValueIterator.zig");
-pub const H2 = @import("./http/H2Client.zig");
-pub const H2Wire = @import("./http/H2FrameParser.zig");
-pub const H3 = @import("./http/H3Client.zig");
+pub const ETag = @import("../http_types/ETag.zig");
+pub const Method = @import("../http_types/Method.zig").Method;
+pub const Headers = @import("./Headers.zig");
+pub const MimeType = @import("../http_types/MimeType.zig");
+pub const URLPath = @import("../http_types/URLPath.zig");
+pub const Encoding = @import("../http_types/Encoding.zig").Encoding;
+pub const Decompressor = @import("./Decompressor.zig").Decompressor;
+pub const Signals = @import("./Signals.zig");
+pub const ThreadSafeStreamBuffer = @import("./ThreadSafeStreamBuffer.zig");
+pub const HTTPThread = @import("./HTTPThread.zig");
+pub const NewHTTPContext = @import("./HTTPContext.zig").NewHTTPContext;
+pub const AsyncHTTP = @import("./AsyncHTTP.zig");
+pub const InternalState = @import("./InternalState.zig");
+pub const CertificateInfo = @import("./CertificateInfo.zig");
+pub const FetchRedirect = @import("../http_types/FetchRedirect.zig").FetchRedirect;
+pub const FetchCacheMode = @import("../http_types/FetchCacheMode.zig").FetchCacheMode;
+pub const FetchRequestMode = @import("../http_types/FetchRequestMode.zig").FetchRequestMode;
+pub const InitError = @import("./InitError.zig").InitError;
+pub const HTTPRequestBody = @import("./HTTPRequestBody.zig").HTTPRequestBody;
+pub const SendFile = @import("./SendFile.zig");
+pub const HeaderValueIterator = @import("./HeaderValueIterator.zig");
+pub const H2 = @import("./H2Client.zig");
+pub const H2Wire = @import("./H2FrameParser.zig");
+pub const H3 = @import("./H3Client.zig");
 
 const string = []const u8;
 
-const HTTPCertError = @import("./http/HTTPCertError.zig");
-const ProxyTunnel = @import("./http/ProxyTunnel.zig");
+const HTTPCertError = @import("./HTTPCertError.zig");
+const ProxyTunnel = @import("./ProxyTunnel.zig");
 const std = @import("std");
-const URL = @import("./url.zig").URL;
+const URL = @import("../url/url.zig").URL;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

@@ -234,9 +234,9 @@ pub const S3HttpDownloadStreamingTask = struct {
 };
 
 const std = @import("std");
-const S3Error = @import("./error.zig").S3Error;
+const S3Error = @import("../../../s3_signing/error.zig").S3Error;
 
-const S3Credentials = @import("./credentials.zig").S3Credentials;
+const S3Credentials = @import("../../../s3_signing/credentials.zig").S3Credentials;
 const SignResult = S3Credentials.SignResult;
 
 const bun = @import("bun");

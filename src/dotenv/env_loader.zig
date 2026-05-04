@@ -1417,10 +1417,10 @@ pub var instance: ?*Loader = null;
 
 const string = []const u8;
 
-const Fs = @import("./fs.zig");
+const Fs = @import("../resolver/fs.zig");
 const std = @import("std");
-const URL = @import("./url.zig").URL;
-const which = @import("./which.zig").which;
+const URL = @import("../url/url.zig").URL;
+const which = @import("../which/which.zig").which;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

@@ -1005,7 +1005,7 @@ fn fetchImpl(
     if (url_type != .remote) {
         defer unix_socket_path.deinit();
         var path_buf: bun.PathBuffer = undefined;
-        const PercentEncoding = @import("../../url.zig").PercentEncoding;
+        const PercentEncoding = @import("../../url/url.zig").PercentEncoding;
         var path_buf2: bun.PathBuffer = undefined;
         var stream = std.io.fixedBufferStream(&path_buf2);
         var url_path_decoded = path_buf2[0 .. PercentEncoding.decode(
@@ -1494,8 +1494,8 @@ const string = []const u8;
 
 const std = @import("std");
 const DataURL = @import("../../resolver/data_url.zig").DataURL;
-const Method = @import("../../http/Method.zig").Method;
-const ZigURL = @import("../../url.zig").URL;
+const Method = @import("../../http_types/Method.zig").Method;
+const ZigURL = @import("../../url/url.zig").URL;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

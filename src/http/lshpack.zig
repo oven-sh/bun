@@ -7,7 +7,7 @@ const lshpack_header = extern struct {
     hpack_index: u16 = 255,
 };
 
-/// wrapper implemented at src/bun.js/bindings/c-bindings.cpp
+/// wrapper implemented at src/jsc/bindings/c-bindings.cpp
 pub const HPACK = extern struct {
     self: *anyopaque,
 

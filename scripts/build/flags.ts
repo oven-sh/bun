@@ -1061,17 +1061,17 @@ export function bunIncludes(cfg: Config): string[] {
     join(cwd, "packages"),
     join(cwd, "packages/bun-usockets"),
     join(cwd, "packages/bun-usockets/src"),
-    join(cwd, "src/bun.js/bindings"),
-    join(cwd, "src/bun.js/bindings/webcore"),
-    join(cwd, "src/bun.js/bindings/webcrypto"),
-    join(cwd, "src/bun.js/bindings/node/crypto"),
-    join(cwd, "src/bun.js/bindings/node/http"),
-    join(cwd, "src/bun.js/bindings/sqlite"),
-    join(cwd, "src/bun.js/bindings/v8"),
-    join(cwd, "src/bun.js/modules"),
+    join(cwd, "src/jsc/bindings"),
+    join(cwd, "src/jsc/bindings/webcore"),
+    join(cwd, "src/jsc/bindings/webcrypto"),
+    join(cwd, "src/jsc/bindings/node/crypto"),
+    join(cwd, "src/jsc/bindings/node/http"),
+    join(cwd, "src/jsc/bindings/sqlite"),
+    join(cwd, "src/jsc/bindings/v8"),
+    join(cwd, "src/jsc/modules"),
     join(cwd, "src/js/builtins"),
     join(cwd, "src/napi"),
-    join(cwd, "src/deps"),
+    join(cwd, "src/uws_sys"),
     codegenDir,
     vendorDir,
     join(vendorDir, "picohttpparser"),
@@ -1080,10 +1080,10 @@ export function bunIncludes(cfg: Config): string[] {
   ];
 
   if (cfg.windows) {
-    includes.push(join(cwd, "src/bun.js/bindings/windows"));
+    includes.push(join(cwd, "src/jsc/bindings/windows"));
   } else {
     // libuv stubs for unix (real libuv used on windows)
-    includes.push(join(cwd, "src/bun.js/bindings/libuv"));
+    includes.push(join(cwd, "src/jsc/bindings/libuv"));
   }
 
   // musl doesn't ship sys/queue.h (glibc-only BSDism). lshpack bundles
@@ -1111,7 +1111,7 @@ export interface FileOverride {
 
 export const fileOverrides: FileOverride[] = [
   {
-    file: "src/bun.js/bindings/workaround-missing-symbols.cpp",
+    file: "src/jsc/bindings/workaround-missing-symbols.cpp",
     // -fwhole-program-vtables requires -flto; disabling one requires
     // disabling the other or clang errors.
     extraFlags: ["-fno-lto", "-fno-whole-program-vtables"],
@@ -1119,7 +1119,7 @@ export const fileOverrides: FileOverride[] = [
     desc: "Disable LTO: LLD 21 emits glibc versioned symbols (exp@GLIBC_2.17) into .lto_discard which fails to parse '@'",
   },
   {
-    file: "src/bun.js/bindings/windows/rescle.cpp",
+    file: "src/jsc/bindings/windows/rescle.cpp",
     extraFlags: "/EHsc",
     when: c => c.windows,
     desc: "Vendored electron/rcedit; VersionInfo ctor throws std::system_error caught in OnEnumResourceLanguage. Self-contained throw/catch — already excluded from PCH",

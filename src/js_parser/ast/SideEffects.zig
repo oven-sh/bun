@@ -893,7 +893,7 @@ pub const SideEffects = enum(u1) {
 
 const string = []const u8;
 
-const options = @import("../options.zig");
+const options = @import("../../bundler/options.zig");
 
 const bun = @import("bun");
 const Environment = bun.Environment;

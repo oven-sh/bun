@@ -754,8 +754,8 @@ pub const AsyncModule = struct {
 };
 
 const Dependency = @import("../install/dependency.zig");
-const Fs = @import("../fs.zig");
-const options = @import("../options.zig");
+const Fs = @import("../resolver/fs.zig");
+const options = @import("../bundler/options.zig");
 const std = @import("std");
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const dumpSource = @import("./RuntimeTranspilerStore.zig").dumpSource;

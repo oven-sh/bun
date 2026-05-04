@@ -195,7 +195,7 @@ pub fn decodeWithoutTypeChecks(this: *TextDecoder, globalThis: *jsc.JSGlobalObje
 }
 
 fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice: []const u8, comptime flush: bool) bun.JSError!JSValue {
-    const TextCodec = @import("../bindings/TextCodec.zig").TextCodec;
+    const TextCodec = @import("../../jsc/TextCodec.zig").TextCodec;
 
     switch (this.encoding) {
         EncodingLabel.latin1 => {

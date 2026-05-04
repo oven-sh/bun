@@ -2491,7 +2491,7 @@ pub fn fixDeadCodeElimination() void {
         std.mem.doNotOptimizeAway(&@field(posix_platform_specific_v8_apis, decl.name));
     }
 
-    std.mem.doNotOptimizeAway(&@import("../bun.js/node/buffer.zig").BufferVectorized.fill);
+    std.mem.doNotOptimizeAway(&@import("../runtime/node/buffer.zig").BufferVectorized.fill);
 }
 
 pub const NapiFinalizerTask = struct {
@@ -2544,8 +2544,8 @@ pub const NapiFinalizerTask = struct {
 
 const std = @import("std");
 
-const WorkPool = @import("../work_pool.zig").WorkPool;
-const WorkPoolTask = @import("../work_pool.zig").Task;
+const WorkPool = @import("../threading/work_pool.zig").WorkPool;
+const WorkPoolTask = @import("../threading/work_pool.zig").Task;
 
 const bun = @import("bun");
 const Async = bun.Async;

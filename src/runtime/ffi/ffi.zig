@@ -1518,7 +1518,7 @@ pub const FFI = struct {
             return if (Environment.codegen_embed)
                 @embedFile("./FFI.h")
             else
-                bun.runtimeEmbedFile(.src, "bun.js/api/FFI.h");
+                bun.runtimeEmbedFile(.src, "runtime/ffi/FFI.h");
         }
 
         pub fn handleTCCError(ctx: ?*Function, message: [*c]const u8) callconv(.c) void {
@@ -2401,7 +2401,7 @@ const CompilerRT = struct {
             };
         }
 
-        const Sizes = @import("../bindings/sizes.zig");
+        const Sizes = @import("../../jsc/sizes.zig");
         const offsets = Offsets.get();
         state.defineSymbolsComptime(.{
             .Bun_FFI_PointerOffsetToArgumentsList = Sizes.Bun_FFI_PointerOffsetToArgumentsList,
@@ -2440,15 +2440,15 @@ fn makeNapiEnvIfNeeded(functions: []const FFI.Function, globalThis: *JSGlobalObj
 
 const string = []const u8;
 
-const TCC = if (Environment.enable_tinycc) @import("../../deps/tcc.zig") else struct {
+const TCC = if (Environment.enable_tinycc) @import("../../tcc_sys/tcc.zig") else struct {
     pub const State = struct {
         pub fn deinit(_: *State) void {}
     };
 };
 
-const Fs = @import("../../fs.zig");
+const Fs = @import("../../resolver/fs.zig");
 const napi = @import("../../napi/napi.zig");
-const options = @import("../../options.zig");
+const options = @import("../../bundler/options.zig");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 

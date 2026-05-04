@@ -1204,18 +1204,18 @@ pub const ParseBindingOptions = struct {
 pub const ConvertESMExportsForHmr = @import("./ast/ConvertESMExportsForHmr.zig");
 pub const ImportScanner = @import("./ast/ImportScanner.zig");
 pub const TypeScript = @import("./ast/TypeScript.zig");
-pub const fs = @import("./fs.zig");
-pub const options = @import("./options.zig");
-pub const renamer = @import("./renamer.zig");
+pub const fs = @import("../resolver/fs.zig");
+pub const options = @import("../bundler/options.zig");
+pub const renamer = @import("../js_printer/renamer.zig");
 pub const KnownGlobal = @import("./ast/KnownGlobal.zig").KnownGlobal;
 pub const Parser = @import("./ast/Parser.zig").Parser;
 pub const SideEffects = @import("./ast/SideEffects.zig").SideEffects;
 pub const foldStringAddition = @import("./ast/foldStringAddition.zig").foldStringAddition;
-pub const isPackagePath = @import("./resolver/resolver.zig").isPackagePath;
+pub const isPackagePath = @import("../resolver/resolver.zig").isPackagePath;
 
 pub const Ref = @import("./ast/base.zig").Ref;
 
-pub const importRecord = @import("./import_record.zig");
+pub const importRecord = @import("../options_types/import_record.zig");
 pub const ImportKind = importRecord.ImportKind;
 const ImportRecord = importRecord.ImportRecord;
 
@@ -1263,9 +1263,9 @@ const ListManaged = std.array_list.Managed;
 const Allocator = std.mem.Allocator;
 
 const _runtime = @import("./runtime.zig");
-const Define = @import("./defines.zig").Define;
+const Define = @import("../bundler/defines.zig").Define;
 const NewParser = @import("./ast/P.zig").NewParser;
-const ObjectPool = @import("./pool.zig").ObjectPool;
+const ObjectPool = @import("../collections/pool.zig").ObjectPool;
 
 const Index = @import("./ast/base.zig").Index;
 const RefCtx = @import("./ast/base.zig").RefCtx;

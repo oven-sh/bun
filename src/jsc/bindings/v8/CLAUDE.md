@@ -20,7 +20,7 @@ For detailed background, see the blog series:
 ## Directory Structure
 
 ```
-src/bun.js/bindings/v8/
+src/jsc/bindings/v8/
 ├── v8.h                    # Main header with V8_UNIMPLEMENTED macro
 ├── v8_*.h                  # V8 compatibility headers
 ├── V8*.h                   # V8 class headers (Number, String, Object, etc.)
@@ -126,7 +126,7 @@ For **GCC/Clang** (Unix):
 bun bd --help  # This compiles your code
 
 # Extract symbols
-nm build/CMakeFiles/bun-debug.dir/src/bun.js/bindings/v8/V8NewClass.cpp.o | grep "T _ZN2v8"
+nm build/CMakeFiles/bun-debug.dir/src/jsc/bindings/v8/V8NewClass.cpp.o | grep "T _ZN2v8"
 ```
 
 For **MSVC** (Windows):

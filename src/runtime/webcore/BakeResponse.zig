@@ -6,7 +6,7 @@ pub fn fixDeadCodeElimination() void {
 extern "C" fn BakeResponse__createForSSR(globalObject: *JSGlobalObject, this: *Response, kind: u8) callconv(jsc.conv) jsc.JSValue;
 
 /// Corresponds to `JSBakeResponseKind` in
-/// `src/bun.js/bindings/JSBakeResponse.h`
+/// `src/jsc/bindings/JSBakeResponse.h`
 const SSRKind = enum(u8) {
     regular = 0,
     redirect = 1,

@@ -6,7 +6,7 @@ import path from "node:path";
 //
 // Bun.S3File.arrayBuffer() / .text() / .json() retained RSS and reached
 // OOM because S3BlobDownloadTask.onS3DownloadResolved in
-// src/bun.js/webcore/Blob.zig never freed the downloaded body
+// src/runtime/webcore/Blob.zig never freed the downloaded body
 // MutableString after handing the bytes to the JS handler. Every call
 // leaked the entire downloaded payload on the native side.
 //

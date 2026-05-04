@@ -347,15 +347,22 @@ const random = struct {
         }
 
         // `result` is freshly allocated and not yet exposed to user JS, so a
-        // detach can't race us here; pin anyway so `JobCtx` has uniform
-        // unpin-in-deinit semantics. `ArrayBuffer.alloc` produces a proper
-        // heap-backed buffer, so `bytes` is already the stable slice.
+        // detach can't race us here; pin anyway so the worker's pointer
+        // survives a GC that could relocate a FastTypedArray's inline
+        // storage, and so `JobCtx` has uniform unpin-in-deinit semantics.
+        // `ArrayBuffer.alloc` → `JSUint8Array::createUninitialized` yields a
+        // FastTypedArray for `size ≤ fastSizeLimit`, and pinning promotes
+        // that to stable heap storage (repointing the vector), so re-read
+        // the slice *after* pinning — `bytes` above is stale for small
+        // sizes once the pin runs.
+        const pinned = result.pinArrayBuffer();
+        const stable = result.asArrayBuffer(global).?;
         const ctx: JobCtx = .{
             .value = result,
-            .bytes = bytes.ptr,
+            .bytes = stable.slice().ptr,
             .offset = 0,
             .length = size,
-            .pinned = result.pinArrayBuffer(),
+            .pinned = pinned,
         };
         try Job.initAndSchedule(global, callback, &ctx);
 

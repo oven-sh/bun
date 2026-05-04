@@ -57,6 +57,25 @@ describe("randomBytes", () => {
 
     await promise;
   });
+
+  it("async fills the returned buffer (small sizes)", async () => {
+    // Small sizes exercise the FastTypedArray path inside
+    // ArrayBuffer.alloc — make sure the bytes the callback receives were
+    // actually written by the worker and aren't a stale uninitialized copy
+    // left behind by a pin-time promotion.
+    for (const size of [16, 32, 64]) {
+      let allZero = true;
+      for (let i = 0; i < 8 && allZero; i++) {
+        const buf = await new Promise<Buffer>((resolve, reject) =>
+          randomBytes(size, (err, b) => (err ? reject(err) : resolve(b))),
+        );
+        expect(buf).toBeInstanceOf(Buffer);
+        expect(buf.length).toBe(size);
+        if (buf.some(x => x !== 0)) allZero = false;
+      }
+      expect(allZero).toBe(false);
+    }
+  });
 });
 
 describe("randomFill bounds checking", () => {

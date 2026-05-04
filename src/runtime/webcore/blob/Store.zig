@@ -67,8 +67,9 @@ pub fn external(ptr: ?*anyopaque, _: ?*anyopaque, _: usize) callconv(.c) void {
 }
 pub fn initS3WithReferencedCredentials(pathlike: node.PathLike, mime_type: ?MimeType, credentials: *bun.S3.S3Credentials, allocator: std.mem.Allocator) !*Store {
     var path = pathlike;
-    // this actually protects/refs the pathlike
-    path.toThreadSafe();
+    // The Store is released from a GC finalizer, which can't safely
+    // unpin/unprotect a borrowed `.buffer` path; copy it instead.
+    path.toOwnedThreadSafe();
 
     const store = Blob.Store.new(.{
         .data = .{
@@ -96,8 +97,9 @@ pub fn initS3WithReferencedCredentials(pathlike: node.PathLike, mime_type: ?Mime
 
 pub fn initS3(pathlike: node.PathLike, mime_type: ?MimeType, credentials: bun.S3.S3Credentials, allocator: std.mem.Allocator) !*Store {
     var path = pathlike;
-    // this actually protects/refs the pathlike
-    path.toThreadSafe();
+    // The Store is released from a GC finalizer, which can't safely
+    // unpin/unprotect a borrowed `.buffer` path; copy it instead.
+    path.toOwnedThreadSafe();
 
     const store = Blob.Store.new(.{
         .data = .{

@@ -609,6 +609,22 @@ pub const PathLike = union(enum) {
         }
     }
 
+    /// Like `toThreadSafe`, but for long-lived ownership where cleanup may
+    /// run from a GC finalizer (e.g. `Blob.Store`). A `.buffer` path is
+    /// borrowed from a JS ArrayBuffer; `toThreadSafe` pins + protects it,
+    /// but the matching unpin/unprotect can't safely run during sweeping.
+    /// Instead, copy the (short) path bytes into an owned `.encoded_slice`
+    /// so `deinit()` alone releases everything. Other variants go through
+    /// `toThreadSafe` unchanged — their `deinit()` already handles cleanup.
+    pub fn toOwnedThreadSafe(this: *PathLike) void {
+        if (this.* == .buffer) {
+            const owned = bun.handleOom(bun.default_allocator.dupe(u8, this.buffer.slice()));
+            this.* = .{ .encoded_slice = jsc.ZigString.Slice.init(bun.default_allocator, owned) };
+            return;
+        }
+        this.toThreadSafe();
+    }
+
     pub fn deinitAndUnprotect(this: *const PathLike) void {
         switch (this.*) {
             inline .encoded_slice, .threadsafe_string, .slice_with_underlying_string => |*val| {
@@ -967,6 +983,13 @@ pub const PathOrFileDescriptor = union(Tag) {
     pub fn toThreadSafe(this: *PathOrFileDescriptor) void {
         if (this.* == .path) {
             this.path.toThreadSafe();
+        }
+    }
+
+    /// See `PathLike.toOwnedThreadSafe`.
+    pub fn toOwnedThreadSafe(this: *PathOrFileDescriptor) void {
+        if (this.* == .path) {
+            this.path.toOwnedThreadSafe();
         }
     }
 

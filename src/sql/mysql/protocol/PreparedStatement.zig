@@ -41,6 +41,9 @@ pub const Execute = struct {
         for (this.params) |*param| {
             param.deinit(bun.default_allocator);
         }
+        if (this.params.len > 0) {
+            bun.default_allocator.free(this.params);
+        }
     }
 
     fn writeNullBitmap(this: *const Execute, comptime Context: type, writer: NewWriter(Context)) AnyMySQLError.Error!void {

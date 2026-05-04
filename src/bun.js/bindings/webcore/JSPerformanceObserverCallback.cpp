@@ -35,7 +35,7 @@ using namespace JSC;
 
 JSPerformanceObserverCallback::JSPerformanceObserverCallback(JSObject* callback, JSDOMGlobalObject* globalObject)
     : PerformanceObserverCallback(globalObject->scriptExecutionContext())
-    , m_data(new JSCallbackDataWeak(globalObject->vm(), callback, this))
+    , m_data(new JSCallbackData(globalObject->vm(), callback, this))
 {
 }
 
@@ -60,7 +60,7 @@ CallbackResult<typename IDLUndefined::ImplementationType> JSPerformanceObserverC
 
     Ref<JSPerformanceObserverCallback> protectedThis(*this);
 
-    auto& globalObject = *jsCast<JSDOMGlobalObject*>(m_data->callback()->globalObject());
+    auto& globalObject = *uncheckedDowncast<JSDOMGlobalObject>(m_data->callback()->globalObject());
     auto& vm = globalObject.vm();
 
     JSLockHolder lock(vm);

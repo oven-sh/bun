@@ -36,9 +36,13 @@ thread_lock: bun.safety.ThreadLock = .initUnlocked(),
 
 pub const max_count = 128;
 pub const requires_file_descriptors = switch (Environment.os) {
-    .mac => true,
+    .mac, .freebsd => true,
     else => false,
 };
+/// Open flags for an fd that exists only to receive kqueue VNODE events.
+/// Darwin has O_EVTONLY (no read/write access requested); FreeBSD has no
+/// equivalent, so the watch fd is a plain O_RDONLY.
+pub const watch_open_flags: i32 = if (Environment.isMac) bun.c.O_EVTONLY else bun.O.RDONLY;
 
 pub const Event = WatchEvent;
 pub const Item = WatchItem;
@@ -142,7 +146,7 @@ pub const max_eviction_count = 8096;
 // ideally, the constants above can be inlined
 const Platform = switch (Environment.os) {
     .linux => @import("./watcher/INotifyWatcher.zig"),
-    .mac => @import("./watcher/KEventWatcher.zig"),
+    .mac, .freebsd => @import("./watcher/KEventWatcher.zig"),
     .windows => WindowsWatcher,
     .wasm => @compileError("Unsupported platform"),
 };
@@ -212,7 +216,7 @@ pub const WatchItem = struct {
     // filepath hash for quick comparison
     hash: u32,
     loader: options.Loader,
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     count: u32,
     parent_hash: u32,
     kind: Kind,
@@ -278,6 +282,8 @@ pub fn flushEvictions(this: *Watcher) void {
     for (this.evict_list[0..this.evict_list_i]) |item| {
         // catch duplicates, since the list is sorted, duplicates will appear right after each other
         if (item == last_item) continue;
+        // Stale udata from a kevent can point past the compacted watchlist; match the second pass's guard.
+        if (item >= fds.len) continue;
 
         if (!Environment.isWindows) {
             // on mac and linux we can just close the file descriptor
@@ -294,6 +300,20 @@ pub fn flushEvictions(this: *Watcher) void {
     for (this.evict_list[0..this.evict_list_i]) |item| {
         if (item == last_item or this.watchlist.len <= item) continue;
         this.watchlist.swapRemove(item);
+
+        // swapRemove put a different entry at `item`, but its kqueue registration still
+        // carries its old `udata` (= pre-swap index). Rewrite it so subsequent kevents
+        // route to the right module; EV_ADD on an existing (ident, filter) replaces in
+        // place. See #29524.
+        if (comptime Environment.isKqueue) {
+            if (item < this.watchlist.len) {
+                const moved_fd = this.watchlist.items(.fd)[item];
+                if (moved_fd.isValid()) {
+                    this.addFileDescriptorToKQueueWithoutChecks(moved_fd, item);
+                }
+            }
+        }
+
         last_item = item;
     }
 }
@@ -313,12 +333,15 @@ fn watchLoop(this: *Watcher) bun.sys.Maybe(void) {
 ///
 /// Preconditions (caller must ensure):
 /// - `fd` is a valid, open file descriptor
-/// - `fd` is not already registered with this kqueue
 /// - `watchlist_id` matches the entry's index in the watchlist
 ///
-/// Note: This function does not propagate kevent registration errors.
-/// If registration fails, the file will not be watched but no error is returned.
-pub fn addFileDescriptorToKQueueWithoutChecks(this: *Watcher, fd: bun.FileDescriptor, watchlist_id: usize) void {
+/// Safe to call on an already-registered `fd`: `EV_ADD` on an existing
+/// `(ident, filter)` replaces the registration in place, which `flushEvictions`
+/// relies on to rewrite `udata` after `swapRemove`. Adding a
+/// skip-if-registered guard here silently reintroduces #29524.
+///
+/// Does not propagate kevent registration errors.
+pub fn addFileDescriptorToKQueueWithoutChecks(this: *Watcher, fd: bun.FD, watchlist_id: usize) void {
     const KEvent = std.c.Kevent;
 
     // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
@@ -353,7 +376,7 @@ pub fn addFileDescriptorToKQueueWithoutChecks(this: *Watcher, fd: bun.FileDescri
 
 fn appendFileAssumeCapacity(
     this: *Watcher,
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     file_path: string,
     hash: HashType,
     loader: options.Loader,
@@ -388,7 +411,7 @@ fn appendFileAssumeCapacity(
         .kind = .file,
     };
 
-    if (comptime Environment.isMac) {
+    if (comptime Environment.isKqueue) {
         this.addFileDescriptorToKQueueWithoutChecks(fd, watchlist_id);
     } else if (comptime Environment.isLinux) {
         // var file_path_to_use_ = std.mem.trimRight(u8, file_path_, "/");
@@ -408,7 +431,7 @@ fn appendFileAssumeCapacity(
 }
 fn appendDirectoryAssumeCapacity(
     this: *Watcher,
-    stored_fd: bun.FileDescriptor,
+    stored_fd: bun.FD,
     file_path: string,
     hash: HashType,
     comptime clone_file_path: bool,
@@ -450,7 +473,7 @@ fn appendDirectoryAssumeCapacity(
         .package_json = null,
     };
 
-    if (Environment.isMac) {
+    if (Environment.isKqueue) {
         const KEvent = std.c.Kevent;
 
         // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
@@ -469,7 +492,7 @@ fn appendDirectoryAssumeCapacity(
         // id
         event.ident = @intCast(fd.native());
 
-        // Store the hash for fast filtering later
+        // Store the index for fast filtering later
         event.udata = @as(usize, @intCast(watchlist_id));
         var events: [1]KEvent = .{event};
 
@@ -515,11 +538,11 @@ fn appendDirectoryAssumeCapacity(
 
 pub fn appendFileMaybeLock(
     this: *Watcher,
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     file_path: string,
     hash: HashType,
     loader: options.Loader,
-    dir_fd: bun.FileDescriptor,
+    dir_fd: bun.FD,
     package_json: ?*PackageJSON,
     comptime clone_file_path: bool,
     comptime lock: bool,
@@ -539,7 +562,7 @@ pub fn appendFileMaybeLock(
 
         if (dir_fd.isValid()) {
             const fds = watchlist_slice.items(.fd);
-            if (std.mem.indexOfScalar(bun.FileDescriptor, fds, dir_fd)) |i| {
+            if (std.mem.indexOfScalar(bun.FD, fds, dir_fd)) |i| {
                 parent_watch_item = @as(WatchItemIndex, @truncate(i));
             }
         }
@@ -592,11 +615,11 @@ inline fn isEligibleDirectory(this: *Watcher, dir: string) bool {
 
 pub fn appendFile(
     this: *Watcher,
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     file_path: string,
     hash: HashType,
     loader: options.Loader,
-    dir_fd: bun.FileDescriptor,
+    dir_fd: bun.FD,
     package_json: ?*PackageJSON,
     comptime clone_file_path: bool,
 ) bun.sys.Maybe(void) {
@@ -605,7 +628,7 @@ pub fn appendFile(
 
 pub fn addDirectory(
     this: *Watcher,
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     file_path: string,
     hash: HashType,
     comptime clone_file_path: bool,
@@ -653,10 +676,10 @@ pub fn addFileByPathSlow(
     }
 
     // Only open fd if we might need it
-    var fd: bun.FileDescriptor = bun.invalid_fd;
-    if (Environment.isMac) {
+    var fd: bun.FD = bun.invalid_fd;
+    if (Environment.isKqueue) {
         const path_z = std.posix.toPosixPath(file_path) catch return false;
-        switch (bun.sys.open(&path_z, bun.c.O_EVTONLY, 0)) {
+        switch (bun.sys.open(&path_z, watch_open_flags, 0)) {
             .result => |opened| fd = opened,
             .err => return false,
         }
@@ -665,9 +688,10 @@ pub fn addFileByPathSlow(
     const res = this.addFile(fd, file_path, hash, loader, bun.invalid_fd, null, true);
     switch (res) {
         .result => {
-            // On macOS, addFile may have found the file already watched (race)
-            // and returned success without using our fd. Close it if unused.
-            if ((comptime Environment.isMac) and fd.isValid()) {
+            // On kqueue platforms, addFile may have found the file already
+            // watched (race) and returned success without using our fd.
+            // Close it if unused.
+            if ((comptime Environment.isKqueue) and fd.isValid()) {
                 this.mutex.lock();
                 const maybe_idx = this.indexOf(hash);
                 const stored_fd = if (maybe_idx) |idx|
@@ -696,11 +720,11 @@ pub fn addFileByPathSlow(
 
 pub fn addFile(
     this: *Watcher,
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     file_path: string,
     hash: HashType,
     loader: options.Loader,
-    dir_fd: bun.FileDescriptor,
+    dir_fd: bun.FD,
     package_json: ?*PackageJSON,
     comptime clone_file_path: bool,
 ) bun.sys.Maybe(void) {
@@ -759,7 +783,7 @@ pub fn getResolveWatcher(watcher: *Watcher) bun.resolver.AnyResolveWatcher {
     return bun.resolver.ResolveWatcher(*@This(), onMaybeWatchDirectory).init(watcher);
 }
 
-pub fn onMaybeWatchDirectory(watch: *Watcher, file_path: string, dir_fd: bun.StoredFileDescriptorType) void {
+pub fn onMaybeWatchDirectory(watch: *Watcher, file_path: string, dir_fd: bun.FD) void {
     // We don't want to watch:
     // - Directories outside the root directory
     // - Directories inside node_modules

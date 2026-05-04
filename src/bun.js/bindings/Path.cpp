@@ -81,7 +81,7 @@ static JSC::JSObject* createPath(JSGlobalObject* globalThis, bool isWindows)
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* path = JSC::constructEmptyObject(globalThis);
     RETURN_IF_EXCEPTION(scope, {});
-    auto builtinNames = WebCore::builtinNames(vm);
+    auto& builtinNames = WebCore::builtinNames(vm);
 
     if (!isWindows) {
         path->putDirectNativeFunction(vm, globalThis, builtinNames.basenamePublicName(), 1, jsFunctionPath_basenamePosix, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
@@ -122,7 +122,7 @@ extern "C" JSC::EncodedJSValue PathParsedObject__create(
     JSC::EncodedJSValue ext,
     JSC::EncodedJSValue name)
 {
-    auto* global = JSC::jsCast<Zig::GlobalObject*>(globalObject);
+    auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     auto& vm = JSC::getVM(globalObject);
     JSC::JSObject* result = JSC::constructEmptyObject(vm, global->pathParsedObjectStructure());
     result->putDirectOffset(vm, 0, JSC::JSValue::decode(root));

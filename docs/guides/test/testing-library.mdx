@@ -60,7 +60,7 @@ preload = ["./happydom.ts", "./testing-library.ts"]
 
 ---
 
-If you are using TypeScript you will also need to make use of declaration merging in order to get the new matcher types to show up in your editor. To do this, create a type declaration file that extends `Matchers` like this.
+If you are using TypeScript, you will also need to use declaration merging to get the new matcher types to show up in your editor. To do this, create a type declaration file that extends `Matchers` like this.
 
 ```ts matchers.d.ts icon="/icons/typescript.svg"
 import { TestingLibraryMatchers } from "@testing-library/jest-dom/matchers";

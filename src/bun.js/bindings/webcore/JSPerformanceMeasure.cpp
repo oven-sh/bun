@@ -139,14 +139,14 @@ JSObject* JSPerformanceMeasure::prototype(VM& vm, JSDOMGlobalObject& globalObjec
 
 JSValue JSPerformanceMeasure::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSPerformanceMeasureDOMConstructor, DOMConstructorID::PerformanceMeasure>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSPerformanceMeasureDOMConstructor, DOMConstructorID::PerformanceMeasure>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsPerformanceMeasureConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSPerformanceMeasurePrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSPerformanceMeasurePrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSPerformanceMeasure::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -159,7 +159,7 @@ static inline JSValue jsPerformanceMeasure_detailGetter(JSGlobalObject& lexicalG
     if (JSValue cachedValue = thisObject.m_detail.get())
         return cachedValue;
     auto& impl = thisObject.wrapped();
-    JSValue result = toJS<IDLAny>(lexicalGlobalObject, throwScope, impl.detail(*jsCast<JSDOMGlobalObject*>(&lexicalGlobalObject)));
+    JSValue result = toJS<IDLAny>(lexicalGlobalObject, throwScope, impl.detail(*uncheckedDowncast<JSDOMGlobalObject>(&lexicalGlobalObject)));
     RETURN_IF_EXCEPTION(throwScope, {});
     thisObject.m_detail.set(JSC::getVM(&lexicalGlobalObject), &thisObject, result);
     return result;
@@ -183,7 +183,7 @@ JSC::GCClient::IsoSubspace* JSPerformanceMeasure::subspaceForImpl(JSC::VM& vm)
 template<typename Visitor>
 void JSPerformanceMeasure::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSPerformanceMeasure*>(cell);
+    auto* thisObject = uncheckedDowncast<JSPerformanceMeasure>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_detail);
@@ -193,7 +193,7 @@ DEFINE_VISIT_CHILDREN(JSPerformanceMeasure);
 
 void JSPerformanceMeasure::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSPerformanceMeasure*>(cell);
+    auto* thisObject = uncheckedDowncast<JSPerformanceMeasure>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));

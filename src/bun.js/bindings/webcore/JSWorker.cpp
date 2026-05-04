@@ -123,7 +123,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSWorkerDOMConstructor*>(callFrame->jsCallee());
+    auto* castedThis = uncheckedDowncast<JSWorkerDOMConstructor>(callFrame->jsCallee());
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     ASSERT(castedThis);
     if (callFrame->argumentCount() < 1) [[unlikely]]
@@ -133,7 +133,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "Worker"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     String scriptUrl;
-    if (auto* domUrl = jsDynamicCast<JSDOMURL*>(argument0.value()); domUrl && domUrl->wrapped().href().isValid()) {
+    if (auto* domUrl = dynamicDowncast<JSDOMURL>(argument0.value()); domUrl && domUrl->wrapped().href().isValid()) {
         scriptUrl = domUrl->wrapped().href().string();
     } else if (argument0.value().isString()) {
         scriptUrl = argument0.value().getString(lexicalGlobalObject);
@@ -152,7 +152,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     JSValue workerData = jsUndefined();
     Vector<JSC::Strong<JSC::JSObject>> transferList;
 
-    if (JSObject* optionsObject = JSC::jsDynamicCast<JSC::JSObject*>(argument1.value())) {
+    if (JSObject* optionsObject = dynamicDowncast<JSC::JSObject>(argument1.value())) {
         auto nameValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->name);
         RETURN_IF_EXCEPTION(throwScope, {});
         if (nameValue) {
@@ -190,7 +190,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
                     if (!str.isEmpty()) {
                         options.preloadModules.append(str);
                     }
-                } else if (auto* array = jsDynamicCast<JSC::JSArray*>(preloadModulesValue)) {
+                } else if (auto* array = dynamicDowncast<JSC::JSArray>(preloadModulesValue)) {
                     std::optional<Vector<String>> seq = convert<IDLSequence<IDLDOMString>>(*lexicalGlobalObject, array);
                     RETURN_IF_EXCEPTION(throwScope, {});
                     if (seq) {
@@ -219,7 +219,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
         if (transferListValue) {
             if (transferListValue.isObject()) {
                 JSC::JSObject* transferListObject = transferListValue.getObject();
-                if (auto* transferListArray = jsDynamicCast<JSC::JSArray*>(transferListObject)) {
+                if (auto* transferListArray = dynamicDowncast<JSC::JSArray>(transferListObject)) {
                     JSC::forEachInArrayLike(globalObject, transferListArray, [&](JSValue transferValue) -> bool {
                         if (auto* transferObject = transferValue.getObject()) {
                             transferList.append({ vm, transferObject });
@@ -240,7 +240,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
         JSObject* envObject = nullptr;
 
         if (envValue && envValue.isCell()) {
-            envObject = jsDynamicCast<JSC::JSObject*>(envValue);
+            envObject = dynamicDowncast<JSC::JSObject>(envValue);
         } else if (globalObject->m_processEnvObject.isInitialized()) {
             envObject = globalObject->processEnvObject();
         }
@@ -344,12 +344,6 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto& impl = jsCast<JSWorker*>(jsValue)->wrapped();
-    if (!impl.updatePtr()) {
-        throwVMError(lexicalGlobalObject, throwScope, "Failed to start Worker thread"_s);
-        return {};
-    }
-
     setSubclassStructureIfNeeded<Worker>(lexicalGlobalObject, callFrame, asObject(jsValue));
     RETURN_IF_EXCEPTION(throwScope, {});
 
@@ -385,12 +379,12 @@ template<> void JSWorkerDOMConstructor::initializeProperties(VM& vm, JSDOMGlobal
 
 JSC_DEFINE_CUSTOM_GETTER(jsWorker_threadIdGetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    auto* castedThis = jsDynamicCast<JSWorker*>(JSValue::decode(thisValue));
+    auto* castedThis = dynamicDowncast<JSWorker>(JSValue::decode(thisValue));
     if (!castedThis) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
     auto& worker = castedThis->wrapped();
-    if (worker.isClosingOrTerminated()) return JSValue::encode(jsNumber(-1));
+    if (worker.wasTerminated()) return JSValue::encode(jsNumber(-1));
     // Main thread starts at 1
     //
     // Note that we cannot use posix thread ids here because we don't know their thread id until the thread starts
@@ -445,14 +439,14 @@ JSObject* JSWorker::prototype(VM& vm, JSDOMGlobalObject& globalObject)
 
 JSValue JSWorker::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSWorkerDOMConstructor, DOMConstructorID::Worker>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSWorkerDOMConstructor, DOMConstructorID::Worker>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsWorkerConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSWorkerPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSWorkerPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSWorker::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -567,7 +561,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_postMessage1Body(JSC
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto transfer = convert<IDLSequence<IDLObject>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.postMessage(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTF::move(message), WTF::move(transfer)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.postMessage(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(message), WTF::move(transfer)); })));
 }
 
 static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_postMessage2Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
@@ -595,7 +589,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_postMessage2Body(JSC
     }
 
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.postMessage(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTF::move(message), WTF::move(options)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.postMessage(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(message), WTF::move(options)); })));
 }
 
 static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_postMessageOverloadDispatcher(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
@@ -687,9 +681,22 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
         return JSValue::encode(promise);
     }
 
-    Strong<JSPromise> strong(vm, promise);
+    // Keep the promise alive across the round-trip. Heap-allocate the Strong
+    // and pass only the raw pointer through the cross-thread lambdas so the
+    // worker thread never touches the parent VM's HandleSet (Strong<T> has no
+    // move ctor; capturing it by value would copy-construct/destroy it on the
+    // worker thread, racing the parent VM's "Strong Handles" GC constraint).
+    //
+    // Leak windows (accepted trade-off vs the crash above):
+    //   - task queued but worker terminated before it runs: the lambda is
+    //     destroyed on the worker thread; the raw pointer is dropped and
+    //     promiseHandle leaks in the (still-live) parent VM. Freeing it
+    //     there would be exactly the cross-thread HandleSet mutation we're
+    //     avoiding. Pre-fix the promise already hung in this case.
+    //   - postTaskTo(parentId, …) on the return trip fails: see below.
+    auto* promiseHandle = new Strong<JSPromise>(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
-    worker.postTaskToWorkerGlobalScope([strong, parentId](ScriptExecutionContext& workerCtx) {
+    bool accepted = worker.postTaskToWorkerGlobalScope([promiseHandle, parentId](ScriptExecutionContext& workerCtx) {
         auto& vm = workerCtx.vm();
         vm.ensureHeapProfiler();
         auto& heapProfiler = *vm.heapProfiler();
@@ -697,11 +704,25 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
         JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
         String snapshot = builder.json();
 
+        // Post the result back. If the parent context is gone this returns
+        // false and promiseHandle leaks; we cannot safely destroy a
+        // parent-VM Strong from the worker thread, and the parent VM is
+        // tearing down anyway.
         ScriptExecutionContext::postTaskTo(parentId,
-            [strong, snapshot = snapshot.isolatedCopy()](ScriptExecutionContext& parentCtx) {
-                strong.get()->resolve(parentCtx.globalObject(), jsString(parentCtx.vm(), snapshot));
+            [promiseHandle, snapshot = snapshot.isolatedCopy()](ScriptExecutionContext& parentCtx) {
+                std::unique_ptr<Strong<JSPromise>> handle(promiseHandle);
+                handle->get()->resolve(parentCtx.globalObject(), parentCtx.vm(), jsString(parentCtx.vm(), snapshot));
             });
     });
+    if (!accepted) {
+        // Worker raced to Closing/Closed between isOnline() and the post.
+        // Still on the parent thread — safe to destroy the handle here.
+        delete promiseHandle;
+        promise->reject(vm, globalObject,
+            Bun::createError(globalObject,
+                Bun::ErrorCode::ERR_WORKER_NOT_RUNNING,
+                "Worker instance not running"_s));
+    }
     return JSValue::encode(promise);
 }
 
@@ -722,7 +743,7 @@ JSC::GCClient::IsoSubspace* JSWorker::subspaceForImpl(JSC::VM& vm)
 
 void JSWorker::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSWorker*>(cell);
+    auto* thisObject = uncheckedDowncast<JSWorker>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -731,7 +752,7 @@ void JSWorker::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 
 bool JSWorkerOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
-    auto* jsWorker = jsCast<JSWorker*>(handle.slot()->asCell());
+    auto* jsWorker = uncheckedDowncast<JSWorker>(handle.slot()->asCell());
     auto& wrapped = jsWorker->wrapped();
     if (!wrapped.isContextStopped() && wrapped.hasPendingActivity()) {
         if (reason) [[unlikely]]
@@ -792,7 +813,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 Worker* JSWorker::toWrapped(JSC::VM&, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSWorker*>(value))
+    if (auto* wrapper = dynamicDowncast<JSWorker>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

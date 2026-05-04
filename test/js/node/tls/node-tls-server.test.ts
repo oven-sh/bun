@@ -1,5 +1,5 @@
 import { readFileSync, realpathSync } from "fs";
-import { tls as cert1 } from "harness";
+import { tls as cert1, isDebug } from "harness";
 import { AddressInfo } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
@@ -241,6 +241,30 @@ describe("tls.createServer listen", () => {
     server.listen(0, "0.0.0.0", closeAndFail);
   });
 
+  it("should reject passphrase longer than PEM_BUFSIZE without crashing", done => {
+    // BoringSSL invokes the passphrase callback with a 1024-byte stack buffer.
+    // A longer passphrase must fail key decryption rather than overflow that buffer.
+    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+    const server: Server = createServer({
+      key: passKey,
+      passphrase: Buffer.alloc(2000, "A").toString(),
+      cert: cert,
+    });
+
+    server.on("error", mustCall());
+    let timeout: Timer;
+    function closeAndFail() {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall()();
+    }
+
+    timeout = setTimeout(closeAndFail, 100);
+
+    server.listen(0, "0.0.0.0", closeAndFail);
+  });
+
   it("should not listen without cert", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
@@ -397,8 +421,12 @@ describe("tls.createServer events", () => {
 
     server.on("error", closeAndFail);
 
-    //should be faster than 100ms
-    timeout = setTimeout(closeAndFail, 100);
+    // First `Bun.connect({tls:true})` of the process triggers the once-only
+    // bundled-root-store build (`us_get_shared_default_ca_store`, ~150 ms in
+    // debug+ASAN) so SSL_get_verify_result is real instead of the false
+    // X509_V_OK VERIFY_NONE used to report. The condition assertion is the
+    // point; the old 100 ms was a perf claim that is now load-order-dependent.
+    timeout = setTimeout(closeAndFail, isDebug ? 2000 : 500);
 
     server.listen(
       mustCall(async () => {
@@ -445,8 +473,12 @@ describe("tls.createServer events", () => {
     };
     server.on("error", closeAndFail);
 
-    //should be faster than 100ms
-    timeout = setTimeout(closeAndFail, 100);
+    // First `Bun.connect({tls:true})` of the process triggers the once-only
+    // bundled-root-store build (`us_get_shared_default_ca_store`, ~150 ms in
+    // debug+ASAN) so SSL_get_verify_result is real instead of the false
+    // X509_V_OK VERIFY_NONE used to report. The condition assertion is the
+    // point; the old 100 ms was a perf claim that is now load-order-dependent.
+    timeout = setTimeout(closeAndFail, isDebug ? 2000 : 500);
 
     server.listen(
       mustCall(async () => {
@@ -597,8 +629,12 @@ describe("tls.createServer events", () => {
 
     server.on("error", closeAndFail);
 
-    //should be faster than 100ms
-    timeout = setTimeout(closeAndFail, 100);
+    // First `Bun.connect({tls:true})` of the process triggers the once-only
+    // bundled-root-store build (`us_get_shared_default_ca_store`, ~150 ms in
+    // debug+ASAN) so SSL_get_verify_result is real instead of the false
+    // X509_V_OK VERIFY_NONE used to report. The condition assertion is the
+    // point; the old 100 ms was a perf claim that is now load-order-dependent.
+    timeout = setTimeout(closeAndFail, isDebug ? 2000 : 500);
 
     server.listen(
       mustCall(async () => {

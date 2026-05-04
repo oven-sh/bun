@@ -69,7 +69,7 @@ pub fn pop(this: *ASTMemoryAllocator) void {
     this.previous = null;
 }
 
-pub fn append(this: ASTMemoryAllocator, comptime ValueType: type, value: anytype) *ValueType {
+pub fn append(this: *ASTMemoryAllocator, comptime ValueType: type, value: anytype) *ValueType {
     const ptr = this.bump_allocator.create(ValueType) catch unreachable;
     ptr.* = value;
     return ptr;

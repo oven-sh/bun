@@ -5,6 +5,9 @@ pub const ArrayBuffer = extern struct {
     value: jsc.JSValue = jsc.JSValue.zero,
     typed_array_type: jsc.JSValue.JSType = .Cell,
     shared: bool = false,
+    /// True for resizable ArrayBuffer or growable SharedArrayBuffer — borrowing
+    /// a slice from one is unsafe (it can shrink/reallocate underneath you).
+    resizable: bool = false,
 
     pub fn isDetached(this: *const ArrayBuffer) bool {
         return this.ptr == null;
@@ -32,7 +35,7 @@ pub const ArrayBuffer = extern struct {
 
     /// Only use this when reading from the file descriptor is _very_ cheap. Like, for example, an in-memory file descriptor.
     /// Do not use this for pipes, however tempting it may seem.
-    pub fn toJSBufferFromFd(fd: bun.FileDescriptor, size: usize, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
+    pub fn toJSBufferFromFd(fd: bun.FD, size: usize, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         const buffer_value = Bun__createUint8ArrayForCopy(globalObject, null, size, true);
         if (buffer_value == .zero) {
             return .zero;
@@ -71,7 +74,7 @@ pub const ArrayBuffer = extern struct {
     extern fn ArrayBuffer__fromSharedMemfd(fd: i64, globalObject: *jsc.JSGlobalObject, byte_offset: usize, byte_length: usize, total_size: usize, jsc.JSValue.JSType) jsc.JSValue;
     pub const toArrayBufferFromSharedMemfd = ArrayBuffer__fromSharedMemfd;
 
-    pub fn toJSBufferFromMemfd(fd: bun.FileDescriptor, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+    pub fn toJSBufferFromMemfd(fd: bun.FD, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         const stat = switch (bun.sys.fstat(fd)) {
             .err => |err| {
                 fd.close();
@@ -587,20 +590,15 @@ pub const MarkedArrayBuffer = struct {
         return this.buffer.byteSlice();
     }
 
+    /// Releases the owned byte buffer if this `MarkedArrayBuffer` was created with an
+    /// allocator (e.g. via `fromString`/`fromBytes`). Does not free the struct itself;
+    /// `MarkedArrayBuffer` is passed and stored by value, so callers own its storage.
     pub fn destroy(this: *MarkedArrayBuffer) void {
         const content = this.*;
         if (this.allocator) |allocator| {
             this.allocator = null;
             allocator.free(content.buffer.slice());
-            allocator.destroy(this);
         }
-    }
-
-    pub fn init(allocator: std.mem.Allocator, size: u32, typed_array_type: jsc.JSValue.JSType) !*MarkedArrayBuffer {
-        const bytes = try allocator.alloc(u8, size);
-        const container = try allocator.create(MarkedArrayBuffer);
-        container.* = MarkedArrayBuffer.fromBytes(bytes, allocator, typed_array_type);
-        return container;
     }
 
     pub fn toNodeBuffer(this: *const MarkedArrayBuffer, ctx: *jsc.JSGlobalObject) jsc.JSValue {

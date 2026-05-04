@@ -61,14 +61,18 @@
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(EventTarget);
-WTF_MAKE_TZONE_ALLOCATED_IMPL(EventTargetWithInlineData);
 
 Ref<EventTarget> EventTarget::create(ScriptExecutionContext& context)
 {
     return EventTargetConcrete::create(context);
 }
 
-EventTarget::~EventTarget() = default;
+EventTarget::~EventTarget()
+{
+    // The WeakPtrImpl (and its EventTargetData) can outlive this object.
+    if (auto* data = this->eventTargetData())
+        data->clear();
+}
 
 bool EventTarget::isNode() const
 {
@@ -99,14 +103,19 @@ bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListene
     // if (!passive.has_value() && Quirks::shouldMakeEventListenerPassive(*this, eventType, listener.get()))
     //     passive = true;
 
-    if (!ensureEventTargetData().eventListenerMap.add(eventType, listener.copyRef(), { options.capture, passive.value_or(false), options.once }))
+    auto* registeredListener = ensureEventTargetData().eventListenerMap.add(eventType, listener.copyRef(), { options.capture, passive.value_or(false), options.once });
+    if (!registeredListener)
         return false;
 
     if (options.signal) {
-        options.signal->addAlgorithm([weakThis = WeakPtr { *this }, eventType, listener = WeakPtr { listener }, capture = options.capture](JSC::JSValue) {
+        uint32_t algorithmIdentifier = options.signal->addAlgorithm([weakThis = WeakPtr { *this }, eventType, listener = WeakPtr { listener }, capture = options.capture](JSC::JSValue) {
             if (weakThis && listener)
                 Ref { *weakThis }->removeEventListener(eventType, *listener, capture);
         });
+        // Remember which abort algorithm belongs to this listener so that
+        // removeEventListener / once:true / removeAllEventListeners can
+        // drop it from the signal via RegisteredEventListener::markAsRemoved().
+        registeredListener->setAbortSignal(WeakPtr { *options.signal }, algorithmIdentifier);
     }
 
     // if (listenerCreatedFromScript)
@@ -183,31 +192,6 @@ void EventTarget::setAttributeEventListener(const AtomString& eventType, JSC::JS
 
 template void EventTarget::setAttributeEventListener<JSErrorHandler>(const AtomString& eventType, JSC::JSValue listener, JSC::JSObject& jsEventTarget);
 template void EventTarget::setAttributeEventListener<JSEventListener>(const AtomString& eventType, JSC::JSValue listener, JSC::JSObject& jsEventTarget);
-
-bool EventTarget::setAttributeEventListener(const AtomString& eventType, RefPtr<EventListener>&& listener, DOMWrapperWorld& isolatedWorld)
-{
-    auto* existingListener = attributeEventListener(eventType, isolatedWorld);
-    if (!listener) {
-        if (existingListener)
-            removeEventListener(eventType, *existingListener, false);
-        return false;
-    }
-    // if (existingListener) {
-    //     InspectorInstrumentation::willRemoveEventListener(*this, eventType, *existingListener, false);
-
-#if ASSERT_ENABLED
-    listener->checkValidityForEventTarget(*this);
-#endif
-
-    auto listenerPointer = listener.copyRef();
-    eventTargetData()->eventListenerMap.replace(eventType, *existingListener, listener.releaseNonNull(), {});
-
-    // InspectorInstrumentation::didAddEventListener(*this, eventType, *listenerPointer, false);
-
-    return true;
-
-    return addEventListener(eventType, listener.releaseNonNull(), {});
-}
 
 JSEventListener* EventTarget::attributeEventListener(const AtomString& eventType, DOMWrapperWorld& isolatedWorld)
 {
@@ -358,8 +342,8 @@ void EventTarget::innerInvokeEventListeners(Event& event, EventListenerVector li
         registeredListener->callback().handleEvent(context, event);
         // InspectorInstrumentation::didHandleEvent(context, event, *registeredListener);
 
-        // if (registeredListener->isPassive())
-        // event.setInPassiveListener(false);
+        if (registeredListener->isPassive())
+            event.setInPassiveListener(false);
     }
 
     // if (contextIsDocument)

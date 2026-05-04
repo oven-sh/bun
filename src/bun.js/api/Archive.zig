@@ -455,7 +455,7 @@ const PromiseResult = union(enum) {
     fn fulfill(this: PromiseResult, globalThis: *jsc.JSGlobalObject, promise: *jsc.JSPromise) bun.JSTerminated!void {
         switch (this) {
             .resolve => |v| try promise.resolve(globalThis, v),
-            .reject => |v| try promise.reject(globalThis, v),
+            .reject => |v| try promise.rejectWithAsyncStack(globalThis, v),
         }
     }
 };
@@ -770,17 +770,19 @@ const FilesContext = struct {
         fn deinit(self: *Result) void {
             switch (self.*) {
                 .libarchive_err => |s| bun.default_allocator.free(std.mem.span(s)),
-                .success => |*list| {
-                    for (list.items) |e| {
-                        bun.default_allocator.free(e.path);
-                        if (e.data.len > 0) bun.default_allocator.free(e.data);
-                    }
-                    list.deinit(bun.default_allocator);
-                },
+                .success => |*list| freeEntries(list),
                 .err => {},
             }
         }
     };
+
+    fn freeEntries(list: *FileEntryList) void {
+        for (list.items) |e| {
+            bun.default_allocator.free(e.path);
+            if (e.data.len > 0) bun.default_allocator.free(e.data);
+        }
+        list.deinit(bun.default_allocator);
+    }
 
     store: *jsc.WebCore.Blob.Store,
     glob_patterns: ?[]const []const u8,
@@ -803,13 +805,7 @@ const FilesContext = struct {
         }
 
         var entries: FileEntryList = .empty;
-        errdefer {
-            for (entries.items) |e| {
-                bun.default_allocator.free(e.path);
-                if (e.data.len > 0) bun.default_allocator.free(e.data);
-            }
-            entries.deinit(bun.default_allocator);
-        }
+        errdefer freeEntries(&entries);
 
         var entry: *lib.Archive.Entry = undefined;
         while (archive.readNextHeader(&entry) == .ok) {
@@ -832,8 +828,11 @@ const FilesContext = struct {
                 while (total_read < size) {
                     const read = archive.readData(data[total_read..]);
                     if (read < 0) {
-                        // Read error - not an allocation error, must free manually
+                        // Read error - returned as a normal Result (not a Zig error), so the
+                        // errdefer above won't fire. Free the current buffer and all previously
+                        // collected entries manually to avoid leaking them.
                         bun.default_allocator.free(data);
+                        freeEntries(&entries);
                         return if (cloneErrorString(archive)) |err| .{ .libarchive_err = err } else .{ .err = error.ReadError };
                     }
                     if (read == 0) break;

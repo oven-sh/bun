@@ -60,16 +60,15 @@ pub const Heap = opaque {
         return mi_heap_realloc(self, p, newsize);
     }
 
-    pub fn isOwned(self: *Heap, p: ?*anyopaque) bool {
-        return mi_heap_check_owned(self, p);
+    pub fn isOwned(self: *Heap, p: ?*const anyopaque) bool {
+        return mi_heap_contains(self, p);
     }
 };
 pub extern fn mi_heap_new() ?*Heap;
 pub extern fn mi_heap_delete(heap: *Heap) void;
 pub extern fn mi_heap_destroy(heap: *Heap) void;
-pub extern fn mi_heap_set_default(heap: *Heap) *Heap;
-pub extern fn mi_heap_get_default() *Heap;
-pub extern fn mi_heap_get_backing() *Heap;
+pub extern fn mi_heap_main() *Heap;
+pub extern fn mi_heap_contains(heap: *const Heap, p: ?*const anyopaque) bool;
 pub extern fn mi_heap_collect(heap: *Heap, force: bool) void;
 pub extern fn mi_heap_malloc(heap: *Heap, size: usize) ?*anyopaque;
 pub extern fn mi_heap_zalloc(heap: *Heap, size: usize) ?*anyopaque;
@@ -102,8 +101,6 @@ pub extern fn mi_heap_rezalloc_aligned(heap: *Heap, p: ?*anyopaque, newsize: usi
 pub extern fn mi_heap_rezalloc_aligned_at(heap: *Heap, p: ?*anyopaque, newsize: usize, alignment: usize, offset: usize) ?*anyopaque;
 pub extern fn mi_heap_recalloc_aligned(heap: *Heap, p: ?*anyopaque, newcount: usize, size: usize, alignment: usize) ?*anyopaque;
 pub extern fn mi_heap_recalloc_aligned_at(heap: *Heap, p: ?*anyopaque, newcount: usize, size: usize, alignment: usize, offset: usize) ?*anyopaque;
-pub extern fn mi_heap_contains_block(heap: *Heap, p: *const anyopaque) bool;
-pub extern fn mi_heap_check_owned(heap: *Heap, p: *const anyopaque) bool;
 pub extern fn mi_check_owned(p: ?*const anyopaque) bool;
 pub const struct_mi_heap_area_s = extern struct {
     blocks: ?*anyopaque,
@@ -112,6 +109,7 @@ pub const struct_mi_heap_area_s = extern struct {
     used: usize,
     block_size: usize,
     full_block_size: usize,
+    reserved1: ?*anyopaque,
 };
 pub const mi_heap_area_t = struct_mi_heap_area_s;
 pub const mi_block_visit_fun = *const fn (?*const Heap, [*c]const mi_heap_area_t, ?*anyopaque, usize, ?*anyopaque) callconv(.c) bool;

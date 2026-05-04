@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-describe("writeEarlyHints", () => {
+describe.concurrent("writeEarlyHints", () => {
   test("rejects CRLF injection in header name", async () => {
     await using proc = Bun.spawn({
       cmd: [

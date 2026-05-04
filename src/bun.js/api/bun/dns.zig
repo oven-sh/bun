@@ -68,11 +68,10 @@ const LibInfo = struct {
             return dns_lookup.promise.value();
         }
 
-        var name_buf: [1024]u8 = undefined;
-        _ = strings.copy(name_buf[0..], query.name);
-
-        name_buf[query.name.len] = 0;
-        const name_z = name_buf[0..query.name.len :0];
+        var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
+        const name_allocator = stack_fallback.get();
+        const name_z = bun.handleOom(name_allocator.dupeZ(u8, query.name));
+        defer name_allocator.free(name_z);
 
         var request = GetAddrInfoRequest.init(
             cache,
@@ -96,7 +95,17 @@ const LibInfo = struct {
 
         if (errno != 0) {
             request.head.promise.rejectTask(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(bun.sys.getErrno(errno))})) catch {}; // TODO: properly propagate exception upwards
-            if (request.cache.pending_cache) this.pending_host_cache_native.used.set(request.cache.pos_in_pending);
+            if (request.cache.pending_cache) {
+                // Release the pending-cache slot. `getOrPutIntoPendingCache` already
+                // set the `used` bit via `HiveArray.get`, so failing to unset it here
+                // permanently orphans the slot and leaves `buffer[pos].lookup` pointing
+                // at the request we are about to free (UAF on the next `.inflight` hit).
+                const pos = request.cache.pos_in_pending;
+                this.pending_host_cache_native.buffer[pos] = undefined;
+                this.pending_host_cache_native.used.unset(pos);
+            }
+            // Drop the KeepAlive + resolver ref that `GetAddrInfoRequest.init` took.
+            request.head.deinit();
             this.vm.allocator.destroy(request);
 
             return promise_value;
@@ -222,21 +231,38 @@ const LibUVBackend = struct {
         port_buf[port_len] = 0;
         const portZ = port_buf[0..port_len :0];
         var hostname: bun.PathBuffer = undefined;
-        _ = strings.copy(hostname[0..], query.name);
-        hostname[query.name.len] = 0;
-        const host = hostname[0..query.name.len :0];
+        // Reserve the last byte for the NUL terminator so the index below can never
+        // exceed the buffer even if the upstream length guard in `doLookup` is bypassed.
+        const copied = strings.copy(hostname[0 .. hostname.len - 1], query.name);
+        hostname[copied.len] = 0;
+        const host = hostname[0..copied.len :0];
 
         request.backend.libc.uv.data = request;
         const promise = request.head.promise.value();
-        if (libuv.uv_getaddrinfo(
+        const rc = libuv.uv_getaddrinfo(
             this.vm.uvLoop(),
             &request.backend.libc.uv,
             &onRawLibUVComplete,
             host.ptr,
             portZ.ptr,
             if (hints) |*hint| hint else null,
-        ).errEnum()) |_| {
-            @panic("TODO: handle error");
+        );
+        if (rc.int() < 0) {
+            // uv_getaddrinfo can fail synchronously before it queues any work
+            // (e.g. UV_EINVAL from the 256-byte IDNA buffer for long hostnames,
+            // or UV_ENOMEM). Route the error through the same path the async
+            // completion would have taken so the pending-cache slot is released
+            // and the promise is rejected with a DNSException.
+            if (request.resolver_for_caching) |resolver| {
+                if (request.cache.pending_cache) {
+                    resolver.drainPendingHostNative(request.cache.pos_in_pending, request.head.globalThis, rc.int(), .{ .addrinfo = null });
+                    return promise;
+                }
+            }
+            var head = request.head;
+            head.processGetAddrInfoNative(rc.int(), null);
+            head.globalThis.allocator().destroy(request);
+            return promise;
         }
         return promise;
     }
@@ -754,10 +780,13 @@ pub const GetAddrInfoRequest = struct {
                     port_buf[port_len] = 0;
                     const portZ = port_buf[0..port_len :0];
                     var hostname: bun.PathBuffer = undefined;
-                    _ = strings.copy(hostname[0..], query.name);
-                    hostname[query.name.len] = 0;
+                    // Reserve the last byte for the NUL terminator so the index below
+                    // can never exceed the buffer even if the upstream length guard in
+                    // `doLookup` is bypassed.
+                    const copied = strings.copy(hostname[0 .. hostname.len - 1], query.name);
+                    hostname[copied.len] = 0;
                     var addrinfo: ?*std.c.addrinfo = null;
-                    const host = hostname[0..query.name.len :0];
+                    const host = hostname[0..copied.len :0];
                     const debug_timer = bun.Output.DebugTimer.start();
                     const err = std.c.getaddrinfo(
                         host.ptr,
@@ -991,6 +1020,10 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
 
         pub fn processResolve(this: *@This(), err_: ?c_ares.Error, _: i32, result: ?*cares_type) void {
             const syscall = comptime "query" ++ &[_]u8{std.ascii.toUpper(type_name[0])} ++ type_name[1..];
+            // This path is reached when the pending cache is full (`.disabled`),
+            // so we own the c-ares result here. The cached path frees it in
+            // `drainPendingCares`; callers from there always pass `null`.
+            defer if (result) |r| r.deinit();
 
             if (err_) |err| {
                 err.toDeferred(syscall, this.name, &this.promise).rejectLater(this.globalThis);
@@ -1081,6 +1114,11 @@ pub const DNSLookup = struct {
 
     pub fn processGetAddrInfo(this: *DNSLookup, err_: ?c_ares.Error, _: i32, result: ?*c_ares.AddrInfo) void {
         log("processGetAddrInfo", .{});
+        // This path is reached when the pending-host cache is full (`.disabled`),
+        // so we own the c-ares result here. The cached path frees it in
+        // `drainPendingHostCares`; callers from there always pass `null`.
+        defer if (result) |r| r.deinit();
+
         if (err_) |err| {
             err.toDeferred("getaddrinfo", null, &this.promise).rejectLater(this.globalThis);
             this.deinit();
@@ -1227,7 +1265,7 @@ pub const internal = struct {
         can_retry_for_addrconfig: bool = default_hints.flags.ADDRCONFIG,
 
         pub fn isExpired(this: *Request, timestamp_to_store: *u32) bool {
-            if (this.refcount > 0 or this.result == null) {
+            if (this.result == null) {
                 return false;
             }
 
@@ -1284,9 +1322,11 @@ pub const internal = struct {
                 if (entry.key.hash == key.hash and entry.valid) {
                     if (entry.isExpired(timestamp_to_store)) {
                         log("get: expired entry", .{});
-                        _ = this.deleteEntryAt(len, i);
-                        entry.deinit();
-                        len = this.len;
+                        if (entry.refcount == 0) {
+                            _ = this.deleteEntryAt(len, i);
+                            entry.deinit();
+                            len = this.len;
+                        }
                         continue;
                     }
 
@@ -1396,11 +1436,13 @@ pub const internal = struct {
     pub const DNSRequestOwner = union(enum) {
         socket: *bun.uws.ConnectingSocket,
         prefetch: *bun.uws.Loop,
+        quic: *bun.http.H3.PendingConnect,
 
         pub fn notifyThreadsafe(this: DNSRequestOwner, req: *Request) void {
             switch (this) {
                 .socket => |socket| us_internal_dns_callback_threadsafe(socket, req),
                 .prefetch => freeaddrinfo(req, 0),
+                .quic => |pc| pc.onDNSResolvedThreadsafe(),
             }
         }
 
@@ -1408,6 +1450,7 @@ pub const internal = struct {
             switch (this) {
                 .prefetch => freeaddrinfo(req, 0),
                 .socket => us_internal_dns_callback(this.socket, req),
+                .quic => |pc| pc.onDNSResolved(),
             }
         }
 
@@ -1415,9 +1458,27 @@ pub const internal = struct {
             return switch (this) {
                 .prefetch => this.prefetch,
                 .socket => this.socket.loop(),
+                .quic => |pc| pc.loop(),
             };
         }
     };
+
+    /// Register `pc` to be notified when `request` resolves. Mirrors
+    /// us_getaddrinfo_set but for the QUIC client's connect path, which has
+    /// no us_connecting_socket_t to hang the callback on. The .quic notify
+    /// path frees the addrinfo request inline (via Bun__addrinfo_freeRequest),
+    /// which re-acquires global_cache.lock — so drop it before notifying.
+    pub fn registerQuic(request: *Request, pc: *bun.http.H3.PendingConnect) void {
+        global_cache.lock.lock();
+        const owner: DNSRequestOwner = .{ .quic = pc };
+        if (request.result != null) {
+            global_cache.lock.unlock();
+            owner.notify(request);
+            return;
+        }
+        bun.handleOom(request.notify.append(bun.default_allocator, owner));
+        global_cache.lock.unlock();
+    }
 
     const ResultEntry = extern struct {
         info: std.c.addrinfo,
@@ -1614,19 +1675,19 @@ pub const internal = struct {
     ) callconv(.c) void {
         const req: *Request = bun.cast(*Request, arg);
         const status_int: c_int = @intCast(status);
-        if (status == @intFromEnum(std.c.EAI.NONAME) and req.can_retry_for_addrconfig) {
+        if (status == @intFromEnum(std.c.EAI.NONAME) and req.can_retry_for_addrconfig) retry: {
             req.can_retry_for_addrconfig = false;
             var service_buf: [bun.fmt.fastDigitCount(std.math.maxInt(u16)) + 2]u8 = undefined;
             const service: ?[*:0]const u8 = if (req.key.port > 0)
                 (std.fmt.bufPrintZ(&service_buf, "{d}", .{req.key.port}) catch unreachable).ptr
             else
                 null;
-            const getaddrinfo_async_start_ = LibInfo.getaddrinfo_async_start() orelse return;
+            const getaddrinfo_async_start_ = LibInfo.getaddrinfo_async_start() orelse break :retry;
             var machport: bun.mach_port = 0;
             var hints = getHints();
             hints.flags.ADDRCONFIG = false;
 
-            _ = getaddrinfo_async_start_(
+            const errno = getaddrinfo_async_start_(
                 &machport,
                 if (req.key.host) |host| host.ptr else null,
                 service,
@@ -1635,11 +1696,34 @@ pub const internal = struct {
                 req,
             );
 
-            switch (req.libinfo.file_poll.?.register(bun.uws.Loop.get(), .machport, true)) {
-                .err => log("libinfoCallback: failed to register poll", .{}),
-                .result => {
-                    return;
+            if (errno != 0 or machport == 0) {
+                log("libinfoCallback: getaddrinfo_async_start retry failed (errno={d})", .{errno});
+                break :retry;
+            }
+
+            // Each getaddrinfo_async_start() call allocates a fresh receive
+            // port via mach_port_allocate(MACH_PORT_RIGHT_RECEIVE) inside
+            // libinfo's si_async_workunit_create() (si_module.c) — it is NOT
+            // the per-thread MIG reply port and is not reused across calls.
+            // libinfo's "async" API is just a libdispatch worker running sync
+            // getaddrinfo and signalling completion via a send-once right on
+            // this port; getaddrinfo_async_handle_reply() then destroys the
+            // receive right after invoking us. So by the time we are here:
+            //   - the first request's port is already dead (no leak, no need
+            //     to mach_port_deallocate it ourselves), and
+            //   - its kqueue knote is gone (it was EV_ONESHOT, and EVFILT_
+            //     MACHPORT knotes are dropped when the receive right dies).
+            // Store the new port and re-register the existing FilePoll on it,
+            // otherwise we'd never see the retry's reply.
+            req.libinfo.machport = machport;
+            const poll = req.libinfo.file_poll.?;
+            poll.fd = .fromNative(@bitCast(machport));
+            switch (poll.register(bun.uws.Loop.get(), .machport, true)) {
+                .err => {
+                    log("libinfoCallback: failed to register poll", .{});
+                    break :retry;
                 },
+                .result => return,
             }
         }
         afterResult(req, addr_info, @intCast(status_int));
@@ -1785,11 +1869,35 @@ pub const internal = struct {
         bun.handleOom(request.notify.append(bun.default_allocator, .{ .socket = socket }));
     }
 
+    fn us_getaddrinfo_cancel(
+        request: *Request,
+        socket: *bun.uws.ConnectingSocket,
+    ) callconv(.c) c_int {
+        global_cache.lock.lock();
+        defer global_cache.lock.unlock();
+        // afterResult sets result and moves the notify list out under this same
+        // lock, so once result is non-null the socket is no longer cancellable
+        // (the callback has fired or is about to fire on the worker thread).
+        if (request.result != null) return 0;
+        for (request.notify.items, 0..) |item, i| {
+            switch (item) {
+                .socket => |s| if (s == socket) {
+                    _ = request.notify.swapRemove(i);
+                    return 1;
+                },
+                .prefetch, .quic => {},
+            }
+        }
+        return 0;
+    }
+
     fn freeaddrinfo(req: *Request, err: c_int) callconv(.c) void {
         global_cache.lock.lock();
         defer global_cache.lock.unlock();
 
-        req.valid = err == 0;
+        if (err != 0) {
+            req.valid = false;
+        }
         dns_cache_errors += @as(usize, @intFromBool(err != 0));
 
         bun.assert(req.refcount > 0);
@@ -1811,6 +1919,9 @@ pub const InternalDNSRequest = internal.Request;
 comptime {
     @export(&internal.us_getaddrinfo_set, .{
         .name = "Bun__addrinfo_set",
+    });
+    @export(&internal.us_getaddrinfo_cancel, .{
+        .name = "Bun__addrinfo_cancel",
     });
     @export(&internal.us_getaddrinfo, .{
         .name = "Bun__addrinfo_get",
@@ -2469,7 +2580,7 @@ pub const Resolver = struct {
 
             const poll: *UvDnsPoll = poll_entry.value_ptr.*;
 
-            const uv_events = if (readable) uv.UV_READABLE else 0 | if (writable) uv.UV_WRITABLE else 0;
+            const uv_events = (if (readable) uv.UV_READABLE else 0) | (if (writable) uv.UV_WRITABLE else 0);
             if (uv.uv_poll_start(&poll.poll, uv_events, onDNSPollUv) < 0) {
                 _ = this.polls.swapRemove(fd);
                 uv.uv_close(@ptrCast(&poll.poll), onCloseUv);
@@ -2496,11 +2607,37 @@ pub const Resolver = struct {
 
             var poll = poll_entry.value_ptr.*;
 
-            if (readable and !poll.flags.contains(.poll_readable))
-                _ = poll.register(vm.event_loop_handle.?, .readable, false);
+            // c-ares reports the full desired (readable, writable) set for this
+            // fd; sync the poll's registration to match. FilePoll now supports
+            // both directions on one poll (epoll: combined mask via CTL_MOD;
+            // kqueue: two filters on the same ident, both EV_DELETEd on
+            // unregister).
+            const loop = vm.event_loop_handle.?;
+            const have_readable = poll.flags.contains(.poll_readable);
+            const have_writable = poll.flags.contains(.poll_writable);
 
-            if (writable and !poll.flags.contains(.poll_writable))
-                _ = poll.register(vm.event_loop_handle.?, .writable, false);
+            if ((have_readable and !readable) or (have_writable and !writable)) {
+                // Dropping a direction. FilePoll has no per-direction
+                // unregister (epoll CTL_DEL removes both; a targeted kqueue
+                // EV_DELETE would need a new API), and leaving the unwanted
+                // direction armed would busy-loop on level-triggered writable
+                // once the socket connects. Full resync is the simplest
+                // correct path and c-ares DNS fds are short-lived.
+                _ = poll.unregister(loop, false);
+                if (readable)
+                    _ = poll.register(loop, .readable, false);
+                if (writable)
+                    _ = poll.register(loop, .writable, false);
+            } else {
+                // Only adding directions (or no change). register() issues a
+                // single CTL_MOD on epoll that preserves the other direction;
+                // on kqueue EV_ADD creates a separate (ident, filter) knote
+                // without disturbing the existing one.
+                if (readable and !have_readable)
+                    _ = poll.register(loop, .readable, false);
+                if (writable and !have_writable)
+                    _ = poll.register(loop, .writable, false);
+            }
         }
     }
 
@@ -2715,7 +2852,7 @@ pub const Resolver = struct {
         var options = GetAddrInfo.Options{};
         var port: u16 = 0;
 
-        if (arguments.len > 1 and arguments.ptr[1].isCell()) {
+        if (arguments.len > 1 and arguments.ptr[1].isObject()) {
             const optionsObject = arguments.ptr[1];
 
             if (try optionsObject.getTruthy(globalThis, "port")) |port_value| {
@@ -2749,6 +2886,17 @@ pub const Resolver = struct {
     }
 
     pub fn doLookup(this: *Resolver, name: []const u8, port: u16, options: GetAddrInfo.Options, globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+        // The system backends copy the hostname into a fixed `bun.PathBuffer` on the
+        // stack before null-terminating it. Reject anything that cannot fit so we never
+        // index past that buffer. RFC 1035 caps hostnames at 253 octets and NI_MAXHOST
+        // is 1025, so this never rejects a name that could have resolved.
+        if (name.len >= bun.MAX_PATH_BYTES) {
+            var promise = jsc.JSPromise.Strong.init(globalThis);
+            const promise_value = promise.value();
+            c_ares.Error.ENOTFOUND.toDeferred("getaddrinfo", name, &promise).rejectLater(globalThis);
+            return promise_value;
+        }
+
         var opts = options;
         var backend = opts.backend;
         const normalized = normalizeDNSName(name, &backend);
@@ -3286,8 +3434,8 @@ pub const Resolver = struct {
                 return globalThis.throwInvalidArgumentType("setServers", "triple", "array");
             }
 
-            const family = (try triple.getIndex(globalThis, 0)).toInt32();
-            const port = (try triple.getIndex(globalThis, 2)).toInt32();
+            const family = try (try triple.getIndex(globalThis, 0)).coerceToInt32(globalThis);
+            const port = try (try triple.getIndex(globalThis, 2)).coerceToInt32(globalThis);
 
             if (family != 4 and family != 6) {
                 return globalThis.throwInvalidArguments("Invalid address family", .{});

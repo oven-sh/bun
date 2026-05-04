@@ -55,7 +55,7 @@ static inline ExceptionOr<JSObject*> invokeConstructor(JSC::JSGlobalObject& lexi
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto& globalObject = *JSC::jsCast<JSDOMGlobalObject*>(&lexicalGlobalObject);
+    auto& globalObject = *uncheckedDowncast<JSDOMGlobalObject>(&lexicalGlobalObject);
 
     auto constructorValue = globalObject.get(&lexicalGlobalObject, identifier);
     EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
@@ -88,7 +88,7 @@ ExceptionOr<Ref<ReadableStream>> ReadableStream::create(JSC::JSGlobalObject& lex
     if (objectOrException.hasException())
         return objectOrException.releaseException();
 
-    return create(*JSC::jsCast<JSDOMGlobalObject*>(&lexicalGlobalObject), *jsCast<JSReadableStream*>(objectOrException.releaseReturnValue()));
+    return create(*uncheckedDowncast<JSDOMGlobalObject>(&lexicalGlobalObject), *uncheckedDowncast<JSReadableStream>(objectOrException.releaseReturnValue()));
 }
 
 ExceptionOr<Ref<ReadableStream>> ReadableStream::create(JSC::JSGlobalObject& lexicalGlobalObject, RefPtr<ReadableStreamSource>&& source, JSC::JSValue nativePtr)
@@ -106,7 +106,7 @@ ExceptionOr<Ref<ReadableStream>> ReadableStream::create(JSC::JSGlobalObject& lex
     if (objectOrException.hasException())
         return objectOrException.releaseException();
 
-    return create(*JSC::jsCast<JSDOMGlobalObject*>(&lexicalGlobalObject), *jsCast<JSReadableStream*>(objectOrException.releaseReturnValue()));
+    return create(*uncheckedDowncast<JSDOMGlobalObject>(&lexicalGlobalObject), *uncheckedDowncast<JSReadableStream>(objectOrException.releaseReturnValue()));
 }
 
 static inline std::optional<JSC::JSValue> invokeReadableStreamFunction(JSC::JSGlobalObject& lexicalGlobalObject, const JSC::Identifier& identifier, JSC::JSValue thisValue, const JSC::MarkedArgumentBuffer& arguments)
@@ -114,10 +114,11 @@ static inline std::optional<JSC::JSValue> invokeReadableStreamFunction(JSC::JSGl
     JSC::VM& vm = lexicalGlobalObject.vm();
     JSC::JSLockHolder lock(vm);
 
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto function = lexicalGlobalObject.get(&lexicalGlobalObject, identifier);
+    RETURN_IF_EXCEPTION(scope, {});
     ASSERT(function.isCallable());
 
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto callData = JSC::getCallData(function);
     auto result = call(&lexicalGlobalObject, function, callData, thisValue, arguments);
     EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
@@ -258,7 +259,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionTransferToNativeReadableStream, (JSGlobalObje
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    auto* readableStream = jsDynamicCast<JSReadableStream*>(callFrame->argument(0));
+    auto* readableStream = dynamicDowncast<JSReadableStream>(callFrame->argument(0));
     readableStream->setTransferred();
     readableStream->setDisturbed(true);
     return JSValue::encode(jsUndefined());
@@ -271,7 +272,7 @@ using namespace WebCore;
 
 extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue* possibleReadableStream1, JSC::EncodedJSValue* possibleReadableStream2)
 {
-    auto* readableStream = jsDynamicCast<WebCore::JSReadableStream*>(JSC::JSValue::decode(possibleReadableStream));
+    auto* readableStream = dynamicDowncast<WebCore::JSReadableStream>(JSC::JSValue::decode(possibleReadableStream));
     if (!readableStream) [[unlikely]]
         return false;
 
@@ -322,7 +323,7 @@ extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, 
 
 extern "C" void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
-    auto* readableStream = jsDynamicCast<WebCore::JSReadableStream*>(JSC::JSValue::decode(possibleReadableStream));
+    auto* readableStream = dynamicDowncast<WebCore::JSReadableStream>(JSC::JSValue::decode(possibleReadableStream));
     if (!readableStream) [[unlikely]]
         return;
 
@@ -332,6 +333,28 @@ extern "C" void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStrea
 
     WebCore::Exception exception { Bun::AbortError };
     WebCore::ReadableStream::cancel(*globalObject, readableStream, exception);
+}
+
+// Like ReadableStream__cancel but forwards an arbitrary JS reason verbatim to
+// the stream's cancel algorithm instead of synthesizing a DOMException. Used
+// by fetch() to honor AbortSignal.reason when cancelling a request body.
+extern "C" void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue encodedReason)
+{
+    auto* readableStream = dynamicDowncast<WebCore::JSReadableStream>(JSC::JSValue::decode(possibleReadableStream));
+    if (!readableStream) [[unlikely]]
+        return;
+
+    auto& vm = globalObject->vm();
+    auto* clientData = static_cast<JSVMClientData*>(vm.clientData);
+    auto& privateName = clientData->builtinFunctions().readableStreamInternalsBuiltins().readableStreamCancelPrivateName();
+
+    JSC::JSLockHolder lock(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    MarkedArgumentBuffer arguments;
+    arguments.append(readableStream);
+    arguments.append(JSC::JSValue::decode(encodedReason));
+    ASSERT(!arguments.hasOverflowed());
+    invokeReadableStreamFunction(*globalObject, privateName, JSC::jsUndefined(), arguments);
 }
 
 extern "C" void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
@@ -351,13 +374,13 @@ extern "C" void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStrea
 extern "C" bool ReadableStream__isDisturbed(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
     ASSERT(globalObject);
-    return WebCore::ReadableStream::isDisturbed(globalObject, jsDynamicCast<WebCore::JSReadableStream*>(JSC::JSValue::decode(possibleReadableStream)));
+    return WebCore::ReadableStream::isDisturbed(globalObject, dynamicDowncast<WebCore::JSReadableStream>(JSC::JSValue::decode(possibleReadableStream)));
 }
 
 extern "C" bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
     ASSERT(globalObject);
-    WebCore::JSReadableStream* stream = jsDynamicCast<WebCore::JSReadableStream*>(JSValue::decode(possibleReadableStream));
+    WebCore::JSReadableStream* stream = dynamicDowncast<WebCore::JSReadableStream>(JSValue::decode(possibleReadableStream));
     return stream != nullptr && WebCore::ReadableStream::isLocked(globalObject, stream);
 }
 
@@ -376,7 +399,7 @@ extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JS
         auto throwScope = DECLARE_THROW_SCOPE(vm);
         JSValue target = object;
         JSValue fn = JSValue();
-        auto* function = jsDynamicCast<JSC::JSFunction*>(object);
+        auto* function = dynamicDowncast<JSC::JSFunction>(object);
         if (function && !function->isHostFunction() && function->jsExecutable() && function->jsExecutable()->isAsyncGenerator()) {
             fn = object;
             target = jsUndefined();
@@ -424,7 +447,7 @@ extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JS
         return 0;
     }
 
-    auto* readableStream = jsCast<WebCore::JSReadableStream*>(object);
+    auto* readableStream = uncheckedDowncast<WebCore::JSReadableStream>(object);
 
     JSValue nativePtrHandle = readableStream->nativePtr();
     if (nativePtrHandle.isEmpty() || !nativePtrHandle.isCell()) {
@@ -434,17 +457,17 @@ extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JS
 
     JSCell* cell = nativePtrHandle.asCell();
 
-    if (auto* casted = jsDynamicCast<JSBlobInternalReadableStreamSource*>(cell)) {
+    if (auto* casted = dynamicDowncast<JSBlobInternalReadableStreamSource>(cell)) {
         *ptr = casted->wrapped();
         return 1;
     }
 
-    if (auto* casted = jsDynamicCast<JSFileInternalReadableStreamSource*>(cell)) {
+    if (auto* casted = dynamicDowncast<JSFileInternalReadableStreamSource>(cell)) {
         *ptr = casted->wrapped();
         return 2;
     }
 
-    if (auto* casted = jsDynamicCast<JSBytesInternalReadableStreamSource*>(cell)) {
+    if (auto* casted = dynamicDowncast<JSBytesInternalReadableStreamSource>(cell)) {
         *ptr = casted->wrapped();
         return 4;
     }
@@ -486,6 +509,7 @@ static inline JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBufferBo
 
     auto callData = JSC::getCallData(function);
     JSValue result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     JSC::JSObject* object = result.getObject();
 
@@ -493,14 +517,12 @@ static inline JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBufferBo
         return JSValue::encode(result);
 
     if (!object) [[unlikely]] {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
         throwTypeError(globalObject, throwScope, "Expected object"_s);
         return {};
     }
 
-    JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(object);
+    JSC::JSPromise* promise = dynamicDowncast<JSC::JSPromise>(object);
     if (!promise) [[unlikely]] {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
         throwTypeError(globalObject, throwScope, "Expected promise"_s);
         return {};
     }
@@ -530,6 +552,7 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::Globa
 
     auto callData = JSC::getCallData(function);
     JSValue result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     JSC::JSObject* object = result.getObject();
 
@@ -537,14 +560,12 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::Globa
         return JSValue::encode(result);
 
     if (!object) [[unlikely]] {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
         throwTypeError(globalObject, throwScope, "Expected object"_s);
         return {};
     }
 
-    JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(object);
+    JSC::JSPromise* promise = dynamicDowncast<JSC::JSPromise>(object);
     if (!promise) [[unlikely]] {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
         throwTypeError(globalObject, throwScope, "Expected promise"_s);
         return {};
     }
@@ -555,6 +576,7 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::Globa
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
 {
     auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSFunction* function = nullptr;
     if (auto readableStreamToText = globalObject->m_readableStreamToText.get()) {
@@ -569,12 +591,15 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::Global
     arguments.append(JSValue::decode(readableStreamValue));
 
     auto callData = JSC::getCallData(function);
-    return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
+    JSValue result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    return JSC::JSValue::encode(result);
 }
 
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToFormData(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue, JSC::EncodedJSValue contentTypeValue)
 {
     auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSFunction* function = nullptr;
     if (auto readableStreamToFormData = globalObject->m_readableStreamToFormData.get()) {
@@ -590,12 +615,15 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToFormData(Zig::Gl
     arguments.append(JSValue::decode(contentTypeValue));
 
     auto callData = JSC::getCallData(function);
-    return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
+    JSValue result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    return JSC::JSValue::encode(result);
 }
 
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
 {
     auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSFunction* function = nullptr;
     if (auto readableStreamToJSON = globalObject->m_readableStreamToJSON.get()) {
@@ -610,12 +638,15 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::Global
     arguments.append(JSValue::decode(readableStreamValue));
 
     auto callData = JSC::getCallData(function);
-    return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
+    JSValue result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    return JSC::JSValue::encode(result);
 }
 
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
 {
     auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSFunction* function = nullptr;
     if (auto readableStreamToBlob = globalObject->m_readableStreamToBlob.get()) {
@@ -630,7 +661,9 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::Global
     arguments.append(JSValue::decode(readableStreamValue));
 
     auto callData = JSC::getCallData(function);
-    return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
+    JSValue result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    return JSC::JSValue::encode(result);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionReadableStreamToArrayBuffer, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

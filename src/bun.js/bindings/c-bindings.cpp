@@ -105,6 +105,19 @@ extern "C" ssize_t bun_sysconf__SC_CLK_TCK()
 #endif
 }
 
+// Host CPU count, ignoring sched_getaffinity and cgroup cpu.max.
+// Used to size os.cpus() so it matches the native cpus() result count.
+extern "C" int32_t bun_sysconf__SC_NPROCESSORS_ONLN()
+{
+#if OS(WINDOWS)
+    SYSTEM_INFO sysinfo;
+    GetSystemInfo(&sysinfo);
+    return sysinfo.dwNumberOfProcessors;
+#else
+    return sysconf(_SC_NPROCESSORS_ONLN);
+#endif
+}
+
 #if OS(DARWIN) && BUN_DEBUG
 #include <malloc/malloc.h>
 
@@ -192,7 +205,7 @@ extern "C" void windows_enable_stdio_inheritance()
 
 #endif
 
-#if OS(LINUX)
+#if OS(LINUX) || OS(FREEBSD)
 
 #include <sys/syscall.h>
 
@@ -200,6 +213,7 @@ extern "C" void windows_enable_stdio_inheritance()
 #define CLOSE_RANGE_CLOEXEC (1U << 2)
 #endif
 
+#if OS(LINUX)
 #ifndef __NR_close_range
 // True for architectures we support:
 // - arch/arm64/include/asm/unistd32.h
@@ -214,6 +228,15 @@ extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigne
 {
     return syscall(__NR_close_range, start, end, flags);
 }
+#else // OS(FREEBSD)
+// FreeBSD 12.2+ libc has close_range; 14.0+ supports CLOSE_RANGE_CLOEXEC
+// (same value 1<<2 as Linux). Passing flags through means execveZ-failure
+// recovery keeps fds open (CLOEXEC) instead of closing them outright.
+extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags)
+{
+    return close_range(start, end, flags);
+}
+#endif
 
 static void unset_cloexec(int fd)
 {
@@ -331,6 +354,11 @@ size_t lshpack_wrapper_decode(lshpack_wrapper* self,
     return s - src;
 }
 
+void lshpack_wrapper_enc_set_max_capacity(lshpack_wrapper* self, unsigned max_capacity)
+{
+    lshpack_enc_set_max_capacity(&self->enc, max_capacity);
+}
+
 void lshpack_wrapper_deinit(lshpack_wrapper* self)
 {
     lshpack_dec_cleanup(&self->dec);
@@ -387,6 +415,18 @@ extern "C" void Bun__onExit();
 extern "C" int32_t bun_stdio_tty[3];
 #if !OS(WINDOWS)
 static termios termios_to_restore_later[3];
+// Whether Bun itself has modified the termios of each stdio fd during this
+// process's lifetime (e.g. via process.stdin.setRawMode). Used to decide
+// whether the exit-time termios restore should fire when Bun is acting as a
+// pipeline producer (stdout is a pipe). See #29592 — writing our startup
+// snapshot back to a shared /dev/pts device clobbers raw mode set on the
+// same device by a downstream consumer (less, fzf, fx, ...).
+//
+// `volatile sig_atomic_t` because bun_restore_stdio() reads this from signal
+// context (onExitSignal, SIGINT/SIGTERM) while Bun__ttySetMode() writes it
+// from normal execution; sig_atomic_t is the only integral type POSIX
+// guarantees can be accessed atomically across that boundary.
+extern "C" volatile sig_atomic_t bun_stdio_modified[3] = { 0, 0, 0 };
 #endif
 
 extern "C" void bun_restore_stdio()
@@ -394,9 +434,25 @@ extern "C" void bun_restore_stdio()
 
 #if !OS(WINDOWS)
 
+    // Only suppress the restore when Bun is a pipeline producer (stdout is a
+    // pipe, not a TTY) and it didn't touch termios itself. That's the #29592
+    // case — a downstream consumer on the same /dev/pts/* device has already
+    // taken over termios and writing our startup snapshot back clobbers it.
+    //
+    // For the interactive-wrapper case (stdout IS a TTY, e.g. `bun run vim`
+    // where the child put the terminal into raw mode and then crashed), we
+    // keep the unconditional restore so the shell prompt comes back cooked.
+    // Same for the crash-handler, --watch reload, and signal-death paths in
+    // run_command / bunx / lifecycle_script_runner — those are all cases
+    // where Bun is the foreground session owner and the startup snapshot is
+    // the state the user expects back.
+    const bool pipeline_producer = bun_stdio_tty[1] == 0;
+
     // restore stdio
     for (int32_t fd = 0; fd < 3; fd++) {
         if (!bun_stdio_tty[fd])
+            continue;
+        if (pipeline_producer && !bun_stdio_modified[fd])
             continue;
 
         sigset_t sa;
@@ -460,7 +516,7 @@ extern "C" void bun_initialize_process()
     bun_close_range(4, ~0U, CLOSE_RANGE_CLOEXEC);
 #endif
 
-#if OS(LINUX) || OS(DARWIN)
+#if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 
     int devNullFd_ = -1;
     bool anyTTYs = false;
@@ -584,7 +640,7 @@ extern "C" int32_t open_as_nonblocking_tty(int32_t fd, int32_t mode)
 static bool can_open_as_nonblocking_tty(int32_t fd)
 {
     int result;
-#if OS(LINUX) || OS(FreeBSD)
+#if OS(LINUX) || OS(FREEBSD)
     int dummy = 0;
 
     result = ioctl(fd, TIOCGPTN, &dummy) != 0;
@@ -767,7 +823,7 @@ extern "C" int ffi_fileno(FILE* file)
 
 // Handle signals in bun.spawnSync.
 // If we receive a signal, we want to forward the signal to the child process.
-#if OS(LINUX) || OS(DARWIN)
+#if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 #include <signal.h>
 #include <pthread.h>
 
@@ -802,7 +858,7 @@ static struct sigaction previous_actions[NSIG];
 
 #endif
 
-#if OS(DARWIN)
+#if OS(DARWIN) || OS(FREEBSD)
 #define FOR_EACH_SIGNAL(M) FOR_EACH_POSIX_SIGNAL(M)
 #endif
 
@@ -876,7 +932,7 @@ extern "C" void Bun__unregisterSignalsForForwarding()
 
 #endif
 
-#if OS(LINUX) || OS(DARWIN)
+#if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 #include <paths.h>
 
 extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = _PATH_DEFPATH;
@@ -910,6 +966,10 @@ extern "C" void Bun__signpost_emit(os_log_t log, os_signpost_type_t type, os_sig
 #undef EMIT_SIGNPOST
 #undef FOR_EACH_TRACE_EVENT
 
+#endif // OS(DARWIN) signpost code
+
+#if OS(DARWIN) || defined(__linux__) || defined(__FreeBSD__)
+
 #define BLOB_HEADER_ALIGNMENT 16 * 1024
 
 extern "C" {
@@ -919,12 +979,25 @@ struct BlobHeader {
 } __attribute__((aligned(BLOB_HEADER_ALIGNMENT)));
 }
 
+#if OS(DARWIN)
+
 extern "C" BlobHeader __attribute__((section("__BUN,__bun"))) BUN_COMPILED = { 0, 0 };
 
 extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength()
 {
     return &BUN_COMPILED.size;
 }
+
+#else // __linux__ / __FreeBSD__ — both ELF, same .bun section approach
+
+extern "C" BlobHeader __attribute__((section(".bun"), aligned(BLOB_HEADER_ALIGNMENT), used)) BUN_COMPILED = { 0 };
+
+extern "C" uint64_t* Bun__getStandaloneModuleGraphELFVaddr()
+{
+    return &BUN_COMPILED.size;
+}
+
+#endif // OS(DARWIN) / __linux__
 
 #elif defined(_WIN32)
 // Windows PE section handling

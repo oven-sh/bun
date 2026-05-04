@@ -60,6 +60,55 @@ describe("ResolveMessage", () => {
       await import(":://filesystem");
     }).toThrow("Cannot find module");
   });
+
+  it("referrer is not freed before it is read", () => {
+    // Non-ASCII in the source path forces resolveMaybeNeedsTrailingSlash to
+    // allocate a new UTF-8 buffer which is freed on return. ResolveMessage
+    // used to borrow that buffer for .referrer, causing a use-after-free
+    // when the property was read later.
+    let err: any;
+    try {
+      Bun.resolveSync("./does-not-exist", "/tmp/caf\u00e9-tr\u00e8s-long-\u{1F389}/file.js");
+    } catch (e) {
+      err = e;
+    }
+    Bun.gc(true);
+    expect(err.referrer).toStartWith("/tmp/caf");
+    expect(err.referrer).toEndWith("/file.js");
+  });
+
+  it("finalize frees with the same allocator it was created with", () => {
+    // ResolveMessage.create() clones the message with the VM's arena
+    // allocator but finalize() was freeing it with bun.default_allocator
+    // and never destroying the struct itself. Under ASAN with mimalloc's
+    // per-heap tracking this surfaced as a flaky use-after-poison in the
+    // resolver after many failed require()s + GCs in a long-running
+    // process (Fuzzilli REPRL). Use relative specifiers so auto-install
+    // does not kick in.
+    for (let i = 0; i < 50; i++) {
+      let errs: any[] = [];
+      for (let j = 0; j < 10; j++) {
+        try {
+          Bun.resolveSync("./does-not-exist-" + j, import.meta.dir);
+        } catch (e) {
+          errs.push(e);
+        }
+      }
+      for (const e of errs) {
+        void e.message;
+        void e.code;
+        void e.specifier;
+        void e.referrer;
+        void e.level;
+        void e.importKind;
+        void e.position;
+        void String(e);
+      }
+      errs = [];
+      Bun.gc(true);
+    }
+    expect().pass();
+  });
 });
 
 // These tests reproduce panics where the module resolver wrote past fixed-size

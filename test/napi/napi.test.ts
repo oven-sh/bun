@@ -21,7 +21,9 @@ describe.concurrent("napi", () => {
       process.exit(1);
     }
     console.timeEnd("Building node-gyp");
-  });
+    // node-gyp rebuild can take a while under a debug/ASAN binary; default
+    // 5s hook timeout kills the install subprocess mid-build.
+  }, 120_000);
 
   describe.each(["esm", "cjs"])("bundle .node files to %s via", format => {
     describe.each(["node", "bun"])("target %s", target => {
@@ -286,6 +288,32 @@ describe.concurrent("napi", () => {
       expect(result).toContain("PASS: napi_get_buffer_info returns null pointer and 0 length for empty buffer");
       expect(result).toContain("PASS: napi_get_typedarray_info returns null pointer and 0 length for empty buffer");
       expect(result).toContain("PASS: napi_is_detached_arraybuffer returns true for empty buffer's arraybuffer");
+      expect(result).not.toContain("FAIL");
+    });
+
+    it("rejects with napi_pending_exception before adopting data when an exception is pending", async () => {
+      const result = await checkSameOutput("test_external_buffer_with_pending_exception", []);
+      expect(result).toContain("status=10");
+      expect(result).toContain("PASS: caller retains ownership on failure with pending exception");
+      expect(result).not.toContain("FAIL");
+    });
+  });
+
+  describe("napi_create_external_arraybuffer", () => {
+    it("wraps caller data and does not fire finalize_cb while the ArrayBuffer is alive", async () => {
+      const result = await checkSameOutput("test_external_arraybuffer_finalizer", []);
+      expect(result).toContain("PASS: napi_create_external_arraybuffer wraps caller data without copying");
+      expect(result).toContain(
+        "PASS: napi_create_external_arraybuffer finalizer not called while ArrayBuffer is alive",
+      );
+      expect(result).toContain("PASS: napi_create_external_arraybuffer data intact after GC");
+      expect(result).not.toContain("FAIL");
+    });
+
+    it("rejects with napi_pending_exception before adopting external_data when an exception is pending", async () => {
+      const result = await checkSameOutput("test_external_arraybuffer_with_pending_exception", []);
+      expect(result).toContain("status=10");
+      expect(result).toContain("PASS: caller retains ownership on failure with pending exception");
       expect(result).not.toContain("FAIL");
     });
   });
@@ -558,6 +586,30 @@ describe.concurrent("napi", () => {
     await checkSameOutput("test_constructor_order", []);
   });
 
+  it("handles napi_module_register called re-entrantly from nm_register_func", async () => {
+    // The init callback of the first static-constructor-registered module
+    // calls napi_module_register() 64 more times. Before the fix, that
+    // appended to the same WTF::Vector the execute loop was range-for
+    // iterating, reallocating it and leaving a dangling iterator for the
+    // second static-constructor-registered module (heap-use-after-free
+    // under ASAN, garbage nm_register_func pointer otherwise).
+    const addonPath = join(__dirname, "napi-app", "build", "Debug", "reentrant_register_addon.node");
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", `require(${JSON.stringify(addonPath)});`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.split(/\r?\n/).filter(Boolean)).toEqual([
+      "register_cb_a",
+      "register_cb_b",
+      "register_cb_reentrant x 64",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   it("behaves as expected when performing operations with an exception pending", async () => {
     await checkSameOutput("test_deferred_exceptions", []);
   });
@@ -615,6 +667,31 @@ describe.concurrent("napi", () => {
     // Get initial count
     const count = addon.getFinalizeCount();
     expect(typeof count).toBe("number");
+  });
+
+  it("napi_wrap finalizers run in LIFO order during env teardown", async () => {
+    // Mirrors sqlite3/duckdb crash: a child wrapped after its parent must be finalized
+    // first so its destructor can still touch the parent. Bun previously iterated an
+    // unordered_set here, so order was hash-dependent and the child could see a freed parent.
+    const code = `
+      const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/test_wrap_cleanup_order.node"))});
+      globalThis.keep = addon.createParentAndChildren(32);
+    `;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(
+      "finalize order: " +
+        Array.from({ length: 32 }, (_, i) => 32 - i)
+          .concat(0)
+          .join(" "),
+    );
+    expect(exitCode).toBe(0);
   });
 
   it("napi_reference_unref can be called from finalizers in regular modules", async () => {

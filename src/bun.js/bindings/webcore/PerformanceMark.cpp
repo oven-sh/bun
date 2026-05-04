@@ -41,7 +41,7 @@ namespace WebCore {
 
 static double performanceNow(ScriptExecutionContext& scriptExecutionContext)
 {
-    return static_cast<double>(Bun__readOriginTimer(jsCast<Zig::GlobalObject*>(scriptExecutionContext.globalObject())->bunVM())) / 1000000;
+    return static_cast<double>(Bun__readOriginTimer(uncheckedDowncast<Zig::GlobalObject>(scriptExecutionContext.globalObject())->bunVM())) / 1000000;
 }
 
 ExceptionOr<Ref<PerformanceMark>> PerformanceMark::create(JSC::JSGlobalObject& globalObject, ScriptExecutionContext& scriptExecutionContext, const String& name, std::optional<PerformanceMarkOptions>&& markOptions)

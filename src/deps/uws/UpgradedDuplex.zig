@@ -174,7 +174,7 @@ fn onReceivedData(
 fn onEnd(
     globalObject: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
-) void {
+) bun.JSError!jsc.JSValue {
     log("onEnd", .{});
     _ = globalObject;
     const function = callframe.callee();
@@ -186,6 +186,7 @@ fn onEnd(
             this.handlers.onEnd(this.handlers.ctx);
         }
     }
+    return .js_undefined;
 }
 
 fn onWritable(
@@ -288,7 +289,7 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *jsc.JSGlobalObject) bun
                 globalThis,
                 null,
                 0,
-                onReceivedData,
+                onEnd,
                 this,
             );
             endCallback.ensureStillAlive();
@@ -342,6 +343,24 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *jsc.JSGlobalObject) bun
 
 pub fn startTLS(this: *UpgradedDuplex, ssl_options: jsc.API.ServerConfig.SSLConfig, is_client: bool) !void {
     this.wrapper = try WrapperType.init(ssl_options, is_client, .{
+        .ctx = this,
+        .onOpen = UpgradedDuplex.onOpen,
+        .onHandshake = UpgradedDuplex.onHandshake,
+        .onData = UpgradedDuplex.onData,
+        .onClose = UpgradedDuplex.onClose,
+        .write = UpgradedDuplex.internalWrite,
+    });
+
+    this.wrapper.?.start();
+}
+
+/// Adopts `ctx` (one ref) — freed on both success (via `wrapper.deinit`) and
+/// error. Mirrors `startTLS` but skips the
+/// `SSLConfig.asUSockets() → us_ssl_ctx_from_options()` round-trip so a
+/// memoised `SecureContext` can be reused on the duplex/named-pipe path.
+pub fn startTLSWithCTX(this: *UpgradedDuplex, ctx: *bun.BoringSSL.c.SSL_CTX, is_client: bool) !void {
+    errdefer bun.BoringSSL.c.SSL_CTX_free(ctx);
+    this.wrapper = try WrapperType.initWithCTX(ctx, is_client, .{
         .ctx = this,
         .onOpen = UpgradedDuplex.onOpen,
         .onHandshake = UpgradedDuplex.onHandshake,

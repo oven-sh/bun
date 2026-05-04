@@ -18,13 +18,21 @@ pub const AdditionalOnAbortCallback = struct {
     }
 };
 
-pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comptime ThisServer: type) type {
+pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comptime ThisServer: type, comptime http3: bool) type {
     return struct {
         const RequestContext = @This();
 
-        const App = uws.NewApp(ssl_enabled);
+        const App = if (http3) struct {
+            pub const Response = uws.H3.Response;
+        } else uws.NewApp(ssl_enabled);
+        /// uWS request type for this transport. The H3 wrapper mirrors
+        /// uws.Request's surface so callers stay duck-typed.
+        pub const Req = if (http3) uws.H3.Request else uws.Request;
+        pub const Resp = App.Response;
+        pub const is_h3 = http3;
+        const resp_kind = uws.ResponseKind.from(ssl_enabled, http3);
         pub threadlocal var pool: ?*RequestContext.RequestContextStackAllocator = null;
-        pub const ResponseStream = jsc.WebCore.HTTPServerWritable(ssl_enabled);
+        pub const ResponseStream = jsc.WebCore.HTTPServerWritable(ssl_enabled, http3);
 
         // This pre-allocates up to 2,048 RequestContext structs.
         // It costs about 655,632 bytes.
@@ -35,7 +43,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         /// thread-local default heap allocator
         /// this prevents an extra pthread_getspecific() call which shows up in profiling
         allocator: std.mem.Allocator,
-        req: ?*uws.Request,
+        req: ?*Req,
         request_weakref: Request.WeakRef = .empty,
         signal: ?*jsc.WebCore.AbortSignal = null,
         method: HTTP.Method,
@@ -43,17 +51,25 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         flags: NewFlags(debug_mode) = .{},
 
-        upgrade_context: ?*uws.SocketContext = null,
+        upgrade_context: ?*uws.WebSocketUpgradeContext = null,
 
         /// We can only safely free once the request body promise is finalized
         /// and the response is rejected
         response_jsvalue: jsc.JSValue = jsc.JSValue.zero,
         ref_count: u8 = 1,
 
-        response_ptr: ?*jsc.WebCore.Response = null,
+        /// Weak: for plain Blob/InternalBlob bodies the Response JSValue is
+        /// not protected (hot path), so GC may finalize it while we're parked
+        /// on tryEnd() backpressure. onAbort / handleResolveStream /
+        /// handleRejectStream only use this for best-effort readable-stream
+        /// cleanup and safely observe null instead of UAF. File/.Locked
+        /// bodies still protect() response_jsvalue, so the pointer stays
+        /// valid for renderMetadata() on those paths.
+        response_weakref: Response.WeakRef = .empty,
         blob: jsc.WebCore.Blob.Any = jsc.WebCore.Blob.Any{ .Blob = .{} },
 
         sendfile: SendfileContext = undefined,
+        range: RangeRequest.Raw = .none,
 
         request_body_readable_stream_ref: jsc.WebCore.ReadableStream.Strong = .{},
         request_body: ?*WebCore.Body.Value.HiveRef = null,
@@ -78,7 +94,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         additional_on_abort: ?AdditionalOnAbortCallback = null,
 
         // TODO: support builtin compression
-        const can_sendfile = !ssl_enabled and !Environment.isWindows;
 
         pub fn setSignalAborted(this: *RequestContext, reason: bun.jsc.CommonAbortReason) void {
             if (this.signal) |signal| {
@@ -133,7 +148,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             ctxLog("onResolve", .{});
 
             const arguments = callframe.arguments_old(2);
-            var ctx = arguments.ptr[1].asPromisePtr(@This());
+            const ctx = NativePromiseContext.take(RequestContext, arguments.ptr[1]) orelse {
+                // The cell's destructor already released the ref (the Promise
+                // was collected before a prior microtask turn reached us).
+                return .js_undefined;
+            };
             defer ctx.deref();
 
             const result = arguments.ptr[0];
@@ -270,6 +289,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             this.request_body_buf.clearAndFree(this.allocator);
             this.response_buf_owned.clearAndFree(this.allocator);
+            this.response_weakref.deref();
 
             if (this.request_body) |body| {
                 _ = body.unref();
@@ -283,7 +303,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             if (this.server) |server| {
                 this.server = null;
-                server.request_pool_allocator.put(this);
+                if (comptime http3) server.h3_request_pool_allocator.put(this) else server.request_pool_allocator.put(this);
                 server.onRequestComplete();
             }
         }
@@ -308,9 +328,14 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             ctxLog("onReject", .{});
 
             const arguments = callframe.arguments_old(2);
-            const ctx = arguments.ptr[1].asPromisePtr(@This());
-            const err = arguments.ptr[0];
+            const ctx = NativePromiseContext.take(RequestContext, arguments.ptr[1]) orelse {
+                // The cell's destructor already released the ref (the Promise
+                // was collected before a prior microtask turn reached us).
+                return .js_undefined;
+            };
             defer ctx.deref();
+
+            const err = arguments.ptr[0];
             handleReject(ctx, if (!err.isEmptyOrUndefinedOrNull()) err else .js_undefined);
             return .js_undefined;
         }
@@ -460,26 +485,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             }
         }
 
-        /// Render a complete response buffer
-        pub fn renderResponseBufferAndMetadata(this: *RequestContext) void {
-            if (this.resp) |resp| {
-                this.renderMetadata();
-
-                if (!resp.tryEnd(
-                    this.response_buf_owned.items,
-                    this.response_buf_owned.items.len,
-                    this.shouldCloseConnection(),
-                )) {
-                    this.flags.has_marked_pending = true;
-                    resp.onWritable(*RequestContext, onWritableCompleteResponseBuffer, this);
-                    return;
-                }
-            }
-            this.detachResponse();
-            this.endRequestStreamingAndDrain();
-            this.deref();
-        }
-
         /// Drain a partial response buffer
         pub fn drainResponseBufferAndMetadata(this: *RequestContext) void {
             if (this.resp) |resp| {
@@ -579,7 +584,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             return this.sendWritableBytesForCompleteResponseBuffer(this.response_buf_owned.items, write_offset, resp);
         }
 
-        pub fn create(this: *RequestContext, server: *ThisServer, req: *uws.Request, resp: *App.Response, should_deinit_context: ?*bool, method: ?bun.http.Method) void {
+        inline fn anyResponse(r: *App.Response) uws.AnyResponse {
+            return if (comptime http3) .{ .H3 = r } else if (comptime ssl_enabled) .{ .SSL = r } else .{ .TCP = r };
+        }
+
+        pub fn create(this: *RequestContext, server: *ThisServer, req: *Req, resp: *App.Response, should_deinit_context: ?*bool, method: ?bun.http.Method) void {
             this.* = .{
                 .allocator = server.allocator,
                 .resp = resp,
@@ -587,6 +596,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 .method = method orelse HTTP.Method.which(req.method()) orelse .GET,
                 .server = server,
                 .defer_deinit_until_callback_completes = should_deinit_context,
+                .range = RangeRequest.rawFromRequest(if (comptime http3) .{ .h3 = req } else .{ .h1 = req }),
             };
 
             ctxLog("create<d> ({*})<r>", .{this});
@@ -617,6 +627,17 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         pub fn onAbort(this: *RequestContext, resp: *App.Response) void {
             ctxLog("onAbort", .{});
             assert(this.resp == resp);
+            // An HTTP/3 stream is destroyed once both sides FIN, so this also
+            // fires after a successful end(). HTTP/1 sockets persist for
+            // keep-alive, so the equivalent never happens there. Drop the
+            // pointer; everything else cleans up via the resolve/reject path.
+            if (comptime http3) {
+                if (resp.hasResponded()) {
+                    this.resp = null;
+                    this.flags.has_abort_handler = false;
+                    return;
+                }
+            }
             assert(!this.flags.aborted);
             assert(this.server != null);
             // mark request as aborted
@@ -676,7 +697,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     any_js_calls = true;
                 }
 
-                if (this.response_ptr) |response| {
+                if (this.response_weakref.get()) |response| {
                     if (response.getBodyReadableStream(globalThis)) |stream| {
                         defer stream.value.ensureStillAlive();
                         response.detachReadableStream(globalThis);
@@ -708,6 +729,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 }
                 this.response_jsvalue = jsc.JSValue.zero;
             }
+            this.response_weakref.deref();
 
             this.request_body_readable_stream_ref.deinit();
 
@@ -760,92 +782,23 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             }
         }
 
-        pub fn endSendFile(this: *RequestContext, writeOffSet: usize, closeConnection: bool) void {
-            if (this.resp) |resp| {
-                defer this.deref();
-
-                this.detachResponse();
-                this.endRequestStreamingAndDrain();
-                resp.endSendFile(writeOffSet, closeConnection);
-            }
+        fn onFileStreamComplete(ctx: *anyopaque, _: uws.AnyResponse) void {
+            const this: *RequestContext = @ptrCast(@alignCast(ctx));
+            this.detachResponse();
+            this.endRequestStreamingAndDrain();
+            this.deref();
         }
 
-        fn cleanupAndFinalizeAfterSendfile(this: *RequestContext) void {
-            const sendfile = this.sendfile;
-            this.endSendFile(sendfile.offset, this.shouldCloseConnection());
-
-            // use node syscall so that we don't segfault on BADF
-            if (sendfile.auto_close)
-                sendfile.fd.close();
+        fn onFileStreamAbort(ctx: *anyopaque, resp: uws.AnyResponse) void {
+            const this: *RequestContext = @ptrCast(@alignCast(ctx));
+            // Route through the real onAbort so flags.aborted, request.signal,
+            // and additional_on_abort fire exactly as they did pre-consolidation.
+            this.onAbort(if (comptime http3) resp.H3 else if (comptime ssl_enabled) resp.SSL else resp.TCP);
         }
-        const separator: string = "\r\n";
-        const separator_iovec = [1]std.posix.iovec_const{.{
-            .iov_base = separator.ptr,
-            .iov_len = separator.len,
-        }};
 
-        pub fn onSendfile(this: *RequestContext) bool {
-            if (this.isAbortedOrEnded()) {
-                this.cleanupAndFinalizeAfterSendfile();
-                return false;
-            }
-            const resp = this.resp.?;
-
-            const adjusted_count_temporary = @min(@as(u64, this.sendfile.remain), @as(u63, std.math.maxInt(u63)));
-            // TODO we should not need this int cast; improve the return type of `@min`
-            const adjusted_count = @as(u63, @intCast(adjusted_count_temporary));
-
-            if (Environment.isLinux) {
-                var signed_offset = @as(i64, @intCast(this.sendfile.offset));
-                const start = this.sendfile.offset;
-                const val = linux.sendfile(this.sendfile.socket_fd.cast(), this.sendfile.fd.cast(), &signed_offset, this.sendfile.remain);
-                this.sendfile.offset = @as(Blob.SizeType, @intCast(signed_offset));
-
-                const errcode = bun.sys.getErrno(val);
-
-                this.sendfile.remain -|= @as(Blob.SizeType, @intCast(this.sendfile.offset -| start));
-
-                if (errcode != .SUCCESS or this.isAbortedOrEnded() or this.sendfile.remain == 0 or val == 0) {
-                    if (errcode != .AGAIN and errcode != .SUCCESS and errcode != .PIPE and errcode != .NOTCONN) {
-                        Output.prettyErrorln("Error: {s}", .{@tagName(errcode)});
-                        Output.flush();
-                    }
-                    this.cleanupAndFinalizeAfterSendfile();
-                    return errcode != .SUCCESS;
-                }
-            } else {
-                var sbytes: std.posix.off_t = adjusted_count;
-                const signed_offset = @as(i64, @bitCast(@as(u64, this.sendfile.offset)));
-                const errcode = bun.sys.getErrno(std.c.sendfile(
-                    this.sendfile.fd.cast(),
-                    this.sendfile.socket_fd.cast(),
-                    signed_offset,
-                    &sbytes,
-                    null,
-                    0,
-                ));
-                const wrote = @as(Blob.SizeType, @intCast(sbytes));
-                this.sendfile.offset +|= wrote;
-                this.sendfile.remain -|= wrote;
-                if (errcode != .AGAIN or this.isAbortedOrEnded() or this.sendfile.remain == 0 or sbytes == 0) {
-                    if (errcode != .AGAIN and errcode != .SUCCESS and errcode != .PIPE and errcode != .NOTCONN) {
-                        Output.prettyErrorln("Error: {s}", .{@tagName(errcode)});
-                        Output.flush();
-                    }
-                    this.cleanupAndFinalizeAfterSendfile();
-                    return errcode == .SUCCESS;
-                }
-            }
-
-            if (!this.sendfile.has_set_on_writable) {
-                this.sendfile.has_set_on_writable = true;
-                this.flags.has_marked_pending = true;
-                resp.onWritable(*RequestContext, onWritableSendfile, this);
-            }
-
-            resp.markNeedsMore();
-
-            return true;
+        fn onFileStreamError(ctx: *anyopaque, resp: uws.AnyResponse, _: bun.sys.Error) void {
+            // FileResponseStream already force-closed the socket; just clean up.
+            onFileStreamComplete(ctx, resp);
         }
 
         pub fn onWritableBytes(this: *RequestContext, write_offset: u64, resp: *App.Response) bool {
@@ -898,14 +851,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             return true;
         }
 
-        pub fn onWritableSendfile(this: *RequestContext, _: u64, _: *App.Response) bool {
-            ctxLog("onWritableSendfile", .{});
-            return this.onSendfile();
-        }
+        pub fn doSendfile(this: *RequestContext, blob: Blob) void {
+            if (this.isAbortedOrEnded()) return;
+            if (this.flags.has_sendfile_ctx) return;
 
-        // We tried open() in another thread for this
-        // it was not faster due to the mountain of syscalls
-        pub fn renderSendFile(this: *RequestContext, blob: jsc.WebCore.Blob) void {
             if (this.resp == null or this.server == null) return;
             const globalThis = this.server.?.globalThis;
             const resp = this.resp.?;
@@ -914,7 +863,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             const file = &this.blob.store().?.data.file;
             var file_buf: bun.PathBuffer = undefined;
             const auto_close = file.pathlike != .fd;
-            const fd = if (!auto_close)
+            const fd: bun.FD = if (!auto_close)
                 file.pathlike.fd
             else switch (bun.sys.open(file.pathlike.path.sliceZ(&file_buf), bun.O.RDONLY | bun.O.NONBLOCK | bun.O.CLOEXEC, 0)) {
                 .result => |_fd| _fd,
@@ -926,174 +875,133 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 },
             };
 
-            // stat only blocks if the target is a file descriptor
             const stat: bun.Stat = switch (bun.sys.fstat(fd)) {
-                .result => |result| result,
+                .result => |s| s,
                 .err => |err| {
-                    // Close fd before toJS call, which might throw
-                    if (auto_close) {
-                        fd.close();
-                    }
+                    if (auto_close) fd.close();
                     const js_err = err.withPathLike(file.pathlike).toJS(globalThis) catch {
                         return this.renderProductionError(500);
                     };
-                    this.runErrorHandler(js_err);
-                    return;
+                    return this.runErrorHandler(js_err);
                 },
             };
 
-            if (Environment.isMac) {
-                if (!bun.isRegularFile(stat.mode)) {
-                    if (auto_close) {
-                        fd.close();
-                    }
-
-                    var err = bun.sys.Error{
-                        .errno = @as(bun.sys.Error.Int, @intCast(@intFromEnum(std.posix.E.INVAL))),
-                        .syscall = .sendfile,
-                    };
-                    var sys = err.withPathLike(file.pathlike).toSystemError();
-                    sys.message = bun.String.static("MacOS does not support sending non-regular files");
-                    const js_err = sys.toErrorInstance(globalThis);
-                    this.runErrorHandler(js_err);
-                    return;
+            const is_regular = bun.isRegularFile(stat.mode);
+            const file_type: bun.io.FileType, const pollable: bool = brk: {
+                if (bun.S.ISFIFO(@intCast(stat.mode)) or bun.S.ISCHR(@intCast(stat.mode))) break :brk .{ .pipe, true };
+                if (bun.S.ISSOCK(@intCast(stat.mode))) break :brk .{ .socket, true };
+                if (bun.S.ISDIR(@intCast(stat.mode))) {
+                    if (auto_close) fd.close();
+                    var sys = (bun.sys.Error{
+                        .errno = @intFromEnum(bun.sys.E.ISDIR),
+                        .syscall = .read,
+                    }).withPathLike(file.pathlike).toSystemError();
+                    sys.message = bun.String.static("Cannot stream a directory as a response body");
+                    return this.runErrorHandler(sys.toErrorInstance(globalThis));
                 }
-            }
-
-            if (Environment.isLinux) {
-                if (!(bun.isRegularFile(stat.mode) or std.posix.S.ISFIFO(stat.mode) or std.posix.S.ISSOCK(stat.mode))) {
-                    if (auto_close) {
-                        fd.close();
-                    }
-
-                    var err = bun.sys.Error{
-                        .errno = @as(bun.sys.Error.Int, @intCast(@intFromEnum(std.posix.E.INVAL))),
-                        .syscall = .sendfile,
-                    };
-                    var sys = err.withPathLike(file.pathlike).toShellSystemError();
-                    sys.message = bun.String.static("File must be regular or FIFO");
-                    const js_err = sys.toErrorInstance(globalThis);
-                    this.runErrorHandler(js_err);
-                    return;
-                }
-            }
-
-            const original_size = this.blob.Blob.size;
-            const stat_size = @as(Blob.SizeType, @intCast(stat.size));
-            this.blob.Blob.size = if (bun.isRegularFile(stat.mode))
-                stat_size
-            else
-                @min(original_size, stat_size);
-
-            this.flags.needs_content_length = true;
-
-            this.sendfile = .{
-                .fd = fd,
-                .remain = this.blob.Blob.offset + original_size,
-                .offset = this.blob.Blob.offset,
-                .auto_close = auto_close,
-                .socket_fd = if (!this.isAbortedOrEnded()) resp.getNativeHandle() else bun.invalid_fd,
+                break :brk .{ .file, false };
             };
 
-            // if we are sending only part of a file, include the content-range header
-            // only include content-range automatically when using a file path instead of an fd
-            // this is to better support manually controlling the behavior
-            if (bun.isRegularFile(stat.mode) and auto_close) {
+            const original_size = this.blob.Blob.size;
+            const stat_size: Blob.SizeType = @intCast(@max(stat.size, 0));
+            this.blob.Blob.size = if (is_regular) stat_size else @min(original_size, stat_size);
+
+            this.flags.needs_content_length = true;
+            this.sendfile = .{
+                .remain = this.blob.Blob.offset + original_size,
+                .offset = this.blob.Blob.offset,
+            };
+            if (is_regular and auto_close) {
                 this.flags.needs_content_range = (this.sendfile.remain -| this.sendfile.offset) != stat_size;
             }
-
-            // we know the bounds when we are sending a regular file
-            if (bun.isRegularFile(stat.mode)) {
+            if (is_regular) {
                 this.sendfile.offset = @min(this.sendfile.offset, stat_size);
                 this.sendfile.remain = @min(@max(this.sendfile.remain, this.sendfile.offset), stat_size) -| this.sendfile.offset;
             }
 
-            resp.runCorkedWithType(*RequestContext, renderMetadataAndNewline, this);
+            // Honor an incoming Range: header for whole-file responses. We
+            // don't compose Range with a user-supplied .slice() because the
+            // Content-Range arithmetic gets ambiguous; the slice path keeps
+            // its existing slice-as-range behavior. `offset == 0` alone is
+            // insufficient — `Bun.file(p).slice(0, n)` has offset 0 — so we
+            // also check the size: an unsliced blob has either the unset-size
+            // sentinel or, if JS already read `.size`, the stat'd size; a
+            // `.slice(0, n)` blob has `n < stat_size`. Skip if the user
+            // already set Content-Range or a non-200 status — they're
+            // managing partial responses themselves.
+            const user_handles_range = if (this.response_weakref.get()) |r|
+                r.statusCode() != 200 or (if (r.getInitHeaders()) |h| h.fastHas(.ContentRange) else false)
+            else
+                false;
+            const is_whole_file = this.blob.Blob.offset == 0 and (original_size == Blob.max_size or original_size == stat_size);
+            // RFC 9110 §14.2: Range is only defined for GET (HEAD mirrors GET's headers).
+            const method_allows_range = this.method == .GET or this.method == .HEAD;
+            if (is_regular and method_allows_range and !user_handles_range and is_whole_file and this.range != .none) {
+                switch (this.range.resolve(stat_size)) {
+                    .none => {},
+                    .satisfiable => |r| {
+                        this.sendfile.offset = @intCast(r.start);
+                        this.sendfile.remain = @intCast(r.end - r.start + 1);
+                        this.sendfile.total = stat_size;
+                        this.flags.needs_content_range = true;
+                    },
+                    .unsatisfiable => {
+                        if (auto_close) fd.close();
+                        var crbuf: [64]u8 = undefined;
+                        this.doWriteStatus(416);
+                        if (this.response_weakref.get()) |response| {
+                            if (response.swapInitHeaders()) |headers_| {
+                                defer headers_.deref();
+                                this.doWriteHeaders(headers_);
+                            }
+                        }
+                        resp.writeHeader("content-range", std.fmt.bufPrint(&crbuf, "bytes */{d}", .{stat_size}) catch unreachable);
+                        resp.writeHeader("accept-ranges", "bytes");
+                        const close = resp.shouldCloseConnection();
+                        this.detachResponse();
+                        this.endRequestStreamingAndDrain();
+                        resp.end("", close);
+                        this.deref();
+                        return;
+                    },
+                }
+            }
 
-            if (this.sendfile.remain == 0 or !this.method.hasBody()) {
-                this.cleanupAndFinalizeAfterSendfile();
+            resp.runCorkedWithType(*RequestContext, renderMetadata, this);
+
+            if ((is_regular and this.sendfile.remain == 0) or !this.method.hasBody()) {
+                if (auto_close) fd.close();
+                const close = resp.shouldCloseConnection();
+                this.detachResponse();
+                this.endRequestStreamingAndDrain();
+                resp.end("", close);
+                this.deref();
                 return;
             }
 
-            _ = this.onSendfile();
-        }
-
-        pub fn renderMetadataAndNewline(this: *RequestContext) void {
-            if (this.resp) |resp| {
-                this.renderMetadata();
-                resp.prepareForSendfile();
-            }
-        }
-
-        pub fn doSendfile(this: *RequestContext, blob: Blob) void {
-            if (this.isAbortedOrEnded()) {
-                return;
-            }
-
-            if (this.flags.has_sendfile_ctx) return;
-
+            // FileResponseStream registers its own onAborted/onWritable with itself
+            // as userData. uWS keeps a single shared userData slot per response, so
+            // any later setAbortHandler()/onWritable() from this RequestContext would
+            // stomp it and hand FileResponseStream's callbacks a *RequestContext.
             this.flags.has_sendfile_ctx = true;
+            this.flags.has_abort_handler = true;
+            this.flags.has_marked_pending = true;
 
-            if (comptime can_sendfile) {
-                return this.renderSendFile(blob);
-            }
-            if (this.server) |server| {
-                this.ref();
-                this.blob.Blob.doReadFileInternal(*RequestContext, this, onReadFile, server.globalThis);
-            }
-        }
-
-        pub fn onReadFile(this: *RequestContext, result: Blob.read_file.ReadFileResultType) void {
-            defer this.deref();
-
-            if (this.isAbortedOrEnded()) {
-                return;
-            }
-
-            if (result == .err) {
-                if (this.server) |server| {
-                    const js_err = result.err.toErrorInstance(server.globalThis);
-                    this.runErrorHandler(js_err);
-                }
-                return;
-            }
-
-            const is_temporary = result.result.is_temporary;
-
-            if (comptime Environment.allow_assert) {
-                assert(this.blob == .Blob);
-            }
-
-            if (!is_temporary) {
-                this.blob.Blob.resolveSize();
-                this.doRenderBlob();
-            } else {
-                const stat_size = @as(Blob.SizeType, @intCast(result.result.total_size));
-
-                if (this.blob == .Blob) {
-                    const original_size = this.blob.Blob.size;
-                    // if we dont know the size we use the stat size
-                    this.blob.Blob.size = if (original_size == 0 or original_size == Blob.max_size)
-                        stat_size
-                    else // the blob can be a slice of a file
-                        @max(original_size, stat_size);
-                }
-
-                if (!this.flags.has_written_status)
-                    this.flags.needs_content_range = true;
-
-                // this is used by content-range
-                this.sendfile = .{
-                    .fd = bun.invalid_fd,
-                    .remain = @as(Blob.SizeType, @truncate(result.result.buf.len)),
-                    .offset = if (this.blob == .Blob) this.blob.Blob.offset else 0,
-                    .auto_close = false,
-                    .socket_fd = bun.invalid_fd,
-                };
-
-                this.response_buf_owned = .{ .items = result.result.buf, .capacity = result.result.buf.len };
-                this.resp.?.runCorkedWithType(*RequestContext, renderResponseBufferAndMetadata, this);
-            }
+            FileResponseStream.start(.{
+                .fd = fd,
+                .auto_close = auto_close,
+                .resp = anyResponse(resp),
+                .vm = this.server.?.vm,
+                .file_type = file_type,
+                .pollable = pollable,
+                .offset = this.sendfile.offset,
+                .length = if (is_regular) @as(u64, this.sendfile.remain) else null,
+                .idle_timeout = this.server.?.config.idleTimeout,
+                .ctx = this,
+                .on_complete = onFileStreamComplete,
+                .on_abort = onFileStreamAbort,
+                .on_error = onFileStreamError,
+            });
         }
 
         pub fn doRenderWithBodyLocked(this: *anyopaque, value: *jsc.WebCore.Body.Value) void {
@@ -1204,10 +1112,24 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 return;
             }
 
-            if (!assignment_result.isEmptyOrUndefinedOrNull()) {
-                assignment_result.ensureStillAlive();
+            // A fully-synchronous ReadableStream can drain through writeBytes
+            // and reach endFromJS() inside assignToStream(). If tryEnd() then
+            // hits transport backpressure (common on QUIC right after the
+            // HEADERS frame), the sink parks a pending_flush promise and
+            // registers onWritable, but assignToStream() itself returns
+            // undefined. Surface that promise here so the request waits for
+            // the drain instead of falling through to the cancel path below.
+            var effective_result = assignment_result;
+            if (effective_result.isEmptyOrUndefinedOrNull()) {
+                if (response_stream.sink.pending_flush) |flush| {
+                    effective_result = flush.toJS();
+                }
+            }
+
+            if (!effective_result.isEmptyOrUndefinedOrNull()) {
+                effective_result.ensureStillAlive();
                 // it returns a Promise when it goes through ReadableStreamDefaultReader
-                if (assignment_result.asAnyPromise()) |promise| {
+                if (effective_result.asAnyPromise()) |promise| {
                     streamLog("returned a promise", .{});
                     this.drainMicrotasks();
 
@@ -1221,7 +1143,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                             }
 
                             // TODO: should this timeout?
-                            const bodyValue = this.response_ptr.?.getBodyValue();
+                            const bodyValue = this.response_weakref.get().?.getBodyValue();
                             bodyValue.* = .{
                                 .Locked = .{
                                     .readable = jsc.WebCore.ReadableStream.Strong.init(stream, globalThis),
@@ -1229,9 +1151,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 },
                             };
                             this.ref();
-                            assignment_result.then(
+                            const cell = NativePromiseContext.create(globalThis, this);
+                            effective_result.thenWithValue(
                                 globalThis,
-                                this,
+                                cell,
                                 onResolveStream,
                                 onRejectStream,
                             ) catch {}; // TODO: properly propagate exception upwards
@@ -1267,7 +1190,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     response_stream.detach(globalThis);
                     this.sink = null;
                     response_stream.sink.destroy();
-                    return this.handleReject(assignment_result);
+                    return this.handleReject(effective_result);
                 }
             }
 
@@ -1280,6 +1203,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 response_stream.sink.onFirstWrite = null;
 
                 response_stream.sink.finalize();
+                this.sink = null;
+                response_stream.sink.destroy();
                 return;
             }
             var response_body_readable_stream_ref = this.response_body_readable_stream_ref;
@@ -1293,6 +1218,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 if (jsc.WebCore.ReadableStream.fromJS(stream.value, globalThis) catch null) |comparator| { // TODO: properly propagate exception upwards
                     if (std.meta.activeTag(comparator.ptr) == std.meta.activeTag(stream.ptr)) {
                         streamLog("is not locked", .{});
+                        response_stream.sink.onFirstWrite = null;
+                        response_stream.sink.ctx = null;
+                        response_stream.detach(globalThis);
+                        response_stream.sink.markDone();
+                        response_stream.sink.finalize();
+                        this.sink = null;
+                        response_stream.sink.destroy();
                         this.renderMissing();
                         return;
                     }
@@ -1305,6 +1237,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             response_stream.detach(globalThis);
             stream.cancel(globalThis);
             response_stream.sink.markDone();
+            response_stream.sink.finalize();
+            this.sink = null;
+            response_stream.sink.destroy();
             this.renderMissing();
         }
 
@@ -1314,9 +1249,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             return @intFromPtr(this.upgrade_context) == std.math.maxInt(usize);
         }
 
-        fn toAsyncWithoutAbortHandler(ctx: *RequestContext, req: *uws.Request, request_object: *Request) void {
-            request_object.request_context.setRequest(req);
+        fn toAsyncWithoutAbortHandler(ctx: *RequestContext, req: *Req, request_object: *Request) void {
             assert(ctx.server != null);
+
+            // For HTTP/3, prepareJsRequestContextFor() already eagerly
+            // populated url+headers (the lazy getRequest() path is H1-only),
+            // so the guards below short-circuit and `req` is never read.
+            if (comptime !http3) request_object.request_context.setRequest(req);
 
             request_object.ensureURL() catch {
                 request_object.url = bun.String.empty;
@@ -1324,7 +1263,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             // we have to clone the request headers here since they will soon belong to a different request
             if (!request_object.hasFetchHeaders()) {
-                request_object.setFetchHeaders(.createFromUWS(req));
+                if (comptime !http3) request_object.setFetchHeaders(.createFromUWS(req));
             }
 
             // This object dies after the stack frame is popped
@@ -1334,7 +1273,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         pub fn toAsync(
             ctx: *RequestContext,
-            req: *uws.Request,
+            req: *Req,
             request_object: *Request,
         ) void {
             ctxLog("toAsync", .{});
@@ -1430,7 +1369,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             // Always this.renderMetadata() before sending the content-length or transfer-encoding header so status is sent first
 
             const resp = this.resp.?;
-            this.response_ptr = response;
+            this.setResponse(response);
             const server = this.server orelse {
                 // server detached?
                 this.renderMetadata();
@@ -1441,21 +1380,27 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             const globalThis = server.globalThis;
             if (response.getFetchHeaders()) |headers| {
                 // first respect the headers
-                if (headers.fastGet(.TransferEncoding)) |transfer_encoding| {
-                    const transfer_encoding_str = transfer_encoding.toSlice(server.allocator);
+                if (comptime !http3) if (headers.fastGet(.TransferEncoding)) |transfer_encoding| {
+                    // fastGet() borrows the header map's StringImpl; renderMetadata() ->
+                    // doWriteHeaders() calls fastRemove(.TransferEncoding) and derefs the
+                    // FetchHeaders, freeing that StringImpl before we write it. Clone so
+                    // the bytes outlive renderMetadata().
+                    const transfer_encoding_str = bun.handleOom(transfer_encoding.toSliceClone(server.allocator));
                     defer transfer_encoding_str.deinit();
                     this.renderMetadata();
                     resp.writeHeader("transfer-encoding", transfer_encoding_str.slice());
                     this.endWithoutBody(this.shouldCloseConnection());
 
                     return;
-                }
+                };
                 if (headers.fastGet(.ContentLength)) |content_length| {
+                    // Parse before renderMetadata(): doWriteHeaders() will fastRemove(.ContentLength)
+                    // and deref the FetchHeaders, freeing the borrowed StringImpl.
                     const content_length_str = content_length.toSlice(server.allocator);
-                    defer content_length_str.deinit();
-                    this.renderMetadata();
-
                     const len = std.fmt.parseInt(usize, content_length_str.slice(), 10) catch 0;
+                    content_length_str.deinit();
+
+                    this.renderMetadata();
                     resp.writeHeaderInt("content-length", len);
                     this.endWithoutBody(this.shouldCloseConnection());
                     return;
@@ -1504,7 +1449,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 },
                 .Locked => {
                     this.renderMetadata();
-                    resp.writeHeader("transfer-encoding", "chunked");
+                    if (comptime !http3) resp.writeHeader("transfer-encoding", "chunked");
                     this.endWithoutBody(this.shouldCloseConnection());
                 },
                 .Used, .Null, .Empty, .Error => {
@@ -1595,7 +1540,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 switch (promise.unwrap(vm.global.vm(), .mark_handled)) {
                     .pending => {
                         ctx.ref();
-                        response_value.then(this.globalThis, ctx, RequestContext.onResolve, RequestContext.onReject) catch {}; // TODO: properly propagate exception upwards
+                        const cell = NativePromiseContext.create(this.globalThis, ctx);
+                        response_value.thenWithValue(this.globalThis, cell, RequestContext.onResolve, RequestContext.onReject) catch {}; // TODO: properly propagate exception upwards
                         return;
                     },
                     .fulfilled => |fulfilled_value| {
@@ -1619,7 +1565,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         ctx.response_jsvalue = fulfilled_value;
                         ctx.response_jsvalue.ensureStillAlive();
                         ctx.flags.response_protected = false;
-                        ctx.response_ptr = response;
                         if (ctx.method == .HEAD) {
                             if (ctx.resp) |resp| {
                                 var pair = HeaderResponsePair{ .this = ctx, .response = response };
@@ -1667,7 +1612,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 wrapper.sink.destroy();
             }
 
-            if (req.response_ptr) |resp| {
+            if (req.response_weakref.get()) |resp| {
                 assert(req.server != null);
                 const globalThis = req.server.?.globalThis;
                 const bodyValue = resp.getBodyValue();
@@ -1694,8 +1639,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         pub fn onResolveStream(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             streamLog("onResolveStream", .{});
-            var args = callframe.arguments_old(2);
-            var req: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
+            const args = callframe.arguments_old(2);
+            const req = NativePromiseContext.take(RequestContext, args.ptr[args.len - 1]) orelse return .js_undefined;
             defer req.deref();
             req.handleResolveStream();
             return .js_undefined;
@@ -1703,7 +1648,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         pub fn onRejectStream(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             streamLog("onRejectStream", .{});
             const args = callframe.arguments_old(2);
-            var req = args.ptr[args.len - 1].asPromisePtr(@This());
+            const req = NativePromiseContext.take(RequestContext, args.ptr[args.len - 1]) orelse return .js_undefined;
             const err = args.ptr[0];
             defer req.deref();
 
@@ -1715,7 +1660,14 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             streamLog("handleRejectStream", .{});
 
             if (req.sink) |wrapper| {
-                wrapper.sink.pending_flush = null;
+                if (wrapper.sink.pending_flush) |prom| {
+                    // The promise value was protected when pending_flush was
+                    // assigned (flushFromJS / endFromJS). Drop that root before
+                    // abandoning the pointer, otherwise it leaks for the
+                    // lifetime of the VM.
+                    prom.toJS().unprotect();
+                    wrapper.sink.pending_flush = null;
+                }
                 wrapper.sink.done = true;
                 req.flags.aborted = req.flags.aborted or wrapper.sink.aborted;
                 wrapper.sink.finalize();
@@ -1724,7 +1676,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 wrapper.sink.destroy();
             }
 
-            if (req.response_ptr) |resp| {
+            if (req.response_weakref.get()) |resp| {
                 const bodyValue = resp.getBodyValue();
 
                 if (resp.getBodyReadableStream(globalThis)) |stream| {
@@ -2019,7 +1971,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (this.isAbortedOrEnded()) {
                 return;
             }
-            var response = this.response_ptr.?;
+            var response = this.response_weakref.get().?;
             this.doRenderWithBody(response.getBodyValue(), response.getBodyReadableStream(this.server.?.globalThis));
         }
 
@@ -2166,9 +2118,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 .pending => {
                     ctx.flags.is_error_promise_pending = true;
                     ctx.ref();
-                    promise_js.then(
+                    const cell = NativePromiseContext.create(ctx.server.?.globalThis, ctx);
+                    promise_js.thenWithValue(
                         ctx.server.?.globalThis,
-                        ctx,
+                        cell,
                         RequestContext.onResolve,
                         RequestContext.onReject,
                     ) catch {}; // TODO: properly propagate exception upwards
@@ -2190,7 +2143,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     ctx.response_jsvalue = fulfilled_value;
                     ctx.response_jsvalue.ensureStillAlive();
                     ctx.flags.response_protected = false;
-                    ctx.response_ptr = response;
 
                     const bodyValue = response.getBodyValue();
                     bodyValue.toBlobIfPossible();
@@ -2232,9 +2184,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (this.resp == null) return;
             const resp = this.resp.?;
 
-            var response: *jsc.WebCore.Response = this.response_ptr.?;
+            // For plain in-memory bodies this runs synchronously from
+            // render() before any backpressure gap, so the Response is
+            // always live here. File / stream bodies that call this after
+            // an async hop keep the Response rooted via response_protected.
+            var response: *jsc.WebCore.Response = this.response_weakref.get().?;
             var status = response.statusCode();
-            var needs_content_range = this.flags.needs_content_range and this.sendfile.remain < this.blob.size();
+            var needs_content_range = this.flags.needs_content_range and (this.sendfile.total > 0 or this.sendfile.remain < this.blob.size());
 
             const size = if (needs_content_range)
                 this.sendfile.remain
@@ -2258,7 +2214,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 defer headers_.deref();
                 has_content_disposition = headers_.fastHas(.ContentDisposition);
                 has_content_range = headers_.fastHas(.ContentRange);
-                needs_content_range = needs_content_range and has_content_range;
+                // For .slice()-driven ranges, only promote to 206 if the user
+                // also set Content-Range (preserves the old contract). For an
+                // incoming Range: header (sendfile.total > 0) we always 206.
+                needs_content_range = needs_content_range and (this.sendfile.total > 0 or has_content_range);
                 if (needs_content_range) {
                     status = 206;
                 }
@@ -2275,7 +2234,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (this.cookies) |cookies| {
                 this.cookies = null;
                 defer cookies.deref();
-                cookies.write(this.server.?.globalThis, ssl_enabled, @ptrCast(this.resp.?)) catch return; // TODO: properly propagate exception upwards
+                cookies.write(this.server.?.globalThis, resp_kind, @ptrCast(this.resp.?)) catch return; // TODO: properly propagate exception upwards
             }
 
             if (needs_content_type and
@@ -2284,6 +2243,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 (!this.blob.isDetached() or content_type.value.ptr != MimeType.other.value.ptr))
             {
                 resp.writeHeader("content-type", content_type.value);
+            }
+
+            // Advertise the QUIC endpoint on H1/H2 responses so browsers can
+            // discover it (RFC 7838). Multiple Alt-Svc fields are valid, so a
+            // user-supplied one composes rather than conflicts.
+            if (comptime !http3 and @hasDecl(ThisServer, "h3AltSvc")) {
+                if (this.server.?.h3AltSvc()) |alt| resp.writeHeader("alt-svc", alt);
             }
 
             // automatically include the filename when:
@@ -2305,6 +2271,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             if (this.flags.needs_content_length) {
                 resp.writeHeaderInt("content-length", size);
+                resp.markWroteContentLengthHeader();
                 this.flags.needs_content_length = false;
             }
 
@@ -2313,15 +2280,23 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
                 resp.writeHeader(
                     "content-range",
-                    std.fmt.bufPrint(
-                        &content_range_buf,
-                        // we omit the full size of the Blob because it could
-                        // change between requests and this potentially leaks
-                        // PII undesirably
-                        "bytes {d}-{d}/*",
-                        .{ this.sendfile.offset, this.sendfile.offset + (this.sendfile.remain -| 1) },
-                    ) catch "bytes */*",
+                    if (this.sendfile.total > 0)
+                        // We resolved an incoming Range header against the
+                        // stat'd size, so the total is meaningful.
+                        std.fmt.bufPrint(&content_range_buf, "bytes {d}-{d}/{d}", .{
+                            this.sendfile.offset,
+                            this.sendfile.offset + (this.sendfile.remain -| 1),
+                            this.sendfile.total,
+                        }) catch "bytes */*"
+                    else
+                        // For .slice()-driven ranges we omit the full size:
+                        // it can change between requests and may leak PII.
+                        std.fmt.bufPrint(&content_range_buf, "bytes {d}-{d}/*", .{
+                            this.sendfile.offset,
+                            this.sendfile.offset + (this.sendfile.remain -| 1),
+                        }) catch "bytes */*",
                 );
+                if (this.sendfile.total > 0) resp.writeHeader("accept-ranges", "bytes");
                 this.flags.needs_content_range = false;
             }
         }
@@ -2330,11 +2305,27 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             assert(!this.flags.has_written_status);
             this.flags.has_written_status = true;
 
-            writeStatus(ssl_enabled, this.resp, status);
+            const resp = this.resp orelse return;
+            if (HTTPStatusText.get(status)) |text| {
+                resp.writeStatus(text);
+            } else {
+                var buf: [48]u8 = undefined;
+                resp.writeStatus(std.fmt.bufPrint(&buf, "{d} HM", .{status}) catch unreachable);
+            }
         }
 
         fn doWriteHeaders(this: *RequestContext, headers: *WebCore.FetchHeaders) void {
-            writeHeaders(headers, ssl_enabled, this.resp);
+            ctxLog("writeHeaders", .{});
+            headers.fastRemove(.ContentLength);
+            headers.fastRemove(.TransferEncoding);
+            if (comptime http3) {
+                // RFC 9114 §4.2: connection-specific fields are malformed.
+                headers.fastRemove(.Connection);
+                headers.fastRemove(.KeepAlive);
+                headers.fastRemove(.ProxyConnection);
+                headers.fastRemove(.Upgrade);
+            }
+            if (this.resp) |resp| headers.toUWSResponse(resp_kind, resp);
         }
 
         pub fn renderBytes(this: *RequestContext) void {
@@ -2357,9 +2348,18 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             this.deref();
         }
 
+        /// Replace the tracked Response. Drops the previous weak ref (if any)
+        /// before taking a new one so the old Response's allocation can be
+        /// freed once its own strong refs go to zero.
+        fn setResponse(this: *RequestContext, response: *jsc.WebCore.Response) void {
+            if (this.response_weakref.raw_ptr == response) return;
+            this.response_weakref.deref();
+            this.response_weakref = .initRef(response);
+        }
+
         pub fn render(this: *RequestContext, response: *jsc.WebCore.Response) void {
             ctxLog("render", .{});
-            this.response_ptr = response;
+            this.setResponse(response);
 
             this.doRender();
         }
@@ -2418,6 +2418,43 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             // This is the start of a task, so it's a good time to drain
             if (this.request_body != null) {
                 var body = this.request_body.?;
+
+                // The up-front maxRequestBodySize check in server.zig only
+                // sees Content-Length. HTTP/3 (and H1 chunked) bodies may
+                // omit it, so cap accumulated bytes here too — otherwise a
+                // single CL-less stream can grow request_body_buf without
+                // bound.
+                if (this.request_body_buf.items.len +| chunk.len > this.server.?.config.max_request_body_size) {
+                    this.request_body_buf.clearAndFree(this.allocator);
+                    resp.clearOnData();
+                    this.flags.is_waiting_for_request_body = false;
+
+                    var loop = vm.eventLoop();
+                    loop.enter();
+                    defer loop.exit();
+                    // Reject the pending body first so endRequestStreaming()
+                    // below (via this.endWithoutBody) doesn't substitute a
+                    // generic ConnectionClosed. toErrorInstance handles
+                    // .Locked itself (rejects the promise, deinits the
+                    // readable, calls onReceiveValue).
+                    body.value.toErrorInstance(.{
+                        .Message = bun.String.static("Request body exceeded maxRequestBodySize"),
+                    }, globalThis) catch {};
+
+                    // Route through the normal end path so this.resp is
+                    // detached and the base ref released. Writing directly on
+                    // the raw uWS response left this.resp pointing at a
+                    // completed (and soon freed) response — uWS markDone()
+                    // clears onAborted so no abort ever fires to release the
+                    // ref, and a later handleResolve()/handleReject() from an
+                    // async handler would dereference the stale pointer.
+                    if (this.resp != null and !resp.hasResponded()) {
+                        this.flags.has_written_status = true;
+                        resp.writeStatus("413 Payload Too Large");
+                    }
+                    this.endWithoutBody(comptime !http3);
+                    return;
+                }
 
                 if (last) {
                     var bytes = &this.request_body_buf;
@@ -2504,7 +2541,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 ctxLog("onStartBuffering", .{});
                 // TODO: check if is someone calling onStartBuffering other than onStartBufferingCallback
                 // if is not, this should be removed and only keep protect + setAbortHandler
-                if (this.flags.is_transfer_encoding == false and this.request_body_content_len == 0) {
+                // HTTP/3 (RFC 9114): Content-Length is optional; the body is
+                // delimited by stream FIN, so the H1 "no CL + no TE ⇒ empty"
+                // shortcut would drop it.
+                if (!http3 and this.flags.is_transfer_encoding == false and this.request_body_content_len == 0) {
                     // no content-length or 0 content-length
                     // no transfer-encoding
                     if (this.request_body != null) {
@@ -2559,7 +2599,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         }
 
         comptime {
-            const export_prefix = "Bun__HTTPRequestContext" ++ (if (debug_mode) "Debug" else "") ++ (if (ThisServer.ssl_enabled) "TLS" else "");
+            const export_prefix = "Bun__HTTPRequestContext" ++ (if (debug_mode) "Debug" else "") ++ (if (http3) "H3" else if (ThisServer.ssl_enabled) "TLS" else "");
             if (bun.Environment.export_cpp_apis) {
                 @export(&jsc.toJSHostFn(onResolve), .{ .name = export_prefix ++ "__onResolve" });
                 @export(&jsc.toJSHostFn(onReject), .{ .name = export_prefix ++ "__onReject" });
@@ -2570,14 +2610,14 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
     };
 }
 
+// Retained only for `renderMetadata` to compute Content-Range / Content-Length
+// for file-blob bodies; the actual fd/socket bookkeeping lives in
+// `FileResponseStream` now.
 const SendfileContext = struct {
-    fd: bun.FileDescriptor,
-    socket_fd: bun.FileDescriptor = bun.invalid_fd,
     remain: Blob.SizeType = 0,
     offset: Blob.SizeType = 0,
-    has_listener: bool = false,
-    has_set_on_writable: bool = false,
-    auto_close: bool = false,
+    /// When non-zero, the Content-Range total (`/{total}` instead of `/*`).
+    total: Blob.SizeType = 0,
 };
 
 fn NewFlags(comptime debug_mode: bool) type {
@@ -2656,25 +2696,11 @@ fn getContentType(headers: ?*WebCore.FetchHeaders, blob: *const WebCore.Blob.Any
 
 const welcome_page_html_gz = @embedFile("../welcome-page.html.gz");
 
-fn writeHeaders(
-    headers: *WebCore.FetchHeaders,
-    comptime ssl: bool,
-    resp_ptr: ?*uws.NewApp(ssl).Response,
-) void {
-    ctxLog("writeHeaders", .{});
-    headers.fastRemove(.ContentLength);
-    headers.fastRemove(.TransferEncoding);
-    if (resp_ptr) |resp| {
-        headers.toUWSResponse(ssl, resp);
-    }
-}
-
 const ctxLog = Output.scoped(.RequestContext, .visible);
 const string = []const u8;
 
 const std = @import("std");
 const Fallback = @import("../../../runtime.zig").Fallback;
-const linux = std.os.linux;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
@@ -2686,7 +2712,10 @@ const assert = bun.assert;
 const logger = bun.logger;
 const uws = bun.uws;
 const Api = bun.schema.api;
-const writeStatus = bun.api.server.writeStatus;
+
+const FileResponseStream = bun.api.server.FileResponseStream;
+const HTTPStatusText = bun.api.server.HTTPStatusText;
+const RangeRequest = bun.api.server.RangeRequest;
 
 const HTTP = bun.http;
 const MimeType = bun.http.MimeType;
@@ -2695,7 +2724,9 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
+
 const AnyRequestContext = jsc.API.AnyRequestContext;
+const NativePromiseContext = jsc.API.NativePromiseContext;
 
 const WebCore = jsc.WebCore;
 const Blob = jsc.WebCore.Blob;

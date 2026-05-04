@@ -3626,6 +3626,25 @@ pub extern "kernel32" fn IsProcessInJob(process: HANDLE, job: HANDLE, result: *B
 
 pub const EXTENDED_STARTUPINFO_PRESENT = 0x80000;
 pub const PROC_THREAD_ATTRIBUTE_JOB_LIST = 0x2000D;
+
+/// Handle to a Windows pseudoconsole (ConPTY).
+pub const HPCON = *anyopaque;
+
+pub extern "kernel32" fn CreatePseudoConsole(
+    size: COORD,
+    hInput: HANDLE,
+    hOutput: HANDLE,
+    dwFlags: DWORD,
+    phPC: *HPCON,
+) callconv(.winapi) std.os.windows.HRESULT;
+
+pub extern "kernel32" fn ResizePseudoConsole(
+    hPC: HPCON,
+    size: COORD,
+) callconv(.winapi) std.os.windows.HRESULT;
+
+pub extern "kernel32" fn ClosePseudoConsole(hPC: HPCON) callconv(.winapi) void;
+
 pub const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
 pub const JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION = 0x400;
 pub const JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x800;
@@ -3988,7 +4007,7 @@ pub extern fn windows_enable_stdio_inheritance() void;
 /// Extracted from standard library except this takes an open file descriptor
 ///
 /// NOTE: THE FILE MUST BE OPENED WITH ACCESS_MASK "DELETE" OR THIS WILL FAIL
-pub fn deleteOpenedFile(fd: bun.FileDescriptor) Maybe(void) {
+pub fn deleteOpenedFile(fd: bun.FD) Maybe(void) {
     comptime bun.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
     var info = w.FILE_DISPOSITION_INFORMATION_EX{
         .Flags = FILE_DISPOSITION_DELETE |
@@ -4020,8 +4039,8 @@ pub fn deleteOpenedFile(fd: bun.FileDescriptor) Maybe(void) {
 /// - source_fd must have been opened with access_mask=w.DELETE
 /// - new_path_w must be the name of a file. it cannot be a path relative to new_dir_fd. see moveOpenedFileAtLoose
 pub fn moveOpenedFileAt(
-    src_fd: bun.FileDescriptor,
-    new_dir_fd: bun.FileDescriptor,
+    src_fd: bun.FD,
+    new_dir_fd: bun.FD,
     new_file_name: []const u16,
     replace_if_exists: bool,
 ) Maybe(void) {
@@ -4080,8 +4099,8 @@ pub fn moveOpenedFileAt(
 ///
 /// Aka: moveOpenedFileAtLoose(fd, dir, ".\\a\\relative\\not-normalized-path.txt", false);
 pub fn moveOpenedFileAtLoose(
-    src_fd: bun.FileDescriptor,
-    new_dir_fd: bun.FileDescriptor,
+    src_fd: bun.FD,
+    new_dir_fd: bun.FD,
     new_path: []const u16,
     replace_if_exists: bool,
 ) Maybe(void) {
@@ -4111,9 +4130,9 @@ pub fn moveOpenedFileAtLoose(
 /// Derived from std.os.windows.renameAtW
 /// Allows more errors
 pub fn renameAtW(
-    old_dir_fd: bun.FileDescriptor,
+    old_dir_fd: bun.FD,
     old_path_w: []const u16,
-    new_dir_fd: bun.FileDescriptor,
+    new_dir_fd: bun.FD,
     new_path_w: []const u16,
     replace_if_exists: bool,
 ) Maybe(void) {

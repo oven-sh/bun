@@ -28,6 +28,7 @@
     macro(httpLOCK, "LOCK") \
     macro(httpMERGE, "MERGE") \
     macro(httpMKACTIVITY, "MKACTIVITY") \
+    macro(httpMKADDRESSBOOK, "MKADDRESSBOOK") \
     macro(httpMKCALENDAR, "MKCALENDAR") \
     macro(httpMKCOL, "MKCOL") \
     macro(httpMOVE, "MOVE") \
@@ -57,10 +58,28 @@
     macro(ascii, "ascii") \
     macro(base64, "base64") \
     macro(base64url, "base64url") \
+    macro(binaryTypeArrayBuffer, "arraybuffer") \
+    macro(binaryTypeNodeBuffer, "nodebuffer") \
+    macro(binaryTypeUint8Array, "uint8array") \
     macro(buffer, "buffer") \
     macro(ec, "ec") \
     macro(ed25519, "ed25519") \
+    macro(fetchCors, "cors") \
+    macro(fetchError, "error") \
+    macro(fetchFollow, "follow") \
+    macro(fetchForceCache, "force-cache") \
+    macro(fetchInclude, "include") \
+    macro(fetchManual, "manual") \
+    macro(fetchNavigate, "navigate") \
+    macro(fetchNoCache, "no-cache") \
+    macro(fetchNoCors, "no-cors") \
+    macro(fetchNoStore, "no-store") \
+    macro(fetchOnlyIfCached, "only-if-cached") \
+    macro(fetchReload, "reload") \
+    macro(fetchSameOrigin, "same-origin") \
     macro(hex, "hex") \
+    macro(ipv4Lower, "ipv4") \
+    macro(ipv6Lower, "ipv6") \
     macro(latin1, "latin1") \
     macro(lax, "lax") \
     macro(none, "none") \

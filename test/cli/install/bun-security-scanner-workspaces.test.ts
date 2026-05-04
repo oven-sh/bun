@@ -1,19 +1,25 @@
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "node:path";
 import { getRegistry, startRegistry, stopRegistry } from "./simple-dummy-registry";
 
-test("security scanner receives packages from workspace dependencies", async () => {
-  const registryUrl = await startRegistry(false);
+let registryUrl: string;
 
-  try {
-    const registry = getRegistry();
-    if (!registry) {
-      throw new Error("Registry not found");
-    }
+beforeAll(async () => {
+  registryUrl = await startRegistry(false);
+  const registry = getRegistry();
+  if (!registry) {
+    throw new Error("Registry not found");
+  }
+  registry.setScannerBehavior("none");
+});
 
-    registry.clearRequestLog();
-    registry.setScannerBehavior("none");
+afterAll(() => {
+  stopRegistry();
+});
 
+describe.concurrent("security scanner workspaces", () => {
+  test("security scanner receives packages from workspace dependencies", async () => {
     // Create a workspace setup with root package and multiple workspace packages
     const files = {
       "package.json": JSON.stringify(
@@ -76,7 +82,7 @@ registry = "${registryUrl}/"
 scanner = "./scanner.js"`,
     );
 
-    const { stdout, stderr } = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "install"],
       cwd: dir,
       stdout: "pipe",
@@ -84,7 +90,8 @@ scanner = "./scanner.js"`,
       env: bunEnv,
     });
 
-    const output = (await stdout.text()) + (await stderr.text());
+    const [stdoutText, stderrText] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const output = stdoutText + stderrText;
 
     // The scanner should receive packages from all workspace dependencies
     expect(output).toContain("SCANNER_RAN:");
@@ -96,23 +103,9 @@ scanner = "./scanner.js"`,
     const packagesScanned = parseInt(match![1], 10);
     // Exact package count: left-pad, is-even, is-odd (is-even <-> is-odd have circular deps)
     expect(packagesScanned).toBe(3);
-  } finally {
-    stopRegistry();
-  }
-});
+  });
 
-test("security scanner receives packages from workspace dependencies with hoisted linker", async () => {
-  const registryUrl = await startRegistry(false);
-
-  try {
-    const registry = getRegistry();
-    if (!registry) {
-      throw new Error("Registry not found");
-    }
-
-    registry.clearRequestLog();
-    registry.setScannerBehavior("none");
-
+  test("security scanner receives packages from workspace dependencies with hoisted linker", async () => {
     const files = {
       "package.json": JSON.stringify(
         {
@@ -165,7 +158,7 @@ registry = "${registryUrl}/"
 scanner = "./scanner.js"`,
     );
 
-    const { stdout, stderr } = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "install"],
       cwd: dir,
       stdout: "pipe",
@@ -173,7 +166,8 @@ scanner = "./scanner.js"`,
       env: bunEnv,
     });
 
-    const output = (await stdout.text()) + (await stderr.text());
+    const [stdoutText, stderrText] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const output = stdoutText + stderrText;
 
     expect(output).toContain("SCANNER_RAN:");
 
@@ -183,23 +177,9 @@ scanner = "./scanner.js"`,
     const packagesScanned = parseInt(match![1], 10);
     // Exact package count: left-pad, is-even, is-odd (is-even <-> is-odd have circular deps)
     expect(packagesScanned).toBe(3);
-  } finally {
-    stopRegistry();
-  }
-});
+  });
 
-test("security scanner receives packages from workspace dependencies with isolated linker", async () => {
-  const registryUrl = await startRegistry(false);
-
-  try {
-    const registry = getRegistry();
-    if (!registry) {
-      throw new Error("Registry not found");
-    }
-
-    registry.clearRequestLog();
-    registry.setScannerBehavior("none");
-
+  test("security scanner receives packages from workspace dependencies with isolated linker", async () => {
     const files = {
       "package.json": JSON.stringify(
         {
@@ -252,7 +232,7 @@ registry = "${registryUrl}/"
 scanner = "./scanner.js"`,
     );
 
-    const { stdout, stderr } = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "install"],
       cwd: dir,
       stdout: "pipe",
@@ -260,7 +240,8 @@ scanner = "./scanner.js"`,
       env: bunEnv,
     });
 
-    const output = (await stdout.text()) + (await stderr.text());
+    const [stdoutText, stderrText] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const output = stdoutText + stderrText;
 
     expect(output).toContain("SCANNER_RAN:");
 
@@ -270,7 +251,5 @@ scanner = "./scanner.js"`,
     const packagesScanned = parseInt(match![1], 10);
     // Exact package count: left-pad, is-even, is-odd (is-even <-> is-odd have circular deps)
     expect(packagesScanned).toBe(3);
-  } finally {
-    stopRegistry();
-  }
+  });
 });

@@ -20,7 +20,7 @@ pub fn run(this: *ManagedTask) bun.JSError!void {
 
 pub fn cancel(this: *ManagedTask) void {
     this.callback = &struct {
-        fn f(_: *anyopaque) void {}
+        fn f(_: *anyopaque) bun.JSError!void {}
     }.f;
 }
 

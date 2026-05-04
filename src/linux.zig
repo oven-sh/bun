@@ -68,7 +68,7 @@ pub const RWFFlagSupport = enum(u8) {
 /// https://man7.org/linux/man-pages/man2/ioctl_ficlone.2.html
 ///
 /// Support for FICLONE is dependent on the filesystem driver.
-pub fn ioctl_ficlone(dest_fd: bun.FileDescriptor, srcfd: bun.FileDescriptor) usize {
+pub fn ioctl_ficlone(dest_fd: bun.FD, srcfd: bun.FD) usize {
     return std.os.linux.ioctl(dest_fd.native(), bun.c.FICLONE, @intCast(srcfd.native()));
 }
 

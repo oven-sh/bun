@@ -30,6 +30,17 @@ pub const CronExpression = struct {
         TooFewFields,
     };
 
+    pub fn errorMessage(e: Error) []const u8 {
+        return switch (e) {
+            error.TooFewFields => "Invalid cron expression: expected 5 space-separated fields (minute hour day month weekday)",
+            error.TooManyFields => "Invalid cron expression: too many fields. Bun.cron uses 5 fields (minute hour day month weekday) — seconds are not supported",
+            error.InvalidStep => "Invalid cron expression: step value must be a positive integer",
+            error.InvalidRange => "Invalid cron expression: range must be ascending (use 'a,b' or 'a-max,0-b' for wrap-around)",
+            error.InvalidNumber => "Invalid cron expression: value out of range for field",
+            error.InvalidField => "Invalid cron expression: unrecognized field syntax",
+        };
+    }
+
     /// Parse a 5-field cron expression or predefined nickname into a CronExpression.
     pub fn parse(input: []const u8) Error!CronExpression {
         const expr = bun.strings.trim(input, " \t");
@@ -54,7 +65,7 @@ pub const CronExpression = struct {
             .hours = try parseField(u32, fields[1], 0, 23, .none),
             .days = try parseField(u32, fields[2], 1, 31, .none),
             .months = try parseField(u16, fields[3], 1, 12, .month),
-            .weekdays = try parseField(u8, fields[4], 0, 6, .weekday),
+            .weekdays = try parseField(u8, fields[4], 0, 7, .weekday),
             .days_is_wildcard = bun.strings.eql(fields[2], "*"),
             .weekdays_is_wildcard = bun.strings.eql(fields[4], "*"),
         };
@@ -83,34 +94,19 @@ pub const CronExpression = struct {
         return stream.getWritten();
     }
 
-    /// Compute the next UTC time (in ms since epoch) that matches this expression,
-    /// starting from `from_ms`. Returns null if no match found within ~4 years.
+    /// Compute the next UTC time (in ms since epoch) that matches this
+    /// expression, strictly after `from_ms`. Returns null if no match found
+    /// within 8 years.
     pub fn next(self: CronExpression, globalObject: *jsc.JSGlobalObject, from_ms: f64) bun.JSError!?f64 {
         var dt = globalObject.msToGregorianDateTimeUTC(from_ms);
-
-        // Advance by 1 minute, zero out seconds
+        const start_year = dt.year;
         dt.minute += 1;
-        if (dt.minute > 59) {
-            dt.minute = 0;
-            dt.hour += 1;
-            if (dt.hour > 23) {
-                dt.hour = 0;
-                dt.day += 1;
-            }
-        }
         dt.second = 0;
 
-        // Loop up to ~4 years to prevent infinite iteration
-        var iterations: u32 = 0;
-        const max_iterations: u32 = 1500 * 24 * 60;
-        while (iterations < max_iterations) : (iterations += 1) {
-            // Normalize via round-trip to handle overflows and compute weekday
-            {
-                const ms = try globalObject.gregorianDateTimeToMSUTC(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, 0);
-                dt = globalObject.msToGregorianDateTimeUTC(ms);
-            }
+        while (dt.year - start_year <= 8) {
+            // Normalize overflow + recompute weekday via a UTC round-trip.
+            dt = globalObject.msToGregorianDateTimeUTC(try globalObject.gregorianDateTimeToMSUTC(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, 0));
 
-            // Check month
             if (!bitSet(u16, self.months, @intCast(dt.month))) {
                 dt.month += 1;
                 dt.day = 1;
@@ -118,38 +114,32 @@ pub const CronExpression = struct {
                 dt.minute = 0;
                 continue;
             }
-
-            // POSIX cron day-of-month / day-of-week logic:
-            //   - If both are restricted (neither was *): OR — either matching is enough
-            //   - If only one is restricted: only that one matters (the * field matches all)
+            // POSIX: if both DOM and DOW are restricted (not `*`), either
+            // matching is enough; otherwise the `*` field matches all anyway.
             const day_ok = bitSet(u32, self.days, @intCast(dt.day));
             const weekday_ok = bitSet(u8, self.weekdays, @intCast(dt.weekday));
-            const both_restricted = !self.days_is_wildcard and !self.weekdays_is_wildcard;
-            const day_match = if (both_restricted) (day_ok or weekday_ok) else (day_ok and weekday_ok);
+            const day_match = if (!self.days_is_wildcard and !self.weekdays_is_wildcard)
+                day_ok or weekday_ok
+            else
+                day_ok and weekday_ok;
             if (!day_match) {
                 dt.day += 1;
                 dt.hour = 0;
                 dt.minute = 0;
                 continue;
             }
-
-            // Check hour
             if (!bitSet(u32, self.hours, @intCast(dt.hour))) {
                 dt.hour += 1;
                 dt.minute = 0;
                 continue;
             }
-
-            // Check minute
             if (!bitSet(u64, self.minutes, @intCast(dt.minute))) {
                 dt.minute += 1;
                 continue;
             }
 
-            // All fields match
-            return try globalObject.gregorianDateTimeToMSUTC(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, 0);
+            return try globalObject.gregorianDateTimeToMSUTC(dt.year, dt.month, dt.day, dt.hour, dt.minute, 0, 0);
         }
-
         return null;
     }
 };
@@ -159,9 +149,9 @@ pub const CronExpression = struct {
 // ============================================================================
 
 const all_hours: u32 = (1 << 24) - 1;
-const all_days: u32 = ((1 << 32) - 1) & ~@as(u32, 1);
-const all_months: u16 = ((1 << 13) - 1) & ~@as(u16, 1);
-const all_weekdays: u8 = (1 << 7) - 1;
+pub const all_days: u32 = ((1 << 32) - 1) & ~@as(u32, 1);
+pub const all_months: u16 = ((1 << 13) - 1) & ~@as(u16, 1);
+pub const all_weekdays: u8 = (1 << 7) - 1;
 
 fn parseNickname(expr: []const u8) ?CronExpression {
     const eql = bun.strings.eqlCaseInsensitiveASCIIICheckLength;
@@ -187,14 +177,14 @@ const weekday_map = bun.ComptimeStringMap(u7, .{
 });
 
 const month_map = bun.ComptimeStringMap(u7, .{
-    .{ "jan", 1 },      .{ "feb", 2 },       .{ "mar", 3 },
-    .{ "apr", 4 },      .{ "may", 5 },       .{ "jun", 6 },
-    .{ "jul", 7 },      .{ "aug", 8 },       .{ "sep", 9 },
-    .{ "oct", 10 },     .{ "nov", 11 },      .{ "dec", 12 },
-    .{ "january", 1 },  .{ "february", 2 },  .{ "march", 3 },
-    .{ "april", 4 },    .{ "may", 5 },       .{ "june", 6 },
-    .{ "july", 7 },     .{ "august", 8 },    .{ "september", 9 },
-    .{ "october", 10 }, .{ "november", 11 }, .{ "december", 12 },
+    .{ "jan", 1 },       .{ "feb", 2 },       .{ "mar", 3 },
+    .{ "apr", 4 },       .{ "may", 5 },       .{ "jun", 6 },
+    .{ "jul", 7 },       .{ "aug", 8 },       .{ "sep", 9 },
+    .{ "oct", 10 },      .{ "nov", 11 },      .{ "dec", 12 },
+    .{ "january", 1 },   .{ "february", 2 },  .{ "march", 3 },
+    .{ "april", 4 },     .{ "june", 6 },      .{ "july", 7 },
+    .{ "august", 8 },    .{ "september", 9 }, .{ "october", 10 },
+    .{ "november", 11 }, .{ "december", 12 },
 });
 
 // ============================================================================
@@ -249,6 +239,9 @@ fn parseField(comptime T: type, field: []const u8, min: u7, max: u7, kind: NameK
             if (@as(u8, i) + @as(u8, step) > range_max) break;
         }
     }
+    // Weekday: fold bit 7 (Sunday alias) into bit 0 *after* range expansion so
+    // 5-7, 0-7, etc. work like Vixie/croner/cron-parser.
+    if (kind == .weekday) result = (result | (result >> 7)) & 0x7F;
     return result;
 }
 
@@ -262,7 +255,6 @@ fn splitRange(base: []const u8) ?[2][]const u8 {
 }
 
 /// Parse a single value (number or name), validating range.
-/// For weekday fields, 7 is normalized to 0 (Sunday).
 fn parseValue(str: []const u8, min: u7, max: u7, kind: NameKind) error{InvalidNumber}!u7 {
     // Try named value first via ComptimeStringMap case-insensitive lookup
     switch (kind) {
@@ -272,7 +264,6 @@ fn parseValue(str: []const u8, min: u7, max: u7, kind: NameKind) error{InvalidNu
     }
 
     const val = std.fmt.parseInt(u8, str, 10) catch return error.InvalidNumber;
-    if (kind == .weekday and val == 7) return 0;
     if (val < min or val > max) return error.InvalidNumber;
     return @intCast(val);
 }
@@ -287,14 +278,7 @@ inline fn bitSet(comptime T: type, set: T, pos: std.math.Log2Int(T)) bool {
 
 /// Write a bitfield as a cron field string: "*" if all bits set, or comma-separated values.
 fn formatBitfield(w: anytype, comptime T: type, bits: T, min: u8, max: u8) void {
-    var all_set = true;
-    for (min..max + 1) |i| {
-        if ((bits >> @intCast(i)) & 1 == 0) {
-            all_set = false;
-            break;
-        }
-    }
-    if (all_set) {
+    if (@popCount(bits) == @as(u32, max) - min + 1) {
         w.writeByte('*') catch unreachable;
         return;
     }

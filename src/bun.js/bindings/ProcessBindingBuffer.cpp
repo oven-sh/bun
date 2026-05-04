@@ -149,7 +149,7 @@ void ProcessBindingBuffer::finishCreation(JSC::VM& vm)
 template<typename Visitor>
 void ProcessBindingBuffer::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    ProcessBindingBuffer* thisObject = jsCast<ProcessBindingBuffer*>(cell);
+    ProcessBindingBuffer* thisObject = uncheckedDowncast<ProcessBindingBuffer>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 }
@@ -157,3 +157,5 @@ void ProcessBindingBuffer::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 DEFINE_VISIT_CHILDREN(ProcessBindingBuffer);
 
 } // namespace Bun
+
+#undef PROCESS_BINDING_NOT_IMPLEMENTED

@@ -960,6 +960,9 @@ pub const FFI = struct {
             for (symbols.keys()) |key| {
                 allocator.free(@constCast(key));
             }
+            for (symbols.values()) |*function_| {
+                function_.arg_types.deinit(allocator);
+            }
             symbols.clearAndFree(allocator);
             return val;
         }
@@ -1029,7 +1032,7 @@ pub const FFI = struct {
                 filepath_buf,
                 name_slice.slice(),
                 switch (Environment.os) {
-                    .linux => "so",
+                    .linux, .freebsd => "so",
                     .mac => "dylib",
                     .windows => "dll",
                     .wasm => @compileError("TODO"),
@@ -1051,6 +1054,9 @@ pub const FFI = struct {
             // an error while validating symbols
             for (symbols.keys()) |key| {
                 bun.default_allocator.free(@constCast(key));
+            }
+            for (symbols.values()) |*function_| {
+                function_.arg_types.deinit(bun.default_allocator);
             }
             symbols.clearAndFree(bun.default_allocator);
             return val;
@@ -1194,6 +1200,9 @@ pub const FFI = struct {
             // an error while validating symbols
             for (symbols.keys()) |key| {
                 allocator.free(@constCast(key));
+            }
+            for (symbols.values()) |*function_| {
+                function_.arg_types.deinit(allocator);
             }
             symbols.clearAndFree(allocator);
             return val;
@@ -1411,7 +1420,7 @@ pub const FFI = struct {
         while (try symbols_iter.next()) |prop| {
             const value = symbols_iter.value;
 
-            if (value.isEmptyOrUndefinedOrNull()) {
+            if (value.isEmptyOrUndefinedOrNull() or !value.isObject()) {
                 return global.toTypeError(.INVALID_ARG_VALUE, "Expected an object for key \"{f}\"", .{prop});
             }
 

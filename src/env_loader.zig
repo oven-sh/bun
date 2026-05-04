@@ -175,16 +175,27 @@ pub const Loader = struct {
         // TODO: When Web Worker support is added, make sure to intern these strings
         var http_proxy: ?URL = null;
 
+        // Treat empty-string lowercase as "absent" so it falls through to uppercase.
+        // CI environments often set `http_proxy=""` as a default; a runtime
+        // `process.env.HTTP_PROXY = "..."` must still be observed.
         if (is_http) {
-            if (this.get("http_proxy") orelse this.get("HTTP_PROXY")) |proxy| {
-                if (proxy.len > 0 and !strings.eqlComptime(proxy, "\"\"") and !strings.eqlComptime(proxy, "''")) {
-                    http_proxy = URL.parse(proxy);
+            const proxy: ?[]const u8 = blk: {
+                if (this.get("http_proxy")) |p| if (p.len > 0) break :blk p;
+                break :blk this.get("HTTP_PROXY");
+            };
+            if (proxy) |p| {
+                if (p.len > 0 and !strings.eqlComptime(p, "\"\"") and !strings.eqlComptime(p, "''")) {
+                    http_proxy = URL.parse(p);
                 }
             }
         } else {
-            if (this.get("https_proxy") orelse this.get("HTTPS_PROXY")) |proxy| {
-                if (proxy.len > 0 and !strings.eqlComptime(proxy, "\"\"") and !strings.eqlComptime(proxy, "''")) {
-                    http_proxy = URL.parse(proxy);
+            const proxy: ?[]const u8 = blk: {
+                if (this.get("https_proxy")) |p| if (p.len > 0) break :blk p;
+                break :blk this.get("HTTPS_PROXY");
+            };
+            if (proxy) |p| {
+                if (p.len > 0 and !strings.eqlComptime(p, "\"\"") and !strings.eqlComptime(p, "''")) {
+                    http_proxy = URL.parse(p);
                 }
             }
         }
@@ -204,7 +215,11 @@ pub const Loader = struct {
         // See the syntax at https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/
         const hn = hostname orelse return false;
 
-        const no_proxy_text = this.get("no_proxy") orelse this.get("NO_PROXY") orelse return false;
+        // Treat empty-string lowercase as "absent" so it falls through to uppercase.
+        const no_proxy_text: []const u8 = blk: {
+            if (this.get("no_proxy")) |p| if (p.len > 0) break :blk p;
+            break :blk this.get("NO_PROXY") orelse return false;
+        };
         if (no_proxy_text.len == 0 or strings.eqlComptime(no_proxy_text, "\"\"") or strings.eqlComptime(no_proxy_text, "''")) {
             return false;
         }

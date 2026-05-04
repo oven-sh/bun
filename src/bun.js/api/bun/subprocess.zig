@@ -17,7 +17,7 @@ process: *Process,
 stdin: Writable,
 stdout: Readable,
 stderr: Readable,
-stdio_pipes: if (Environment.isWindows) std.ArrayListUnmanaged(StdioResult) else std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
+stdio_pipes: if (Environment.isWindows) std.ArrayListUnmanaged(StdioResult) else std.ArrayListUnmanaged(bun.spawn.PosixSpawnResult.ExtraPipe) = .{},
 pid_rusage: ?Rusage = null,
 
 /// Terminal attached to this subprocess (if spawned with terminal option)
@@ -28,7 +28,6 @@ observable_getters: std.enums.EnumSet(enum {
     stdin,
     stdout,
     stderr,
-    stdio,
 }) = .{},
 closed: std.enums.EnumSet(StdioKind) = .{},
 this_value: jsc.JSRef = jsc.JSRef.empty(),
@@ -58,7 +57,11 @@ pub const Flags = packed struct(u8) {
     finalized: bool = false,
     deref_on_stdin_destroyed: bool = false,
     is_stdin_a_readable_stream: bool = false,
-    _: u2 = 0,
+    /// Terminal was created inline by spawn (vs. an existing Terminal passed
+    /// by the caller). Owned terminals are closed when the subprocess exits
+    /// so the exit callback fires; borrowed terminals are left open for reuse.
+    owns_terminal: bool = false,
+    _: u1 = 0,
 };
 
 pub const SignalCode = bun.SignalCode;
@@ -91,7 +94,7 @@ pub const StdioKind = enum {
     stdout,
     stderr,
 
-    pub fn toFd(this: @This()) bun.FileDescriptor {
+    pub fn toFd(this: @This()) bun.FD {
         return switch (this) {
             .stdin => .stdin(),
             .stdout => .stdout(),
@@ -147,7 +150,14 @@ pub fn hasExited(this: *const Subprocess) bool {
 }
 
 pub fn computeHasPendingActivity(this: *const Subprocess) bool {
-    if (this.ipc_data != null) {
+    // `ipc_data` is never set back to `null` after init, so checking only
+    // for `!= null` would keep the JSSubprocess strongly referenced for the
+    // lifetime of the VM. The IPC side contributes pending activity until
+    // `_onAfterIPCClosed` has actually run: gating on `close_event_sent`
+    // (rather than `socket != .closed`) keeps the wrapper Strong across the
+    // window where the socket is already `.closed` but the task holding a
+    // raw `*SendQueue` into `ipc_data` is still queued.
+    if (this.ipc_data != null and !this.ipc_data.?.close_event_sent) {
         return true;
     }
 
@@ -225,6 +235,13 @@ pub fn onCloseIO(this: *Subprocess, kind: StdioKind) void {
             }
         },
     }
+
+    // When the process exits before its stdout/stderr pipes have finished
+    // draining, onProcessExit's deferred updateHasPendingActivity() observes
+    // the pipe as still pending and keeps `this_value` Strong. When the pipe
+    // later completes and reaches here, we must re-evaluate so the JSRef can
+    // be downgraded and the JSSubprocess + buffered output become collectable.
+    this.updateHasPendingActivity();
 }
 
 pub fn jsRef(this: *Subprocess) void {
@@ -474,21 +491,17 @@ pub fn getStdio(this: *Subprocess, global: *JSGlobalObject) bun.JSError!JSValue 
     try array.push(global, .null); // TODO: align this with options
     try array.push(global, .null); // TODO: align this with options
 
-    this.observable_getters.insert(.stdio);
-    var pipes = this.stdio_pipes.items;
-    if (this.ipc_data != null) {
-        try array.push(global, .null);
-        pipes = pipes[@min(1, pipes.len)..];
-    }
-
-    for (pipes) |item| {
+    for (this.stdio_pipes.items) |item| {
         if (Environment.isWindows) {
             if (item == .buffer) {
                 const fdno: usize = @intFromPtr(item.buffer.fd().cast());
                 try array.push(global, JSValue.jsNumber(fdno));
+            } else {
+                try array.push(global, .null);
             }
-        } else {
-            try array.push(global, JSValue.jsNumber(item.cast()));
+        } else switch (item) {
+            .owned_fd, .unowned_fd => |fd| try array.push(global, JSValue.jsNumber(fd.cast())),
+            .unavailable => try array.push(global, .null),
         }
     }
     return array;
@@ -586,6 +599,14 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
 
     jsc_vm.onSubprocessExit(process);
 
+    if (Environment.isWindows and this.flags.owns_terminal) {
+        // POSIX gets EOF on the master when the child (last slave_fd holder)
+        // exits. ConPTY's conhost stays alive after the child exits, so close
+        // the pseudoconsole now to deliver EOF and fire the terminal's exit
+        // callback. Leaves the Terminal itself open to match POSIX.
+        if (this.terminal) |terminal| terminal.closePseudoconsole();
+    }
+
     var stdin: ?*jsc.WebCore.FileSink = if (this.stdin == .pipe and this.flags.is_stdin_a_readable_stream) this.stdin.pipe else this.weak_file_sink_stdin_ptr;
     var existing_stdin_value = jsc.JSValue.zero;
     if (this_jsvalue != .zero) {
@@ -637,7 +658,22 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
         this.weak_file_sink_stdin_ptr = null;
         this.flags.has_stdin_destructor_called = true;
 
-        // It is okay if it does call deref() here, as in that case it was truly ref'd.
+        // `onAttachedProcessExit()` → `writer.close()` → `FileSink.onClose`
+        // fires `pipe.signal` synchronously on POSIX. When the signal still
+        // targets `&this.stdin` (the user never read `.stdin`, or did and
+        // `Writable.toJS` left it wired), that would re-enter
+        // `Writable.onClose` → `pipe.deref()` while `onAttachedProcessExit`
+        // is still running on `pipe`. Detach the signal first and drive the
+        // `onStdinDestroyed()` deref ourselves instead; this also leaves
+        // `this.stdin` as `.pipe` so reading `.stdin` after exit still
+        // returns the sink.
+        if (@intFromPtr(pipe.signal.ptr) == @intFromPtr(&this.stdin)) {
+            pipe.signal.clear();
+        }
+        const must_deref = this.flags.deref_on_stdin_destroyed;
+        this.flags.deref_on_stdin_destroyed = false;
+        defer if (must_deref) this.deref();
+
         pipe.onAttachedProcessExit(&status);
     }
 
@@ -659,7 +695,9 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
 
                 switch (status) {
                     .exited => |exited| promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(exited.code)) catch {}, // TODO: properly propagate exception upwards
-                    .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJS(globalThis) catch return) catch {}, // TODO: properly propagate exception upwards
+                    .err => |err| {
+                        promise.asAnyPromise().?.rejectWithAsyncStack(globalThis, err.toJS(globalThis) catch return) catch {}; // TODO: properly propagate exception upwards
+                    },
                     .signaled => promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(status.signaled))) catch {}, // TODO: properly propagate exception upwards
                     else => {
                         // crash in debug mode
@@ -720,7 +758,7 @@ fn closeIO(this: *Subprocess, comptime io: @Type(.enum_literal)) void {
     }
 }
 
-fn onPipeClose(this: *uv.Pipe) callconv(.c) void {
+pub fn onPipeClose(this: *uv.Pipe) callconv(.c) void {
     // safely free the pipes
     bun.default_allocator.destroy(this);
 }
@@ -734,22 +772,17 @@ pub fn finalizeStreams(this: *Subprocess) void {
     this.closeIO(.stdout);
     this.closeIO(.stderr);
 
-    close_stdio_pipes: {
-        if (!this.observable_getters.contains(.stdio)) {
-            break :close_stdio_pipes;
-        }
-
-        for (this.stdio_pipes.items) |item| {
-            if (Environment.isWindows) {
-                if (item == .buffer) {
-                    item.buffer.close(onPipeClose);
-                }
-            } else {
-                item.close();
+    for (this.stdio_pipes.items) |item| {
+        if (Environment.isWindows) {
+            if (item == .buffer) {
+                item.buffer.close(onPipeClose);
             }
+        } else switch (item) {
+            .owned_fd => |fd| fd.close(),
+            .unowned_fd, .unavailable => {},
         }
-        this.stdio_pipes.clearAndFree(bun.default_allocator);
     }
+    this.stdio_pipes.clearAndFree(bun.default_allocator);
 }
 
 fn deinit(this: *Subprocess) void {
@@ -789,8 +822,15 @@ pub fn finalize(this: *Subprocess) callconv(.c) void {
     MaxBuf.removeFromSubprocess(&this.stdout_maxbuf);
     MaxBuf.removeFromSubprocess(&this.stderr_maxbuf);
 
-    if (this.ipc_data != null) {
-        this.disconnectIPC(false);
+    if (this.ipc_data) |*ipc_data| {
+        // In normal operation the socket is already `.closed` by the time we
+        // get here (that is what allowed `computeHasPendingActivity` to drop
+        // to false and let GC collect us). `disconnectIPC` would be a no-op
+        // in that state and would leak the SendQueue's buffers; deinit it
+        // instead. `SendQueue.deinit` handles the VM-shutdown case where the
+        // socket is still open.
+        ipc_data.deinit();
+        this.ipc_data = null;
     }
 
     this.flags.finalized = true;
@@ -911,7 +951,46 @@ pub fn getGlobalThis(this: *Subprocess) ?*jsc.JSGlobalObject {
 
 const IPClog = Output.scoped(.IPC, .visible);
 
-pub const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.StdioResult else ?bun.FileDescriptor;
+pub const TestingAPIs = struct {
+    /// Inject a synthetic read error into a subprocess's stdout/stderr
+    /// PipeReader, as if the underlying read() syscall (Posix) or libuv read
+    /// callback (Windows) had failed with EBADF. Used by tests to exercise
+    /// the onReaderError cleanup path, which is otherwise very hard to
+    /// trigger deterministically — on Windows in particular, peer death on
+    /// a named pipe maps to UV_EOF rather than an error.
+    ///
+    /// Returns true if an error was injected, false if the given stdio is
+    /// not (or no longer) a buffered pipe reader.
+    pub fn injectStdioReadError(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const subprocess_value, const kind_value = callframe.argumentsAsArray(2);
+        const subprocess = Subprocess.fromJS(subprocess_value) orelse {
+            return globalThis.throw("first argument must be a Subprocess", .{});
+        };
+        const kind_str = try kind_value.toBunString(globalThis);
+        defer kind_str.deref();
+
+        const out: *Readable = if (kind_str.eqlComptime("stdout"))
+            &subprocess.stdout
+        else if (kind_str.eqlComptime("stderr"))
+            &subprocess.stderr
+        else
+            return globalThis.throw("second argument must be 'stdout' or 'stderr'", .{});
+
+        if (out.* != .pipe) return .false;
+        const pipe = out.pipe;
+
+        // Mirror what the real error path does (onStreamRead on Windows,
+        // read() on Posix) so the teardown exercised is identical.
+        const fake_err = bun.sys.Error.fromCode(.BADF, .read);
+        if (comptime Environment.isWindows) {
+            _ = pipe.reader.stopReading();
+        }
+        pipe.reader.onError(fake_err);
+        return .true;
+    }
+};
+
+pub const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.StdioResult else ?bun.FD;
 pub const Writable = @import("./subprocess/Writable.zig").Writable;
 
 pub const MaxBuf = bun.io.MaxBuf;

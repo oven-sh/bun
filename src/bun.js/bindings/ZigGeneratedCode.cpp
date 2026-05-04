@@ -34,7 +34,7 @@ JSC_DEFINE_HOST_FUNCTION(FFI__ptr__slowpathWrapper, (JSC::JSGlobalObject * globa
 
 extern "C" void FFI__ptr__put(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
 {
-    JSC::JSObject* thisObject = JSC::jsCast<JSC::JSObject*>(JSC::JSValue::decode(value));
+    JSC::JSObject* thisObject = uncheckedDowncast<JSC::JSObject>(JSC::JSValue::decode(value));
     // static const JSC::DOMJIT::Signature DOMJIT_ptr_signature(
     //     FFI__ptr__fastpathWrapper,
     //     thisObject->classInfo(),
@@ -81,7 +81,7 @@ JSC_DEFINE_HOST_FUNCTION(Reader__u8__slowpathWrapper, (JSC::JSGlobalObject * glo
 
 extern "C" void Reader__u8__put(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
 {
-    JSC::JSObject* thisObject = JSC::jsCast<JSC::JSObject*>(JSC::JSValue::decode(value));
+    JSC::JSObject* thisObject = uncheckedDowncast<JSC::JSObject>(JSC::JSValue::decode(value));
     // static const JSC::DOMJIT::Signature DOMJIT_u8_signature(
     //     Reader__u8__fastpathWrapper,
     //     thisObject->classInfo(),
@@ -130,7 +130,7 @@ JSC_DEFINE_HOST_FUNCTION(Reader__u16__slowpathWrapper, (JSC::JSGlobalObject * gl
 
 extern "C" void Reader__u16__put(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
 {
-    JSC::JSObject* thisObject = JSC::jsCast<JSC::JSObject*>(JSC::JSValue::decode(value));
+    JSC::JSObject* thisObject = uncheckedDowncast<JSC::JSObject>(JSC::JSValue::decode(value));
     // static const JSC::DOMJIT::Signature DOMJIT_u16_signature(
     //     Reader__u16__fastpathWrapper,
     //     thisObject->classInfo(),
@@ -176,7 +176,7 @@ JSC_DEFINE_HOST_FUNCTION(Reader__u32__slowpathWrapper, (JSC::JSGlobalObject * gl
 
 extern "C" void Reader__u32__put(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
 {
-    JSC::JSObject* thisObject = JSC::jsCast<JSC::JSObject*>(JSC::JSValue::decode(value));
+    JSC::JSObject* thisObject = uncheckedDowncast<JSC::JSObject>(JSC::JSValue::decode(value));
     // static const JSC::DOMJIT::Signature DOMJIT_u32_signature(
     //     Reader__u32__fastpathWrapper,
     //     thisObject->classInfo(),
@@ -222,7 +222,7 @@ JSC_DEFINE_HOST_FUNCTION(Reader__ptr__slowpathWrapper, (JSC::JSGlobalObject * gl
 
 extern "C" void Reader__ptr__put(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
 {
-    JSC::JSObject* thisObject = JSC::jsCast<JSC::JSObject*>(JSC::JSValue::decode(value));
+    JSC::JSObject* thisObject = uncheckedDowncast<JSC::JSObject>(JSC::JSValue::decode(value));
     // static const JSC::DOMJIT::Signature DOMJIT_ptr_signature(
     //     Reader__ptr__fastpathWrapper,
     //     thisObject->classInfo(),
@@ -268,7 +268,7 @@ JSC_DEFINE_HOST_FUNCTION(Reader__i8__slowpathWrapper, (JSC::JSGlobalObject * glo
 
 extern "C" void Reader__i8__put(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
 {
-    JSC::JSObject* thisObject = JSC::jsCast<JSC::JSObject*>(JSC::JSValue::decode(value));
+    JSC::JSObject* thisObject = uncheckedDowncast<JSC::JSObject>(JSC::JSValue::decode(value));
     // static const JSC::DOMJIT::Signature DOMJIT_i8_signature(
     //     Reader__i8__fastpathWrapper,
     //     thisObject->classInfo(),
@@ -314,7 +314,7 @@ JSC_DEFINE_HOST_FUNCTION(Reader__i16__slowpathWrapper, (JSC::JSGlobalObject * gl
 
 extern "C" void Reader__i16__put(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
 {
-    JSC::JSObject* thisObject = JSC::jsCast<JSC::JSObject*>(JSC::JSValue::decode(value));
+    JSC::JSObject* thisObject = uncheckedDowncast<JSC::JSObject>(JSC::JSValue::decode(value));
     // static const JSC::DOMJIT::Signature DOMJIT_i16_signature(
     //     Reader__i16__fastpathWrapper,
     //     thisObject->classInfo(),
@@ -360,7 +360,7 @@ JSC_DEFINE_HOST_FUNCTION(Reader__i32__slowpathWrapper, (JSC::JSGlobalObject * gl
 
 extern "C" void Reader__i32__put(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
 {
-    JSC::JSObject* thisObject = JSC::jsCast<JSC::JSObject*>(JSC::JSValue::decode(value));
+    JSC::JSObject* thisObject = uncheckedDowncast<JSC::JSObject>(JSC::JSValue::decode(value));
     // static const JSC::DOMJIT::Signature DOMJIT_i32_signature(
     //     Reader__i32__fastpathWrapper,
     //     thisObject->classInfo(),
@@ -406,7 +406,7 @@ JSC_DEFINE_HOST_FUNCTION(Reader__i64__slowpathWrapper, (JSC::JSGlobalObject * gl
 
 extern "C" void Reader__i64__put(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
 {
-    JSC::JSObject* thisObject = JSC::jsCast<JSC::JSObject*>(JSC::JSValue::decode(value));
+    JSC::JSObject* thisObject = uncheckedDowncast<JSC::JSObject>(JSC::JSValue::decode(value));
     // static const JSC::DOMJIT::Signature DOMJIT_i64_signature(
     //     Reader__i64__fastpathWrapper,
     //     thisObject->classInfo(),
@@ -452,7 +452,7 @@ JSC_DEFINE_HOST_FUNCTION(Reader__u64__slowpathWrapper, (JSC::JSGlobalObject * gl
 
 extern "C" void Reader__u64__put(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
 {
-    JSC::JSObject* thisObject = JSC::jsCast<JSC::JSObject*>(JSC::JSValue::decode(value));
+    JSC::JSObject* thisObject = uncheckedDowncast<JSC::JSObject>(JSC::JSValue::decode(value));
     // static const JSC::DOMJIT::Signature DOMJIT_u64_signature(
     //     Reader__u64__fastpathWrapper,
     //     thisObject->classInfo(),
@@ -498,7 +498,7 @@ JSC_DEFINE_HOST_FUNCTION(Reader__intptr__slowpathWrapper, (JSC::JSGlobalObject *
 
 extern "C" void Reader__intptr__put(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
 {
-    JSC::JSObject* thisObject = JSC::jsCast<JSC::JSObject*>(JSC::JSValue::decode(value));
+    JSC::JSObject* thisObject = uncheckedDowncast<JSC::JSObject>(JSC::JSValue::decode(value));
     // static const JSC::DOMJIT::Signature DOMJIT_intptr_signature(
     //     Reader__intptr__fastpathWrapper,
     //     thisObject->classInfo(),
@@ -544,7 +544,7 @@ JSC_DEFINE_HOST_FUNCTION(Reader__f32__slowpathWrapper, (JSC::JSGlobalObject * gl
 
 extern "C" void Reader__f32__put(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
 {
-    JSC::JSObject* thisObject = JSC::jsCast<JSC::JSObject*>(JSC::JSValue::decode(value));
+    JSC::JSObject* thisObject = uncheckedDowncast<JSC::JSObject>(JSC::JSValue::decode(value));
     // static const JSC::DOMJIT::Signature DOMJIT_f32_signature(
     //     Reader__f32__fastpathWrapper,
     //     thisObject->classInfo(),
@@ -590,7 +590,7 @@ JSC_DEFINE_HOST_FUNCTION(Reader__f64__slowpathWrapper, (JSC::JSGlobalObject * gl
 
 extern "C" void Reader__f64__put(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
 {
-    JSC::JSObject* thisObject = JSC::jsCast<JSC::JSObject*>(JSC::JSValue::decode(value));
+    JSC::JSObject* thisObject = uncheckedDowncast<JSC::JSObject>(JSC::JSValue::decode(value));
     // static const JSC::DOMJIT::Signature DOMJIT_f64_signature(
     //     Reader__f64__fastpathWrapper,
     //     thisObject->classInfo(),

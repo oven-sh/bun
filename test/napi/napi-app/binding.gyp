@@ -122,6 +122,16 @@
             ],
         },
         {
+            "target_name": "reentrant_register_addon",
+            "sources": ["reentrant_register_addon.cpp"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+            ],
+        },
+        {
             "target_name": "test_cleanup_hook_order",
             "sources": ["test_cleanup_hook_order.c"],
             "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
@@ -230,6 +240,17 @@
                 "NAPI_DISABLE_CPP_EXCEPTIONS",
                 "NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1",
                 "NAPI_VERSION_EXPERIMENTAL=1",
+            ],
+        },
+        {
+            "target_name": "test_wrap_cleanup_order",
+            "sources": ["test_wrap_cleanup_order.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+                "NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1",
             ],
         },
     ]

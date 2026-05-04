@@ -808,7 +808,10 @@ pub const Loader = enum(u8) {
         try loader.toZigString(&zig_str, global);
         if (zig_str.len == 0) return null;
 
-        return fromString(zig_str.slice()) orelse {
+        const slice = zig_str.toSlice(bun.default_allocator);
+        defer slice.deinit();
+
+        return fromString(slice.slice()) orelse {
             return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, yaml, wasm, bunsh, json, or md", .{});
         };
     }
@@ -1156,6 +1159,8 @@ const default_loaders_posix = .{
     .{ ".html", .html },
     .{ ".jsonc", .jsonc },
     .{ ".json5", .json5 },
+    .{ ".md", .md },
+    .{ ".markdown", .md },
 };
 const default_loaders_win32 = default_loaders_posix ++ .{
     .{ ".sh", .bunsh },

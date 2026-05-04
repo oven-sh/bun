@@ -14,6 +14,7 @@
 #include "JSFetchHeaders.h"
 #include "JSDOMExceptionHandling.h"
 #include <bun-uws/src/App.h>
+#include <bun-uws/src/Http3Response.h>
 #include "ZigGeneratedClasses.h"
 #include "ScriptExecutionContext.h"
 #include "AsyncContextFrame.h"
@@ -436,7 +437,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSObject* callbackObject = jsCast<JSObject*>(callback);
+    JSObject* callbackObject = uncheckedDowncast<JSObject>(callback);
     MarkedArgumentBuffer args;
     args.append(thisValue);
 
@@ -444,7 +445,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     RETURN_IF_EXCEPTION(scope, {});
 
     bool hasBody = false;
-    WebCore::JSNodeHTTPResponse* nodeHTTPResponseObject = jsCast<WebCore::JSNodeHTTPResponse*>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, upgrade_ctx, nodeHttpResponsePtr)));
+    WebCore::JSNodeHTTPResponse* nodeHTTPResponseObject = uncheckedDowncast<WebCore::JSNodeHTTPResponse>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, upgrade_ctx, nodeHttpResponsePtr)));
 
     args.append(nodeHTTPResponseObject);
     args.append(jsBoolean(hasBody));
@@ -452,7 +453,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     auto* currentSocketDataPtr = reinterpret_cast<JSC::JSCell*>(response->getHttpResponseData()->socketData);
 
     if (currentSocketDataPtr) {
-        auto* thisSocket = jsCast<JSNodeHTTPServerSocket*>(currentSocketDataPtr);
+        auto* thisSocket = uncheckedDowncast<JSNodeHTTPServerSocket>(currentSocketDataPtr);
         thisSocket->currentResponseObject.set(vm, thisSocket, nodeHTTPResponseObject);
         args.append(thisSocket);
         args.append(jsBoolean(false));
@@ -598,13 +599,13 @@ static void NodeHTTPServer__writeHead(
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSObject* headersObject = headersObjectValue.getObject();
-    if (response->getLoopData()->canCork() && response->getBufferedAmount() == 0) {
-        response->getLoopData()->setCorkedSocket(response, isSSL);
+    if (!response->uWS::template AsyncSocket<isSSL>::isCorked() && response->getBufferedAmount() == 0) {
+        response->uWS::template AsyncSocket<isSSL>::cork();
     }
     response->writeStatus(std::string_view(statusMessage, statusMessageLength));
 
     if (headersObject) {
-        if (auto* fetchHeaders = jsDynamicCast<WebCore::JSFetchHeaders*>(headersObject)) {
+        if (auto* fetchHeaders = dynamicDowncast<WebCore::JSFetchHeaders>(headersObject)) {
             writeFetchHeadersToUWSResponse<isSSL>(fetchHeaders->wrapped(), response);
             return;
         }
@@ -730,12 +731,12 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignHeaders, (JSGlobalObject * globalObject, Ca
     // This is an internal binding.
     JSValue requestValue = callFrame->uncheckedArgument(0);
     JSObject* objectValue = callFrame->uncheckedArgument(1).getObject();
-    JSC::InternalFieldTuple* tuple = jsCast<JSC::InternalFieldTuple*>(callFrame->uncheckedArgument(2));
+    JSC::InternalFieldTuple* tuple = uncheckedDowncast<JSC::InternalFieldTuple>(callFrame->uncheckedArgument(2));
     ASSERT(callFrame->argumentCount() == 3);
 
     JSValue headersValue = JSValue();
     JSValue urlValue = JSValue();
-    if (auto* jsRequest = jsDynamicCast<WebCore::JSRequest*>(requestValue)) {
+    if (auto* jsRequest = dynamicDowncast<WebCore::JSRequest>(requestValue)) {
         if (uWS::HttpRequest* request = Request__getUWSRequest(jsRequest->wrapped())) {
             return assignHeadersFromUWebSockets(request, globalObject->objectPrototype(), objectValue, tuple, globalObject, vm);
         }
@@ -761,7 +762,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignHeaders, (JSGlobalObject * globalObject, Ca
         }
 
         if (headersValue) {
-            if (auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(headersValue)) {
+            if (auto* headers = dynamicDowncast<WebCore::JSFetchHeaders>(headersValue)) {
                 FetchHeaders& impl = headers->wrapped();
                 if (urlValue) {
                     if (urlValue.isString()) {
@@ -800,7 +801,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignEventCallback, (JSGlobalObject * globalObje
 
     ASSERT(callFrame->argumentCount() == 2);
 
-    if (auto* jsRequest = jsDynamicCast<WebCore::JSRequest*>(requestValue)) {
+    if (auto* jsRequest = dynamicDowncast<WebCore::JSRequest>(requestValue)) {
         Request__setInternalEventCallback(jsRequest->wrapped(), JSValue::encode(callback), globalObject);
     }
 
@@ -818,11 +819,11 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetTimeout, (JSGlobalObject * globalObject, CallF
 
     ASSERT(callFrame->argumentCount() == 2);
 
-    if (auto* jsRequest = jsDynamicCast<WebCore::JSRequest*>(requestValue)) {
+    if (auto* jsRequest = dynamicDowncast<WebCore::JSRequest>(requestValue)) {
         Request__setTimeout(jsRequest->wrapped(), JSValue::encode(seconds), globalObject);
     }
 
-    if (auto* nodeHttpResponse = jsDynamicCast<WebCore::JSNodeHTTPResponse*>(requestValue)) {
+    if (auto* nodeHttpResponse = dynamicDowncast<WebCore::JSNodeHTTPResponse>(requestValue)) {
         NodeHTTPResponse__setTimeout(nodeHttpResponse->wrapped(), JSValue::encode(seconds), globalObject);
     }
 
@@ -878,7 +879,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPGetHeader, (JSGlobalObject * globalObject, CallFr
 
     JSValue headersValue = callFrame->argument(0);
 
-    if (auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(headersValue)) {
+    if (auto* headers = dynamicDowncast<WebCore::JSFetchHeaders>(headersValue)) {
         JSValue nameValue = callFrame->argument(1);
         if (nameValue.isString()) {
             FetchHeaders* impl = &headers->wrapped();
@@ -917,7 +918,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
     JSValue nameValue = callFrame->argument(1);
     JSValue valueValue = callFrame->argument(2);
 
-    if (auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(headersValue)) {
+    if (auto* headers = dynamicDowncast<WebCore::JSFetchHeaders>(headersValue)) {
 
         if (nameValue.isString()) {
             String name = nameValue.toWTFString(globalObject);
@@ -930,7 +931,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
 
             // Note: isArray() accepts Proxy->Array, but jsDynamicCast returns null for Proxy.
             // Fall through to the single-value path in that case.
-            if (auto* array = jsDynamicCast<JSArray*>(valueValue)) {
+            if (auto* array = dynamicDowncast<JSArray>(valueValue)) {
                 unsigned length = array->length();
                 if (length > 0) {
                     JSValue item = array->getIndex(globalObject, 0);
@@ -1020,12 +1021,73 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
     return obj;
 }
 
-extern "C" void WebCore__FetchHeaders__toUWSResponse(WebCore::FetchHeaders* arg0, bool is_ssl, void* arg2)
+static void writeFetchHeadersToH3Response(WebCore::FetchHeaders& headers, uWS::Http3Response* res)
 {
-    if (is_ssl) {
-        writeFetchHeadersToUWSResponse<true>(*arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
-    } else {
+    auto& internalHeaders = headers.internalHeaders();
+    auto* data = res->getHttpResponseData();
+
+    auto writeOne = [&](const WTF::StringView& name, const WTF::StringView& value) {
+        WTF::CString nameStr, valueStr;
+        std::string_view nameView, valueView;
+        if (name.is8Bit()) {
+            const auto s = name.span8();
+            nameView = std::string_view(reinterpret_cast<const char*>(s.data()), s.size());
+        } else {
+            nameStr = name.utf8();
+            nameView = std::string_view(nameStr.data(), nameStr.length());
+        }
+        if (value.is8Bit()) {
+            const auto s = value.span8();
+            valueView = std::string_view(reinterpret_cast<const char*>(s.data()), s.size());
+        } else {
+            valueStr = value.utf8();
+            valueView = std::string_view(valueStr.data(), valueStr.length());
+        }
+        res->writeHeader(nameView, valueView);
+    };
+
+    for (auto& value : internalHeaders.getSetCookieHeaders()) {
+        if (value.is8Bit()) {
+            const auto s = value.span8();
+            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(reinterpret_cast<const char*>(s.data()), s.size()));
+        } else {
+            WTF::CString v = value.utf8();
+            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(v.data(), v.length()));
+        }
+    }
+
+    for (const auto& header : internalHeaders.commonHeaders()) {
+        if (header.key == WebCore::HTTPHeaderName::ContentLength) {
+            if (!(data->state & uWS::Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
+                data->state |= uWS::Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;
+                res->writeMark();
+            }
+        }
+        if (header.key == WebCore::HTTPHeaderName::Date) {
+            data->state |= uWS::Http3ResponseData::HTTP_WROTE_DATE_HEADER;
+        }
+        // HTTP/3 has no Transfer-Encoding; if a user header reaches here it
+        // was already stripped by doWriteHeaders().
+        writeOne(WebCore::httpHeaderNameString(header.key), header.value);
+    }
+
+    for (auto& header : internalHeaders.uncommonHeaders()) {
+        writeOne(header.key, header.value);
+    }
+}
+
+extern "C" void WebCore__FetchHeaders__toUWSResponse(WebCore::FetchHeaders* arg0, UWSResponseKind kind, void* arg2)
+{
+    switch (kind) {
+    case UWSResponseKind::TCP:
         writeFetchHeadersToUWSResponse<false>(*arg0, reinterpret_cast<uWS::HttpResponse<false>*>(arg2));
+        break;
+    case UWSResponseKind::SSL:
+        writeFetchHeadersToUWSResponse<true>(*arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
+        break;
+    case UWSResponseKind::H3:
+        writeFetchHeadersToH3Response(*arg0, reinterpret_cast<uWS::Http3Response*>(arg2));
+        break;
     }
 }
 

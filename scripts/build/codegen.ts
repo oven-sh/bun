@@ -6,8 +6,8 @@
  * most codegen scripts use `writeIfNotChanged`, so downstream is pruned
  * when output content didn't change.
  *
- * Source lists come from `cmake/Sources.json` patterns, globbed once at
- * configure time via `globAllSources()` — see sources.ts. The expanded
+ * Source lists come from the patterns in glob-sources.ts, globbed once at
+ * configure time via `globAllSources()`. The expanded
  * paths are baked into build.ninja; adding a file picks up on next configure.
  *
  * bindgenv2 is special: its output set is dynamic (depends on which types
@@ -37,12 +37,12 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { basename, relative, resolve } from "node:path";
+import type { Sources } from "../glob-sources.ts";
 import type { Config } from "./config.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
-import type { Sources } from "./sources.ts";
 
 /**
  * Codegen outputs that land in `src/` instead of `codegenDir`. The zig
@@ -94,9 +94,25 @@ function readPackageDeps(pkgDir: string): string[] {
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Register ninja rules shared by all codegen steps. Call once before
- * emitCodegen().
+ * Node-style platform/arch strings for the TARGET (not the host running
+ * codegen). Passed as TARGET_PLATFORM/TARGET_ARCH so scripts that inline
+ * `process.platform` into bundled JS use the target's value.
  */
+function codegenTarget(cfg: Config): { platform: string; arch: string } {
+  const platform =
+    cfg.abi === "android"
+      ? "android"
+      : cfg.os === "darwin"
+        ? "darwin"
+        : cfg.os === "windows"
+          ? "win32"
+          : cfg.os === "freebsd"
+            ? "freebsd"
+            : "linux";
+  const arch = cfg.x64 ? "x64" : "arm64";
+  return { platform, arch };
+}
+
 export function registerCodegenRules(n: Ninja, cfg: Config): void {
   // Shell syntax: HOST platform, not target. zig-only cross-compiles on
   // a linux box for darwin/windows; these rules run on the linux box.
@@ -104,16 +120,25 @@ export function registerCodegenRules(n: Ninja, cfg: Config): void {
   const q = (p: string) => quote(p, hostWin);
   const bun = q(cfg.bun);
   const esbuild = q(cfg.esbuild);
+  const { platform, arch } = codegenTarget(cfg);
 
   // Generic codegen: `cd <repo-root> && [env VARS] bun <args>`.
   // Both `bun run script.ts` and `bun script.ts` go through this — the
   // caller puts the `run` subcommand in $args when needed.
   //
+  // TARGET_PLATFORM/ARCH: scripts that inline process.platform into the
+  // bundled JS modules (replacements.ts, bundle-modules.ts,
+  // create-hash-table.ts) read these so a cross-compiled binary doesn't
+  // ship with the build host's platform baked in.
+  //
   // restat = 1 because most scripts use writeIfNotChanged(). Scripts that
   // don't (generate-jssink, ci_info) always write → restat is a no-op for
   // them, no harm.
+  const env = hostWin
+    ? `set TARGET_PLATFORM=${platform}&& set TARGET_ARCH=${arch}&& `
+    : `TARGET_PLATFORM=${platform} TARGET_ARCH=${arch} `;
   n.rule("codegen", {
-    command: hostWin ? `cmd /c "cd /d $cwd && ${bun} $args"` : `cd $cwd && ${bun} $args`,
+    command: hostWin ? `cmd /c "cd /d $cwd && ${env}${bun} $args"` : `cd $cwd && ${env}${bun} $args`,
     description: "gen $desc",
     restat: true,
   });
@@ -578,7 +603,7 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const output = resolve(cfg.codegenDir, "cpp.zig");
 
   // Write the .cpp file list for cppbind to scan. Build system owns the
-  // glob (sources.ts reads Sources.json); we hand the result to cppbind
+  // glob (glob-sources.ts); we hand the result to cppbind
   // as an explicit input instead of it reading a magic hardcoded path.
   // Relative paths, forward slashes — same format cppbind expects.
   //
@@ -890,12 +915,8 @@ function emitObjectLuts({ n, cfg, o, dirStamp }: Ctx): void {
     [resolve(cfg.cwd, "src/bun.js/bindings/webcore/JSEvent.cpp"), resolve(cfg.codegenDir, "JSEvent.lut.h")],
   ];
 
-  // create-hash-table.ts reads TARGET_PLATFORM env with process.platform
-  // fallback. We don't set it — cmake never did either. The preprocessing
-  // is OS-based (#if OS(WINDOWS) etc.) not arch-based, and bun only
-  // cross-compiles across arch on the same OS, so host platform == target
-  // OS. If cross-OS builds are ever added, thread the platform through
-  // argv here rather than shell env (which isn't portable to cmd.exe).
+  // create-hash-table.ts reads TARGET_PLATFORM env (set in registerCodegenRules)
+  // with process.platform fallback.
   for (const [src, out] of pairs) {
     n.build({
       outputs: [out],

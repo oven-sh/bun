@@ -1,4 +1,3 @@
-#!/usr/bin/env bun
 /**
  * Subprocess output wrapper for ninja builds. Two modes:
  *
@@ -38,9 +37,12 @@
  *   command = bun /path/to/stream.ts $name --console $zig build obj ...
  *   pool = console
  *
- * --cwd=DIR / --env=K=V / --console / --zig-progress go between <name> and
- * <command>. They exist so the rule doesn't need `sh -c '...'` (which would
- * conflict with shell-quoted ninja vars like $args).
+ * --cwd=DIR / --env=K=V / --console / --zig-progress / --stamp=PATH go
+ * between <name> and <command>. They exist so the rule doesn't need
+ * `sh -c '...'` (which would conflict with shell-quoted ninja vars like
+ * $args). --stamp=PATH writes an empty file at PATH when the child exits
+ * 0 — used for rules whose command doesn't naturally produce an output
+ * file (e.g. `zig build check`) so ninja can still chain on it.
  *
  * --zig-progress (prefix mode, posix only): sets ZIG_PROGRESS=3, decodes
  * zig's binary progress protocol into `[zig] Stage [N/M]` lines. Without it,
@@ -48,8 +50,9 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { createWriteStream, writeSync } from "node:fs";
+import { closeSync, createWriteStream, openSync, writeSync } from "node:fs";
 import { createInterface } from "node:readline";
+import { nameColor } from "./tty.ts";
 
 export const streamPath: string = import.meta.filename;
 
@@ -73,25 +76,16 @@ export const STREAM_FD = 3;
  * the name disambiguates.
  */
 function coloredPrefix(name: string): string {
-  // Override: zig brand orange (hash would give yellow-green).
-  const overrides: Record<string, number> = { zig: 214 };
-  const palette = [220, 184, 154, 120, 114, 86, 87, 81, 111, 147, 141, 183];
-  // fnv-1a — tiny, good-enough distribution for short strings.
-  let h = 2166136261;
-  for (let i = 0; i < name.length; i++) {
-    h ^= name.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  const color = overrides[name] ?? palette[(h >>> 0) % palette.length];
-  // 38;5;N = set foreground to 256-color N. 39 = default foreground.
-  return `\x1b[38;5;${color}m[${name}]\x1b[39m `;
+  // Caller already gated on useColor (FD3-based); tty.ts's default check
+  // (FD2-based) would wrongly disable since FD2 is a ninja pipe here.
+  return nameColor(name, `[${name}]`, true) + " ";
 }
 
 // ───────────────────────────────────────────────────────────────────────────
 // CLI — guarded so `import { STREAM_FD } from "./stream.ts"` doesn't run it.
 // ───────────────────────────────────────────────────────────────────────────
 
-if (import.meta.main) {
+if (process.argv[1] === import.meta.filename) {
   main();
 }
 
@@ -107,7 +101,37 @@ function main(): void {
   let cwd: string | undefined;
   let zigProgress = false;
   let consoleMode = false;
+  let stampPath: string | undefined;
   const envOverrides: Record<string, string> = {};
+
+  // Bun's bundled BoringSSL doesn't consult the system trust store, so
+  // fetch-cli.ts can't download deps behind a TLS-intercepting proxy whose
+  // root is installed into the OS bundle (curl works; bun's fetch() doesn't).
+  // Point child Bun processes at the system bundle via NODE_EXTRA_CA_CERTS
+  // so dep downloads trust the same roots curl does. Mirror it to
+  // CARGO_HTTP_CAINFO so cargo (libcurl) sees the same roots. Each var is
+  // only defaulted if the user hasn't set it; no-op if the bundle doesn't
+  // exist. Has to be in the child's env (not ours) because Bun snapshots
+  // NODE_EXTRA_CA_CERTS at process start.
+  {
+    let systemCA: string | undefined;
+    for (const p of [
+      "/etc/ssl/certs/ca-certificates.crt", // Debian/Ubuntu/Alpine
+      "/etc/pki/tls/certs/ca-bundle.crt", // Fedora/RHEL
+      "/etc/ssl/cert.pem", // macOS/BSD
+    ]) {
+      try {
+        closeSync(openSync(p, "r"));
+        systemCA = p;
+        break;
+      } catch {}
+    }
+    if (systemCA !== undefined) {
+      if (process.env.NODE_EXTRA_CA_CERTS === undefined) envOverrides.NODE_EXTRA_CA_CERTS = systemCA;
+      if (process.env.CARGO_HTTP_CAINFO === undefined) envOverrides.CARGO_HTTP_CAINFO = systemCA;
+    }
+  }
+
   while (argv[0]?.startsWith("--")) {
     const opt = argv.shift()!;
     if (opt.startsWith("--cwd=")) {
@@ -120,11 +144,23 @@ function main(): void {
       zigProgress = true;
     } else if (opt === "--console") {
       consoleMode = true;
+    } else if (opt.startsWith("--stamp=")) {
+      stampPath = opt.slice(8);
     } else {
       process.stderr.write(`stream.ts: unknown option ${opt}\n`);
       process.exit(2);
     }
   }
+
+  // Create an empty stamp file after the child exits 0. Lets ninja chain
+  // dependents on commands that don't naturally produce an output file
+  // (e.g. `zig build check`, typecheck runs) — cross-platform, no shell
+  // tricks. If the child fails, skip the stamp so ninja will retry.
+  const writeStamp = (): void => {
+    if (stampPath !== undefined) {
+      closeSync(openSync(stampPath, "w"));
+    }
+  };
 
   const cmd = argv;
   if (cmd.length === 0) {
@@ -146,7 +182,9 @@ function main(): void {
       process.stderr.write(`[${name}] spawn failed: ${result.error.message}\n`);
       process.exit(127);
     }
-    process.exit(result.status ?? (result.signal ? 1 : 0));
+    const exitCode = result.status ?? (result.signal ? 1 : 0);
+    if (exitCode === 0) writeStamp();
+    process.exit(exitCode);
   }
 
   // Probe STREAM_FD. If build.ts set it up, it's a dup of the terminal.
@@ -255,6 +293,7 @@ function main(): void {
       writeFinal(`killed by ${signal}\n`);
       process.exit(1);
     }
+    if (code === 0) writeStamp();
     process.exit(code ?? 1);
   });
 }

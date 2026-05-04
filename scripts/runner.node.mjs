@@ -40,6 +40,7 @@ import {
   getArch,
   getBranch,
   getBuildLabel,
+  getBuildMetadata,
   getBuildUrl,
   getCommit,
   getDistro,
@@ -190,29 +191,53 @@ let allFiles = [];
 let newFiles = [];
 let prFileCount = 0;
 if (isBuildkite) {
-  try {
-    console.log("on buildkite: collecting new files from PR");
-    const per_page = 50;
-    const { BUILDKITE_PULL_REQUEST } = process.env;
-    for (let i = 1; i <= 10; i++) {
-      const res = await fetch(
-        `https://api.github.com/repos/oven-sh/bun/pulls/${BUILDKITE_PULL_REQUEST}/files?per_page=${per_page}&page=${i}`,
-        { headers: { Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}` } },
-      );
-      const doc = await res.json();
-      console.log(`-> page ${i}, found ${doc.length} items`);
-      if (doc.length === 0) break;
-      for (const { filename, status } of doc) {
-        prFileCount += 1;
-        allFiles.push(filename);
-        if (status !== "added") continue;
-        newFiles.push(filename);
-      }
-      if (doc.length < per_page) break;
+  // The pipeline-upload step (.buildkite/ci.mjs) already fetched the PR file
+  // list once and stored it as build meta-data. Read it from there so each of
+  // the ~150 test shards doesn't repeat the GitHub API call and burn through
+  // the token's hourly rate limit.
+  const cachedAll = await getBuildMetadata("pr-all-files");
+  const cachedNew = await getBuildMetadata("pr-new-files");
+  if (cachedAll) {
+    try {
+      allFiles = JSON.parse(cachedAll);
+      newFiles = cachedNew ? JSON.parse(cachedNew) : [];
+      prFileCount = allFiles.length;
+      console.log(`- PR file list from build meta-data: ${prFileCount} files, ${newFiles.length} new files`);
+    } catch (e) {
+      console.error("Failed to parse pr-*-files meta-data:", e);
+      allFiles = [];
+      newFiles = [];
     }
-    console.log(`- PR ${BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
-  } catch (e) {
-    console.error(e);
+  }
+  if (allFiles.length === 0) {
+    try {
+      console.log("on buildkite: collecting new files from PR");
+      const per_page = 50;
+      const { BUILDKITE_PULL_REQUEST } = process.env;
+      for (let i = 1; i <= 10; i++) {
+        const res = await fetch(
+          `https://api.github.com/repos/oven-sh/bun/pulls/${BUILDKITE_PULL_REQUEST}/files?per_page=${per_page}&page=${i}`,
+          { headers: { Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}` } },
+        );
+        const doc = await res.json();
+        if (!res.ok || !Array.isArray(doc)) {
+          console.error(`-> page ${i}: GitHub API ${res.status} ${res.statusText}:`, JSON.stringify(doc));
+          throw new Error(`GitHub API returned ${res.status}; cannot determine changed files`);
+        }
+        console.log(`-> page ${i}, found ${doc.length} items`);
+        if (doc.length === 0) break;
+        for (const { filename, status } of doc) {
+          prFileCount += 1;
+          allFiles.push(filename);
+          if (status !== "added") continue;
+          newFiles.push(filename);
+        }
+        if (doc.length < per_page) break;
+      }
+      console.log(`- PR ${BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
+    } catch (e) {
+      console.error(e);
+    }
   }
 }
 
@@ -405,6 +430,19 @@ async function runTests() {
 
   const tests = getRelevantTests(testsPath, modifiers, expectations);
   !isQuiet && console.log("Running tests:", tests.length);
+
+  // Kick off only the docker services this shard's tests need (mysql/postgres/
+  // redis/minio/…) so they've initialized by the time any test's ensure() runs.
+  // warmup-ci.ts maps test paths → services and does one `compose up -d` (no
+  // --wait); ensure()'s own `up --wait` is the synchronization point and
+  // returns fast when the container is already healthy. Linux-only — macOS /
+  // Windows CI don't run docker tests. Runs in the background while
+  // getVendorTests below installs vendor deps.
+  if (isCI && isLinux && spawnSync("docker", ["compose", "version"], { stdio: "ignore" }).status === 0) {
+    spawn(execPath, [join(cwd, "test", "docker", "warmup-ci.ts"), ...tests], {
+      stdio: ["ignore", "inherit", "inherit"],
+    }).on("error", err => console.warn("docker warmup spawn failed:", err.message));
+  }
 
   /** @type {VendorTest[] | undefined} */
   let vendorTests;
@@ -1031,6 +1069,23 @@ async function spawnSafe(options) {
       error = "spawn error";
       buffer = stack || message;
     }
+  } else if ((error = buffer.match(/ERROR: Unchecked JS exception:/g))) {
+    // Format from JSC's VM::verifyExceptionCheckNeedIsSatisfied / ExceptionEventLocation::printInternal:
+    //   "{functionName} @ {__FILE__}:{line}"
+    // __FILE__ is relative to the cmake build dir (e.g. ../../src/...) — strip leading ../ for a repo-relative path.
+    // JSC crashes immediately after printing, so >1 block means multiple subprocesses crashed.
+    const count = error.length;
+    const repoRel = p => p?.replace(/^(?:\.\.?[\\/])+/, "");
+    const thrown = /This scope can throw a JS exception: (\S+) @ (\S+)/.exec(buffer);
+    const unchecked = /But the exception was unchecked as of this scope: (\S+) @ (\S+)/.exec(buffer);
+    error = "unchecked exception";
+    if (unchecked) {
+      error += ` at ${unchecked[1]} @ ${repoRel(unchecked[2])}`;
+      if (thrown) error += ` (thrown from ${repoRel(thrown[2])})`;
+    } else if (thrown) {
+      error += ` thrown from ${thrown[1]} @ ${repoRel(thrown[2])}`;
+    }
+    if (count > 1) error += ` +${count - 1} more`;
   } else if (
     (error = /thread \d+ panic: (.*)(?:\r\n|\r|\n|\\n)/i.exec(buffer)) ||
     (error = /panic\(.*\): (.*)(?:\r\n|\r|\n|\\n)/i.exec(buffer)) ||
@@ -1387,7 +1442,7 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
  * @returns {number}
  */
 function getTestTimeout(testPath) {
-  if (/integration|3rd_party|docker|bun-install-registry|v8/i.test(testPath)) {
+  if (/integration|3rd_party|docker|bun-install-registry|v8|bundler_compile/i.test(testPath)) {
     return integrationTimeout;
   }
   return testTimeout;
@@ -1972,11 +2027,17 @@ async function getExecPathFromBuildKite(target, buildId) {
       args.push("--build", buildId);
     }
 
-    await spawnSafe({
+    const { error } = await spawnSafe({
       command: "buildkite-agent",
       args,
-      timeout: 60000,
+      timeout: 120000,
     });
+    if (error === "timeout") {
+      throw new Error(
+        `buildkite-agent artifact download timed out after 120s for step '${target}'. ` +
+          `Refusing to continue with a partial download (would silently fall back to the wrong binary).`,
+      );
+    }
 
     zipPath = readdirSync(releasePath, { recursive: true, encoding: "utf-8" })
       .filter(filename => /^bun.*\.zip$/i.test(filename))
@@ -2311,6 +2372,7 @@ function isAlwaysFailure(error) {
   return (
     error.includes("segmentation fault") ||
     error.includes("illegal instruction") ||
+    error.includes("unchecked exception") ||
     error.includes("sigtrap") ||
     error.includes("sigkill") ||
     error.includes("error: addresssanitizer") ||
@@ -2642,7 +2704,11 @@ export async function main() {
 
   let doRunTests = true;
   if (isCI) {
-    if (allFiles.every(filename => filename.startsWith("docs/"))) {
+    // allFiles can be empty if the GitHub API call failed (bad token, rate
+    // limit, non-PR build). [].every() is vacuously true, which would skip the
+    // entire suite and exit 0 — so require at least one file before treating
+    // the change set as docs-only.
+    if (allFiles.length > 0 && allFiles.every(filename => filename.startsWith("docs/"))) {
       doRunTests = false;
     }
   }

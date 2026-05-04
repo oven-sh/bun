@@ -366,6 +366,154 @@ describe("bundler", () => {
       "/Users/user/project/src/entry.ts": [`Could not resolve: "#/test". Maybe you need to "bun install"?`],
     },
   });
+  itBundled("tsconfig/PathsInChildNoBaseURL", {
+    // Child defines paths without baseUrl, extends parent with no paths/baseUrl.
+    // Paths should resolve relative to the child tsconfig's directory.
+    files: {
+      "/Users/user/project/src/entry.ts": /* ts */ `
+        import test from '#/lib/test'
+        console.log(test)
+      `,
+      "/Users/user/project/src/lib/test.ts": `export default 123`,
+      "/Users/user/project/src/tsconfig.json": /* json */ `
+        {
+          "extends": "../tsconfig.base.json",
+          "compilerOptions": {
+            "paths": {
+              "#/*": ["./*"]
+            }
+          }
+        }
+      `,
+      "/Users/user/project/tsconfig.base.json": /* json */ `
+        {
+          "compilerOptions": {
+            "strict": true
+          }
+        }
+      `,
+    },
+    run: {
+      stdout: "123",
+    },
+  });
+  itBundled("tsconfig/PathsInGrandchildNoBaseURL", {
+    // 3-level extends chain: root -> child -> grandchild, both child and
+    // grandchild define paths without baseUrl. TypeScript replaces paths across
+    // extends, so only grandchild's paths survive and base_url_for_paths
+    // resolves relative to grandchild's directory.
+    files: {
+      "/Users/user/project/app/src/entry.ts": /* ts */ `
+        import test from '#/lib/test'
+        console.log(test)
+      `,
+      "/Users/user/project/app/src/lib/test.ts": `export default 456`,
+      "/Users/user/project/app/src/tsconfig.json": /* json */ `
+        {
+          "extends": "../tsconfig.json",
+          "compilerOptions": {
+            "paths": {
+              "#/*": ["./*"]
+            }
+          }
+        }
+      `,
+      "/Users/user/project/app/tsconfig.json": /* json */ `
+        {
+          "extends": "../tsconfig.base.json",
+          "compilerOptions": {
+            "paths": {
+              "util/*": ["./utils/*"]
+            }
+          }
+        }
+      `,
+      "/Users/user/project/tsconfig.base.json": /* json */ `
+        {
+          "compilerOptions": {
+            "strict": true
+          }
+        }
+      `,
+    },
+    run: {
+      stdout: "456",
+    },
+  });
+  itBundled("tsconfig/PathsReplacedAcrossExtends", {
+    // TypeScript replaces paths across extends: when grandchild defines paths,
+    // child's paths are gone entirely (verified via `tsc --showConfig`). This
+    // test places the target file where the OLD merge behavior would find it
+    // (grandchild's dir), so it discriminates: merge would succeed, replace fails.
+    files: {
+      "/Users/user/project/app/src/entry.ts": /* ts */ `
+        import test from 'util/helper'
+        console.log(test)
+      `,
+      "/Users/user/project/app/src/utils/helper.ts": `export default 789`,
+      "/Users/user/project/app/src/tsconfig.json": /* json */ `
+        {
+          "extends": "../tsconfig.json",
+          "compilerOptions": {
+            "paths": {
+              "#/*": ["./*"]
+            }
+          }
+        }
+      `,
+      "/Users/user/project/app/tsconfig.json": /* json */ `
+        {
+          "extends": "../tsconfig.base.json",
+          "compilerOptions": {
+            "paths": {
+              "util/*": ["./utils/*"]
+            }
+          }
+        }
+      `,
+      "/Users/user/project/tsconfig.base.json": /* json */ `
+        {
+          "compilerOptions": {
+            "strict": true
+          }
+        }
+      `,
+    },
+    bundleErrors: {
+      "/Users/user/project/app/src/entry.ts": [`Could not resolve: "util/helper". Maybe you need to "bun install"?`],
+    },
+  });
+  itBundled("tsconfig/EmptyPathsClearsParent", {
+    // An explicit `paths: {}` in the child should CLEAR inherited paths, not
+    // inherit them. TypeScript treats empty paths as a complete override.
+    files: {
+      "/Users/user/project/src/entry.ts": /* ts */ `
+        import test from '@helpers/x'
+        console.log(test)
+      `,
+      "/Users/user/project/src/helpers/x.ts": `export default 123`,
+      "/Users/user/project/src/tsconfig.json": /* json */ `
+        {
+          "extends": "../tsconfig.base.json",
+          "compilerOptions": {
+            "paths": {}
+          }
+        }
+      `,
+      "/Users/user/project/tsconfig.base.json": /* json */ `
+        {
+          "compilerOptions": {
+            "paths": {
+              "@helpers/*": ["./src/helpers/*"]
+            }
+          }
+        }
+      `,
+    },
+    bundleErrors: {
+      "/Users/user/project/src/entry.ts": [`Could not resolve: "@helpers/x". Maybe you need to "bun install"?`],
+    },
+  });
   itBundled("tsconfig/JSX", {
     files: {
       "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,

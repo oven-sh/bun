@@ -67,6 +67,7 @@ if (import.meta.main) {
           cert: Bun.file(runInfo.tlsPaths.cert),
           key: Bun.file(runInfo.tlsPaths.key),
           ca: Bun.file(runInfo.tlsPaths.ca),
+          rejectUnauthorized: false,
         }
       : undefined,
   });

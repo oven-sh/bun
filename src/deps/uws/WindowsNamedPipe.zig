@@ -355,27 +355,12 @@ pub fn getAcceptedBy(this: *WindowsNamedPipe, server: *uv.Pipe, ssl_ctx: ?*Borin
     }
     return .success;
 }
-pub fn open(this: *WindowsNamedPipe, fd: bun.FileDescriptor, ssl_options: ?jsc.API.ServerConfig.SSLConfig) bun.sys.Maybe(void) {
+pub fn open(this: *WindowsNamedPipe, fd: bun.FD, ssl_options: ?jsc.API.ServerConfig.SSLConfig, owned_ctx: ?*BoringSSL.SSL_CTX) bun.sys.Maybe(void) {
     bun.assert(this.pipe != null);
     this.flags.disconnected = true;
 
-    if (ssl_options) |tls| {
-        this.flags.is_ssl = true;
-        this.wrapper = WrapperType.init(tls, true, .{
-            .ctx = this,
-            .onOpen = WindowsNamedPipe.onOpen,
-            .onHandshake = WindowsNamedPipe.onHandshake,
-            .onData = WindowsNamedPipe.onData,
-            .onClose = WindowsNamedPipe.onClose,
-            .write = WindowsNamedPipe.internalWrite,
-        }) catch {
-            return .{
-                .err = .{
-                    .errno = @intFromEnum(bun.sys.E.PIPE),
-                    .syscall = .connect,
-                },
-            };
-        };
+    if (this.initTLSWrapper(ssl_options, owned_ctx)) |result| {
+        if (result == .err) return result;
     }
     const initResult = this.pipe.?.init(this.vm.uvLoop(), false);
     if (initResult == .err) {
@@ -392,29 +377,14 @@ pub fn open(this: *WindowsNamedPipe, fd: bun.FileDescriptor, ssl_options: ?jsc.A
     return .success;
 }
 
-pub fn connect(this: *WindowsNamedPipe, path: []const u8, ssl_options: ?jsc.API.ServerConfig.SSLConfig) bun.sys.Maybe(void) {
+pub fn connect(this: *WindowsNamedPipe, path: []const u8, ssl_options: ?jsc.API.ServerConfig.SSLConfig, owned_ctx: ?*BoringSSL.SSL_CTX) bun.sys.Maybe(void) {
     bun.assert(this.pipe != null);
     this.flags.disconnected = true;
     // ref because we are connecting
     _ = this.pipe.?.ref();
 
-    if (ssl_options) |tls| {
-        this.flags.is_ssl = true;
-        this.wrapper = WrapperType.init(tls, true, .{
-            .ctx = this,
-            .onOpen = WindowsNamedPipe.onOpen,
-            .onHandshake = WindowsNamedPipe.onHandshake,
-            .onData = WindowsNamedPipe.onData,
-            .onClose = WindowsNamedPipe.onClose,
-            .write = WindowsNamedPipe.internalWrite,
-        }) catch {
-            return .{
-                .err = .{
-                    .errno = @intFromEnum(bun.sys.E.PIPE),
-                    .syscall = .connect,
-                },
-            };
-        };
+    if (this.initTLSWrapper(ssl_options, owned_ctx)) |result| {
+        if (result == .err) return result;
     }
     const initResult = this.pipe.?.init(this.vm.uvLoop(), false);
     if (initResult == .err) {
@@ -429,6 +399,41 @@ pub fn connect(this: *WindowsNamedPipe, path: []const u8, ssl_options: ?jsc.API.
     this.ref();
     return result;
 }
+
+/// Set up the in-process SSL wrapper for `connect`/`open`. Prefers a prebuilt
+/// `SSL_CTX` (one ref ADOPTED — held by `wrapper` on success, freed here on
+/// failure) so a memoised `tls.createSecureContext` reaches this path with its
+/// CA bundle intact; on this branch `[buntls]` returns `{secureContext}` and no
+/// longer spreads `{ca,cert,key}`, so the `SSLConfig` fallback alone would build
+/// a CTX with an empty trust store and fail `DEPTH_ZERO_SELF_SIGNED_CERT`.
+/// Returns null when neither input requested TLS.
+fn initTLSWrapper(this: *WindowsNamedPipe, ssl_options: ?jsc.API.ServerConfig.SSLConfig, owned_ctx: ?*BoringSSL.SSL_CTX) ?bun.sys.Maybe(void) {
+    const handlers: WrapperType.Handlers = .{
+        .ctx = this,
+        .onOpen = WindowsNamedPipe.onOpen,
+        .onHandshake = WindowsNamedPipe.onHandshake,
+        .onData = WindowsNamedPipe.onData,
+        .onClose = WindowsNamedPipe.onClose,
+        .write = WindowsNamedPipe.internalWrite,
+    };
+    if (owned_ctx) |ctx| {
+        this.flags.is_ssl = true;
+        this.wrapper = WrapperType.initWithCTX(ctx, true, handlers) catch {
+            BoringSSL.SSL_CTX_free(ctx);
+            return .{ .err = .{ .errno = @intFromEnum(bun.sys.E.PIPE), .syscall = .connect } };
+        };
+        return .success;
+    }
+    if (ssl_options) |tls| {
+        this.flags.is_ssl = true;
+        this.wrapper = WrapperType.init(tls, true, handlers) catch {
+            return .{ .err = .{ .errno = @intFromEnum(bun.sys.E.PIPE), .syscall = .connect } };
+        };
+        return .success;
+    }
+    return null;
+}
+
 pub fn startTLS(this: *WindowsNamedPipe, ssl_options: jsc.API.ServerConfig.SSLConfig, is_client: bool) !void {
     this.flags.is_ssl = true;
     if (this.start(is_client)) {

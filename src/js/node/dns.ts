@@ -92,7 +92,7 @@ function setDefaultResultOrder(order) {
 }
 
 function getDefaultResultOrder() {
-  return defaultResultOrder;
+  return defaultResultOrder();
 }
 
 function setServersOn(servers, object) {
@@ -943,7 +943,9 @@ const promises = {
     }
   },
 
+  getDefaultResultOrder,
   setDefaultResultOrder,
+  getServers,
   setServers,
 };
 

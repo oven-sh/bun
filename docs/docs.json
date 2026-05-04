@@ -44,7 +44,7 @@
     ]
   },
   "contextual": {
-    "options": ["copy", "view", "chatgpt", "claude", "perplexity", "mcp", "cursor", "vscode"]
+    "options": ["copy", "view", "claude", "mcp", "vscode"]
   },
   "styling": {
     "codeblocks": {
@@ -68,6 +68,7 @@
               "/installation",
               "/quickstart",
               "/typescript",
+              "/typescript-6",
               "/runtime/templating/init",
               "/runtime/templating/create"
             ]
@@ -136,7 +137,13 @@
           {
             "group": "Process & System",
             "icon": "computer",
-            "pages": ["/runtime/environment-variables", "/runtime/shell", "/runtime/child-process", "/runtime/cron"]
+            "pages": [
+              "/runtime/environment-variables",
+              "/runtime/shell",
+              "/runtime/child-process",
+              "/runtime/webview",
+              "/runtime/cron"
+            ]
           },
           {
             "group": "Interop & Tooling",
@@ -156,6 +163,7 @@
               "/runtime/json5",
               "/runtime/jsonl",
               "/runtime/html-rewriter",
+              "/runtime/image",
               "/runtime/hashing",
               "/runtime/glob",
               "/runtime/semver",
@@ -208,6 +216,7 @@
               "/pm/cli/patch",
               "/pm/filter",
               "/pm/global-cache",
+              "/pm/global-store",
               "/pm/isolated-installs",
               "/pm/lockfile",
               "/pm/lifecycle",

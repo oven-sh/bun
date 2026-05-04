@@ -36,7 +36,7 @@ pub const PatchFile = struct {
         pathbuf: bun.PathBuffer = undefined,
         patch_dir_abs_path: ?[:0]const u8 = null,
 
-        fn patchDirAbsPath(state: *@This(), fd: bun.FileDescriptor) bun.sys.Maybe([:0]const u8) {
+        fn patchDirAbsPath(state: *@This(), fd: bun.FD) bun.sys.Maybe([:0]const u8) {
             if (state.patch_dir_abs_path) |p| return .{ .result = p };
             return switch (bun.sys.getFdPath(fd, &state.pathbuf)) {
                 .result => |p| {
@@ -48,7 +48,7 @@ pub const PatchFile = struct {
         }
     };
 
-    pub fn apply(this: *const PatchFile, allocator: Allocator, patch_dir: bun.FileDescriptor) ?bun.sys.Error {
+    pub fn apply(this: *const PatchFile, allocator: Allocator, patch_dir: bun.FD) ?bun.sys.Error {
         var state: ApplyState = .{};
         var sfb = std.heap.stackFallback(1024, allocator);
         var arena = bun.ArenaAllocator.init(sfb.get());
@@ -207,7 +207,7 @@ pub const PatchFile = struct {
     fn applyPatch(
         patch: *const FilePatch,
         arena: *bun.ArenaAllocator,
-        patch_dir: bun.FileDescriptor,
+        patch_dir: bun.FD,
         state: *ApplyState,
     ) bun.sys.Maybe(void) {
         const file_path: [:0]const u8 = bun.handleOom(arena.allocator().dupeZ(u8, patch.path));
@@ -1132,13 +1132,13 @@ pub const TestingAPIs = struct {
     const ApplyArgs = struct {
         patchfile_txt: jsc.ZigString.Slice,
         patchfile: PatchFile,
-        dirfd: bun.FileDescriptor,
+        dirfd: bun.FD,
 
         pub fn deinit(this: *ApplyArgs) void {
             this.patchfile_txt.deinit();
             this.patchfile.deinit(bun.default_allocator);
             // TODO: HAVE @zackradisic REVIEW THIS DIFF
-            if (bun.FileDescriptor.cwd() != this.dirfd) {
+            if (bun.FD.cwd() != this.dirfd) {
                 this.dirfd.close();
             }
         }
@@ -1203,7 +1203,7 @@ pub const TestingAPIs = struct {
                 },
                 .result => |fd| fd,
             };
-        } else bun.FileDescriptor.cwd();
+        } else bun.FD.cwd();
 
         const patchfile_bunstr = patchfile_js.toBunString(globalThis) catch return .initErr(.js_undefined);
         defer patchfile_bunstr.deref();
@@ -1211,7 +1211,7 @@ pub const TestingAPIs = struct {
 
         const patch_file = parsePatchFile(patchfile_src.slice()) catch |e| {
             // TODO: HAVE @zackradisic REVIEW THIS DIFF
-            if (bun.FileDescriptor.cwd() != dir_fd) {
+            if (bun.FD.cwd() != dir_fd) {
                 dir_fd.close();
             }
 

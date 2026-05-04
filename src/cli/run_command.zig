@@ -38,6 +38,7 @@ pub const RunCommand = struct {
             "/usr/bin/sh", // don't think this is a real one
             "/usr/bin/zsh",
             "/usr/local/bin/zsh",
+            "/system/bin/sh", // Android
         };
         inline for (hardcoded_popular_ones) |shell| {
             if (Try.shell(shell)) {
@@ -607,7 +608,7 @@ pub const RunCommand = struct {
         .windows => @compileError("Do not use RunCommand.bun_node_dir on Windows"),
 
         .mac => "/private/tmp",
-        else => "/tmp",
+        else => if (Environment.isAndroid) "/data/local/tmp" else "/tmp",
     } ++ if (!Environment.isDebug)
         "/bun-node" ++ if (Environment.git_sha_short.len > 0) "-" ++ Environment.git_sha_short else ""
     else
@@ -820,6 +821,14 @@ pub const RunCommand = struct {
         }
 
         this_transpiler.env.map.putDefault("npm_config_local_prefix", this_transpiler.fs.top_level_dir) catch unreachable;
+
+        // Propagate --no-orphans / [run] noOrphans to the script's env so any
+        // Bun process the script spawns enables its own watchdog. The env
+        // loader snapshots `environ` before flag parsing runs, so the
+        // `setenv()` in `enable()` isn't reflected here.
+        if (bun.ParentDeathWatchdog.isEnabled()) {
+            this_transpiler.env.map.put("BUN_FEATURE_FLAG_NO_ORPHANS", "1") catch unreachable;
+        }
 
         // we have no way of knowing what version they're expecting without running the node executable
         // running the node executable is too slow
@@ -1115,8 +1124,14 @@ pub const RunCommand = struct {
                             }
                         }
 
-                        if (strings.startsWith(key, "post") or strings.startsWith(key, "pre")) {
-                            continue :loop;
+                        // npm-style lifecycle hooks: a script named `pre<X>` or `post<X>` runs
+                        // automatically around `<X>`, so there's no reason to list it as a
+                        // completion target. But `prettier`, `prebuild`-with-no-`build`,
+                        // `postgres`, etc. are standalone scripts — keep them.
+                        if (strings.hasPrefixComptime(key, "pre")) {
+                            if (scripts.contains(key["pre".len..])) continue :loop;
+                        } else if (strings.hasPrefixComptime(key, "post")) {
+                            if (scripts.contains(key["post".len..])) continue :loop;
                         }
 
                         const entry_item = results.getOrPutAssumeCapacity(key);
@@ -1237,7 +1252,312 @@ pub const RunCommand = struct {
         Output.flush();
     }
 
+    /// One pending remote-image download. Lives on the heap so its
+    /// `async_http.task` (embedded in ThreadPool.Task) has a stable
+    /// address — HTTPThread.schedule does @fieldParentPtr on that task,
+    /// so moving the struct would break the worker's callback.
+    const RemoteImageDownload = struct {
+        // Assigned immediately after the struct literal in
+        // prefetchRemoteImages (can't be set in the literal because
+        // AsyncHTTP.init needs a pointer to response_buffer, which only
+        // has a stable address once the owning struct is live).
+        async_http: bun.http.AsyncHTTP,
+        response_buffer: bun.MutableString,
+        url: []const u8,
+        done: *DoneChannel,
+
+        const DoneChannel = bun.threading.Channel(u32, .{ .Static = 256 });
+
+        fn onDone(self: *RemoteImageDownload, async_http: *bun.http.AsyncHTTP, _: bun.http.HTTPClientResult) void {
+            // Mirror sendSyncCallback from AsyncHTTP.zig: the worker's
+            // ThreadlocalAsyncHTTP is about to be freed, so copy its
+            // mutated state back into our owned AsyncHTTP before writing
+            // to the channel.
+            async_http.real.?.* = async_http.*;
+            async_http.real.?.response_buffer = async_http.response_buffer;
+            // Channel payload is a placeholder tick — the main thread
+            // walks `downloads[]` to read per-task state after N wakeups.
+            self.done.writeItem(0) catch {};
+        }
+    };
+
+    /// Parse `contents` once with an ImageUrlCollector, download every
+    /// http(s) image URL it finds to a temp file, and populate `out_map`
+    /// with url → temp-path entries. Failures are silent — an image that
+    /// can't be downloaded just falls back to alt-text rendering.
+    fn prefetchRemoteImages(
+        contents: []const u8,
+        md_opts: bun.md.Options,
+        out_map: *bun.StringHashMapUnmanaged([]const u8),
+    ) void {
+        const allocator = bun.default_allocator;
+        var collector = bun.md.ImageUrlCollector.init(allocator);
+        defer collector.deinit();
+        bun.md.renderWithRenderer(contents, allocator, md_opts, collector.renderer()) catch return;
+        if (collector.urls.items.len == 0) return;
+
+        // Walk the collected URLs once, deduping and picking out the
+        // http(s) ones. If there are no remote URLs we never spawn the
+        // HTTP worker or allocate any Download structs.
+        var seen = bun.StringHashMapUnmanaged(void){};
+        defer seen.deinit(allocator);
+        var remote_urls = std.ArrayListUnmanaged([]const u8){};
+        defer remote_urls.deinit(allocator);
+        for (collector.urls.items) |u| {
+            if (!bun.strings.hasPrefixComptime(u, "http://") and
+                !bun.strings.hasPrefixComptime(u, "https://")) continue;
+            const gop = seen.getOrPut(allocator, u) catch continue;
+            if (gop.found_existing) continue;
+            remote_urls.append(allocator, u) catch continue;
+        }
+        if (remote_urls.items.len == 0) return;
+
+        const HTTP = bun.http;
+        HTTP.HTTPThread.init(&.{});
+
+        // Heap-allocate each Download so AsyncHTTP.task has a stable
+        // address (see RemoteImageDownload doc comment).
+        var downloads = std.ArrayListUnmanaged(*RemoteImageDownload){};
+        defer {
+            for (downloads.items) |d| {
+                d.response_buffer.deinit();
+                allocator.destroy(d);
+            }
+            downloads.deinit(allocator);
+        }
+
+        var done_channel = RemoteImageDownload.DoneChannel.init();
+
+        // Kick off every download in parallel. Accumulate tasks into a
+        // single ThreadPool.Batch, then ship the whole batch to the
+        // HTTP thread in one schedule() call — worker picks up and runs
+        // them concurrently.
+        var batch = bun.ThreadPool.Batch{};
+        for (remote_urls.items) |raw_url| {
+            const d = allocator.create(RemoteImageDownload) catch continue;
+            d.* = .{
+                .async_http = undefined,
+                .response_buffer = bun.MutableString.init(allocator, 8 * 1024) catch {
+                    allocator.destroy(d);
+                    continue;
+                },
+                .url = raw_url,
+                .done = &done_channel,
+            };
+            d.async_http = HTTP.AsyncHTTP.init(
+                allocator,
+                .GET,
+                bun.URL.parse(raw_url),
+                .{},
+                "",
+                &d.response_buffer,
+                "",
+                HTTP.HTTPClientResult.Callback.New(*RemoteImageDownload, RemoteImageDownload.onDone).init(d),
+                HTTP.FetchRedirect.follow,
+                .{},
+            );
+            downloads.append(allocator, d) catch {
+                d.response_buffer.deinit();
+                allocator.destroy(d);
+                continue;
+            };
+            d.async_http.schedule(allocator, &batch);
+        }
+        if (downloads.items.len == 0) return;
+        HTTP.http_thread.schedule(batch);
+
+        // Block the main thread on the channel until every scheduled
+        // download has reported back. readItem() uses a mutex+condvar,
+        // no busy loop. The payload value is unused — each wakeup just
+        // means "one more task finished".
+        var completed: usize = 0;
+        while (completed < downloads.items.len) : (completed += 1) {
+            _ = done_channel.readItem() catch break;
+        }
+
+        // Second pass: walk completed downloads, write successful
+        // bodies to temp files, populate out_map. All disk I/O is done
+        // AFTER every network request has settled.
+        const tmpdir = bun.fs.FileSystem.RealFS.tmpdirPath();
+        for (downloads.items) |d| {
+            if (d.async_http.err != null) continue;
+            const status = if (d.async_http.response) |r| r.status_code else 0;
+            if (status != 200) continue;
+            const bytes = d.response_buffer.slice();
+            if (bytes.len == 0) continue;
+
+            // Extension is best-effort from the URL path; Kitty inspects
+            // the file's magic bytes regardless.
+            const ext: []const u8 = if (bun.strings.endsWith(d.url, ".png")) ".png" else if (bun.strings.endsWith(d.url, ".jpg") or bun.strings.endsWith(d.url, ".jpeg")) ".jpg" else if (bun.strings.endsWith(d.url, ".gif")) ".gif" else if (bun.strings.endsWith(d.url, ".webp")) ".webp" else ".bin";
+            var name_buf: [64]u8 = undefined;
+            const name = std.fmt.bufPrint(&name_buf, "bun-md-{x}{s}", .{ bun.fastRandom(), ext }) catch continue;
+            const path = std.fmt.allocPrint(allocator, "{s}/{s}", .{ tmpdir, name }) catch continue;
+
+            const fd = switch (bun.sys.openA(path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o600)) {
+                .result => |f| f,
+                .err => {
+                    allocator.free(path);
+                    continue;
+                },
+            };
+            const ok = (bun.sys.File{ .handle = fd }).writeAll(bytes) == .result;
+            fd.close();
+            if (!ok) {
+                // openA + TRUNC leaves an orphan even on zero-byte
+                // write failure. Unlink via stack buffer so cleanup
+                // can't fail for OOM reasons.
+                unlinkStagedPath(path);
+                allocator.free(path);
+                continue;
+            }
+            // Dupe d.url for the map key — `collector.urls.items` owns
+            // the backing bytes and gets freed by `defer collector.deinit()`
+            // when this function returns, which would leave out_map with
+            // dangling keys that emitImage() would later hash-compare.
+            const key = allocator.dupe(u8, d.url) catch {
+                unlinkStagedPath(path);
+                allocator.free(path);
+                continue;
+            };
+            out_map.put(allocator, key, path) catch {
+                unlinkStagedPath(path);
+                allocator.free(key);
+                allocator.free(path);
+                continue;
+            };
+        }
+    }
+
+    /// Null-terminate `path` on the stack and unlink it. Never allocates.
+    fn unlinkStagedPath(path: []const u8) void {
+        var buf: bun.PathBuffer = undefined;
+        _ = bun.sys.unlink(bun.path.z(path, &buf));
+    }
+
+    /// Read a markdown file, render it to ANSI, print to stdout, and exit.
+    /// Runs without a JavaScript VM — much faster than booting JSC.
+    fn renderMarkdownFileAndExit(path: string) noreturn {
+        // No explicit free() on contents / rendered below: every path out
+        // of this function calls Global.exit() or bun.outOfMemory() (both
+        // noreturn), so the OS reclaims the allocations on process exit.
+        const contents = switch (bun.sys.File.readFrom(bun.FD.cwd(), path, bun.default_allocator)) {
+            .result => |bytes| bytes,
+            .err => |err| {
+                Output.prettyErrorln("<r><red>error<r>: {f}", .{err});
+                Output.flush();
+                Global.exit(1);
+            },
+        };
+
+        // Theme selection: colors when stdout is a TTY (or forced on),
+        // hyperlinks when colors are on. Light/dark detected from env.
+        const colors = Output.enable_ansi_colors_stdout;
+        const columns: u16 = brk: {
+            // Output.terminal_size is never populated; query stdout
+            // directly. Honor COLUMNS so piped output and tests can
+            // pin a width.
+            if (bun.getenvZ("COLUMNS")) |env| {
+                if (std.fmt.parseInt(u16, env, 10) catch null) |n| {
+                    if (n > 0) break :brk n;
+                }
+            }
+            if (comptime bun.Environment.isPosix) {
+                var size: std.posix.winsize = undefined;
+                if (std.posix.system.ioctl(std.posix.STDOUT_FILENO, std.posix.T.IOCGWINSZ, @intFromPtr(&size)) == 0) {
+                    if (size.col > 0) break :brk size.col;
+                }
+            } else if (comptime bun.Environment.isWindows) {
+                if (windows.GetStdHandle(windows.STD_OUTPUT_HANDLE) catch null) |handle| {
+                    var csbi: windows.CONSOLE_SCREEN_BUFFER_INFO = undefined;
+                    if (windows.kernel32.GetConsoleScreenBufferInfo(handle, &csbi) != windows.FALSE) {
+                        const w = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+                        if (w > 0) break :brk @intCast(w);
+                    }
+                }
+            }
+            break :brk 80;
+        };
+        const is_tty = Output.isStdoutTTY();
+        const kitty_graphics = colors and is_tty and bun.md.detectKittyGraphics();
+
+        const md_opts: bun.md.Options = .terminal;
+
+        // Pre-scan for http(s) image URLs so Kitty can display them
+        // inline. Only runs when kitty_graphics is on and the document
+        // actually contains an image marker — otherwise the whole block
+        // is a no-op.
+        var remote_map: bun.StringHashMapUnmanaged([]const u8) = .{};
+        if (kitty_graphics and bun.strings.contains(contents, "![")) {
+            prefetchRemoteImages(contents, md_opts, &remote_map);
+        }
+
+        // Relative image paths in the markdown should resolve against
+        // the document's directory, not the process cwd — otherwise
+        // `bun ./docs/README.md` from `/home/user` can't find `./img.png`
+        // that sits next to README.md. Resolve to an absolute dir first
+        // so joinAbsString downstream doesn't double-apply cwd.
+        var base_buf: bun.PathBuffer = undefined;
+        var cwd_buf: bun.PathBuffer = undefined;
+        const abs_md_path: []const u8 = blk: {
+            if (std.fs.path.isAbsolute(path)) break :blk path;
+            const cwd = switch (bun.sys.getcwd(&cwd_buf)) {
+                .result => |c| c,
+                .err => break :blk path,
+            };
+            break :blk bun.path.joinAbsStringBuf(cwd, &base_buf, &.{path}, .auto);
+        };
+        const dir = bun.path.dirname(abs_md_path, .auto);
+        // When dirname returns empty (bare filename + getcwd failed), fall
+        // back to "." instead of abs_md_path — otherwise joinAbsString
+        // downstream would treat the file path itself as a directory.
+        const image_base_dir = if (dir.len > 0) dir else ".";
+
+        const theme: bun.md.AnsiTheme = .{
+            .light = bun.md.detectLightBackground(),
+            .columns = columns,
+            .colors = colors,
+            .hyperlinks = colors and is_tty,
+            .kitty_graphics = kitty_graphics,
+            .remote_image_paths = if (remote_map.count() > 0) &remote_map else null,
+            .image_base_dir = image_base_dir,
+        };
+
+        const rendered = bun.md.renderToAnsi(
+            contents,
+            bun.default_allocator,
+            md_opts,
+            theme,
+        ) catch |err| switch (err) {
+            error.OutOfMemory => bun.outOfMemory(),
+            error.StackOverflow => {
+                Output.prettyErrorln("<r><red>error<r>: markdown rendering exceeded the stack — input is too deeply nested", .{});
+                Output.flush();
+                Global.exit(1);
+            },
+        } orelse {
+            Output.prettyErrorln("<r><red>error<r>: failed to render markdown", .{});
+            Output.flush();
+            Global.exit(1);
+        };
+
+        Output.writer().writeAll(rendered) catch {};
+        Output.flush();
+        // Temp files prefetchRemoteImages() wrote are deliberately NOT
+        // unlinked here. Output.flush() only guarantees the APC bytes
+        // reached the terminal's PTY ring buffer — Kitty reads the file
+        // asynchronously from its own event loop, so unlinking inside
+        // this process races Kitty's open() and typically drops images
+        // silently (q=2 suppresses the error). System tmp cleanup
+        // (systemd-tmpfiles, /tmp reboot wipe) eventually removes the
+        // bun-md-*.png files, which are small (~100KB each) and rare.
+        Global.exit(0);
+    }
+
     fn _bootAndHandleError(ctx: Command.Context, path: string, loader: ?bun.options.Loader) bool {
+        const resolved_loader: ?bun.options.Loader = loader orelse bun.options.defaultLoaders.get(std.fs.path.extension(path));
+        if (resolved_loader) |l| {
+            if (l == .md) renderMarkdownFileAndExit(path);
+        }
         Global.configureAllocator(.{ .long_running = true });
         Run.boot(ctx, ctx.allocator.dupe(u8, path) catch return false, loader) catch |err| {
             ctx.log.print(Output.errorWriter()) catch {};
@@ -1358,7 +1678,7 @@ pub const RunCommand = struct {
         } else if (cfg.allow_fast_run_for_extensions) {
             const ext = std.fs.path.extension(target_name);
             const default_loader = options.defaultLoaders.get(ext);
-            if (default_loader != null and default_loader.?.canBeRunByBun()) {
+            if (default_loader != null and (default_loader.?.canBeRunByBun() or default_loader.? == .md)) {
                 try_fast_run = true;
             }
         }
@@ -1518,8 +1838,9 @@ pub const RunCommand = struct {
         if (resolution) |resolved| {
             var resolved_mutable = resolved;
             const path = resolved_mutable.path().?;
-            const loader: bun.options.Loader = this_transpiler.options.loaders.get(path.name.ext) orelse .tsx;
-            if (loader.canBeRunByBun() or loader == .html) {
+            const loader: bun.options.Loader = this_transpiler.options.loaders.get(path.name.ext) orelse
+                bun.options.defaultLoaders.get(path.name.ext) orelse .tsx;
+            if (loader.canBeRunByBun() or loader == .html or loader == .md) {
                 log("Resolved to: `{s}`", .{path.text});
                 return _bootAndHandleError(ctx, path.text, loader);
             } else {

@@ -3,8 +3,8 @@ pub const String = extern struct {
     pub const max_inline_len: usize = 8;
     /// This is three different types of string.
     /// 1. Empty string. If it's all zeroes, then it's an empty string.
-    /// 2. If the final bit is set, then it's a string that is stored inline.
-    /// 3. If the final bit is not set, then it's a string that is stored in an external buffer.
+    /// 2. If the final bit is not set, then it's a string that is stored inline.
+    /// 3. If the final bit is set, then it's a string that is stored in an external buffer.
     bytes: [max_inline_len]u8 = [8]u8{ 0, 0, 0, 0, 0, 0, 0, 0 },
 
     pub const empty: String = .{};

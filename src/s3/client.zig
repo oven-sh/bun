@@ -115,16 +115,16 @@ pub fn listObjects(
     bun.handleOom(search_params.appendSlice(bun.default_allocator, "?"));
 
     if (listOptions.continuation_token) |continuation_token| {
-        var buff: [1024]u8 = undefined;
-        const encoded = S3Credentials.encodeURIComponent(continuation_token, &buff, true) catch |err|
-            std.debug.panic("unexpected error from S3Credentials.encodeURIComponent: {}", .{err});
+        const buff = bun.handleOom(bun.default_allocator.alloc(u8, continuation_token.len * 3));
+        defer bun.default_allocator.free(buff);
+        const encoded = S3Credentials.encodeURIComponent(continuation_token, buff, true) catch unreachable;
         bun.handleOom(search_params.appendFmt(bun.default_allocator, "continuation-token={s}", .{encoded}));
     }
 
     if (listOptions.delimiter) |delimiter| {
-        var buff: [1024]u8 = undefined;
-        const encoded = S3Credentials.encodeURIComponent(delimiter, &buff, true) catch |err|
-            std.debug.panic("unexpected error from S3Credentials.encodeURIComponent: {}", .{err});
+        const buff = bun.handleOom(bun.default_allocator.alloc(u8, delimiter.len * 3));
+        defer bun.default_allocator.free(buff);
+        const encoded = S3Credentials.encodeURIComponent(delimiter, buff, true) catch unreachable;
 
         if (listOptions.continuation_token != null) {
             bun.handleOom(search_params.appendFmt(bun.default_allocator, "&delimiter={s}", .{encoded}));
@@ -160,16 +160,16 @@ pub fn listObjects(
     }
 
     if (listOptions.prefix) |prefix| {
-        var buff: [1024]u8 = undefined;
-        const encoded = S3Credentials.encodeURIComponent(prefix, &buff, true) catch |err|
-            std.debug.panic("unexpected error from S3Credentials.encodeURIComponent: {}", .{err});
+        const buff = bun.handleOom(bun.default_allocator.alloc(u8, prefix.len * 3));
+        defer bun.default_allocator.free(buff);
+        const encoded = S3Credentials.encodeURIComponent(prefix, buff, true) catch unreachable;
         bun.handleOom(search_params.appendFmt(bun.default_allocator, "&prefix={s}", .{encoded}));
     }
 
     if (listOptions.start_after) |start_after| {
-        var buff: [1024]u8 = undefined;
-        const encoded = S3Credentials.encodeURIComponent(start_after, &buff, true) catch |err|
-            std.debug.panic("unexpected error from S3Credentials.encodeURIComponent: {}", .{err});
+        const buff = bun.handleOom(bun.default_allocator.alloc(u8, start_after.len * 3));
+        defer bun.default_allocator.free(buff);
+        const encoded = S3Credentials.encodeURIComponent(start_after, buff, true) catch unreachable;
         bun.handleOom(search_params.appendFmt(bun.default_allocator, "&start-after={s}", .{encoded}));
     }
 
@@ -204,6 +204,7 @@ pub fn listObjects(
 
     const url = bun.URL.parse(result.url);
     const proxy = proxy_url orelse "";
+    task.proxy_url = if (proxy.len > 0) bun.handleOom(bun.default_allocator.dupe(u8, proxy)) else "";
 
     task.http = bun.http.AsyncHTTP.init(
         bun.default_allocator,
@@ -219,7 +220,7 @@ pub fn listObjects(
         ).init(task),
         .follow,
         .{
-            .http_proxy = if (proxy.len > 0) bun.URL.parse(proxy) else null,
+            .http_proxy = if (task.proxy_url.len > 0) bun.URL.parse(task.proxy_url) else null,
             .verbose = task.vm.getVerboseFetch(),
             .reject_unauthorized = task.vm.getTLSRejectUnauthorized(),
         },

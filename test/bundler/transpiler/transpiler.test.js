@@ -1302,6 +1302,30 @@ export default <>hi</>
     ).toThrow();
   });
 
+  it("define with an empty-string key is ignored without leaving uninitialized slots", async () => {
+    // `JSPropertyIterator` skips empty-name properties, but `names`/`values` were being
+    // indexed by the property position instead of a dense counter, leaving garbage in the
+    // skipped slot that `stringHashMapFromArrays` then tried to hash. Run in a subprocess
+    // so a crash surfaces as a test failure instead of taking down the test runner.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const t = new Bun.Transpiler({ define: { "": "1", FOO: '"bar"' } });
+          process.stdout.write(t.transformSync("console.log(FOO);", "js"));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe('console.log("bar");');
+    expect(exitCode).toBe(0);
+  });
+
   it("JSX keys", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",

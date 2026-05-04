@@ -110,12 +110,17 @@ const advanced = struct {
                 };
             },
             .SerializedMessage, .SerializedInternalMessage => |tag| {
-                if (data.len < (header_length + message_len)) {
+                // `header_length + message_len` would be evaluated as u32; a peer-controlled
+                // `message_len >= 0xFFFFFFFB` wraps the sum to a small value and defeats the
+                // bounds check. Compare against the remaining bytes instead — `data.len >=
+                // header_length` is already established above, so the subtraction cannot
+                // underflow.
+                if (data.len - header_length < message_len) {
                     log("Not enough bytes to decode IPC message body of len {d}, have {d} bytes", .{ message_len, data.len });
                     return IPCDecodeError.NotEnoughBytes;
                 }
 
-                const message = data[header_length .. header_length + message_len];
+                const message = data[header_length..][0..message_len];
                 const deserialized = try JSValue.deserialize(message, global);
 
                 return .{
@@ -326,9 +331,9 @@ pub fn getNackPacket(mode: Mode) []const u8 {
 pub const Socket = uws.NewSocketHandler(false);
 
 pub const Handle = struct {
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     js: jsc.JSValue,
-    pub fn init(fd: bun.FileDescriptor, js: jsc.JSValue) @This() {
+    pub fn init(fd: bun.FD, js: jsc.JSValue) @This() {
         js.protect();
         return .{ .fd = fd, .js = js };
     }
@@ -450,12 +455,17 @@ pub const SendQueue = struct {
     mode: Mode,
     internal_msg_queue: node_cluster_binding.InternalMsgHolder = .{},
     incoming: IncomingBuffer,
-    incoming_fd: ?bun.FileDescriptor = null,
+    incoming_fd: ?bun.FD = null,
 
     socket: SocketUnion,
     owner: SendQueueOwner,
 
     close_next_tick: ?jsc.Task = null,
+    /// Set while an `_onAfterIPCClosed` task is queued. Cleared when the task
+    /// runs. Tracked so `deinit` can cancel it; the task captures a raw
+    /// `*SendQueue` into the owner's inline storage, which is freed right
+    /// after `deinit` returns.
+    after_close_task: ?jsc.Task = null,
     write_in_progress: bool = false,
     close_event_sent: bool = false,
 
@@ -502,11 +512,23 @@ pub const SendQueue = struct {
         self.internal_msg_queue.deinit();
         self.incoming.deinit();
         if (self.waiting_for_ack) |*waiting| waiting.deinit();
+        // An SCM_RIGHTS fd can be stashed by `onFd` and not yet consumed by
+        // the `NODE_HANDLE` decoder when the socket closes.
+        if (bun.take(&self.incoming_fd)) |fd| fd.close();
 
         // if there is a close next tick task, cancel it so it doesn't get called and then UAF
         if (self.close_next_tick) |close_next_tick_task| {
             const managed: *bun.jsc.ManagedTask = close_next_tick_task.as(bun.jsc.ManagedTask);
             managed.cancel();
+        }
+        // Same for the close-notification task. `closeSocket` above may have
+        // just enqueued this (VM-shutdown path with the socket still open),
+        // or it may be left over from an earlier `_socketClosed` that hasn't
+        // drained yet; either way the owner is about to free our storage.
+        if (self.after_close_task) |after_close_task| {
+            const managed: *bun.jsc.ManagedTask = after_close_task.as(bun.jsc.ManagedTask);
+            managed.cancel();
+            self.after_close_task = null;
         }
     }
 
@@ -555,8 +577,17 @@ pub const SendQueue = struct {
             this.windows.windows_write = null; // will be freed by _windowsOnWriteComplete
         }
         this.keep_alive.disable();
+        const was_open = this.socket == .open;
         this.socket = .closed;
-        this.getGlobalThis().bunVM().enqueueTask(jsc.ManagedTask.New(SendQueue, _onAfterIPCClosed).init(this));
+        // Only enqueue the close notification for the open→closed transition.
+        // `closeSocket` (via `SendQueue.deinit` during the owner's finalizer)
+        // can reach this path again with the socket already `.closed`; the
+        // owner is about to free the memory that backs `this`, so scheduling
+        // a task that points back into it would use-after-free.
+        if (was_open and this.after_close_task == null) {
+            this.after_close_task = jsc.ManagedTask.New(SendQueue, _onAfterIPCClosed).init(this);
+            this.getGlobalThis().bunVM().enqueueTask(this.after_close_task.?);
+        }
     }
     fn _windowsClose(this: *SendQueue) void {
         log("SendQueue#_windowsClose", .{});
@@ -565,7 +596,6 @@ pub const SendQueue = struct {
         pipe.data = pipe;
         pipe.close(&_windowsOnClosed);
         this._socketClosed();
-        this.getGlobalThis().bunVM().enqueueTask(jsc.ManagedTask.New(SendQueue, _onAfterIPCClosed).init(this));
     }
     fn _windowsOnClosed(windows: *uv.Pipe) callconv(.c) void {
         log("SendQueue#_windowsOnClosed", .{});
@@ -596,6 +626,7 @@ pub const SendQueue = struct {
 
     fn _onAfterIPCClosed(this: *SendQueue) void {
         log("SendQueue#_onAfterIPCClosed", .{});
+        this.after_close_task = null;
         if (this.close_event_sent) return;
         this.close_event_sent = true;
         switch (this.owner) {
@@ -827,7 +858,7 @@ pub const SendQueue = struct {
 
     /// starts a write request. on posix, this always calls _onWriteComplete immediately. on windows, it may
     /// call _onWriteComplete later.
-    fn _write(this: *SendQueue, data: []const u8, fd: ?bun.FileDescriptor) void {
+    fn _write(this: *SendQueue, data: []const u8, fd: ?bun.FD) void {
         log("SendQueue#_write len {d}", .{data.len});
         const socket = this.getSocket() orelse {
             this._onWriteComplete(-1);
@@ -921,7 +952,7 @@ pub const SendQueue = struct {
         return .success;
     }
 
-    pub fn windowsConfigureClient(this: *SendQueue, pipe_fd: bun.FileDescriptor) !void {
+    pub fn windowsConfigureClient(this: *SendQueue, pipe_fd: bun.FD) !void {
         log("configureClient", .{});
         const ipc_pipe = bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe));
         ipc_pipe.init(uv.Loop.get(), true).unwrap() catch |err| {
@@ -1309,6 +1340,9 @@ pub const IPCHandlers = struct {
             _: Socket,
             fd: c_int,
         ) void {
+            // SCM_RIGHTS is POSIX-only; on Windows this arm is unreachable but
+            // still type-checked, and `FD.fromNative` takes `*anyopaque` there.
+            if (comptime bun.Environment.isWindows) return;
             log("onFd: {d}", .{fd});
             if (send_queue.incoming_fd != null) {
                 log("onFd: incoming_fd already set; overwriting", .{});
@@ -1476,7 +1510,11 @@ pub const IPCHandlers = struct {
 
         pub fn onClose(send_queue: *SendQueue) void {
             log("NewNamedPipeIPCHandler#onClose\n", .{});
-            send_queue.getGlobalThis().bunVM().enqueueTask(jsc.ManagedTask.New(SendQueue, SendQueue._onAfterIPCClosed).init(send_queue));
+            // Currently unreferenced (only onReadAlloc/onReadError/onRead are
+            // wired into readStart), but route through `_socketClosed` so any
+            // future wiring tracks the `_onAfterIPCClosed` task for `deinit`
+            // to cancel, matching every other close path.
+            send_queue._socketClosed();
         }
     };
 };

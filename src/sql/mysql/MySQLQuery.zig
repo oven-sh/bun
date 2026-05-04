@@ -12,7 +12,7 @@ const MySQLQuery = @This();
     _padding: u3 = 0,
 },
 
-fn bind(this: *MySQLQuery, execute: *PreparedStatement.Execute, globalObject: *JSGlobalObject, binding_value: JSValue, columns_value: JSValue) AnyMySQLError.Error!void {
+fn bind(this: *MySQLQuery, execute: *PreparedStatement.Execute, globalObject: *JSGlobalObject, binding_value: JSValue, columns_value: JSValue, roots: *bun.jsc.MarkedArgumentBuffer) AnyMySQLError.Error!void {
     var iter = try QueryBindingIterator.init(binding_value, columns_value, globalObject);
 
     var i: u32 = 0;
@@ -24,18 +24,32 @@ fn bind(this: *MySQLQuery, execute: *PreparedStatement.Execute, globalObject: *J
         bun.default_allocator.free(params);
     }
     while (try iter.next()) |js_value| {
+        if (i >= params.len) {
+            // The binding array yielded more values than the prepared statement
+            // expects. This can happen when the user-supplied array is mutated (e.g.
+            // from an index getter) between signature generation and binding. Fail
+            // loudly instead of writing past the end of `params`/`param_types`.
+            return error.WrongNumberOfParametersProvided;
+        }
         const param = execute.param_types[i];
         params[i] = try Value.fromJS(
             js_value,
             globalObject,
             param.type,
             param.flags.UNSIGNED,
+            roots,
         );
         i += 1;
     }
 
     if (iter.anyFailed()) {
         return error.InvalidQueryBinding;
+    }
+
+    if (i != params.len) {
+        // Fewer values than the prepared statement expects; the remaining slots
+        // would be uninitialized.
+        return error.WrongNumberOfParametersProvided;
     }
 
     this.#status = .binding;
@@ -47,18 +61,55 @@ fn bindAndExecute(this: *MySQLQuery, writer: anytype, statement: *MySQLStatement
     if (statement.signature.fields.len != statement.params.len) {
         return error.WrongNumberOfParametersProvided;
     }
-    var packet = try writer.start(0);
+
+    // BLOB parameters borrow ArrayBuffer/Blob bytes rather than copying.
+    // Converting later parameters can run user JS (index getters, toJSON,
+    // toString coercion) which could drop the last reference to an earlier
+    // buffer and force GC. Root every borrowed JSValue in a stack-scoped
+    // MarkedArgumentBuffer so the wrapper (and its RefPtr<ArrayBuffer>)
+    // survives until execute.deinit() has unpinned and released the borrow.
+    const Ctx = struct {
+        this: *MySQLQuery,
+        writer: @TypeOf(writer),
+        statement: *MySQLStatement,
+        globalObject: *JSGlobalObject,
+        binding_value: JSValue,
+        columns_value: JSValue,
+        result: AnyMySQLError.Error!void,
+
+        pub fn run(ctx: *@This(), roots: *bun.jsc.MarkedArgumentBuffer) callconv(.c) void {
+            ctx.result = bindAndExecuteImpl(ctx.this, ctx.writer, ctx.statement, ctx.globalObject, ctx.binding_value, ctx.columns_value, roots);
+        }
+    };
+    var ctx: Ctx = .{
+        .this = this,
+        .writer = writer,
+        .statement = statement,
+        .globalObject = globalObject,
+        .binding_value = binding_value,
+        .columns_value = columns_value,
+        .result = {},
+    };
+    bun.jsc.MarkedArgumentBuffer.run(Ctx, &ctx, &Ctx.run);
+    return ctx.result;
+}
+
+fn bindAndExecuteImpl(this: *MySQLQuery, writer: anytype, statement: *MySQLStatement, globalObject: *JSGlobalObject, binding_value: JSValue, columns_value: JSValue, roots: *bun.jsc.MarkedArgumentBuffer) AnyMySQLError.Error!void {
     var execute = PreparedStatement.Execute{
         .statement_id = statement.statement_id,
         .param_types = statement.signature.fields,
         .new_params_bind_flag = statement.execution_flags.need_to_send_params,
         .iteration_count = 1,
     };
-    statement.execution_flags.need_to_send_params = false;
     defer execute.deinit();
-    try this.bind(&execute, globalObject, binding_value, columns_value);
+    // Bind before touching the writer so a bind failure (user-triggerable via JS
+    // getters / param-count mismatch) doesn't leave a partial packet header in
+    // the connection's write buffer.
+    try this.bind(&execute, globalObject, binding_value, columns_value, roots);
+    var packet = try writer.start(0);
     try execute.write(writer);
     try packet.end();
+    statement.execution_flags.need_to_send_params = false;
     this.#status = .running;
 }
 

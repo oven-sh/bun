@@ -4,6 +4,7 @@
 pub const Bun = @import("./api/BunObject.zig");
 
 pub const server = @import("./api/server.zig");
+pub const NativePromiseContext = @import("./api/NativePromiseContext.zig");
 pub const AnyRequestContext = server.AnyRequestContext;
 pub const AnyServer = server.AnyServer;
 pub const DebugHTTPSServer = server.DebugHTTPSServer;
@@ -22,9 +23,15 @@ pub const SocketAddress = @import("./api/bun/socket.zig").SocketAddress;
 pub const TCPSocket = @import("./api/bun/socket.zig").TCPSocket;
 pub const TLSSocket = @import("./api/bun/socket.zig").TLSSocket;
 pub const SocketHandlers = @import("./api/bun/socket.zig").Handlers;
+pub const NewSocket = @import("./api/bun/socket.zig").NewSocket;
+pub const SecureContext = @import("./api/bun/SecureContext.zig");
+pub const SSLContextCache = @import("./api/bun/SSLContextCache.zig");
 
 pub const Subprocess = @import("./api/bun/subprocess.zig");
+pub const cron = @import("./api/cron.zig");
 pub const Terminal = @import("./api/bun/Terminal.zig");
+pub const WebViewHostProcess = @import("./webview/HostProcess.zig");
+pub const ChromeProcess = @import("./webview/ChromeProcess.zig");
 pub const HashObject = @import("./api/HashObject.zig");
 pub const JSONCObject = @import("./api/JSONCObject.zig");
 pub const MarkdownObject = @import("./api/MarkdownObject.zig");
@@ -42,6 +49,7 @@ pub const HTMLRewriter = @import("./api/html_rewriter.zig");
 pub const FileSystemRouter = @import("./api/filesystem_router.zig").FileSystemRouter;
 pub const Archive = @import("./api/Archive.zig");
 pub const Glob = @import("./api/glob.zig");
+pub const Image = @import("../image/Image.zig");
 pub const H2FrameParser = @import("./api/bun/h2_frame_parser.zig").H2FrameParser;
 pub const JSBundler = @import("./api/JSBundler.zig").JSBundler;
 pub const JSTranspiler = @import("./api/JSTranspiler.zig");

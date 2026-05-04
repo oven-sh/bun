@@ -91,7 +91,7 @@ pub const PackageInstall = struct {
 
         pub inline fn isSupported(this: Method) bool {
             if (comptime Environment.isMac) return macOS.get(this);
-            if (comptime Environment.isLinux) return linux.get(this);
+            if (comptime Environment.isLinux or Environment.isFreeBSD) return linux.get(this);
             if (comptime Environment.isWindows) return windows.get(this);
 
             return false;
@@ -1226,7 +1226,7 @@ pub const PackageInstall = struct {
         }
     }
 
-    pub fn isDanglingWindowsBinLink(node_mod_fd: bun.FileDescriptor, path: []const u16, temp_buffer: []u8) bool {
+    pub fn isDanglingWindowsBinLink(node_mod_fd: bun.FD, path: []const u16, temp_buffer: []u8) bool {
         const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.zig");
         const bin_path = bin_path: {
             const fd = bun.sys.openatWindows(node_mod_fd, path, bun.O.RDONLY).unwrap() catch return true;

@@ -30,15 +30,15 @@ extern "C"
 
   uws_app_t *uws_create_app(int ssl, struct us_bun_socket_context_options_t options)
   {
+    uWS::SocketContextOptions socket_context_options;
+    memcpy(&socket_context_options, &options,
+           sizeof(uWS::SocketContextOptions));
     if (ssl)
     {
-      uWS::SocketContextOptions socket_context_options;
-      memcpy(&socket_context_options, &options,
-             sizeof(uWS::SocketContextOptions));
       return (uws_app_t *)uWS::SSLApp::create(socket_context_options);
     }
 
-    return (uws_app_t *)new uWS::App();
+    return (uws_app_t *)uWS::App::create(socket_context_options);
   }
 
   void uws_app_clear_routes(int ssl, uws_app_t *app)
@@ -138,9 +138,12 @@ extern "C"
 
   extern "C" void uws_res_clear_corked_socket(us_loop_t *loop) {
     uWS::LoopData *loopData = uWS::Loop::data(loop);
-    void *corkedSocket = loopData->getCorkedSocket();
-    if (corkedSocket) {
-        if (loopData->isCorkedSSL()) {
+    /* Drain any leftover corks. Two slots max. */
+    for (int i = 0; i < 2; i++) {
+        bool ssl;
+        void *corkedSocket = loopData->getAnyCorkedSocket(&ssl);
+        if (!corkedSocket) break;
+        if (ssl) {
             ((uWS::AsyncSocket<true> *) corkedSocket)->uncork();
         } else {
             ((uWS::AsyncSocket<false> *) corkedSocket)->uncork();
@@ -1376,7 +1379,7 @@ extern "C"
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       if (*length < 16 * 1024 && *length > 0) {
-        if (uwsRes->canCork()) {
+        if (!uwsRes->uWS::AsyncSocket<true>::isCorked()) {
           uwsRes->uWS::AsyncSocket<true>::cork();
         }
       }
@@ -1384,7 +1387,7 @@ extern "C"
     }
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
     if (*length < 16 * 1024 && *length > 0) {
-        if (uwsRes->canCork()) {
+        if (!uwsRes->uWS::AsyncSocket<false>::isCorked()) {
           uwsRes->uWS::AsyncSocket<false>::cork();
         }
       }
@@ -1629,7 +1632,7 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
         stringViewFromC(sec_web_socket_protocol, sec_web_socket_protocol_length),
         stringViewFromC(sec_web_socket_extensions,
                          sec_web_socket_extensions_length),
-        (struct us_socket_context_t *)ws);
+        (uWS::WebSocketContext<true, true, void *> *)ws);
     } else {
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
 
@@ -1639,7 +1642,7 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
         stringViewFromC(sec_web_socket_protocol, sec_web_socket_protocol_length),
         stringViewFromC(sec_web_socket_extensions,
                          sec_web_socket_extensions_length),
-        (struct us_socket_context_t *)ws);
+        (uWS::WebSocketContext<false, true, void *> *)ws);
     }
   }
 
@@ -1700,9 +1703,9 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
   void us_socket_mark_needs_more_not_ssl(uws_res_r res)
   {
     us_socket_r s = (us_socket_t *)res;
-    if(us_socket_is_closed(s->flags.is_tls, s)) return;
+    if(us_socket_is_closed(s)) return;
     s->flags.last_write_failed = 1;
-    us_poll_change(&s->p, s->context->loop,
+    us_poll_change(&s->p, s->group->loop,
                    LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
   }
 
@@ -1865,9 +1868,9 @@ __attribute__((callback (corker, ctx)))
   }
 
   void us_socket_sendfile_needs_more(us_socket_r s) {
-    if(us_socket_is_closed(s->flags.is_tls, s)) return;
+    if(us_socket_is_closed(s)) return;
     s->flags.last_write_failed = 1;
-    us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
   }
 
   LIBUS_SOCKET_DESCRIPTOR us_socket_get_fd(us_socket_r s) {

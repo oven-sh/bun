@@ -18,12 +18,14 @@ pub const LOLHTMLContext = struct {
 
         for (this.element_handlers.items) |handler| {
             handler.deinit();
+            bun.default_allocator.destroy(handler);
         }
         this.element_handlers.deinit(bun.default_allocator);
         this.element_handlers = .{};
 
         for (this.document_handlers.items) |handler| {
             handler.deinit();
+            bun.default_allocator.destroy(handler);
         }
         this.document_handlers.deinit(bun.default_allocator);
         this.document_handlers = .{};
@@ -571,7 +573,7 @@ pub const HTMLRewriter = struct {
         ) ?JSValue {
             bun.handleOom(sink.bytes.growBy(bytes.len));
             const global = sink.global;
-            var response = sink.response;
+            const response = sink.response;
 
             sink.rewriter.?.write(bytes) catch {
                 if (is_async) {
@@ -583,8 +585,6 @@ pub const HTMLRewriter = struct {
             };
 
             sink.rewriter.?.end() catch {
-                if (!is_async) response.finalize();
-                sink.response = undefined;
                 if (is_async) {
                     response.getBodyValue().toErrorInstance(.{ .Message = createLOLHTMLStringError() }, global) catch {}; // TODO: properly propagate exception upwards
                     return null;
@@ -906,7 +906,14 @@ fn HandlerCallback(
             // The init values are handled by bun.new with .init()
 
             defer {
-                @field(wrapper, field_name) = null;
+                if (comptime @hasDecl(ZigType, "invalidate")) {
+                    // Some wrapper types (Element) hand out sub-objects that
+                    // borrow from the underlying lol-html value and must be
+                    // detached along with the wrapper itself.
+                    wrapper.invalidate();
+                } else {
+                    @field(wrapper, field_name) = null;
+                }
                 wrapper.deref();
             }
 
@@ -1690,6 +1697,11 @@ pub const Element = struct {
 
     ref_count: RefCount,
     element: ?*LOLHTML.Element = null,
+    /// AttributeIterator instances created by `getAttributes()` that borrow
+    /// from `element`. They must be detached in `invalidate()` when the
+    /// handler returns so that JS cannot dereference the freed lol-html
+    /// attribute buffer.
+    attribute_iterators: std.ArrayListUnmanaged(*AttributeIterator) = .{},
 
     pub const js = jsc.Codegen.JSElement;
     pub const toJS = js.toJS;
@@ -1707,8 +1719,31 @@ pub const Element = struct {
         this.deref();
     }
 
-    fn deinit(this: *Element) void {
+    /// Detach every `AttributeIterator` we handed to JS. Called when the
+    /// underlying attribute buffer is about to become invalid — either
+    /// because the handler is returning, or because `setAttribute` /
+    /// `removeAttribute` is about to mutate the `Vec<Attribute>` the
+    /// iterators borrow from.
+    fn detachAttributeIterators(this: *Element) void {
+        for (this.attribute_iterators.items) |iter| {
+            iter.detach();
+            iter.deref();
+        }
+        this.attribute_iterators.clearRetainingCapacity();
+    }
+
+    /// Called by `HandlerCallback` when the handler returns. The underlying
+    /// `*LOLHTML.Element` (and the attribute buffer any `AttributeIterator`
+    /// borrows from) is only valid during handler execution, so we must null
+    /// it out here along with any iterators we handed to JS.
+    pub fn invalidate(this: *Element) void {
         this.element = null;
+        this.detachAttributeIterators();
+        this.attribute_iterators.clearAndFree(bun.default_allocator);
+    }
+
+    fn deinit(this: *Element) void {
+        this.invalidate();
         bun.destroy(this);
     }
 
@@ -1769,6 +1804,10 @@ pub const Element = struct {
         if (this.element == null)
             return .js_undefined;
 
+        // Mutating the attribute Vec (push → possible realloc) invalidates
+        // the slice::Iter any live AttributeIterator borrows from.
+        this.detachAttributeIterators();
+
         var name_slice = name_.toSlice(bun.default_allocator);
         defer name_slice.deinit();
 
@@ -1782,6 +1821,10 @@ pub const Element = struct {
     pub fn removeAttribute_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, name: ZigString) JSValue {
         if (this.element == null)
             return .js_undefined;
+
+        // Vec::remove shifts trailing elements and shrinks len, leaving any
+        // live slice::Iter's end pointer past the new end.
+        this.detachAttributeIterators();
 
         var name_slice = name.toSlice(bun.default_allocator);
         defer name_slice.deinit();
@@ -1962,6 +2005,12 @@ pub const Element = struct {
             .ref_count = .init(),
             .iterator = iter,
         });
+        // Track this iterator so we can detach it when the handler returns.
+        // lol-html's attribute iterator borrows from the element's attribute
+        // buffer which is freed after the callback; leaking the iterator to
+        // JS without detaching it would be a use-after-free.
+        attr_iter.ref();
+        bun.handleOom(this.attribute_iterators.append(bun.default_allocator, attr_iter));
         return attr_iter.toJS(globalObject);
     }
 };

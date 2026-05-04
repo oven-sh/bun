@@ -158,6 +158,21 @@ pub fn decodeUTF16(
 pub fn decode(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(2).slice();
 
+    // Evaluate options.stream before reading the input bytes. Reading `stream`
+    // can invoke a user-defined getter that detaches/transfers the input's
+    // ArrayBuffer; capturing the byte pointer before that getter runs leaves
+    // `decodeSlice` reading through a stale pointer into memory that may have
+    // been freed or reused. Node.js reads options first as well.
+    const stream = stream: {
+        if (arguments.len > 1 and arguments[1].isObject()) {
+            if (try arguments[1].fastGet(globalThis, .stream)) |stream_value| {
+                break :stream stream_value.toBoolean();
+            }
+        }
+
+        break :stream false;
+    };
+
     const input_slice = input_slice: {
         if (arguments.len == 0 or arguments[0].isUndefined()) {
             break :input_slice "";
@@ -168,16 +183,6 @@ pub fn decode(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, callframe: *j
         }
 
         return globalThis.throwInvalidArguments("TextDecoder.decode expects an ArrayBuffer or TypedArray", .{});
-    };
-
-    const stream = stream: {
-        if (arguments.len > 1 and arguments[1].isObject()) {
-            if (try arguments[1].fastGet(globalThis, .stream)) |stream_value| {
-                break :stream stream_value.toBoolean();
-            }
-        }
-
-        break :stream false;
     };
 
     return switch (!stream) {
@@ -273,8 +278,14 @@ fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice
                 return globalThis.ERR(.ENCODING_INVALID_ENCODED_DATA, "The encoded data was not valid {s} data", .{@tagName(utf16_encoding)}).throw();
             }
 
-            var output = bun.String.borrowUTF16(decoded.items);
-            return output.toJS(globalThis);
+            if (decoded.items.len == 0) {
+                decoded.deinit(bun.default_allocator);
+                return ZigString.Empty.toJS(globalThis);
+            }
+
+            // Transfer ownership of the backing allocation to JSC; freed via
+            // free_global_string -> mi_free when the string is collected.
+            return ZigString.toExternalU16(decoded.items.ptr, decoded.items.len, globalThis);
         },
 
         // Handle all other encodings using WebKit's TextCodec

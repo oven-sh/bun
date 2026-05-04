@@ -10,6 +10,11 @@ ref_count: RefCount,
 
 input_line_count: usize = 0,
 mappings: Mapping.List = .{},
+/// Set when this map's mappings are backed by an InternalSourceMap blob (e.g.
+/// embedded in a `bun build --compile` executable) instead of a materialized
+/// `Mapping.List`. The blob's bytes are borrowed (they live in the standalone
+/// module graph's section), so `deinit` does not free them.
+internal: ?InternalSourceMap = null,
 
 /// If this is empty, this implies that the source code is a single file
 /// transpiled on-demand. If there are items, then it means this is a file
@@ -88,9 +93,21 @@ pub fn isExternal(psm: *ParsedSourceMap) bool {
     return psm.external_source_names.len != 0;
 }
 
+pub fn findMapping(this: *const ParsedSourceMap, line: bun.Ordinal, column: bun.Ordinal) ?Mapping {
+    if (this.internal) |ism| return ism.find(line, column);
+    return this.mappings.find(line, column);
+}
+
+pub fn internalCursor(this: *const ParsedSourceMap) ?InternalSourceMap.Cursor {
+    return if (this.internal) |ism| ism.cursor() else null;
+}
+
 fn deinit(this: *ParsedSourceMap) void {
     const allocator = bun.default_allocator;
 
+    if (this.internal) |ism| {
+        if (!this.is_standalone_module_graph) ism.deinit();
+    }
     this.mappings.deinit(allocator);
 
     if (this.external_source_names.len > 0) {
@@ -108,10 +125,18 @@ pub fn standaloneModuleGraphData(this: *ParsedSourceMap) *bun.StandaloneModuleGr
 }
 
 pub fn memoryCost(this: *const ParsedSourceMap) usize {
-    return @sizeOf(ParsedSourceMap) + this.mappings.memoryCost() + this.external_source_names.len * @sizeOf([]const u8);
+    const mappings_cost = if (this.internal) |ism| ism.memoryCost() else this.mappings.memoryCost();
+    return @sizeOf(ParsedSourceMap) + mappings_cost + this.external_source_names.len * @sizeOf([]const u8);
 }
 
 pub fn writeVLQs(map: *const ParsedSourceMap, writer: anytype) !void {
+    if (map.internal) |ism| {
+        var buf = bun.MutableString.initEmpty(bun.default_allocator);
+        defer buf.deinit();
+        ism.appendVLQTo(&buf);
+        try writer.writeAll(buf.list.items);
+        return;
+    }
     var last_col: i32 = 0;
     var last_src: i32 = 0;
     var last_ol: i32 = 0;
@@ -156,6 +181,7 @@ const std = @import("std");
 const SourceMap = @import("./sourcemap.zig");
 const BakeSourceProvider = SourceMap.BakeSourceProvider;
 const DevServerSourceProvider = SourceMap.DevServerSourceProvider;
+const InternalSourceMap = SourceMap.InternalSourceMap;
 const Mapping = SourceMap.Mapping;
 const ParseUrlResultHint = SourceMap.ParseUrlResultHint;
 const SourceMapLoadHint = SourceMap.SourceMapLoadHint;

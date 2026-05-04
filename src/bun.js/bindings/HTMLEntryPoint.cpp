@@ -5,7 +5,6 @@
 #include "InternalModuleRegistry.h"
 #include "ModuleLoader.h"
 #include "ZigGlobalObject.h"
-#include <JavaScriptCore/JSInternalPromise.h>
 #include <JavaScriptCore/JSPromise.h>
 namespace Bun {
 using namespace JSC;
@@ -34,7 +33,7 @@ extern "C" JSPromise* Bun__loadHTMLEntryPoint(Zig::GlobalObject* globalObject)
         return JSPromise::resolvedPromise(globalObject, result);
     }
 
-    JSPromise* promise = jsDynamicCast<JSC::JSPromise*>(result);
+    JSPromise* promise = dynamicDowncast<JSC::JSPromise>(result);
     if (!promise) [[unlikely]] {
         BUN_PANIC("Failed to load HTML entry point");
     }

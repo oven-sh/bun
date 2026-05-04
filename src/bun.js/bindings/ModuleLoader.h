@@ -8,13 +8,14 @@
 
 BUN_DECLARE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionOnLoadObjectResultReject);
+BUN_DECLARE_HOST_FUNCTION(jsFunctionEvictIsolationSourceProviderCache);
 
 namespace Zig {
 class GlobalObject;
 }
 
 namespace JSC {
-class JSInternalPromise;
+class JSPromise;
 }
 
 namespace Bun {
@@ -70,7 +71,7 @@ public:
     static PendingVirtualModuleResult* createWithInitialValues(VM&, Structure*);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
-    JSC::JSInternalPromise* internalPromise();
+    JSC::JSPromise* internalPromise();
 
     static std::array<JSValue, numberOfInternalFields> initialValues()
     {

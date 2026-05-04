@@ -143,14 +143,16 @@ test("PADDING_STRATEGY_MAX does not leak prior DATA payload into padding bytes",
     expect(sawPadded).toBe(true);
 
     // HEADERS frame padding must also be zero (RFC 7540 §6.2). The backing
-    // buffer for header encoding is grown from uninitialized storage.
+    // buffer for header encoding is grown from uninitialized storage. Under
+    // PADDING_STRATEGY_MAX a small header block is always padded, so assert
+    // the flag is present rather than silently skipping the check.
     const headersFrame = frames.find(f => f.type === FRAME_HEADERS && f.streamId === 1);
     expect(headersFrame).toBeDefined();
-    if (headersFrame!.flags & FLAG_PADDED) {
-      const prio = headersFrame!.flags & FLAG_PRIORITY ? 5 : 0;
-      const { padLen, padding } = extractPadding(headersFrame!, prio);
-      expect(padding.equals(Buffer.alloc(padLen))).toBe(true);
-    }
+    expect(headersFrame!.flags & FLAG_PADDED).toBe(FLAG_PADDED);
+    const prio = headersFrame!.flags & FLAG_PRIORITY ? 5 : 0;
+    const h = extractPadding(headersFrame!, prio);
+    expect(h.padLen).toBeGreaterThan(0);
+    expect(h.padding.equals(Buffer.alloc(h.padLen))).toBe(true);
   } finally {
     close();
   }

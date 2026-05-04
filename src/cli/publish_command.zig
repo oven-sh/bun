@@ -52,10 +52,11 @@ pub const PublishCommand = struct {
                 var maybe_package_json_contents: ?[]const u8 = null;
 
                 // README match tracking: mirrors `findWorkspaceReadme`, but
-                // operates streamingly over tar entries.
-                var readme_markdown_name: ?[]const u8 = null;
+                // operates streamingly over tar entries. `OSPathChar` is u16
+                // on Windows (libarchive returns widened paths there).
+                var readme_markdown_name: ?[]const bun.OSPathChar = null;
                 var readme_markdown_bytes: ?[]const u8 = null;
-                var readme_fallback_name: ?[]const u8 = null;
+                var readme_fallback_name: ?[]const bun.OSPathChar = null;
                 var readme_fallback_bytes: ?[]const u8 = null;
 
                 var iter = switch (Archive.Iterator.init(tarball_bytes)) {

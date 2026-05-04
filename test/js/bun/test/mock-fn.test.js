@@ -268,6 +268,13 @@ describe("mock()", () => {
     const result = Reflect.construct(fn, [], NewTarget);
     expect(Object.getPrototypeOf(result)).toBe(NewTarget.prototype);
   });
+  test("new on mock uses assigned prototype", () => {
+    const fn = jest.fn();
+    const proto = { marker: true };
+    fn.prototype = proto;
+    const result = new fn();
+    expect(Object.getPrototypeOf(result)).toBe(proto);
+  });
   test("new on mock passes this to the implementation", () => {
     const fn = jest.fn(function () {
       this.x = 1;

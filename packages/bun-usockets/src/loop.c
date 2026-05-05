@@ -24,10 +24,6 @@
 #ifndef WIN32
 #include <sys/ioctl.h>
 #endif
-#ifdef __linux__
-#include <netinet/in.h>
-#include <linux/errqueue.h>
-#endif
 
 #if __has_include("wtf/Platform.h")
 #include "wtf/Platform.h"
@@ -671,45 +667,38 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             }
 
 #if defined(__linux__)
-            /* On Linux with IP_RECVERR, EPOLLERR fires when an ICMP error
-             * (port unreachable, host unreachable, TTL exceeded, ...) is
-             * queued on the socket's error queue. For an *unconnected* UDP
-             * socket regular recvmmsg does NOT dequeue these — only
-             * recvmsg(MSG_ERRQUEUE) does — so EPOLLERR stays level-triggered
-             * until we drain it explicitly. Do that here, surfacing each
-             * errno via on_recv_error; the socket stays open. On other
-             * platforms (kqueue EV_ERROR, Windows) an error event is fatal —
-             * preserve close-on-error there. */
-            int recv_error_surfaced = 0;
-            int recv_would_block_only = 0;
+            /* IP_RECVERR: EPOLLERR means the error queue and/or sk_err is
+             * set. Drain the queue with MSG_ERRQUEUE (plain recv doesn't
+             * dequeue, so EPOLLERR would stay asserted and busy-loop),
+             * then consume any residual sk_err via SO_ERROR. Surface each
+             * errno via on_recv_error and keep the socket open. */
             if (error) {
-                struct msghdr eh; char ectrl[512]; char ebuf[1];
-                struct iovec eiov = { ebuf, sizeof(ebuf) };
-                while (!u->closed) {
-                    memset(&eh, 0, sizeof(eh));
-                    eh.msg_iov = &eiov; eh.msg_iovlen = 1;
-                    eh.msg_control = ectrl; eh.msg_controllen = sizeof(ectrl);
-                    if (recvmsg(us_poll_fd(p), &eh, MSG_ERRQUEUE) < 0) break;
-                    recv_error_surfaced = 1;
-                    if (u->on_recv_error) {
-                        /* The queued ICMP error is in sock_extended_err,
-                         * not errno. */
-                        int ee = 0;
-                        for (struct cmsghdr *cm = CMSG_FIRSTHDR(&eh); cm; cm = CMSG_NXTHDR(&eh, cm)) {
-                            if ((cm->cmsg_level == IPPROTO_IP   && cm->cmsg_type == IP_RECVERR) ||
-                                (cm->cmsg_level == IPPROTO_IPV6 && cm->cmsg_type == IPV6_RECVERR)) {
-                                ee = ((struct sock_extended_err *) CMSG_DATA(cm))->ee_errno;
-                                break;
-                            }
-                        }
-                        u->on_recv_error(u, ee ? ee : ECONNREFUSED);
+                int err = 0, drained = 0;
+                for (int budget = 32; budget > 0 && !u->closed; budget--) {
+                    if ((drained = bsd_udp_drain_errqueue(us_poll_fd(p), &err)) <= 0) break;
+                    if (err && u->on_recv_error) u->on_recv_error(u, err);
+                }
+                if (!u->closed && drained < 0) {
+                    /* recvmsg(MSG_ERRQUEUE) itself failed — surface and
+                     * close to avoid spinning on a stuck EPOLLERR. */
+                    if (errno && u->on_recv_error) u->on_recv_error(u, errno);
+                    if (!u->closed) us_udp_socket_close(u);
+                } else if (!u->closed && drained == 0) {
+                    /* Queue empty — read-and-clear sk_err. Skip when budget
+                     * ran out (drained>0): sk_err then holds the NEXT
+                     * queue entry's errno and reading it now would
+                     * double-report on the next tick. */
+                    socklen_t len = sizeof(err);
+                    if (getsockopt(us_poll_fd(p), SOL_SOCKET, SO_ERROR, (char *) &err, &len) == 0 && err) {
+                        if (u->on_recv_error) u->on_recv_error(u, err);
                     }
                 }
+                if (u->closed) break;
+                error = 0; /* handled; don't close below */
             }
 #endif
 
             if ((events & LIBUS_SOCKET_READABLE) && !u->closed) {
-
                 do {
                     struct udp_recvbuf recvbuf;
                     bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
@@ -717,30 +706,21 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     if (npackets > 0) {
                         u->on_data(u, &recvbuf, npackets);
                     } else {
-                        if (npackets == LIBUS_SOCKET_ERROR) {
-                            if (!bsd_would_block()) {
+                        if (npackets == LIBUS_SOCKET_ERROR && !bsd_would_block()) {
 #if defined(__linux__)
-                                int recv_err = errno;
-                                recv_error_surfaced = 1;
-                                if (u->on_recv_error) {
-                                    u->on_recv_error(u, recv_err);
-                                }
+                            /* A pending error on the normal recv path (not
+                             * the error queue) — surface it but keep the
+                             * socket open; UDP errors are per-datagram. */
+                            int recv_err = errno;
+                            if (u->on_recv_error) {
+                                u->on_recv_error(u, recv_err);
+                            }
 #else
-                                /* non-Linux: fall through and close below */
-                                error = 1;
+                            /* non-Linux: fall through and close below */
+                            error = 1;
 #endif
-                            }
-#if defined(__linux__)
-                            else {
-                                recv_would_block_only = 1;
-                            }
-#endif
-                        } else {
-                            // 0 messages received, we are done
-                            // this case can happen if either:
-                            // - the total number of messages pending was not divisible by 8
-                            // - recvmsg() was used instead of recvmmsg() and there was no message to read.
                         }
+                        // else: 0 messages or EAGAIN — done for now.
 
                         break;
                     }
@@ -761,21 +741,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
             }
 
-#if defined(__linux__)
-            /* Only close on EPOLLERR if we didn't surface the real errno
-             * via recvmmsg + on_recv_error above AND recv wasn't just
-             * EAGAIN (which means the error queue is already drained,
-             * leaving a residual EPOLLERR). Otherwise the socket stays
-             * open so the user can keep sending/receiving after a
-             * transient ICMP error. */
-            if (error && !recv_error_surfaced && !recv_would_block_only && !u->closed) {
-                us_udp_socket_close(u);
-            }
-#else
+            /* On non-Linux platforms (kqueue's EV_ERROR, Windows) an error
+             * event is a fatal socket condition, not a drainable queue. On
+             * Linux, EPOLLERR was handled above and error was cleared. */
             if (error && !u->closed) {
                 us_udp_socket_close(u);
             }
-#endif
             break;
         }
     }

@@ -3921,12 +3921,18 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionDrainMicrotaskQueue, ImplementationVisibility::Private));
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionReportUncaughtException, ImplementationVisibility::Private));
 
-    JSValue nextTickFunction = JSC::profiledCall(globalObject, ProfilingReason::API, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
+    // Lazy PropertyCallback: must not throw, and must not leak the
+    // JSC::Exception cell as the cached property value on failure.
+    NakedPtr<JSC::Exception> returnedException;
+    JSValue nextTickFunction = JSC::profiledCall(globalObject, ProfilingReason::API, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args, returnedException);
+    if (returnedException) [[unlikely]]
+        return jsUndefined();
     if (nextTickFunction && nextTickFunction.isObject()) {
         this->m_nextTickFunction.set(vm, this, nextTickFunction.getObject());
+        return nextTickFunction;
     }
 
-    return nextTickFunction;
+    return jsUndefined();
 }
 
 static JSValue constructProcessNextTickFn(VM& vm, JSObject* processObject)

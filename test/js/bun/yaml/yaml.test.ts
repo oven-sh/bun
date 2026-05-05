@@ -495,7 +495,7 @@ database:
       });
     });
 
-    test.todo("handles circular references with anchors and aliases", () => {
+    test("handles circular references with anchors and aliases", () => {
       const yaml = `
 parent: &ref
   name: parent
@@ -507,6 +507,84 @@ parent: &ref
       expect(result.parent.name).toBe("parent");
       expect(result.parent.child.name).toBe("child");
       expect(result.parent.child.parent).toBe(result.parent);
+    });
+
+    describe("cyclic anchors and aliases", () => {
+      test("self-referencing flow sequence", () => {
+        const result = YAML.parse(`&a [1, *a, 3]`);
+        expect(result[0]).toBe(1);
+        expect(result[1]).toBe(result);
+        expect(result[2]).toBe(3);
+      });
+
+      test("self-referencing block sequence", () => {
+        const result = YAML.parse(`&a\n- 1\n- *a\n- 3\n`);
+        expect(result[0]).toBe(1);
+        expect(result[1]).toBe(result);
+        expect(result[2]).toBe(3);
+      });
+
+      test("self-referencing flow mapping", () => {
+        const result = YAML.parse(`&a {x: 1, self: *a, y: 2}`);
+        expect(result.x).toBe(1);
+        expect(result.self).toBe(result);
+        expect(result.y).toBe(2);
+      });
+
+      test("nested cyclic references across two levels", () => {
+        const result = YAML.parse(`
+&outer
+- &inner
+  - *inner
+  - *outer
+`);
+        expect(result[0][0]).toBe(result[0]);
+        expect(result[0][1]).toBe(result);
+      });
+
+      test("two siblings referencing each other through parent", () => {
+        const result = YAML.parse(`&root
+a:
+  other: *root
+b:
+  other: *root
+`);
+        expect(result.a.other).toBe(result);
+        expect(result.b.other).toBe(result);
+        expect(result.a.other.b.other).toBe(result);
+      });
+
+      test("cyclic reference preserves identity with later backward alias", () => {
+        const result = YAML.parse(`
+- &a
+  - *a
+- *a
+`);
+        expect(result[0][0]).toBe(result[0]);
+        expect(result[1]).toBe(result[0]);
+      });
+
+      test("genuinely undefined alias still errors", () => {
+        expect(() => YAML.parse(`[*nope]`)).toThrow(SyntaxError);
+        expect(() => YAML.parse(`key: *nope`)).toThrow(SyntaxError);
+        expect(() => YAML.parse(`*nope`)).toThrow(SyntaxError);
+      });
+
+      test("cyclic alias as mapping key is rejected", () => {
+        expect(() => YAML.parse(`&a {*a: 1}`)).toThrow(SyntaxError);
+      });
+
+      test("cyclic alias as merge key value is rejected", () => {
+        expect(() => YAML.parse(`&a\n<<: *a\nx: 1\n`)).toThrow(SyntaxError);
+      });
+
+      test("cyclic round trip through stringify", () => {
+        const result = YAML.parse(`&a [1, *a]`);
+        const out = YAML.stringify(result);
+        const reparsed = YAML.parse(out);
+        expect(reparsed[0]).toBe(1);
+        expect(reparsed[1]).toBe(reparsed);
+      });
     });
 
     test("handles multiple documents", () => {

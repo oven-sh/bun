@@ -2895,11 +2895,6 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessGetEval, (JSGlobalObject * globalObject, Enco
     return true;
 }
 
-static JSValue constructBrowser(VM& vm, JSObject* processObject)
-{
-    return jsBoolean(false);
-}
-
 static JSValue constructVersion(VM& vm, JSObject* processObject)
 {
     return JSC::jsString(vm, makeString("v"_s, ASCIILiteral::fromLiteralUnsafe(REPORTED_NODEJS_VERSION)));
@@ -4275,7 +4270,6 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   assert                           Process_functionAssert                              Function 1
   availableMemory                  Process_availableMemory                             Function 0
   binding                          Process_functionBinding                             Function 1
-  browser                          constructBrowser                                    PropertyCallback
   channel                          constructProcessChannel                             PropertyCallback
   chdir                            Process_functionChdir                               Function 1
   config                           constructProcessConfigObject                        PropertyCallback

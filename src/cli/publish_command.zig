@@ -50,6 +50,11 @@ pub const PublishCommand = struct {
                 };
 
                 var maybe_package_json_contents: ?[]const u8 = null;
+                var maybe_readme: ?ReadmeInfo = null;
+                errdefer if (maybe_readme) |r| {
+                    ctx.allocator.free(r.filename);
+                    ctx.allocator.free(r.contents);
+                };
 
                 var iter = switch (Archive.Iterator.init(tarball_bytes)) {
                     .err => |err| {
@@ -110,6 +115,20 @@ pub const PublishCommand = struct {
                                     },
                                     .result => |bytes| bytes,
                                 };
+                            } else if (maybe_readme == null and isReadmeOSPath(filename)) {
+                                // First matching README wins — libarchive iteration is one-shot.
+                                const bytes = switch (try next.readEntryData(ctx.allocator, iter.archive)) {
+                                    .err => |err| {
+                                        Output.errGeneric("{s}: {s}", .{ err.message, err.archive.errorString() });
+                                        Global.crash();
+                                    },
+                                    .result => |bytes| bytes,
+                                };
+                                const filename_utf8 = if (comptime bun.OSPathChar == u8)
+                                    try ctx.allocator.dupe(u8, filename)
+                                else
+                                    try strings.toUTF8Alloc(ctx.allocator, filename);
+                                maybe_readme = .{ .filename = filename_utf8, .contents = bytes };
                             }
                         }
                     } else {
@@ -204,7 +223,7 @@ pub const PublishCommand = struct {
                     json_source,
                     shasum,
                     integrity,
-                    null,
+                    maybe_readme,
                 );
 
                 Pack.Context.printSummary(
@@ -1059,12 +1078,22 @@ pub const PublishCommand = struct {
         return writer.ctx.writtenWithoutTrailingZero();
     }
 
-    /// Matches npm's `{README,README.*}` glob case-insensitively.
-    fn isReadmeFilename(name: []const u8) bool {
+    /// Matches npm's `{README,README.*}` glob case-insensitively. Generic
+    /// over char type so it works for both UTF-8 readdir entries and UTF-16
+    /// tar entry names on Windows.
+    fn isReadmeFilenameT(comptime T: type, name: []const T) bool {
         const README = "README";
         if (name.len < README.len) return false;
-        if (!strings.eqlCaseInsensitiveASCII(name[0..README.len], README, true)) return false;
+        if (!strings.eqlCaseInsensitiveT(T, name[0..README.len], README)) return false;
         return name.len == README.len or name[README.len] == '.';
+    }
+
+    fn isReadmeFilename(name: []const u8) bool {
+        return isReadmeFilenameT(u8, name);
+    }
+
+    fn isReadmeOSPath(name: []const bun.OSPathChar) bool {
+        return isReadmeFilenameT(bun.OSPathChar, name);
     }
 
     /// Searches `abs_workspace_path` for a README, matching `npm publish`. Returns

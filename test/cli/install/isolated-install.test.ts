@@ -488,6 +488,92 @@ describe("isolated workspaces", () => {
       { name: "pkg3", dependencies: { "different-name": "workspace:." } },
     ]);
   });
+
+  // https://github.com/oven-sh/bun/issues/29598
+  //
+  // When a workspace member is listed through a path that traverses a
+  // symlink, the member's `<workspace>/node_modules/<dep>` links are
+  // physically created at the resolved target directory — but their
+  // content (the relative `..`-prefix) used to be computed against the
+  // logical path, so they walked past the project root and pointed at
+  // nothing. Resolve the workspace dir's real path before computing the
+  // link target so require() works from inside the symlinked member.
+  test("symlinked workspace members get runnable dependency links", async () => {
+    using dir = tempDir("isolated-workspace-symlink-", {
+      "bunfig.toml": `[install]\nlinker = "isolated"\ncache = ".bun-cache"\n`,
+      "package.json": JSON.stringify({
+        name: "root",
+        private: true,
+        workspaces: ["app", "repos/ext/shared-lib"],
+      }),
+      "app/package.json": JSON.stringify({
+        name: "app",
+        private: true,
+        dependencies: { "shared-lib": "workspace:*" },
+      }),
+      "app/index.js": `import { check } from "shared-lib"; console.log(check("ok"));`,
+      // Vendor deps live next to the *real* workspace so `file:` resolves
+      // the same through logical or canonical paths. Unscoped + scoped
+      // both covered — the scoped link parent is one level deeper, which
+      // the relative target has to account for.
+      "real-workspaces/vendor/shared-dep/package.json": JSON.stringify({
+        name: "shared-dep",
+        version: "1.0.0",
+        main: "index.js",
+      }),
+      "real-workspaces/vendor/shared-dep/index.js": `module.exports = { id: "shared-dep" };`,
+      "real-workspaces/vendor/@myscope/helper/package.json": JSON.stringify({
+        name: "@myscope/helper",
+        version: "1.0.0",
+        main: "index.js",
+      }),
+      "real-workspaces/vendor/@myscope/helper/index.js": `module.exports = { id: "@myscope/helper" };`,
+      "real-workspaces/shared-lib/package.json": JSON.stringify({
+        name: "shared-lib",
+        private: true,
+        type: "module",
+        exports: { ".": "./index.js" },
+        dependencies: {
+          "shared-dep": "file:../vendor/shared-dep",
+          "@myscope/helper": "file:../vendor/@myscope/helper",
+        },
+      }),
+      "real-workspaces/shared-lib/index.js":
+        `import pkg from "shared-dep";` +
+        `import scoped from "@myscope/helper";` +
+        `export const check = v => pkg.id + "+" + scoped.id + ":" + v;`,
+    });
+    const root = String(dir);
+
+    // The workspace is listed as `repos/ext/shared-lib`, but `repos/ext`
+    // is a symlink to `../real-workspaces`, so the member's real path
+    // is `<project>/real-workspaces/shared-lib`.
+    await mkdir(join(root, "repos"), { recursive: true });
+    await symlink(join("..", "real-workspaces"), join(root, "repos", "ext"));
+
+    await runBunInstall(bunEnv, root);
+
+    // Package-local dep links live at the real member path. Both the
+    // unscoped and the scoped target must resolve up through
+    // `<project>/node_modules/.bun/...`.
+    const sharedDepLink = join(root, "real-workspaces", "shared-lib", "node_modules", "shared-dep");
+    const scopedDepLink = join(root, "real-workspaces", "shared-lib", "node_modules", "@myscope", "helper");
+    expect(await readlink(sharedDepLink)).toContain(".bun");
+    expect(await readlink(scopedDepLink)).toContain(".bun");
+    expect(existsSync(join(sharedDepLink, "package.json"))).toBeTrue();
+    expect(existsSync(join(scopedDepLink, "package.json"))).toBeTrue();
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "app/index.js"],
+      env: bunEnv,
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("shared-dep+@myscope/helper:ok\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("optional peers", () => {

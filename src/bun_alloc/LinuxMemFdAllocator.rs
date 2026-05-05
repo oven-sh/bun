@@ -161,7 +161,7 @@ impl LinuxMemFdAllocator {
             }
 
             // MOVE_DOWN: VirtualMachine::is_smol_mode → bun_core (process-global flag; move-in pending).
-            if bun_core::is_smol_mode() {
+            if crate::stubs::is_smol_mode() {
                 return bytes.len() >= 1024 * 1024 * 1;
             }
 
@@ -181,19 +181,19 @@ impl LinuxMemFdAllocator {
         #[cfg(target_os = "linux")]
         {
             let mut label_buf = [0u8; 128];
-            let label: &bun_core::ZStr = {
+            let label: &crate::stubs::ZStr = {
                 use core::fmt::Write as _;
                 let n = MEMFD_COUNTER.fetch_add(1, Ordering::Relaxed);
                 // Zig: `std.fmt.bufPrintZ(&label_buf, "memfd-num-{d}", .{n}) catch ""`
-                let mut cursor = bun_core::BufWriter::new(&mut label_buf[..label_buf.len() - 1]);
+                let mut cursor = crate::stubs::BufWriter::new(&mut label_buf[..label_buf.len() - 1]);
                 match write!(cursor, "memfd-num-{}", n) {
                     Ok(()) => {
                         let written = cursor.written();
                         label_buf[written] = 0;
                         // SAFETY: we wrote `written` bytes and a NUL at `label_buf[written]`.
-                        unsafe { bun_core::ZStr::from_raw(label_buf.as_ptr(), written) }
+                        unsafe { crate::stubs::ZStr::from_raw(label_buf.as_ptr(), written) }
                     }
-                    Err(_) => bun_core::ZStr::EMPTY,
+                    Err(_) => crate::stubs::ZStr::EMPTY,
                 }
             };
 

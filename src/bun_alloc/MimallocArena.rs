@@ -11,7 +11,7 @@ use crate::mimalloc;
 // `&dyn Allocator` trait object. For now, reference the explicit pair type.
 use crate::{Alignment, AllocatorVTable, ZigAllocator};
 
-bun_core::declare_scope!(mimalloc, hidden);
+crate::declare_scope!(mimalloc, hidden);
 
 // `safety_checks = bun.Environment.ci_assert` — a comptime build flag.
 // TODO(port): confirm the exact cfg name for ci_assert in Phase B.
@@ -85,7 +85,7 @@ impl<'a> Borrowed<'a> {
                     *s = Some(DebugHeap {
                         // SAFETY: mi_heap_main() never returns null.
                         inner: unsafe { NonNull::new_unchecked(heap) },
-                        thread_lock: bun_core::ThreadLock::init_locked(),
+                        thread_lock: crate::stubs::ThreadLock::init_locked(),
                     });
                 }
                 let p: *const DebugHeap = s.as_ref().unwrap();
@@ -136,7 +136,7 @@ impl<'a> Borrowed<'a> {
     }
 
     fn aligned_alloc(self, len: usize, alignment: Alignment) -> Option<NonNull<u8>> {
-        bun_core::scoped_log!(mimalloc, "Malloc: {}\n", len);
+        crate::scoped_log!(mimalloc, "Malloc: {}\n", len);
 
         let heap = self.get_mimalloc_heap();
         // SAFETY: FFI — heap is a live mi_heap_t* (from mi_heap_new/mi_heap_main); len/alignment
@@ -176,7 +176,7 @@ type BorrowedHeap<'a> = &'a mimalloc::Heap;
 
 struct DebugHeap {
     inner: NonNull<mimalloc::Heap>,
-    thread_lock: bun_core::ThreadLock,
+    thread_lock: crate::stubs::ThreadLock,
 }
 // Zig: `pub const deinit = void;` — sentinel meaning "no deinit"; no Drop impl.
 
@@ -238,7 +238,7 @@ impl MimallocArena {
         {
             let heap = Box::new(DebugHeap {
                 inner: mimalloc_heap,
-                thread_lock: bun_core::ThreadLock::init_locked(),
+                thread_lock: crate::stubs::ThreadLock::init_locked(),
             });
             MimallocArena { heap }
         }
@@ -339,7 +339,7 @@ fn vtable_remap(ptr: *mut c_void, buf: &mut [u8], alignment: Alignment, new_len:
 }
 
 fn global_vtable_alloc(_: *mut c_void, len: usize, alignment: Alignment, _: usize) -> Option<NonNull<u8>> {
-    bun_core::scoped_log!(mimalloc, "Malloc: {}\n", len);
+    crate::scoped_log!(mimalloc, "Malloc: {}\n", len);
     // SAFETY: FFI — len/alignment are passed by value; mimalloc returns null on failure.
     let ptr: *mut c_void = if mimalloc::must_use_aligned_alloc(alignment) {
         unsafe { mimalloc::mi_malloc_aligned(len, alignment.to_byte_units()) }

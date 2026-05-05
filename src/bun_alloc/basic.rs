@@ -6,10 +6,10 @@ use crate::mimalloc;
 // Phase B may reshape the vtable struct into `trait Allocator` impls instead.
 use crate::{Alignment, Allocator, AllocatorVTable};
 
-bun_core::declare_scope!(mimalloc, hidden);
+crate::declare_scope!(mimalloc, hidden);
 
 fn mimalloc_free(_: *mut c_void, buf: &mut [u8], alignment: Alignment, _: usize) {
-    bun_core::scoped_log!(mimalloc, "mi_free({})", buf.len());
+    crate::scoped_log!(mimalloc, "mi_free({})", buf.len());
     // mi_free_size internally just asserts the size
     // so it's faster if we don't pass that value through
     // but its good to have that assertion
@@ -38,7 +38,7 @@ pub(crate) struct MimallocAllocator;
 
 impl MimallocAllocator {
     fn aligned_alloc(len: usize, alignment: Alignment) -> *mut u8 {
-        bun_core::scoped_log!(mimalloc, "mi_alloc({}, {})", len, alignment.to_byte_units());
+        crate::scoped_log!(mimalloc, "mi_alloc({}, {})", len, alignment.to_byte_units());
 
         let ptr: *mut c_void = if mimalloc::must_use_aligned_alloc(alignment) {
             // SAFETY: mimalloc FFI; len/alignment are valid
@@ -121,7 +121,7 @@ pub(crate) struct ZAllocator;
 
 impl ZAllocator {
     fn aligned_alloc(len: usize, alignment: Alignment) -> *mut u8 {
-        bun_core::scoped_log!(mimalloc, "ZAllocator.alignedAlloc: {}\n", len);
+        crate::scoped_log!(mimalloc, "ZAllocator.alignedAlloc: {}\n", len);
 
         let ptr: *mut c_void = if mimalloc::must_use_aligned_alloc(alignment) {
             // SAFETY: mimalloc FFI; len/alignment are valid

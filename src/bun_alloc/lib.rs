@@ -7,36 +7,89 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU16, Ordering};
 
 
-use bun_core::Mutex;
+use parking_lot::Mutex;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports (thin — match Zig `pub const X = @import(...)` lines)
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use self::basic::c_allocator;
-pub use self::basic::z_allocator;
-pub use self::basic::free_without_size;
-pub use bun_mimalloc_sys as mimalloc;
+pub use bun_mimalloc_sys::mimalloc;
 
-pub mod mimalloc_arena;
-pub use mimalloc_arena::MimallocArena;
-// PORTING.md: `MimallocArena` / arena allocator is re-exported as `Arena` (bumpalo::Bump) for AST crates.
+// ── debug-log no-ops (real impl in bun_core; T0 alloc < core so stub here) ──
+#[macro_export] macro_rules! declare_scope { ($($t:tt)*) => {}; }
+#[macro_export] macro_rules! scoped_log { ($($t:tt)*) => {}; }
+
+// ── Allocator vtable (mirrors std.mem.Allocator) ──────────────────────────
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Alignment(pub u8); // log2 of byte alignment, like std.mem.Alignment
+impl Alignment {
+    #[inline] pub const fn of<T>() -> Self { Self(core::mem::align_of::<T>().trailing_zeros() as u8) }
+    #[inline] pub const fn to_byte_units(self) -> usize { 1usize << self.0 }
+    #[inline] pub const fn from_byte_units(b: usize) -> Self { Self(b.trailing_zeros() as u8) }
+}
+
+pub struct AllocatorVTable {
+    pub alloc: unsafe fn(*mut core::ffi::c_void, usize, Alignment, usize) -> *mut u8,
+    pub resize: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize, usize) -> bool,
+    pub remap: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize, usize) -> *mut u8,
+    pub free: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize),
+}
+impl AllocatorVTable {
+    pub const NO_REMAP: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize, usize) -> *mut u8 =
+        |_, _, _, _, _| core::ptr::null_mut();
+}
+
+/// `std.mem.Allocator` — fat (ptr + vtable). Distinct from the `Allocator` trait below.
+#[derive(Clone, Copy)]
+pub struct StdAllocator {
+    pub ptr: *mut core::ffi::c_void,
+    pub vtable: &'static AllocatorVTable,
+}
+
+// PORTING.md: `MimallocArena` is superseded by bumpalo for AST crates.
 pub type Arena = bumpalo::Bump;
+pub type MimallocArena = bumpalo::Bump;
 
-pub mod allocation_scope;
-pub use allocation_scope::AllocationScope;
-pub use allocation_scope::AllocationScopeIn;
+// ── B-1 gate ───────────────────────────────────────────────────────────────
+// These modules pull in higher-tier crates (bun_collections, bun_core, bun_ptr,
+// bun_runtime). Gated until B-2 makes those available; bodies preserved.
+#[cfg(any())] #[path = "MimallocArena.rs"]    pub mod mimalloc_arena;
+#[cfg(any())]                                 pub mod allocation_scope;
+#[cfg(any())] #[path = "NullableAllocator.rs"] pub mod nullable_allocator;
+#[cfg(any())] #[path = "LinuxMemFdAllocator.rs"] pub mod linux_mem_fd_allocator;
+#[cfg(any())]                                 pub mod maybe_owned;
+#[cfg(any())] #[path = "MaxHeapAllocator.rs"] pub mod max_heap_allocator;
+#[cfg(any())] #[path = "BufferFallbackAllocator.rs"] pub mod buffer_fallback_allocator;
 
-pub mod nullable_allocator;
-pub use nullable_allocator::NullableAllocator;
-pub mod max_heap_allocator;
-pub use max_heap_allocator::MaxHeapAllocator;
-pub mod linux_mem_fd_allocator;
-pub use linux_mem_fd_allocator::LinuxMemFdAllocator;
-pub mod buffer_fallback_allocator;
-pub use buffer_fallback_allocator::BufferFallbackAllocator;
-pub mod maybe_owned;
-pub use maybe_owned::MaybeOwned;
+// Stub types for the gated modules (so re-exports / downstream `use` resolve).
+pub struct AllocationScope;
+pub struct AllocationScopeIn;
+pub struct NullableAllocator;
+pub struct LinuxMemFdAllocator;
+pub struct MaxHeapAllocator;
+pub struct BufferFallbackAllocator;
+pub struct MaybeOwned<T>(core::marker::PhantomData<T>);
+
+// ── stubs ─────────────────────────────────────────────────────────────────
+// Forward refs introduced by B-0 move-out seds. Real impls in bun_core (T0
+// peer); duplicated here because Cargo dep order is alloc < core.
+pub mod stubs {
+    pub use crate::out_of_memory;
+    pub type ThreadLock = ();
+    pub type PathBuffer = [u8; 4096];
+    pub const SEP_STR: &str = "/";
+    pub type ZStr = [u8];
+    pub type CoreError = core::num::NonZeroU16;
+    pub struct StoredTrace;
+    pub struct WriteStackTraceLimits;
+    pub struct BufWriter;
+    #[inline] pub fn dump_stack_trace(_: &StoredTrace, _: &WriteStackTraceLimits) {}
+    #[inline] pub fn is_smol_mode() -> bool { false }
+    pub mod strings {
+        #[inline] pub fn includes(h: &[u8], n: &[u8]) -> bool { bstr::ByteSlice::find(h, n).is_some() }
+    }
+}
 
 // Per PORTING.md type map: `OOM!T` / `error{OutOfMemory}!T` → `Result<T, bun_alloc::AllocError>`.
 // This is the crate root, so define it here. Re-exported as `bun_core::OOM`.
@@ -106,7 +159,7 @@ pub fn page_size() -> usize {
 // Source: src/jsc/WTF.zig `releaseFastMallocFreeMemoryForThisThread`.
 // MOVE_DOWN from bun_jsc so bun_threading (T2) can call it without a T6 dep.
 pub mod wtf {
-    extern "C" {
+    unsafe extern "C" {
         // Defined in WebKit's WTF (linked into the final binary).
         fn WTF__releaseFastMallocFreeMemoryForThisThread();
     }
@@ -405,6 +458,10 @@ pub fn slice_range(slice: &[u8], buffer: &[u8]) -> Option<[u32; 2]> {
     }
 }
 
+// ── B-1 gate: BSSList/BSSMap/FBS need bun_collections + bare Mutex ────────
+#[cfg(any())]
+mod _bss_gated {
+use super::*;
 // ──────────────────────────────────────────────────────────────────────────
 // IndexType / IndexMap / Result / ItemStatus
 // ──────────────────────────────────────────────────────────────────────────
@@ -766,7 +823,7 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
     {
         self.mutex.lock();
         let _guard = scopeguard::guard(&mut self.mutex, |m| m.unlock());
-        // TODO(port): bun_core::Mutex needs an RAII guard that does not borrow `&mut self`
+        // TODO(port): parking_lot::Mutex needs an RAII guard that does not borrow `&mut self`
         // so the lock stays held across append_overflow (Zig: `defer self.mutex.unlock()`).
         // Do NOT release early — append_overflow mutates head/used and must run under the lock.
         // Phase A accepts the borrowck conflict here; correctness > compilation.
@@ -913,7 +970,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         self.mutex.lock();
         let _guard = scopeguard::guard((), |_| self.mutex.unlock());
         // PORT NOTE: reshaped for borrowck — guard captures self.mutex; Phase B should make
-        // bun_core::Mutex return an RAII guard so this is `let _g = self.mutex.lock();`.
+        // parking_lot::Mutex return an RAII guard so this is `let _g = self.mutex.lock();`.
         // TODO(port): borrowck conflict between guard closure and self.do_append; fix with RAII Mutex.
         self.do_append(value)
     }
@@ -926,8 +983,8 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         // TODO(port): RAII mutex guard (see `append`).
 
         thread_local! {
-            static LOWERCASE_BUF: core::cell::RefCell<bun_core::PathBuffer> =
-                const { core::cell::RefCell::new(bun_core::PathBuffer::ZEROED) };
+            static LOWERCASE_BUF: core::cell::RefCell<crate::stubs::PathBuffer> =
+                const { core::cell::RefCell::new(crate::stubs::PathBuffer::ZEROED) };
         }
         // TODO(port): can't return a borrow of thread_local across `with_borrow_mut`; copy into
         // backing_buf inside the closure then return that. Phase B reshape.
@@ -953,7 +1010,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         // SAFETY: returned slice points into `self.backing_buf` or a leaked heap alloc;
         // `&mut ZStr` then `&[u8]` reborrow matches Zig `[:0]u8` → `[]const u8`.
         let out: &mut [u8];
-        if value_len + self.backing_buf_used as usize < self.backing_buf.len() - 1 {
+        if value_len + (self.backing_buf_used as usize) < self.backing_buf.len() - 1 {
             let start = self.backing_buf_used as usize;
             self.backing_buf_used += value_len as u64;
             let end = self.backing_buf_used as usize;
@@ -1041,7 +1098,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         denormalized_key: &[u8],
     ) -> core::result::Result<Result, AllocError> {
         let key = if REMOVE_TRAILING_SLASHES {
-            bun_core::strings::trim_right(denormalized_key, bun_core::SEP_STR.as_bytes())
+            crate::stubs::strings::trim_right(denormalized_key, crate::stubs::SEP_STR.as_bytes())
         } else {
             denormalized_key
         };
@@ -1080,7 +1137,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
 
     pub fn get(&mut self, denormalized_key: &[u8]) -> Option<&mut ValueType> {
         let key = if REMOVE_TRAILING_SLASHES {
-            bun_core::strings::trim_right(denormalized_key, bun_core::SEP_STR.as_bytes())
+            crate::stubs::strings::trim_right(denormalized_key, crate::stubs::SEP_STR.as_bytes())
         } else {
             denormalized_key
         };
@@ -1158,7 +1215,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     pub fn remove(&mut self, denormalized_key: &[u8]) -> bool {
         self.mutex.lock();
         let key = if REMOVE_TRAILING_SLASHES {
-            bun_core::strings::trim_right(denormalized_key, bun_core::SEP_STR.as_bytes())
+            crate::stubs::strings::trim_right(denormalized_key, crate::stubs::SEP_STR.as_bytes())
         } else {
             denormalized_key
         };
@@ -1283,7 +1340,7 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
         }
 
         let slice = if REMOVE_TRAILING_SLASHES {
-            bun_core::strings::trim_right(slice, b"/")
+            crate::stubs::strings::trim_right(slice, b"/")
         } else {
             slice
         };
@@ -1326,6 +1383,7 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
         self.map.remove(key)
     }
 }
+} // _bss_gated
 
 // ──────────────────────────────────────────────────────────────────────────
 // GenericAllocator interface
@@ -1431,23 +1489,16 @@ pub struct DefaultAlloc;
 // `basic` module selection
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(feature = "mimalloc")] // Zig: `if (bun.use_mimalloc)`
-mod basic_impl {
-    pub use crate::basic::*;
-}
-#[cfg(not(feature = "mimalloc"))]
-mod basic_impl {
-    pub use crate::fallback::*;
-}
-use basic_impl as basic;
-
-pub mod basic_mod; // ./basic.zig — TODO(port): rename to `basic` once cfg-gating settles
-pub mod fallback;  // ./fallback.zig
+// B-1: always use mimalloc-backed basic.rs (Zig's `bun.use_mimalloc` is always true).
+#[cfg(any())] #[path = "basic.rs"] pub mod basic; // gated until AllocatorVTable callers align
+#[cfg(any())] pub mod fallback;
+#[cfg(any())] pub mod heap_breakdown; // macOS-only debug zones; needs StringHashMap + libc malloc_zone_*
+pub mod memory;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bun_alloc/bun_alloc.zig (937 lines)
 //   confidence: low
 //   todos:      32
-//   notes:      generic_const_exprs + per-monomorphization statics blocked on stable Rust; BSSMap key_list_overflow calls non-existent OverflowList API in upstream Zig (likely dead code); bun_core::Mutex needs RAII guard (BSSList::append intentionally won't borrowck until then); BSSList.head dual-semantics (sibling-ref vs heap) needs enum split.
+//   notes:      generic_const_exprs + per-monomorphization statics blocked on stable Rust; BSSMap key_list_overflow calls non-existent OverflowList API in upstream Zig (likely dead code); parking_lot::Mutex needs RAII guard (BSSList::append intentionally won't borrowck until then); BSSList.head dual-semantics (sibling-ref vs heap) needs enum split.
 // ──────────────────────────────────────────────────────────────────────────

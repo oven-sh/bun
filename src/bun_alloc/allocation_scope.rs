@@ -9,7 +9,7 @@ use bun_collections::{ArrayHashMap};
 use bun_core::Output;
 // MOVE_DOWN: StoredTrace/WriteStackTraceLimits/dump_stack_trace → bun_core (move-in pending).
 use bun_core::{dump_stack_trace, StoredTrace, WriteStackTraceLimits};
-use bun_core::Guarded;
+use parking_lot::Mutex;
 
 // TODO(port): `std.mem.Allocator` is Zig's fat-pointer (ptr + vtable) dynamic allocator handle.
 // `bun_alloc` must expose an equivalent (`crate::StdAllocator` here) for the parent-allocator
@@ -57,7 +57,7 @@ pub enum FreeError {
     NotAllocated,
 }
 
-impl From<FreeError> for bun_core::Error {
+impl From<FreeError> for crate::stubs::CoreError {
     fn from(e: FreeError) -> Self {
         match e {
             FreeError::NotAllocated => bun_core::err!("NotAllocated"),

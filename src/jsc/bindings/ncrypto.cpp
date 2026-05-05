@@ -7,11 +7,20 @@
 #include <openssl/asn1.h>
 #include <openssl/bn.h>
 #include <openssl/dh.h>
+#include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/pkcs12.h>
 #include <openssl/rand.h>
+#include <openssl/rsa.h>
 #include <openssl/x509v3.h>
+#ifdef OPENSSL_IS_BORINGSSL
+// Used by the BN_R_NEGATIVE_NUMBER fallback parser below; these headers and
+// the CBS_* / OBJ_cbs2nid APIs don't exist in OpenSSL 1.1.1/3.x.
+#include <openssl/bytestring.h>
+#include <openssl/nid.h>
+#include <openssl/obj.h>
+#endif
 #include <algorithm>
 #include <cstring>
 #if OPENSSL_VERSION_MAJOR >= 3
@@ -2395,6 +2404,96 @@ constexpr bool IsEncryptedPrivateKeyInfo(
     return len >= 1 && buffer.data[offset] != 2;
 }
 
+#ifdef OPENSSL_IS_BORINGSSL
+// Reads an ASN.1 INTEGER as an unsigned big-endian byte sequence, tolerating
+// the non-conforming case where the leading 0x00 sign byte is omitted on a
+// value with the high bit set. BoringSSL's |BN_parse_asn1_unsigned| rejects
+// that encoding with BN_R_NEGATIVE_NUMBER, but OpenSSL (and therefore Node)
+// accepts it, so we match Node here.
+bool ParseAsn1IntegerLooseUnsigned(CBS* cbs, BignumPointer* out)
+{
+    CBS child;
+    if (!CBS_get_asn1(cbs, &child, CBS_ASN1_INTEGER) || CBS_len(&child) == 0) {
+        return false;
+    }
+    const unsigned char* data = CBS_data(&child);
+    size_t len = CBS_len(&child);
+    // Strip one leading 0x00 if present (standard encoding for values whose
+    // top bit is set). Everything else is treated as unsigned bytes.
+    if (len > 1 && data[0] == 0x00) {
+        data += 1;
+        len -= 1;
+    }
+    out->reset(data, len);
+    return *out;
+}
+
+// Fallback parser for RSA SubjectPublicKeyInfo DER that tolerates an
+// RSAPublicKey.modulus encoded without the leading 0x00 sign byte. Returns
+// nullptr if the input is not an RSA SPKI or is otherwise malformed. RFC 3279
+// §2.3.1 requires the algorithm parameters for rsaEncryption to be an explicit
+// NULL — we reject anything else; the modulus sign byte is the only
+// non-conforming case we recover from.
+EVP_PKEY* ParseSpkiRsaLoose(const unsigned char* data, size_t len)
+{
+    CBS cbs, spki, alg, oid, params, bitstr, rsa_pub_key;
+    CBS_init(&cbs, data, len);
+    if (!CBS_get_asn1(&cbs, &spki, CBS_ASN1_SEQUENCE) || CBS_len(&cbs) != 0
+        || !CBS_get_asn1(&spki, &alg, CBS_ASN1_SEQUENCE)
+        || !CBS_get_asn1(&alg, &oid, CBS_ASN1_OBJECT)
+        || OBJ_cbs2nid(&oid) != NID_rsaEncryption
+        || !CBS_get_asn1(&alg, &params, CBS_ASN1_NULL) || CBS_len(&params) != 0
+        || CBS_len(&alg) != 0
+        || !CBS_get_asn1(&spki, &bitstr, CBS_ASN1_BITSTRING) || CBS_len(&spki) != 0) {
+        return nullptr;
+    }
+    // BIT STRING leading byte is the count of unused trailing bits (zero for SPKI).
+    uint8_t unused_bits;
+    if (!CBS_get_u8(&bitstr, &unused_bits) || unused_bits != 0
+        || !CBS_get_asn1(&bitstr, &rsa_pub_key, CBS_ASN1_SEQUENCE) || CBS_len(&bitstr) != 0) {
+        return nullptr;
+    }
+
+    BignumPointer n, e;
+    if (!ParseAsn1IntegerLooseUnsigned(&rsa_pub_key, &n)
+        || !ParseAsn1IntegerLooseUnsigned(&rsa_pub_key, &e)
+        || CBS_len(&rsa_pub_key) != 0) {
+        return nullptr;
+    }
+
+    RSAPointer rsa(RSA_new());
+    if (!rsa || !Rsa(rsa.get()).setPublicKey(WTF::move(n), WTF::move(e))) {
+        return nullptr;
+    }
+    return EVPKeyPointer::NewRSA(WTF::move(rsa)).release();
+}
+
+// Calls d2i_PUBKEY, falling back to ParseSpkiRsaLoose on BN_R_NEGATIVE_NUMBER.
+EVP_PKEY* D2iPubkeyWithLooseRsaFallback(const unsigned char* data, long len) // NOLINT(runtime/int)
+{
+    // Clear so ERR_peek_error below sees this call's root cause, not a stale one.
+    ERR_clear_error();
+    const unsigned char* p = data;
+    if (EVP_PKEY* key = d2i_PUBKEY(nullptr, &p, len)) return key;
+    const uint32_t err = ERR_peek_error();
+    if (ERR_GET_LIB(err) == ERR_LIB_BN && ERR_GET_REASON(err) == BN_R_NEGATIVE_NUMBER) {
+        // Only clear on success — if the loose parser also rejects, preserve
+        // d2i_PUBKEY's error stack so throwCryptoError can surface it as
+        // `opensslErrorStack` on the thrown JS error.
+        if (EVP_PKEY* key = ParseSpkiRsaLoose(data, len)) {
+            ERR_clear_error();
+            return key;
+        }
+    }
+    return nullptr;
+}
+#else
+EVP_PKEY* D2iPubkeyWithLooseRsaFallback(const unsigned char* data, long len) // NOLINT(runtime/int)
+{
+    return d2i_PUBKEY(nullptr, &data, len);
+}
+#endif // OPENSSL_IS_BORINGSSL
+
 } // namespace
 
 bool EVPKeyPointer::IsRSAPrivateKey(const Buffer<const unsigned char>& buffer)
@@ -2422,7 +2521,7 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePublicKeyPEM(
             bp,
             "PUBLIC KEY",
             [](const unsigned char** p, long l) { // NOLINT(runtime/int)
-                return d2i_PUBKEY(nullptr, p, l);
+                return D2iPubkeyWithLooseRsaFallback(*p, l);
             })) {
         return ret;
     }
@@ -2471,7 +2570,7 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePublicKey(
         return EVPKeyPointer::ParseKeyResult(EVPKeyPointer(key));
     }
 
-    if (config.type == PKEncodingType::SPKI && (key = d2i_PUBKEY(nullptr, &start, buffer.len))) {
+    if (config.type == PKEncodingType::SPKI && (key = D2iPubkeyWithLooseRsaFallback(buffer.data, buffer.len))) {
         return EVPKeyPointer::ParseKeyResult(EVPKeyPointer(key));
     }
 

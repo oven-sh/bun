@@ -184,8 +184,19 @@ static void us_internal_connecting_socket_detach(struct us_connecting_socket_t *
 void us_connecting_socket_free(struct us_connecting_socket_t *c) {
     // we can't just free c immediately, as it may be enqueued in the dns_ready_head list
     // instead, we move it to a close list and free it after the iteration
+    if (c->scheduled_for_free) {
+        /* Already on closed_connecting_head. Re-enqueueing would — if another
+         * node was pushed in between — turn the close list into a cycle and
+         * make us_internal_free_closed_sockets a double-free loop. detach()
+         * is itself idempotent (group/ssl_ctx NULL'd on first call). */
+        return;
+    }
+    c->scheduled_for_free = 1;
     us_internal_connecting_socket_detach(c, c->loop);
-    c->next = c->loop->data.closed_connecting_head;
+    /* Use the dedicated close-list link, NOT c->next — that field belongs to
+     * dns_ready_head and may still be the only pointer to the rest of an
+     * in-progress drain snapshot. */
+    c->next_closed = c->loop->data.closed_connecting_head;
     c->loop->data.closed_connecting_head = c;
 }
 

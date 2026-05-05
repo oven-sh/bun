@@ -9,13 +9,13 @@
 
 use bun_collections::ArrayHashMap;
 use bun_logger as logger;
-use bun_schema::api;
+use crate::schema::api;
 
-use crate::bundle_enums;
-use crate::code_coverage_options::CodeCoverageOptions;
-use crate::compile_target::CompileTarget;
-use crate::global_cache::GlobalCache;
-use crate::offline_mode::OfflineMode;
+use crate::BundleEnums as bundle_enums;
+use crate::CodeCoverageOptions::CodeCoverageOptions;
+use crate::CompileTarget::CompileTarget;
+use crate::GlobalCache::GlobalCache;
+use crate::OfflineMode::OfflineMode;
 
 // TODO(port): every `[]const u8` / `[]const []const u8` struct field below is a
 // proc-lifetime CLI string (no `deinit`, populated once from argv/bunfig and
@@ -140,7 +140,7 @@ impl Default for BundlerOptions {
             bake_debug_dump_server: false,
             bake_debug_disable_minify: false,
             production: false,
-            env_behavior: api::DotEnvBehavior::Disable,
+            env_behavior: api::DotEnvBehavior::disable,
             env_prefix: Box::default(),
             elide_lines: None,
             compile: false,
@@ -192,7 +192,7 @@ impl Default for DebugOptions {
             fallback_only: false,
             silent: false,
             hot_reload: HotReload::None,
-            global_cache: GlobalCache::Auto,
+            global_cache: GlobalCache::auto,
             offline_mode_setting: None,
             run_in_bun: false,
             loaded_bunfig: false,

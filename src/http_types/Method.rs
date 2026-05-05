@@ -50,25 +50,10 @@ pub enum Method {
 
 pub type Set = EnumSet<Method>;
 
-// TODO(b1): EnumSet::remove is not const on stable — Phase-A const-init gated.
-// Rewritten as `matches!` complements below; revisit if a const Set is needed for FFI.
-#[cfg(any())]
-const WITH_BODY: Set = {
-    let mut values = Set::all();
-    values.remove(Method::HEAD);
-    values.remove(Method::TRACE);
-    values
-};
-
-#[cfg(any())]
-const WITH_REQUEST_BODY: Set = {
-    let mut values = Set::all();
-    values.remove(Method::GET);
-    values.remove(Method::HEAD);
-    values.remove(Method::OPTIONS);
-    values.remove(Method::TRACE);
-    values
-};
+// PORT NOTE: Zig's private `with_body`/`with_request_body` EnumSet consts are
+// folded directly into `has_body()`/`has_request_body()` as `matches!` —
+// `EnumSet::remove` is not const on stable, and the consts were never read
+// outside those two predicates.
 
 impl Method {
     pub fn has_body(self) -> bool {

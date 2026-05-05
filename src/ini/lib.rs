@@ -1,51 +1,283 @@
 #![allow(unused, dead_code, non_snake_case, non_upper_case_globals)]
 // ──────────────────────────────────────────────────────────────────────────
-// Phase B-1 gate-and-stub: the Phase-A draft body does not yet compile
-// (depends on bun_logger::{E,Expr,ExprData}, bun_schema, bun_dot_env,
-// bun_str, bun_install_types, bumpalo, thiserror, adt_const_params).
-// Preserve the draft verbatim inside a `#[cfg(any())]` module and expose a
-// minimal stub surface so dependents type-check. Un-gating happens in B-2.
+// Phase B-2 un-gate: pieces that do not transitively need the JS-AST
+// (`Expr`/`E::Object`/`Rope`) or the schema (`BunInstall`/`NpmRegistry`)
+// now compile for real. Everything that touches those types stays re-gated
+// with a `// TODO(b2-blocked):` pointing at the missing lower-tier symbol.
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(b1): bun_dot_env::Loader missing
-// TODO(b1): bun_logger::{E,Expr,ExprData,e::object::Rope} missing
-// TODO(b1): bun_schema::api::{BunInstall,NpmRegistry,NpmRegistryMap} missing
-// TODO(b1): bun_str::{strings,ZStr} missing (crate is bun_string)
-// TODO(b1): bun_install_types::NodeLinker missing
+use core::fmt;
+
+use bun_alloc::{AllocError, Arena, ArenaVec};
+use bun_logger::{self as logger, Loc, Log, Source};
+use bun_string::{strings, ZStr};
+
+type OOM<T> = Result<T, AllocError>;
+
+// ──────────────────────────────────────────────────────────────────────────
+// Options
+// ──────────────────────────────────────────────────────────────────────────
+
+pub struct Options {
+    pub bracked_array: bool,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self { bracked_array: true }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Pure-byte helpers (lifted from `Parser` so they compile without the
+// Expr-carrying struct). The Zig has these as methods on `Parser` but they
+// touch no parser state — exposing them as free fns lets the logic stay
+// un-gated and unit-testable while the AST-dependent body is blocked.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[inline]
+pub(crate) fn should_skip_line(line: &[u8]) -> bool {
+    if line.is_empty()
+        // comments
+        || line[0] == b';'
+        || line[0] == b'#'
+    {
+        return true;
+    }
+
+    // check the rest is whitespace
+    for &c in line {
+        match c {
+            b' ' | b'\t' | b'\n' | b'\r' => {}
+            b'#' | b';' => return true,
+            _ => return false,
+        }
+    }
+    true
+}
+
+#[inline]
+pub(crate) fn is_quoted(val: &[u8]) -> bool {
+    (strings::starts_with_char(val, b'"') && strings::ends_with_char(val, b'"'))
+        || (strings::starts_with_char(val, b'\'') && strings::ends_with_char(val, b'\''))
+}
+
+#[inline]
+pub(crate) fn next_dot(key: &[u8]) -> Option<usize> {
+    key.iter().position(|&b| b == b'.')
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// IniOption — tri-state used by iterators (None != end-of-iteration)
+// ──────────────────────────────────────────────────────────────────────────
+
+pub enum IniOption<T> {
+    Some(T),
+    None,
+}
+
+impl<T> IniOption<T> {
+    pub fn get(self) -> Option<T> {
+        match self {
+            IniOption::Some(v) => Some(v),
+            IniOption::None => None,
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// ConfigOpt
+// ──────────────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::EnumString)]
+pub enum ConfigOpt {
+    /// `${username}:${password}` encoded in base64
+    #[strum(serialize = "_auth")]
+    _Auth,
+
+    /// authentication string
+    #[strum(serialize = "_authToken")]
+    _AuthToken,
+
+    #[strum(serialize = "username")]
+    Username,
+
+    /// this is encoded as base64 in .npmrc
+    #[strum(serialize = "_password")]
+    _Password,
+
+    #[strum(serialize = "email")]
+    Email,
+
+    /// path to certificate file
+    #[strum(serialize = "certfile")]
+    Certfile,
+
+    /// path to key file
+    #[strum(serialize = "keyfile")]
+    Keyfile,
+}
+
+impl ConfigOpt {
+    pub fn is_base64_encoded(self) -> bool {
+        matches!(self, ConfigOpt::_Auth | ConfigOpt::_Password)
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// ConfigItem
+// ──────────────────────────────────────────────────────────────────────────
+
+pub struct ConfigItem {
+    pub registry_url: Box<[u8]>,
+    pub optname: ConfigOpt,
+    pub value: Box<[u8]>,
+    pub loc: Loc,
+}
+
+impl ConfigItem {
+    /// Duplicate ConfigIterator.Item
+    pub fn dupe(&self) -> OOM<Option<ConfigItem>> {
+        Ok(Some(ConfigItem {
+            registry_url: Box::<[u8]>::from(&*self.registry_url),
+            optname: self.optname,
+            value: Box::<[u8]>::from(&*self.value),
+            loc: self.loc,
+        }))
+    }
+
+    /// Duplicate the value, decoding it if it is base64 encoded.
+    pub fn dupe_value_decoded(
+        &self,
+        log: &mut Log,
+        source: &Source,
+    ) -> OOM<Option<Box<[u8]>>> {
+        if self.optname.is_base64_encoded() {
+            if self.value.is_empty() {
+                return Ok(Some(Box::default()));
+            }
+            let len = bun_base64::decode_len(&self.value);
+            let mut slice = vec![0u8; len].into_boxed_slice();
+            let result = bun_base64::decode(&mut slice[..], &self.value);
+            if !result.is_successful() {
+                log.add_error_fmt_opts(
+                    format_args!("{} is not valid base64", <&'static str>::from(self.optname)),
+                    logger::AddErrorOptions {
+                        source: Some(source),
+                        loc: self.loc,
+                        ..Default::default()
+                    },
+                )?;
+                return Ok(None);
+            }
+            return Ok(Some(Box::<[u8]>::from(&slice[..result.count])));
+        }
+        Ok(Some(Box::<[u8]>::from(&*self.value)))
+    }
+
+    // deinit -> Drop: Box<[u8]> fields drop automatically.
+}
+
+impl fmt::Display for ConfigItem {
+    fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            writer,
+            "//{}:{}={}",
+            bstr::BStr::new(&self.registry_url),
+            <&'static str>::from(self.optname),
+            bstr::BStr::new(&self.value),
+        )
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// NodeLinkerMap
+// ──────────────────────────────────────────────────────────────────────────
+
+use bun_install_types::NodeLinker::NodeLinker;
+
+static NODE_LINKER_MAP: phf::Map<&'static [u8], NodeLinker> = phf::phf_map! {
+    // yarn
+    b"pnpm" => NodeLinker::Isolated,
+    b"node-modules" => NodeLinker::Hoisted,
+    // pnpm
+    b"isolated" => NodeLinker::Isolated,
+    b"hoisted" => NodeLinker::Hoisted,
+};
+
+// ──────────────────────────────────────────────────────────────────────────
+// ScopeError
+// ──────────────────────────────────────────────────────────────────────────
+
+#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+pub enum ScopeError {
+    #[error("no_value")]
+    NoValue,
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Re-gated items + shadow stubs
+//
+// Everything below depends on `bun_js_parser::{Expr, ExprData, E::Object,
+// E::Array, E::Boolean, E::Null, E::String, E::Number, e::object::Rope}`
+// (the real AST surface, not the B-1 unit-struct stubs) and/or
+// `bun_api::{BunInstall, NpmRegistry, NpmRegistryMap, npm_registry, Ca}`.
+// Neither lower-tier crate exposes those yet, so the bodies stay gated and
+// minimal opaque shadow stubs are provided so dependents type-check.
+// ──────────────────────────────────────────────────────────────────────────
+
+// TODO(b2-blocked): bun_js_parser::Expr (with .data / ::init / .as_property /
+//                   .as_string / .as_bool / .get / .is_array / .as_string_cloned /
+//                   .as_utf8_string_literal)
+// TODO(b2-blocked): bun_js_parser::ExprData (EString/EArray/EObject/EBoolean/ENull/ENumber)
+// TODO(b2-blocked): bun_js_parser::E::Object (.properties / .get / .put / .get_or_put_object)
+// TODO(b2-blocked): bun_js_parser::E::Array (.items / .push)
+// TODO(b2-blocked): bun_js_parser::E::{String, Boolean, Null, Number}
+// TODO(b2-blocked): bun_js_parser::e::object::Rope
+// TODO(b2-blocked): bun_api::BunInstall
+// TODO(b2-blocked): bun_api::NpmRegistry
+// TODO(b2-blocked): bun_api::NpmRegistryMap
+// TODO(b2-blocked): bun_api::npm_registry::Parser
+// TODO(b2-blocked): bun_api::Ca
+// TODO(b2-blocked): bun_logger::source_from_file (was bun_sys::File::to_source — moved up)
+// TODO(b2-blocked): bun_install_types::NodeLinker::PnpmMatcher::from_expr
+// TODO(b2-blocked): bun_interchange::json::parse_utf8_impl
 
 pub struct Parser<'a>(core::marker::PhantomData<&'a ()>);
-pub struct Options;
 pub struct ToStringFormatter<'a>(core::marker::PhantomData<&'a ()>);
-pub enum IniOption<T> { Some(T), None }
 pub struct ConfigIterator<'a>(core::marker::PhantomData<&'a ()>);
-pub struct ConfigItem;
-pub enum ConfigOpt { Stub }
 pub struct ScopeIterator<'a>(core::marker::PhantomData<&'a ()>);
-#[derive(Debug)]
-pub enum ScopeError { NoValue }
 pub struct ScopeItem;
+pub mod config_iterator {
+    pub use super::{ConfigItem as Item, ConfigIterator as Iter, ConfigOpt as Opt};
+}
 
-pub fn load_npmrc_config() { todo!("b1 stub: load_npmrc_config") }
-pub fn load_npmrc() { todo!("b1 stub: load_npmrc") }
+pub fn load_npmrc_config() { todo!("b2-blocked: bun_api::BunInstall") }
+pub fn load_npmrc() { todo!("b2-blocked: bun_api::BunInstall / bun_js_parser::Expr") }
 
 #[cfg(any())]
 mod draft {
 
 use core::fmt;
-use core::marker::ConstParamTy;
 use std::io::Write as _;
 
-use bun_alloc::{AllocError, Arena}; // Arena = bumpalo::Bump
+use bun_alloc::{AllocError, Arena, ArenaVec};
 use bun_collections::ArrayHashMap;
 use bun_core::{Global, Output};
-use bun_dot_env::Loader as DotEnvLoader;
-// TODO(b0): E/Expr/ExprData/e::object::Rope arrive from move-in (was bun_js_parser → logger)
-use bun_logger::e::object::Rope;
-use bun_logger::{self as js_ast, E, Expr};
+use bun_dotenv::Loader as DotEnvLoader;
+// TODO(b2-blocked): bun_js_parser::{Expr, ExprData, E, e::object::Rope}
+use bun_js_parser::e::object::Rope;
+use bun_js_parser::{self as js_ast, E, Expr, ExprData};
 use bun_logger::{self as logger, Loc, Log, Source};
-use bun_schema::api::{BunInstall, NpmRegistry, NpmRegistryMap};
-use bun_str::{strings, ZStr};
+// TODO(b2-blocked): bun_api::{BunInstall, NpmRegistry, NpmRegistryMap}
+use bun_api::{BunInstall, NpmRegistry, NpmRegistryMap};
+use bun_string::{strings, ZStr};
 use bun_url::URL;
+
+use super::{
+    is_quoted, next_dot, should_skip_line, ConfigItem, ConfigOpt, IniOption, NodeLinker,
+    Options, ScopeError, NODE_LINKER_MAP,
+};
 
 type OOM<T> = Result<T, AllocError>;
 
@@ -60,17 +292,7 @@ pub struct Parser<'a> {
     pub out: Expr,
     pub logger: Log,
     pub arena: Arena,
-    pub env: &'a mut DotEnvLoader,
-}
-
-pub struct Options {
-    pub bracked_array: bool,
-}
-
-impl Default for Options {
-    fn default() -> Self {
-        Self { bracked_array: true }
-    }
+    pub env: &'a mut DotEnvLoader<'a>,
 }
 
 // PORT NOTE: Zig `prepareStr` switches its *return type* on a comptime enum
@@ -78,7 +300,11 @@ impl Default for Options {
 // const generics cannot select a return type, so we keep a single
 // `prepare_str::<USAGE>()` body for diffability and wrap the result in
 // `PrepareResult`. Callers unwrap with `.into_*()`.
-#[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
+//
+// PORT NOTE: `#[derive(ConstParamTy)]` requires nightly `adt_const_params`.
+// Dropped to a runtime arg (the body never uses USAGE in a type position).
+// PERF(port): was comptime monomorphization — profile in Phase B.
+#[derive(PartialEq, Eq, Clone, Copy)]
 enum Usage {
     Section,
     Key,
@@ -116,7 +342,7 @@ impl<'bump> PrepareResult<'bump> {
 }
 
 impl<'a> Parser<'a> {
-    pub fn init(path: &[u8], src: &'a [u8], env: &'a mut DotEnvLoader) -> Parser<'a> {
+    pub fn init(path: &[u8], src: &'a [u8], env: &'a mut DotEnvLoader<'a>) -> Parser<'a> {
         Parser {
             opts: Options::default(),
             logger: Log::init(),
@@ -129,27 +355,6 @@ impl<'a> Parser<'a> {
     }
 
     // deinit -> Drop: `logger` and `arena` are owned and drop automatically.
-
-    #[inline]
-    fn should_skip_line(line: &[u8]) -> bool {
-        if line.is_empty()
-            // comments
-            || line[0] == b';'
-            || line[0] == b'#'
-        {
-            return true;
-        }
-
-        // check the rest is whitespace
-        for &c in line {
-            match c {
-                b' ' | b'\t' | b'\n' | b'\r' => {}
-                b'#' | b';' => return true,
-                _ => return false,
-            }
-        }
-        true
-    }
 
     pub fn parse(&mut self, bump: &'a Arena) -> OOM<()> {
         // TODO(port): borrowck — in Zig, `arena_allocator` is `self.arena.allocator()`;
@@ -174,7 +379,7 @@ impl<'a> Parser<'a> {
             } else {
                 line_
             };
-            if Self::should_skip_line(line) {
+            if should_skip_line(line) {
                 continue;
             }
 
@@ -205,7 +410,8 @@ impl<'a> Parser<'a> {
                         .unwrap()
                         + 1;
                     let section: &mut Rope = self
-                        .prepare_str::<{ Usage::Section }>(
+                        .prepare_str(
+                            Usage::Section,
                             bump,
                             ropealloc,
                             &line[1..close_bracket_idx],
@@ -275,7 +481,8 @@ impl<'a> Parser<'a> {
             let maybe_eq_sign_idx = line.iter().position(|&b| b == b'=');
 
             let key_raw: &[u8] = self
-                .prepare_str::<{ Usage::Key }>(
+                .prepare_str(
+                    Usage::Key,
                     bump,
                     ropealloc,
                     &line[..maybe_eq_sign_idx.unwrap_or(line.len())],
@@ -312,7 +519,8 @@ impl<'a> Parser<'a> {
                 if let Some(eq_sign_idx) = maybe_eq_sign_idx {
                     if eq_sign_idx + 1 < line.len() {
                         break 'brk self
-                            .prepare_str::<{ Usage::Value }>(
+                            .prepare_str(
+                                Usage::Value,
                                 bump,
                                 ropealloc,
                                 &line[eq_sign_idx + 1..],
@@ -329,7 +537,7 @@ impl<'a> Parser<'a> {
             };
 
             let value: Expr = match &value_raw.data {
-                js_ast::ExprData::EString(s) => {
+                ExprData::EString(s) => {
                     if s.data == b"true" {
                         Expr::init(E::Boolean(E::Boolean { value: true }), Loc::EMPTY)
                     } else if s.data == b"false" {
@@ -380,8 +588,9 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn prepare_str<const USAGE: Usage>(
+    fn prepare_str(
         &mut self,
+        usage: Usage,
         bump: &'a Arena,
         ropealloc: &'a Arena,
         val_: &[u8],
@@ -390,7 +599,7 @@ impl<'a> Parser<'a> {
         let mut offset = offset_;
         let mut val = strings::trim(val_, b" \n\r\t");
 
-        if Self::is_quoted(val) {
+        if is_quoted(val) {
             'out: {
                 // remove single quotes before calling JSON.parse
                 if !val.is_empty() && val[0] == b'\'' {
@@ -404,12 +613,13 @@ impl<'a> Parser<'a> {
                 let src = Source::init_path_string(self.source.path.text.as_slice(), val);
                 let mut log = Log::init();
                 // Try to parse it and if it fails will just treat it as a string
-                let json_val: Expr = match bun_json::parse_utf8_impl(&src, &mut log, bump, true) {
+                // TODO(b2-blocked): bun_interchange::json::parse_utf8_impl
+                let json_val: Expr = match bun_interchange::json::parse_utf8_impl(&src, &mut log, bump, true) {
                     Ok(v) => v,
                     Err(_) => {
                         // JSON parse failed (e.g., single-quoted string like '${VAR}')
                         // Still need to expand env vars in the content
-                        if USAGE == Usage::Value {
+                        if usage == Usage::Value {
                             let expanded = self.expand_env_vars(bump, val)?;
                             return Ok(PrepareResult::Value(Expr::init(
                                 E::String(E::String::init(expanded)),
@@ -423,18 +633,18 @@ impl<'a> Parser<'a> {
 
                 if let Some(str_) = json_val.as_string(bump) {
                     // Expand env vars in the JSON-parsed string
-                    let expanded = if USAGE == Usage::Value {
+                    let expanded = if usage == Usage::Value {
                         self.expand_env_vars(bump, str_)?
                     } else {
                         str_
                     };
-                    if USAGE == Usage::Value {
+                    if usage == Usage::Value {
                         return Ok(PrepareResult::Value(Expr::init(
                             E::String(E::String::init(expanded)),
                             Loc { start: offset },
                         )));
                     }
-                    if USAGE == Usage::Section {
+                    if usage == Usage::Section {
                         return Ok(PrepareResult::Section(Self::str_to_rope(
                             ropealloc, expanded,
                         )?));
@@ -442,7 +652,7 @@ impl<'a> Parser<'a> {
                     return Ok(PrepareResult::Key(expanded));
                 }
 
-                if USAGE == Usage::Value {
+                if usage == Usage::Value {
                     return Ok(PrepareResult::Value(json_val));
                 }
 
@@ -455,8 +665,8 @@ impl<'a> Parser<'a> {
                 // foo[json_val] = 'nice'
                 // ```
                 match &json_val.data {
-                    js_ast::ExprData::EObject(_) => {
-                        if USAGE == Usage::Section {
+                    ExprData::EObject(_) => {
+                        if usage == Usage::Section {
                             return Ok(PrepareResult::Section(Self::single_str_rope(
                                 ropealloc,
                                 b"[Object object]",
@@ -466,11 +676,11 @@ impl<'a> Parser<'a> {
                     }
                     _ => {
                         // PERF(port): was std.fmt.allocPrint into arena
-                        let mut buf = bumpalo::collections::Vec::<u8>::new_in(bump);
+                        let mut buf = ArenaVec::<u8>::new_in(bump);
                         write!(&mut buf, "{}", ToStringFormatter { d: &json_val.data })
                             .map_err(|_| AllocError)?;
                         let str_ = buf.into_bump_slice();
-                        if USAGE == Usage::Section {
+                        if usage == Usage::Section {
                             return Ok(PrepareResult::Section(Self::single_str_rope(
                                 ropealloc, str_,
                             )?));
@@ -485,10 +695,9 @@ impl<'a> Parser<'a> {
             let mut did_any_escape = false;
             let mut esc = false;
             // PERF(port): was stack-fallback(STACK_BUF_SIZE) over arena
-            let mut unesc =
-                bumpalo::collections::Vec::<u8>::with_capacity_in(STACK_BUF_SIZE, bump);
+            let mut unesc = ArenaVec::<u8>::with_capacity_in(STACK_BUF_SIZE, bump);
 
-            // RopeT is *Rope when USAGE==Section, else unit. In Rust we just
+            // RopeT is *Rope when usage==Section, else unit. In Rust we just
             // keep an Option<&mut Rope> and ignore it for non-section usages.
             let mut rope: Option<&'a mut Rope> = None;
 
@@ -500,7 +709,7 @@ impl<'a> Parser<'a> {
                         b'\\' => unesc.extend_from_slice(&[b'\\']),
                         b';' | b'#' | b'$' => unesc.push(c),
                         b'.' => {
-                            if USAGE == Usage::Section {
+                            if usage == Usage::Section {
                                 unesc.push(b'.');
                             } else {
                                 unesc.extend_from_slice(b"\\.");
@@ -547,7 +756,7 @@ impl<'a> Parser<'a> {
                     match c {
                         b'$' => {
                             'not_env_substitution: {
-                                if USAGE != Usage::Value {
+                                if usage != Usage::Value {
                                     break 'not_env_substitution;
                                 }
 
@@ -569,7 +778,7 @@ impl<'a> Parser<'a> {
                             did_any_escape = true;
                         }
                         b'.' => {
-                            if USAGE == Usage::Section {
+                            if usage == Usage::Section {
                                 self.commit_rope_part(bump, ropealloc, &mut unesc, &mut rope)?;
                             } else {
                                 unesc.push(b'.');
@@ -614,7 +823,7 @@ impl<'a> Parser<'a> {
                 unesc.push(b'\\');
             }
 
-            match USAGE {
+            match usage {
                 Usage::Section => {
                     self.commit_rope_part(bump, ropealloc, &mut unesc, &mut rope)?;
                     return Ok(PrepareResult::Section(rope.unwrap()));
@@ -652,13 +861,13 @@ impl<'a> Parser<'a> {
             }
         }
         // fallthrough from `break 'out` above
-        if USAGE == Usage::Value {
+        if usage == Usage::Value {
             return Ok(PrepareResult::Value(Expr::init(
                 E::String(E::String::init(val)),
                 Loc { start: offset },
             )));
         }
-        if USAGE == Usage::Key {
+        if usage == Usage::Key {
             return Ok(PrepareResult::Key(val));
             // TODO(port): lifetime — `val` borrows `val_` (caller line slice);
             // Zig returns it directly. Phase B may need bump.alloc_slice_copy here.
@@ -680,7 +889,7 @@ impl<'a> Parser<'a> {
             return Ok(bump.alloc_slice_copy(val));
         }
 
-        let mut result = bumpalo::collections::Vec::<u8>::with_capacity_in(val.len(), bump);
+        let mut result = ArenaVec::<u8>::with_capacity_in(val.len(), bump);
         let mut i: usize = 0;
         while i < val.len() {
             if val[i] == b'$' && i + 2 < val.len() && val[i + 1] == b'{' {
@@ -737,7 +946,7 @@ impl<'a> Parser<'a> {
         val: &[u8],
         start: usize,
         i: usize,
-        unesc: &mut bumpalo::collections::Vec<'a, u8>,
+        unesc: &mut ArenaVec<'a, u8>,
     ) -> OOM<Option<usize>> {
         debug_assert!(val[i] == b'$');
         let mut esc = false;
@@ -807,15 +1016,11 @@ impl<'a> Parser<'a> {
         Ok(rope)
     }
 
-    fn next_dot(key: &[u8]) -> Option<usize> {
-        key.iter().position(|&b| b == b'.')
-    }
-
     fn commit_rope_part(
         &mut self,
         bump: &'a Arena,
         ropealloc: &'a Arena,
-        unesc: &mut bumpalo::collections::Vec<'a, u8>,
+        unesc: &mut ArenaVec<'a, u8>,
         existing_rope: &mut Option<&'a mut Rope>,
     ) -> OOM<()> {
         let _ = self; // autofix
@@ -834,7 +1039,7 @@ impl<'a> Parser<'a> {
     }
 
     fn str_to_rope(ropealloc: &'a Arena, key: &'a [u8]) -> OOM<&'a mut Rope> {
-        let Some(mut dot_idx) = Self::next_dot(key) else {
+        let Some(mut dot_idx) = next_dot(key) else {
             let rope = ropealloc.alloc(Rope {
                 head: Expr::init(E::String(E::String::init(key)), Loc::EMPTY),
                 next: None,
@@ -851,7 +1056,7 @@ impl<'a> Parser<'a> {
         let head: *mut Rope = rope as *mut Rope;
 
         while dot_idx + 1 < key.len() {
-            let next_dot_idx = match Self::next_dot(&key[dot_idx + 1..]) {
+            let next_dot_idx = match next_dot(&key[dot_idx + 1..]) {
                 Some(n) => dot_idx + 1 + n,
                 None => {
                     let rest = &key[dot_idx + 1..];
@@ -873,11 +1078,6 @@ impl<'a> Parser<'a> {
         // SAFETY: head was created by ropealloc.alloc above and is still live in the bump.
         Ok(unsafe { &mut *head })
     }
-
-    fn is_quoted(val: &[u8]) -> bool {
-        (strings::starts_with_char(val, b'"') && strings::ends_with_char(val, b'"'))
-            || (strings::starts_with_char(val, b'\'') && strings::ends_with_char(val, b'\''))
-    }
 }
 
 // `IniTestingAPIs` — *_jsc alias deleted (see PORTING.md "Idiom map").
@@ -887,13 +1087,13 @@ impl<'a> Parser<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct ToStringFormatter<'a> {
-    pub d: &'a js_ast::ExprData,
+    pub d: &'a ExprData,
 }
 
 impl fmt::Display for ToStringFormatter<'_> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.d {
-            js_ast::ExprData::EArray(arr) => {
+            ExprData::EArray(arr) => {
                 let last = arr.items.len().saturating_sub(1);
                 for (i, e) in arr.items.slice().iter().enumerate() {
                     let is_last = i == last;
@@ -906,15 +1106,15 @@ impl fmt::Display for ToStringFormatter<'_> {
                 }
                 Ok(())
             }
-            js_ast::ExprData::EObject(_) => write!(writer, "[Object object]"),
-            js_ast::ExprData::EBoolean(b) => {
+            ExprData::EObject(_) => write!(writer, "[Object object]"),
+            ExprData::EBoolean(b) => {
                 write!(writer, "{}", if b.value { "true" } else { "false" })
             }
-            js_ast::ExprData::ENumber(n) => write!(writer, "{}", n.value),
-            js_ast::ExprData::EString(s) => {
+            ExprData::ENumber(n) => write!(writer, "{}", n.value),
+            ExprData::EString(s) => {
                 write!(writer, "{}", bstr::BStr::new(s.data))
             }
-            js_ast::ExprData::ENull(_) => write!(writer, "null"),
+            ExprData::ENull(_) => write!(writer, "null"),
 
             tag => {
                 if cfg!(debug_assertions) {
@@ -930,24 +1130,6 @@ impl fmt::Display for ToStringFormatter<'_> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Option(T) — tri-state used by iterators (None != end-of-iteration)
-// ──────────────────────────────────────────────────────────────────────────
-
-pub enum IniOption<T> {
-    Some(T),
-    None,
-}
-
-impl<T> IniOption<T> {
-    pub fn get(self) -> Option<T> {
-        match self {
-            IniOption::Some(v) => Some(v),
-            IniOption::None => None,
-        }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
 // ConfigIterator
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -957,105 +1139,6 @@ pub struct ConfigIterator<'a> {
     pub log: &'a mut Log,
 
     pub prop_idx: usize,
-}
-
-pub struct ConfigItem {
-    pub registry_url: Box<[u8]>,
-    pub optname: ConfigOpt,
-    pub value: Box<[u8]>,
-    pub loc: Loc,
-}
-
-#[derive(
-    Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::EnumString,
-)]
-pub enum ConfigOpt {
-    /// `${username}:${password}` encoded in base64
-    #[strum(serialize = "_auth")]
-    _Auth,
-
-    /// authentication string
-    #[strum(serialize = "_authToken")]
-    _AuthToken,
-
-    #[strum(serialize = "username")]
-    Username,
-
-    /// this is encoded as base64 in .npmrc
-    #[strum(serialize = "_password")]
-    _Password,
-
-    #[strum(serialize = "email")]
-    Email,
-
-    /// path to certificate file
-    #[strum(serialize = "certfile")]
-    Certfile,
-
-    /// path to key file
-    #[strum(serialize = "keyfile")]
-    Keyfile,
-}
-
-impl ConfigOpt {
-    pub fn is_base64_encoded(self) -> bool {
-        matches!(self, ConfigOpt::_Auth | ConfigOpt::_Password)
-    }
-}
-
-impl ConfigItem {
-    /// Duplicate ConfigIterator.Item
-    pub fn dupe(&self) -> OOM<Option<ConfigItem>> {
-        Ok(Some(ConfigItem {
-            registry_url: Box::<[u8]>::from(&*self.registry_url),
-            optname: self.optname,
-            value: Box::<[u8]>::from(&*self.value),
-            loc: self.loc,
-        }))
-    }
-
-    /// Duplicate the value, decoding it if it is base64 encoded.
-    pub fn dupe_value_decoded(
-        &self,
-        log: &mut Log,
-        source: &Source,
-    ) -> OOM<Option<Box<[u8]>>> {
-        if self.optname.is_base64_encoded() {
-            if self.value.is_empty() {
-                return Ok(Some(Box::default()));
-            }
-            let len = bun_base64::decode_len(&self.value);
-            let mut slice = vec![0u8; len].into_boxed_slice();
-            let result = bun_base64::decode(&mut slice[..], &self.value);
-            if result.status != bun_base64::DecodeStatus::Success {
-                log.add_error_fmt_opts(
-                    format_args!("{} is not valid base64", <&'static str>::from(self.optname)),
-                    logger::AddErrorOpts {
-                        source: Some(source),
-                        loc: self.loc,
-                        ..Default::default()
-                    },
-                )?;
-                return Ok(None);
-            }
-            return Ok(Some(Box::<[u8]>::from(&slice[..result.count])));
-        }
-        Ok(Some(Box::<[u8]>::from(&*self.value)))
-    }
-
-    // deinit -> Drop: Box<[u8]> fields drop automatically.
-}
-
-impl fmt::Display for ConfigItem {
-    fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            writer,
-            "//{}:{}={}",
-            bstr::BStr::new(&self.registry_url),
-            <&'static str>::from(self.optname),
-            bstr::BStr::new(&self.value),
-        )
-    }
 }
 
 impl<'a> ConfigIterator<'a> {
@@ -1115,22 +1198,6 @@ impl<'a> ConfigIterator<'a> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// NodeLinkerMap
-// ──────────────────────────────────────────────────────────────────────────
-
-static NODE_LINKER_MAP: phf::Map<
-    &'static [u8],
-    bun_install_types::NodeLinker::options::NodeLinker,
-> = phf::phf_map! {
-    // yarn
-    b"pnpm" => bun_install_types::NodeLinker::options::NodeLinker::Isolated,
-    b"node-modules" => bun_install_types::NodeLinker::options::NodeLinker::Hoisted,
-    // pnpm
-    b"isolated" => bun_install_types::NodeLinker::options::NodeLinker::Isolated,
-    b"hoisted" => bun_install_types::NodeLinker::options::NodeLinker::Hoisted,
-};
-
-// ──────────────────────────────────────────────────────────────────────────
 // ScopeIterator
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -1141,12 +1208,6 @@ pub struct ScopeIterator<'a> {
 
     pub prop_idx: usize,
     pub count: bool,
-}
-
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum ScopeError {
-    #[error("no_value")]
-    NoValue,
 }
 
 pub struct ScopeItem {
@@ -1171,7 +1232,7 @@ impl<'a> ScopeIterator<'a> {
                         let registry = 'brk: {
                             if let Some(value) = &prop.value {
                                 if let Some(str_) = value.as_utf8_string_literal() {
-                                    let mut parser = bun_schema::api::npm_registry::Parser {
+                                    let mut parser = bun_api::npm_registry::Parser {
                                         log: self.log,
                                         source: self.source,
                                     };
@@ -1200,7 +1261,7 @@ impl<'a> ScopeIterator<'a> {
 
 pub fn load_npmrc_config(
     install: &mut BunInstall,
-    env: &mut DotEnvLoader,
+    env: &mut DotEnvLoader<'_>,
     auto_loaded: bool,
     npmrc_paths: &[&ZStr],
 ) {
@@ -1212,9 +1273,10 @@ pub fn load_npmrc_config(
     let mut configs: Vec<ConfigItem> = Vec::new();
 
     for &npmrc_path in npmrc_paths {
-        let source = match bun_sys::File::to_source(
+        // TODO(b2-blocked): bun_logger::source_from_file (was bun_sys::File::to_source — moved up to T2)
+        let source = match logger::source_from_file(
             npmrc_path,
-            bun_sys::ToSourceOpts { convert_bom: true },
+            logger::ToSourceOpts { convert_bom: true },
         ) {
             Ok(s) => s,
             Err(err) => {
@@ -1254,7 +1316,7 @@ pub fn load_npmrc_config(
 
 pub fn load_npmrc(
     install: &mut BunInstall,
-    env: &mut DotEnvLoader,
+    env: &mut DotEnvLoader<'_>,
     npmrc_path: &ZStr,
     log: &mut Log,
     source: &Source,
@@ -1274,7 +1336,7 @@ pub fn load_npmrc(
 
     if let Some(query) = out.as_property(b"registry") {
         if let Some(str_) = query.expr.as_utf8_string_literal() {
-            let mut p = bun_schema::api::npm_registry::Parser {
+            let mut p = bun_api::npm_registry::Parser {
                 log,
                 source,
             };
@@ -1301,7 +1363,7 @@ pub fn load_npmrc(
 
     if let Some(query) = out.as_property(b"ca") {
         if let Some(str_) = query.expr.as_utf8_string_literal() {
-            install.ca = Some(bun_schema::api::Ca::Str(Box::<[u8]>::from(str_)));
+            install.ca = Some(bun_api::Ca::Str(Box::<[u8]>::from(str_)));
         } else if query.expr.is_array() {
             let arr = query.expr.data.e_array();
             let mut list: Vec<Box<[u8]>> = Vec::with_capacity(arr.items.len());
@@ -1310,7 +1372,7 @@ pub fn load_npmrc(
                     list.push(s);
                 }
             }
-            install.ca = Some(bun_schema::api::Ca::List(list.into_boxed_slice()));
+            install.ca = Some(bun_api::Ca::List(list.into_boxed_slice()));
         }
     }
 
@@ -1322,7 +1384,7 @@ pub fn load_npmrc(
 
     if let Some(omit) = out.as_property(b"omit") {
         match &omit.expr.data {
-            js_ast::ExprData::EString(str_) => {
+            ExprData::EString(str_) => {
                 if str_.eql_comptime(b"dev") {
                     install.save_dev = Some(false);
                 } else if str_.eql_comptime(b"peer") {
@@ -1331,9 +1393,9 @@ pub fn load_npmrc(
                     install.save_optional = Some(false);
                 }
             }
-            js_ast::ExprData::EArray(arr) => {
+            ExprData::EArray(arr) => {
                 for item in arr.items.slice() {
-                    if let js_ast::ExprData::EString(str_) = &item.data {
+                    if let ExprData::EString(str_) = &item.data {
                         if str_.eql_comptime(b"dev") {
                             install.save_dev = Some(false);
                         } else if str_.eql_comptime(b"peer") {
@@ -1350,7 +1412,7 @@ pub fn load_npmrc(
 
     if let Some(omit) = out.as_property(b"include") {
         match &omit.expr.data {
-            js_ast::ExprData::EString(str_) => {
+            ExprData::EString(str_) => {
                 if str_.eql_comptime(b"dev") {
                     install.save_dev = Some(true);
                 } else if str_.eql_comptime(b"peer") {
@@ -1359,9 +1421,9 @@ pub fn load_npmrc(
                     install.save_optional = Some(true);
                 }
             }
-            js_ast::ExprData::EArray(arr) => {
+            ExprData::EArray(arr) => {
                 for item in arr.items.slice() {
-                    if let js_ast::ExprData::EString(str_) = &item.data {
+                    if let ExprData::EString(str_) = &item.data {
                         if str_.eql_comptime(b"dev") {
                             install.save_dev = Some(true);
                         } else if str_.eql_comptime(b"peer") {
@@ -1397,11 +1459,9 @@ pub fn load_npmrc(
     if let Some(install_strategy_expr) = out.get(b"install-strategy") {
         if let Some(install_strategy_str) = install_strategy_expr.as_string(bump) {
             if install_strategy_str == b"hoisted" {
-                install.node_linker =
-                    Some(bun_install_types::NodeLinker::options::NodeLinker::Hoisted);
+                install.node_linker = Some(NodeLinker::Hoisted);
             } else if install_strategy_str == b"linked" {
-                install.node_linker =
-                    Some(bun_install_types::NodeLinker::options::NodeLinker::Isolated);
+                install.node_linker = Some(NodeLinker::Isolated);
             } else if install_strategy_str == b"nested" {
                 // TODO
             } else if install_strategy_str == b"shallow" {
@@ -1420,8 +1480,8 @@ pub fn load_npmrc(
     }
 
     if let Some(public_hoist_pattern_expr) = out.get(b"public-hoist-pattern") {
-        // TODO(b0): PnpmMatcher arrives from move-in (was bun_install → install_types)
-        install.public_hoist_pattern = match bun_install_types::PnpmMatcher::from_expr(
+        // TODO(b2-blocked): bun_install_types::NodeLinker::PnpmMatcher::from_expr
+        install.public_hoist_pattern = match bun_install_types::NodeLinker::PnpmMatcher::from_expr(
             public_hoist_pattern_expr,
             log,
             source,
@@ -1437,8 +1497,8 @@ pub fn load_npmrc(
     }
 
     if let Some(hoist_pattern_expr) = out.get(b"hoist-pattern") {
-        // TODO(b0): PnpmMatcher arrives from move-in (was bun_install → install_types)
-        install.hoist_pattern = match bun_install_types::PnpmMatcher::from_expr(
+        // TODO(b2-blocked): bun_install_types::NodeLinker::PnpmMatcher::from_expr
+        install.hoist_pattern = match bun_install_types::NodeLinker::PnpmMatcher::from_expr(
             hoist_pattern_expr,
             log,
             source,
@@ -1519,8 +1579,7 @@ pub fn load_npmrc(
             if let Some(dr) = &install.default_registry {
                 break 'brk URL::parse(&dr.url);
             }
-            // TODO(b0): DEFAULT_URL arrives from move-in (was bun_install::npm::Registry → install_types)
-            URL::parse(bun_install_types::npm::Registry::DEFAULT_URL)
+            URL::parse(bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL)
         };
 
         // I don't like having to do this but we'll need a mapping of scope -> bun.URL
@@ -1575,7 +1634,7 @@ pub fn load_npmrc(
                 match conf_item.optname {
                     ConfigOpt::Certfile | ConfigOpt::Keyfile => {
                         log.add_warning_fmt(
-                            source,
+                            Some(source),
                             iter.config.properties.at(iter.prop_idx - 1).key.as_ref().unwrap().loc,
                             format_args!(
                                 "The following .npmrc registry option was not applied:\n\n  <b>{}<r>\n\nBecause we currently don't support the <b>{}<r> option.",
@@ -1610,8 +1669,9 @@ pub fn load_npmrc(
                         password: Box::default(),
                         token: Box::default(),
                         username: Box::default(),
-                        // TODO(b0): DEFAULT_URL arrives from move-in (was bun_install::npm::Registry → install_types)
-                        url: Box::<[u8]>::from(bun_install_types::npm::Registry::DEFAULT_URL),
+                        url: Box::<[u8]>::from(
+                            bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL,
+                        ),
                         email: Box::default(),
                     });
                     install.default_registry.as_mut().unwrap()
@@ -1718,7 +1778,7 @@ fn handle_auth(
     if conf_item.value.is_empty() {
         log.add_error_opts(
             "invalid _auth value, expected base64 encoded \"<username>:<password>\", received an empty string",
-            logger::AddErrorOpts {
+            logger::AddErrorOptions {
                 source: Some(source),
                 loc: conf_item.loc,
                 redact_sensitive_information: true,
@@ -1733,7 +1793,7 @@ fn handle_auth(
     if !result.is_successful() {
         log.add_error_opts(
             "invalid _auth value, expected valid base64",
-            logger::AddErrorOpts {
+            logger::AddErrorOptions {
                 source: Some(source),
                 loc: conf_item.loc,
                 redact_sensitive_information: true,
@@ -1746,7 +1806,7 @@ fn handle_auth(
     let Some(colon_idx) = username_password.iter().position(|&b| b == b':') else {
         log.add_error_opts(
             "invalid _auth value, expected base64 encoded \"<username>:<password>\"",
-            logger::AddErrorOpts {
+            logger::AddErrorOptions {
                 source: Some(source),
                 loc: conf_item.loc,
                 redact_sensitive_information: true,
@@ -1759,7 +1819,7 @@ fn handle_auth(
     if colon_idx + 1 >= username_password.len() {
         log.add_error_opts(
             "invalid _auth value, expected base64 encoded \"<username>:<password>\"",
-            logger::AddErrorOpts {
+            logger::AddErrorOptions {
                 source: Some(source),
                 loc: conf_item.loc,
                 redact_sensitive_information: true,
@@ -1781,5 +1841,5 @@ fn handle_auth(
 //   source:     src/ini/ini.zig (1357 lines)
 //   confidence: medium
 //   todos:      6
-//   notes:      prepare_str return-type-switch wrapped in PrepareResult enum; Parser arena vs &mut self borrowck needs Phase B reshaping; ConfigItem fields boxed (Zig dual borrowed/owned)
+//   notes:      B-2: Options/IniOption/ConfigOpt/ConfigItem/ScopeError/NODE_LINKER_MAP/byte-helpers compile; Parser+iterators+load_npmrc re-gated on bun_js_parser AST surface and bun_api schema types
 // ──────────────────────────────────────────────────────────────────────────

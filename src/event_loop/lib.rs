@@ -9,64 +9,24 @@ pub mod ConcurrentTask;
 pub mod EventLoopTimer;
 
 // ────────────────────────────────────────────────────────────────────────────
-// B-1 gate-and-stub: the Phase-A draft bodies below depend on lower-tier
-// symbols that are themselves still gated or absent (bun_uws crate,
-// bun_sys::windows::libuv, bun_core::Timespec, bun_core::Output::DescriptorType,
-// bun_collections::LinearFifo, bun_aio::file_poll::Store methods,
-// bun_dotenv::Loader::init/instance). Preserve the drafts behind cfg(any())
-// and expose a minimal stub surface so dependents can name the types.
-// Un-gating happens in B-2 once the lower tiers are real.
+// B-2 un-gated: AnyEventLoop / SpawnSyncEventLoop / MiniEventLoop compile.
+// Function bodies that touch still-gated lower-tier surface (bun_uws::Loop
+// methods, bun_core::Timespec, bun_core::Output::DescriptorType,
+// bun_dotenv::Map::create_null_delimited_env_map, bun_aio EventLoopCtx
+// adapter) are individually re-gated with `// TODO(b2-blocked):` markers.
 // ────────────────────────────────────────────────────────────────────────────
 
-#[cfg(any())]
-#[path = "AnyEventLoop.rs"]
-pub mod any_event_loop_draft;
-#[cfg(any())]
-#[path = "SpawnSyncEventLoop.rs"]
-pub mod spawn_sync_event_loop_draft;
-#[cfg(any())]
 #[path = "MiniEventLoop.rs"]
-pub mod mini_event_loop_draft;
+pub mod MiniEventLoop;
+#[path = "AnyEventLoop.rs"]
+pub mod AnyEventLoop;
+#[path = "SpawnSyncEventLoop.rs"]
+pub mod SpawnSyncEventLoop;
 
-// ─── stub surface ───────────────────────────────────────────────────────────
+// ─── public surface ─────────────────────────────────────────────────────────
 
 pub use AnyTask::JsResult;
 pub use ConcurrentTask::{Task, TaskTag, task_tag};
 
-/// Stub `MiniEventLoop` module — real one in MiniEventLoop.rs (gated).
-pub mod MiniEventLoop {
-    /// TODO(b1): real impl in MiniEventLoop.rs.
-    pub struct MiniEventLoop;
-    pub type Task = crate::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
-    impl MiniEventLoop {
-        pub fn init_global(
-            _env: *mut (), /* bun_dotenv::Loader */
-            _console: *mut (),
-        ) -> &'static mut MiniEventLoop {
-            todo!("B-2: MiniEventLoop::init_global")
-        }
-    }
-}
-
-/// Stub `AnyEventLoop` module — real one in AnyEventLoop.rs (gated).
-pub mod AnyEventLoop {
-    /// TODO(b1): real impl in AnyEventLoop.rs (vtable-based union over
-    /// jsc::EventLoop / MiniEventLoop / SpawnSyncEventLoop).
-    pub struct AnyEventLoop;
-    /// TODO(b1): tagged-ptr handle wrapping AnyEventLoop variants.
-    #[derive(Copy, Clone)]
-    pub struct EventLoopHandle(pub *mut ());
-    /// TODO(b1): enum { js, mini } discriminant for EventLoopHandle.
-    #[derive(Copy, Clone, Eq, PartialEq)]
-    pub enum EventLoopKind {
-        Js,
-        Mini,
-    }
-}
-pub use AnyEventLoop::{EventLoopHandle, EventLoopKind};
-
-/// Stub `SpawnSyncEventLoop` module — real one in SpawnSyncEventLoop.rs (gated).
-pub mod SpawnSyncEventLoop {
-    /// TODO(b1): real impl in SpawnSyncEventLoop.rs.
-    pub struct SpawnSyncEventLoop;
-}
+pub use AnyEventLoop::{EventLoopHandle, EventLoopTask, EventLoopTaskPtr, JsEventLoopVTable};
+pub use MiniEventLoop::{EventLoopKind, PlatformEventLoop};

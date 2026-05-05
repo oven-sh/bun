@@ -2,87 +2,30 @@
 //!
 //! Port of `src/patch/patch.zig`.
 
-#![allow(unused, dead_code, non_snake_case)]
+#![allow(unused, dead_code, non_snake_case, non_camel_case_types, non_upper_case_globals)]
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-1 stub surface — Phase-A draft body is gated below until lower-tier
-// crates (bun_sys, bun_paths, bun_str, bun_spawn, bun_event_loop, bun_output,
-// bun_collections::IntegerBitSet, bun_core::env_var) expose the symbols it
-// needs. Un-gating happens in B-2.
+// B-2 un-gated. Shadow stubs removed; real defs re-exported from
+// `phase_a_draft` below.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Opaque stub. Real definition lives in the gated `phase_a_draft` module.
-pub struct PatchFile<'a>(core::marker::PhantomData<&'a [u8]>);
-/// Opaque stub.
-pub struct PatchFilePart<'a>(core::marker::PhantomData<&'a [u8]>);
-/// Opaque stub.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct ParseErr;
+pub use phase_a_draft::*;
 
-pub fn parse_patch_file(_file: &[u8]) -> Result<PatchFile<'_>, ParseErr> {
-    todo!("b1-stub: parse_patch_file")
-}
-
-// TODO(b1): bun_event_loop::AnyEventLoop missing (crate gated out — pulls broken bun_aio).
-// TODO(b1): bun_spawn::sync::{Options,Result,Stdio} missing.
-pub fn spawn_opts(
-    _old_folder: &[u8],
-    _new_folder: &[u8],
-    _cwd: &[u8],
-    _git: &[u8],
-    _loop: *mut core::ffi::c_void,
-) -> () {
-    todo!("b1-stub: spawn_opts")
-}
-
-pub fn diff_post_process(
-    _result: *mut core::ffi::c_void,
-    _old_folder: &[u8],
-    _new_folder: &[u8],
-) -> Result<(), ()> {
-    todo!("b1-stub: diff_post_process")
-}
-
-pub fn git_diff_preprocess_paths<const SENTINEL: bool>(
-    _old_folder: &[u8],
-    _new_folder: &[u8],
-    _is_windows: bool,
-) -> [&'static [u8]; 2] {
-    todo!("b1-stub: git_diff_preprocess_paths")
-}
-
-pub fn git_diff_internal(
-    _old_folder: &[u8],
-    _new_folder: &[u8],
-) -> Result<(), ()> {
-    todo!("b1-stub: git_diff_internal")
-}
-
-pub fn json_fmt<'a>(_pf: &'a PatchFile<'a>) -> impl core::fmt::Display + 'a {
-    struct Stub;
-    impl core::fmt::Display for Stub {
-        fn fmt(&self, _: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            todo!("b1-stub: json_fmt")
-        }
-    }
-    Stub
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Phase-A draft (preserved verbatim, gated off until B-2).
-// ──────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
 mod phase_a_draft {
 
 use core::mem;
 
-use bun_collections::IntegerBitSet;
-use bun_core::Output;
-use bun_paths::{self as paths, PathBuffer};
-use bun_str::{strings, ZStr};
-use bun_sys::{self as sys, Fd};
+use bun_collections::bit_set::ArrayBitSet;
+use bun_core::{ZBox, ZStr};
+use bun_paths::{self as paths, platform, PathBuffer};
+use bun_string::{strings, PathString};
+use bun_sys::{self as sys, Fd, FdExt};
 
-bun_output::declare_scope!(patch, visible);
+bun_core::declare_scope!(Patch, visible);
+
+/// 256-bit set keyed by byte value. `IntegerBitSet<256>` overflows the single-
+/// `usize` mask; `ArrayBitSet<256, 4>` is the >64-bit form per bit_set.rs note.
+type ByteBitSet = ArrayBitSet<256, 4>;
 
 const WHITESPACE: &[u8] = b" \t\n\r";
 
@@ -128,6 +71,7 @@ impl ApplyState {
         Self { pathbuf: PathBuffer::uninit(), patch_dir_abs_path: None }
     }
 
+    #[cfg(any())]
     fn patch_dir_abs_path(&mut self, fd: Fd) -> sys::Result<&ZStr> {
         if let Some(len) = self.patch_dir_abs_path {
             // SAFETY: pathbuf[len] == 0 was written below on a previous call.
@@ -143,6 +87,12 @@ impl ApplyState {
             sys::Result::Err(e) => sys::Result::Err(e.with_fd(fd)),
         }
     }
+    // TODO(b2-blocked): bun_sys::get_fd_path
+    #[cfg(not(any()))]
+    fn patch_dir_abs_path(&mut self, fd: Fd) -> sys::Result<&ZStr> {
+        let _ = fd;
+        sys::Result::Err(sys::Error::todo())
+    }
 }
 
 impl<'a> PatchFile<'a> {
@@ -153,29 +103,29 @@ impl<'a> PatchFile<'a> {
         for part in &self.parts {
             match part {
                 PatchFilePart::FileDeletion(file_deletion) => {
-                    let pathz = ZStr::from_bytes(file_deletion.path);
+                    let pathz = ZBox::from_vec_with_nul(file_deletion.path.to_vec());
 
-                    if let sys::Result::Err(e) = sys::unlinkat(patch_dir, &pathz) {
+                    if let sys::Result::Err(e) = sys::unlinkat(patch_dir, &pathz, 0) {
                         return Some(e.without_path());
                     }
                 }
                 PatchFilePart::FileRename(file_rename) => {
-                    let from_path = ZStr::from_bytes(file_rename.from_path);
-                    let to_path = ZStr::from_bytes(file_rename.to_path);
+                    let from_path = ZBox::from_vec_with_nul(file_rename.from_path.to_vec());
+                    let to_path = ZBox::from_vec_with_nul(file_rename.to_path.to_vec());
 
-                    if let Some(todir) = paths::dirname(to_path.as_bytes(), paths::Style::Auto) {
+                    let todir = paths::dirname(to_path.as_bytes());
+                    if !todir.is_empty() {
                         let abs_patch_dir = match state.patch_dir_abs_path(patch_dir) {
                             sys::Result::Ok(p) => p,
                             sys::Result::Err(e) => return Some(e.without_path()),
                         };
-                        let path_to_make = paths::join_z(
+                        let path_to_make = paths::resolve_path::join_z::<platform::Auto>(
                             &[abs_patch_dir.as_bytes(), todir],
-                            paths::Style::Auto,
                         );
                         // CYCLEBREAK(b0): was bun_runtime::node::fs::NodeFs::mkdir_recursive — moved down to bun_sys (T1).
-                        // Move-in pass adds `pub fn mkdir_recursive(path: &[u8], mode: sys::Mode) -> sys::Result<()>` to bun_sys.
+                        // TODO(b2-blocked): bun_sys::mkdir_recursive — using mkdir_recursive_at (drops mode arg).
                         if let sys::Result::Err(e) =
-                            sys::mkdir_recursive(path_to_make.as_bytes(), 0o755)
+                            sys::mkdir_recursive_at(Fd::cwd(), path_to_make.as_bytes())
                         {
                             return Some(e.without_path());
                         }
@@ -188,16 +138,16 @@ impl<'a> PatchFile<'a> {
                     }
                 }
                 PatchFilePart::FileCreation(file_creation) => {
-                    let filepath_z = ZStr::from_bytes(file_creation.path);
-                    let filepath = bun_str::PathString::init(filepath_z.as_bytes());
-                    let filedir = paths::dirname(filepath.slice(), paths::Style::Auto)
-                        .unwrap_or(b"");
+                    let filepath_z = ZBox::from_vec_with_nul(file_creation.path.to_vec());
+                    let filepath = PathString::init(filepath_z.as_bytes());
+                    let filedir = paths::dirname(filepath.slice());
                     let mode = file_creation.mode;
 
                     if !filedir.is_empty() {
                         // CYCLEBREAK(b0): was bun_runtime::node::fs::NodeFs::mkdir_recursive — moved down to bun_sys (T1).
+                        // TODO(b2-blocked): bun_sys::mkdir_recursive — using mkdir_recursive_at (drops mode arg).
                         if let sys::Result::Err(e) =
-                            sys::mkdir_recursive(filedir, u32::try_from(mode as u32).unwrap())
+                            sys::mkdir_recursive_at(patch_dir, filedir)
                         {
                             return Some(e.without_path());
                         }
@@ -265,7 +215,7 @@ impl<'a> PatchFile<'a> {
                 }
                 PatchFilePart::FileModeChange(file_mode_change) => {
                     let newmode = file_mode_change.new_mode;
-                    let filepath = ZStr::from_bytes(file_mode_change.path);
+                    let filepath = ZBox::from_vec_with_nul(file_mode_change.path.to_vec());
                     #[cfg(unix)]
                     {
                         if let sys::Result::Err(e) =
@@ -282,10 +232,9 @@ impl<'a> PatchFile<'a> {
                             sys::Result::Err(e) => return Some(e.without_path()),
                         };
                         let mut buf = PathBuffer::uninit();
-                        let joined_absfilepath = paths::join_z_buf(
-                            &mut buf,
+                        let joined_absfilepath = paths::resolve_path::join_z_buf::<platform::Auto>(
+                            &mut buf[..],
                             &[absfilepath.as_bytes(), filepath.as_bytes()],
-                            paths::Style::Auto,
                         );
                         let fd = match sys::open(&joined_absfilepath, sys::O::RDWR, 0) {
                             sys::Result::Err(e) => return Some(e.without_path()),
@@ -318,7 +267,7 @@ fn apply_patch(
     state: &mut ApplyState,
 ) -> sys::Result<()> {
     // PERF(port): was arena.allocator().dupeZ — profile in Phase B
-    let file_path = ZStr::from_bytes(patch.path);
+    let file_path = ZBox::from_vec_with_nul(patch.path.to_vec());
 
     // Need to get the mode of the original file
     // And also get the size to read file into memory
@@ -329,11 +278,11 @@ fn apply_patch(
         let r = {
             let p = match state.patch_dir_abs_path(patch_dir) {
                 sys::Result::Ok(p) => {
-                    paths::join_z(&[p.as_bytes(), file_path.as_bytes()], paths::Style::Auto)
+                    paths::resolve_path::join_z::<platform::Auto>(&[p.as_bytes(), file_path.as_bytes()])
                 }
                 sys::Result::Err(e) => return sys::Result::Err(e),
             };
-            sys::stat(&p)
+            sys::stat(p)
         };
         match r {
             sys::Result::Err(e) => {
@@ -351,14 +300,14 @@ fn apply_patch(
     // But if the file size is small, like less than a single page, it's probably ok
     // to use the arena
     // PERF(port): was arena vs default_allocator selection — profile in Phase B
-    let _use_arena: bool = stat.size as usize <= PAGE_SIZE;
+    let _use_arena: bool = stat.st_size as usize <= PAGE_SIZE;
     // TODO(port): Zig used `patch_dir.stdDir().readFileAlloc(...)` (std.fs). Replace with bun_sys::File::read_from.
-    let filebuf: Vec<u8> = match sys::File::read_from(patch_dir, &file_path, 1024 * 1024 * 1024 * 4)
+    let filebuf: Vec<u8> = match read_file_alloc(patch_dir, &file_path, 1024 * 1024 * 1024 * 4)
     {
         Ok(b) => b,
         Err(_) => {
             return sys::Result::Err(
-                sys::Error::from_code(sys::Errno::INVAL, sys::Syscall::Read)
+                sys::Error::from_code(sys::E::EINVAL, sys::Tag::read)
                     .with_path(file_path.as_bytes()),
             )
         }
@@ -415,7 +364,7 @@ fn apply_patch(
         // Validate hunk start position is within bounds
         if line_cursor > lines.len() {
             return sys::Result::Err(
-                sys::Error::from_code(sys::Errno::INVAL, sys::Syscall::Fstatat)
+                sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
                     .with_path(file_path.as_bytes()),
             );
         }
@@ -429,7 +378,7 @@ fn apply_patch(
                     // Validate context lines exist
                     if line_cursor + part.lines.len() > lines.len() {
                         return sys::Result::Err(
-                            sys::Error::from_code(sys::Errno::INVAL, sys::Syscall::Fstatat)
+                            sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
                                 .with_path(file_path.as_bytes()),
                         );
                     }
@@ -440,7 +389,7 @@ fn apply_patch(
                     // Validate insertion position is within bounds
                     if line_cursor > lines.len() {
                         return sys::Result::Err(
-                            sys::Error::from_code(sys::Errno::INVAL, sys::Syscall::Fstatat)
+                            sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
                                 .with_path(file_path.as_bytes()),
                         );
                     }
@@ -461,7 +410,7 @@ fn apply_patch(
                     // Validate deletion range is within bounds
                     if line_cursor + part.lines.len() > lines.len() {
                         return sys::Result::Err(
-                            sys::Error::from_code(sys::Errno::INVAL, sys::Syscall::Fstatat)
+                            sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
                                 .with_path(file_path.as_bytes()),
                         );
                     }
@@ -480,7 +429,7 @@ fn apply_patch(
         patch_dir,
         &file_path,
         sys::O::CREAT | sys::O::WRONLY | sys::O::TRUNC,
-        u32::try_from(stat.mode).unwrap(),
+        sys::Mode::try_from(stat.st_mode).unwrap(),
     ) {
         sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),
         sys::Result::Ok(fd) => fd,
@@ -498,6 +447,17 @@ fn apply_patch(
     }
 
     sys::Result::Ok(())
+}
+
+#[cfg(any())]
+fn read_file_alloc(dir: Fd, path: &ZStr, max: usize) -> sys::Result<Vec<u8>> {
+    sys::File::read_from(dir, path, max)
+}
+// TODO(b2-blocked): bun_sys::File::read_from
+#[cfg(not(any()))]
+fn read_file_alloc(dir: Fd, path: &ZStr, max: usize) -> sys::Result<Vec<u8>> {
+    let _ = (dir, path, max);
+    sys::Result::Err(sys::Error::todo())
 }
 
 /// Port of `std.mem.join` for byte slices.
@@ -759,7 +719,7 @@ pub enum ParseErr {
 
 impl From<ParseErr> for bun_core::Error {
     fn from(e: ParseErr) -> Self {
-        bun_core::Error::from_static_str(<&'static str>::from(e))
+        bun_core::err!(from e)
     }
 }
 
@@ -1104,12 +1064,10 @@ impl<'a> PatchLinesParser<'a> {
                         continue;
                     }
                     // parsing hunks
-                    let hunk_line_type: HunkLineType = 'brk: {
-                        if line.is_empty() {
-                            // treat blank lines as context
-                            break 'brk HunkLineType::Context;
-                        }
-
+                    let hunk_line_type: HunkLineType = if line.is_empty() {
+                        // treat blank lines as context
+                        HunkLineType::Context
+                    } else {
                         let maybe = match line[0] {
                             b'@' => Some(HunkLineType::Header),
                             b'-' => Some(HunkLineType::Deletion),
@@ -1224,8 +1182,8 @@ struct HunkHeaderLineImpl<'a> {
 
 fn parse_hunk_header_line_impl(text_: &[u8]) -> Result<HunkHeaderLineImpl<'_>, ParseErr> {
     let mut text = text_;
-    let digits: IntegerBitSet<256> = {
-        let mut set = IntegerBitSet::<256>::init_empty();
+    let digits: ByteBitSet = {
+        let mut set = ByteBitSet::init_empty();
         let mut c = b'0';
         while c <= b'9' {
             set.set(c as usize);
@@ -1382,8 +1340,10 @@ fn parse_diff_hashes(line: &[u8]) -> Option<(&[u8], &[u8])> {
 
     let delimiter_start = strings::index_of(line, b"..")? as usize;
 
-    let valid_chars: IntegerBitSet<256> = const {
-        let mut bitset = IntegerBitSet::<256>::init_empty();
+    // PERF(port): was comptime IntegerBitSet — ArrayBitSet::set is non-const,
+    // so this builds at runtime. Profile in Phase B.
+    let valid_chars: ByteBitSet = {
+        let mut bitset = ByteBitSet::init_empty();
         // TODO: the regex uses \w which is [a-zA-Z0-9_]
         let mut c = b'0';
         while c <= b'9' {
@@ -1474,8 +1434,18 @@ fn parse_diff_line_paths(line: &[u8]) -> Option<(&[u8], &[u8])> {
     }
 
     let a_path = &rest[a_path_start_index..a_path_end_index];
-    let b_path = strings::trim_right(&rest[b_path_start_index..], b" \n\r\t");
+    let b_path = trim_end_any(&rest[b_path_start_index..], b" \n\r\t");
     Some((a_path, b_path))
+}
+
+// TODO(b2-blocked): bun_string::strings::trim_right — local stand-in until
+// `immutable.rs` exports it. (std.mem.trimRight)
+fn trim_end_any<'a>(slice: &'a [u8], values_to_strip: &[u8]) -> &'a [u8] {
+    let mut end = slice.len();
+    while end > 0 && values_to_strip.contains(&slice[end - 1]) {
+        end -= 1;
+    }
+    &slice[..end]
 }
 
 // `pub const TestingAPIs = @import("../patch_jsc/testing.zig").TestingAPIs;`
@@ -1485,6 +1455,9 @@ fn parse_diff_line_paths(line: &[u8]) -> Option<(&[u8], &[u8])> {
 // spawnOpts / diffPostProcess / gitDiff*
 // ──────────────────────────────────────────────────────────────────────────
 
+// TODO(b2-blocked): bun_spawn::sync::Options
+// TODO(b2-blocked): bun_event_loop::AnyEventLoop
+#[cfg(any())]
 pub fn spawn_opts(
     old_folder: &[u8],
     new_folder: &[u8],
@@ -1559,11 +1532,13 @@ pub fn spawn_opts(
     }
 }
 
+// TODO(b2-blocked): bun_spawn::sync::Result
+#[cfg(any())]
 pub fn diff_post_process(
     result: &mut bun_spawn::sync::Result,
     old_folder: &[u8],
     new_folder: &[u8],
-) -> Result<bun_sys::node::Maybe<Vec<u8>, Vec<u8>>, bun_core::Error> {
+) -> Result<core::result::Result<Vec<u8>, Vec<u8>>, bun_core::Error> {
     let mut stdout: Vec<u8> = Vec::new();
     let mut stderr: Vec<u8> = Vec::new();
 
@@ -1574,12 +1549,12 @@ pub fn diff_post_process(
     // the unreturned vec is dropped automatically.
 
     if !stderr.is_empty() {
-        return Ok(bun_sys::node::Maybe::Err(stderr));
+        return Ok(Err(stderr));
     }
 
-    bun_output::scoped_log!(patch, "Before postprocess: {}\n", bstr::BStr::new(&stdout));
+    bun_core::scoped_log!(Patch, "Before postprocess: {}\n", bstr::BStr::new(&stdout));
     git_diff_postprocess(&mut stdout, old_folder, new_folder)?;
-    Ok(bun_sys::node::Maybe::Ok(stdout))
+    Ok(Ok(stdout))
 }
 
 // TODO(port): Zig signature returns `[2]if (sentinel) [:0]const u8 else []const u8` —
@@ -1643,7 +1618,7 @@ pub fn git_diff_preprocess_paths<const SENTINEL: bool>(
 pub fn git_diff_internal(
     old_folder_: &[u8],
     new_folder_: &[u8],
-) -> Result<bun_sys::node::Maybe<Vec<u8>, Vec<u8>>, bun_core::Error> {
+) -> Result<core::result::Result<Vec<u8>, Vec<u8>>, bun_core::Error> {
     let paths = git_diff_preprocess_paths::<false>(old_folder_, new_folder_);
     let old_folder = &paths[0][..];
     let new_folder = &paths[1][..];
@@ -1702,21 +1677,21 @@ fn git_diff_postprocess(
     let mut new_buf = PathBuffer::uninit();
 
     let (a_old_folder_slash, b_new_folder_slash) = {
-        let ob = old_buf.as_mut_slice();
+        let ob = &mut old_buf[..];
         ob[0] = b'a';
         ob[1] = b'/';
         ob[2..2 + old_folder_trimmed.len()].copy_from_slice(old_folder_trimmed);
         ob[2 + old_folder_trimmed.len()] = b'/';
 
-        let nb = new_buf.as_mut_slice();
+        let nb = &mut new_buf[..];
         nb[0] = b'b';
         nb[1] = b'/';
         nb[2..2 + new_folder_trimmed.len()].copy_from_slice(new_folder_trimmed);
         nb[2 + new_folder_trimmed.len()] = b'/';
 
         (
-            &old_buf.as_slice()[0..2 + old_folder_trimmed.len() + 1],
-            &new_buf.as_slice()[0..2 + new_folder_trimmed.len() + 1],
+            &old_buf[0..2 + old_folder_trimmed.len() + 1],
+            &new_buf[0..2 + new_folder_trimmed.len() + 1],
         )
     };
 

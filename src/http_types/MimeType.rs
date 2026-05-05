@@ -1,15 +1,30 @@
 use std::borrow::Cow;
 
-use bun_options_types::Loader; // TYPE_ONLY: was bun_bundler::options::Loader (T5); moves to options_types (T3) per CYCLEBREAK
-use bun_collections::StringHashMap;
-use bun_str::strings;
+use bun_string::strings;
 
+// TODO(b2-blocked): bun_options_types::Loader
+// `options_types` is same-tier (T3); not added as a dep to avoid an intra-tier
+// edge. `by_loader` (the only consumer) is gated below.
+#[cfg(any())]
+use bun_options_types::Loader; // TYPE_ONLY: was bun_bundler::options::Loader (T5); moves to options_types (T3) per CYCLEBREAK
+
+// ───────────────────────────────────────────────────────────────────────────
+// `Table` (= generated `mime_type_list_enum::MimeTypeList`) is not yet emitted
+// by codegen for Rust — `mime_type_list_enum.rs` is a stub. Every item below
+// that names `Table`/`t!` is individually `#[cfg(any())]`-gated so the rest of
+// the module (struct, Category, init, constants, by_name) compiles for real.
+// Track-A blocker: src/codegen/generate-compact-string-table.ts must emit Rust.
+// ───────────────────────────────────────────────────────────────────────────
+#[cfg(any())]
 pub use super::mime_type_list_enum::MimeTypeList as Table;
+#[cfg(any())]
+use bun_collections::StringHashMap;
 
 // TODO(port): `Table` variant names in Zig are raw MIME-type strings (e.g. `@"application/json"`),
 // which are not valid Rust identifiers. The generated `mime_type_list_enum.rs` must expose either
 // mangled variant names or a `const fn from_mime_literal(&'static str) -> Table`. Until then,
 // `t!("...")` is a placeholder that resolves to the corresponding `Table` value.
+#[cfg(any())]
 macro_rules! t {
     ($s:literal) => {
         Table::from_mime_literal($s)
@@ -24,13 +39,16 @@ pub struct MimeType {
     pub category: Category,
 }
 
+#[cfg(any())]
 pub type Map = StringHashMap<Table>;
 
+#[cfg(any())]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Compact {
     pub value: Table,
 }
 
+#[cfg(any())]
 impl Compact {
     pub fn from(value: Table) -> Compact {
         Compact { value }
@@ -90,6 +108,7 @@ impl Compact {
     }
 }
 
+#[cfg(any())]
 #[cold]
 pub fn create_hash_table() -> Result<Map, bun_alloc::AllocError> {
     let mut map = Map::default();
@@ -152,6 +171,7 @@ pub enum Category {
     Multipart,
 }
 
+#[cfg(any())]
 impl Category {
     pub fn from_table(entry: Table) -> Category {
         // TODO(port): see top-of-file note re: Table variant idents.
@@ -187,7 +207,9 @@ impl Category {
         }
         Category::init(entry.slice())
     }
+}
 
+impl Category {
     pub fn init(str: &[u8]) -> Category {
         if let Some(slash) = strings::index_of_char(str, b'/') {
             let category = &str[0..slash as usize];
@@ -355,7 +377,7 @@ impl MimeType {
 
             match category_.len() {
                 len if len == b"application".len() => {
-                    if strings::eql_ignore_len(category_, b"application") {
+                    if strings::eql_comptime_ignore_len(category_, b"application") {
                         if str == b"json" || str == b"geo+json" {
                             return JSON;
                         }
@@ -380,7 +402,7 @@ impl MimeType {
                     };
                 }
                 len if len == b"font".len() => {
-                    if strings::eql_ignore_len(category_, b"font") {
+                    if strings::eql_comptime_ignore_len(category_, b"font") {
                         if let Some(a) = allocated {
                             if dupe {
                                 *a = true;
@@ -392,7 +414,7 @@ impl MimeType {
                         };
                     }
 
-                    if strings::eql_ignore_len(category_, b"text") {
+                    if strings::eql_comptime_ignore_len(category_, b"text") {
                         if str == b"css" {
                             return CSS;
                         }
@@ -421,7 +443,7 @@ impl MimeType {
                     }
                 }
                 len if len == b"image".len() => {
-                    if strings::eql_ignore_len(category_, b"image") {
+                    if strings::eql_comptime_ignore_len(category_, b"image") {
                         if let Some(a) = allocated {
                             if dupe {
                                 *a = true;
@@ -433,7 +455,7 @@ impl MimeType {
                         };
                     }
 
-                    if strings::eql_ignore_len(category_, b"audio") {
+                    if strings::eql_comptime_ignore_len(category_, b"audio") {
                         if let Some(a) = allocated {
                             if dupe {
                                 *a = true;
@@ -445,7 +467,7 @@ impl MimeType {
                         };
                     }
 
-                    if strings::eql_ignore_len(category_, b"video") {
+                    if strings::eql_comptime_ignore_len(category_, b"video") {
                         if let Some(a) = allocated {
                             if dupe {
                                 *a = true;
@@ -486,6 +508,8 @@ impl MimeType {
 }
 
 // TODO: improve this
+// TODO(b2-blocked): bun_options_types::Loader (same-tier T3; see top-of-file note)
+#[cfg(any())]
 pub fn by_loader(loader: Loader, ext: &[u8]) -> MimeType {
     match loader {
         Loader::Tsx | Loader::Ts | Loader::Js | Loader::Jsx | Loader::Json => JAVASCRIPT,
@@ -499,14 +523,20 @@ pub fn by_extension(ext_without_leading_dot: &[u8]) -> MimeType {
 }
 
 pub fn by_extension_no_default(ext_without_leading_dot: &[u8]) -> Option<MimeType> {
-    if let Some(entry) = EXTENSIONS.get(ext_without_leading_dot) {
-        return Some(Compact::from(*entry).to_mime_type());
+    #[cfg(any())]
+    {
+        if let Some(entry) = EXTENSIONS.get(ext_without_leading_dot) {
+            return Some(Compact::from(*entry).to_mime_type());
+        }
+        return None;
     }
-
-    None
+    // TODO(b2-blocked): bun_http_types::mime_type_list_enum::MimeTypeList (codegen)
+    let _ = ext_without_leading_dot;
+    todo!("b2-blocked: EXTENSIONS table needs mime_type_list_enum codegen")
 }
 
 // this is partially auto-generated
+#[cfg(any())]
 pub use super::mime_type_list_enum::MimeTypeList::ALL as ALL;
 
 // TODO: do a comptime static hash map for this
@@ -518,6 +548,7 @@ pub fn by_name(name: &[u8]) -> MimeType {
 // TODO(port): phf_map! rejects duplicate keys at compile time. The Zig source contains
 // duplicate entries for "tsx", "yaml", "yml" (Zig ComptimeStringMap silently kept first).
 // Phase B must dedupe.
+#[cfg(any())]
 pub static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
     b"123" => t!("application/vnd.lotus-1-2-3"),
     b"1km" => t!("application/vnd.1000minds.decision-model+xml"),
@@ -1708,6 +1739,7 @@ pub static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
     b"zmm" => t!("application/vnd.handheld-entertainment+xml"),
 };
 
+#[cfg(any())]
 const IMAGES_HEADERS: &[(&[u8], Table)] = &[
     (&[0x42, 0x4d], t!("image/bmp")),
     (&[0xff, 0xd8, 0xff], t!("image/jpeg")),
@@ -1722,16 +1754,21 @@ pub fn sniff(bytes: &[u8]) -> Option<MimeType> {
         return None;
     }
 
-    // PERF(port): was `inline for` over heterogeneous-length tuples — profile in Phase B
-    for (header, table) in IMAGES_HEADERS {
-        if bytes.len() >= header.len() {
-            if &bytes[0..header.len()] == *header {
-                return Some(Compact::from(*table).to_mime_type());
+    #[cfg(any())]
+    {
+        // PERF(port): was `inline for` over heterogeneous-length tuples — profile in Phase B
+        for (header, table) in IMAGES_HEADERS {
+            if bytes.len() >= header.len() {
+                if &bytes[0..header.len()] == *header {
+                    return Some(Compact::from(*table).to_mime_type());
+                }
             }
         }
+        return None;
     }
-
-    None
+    // TODO(b2-blocked): bun_http_types::mime_type_list_enum::MimeTypeList (codegen)
+    let _ = bytes;
+    todo!("b2-blocked: IMAGES_HEADERS needs mime_type_list_enum codegen")
 }
 
 // ──────────────────────────────────────────────────────────────────────────

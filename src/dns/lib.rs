@@ -1,16 +1,14 @@
 #![allow(unused, clippy::all)]
 
 use core::ffi::c_int;
-#[cfg(any())]
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
-// TODO(b1): bun_str crate name → bun_string; gate until BunString surface stabilizes
-#[cfg(any())]
 use bun_string::String as BunString;
-// TODO(b1): bun_wyhash::Wyhash missing (only Wyhash11 exported)
-#[cfg(any())]
-use bun_wyhash::Wyhash;
+// Zig used `std.hash.Wyhash`; bun_wyhash exports `Wyhash11` (same iterative
+// init/update/final_ surface). Hash is in-memory dedupe only — algorithm
+// identity is not load-bearing.
+use bun_wyhash::Wyhash11 as Wyhash;
 
 // TODO(port): move to dns_sys / verify libc crate exposes these on all targets
 #[cfg(windows)]
@@ -44,7 +42,7 @@ impl GetAddrInfo {
         }
     }
 
-    // TODO(b1): bun_c_ares crate not in deps — gated
+    // TODO(b2-blocked): bun_c_ares::AddrInfoHints
     #[cfg(any())]
     pub fn to_cares(&self) -> bun_c_ares::AddrInfoHints {
         // SAFETY: all-zero is a valid AddrInfoHints (C POD struct)
@@ -59,22 +57,15 @@ impl GetAddrInfo {
     }
 
     pub fn hash(&self) -> u64 {
-        #[cfg(any())]
-        {
-            let mut hasher = Wyhash::init(0);
-            // TODO(port): Zig used asBytes(&port) ++ asBytes(&options) where Options is
-            // packed struct(u64). Rust Options is not bit-packed; verify hash stability
-            // is not load-bearing across process boundaries (it isn't — used for in-memory dedupe).
-            hasher.update(&self.port.to_ne_bytes());
-            hasher.update(&self.options.to_packed_bytes());
-            hasher.update(&self.name);
+        let mut hasher = Wyhash::init(0);
+        // TODO(port): Zig used asBytes(&port) ++ asBytes(&options) where Options is
+        // packed struct(u64). Rust Options is not bit-packed; verify hash stability
+        // is not load-bearing across process boundaries (it isn't — used for in-memory dedupe).
+        hasher.update(&self.port.to_ne_bytes());
+        hasher.update(&self.options.to_packed_bytes());
+        hasher.update(&self.name);
 
-            hasher.final_()
-        }
-        #[cfg(not(any()))]
-        {
-            todo!("b1: bun_wyhash::Wyhash")
-        }
+        hasher.final_()
     }
 }
 
@@ -322,7 +313,7 @@ pub enum BackendFromJsError {
 
 // TODO(port): std.net.Address — std::net is banned. Need a bun_sys (or bun_net)
 // SocketAddress wrapper over libc::sockaddr_storage with .in/.in6/.un views.
-// TODO(b1): bun_sys::net::Address missing — local opaque stub
+// TODO(b2-blocked): bun_sys::net::Address
 #[cfg(any())]
 pub type Address = bun_sys::net::Address;
 #[cfg(not(any()))]
@@ -376,6 +367,7 @@ impl GetAddrInfoResult {
     }
 
     pub fn from_addr_info(addrinfo: &libc::addrinfo) -> Option<GetAddrInfoResult> {
+        // TODO(b2-blocked): bun_sys::net::Address
         #[cfg(any())]
         {
             let sockaddr = addrinfo.ai_addr;
@@ -391,12 +383,14 @@ impl GetAddrInfoResult {
         }
         #[cfg(not(any()))]
         {
-            todo!("b1: Address::init_posix")
+            let _ = addrinfo;
+            todo!("b2-blocked: bun_sys::net::Address::init_posix")
         }
     }
 }
 
-// TODO(b1): bun_string::String surface (create_format/clone_latin1/empty) + Address methods — gated
+// TODO(b2-blocked): bun_sys::net::Address
+// TODO(b2-blocked): bun_string::String::create_format
 #[cfg(any())]
 pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
     match address.any().family() {
@@ -494,17 +488,10 @@ impl Order {
     }
 
     pub fn from_string_or_die(order: &[u8]) -> Order {
-        #[cfg(any())]
-        {
-            Self::from_string(order).unwrap_or_else(|| {
-                bun_core::pretty_errorln!("<r><red>error<r><d>:<r> Invalid DNS result order.");
-                bun_core::Global::exit(1)
-            })
-        }
-        #[cfg(not(any()))]
-        {
-            Self::from_string(order).unwrap_or_else(|| todo!("b1: bun_core::Global::exit"))
-        }
+        Self::from_string(order).unwrap_or_else(|| {
+            bun_core::pretty_errorln!("<r><red>error<r><d>:<r> Invalid DNS result order.");
+            bun_core::Global::exit(1)
+        })
     }
 }
 

@@ -56,59 +56,46 @@ impl URLPath {
 // we're allocating virtual memory here, so if we never use it, it won't be allocated
 // and even when they're, they're probably rarely going to be > 1024 chars long
 // so we can have a big and little one and almost always use the little one
+//
+// PORT NOTE: Zig uses two threadlocal fixed `[1024]u8`/`[16384]u8` buffers and
+// decodes in-place via `fixedBufferStream`. `bun_url::PercentEncoding` only
+// exposes a `Write`-bounded decoder whose trait is crate-private; the sole
+// externally-usable impl is `Vec<u8>`. Use a threadlocal `Vec<u8>` as the
+// scratch decode target instead — same lifetime contract (slices into it are
+// valid until the next `parse()` on this thread), one buffer instead of two.
+// PERF(port): was zero-alloc fixed buffers — profile in Phase B.
 thread_local! {
-    static TEMP_PATH_BUF: RefCell<[u8; 1024]> = const { RefCell::new([0u8; 1024]) };
-    static BIG_TEMP_PATH_BUF: RefCell<[u8; 16384]> = const { RefCell::new([0u8; 16384]) };
+    static DECODE_BUF: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
 }
 
 pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Error> {
-    // TODO(b1): body gated — PercentEncoding::decode_fault_tolerant signature
-    // mismatch (W: bun_io::Write bound + arg arity) vs Phase-A draft. Un-gate in B-2.
-    #[cfg(any())]
-    {
     // TODO(port): narrow error set
     let mut decoded_pathname: &[u8] = possibly_encoded_pathname_;
     let mut needs_redirect = false;
 
     if strings::index_of_char(decoded_pathname, b'%').is_some() {
-        // https://github.com/ziglang/zig/issues/14148
+        // Zig caps the in-place buffer at 16384; preserve that bound on input.
+        let capped = &possibly_encoded_pathname_[..possibly_encoded_pathname_.len().min(16384)];
+
         // TODO(port): lifetime — Zig returns slices into threadlocal storage from
-        // this function. Rust `thread_local!` cannot hand out borrows past `with()`.
-        // SAFETY: single-threaded per-thread scratch; the returned URLPath must not
-        // outlive the next call to `parse()` on this thread (same invariant as Zig).
-        let possibly_encoded_pathname: &mut [u8] = unsafe {
-            match decoded_pathname.len() {
-                0..=1024 => TEMP_PATH_BUF.with(|b| {
-                    core::slice::from_raw_parts_mut(b.borrow_mut().as_mut_ptr(), 1024)
-                }),
-                _ => BIG_TEMP_PATH_BUF.with(|b| {
-                    core::slice::from_raw_parts_mut(b.borrow_mut().as_mut_ptr(), 16384)
-                }),
-            }
-        };
-        let possibly_encoded_pathname = &mut possibly_encoded_pathname[0..possibly_encoded_pathname_
-            .len()
-            .min(possibly_encoded_pathname.len())];
-
-        possibly_encoded_pathname
-            .copy_from_slice(&possibly_encoded_pathname_[0..possibly_encoded_pathname.len()]);
-        let clone = &possibly_encoded_pathname[0..possibly_encoded_pathname.len()];
-
-        // TODO(port): std.io.fixedBufferStream(possibly_encoded_pathname).writer() —
-        // PercentEncoding::decode_fault_tolerant in Rust should take
-        // `&mut impl bun_io::Write`; passing the mutable slice directly here and
-        // relying on the returned byte count.
-        let n = PercentEncoding::decode_fault_tolerant(
-            possibly_encoded_pathname,
-            clone,
-            &mut needs_redirect,
-            true,
-        )?;
-        // PORT NOTE: reshaped for borrowck — re-slice from the buffer, not the &mut.
-        decoded_pathname = unsafe {
-            // SAFETY: same buffer as `possibly_encoded_pathname`, n <= len.
-            core::slice::from_raw_parts(possibly_encoded_pathname.as_ptr(), n)
-        };
+        // this function. Rust `thread_local!` cannot hand out borrows past
+        // `with_borrow_mut()`. We launder the Vec's data pointer into a raw slice
+        // with the same single-threaded scratch invariant as Zig: the returned
+        // URLPath must not outlive the next call to `parse()` on this thread.
+        let (ptr, n) = DECODE_BUF.with_borrow_mut(|buf| -> Result<(*const u8, usize), bun_core::Error> {
+            buf.clear();
+            buf.reserve(capped.len());
+            let n = PercentEncoding::decode_fault_tolerant::<_, true>(
+                buf,
+                capped,
+                Some(&mut needs_redirect),
+            )?;
+            Ok((buf.as_ptr(), n as usize))
+        })?;
+        // SAFETY: `ptr` points into the threadlocal `DECODE_BUF` which lives for
+        // the thread lifetime; `n <= buf.len()`; not reallocated until next
+        // `parse()` call. Same invariant the Zig threadlocal buffers carry.
+        decoded_pathname = unsafe { core::slice::from_raw_parts(ptr, n) };
     }
 
     let mut question_mark_i: i16 = -1;
@@ -196,7 +183,7 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
     unsafe fn extend(s: &[u8]) -> &'static [u8] {
         // SAFETY: caller upholds that `s` outlives all uses of the returned URLPath
         // (points into threadlocal scratch or the caller's input slice).
-        core::mem::transmute::<&[u8], &'static [u8]>(s)
+        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(s) }
     }
 
     // SAFETY: every slice passed to `extend` below borrows either the caller's
@@ -221,9 +208,6 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
             needs_redirect,
         }
     })
-    } // end #[cfg(any())]
-    let _ = possibly_encoded_pathname_;
-    todo!("b1-stub: URLPath::parse")
 }
 
 // ──────────────────────────────────────────────────────────────────────────

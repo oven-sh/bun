@@ -61,12 +61,11 @@ impl<T> HandleOom for Result<T, AllocError> {
 }
 
 // ── .error_set, isOomOnlyError == true → noreturn ────────────────────────
-// TODO(port): `!` as an associated type requires nightly `feature(never_type)`.
-// Phase B: either enable the feature crate-wide or substitute
-// `core::convert::Infallible` and have callers `match x {}`.
+// `!` as an associated type requires nightly; use `core::convert::Infallible`
+// (uninhabited) so callers can `match x {}`.
 impl HandleOom for AllocError {
-    type Output = !;
-    fn handle_oom(self) -> ! {
+    type Output = core::convert::Infallible;
+    fn handle_oom(self) -> core::convert::Infallible {
         crate::out_of_memory()
     }
 }
@@ -83,7 +82,7 @@ impl<T> HandleOom for Result<T, Error> {
     fn handle_oom(self) -> Result<T, Error> {
         match self {
             Ok(success) => Ok(success),
-            Err(err) if err == bun_core::err!("OutOfMemory") => crate::out_of_memory(),
+            Err(err) if err == Error::OUT_OF_MEMORY => crate::out_of_memory(),
             Err(other_error) => Err(other_error),
         }
     }
@@ -93,7 +92,7 @@ impl<T> HandleOom for Result<T, Error> {
 impl HandleOom for Error {
     type Output = Error;
     fn handle_oom(self) -> Error {
-        if self == bun_core::err!("OutOfMemory") {
+        if self == Error::OUT_OF_MEMORY {
             crate::out_of_memory()
         } else {
             self

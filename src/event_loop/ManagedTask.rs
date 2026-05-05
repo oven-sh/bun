@@ -14,7 +14,9 @@ pub struct ManagedTask {
 
 impl ManagedTask {
     pub fn task(this: *mut ManagedTask) -> Task {
-        Task::init(this)
+        // PORT NOTE: Zig `Task.init(this)` mapped variant type → tag at comptime.
+        // Per §Dispatch (tag+ptr), name the tag explicitly.
+        Task::new(crate::task_tag::ManagedTask, this.cast())
     }
 
     pub fn run(this: *mut ManagedTask) -> JsResult<()> {

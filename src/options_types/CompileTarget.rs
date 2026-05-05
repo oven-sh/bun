@@ -7,11 +7,11 @@
 use core::fmt;
 use std::io::Write as _;
 
-use bun_core::{env_var, fmt as bun_fmt, Environment, Global, Output};
-use bun_core::environment::{Architecture, OperatingSystem};
+use bun_core::{env_var, fmt as bun_fmt, Environment, Global};
+use bun_core::env::{Architecture, OperatingSystem};
 use bun_paths::{self as path, PathBuffer};
 use bun_semver::{SlicedString, Version};
-use bun_str::{strings, ZStr};
+use bun_string::{strings, MutableString, ZStr};
 use bun_sys::Fd;
 use core::ptr::null_mut;
 use core::sync::atomic::{AtomicPtr, Ordering};
@@ -28,12 +28,12 @@ pub struct HttpSyncDownloadVTable {
     /// Synchronous GET. Writes the body into `out` and returns the HTTP status
     /// code. `progress_node` is an erased `*mut bun_core::progress::Node` (the
     /// callee assigns it to `client.progress_node`).
-    pub get_sync: unsafe fn(
-        url: bun_url::URL,
-        http_proxy: Option<bun_url::URL>,
+    pub get_sync: for<'a> unsafe fn(
+        url: bun_url::URL<'a>,
+        http_proxy: Option<bun_url::URL<'a>>,
         reject_unauthorized: bool,
-        progress_node: *mut (), // SAFETY: erased *mut bun_core::progress::Node
-        out: *mut bun_core::MutableString,
+        progress_node: *mut (), // SAFETY: erased *mut bun_core::Progress::Node
+        out: *mut MutableString,
     ) -> Result<u16, bun_core::Error>,
 }
 
@@ -62,6 +62,7 @@ impl Default for CompileTarget {
                 major: Environment::VERSION.major as _, // @truncate
                 minor: Environment::VERSION.minor as _, // @truncate
                 patch: Environment::VERSION.patch as _, // @truncate
+                tag: Default::default(),
             },
             libc: if Environment::IS_MUSL {
                 Libc::Musl
@@ -152,7 +153,7 @@ impl CompileTarget {
         self.os == other.os
             && self.arch == other.arch
             && self.baseline == other.baseline
-            && self.version.eql(&other.version)
+            && self.version.eql(other.version)
             && self.libc == other.libc
     }
 
@@ -240,6 +241,10 @@ impl CompileTarget {
         }
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_core::self_exe_path
+    // TODO(b2-blocked): bun_sys::fetch_cache_directory_path
+    // TODO(b2-blocked): bun_paths::join_abs_string_buf_z
     pub fn exe_path<'a>(
         &self,
         buf: &'a mut PathBuffer,
@@ -283,6 +288,12 @@ impl CompileTarget {
         dest
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_sys::move_file_z
+    // TODO(b2-blocked): bun_sys::Dir::make_open_path
+    // TODO(b2-blocked): bun_core::fast_random
+    // TODO(b2-blocked): bun_paths::fs::FileSystem::tmpname
+    // TODO(b2-blocked): bun_dotenv::Loader::get_http_proxy_for
     pub fn download_to_path(
         &self,
         env: &mut bun_dotenv::Loader,
@@ -522,6 +533,7 @@ impl CompileTarget {
                         major: version.version.major.unwrap(),
                         minor: version.version.minor.unwrap(),
                         patch: version.version.patch.unwrap(),
+                        tag: Default::default(),
                     };
                     _found_version = true;
                     continue;
@@ -594,47 +606,48 @@ impl CompileTarget {
                 }
 
                 if let Some(token) = unsupported_token {
-                    Output::err_generic(format_args!(
+                    bun_core::err_generic!(
                         "Unsupported target {} in \"bun{}\"\n\
                          To see the supported targets:\n  \
                          https://bun.com/docs/bundler/executables",
                         bun_fmt::quote(token),
                         bstr::BStr::new(input_),
-                    ));
+                    );
                 } else {
-                    Output::err_generic(format_args!(
+                    bun_core::err_generic!(
                         "Unsupported target: {}",
                         bstr::BStr::new(input_)
-                    ));
+                    );
                 }
                 Global::exit(1);
             }
             Err(ParseError::InvalidTarget) => {
                 let input = strings::trim(input_, b" \t\r");
                 if strings::contains(input, b"musl") && !strings::contains(input, b"linux") {
-                    Output::err_generic(format_args!(
+                    bun_core::err_generic!(
                         "invalid target, musl libc only exists on linux"
-                    ));
+                    );
                 } else if strings::contains(input, b"android") && !strings::contains(input, b"linux")
                 {
-                    Output::err_generic(format_args!(
+                    bun_core::err_generic!(
                         "invalid target, android only exists with linux (use bun-linux-arm64-android)"
-                    ));
+                    );
                 } else if strings::contains(input, b"wasm") {
-                    Output::err_generic(format_args!(
+                    bun_core::err_generic!(
                         "invalid target, WebAssembly is not supported. Sorry!"
-                    ));
+                    );
                 } else if strings::contains(input, b"v") {
-                    Output::err_generic(format_args!(const_format::concatcp!(
-                        "Please pass a complete version number to --target. ",
-                        "For example, --target=bun-v",
+                    // PORT NOTE: Zig used a comptime-concat format string with VERSION_STRING.
+                    // `format_args!` requires a literal; pass the version as a runtime arg.
+                    bun_core::err_generic!(
+                        "Please pass a complete version number to --target. For example, --target=bun-v{}",
                         Environment::VERSION_STRING,
-                    )));
+                    );
                 } else {
-                    Output::err_generic(format_args!(
+                    bun_core::err_generic!(
                         "Invalid target: {}",
                         bstr::BStr::new(input_)
-                    ));
+                    );
                 }
                 Global::exit(1);
             }
@@ -662,7 +675,7 @@ impl CompileTarget {
                 const VALUES: &[&[u8]] = &[
                     $platform,
                     $arch,
-                    const_format::concatcp!("\"", bun_core::Global::PACKAGE_JSON_VERSION, "\"")
+                    const_format::concatcp!("\"", bun_core::Global::package_json_version, "\"")
                         .as_bytes(),
                 ];
                 VALUES

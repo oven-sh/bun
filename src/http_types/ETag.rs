@@ -9,9 +9,6 @@ struct Parsed<'a> {
 
 /// Parse a single entity tag from a string, returns the tag without quotes and whether it's weak
 fn parse(tag_str: &[u8]) -> Parsed<'_> {
-    // TODO(b1): bun_string::strings missing trim/trim_left — body gated.
-    #[cfg(any())]
-    {
     let mut str = strings::trim(tag_str, b" \t");
 
     // Check for weak indicator
@@ -19,7 +16,11 @@ fn parse(tag_str: &[u8]) -> Parsed<'_> {
     if str.starts_with(b"W/") {
         is_weak = true;
         str = &str[2..];
-        str = strings::trim_left(str, b" \t");
+        // PORT NOTE: Zig `std.mem.trimLeft(u8, str, " \t")` — bun_string has no
+        // multi-char trim_left; inline it (trailing was already stripped above).
+        while let [b' ' | b'\t', rest @ ..] = str {
+            str = rest;
+        }
     }
 
     // Remove surrounding quotes
@@ -28,9 +29,6 @@ fn parse(tag_str: &[u8]) -> Parsed<'_> {
     }
 
     Parsed { tag: str, is_weak }
-    }
-    let _ = tag_str;
-    todo!("b1-stub")
 }
 
 /// Perform weak comparison between two entity tags according to RFC 9110 Section 8.8.3.2
@@ -42,31 +40,33 @@ fn weak_match(tag1: &[u8], is_weak1: bool, tag2: &[u8], is_weak2: bool) -> bool 
 }
 
 pub fn append_to_headers(bytes: &[u8], headers: &mut Headers) -> Result<(), bun_core::Error> {
-    // TODO(b1): Headers::append gated (MultiArrayList stub has no methods) — body gated.
-    #[cfg(any())]
-    {
     // TODO(port): narrow error set
-    // TODO(port): std.hash.XxHash64 — pick xxhash crate (e.g. xxhash-rust) or bun_core wrapper in Phase B
     let hash: u64 = xxhash64(0, bytes);
 
     let mut etag_buf = [0u8; 40];
     let len = {
         use std::io::Write;
         let mut cursor = &mut etag_buf[..];
-        write!(cursor, "\"{:x}\"", hash).expect("unreachable");
+        // Zig's `bun.fmt.hexIntLower(u64)` always emits exactly 16 hex chars
+        // (zero-padded). `{:x}` alone is variable-width.
+        write!(cursor, "\"{:016x}\"", hash).expect("unreachable");
         40 - cursor.len()
     };
     let etag_str = &etag_buf[..len];
     headers.append(b"etag", etag_str);
     Ok(())
-    }
-    let _ = (bytes, headers);
-    todo!("b1-stub")
 }
 
-// TODO(port): replace with real XxHash64 impl in Phase B (std.hash.XxHash64.hash(0, bytes))
-fn xxhash64(_seed: u64, _bytes: &[u8]) -> u64 {
-    unimplemented!("xxhash64")
+fn xxhash64(seed: u64, bytes: &[u8]) -> u64 {
+    // TODO(b2-blocked): bun_core::hash::xxhash64
+    // Zig: `std.hash.XxHash64.hash(0, bytes)`. No XxHash64 in bun_core yet
+    // (only wyhash). Body re-gated until lower-tier crate exposes it.
+    #[cfg(any())]
+    {
+        bun_core::hash::xxhash64(seed, bytes)
+    }
+    let _ = (seed, bytes);
+    unimplemented!("b2-blocked: bun_core::hash::xxhash64")
 }
 
 pub fn if_none_match(
@@ -75,9 +75,6 @@ pub fn if_none_match(
     // "If-None-Match" header
     if_none_match: &[u8],
 ) -> bool {
-    // TODO(b1): bun_string::strings missing trim — body gated.
-    #[cfg(any())]
-    {
     let our_parsed = parse(etag);
 
     // Handle "*" case
@@ -94,9 +91,6 @@ pub fn if_none_match(
     }
 
     false // Condition is true, continue with normal processing
-    }
-    let _ = (etag, if_none_match);
-    todo!("b1-stub")
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -130,8 +124,55 @@ pub struct HeaderEntry {
 
 pub type HeaderEntryList = bun_collections::MultiArrayList<HeaderEntry>;
 
-// TODO(b1): bun_collections::MultiArrayList stub lacks Default — derive gated.
-#[cfg_attr(any(), derive(Default))]
+// Manual `MultiArrayElement` impl — `#[derive(MultiArrayElement)]` proc-macro
+// does not exist yet (TODO in bun_collections). Two same-size/align fields, so
+// the size-sorted order is identity.
+#[repr(usize)]
+#[derive(Copy, Clone)]
+pub enum HeaderEntryField {
+    Name = 0,
+    Value = 1,
+}
+
+impl bun_collections::multi_array_list::MultiArrayElement for HeaderEntry {
+    type Field = HeaderEntryField;
+    const FIELD_COUNT: usize = 2;
+    const ALIGN: usize = core::mem::align_of::<StringPointer>();
+    const SIZES_BYTES: &'static [usize] = &[
+        core::mem::size_of::<StringPointer>(),
+        core::mem::size_of::<StringPointer>(),
+    ];
+    const SIZES_FIELDS: &'static [usize] = &[0, 1];
+
+    #[inline]
+    fn field_index(field: Self::Field) -> usize {
+        field as usize
+    }
+
+    #[inline]
+    unsafe fn scatter(self, ptrs: &[*mut u8], index: usize) {
+        // SAFETY: caller guarantees `ptrs[0..2]` are valid `StringPointer`
+        // columns with capacity > `index`.
+        unsafe {
+            ptrs[0].cast::<StringPointer>().add(index).write(self.name);
+            ptrs[1].cast::<StringPointer>().add(index).write(self.value);
+        }
+    }
+
+    #[inline]
+    unsafe fn gather(ptrs: &[*mut u8], index: usize) -> Self {
+        // SAFETY: caller guarantees `ptrs[0..2]` are valid `StringPointer`
+        // columns with `len > index`.
+        unsafe {
+            HeaderEntry {
+                name: ptrs[0].cast::<StringPointer>().add(index).read(),
+                value: ptrs[1].cast::<StringPointer>().add(index).read(),
+            }
+        }
+    }
+}
+
+#[derive(Default)]
 pub struct Headers {
     pub entries: HeaderEntryList,
     pub buf: Vec<u8>,
@@ -139,38 +180,40 @@ pub struct Headers {
     // global mimalloc, field dropped (PORTING.md §allocators).
 }
 
-// TODO(b1): bun_collections::MultiArrayList stub has no methods (memory_cost/clone/
-// slice/append) and eql_case_insensitive_ascii arity differs — impl gated until B-2.
-#[cfg(any())]
 impl Headers {
     pub fn memory_cost(&self) -> usize {
         self.buf.len() + self.entries.memory_cost()
     }
 
-    // PORT NOTE: Zig `!Headers`; only fallible calls were allocator.clone — Vec
-    // clone aborts on OOM in this codebase.
+    // PORT NOTE: Zig `!Headers`; only fallible calls were allocations — abort on OOM.
     pub fn clone(&self) -> Headers {
         Headers {
-            entries: self.entries.clone(),
+            entries: self
+                .entries
+                .clone()
+                .unwrap_or_else(|_| bun_alloc::out_of_memory()),
             buf: self.buf.clone(),
         }
     }
 
     pub fn get(&self, name: &[u8]) -> Option<&[u8]> {
         let entries = self.entries.slice();
-        // TODO(port): MultiArrayList<HeaderEntry> column accessors — assuming
-        // .items_name()/.items_value() codegen; verify against bun_collections.
-        let names = entries.items_name();
-        let values = entries.items_value();
+        // PORT NOTE: derive-generated typed accessors don't exist yet; call
+        // `Slice::items` directly with the correct column type.
+        // SAFETY: both columns are `StringPointer`; field enum matches.
+        let names: &[StringPointer] =
+            unsafe { entries.items::<StringPointer>(HeaderEntryField::Name) };
+        let values: &[StringPointer] =
+            unsafe { entries.items::<StringPointer>(HeaderEntryField::Value) };
         for (i, name_ptr) in names.iter().enumerate() {
-            if strings::eql_case_insensitive_ascii(self.as_str(*name_ptr), name, true) {
+            if strings::eql_case_insensitive_ascii::<true>(self.as_str(*name_ptr), name) {
                 return Some(self.as_str(values[i]));
             }
         }
         None
     }
 
-    // PORT NOTE: was `!void`; only `try` sites were allocations.
+    // PORT NOTE: was `!void`; only `try` sites were allocations — abort on OOM.
     pub fn append(&mut self, name: &[u8], value: &[u8]) {
         let mut offset: u32 = self.buf.len() as u32;
         self.buf.reserve(name.len() + value.len());
@@ -187,10 +230,12 @@ impl Headers {
             offset,
             length: value.len() as u32,
         };
-        self.entries.append(HeaderEntry {
-            name: name_ptr,
-            value: value_ptr,
-        });
+        self.entries
+            .append(HeaderEntry {
+                name: name_ptr,
+                value: value_ptr,
+            })
+            .unwrap_or_else(|_| bun_alloc::out_of_memory());
     }
 
     // PORT NOTE: Zig `deinit()` — handled by Drop on Vec/MultiArrayList.

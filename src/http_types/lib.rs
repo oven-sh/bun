@@ -9,21 +9,9 @@ pub mod URLPath;
 pub mod Method;
 pub mod ETag;
 
-// B-1 gate: MimeType depends on generated mime_type_list_enum::MimeTypeList (not yet
-// emitted by codegen for Rust), bun_options_types::Loader (crate not in deps), and
-// has phf duplicate keys. Preserve Phase-A draft; un-gate in B-2.
-#[cfg(any())]
+// B-2: module un-gated. Items depending on the not-yet-generated
+// `mime_type_list_enum::MimeTypeList` (`Table`, `Compact`, `EXTENSIONS`,
+// `sniff`, `by_loader`, `from_table`, `create_hash_table`, `ALL`) remain
+// individually `#[cfg(any())]`-gated inside MimeType.rs. Everything else
+// (struct, Category, init, by_name, constants) compiles for real.
 pub mod MimeType;
-#[cfg(not(any()))]
-pub mod MimeType {
-    // TODO(b1): stub surface — real impl gated above.
-    #[derive(Clone, Copy, PartialEq, Eq, Default)]
-    pub struct Category(u8);
-    pub struct MimeType {
-        pub value: std::borrow::Cow<'static, [u8]>,
-        pub category: Category,
-    }
-    pub fn by_extension(_ext: &[u8]) -> MimeType { todo!("b1-stub") }
-    pub fn by_extension_no_default(_ext: &[u8]) -> Option<MimeType> { todo!("b1-stub") }
-    pub fn by_name(_name: &[u8]) -> MimeType { todo!("b1-stub") }
-}

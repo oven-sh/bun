@@ -1,21 +1,31 @@
 use core::fmt;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
-use std::sync::Once;
+use std::sync::OnceLock;
 
-use enumset::EnumSet;
-
-// TODO(b1): bun_core::env_var is gated out in the lower-tier crate.
-#[cfg(any())]
 use bun_core::env_var;
-// TODO(b1): bun_semver crate not yet wired as a dep.
-#[cfg(any())]
-use bun_semver as semver;
-// TODO(b1): bun_str::slice_to_nul missing (crate not linked).
-#[cfg(any())]
-use bun_str::slice_to_nul;
-
 #[allow(unused_imports)]
+use bun_semver as semver;
+
 use crate::schema::analytics;
+
+/// Zig: `bun.sliceTo(buf, 0)` — slice up to (excluding) the first NUL byte.
+// PORT NOTE: lower-tier `bun_string` has no direct equivalent; this is a tiny
+// local helper rather than a cross-crate dep.
+#[inline]
+#[allow(dead_code)]
+fn slice_to_nul(buf: &[u8]) -> &[u8] {
+    let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    &buf[..end]
+}
+
+/// Reinterpret a `[c_char; N]` field (e.g. from `libc::utsname`) as `&[u8]`.
+#[inline]
+#[allow(dead_code)]
+fn c_chars_as_bytes(s: &[libc::c_char]) -> &[u8] {
+    // SAFETY: `c_char` is `i8` or `u8`; both are byte-sized and any bit pattern
+    // is a valid `u8`. The returned slice has the same length and provenance.
+    unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<u8>(), s.len()) }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -66,29 +76,24 @@ pub fn is_enabled() -> bool {
         TriState::Yes => true,
         TriState::No => false,
         TriState::Unknown => {
-            #[cfg(any())]
-            {
-                let detected = 'detect: {
-                    if env_var::DO_NOT_TRACK.get() {
-                        break 'detect TriState::No;
-                    }
-                    if env_var::HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET
-                        .get()
-                        .is_some()
-                    {
-                        break 'detect TriState::No;
-                    }
-                    TriState::Yes
-                };
-                set_enabled(detected);
-                debug_assert!(matches!(enabled(), TriState::Yes | TriState::No));
-                enabled() == TriState::Yes
-            }
-            #[cfg(not(any()))]
-            {
-                // TODO(b1): env_var gated out
-                todo!("is_enabled: env_var detection")
-            }
+            let detected = 'detect: {
+                // PORT NOTE: `env_var::*.get()` returns `Option<ValueType>` in
+                // the Rust port even when a default exists; `DO_NOT_TRACK` has
+                // `default: false` so `.unwrap_or(false)` matches Zig semantics.
+                if env_var::DO_NOT_TRACK.get().unwrap_or(false) {
+                    break 'detect TriState::No;
+                }
+                if env_var::HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET
+                    .get()
+                    .is_some()
+                {
+                    break 'detect TriState::No;
+                }
+                TriState::Yes
+            };
+            set_enabled(detected);
+            debug_assert!(matches!(enabled(), TriState::Yes | TriState::No));
+            enabled() == TriState::Yes
         }
     }
 }
@@ -104,22 +109,23 @@ pub fn is_enabled() -> bool {
 /// the feature list is declared once via `define_features!` and that macro
 /// generates the statics, `PACKED_FEATURES_LIST`, `PackedFeatures`,
 /// `packed_features()`, and the `Display` body.
-#[cfg(any())] // TODO(b1): gated — nightly macro_metavar_expr + bun_options_types dep missing
 pub mod features {
     use super::*;
 
-    // TODO(port): `bun_options_types::HardcodedModule` must derive
-    // `enumset::EnumSetType` for this to type-check.
-    // TYPE_ONLY(b0): moved from `bun_jsc::module_loader` → `bun_options_types`
-    // (move-in pass adds the enum def there).
+    // TODO(b2-blocked): bun_resolve_builtins::HardcodedModule
+    // The real `HardcodedModule` enum (Zig: `bun.jsc.ModuleLoader.HardcodedModule`)
+    // lives in `bun_resolve_builtins` and must derive `enumset::EnumSetType`;
+    // that crate's enum is still a Phase-A stub struct. Re-gate just this
+    // static and the formatter's builtins iterator below.
+    #[cfg(any())]
     pub static BUILTIN_MODULES: parking_lot::Mutex<
-        EnumSet<bun_options_types::HardcodedModule>,
-    > = parking_lot::const_mutex(EnumSet::empty());
+        enumset::EnumSet<bun_resolve_builtins::HardcodedModule::HardcodedModule>,
+    > = parking_lot::const_mutex(enumset::EnumSet::empty());
     // PORT NOTE: Zig used a plain mutable global; wrapped in a Mutex here
     // because `EnumSet` is not a single atomic word for large enums.
 
     macro_rules! define_features {
-        ( $( $(#[$doc:meta])* ($ident:ident, $name:literal) ),* $(,)? ) => {
+        ( $( $(#[$doc:meta])* $idx:literal => ($ident:ident, $name:literal) ),* $(,)? ) => {
             $(
                 $(#[$doc])*
                 #[allow(non_upper_case_globals)]
@@ -137,23 +143,31 @@ pub mod features {
             /// Zig: `pub const packed_features_list = brk: { ... }`
             pub const PACKED_FEATURES_LIST: &[&str] = &[ $( $name ),* ];
 
+            // Zig: `pub const PackedFeatures = @Type(.{ .@"struct" = .{ .layout = .@"packed", .backing_integer = u64, ... } })`
+            // All fields are `bool` → bitflags over u64.
+            // PORT NOTE: nightly `${index()}` (macro_metavar_expr) is unavailable
+            // on stable, so each feature carries an explicit `$idx` literal at the
+            // call site. The dense-index assertion below catches gaps/duplicates.
             ::bitflags::bitflags! {
-                /// Zig: `pub const PackedFeatures = @Type(.{ .@"struct" = .{ .layout = .@"packed", .backing_integer = u64, ... } })`
-                /// All fields are `bool` → bitflags over u64.
                 #[repr(transparent)]
                 #[derive(Default, Copy, Clone, PartialEq, Eq)]
                 pub struct PackedFeatures: u64 {
-                    // TODO(b1): `${index()}` requires nightly macro_metavar_expr;
-                    // module is cfg-gated so this body is inert. Restore in B-2.
-                    $( const $ident = 0; )*
+                    $( const $ident = 1u64 << $idx; )*
                 }
             }
-            // TODO(port): `${index()}` requires `#![feature(macro_metavar_expr)]`
-            // (nightly). If Phase B is on stable, replace with a hand-written
-            // `const` table or a small proc-macro.
             const _: () = assert!(
                 PACKED_FEATURES_LIST.len() <= 64,
                 "PackedFeatures backing integer is u64"
+            );
+            // Dense-index check: every bit < len() is set exactly once.
+            const _: () = assert!(
+                PackedFeatures::all().bits()
+                    == if PACKED_FEATURES_LIST.len() == 64 {
+                        u64::MAX
+                    } else {
+                        (1u64 << PACKED_FEATURES_LIST.len()) - 1
+                    },
+                "feature indices must be dense 0..N with no gaps or duplicates"
             );
 
             /// Zig: `pub fn packedFeatures() PackedFeatures`
@@ -197,20 +211,24 @@ pub mod features {
                         writer.write_str("\n")?;
                     }
 
-                    let builtins = BUILTIN_MODULES.lock();
-                    let mut iter = builtins.iter();
-                    if let Some(first) = iter.next() {
-                        writer.write_str("Builtins: \"")?;
-                        writer.write_str(<&'static str>::from(first))?;
-                        writer.write_str("\" ")?;
-
-                        while let Some(key) = iter.next() {
-                            writer.write_str("\"")?;
-                            writer.write_str(<&'static str>::from(key))?;
+                    // TODO(b2-blocked): bun_resolve_builtins::HardcodedModule
+                    #[cfg(any())]
+                    {
+                        let builtins = BUILTIN_MODULES.lock();
+                        let mut iter = builtins.iter();
+                        if let Some(first) = iter.next() {
+                            writer.write_str("Builtins: \"")?;
+                            writer.write_str(<&'static str>::from(first))?;
                             writer.write_str("\" ")?;
-                        }
 
-                        writer.write_str("\n")?;
+                            while let Some(key) = iter.next() {
+                                writer.write_str("\"")?;
+                                writer.write_str(<&'static str>::from(key))?;
+                                writer.write_str("\" ")?;
+                            }
+
+                            writer.write_str("\n")?;
+                        }
                     }
                     Ok(())
                 }
@@ -221,75 +239,77 @@ pub mod features {
     // PORT NOTE: Zig identifiers `@"Bun.stderr"` etc. cannot be Rust idents;
     // renamed to `bun_stderr` etc. The string literal preserves the original
     // name for output / `PACKED_FEATURES_LIST` (matches `@tagName` semantics).
+    // The leading integer is the bit index in `PackedFeatures` (must be dense
+    // 0..N — asserted at compile time inside the macro).
     define_features! {
-        (bun_stderr, "Bun.stderr"),
-        (bun_stdin, "Bun.stdin"),
-        (bun_stdout, "Bun.stdout"),
-        (web_socket, "WebSocket"),
-        (abort_signal, "abort_signal"),
-        (binlinks, "binlinks"),
-        (bunfig, "bunfig"),
-        (define, "define"),
-        (dotenv, "dotenv"),
-        (debugger, "debugger"),
-        (external, "external"),
-        (extracted_packages, "extracted_packages"),
-        (fetch, "fetch"),
-        (git_dependencies, "git_dependencies"),
-        (html_rewriter, "html_rewriter"),
+        0 => (bun_stderr, "Bun.stderr"),
+        1 => (bun_stdin, "Bun.stdin"),
+        2 => (bun_stdout, "Bun.stdout"),
+        3 => (web_socket, "WebSocket"),
+        4 => (abort_signal, "abort_signal"),
+        5 => (binlinks, "binlinks"),
+        6 => (bunfig, "bunfig"),
+        7 => (define, "define"),
+        8 => (dotenv, "dotenv"),
+        9 => (debugger, "debugger"),
+        10 => (external, "external"),
+        11 => (extracted_packages, "extracted_packages"),
+        12 => (fetch, "fetch"),
+        13 => (git_dependencies, "git_dependencies"),
+        14 => (html_rewriter, "html_rewriter"),
         /// TCP server from `Bun.listen`
-        (tcp_server, "tcp_server"),
+        15 => (tcp_server, "tcp_server"),
         /// TLS server from `Bun.listen`
-        (tls_server, "tls_server"),
-        (http_server, "http_server"),
-        (https_server, "https_server"),
-        (http_client_proxy, "http_client_proxy"),
+        16 => (tls_server, "tls_server"),
+        17 => (http_server, "http_server"),
+        18 => (https_server, "https_server"),
+        19 => (http_client_proxy, "http_client_proxy"),
         /// Set right before JSC::initialize is called
-        (jsc, "jsc"),
+        20 => (jsc, "jsc"),
         /// Set when bake.DevServer is initialized
-        (dev_server, "dev_server"),
-        (lifecycle_scripts, "lifecycle_scripts"),
-        (loaders, "loaders"),
-        (lockfile_migration_from_package_lock, "lockfile_migration_from_package_lock"),
-        (text_lockfile, "text_lockfile"),
-        (isolated_bun_install, "isolated_bun_install"),
-        (hoisted_bun_install, "hoisted_bun_install"),
-        (macros, "macros"),
-        (no_avx2, "no_avx2"),
-        (no_avx, "no_avx"),
-        (shell, "shell"),
-        (spawn, "spawn"),
-        (standalone_executable, "standalone_executable"),
-        (standalone_shell, "standalone_shell"),
+        21 => (dev_server, "dev_server"),
+        22 => (lifecycle_scripts, "lifecycle_scripts"),
+        23 => (loaders, "loaders"),
+        24 => (lockfile_migration_from_package_lock, "lockfile_migration_from_package_lock"),
+        25 => (text_lockfile, "text_lockfile"),
+        26 => (isolated_bun_install, "isolated_bun_install"),
+        27 => (hoisted_bun_install, "hoisted_bun_install"),
+        28 => (macros, "macros"),
+        29 => (no_avx2, "no_avx2"),
+        30 => (no_avx, "no_avx"),
+        31 => (shell, "shell"),
+        32 => (spawn, "spawn"),
+        33 => (standalone_executable, "standalone_executable"),
+        34 => (standalone_shell, "standalone_shell"),
         /// Set when invoking a todo panic
-        (todo_panic, "todo_panic"),
-        (transpiler_cache, "transpiler_cache"),
-        (tsconfig, "tsconfig"),
-        (tsconfig_paths, "tsconfig_paths"),
-        (virtual_modules, "virtual_modules"),
-        (workers_spawned, "workers_spawned"),
-        (workers_terminated, "workers_terminated"),
+        35 => (todo_panic, "todo_panic"),
+        36 => (transpiler_cache, "transpiler_cache"),
+        37 => (tsconfig, "tsconfig"),
+        38 => (tsconfig_paths, "tsconfig_paths"),
+        39 => (virtual_modules, "virtual_modules"),
+        40 => (workers_spawned, "workers_spawned"),
+        41 => (workers_terminated, "workers_terminated"),
         #[unsafe(export_name = "Bun__napi_module_register_count")]
-        (napi_module_register, "napi_module_register"),
+        42 => (napi_module_register, "napi_module_register"),
         #[unsafe(export_name = "Bun__process_dlopen_count")]
-        (process_dlopen, "process_dlopen"),
-        (postgres_connections, "postgres_connections"),
-        (s3, "s3"),
-        (valkey, "valkey"),
-        (csrf_verify, "csrf_verify"),
-        (csrf_generate, "csrf_generate"),
-        (unsupported_uv_function, "unsupported_uv_function"),
-        (exited, "exited"),
-        (yarn_migration, "yarn_migration"),
-        (pnpm_migration, "pnpm_migration"),
-        (yaml_parse, "yaml_parse"),
-        (cpu_profile, "cpu_profile"),
+        43 => (process_dlopen, "process_dlopen"),
+        44 => (postgres_connections, "postgres_connections"),
+        45 => (s3, "s3"),
+        46 => (valkey, "valkey"),
+        47 => (csrf_verify, "csrf_verify"),
+        48 => (csrf_generate, "csrf_generate"),
+        49 => (unsupported_uv_function, "unsupported_uv_function"),
+        50 => (exited, "exited"),
+        51 => (yarn_migration, "yarn_migration"),
+        52 => (pnpm_migration, "pnpm_migration"),
+        53 => (yaml_parse, "yaml_parse"),
+        54 => (cpu_profile, "cpu_profile"),
         #[unsafe(export_name = "Bun__Feature__heap_snapshot")]
-        (heap_snapshot, "heap_snapshot"),
+        55 => (heap_snapshot, "heap_snapshot"),
         #[unsafe(export_name = "Bun__Feature__webview_chrome")]
-        (webview_chrome, "webview_chrome"),
+        56 => (webview_chrome, "webview_chrome"),
         #[unsafe(export_name = "Bun__Feature__webview_webkit")]
-        (webview_webkit, "webview_webkit"),
+        57 => (webview_webkit, "webview_webkit"),
     }
 
     // Zig: `comptime { @export(&napi_module_register, .{ .name = "Bun__napi_module_register_count" }); ... }`
@@ -300,23 +320,6 @@ pub mod features {
     // on the canonical statics inside `define_features!` above — Rust cannot
     // alias-export a static under a second symbol name, so the export name is
     // attached to the single definition.
-    // TODO(port): if `meta` fragment rejects `unsafe(export_name = ...)` on
-    // stable, split the macro arm or use a proc-macro in Phase B.
-}
-
-// TODO(b1): stub surface for the gated `features` module.
-#[cfg(not(any()))]
-pub mod features {
-    #[derive(Default, Copy, Clone, PartialEq, Eq)]
-    pub struct PackedFeatures(pub u64);
-    pub const PACKED_FEATURES_LIST: &[&str] = &[];
-    pub fn packed_features() -> PackedFeatures {
-        todo!()
-    }
-    pub struct Formatter;
-    pub fn formatter() -> Formatter {
-        todo!()
-    }
 }
 
 // Re-exports to mirror Zig's `Features.packedFeatures()` etc. at module scope.
@@ -344,6 +347,7 @@ pub const fn validate_feature_name(name: &[u8]) -> bool {
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
+#[allow(non_camel_case_types)]
 pub enum EventName {
     bundle_success,
     bundle_fail,
@@ -355,14 +359,12 @@ pub enum EventName {
 // Zig: `var random: std.rand.DefaultPrng = undefined;`
 // TODO(port): unused in this file; keep a placeholder for parity.
 // PERF(port): Zig left this uninitialized; Rust requires init.
-// TODO(b1): bun_core::rand::DefaultPrng missing
+// TODO(b2-blocked): bun_core::rand::DefaultPrng
 #[cfg(any())]
 #[allow(dead_code)]
 static RANDOM: parking_lot::Mutex<Option<bun_core::rand::DefaultPrng>> =
     parking_lot::const_mutex(None);
 
-// TODO(b1): analytics::Architecture variants need schema regen
-#[cfg(any())]
 const PLATFORM_ARCH: analytics::Architecture = {
     #[cfg(target_arch = "aarch64")]
     { analytics::Architecture::arm }
@@ -377,128 +379,131 @@ const PLATFORM_ARCH: analytics::Architecture = {
 // TODO: move this code somewhere more appropriate, and remove it from "analytics"
 // The following code is not currently even used for analytics, just feature-detection
 // in order to determine if certain APIs are usable.
-#[cfg(any())] // TODO(b1): gated — bun_sys::linux, bun_semver, bun_str, schema::analytics deps missing
 pub mod generate_header {
     use super::*;
 
     pub mod generate_platform {
         use super::*;
-        use core::ffi::c_int;
 
         pub use analytics::Platform;
 
-        static mut OSVERSION_NAME: [u8; 32] = [0; 32];
+        // ──────────────────────────────────────────────────────────────────
+        // macOS
+        // ──────────────────────────────────────────────────────────────────
+
+        #[cfg(target_os = "macos")]
+        static OSVERSION_NAME: OnceLock<[u8; 32]> = OnceLock::new();
 
         #[cfg(target_os = "macos")]
         fn for_mac() -> analytics::Platform {
-            // SAFETY: only called under RUN_ONCE; single-threaded init.
-            unsafe {
-                OSVERSION_NAME.fill(0);
-            }
+            let buf: &'static [u8; 32] = OSVERSION_NAME.get_or_init(|| {
+                let mut name = [0u8; 32];
+                let mut len: usize = name.len() - 1;
+                // this previously used "kern.osrelease", which was the darwin xnu kernel version
+                // That is less useful than "kern.osproductversion", which is the macOS version
+                // SAFETY: FFI call; buffer and len are valid for `len` bytes.
+                let rc = unsafe {
+                    libc::sysctlbyname(
+                        c"kern.osproductversion".as_ptr(),
+                        name.as_mut_ptr().cast(),
+                        &mut len,
+                        core::ptr::null_mut(),
+                        0,
+                    )
+                };
+                if rc == -1 {
+                    [0u8; 32]
+                } else {
+                    name
+                }
+            });
 
-            let mut platform = analytics::Platform {
+            analytics::Platform {
                 os: analytics::OperatingSystem::macos,
-                version: &[],
+                version: slice_to_nul(&buf[..]),
                 arch: PLATFORM_ARCH,
-            };
-            // SAFETY: see above.
-            let mut len: usize = unsafe { OSVERSION_NAME.len() } - 1;
-            // this previously used "kern.osrelease", which was the darwin xnu kernel version
-            // That is less useful than "kern.osproductversion", which is the macOS version
-            // SAFETY: FFI call; buffer and len are valid.
-            let rc: c_int = unsafe {
-                bun_sys::darwin::sysctlbyname(
-                    c"kern.osproductversion".as_ptr(),
-                    OSVERSION_NAME.as_mut_ptr().cast(),
-                    &mut len,
-                    core::ptr::null_mut(),
-                    0,
-                )
-            };
-            if rc == -1 {
-                return platform;
             }
-
-            // SAFETY: buffer initialized above; sysctlbyname NUL-terminates within len.
-            platform.version = slice_to_nul(unsafe { &OSVERSION_NAME[..] });
-            platform
         }
+
+        // ──────────────────────────────────────────────────────────────────
+        // Linux / Android
+        // ──────────────────────────────────────────────────────────────────
 
         // Zig: `pub var linux_os_name: std.c.utsname = undefined;`
         // PORT NOTE: Zig's `Environment.isLinux` is true on Android (it checks
         // the kernel, not the libc target), so all Linux-gated items below are
         // `any(linux, android)` — `for_linux()` itself branches on Android.
+        // PORT NOTE: §Concurrency — `static mut + std.once` becomes `OnceLock`.
+        // The Zig source calls `std.c.uname` directly; the Rust port uses
+        // `libc::uname` for the same reason (`bun_sys` exposes no wrapper).
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        pub static mut LINUX_OS_NAME: bun_sys::linux::utsname =
-            // SAFETY: all-zero is a valid utsname (POD C struct).
-            unsafe { core::mem::zeroed() };
-
-        static mut PLATFORM_: analytics::Platform = analytics::Platform {
-            os: analytics::OperatingSystem::linux, // overwritten before read
-            version: &[],
-            arch: PLATFORM_ARCH,
-        };
+        pub static LINUX_OS_NAME: OnceLock<libc::utsname> = OnceLock::new();
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        static mut LINUX_KERNEL_VERSION: semver::Version = semver::Version::ZERO;
-        // TODO(port): `semver::Version` needs a `const ZERO` / `const fn default()`.
+        fn linux_os_name() -> &'static libc::utsname {
+            LINUX_OS_NAME.get_or_init(|| {
+                // SAFETY: `uname(2)` fills the struct on success; zero-init
+                // beforehand so a (theoretical) failure leaves a valid
+                // all-zero utsname.
+                let mut name: libc::utsname = unsafe { core::mem::zeroed() };
+                // SAFETY: `name` is a valid, exclusive pointer to a utsname.
+                let _ = unsafe { libc::uname(&mut name) };
+                name
+            })
+        }
 
-        static RUN_ONCE: Once = Once::new();
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        static LINUX_KERNEL_VERSION: OnceLock<semver::Version> = OnceLock::new();
 
-        fn run_once_init() {
-            #[cfg(target_os = "macos")]
-            {
-                // SAFETY: guarded by RUN_ONCE.
-                unsafe { PLATFORM_ = for_mac() };
-            }
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            {
-                // SAFETY: guarded by RUN_ONCE.
-                unsafe {
-                    PLATFORM_ = for_linux();
+        // ──────────────────────────────────────────────────────────────────
+        // Platform OnceLock
+        // ──────────────────────────────────────────────────────────────────
 
-                    let release = slice_to_nul(&LINUX_OS_NAME.release);
-                    let sliced_string = semver::SlicedString::init(release, release);
-                    let result = semver::Version::parse(sliced_string);
-                    LINUX_KERNEL_VERSION = result.version.min();
+        static PLATFORM_: OnceLock<analytics::Platform> = OnceLock::new();
+
+        pub fn for_os() -> analytics::Platform {
+            *PLATFORM_.get_or_init(|| {
+                #[cfg(target_os = "macos")]
+                {
+                    return for_mac();
                 }
-            }
-            #[cfg(target_os = "freebsd")]
-            {
-                // SAFETY: guarded by RUN_ONCE.
-                unsafe { PLATFORM_ = for_freebsd() };
-            }
-            #[cfg(windows)]
-            {
-                // SAFETY: guarded by RUN_ONCE.
-                unsafe {
-                    PLATFORM_ = Platform {
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                {
+                    return for_linux();
+                }
+                #[cfg(target_os = "freebsd")]
+                {
+                    return for_freebsd();
+                }
+                #[cfg(windows)]
+                {
+                    return Platform {
                         os: analytics::OperatingSystem::windows,
                         version: &[],
                         arch: PLATFORM_ARCH,
                     };
                 }
-            }
+                #[allow(unreachable_code)]
+                Platform {
+                    os: analytics::OperatingSystem::_none,
+                    version: &[],
+                    arch: PLATFORM_ARCH,
+                }
+            })
         }
 
-        pub fn for_os() -> analytics::Platform {
-            RUN_ONCE.call_once(run_once_init);
-            // SAFETY: PLATFORM_ is only mutated under RUN_ONCE; after call_once
-            // returns it is effectively immutable.
-            unsafe { PLATFORM_.clone() }
-        }
+        // ──────────────────────────────────────────────────────────────────
+        // macOS sendmsg_x / recvmsg_x feature gate
+        // ──────────────────────────────────────────────────────────────────
 
         // On macOS 13, tests that use sendmsg_x or recvmsg_x hang.
-        static mut USE_MSGX_ON_MACOS_14_OR_LATER: bool = false;
-        static DETECT_USE_MSGX_ONCE: Once = Once::new();
+        #[cfg(target_os = "macos")]
+        static USE_MSGX_ON_MACOS_14_OR_LATER: OnceLock<bool> = OnceLock::new();
 
-        fn detect_use_msgx_on_macos_14_or_later() {
+        #[cfg(target_os = "macos")]
+        fn detect_use_msgx_on_macos_14_or_later() -> bool {
             let version = semver::Version::parse_utf8(for_os().version);
-            // SAFETY: only called under DETECT_USE_MSGX_ONCE.
-            unsafe {
-                USE_MSGX_ON_MACOS_14_OR_LATER =
-                    version.valid && version.version.max().major >= 14;
-            }
+            version.valid && version.version.max().major >= 14
         }
 
         #[unsafe(no_mangle)]
@@ -506,21 +511,28 @@ pub mod generate_header {
             #[cfg(not(target_os = "macos"))]
             {
                 // this should not be used on non-mac platforms.
-                return 0;
+                0
             }
             #[cfg(target_os = "macos")]
             {
-                DETECT_USE_MSGX_ONCE.call_once(detect_use_msgx_on_macos_14_or_later);
-                // SAFETY: written once under DETECT_USE_MSGX_ONCE.
-                unsafe { USE_MSGX_ON_MACOS_14_OR_LATER as i32 }
+                *USE_MSGX_ON_MACOS_14_OR_LATER
+                    .get_or_init(detect_use_msgx_on_macos_14_or_later) as i32
             }
         }
 
+        // ──────────────────────────────────────────────────────────────────
+        // Linux kernel version
+        // ──────────────────────────────────────────────────────────────────
+
         #[cfg(any(target_os = "linux", target_os = "android"))]
         pub fn kernel_version() -> semver::Version {
-            let _ = for_os();
-            // SAFETY: LINUX_KERNEL_VERSION written once under RUN_ONCE (via for_os).
-            unsafe { LINUX_KERNEL_VERSION }
+            *LINUX_KERNEL_VERSION.get_or_init(|| {
+                let release =
+                    slice_to_nul(c_chars_as_bytes(&linux_os_name().release));
+                let sliced_string = semver::SlicedString::init(release, release);
+                let result = semver::Version::parse(sliced_string);
+                result.version.min()
+            })
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         pub fn kernel_version() -> semver::Version {
@@ -532,7 +544,7 @@ pub mod generate_header {
         pub extern "C" fn Bun__isEpollPwait2SupportedOnLinuxKernel() -> i32 {
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
             {
-                return 0;
+                0
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
@@ -544,7 +556,7 @@ pub mod generate_header {
                     ..Default::default()
                 };
 
-                match kernel_version().order(&min_epoll_pwait2, b"", b"") {
+                match kernel_version().order(min_epoll_pwait2, b"", b"") {
                     core::cmp::Ordering::Greater => 1,
                     core::cmp::Ordering::Equal => 1,
                     core::cmp::Ordering::Less => 0,
@@ -554,15 +566,9 @@ pub mod generate_header {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         fn for_linux() -> analytics::Platform {
-            // SAFETY: only called under RUN_ONCE; LINUX_OS_NAME is POD.
-            unsafe {
-                LINUX_OS_NAME = core::mem::zeroed();
-                let _ = bun_sys::linux::uname(&mut LINUX_OS_NAME);
-            }
-
             // Confusingly, the "release" tends to contain the kernel version much more frequently than the "version" field.
-            // SAFETY: LINUX_OS_NAME.release is a NUL-terminated C array filled by uname().
-            let release: &'static [u8] = unsafe { slice_to_nul(&LINUX_OS_NAME.release) };
+            let release: &'static [u8] =
+                slice_to_nul(c_chars_as_bytes(&linux_os_name().release));
 
             #[cfg(target_os = "android")]
             {
@@ -573,60 +579,49 @@ pub mod generate_header {
                 };
             }
 
-            // Linux DESKTOP-P4LCIEM 5.10.16.3-microsoft-standard-WSL2 #1 SMP Fri Apr 2 22:23:49 UTC 2021 x86_64 x86_64 x86_64 GNU/Linux
-            if bun_str::strings::index_of(release, b"microsoft").is_some() {
-                return analytics::Platform {
-                    os: analytics::OperatingSystem::wsl,
+            #[cfg(not(target_os = "android"))]
+            {
+                // Linux DESKTOP-P4LCIEM 5.10.16.3-microsoft-standard-WSL2 #1 SMP Fri Apr 2 22:23:49 UTC 2021 x86_64 x86_64 x86_64 GNU/Linux
+                if bun_string::strings::index_of(release, b"microsoft").is_some() {
+                    return analytics::Platform {
+                        os: analytics::OperatingSystem::wsl,
+                        version: release,
+                        arch: PLATFORM_ARCH,
+                    };
+                }
+
+                analytics::Platform {
+                    os: analytics::OperatingSystem::linux,
                     version: release,
                     arch: PLATFORM_ARCH,
-                };
-            }
-
-            analytics::Platform {
-                os: analytics::OperatingSystem::linux,
-                version: release,
-                arch: PLATFORM_ARCH,
+                }
             }
         }
 
+        // ──────────────────────────────────────────────────────────────────
+        // FreeBSD
+        // ──────────────────────────────────────────────────────────────────
+
         // Zig std's `std.c.utsname` has no FreeBSD branch; use translate-c's.
+        // PORT NOTE: Rust's `libc` crate does provide `utsname`/`uname` on
+        // FreeBSD, so the translate-c indirection is unnecessary here.
         #[cfg(target_os = "freebsd")]
-        static mut FREEBSD_OS_NAME: bun_sys::c::struct_utsname =
-            // SAFETY: all-zero is a valid struct_utsname (POD C struct).
-            unsafe { core::mem::zeroed() };
+        static FREEBSD_OS_NAME: OnceLock<libc::utsname> = OnceLock::new();
 
         #[cfg(target_os = "freebsd")]
         fn for_freebsd() -> analytics::Platform {
-            // SAFETY: only called under RUN_ONCE.
-            unsafe {
-                FREEBSD_OS_NAME = core::mem::zeroed();
-                let _ = bun_sys::c::uname(&mut FREEBSD_OS_NAME);
-            }
+            let name = FREEBSD_OS_NAME.get_or_init(|| {
+                // SAFETY: see linux_os_name().
+                let mut name: libc::utsname = unsafe { core::mem::zeroed() };
+                // SAFETY: `name` is a valid, exclusive pointer to a utsname.
+                let _ = unsafe { libc::uname(&mut name) };
+                name
+            });
             analytics::Platform {
                 os: analytics::OperatingSystem::freebsd,
-                // SAFETY: filled by uname() above.
-                version: unsafe { slice_to_nul(&FREEBSD_OS_NAME.release) },
+                version: slice_to_nul(c_chars_as_bytes(&name.release)),
                 arch: PLATFORM_ARCH,
             }
-        }
-    }
-}
-
-// TODO(b1): stub surface for the gated `generate_header` module.
-#[cfg(not(any()))]
-pub mod generate_header {
-    pub mod generate_platform {
-        pub type Platform = crate::schema::analytics::Platform;
-        pub fn for_os() -> Platform {
-            todo!()
-        }
-        #[unsafe(no_mangle)]
-        pub extern "C" fn Bun__doesMacOSVersionSupportSendRecvMsgX() -> i32 {
-            todo!()
-        }
-        #[unsafe(no_mangle)]
-        pub extern "C" fn Bun__isEpollPwait2SupportedOnLinuxKernel() -> i32 {
-            todo!()
         }
     }
 }

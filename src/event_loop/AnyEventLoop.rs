@@ -4,7 +4,9 @@ use bun_aio::FilePoll;
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_uws::Loop as UwsLoop;
 
-use crate::{AnyTaskWithExtraContext, ConcurrentTask, MiniEventLoop};
+use crate::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
+use crate::ConcurrentTask::ConcurrentTask;
+use crate::MiniEventLoop::{EventLoopKind, MiniEventLoop};
 
 /// Manual vtable for the JS-event-loop arm of `AnyEventLoop` / `EventLoopHandle`
 /// (cold dispatch — see PORTING.md §Dispatch). `bun_runtime` provides the static
@@ -34,12 +36,12 @@ pub struct JsEventLoopVTable {
     pub exit: unsafe fn(*mut ()),
     pub enqueue_task_concurrent: unsafe fn(*mut (), *mut ConcurrentTask),
     /// `el.virtual_machine.transpiler.env`.
-    pub env: unsafe fn(*mut ()) -> *mut DotEnvLoader,
+    pub env: unsafe fn(*mut ()) -> *mut DotEnvLoader<'static>,
     /// `el.virtual_machine.transpiler.fs.top_level_dir` — borrowed slice valid for VM lifetime.
     pub top_level_dir: unsafe fn(*mut ()) -> *const [u8],
     /// `el.virtual_machine.transpiler.env.map.createNullDelimitedEnvMap(alloc)`.
     pub create_null_delimited_env_map:
-        unsafe fn(*mut ()) -> bun_core::OomResult<Box<[Option<*const i8>]>>,
+        unsafe fn(*mut ()) -> Result<Box<[Option<*const i8>]>, bun_core::AllocError>,
 }
 
 /// Registered by `bun_runtime::init()` — the single static `JsEventLoopVTable`
@@ -83,16 +85,28 @@ pub type Task = AnyTaskWithExtraContext;
 
 impl<'a> AnyEventLoop<'a> {
     pub fn iteration_number(&self) -> u64 {
-        match self {
-            // SAFETY: vtable populated by runtime; owner is the erased EventLoop ptr.
-            AnyEventLoop::Js { owner, vtable } => unsafe { (vtable.iteration_number)(*owner) },
-            // TODO(port): `loop` is a Rust keyword; assumes MiniEventLoop port names the field `loop_`.
-            AnyEventLoop::Mini(mini) => mini.loop_.iteration_number(),
+        #[cfg(any())]
+        {
+            return match self {
+                // SAFETY: vtable populated by runtime; owner is the erased EventLoop ptr.
+                AnyEventLoop::Js { owner, vtable } => unsafe { (vtable.iteration_number)(*owner) },
+                // TODO(b2-blocked): bun_uws::Loop::iteration_number
+                AnyEventLoop::Mini(mini) => mini.loop_.iteration_number(),
+            };
         }
+        // TODO(b2-blocked): bun_uws::Loop::iteration_number
+        todo!("AnyEventLoop::iteration_number — blocked on bun_uws::Loop::iteration_number")
     }
 
     pub fn wakeup(&mut self) {
-        self.r#loop().wakeup();
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_uws::Loop::wakeup
+            self.r#loop().wakeup();
+            return;
+        }
+        // TODO(b2-blocked): bun_uws::Loop::wakeup
+        todo!("AnyEventLoop::wakeup — blocked on bun_uws::Loop::wakeup")
     }
 
     pub fn file_polls(&mut self) -> &mut bun_aio::file_poll::Store {
@@ -104,26 +118,35 @@ impl<'a> AnyEventLoop<'a> {
     }
 
     pub fn put_file_poll(&mut self, poll: &mut FilePoll) {
-        // TODO(port): `poll.flags.contains(.was_ever_registered)` — exact flag-set type/path TBD in bun_aio.
-        let was_ever_registered = poll.flags.contains(bun_aio::file_poll::Flag::WasEverRegistered);
-        match self {
-            AnyEventLoop::Js { owner, vtable } => unsafe {
-                (vtable.put_file_poll)(*owner, poll, was_ever_registered)
-            },
-            AnyEventLoop::Mini(mini) => {
-                // PORT NOTE: reshaped for borrowck — Zig passed `&this.mini` while also holding
-                // `this.mini.filePolls()` mutably; Phase B may need to split the borrow.
-                let store = mini.file_polls();
-                store.put(poll, mini, was_ever_registered);
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_aio::file_poll::Store::put (signature: takes EventLoopCtx, not &mut MiniEventLoop)
+            let was_ever_registered = poll
+                .flags
+                .contains(bun_aio::file_poll::Flags::WasEverRegistered);
+            match self {
+                AnyEventLoop::Js { owner, vtable } => unsafe {
+                    (vtable.put_file_poll)(*owner, poll, was_ever_registered)
+                },
+                AnyEventLoop::Mini(mini) => {
+                    // PORT NOTE: reshaped for borrowck — Zig passed `&this.mini` while also holding
+                    // `this.mini.filePolls()` mutably; Phase B may need to split the borrow.
+                    let store = mini.file_polls();
+                    store.put(poll, mini, was_ever_registered);
+                }
             }
+            return;
         }
+        let _ = poll;
+        // TODO(b2-blocked): bun_aio::file_poll::Store::put (EventLoopCtx adapter for MiniEventLoop)
+        todo!("AnyEventLoop::put_file_poll — blocked on bun_aio EventLoopCtx adapter")
     }
 
     // PORT NOTE: renamed via raw identifier — `loop` is a Rust keyword.
-    pub fn r#loop(&mut self) -> &mut UwsLoop {
+    pub fn r#loop(&mut self) -> *mut UwsLoop {
         match self {
-            // SAFETY: vtable contract — returns a valid &mut UwsLoop owned by the VM.
-            AnyEventLoop::Js { owner, vtable } => unsafe { &mut *(vtable.uws_loop)(*owner) },
+            // SAFETY: vtable contract — returns a valid *mut UwsLoop owned by the VM.
+            AnyEventLoop::Js { owner, vtable } => unsafe { (vtable.uws_loop)(*owner) },
             AnyEventLoop::Mini(mini) => mini.loop_,
         }
     }
@@ -159,52 +182,67 @@ impl<'a> AnyEventLoop<'a> {
     }
 
     pub fn tick<C: Copy>(&mut self, context: C, is_done: fn(C) -> bool) {
-        match self {
-            AnyEventLoop::Js { owner, vtable } => {
-                while !is_done(context) {
-                    // SAFETY: vtable contract.
-                    unsafe {
-                        (vtable.tick)(*owner);
-                        (vtable.auto_tick)(*owner);
+        #[cfg(any())]
+        {
+            match self {
+                AnyEventLoop::Js { owner, vtable } => {
+                    while !is_done(context) {
+                        // SAFETY: vtable contract.
+                        unsafe {
+                            (vtable.tick)(*owner);
+                            (vtable.auto_tick)(*owner);
+                        }
                     }
                 }
+                AnyEventLoop::Mini(mini) => {
+                    // TODO(port): Zig used `@ptrCast(isDone)` to erase the fn-pointer type for
+                    // `mini.tick(context, *const fn(*anyopaque) bool)`. Phase B: decide whether
+                    // MiniEventLoop::tick is generic over C or takes an erased `*mut c_void` + fn ptr.
+                    mini.tick(context, is_done);
+                }
             }
-            AnyEventLoop::Mini(mini) => {
-                // TODO(port): Zig used `@ptrCast(isDone)` to erase the fn-pointer type for
-                // `mini.tick(context, *const fn(*anyopaque) bool)`. Phase B: decide whether
-                // MiniEventLoop::tick is generic over C or takes an erased `*mut c_void` + fn ptr.
-                mini.tick(context, is_done);
-            }
+            return;
         }
+        let _ = (context, is_done);
+        // TODO(b2-blocked): bun_uws::Loop::tick (via MiniEventLoop::tick)
+        todo!("AnyEventLoop::tick — blocked on bun_uws::Loop methods")
     }
 
     pub fn tick_once<C>(&mut self, context: C) {
-        match self {
-            AnyEventLoop::Js { owner, vtable } => {
-                let _ = context;
-                // SAFETY: vtable contract.
-                unsafe {
-                    (vtable.tick)(*owner);
-                    (vtable.auto_tick_active)(*owner);
+        #[cfg(any())]
+        {
+            match self {
+                AnyEventLoop::Js { owner, vtable } => {
+                    let _ = context;
+                    // SAFETY: vtable contract.
+                    unsafe {
+                        (vtable.tick)(*owner);
+                        (vtable.auto_tick_active)(*owner);
+                    }
+                }
+                AnyEventLoop::Mini(mini) => {
+                    mini.tick_without_idle(context);
                 }
             }
-            AnyEventLoop::Mini(mini) => {
-                mini.tick_without_idle(context);
-            }
+            return;
         }
+        let _ = context;
+        // TODO(b2-blocked): bun_uws::Loop::tick_without_idle (via MiniEventLoop)
+        todo!("AnyEventLoop::tick_once — blocked on bun_uws::Loop methods")
     }
 
     pub fn enqueue_task_concurrent<Context, ParentContext>(
         &mut self,
         ctx: &mut Context,
-        callback: fn(&mut Context, &mut ParentContext),
         // TODO(port): Zig param `comptime field: std.meta.FieldEnum(Context)` — struct-field
         // reflection has no Rust equivalent. Likely becomes `core::mem::offset_of!`-based or
         // the caller passes `&mut ctx.<field>` directly. See MiniEventLoop port.
     ) {
         match self {
             AnyEventLoop::Js { .. } => {
-                bun_core::todo_panic!("AnyEventLoop.enqueueTaskConcurrent");
+                // Zig: `bun.todoPanic(@src(), "AnyEventLoop.enqueueTaskConcurrent", .{});`
+                // — intentionally unreachable in Zig too.
+                unreachable!("AnyEventLoop.enqueueTaskConcurrent");
                 // const TaskType = AnyTask.New(Context, Callback);
                 // @field(ctx, field) = TaskType.init(ctx);
                 // var concurrent = bun.default_allocator.create(ConcurrentTask) catch unreachable;
@@ -214,7 +252,7 @@ impl<'a> AnyEventLoop<'a> {
             }
             AnyEventLoop::Mini(mini) => {
                 // TODO(port): forward the `field` reflection param once its Rust shape is decided.
-                mini.enqueue_task_concurrent_with_extra_ctx::<Context, ParentContext>(ctx, callback);
+                mini.enqueue_task_concurrent_with_extra_ctx::<Context, ParentContext>(ctx);
             }
         }
     }
@@ -254,10 +292,10 @@ pub enum EventLoopTask {
 }
 
 impl EventLoopTask {
-    pub fn init(kind: crate::EventLoopKind) -> EventLoopTask {
+    pub fn init(kind: EventLoopKind) -> EventLoopTask {
         match kind {
-            crate::EventLoopKind::Js => EventLoopTask::Js(ConcurrentTask::default()),
-            crate::EventLoopKind::Mini => EventLoopTask::Mini(AnyTaskWithExtraContext::default()),
+            EventLoopKind::Js => EventLoopTask::Js(ConcurrentTask::default()),
+            EventLoopKind::Mini => EventLoopTask::Mini(AnyTaskWithExtraContext::default()),
         }
     }
 
@@ -358,27 +396,42 @@ impl EventLoopHandle {
         }
     }
 
-    pub fn file_polls(self) -> &'static mut bun_aio::file_poll::Store {
+    /// Returns the FilePoll store as a raw pointer (mirrors Zig `*FilePoll.Store`).
+    /// `EventLoopHandle` is `Copy`; promoting to `&'static mut` would let two
+    /// calls produce aliased exclusive references (UB). Callers deref locally
+    /// for the brief region they need `&mut`.
+    pub fn file_polls(self) -> *mut bun_aio::file_poll::Store {
         match self {
-            // SAFETY: vtable contract — returns a valid &mut Store owned by the VM.
-            EventLoopHandle::Js { owner, vtable } => unsafe { &mut *(vtable.file_polls)(owner) },
-            // SAFETY: see `stdout`.
-            EventLoopHandle::Mini(mini) => unsafe { (*mini).file_polls() },
+            // SAFETY: vtable contract — slot returns a valid live *mut Store.
+            EventLoopHandle::Js { owner, vtable } => unsafe { (vtable.file_polls)(owner) },
+            // SAFETY: see `stdout`. We hold `*mut MiniEventLoop`; derive a
+            // unique borrow at the call site only.
+            EventLoopHandle::Mini(mini) => unsafe { (*mini).file_polls() as *mut _ },
         }
     }
 
     pub fn put_file_poll(&mut self, poll: &mut FilePoll) {
-        let was_ever_registered = poll.flags.contains(bun_aio::file_poll::Flag::WasEverRegistered);
-        match self {
-            EventLoopHandle::Js { owner, vtable } => unsafe {
-                (vtable.put_file_poll)(*owner, poll, was_ever_registered)
-            },
-            // SAFETY: see `stdout`.
-            EventLoopHandle::Mini(mini) => unsafe {
-                let store = (**mini).file_polls();
-                store.put(poll, &mut **mini, was_ever_registered);
-            },
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_aio::file_poll::Store::put (signature: takes EventLoopCtx, not &mut MiniEventLoop)
+            let was_ever_registered = poll
+                .flags
+                .contains(bun_aio::file_poll::Flags::WasEverRegistered);
+            match self {
+                EventLoopHandle::Js { owner, vtable } => unsafe {
+                    (vtable.put_file_poll)(*owner, poll, was_ever_registered)
+                },
+                // SAFETY: see `stdout`.
+                EventLoopHandle::Mini(mini) => unsafe {
+                    let store = (**mini).file_polls();
+                    store.put(poll, &mut **mini, was_ever_registered);
+                },
+            }
+            return;
         }
+        let _ = poll;
+        // TODO(b2-blocked): bun_aio::file_poll::Store::put (EventLoopCtx adapter for MiniEventLoop)
+        todo!("EventLoopHandle::put_file_poll — blocked on bun_aio EventLoopCtx adapter")
     }
 
     pub fn enqueue_task_concurrent(self, task: EventLoopTaskPtr) {
@@ -397,7 +450,7 @@ impl EventLoopHandle {
             // SAFETY: vtable contract.
             EventLoopHandle::Js { owner, vtable } => unsafe { (vtable.uws_loop)(owner) },
             // SAFETY: see `stdout`.
-            EventLoopHandle::Mini(mini) => unsafe { (*mini).loop_ as *const _ as *mut _ },
+            EventLoopHandle::Mini(mini) => unsafe { (*mini).loop_ },
         }
     }
 
@@ -406,32 +459,50 @@ impl EventLoopHandle {
         self.r#loop()
     }
 
-    pub fn pipe_read_buffer(self) -> &'static mut [u8] {
+    /// Returns the shared pipe-read scratch buffer as a raw fat ptr (mirrors
+    /// Zig `[]u8`). Same `Copy`-handle aliasing concern as [`file_polls`].
+    pub fn pipe_read_buffer(self) -> *mut [u8] {
         match self {
-            // SAFETY: vtable contract.
-            EventLoopHandle::Js { owner, vtable } => unsafe { &mut *(vtable.pipe_read_buffer)(owner) },
+            // SAFETY: vtable contract — slot returns a valid live *mut [u8].
+            EventLoopHandle::Js { owner, vtable } => unsafe { (vtable.pipe_read_buffer)(owner) },
             // SAFETY: see `stdout`.
-            EventLoopHandle::Mini(mini) => unsafe { (*mini).pipe_read_buffer() },
+            EventLoopHandle::Mini(mini) => unsafe { (*mini).pipe_read_buffer() as *mut [u8] },
         }
     }
 
     pub fn ref_(self) {
-        // SAFETY: `r#loop` returns a valid live loop.
-        unsafe { (*self.r#loop()).ref_() };
+        #[cfg(any())]
+        {
+            // SAFETY: `r#loop` returns a valid live loop.
+            // TODO(b2-blocked): bun_uws::Loop::ref_
+            unsafe { (*self.r#loop()).ref_() };
+            return;
+        }
+        // TODO(b2-blocked): bun_uws::Loop::ref_
+        todo!("EventLoopHandle::ref_ — blocked on bun_uws::Loop::ref_")
     }
 
     pub fn unref(self) {
-        // SAFETY: `r#loop` returns a valid live loop.
-        unsafe { (*self.r#loop()).unref() };
+        #[cfg(any())]
+        {
+            // SAFETY: `r#loop` returns a valid live loop.
+            // TODO(b2-blocked): bun_uws::Loop::unref
+            unsafe { (*self.r#loop()).unref() };
+            return;
+        }
+        // TODO(b2-blocked): bun_uws::Loop::unref
+        todo!("EventLoopHandle::unref — blocked on bun_uws::Loop::unref")
     }
 
-    pub fn env(self) -> *mut DotEnvLoader {
+    pub fn env(self) -> *mut DotEnvLoader<'static> {
         match self {
             // SAFETY: vtable contract.
             EventLoopHandle::Js { owner, vtable } => unsafe { (vtable.env)(owner) },
             // SAFETY: see `stdout`. Zig unwraps `mini.env.?` — caller invariant.
+            // `MiniEventLoop::env` is `Option<NonNull<DotEnvLoader>>` so
+            // provenance is mutable (Zig field is `?*DotEnvLoader`).
             EventLoopHandle::Mini(mini) => unsafe {
-                (*mini).env.expect("MiniEventLoop.env unset") as *const _ as *mut _
+                (*mini).env.expect("MiniEventLoop.env unset").as_ptr().cast()
             },
         }
     }
@@ -447,19 +518,25 @@ impl EventLoopHandle {
 
     pub fn create_null_delimited_env_map(
         self,
-    ) -> bun_core::OomResult<Box<[Option<*const i8>]>> {
-        match self {
-            // SAFETY: vtable contract.
-            EventLoopHandle::Js { owner, vtable } => unsafe {
-                (vtable.create_null_delimited_env_map)(owner)
-            },
-            // SAFETY: see `stdout`. Zig unwraps `mini.env.?`.
-            EventLoopHandle::Mini(mini) => unsafe {
-                (*(*mini).env.expect("MiniEventLoop.env unset"))
-                    .map
-                    .create_null_delimited_env_map()
-            },
+    ) -> Result<Box<[Option<*const i8>]>, bun_core::AllocError> {
+        #[cfg(any())]
+        {
+            return match self {
+                // SAFETY: vtable contract.
+                EventLoopHandle::Js { owner, vtable } => unsafe {
+                    (vtable.create_null_delimited_env_map)(owner)
+                },
+                // SAFETY: see `stdout`. Zig unwraps `mini.env.?`.
+                EventLoopHandle::Mini(mini) => unsafe {
+                    // TODO(b2-blocked): bun_dotenv::Map::create_null_delimited_env_map
+                    (*(*mini).env.expect("MiniEventLoop.env unset"))
+                        .map
+                        .create_null_delimited_env_map()
+                },
+            };
         }
+        // TODO(b2-blocked): bun_dotenv::Map::create_null_delimited_env_map
+        todo!("EventLoopHandle::create_null_delimited_env_map — blocked on bun_dotenv::Map")
     }
 
     // PORT NOTE: Zig `cast(tag)` returned `tag.Type()` at comptime — no Rust

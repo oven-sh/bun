@@ -1,10 +1,9 @@
 use bun_collections::BabyList;
 use bun_logger::Range;
-use bun_fs::Path;
+use bun_paths::fs::Path;
 // move-in resolved: Loader & ast::Index now live in this crate (BundleEnums.rs)
-use crate::bundle_enums::Loader;
-use crate::bundle_enums::Index as AstIndex;
-use bun_schema::api;
+use crate::BundleEnums::Loader;
+use crate::BundleEnums::Index as AstIndex;
 use enum_map::{Enum, EnumMap};
 
 #[repr(u8)]
@@ -50,51 +49,50 @@ pub enum ImportKind {
 
 pub type Label = EnumMap<ImportKind, &'static [u8]>;
 
-// TODO(port): EnumMap may not be const-constructible; Phase B may need lazy_static/OnceLock or convert to a `match` body inside label()/error_label().
-pub static ALL_LABELS: Label = 'brk: {
-    // If these are changed, make sure to update
-    // - src/js/builtins/codegen/replacements.ts
-    // - packages/bun-types/bun.d.ts
-    let mut labels: Label = EnumMap::from_array([b"" as &'static [u8]; 12]);
-    labels[ImportKind::EntryPointRun] = b"entry-point-run";
-    labels[ImportKind::EntryPointBuild] = b"entry-point-build";
-    labels[ImportKind::Stmt] = b"import-statement";
-    labels[ImportKind::Require] = b"require-call";
-    labels[ImportKind::Dynamic] = b"dynamic-import";
-    labels[ImportKind::RequireResolve] = b"require-resolve";
-    labels[ImportKind::At] = b"import-rule";
-    labels[ImportKind::Url] = b"url-token";
-    labels[ImportKind::Composes] = b"composes";
-    labels[ImportKind::Internal] = b"internal";
-    labels[ImportKind::HtmlManifest] = b"html_manifest";
-    break 'brk labels;
-};
-
-pub static ERROR_LABELS: Label = 'brk: {
-    let mut labels: Label = EnumMap::from_array([b"" as &'static [u8]; 12]);
-    labels[ImportKind::EntryPointRun] = b"entry point (run)";
-    labels[ImportKind::EntryPointBuild] = b"entry point (build)";
-    labels[ImportKind::Stmt] = b"import";
-    labels[ImportKind::Require] = b"require()";
-    labels[ImportKind::Dynamic] = b"import()";
-    labels[ImportKind::RequireResolve] = b"require.resolve()";
-    labels[ImportKind::At] = b"@import";
-    labels[ImportKind::Url] = b"url()";
-    labels[ImportKind::Internal] = b"<bun internal>";
-    labels[ImportKind::Composes] = b"composes";
-    labels[ImportKind::HtmlManifest] = b"HTML import";
-    break 'brk labels;
-};
+// E0015: EnumMap indexing isn't const; Zig's `comptime brk: { ... }` initializer
+// is folded into match arms inside label()/error_label() below — same lookup
+// table, zero runtime init (PORTING.md §Concurrency: prefer no-lock over OnceLock
+// when the data is pure const).
+//
+// If these are changed, make sure to update
+// - src/js/builtins/codegen/replacements.ts
+// - packages/bun-types/bun.d.ts
 
 impl ImportKind {
     #[inline]
     pub fn label(self) -> &'static [u8] {
-        ALL_LABELS[self]
+        match self {
+            ImportKind::EntryPointRun => b"entry-point-run",
+            ImportKind::EntryPointBuild => b"entry-point-build",
+            ImportKind::Stmt => b"import-statement",
+            ImportKind::Require => b"require-call",
+            ImportKind::Dynamic => b"dynamic-import",
+            ImportKind::RequireResolve => b"require-resolve",
+            ImportKind::At => b"import-rule",
+            ImportKind::AtConditional => b"",
+            ImportKind::Url => b"url-token",
+            ImportKind::Composes => b"composes",
+            ImportKind::Internal => b"internal",
+            ImportKind::HtmlManifest => b"html_manifest",
+        }
     }
 
     #[inline]
     pub fn error_label(self) -> &'static [u8] {
-        ERROR_LABELS[self]
+        match self {
+            ImportKind::EntryPointRun => b"entry point (run)",
+            ImportKind::EntryPointBuild => b"entry point (build)",
+            ImportKind::Stmt => b"import",
+            ImportKind::Require => b"require()",
+            ImportKind::Dynamic => b"import()",
+            ImportKind::RequireResolve => b"require.resolve()",
+            ImportKind::At => b"@import",
+            ImportKind::AtConditional => b"",
+            ImportKind::Url => b"url()",
+            ImportKind::Internal => b"<bun internal>",
+            ImportKind::Composes => b"composes",
+            ImportKind::HtmlManifest => b"HTML import",
+        }
     }
 
     #[inline]
@@ -102,17 +100,21 @@ impl ImportKind {
         matches!(self, Self::Require | Self::RequireResolve)
     }
 
-    // TODO(port): Zig `jsonStringify` uses the std.json writer protocol (`writer.write(str)`).
-    // Phase B should likely replace this with a `serde::Serialize` impl or the project's JSON writer trait.
-    pub fn json_stringify<W: core::fmt::Write>(self, writer: &mut W) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        writer.write_str(<&'static str>::from(self)).map_err(Into::into)
+    // TODO(port): Zig `jsonStringify` uses the std.json writer protocol; replace
+    // with a `serde::Serialize` impl or the project's JSON writer trait. For now
+    // emit the quoted string directly — every tag name is a plain ASCII
+    // identifier with no chars that need JSON escaping.
+    pub fn json_stringify<W: core::fmt::Write>(self, writer: &mut W) -> core::fmt::Result {
+        writer.write_char('"')?;
+        writer.write_str(<&'static str>::from(self))?;
+        writer.write_char('"')
     }
 
     pub fn is_from_css(self) -> bool {
         self == Self::AtConditional || self == Self::At || self == Self::Url || self == Self::Composes
     }
 
+    #[cfg(any())] // TODO(b2-blocked): bun_api::ImportKind
     pub fn to_api(self) -> api::ImportKind {
         // TODO(port): source Zig references `ImportKind.entry_point` which is not a declared variant
         // (only entry_point_run / entry_point_build exist). This compiles in Zig only because the

@@ -79,25 +79,13 @@ pub mod npm {
 // where JSC is uninitialised anyway).
 // ══════════════════════════════════════════════════════════════════════════
 
-// ──────────────────────────────────────────────────────────────────────────
-// B-1 GATE: PnpmMatcher draft references symbols absent from lower-tier stub
-// surfaces (bun_logger::ast, bun_logger::ErrorOpts, bun_str crate, thiserror,
-// strings::trim/escape_reg_exp_*, BunString::from_bytes/clone_utf8). Preserve
-// the Phase-A body verbatim under #[cfg(any())]; expose opaque stub types so
-// dependents compile. Un-gating in B-2 once lower tiers fill in.
-// ──────────────────────────────────────────────────────────────────────────
-
 use core::ptr::{null_mut, NonNull};
 use core::sync::atomic::{AtomicPtr, Ordering};
 
-#[cfg(any())]
-mod _draft_pnpm_matcher {
-use super::*;
 use bun_alloc::AllocError;
-// Expr/ExprData moved down from `bun_js_parser` → `bun_logger::ast` per
-// CYCLEBREAK §→logger; install_types (≤T3) may depend on logger.
-use bun_logger::{self as logger, ast};
-use bun_str::{strings, String as BunString};
+use bun_logger as logger;
+use bun_string::{strings, String as BunString};
+use bun_string::escape_reg_exp::escape_reg_exp_for_package_name_matching;
 
 /// Erased `bun_jsc::RegularExpression` vtable. Registered once at startup by
 /// `bun_runtime`; `compile` performs `jsc::initialize(false)` lazily.
@@ -172,15 +160,18 @@ pub enum Behavior {
     HasExcludeAndIncludeMatchers,
 }
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+#[derive(Debug, strum::IntoStaticStr)]
 pub enum FromExprError {
-    #[error("OutOfMemory")]
     OutOfMemory,
-    #[error("InvalidRegExp")]
     InvalidRegExp,
-    #[error("UnexpectedExpr")]
     UnexpectedExpr,
 }
+impl core::fmt::Display for FromExprError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(<&'static str>::from(self))
+    }
+}
+impl std::error::Error for FromExprError {}
 
 impl From<AllocError> for FromExprError {
     fn from(_: AllocError) -> Self { Self::OutOfMemory }
@@ -206,6 +197,11 @@ impl From<FromExprError> for bun_core::Error {
 }
 
 impl PnpmMatcher {
+    // TODO(b2-blocked): bun_logger::ast — Expr/ExprData (EString/EArray/
+    // .as_string_cloned/.slice/.loc) have not yet moved down from
+    // bun_js_parser into bun_logger per CYCLEBREAK §→logger. Re-gate just
+    // this fn body until that lower-tier surface lands.
+    #[cfg(any())]
     pub fn from_expr(
         expr: &ast::Expr,
         log: &mut logger::Log,
@@ -319,7 +315,10 @@ impl PnpmMatcher {
             return false;
         }
 
-        let name_str = BunString::from_bytes(name);
+        // PORT NOTE: Zig `bun.String.fromBytes(name)`. `from_bytes` not yet on
+        // bun_string surface; package names are ASCII so `borrow_utf8` is an
+        // equivalent zero-copy borrow for the regex match call.
+        let name_str = BunString::borrow_utf8(name);
 
         match self.behavior {
             Behavior::AllMatchersInclude => {
@@ -368,13 +367,17 @@ impl PnpmMatcher {
     }
 }
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+#[derive(Debug, strum::IntoStaticStr)]
 pub enum CreateMatcherError {
-    #[error("OutOfMemory")]
     OutOfMemory,
-    #[error("InvalidRegExp")]
     InvalidRegExp,
 }
+impl core::fmt::Display for CreateMatcherError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(<&'static str>::from(self))
+    }
+}
+impl std::error::Error for CreateMatcherError {}
 
 impl From<AllocError> for CreateMatcherError {
     fn from(_: AllocError) -> Self { Self::OutOfMemory }
@@ -389,10 +392,10 @@ impl From<CreateMatcherError> for bun_core::Error {
     }
 }
 
-fn create_matcher(raw: &[u8], buf: &mut Vec<u8>) -> Result<Matcher, CreateMatcherError> {
+pub fn create_matcher(raw: &[u8], buf: &mut Vec<u8>) -> Result<Matcher, CreateMatcherError> {
     buf.clear();
 
-    let mut trimmed = strings::trim(raw, strings::WHITESPACE_CHARS);
+    let mut trimmed = strings::trim(raw, &strings::WHITESPACE_CHARS);
 
     let mut is_exclude = false;
     if strings::starts_with_char(trimmed, b'!') {
@@ -406,9 +409,10 @@ fn create_matcher(raw: &[u8], buf: &mut Vec<u8>) -> Result<Matcher, CreateMatche
 
     // Writer.Allocating can only fail with OutOfMemory; Vec::push aborts on
     // OOM under the global mimalloc allocator, so the explicit error mapping
-    // from the Zig source collapses.
+    // from the Zig source collapses. `escape_reg_exp_*` writes through
+    // `io::Write` for `Vec<u8>`, which is infallible.
     buf.push(b'^');
-    strings::escape_reg_exp_for_package_name_matching(trimmed, buf);
+    let _ = escape_reg_exp_for_package_name_matching(trimmed, buf);
     buf.push(b'$');
 
     // PERF(port): was inline `jsc::RegularExpression.init(.cloneUTF8(buf), .none)`
@@ -425,66 +429,7 @@ fn create_matcher(raw: &[u8], buf: &mut Vec<u8>) -> Result<Matcher, CreateMatche
 //               src/install/npm.zig (Registry.default_url / default_url_hash)
 //   confidence: medium
 //   todos:      2
-//   notes:      ast::Expr/ExprData imported from bun_logger (post-CYCLEBREAK
-//               home); jsc::RegularExpression erased behind REGEX_VTABLE hook
+//   notes:      jsc::RegularExpression erased behind REGEX_VTABLE hook
 //               (tier-6 registers in bun_runtime::init — Pass C).
+//               from_expr() re-gated on bun_logger::ast (CYCLEBREAK pending).
 // ──────────────────────────────────────────────────────────────────────────
-} // end #[cfg(any())] mod _draft_pnpm_matcher
-
-// ── B-1 stub surface for gated PnpmMatcher ────────────────────────────────
-// TODO(b1): bun_logger::ast / bun_logger::ErrorOpts missing — gated above.
-// TODO(b1): bun_str crate (should be bun_string) missing trim/escape helpers.
-
-/// Erased `bun_jsc::RegularExpression` vtable. Registered once at startup by
-/// `bun_runtime`; `compile` performs `jsc::initialize(false)` lazily.
-pub struct RegexVTable {
-    pub compile: unsafe fn(pattern: bun_string::String) -> Option<NonNull<()>>,
-    pub matches: unsafe fn(regex: NonNull<()>, input: &bun_string::String) -> bool,
-    pub drop: unsafe fn(regex: NonNull<()>),
-}
-
-/// Hook: tier-6 writes a leaked `&'static RegexVTable`. Null = JSC unavailable.
-pub static REGEX_VTABLE: AtomicPtr<RegexVTable> = AtomicPtr::new(null_mut());
-
-pub struct RegularExpression(NonNull<()>);
-
-pub struct PnpmMatcher {
-    pub matchers: Box<[Matcher]>,
-    pub behavior: Behavior,
-}
-
-pub struct Matcher {
-    pub pattern: Pattern,
-    pub is_exclude: bool,
-}
-
-pub enum Pattern {
-    MatchAll,
-    Regex(RegularExpression),
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Behavior {
-    AllMatchersInclude,
-    AllMatchersExclude,
-    HasExcludeAndIncludeMatchers,
-}
-
-#[derive(Debug, strum::IntoStaticStr)]
-pub enum FromExprError {
-    OutOfMemory,
-    InvalidRegExp,
-    UnexpectedExpr,
-}
-
-#[derive(Debug, strum::IntoStaticStr)]
-pub enum CreateMatcherError {
-    OutOfMemory,
-    InvalidRegExp,
-}
-
-impl PnpmMatcher {
-    pub fn is_match(&self, _name: &[u8]) -> bool {
-        todo!("B-2: un-gate _draft_pnpm_matcher")
-    }
-}

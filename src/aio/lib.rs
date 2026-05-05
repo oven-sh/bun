@@ -1,62 +1,45 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
+#![allow(static_mut_refs)]
 // AUTOGEN: mod declarations only — real exports added in B-1.
 
 pub mod stub_event_loop;
 
 // ────────────────────────────────────────────────────────────────────────────
-// B-1 gate-and-stub: the Phase-A draft bodies below depend on lower-tier
-// symbols that are themselves still gated (bun_sys::windows, bun_sys::linux,
-// bun_output, bun_threading::WorkPool, bun_collections::TaggedPtrUnion,
-// bun_core::env_var, bun_str). Preserve the drafts behind cfg(any()) and
-// expose a minimal stub surface so dependents can name the types. Un-gating
-// happens in B-2 once the lower tiers are real.
+// B-2 un-gated: posix_event_loop + ParentDeathWatchdog compile on unix.
+// windows_event_loop is platform-gated (was cfg(any())); it remains blocked
+// on bun_sys::windows::libuv on its target platform.
 // ────────────────────────────────────────────────────────────────────────────
 
-#[cfg(any())]
+#[cfg(windows)]
 pub mod windows_event_loop;
-#[cfg(any())]
+
 #[path = "ParentDeathWatchdog.rs"]
-pub mod parent_death_watchdog_draft;
-#[cfg(any())]
+pub mod parent_death_watchdog;
+pub use parent_death_watchdog as ParentDeathWatchdog;
+
 pub mod posix_event_loop;
 
-// ─── stub surface ───────────────────────────────────────────────────────────
+// ─── public surface ─────────────────────────────────────────────────────────
 
-pub use stub_event_loop::{FilePoll, KeepAlive, Loop};
+#[cfg(not(windows))]
+pub use posix_event_loop::{Closer, FilePoll, KeepAlive, Loop, Waker};
+#[cfg(windows)]
+pub use windows_event_loop::{Closer, FilePoll, KeepAlive, Loop, Waker};
 
-/// TODO(b1): real impl in posix_event_loop / windows_event_loop.
-pub struct Closer;
-/// TODO(b1): real impl in posix_event_loop.
-pub struct Waker;
+pub use posix_event_loop::{
+    AllocatorType, EventLoopCtx, EventLoopCtxVTable, OpaqueCallback, Owner, PollTag, Store,
+};
 
-/// TODO(b1): mirrors posix_event_loop::Flags / FlagsSet.
-pub type PollFlag = u32;
-/// TODO(b1): mirrors posix_event_loop poll kind enum used by process.rs.
-pub type PollKind = u32;
+/// Mirrors posix_event_loop::Flags.
+pub use posix_event_loop::Flags as PollFlag;
+/// Mirrors posix_event_loop poll kind enum used by process.rs.
+pub use posix_event_loop::Flags as PollKind;
 
-/// Stub `file_poll` module — real one lives in posix_event_loop.rs.
+/// `file_poll` module — real one lives in posix_event_loop.rs.
 pub mod file_poll {
-    pub use super::stub_event_loop::FilePoll;
-    /// TODO(b1): HiveArray-backed store of FilePoll.
-    pub struct Store;
-    /// TODO(b1): bitflags enum (WasEverRegistered, Socket, …).
-    pub type Flag = u32;
-    pub type Flags = u32;
-    pub type FlagsSet = u32;
+    pub use super::posix_event_loop::FilePoll;
+    pub use super::posix_event_loop::Store;
+    pub use super::posix_event_loop::{Flags, Flags as Flag, FlagsSet};
+    /// Kqueue/epoll watch kind passed to `FilePoll::register`.
+    pub type Pollable = Flags;
 }
-
-/// Stub `ParentDeathWatchdog` module + type.
-pub mod ParentDeathWatchdog {
-    pub struct ParentDeathWatchdog;
-    pub fn is_enabled() -> bool {
-        // TODO(b1): bun_core::env_var missing from lower tier
-        false
-    }
-    pub fn install() {
-        todo!("B-2: ParentDeathWatchdog::install")
-    }
-    pub fn enable() {
-        todo!("B-2: ParentDeathWatchdog::enable")
-    }
-}
-pub use ParentDeathWatchdog as parent_death_watchdog;

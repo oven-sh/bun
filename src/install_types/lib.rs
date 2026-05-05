@@ -4,31 +4,26 @@
 pub mod NodeLinker;
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-1 GATE: Phase-A drafts of ExternalString / SlicedString / SemverString
-// duplicate the canonical defs now living in `bun_semver`. They reference
-// lower-tier symbols not yet on stub surfaces (bun_collections::IdentityContext,
-// bun_core::fmt, bun_str::strings, bun_wyhash::hash, Lockfile). Gate the draft
-// bodies and re-export the bun_semver versions as the minimal public surface.
-// Un-gating + reconciliation in B-2.
+// B-2 RECONCILED: Phase-A drafts of ExternalString / SlicedString /
+// SemverString duplicated the canonical defs that were MOVE-IN'd to
+// `bun_semver` (see src/semver/lib.rs `MOVE-IN` blocks — same .zig ground
+// truth). The drafts are dead duplicates; the public surface of this crate
+// re-exports the single canonical impl so `install_types::SemverString::*`
+// and `bun_semver::string::*` name the same types.
+// The sibling Phase-A `.rs` draft files are retained on disk for reference
+// but are not compiled.
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(any())]
-pub mod ExternalString;
-#[cfg(not(any()))]
 pub mod ExternalString {
+    pub use bun_semver::external_string::*;
     pub use bun_semver::ExternalString;
 }
 
-#[cfg(any())]
-pub mod SlicedString;
-#[cfg(not(any()))]
 pub mod SlicedString {
+    pub use bun_semver::sliced_string::*;
     pub use bun_semver::SlicedString;
 }
 
-#[cfg(any())]
-pub mod SemverString;
-#[cfg(not(any()))]
 pub mod SemverString {
     // Re-export the full bun_semver string module surface (String, Formatter,
     // Pointer, Builder, etc.) so downstream `install_types::SemverString::*`

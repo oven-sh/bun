@@ -3,8 +3,7 @@
 //! Aliased back at original locations — call sites unchanged.
 
 use bun_collections;
-use bun_schema::api;
-use bun_str::strings;
+use bun_string::strings;
 use enum_map::{Enum, EnumMap};
 use phf;
 
@@ -90,11 +89,10 @@ pub enum BundlePackage {
     Never,
 }
 
-impl BundlePackage {
-    // Zig: `bun.StringArrayHashMapUnmanaged(BundlePackage)` — insertion-ordered,
-    // string-keyed. Maps to bun_collections per PORTING.md §Collections.
-    pub type Map = bun_collections::StringArrayHashMap<BundlePackage>;
-}
+// Zig: `bun.StringArrayHashMapUnmanaged(BundlePackage)` — insertion-ordered,
+// string-keyed. Maps to bun_collections per PORTING.md §Collections.
+// (E0658: inherent assoc types are nightly-only; lifted to module scope.)
+pub type BundlePackageMap = bun_collections::StringArrayHashMap<BundlePackage>;
 
 // ─── move-in: TYPE_ONLY from bun_bundler::options ─────────────────────────
 
@@ -138,6 +136,7 @@ impl Target {
 
     // `from_js` lives in bundler_jsc as an extension trait — see PORTING.md.
 
+    #[cfg(any())] // TODO(b2-blocked): bun_api::Target
     pub fn to_api(self) -> api::Target {
         match self {
             Target::Node => api::Target::node,
@@ -176,6 +175,7 @@ impl Target {
     // `bake_graph()` stays in bun_bake (would back-edge into tier-6).
     // `out_extensions()` stays in bun_bundler (allocator-heavy, only used there).
 
+    #[cfg(any())] // TODO(b2-blocked): bun_api::Target
     pub fn from(plat: Option<api::Target>) -> Target {
         match plat.unwrap_or(api::Target::_none) {
             api::Target::node => Target::Node,
@@ -278,6 +278,7 @@ impl LoaderOptional {
         }
     }
 
+    #[cfg(any())] // TODO(b2-blocked): bun_api::Loader
     pub fn from_api(loader: api::Loader) -> LoaderOptional {
         if loader == api::Loader::_none {
             LoaderOptional::NONE
@@ -293,9 +294,10 @@ impl From<Loader> for LoaderOptional {
     }
 }
 
-impl Loader {
-    pub type HashTable = bun_collections::StringArrayHashMap<Loader>;
+// E0658: inherent assoc types are nightly-only; lifted to module scope.
+pub type LoaderHashTable = bun_collections::StringArrayHashMap<Loader>;
 
+impl Loader {
     #[inline]
     pub fn is_css(self) -> bool {
         self == Loader::Css
@@ -404,6 +406,7 @@ impl Loader {
         b"markdown" => Loader::Md,
     };
 
+    #[cfg(any())] // TODO(b2-blocked): bun_api::Loader
     pub const API_NAMES: phf::Map<&'static [u8], api::Loader> = phf::phf_map! {
         b"js" => api::Loader::js,
         b"mjs" => api::Loader::js,
@@ -445,7 +448,7 @@ impl Loader {
         Self::NAMES.get(slice).copied().or_else(|| {
             Self::NAMES
                 .entries()
-                .find(|(k, _)| strings::eql_case_insensitive_ascii_i_check_length(k, slice))
+                .find(|(k, _)| strings::eql_case_insensitive_asciii_check_length(k, slice))
                 .map(|(_, v)| *v)
         })
     }
@@ -454,6 +457,7 @@ impl Loader {
         matches!(self, Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx)
     }
 
+    #[cfg(any())] // TODO(b2-blocked): bun_api::Loader
     pub fn to_api(self) -> api::Loader {
         match self {
             Loader::Jsx => api::Loader::jsx,
@@ -478,6 +482,7 @@ impl Loader {
         }
     }
 
+    #[cfg(any())] // TODO(b2-blocked): bun_api::Loader
     pub fn from_api(loader: api::Loader) -> Loader {
         match loader {
             api::Loader::_none => Loader::File,

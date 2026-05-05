@@ -7,9 +7,15 @@ use bun_string::ZStr;
 // ──────────────────────────────────────────────────────────────────────────
 // Thin re-exports from uws_sys / runtime
 // ──────────────────────────────────────────────────────────────────────────
-// B-1: lower-tier crates (bun_uws_sys, bun_runtime) gate most of these modules
-// behind `#[cfg(any())]`. Preserve the Phase-A re-export list under a gate and
-// expose local opaque stubs so higher tiers compile. Un-gate in B-2.
+// B-2: bun_uws_sys still gates every module (only opaque handles exported), so
+// the Phase-A re-export list stays parked. Local opaque stubs below keep higher
+// tiers compiling.
+// TODO(b2-blocked): bun_uws_sys::{us_socket_t, socket, Timer, SocketGroup,
+//   SocketKind, SocketContext, ConnectingSocket, InternalLoopData, Loop,
+//   Request, Response, App, WebSocket, ListenSocket, udp, BodyReaderMixin,
+//   h3, quic, vtable} — modules gated in lower tier.
+// The bun_runtime::* items (dispatch, WindowsNamedPipe, UpgradedDuplex) are
+// upward refs and intentionally remain local stub modules.
 
 #[cfg(any())]
 mod _phase_a_reexports {
@@ -246,18 +252,14 @@ pub fn on_thread_exit() {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn BUN__warn__extra_ca_load_failed(filename: *const c_char, error_msg: *const c_char) {
-    #[cfg(any())] // TODO(b1): bun_core::Output::warn missing
-    {
-        // SAFETY: C++ caller passes valid NUL-terminated strings.
-        let filename = unsafe { core::ffi::CStr::from_ptr(filename) };
-        let error_msg = unsafe { core::ffi::CStr::from_ptr(error_msg) };
-        bun_core::Output::warn(format_args!(
-            "ignoring extra certs from {}, load failed: {}",
-            bstr::BStr::new(filename.to_bytes()),
-            bstr::BStr::new(error_msg.to_bytes()),
-        ));
-    }
-    let _ = (filename, error_msg);
+    // SAFETY: C++ caller passes valid NUL-terminated strings.
+    let filename = unsafe { core::ffi::CStr::from_ptr(filename) };
+    let error_msg = unsafe { core::ffi::CStr::from_ptr(error_msg) };
+    bun_core::Output::warn(format_args!(
+        "ignoring extra certs from {}, load failed: {}",
+        bstr::BStr::new(filename.to_bytes()),
+        bstr::BStr::new(error_msg.to_bytes()),
+    ));
 }
 
 #[cfg(windows)]
@@ -273,12 +275,14 @@ mod c {
 }
 
 pub fn get_default_ciphers() -> &'static ZStr {
-    #[cfg(any())] // TODO(b1): ZStr::from_ptr missing — use from_raw + strlen in B-2
-    {
-        // SAFETY: us_get_default_ciphers returns a static NUL-terminated string.
-        unsafe { ZStr::from_ptr(c::us_get_default_ciphers().cast()) }
+    // SAFETY: us_get_default_ciphers returns a static NUL-terminated string;
+    // CStr::from_ptr computes the length, ZStr::from_raw rebuilds the
+    // length-carrying slice (excluding the NUL).
+    unsafe {
+        let p = c::us_get_default_ciphers();
+        let len = core::ffi::CStr::from_ptr(p).to_bytes().len();
+        ZStr::from_raw(p.cast::<u8>(), len)
     }
-    todo!("b1-stub")
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -286,19 +290,39 @@ pub fn get_default_ciphers() -> &'static ZStr {
 // Ground truth: src/runtime/socket/ssl_wrapper.zig
 // Requested by: http_jsc (CYCLEBREAK §move-in → uws)
 // ═══════════════════════════════════════════════════════════════════════════
-// B-1: gated — depends on bun_boringssl_sys / bun_output (not in deps) and
-// bun_uws_sys::socket_context::BunSocketContextOptions (gated in lower tier).
-// Stub surface follows below; full Phase-A body preserved here for B-2.
-#[cfg(any())]
+// B-2: module un-gated. `bun_boringssl_sys` is currently empty (bindgen not yet
+// run), so every fn body that calls a BoringSSL symbol is re-gated below; the
+// type/struct surface compiles against opaque `SSL`/`SSL_CTX` from
+// `bun_boringssl::c`. `init_from_options` additionally needs
+// `bun_uws_sys::socket_context::BunSocketContextOptions` (gated in lower tier).
 pub mod ssl_wrapper {
     use core::ffi::{c_int, c_void};
     use core::ptr::NonNull;
 
-    use bun_boringssl_sys as boring_sys;
+    // TODO(b2-blocked): bun_boringssl_sys::{SSL_new, SSL_free, SSL_CTX_free,
+    //   SSL_read, SSL_write, SSL_shutdown, SSL_get_error, SSL_do_handshake,
+    //   SSL_is_init_finished, SSL_get_shutdown, SSL_get_rbio, SSL_get_wbio,
+    //   SSL_set_bio, SSL_set_renegotiate_mode, SSL_set_connect_state,
+    //   SSL_set_accept_state, SSL_set_verify, SSL_CTX_get_verify_mode,
+    //   SSL_set0_verify_cert_store, SSL_renegotiate, BIO_new, BIO_free,
+    //   BIO_s_mem, BIO_read, BIO_write, BIO_ctrl_pending,
+    //   BIO_set_mem_eof_return, ERR_clear_error, X509_STORE, X509_STORE_CTX,
+    //   ssl_renegotiate_explicit, ssl_renegotiate_never, SSL_ERROR_*,
+    //   SSL_VERIFY_*, SSL_RECEIVED_SHUTDOWN}
+    // — bindgen output empty. Opaque handle types borrowed from
+    // `bun_boringssl::c` so struct fields compile.
+    mod boring_sys {
+        pub use bun_boringssl::c::{SSL, SSL_CTX};
+    }
 
     use crate::{create_bun_socket_error_t, us_bun_verify_error_t};
 
-    bun_output::declare_scope!(SSLWrapper, hidden);
+    bun_core::declare_scope!(SSLWrapper, hidden);
+    /// Local alias for `scoped_log!(SSLWrapper, ...)` so the body reads like
+    /// the Zig `const log = bun.Output.scoped(.SSLWrapper, .hidden)`.
+    macro_rules! log {
+        ($($t:tt)*) => { bun_core::scoped_log!(SSLWrapper, $($t)*) };
+    }
 
     // Mimics the behavior of openssl.c in uSockets, wrapping data that can be
     // received from anywhere (network, DuplexStream, etc).
@@ -415,6 +439,11 @@ pub mod ssl_wrapper {
         WantWrite,
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_boringssl_sys::{SSL_*, BIO_*, ERR_*} — every method
+    // body calls into BoringSSL; un-gate once bindgen populates boringssl_sys.
+    // `init_from_options` is additionally
+    // TODO(b2-blocked): bun_uws_sys::socket_context::BunSocketContextOptions
     impl<T: Copy> SSLWrapper<T> {
         /// Initialize the SSLWrapper with a specific SSL_CTX*, remember to
         /// call SSL_CTX_up_ref if you want to keep the SSL_CTX alive after
@@ -1047,10 +1076,12 @@ pub mod ssl_wrapper {
     /// `us_verify_callback` equivalent — let the handshake complete regardless of
     /// verify result so JS reads `authorizationError` and `rejectUnauthorized`
     /// decides, instead of BoringSSL aborting mid-flight.
+    #[cfg(any())] // TODO(b2-blocked): bun_boringssl_sys::X509_STORE_CTX
     extern "C" fn always_continue_verify(_: c_int, _: *mut boring_sys::X509_STORE_CTX) -> c_int {
         1
     }
 
+    #[cfg(any())] // TODO(b2-blocked): bun_boringssl_sys::X509_STORE
     unsafe extern "C" {
         /// Process-wide bundled root store from `root_certs.cpp` — built once and
         /// up_ref'd per consumer so the ~150-cert load happens once total, not per
@@ -1071,41 +1102,6 @@ pub mod ssl_wrapper {
     //               `init_from_options` (or wrap it as an extension trait
     //               in their own tier).
     // ──────────────────────────────────────────────────────────────────────
-}
-
-// B-1 stub surface for ssl_wrapper (gated body above).
-pub mod ssl_wrapper {
-    use crate::us_bun_verify_error_t;
-
-    pub struct SSLWrapper<T: Copy>(core::marker::PhantomData<T>);
-    pub type SslWrapper<T> = SSLWrapper<T>;
-
-    #[repr(transparent)]
-    #[derive(Clone, Copy, Default)]
-    pub struct Flags(u8);
-
-    #[repr(u8)]
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    pub enum HandshakeState {
-        HandshakePending = 0,
-        HandshakeCompleted = 1,
-        HandshakeRenegotiationPending = 2,
-    }
-
-    pub struct Handlers<T: Copy> {
-        pub ctx: T,
-        pub on_open: fn(T),
-        pub on_handshake: fn(T, bool, us_bun_verify_error_t),
-        pub write: fn(T, &[u8]),
-        pub on_data: fn(T, &[u8]),
-        pub on_close: fn(T),
-    }
-
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum InitError { OutOfMemory, InvalidOptions }
-
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum WriteDataError { ConnectionClosed, WantRead, WantWrite }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

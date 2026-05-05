@@ -340,18 +340,16 @@ impl ConcurrentTask {
 
     // TODO(port): `comptime callback: anytype` + `std.meta.Child(@TypeOf(ptr))` is comptime
     // reflection. Modeled here as a generic over the pointee type `T` with a plain fn-pointer
-    // callback. ManagedTask::New(T, callback).init(ptr) likely becomes ManagedTask::new::<T>.
-    pub fn from_callback<T>(ptr: *mut T, callback: fn(*mut T)) -> *mut ConcurrentTask {
+    // callback. Zig's `ManagedTask.New(T, cb).init(ptr)` collapses to `ManagedTask::new(ptr, cb)`.
+    // PORT NOTE: callback returns `JsResult<()>` to match `ManagedTask::new`'s stored ABI;
+    // Zig accepted both `fn(*T) void` and `fn(*T) JSError!void` via comptime — Rust callers
+    // that have a `fn(*mut T)` should wrap it as `|p| { f(p); Ok(()) }` at the call site.
+    pub fn from_callback<T>(
+        ptr: *mut T,
+        callback: fn(*mut T) -> crate::JsResult<()>,
+    ) -> *mut ConcurrentTask {
         bun_core::mark_binding!();
-        #[cfg(any())]
-        {
-            // TODO(b1): ManagedTask::New(T, cb).init(ptr) shape changed in the
-            // Rust port (see ManagedTask::new<T>(ctx, callback) -> Task). Phase B
-            // must rewrite this call site once the JsResult callback ABI settles.
-            return Self::create(ManagedTask::new::<T>(callback).init(ptr));
-        }
-        let _ = (ptr, callback);
-        todo!("B-2: ConcurrentTask::from_callback — ManagedTask::new signature mismatch")
+        Self::create(ManagedTask::ManagedTask::new(ptr, callback))
     }
 
     pub fn from<T>(&mut self, of: T, auto_deinit: AutoDeinit) -> &mut ConcurrentTask {

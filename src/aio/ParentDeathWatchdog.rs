@@ -35,12 +35,10 @@
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_core::{env_var, Global};
-use bun_str::ZStr;
-use bun_sys::{self, Fd, File, O};
+use bun_core::{env_var, ZStr};
+use bun_sys::{self, Fd, O};
 
-use crate::posix_event_loop::{poll_tag, EventLoopCtx, Owner};
-use crate::FilePoll;
+use crate::posix_event_loop::{poll_tag, EventLoopCtx, FilePoll, Owner};
 
 /// Unit struct — `FilePoll.Owner` needs a real pointer, but we have no
 /// per-instance state.
@@ -195,7 +193,7 @@ static mut INSTANCE: ParentDeathWatchdog = ParentDeathWatchdog;
 pub fn install() {
     #[cfg(unix)]
     {
-        if !env_var::BUN_FEATURE_FLAG_NO_ORPHANS.get() {
+        if !env_var::BUN_FEATURE_FLAG_NO_ORPHANS.get().unwrap_or(false) {
             return;
         }
         enable();
@@ -232,7 +230,7 @@ pub fn enable() {
         // per-script in `spawnPosix` (just before the spawn) and cleared on return.
         // Descendant cleanup runs on every clean exit regardless of whether we end
         // up watching a parent (Bun may have been spawned directly by launchd/init).
-        Global::add_exit_callback(on_process_exit);
+        bun_core::add_exit_callback(on_process_exit);
 
         ORIGINAL_PPID = libc::getppid();
         // Already orphaned (parent died before we got here, or launchd/init
@@ -274,6 +272,8 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
     {
         let _ = handle;
     }
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_sys::Errno + FilePoll::register (blocked on bun_uws_sys::Loop)
     #[cfg(target_os = "macos")]
     {
         // SAFETY: globals written once at startup; read-only here.
@@ -323,7 +323,7 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
 /// fired.
 pub fn on_parent_exit(_this: &mut ParentDeathWatchdog) {
     // Global.exit → Bun__onExit → on_process_exit → kill_descendants.
-    Global::exit(EXIT_CODE);
+    bun_core::exit(EXIT_CODE as u32);
 }
 
 /// Registered with `Global.addExitCallback` so it runs from `Bun__onExit`
@@ -554,6 +554,7 @@ fn kill_tree_rooted_at(root: libc::pid_t, expected_ppid_of_root: libc::pid_t) {
 /// parent we expected").
 #[cfg(unix)]
 fn parent_pid_of(pid: libc::pid_t) -> libc::pid_t {
+    #[cfg(any())] // TODO(b2-blocked): bun_sys::c::proc_pidinfo
     #[cfg(target_os = "macos")]
     {
         // SAFETY: info is fully written by proc_pidinfo on success (rc == size).
@@ -611,6 +612,7 @@ fn parent_pid_of(pid: libc::pid_t) -> libc::pid_t {
 /// to `out.len`.
 #[cfg(unix)]
 fn list_child_pids(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option<usize> {
+    #[cfg(any())] // TODO(b2-blocked): bun_sys::c::proc_listchildpids
     #[cfg(target_os = "macos")]
     {
         // proc_listchildpids returns the *count* of pids written (libproc.c
@@ -646,6 +648,14 @@ fn list_child_pids(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option<usize
 /// Requires CONFIG_PROC_CHILDREN (enabled on every distro kernel that matters).
 #[cfg(target_os = "linux")]
 fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option<usize> {
+    #[cfg(not(any()))]
+    {
+        // TODO(b2-blocked): bun_sys::open_dir_for_iteration + bun_sys::iterate_dir
+        let _ = (parent, out);
+        return None;
+    }
+    #[cfg(any())]
+    {
     use std::io::Write;
 
     let mut path_buf = [0u8; 64];
@@ -710,6 +720,7 @@ fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option
         }
     }
     Some(written)
+    } // end #[cfg(any())]
 }
 
 /// Single-shot open+read+close into `buf`. Exit-handler helper — avoids
@@ -717,6 +728,14 @@ fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option
 /// we don't need.
 #[cfg(unix)]
 fn read_file_once<'a>(path: &ZStr, buf: &'a mut [u8]) -> Option<&'a [u8]> {
+    #[cfg(not(any()))]
+    {
+        // TODO(b2-blocked): bun_sys::File::open / read_all
+        let _ = (path, buf);
+        return None;
+    }
+    #[cfg(any())]
+    {
     let file = match File::open(path, O::RDONLY, 0) {
         bun_sys::Result::Ok(f) => f,
         bun_sys::Result::Err(_) => return None,
@@ -730,6 +749,7 @@ fn read_file_once<'a>(path: &ZStr, buf: &'a mut [u8]) -> Option<&'a [u8]> {
         bun_sys::Result::Ok(n) => Some(&buf[..n]),
         bun_sys::Result::Err(_) => None,
     }
+    } // end #[cfg(any())]
 }
 
 // ─── port-local helpers ──────────────────────────────────────────────────────

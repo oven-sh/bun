@@ -3,16 +3,22 @@ use core::fmt;
 use core::ptr;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
-use bun_collections::{HiveArray, TaggedPtrUnion};
+use bun_collections::HiveArray;
 use bun_core::Output;
-use bun_sys::{self as sys, Fd};
+use bun_sys::{self as sys, Fd, FdExt};
 use bun_uws_sys::Loop as UwsLoop;
 
-use bun_threading::{WorkPool, WorkPoolTask};
+use bun_threading::work_pool::{self, WorkPool};
 
 pub type Loop = UwsLoop;
 
-bun_output::declare_scope!(KeepAlive, visible);
+bun_core::declare_scope!(KeepAlive, visible);
+
+// TODO(b2-blocked): bun_sys::syslog — macro not exported from bun_sys yet.
+// Local no-op shim so debug log call sites compile.
+macro_rules! syslog {
+    ($($arg:tt)*) => {{ let _ = ::core::format_args!($($arg)*); }};
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // EventLoopCtx — manual vtable (cycle-break for bun_jsc::{AbstractVm,
@@ -137,7 +143,9 @@ impl KeepAlive {
             return;
         }
         self.status = KeepAliveStatus::Inactive;
+        #[cfg(any())]
         loop_.sub_active(1);
+        // TODO(b2-blocked): bun_uws_sys::Loop::sub_active
     }
 
     /// Only intended to be used from EventLoop.Pollable
@@ -146,7 +154,9 @@ impl KeepAlive {
             return;
         }
         self.status = KeepAliveStatus::Active;
+        #[cfg(any())]
         loop_.add_active(1);
+        // TODO(b2-blocked): bun_uws_sys::Loop::add_active
     }
 
     pub fn init() -> KeepAlive {
@@ -159,7 +169,9 @@ impl KeepAlive {
             return;
         }
         self.status = KeepAliveStatus::Inactive;
+        #[cfg(any())]
         event_loop_ctx.platform_event_loop().unref();
+        // TODO(b2-blocked): bun_uws_sys::Loop::unref
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
@@ -197,7 +209,9 @@ impl KeepAlive {
             return;
         }
         self.status = KeepAliveStatus::Active;
+        #[cfg(any())]
         event_loop_ctx.platform_event_loop().ref_();
+        // TODO(b2-blocked): bun_uws_sys::Loop::ref_
     }
 
     /// Allow a poll to keep the process alive.
@@ -233,8 +247,10 @@ static mut MAX_GENERATION_NUMBER: KQueueGenerationNumber = 0;
 
 /// Darwin uses the extended `kevent64_s` (extra `ext` field carries our
 /// generation number); FreeBSD only has the plain `struct kevent`.
+#[cfg(any())] // TODO(b2-blocked): bun_sys::darwin::kevent64_s
 #[cfg(target_os = "macos")]
 type KQueueEvent = bun_sys::darwin::kevent64_s;
+#[cfg(any())] // TODO(b2-blocked): bun_sys::freebsd::Kevent
 #[cfg(target_os = "freebsd")]
 type KQueueEvent = bun_sys::freebsd::Kevent;
 
@@ -373,10 +389,11 @@ impl FilePoll {
         bun_io::FileType::Pipe
     }
 
+    #[cfg(any())] // TODO(b2-blocked): bun_sys::darwin::kevent64_s / bun_sys::freebsd::Kevent
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub fn on_kqueue_event(&mut self, _loop: &mut Loop, kqueue_event: &KQueueEvent) {
         self.update_flags(Flags::from_kqueue_event(kqueue_event));
-        sys::syslog!("onKQueueEvent: {}", self);
+        syslog!("onKQueueEvent: {}", self);
 
         #[cfg(all(target_os = "macos", debug_assertions))]
         debug_assert!(self.generation_number == kqueue_event.ext[0] as usize);
@@ -384,6 +401,7 @@ impl FilePoll {
         self.on_update(kqueue_event.data);
     }
 
+    #[cfg(any())] // TODO(b2-blocked): bun_sys::linux::epoll_event
     #[cfg(target_os = "linux")]
     pub fn on_epoll_event(&mut self, _loop: &mut Loop, epoll_event: &bun_sys::linux::epoll_event) {
         self.update_flags(Flags::from_epoll_event(epoll_event));
@@ -475,7 +493,7 @@ impl FilePoll {
         // names no variant types. // PERF(port): was inline switch.
         let hook = ON_POLL_DISPATCH.load(Ordering::Relaxed);
         if hook.is_null() {
-            sys::syslog!(
+            syslog!(
                 concat!("onUpdate ", kqueue_or_epoll!(), " (fd: {}) disconnected? (tag={})"),
                 self.fd,
                 self.owner.tag()
@@ -503,9 +521,11 @@ impl FilePoll {
     /// This decrements the active counter if it was previously incremented
     /// "active" controls whether or not the event loop should potentially idle
     pub fn disable_keeping_process_alive(&mut self, event_loop_ctx: EventLoopCtx) {
+        #[cfg(any())]
         event_loop_ctx
             .platform_event_loop()
             .sub_active(self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
+        // TODO(b2-blocked): bun_uws_sys::Loop::sub_active
 
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.remove(Flags::HasIncrementedActiveCount);
@@ -530,9 +550,11 @@ impl FilePoll {
             return;
         }
 
+        #[cfg(any())]
         event_loop_ctx
             .platform_event_loop()
             .add_active((!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32);
+        // TODO(b2-blocked): bun_uws_sys::Loop::add_active
 
         self.flags.insert(Flags::KeepsEventLoopAlive);
         self.flags.insert(Flags::HasIncrementedActiveCount);
@@ -540,12 +562,18 @@ impl FilePoll {
 
     /// Only intended to be used from EventLoop.Pollable
     fn deactivate(&mut self, loop_: &mut Loop) {
-        if self.flags.contains(Flags::HasIncrementedPollCount) {
-            loop_.dec();
+        #[cfg(any())]
+        {
+            if self.flags.contains(Flags::HasIncrementedPollCount) {
+                loop_.dec();
+            }
         }
+        // TODO(b2-blocked): bun_uws_sys::Loop::dec
         self.flags.remove(Flags::HasIncrementedPollCount);
 
+        #[cfg(any())]
         loop_.sub_active(self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
+        // TODO(b2-blocked): bun_uws_sys::Loop::sub_active
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.remove(Flags::HasIncrementedActiveCount);
     }
@@ -554,13 +582,19 @@ impl FilePoll {
     fn activate(&mut self, loop_: &mut Loop) {
         self.flags.remove(Flags::Closed);
 
-        if !self.flags.contains(Flags::HasIncrementedPollCount) {
-            loop_.inc();
+        #[cfg(any())]
+        {
+            if !self.flags.contains(Flags::HasIncrementedPollCount) {
+                loop_.inc();
+            }
         }
+        // TODO(b2-blocked): bun_uws_sys::Loop::inc
         self.flags.insert(Flags::HasIncrementedPollCount);
 
         if self.flags.contains(Flags::KeepsEventLoopAlive) {
+            #[cfg(any())]
             loop_.add_active((!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32);
+            // TODO(b2-blocked): bun_uws_sys::Loop::add_active
             self.flags.insert(Flags::HasIncrementedActiveCount);
         }
     }
@@ -589,7 +623,7 @@ impl FilePoll {
                 poll.generation_number = MAX_GENERATION_NUMBER;
             }
         }
-        sys::syslog!(
+        syslog!(
             "FilePoll.init(0x{:x}, generation_number={}, fd={})",
             poll as *mut _ as usize,
             poll.generation_number,
@@ -621,7 +655,7 @@ impl FilePoll {
             }
         }
 
-        sys::syslog!(
+        syslog!(
             "FilePoll.initWithOwner(0x{:x}, generation_number={}, fd={})",
             poll as usize,
             poll_ref.generation_number,
@@ -644,7 +678,7 @@ impl FilePoll {
 
     /// Prevent a poll from keeping the process alive.
     pub fn unref(&mut self, event_loop_ctx: EventLoopCtx) {
-        sys::syslog!("unref");
+        syslog!("unref");
         self.disable_keeping_process_alive(event_loop_ctx);
     }
 
@@ -653,7 +687,7 @@ impl FilePoll {
         if self.flags.contains(Flags::Closed) {
             return;
         }
-        sys::syslog!("ref");
+        syslog!("ref");
         self.enable_keeping_process_alive(event_loop_ctx);
     }
 
@@ -684,9 +718,25 @@ impl FilePoll {
         one_shot: OneShotFlag,
         fd: Fd,
     ) -> sys::Result<()> {
+        #[cfg(any())]
+        return self.register_with_fd_impl(loop_, flag, one_shot, fd);
+        // TODO(b2-blocked): bun_uws_sys::Loop (fd field) + bun_sys::linux::epoll_ctl /
+        // bun_sys::darwin::kevent64 + bun_collections::TaggedPtrUnion (Pollable).
+        let _ = (loop_, flag, one_shot, fd);
+        sys::Result::Ok(())
+    }
+
+    #[cfg(any())]
+    fn register_with_fd_impl(
+        &mut self,
+        loop_: &mut Loop,
+        flag: Flags,
+        one_shot: OneShotFlag,
+        fd: Fd,
+    ) -> sys::Result<()> {
         let watcher_fd = loop_.fd;
 
-        sys::syslog!(
+        syslog!(
             "register: FilePoll(0x{:x}, generation_number={}) {} ({})",
             self as *mut _ as usize,
             self.generation_number,
@@ -961,11 +1011,18 @@ impl FilePoll {
         // PORT NOTE: reshaped for borrowck (Zig `defer this.deactivate(loop)`) — compute the
         // syscall result first, then unconditionally deactivate. Avoids the raw-pointer scopeguard
         // the literal translation would require.
+        #[cfg(any())]
         let result = self.unregister_with_fd_impl(loop_, fd, force_unregister);
+        // TODO(b2-blocked): bun_uws_sys::Loop + bun_sys::linux::epoll_ctl
+        #[cfg(not(any()))]
+        let result: sys::Result<()> = { let _ = (fd, force_unregister); sys::Result::Ok(()) };
         self.deactivate(loop_);
         result
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_uws_sys::Loop (fd field) + bun_sys::linux::epoll_ctl /
+    // bun_sys::darwin::kevent64 + bun_collections::TaggedPtrUnion (Pollable).
     fn unregister_with_fd_impl(
         &mut self,
         loop_: &mut Loop,
@@ -1005,7 +1062,7 @@ impl FilePoll {
         };
 
         if self.flags.contains(Flags::NeedsRearm) && !force_unregister {
-            sys::syslog!(
+            syslog!(
                 "unregister: {} ({}) skipped due to needs_rearm",
                 <&'static str>::from(flag),
                 fd
@@ -1017,7 +1074,7 @@ impl FilePoll {
             return sys::Result::Ok(());
         }
 
-        sys::syslog!(
+        syslog!(
             "unregister: FilePoll(0x{:x}, generation_number={}) {}{} ({})",
             self as *mut _ as usize,
             self.generation_number,
@@ -1303,6 +1360,7 @@ impl Flags {
         }
     }
 
+    #[cfg(any())] // TODO(b2-blocked): bun_sys::darwin::EVFILT
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub fn from_kqueue_event(kqueue_event: &KQueueEvent) -> FlagsSet {
         use bun_sys::darwin::EVFILT; // TODO(port): freebsd EVFILT path
@@ -1328,6 +1386,7 @@ impl Flags {
         flags
     }
 
+    #[cfg(any())] // TODO(b2-blocked): bun_sys::linux::EPOLL
     #[cfg(target_os = "linux")]
     pub fn from_epoll_event(epoll: &bun_sys::linux::epoll_event) -> FlagsSet {
         use bun_sys::linux::EPOLL;
@@ -1434,7 +1493,7 @@ impl Store {
         // TODO(port): Zig asserts the callback slot is empty or already this fn.
         debug_assert!(
             vm.after_event_loop_callback().is_none()
-                || vm.after_event_loop_callback() == Some(callback)
+                || vm.after_event_loop_callback().map(|f| f as usize) == Some(callback as usize)
         );
         vm.set_after_event_loop_callback(Some(callback), self as *mut Store as *mut c_void);
     }
@@ -1450,8 +1509,12 @@ impl Store {
 // onTick (exported)
 // ──────────────────────────────────────────────────────────────────────────
 
-type Pollable = TaggedPtrUnion<(FilePoll,)>;
+#[cfg(any())] // TODO(b2-blocked): bun_collections::TaggedPtrUnion
+type Pollable = bun_collections::TaggedPtrUnion<(FilePoll,)>;
 
+#[cfg(any())]
+// TODO(b2-blocked): bun_collections::TaggedPtrUnion + bun_uws_sys::Loop fields
+// (current_ready_poll, ready_polls).
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__internal_dispatch_ready_poll(loop_: *mut Loop, tagged_pointer: *mut c_void) {
     let tag = Pollable::from(tagged_pointer);
@@ -1484,6 +1547,7 @@ pub extern "C" fn Bun__internal_dispatch_ready_poll(loop_: *mut Loop, tagged_poi
     }
 }
 
+#[cfg(any())] // TODO(b2-blocked): bun_sys::posix::timespec
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 // SAFETY: all-zero is a valid timespec
 static TIMEOUT: bun_sys::posix::timespec = unsafe { core::mem::zeroed() };
@@ -1496,7 +1560,7 @@ pub enum OneShotFlag {
     None,
 }
 
-const INVALID_FD: Fd = bun_sys::INVALID_FD;
+const INVALID_FD: Fd = Fd::INVALID;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Waker
@@ -1515,6 +1579,7 @@ pub struct LinuxWaker {
 }
 
 impl LinuxWaker {
+    #[cfg(any())] // TODO(b2-blocked): bun_sys::eventfd
     pub fn init() -> Result<Self, bun_core::Error> {
         // TODO(port): std.posix.eventfd → bun_sys::eventfd
         let fd = bun_sys::eventfd(0, 0)?;
@@ -1530,20 +1595,29 @@ impl LinuxWaker {
     }
 
     pub fn wait(&self) {
-        let mut bytes: usize = 0;
-        // SAFETY: usize is 8 bytes on supported targets; reinterpret as [u8; 8].
-        let buf = unsafe { &mut *(&mut bytes as *mut usize as *mut [u8; 8]) };
-        let _ = bun_sys::posix::read(self.fd.cast(), buf);
+        #[cfg(any())]
+        {
+            let mut bytes: usize = 0;
+            // SAFETY: usize is 8 bytes on supported targets; reinterpret as [u8; 8].
+            let buf = unsafe { &mut *(&mut bytes as *mut usize as *mut [u8; 8]) };
+            let _ = bun_sys::posix::read(self.fd.cast(), buf);
+        }
+        // TODO(b2-blocked): bun_sys::posix::read
     }
 
     pub fn wake(&self) {
-        let mut bytes: usize = 1;
-        // SAFETY: usize is 8 bytes; reinterpret as [u8; 8].
-        let buf = unsafe { &*(&mut bytes as *mut usize as *mut [u8; 8]) };
-        let _ = bun_sys::posix::write(self.fd.cast(), buf);
+        #[cfg(any())]
+        {
+            let mut bytes: usize = 1;
+            // SAFETY: usize is 8 bytes; reinterpret as [u8; 8].
+            let buf = unsafe { &*(&mut bytes as *mut usize as *mut [u8; 8]) };
+            let _ = bun_sys::posix::write(self.fd.cast(), buf);
+        }
+        // TODO(b2-blocked): bun_sys::posix::write
     }
 }
 
+#[cfg(any())] // TODO(b2-blocked): bun_sys::darwin + bun_core::mach_port
 #[cfg(target_os = "macos")]
 pub struct KEventWaker {
     pub kq: bun_sys::posix::fd_t,
@@ -1552,6 +1626,7 @@ pub struct KEventWaker {
     pub has_pending_wake: bool,
 }
 
+#[cfg(any())] // TODO(b2-blocked): bun_sys::darwin + bun_core::mach_port
 #[cfg(target_os = "macos")]
 impl KEventWaker {
     type Kevent64 = bun_sys::darwin::kevent64_s;
@@ -1619,6 +1694,7 @@ impl KEventWaker {
 }
 
 // TODO(port): move to aio_sys
+#[cfg(any())] // TODO(b2-blocked): bun_core::mach_port
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn io_darwin_close_machport(port: bun_core::mach_port);
@@ -1636,14 +1712,15 @@ unsafe extern "C" {
 
 pub struct Closer {
     pub fd: Fd,
-    pub task: WorkPoolTask,
+    pub task: work_pool::Task,
 }
 
 impl Closer {
     pub fn new(fd: Fd) -> Box<Self> {
         Box::new(Self {
             fd,
-            task: WorkPoolTask {
+            task: work_pool::Task {
+                node: bun_threading::thread_pool::Node::default(),
                 callback: Self::on_close,
             },
         })
@@ -1654,17 +1731,17 @@ impl Closer {
         debug_assert!(fd.is_valid());
         let closer = Box::into_raw(Self::new(fd));
         // SAFETY: closer is a valid heap allocation; task is the embedded field.
-        WorkPool::schedule(unsafe { &mut (*closer).task });
+        WorkPool::schedule(unsafe { &raw mut (*closer).task });
     }
 
-    fn on_close(task: *mut WorkPoolTask) {
+    unsafe fn on_close(task: *mut work_pool::Task) {
         // SAFETY: task points to Closer.task; recover the parent via offset_of.
         let closer = unsafe {
-            &mut *((task as *mut u8).sub(core::mem::offset_of!(Closer, task)) as *mut Closer)
+            (task as *mut u8).sub(core::mem::offset_of!(Closer, task)) as *mut Closer
         };
         // PORT NOTE: Zig `defer bun.destroy(closer)` — recover Box and let it drop after fd.close().
         // SAFETY: closer was Box::into_raw'd in Closer::close; reclaim ownership here.
-        let closer_box = unsafe { Box::from_raw(closer as *mut Closer) };
+        let closer_box = unsafe { Box::from_raw(closer) };
         closer_box.fd.close();
         // closer_box dropped here
     }

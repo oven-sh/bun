@@ -108,9 +108,12 @@ impl CPUFeatures {
         debug_assert!(!flags.contains(Flags::NONE) && (raw & !Flags::all().bits()) == 0);
 
         #[cfg(target_arch = "x86_64")]
+        #[cfg(any())]
         {
-            // TODO(port): bun.analytics.Features.no_avx / no_avx2 are global mutable
-            // counters in Zig (`+= usize`). Exact Rust API for bun_analytics TBD.
+            // TODO(b2-blocked): bun_analytics::Features::no_avx_add
+            // TODO(b2-blocked): bun_analytics::Features::no_avx2_add
+            // Zig: bun.analytics.Features.no_avx / no_avx2 are global mutable
+            // counters (`+= usize`). bun_analytics does not compile yet.
             bun_analytics::Features::no_avx_add(usize::from(!flags.contains(Flags::AVX)));
             bun_analytics::Features::no_avx2_add(usize::from(!flags.contains(Flags::AVX2)));
         }

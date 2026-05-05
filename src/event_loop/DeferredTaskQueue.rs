@@ -40,32 +40,33 @@ pub struct DeferredTaskQueue {
 
 impl DeferredTaskQueue {
     pub fn post_task(&mut self, ctx: Option<NonNull<c_void>>, task: DeferredRepeatingTask) -> bool {
-        #[cfg(any())]
-        {
-            // TODO(b1): bun_collections::ArrayHashMap is currently aliased to
-            // std HashMap which lacks get_or_put_value. Un-gate in B-2 once
-            // the real IndexMap-backed ArrayHashMap lands.
-            let existing = self.map.get_or_put_value(ctx, task);
-            return existing.found_existing;
+        // Zig: `getOrPutValue(ctx, task).found_existing`.
+        // PORT NOTE: `ArrayHashMap` is currently aliased to std `HashMap`; the
+        // entry API gives the same semantics (insert-if-absent + report-existing).
+        match self.map.entry(ctx) {
+            bun_collections::hash_map::Entry::Occupied(_) => true,
+            bun_collections::hash_map::Entry::Vacant(v) => {
+                v.insert(task);
+                false
+            }
         }
-        let _ = (ctx, task);
-        todo!("B-2: DeferredTaskQueue::post_task — needs ArrayHashMap::get_or_put_value")
     }
 
     pub fn unregister_task(&mut self, ctx: Option<NonNull<c_void>>) -> bool {
-        #[cfg(any())]
-        {
-            return self.map.swap_remove(&ctx);
-        }
-        let _ = ctx;
-        todo!("B-2: DeferredTaskQueue::unregister_task — needs ArrayHashMap::swap_remove")
+        // Zig: `swapRemove(ctx) -> bool`. Order is irrelevant for this map's
+        // contract (see file doc — "order may not particularly matter"), so
+        // plain `remove().is_some()` is equivalent.
+        self.map.remove(&ctx).is_some()
     }
 
     pub fn run(&mut self) {
         #[cfg(any())]
         {
-            // TODO(b1): bun_collections::ArrayHashMap (std HashMap stub) lacks
-            // indexable keys()/values()/swap_remove_at. Un-gate in B-2.
+            // TODO(b2-blocked): bun_collections::ArrayHashMap::swap_remove_at
+            // TODO(b2-blocked): bun_collections::ArrayHashMap::keys (indexable slice)
+            // TODO(b2-blocked): bun_collections::ArrayHashMap::values (indexable slice)
+            // The std-HashMap stub cannot express indexed iterate-while-mutating;
+            // un-gate once the real IndexMap-backed ArrayHashMap lands.
             let mut i: usize = 0;
             let mut last = self.map.len();
             while i < last {
@@ -86,7 +87,8 @@ impl DeferredTaskQueue {
             }
             return;
         }
-        todo!("B-2: DeferredTaskQueue::run — needs ArrayHashMap indexable iteration")
+        // TODO(b2-blocked): bun_collections::ArrayHashMap::swap_remove_at
+        todo!("DeferredTaskQueue::run — needs ArrayHashMap indexable iteration")
     }
 }
 

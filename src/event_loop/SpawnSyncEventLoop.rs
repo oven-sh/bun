@@ -19,8 +19,9 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_uws as uws;
-// TODO(port): verify crate path for `bun.timespec` (assuming bun_core)
-use bun_core::Timespec;
+// TODO(b2-blocked): bun_core::Timespec — using in-crate stub from EventLoopTimer.rs
+// until the real Timespec lands in bun_core.
+use crate::EventLoopTimer::Timespec;
 #[cfg(windows)]
 use bun_sys::windows::libuv;
 
@@ -116,38 +117,50 @@ impl SpawnSyncEventLoop {
         this: &mut core::mem::MaybeUninit<Self>,
         vm: *mut (), /* SAFETY: erased *mut VirtualMachine */
     ) {
-        // TODO(port): Zig passes a comptime `Handler` type with wakeup/pre/post decls.
-        // Assuming the Rust wrapper takes three fn pointers; adjust to actual `bun_uws` API.
-        let loop_ = uws::Loop::create(handler::wakeup, handler::pre, handler::post);
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_uws::Loop::create
+            // TODO(port): Zig passes a comptime `Handler` type with wakeup/pre/post decls.
+            // Assuming the Rust wrapper takes three fn pointers; adjust to actual `bun_uws` API.
+            let loop_ = uws::Loop::create(handler::wakeup, handler::pre, handler::post);
 
-        // SAFETY: `Loop::create` never returns null (panics/aborts on OOM in uws).
-        let loop_ = unsafe { NonNull::new_unchecked(loop_) };
+            // SAFETY: `Loop::create` never returns null (panics/aborts on OOM in uws).
+            let loop_ = unsafe { NonNull::new_unchecked(loop_) };
 
-        // Initialize the JSC EventLoop with empty state via the runtime vtable.
-        // CRITICAL: On Windows, the vtable impl stores our isolated loop pointer in `uws_loop`.
-        // SAFETY: vtable contract — heap-allocates a fresh EventLoop bound to vm.
-        let event_loop = unsafe { (vt().create_event_loop)(vm, loop_.as_ptr()) };
+            // Initialize the JSC EventLoop with empty state via the runtime vtable.
+            // CRITICAL: On Windows, the vtable impl stores our isolated loop pointer in `uws_loop`.
+            // SAFETY: vtable contract — heap-allocates a fresh EventLoop bound to vm.
+            let event_loop = unsafe { (vt().create_event_loop)(vm, loop_.as_ptr()) };
 
-        this.write(Self {
-            uws_loop: loop_,
-            original_event_loop_handle: None, // = undefined in Zig; overwritten in `prepare`
-            #[cfg(windows)]
-            uv_timer: None,
-            did_timeout: false,
-            event_loop,
-            vm,
-        });
+            this.write(Self {
+                uws_loop: loop_,
+                original_event_loop_handle: None, // = undefined in Zig; overwritten in `prepare`
+                #[cfg(windows)]
+                uv_timer: None,
+                did_timeout: false,
+                event_loop,
+                vm,
+            });
 
-        // Set up the loop's internal data to point to this isolated event loop
-        // SAFETY: uws_loop was just created above and is exclusively owned here; `this` was fully
-        // written immediately above so `assume_init_mut` is sound.
-        unsafe {
-            let this = this.assume_init_mut();
-            (*this.uws_loop.as_ptr())
-                .internal_loop_data
-                .set_parent_event_loop(EventLoopHandle::init(this.event_loop));
-            (*this.uws_loop.as_ptr()).internal_loop_data.jsc_vm = core::ptr::null_mut();
+            // Set up the loop's internal data to point to this isolated event loop
+            // SAFETY: uws_loop was just created above and is exclusively owned here; `this` was fully
+            // written immediately above so `assume_init_mut` is sound.
+            unsafe {
+                let this = this.assume_init_mut();
+                // TODO(b2-blocked): bun_uws::Loop::internal_loop_data
+                // TODO(b2-blocked): bun_uws::InternalLoopData::set_parent_event_loop
+                // TODO(b2-blocked): bun_uws::InternalLoopData::jsc_vm
+                (*this.uws_loop.as_ptr())
+                    .internal_loop_data
+                    .set_parent_event_loop(EventLoopHandle::init(this.event_loop));
+                (*this.uws_loop.as_ptr()).internal_loop_data.jsc_vm = core::ptr::null_mut();
+            }
+            return;
         }
+        let _ = (this, vm);
+        // TODO(b2-blocked): bun_uws::Loop::create
+        // TODO(b2-blocked): bun_uws::InternalLoopData::set_parent_event_loop
+        todo!("SpawnSyncEventLoop::init — blocked on bun_uws::Loop::create")
     }
 }
 
@@ -182,8 +195,13 @@ impl Drop for SpawnSyncEventLoop {
         // PORT NOTE: Zig order was `event_loop.deinit()` then `uws_loop.deinit()`.
         // SAFETY: vtable contract — frees the heap-allocated EventLoop from `init`.
         unsafe { (vt().destroy_event_loop)(self.event_loop) };
-        // SAFETY: uws_loop is valid and owned; deinit frees it.
-        unsafe { (*self.uws_loop.as_ptr()).deinit() };
+        #[cfg(any())]
+        {
+            // SAFETY: uws_loop is valid and owned; deinit frees it.
+            // TODO(b2-blocked): bun_uws::Loop::deinit
+            unsafe { (*self.uws_loop.as_ptr()).deinit() };
+        }
+        // TODO(b2-blocked): bun_uws::Loop::deinit — leaking uws_loop until Loop is un-gated.
     }
 }
 
@@ -281,79 +299,97 @@ impl SpawnSyncEventLoop {
     /// Tick the isolated event loop with an optional timeout
     /// This is similar to the main event loop's tick but completely isolated
     pub fn tick_with_timeout(&mut self, timeout: Option<&Timespec>) -> TickState {
-        let duration_storage: Option<Timespec>;
-        let duration: Option<&Timespec> = match timeout {
-            Some(ts) => {
-                duration_storage = Some(ts.duration(&Timespec::now(Timespec::ALLOW_MOCKED_TIME)));
-                duration_storage.as_ref()
-            }
-            None => None,
-        };
-        // TODO(port): verify `Timespec::now` API shape (`.allow_mocked_time` enum literal in Zig).
-
-        #[cfg(windows)]
+        #[cfg(any())]
         {
-            if let Some(ts) = duration {
-                self.prepare_timer_on_windows(ts);
-            }
-        }
+            // TODO(b2-blocked): bun_core::Timespec::now
+            // TODO(b2-blocked): bun_core::Timespec::duration
+            // TODO(b2-blocked): bun_core::Timespec::order
+            let duration_storage: Option<Timespec>;
+            let duration: Option<&Timespec> = match timeout {
+                Some(ts) => {
+                    duration_storage =
+                        Some(ts.duration(&Timespec::now(Timespec::ALLOW_MOCKED_TIME)));
+                    duration_storage.as_ref()
+                }
+                None => None,
+            };
+            // TODO(port): verify `Timespec::now` API shape (`.allow_mocked_time` enum literal in Zig).
 
-        // Suppress microtask drain for the entire tick, including the uws loop tick.
-        // On Windows, uv_run() fires callbacks inline (e.g. uv_process exit, pipe I/O)
-        // which call onProcessExit → onExit. If any code path in those callbacks
-        // reaches drainMicrotasksWithGlobal, we must already have the flag set.
-        // On POSIX, the uws tick only polls I/O; callbacks are dispatched later
-        // via the task queue, but we set the flag here uniformly for safety.
-        let vm = self.vm;
-        // SAFETY: vtable contract — `vm` is a valid backref set in `init`/`prepare`;
-        // the VM outlives this SpawnSyncEventLoop by construction.
-        let prev_suppress = unsafe { (vt().vm_swap_suppress_microtask_drain)(vm, true) };
-        let _guard = scopeguard::guard((), |_| {
-            // SAFETY: same as above.
-            unsafe { (vt().vm_swap_suppress_microtask_drain)(vm, prev_suppress) };
-        });
-        // PORT NOTE: Zig `defer` restores at scope exit; scopeguard mirrors that.
-
-        // Tick the isolated uws loop with the specified timeout
-        // This will only process I/O related to this subprocess
-        // and will NOT interfere with the main event loop
-        // SAFETY: uws_loop is valid and exclusively owned.
-        unsafe { (*self.uws_loop.as_ptr()).tick_with_timeout(duration) };
-
-        if let Some(ts) = timeout {
             #[cfg(windows)]
             {
-                // SAFETY: uv_timer is Some when timeout is Some (set in prepare_timer_on_windows).
-                let t = self.uv_timer.unwrap();
-                unsafe {
-                    (*t.as_ptr()).unref();
-                    (*t.as_ptr()).stop();
+                if let Some(ts) = duration {
+                    self.prepare_timer_on_windows(ts);
                 }
             }
-            #[cfg(not(windows))]
-            {
-                self.did_timeout =
-                    Timespec::now(Timespec::ALLOW_MOCKED_TIME).order(ts) != core::cmp::Ordering::Less;
+
+            // Suppress microtask drain for the entire tick, including the uws loop tick.
+            // On Windows, uv_run() fires callbacks inline (e.g. uv_process exit, pipe I/O)
+            // which call onProcessExit → onExit. If any code path in those callbacks
+            // reaches drainMicrotasksWithGlobal, we must already have the flag set.
+            // On POSIX, the uws tick only polls I/O; callbacks are dispatched later
+            // via the task queue, but we set the flag here uniformly for safety.
+            let vm = self.vm;
+            // SAFETY: vtable contract — `vm` is a valid backref set in `init`/`prepare`;
+            // the VM outlives this SpawnSyncEventLoop by construction.
+            let prev_suppress = unsafe { (vt().vm_swap_suppress_microtask_drain)(vm, true) };
+            let _guard = scopeguard::guard((), |_| {
+                // SAFETY: same as above.
+                unsafe { (vt().vm_swap_suppress_microtask_drain)(vm, prev_suppress) };
+            });
+            // PORT NOTE: Zig `defer` restores at scope exit; scopeguard mirrors that.
+
+            // Tick the isolated uws loop with the specified timeout
+            // This will only process I/O related to this subprocess
+            // and will NOT interfere with the main event loop
+            // SAFETY: uws_loop is valid and exclusively owned.
+            // TODO(b2-blocked): bun_uws::Loop::tick_with_timeout
+            unsafe { (*self.uws_loop.as_ptr()).tick_with_timeout(duration) };
+
+            if let Some(ts) = timeout {
+                #[cfg(windows)]
+                {
+                    // SAFETY: uv_timer is Some when timeout is Some (set in prepare_timer_on_windows).
+                    let t = self.uv_timer.unwrap();
+                    unsafe {
+                        (*t.as_ptr()).unref();
+                        (*t.as_ptr()).stop();
+                    }
+                }
+                #[cfg(not(windows))]
+                {
+                    self.did_timeout = Timespec::now(Timespec::ALLOW_MOCKED_TIME).order(ts)
+                        != core::cmp::Ordering::Less;
+                }
             }
+
+            // SAFETY: vtable contract.
+            unsafe { (vt().event_loop_tick_tasks_only)(self.event_loop) };
+
+            let did_timeout = self.did_timeout;
+            self.did_timeout = false;
+
+            if did_timeout {
+                return TickState::Timeout;
+            }
+
+            return TickState::Completed;
         }
-
-        // SAFETY: vtable contract.
-        unsafe { (vt().event_loop_tick_tasks_only)(self.event_loop) };
-
-        let did_timeout = self.did_timeout;
-        self.did_timeout = false;
-
-        if did_timeout {
-            return TickState::Timeout;
-        }
-
-        TickState::Completed
+        let _ = timeout;
+        // TODO(b2-blocked): bun_uws::Loop::tick_with_timeout
+        // TODO(b2-blocked): bun_core::Timespec
+        todo!("SpawnSyncEventLoop::tick_with_timeout — blocked on bun_uws::Loop / bun_core::Timespec")
     }
 
     /// Check if the loop has any active handles
     pub fn is_active(&self) -> bool {
-        // SAFETY: uws_loop is valid for the lifetime of self.
-        unsafe { (*self.uws_loop.as_ptr()).is_active() }
+        #[cfg(any())]
+        {
+            // SAFETY: uws_loop is valid for the lifetime of self.
+            // TODO(b2-blocked): bun_uws::Loop::is_active
+            return unsafe { (*self.uws_loop.as_ptr()).is_active() };
+        }
+        // TODO(b2-blocked): bun_uws::Loop::is_active
+        todo!("SpawnSyncEventLoop::is_active — blocked on bun_uws::Loop::is_active")
     }
 }
 

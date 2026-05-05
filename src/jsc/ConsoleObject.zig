@@ -326,8 +326,57 @@ pub const TablePrinter = struct {
         }
     };
 
-    /// Compute how much horizontal space will take a JSValue when printed
-    fn getWidthForValue(this: *TablePrinter, value: JSValue) bun.JSError!u32 {
+    /// Whether a string cell value should be rendered in quoted/escaped form.
+    /// Bun normally prints plain strings in `console.table` cells without
+    /// surrounding quotes, but that breaks the row layout if the string
+    /// contains a C0 control character whose rendered width doesn't match
+    /// what the writer emits: \n and \r move the cursor out of the cell
+    /// entirely, \v and \f move it down, \t expands to a terminal-dependent
+    /// width, and other C0 chars are counted as zero width but emitted as
+    /// literal bytes (issue #29082). Promoting the cell to the quoted form
+    /// has `writeJSONString` escape the whole string so the table stays
+    /// rectangular.
+    ///
+    /// Intentionally NOT included:
+    /// - 0x1B (ESC): starts ANSI color sequences. `VisibleCharacterCounter`
+    ///   already strips those from the width calculation, and the formatter
+    ///   emits the bytes raw — both agree, so layout is preserved and
+    ///   colors survive. Quoting them would destroy chalk/picocolors output.
+    /// - 0x7F (DEL): both sides count it as zero width, so it doesn't
+    ///   break layout either.
+    fn shouldQuoteStringCell(this: *TablePrinter, value: JSValue, tag: ConsoleObject.Formatter.Tag.Result) bun.JSError!bool {
+        if (!(tag.tag == .String or tag.tag == .StringPossiblyFormatted)) return true;
+        if (!value.isString()) return false;
+        var str: bun.String = try bun.String.fromJS(value, this.globalObject);
+        defer str.deref();
+        return stringHasLayoutBreakingControlChar(str);
+    }
+
+    /// Same as `shouldQuoteStringCell` but operates directly on a
+    /// `bun.String` — used for the index column, whose row key is a
+    /// pre-resolved string rather than a `JSValue`.
+    fn stringHasLayoutBreakingControlChar(str: bun.String) bool {
+        if (str.isUTF16()) {
+            for (str.utf16()) |c| {
+                if (c < 0x20 and c != 0x1B) return true;
+            }
+        } else {
+            for (str.byteSlice()) |b| {
+                if (b < 0x20 and b != 0x1B) return true;
+            }
+        }
+        return false;
+    }
+
+    /// Compute how much horizontal space a JSValue will take when printed,
+    /// using the already-decided `quote_strings` flag so both width and
+    /// render agree without repeating the `shouldQuoteStringCell` scan.
+    fn getWidthForValueWithTag(
+        this: *TablePrinter,
+        value: JSValue,
+        tag: ConsoleObject.Formatter.Tag.Result,
+        quote_strings: bool,
+    ) bun.JSError!u32 {
         var width: usize = 0;
         var old_writer = VisibleCharacterCounter.Writer{
             .context = .{
@@ -338,8 +387,7 @@ pub const TablePrinter = struct {
         var adapted_writer = old_writer.adaptToNewApi(&discard_buf);
         var value_formatter = this.value_formatter;
 
-        const tag = try ConsoleObject.Formatter.Tag.get(value, this.globalObject);
-        value_formatter.quote_strings = !(tag.tag == .String or tag.tag == .StringPossiblyFormatted);
+        value_formatter.quote_strings = quote_strings;
         value_formatter.format(
             tag,
             *std.Io.Writer,
@@ -356,13 +404,95 @@ pub const TablePrinter = struct {
         return @truncate(width);
     }
 
+    /// Compute how much horizontal space will take a JSValue when printed.
+    /// Resolves the tag and `quote_strings` flag internally — callers that
+    /// also need to render the value should use `getWidthForValueWithTag`
+    /// to avoid computing them twice.
+    fn getWidthForValue(this: *TablePrinter, value: JSValue) bun.JSError!u32 {
+        const tag = try ConsoleObject.Formatter.Tag.get(value, this.globalObject);
+        const quote_strings = try this.shouldQuoteStringCell(value, tag);
+        return this.getWidthForValueWithTag(value, tag, quote_strings);
+    }
+
+    /// Width a `RowKey` will take in the index column when rendered.
+    /// `quote` is the already-decided flag from
+    /// `stringHasLayoutBreakingControlChar` — only meaningful for the
+    /// `.str` variant — so callers that also need to render the key
+    /// scan the string only once. Mirrors the `getWidthForValueWithTag`
+    /// pattern used for data cells.
+    fn rowKeyWidthWithQuote(row_key: RowKey, quote: bool) u32 {
+        return switch (row_key) {
+            .str => |value| if (quote)
+                jsonQuotedStringWidth(value)
+            else
+                @intCast(value.visibleWidthExcludeANSIColors(false)),
+            .num => |value| @truncate(bun.fmt.fastDigitCount(value)),
+        };
+    }
+
+    /// Thin wrapper for callers that only need the width (e.g. the
+    /// first pass in `updateColumnsForRow`) — resolves `quote`
+    /// internally.
+    fn rowKeyWidth(row_key: RowKey) u32 {
+        const quote = switch (row_key) {
+            .str => |value| stringHasLayoutBreakingControlChar(value),
+            .num => false,
+        };
+        return rowKeyWidthWithQuote(row_key, quote);
+    }
+
+    /// Compute the width of a `bun.String` when rendered via
+    /// `writeJSONString` (i.e. surrounded by `"`, with C0 control chars
+    /// JSON-escaped). Measured by feeding the formatted bytes through
+    /// `VisibleCharacterCounter`, matching how `getWidthForValueWithTag`
+    /// measures data-cell widths.
+    fn jsonQuotedStringWidth(str: bun.String) u32 {
+        var width: usize = 0;
+        var old_writer = VisibleCharacterCounter.Writer{ .context = .{ .width = &width } };
+        var discard_buf: [512]u8 = undefined;
+        var adapted_writer = old_writer.adaptToNewApi(&discard_buf);
+        const w = &adapted_writer.new_interface;
+        writeQuotedBunString(*std.Io.Writer, w, str) catch {};
+        w.flush() catch {};
+        return @truncate(width);
+    }
+
+    /// Render a `bun.String` as a JSON-quoted + escaped literal — picks
+    /// the right `writeJSONString` encoding branch for 8-bit vs UTF-16.
+    fn writeQuotedBunString(comptime Writer: type, writer: Writer, str: bun.String) !void {
+        if (str.is8Bit()) {
+            try JSPrinter.writeJSONString(str.byteSlice(), Writer, writer, .latin1);
+        } else {
+            // UTF-16 → writeJSONString reads `[]const u8` but accepts an
+            // `.utf16` encoding and reinterprets the bytes as u16.
+            const u16_slice = str.utf16();
+            const byte_ptr = @as([*]const u8, @ptrCast(u16_slice.ptr));
+            try JSPrinter.writeJSONString(byte_ptr[0 .. u16_slice.len * 2], Writer, writer, .utf16);
+        }
+    }
+
+    /// Render a `RowKey` into the index column, quoting + JSON-escaping
+    /// string keys that contain layout-breaking control chars. `quote`
+    /// is the already-decided flag from the width computation so this
+    /// doesn't re-scan the string — mirrors the data-cell dedup from
+    /// `getWidthForValueWithTag`.
+    fn writeRowKeyWithQuote(comptime Writer: type, writer: Writer, row_key: RowKey, quote: bool) !void {
+        switch (row_key) {
+            .str => |value| {
+                if (quote) {
+                    try writeQuotedBunString(Writer, writer, value);
+                } else {
+                    try writer.print("{f}", .{value});
+                }
+            },
+            .num => |value| try writer.print("{d}", .{value}),
+        }
+    }
+
     /// Update the sizes of the columns for the values of a given row, and create any additional columns as needed
     fn updateColumnsForRow(this: *TablePrinter, columns: *std.array_list.Managed(Column), row_key: RowKey, row_value: JSValue) bun.JSError!void {
         // update size of "(index)" column
-        const row_key_len: u32 = switch (row_key) {
-            .str => |value| @intCast(value.visibleWidthExcludeANSIColors(false)),
-            .num => |value| @truncate(bun.fmt.fastDigitCount(value)),
-        };
+        const row_key_len: u32 = rowKeyWidth(row_key);
         columns.items[0].width = @max(columns.items[0].width, row_key_len);
 
         // special handling for Map: column with idx=1 is "Keys"
@@ -444,18 +574,19 @@ pub const TablePrinter = struct {
     ) !void {
         try writer.writeAll("│");
         {
-            const len: u32 = switch (row_key) {
-                .str => |value| @truncate(value.visibleWidthExcludeANSIColors(false)),
-                .num => |value| @truncate(bun.fmt.fastDigitCount(value)),
+            // Scan the string row key once for layout-breaking control
+            // chars and reuse the flag for both width + render so we
+            // don't walk the bytes twice per row.
+            const quote_row_key = switch (row_key) {
+                .str => |value| stringHasLayoutBreakingControlChar(value),
+                .num => false,
             };
+            const len: u32 = rowKeyWidthWithQuote(row_key, quote_row_key);
             const needed = columns.items[0].width -| len;
 
             // Right-align the number column
             try writer.splatByteAll(' ', needed + PADDING);
-            switch (row_key) {
-                .str => |value| try writer.print("{f}", .{value}),
-                .num => |value| try writer.print("{d}", .{value}),
-            }
+            try writeRowKeyWithQuote(Writer, writer, row_key, quote_row_key);
             try writer.splatByteAll(' ', PADDING);
         }
 
@@ -480,13 +611,18 @@ pub const TablePrinter = struct {
             if (value == .zero) {
                 try writer.splatByteAll(' ', col.width + (PADDING * 2));
             } else {
-                const len: u32 = try this.getWidthForValue(value);
+                // Resolve tag + quote_strings once per cell and reuse for
+                // both the width calculation and the actual render — the
+                // `bun.String.fromJS` + byte scan inside `shouldQuoteStringCell`
+                // is non-trivial and shouldn't run twice.
+                const tag = try ConsoleObject.Formatter.Tag.get(value, this.globalObject);
+                const quote_strings = try this.shouldQuoteStringCell(value, tag);
+                const len: u32 = try this.getWidthForValueWithTag(value, tag, quote_strings);
                 const needed = col.width -| len;
                 try writer.splatByteAll(' ', PADDING);
-                const tag = try ConsoleObject.Formatter.Tag.get(value, this.globalObject);
                 var value_formatter = this.value_formatter;
 
-                value_formatter.quote_strings = !(tag.tag == .String or tag.tag == .StringPossiblyFormatted);
+                value_formatter.quote_strings = quote_strings;
 
                 defer {
                     if (value_formatter.map_node) |node| {

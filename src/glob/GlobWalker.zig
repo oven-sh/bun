@@ -498,15 +498,28 @@ pub fn GlobWalker_(
                                         this.iter_state = .get_next;
                                         return .success;
                                     }
-                                    // Symlink cycle — Node's `fs.glob` returns
-                                    // `[]` for absolute-literal patterns that
-                                    // traverse a self-referential symlink. The
-                                    // main cwd-open below (for `root_path`) is
-                                    // already covered by `swallow_missing_cwd`;
-                                    // mirror that here so both codepaths agree.
+                                    // Symlink cycle — Node's `fs.glob` reports
+                                    // the dirent when the self-referential
+                                    // symlink is the *terminal* segment
+                                    // (`/abs/loop`), and returns `[]` (or
+                                    // throws, matching the kernel) when the
+                                    // loop is mid-path (`/abs/loop/inside`).
+                                    // `lstat` disambiguates: succeeds for the
+                                    // terminal case, fails ELOOP for mid-path.
+                                    // Mirrors the literal-tail branch in
+                                    // `transitionToDirIterState`.
                                     if (this.walker.swallow_missing_cwd and e.getErrno() == bun.sys.E.LOOP) {
-                                        this.iter_state = .get_next;
-                                        return .success;
+                                        switch (Accessor.lstatat(.empty, path)) {
+                                            .result => {
+                                                try this.walker.appendMatchedPathSymlink(path);
+                                                this.iter_state = .{ .matched = path };
+                                                return .success;
+                                            },
+                                            .err => {
+                                                this.iter_state = .get_next;
+                                                return .success;
+                                            },
+                                        }
                                     }
                                     return .{ .err = e.withPath(path) };
                                 },

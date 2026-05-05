@@ -380,13 +380,16 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
   });
 
   it("literal-tail self-referential symlink reports the symlink itself", () => {
-    // `fs.globSync('loop', {cwd})` and `fs.globSync('*/loop', {cwd})` against
-    // a self-referential symlink hit the *literal-tail optimization* in
-    // `transitionToDirIterState` — it calls `statat` (which follows links)
-    // and fails with ELOOP. Node returns the dirent name (`['loop']` or
-    // `['sub/loop']`) since the entry exists. Under `swallow_missing_cwd`
-    // the walker falls back to `lstatat` on ELOOP so the symlink's own
-    // mode drives the match decision.
+    // All three shapes target a self-referential symlink as the terminal
+    // segment. Node returns the dirent name (the entry exists; `lstat`
+    // succeeds). The walker hits ELOOP either at `statat` in the
+    // literal-tail optimization (relative) or at `Accessor.open` in the
+    // absolute-literal fast path; both fall back to `lstatat` so the
+    // symlink's own mode drives the match decision.
+    //   * relative terminal    — `fs.globSync('loop', {cwd})`
+    //   * relative mid-walk    — `fs.globSync('*/loop', {cwd})` where
+    //                             `*` matches a real dir with `loop` inside
+    //   * absolute terminal    — `fs.globSync('/abs/loop')`
     using dir = tempDir("glob-loop-literal-tail", {
       sub: {},
     });
@@ -394,6 +397,7 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
     fs.symlinkSync("loop", path.join(String(dir), "sub", "loop"), "dir");
     expect(fs.globSync("loop", { cwd: String(dir) })).toStrictEqual(["loop"]);
     expect(fs.globSync("*/loop", { cwd: String(dir) })).toStrictEqual([path.join("sub", "loop")]);
+    expect(fs.globSync(path.join(String(dir), "loop"))).toStrictEqual([path.join(String(dir), "loop")]);
   });
 
   it("brace alternative that names a symlink still descends", () => {

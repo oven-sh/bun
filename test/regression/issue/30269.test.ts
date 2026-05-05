@@ -104,7 +104,8 @@ test("#30269 bundler doesn't rename a nested local into another top-level symbol
   const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
   // On the buggy build this stderr contains:
   //   TypeError: r2 is not a function. (In 'r2()', 'r2' is an instance of Expression)
-  expect(stderr).toBe("");
+  // Asserting on stdout + exit code is enough; stderr can hold unrelated
+  // debug-build warnings (e.g. MADV_DONTNEED) that we don't want to flake on.
   expect(stdout).toBe("ok: true\n");
   expect(exitCode).toBe(0);
 });

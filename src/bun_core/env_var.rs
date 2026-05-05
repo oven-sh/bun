@@ -569,14 +569,22 @@ pub(crate) mod kind {
                 // Zig used `std.fmt.parseInt(u64, raw_env, 10)` which distinguishes Overflow vs
                 // InvalidCharacter. Env-var values are arbitrary bytes, so per PORTING.md we parse
                 // the byte slice directly instead of round-tripping through `core::str::from_utf8`.
-                // Mirrors Zig's parseUnsigned: optional leading '+', then base-10 ASCII digits.
+                // Mirrors Zig std.fmt.parseInt(u64, _, 10): optional leading '+',
+                // base-10 digits, and interior '_' separators are skipped
+                // (vendor/zig/lib/std/fmt.zig:454). Leading/trailing '_' rejected.
                 let formatted = {
                     let digits = raw_env.strip_prefix(b"+").unwrap_or(raw_env);
-                    if digits.is_empty() {
+                    if digits.is_empty()
+                        || *digits.first().unwrap() == b'_'
+                        || *digits.last().unwrap() == b'_'
+                    {
                         return self.handle_error(raw_env, "is not a valid integer");
                     }
                     let mut acc: u64 = 0;
                     for &b in digits {
+                        if b == b'_' {
+                            continue;
+                        }
                         let d = match b {
                             b'0'..=b'9' => (b - b'0') as u64,
                             _ => return self.handle_error(raw_env, "is not a valid integer"),

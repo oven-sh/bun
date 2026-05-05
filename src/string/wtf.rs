@@ -207,15 +207,14 @@ impl WTFStringImplStruct {
     }
 
     /// Allocates a NUL-terminated UTF-8 copy. Port of `toOwnedSliceZ`.
-    pub fn to_owned_slice_z(&self) -> Vec<u8> {
+    /// `.len()` excludes the sentinel (Zig `[:0]u8` semantics).
+    pub fn to_owned_slice_z(&self) -> bun_core::ZBox {
         if self.is_8bit() {
             if let Some(utf8) = strings::to_utf8_from_latin1_z(self.latin1_slice()) {
                 return utf8;
             }
-            // ASCII: copy + append NUL.
-            let mut v = self.latin1_slice().to_vec();
-            v.push(0);
-            return v;
+            // ASCII: copy bytes; ZBox appends the NUL.
+            return bun_core::ZBox::from_vec_with_nul(self.latin1_slice().to_vec());
         }
         strings::to_utf8_alloc_z(self.utf16_slice())
     }

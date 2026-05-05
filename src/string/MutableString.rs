@@ -274,7 +274,13 @@ impl MutableString {
     }
 
     pub fn inflate(&mut self, amount: usize) -> Result<(), AllocError> {
-        self.list.resize(amount, 0);
+        // Zig MutableString.inflate: `list.resize(amount)` leaves new bytes
+        // uninitialized. Match that — callers always overwrite the inflated
+        // region (it's a printer buffer pre-size).
+        self.list.reserve(amount.saturating_sub(self.list.len()));
+        // SAFETY: `u8` has no drop and any bit pattern is valid; capacity ≥
+        // `amount` after `reserve`. Callers MUST write before reading.
+        unsafe { self.list.set_len(amount) };
         Ok(())
     }
 

@@ -1358,10 +1358,9 @@ impl DynamicBitSetList {
         let single_bitset_buf_size = masks + 1;
 
         // TODO(port): narrow error set
+        // vec![0usize; ..] is already zero-filled; the redundant `.fill(0)` was
+        // dead. (Zig's `init_empty` writes the header words next.)
         let mut buf = vec![0usize; single_bitset_buf_size * n].into_boxed_slice();
-
-        let fill_value = bool_mask_usize(false);
-        buf.fill(fill_value);
 
         for i in 0..n {
             buf[i * single_bitset_buf_size] = single_bitset_buf_size;

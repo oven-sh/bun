@@ -104,11 +104,10 @@ impl RawAtomicRefCount {
     }
 }
 
-/// Alias matching the Zig generic spelling for callers that want it.
-/// `RawRefCountT::<true>` = atomic, `::<false>` = single-threaded.
-// PORT NOTE: cannot actually unify into one generic struct on stable; this is
-// just the discriminating const so callers can name it.
-pub type RawRefCountT<const ATOMIC: bool> = RawRefCount; // single-threaded default; use RawAtomicRefCount explicitly for atomic
+// NOTE: there is no `RawRefCountT<const ATOMIC: bool>` alias. A type alias
+// cannot dispatch on the const param on stable Rust, so any such alias would
+// silently resolve to one variant regardless of the bool — a footgun. Callers
+// must pick `RawRefCount` (single-thread) vs `RawAtomicRefCount` explicitly.
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

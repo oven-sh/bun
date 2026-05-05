@@ -267,17 +267,27 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
         // returned slice borrows the underlying allocation, not the temporary
         // `Slice` (which only caches pointers). Reproduce by computing the
         // column ptr directly without the intermediate `Slice` value.
-        if self.capacity == 0 || core::mem::size_of::<F>() == 0 {
+        if self.capacity == 0 {
             return &mut [];
+        }
+        if core::mem::size_of::<F>() == 0 {
+            // Zig returns a ZST slice of length self.len (lib.zig:89-93), not 0.
+            // SAFETY: ZST slice; dangling ptr is valid for 0-size reads.
+            return unsafe {
+                core::slice::from_raw_parts_mut(core::ptr::NonNull::<F>::dangling().as_ptr(), self.len)
+            };
         }
         let fi = T::field_index(field);
         let mut ptr = self.bytes;
-        for &si in T::SIZES_FIELDS {
+        // Walk size-sorted columns; SIZES_BYTES is indexed by sorted position k,
+        // SIZES_FIELDS[k] gives the original field index at that position.
+        // (Bug: previously indexed SIZES_BYTES[si] — wrong axis.)
+        for (k, &si) in T::SIZES_FIELDS.iter().enumerate() {
             if si == fi {
                 break;
             }
             // SAFETY: column offsets within the single allocation.
-            ptr = unsafe { ptr.add(T::SIZES_BYTES[si] * self.capacity) };
+            ptr = unsafe { ptr.add(T::SIZES_BYTES[k] * self.capacity) };
         }
         // SAFETY: caller guarantees `F` matches field type; `ptr` points to
         // `capacity` aligned `F`s and `len <= capacity`.

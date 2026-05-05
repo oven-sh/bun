@@ -177,11 +177,14 @@ pub fn argv() -> impl Iterator<Item = &'static [u8]> {
     .map(|b| &**b)
 }
 
-/// `bun.Output.debugWarn` — eprint in debug builds only.
+/// `bun.Output.debugWarn` — yellow `debug warn:` prefix to stderr in debug
+/// builds, through the Bun output sink (so colour/redirect logic applies),
+/// followed by an explicit flush. Zig output.zig:1189-1194.
 #[inline]
 pub fn debug_warn(args: core::fmt::Arguments<'_>) {
     if cfg!(debug_assertions) {
-        eprintln!("[debug-warn] {args}");
+        pretty_errorln!("<yellow>debug warn<r><d>:<r> {}", args);
+        flush();
     }
 }
 
@@ -191,10 +194,10 @@ pub fn warn(args: core::fmt::Arguments<'_>) {
     pretty_errorln!("<r><yellow>warn<r><d>:<r> {}", args);
 }
 
-/// `bun.Output.note` — cyan `note:` prefix to stderr.
+/// `bun.Output.note` — blue `note:` prefix to stderr (output.zig:1179).
 #[inline]
 pub fn note(msg: &str) {
-    pretty_errorln!("<r><cyan>note<r><d>:<r> {}", msg);
+    pretty_errorln!("<blue>note<r><d>:<r> {}", msg);
 }
 
 /// `bun.Output.Source.Stdio.restore` — restore terminal to cooked mode on exit.
@@ -357,7 +360,8 @@ impl Source {
     }
 
     pub fn is_no_color() -> bool {
-        env_var::NO_COLOR.get().is_some()
+        // Zig output.zig:99 — parsed bool, default false. NO_COLOR=0 → false.
+        env_var::NO_COLOR.get().unwrap_or(false)
     }
 
     pub fn get_force_color_depth() -> Option<ColorDepth> {

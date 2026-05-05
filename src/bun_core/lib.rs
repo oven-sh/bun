@@ -362,18 +362,17 @@ pub mod strings {
         EncodeIntoResult { read: read as u32, written: written as u32 }
     }
 
-    /// Null-terminated variant of `to_utf8_from_latin1`. Appends a trailing NUL.
-    pub fn to_utf8_from_latin1_z(latin1: &[u8]) -> Option<Vec<u8>> {
-        let mut v = to_utf8_from_latin1(latin1)?;
-        v.push(0);
-        Some(v)
+    /// Null-terminated variant of `to_utf8_from_latin1`. Returns `ZBox` so
+    /// `.len()` excludes the sentinel (Zig `[:0]u8` semantics).
+    pub fn to_utf8_from_latin1_z(latin1: &[u8]) -> Option<crate::ZBox> {
+        let v = to_utf8_from_latin1(latin1)?;
+        Some(crate::ZBox::from_vec_with_nul(v))
     }
 
-    /// Null-terminated variant of `to_utf8_alloc`.
-    pub fn to_utf8_alloc_z(utf16: &[u16]) -> Vec<u8> {
-        let mut v = to_utf8_alloc(utf16);
-        v.push(0);
-        v
+    /// Null-terminated variant of `to_utf8_alloc`. Returns `ZBox` so `.len()`
+    /// excludes the sentinel.
+    pub fn to_utf8_alloc_z(utf16: &[u16]) -> crate::ZBox {
+        crate::ZBox::from_vec_with_nul(to_utf8_alloc(utf16))
     }
 
     /// Port of `firstNonASCII16`.

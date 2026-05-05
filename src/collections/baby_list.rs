@@ -505,8 +505,9 @@ impl<T> BabyList<T> {
     where
         T: AsRef<[u8]>,
     {
-        // bun.strings.sortAsc — lex byte-slice sort. Inlined here (was 1-liner in Zig).
-        self.slice_mut().sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
+        // bun.strings.sortAsc — lex byte-slice sort. Zig std.sort.pdq is
+        // unstable, so use sort_unstable_by (no alloc, same algorithm family).
+        self.slice_mut().sort_unstable_by(|a, b| a.as_ref().cmp(b.as_ref()));
     }
 
     // PORT NOTE: reshaped — Zig took `comptime Context: type, context: Context` and called

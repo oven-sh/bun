@@ -258,6 +258,40 @@ impl ZStr {
         // SAFETY: invariant — byte at `len` is NUL and owned by the same allocation.
         unsafe { core::slice::from_raw_parts(self.0.as_ptr(), self.0.len() + 1) }
     }
+    // NOTE: there is intentionally no `Box<ZStr>` constructor. `Box<DST>`
+    // deallocates using the fat-pointer metadata length, so a `Box<ZStr>` whose
+    // `.len()` excludes the NUL would free one byte short. Use `ZBox` (below)
+    // for owned NUL-terminated strings.
+}
+
+/// Owned, heap-allocated, NUL-terminated byte string. `.len()` / `Deref`
+/// **exclude** the trailing NUL — Zig `[:0]u8` semantics. This is the owned
+/// counterpart of `&ZStr`; use it where Zig returned an allocated `[:0]u8`.
+pub struct ZBox(Box<[u8]>); // invariant: last byte == 0
+impl ZBox {
+    /// `v` must end with `0`.
+    #[inline]
+    pub fn from_vec_with_nul(mut v: Vec<u8>) -> ZBox {
+        if v.last() != Some(&0) {
+            v.push(0);
+        }
+        ZBox(v.into_boxed_slice())
+    }
+    #[inline] pub fn len(&self) -> usize { self.0.len() - 1 }
+    #[inline] pub fn is_empty(&self) -> bool { self.len() == 0 }
+    #[inline] pub fn as_bytes(&self) -> &[u8] { &self.0[..self.len()] }
+    #[inline] pub fn as_bytes_with_nul(&self) -> &[u8] { &self.0 }
+    #[inline] pub fn as_ptr(&self) -> *const core::ffi::c_char { self.0.as_ptr().cast() }
+    #[inline]
+    pub fn as_zstr(&self) -> &ZStr {
+        // SAFETY: invariant — `self.0[len] == 0`.
+        unsafe { ZStr::from_raw(self.0.as_ptr(), self.len()) }
+    }
+    #[inline] pub fn into_vec_with_nul(self) -> Vec<u8> { self.0.into_vec() }
+}
+impl core::ops::Deref for ZBox {
+    type Target = ZStr;
+    #[inline] fn deref(&self) -> &ZStr { self.as_zstr() }
 }
 impl core::ops::Deref for ZStr {
     type Target = [u8];
@@ -377,7 +411,17 @@ pub type RawMutex = parking_lot::RawMutex; // for the rare bare-lock sites (outp
 
 // ─── Path primitives (from bun_paths) ─────────────────────────────────────
 // Zig: src/paths/paths.zig lines 13-20.
-pub const MAX_PATH_BYTES: usize = if cfg!(target_arch = "wasm32") { 1024 } else { 4096 };
+// Zig uses `std.fs.max_path_bytes` which is platform-dependent.
+pub const MAX_PATH_BYTES: usize = if cfg!(target_arch = "wasm32") {
+    1024
+} else if cfg!(windows) {
+    // std.os.windows.PATH_MAX_WIDE * 3 + 1 (UTF-8 worst-case from UTF-16).
+    32767 * 3 + 1
+} else if cfg!(target_os = "macos") {
+    1024 // libc::PATH_MAX
+} else {
+    4096 // Linux libc::PATH_MAX
+};
 pub const PATH_MAX_WIDE: usize = 32767;
 
 #[cfg(windows)] pub type OSPathChar = u16;
@@ -405,17 +449,47 @@ pub struct WPathBuffer(pub [u16; PATH_MAX_WIDE]);
 #[cfg(windows)] pub type OSPathBuffer = WPathBuffer;
 #[cfg(not(windows))] pub type OSPathBuffer = PathBuffer;
 
-/// Zig: `bun.Dirname.dirname(u8, path)` — returns slice up to (excl.) last sep,
-/// or None if no separator. Minimal port for output.rs scoped-log path setup.
+/// Zig: `bun.Dirname.dirname(u8, path)` → `std.fs.path.dirnamePosix` /
+/// `dirnameWindows`. Faithful port (handles trailing-sep stripping and root).
 pub fn dirname(path: &[u8]) -> Option<&[u8]> {
-    let mut i = path.len();
-    while i > 0 {
+    #[inline]
+    fn is_sep(b: u8) -> bool { b == b'/' || (cfg!(windows) && b == b'\\') }
+
+    if path.is_empty() {
+        return None;
+    }
+    // Strip trailing separators.
+    let mut end = path.len();
+    while end > 1 && is_sep(path[end - 1]) {
+        end -= 1;
+    }
+    // Windows: skip drive prefix `X:` so `C:\foo` → `C:\`, `C:foo` → None.
+    let root_end: usize = if cfg!(windows)
+        && end >= 2
+        && path[1] == b':'
+        && path[0].is_ascii_alphabetic()
+    {
+        if end >= 3 && is_sep(path[2]) { 3 } else { 2 }
+    } else if is_sep(path[0]) {
+        1
+    } else {
+        0
+    };
+    // Scan back for last separator after the root.
+    let mut i = end;
+    while i > root_end {
         i -= 1;
-        if path[i] == b'/' || (cfg!(windows) && path[i] == b'\\') {
-            return Some(&path[..i]);
+        if is_sep(path[i]) {
+            // Strip any run of separators that ends here, but never past root.
+            let mut j = i;
+            while j > root_end && is_sep(path[j - 1]) {
+                j -= 1;
+            }
+            return Some(&path[..j.max(root_end)]);
         }
     }
-    None
+    // No separator after root: return the root if there is one, else None.
+    if root_end > 0 { Some(&path[..root_end]) } else { None }
 }
 
 // ─── Fd + fd module (from bun_sys::fd) ────────────────────────────────────
@@ -423,26 +497,42 @@ pub fn dirname(path: &[u8]) -> Option<&[u8]> {
 // Full method set (close, makeLibUVOwned, …) stays in bun_sys which re-exports
 // `pub use bun_core::Fd as FD;` and adds inherent impls there.
 
+// Zig backing_int (fd.zig:1): c_int on posix, u64 on Windows.
 #[cfg(not(windows))] type FdBacking = i32;
-#[cfg(windows)] type FdBacking = i64; // packed { kind: u1, handle/uv: u63 }
+#[cfg(windows)] type FdBacking = u64;
 
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Fd(pub FdBacking);
 
+// Zig packed struct(u64) { value: u63, kind: u1 } — fields are LSB-first, so
+// `value` is bits 0..63, `kind` is bit 63. (.system=0, .uv=1)
+#[cfg(windows)] const FD_KIND_BIT: u64 = 1u64 << 63;
+#[cfg(windows)] const FD_VALUE_MASK: u64 = FD_KIND_BIT - 1;
+
 impl Fd {
-    pub const INVALID: Fd = Fd(if cfg!(windows) { i64::MIN as FdBacking } else { -1 as FdBacking });
+    /// Zig fd.zig:33-35: { kind=.system, value.as_system = minInt(field_type) }.
+    /// posix: minInt(c_int); windows: minInt(u63) = 0, kind=0 → all-zero u64.
+    #[cfg(not(windows))]
+    pub const INVALID: Fd = Fd(i32::MIN);
+    #[cfg(windows)]
+    pub const INVALID: Fd = Fd(0);
 
     #[inline] pub const fn from_native(v: FdBacking) -> Fd { Fd(v) }
     /// libuv fd (== posix fd on non-windows; uv-tagged on windows).
     #[inline] pub const fn from_uv(v: i32) -> Fd {
-        #[cfg(windows)] { Fd(((v as i64) << 1) | 1) } // kind=.uv tag in low bit
-        #[cfg(not(windows))] { Fd(v) }
+        #[cfg(windows)]
+        // kind=.uv (bit 63 = 1); uv_file is i32, store sign-extended into low 63.
+        { Fd(FD_KIND_BIT | ((v as i64 as u64) & FD_VALUE_MASK)) }
+        #[cfg(not(windows))]
+        { Fd(v) }
     }
     #[cfg(windows)]
     #[inline] pub fn from_system(h: *mut core::ffi::c_void) -> Fd {
-        // kind=.system tag (low bit 0); store handle as u63.
-        Fd((h as i64) << 1)
+        // kind=.system (bit 63 = 0); WindowsHandleNumber is u63.
+        // Zig fd.zig:48 asserts `@intFromPtr(value) <= maxInt(u63)`.
+        debug_assert!((h as u64) <= FD_VALUE_MASK);
+        Fd((h as u64) & FD_VALUE_MASK)
     }
     #[inline] pub const fn native(self) -> FdBacking { self.0 }
 
@@ -589,17 +679,17 @@ impl ThreadLock {
     /// Zig `initLockedIfNonComptime` — Zig comptime evaluation has no thread;
     /// in Rust there is no comptime execution, so this is just `init_locked`.
     #[inline] pub fn init_locked_if_non_comptime() -> Self { Self::init_locked() }
-    /// Zig `lockOrAssert` — assert we already hold the lock (from this thread).
+    /// Zig `lockOrAssert` — acquire if unlocked, else assert this thread holds it.
     #[inline]
-    pub fn lock_or_assert(&self) {
+    pub fn lock_or_assert(&mut self) {
         #[cfg(debug_assertions)]
         {
             let held = self.owning_thread.load(core::sync::atomic::Ordering::Acquire);
-            let cur = thread_id();
-            debug_assert!(
-                held == cur,
-                "ThreadLock: assert_locked from thread {cur}, held by {held}",
-            );
+            if held == INVALID_THREAD_ID {
+                self.lock();
+            } else {
+                self.assert_locked();
+            }
         }
     }
     #[inline]
@@ -651,12 +741,19 @@ impl StackCheck {
     #[inline] pub fn configure_thread() { unsafe { Bun__StackCheck__initialize() } }
     #[inline] pub fn init() -> Self { Self { cached_stack_end: unsafe { Bun__StackCheck__getMaxStack() } as usize } }
     #[inline] pub fn update(&mut self) { self.cached_stack_end = unsafe { Bun__StackCheck__getMaxStack() } as usize; }
-    /// Is there at least 128 KB of stack space available?
+    /// Is there enough stack space to safely recurse?
+    /// Zig: `> 256K` on Windows, `> 128K` elsewhere (bun.zig:3762).
     #[inline]
     pub fn is_safe_to_recurse(&self) -> bool {
         // PORT NOTE: @frameAddress() → intrinsic; approximate with a stack local's addr.
         let probe = 0u8;
-        (&probe as *const u8 as usize).wrapping_sub(self.cached_stack_end) >= 128 * 1024
+        let probe_addr = &probe as *const u8 as usize;
+        // Zig uses `-|` (saturating sub): if probe < end (already past limit),
+        // result saturates to 0 → "not safe". wrapping_sub would yield a huge
+        // positive and incorrectly return true.
+        let remaining = probe_addr.saturating_sub(self.cached_stack_end);
+        let threshold: usize = if cfg!(windows) { 256 * 1024 } else { 128 * 1024 };
+        remaining > threshold
     }
 }
 

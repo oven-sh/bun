@@ -147,18 +147,25 @@ impl StringJoiner {
         self.len = 0;
         let mut current: *mut Node = Box::into_raw(head);
 
-        // allocator.alloc(u8, this.len)
-        let mut slice = vec![0u8; len].into_boxed_slice();
+        // Zig: `allocator.alloc(u8, this.len)` — allocates uninitialized.
+        // Avoid the redundant zero-fill of `vec![0u8; len]`.
+        let mut slice = Box::<[u8]>::new_uninit_slice(len);
 
-        let mut remaining: &mut [u8] = &mut slice[..];
+        let mut off = 0usize;
         while !current.is_null() {
             // SAFETY: `current` walks the singly-linked chain of Box-allocated nodes.
             let node = unsafe { &*current };
             let s = node.slice();
-            remaining[..s.len()].copy_from_slice(s);
-            // PORT NOTE: reshaped for borrowck — capture len before reborrow.
-            let n = s.len();
-            remaining = &mut remaining[n..];
+            // SAFETY: `off + s.len() <= len` by construction (`self.len` summed
+            // these slices); `slice` is a fresh uninit allocation owned here.
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    s.as_ptr(),
+                    slice.as_mut_ptr().add(off) as *mut u8,
+                    s.len(),
+                );
+            }
+            off += s.len();
 
             let prev = current;
             current = node.next;
@@ -166,9 +173,10 @@ impl StringJoiner {
             drop(unsafe { Box::from_raw(prev) });
         }
 
-        debug_assert!(remaining.is_empty());
+        debug_assert_eq!(off, len);
 
-        Ok(slice)
+        // SAFETY: every byte in [0, len) was written exactly once above.
+        Ok(unsafe { slice.assume_init() })
     }
 
     /// Same as `.done`, but appends extra slice `end`

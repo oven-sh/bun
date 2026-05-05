@@ -220,8 +220,8 @@ macro_rules! mark_binding {
         $crate::mark_binding!(::core::panic::Location::caller().file())
     };
     ($fn_name:expr) => {
-        // Zig: `Output.scoped(.JSC, .visible)("...")`. The `JSC` scope is owned by
-        // bun_core (callers don't declare it).
+        // Zig: `Output.scoped(.JSC, .hidden)` (jsc.zig:169) — opt-in via
+        // BUN_DEBUG_JSC=1. The `JSC` scope is owned by bun_core.
         if cfg!(feature = "debug_logs") && $crate::Global::JSC_SCOPE.is_visible() {
             $crate::Global::JSC_SCOPE.log(
                 ::core::format_args!("[JSC] {} ({}:{})\n", $fn_name, ::core::file!(), ::core::line!()),
@@ -230,9 +230,9 @@ macro_rules! mark_binding {
         }
     };
 }
-/// Shared `bun.Output.scoped(.JSC)` logger for `mark_binding!`.
+/// Shared `bun.Output.scoped(.JSC, .hidden)` logger for `mark_binding!`.
 pub static JSC_SCOPE: crate::output::ScopedLogger =
-    crate::output::ScopedLogger::new("JSC", crate::output::Visibility::Visible);
+    crate::output::ScopedLogger::new("JSC", crate::output::Visibility::Hidden);
 
 // ─── debug_flags (MOVE_DOWN from bun_cli, for bun_resolver) ───────────────
 // Zig: src/cli/cli.zig::debug_flags — debug-build-only breakpoint matchers.
@@ -388,7 +388,9 @@ unsafe extern "system" {
 }
 
 pub fn set_thread_name(name: &ZStr) {
-    #[cfg(target_os = "linux")]
+    // Zig `Environment.isLinux` is true on Android (linux OS + android ABI);
+    // Rust's `target_os = "linux"` is not, so include android explicitly.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // SAFETY: PR_SET_NAME takes a NUL-terminated byte string; `name` is `[:0]const u8`.
         unsafe {

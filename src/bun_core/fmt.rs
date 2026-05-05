@@ -173,26 +173,39 @@ pub mod strings {
         s.len() == 36 && starts_with_uuid(s)
     }
 
-    /// Scalar port of the highway scanner of the same name.
-    /// PERF(port): bun_string overrides with the highway SIMD version.
+    /// Zig: aliases `indexOfNewlineOrNonASCII`, which matches any control byte
+    /// or non-ASCII (`< 0x20 || > 0x7F`). Scalar fallback; highway override
+    /// via bun_string when linked.
     pub fn index_of_newline_or_non_ascii_or_ansi(s: &[u8]) -> Option<usize> {
-        s.iter().position(|&b| b == b'\n' || b == b'\r' || b == 0x1B || b >= 0x80)
+        s.iter().position(|&b| b < 0x20 || b > 0x7F)
     }
 
+    /// Zig delegates to highway: `b < 0x20 || b > 127 || b == '"'`
+    /// (highway_strings.cpp:438). Do NOT match `'` or `` ` ``.
     pub fn contains_newline_or_non_ascii_or_quote(s: &[u8]) -> bool {
-        s.iter().any(|&b| b == b'\n' || b == b'\r' || b == b'"' || b == b'\'' || b == b'`' || b >= 0x80)
+        s.iter().any(|&b| b < 0x20 || b > 0x7F || b == b'"')
     }
 
-    /// Port of `bun.fmt.URLFormatter.find_url_password` — returns (start, end)
-    /// of the password segment in `s`, or None.
+    /// Port of `bun.fmt.URLFormatter.findUrlPassword` — returns
+    /// `(offset, len)` of the password segment, or None.
+    /// Zig only matches http:// and https:// schemes and rejects empty pw.
     pub fn find_url_password(s: &[u8]) -> Option<(usize, usize)> {
-        // scheme://user:PASSWORD@host
-        let scheme_end = ::bstr::ByteSlice::find(s, b"://")? + 3;
+        let scheme_end = if s.len() >= 7 && eql_case_insensitive_ascii(&s[..7], b"http://", false) {
+            7
+        } else if s.len() >= 8 && eql_case_insensitive_ascii(&s[..8], b"https://", false) {
+            8
+        } else {
+            return None;
+        };
         let rest = &s[scheme_end..];
         let at = rest.iter().position(|&b| b == b'@')?;
         let userinfo = &rest[..at];
         let colon = userinfo.iter().position(|&b| b == b':')?;
-        Some((scheme_end + colon + 1, scheme_end + at))
+        // Reject empty password (`user:@host`).
+        if colon == at - 1 {
+            return None;
+        }
+        Some((scheme_end + colon + 1, at - colon - 1))
     }
 
     // ─── CodepointIterator (fmt.rs identifier formatter) ──────────────────
@@ -2222,7 +2235,7 @@ impl Display for SizeFormatter {
             return Ok(());
         }
         let precision: usize =
-            if (new_value - new_value.trunc()).abs() < 0.100 { 1 } else { 2 };
+            if (new_value - new_value.trunc()).abs() <= 0.100 { 1 } else { 2 };
         write!(f, "{:.1$}", new_value, precision)?;
         if self.opts.space_between_number_and_unit {
             write!(f, " {}B", suffix as char)

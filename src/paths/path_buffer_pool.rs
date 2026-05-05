@@ -47,7 +47,13 @@ impl<T: PoolStorage> PathBufferPoolT<T> {
     /// Returns an RAII guard that derefs to `&mut T` and returns the buffer to
     /// the pool on `Drop`. Replaces manual `get`/`put` pairing.
     pub fn get() -> PoolGuard<T> {
-        let buf = T::with_pool(|p| p.borrow_mut().pop()).unwrap_or_else(|| Box::new(T::default()));
+        let buf = T::with_pool(|p| p.borrow_mut().pop()).unwrap_or_else(|| {
+            // Zig leaves the buffer `undefined`; `T::default()` zero-fills 64 KB
+            // on Windows. Allocate uninitialized — sound for `[u8;N]`/`[u16;N]`.
+            // SAFETY: `T` is one of `PathBuffer`/`WPathBuffer`, both `#[repr(C)]`
+            // wrappers over an integer array, so every bit-pattern is valid.
+            unsafe { Box::<T>::new_uninit().assume_init() }
+        });
         PoolGuard { buf: Some(buf) }
     }
 

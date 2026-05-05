@@ -241,7 +241,11 @@ pub fn contains_char_t<T: Copy + Eq + Into<u32>>(self_: &[T], char: u8) -> bool 
 
 #[inline]
 pub fn contains(self_: &[u8], str: &[u8]) -> bool {
-    contains_t(self_, str)
+    // Zig: containsT(u8) → indexOfT(u8) → indexOf, which routes through
+    // std.mem.indexOf and returns None for empty needle. The generic
+    // index_of_t below returns Some(0) for empty, so dispatch to the
+    // u8-specific index_of (which matches Zig/std.mem semantics).
+    index_of(self_, str).is_some()
 }
 
 #[inline]

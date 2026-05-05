@@ -618,6 +618,12 @@ const ClassInfo JSMockFunctionPrototype::s_info = { "Mock"_s, &Base::s_info, nul
 
 extern "C" void JSMock__resetSpies(Zig::GlobalObject* globalObject)
 {
+    // Also drop the on-demand requireMock cache — jest.requireMock() results
+    // are logically per-test-file and should not leak into other files after
+    // `mock.restore()` / `jest.restoreAllMocks()`, matching Jest's
+    // `_mockRegistry` lifecycle.
+    globalObject->mockModule.requireMockCache.clear();
+
     if (!globalObject->mockModule.activeSpies) {
         return;
     }
@@ -1642,5 +1648,303 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsMockFn, (JSC::JSGlobalObject * lexicalGlobalO
 
     return JSValue::encode(thisObject);
 }
+
+namespace Bun {
+
+// Write `value` onto `target` at `name`, picking putDirectIndex when `name`
+// is a canonical integer index string (`"0"`, `"1"`, …). JSC's
+// JSObject::putDirect carries `ASSERT(!parseIndex(propertyName))` and expects
+// the caller to keep index keys in indexed storage — tripping that assert
+// would fire on `bun bd test` for modules exporting `{ 0: fn, 1: fn }`.
+// Same pattern `spyOn` uses a few hundred lines above.
+static ALWAYS_INLINE void putDirectMaybeIndex(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* target, const JSC::PropertyName& name, JSC::JSValue value, unsigned attributes)
+{
+    if (auto index = JSC::parseIndex(name)) {
+        target->putDirectIndex(globalObject, *index, value, attributes, JSC::PutDirectIndexLikePutDirect);
+    } else {
+        target->putDirect(vm, name, value, attributes);
+    }
+}
+
+JSC::JSObject* createAutoMockedFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue originalValue)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSMockFunction* mockFn = JSMockFunction::create(
+        vm,
+        globalObject,
+        globalObject->mockModule.mockFunctionStructure.getInitializedOnMainThread(globalObject));
+
+    if (!mockFn) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+
+    if (originalValue && originalValue.isCell() && originalValue.isCallable()) {
+        mockFn->copyNameAndLength(vm, lexicalGlobalObject, originalValue);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    } else {
+        mockFn->setName("mockConstructor"_s);
+    }
+
+    if (!globalObject->mockModule.activeMocks) {
+        ActiveSpySet* activeMocks = ActiveSpySet::create(vm, globalObject->mockModule.activeSpySetStructure.getInitializedOnMainThread(globalObject));
+        globalObject->mockModule.activeMocks.set(vm, activeMocks);
+    }
+    ActiveSpySet* activeMocks = uncheckedDowncast<ActiveSpySet>(globalObject->mockModule.activeMocks.get());
+    activeMocks->add(vm, mockFn, mockFn);
+
+    return mockFn;
+}
+
+// Given a real exports value (object, function, primitive), build an auto-mock
+// version: functions become mock.fn() with no implementation, plain objects are
+// recursively mocked, other values are preserved. Uses `visited` to handle
+// cycles safely — if we've already visited an object, the same mock is reused.
+static JSC::JSValue autoMockValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue value, WTF::UncheckedKeyHashMap<JSC::JSObject*, JSC::Strong<JSC::JSObject>>& visited, unsigned depth)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Bail out of runaway recursion — nested 16 levels deep is already
+    // well past anything a normal module would expose.
+    if (depth > 16) {
+        return value;
+    }
+
+    if (!value || !value.isCell()) {
+        return value;
+    }
+
+    // Primitives pass through unchanged.
+    if (!value.isObject()) {
+        return value;
+    }
+
+    JSObject* object = value.getObject();
+
+    // Handle cycles by returning the same mock we already started building.
+    if (auto existing = visited.get(object)) {
+        return JSValue(existing.get());
+    }
+
+    // Functions (including classes) become mock.fn() returning undefined.
+    // We still walk their own properties so that static methods such as
+    // `MyClass.someStatic()` are mocks, and we walk `.prototype` so that
+    // `MyClass.prototype.method` is a mock too.
+    if (value.isCallable()) {
+        JSObject* mockFn = createAutoMockedFunction(lexicalGlobalObject, value);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!mockFn) return jsUndefined();
+
+        visited.set(object, JSC::Strong<JSC::JSObject> { vm, mockFn });
+
+        // Seed the visited map with the prototype → mockProto mapping up
+        // front, *before* walking the function's static properties. Without
+        // this, a static property that aliases the prototype
+        // (e.g. `MyClass.proto = MyClass.prototype`) would go through the
+        // plain-object recursion first and produce a second distinct mock
+        // object, breaking `mocked.MyClass.proto === mocked.MyClass.prototype`.
+        JSObject* mockProto = nullptr;
+        JSObject* originalProtoObj = nullptr;
+        if (auto originalProto = object->getDirect(vm, vm.propertyNames->prototype); originalProto && originalProto.isObject()) {
+            JSObject* proto = originalProto.getObject();
+            // Don't mock Function.prototype or similar shared prototypes —
+            // only mock real class prototypes (distinct per class).
+            if (proto != lexicalGlobalObject->functionPrototype()
+                && proto != lexicalGlobalObject->objectPrototype()) {
+                mockProto = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype());
+                RETURN_IF_EXCEPTION(scope, {});
+                originalProtoObj = proto;
+                visited.set(originalProtoObj, JSC::Strong<JSC::JSObject> { vm, mockProto });
+            }
+        }
+
+        // Include non-enumerable own properties so static methods on ES2015
+        // classes (which default to non-enumerable) get mocked too.
+        JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+        object->methodTable()->getOwnPropertyNames(object, lexicalGlobalObject, names, DontEnumPropertiesMode::Include);
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            return JSValue(mockFn);
+        }
+
+        for (auto& name : names) {
+            // Skip built-in function properties. `.prototype` is handled
+            // separately below so we can mock instance methods too.
+            if (name == vm.propertyNames->length
+                || name == vm.propertyNames->name
+                || name == vm.propertyNames->prototype
+                || name == vm.propertyNames->caller
+                || name == vm.propertyNames->arguments) {
+                continue;
+            }
+            // Detect accessor descriptors up-front so we don't invoke user
+            // getters (which can have side effects) just to walk exports.
+            JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
+            bool hasOwn = object->methodTable()->getOwnPropertySlot(object, lexicalGlobalObject, name, slot);
+            if (scope.exception()) [[unlikely]] {
+                (void)scope.tryClearException();
+                continue;
+            }
+            if (!hasOwn || slot.isAccessor() || slot.isCustom()) {
+                continue;
+            }
+
+            JSValue propValue = slot.getValue(lexicalGlobalObject, name);
+            if (scope.exception()) [[unlikely]] {
+                (void)scope.tryClearException();
+                continue;
+            }
+            JSValue mockedProp = autoMockValue(lexicalGlobalObject, propValue, visited, depth + 1);
+            if (scope.exception()) [[unlikely]] {
+                (void)scope.tryClearException();
+                continue;
+            }
+            // Preserve the source descriptor attributes so that e.g. static
+            // class methods (non-enumerable by default) stay non-enumerable
+            // on the mock, and `ReadOnly`/`DontDelete` constants survive.
+            putDirectMaybeIndex(vm, lexicalGlobalObject, mockFn, name, mockedProp, slot.attributes());
+            if (scope.exception()) [[unlikely]] {
+                (void)scope.tryClearException();
+            }
+        }
+
+        // Now fill in the prototype mock we pre-registered. Any of the static
+        // properties that hit this prototype during their own walk have
+        // already been redirected to `mockProto` via `visited`.
+        if (mockProto && originalProtoObj) {
+            JSC::PropertyNameArrayBuilder protoNames(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+            originalProtoObj->methodTable()->getOwnPropertyNames(originalProtoObj, lexicalGlobalObject, protoNames, DontEnumPropertiesMode::Include);
+            if (scope.exception()) [[unlikely]] {
+                (void)scope.tryClearException();
+            } else {
+                for (auto& name : protoNames) {
+                    // Skip the constructor back-pointer — leaving it as the
+                    // real function would defeat the mock, and trying to
+                    // mock it would recurse.
+                    if (name == vm.propertyNames->constructor) continue;
+
+                    JSC::PropertySlot slot(originalProtoObj, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
+                    bool hasOwn = originalProtoObj->methodTable()->getOwnPropertySlot(originalProtoObj, lexicalGlobalObject, name, slot);
+                    if (scope.exception()) [[unlikely]] {
+                        (void)scope.tryClearException();
+                        continue;
+                    }
+                    if (!hasOwn || slot.isAccessor() || slot.isCustom()) {
+                        continue;
+                    }
+
+                    JSValue propValue = slot.getValue(lexicalGlobalObject, name);
+                    if (scope.exception()) [[unlikely]] {
+                        (void)scope.tryClearException();
+                        continue;
+                    }
+                    JSValue mockedProp = autoMockValue(lexicalGlobalObject, propValue, visited, depth + 1);
+                    if (scope.exception()) [[unlikely]] {
+                        (void)scope.tryClearException();
+                        continue;
+                    }
+                    // Prototype methods are non-enumerable in ES2015 classes;
+                    // preserve that so `Object.keys(instance)` matches.
+                    putDirectMaybeIndex(vm, lexicalGlobalObject, mockProto, name, mockedProp, slot.attributes());
+                    if (scope.exception()) [[unlikely]] {
+                        (void)scope.tryClearException();
+                    }
+                }
+            }
+            // Function.prototype's own `prototype` descriptor is writable +
+            // non-enumerable + non-configurable — match that.
+            mockFn->putDirect(vm, vm.propertyNames->prototype, mockProto,
+                JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+            if (scope.exception()) [[unlikely]] {
+                (void)scope.tryClearException();
+            }
+        }
+
+        return JSValue(mockFn);
+    }
+
+    // Leave arrays, dates, regexps, promises, maps, sets and other builtin
+    // exotic objects alone — recursively mocking them would break consumer
+    // code that branches on `Array.isArray(...)` or similar. Module namespace
+    // objects (what ESM `require()` returns) are recursed into, just like
+    // plain exports objects — that's the whole point of auto-mocking.
+    auto typeCode = object->type();
+    switch (typeCode) {
+    case JSC::FinalObjectType:
+    case JSC::ObjectType:
+    case JSC::ModuleNamespaceObjectType:
+        break;
+    default:
+        // Arrays, dates, regexps, typed arrays, etc. stay as-is.
+        return value;
+    }
+
+    // Plain object: recurse.
+    JSObject* mockObject = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype());
+    RETURN_IF_EXCEPTION(scope, {});
+
+    visited.set(object, JSC::Strong<JSC::JSObject> { vm, mockObject });
+
+    // Include non-enumerable own properties so objects built with
+    // `Object.defineProperty` (e.g. module exports with `{ enumerable: false }`
+    // constants) don't silently lose entries in the mock.
+    JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    object->methodTable()->getOwnPropertyNames(object, lexicalGlobalObject, names, DontEnumPropertiesMode::Include);
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return JSValue(mockObject);
+    }
+
+    for (auto& name : names) {
+        // Use getOwnPropertySlot so we don't invoke user getters (which can
+        // have side effects) just to walk the exports.
+        JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
+        bool hasOwn = object->methodTable()->getOwnPropertySlot(object, lexicalGlobalObject, name, slot);
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            continue;
+        }
+        if (!hasOwn || slot.isAccessor() || slot.isCustom()) {
+            continue;
+        }
+
+        JSValue propValue = slot.getValue(lexicalGlobalObject, name);
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            continue;
+        }
+        JSValue mockedProp = autoMockValue(lexicalGlobalObject, propValue, visited, depth + 1);
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            continue;
+        }
+        // Preserve the source descriptor attributes (DontEnum, ReadOnly,
+        // DontDelete) so the mock keeps the same property shape.
+        putDirectMaybeIndex(vm, lexicalGlobalObject, mockObject, name, mockedProp, slot.attributes());
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+        }
+    }
+
+    return JSValue(mockObject);
+}
+
+JSC::JSValue createAutoMockFromExports(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue exports)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    WTF::UncheckedKeyHashMap<JSC::JSObject*, JSC::Strong<JSC::JSObject>> visited;
+    JSValue mocked = autoMockValue(lexicalGlobalObject, exports, visited, 0);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return mocked;
+}
+
+} // namespace Bun
 
 #undef CHECK_IS_MOCK_FUNCTION

@@ -20,10 +20,14 @@ test("jest.mock() with object as first argument should throw TypeError", () => {
   }).toThrow(TypeError);
 });
 
-test("jest.mock() with missing callback should throw TypeError", () => {
+test("jest.mock() with missing callback auto-mocks and surfaces resolution errors", () => {
+  // As of #29836, `jest.mock(specifier)` with no factory is auto-mock mode —
+  // not a TypeError. For a non-existent specifier the require() under the
+  // hood throws a resolution error; that's the regression signal for ENG-24434
+  // (we must fail cleanly, not crash with a stack-buffer-overflow).
   const jestObj = Bun.jest(import.meta.path).jest;
 
   expect(() => {
-    jestObj.mock("some-module");
-  }).toThrow(TypeError);
+    jestObj.mock("some-module-that-does-not-exist-abcdef");
+  }).toThrow(/Cannot find package|Module not found|find module/);
 });

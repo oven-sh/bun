@@ -1616,6 +1616,12 @@ pub const JSZlib = struct {
         if (options_val_) |options_val| {
             if (try options_val.get(globalThis, "windowBits")) |window| {
                 opts.windowBits = try window.coerce(i32, globalThis);
+                // Mirror the compress path and node:zlib.Gunzip: a `windowBits`
+                // in the zlib-wrap range (8..15) stays in gunzip mode by adding
+                // 16. Keeps `Bun.gunzipSync(data, {windowBits: 15})` readable.
+                if (is_gzip and opts.windowBits >= 8 and opts.windowBits <= 15) {
+                    opts.windowBits += 16;
+                }
                 library = .zlib;
             }
 

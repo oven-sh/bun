@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import * as zlib from "node:zlib";
 
-const payload = Buffer.from("hello".repeat(100));
+const payload = Buffer.alloc(500, "hello");
 
 // The zlib header byte sequence (default compression: 0x78 0x9c; max: 0x78 0xda).
 const ZLIB_MAGIC_BYTE = 0x78;
@@ -174,5 +174,39 @@ describe("Bun.gzipSync windowBits quirks", () => {
     expect(compressed[0]).not.toBe(GZIP_MAGIC_0);
     // Round-trip as raw deflate.
     expect(Buffer.from(Bun.inflateSync(compressed, { windowBits: -15 }))).toEqual(payload);
+  });
+});
+
+describe("Bun.gunzipSync windowBits", () => {
+  // Mirror of the compress-side `+16` adjustment: a `windowBits` in 8..15 on
+  // the gunzip path must stay in gunzip mode, otherwise zlib sees a zlib-wrap
+  // request against gzip bytes and errors with "incorrect header check".
+  const gzipped = Bun.gzipSync(payload);
+
+  test("default decompresses gzip data", () => {
+    expect(Buffer.from(Bun.gunzipSync(gzipped))).toEqual(payload);
+  });
+
+  test("windowBits: 15 decompresses gzip data (matches node:zlib)", () => {
+    expect(Buffer.from(Bun.gunzipSync(gzipped, { windowBits: 15 }))).toEqual(payload);
+    expect(Buffer.from(zlib.gunzipSync(gzipped, { windowBits: 15 }))).toEqual(payload);
+  });
+
+  test("windowBits: 31 decompresses gzip data (already in gzip range)", () => {
+    expect(Buffer.from(Bun.gunzipSync(gzipped, { windowBits: 31 }))).toEqual(payload);
+  });
+
+  test("windowBits: 9 decompresses gzip data (smaller window)", () => {
+    expect(Buffer.from(Bun.gunzipSync(gzipped, { windowBits: 9 }))).toEqual(payload);
+  });
+
+  test("inflateSync windowBits: 15 still decompresses zlib-wrap data", () => {
+    const zlibData = Bun.deflateSync(payload, { windowBits: 15 });
+    expect(Buffer.from(Bun.inflateSync(zlibData, { windowBits: 15 }))).toEqual(payload);
+  });
+
+  test("inflateSync windowBits: -15 still decompresses raw deflate", () => {
+    const raw = Bun.deflateSync(payload, { windowBits: -15 });
+    expect(Buffer.from(Bun.inflateSync(raw, { windowBits: -15 }))).toEqual(payload);
   });
 });

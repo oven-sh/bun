@@ -69,6 +69,26 @@ const MathMin = Math.min;
 
 let cluster;
 
+// diagnostics_channel channels for the HTTP server. Mirrors Node's
+// lib/_http_server.js. Inactive channels are no-ops until someone subscribes.
+const dc = require("node:diagnostics_channel");
+const onRequestStartChannel = dc.channel("http.server.request.start");
+const onResponseCreatedChannel = dc.channel("http.server.response.created");
+const onResponseFinishChannel = dc.channel("http.server.response.finish");
+
+function emitResponseFinishChannel(this: { req; res; socket; server }) {
+  // Re-checked here (not at listener-attach) so subscribers that attach
+  // between request-arrival and response-finish are still observed.
+  if (onResponseFinishChannel.hasSubscribers) {
+    onResponseFinishChannel.publish({
+      request: this.req,
+      response: this.res,
+      socket: this.socket,
+      server: this.server,
+    });
+  }
+}
+
 function emitCloseServer(self: Server) {
   callCloseCallback(self);
   self.emit("close");
@@ -574,6 +594,13 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
         });
 
+        // Attached unconditionally to match Node's resOnFinish; the
+        // hasSubscribers check happens in emitResponseFinishChannel.
+        http_res.on(
+          "finish",
+          emitResponseFinishChannel.bind({ req: http_req, res: http_res, socket, server }),
+        );
+
         setIsNextIncomingMessageHTTPS(prevIsNextIncomingMessageHTTPS);
         handle.onabort = onServerRequestEvent.bind(socket);
         // start buffering data if any, the user will need to resume() or .on("data") to read it
@@ -615,6 +642,11 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
 
         setCloseCallback(http_res, onClose);
+        // Match Node's parserOnIncoming: publish once, before branching, for
+        // non-upgrade requests (fires on 503/checkContinue/417/normal paths).
+        if (!is_upgrade && onRequestStartChannel.hasSubscribers) {
+          onRequestStartChannel.publish({ request: http_req, response: http_res, socket, server });
+        }
         if (reachedRequestsLimit) {
           server.emit("dropRequest", http_req, socket);
           http_res.writeHead(503);
@@ -1256,6 +1288,12 @@ function ServerResponse(req, options): void {
   this.statusCode = 200;
   this.statusMessage = undefined;
   this.chunkedEncoding = false;
+
+  // Publish response.created from the constructor (matches Node) so it also
+  // fires for direct `new ServerResponse(req)` use — light-my-request etc.
+  if (onResponseCreatedChannel.hasSubscribers) {
+    onResponseCreatedChannel.publish({ request: req, response: this });
+  }
 }
 $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
 

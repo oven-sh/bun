@@ -103,7 +103,9 @@ test("issue #29286: Bun.build({ bytecode: true, format: 'esm' }) no longer requi
           for (const log of result.logs) console.error(String(log));
           process.exit(1);
         }
-        console.log('outputs:', result.outputs.map(o => o.path.split('/').pop()).sort().join(','));
+        // Normalize separators so the test works on Windows — BuildArtifact.path
+        // uses backslashes there.
+        console.log('outputs:', result.outputs.map(o => o.path.replaceAll('\\\\', '/').split('/').pop()).sort().join(','));
       `,
     ],
     env: bunEnv,

@@ -10,6 +10,7 @@
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/ExecutableBase.h"
 #include "JavaScriptCore/JSType.h"
+#include "wtf/URL.h"
 #include "wtf/text/OrdinalNumber.h"
 
 #include <JavaScriptCore/TopExceptionScope.h>
@@ -17,6 +18,7 @@
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/SourceProvider.h>
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/NativeCallee.h>
 #include <JavaScriptCore/Interpreter.h>
@@ -39,6 +41,86 @@ static ImplementationVisibility getImplementationVisibility(JSC::CodeBlock* code
     }
 
     return ImplementationVisibility::Public;
+}
+
+// Node reports stack frame filenames for ES module code as file:// URLs, while
+// CJS frames use an absolute filesystem path. Bun's internal SourceProvider
+// tracks the module kind — use it to decide which shape to display.
+//
+// Only module-type providers (Module / BunTranspiledModule) are treated as
+// ESM. Program, Synthetic, JSON, WebAssembly, and ImportMap keep their raw
+// string.
+bool isESMSourceProvider(const JSC::SourceProvider* provider)
+{
+    if (!provider)
+        return false;
+
+    switch (provider->sourceType()) {
+    case JSC::SourceProviderSourceType::Module:
+#if USE(BUN_JSC_ADDITIONS)
+    case JSC::SourceProviderSourceType::BunTranspiledModule:
+#endif
+        return true;
+    default:
+        return false;
+    }
+}
+
+static const JSC::SourceProvider* sourceProviderFor(JSC::CodeBlock* codeBlock)
+{
+    if (!codeBlock)
+        return nullptr;
+    return codeBlock->source().provider();
+}
+
+static const JSC::SourceProvider* sourceProviderFor(const JSC::StackFrame& frame)
+{
+    if (frame.isWasmFrame() || !frame.hasLineAndColumnInfo())
+        return nullptr;
+    return sourceProviderFor(frame.codeBlock());
+}
+
+bool isESMStackFrame(const JSC::StackFrame& frame)
+{
+    return isESMSourceProvider(sourceProviderFor(frame));
+}
+
+// If `url` is an absolute filesystem path, return a corresponding file:// URL;
+// otherwise return `url` unchanged. Used for ESM stack frame display to match
+// Node's v8 stack trace shape (see https://nodejs.org/api/errors.html#errorstack).
+// URLs with an existing scheme ("file://", "node:", "http://", etc.), relative
+// paths, bare specifiers, and synthetic placeholders like "[native code]" are
+// passed through unchanged.
+WTF::String toFileURLIfAbsolutePath(const WTF::String& url)
+{
+    if (url.isEmpty())
+        return url;
+
+    // POSIX absolute path.
+    if (url[0] == '/')
+        return WTF::URL::fileURLWithFileSystemPath(url).string();
+
+    // Windows drive-letter absolute path (e.g. "C:\foo" or "C:/foo").
+    if (url.length() >= 3 && url[1] == ':') {
+        char16_t first = url[0];
+        char16_t third = url[2];
+        if (((first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z'))
+            && (third == '\\' || third == '/'))
+            return WTF::URL::fileURLWithFileSystemPath(url).string();
+    }
+
+    // Windows UNC path (e.g. "\\server\share").
+    if (url.length() >= 2 && url[0] == '\\' && url[1] == '\\')
+        return WTF::URL::fileURLWithFileSystemPath(url).string();
+
+    return url;
+}
+
+WTF::String formatSourceURLForDisplay(const WTF::String& url, bool isESM)
+{
+    if (!isESM)
+        return url;
+    return toFileURLIfAbsolutePath(url);
 }
 
 bool isImplementationVisibilityPrivate(JSC::StackVisitor& visitor)

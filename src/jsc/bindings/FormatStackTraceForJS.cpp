@@ -311,6 +311,7 @@ WTF::String formatStackTrace(
         OrdinalNumber displayLine = {};
         OrdinalNumber displayColumn = {};
         WTF::String sourceURLForFrame = sourceURLs[i];
+        bool isESM = Zig::isESMStackFrame(frame);
 
         if (frame.hasLineAndColumnInfo()) {
             originalLine = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].line);
@@ -323,6 +324,10 @@ WTF::String formatStackTrace(
                 displayColumn = remappedFrame.position.column();
                 sourceURLForFrame = remappedFrame.source_url.toWTFString();
             }
+
+            // For ESM frames, display the source URL as a file:// URL to match
+            // Node's v8 stack trace shape (#30298).
+            sourceURLForFrame = Zig::formatSourceURLForDisplay(sourceURLForFrame, isESM);
 
             if (!hasSet) {
                 hasSet = true;
@@ -497,6 +502,10 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
         WTF::String sourceURLForFrame = didRemap[i] ? frame.source_url.toWTFString() : sourceURLs[i];
 
         auto* callsite = uncheckedDowncast<CallSite>(callSites.at(i));
+
+        // For ESM frames, shape the source URL as a file:// URL so that
+        // CallSite.getFileName() matches Node's v8 stack trace API (#30298).
+        sourceURLForFrame = Zig::formatSourceURLForDisplay(sourceURLForFrame, Zig::isESMStackFrame(stackFrames.at(i)));
 
         if (!sourceURLForFrame.isEmpty())
             callsite->setSourceURL(vm, jsString(vm, sourceURLForFrame));

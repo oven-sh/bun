@@ -220,6 +220,25 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame);
 String sourceURL(JSC::StackVisitor& visitor);
 String sourceURL(JSC::VM& vm, JSC::JSFunction* function);
 
+// Returns true if the SourceProvider represents an ES module. Module and
+// BunTranspiledModule both qualify; Program (CJS wrapper), Synthetic, JSON,
+// WebAssembly, and ImportMap do not.
+bool isESMSourceProvider(const JSC::SourceProvider* provider);
+
+// Returns true if the stack frame's originating source is an ES module.
+bool isESMStackFrame(const JSC::StackFrame& frame);
+
+// If `url` is an absolute filesystem path, convert it to a file:// URL.
+// Otherwise return `url` unchanged. Relative paths, bare specifiers, URLs with
+// an existing scheme (node:, file://, http://, ...), and synthetic placeholders
+// like "[native code]" are passed through.
+String toFileURLIfAbsolutePath(const String& url);
+
+// Convenience: if `isESM` is false, return `url` as-is; otherwise return the
+// file:// URL form for absolute paths. Used to shape stack frame filenames so
+// that ESM frames match Node's v8 stack trace format.
+String formatSourceURLForDisplay(const String& url, bool isESM);
+
 enum class FinalizerSafety {
     NotInFinalizer,
     MustNotTriggerGC,

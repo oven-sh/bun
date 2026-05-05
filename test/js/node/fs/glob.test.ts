@@ -400,26 +400,33 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
     expect(fs.globSync(path.join(String(dir), "loop"))).toStrictEqual([path.join(String(dir), "loop")]);
   });
 
-  it("absolute literal path pointing at a dangling symlink emits the symlink itself under fs.glob, not public Bun.Glob", () => {
-    // `open(path, O_DIRECTORY)` returns ENOENT for a dangling symlink
-    // (kernel follows the link, target missing) — same errno as a truly
-    // missing path. The absolute-literal fast-path's ENOENT arm, gated
-    // on `swallow_missing_cwd`, disambiguates via `lstat`:
-    //   * `fs.glob` (sets the flag) → succeeds → emit like Node; fails
-    //                                 ENOENT → `.get_next` → `[]`.
-    //   * public `Bun.Glob` (no flag) → always `[]`, preserving the
-    //                                   pre-PR contract that direct
-    //                                   consumers don't cross symlinks.
+  it("literal path pointing at a dangling symlink emits the symlink under fs.glob (absolute and relative), not public Bun.Glob", () => {
+    // `statat`/`open(path, O_DIRECTORY)` follow the symlink and fail
+    // with ENOENT because the target is missing, but the dirent itself
+    // exists. Node's `fs.glob` reports the dirent; the walker falls
+    // back to `lstat`/`lstatat` to see the symlink's own mode. The
+    // fallback is gated on `swallow_missing_cwd`:
+    //   * `fs.glob` (sets the flag) → lstat succeeds → emit like Node;
+    //                                 lstat fails (truly missing) → `[]`.
+    //   * direct `Bun.Glob` consumers (no flag) → `[]`, preserving the
+    //                                             contract that they
+    //                                             don't cross symlinks.
+    // Two paths in the walker cover this: the absolute-literal fast-path
+    // for `/abs/dangling` and the relative literal-tail in
+    // `transitionToDirIterState` for `dangling` with `{cwd}`.
     using dir = tempDir("glob-dangling", {});
     fs.symlinkSync("nonexistent-target", path.join(String(dir), "dangling"), "file");
-    // fs.glob: Node-compat, emits the dirent.
+    // fs.glob, both shapes emit the dirent.
     expect(fs.globSync(path.join(String(dir), "dangling"))).toStrictEqual([path.join(String(dir), "dangling")]);
+    expect(fs.globSync("dangling", { cwd: String(dir) })).toStrictEqual(["dangling"]);
     // Truly-missing path still returns [] (same arm, lstat fails).
     expect(fs.globSync(path.join(String(dir), "does-not-exist"))).toStrictEqual([]);
-    // Public Bun.Glob: unchanged — dangling symlink not emitted, same
-    // as pre-PR behavior.
+    expect(fs.globSync("does-not-exist", { cwd: String(dir) })).toStrictEqual([]);
+    // Public Bun.Glob: unchanged — dangling symlink not emitted.
     expect([...new Bun.Glob(path.join(String(dir), "dangling")).scanSync()]).toStrictEqual([]);
     expect([...new Bun.Glob(path.join(String(dir), "dangling")).scanSync({ onlyFiles: false })]).toStrictEqual([]);
+    expect([...new Bun.Glob("dangling").scanSync({ cwd: String(dir) })]).toStrictEqual([]);
+    expect([...new Bun.Glob("dangling").scanSync({ cwd: String(dir), onlyFiles: false })]).toStrictEqual([]);
   });
 
   it("brace alternative that names a symlink still descends", () => {

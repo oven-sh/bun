@@ -604,14 +604,13 @@ pub fn GlobWalker_(
                                     // symlink (dirent exists, kernel
                                     // follows the link, target is missing).
                                     // Node's `fs.glob` emits the dirent for
-                                    // the dangling case; public `Bun.Glob`
-                                    // pre-PR returned `[]` uniformly. Gated
-                                    // on `swallow_missing_cwd` so `fs.glob`
+                                    // the dangling case. Gated on
+                                    // `swallow_missing_cwd` so `fs.glob`
                                     // gets the dangling-symlink dirent and
-                                    // public `Bun.Glob` callers still see
-                                    // the empty result — same pattern as
-                                    // the ELOOP arm below and the literal-
-                                    // tail branch in
+                                    // direct `Bun.Glob` consumers (which
+                                    // don't opt in) keep the empty result
+                                    // — same pattern as the ELOOP arm below
+                                    // and the literal-tail branch in
                                     // `transitionToDirIterState`.
                                     if (this.walker.swallow_missing_cwd and e.getErrno() == bun.sys.E.NOENT) {
                                         switch (Syscall.lstat(path)) {
@@ -905,6 +904,27 @@ pub fn GlobWalker_(
                         const stat_result: bun.Stat = stat_result: switch (Accessor.statat(fd, pathz)) {
                             .err => |e_| {
                                 var e: bun.sys.Error = e_;
+                                // Dangling symlink: `statat` follows the link
+                                // and fails with ENOENT because the target
+                                // is missing, but the dirent itself exists.
+                                // Node's `fs.glob` reports the dirent; fall
+                                // back to `lstatat` so the `matches`
+                                // expression below sees the symlink's own
+                                // mode (`lstatat` fails ENOENT too for a
+                                // truly-missing path → `[]`). Gated on the
+                                // Node-compat flag so public `Bun.Glob`
+                                // keeps the historical empty-result behavior
+                                // — mirrors the ENOENT arm of the absolute-
+                                // literal fast-path.
+                                if (this.walker.swallow_missing_cwd and e.getErrno() == .NOENT) {
+                                    break :stat_result switch (Accessor.lstatat(fd, pathz)) {
+                                        .err => {
+                                            this.iter_state = .get_next;
+                                            return .success;
+                                        },
+                                        .result => |stat| stat,
+                                    };
+                                }
                                 if (e.getErrno() == .NOENT) {
                                     this.iter_state = .get_next;
                                     return .success;

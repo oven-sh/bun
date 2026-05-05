@@ -8,11 +8,11 @@
 //! until their `on_close` callback returns, after which they are freed by
 //! lsquic — never store them past that point.
 
-pub mod context;
-pub mod socket;
-pub mod stream;
-pub mod pending_connect;
-pub mod header;
+#[path = "quic/Context.rs"]        pub mod context;
+#[path = "quic/Socket.rs"]         pub mod socket;
+#[path = "quic/Stream.rs"]         pub mod stream;
+#[path = "quic/PendingConnect.rs"] pub mod pending_connect;
+#[path = "quic/Header.rs"]         pub mod header;
 
 pub use self::context::Context;
 pub use self::socket::Socket;

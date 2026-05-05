@@ -15,7 +15,7 @@ pub mod linear_fifo;
 // stable: enum const params → const usize/bool, inherent assoc → free aliases.
 pub mod bit_set;
 pub mod pool;
-pub use pool::{ObjectPool, ObjectPoolType};
+pub use pool::{ObjectPool, ObjectPoolTrait, ObjectPoolType, PoolGuard};
 pub mod comptime_string_map;
 pub use comptime_string_map::{ComptimeStringMap, ComptimeStringMapWithKeyType};
 #[path = "StaticHashMap.rs"]
@@ -32,13 +32,27 @@ pub use bit_set::{AutoBitSet, IntegerBitSet, StaticBitSet, DynamicBitSetUnmanage
 
 pub mod array_hash_map;
 pub use array_hash_map::{
-    ArrayHashMap, ArrayHashMapExt, CaseInsensitiveAsciiStringArrayHashMap, Entry, GetOrPutResult,
-    MapEntry, OccupiedEntry, StringArrayHashMap, StringHashMap, StringHashMapUnownedKey,
-    VacantEntry,
+    string_hash_map, ArrayHashMap, ArrayHashMapExt, CaseInsensitiveAsciiStringArrayHashMap, Entry,
+    GetOrPutResult, MapEntry, OccupiedEntry, StringArrayHashMap, StringHashMap,
+    StringHashMapContext, StringHashMapUnownedKey, StringSet, VacantEntry,
 };
+/// Explicit-context alias; `ArrayHashMap<K, V>` already has `C = AutoContext`
+/// as a default, this just gives the three-param spelling a distinct name.
+pub type ArrayHashMapWithContext<K, V, C> = ArrayHashMap<K, V, C>;
 
 pub mod string_map;
 pub use string_map::StringMap;
+
+// Re-export from bun_ptr so callers can name it as `bun_collections::TaggedPtrUnion`
+// (PORTING.md groups it under Collections; the impl lives in src/ptr/).
+pub use bun_ptr::tagged_pointer::{TaggedPtr as TaggedPointer, TaggedPtrUnion};
+
+/// `bun.SmallList` — small-buffer-optimised list. The implementation lives in
+/// `bun_css::small_list` (it predates this crate and pulling it down would
+/// cycle); this stub aliases `Vec<T>` so dependents that only need
+/// `push`/`len`/`as_slice` compile. PERF(port): no SBO — replace once
+/// `small_list.rs` is hoisted out of `bun_css`.
+pub type SmallList<T, const N: usize> = Vec<T>;
 
 // Unordered HashMap alias. PORTING.md: must be wyhash-backed for determinism.
 // TODO(port): swap RandomState for a wyhash BuildHasher once bun_wyhash exposes one.

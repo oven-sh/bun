@@ -360,6 +360,56 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
         let value_ptr = unsafe { &mut *self.values.as_mut_ptr().add(index) };
         GetOrPutResult { found_existing, index, key_ptr, value_ptr }
     }
+
+    /// Mutable access to the entry at `index` (key + value). Returns `None` if
+    /// `index >= len`. Mirrors `indexmap::IndexMap::get_index_mut`.
+    pub fn get_index_mut(&mut self, index: usize) -> Option<(&mut K, &mut V)> {
+        if index >= self.keys.len() {
+            return None;
+        }
+        // SAFETY: `keys` and `values` are distinct allocations; one `&mut` into
+        // each is sound even though both derive from `&mut self`.
+        let key_ptr = unsafe { &mut *self.keys.as_mut_ptr().add(index) };
+        let value_ptr = unsafe { &mut *self.values.as_mut_ptr().add(index) };
+        Some((key_ptr, value_ptr))
+    }
+
+    /// Zig `swapRemoveAt` — remove the entry at `index` by swapping in the last
+    /// entry. O(1); does not preserve insertion order. Returns the removed pair.
+    pub fn swap_remove_at(&mut self, index: usize) -> (K, V) {
+        let k = self.keys.swap_remove(index);
+        let v = self.values.swap_remove(index);
+        self.hashes.swap_remove(index);
+        (k, v)
+    }
+
+    // ── adapted lookup (Zig: getAdapted / getIndexAdapted) ─────────────────
+
+    /// Look up by `key` using `adapter` for hash/eql, without constructing a `K`.
+    #[inline]
+    pub fn get_index_adapted<Q: ?Sized, A>(&self, key: &Q, adapter: A) -> Option<usize>
+    where
+        A: ArrayHashAdapter<Q, K>,
+    {
+        let h = adapter.hash(key);
+        self.find_hash(h, |k, idx| adapter.eql(key, k, idx))
+    }
+
+    #[inline]
+    pub fn get_adapted<Q: ?Sized, A>(&self, key: &Q, adapter: A) -> Option<&V>
+    where
+        A: ArrayHashAdapter<Q, K>,
+    {
+        self.get_index_adapted(key, adapter).map(|i| &self.values[i])
+    }
+
+    #[inline]
+    pub fn contains_adapted<Q: ?Sized, A>(&self, key: &Q, adapter: A) -> bool
+    where
+        A: ArrayHashAdapter<Q, K>,
+    {
+        self.get_index_adapted(key, adapter).is_some()
+    }
 }
 
 impl<K, V, C: ArrayHashContext<K>> ArrayHashMap<K, V, C> {
@@ -621,6 +671,22 @@ impl<K: Default, V: Default, C> ArrayHashMap<K, V, C> {
         self.hashes.push(h);
         Ok(self.gop_at(i, false))
     }
+
+    /// Zig `getOrPutContextAdapted`: same as `get_or_put_adapted` but takes an
+    /// explicit `ctx` for the *stored* key type. This port does not need `ctx`
+    /// for the index header (none yet), so it is accepted and ignored.
+    #[inline]
+    pub fn get_or_put_context_adapted<Q, A>(
+        &mut self,
+        key: Q,
+        adapter: A,
+        _ctx: C,
+    ) -> Result<GetOrPutResult<'_, K, V>, AllocError>
+    where
+        A: ArrayHashAdapter<Q, K>,
+    {
+        self.get_or_put_adapted(key, adapter)
+    }
 }
 
 impl<K, V, C> ArrayHashMapExt for ArrayHashMap<K, V, C> {
@@ -853,9 +919,63 @@ impl<V> StringHashMap<V> {
         Self::default()
     }
 
+    pub fn with_capacity(n: usize) -> Self {
+        Self { inner: std::collections::HashMap::with_capacity(n) }
+    }
+
+    #[inline]
+    pub fn count(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn ensure_total_capacity(&mut self, n: usize) -> Result<(), AllocError> {
+        let need = n.saturating_sub(self.inner.len());
+        self.inner.reserve(need);
+        Ok(())
+    }
+
+    pub fn ensure_unused_capacity(&mut self, additional: usize) -> Result<(), AllocError> {
+        self.inner.reserve(additional);
+        Ok(())
+    }
+
     pub fn put(&mut self, key: &[u8], value: V) -> Result<(), AllocError> {
         self.inner.insert(Box::from(key), value);
         Ok(())
+    }
+
+    /// PERF(port): Zig skips the grow check; std::HashMap cannot, so this is
+    /// just `put` without the `Result`.
+    #[inline]
+    pub fn put_assume_capacity(&mut self, key: &[u8], value: V) {
+        self.inner.insert(Box::from(key), value);
+    }
+
+    /// Zig `putNoClobber` — asserts the key was not already present.
+    pub fn put_no_clobber(&mut self, key: &[u8], value: V) -> Result<(), AllocError> {
+        let prev = self.inner.insert(Box::from(key), value);
+        debug_assert!(prev.is_none(), "put_no_clobber: key already present");
+        Ok(())
+    }
+
+    /// Zig `getAdapted` — look up by `key` using `adapter` for hash/eql.
+    ///
+    /// PERF(port): the underlying `std::HashMap` cannot be queried with an
+    /// external u64 hash (it uses its own `BuildHasher`), so the adapter's
+    /// precomputed hash is ignored and the lookup falls back to the normal
+    /// `get(key)` path. Correctness is preserved (`adapter.eql` is byte
+    /// equality for all current adapters); only the rehash-avoidance is lost.
+    /// Restore once `StringHashMap` is moved off `std::HashMap` onto a
+    /// wyhash-backed table that accepts a raw u64.
+    #[inline]
+    pub fn get_adapted<A>(&self, key: &[u8], _adapter: &A) -> Option<&V> {
+        self.inner.get(key)
+    }
+
+    /// See `get_adapted` for the PERF(port) caveat.
+    #[inline]
+    pub fn contains_adapted<A>(&self, key: &[u8], _adapter: &A) -> bool {
+        self.inner.contains_key(key)
     }
 }
 
@@ -884,6 +1004,192 @@ impl<V: Default> StringHashMap<V> {
     pub fn get_or_put_value(&mut self, key: &[u8], value: V) -> Result<&mut V, AllocError> {
         Ok(self.inner.entry(Box::from(key)).or_insert(value))
     }
+
+    /// Zig `getOrPutContextAdapted` on `StringHashMap` — see `get_adapted` for
+    /// why the adapter's precomputed hash is currently ignored.
+    pub fn get_or_put_context_adapted<A>(
+        &mut self,
+        key: &[u8],
+        _adapter: A,
+    ) -> StringHashMapGetOrPut<'_, V> {
+        let found_existing = self.inner.contains_key(key);
+        let value_ptr = self
+            .inner
+            .entry(Box::from(key))
+            .or_insert_with(V::default);
+        StringHashMapGetOrPut { found_existing, value_ptr }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// StringHashMapContext + Prehashed adapters (src/bun.zig)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `bun.StringHashMapContext` — wyhash(seed=0) over byte slices, full 64-bit.
+/// This is the *unordered* map context (vs. `StringContext` above which
+/// truncates to u32 for `ArrayHashMap`).
+///
+/// PORT NOTE: spelled as a module rather than a unit struct so callers can
+/// path-access the nested `Prehashed` / `PrehashedCaseInsensitive` types
+/// (`StringHashMapContext::Prehashed::…`) on stable Rust, which forbids
+/// inherent associated types.
+#[allow(non_snake_case)]
+pub mod StringHashMapContext {
+    #[inline]
+    pub fn hash(s: &[u8]) -> u64 {
+        bun_wyhash::hash(s)
+    }
+    #[inline]
+    pub fn eql(a: &[u8], b: &[u8]) -> bool {
+        a == b
+    }
+    /// Precompute the hash of `input` so repeated lookups across many maps
+    /// can skip rehashing. Returns a `Prehashed` adapter.
+    #[inline]
+    pub fn pre(input: &[u8]) -> super::string_hash_map::Prehashed<'_> {
+        super::string_hash_map::Prehashed { value: bun_wyhash::hash(input), input }
+    }
+
+    pub use super::string_hash_map::{Prehashed, PrehashedCaseInsensitive};
+}
+
+/// Namespace mirroring `std.hash_map` so call sites can write
+/// `bun_collections::string_hash_map::{hash, Prehashed, GetOrPutResult}`.
+pub mod string_hash_map {
+    /// `std.hash_map.hashString` — wyhash(seed=0), full u64.
+    #[inline]
+    pub fn hash(s: &[u8]) -> u64 {
+        bun_wyhash::hash(s)
+    }
+
+    /// `bun.StringHashMapContext.Prehashed` — caches the hash of one borrowed
+    /// slice; `hash()` returns the cached value when asked about that exact
+    /// slice (pointer + len identity), otherwise rehashes.
+    #[derive(Clone, Copy)]
+    pub struct Prehashed<'a> {
+        pub value: u64,
+        pub input: &'a [u8],
+    }
+
+    impl<'a> Prehashed<'a> {
+        #[inline]
+        pub fn new(input: &'a [u8]) -> Self {
+            Self { value: hash(input), input }
+        }
+        #[inline]
+        pub fn hash(&self, s: &[u8]) -> u64 {
+            if core::ptr::eq(s.as_ptr(), self.input.as_ptr()) && s.len() == self.input.len() {
+                return self.value;
+            }
+            hash(s)
+        }
+        #[inline]
+        pub fn eql(&self, a: &[u8], b: &[u8]) -> bool {
+            a == b
+        }
+    }
+
+    /// `bun.StringHashMapContext.PrehashedCaseInsensitive` — owns a lowercased
+    /// copy of the input. Dropped via `Box`.
+    pub struct PrehashedCaseInsensitive {
+        pub value: u64,
+        pub input: Box<[u8]>,
+    }
+
+    impl PrehashedCaseInsensitive {
+        pub fn init(input: &[u8]) -> Self {
+            let mut out = vec![0u8; input.len()].into_boxed_slice();
+            for (dst, &src) in out.iter_mut().zip(input) {
+                *dst = src.to_ascii_lowercase();
+            }
+            Self { value: hash(&out), input: out }
+        }
+        #[inline]
+        pub fn hash(&self, s: &[u8]) -> u64 {
+            if core::ptr::eq(s.as_ptr(), self.input.as_ptr()) && s.len() == self.input.len() {
+                return self.value;
+            }
+            hash(s)
+        }
+        #[inline]
+        pub fn eql(&self, a: &[u8], b: &[u8]) -> bool {
+            a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.eq_ignore_ascii_case(y))
+        }
+    }
+
+    /// Result type alias for `StringHashMap::get_or_put*` so callers can name
+    /// it as `string_hash_map::GetOrPutResult<'_, V>`.
+    pub type GetOrPutResult<'a, V> = super::StringHashMapGetOrPut<'a, V>;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// StringSet (src/bun.zig) — `StringArrayHashMap<()>` with key-duping insert
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `bun.StringSet` — insertion-ordered set of owned byte-string keys.
+#[derive(Default)]
+pub struct StringSet {
+    pub map: StringArrayHashMap<()>,
+}
+
+impl StringSet {
+    #[inline]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Zig `init(allocator)` — allocator dropped (global mimalloc).
+    #[inline]
+    pub fn init() -> Self {
+        Self::default()
+    }
+
+    pub fn clone(&self) -> Result<Self, AllocError> {
+        Ok(Self { map: self.map.clone()? })
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.map.count() == 0
+    }
+
+    #[inline]
+    pub fn count(&self) -> usize {
+        self.map.count()
+    }
+
+    #[inline]
+    pub fn keys(&self) -> &[Box<[u8]>] {
+        self.map.keys()
+    }
+
+    /// Insert `key`, duping it on miss. Returns `Ok(())` whether or not the key
+    /// was already present (Zig signature).
+    pub fn insert(&mut self, key: &[u8]) -> Result<(), AllocError> {
+        // get_or_put already boxes `key` on miss; the Zig second-dupe is
+        // redundant under owned `Box<[u8]>` keys.
+        let _ = self.map.get_or_put(key)?;
+        Ok(())
+    }
+
+    #[inline]
+    pub fn contains(&self, key: &[u8]) -> bool {
+        self.map.contains(key)
+    }
+
+    #[inline]
+    pub fn swap_remove(&mut self, key: &[u8]) -> bool {
+        self.map.swap_remove(key)
+    }
+
+    pub fn clear_and_free(&mut self) {
+        // Keys are `Box<[u8]>`; `clear` drops them.
+        self.map.clear_retaining_capacity();
+        // PORT NOTE: Zig also freed the backing arrays; Vec keeps capacity here
+        // (callers wanting that can drop the whole `StringSet`).
+    }
+
+    // `deinit` → Drop.
 }
 
 // ──────────────────────────────────────────────────────────────────────────

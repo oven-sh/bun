@@ -1196,6 +1196,16 @@ pub fn fmt_java_script(
     QuickAndDirtyJavaScriptSyntaxHighlighter { text, opts }
 }
 
+/// snake_case alias of `fmt_java_script` (Zig: `fmtJavaScript`). Several
+/// downstream crates spell it `fmt_javascript`.
+#[inline]
+pub fn fmt_javascript(
+    text: &[u8],
+    opts: HighlighterOptions,
+) -> QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
+    QuickAndDirtyJavaScriptSyntaxHighlighter { text, opts }
+}
+
 pub struct QuickAndDirtyJavaScriptSyntaxHighlighter<'a> {
     pub text: &'a [u8],
     pub opts: HighlighterOptions,
@@ -2249,6 +2259,32 @@ impl Display for SizeFormatter {
 // f64/f32/f128 (intFromFloat) and i64/isize (intCast). Expose typed helpers.
 pub fn size(bytes: usize, opts: SizeFormatterOptions) -> SizeFormatter {
     SizeFormatter { value: bytes, opts }
+}
+/// Short-name alias of `size(.., default)` for `{B}`-style formatting
+/// (Zig: `bun.fmt.bytes`). Downstream: `bun_fmt::bytes(rss)`.
+#[inline]
+pub fn bytes(n: usize) -> SizeFormatter {
+    SizeFormatter { value: n, opts: SizeFormatterOptions::default() }
+}
+
+/// Lowercase hex encode into `out` (must be `2 * input.len()`). Port of
+/// `std.fmt.bytesToHex(.., .lower)` as used by Bun's hash printers.
+pub fn bytes_to_hex_lower(input: &[u8], out: &mut [u8]) -> usize {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    debug_assert!(out.len() >= input.len() * 2);
+    for (i, &b) in input.iter().enumerate() {
+        out[i * 2] = HEX[(b >> 4) as usize];
+        out[i * 2 + 1] = HEX[(b & 0x0F) as usize];
+    }
+    input.len() * 2
+}
+
+/// Allocating lowercase hex encode. Returns a `String` (output is always ASCII).
+pub fn bytes_to_hex_lower_string(input: &[u8]) -> String {
+    let mut out = vec![0u8; input.len() * 2];
+    bytes_to_hex_lower(input, &mut out);
+    // SAFETY: hex alphabet is ASCII.
+    unsafe { String::from_utf8_unchecked(out) }
 }
 pub fn size_f64(bytes: f64, opts: SizeFormatterOptions) -> SizeFormatter {
     SizeFormatter { value: bytes as usize, opts }

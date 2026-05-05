@@ -20,3 +20,4 @@ bitflags.workspace = true
 bun_boringssl_sys.workspace = true
 bun_core.workspace = true
 bun_errno.workspace = true
+bun_http_types.workspace = true

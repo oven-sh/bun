@@ -73,7 +73,21 @@ unsafe extern "C" {
     fn BunString__tryCreateAtom(bytes: *const u8, len: usize) -> String;
     fn BunString__createStaticExternal(bytes: *const u8, len: usize, isLatin1: bool) -> String;
     fn BunString__toInt32(this: *const String) -> i64;
+    fn BunString__createExternal(
+        bytes: *const u8,
+        len: usize,
+        is_latin1: bool,
+        ctx: *mut core::ffi::c_void,
+        callback: Option<extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, u32)>,
+    ) -> String;
+    fn BunString__createExternalGloballyAllocatedLatin1(bytes: *mut u8, len: usize) -> String;
+    fn BunString__createExternalGloballyAllocatedUTF16(bytes: *mut u16, len: usize) -> String;
 }
+
+/// `ctx` is the pointer passed into `create_external`; `buffer` is the
+/// `[*]u8`/`[*]u16` storage; `len` is the character count.
+pub type ExternalStringImplFreeFunction<Ctx> =
+    extern "C" fn(ctx: Ctx, buffer: *mut core::ffi::c_void, len: u32);
 
 impl String {
     pub const EMPTY: Self = Self { tag: Tag::Empty, value: StringImpl { zig: ZigString::EMPTY } };
@@ -160,6 +174,67 @@ impl String {
         }
         Self::clone_utf8(bytes)
     }
+    /// `bun.String.createExternal` — wraps `bytes` in a `WTF::ExternalStringImpl`
+    /// that calls `callback(ctx, buffer, len)` when the impl is destroyed.
+    ///
+    /// External strings are WTF strings whose bytes live elsewhere; `bytes` is
+    /// borrowed (not copied). If `bytes.len() >= max_length()`, `callback` is
+    /// invoked immediately and a `dead` string is returned (string.zig:404).
+    ///
+    /// `Ctx` must be a pointer-sized type (raw pointer or `&T`); enforced by
+    /// the const-assert below to keep the C-ABI transmute sound.
+    pub fn create_external<Ctx>(
+        bytes: &[u8],
+        is_latin1: bool,
+        ctx: Ctx,
+        callback: ExternalStringImplFreeFunction<Ctx>,
+    ) -> Self {
+        use core::ffi::c_void;
+        // PORT NOTE: Zig asserted `@typeInfo(Ctx) == .pointer` at comptime.
+        struct AssertPtrSized<C>(core::marker::PhantomData<C>);
+        impl<C> AssertPtrSized<C> {
+            const OK: () = assert!(core::mem::size_of::<C>() == core::mem::size_of::<*mut c_void>());
+        }
+        let () = AssertPtrSized::<Ctx>::OK;
+        debug_assert!(!bytes.is_empty());
+        if bytes.len() >= Self::max_length() {
+            callback(ctx, bytes.as_ptr() as *mut c_void, bytes.len() as u32);
+            return Self::DEAD;
+        }
+        // SAFETY: Ctx is pointer-sized (asserted); the C ABI for the callback
+        // is identical with Ctx erased to *mut c_void.
+        let ctx_erased: *mut c_void = unsafe { core::mem::transmute_copy(&ctx) };
+        let cb_erased: Option<extern "C" fn(*mut c_void, *mut c_void, u32)> =
+            // SAFETY: same ABI; first param erased per the const-assert above.
+            Some(unsafe { core::mem::transmute::<
+                ExternalStringImplFreeFunction<Ctx>,
+                extern "C" fn(*mut c_void, *mut c_void, u32),
+            >(callback) });
+        // SAFETY: bytes describes a valid slice; len < max_length checked.
+        let s = unsafe {
+            BunString__createExternal(bytes.as_ptr(), bytes.len(), is_latin1, ctx_erased, cb_erased)
+        };
+        debug_assert!(
+            s.tag != Tag::WTFStringImpl || unsafe { (*s.value.wtf).ref_count() } == 1
+        );
+        s
+    }
+
+    /// Max `WTF::StringImpl` length (in characters, not bytes).
+    /// Hooked by `bun_runtime` (`STRING_ALLOCATION_LIMIT_HOOK`); falls back to
+    /// `i32::MAX` until the runtime installs the limit.
+    #[inline]
+    pub fn max_length() -> usize {
+        let p = STRING_ALLOCATION_LIMIT_HOOK.load(Ordering::Relaxed);
+        if p.is_null() {
+            i32::MAX as usize
+        } else {
+            // SAFETY: runtime stores a `fn() -> usize` here during init.
+            let f: fn() -> usize = unsafe { core::mem::transmute::<*mut (), fn() -> usize>(p) };
+            f()
+        }
+    }
+
     /// `bun.String.createStaticExternal` — wraps `bytes` in a
     /// `WTF::ExternalStringImpl` that will **never** be freed. Only use for
     /// dynamically-allocated data with process lifetime (string.zig:427).
@@ -699,6 +774,16 @@ pub struct StringPointer {
     pub length: u32,
 }
 
+impl StringPointer {
+    /// View into `buf[offset .. offset+length]`.
+    #[inline]
+    pub fn slice(self, buf: &[u8]) -> &[u8] {
+        &buf[self.offset as usize..self.offset as usize + self.length as usize]
+    }
+    #[inline]
+    pub fn is_empty(self) -> bool { self.length == 0 }
+}
+
 pub use path_string::PathString;
 pub use mutable_string::MutableString;
 pub use hashed_string::HashedString;
@@ -770,3 +855,50 @@ pub mod lexer_tables {
 
 // Hook slot: bun_runtime sets the WTFString allocation cap.
 pub static STRING_ALLOCATION_LIMIT_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+// ──────────────────────────────────────────────────────────────────────────
+// Top-level free helpers (move-ins from misc Zig namespaces).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `bun.sliceTo(buf, 0)` — slice up to (not including) the first NUL byte,
+/// or the whole buffer if none. Port of `std.mem.sliceTo` for `u8`/`0`.
+#[inline]
+pub fn slice_to_nul(buf: &[u8]) -> &[u8] {
+    match buf.iter().position(|&b| b == 0) {
+        Some(i) => &buf[..i],
+        None => buf,
+    }
+}
+
+/// move-in: `cheap_prefix_normalizer` (MOVE_DOWN ← `bundle_v2.zig`).
+///
+/// Pure path-string helper used by the bundler chunk writer and `css::printer`.
+/// Returns `(prefix', suffix')` such that concatenating them produces a
+/// reasonably-normalized path (collapses `./` leading and avoids `//`).
+pub fn cheap_prefix_normalizer<'a>(prefix: &'a [u8], suffix: &'a [u8]) -> (&'a [u8], &'a [u8]) {
+    if prefix.is_empty() {
+        let suffix_no_slash = strings::remove_leading_dot_slash(suffix);
+        return (
+            if strings::has_prefix_comptime(suffix_no_slash, b"../") { b"" } else { b"./" },
+            suffix_no_slash,
+        );
+    }
+
+    // ["https://example.com/", "/out.js"]  => "https://example.com/out.js"
+    // ["/foo/", "/bar.js"]                 => "/foo/bar.js"
+    let win = bun_core::Environment::IS_WINDOWS;
+    if strings::ends_with_char(prefix, b'/') || (win && strings::ends_with_char(prefix, b'\\')) {
+        if strings::starts_with_char(suffix, b'/')
+            || (win && strings::starts_with_char(suffix, b'\\'))
+        {
+            return (prefix, &suffix[1..]);
+        }
+        // It gets really complicated if we try to deal with URLs more than this
+        // (see bundle_v2.zig comment block).
+    }
+
+    (prefix, strings::remove_leading_dot_slash(suffix))
+}
+
+// Re-export `wtf::parse_double` at crate root (callers spell it `bun_str::parse_double`).
+pub use wtf::parse_double;

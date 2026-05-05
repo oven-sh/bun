@@ -67,9 +67,24 @@ impl Default for Array {
 // TODO(b2-ast-round-C): Array methods call `BabyList::init_capacity(bump, n)`
 // (signature mismatch: BabyList takes only `n`; AST-crate variant with bump
 // arena pending) and `Expr::Data::*` deep matches. Un-gate with parser round.
+// Live subset of `Array` accessors needed by downstream crates (round-E unblock).
+impl Array {
+    /// Zig: `pub fn push(this: *Array, allocator, item) !void`.
+    /// Phase A `BabyList::append` uses the global allocator; `_bump` is kept
+    /// for call-site shape parity and the eventual bump-arena BabyList.
+    pub fn push(&mut self, _bump: &Bump, item: Expr) -> Result<(), AllocError> {
+        self.items.append(item)
+    }
+
+    #[inline]
+    pub fn slice(&self) -> &[Expr] {
+        self.items.slice()
+    }
+}
+
 #[cfg(any())]
 impl Array {
-    pub fn push(&mut self, bump: &Bump, item: Expr) -> Result<(), AllocError> {
+    pub fn push_gated(&mut self, bump: &Bump, item: Expr) -> Result<(), AllocError> {
         self.items.append(bump, item)
     }
 
@@ -813,6 +828,124 @@ pub struct RopeQuery<'a> {
     pub rope: &'a Rope,
 }
 
+// ── live Object accessor surface (round-E unblock) ─────────────────────────
+// Adapted to the current `BabyList` API (`append(v)`, `slice()`, `slice_mut()`).
+// `set_rope`/`get_or_put_array`/sort helpers stay in the gated impl below.
+impl Object {
+    pub fn get(&self, key: &[u8]) -> Option<Expr> {
+        self.as_property(key).map(|q| q.expr)
+    }
+
+    pub fn as_property(&self, name: &[u8]) -> Option<crate::ast::expr::Query> {
+        for (i, prop) in self.properties.slice().iter().enumerate() {
+            let Some(value) = prop.value else { continue };
+            let Some(key) = &prop.key else { continue };
+            let crate::ast::expr::Data::EString(key_str) = &key.data else { continue };
+            if key_str.eql_bytes(name) {
+                return Some(crate::ast::expr::Query { expr: value, loc: key.loc, i: i as u32 });
+            }
+        }
+        None
+    }
+
+    pub fn has_property(&self, name: &[u8]) -> bool {
+        for prop in self.properties.slice() {
+            let Some(key) = &prop.key else { continue };
+            let crate::ast::expr::Data::EString(key_str) = &key.data else { continue };
+            if key_str.eql_bytes(name) {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn put(&mut self, _bump: &Bump, key: &[u8], expr: Expr) -> Result<(), AllocError> {
+        if let Some(q) = self.as_property(key) {
+            self.properties.slice_mut()[q.i as usize].value = Some(expr);
+        } else {
+            self.properties.append(G::Property {
+                key: Some(Expr::init(EString::init(key), expr.loc)),
+                value: Some(expr),
+                ..G::Property::default()
+            })?;
+        }
+        Ok(())
+    }
+
+    pub fn put_string(&mut self, bump: &Bump, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
+        self.put(bump, key, Expr::init(EString::init(value), logger::Loc::EMPTY))
+    }
+
+    /// Walks `rope` segments, creating nested objects as needed, and returns
+    /// the leaf `E.Object` expression (Zig: `getOrPutObject`).
+    pub fn get_or_put_object(
+        &mut self,
+        rope: &Rope,
+        _bump: &Bump,
+    ) -> Result<Expr, SetError> {
+        let head_key = match rope.head.data.e_string() {
+            Some(s) => s.data,
+            None => return Err(SetError::Clobber),
+        };
+        if let Some(existing) = self.get(head_key) {
+            match existing.data {
+                crate::ast::expr::Data::EArray(mut array) => {
+                    if rope.next.is_null() {
+                        return Err(SetError::Clobber);
+                    }
+                    if let Some(last) = array.items.last() {
+                        if let crate::ast::expr::Data::EObject(mut obj) = last.data {
+                            // SAFETY: rope.next is non-null (checked above) and arena-owned.
+                            return obj.get_or_put_object(unsafe { &*rope.next }, _bump);
+                        }
+                        return Err(SetError::Clobber);
+                    }
+                    return Err(SetError::Clobber);
+                }
+                crate::ast::expr::Data::EObject(mut object) => {
+                    if !rope.next.is_null() {
+                        // SAFETY: rope.next is non-null and arena-owned.
+                        return object.get_or_put_object(unsafe { &*rope.next }, _bump);
+                    }
+                    return Ok(existing);
+                }
+                _ => return Err(SetError::Clobber),
+            }
+        }
+
+        if !rope.next.is_null() {
+            let obj = Expr::init(Object::default(), rope.head.loc);
+            // SAFETY: rope.next is non-null and arena-owned.
+            let out = match obj.data {
+                crate::ast::expr::Data::EObject(mut o) => {
+                    o.get_or_put_object(unsafe { &*rope.next }, _bump)?
+                }
+                _ => unreachable!(),
+            };
+            self.properties.append(G::Property {
+                key: Some(rope.head),
+                value: Some(obj),
+                ..G::Property::default()
+            })?;
+            return Ok(out);
+        }
+
+        let out = Expr::init(Object::default(), rope.head.loc);
+        self.properties.append(G::Property {
+            key: Some(rope.head),
+            value: Some(out),
+            ..G::Property::default()
+        })?;
+        Ok(out)
+    }
+}
+
+/// Module-style alias so downstream crates can address `e::object::Rope`
+/// (the Zig path was `E.Object.Rope` — a nested struct).
+pub mod object {
+    pub use super::{Object, Rope, RopeQuery, SetError};
+}
+
 // TODO(b2-ast-round-C): Object accessors call `Expr::as_property`/`EString::eql`
 // which need `bun_string::utf16_eql_string` (track-A blocked_on) and the gated
 // `impl Expr` accessor block. Un-gate with the parser round.
@@ -1241,6 +1374,129 @@ impl EString {
         // ASCII-only utf8 via `copy_utf16_into_utf8`, so this branch is not hit
         // on the current call path. Fail loud if it is.
         todo!("EString::to_utf8(utf16) — blocked on bun_string transcoding")
+    }
+}
+
+// ── live EString accessor surface (round-E unblock) ────────────────────────
+// Subset of the gated impl below adapted to the current `bun_string` API
+// (`eql_long::<CHECK_LEN>`, no bump-arena `to_utf8_alloc`). Heavy
+// transcode/rope-clone paths stay gated.
+impl EString {
+    #[inline]
+    pub fn len(&self) -> usize {
+        if self.rope_len > 0 { self.rope_len as usize } else { self.data.len() }
+    }
+    #[inline]
+    pub fn is_blank(&self) -> bool {
+        self.len() == 0
+    }
+    #[inline]
+    pub fn is_present(&self) -> bool {
+        self.len() > 0
+    }
+
+    /// Zig `slice8()` alias used by some downstream callers as `.utf8()`.
+    #[inline]
+    pub fn utf8(&self) -> &[u8] {
+        self.slice8()
+    }
+
+    pub fn eql_bytes(&self, other: &[u8]) -> bool {
+        if self.is_utf8() {
+            strings::eql_long::<true>(self.data, other)
+        } else {
+            // ASCII codepoint-wise compare; full WTF-16 path lives in the
+            // gated impl (track-A `utf16_eql_string`).
+            let s16 = self.slice16();
+            s16.len() == other.len()
+                && other.iter().zip(s16).all(|(b, c)| (*b as u16) == *c)
+        }
+    }
+
+    pub fn eql_comptime(&self, value: &'static [u8]) -> bool {
+        if !self.is_utf8() {
+            debug_assert!(self.next.is_none(), "transpiler: utf-16 string is a rope");
+            return strings::eql_comptime_utf16(self.slice16(), value);
+        }
+        if self.next.is_none() {
+            return self.data == value;
+        }
+        self.eql8_rope(value)
+    }
+
+    fn eql8_rope(&self, value: &[u8]) -> bool {
+        debug_assert!(self.next.is_some() && self.is_utf8());
+        if self.rope_len as usize != value.len() {
+            return false;
+        }
+        let mut i = 0usize;
+        let mut next: Option<&EString> = Some(self);
+        while let Some(cur) = next {
+            if !strings::eql_long::<false>(cur.data, &value[i..i + cur.data.len()]) {
+                return false;
+            }
+            i += cur.data.len();
+            next = cur.next.as_ref().map(|r| r.get());
+        }
+        true
+    }
+
+    pub fn resolve_rope_if_needed(&mut self, bump: &Bump) {
+        if self.next.is_none() || !self.is_utf8() {
+            return;
+        }
+        let mut bytes =
+            bumpalo::collections::Vec::<u8>::with_capacity_in(self.rope_len as usize, bump);
+        bytes.extend_from_slice(self.data);
+        let mut str_ = self.next;
+        while let Some(part) = str_ {
+            bytes.extend_from_slice(part.get().data);
+            str_ = part.get().next;
+        }
+        // SAFETY: arena-owned slice; lifetime erased to 'static per Phase-A `Str` convention.
+        self.data =
+            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(bytes.into_bump_slice()) };
+        self.next = None;
+    }
+
+    /// Zig `string(allocator)` — return UTF-8 bytes, transcoding if UTF-16.
+    /// Phase A: transcode allocates via global allocator then copies into
+    /// `bump` (Zig used the passed allocator directly).
+    pub fn string<'b>(&self, bump: &'b Bump) -> Result<&'b [u8], AllocError> {
+        if self.is_utf8() {
+            // SAFETY: `self.data` is arena-owned with the same lifetime as `bump`
+            // (Zig invariant); reborrowing under `'b` is sound while the AST
+            // store is alive.
+            Ok(unsafe { core::mem::transmute::<&[u8], &'b [u8]>(self.data) })
+        } else {
+            let v = strings::to_utf8_alloc(self.slice16());
+            Ok(bump.alloc_slice_copy(&v))
+        }
+    }
+
+    pub fn string_cloned<'b>(&self, bump: &'b Bump) -> Result<&'b [u8], AllocError> {
+        if self.is_utf8() {
+            Ok(bump.alloc_slice_copy(self.data))
+        } else {
+            let v = strings::to_utf8_alloc(self.slice16());
+            Ok(bump.alloc_slice_copy(&v))
+        }
+    }
+
+    pub fn hash(&self) -> u64 {
+        if self.is_blank() {
+            return 0;
+        }
+        if self.is_utf8() {
+            bun_wyhash::hash(self.data)
+        } else {
+            let s16 = self.slice16();
+            // SAFETY: reinterpreting &[u16] as &[u8] of double length for hashing.
+            let bytes = unsafe {
+                core::slice::from_raw_parts(s16.as_ptr() as *const u8, s16.len() * 2)
+            };
+            bun_wyhash::hash(bytes)
+        }
     }
 }
 

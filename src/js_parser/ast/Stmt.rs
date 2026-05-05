@@ -428,6 +428,17 @@ pub mod data {
             Backing::reset(unsafe { &mut *instance() });
         }
 
+        /// Zig: `Stmt.Data.Store.disable_reset = b;` — toggled by long-lived
+        /// callers that want the Store to persist across multiple parse calls.
+        #[inline]
+        pub fn set_disable_reset(b: bool) {
+            DISABLE_RESET.with(|c| c.set(b));
+        }
+        #[inline]
+        pub fn disable_reset() -> bool {
+            DISABLE_RESET.with(|c| c.get())
+        }
+
         pub fn deinit() {
             if instance().is_null() || !memory_allocator().is_null() {
                 return;

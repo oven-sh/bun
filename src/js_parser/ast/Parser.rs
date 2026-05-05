@@ -180,6 +180,35 @@ impl<'a> Options<'a> {
     }
 }
 
+// ── live `Parser::init` (round-E unblock) ─────────────────────────────────
+// `Lexer::init` borrows `log` mutably for the lexer's lifetime, but `Parser`
+// also stores `log: &'a mut Log`. Zig held two aliasing `*Log` pointers; Rust
+// cannot. The lexer is given a raw-reborrowed `&mut Log` (Phase-A escape
+// hatch — Phase B should restructure `Parser` to own the log and have the
+// lexer borrow through an accessor).
+impl<'a> Parser<'a> {
+    pub fn init(
+        options: Options<'a>,
+        log: &'a mut logger::Log,
+        source: &'a logger::Source,
+        define: &'a Define,
+        bump: &'a Arena,
+    ) -> Result<Parser<'a>, Error> {
+        // SAFETY: `log` outlives `'a`; the lexer and parser never deref the two
+        // `&mut Log` aliases concurrently (Zig invariant). Phase-B restructure
+        // tracked above.
+        let lexer_log: &'a mut logger::Log = unsafe { &mut *(log as *mut logger::Log) };
+        Ok(Parser {
+            options,
+            bump,
+            lexer: js_lexer::Lexer::init(lexer_log, source, bump)?,
+            define,
+            source,
+            log,
+        })
+    }
+}
+
 // Round-D: parse()/analyze()/_parse()/scan_imports() drive the full P method
 // surface (init/prepare_for_visit_pass/to_ast) which is gated. Struct + named
 // instantiations stay live so downstream crates can name `Parser<'a>`.

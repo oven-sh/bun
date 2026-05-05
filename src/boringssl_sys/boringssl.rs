@@ -480,3 +480,215 @@ pub unsafe fn sk_GENERAL_NAME_pop_free(
         )
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SSL / TLS — error codes, verify modes, shutdown flags, renegotiate modes
+// (`vendor/boringssl/include/openssl/ssl.h`)
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub const SSL_ERROR_NONE: c_int = 0;
+pub const SSL_ERROR_SSL: c_int = 1;
+pub const SSL_ERROR_WANT_READ: c_int = 2;
+pub const SSL_ERROR_WANT_WRITE: c_int = 3;
+pub const SSL_ERROR_WANT_X509_LOOKUP: c_int = 4;
+pub const SSL_ERROR_SYSCALL: c_int = 5;
+pub const SSL_ERROR_ZERO_RETURN: c_int = 6;
+pub const SSL_ERROR_WANT_CONNECT: c_int = 7;
+pub const SSL_ERROR_WANT_ACCEPT: c_int = 8;
+pub const SSL_ERROR_WANT_RENEGOTIATE: c_int = 19;
+
+pub const SSL_VERIFY_NONE: c_int = 0x00;
+pub const SSL_VERIFY_PEER: c_int = 0x01;
+pub const SSL_VERIFY_FAIL_IF_NO_PEER_CERT: c_int = 0x02;
+pub const SSL_VERIFY_PEER_IF_NO_OBC: c_int = 0x04;
+
+pub const SSL_SENT_SHUTDOWN: c_int = 1;
+pub const SSL_RECEIVED_SHUTDOWN: c_int = 2;
+
+/// `enum ssl_renegotiate_mode_t` — passed to `SSL_set_renegotiate_mode`.
+pub type ssl_renegotiate_mode_t = c_uint;
+pub const ssl_renegotiate_never: ssl_renegotiate_mode_t = 0;
+pub const ssl_renegotiate_once: ssl_renegotiate_mode_t = 1;
+pub const ssl_renegotiate_freely: ssl_renegotiate_mode_t = 2;
+pub const ssl_renegotiate_ignore: ssl_renegotiate_mode_t = 3;
+pub const ssl_renegotiate_explicit: ssl_renegotiate_mode_t = 4;
+
+/// `#define RSA_PKCS1_OAEP_PADDING 4` (`openssl/rsa.h`).
+pub const RSA_PKCS1_OAEP_PADDING: c_int = 4;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BIO — opaque-ish handle + method vtable
+// (`vendor/boringssl/include/openssl/bio.h`)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// `CRYPTO_refcount_t` (`openssl/thread.h`) — atomic-ish u32 in BoringSSL.
+pub type CRYPTO_refcount_t = u32;
+
+/// `ossl_ssize_t` — signed counterpart of `size_t` for BoringSSL "length or -1"
+/// parameters. Mirrors the `isize` definition in `boringssl.zig`.
+pub type ossl_ssize_t = isize;
+
+/// `bio_info_cb` — callback type for `BIO_METHOD.callback_ctrl`.
+pub type bio_info_cb = Option<
+    unsafe extern "C" fn(*mut BIO, c_int, *const c_char, c_int, c_long, c_long) -> c_long,
+>;
+
+/// `struct bio_method_st` — vtable for a BIO implementation. Laid out by-value
+/// so callers can construct custom BIO methods on the Rust side.
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct BIO_METHOD {
+    pub r#type: c_int,
+    pub name: *const c_char,
+    pub bwrite: Option<unsafe extern "C" fn(*mut BIO, *const c_char, c_int) -> c_int>,
+    pub bread: Option<unsafe extern "C" fn(*mut BIO, *mut c_char, c_int) -> c_int>,
+    pub bputs: Option<unsafe extern "C" fn(*mut BIO, *const c_char) -> c_int>,
+    pub bgets: Option<unsafe extern "C" fn(*mut BIO, *mut c_char, c_int) -> c_int>,
+    pub ctrl: Option<unsafe extern "C" fn(*mut BIO, c_int, c_long, *mut c_void) -> c_long>,
+    pub create: Option<unsafe extern "C" fn(*mut BIO) -> c_int>,
+    pub destroy: Option<unsafe extern "C" fn(*mut BIO) -> c_int>,
+    pub callback_ctrl: Option<unsafe extern "C" fn(*mut BIO, c_int, bio_info_cb) -> c_long>,
+}
+
+/// `struct bio_st` — exposed by-value because the Zig side reaches into
+/// `flags`/`num`/`ptr` directly when implementing custom BIO backends.
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct BIO {
+    pub method: *const BIO_METHOD,
+    pub init: c_int,
+    pub shutdown: c_int,
+    pub flags: c_int,
+    pub retry_reason: c_int,
+    pub num: c_int,
+    pub references: CRYPTO_refcount_t,
+    pub ptr: *mut c_void,
+    pub next_bio: *mut BIO,
+    pub num_read: usize,
+    pub num_write: usize,
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Additional opaque handles
+// ═══════════════════════════════════════════════════════════════════════════
+
+opaque!(
+    /// `struct ssl_method_st` (`typedef ... SSL_METHOD`).
+    SSL_METHOD
+);
+opaque!(
+    /// `struct x509_store_st` (`typedef ... X509_STORE`).
+    X509_STORE
+);
+opaque!(
+    /// `struct x509_store_ctx_st` (`typedef ... X509_STORE_CTX`).
+    X509_STORE_CTX
+);
+opaque!(
+    /// `struct rsa_st` (`typedef ... RSA`).
+    RSA
+);
+
+/// `int (*SSL_verify_cb)(int preverify_ok, X509_STORE_CTX *ctx)` — verify
+/// callback type for `SSL_set_verify` / `SSL_CTX_set_verify`.
+pub type SSL_verify_cb = Option<unsafe extern "C" fn(c_int, *mut X509_STORE_CTX) -> c_int>;
+
+/// `int pem_password_cb(char *buf, int size, int rwflag, void *userdata)`.
+pub type pem_password_cb =
+    unsafe extern "C" fn(*mut c_char, c_int, c_int, *mut c_void) -> c_int;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Extern functions — SSL / BIO / ERR / HMAC / RSA / PBKDF2
+// ═══════════════════════════════════════════════════════════════════════════
+
+unsafe extern "C" {
+    // ── SSL_METHOD ───────────────────────────────────────────────────────
+    pub fn TLS_with_buffers_method() -> *const SSL_METHOD;
+
+    // ── SSL_CTX ──────────────────────────────────────────────────────────
+    pub fn SSL_CTX_new(method: *const SSL_METHOD) -> *mut SSL_CTX;
+    pub fn SSL_CTX_free(ctx: *mut SSL_CTX);
+    pub fn SSL_CTX_get_verify_mode(ctx: *const SSL_CTX) -> c_int;
+
+    // ── SSL ──────────────────────────────────────────────────────────────
+    pub fn SSL_new(ctx: *mut SSL_CTX) -> *mut SSL;
+    pub fn SSL_free(ssl: *mut SSL);
+    pub fn SSL_set_connect_state(ssl: *mut SSL);
+    pub fn SSL_set_accept_state(ssl: *mut SSL);
+    pub fn SSL_set_bio(ssl: *mut SSL, rbio: *mut BIO, wbio: *mut BIO);
+    pub fn SSL_get_rbio(ssl: *const SSL) -> *mut BIO;
+    pub fn SSL_get_wbio(ssl: *const SSL) -> *mut BIO;
+    pub fn SSL_do_handshake(ssl: *mut SSL) -> c_int;
+    pub fn SSL_read(ssl: *mut SSL, buf: *mut c_void, num: c_int) -> c_int;
+    pub fn SSL_write(ssl: *mut SSL, buf: *const c_void, num: c_int) -> c_int;
+    pub fn SSL_shutdown(ssl: *mut SSL) -> c_int;
+    pub fn SSL_get_error(ssl: *const SSL, ret_code: c_int) -> c_int;
+    pub fn SSL_get_shutdown(ssl: *const SSL) -> c_int;
+    pub fn SSL_is_init_finished(ssl: *const SSL) -> c_int;
+    pub fn SSL_set_verify(ssl: *mut SSL, mode: c_int, callback: SSL_verify_cb);
+    pub fn SSL_set0_verify_cert_store(ssl: *mut SSL, store: *mut X509_STORE) -> c_int;
+    pub fn SSL_set_renegotiate_mode(ssl: *mut SSL, mode: ssl_renegotiate_mode_t);
+    pub fn SSL_renegotiate(ssl: *mut SSL) -> c_int;
+
+    // ── BIO ──────────────────────────────────────────────────────────────
+    pub fn BIO_new(method: *const BIO_METHOD) -> *mut BIO;
+    pub fn BIO_free(bio: *mut BIO) -> c_int;
+    pub fn BIO_read(bio: *mut BIO, data: *mut c_void, len: c_int) -> c_int;
+    pub fn BIO_write(bio: *mut BIO, data: *const c_void, len: c_int) -> c_int;
+    pub fn BIO_ctrl(bio: *mut BIO, cmd: c_int, larg: c_long, parg: *mut c_void) -> c_long;
+    pub fn BIO_ctrl_pending(bio: *const BIO) -> usize;
+    pub fn BIO_s_mem() -> *const BIO_METHOD;
+    pub fn BIO_new_mem_buf(buf: *const c_void, len: ossl_ssize_t) -> *mut BIO;
+    pub fn BIO_set_mem_eof_return(bio: *mut BIO, eof_value: c_int) -> c_int;
+
+    // ── ERR ──────────────────────────────────────────────────────────────
+    pub fn ERR_clear_error();
+    pub fn ERR_get_error() -> u32;
+    pub fn ERR_error_string(packed_error: u32, buf: *mut c_char) -> *mut c_char;
+    pub fn ERR_load_ERR_strings();
+    pub fn ERR_load_crypto_strings();
+
+    // ── HMAC (streaming) ─────────────────────────────────────────────────
+    pub fn HMAC_CTX_init(ctx: *mut HMAC_CTX);
+    pub fn HMAC_CTX_cleanup(ctx: *mut HMAC_CTX);
+    pub fn HMAC_CTX_copy(dest: *mut HMAC_CTX, src: *const HMAC_CTX) -> c_int;
+    pub fn HMAC_Init_ex(
+        ctx: *mut HMAC_CTX,
+        key: *const c_void,
+        key_len: usize,
+        md: *const EVP_MD,
+        impl_: *mut ENGINE,
+    ) -> c_int;
+    pub fn HMAC_Update(ctx: *mut HMAC_CTX, data: *const u8, data_len: usize) -> c_int;
+    pub fn HMAC_Final(ctx: *mut HMAC_CTX, out: *mut u8, out_len: *mut c_uint) -> c_int;
+    pub fn HMAC_size(ctx: *const HMAC_CTX) -> usize;
+
+    // ── PBKDF2 ───────────────────────────────────────────────────────────
+    pub fn PKCS5_PBKDF2_HMAC(
+        password: *const u8,
+        password_len: usize,
+        salt: *const u8,
+        salt_len: usize,
+        iterations: c_uint,
+        digest: *const EVP_MD,
+        key_len: usize,
+        out_key: *mut u8,
+    ) -> c_int;
+
+    // ── RSA / PEM ────────────────────────────────────────────────────────
+    pub fn RSA_free(rsa: *mut RSA);
+    pub fn RSA_size(rsa: *const RSA) -> c_uint;
+    pub fn RSA_public_encrypt(
+        flen: usize,
+        from: *const u8,
+        to: *mut u8,
+        rsa: *mut RSA,
+        padding: c_int,
+    ) -> c_int;
+    pub fn PEM_read_bio_RSA_PUBKEY(
+        bp: *mut BIO,
+        x: *mut *mut RSA,
+        cb: Option<pem_password_cb>,
+        u: *mut c_void,
+    ) -> *mut RSA;
+}

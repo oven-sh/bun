@@ -66,6 +66,20 @@ impl ASTMemoryAllocator {
         crate::ast::StoreRef::from_bump(self.arena.alloc(value))
     }
 
+    /// Zig: `this.stack_allocator.get()` — the `std.mem.Allocator` vtable into
+    /// the stack-fallback buffer. In Phase A both `stack_allocator` and
+    /// `bump_allocator` collapse to the single `Arena`, so this returns it.
+    #[inline]
+    pub fn stack_allocator(&self) -> &Arena {
+        &self.arena
+    }
+
+    /// Alias for callers that addressed the Zig `bump_allocator` field.
+    #[inline]
+    pub fn bump_allocator(&self) -> &Arena {
+        &self.arena
+    }
+
     /// Initialize ASTMemoryAllocator as `undefined`, and call this.
     pub fn init_without_stack(&mut self) {
         // Zig set up the SFA with an empty fixed buffer so every alloc goes to the fallback

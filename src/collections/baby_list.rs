@@ -608,6 +608,36 @@ impl<T> BabyList<T> {
         Ok(list_)
     }
 
+    /// Like `deep_clone` but the per-element clone is supplied as a closure
+    /// (e.g. an arena-aware `|x| x.deep_clone(bump)`). This is the variant
+    /// `bun_css::generic::DeepClone for BabyList<T>` needs, where the element
+    /// trait carries an arena lifetime that the in-crate `DeepClone` trait
+    /// cannot express.
+    pub fn deep_clone_with<F>(&self, mut clone_one: F) -> Self
+    where
+        F: FnMut(&T) -> T,
+    {
+        let mut list_ =
+            Self::init_capacity(self.len as usize).expect("OutOfMemory");
+        for item in self.slice_const() {
+            list_.append_assume_capacity(clone_one(item));
+        }
+        list_
+    }
+
+    /// Fallible variant of `deep_clone_with`.
+    pub fn try_deep_clone_with<F, E>(&self, mut clone_one: F) -> Result<Self, E>
+    where
+        F: FnMut(&T) -> Result<T, E>,
+        E: From<AllocError>,
+    {
+        let mut list_ = Self::init_capacity(self.len as usize).map_err(E::from)?;
+        for item in self.slice_const() {
+            list_.append_assume_capacity(clone_one(item)?);
+        }
+        Ok(list_)
+    }
+
     /// Same as `deep_clone` but calls `bun.outOfMemory` instead of returning an error.
     /// `T::deep_clone` must not return any error except `error.OutOfMemory`.
     pub fn deep_clone_infallible(&self) -> Self
@@ -830,6 +860,17 @@ impl<T: fmt::Debug> fmt::Display for BabyList<T> {
 }
 
 pub type ByteList = BabyList<u8>;
+
+/// `ByteList` is the canonical pooled scratch buffer (`ObjectPool<ByteList, ..>`
+/// in Zig). `INIT` allocates an empty list; `reset` truncates to len=0 while
+/// keeping capacity so the next user reuses the buffer.
+impl crate::pool::ObjectPoolType for ByteList {
+    const INIT: Option<fn() -> Result<Self, bun_core::Error>> = Some(|| Ok(ByteList::default()));
+    #[inline]
+    fn reset(&mut self) {
+        self.clear_retaining_capacity();
+    }
+}
 
 #[derive(Default)]
 pub struct OffsetByteList {

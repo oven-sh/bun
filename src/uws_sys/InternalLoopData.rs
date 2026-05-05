@@ -32,10 +32,10 @@ pub struct InternalLoopData {
     pub closed_connecting_head: *mut ConnectingSocket,
     // FORWARD_DECL(b0): was `bun_threading::Mutex` (tier 2). `bun.Mutex.ReleaseImpl.Type`
     // C layout must match; verify size/align with static assert in Phase B.
-    pub mutex: bun_core::Mutex,
+    pub mutex: parking_lot::RawMutex,
     pub parent_ptr: *mut c_void,
     pub parent_tag: c_char,
-    pub iteration_nr: usize,
+    pub iteration_nr: u64,
     // SAFETY: erased `Option<&'static jsc::VM>` — tier-0 crate cannot name jsc types.
     // Higher tier (`bun_runtime`) casts this back when reading.
     pub jsc_vm: *const c_void,

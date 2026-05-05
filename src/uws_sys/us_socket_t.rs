@@ -126,7 +126,7 @@ impl us_socket_t {
             let errno = bun_errno::get_errno(length);
             debug_assert!(errno != bun_errno::E::SUCCESS);
             // TODO(port): bun.errnoToZigErr — map errno to bun_core::Error
-            return Err(bun_core::errno_to_err(errno));
+            return Err(bun_core::errno_to_zig_err(errno as i32));
         }
         debug_assert!(buf.len() >= length as usize);
         Ok(&buf[..usize::try_from(length).unwrap()])
@@ -144,7 +144,7 @@ impl us_socket_t {
             let errno = bun_errno::get_errno(length);
             debug_assert!(errno != bun_errno::E::SUCCESS);
             // TODO(port): bun.errnoToZigErr — map errno to bun_core::Error
-            return Err(bun_core::errno_to_err(errno));
+            return Err(bun_core::errno_to_zig_err(errno as i32));
         }
         debug_assert!(buf.len() >= length as usize);
         Ok(&buf[..usize::try_from(length).unwrap()])

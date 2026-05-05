@@ -15,8 +15,11 @@ use bun_logger::Loc;
 use bun_string::{self as strings, ZStr};
 
 use crate::ast::{
-    self as js_ast, ASTMemoryAllocator, DebugOnlyDisabler, E, G, Op, Ref, Stmt, StoreRef, S,
+    self as js_ast, ASTMemoryAllocator, DebugOnlyDisabler, E, G, Op, Ref, Stmt, S,
 };
+// Re-export so downstream crates can name `ast::expr::StoreRef` (the Zig path
+// was `Expr.Data.Store` / `*E.Foo`; some callers route through `expr::`).
+pub use crate::ast::StoreRef;
 
 // ───────────────────────────────────────────────────────────────────────────
 // Cycle-break: vtable for Blob (was bun_jsc::webcore::Blob — T6 upward ref).
@@ -221,6 +224,116 @@ impl Default for Query {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// ── live Expr accessor surface (round-E unblock) ───────────────────────────
+// Subset of the gated impl below; bodies adapted to the live `E::Object` /
+// `E::EString` surface added this round. The full set/get_path/rope helpers
+// stay gated.
+impl Expr {
+    #[inline]
+    pub fn is_array(&self) -> bool {
+        matches!(self.data, Data::EArray(_))
+    }
+    #[inline]
+    pub fn is_object(&self) -> bool {
+        matches!(self.data, Data::EObject(_))
+    }
+    #[inline]
+    pub fn is_string(&self) -> bool {
+        matches!(self.data, Data::EString(_))
+    }
+
+    /// Making this comptime bloats the binary and doesn't seem to impact
+    /// runtime performance.
+    pub fn as_property(&self, name: &[u8]) -> Option<Query> {
+        let Data::EObject(obj) = &self.data else { return None };
+        if obj.properties.len == 0 {
+            return None;
+        }
+        obj.as_property(name)
+    }
+
+    pub fn get(&self, name: &[u8]) -> Option<Expr> {
+        self.as_property(name).map(|q| q.expr)
+    }
+
+    pub fn get_object(&self, name: &[u8]) -> Option<Expr> {
+        self.as_property(name).and_then(|q| q.expr.is_object().then_some(q.expr))
+    }
+
+    pub fn as_array(&self) -> Option<ArrayIterator<'_>> {
+        match &self.data {
+            Data::EArray(array) => {
+                if array.items.len == 0 {
+                    return None;
+                }
+                Some(ArrayIterator { array: array.get(), index: 0 })
+            }
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_utf8_string_literal(&self) -> Option<&[u8]> {
+        if let Data::EString(s) = &self.data {
+            debug_assert!(s.next.is_none());
+            return Some(s.data);
+        }
+        None
+    }
+
+    #[inline]
+    pub fn as_string<'b>(&self, bump: &'b Bump) -> Option<&'b [u8]> {
+        match &self.data {
+            Data::EString(str) => Some(str.string(bump).expect("OOM")),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_string_cloned<'b>(
+        &self,
+        bump: &'b Bump,
+    ) -> Result<Option<&'b [u8]>, AllocError> {
+        match &self.data {
+            Data::EString(str) => Ok(Some(str.string_cloned(bump)?)),
+            _ => Ok(None),
+        }
+    }
+
+    pub fn as_bool(&self) -> Option<bool> {
+        match self.data {
+            Data::EBoolean(b) | Data::EBranchBoolean(b) => Some(b.value),
+            _ => None,
+        }
+    }
+
+    pub fn as_number(&self) -> Option<f64> {
+        match self.data {
+            Data::ENumber(n) => Some(n.value),
+            _ => None,
+        }
+    }
+
+    /// Construct an `Expr` from an opaque `Blob` (JSON / text / data-URL).
+    ///
+    /// This is the macro-expansion `Expr.fromBlob` path. The body is owned by
+    /// the higher-tier `bun_js_parser_jsc` crate (touches `MimeType`, JSON
+    /// parsing, and `jsc::webcore::Blob`). Downstream callers in lower tiers
+    /// only need the symbol to exist for type-check; calling it without the
+    /// JSC bridge is a logic error.
+    // TODO(b2-blocked): bun_http_types::MimeType + bun_interchange::json::parse.
+    pub fn from_blob(
+        _blob: BlobRef,
+        _bump: &Bump,
+        _mime_type: Option<&[u8]>,
+        _log: &mut logger::Log,
+        loc: Loc,
+    ) -> Result<Expr, bun_core::Error> {
+        let _ = loc;
+        todo!("Expr::from_blob — owned by bun_js_parser_jsc (MimeType/JSON bridge)")
+    }
+}
+
 // Expr — property/object/string accessor methods.
 // TODO(b2-ast-round-C): these call into `E::Object::as_property` / `EString`
 // methods that need `bun_string::utf16_eql_string`/`to_utf8_alloc` (track-A
@@ -1632,6 +1745,14 @@ impl Data {
         if let Data::EArray(a) = *self { Some(a) } else { None }
     }
     #[inline]
+    pub fn e_array_mut(&mut self) -> Option<&mut E::Array> {
+        if let Data::EArray(a) = self { Some(&mut **a) } else { None }
+    }
+    #[inline]
+    pub fn e_object_mut(&mut self) -> Option<&mut E::Object> {
+        if let Data::EObject(o) = self { Some(&mut **o) } else { None }
+    }
+    #[inline]
     pub fn as_e_string(&self) -> Option<StoreRef<E::EString>> {
         self.e_string()
     }
@@ -2701,6 +2822,18 @@ pub mod data {
             }
             // SAFETY: caller contract — instance is set when reset() is called.
             Backing::reset(unsafe { &mut *instance() });
+        }
+
+        /// Zig: `Expr.Data.Store.disable_reset = b;` — toggled by long-lived
+        /// callers (transpiler, bundler) that want the Store to persist across
+        /// multiple parse calls.
+        #[inline]
+        pub fn set_disable_reset(b: bool) {
+            DISABLE_RESET.with(|c| c.set(b));
+        }
+        #[inline]
+        pub fn disable_reset() -> bool {
+            DISABLE_RESET.with(|c| c.get())
         }
 
         pub fn deinit() {

@@ -37,7 +37,106 @@ mod escape_html {}
 
 mod escape_reg_exp { pub use crate::escape_reg_exp::*; }
 mod paths {}
-mod visible {}
+
+/// `bun.strings.visible` — terminal-visible-width helpers. Minimal scalar
+/// surface; full SIMD/grapheme-aware impls live in the gated `visible_draft`.
+pub mod visible {
+    pub mod width {
+        pub mod exclude_ansi_colors {
+            use crate::immutable::{index_of_char_usize, wtf8_byte_sequence_length};
+
+            /// Skip a CSI/OSC escape starting at `input[0] == ESC`; returns
+            /// the byte length consumed (at least 1). Mirrors the parser in
+            /// `visible.zig:visibleLatin1WidthExcludeANSIColors`.
+            fn skip_ansi(input: &[u8]) -> usize {
+                debug_assert!(!input.is_empty() && input[0] == 0x1b);
+                if input.len() < 2 { return input.len(); }
+                match input[1] {
+                    b'[' => {
+                        // CSI: ESC '[' ... <0x40..=0x7E>
+                        let mut i = 2;
+                        while i < input.len() {
+                            if (0x40..=0x7E).contains(&input[i]) { return i + 1; }
+                            i += 1;
+                        }
+                        input.len()
+                    }
+                    b']' => {
+                        // OSC: ESC ']' ... (BEL | ST | ESC '\')
+                        let mut i = 2;
+                        while i < input.len() {
+                            match input[i] {
+                                0x07 | 0x9c => return i + 1,
+                                0x1b if i + 1 < input.len() && input[i + 1] == b'\\' => return i + 2,
+                                _ => i += 1,
+                            }
+                        }
+                        input.len()
+                    }
+                    _ => 1,
+                }
+            }
+
+            /// Visible terminal width of a UTF-8 string, treating ANSI escape
+            /// sequences as zero-width.
+            ///
+            /// PORT NOTE (B-2): scalar fallback — counts 1 column per
+            /// codepoint. Full East-Asian-width / grapheme handling is in the
+            /// gated `visible_draft` module; un-gate to replace this.
+            pub fn utf8(input: &[u8]) -> usize {
+                let mut w = 0usize;
+                let mut i = 0usize;
+                while i < input.len() {
+                    let b = input[i];
+                    if b == 0x1b {
+                        i += skip_ansi(&input[i..]);
+                        continue;
+                    }
+                    if b < 0x80 {
+                        // C0 controls are zero-width.
+                        if b >= 0x20 && b != 0x7f { w += 1; }
+                        i += 1;
+                    } else {
+                        let len = wtf8_byte_sequence_length(b).max(1) as usize;
+                        w += 1;
+                        i += len.min(input.len() - i);
+                    }
+                }
+                w
+            }
+
+            /// Byte index of the longest prefix of `input` whose visible
+            /// width is `<= max_width`. ANSI escapes are zero-width and
+            /// always included; never splits a multi-byte UTF-8 codepoint.
+            pub fn utf8_index_at_width(input: &[u8], max_width: usize) -> usize {
+                let mut w = 0usize;
+                let mut i = 0usize;
+                while i < input.len() {
+                    let b = input[i];
+                    if b == 0x1b {
+                        i += skip_ansi(&input[i..]);
+                        continue;
+                    }
+                    let (cw, len) = if b < 0x80 {
+                        (if b >= 0x20 && b != 0x7f { 1usize } else { 0 }, 1usize)
+                    } else {
+                        let l = wtf8_byte_sequence_length(b).max(1) as usize;
+                        (1, l.min(input.len() - i))
+                    };
+                    if w + cw > max_width {
+                        return i;
+                    }
+                    w += cw;
+                    i += len;
+                }
+                input.len()
+            }
+
+            pub fn latin1(input: &[u8]) -> usize { utf8(input) }
+            // utf16 variant lives in the gated draft (needs grapheme tables).
+        }
+    }
+}
 
 /// Minimal `unicode` surface needed by `immutable.rs` itself (CodepointIterator
 /// + WTF-8 decode). Full transcoding suite (to_utf8_*, convert_utf16_*) lives
@@ -2681,6 +2780,180 @@ pub fn trim_left<'a>(slice: &'a [u8], values_to_strip: &[u8]) -> &'a [u8] {
         begin += 1;
     }
     &slice[begin..]
+}
+
+/// `std.mem.trimRight(u8, str, chars)` — strip trailing chars in `values_to_strip`.
+pub fn trim_right<'a>(slice: &'a [u8], values_to_strip: &[u8]) -> &'a [u8] {
+    let mut end = slice.len();
+    while end > 0 && values_to_strip.contains(&slice[end - 1]) {
+        end -= 1;
+    }
+    &slice[..end]
+}
+
+/// `std.mem.replacementSize` — byte length of `input` after replacing every
+/// occurrence of `needle` with `replacement`.
+pub fn replacement_size(input: &[u8], needle: &[u8], replacement: &[u8]) -> usize {
+    if needle.is_empty() {
+        return input.len();
+    }
+    let mut size = 0usize;
+    let mut i = 0usize;
+    while i < input.len() {
+        if i + needle.len() <= input.len() && &input[i..i + needle.len()] == needle {
+            size += replacement.len();
+            i += needle.len();
+        } else {
+            size += 1;
+            i += 1;
+        }
+    }
+    size
+}
+
+/// `std.mem.replace` — write `input` into `output` replacing every `needle`
+/// with `replacement`; returns the number of replacements made. `output` must
+/// be at least `replacement_size(input, needle, replacement)` bytes.
+pub fn replace(input: &[u8], needle: &[u8], replacement: &[u8], output: &mut [u8]) -> usize {
+    if needle.is_empty() {
+        output[..input.len()].copy_from_slice(input);
+        return 0;
+    }
+    let mut i = 0usize;
+    let mut o = 0usize;
+    let mut count = 0usize;
+    while i < input.len() {
+        if i + needle.len() <= input.len() && &input[i..i + needle.len()] == needle {
+            output[o..o + replacement.len()].copy_from_slice(replacement);
+            o += replacement.len();
+            i += needle.len();
+            count += 1;
+        } else {
+            output[o] = input[i];
+            o += 1;
+            i += 1;
+        }
+    }
+    count
+}
+
+/// Error from [`parse_int`] (`std.fmt.parseInt` port).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParseIntError {
+    InvalidCharacter,
+    Overflow,
+}
+
+/// `std.fmt.parseInt` — parse an integer of type `T` from `buf` in base
+/// `radix` (2..=36). Accepts an optional leading `+`/`-`. Port keeps Zig's
+/// error set: `Overflow` on range error, `InvalidCharacter` otherwise.
+pub fn parse_int<T>(buf: &[u8], radix: u8) -> Result<T, ParseIntError>
+where
+    T: TryFrom<i128> + TryFrom<u128>,
+{
+    debug_assert!((2..=36).contains(&radix));
+    if buf.is_empty() {
+        return Err(ParseIntError::InvalidCharacter);
+    }
+    let (neg, digits) = match buf[0] {
+        b'+' => (false, &buf[1..]),
+        b'-' => (true, &buf[1..]),
+        _ => (false, buf),
+    };
+    if digits.is_empty() {
+        return Err(ParseIntError::InvalidCharacter);
+    }
+    let radix_u = radix as u128;
+    let mut acc: u128 = 0;
+    for &c in digits {
+        let d = match c {
+            b'0'..=b'9' => (c - b'0') as u128,
+            b'a'..=b'z' => (c - b'a' + 10) as u128,
+            b'A'..=b'Z' => (c - b'A' + 10) as u128,
+            _ => return Err(ParseIntError::InvalidCharacter),
+        };
+        if d >= radix_u {
+            return Err(ParseIntError::InvalidCharacter);
+        }
+        acc = acc
+            .checked_mul(radix_u)
+            .and_then(|v| v.checked_add(d))
+            .ok_or(ParseIntError::Overflow)?;
+    }
+    if neg {
+        let signed: i128 = if acc > i128::MAX as u128 {
+            return Err(ParseIntError::Overflow);
+        } else {
+            -(acc as i128)
+        };
+        T::try_from(signed).map_err(|_| ParseIntError::Overflow)
+    } else {
+        T::try_from(acc).map_err(|_| ParseIntError::Overflow)
+    }
+}
+
+/// `strings.removeLeadingDotSlash` — strip a leading `./` (or `.\` on Windows).
+#[inline]
+pub fn remove_leading_dot_slash(slice: &[u8]) -> &[u8] {
+    if slice.len() >= 2 {
+        if &slice[..2] == b"./" || (cfg!(windows) && &slice[..2] == b".\\") {
+            return &slice[2..];
+        }
+    }
+    slice
+}
+
+/// Compare a UTF-16 string against a UTF-8 string without allocating
+/// (`unicode.zig:utf16EqlString`).
+pub fn utf16_eql_string(text: &[u16], str: &[u8]) -> bool {
+    if text.len() > str.len() {
+        // UTF-16 encoding can never be longer than the UTF-8 encoding.
+        return false;
+    }
+    let mut temp = [0u8; 4];
+    let n = text.len();
+    let mut j: usize = 0;
+    let mut i: usize = 0;
+    while i < n {
+        let mut r1: i32 = text[i] as i32;
+        if (0xD800..=0xDBFF).contains(&r1) && i + 1 < n {
+            let r2: i32 = text[i + 1] as i32;
+            if (0xDC00..=0xDFFF).contains(&r2) {
+                r1 = ((r1 - 0xD800) << 10) | ((r2 - 0xDC00) + 0x10000);
+                i += 1;
+            }
+        }
+        let width = encode_wtf8_rune(&mut temp, r1 as u32) as usize;
+        if j + width > str.len() {
+            return false;
+        }
+        if temp[..width] != str[j..j + width] {
+            return false;
+        }
+        j += width;
+        i += 1;
+    }
+    j == str.len()
+}
+
+/// `strings.toUTF16AllocForReal` — like [`to_utf16_alloc`] but **always**
+/// returns a `Vec<u16>` (pure-ASCII inputs are widened 1:1 instead of
+/// returning `None`). Port of `unicode.zig:toUTF16AllocForReal`.
+pub fn to_utf16_alloc_for_real(
+    bytes: &[u8],
+    fail_if_invalid: bool,
+    sentinel: bool,
+) -> Result<Vec<u16>, ToUTF16Error> {
+    if let Some(v) = to_utf16_alloc(bytes, fail_if_invalid, sentinel)? {
+        return Ok(v);
+    }
+    // All-ASCII path: widen each byte.
+    let mut out = Vec::with_capacity(bytes.len() + sentinel as usize);
+    out.extend(bytes.iter().map(|&b| b as u16));
+    if sentinel {
+        out.push(0);
+    }
+    Ok(out)
 }
 
 /// `withoutPrefix` (runtime) — strip `prefix` from `input` if present.

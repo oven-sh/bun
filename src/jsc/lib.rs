@@ -16,6 +16,8 @@
 #![allow(dead_code, unused_imports, unused_variables, deprecated, non_snake_case)]
 #![allow(unexpected_cfgs)] // TODO(b2): ci_assert / asan features — wire up in Cargo.toml
 
+extern crate alloc;
+
 use core::ffi::{c_char, c_void};
 
 /// The calling convention used for JavaScript functions <> Native.
@@ -369,9 +371,35 @@ impl JSValue {
         // SAFETY: pure FFI predicate; the zero guard avoids passing empty.
         !self.is_empty() && unsafe { JSC__JSValue__toBoolean(self) }
     }
+    #[inline] pub fn as_boolean(self) -> bool {
+        debug_assert!(self.is_boolean());
+        self.0 == Self::TRUE.0
+    }
+    #[inline] pub fn as_int32(self) -> i32 {
+        debug_assert!(self.is_int32());
+        (self.0 & 0xffff_ffff) as u32 as i32
+    }
+    #[inline] pub fn is_double(self) -> bool {
+        self.is_number() && !self.is_int32()
+    }
+    #[inline] pub fn as_double(self) -> f64 {
+        debug_assert!(self.is_double());
+        // FFI.zig: JSVALUE_TO_DOUBLE — subtract DoubleEncodeOffset, bitcast to f64.
+        f64::from_bits((self.0 as i64).wrapping_sub(ffi::DOUBLE_ENCODE_OFFSET) as u64)
+    }
+    /// Asserts this is a number, undefined, null, or a boolean.
     pub fn as_number(self) -> f64 {
-        // TODO(b2): full `asNumber` impl (int32/double dispatch). Gated in JSValue.rs.
-        todo!("JSValue::as_number")
+        if self.is_int32() {
+            self.as_int32() as f64
+        } else if self.is_number() {
+            self.as_double()
+        } else if self.is_undefined_or_null() {
+            0.0
+        } else if self.is_boolean() {
+            if self.as_boolean() { 1.0 } else { 0.0 }
+        } else {
+            f64::NAN
+        }
     }
     #[inline] pub fn get_number(self) -> Option<f64> {
         if self.is_number() { Some(self.as_number()) } else { None }
@@ -398,17 +426,18 @@ impl JSValue {
         T::coerce_from(self, global)
     }
     pub fn to_js_string(self, global: &JSGlobalObject) -> JsResult<*mut JSString> {
-        let _ = global;
-        // TODO(b2): from_js_host_call wrapper — gated until host_fn.rs un-gates.
-        todo!("JSValue::to_js_string")
+        // SAFETY: `global` is live; FFI may set an exception.
+        let p = unsafe { JSC__JSValue__toStringOrNull(self, global) };
+        if p.is_null() || global.has_exception() { Err(JsError::Thrown) } else { Ok(p) }
     }
     pub fn to_bun_string(self, global: &JSGlobalObject) -> JsResult<bun_string::String> {
         bun_string_jsc::from_js(self, global)
     }
     pub fn to_zig_string(self, out: &mut bun_string::ZigString, global: &JSGlobalObject) -> JsResult<()> {
-        let _ = (out, global);
-        // TODO(b2): JSC__JSValue__toZigString FFI — gated.
-        todo!("JSValue::to_zig_string")
+        // SAFETY: `out` is a valid out-param; `global` is live.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__toZigString(self, out, global)
+        })
     }
     pub fn to_slice(self, global: &JSGlobalObject) -> JsResult<bun_string::ZigStringSlice> {
         Ok(self.to_bun_string(global)?.to_utf8())
@@ -440,24 +469,64 @@ impl JSValue {
         E::from_js_value(self, global, property_name)
     }
     pub fn as_string(self) -> *mut JSString {
-        // TODO(b2): cell ptr cast — gated until DecodedJSValue un-gates.
-        todo!("JSValue::as_string")
+        debug_assert!(self.is_string());
+        // SAFETY: `is_string()` ⇒ cell-tagged ⇒ payload is the JSString*.
+        unsafe { JSC__JSValue__asString(self) }
     }
     pub fn as_array_buffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
-        let _ = global;
-        // TODO(b2): JSC__JSValue__asArrayBuffer_ — gated (needs ArrayBuffer fields).
-        todo!("JSValue::as_array_buffer")
+        let mut out = ArrayBuffer::default();
+        // SAFETY: `global` is live; `out` is a valid out-param.
+        if unsafe { JSC__JSValue__asArrayBuffer_(self, global, &mut out) } {
+            out.value = self;
+            Some(out)
+        } else {
+            None
+        }
+    }
+    /// Generic downcast (`as(comptime T)` in Zig). Dispatches via [`JsClass::from_js`].
+    #[inline]
+    pub fn as_<T: JsClass>(self) -> Option<*mut T> {
+        if !self.is_cell() { return None; }
+        T::from_js(self)
+    }
+    pub fn as_any_promise(self) -> Option<AnyPromise> {
+        if !self.is_cell() { return None; }
+        // SAFETY: `self` is a cell; FFI returns null when not a promise type.
+        let p = unsafe { JSC__JSValue__asPromise(self) };
+        if !p.is_null() { return Some(AnyPromise::Normal(p)); }
+        // SAFETY: `self` is a cell; FFI returns null when not an internal promise.
+        let p = unsafe { JSC__JSValue__asInternalPromise(self) };
+        if !p.is_null() { return Some(AnyPromise::Internal(p)); }
+        None
     }
     pub fn get_unix_timestamp(self) -> f64 {
         // SAFETY: pure FFI; `self` must be a JSDate cell (caller-checked).
         unsafe { JSC__JSValue__getUnixTimestamp(self) }
     }
+    /// Returns `(ptr, len)` of the cell's `ClassInfo` name (static C string).
+    pub fn get_class_info_name(self) -> Option<&'static [u8]> {
+        if !self.is_cell() { return None; }
+        let mut ptr: *const u8 = core::ptr::null();
+        let mut len: usize = 0;
+        // SAFETY: out-params are valid; FFI writes only when returning true.
+        if unsafe { JSC__JSValue__getClassInfoName(self, &mut ptr, &mut len) } {
+            // SAFETY: C++ guarantees `ptr[..len]` is a static `ClassInfo::className`.
+            Some(unsafe { core::slice::from_raw_parts(ptr, len) })
+        } else {
+            None
+        }
+    }
 
     // ── property access ──────────────────────────────────────────────────
     pub fn get(self, global: &JSGlobalObject, property: &[u8]) -> JsResult<Option<JSValue>> {
-        let _ = (global, property);
-        // TODO(b2): full impl needs BuiltinName fast-path + getIfPropertyExistsImpl — gated.
-        todo!("JSValue::get")
+        // TODO(b2): BuiltinName fast-path — see JSValue.zig:1439.
+        // SAFETY: `global` is live; bytes valid for the call.
+        let v = unsafe {
+            JSC__JSValue__getIfPropertyExistsImpl(self, global, property.as_ptr(), property.len() as u32)
+        };
+        if global.has_exception() { return Err(JsError::Thrown); }
+        // Zig: `.zero` means "not found"; `.js_undefined` is a real undefined value.
+        if v.is_empty() || v.is_undefined() { Ok(None) } else { Ok(Some(v)) }
     }
     pub fn get_if_property_exists(
         self,
@@ -492,17 +561,20 @@ impl JSValue {
         if v.is_empty() { None } else { Some(v) }
     }
     pub fn get_object(self) -> Option<*mut JSObject> {
-        let _ = self.is_object();
-        // TODO(b2): cell ptr cast — gated until DecodedJSValue un-gates.
-        todo!("JSValue::get_object")
+        if !self.is_object() { return None; }
+        // Cell-tagged JSValues *are* the cell pointer (NotCellMask bits are zero).
+        Some(self.0 as *mut JSObject)
     }
     pub fn get_index(self, global: &JSGlobalObject, i: u32) -> JsResult<JSValue> {
         JSObject::get_index(self, global, i)
     }
     pub fn get_length(self, global: &JSGlobalObject) -> JsResult<u64> {
-        let _ = global;
-        // TODO(b2): JSC__JSValue__getLengthIfPropertyExistsInternal + fallback — gated.
-        todo!("JSValue::get_length")
+        // SAFETY: `global` is live; FFI may set an exception.
+        let len = host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__getLengthIfPropertyExistsInternal(self, global)
+        })?;
+        if len == f64::MAX { return Ok(0); }
+        Ok(len.clamp(0.0, MAX_SAFE_INTEGER as f64) as u64)
     }
     pub fn put(self, global: &JSGlobalObject, key: &[u8], value: JSValue) {
         let zs = bun_string::ZigString::init(key);
@@ -535,11 +607,55 @@ impl JSValue {
 
     /// `JSValue.parse` — parse a JSON string. Declared on JSValue in Zig but
     /// implemented in C++ via `JSC__JSValue__parseJSON`.
-    pub fn parse(global: &JSGlobalObject, string: &bun_string::String) -> JsResult<JSValue> {
-        let _ = (global, string);
-        // TODO(b2): bun_string_jsc::to_json — gated.
-        todo!("JSValue::parse")
+    pub fn parse(global: &JSGlobalObject, string: &bun_string::ZigString) -> JsResult<JSValue> {
+        // SAFETY: `global` is live; `string` borrowed for the call.
+        host_fn::from_js_host_call(global, || unsafe {
+            JSC__JSValue__parseJSON(string, global)
+        })
     }
+}
+
+/// `JSValue.Hash` — `std.hash_map` adapter for using JSValue as a key (Zig: JSValue.zig).
+/// Hashes the raw encoded bit-pattern.
+pub mod js_value_hash {
+    use super::JSValue;
+    #[derive(Default, Clone, Copy)]
+    pub struct Hash;
+    impl Hash {
+        #[inline] pub fn hash(_: &Self, v: JSValue) -> u64 {
+            bun_wyhash::hash(&v.0.to_ne_bytes())
+        }
+        #[inline] pub fn eql(_: &Self, a: JSValue, b: JSValue) -> bool { a.0 == b.0 }
+    }
+}
+impl JSValue {
+    #[allow(non_upper_case_globals)]
+    pub const Hash: js_value_hash::Hash = js_value_hash::Hash;
+}
+impl core::hash::Hash for JSValue {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) { self.0.hash(state) }
+}
+
+// ── `JSValue::from(T)` blanket constructors (Zig: anytype dispatch) ───────
+impl From<bool> for JSValue {
+    #[inline] fn from(b: bool) -> Self { Self::js_boolean(b) }
+}
+impl From<i32> for JSValue {
+    #[inline] fn from(i: i32) -> Self { Self::js_number_from_int32(i) }
+}
+impl From<u32> for JSValue {
+    #[inline] fn from(i: u32) -> Self {
+        if i <= i32::MAX as u32 { Self::js_number_from_int32(i as i32) } else { Self::js_number(i as f64) }
+    }
+}
+impl From<f64> for JSValue {
+    #[inline] fn from(n: f64) -> Self { Self::js_number(n) }
+}
+impl From<u64> for JSValue {
+    #[inline] fn from(i: u64) -> Self { Self::js_number_from_uint64(i) }
+}
+impl From<usize> for JSValue {
+    #[inline] fn from(i: usize) -> Self { Self::js_number_from_uint64(i as u64) }
 }
 
 /// Dispatch trait for `JSValue::coerce::<T>()`. Zig used a comptime type switch.
@@ -584,6 +700,16 @@ unsafe extern "C" {
     fn JSC__JSValue__put(this: JSValue, global: *const JSGlobalObject, key: *const bun_string::ZigString, value: JSValue);
     fn JSC__JSValue__putIndex(this: JSValue, global: *const JSGlobalObject, i: u32, value: JSValue);
     fn JSC__JSValue__putToPropertyKey(target: JSValue, global: *const JSGlobalObject, key: JSValue, value: JSValue);
+    fn JSC__JSValue__toStringOrNull(this: JSValue, global: *const JSGlobalObject) -> *mut JSString;
+    fn JSC__JSValue__asString(this: JSValue) -> *mut JSString;
+    fn JSC__JSValue__asArrayBuffer_(this: JSValue, global: *const JSGlobalObject, out: *mut ArrayBuffer) -> bool;
+    fn JSC__JSValue__asPromise(this: JSValue) -> *mut JSPromise;
+    fn JSC__JSValue__asInternalPromise(this: JSValue) -> *mut JSInternalPromise;
+    fn JSC__JSValue__getClassInfoName(this: JSValue, out: *mut *const u8, len: *mut usize) -> bool;
+    fn JSC__JSValue__getLengthIfPropertyExistsInternal(this: JSValue, global: *const JSGlobalObject) -> f64;
+    fn JSC__JSValue__parseJSON(string: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
+    fn JSC__JSValue__toZigString(this: JSValue, out: *mut bun_string::ZigString, global: *const JSGlobalObject);
+    fn JSC__JSValue__getIfPropertyExistsImpl(target: JSValue, global: *const JSGlobalObject, ptr: *const u8, len: u32) -> JSValue;
 }
 
 /// `bun.JSError` — the canonical Bun JS error union (`error{Thrown, OutOfMemory, Terminated}`).
@@ -728,14 +854,47 @@ impl JSValue {
 
 // JSC Classes Bindings — opaque stubs (B-2: trimmed as real modules un-gate)
 stub_ty!(
-    AnyPromise, CachedBytecode, CallFrame,
+    CachedBytecode, CallFrame,
     DOMFormData, DeferredError,
     JSGlobalObject, JSObject,
     JSPromise, JSString,
     URL, VM,
     ResolvedSource, ZigStackTrace, ZigStackFrame,
-    ZigException, Formatter, JSPropertyIteratorOptions, RuntimeTranspilerCache,
+    ZigException, Formatter, RuntimeTranspilerCache,
 );
+
+/// `jsc.AnyPromise` — `JSPromise | JSInternalPromise` (AnyPromise.zig).
+#[derive(Debug, Clone, Copy)]
+pub enum AnyPromise {
+    Normal(*mut JSPromise),
+    Internal(*mut JSInternalPromise),
+}
+impl AnyPromise {
+    #[inline] pub fn as_value(self) -> JSValue {
+        match self {
+            Self::Normal(p) => JSValue::from_cell(p),
+            Self::Internal(p) => JSValue::from_cell(p),
+        }
+    }
+}
+
+/// `JSPromise.UnwrapMode` (JSPromise.zig:349).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromiseUnwrapMode {
+    MarkHandled,
+    LeaveUnhandled,
+}
+
+/// `JSPropertyIteratorOptions` — comptime config struct in Zig; here a value type
+/// downstream can use as a const-generic carrier or runtime flag set.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct JSPropertyIteratorOptions {
+    pub skip_empty_name: bool,
+    pub include_value: bool,
+    pub own_properties_only: bool,
+    pub observable: bool,
+    pub only_non_index_properties: bool,
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // B-2 Track A — JSGlobalObject surface (signatures from JSGlobalObject.zig).
@@ -758,6 +917,12 @@ unsafe extern "C" {
         cause: JSValue,
     ) -> JSValue;
     fn JSC__VM__throwError(vm: *mut VM, global: *const JSGlobalObject, value: JSValue);
+    fn JSGlobalObject__createOutOfMemoryError(this: *const JSGlobalObject) -> JSValue;
+    fn JSGlobalObject__tryTakeException(this: *const JSGlobalObject) -> JSValue;
+    fn ZigString__toErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
+    fn ZigString__toTypeErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
+    fn ZigString__toSyntaxErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
+    fn ZigString__toRangeErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
 }
 
 impl JSGlobalObject {
@@ -783,8 +948,8 @@ impl JSGlobalObject {
     }
 
     pub fn create_out_of_memory_error(&self) -> JSValue {
-        // TODO(b2): JSC__createOutOfMemoryError — gated.
-        todo!("JSGlobalObject::create_out_of_memory_error")
+        // SAFETY: `self` is a live JSGlobalObject.
+        unsafe { JSGlobalObject__createOutOfMemoryError(self) }
     }
     pub fn throw_out_of_memory_value(&self) -> JSValue {
         // JSGlobalObject.zig:21 — dedicated FFI, returns `.zero` (sentinel).
@@ -798,10 +963,25 @@ impl JSGlobalObject {
         unsafe { JSGlobalObject__throwOutOfMemoryError(self) };
         JsError::Thrown
     }
+    /// `createErrorInstance(fmt, args)` — formats `args` into a UTF-8 buffer, wraps
+    /// it as a ZigString, and calls `ZigString__toErrorInstance`.
+    pub fn create_error_instance(&self, args: core::fmt::Arguments<'_>) -> JSValue {
+        let buf = alloc::fmt::format(args);
+        let zs = bun_string::ZigString::init_utf8(buf.as_bytes());
+        // SAFETY: `self` is live; `zs` borrowed for the call (C++ clones).
+        unsafe { ZigString__toErrorInstance(&zs, self) }
+    }
+    pub fn create_type_error_instance(&self, args: core::fmt::Arguments<'_>) -> JSValue {
+        let buf = alloc::fmt::format(args);
+        let zs = bun_string::ZigString::init_utf8(buf.as_bytes());
+        // SAFETY: `self` is live; `zs` borrowed for the call.
+        unsafe { ZigString__toTypeErrorInstance(&zs, self) }
+    }
     pub fn create_syntax_error_instance(&self, args: core::fmt::Arguments<'_>) -> JSValue {
-        let _ = args;
-        // TODO(b2): full impl needs ZigString FFI path — gated.
-        todo!("JSGlobalObject::create_syntax_error_instance")
+        let buf = alloc::fmt::format(args);
+        let zs = bun_string::ZigString::init_utf8(buf.as_bytes());
+        // SAFETY: `self` is live; `zs` borrowed for the call.
+        unsafe { ZigString__toSyntaxErrorInstance(&zs, self) }
     }
     pub fn create_aggregate_error(
         &self,
@@ -840,34 +1020,36 @@ impl JSGlobalObject {
         JsError::Thrown
     }
     pub fn throw(&self, args: core::fmt::Arguments<'_>) -> JsError {
-        let _ = args;
-        // TODO(b2): createErrorInstance(fmt) + throwValue — gated.
-        todo!("JSGlobalObject::throw")
+        let err = self.create_error_instance(args);
+        self.throw_value(err)
     }
     pub fn throw_error(&self, err: bun_core::Error, msg: &'static str) -> JsError {
-        let _ = (err, msg);
-        // TODO(b2): SystemError/JSError dispatch — gated.
-        todo!("JSGlobalObject::throw_error")
+        // TODO(b2): SystemError/JSError dispatch — for now, format both.
+        self.throw(format_args!("{msg}: {err:?}"))
     }
     pub fn throw_type_error(&self, args: core::fmt::Arguments<'_>) -> JsError {
-        let _ = args;
-        // TODO(b2): createTypeErrorInstance(fmt) + throwValue — gated.
-        todo!("JSGlobalObject::throw_type_error")
+        let err = self.create_type_error_instance(args);
+        self.throw_value(err)
     }
     pub fn throw_range_error<V: core::fmt::Display>(&self, value: V, options: RangeErrorOptions<'_>) -> JsError {
-        let _ = (value, options);
-        // TODO(b2): ERR(.OUT_OF_RANGE).throw() — gated.
-        todo!("JSGlobalObject::throw_range_error")
+        // JSGlobalObject.zig — `ERR(.OUT_OF_RANGE).throw()`. Use a RangeError instance.
+        use bstr::ByteSlice;
+        let buf = alloc::format!(
+            "The value of \"{}\" is out of range. It must be {}. Received {}",
+            options.field_name.as_bstr(), options.msg.as_bstr(), value,
+        );
+        let zs = bun_string::ZigString::init_utf8(buf.as_bytes());
+        // SAFETY: `self` is live; `zs` borrowed for the call.
+        let err = unsafe { ZigString__toRangeErrorInstance(&zs, self) };
+        self.throw_value(err)
     }
     pub fn throw_todo(&self, msg: &str) -> JsError {
-        let _ = msg;
-        // TODO(b2): full impl — gated.
-        todo!("JSGlobalObject::throw_todo")
+        self.throw(format_args!("TODO: {msg}"))
     }
     pub fn throw_invalid_arguments(&self, args: core::fmt::Arguments<'_>) -> JsError {
-        let _ = args;
-        // TODO(b2): full impl — gated.
-        todo!("JSGlobalObject::throw_invalid_arguments")
+        // JSGlobalObject.zig:73 — `JSC::createInvalidThisError`-style TypeError.
+        let err = self.create_type_error_instance(args);
+        self.throw_value(err)
     }
     pub fn throw_invalid_argument_type(
         &self,
@@ -909,8 +1091,9 @@ impl JSGlobalObject {
         v
     }
     pub fn try_take_exception(&self) -> Option<JSValue> {
-        // TODO(b2): Bun__JSGlobalObject__tryTakeException FFI — gated.
-        todo!("JSGlobalObject::try_take_exception")
+        // SAFETY: `self` is a live JSGlobalObject.
+        let v = unsafe { JSGlobalObject__tryTakeException(self) };
+        if v.is_empty() { None } else { Some(v) }
     }
 
     pub fn validate_object(
@@ -1071,16 +1254,52 @@ pub mod call_frame {
 pub use self::call_frame::ArgumentsSlice;
 
 impl CallFrame {
+    // JSC::CallFrameSlot constants (JavaScriptCore/interpreter/CallFrame.h).
+    const OFFSET_CODE_BLOCK: usize = 2;
+    const OFFSET_CALLEE: usize = Self::OFFSET_CODE_BLOCK + 1;
+    const OFFSET_ARG_COUNT_INCL_THIS: usize = Self::OFFSET_CALLEE + 1;
+    const OFFSET_THIS_ARGUMENT: usize = Self::OFFSET_ARG_COUNT_INCL_THIS + 1;
+    const OFFSET_FIRST_ARGUMENT: usize = Self::OFFSET_THIS_ARGUMENT + 1;
+
+    #[inline]
+    fn as_register_ptr(&self) -> *const JSValue {
+        // CallFrame is opaque; `self` is the register array base. Registers are
+        // 8-byte unions (`EncodedJSValue` payload). SAFETY: caller-provided
+        // CallFrame* came from JSC and is register-aligned.
+        (self as *const Self).cast::<JSValue>()
+    }
+    #[inline]
+    fn argument_count_including_this(&self) -> u32 {
+        // SAFETY: register slot at `OFFSET_ARG_COUNT_INCL_THIS` holds the encoded
+        // value; the low 32 bits (`asBits.payload`) are the count.
+        let raw = unsafe { *self.as_register_ptr().add(Self::OFFSET_ARG_COUNT_INCL_THIS) };
+        (raw.0 & 0xffff_ffff) as u32
+    }
     pub fn arguments(&self) -> &[JSValue] {
-        // TODO(b2): register layout offset math — gated until CallFrame.rs un-gates.
-        todo!("CallFrame::arguments")
+        let count = self.arguments_count() as usize;
+        // SAFETY: registers `[first_argument..first_argument+count]` are live JSValues
+        // for the lifetime of `&self` (the call is on-stack).
+        unsafe {
+            core::slice::from_raw_parts(
+                self.as_register_ptr().add(Self::OFFSET_FIRST_ARGUMENT),
+                count,
+            )
+        }
     }
     pub fn argument(&self, i: usize) -> JSValue {
         self.arguments().get(i).copied().unwrap_or(JSValue::UNDEFINED)
     }
+    #[inline]
     pub fn arguments_count(&self) -> u32 {
-        // TODO(b2): register layout offset math — gated.
-        todo!("CallFrame::arguments_count")
+        self.argument_count_including_this().saturating_sub(1)
+    }
+    pub fn this(&self) -> JSValue {
+        // SAFETY: register slot at `OFFSET_THIS_ARGUMENT` holds `thisValue`.
+        unsafe { *self.as_register_ptr().add(Self::OFFSET_THIS_ARGUMENT) }
+    }
+    pub fn callee(&self) -> JSValue {
+        // SAFETY: register slot at `OFFSET_CALLEE` holds the callee JSFunction.
+        unsafe { *self.as_register_ptr().add(Self::OFFSET_CALLEE) }
     }
     pub fn arguments_as_array<const N: usize>(&self) -> [JSValue; N] {
         let args = self.arguments();
@@ -1161,6 +1380,7 @@ impl SystemError {
 
 unsafe extern "C" {
     fn URL__pathFromFileURL(input: *mut bun_string::String) -> bun_string::String;
+    fn URL__getHrefFromJS(value: JSValue, global: *mut JSGlobalObject) -> bun_string::String;
 }
 impl URL {
     pub fn path_from_file_url(s: bun_string::String) -> bun_string::String {
@@ -1169,9 +1389,10 @@ impl URL {
         unsafe { URL__pathFromFileURL(&mut input) }
     }
     pub fn href_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<bun_string::String> {
-        let _ = (value, global);
-        // TODO(b2): from_js_host_call wrapper around URL__hrefFromJS — gated.
-        todo!("URL::href_from_js")
+        // SAFETY: `global` is live; FFI may set an exception.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            URL__getHrefFromJS(value, global.as_ptr())
+        })
     }
 }
 
@@ -1187,11 +1408,24 @@ pub mod js_promise {
     }
 }
 
+unsafe extern "C" {
+    fn JSC__JSString__length(this: *const JSString) -> usize;
+    fn JSC__JSString__toZigString(this: *const JSString, global: *const JSGlobalObject, out: *mut bun_string::ZigString);
+}
 impl JSString {
+    #[inline]
+    pub fn length(&self) -> usize {
+        // SAFETY: `self` is a live JSString.
+        unsafe { JSC__JSString__length(self) }
+    }
+    pub fn get_zig_string(&self, global: &JSGlobalObject) -> bun_string::ZigString {
+        let mut out = bun_string::ZigString::EMPTY;
+        // SAFETY: `self` and `global` are live; `out` is a valid out-param.
+        unsafe { JSC__JSString__toZigString(self, global, &mut out) };
+        out
+    }
     pub fn to_slice(&self, global: &JSGlobalObject) -> bun_string::ZigStringSlice {
-        let _ = global;
-        // TODO(b2): get_zig_string + to_slice — gated until JSString.rs un-gates.
-        todo!("JSString::to_slice")
+        self.get_zig_string(global).to_slice()
     }
 }
 
@@ -1298,28 +1532,119 @@ pub mod debugger {
             Self { id: 0 }
         }
     }
+
+    /// `jsc.Debugger.DebuggerId` — `bun.GenericIndex(i32, Debugger)`.
+    /// Newtype over `i32` (Rust has no `bun_core::GenericIndex` at this tier).
+    #[repr(transparent)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+    pub struct DebuggerId(pub i32);
+    impl DebuggerId {
+        pub const INVALID: Self = Self(-1);
+        #[inline] pub const fn new(i: i32) -> Self { Self(i) }
+        #[inline] pub const fn get(self) -> i32 { self.0 }
+    }
 }
 pub use self::debugger as Debugger;
-pub mod saved_source_map {}
+pub mod saved_source_map {
+    /// `jsc.SavedSourceMap` — per-VM sourcemap store. Full impl gated.
+    #[derive(Default)]
+    pub struct SavedSourceMap {
+        // TODO(b2): real fields — gated until SavedSourceMap.rs un-gates.
+        _priv: (),
+    }
+}
 pub use self::saved_source_map as SavedSourceMap;
 
 pub mod virtual_machine {
+    use core::cell::Cell;
+
+    /// `jsc.VirtualMachine.InitOptions` — see VirtualMachine.zig:1100.
+    /// Only the fields downstream crates need are surfaced here.
+    #[derive(Default)]
+    pub struct InitOptions {
+        pub args: alloc::vec::Vec<alloc::string::String>,
+        pub graph: *mut core::ffi::c_void,
+        pub smol: bool,
+        pub eval_mode: bool,
+        pub is_main_thread: bool,
+    }
+
+    /// Thread-local VM holder (`VMHolder` in VirtualMachine.zig).
+    thread_local! {
+        static VM_HOLDER: Cell<*mut VirtualMachine> = const { Cell::new(core::ptr::null_mut()) };
+    }
+
     #[repr(C)]
     #[derive(Debug, Default)]
     pub struct VirtualMachine {
         pub active_tasks: u32,
+        // TODO(b2): full field layout — gated until VirtualMachine.rs un-gates.
     }
     impl VirtualMachine {
         /// `jsc.VirtualMachine.get()` — returns the thread-local VM. In Zig this is
         /// `VMHolder.vm.?`; the Rust port stores it in a thread-local once
         /// VirtualMachine.rs un-gates.
         pub fn get() -> &'static mut VirtualMachine {
-            // TODO(b2): VMHolder thread-local — gated until VirtualMachine.rs un-gates.
-            todo!("VirtualMachine::get")
+            let p = VM_HOLDER.with(|c| c.get());
+            assert!(!p.is_null(), "VirtualMachine::get() called before VM was initialized");
+            // SAFETY: `p` was set by `set_current` and is live for the thread's lifetime.
+            unsafe { &mut *p }
+        }
+        #[inline]
+        pub fn is_loaded() -> bool {
+            VM_HOLDER.with(|c| !c.get().is_null())
+        }
+        /// Installs `vm` as the current thread's VM (Zig: `VMHolder.vm = vm`).
+        pub fn set_current(vm: *mut VirtualMachine) {
+            VM_HOLDER.with(|c| c.set(vm));
+        }
+        pub fn global(&self) -> &super::JSGlobalObject {
+            // TODO(b2): `self.global` field — gated until full struct un-gates.
+            todo!("VirtualMachine::global")
+        }
+        pub fn event_loop(&self) -> &mut super::event_loop::EventLoop {
+            // TODO(b2): `self.event_loop` field — gated until full struct un-gates.
+            todo!("VirtualMachine::event_loop")
+        }
+        pub fn transpiler(&self) -> &mut bun_bundler::Transpiler {
+            // TODO(b2): `self.transpiler` field — gated until full struct un-gates.
+            todo!("VirtualMachine::transpiler")
+        }
+        pub fn source_mappings(&self) -> &mut super::saved_source_map::SavedSourceMap {
+            // TODO(b2): `self.source_mappings` field — gated until full struct un-gates.
+            todo!("VirtualMachine::source_mappings")
+        }
+        pub fn rare_data(&mut self) -> &mut super::rare_data::RareData {
+            // TODO(b2): lazy-init `self.rare_data` field — gated.
+            todo!("VirtualMachine::rare_data")
+        }
+        pub fn enable_macro_mode(&mut self) {
+            // TODO(b2): macro_mode counter + lazy MacroMap init — gated.
+        }
+        pub fn disable_macro_mode(&mut self) {
+            // TODO(b2): macro_mode counter — gated.
+        }
+        pub fn load_macro_entry_point(
+            &mut self,
+            entry_path: &str,
+            function_name: &str,
+            specifier: &str,
+            hash: i32,
+        ) -> super::JsResult<*mut super::JSInternalPromise> {
+            let _ = (entry_path, function_name, specifier, hash);
+            // TODO(b2): MacroEntryPointLoader + runWithAPILock — gated.
+            todo!("VirtualMachine::load_macro_entry_point")
+        }
+        /// `runWithAPILock(comptime Context, ctx, comptime fn)` — acquires the JSC
+        /// API lock around `f(ctx)`. Rust collapses the comptime params into a closure.
+        pub fn run_with_api_lock<R>(&self, f: impl FnOnce() -> R) -> R {
+            // TODO(b2): JSLock acquire/release FFI — gated. For now, call directly.
+            f()
         }
     }
 }
 pub use self::virtual_machine as VirtualMachine;
+pub use self::virtual_machine::InitOptions as VirtualMachineInitOptions;
 
 pub mod module_loader {
     /// Re-export of the canonical hard-coded module enum.
@@ -1382,6 +1707,20 @@ pub mod console_object {
             TypedArray,
             // TODO(b2): full list — gated until ConsoleObject.rs un-gates.
         }
+        /// `Tag.get(value, global)` — classify a JSValue. Returns the tag plus
+        /// the resolved cell (if it followed a Proxy/boxed primitive).
+        #[derive(Debug, Clone, Copy)]
+        pub struct Result {
+            pub tag: Tag,
+            pub cell: crate::JSType,
+        }
+        impl Tag {
+            pub fn get(value: crate::JSValue, global: &crate::JSGlobalObject) -> crate::JsResult<Result> {
+                let _ = (value, global);
+                // TODO(b2): full classifier (ConsoleObject.zig:1190) — gated.
+                todo!("ConsoleObject::Formatter::Tag::get")
+            }
+        }
     }
 }
 pub use self::console_object as ConsoleObject;
@@ -1403,18 +1742,103 @@ pub mod Snapshot {}
 stub_ty!(TestScope);
 
 pub mod js_property_iterator {
-    #[derive(Debug, Default)]
-    pub struct JSPropertyIterator<T>(pub core::marker::PhantomData<T>);
-    impl<T> JSPropertyIterator<T> {
-        pub fn init(
-            global: &crate::JSGlobalObject,
-            object: crate::JSValue,
-        ) -> crate::JsResult<Self> {
-            let _ = (global, object);
-            // TODO(b2): JSC__JSPropertyIterator__create FFI — gated.
-            todo!("JSPropertyIterator::init")
+    use super::*;
+
+    /// Const-generic wrapper over the C++ `JSPropertyIteratorImpl`. The bool
+    /// params mirror `JSPropertyIteratorOptions` (Zig comptime config).
+    pub struct JSPropertyIterator<
+        const SKIP_EMPTY_NAME: bool = false,
+        const INCLUDE_VALUE: bool = true,
+        const OWN_ONLY: bool = true,
+    > {
+        impl_: *mut core::ffi::c_void,
+        object: *mut JSObject,
+        global: *mut JSGlobalObject,
+        i: usize,
+        pub len: usize,
+        pub value: JSValue,
+    }
+
+    unsafe extern "C" {
+        fn Bun__JSPropertyIterator__create(
+            global: *mut JSGlobalObject,
+            object: JSValue,
+            count: *mut usize,
+            own_properties_only: bool,
+            only_non_index_properties: bool,
+        ) -> *mut core::ffi::c_void;
+        fn Bun__JSPropertyIterator__getNameAndValue(
+            iter: *mut core::ffi::c_void,
+            global: *mut JSGlobalObject,
+            object: *mut JSObject,
+            name: *mut bun_string::String,
+            i: usize,
+        ) -> JSValue;
+        fn Bun__JSPropertyIterator__getName(
+            iter: *mut core::ffi::c_void,
+            name: *mut bun_string::String,
+            i: usize,
+        );
+        fn Bun__JSPropertyIterator__deinit(iter: *mut core::ffi::c_void);
+    }
+
+    impl<const SKIP_EMPTY_NAME: bool, const INCLUDE_VALUE: bool, const OWN_ONLY: bool>
+        JSPropertyIterator<SKIP_EMPTY_NAME, INCLUDE_VALUE, OWN_ONLY>
+    {
+        pub fn init(global: &JSGlobalObject, object: JSValue) -> JsResult<Self> {
+            let mut len: usize = 0;
+            // SAFETY: `global` is live; `len` valid out-param.
+            let impl_ = unsafe {
+                Bun__JSPropertyIterator__create(global.as_ptr(), object, &mut len, OWN_ONLY, false)
+            };
+            if global.has_exception() { return Err(JsError::Thrown); }
+            Ok(Self {
+                impl_,
+                object: object.get_object().unwrap_or(core::ptr::null_mut()),
+                global: global.as_ptr(),
+                i: 0,
+                len,
+                value: JSValue::ZERO,
+            })
+        }
+        pub fn next(&mut self) -> JsResult<Option<bun_string::String>> {
+            loop {
+                if self.i >= self.len { return Ok(None); }
+                let i = self.i;
+                self.i += 1;
+                let mut name = bun_string::String::DEAD;
+                if INCLUDE_VALUE {
+                    // SAFETY: `impl_`/`object` live for `self`'s lifetime.
+                    let v = unsafe {
+                        Bun__JSPropertyIterator__getNameAndValue(
+                            self.impl_, self.global, self.object, &mut name, i,
+                        )
+                    };
+                    // SAFETY: `global` was live when stored.
+                    if unsafe { (*self.global).has_exception() } { return Err(JsError::Thrown); }
+                    if v.is_empty() { continue; }
+                    v.ensure_still_alive();
+                    self.value = v;
+                } else {
+                    // SAFETY: `impl_` live for `self`'s lifetime.
+                    unsafe { Bun__JSPropertyIterator__getName(self.impl_, &mut name, i) };
+                }
+                if SKIP_EMPTY_NAME && name.is_empty() { continue; }
+                return Ok(Some(name));
+            }
+        }
+        pub fn deinit(&mut self) {
+            if !self.impl_.is_null() {
+                // SAFETY: `impl_` was returned by `create`; deinit is idempotent-guarded.
+                unsafe { Bun__JSPropertyIterator__deinit(self.impl_) };
+                self.impl_ = core::ptr::null_mut();
+            }
         }
     }
+    impl<const A: bool, const B: bool, const S: bool> Drop for JSPropertyIterator<A, B, S> {
+        fn drop(&mut self) { self.deinit(); }
+    }
+
     pub type JSPropertyIteratorOptions = super::JSPropertyIteratorOptions;
 }
 pub use self::js_property_iterator::JSPropertyIterator;
@@ -1428,6 +1852,21 @@ pub mod event_loop {
         ManagedTask, MiniEventLoop, MiniVM, PosixSignalHandle, PosixSignalTask, Task, WorkPool,
         WorkPoolTask, WorkTask,
     );
+
+    /// `jsc.EventLoop` — the JS-thread event loop. Full struct lives in
+    /// event_loop.rs (gated). Surfaced as opaque so dependents can hold `*mut`.
+    #[repr(C)]
+    pub struct EventLoop {
+        // TODO(b2): real fields — gated until event_loop.rs un-gates.
+        _opaque: [u8; 0],
+    }
+    impl EventLoop {
+        pub fn tick(&mut self) { todo!("EventLoop::tick — gated") }
+        pub fn tick_possibly_forever(&mut self) { todo!("EventLoop::tick_possibly_forever — gated") }
+        pub fn auto_tick_active(&mut self) { todo!("EventLoop::auto_tick_active — gated") }
+        pub fn tick_concurrent_with_count(&mut self) -> usize { 0 }
+        pub fn enqueue_task(&mut self, _task: Task) { todo!("EventLoop::enqueue_task — gated") }
+    }
 }
 pub use self::event_loop as EventLoop;
 pub use self::event_loop::{
@@ -1468,6 +1907,9 @@ pub mod c_api {
             argument_count: usize,
             arguments: *const JSValueRef,
         ) -> JSValue;
+        pub fn JSValueMakeBoolean(ctx: *mut JSGlobalObject, value: bool) -> JSValueRef;
+        pub fn JSValueMakeNull(ctx: *mut JSGlobalObject) -> JSValueRef;
+        pub fn JSValueToNumber(ctx: *mut JSGlobalObject, value: JSValueRef, exception: ExceptionRef) -> f64;
     }
 }
 pub use self::c_api as C;
@@ -1575,6 +2017,10 @@ pub mod bun_string_jsc {
             ptr: *const u8,
             len: usize,
         ) -> JSValue;
+        fn BunString__toJS(this: *const bun_string::String, global: *mut JSGlobalObject) -> JSValue;
+        fn BunString__transferToJS(this: *mut bun_string::String, global: *mut JSGlobalObject) -> JSValue;
+        fn BunString__toJSON(this: *mut bun_string::String, global: *mut JSGlobalObject) -> JSValue;
+        fn BunString__toErrorInstance(this: *const bun_string::String, global: *mut JSGlobalObject) -> JSValue;
     }
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<bun_string::String> {
         let mut out = bun_string::String::DEAD;
@@ -1587,6 +2033,23 @@ pub mod bun_string_jsc {
         let v = unsafe { BunString__createUTF8ForJS(global.as_ptr(), utf8.as_ptr(), utf8.len()) };
         if global.has_exception() { Err(JsError::Thrown) } else { Ok(v) }
     }
+    pub fn to_js(this: &bun_string::String, global: &JSGlobalObject) -> JsResult<JSValue> {
+        // SAFETY: `this` borrowed; `global` is live.
+        host_fn::from_js_host_call(global, || unsafe { BunString__toJS(this, global.as_ptr()) })
+    }
+    /// Transfers ownership of `this` to JS (decrements ref on the Rust side).
+    pub fn transfer_to_js(this: &mut bun_string::String, global: &JSGlobalObject) -> JsResult<JSValue> {
+        // SAFETY: `this` is live; FFI consumes the ref.
+        host_fn::from_js_host_call(global, || unsafe { BunString__transferToJS(this, global.as_ptr()) })
+    }
+    pub fn to_js_by_parse_json(this: &mut bun_string::String, global: &JSGlobalObject) -> JsResult<JSValue> {
+        // SAFETY: `this` borrowed mutably for the call; `global` is live.
+        host_fn::from_js_host_call(global, || unsafe { BunString__toJSON(this, global.as_ptr()) })
+    }
+    pub fn to_error_instance(this: &bun_string::String, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: `this` borrowed; `global` is live.
+        unsafe { BunString__toErrorInstance(this, global.as_ptr()) }
+    }
 }
 
 /// Extension trait providing JSC-aware methods on `bun_string::String`.
@@ -1594,15 +2057,78 @@ pub mod bun_string_jsc {
 pub trait StringJsc {
     fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<bun_string::String>;
     fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
+    fn transfer_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
+    fn to_js_by_parse_json(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
+    fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
 }
 impl StringJsc for bun_string::String {
     fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<bun_string::String> {
         bun_string_jsc::from_js(value, global)
     }
     fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let _ = global;
-        // TODO(b2): BunString__toJS FFI — gated.
-        todo!("StringJsc::to_js")
+        bun_string_jsc::to_js(self, global)
+    }
+    fn transfer_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        bun_string_jsc::transfer_to_js(self, global)
+    }
+    fn to_js_by_parse_json(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        bun_string_jsc::to_js_by_parse_json(self, global)
+    }
+    fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
+        bun_string_jsc::to_error_instance(self, global)
+    }
+}
+
+/// Extension trait providing JSC-aware methods on `bun_sys::Error` (`bun.sys.Error`).
+/// Mirrors `Error.toJS` / `Error.throw` in src/sys/Error.zig.
+pub trait SysErrorJsc {
+    fn to_system_error(&self) -> SystemError;
+    fn to_js(&self, global: &JSGlobalObject) -> JSValue;
+    fn throw(&self, global: &JSGlobalObject) -> JsError;
+}
+impl SysErrorJsc for bun_sys::Error {
+    fn to_system_error(&self) -> SystemError {
+        // TODO(b2): full field mapping (path/syscall/dest) — see src/sys/Error.zig.
+        SystemError {
+            errno: self.errno as core::ffi::c_int,
+            code: bun_string::String::EMPTY,
+            message: bun_string::String::EMPTY,
+            path: bun_string::String::EMPTY,
+            syscall: bun_string::String::EMPTY,
+            hostname: bun_string::String::EMPTY,
+            fd: -1,
+            dest: bun_string::String::EMPTY,
+        }
+    }
+    fn to_js(&self, global: &JSGlobalObject) -> JSValue {
+        // UFCS: bun_sys::Error has its own inherent `to_system_error()`
+        // returning `bun_sys::SystemError` (different type); we want the trait
+        // method that returns the jsc-layout `SystemError` defined above.
+        <Self as SysErrorJsc>::to_system_error(self).to_error_instance(global)
+    }
+    fn throw(&self, global: &JSGlobalObject) -> JsError {
+        global.throw_value(<Self as SysErrorJsc>::to_js(self, global))
+    }
+}
+
+/// Extension trait providing JSC-aware methods on `bun_logger::Log`.
+/// Mirrors `Log.toJS` / `Log.toJSArray` in src/logger.zig.
+pub trait LogJsc {
+    fn to_js(&self, global: &JSGlobalObject, message: &str) -> JsResult<JSValue>;
+    fn to_js_array(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
+}
+impl LogJsc for bun_logger::Log {
+    fn to_js(&self, global: &JSGlobalObject, message: &str) -> JsResult<JSValue> {
+        // TODO(b2): full impl wraps msgs into an AggregateError with `message`.
+        let arr = self.to_js_array(global)?;
+        global.create_aggregate_error_with_array(
+            bun_string::String::borrow_utf8(message.as_bytes()),
+            arr,
+        )
+    }
+    fn to_js_array(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        // TODO(b2): wrap each Msg in BuildMessage/ResolveMessage per kind — gated.
+        JSValue::create_empty_array(global, self.msgs.len())
     }
 }
 
@@ -1636,18 +2162,40 @@ impl<V: Copy> ComptimeStringMapExt<V> for phf::Map<&'static [u8], V> {
 // B-2 Track A — BuildMessage / ResolveMessage / ZigException::Holder / JsClass.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod build_message {
+    use super::*;
     /// `jsc.BuildMessage` — wraps a `bun.logger.Msg` for JS exposure.
     pub struct BuildMessage {
         pub msg: bun_logger::Msg,
+    }
+    impl BuildMessage {
+        /// Create a JS `BuildMessage` instance from a logger `Msg`.
+        pub fn create(global: &JSGlobalObject, msg: bun_logger::Msg) -> JsResult<JSValue> {
+            let _ = (global, msg);
+            // TODO(b2): codegen `BuildMessage__create` — needs JsClass derive.
+            todo!("BuildMessage::create")
+        }
     }
 }
 pub use self::build_message::BuildMessage;
 
 pub mod resolve_message {
+    use super::*;
     /// `jsc.ResolveMessage` — wraps a resolver error for JS exposure.
     pub struct ResolveMessage {
         pub msg: bun_logger::Msg,
         pub referrer: bun_string::String,
+    }
+    impl ResolveMessage {
+        /// Create a JS `ResolveMessage` instance from a logger `Msg` + referrer.
+        pub fn create(
+            global: &JSGlobalObject,
+            msg: bun_logger::Msg,
+            referrer: bun_string::String,
+        ) -> JsResult<JSValue> {
+            let _ = (global, msg, referrer);
+            // TODO(b2): codegen `ResolveMessage__create` — needs JsClass derive.
+            todo!("ResolveMessage::create")
+        }
     }
 }
 pub use self::resolve_message::ResolveMessage;

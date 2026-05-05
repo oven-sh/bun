@@ -234,6 +234,38 @@ pub fn note(msg: &str) {
     pretty_errorln!("<blue>note<r><d>:<r> {}", msg);
 }
 
+/// Function-form of `Output.debug` (Zig: `pub fn debug(comptime fmt, args)`).
+/// The macro form is `crate::debug!`; this fn variant takes pre-built
+/// `Arguments` for call sites that can't use the macro (e.g. trait objects).
+#[inline]
+pub fn debug(args: core::fmt::Arguments<'_>) {
+    if cfg!(debug_assertions) {
+        pretty_errorln!("<d>DEBUG:<r> {}", args);
+        flush();
+    }
+}
+
+/// Function-form of `Output.prettyErrorln` for callers holding a pre-built
+/// `Arguments` (no `<tag>` rewrite — caller is expected to have already
+/// applied it or to pass plain text). Macro form: `crate::pretty_errorln!`.
+#[inline]
+pub fn pretty_errorln(args: core::fmt::Arguments<'_>) {
+    print_to(Destination::Stderr, args);
+    write_bytes(Destination::Stderr, b"\n");
+}
+
+/// Test-harness initializer: configure the output sinks without touching the
+/// real stdio FDs (Zig: `Output.initTest`). Safe to call repeatedly.
+pub fn init_test() {
+    if SOURCE_SET.get() { return; }
+    let stdout = File::from(Fd::stdout());
+    let stderr = File::from(Fd::stderr());
+    Source::set_init(stdout, stderr);
+    // Tests run without a TTY; force colours off so snapshot output is stable.
+    ENABLE_ANSI_COLORS_STDOUT.store(false, Ordering::Relaxed);
+    ENABLE_ANSI_COLORS_STDERR.store(false, Ordering::Relaxed);
+}
+
 /// `bun.Output.Source.Stdio.restore` — restore terminal to cooked mode on exit.
 /// Real impl walks stdio fds and `tcsetattr`s; lives in bun_sys. Hook-registered.
 pub mod source {
@@ -819,6 +851,23 @@ pub static IS_GITHUB_ACTION: AtomicBool = AtomicBool::new(false);
 
 pub static mut STDERR_DESCRIPTOR_TYPE: OutputStreamDescriptor = OutputStreamDescriptor::Unknown;
 pub static mut STDOUT_DESCRIPTOR_TYPE: OutputStreamDescriptor = OutputStreamDescriptor::Unknown;
+
+/// Downstream alias (Zig: `Output.OutputStreamDescriptor`). Several call sites
+/// refer to it as `Output::DescriptorType` for brevity.
+pub type DescriptorType = OutputStreamDescriptor;
+
+/// Safe getter for the `static mut` (Zig: `Output.stderr_descriptor_type`).
+#[inline]
+pub fn stderr_descriptor_type() -> OutputStreamDescriptor {
+    // SAFETY: written once during single-threaded startup (Source::set_init).
+    unsafe { STDERR_DESCRIPTOR_TYPE }
+}
+/// Safe getter for the `static mut` (Zig: `Output.stdout_descriptor_type`).
+#[inline]
+pub fn stdout_descriptor_type() -> OutputStreamDescriptor {
+    // SAFETY: written once during single-threaded startup (Source::set_init).
+    unsafe { STDOUT_DESCRIPTOR_TYPE }
+}
 
 #[inline]
 pub fn is_stdout_tty() -> bool {
@@ -1469,6 +1518,16 @@ pub fn clear_to_end() {
 // <r> - reset
 const CSI: &str = "\x1b[";
 
+/// Lowercase lookup wrapper (Zig: `Output.color_map.get(name)`). The static
+/// table itself is `COLOR_MAP` below; this fn-module mirrors the Zig
+/// `ComptimeStringMap` `.get()` surface.
+pub mod color_map {
+    #[inline]
+    pub fn get(name: &[u8]) -> Option<&'static str> {
+        super::COLOR_MAP.get(name).copied()
+    }
+}
+
 pub static COLOR_MAP: phf::Map<&'static [u8], &'static str> = phf::phf_map! {
     b"b" => "\x1b[1m",
     b"d" => "\x1b[2m",
@@ -1516,6 +1575,76 @@ macro_rules! pretty_fmt {
         // TODO(port): proc-macro tag stripping — passthrough for now
         $fmt
     };
+}
+
+/// Runtime `<tag>` → ANSI rewrite returning an owned buffer. Function-form
+/// counterpart of the `pretty_fmt!` macro for call sites that hold a runtime
+/// format string (e.g. crash_handler). Result derefs to `[u8]`.
+#[inline]
+pub fn pretty_fmt(fmt: &str, is_enabled: bool) -> PrettyBuf {
+    PrettyBuf(pretty_fmt_runtime(fmt.as_bytes(), is_enabled))
+}
+
+/// Owned ANSI-rewritten buffer; derefs to `[u8]` so it can be passed to
+/// `write_all(&buf)` directly.
+#[repr(transparent)]
+pub struct PrettyBuf(pub Vec<u8>);
+impl core::ops::Deref for PrettyBuf {
+    type Target = [u8];
+    #[inline] fn deref(&self) -> &[u8] { &self.0 }
+}
+impl AsRef<[u8]> for PrettyBuf {
+    #[inline] fn as_ref(&self) -> &[u8] { &self.0 }
+}
+
+/// Runtime `<tag>` → ANSI rewrite *with* an `Arguments` payload substituted at
+/// the first `{s}` / `{}` placeholder. Returns a `Display` impl so callers can
+/// `write!(w, "{}", pretty_fmt_args(fmt, true, format_args!(...)))`.
+///
+/// Port of `Output.prettyFmt` + `print` fused for the dynamic-template case
+/// (crash_handler builds the template at runtime).
+pub fn pretty_fmt_args<'a>(
+    fmt: &'a str,
+    is_enabled: bool,
+    args: fmt::Arguments<'a>,
+) -> PrettyFmtArgs<'a> {
+    PrettyFmtArgs { template: pretty_fmt_runtime(fmt.as_bytes(), is_enabled), args }
+}
+
+pub struct PrettyFmtArgs<'a> {
+    template: Vec<u8>,
+    args: fmt::Arguments<'a>,
+}
+impl fmt::Display for PrettyFmtArgs<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Substitute the first `{}` / `{s}` / `{d}` / `{any}` with `self.args`;
+        // pass through everything else verbatim (the Zig comptime version
+        // supported exactly one positional in these crash-handler templates).
+        let t = &self.template;
+        let mut i = 0usize;
+        let mut substituted = false;
+        while i < t.len() {
+            let b = t[i];
+            if b == b'{' && !substituted {
+                // Find closing '}' and skip the spec — we don't interpret it,
+                // the caller pre-formatted via `format_args!`.
+                let start = i;
+                while i < t.len() && t[i] != b'}' { i += 1; }
+                if i < t.len() { i += 1; } // consume '}'
+                f.write_fmt(self.args)?;
+                substituted = true;
+            } else if b == b'{' && substituted {
+                // Literal-ish second placeholder; emit verbatim (rare).
+                f.write_str("{")?;
+                i += 1;
+            } else {
+                // SAFETY: template is ASCII/ANSI bytes.
+                f.write_str(unsafe { core::str::from_utf8_unchecked(&t[i..i + 1]) })?;
+                i += 1;
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Runtime mirror of Zig `prettyFmt` for testing the proc-macro and for the rare

@@ -85,6 +85,22 @@ impl<T> StoreRef<T> {
     pub const fn as_ptr(self) -> *mut T {
         self.0.as_ptr()
     }
+    /// Wrap a `&'static T` (compile-time/global singleton — e.g. Prefill
+    /// constants). The pointee is never freed, so the StoreRef is valid for
+    /// the program lifetime. Mutation through the resulting `StoreRef` is UB;
+    /// callers must treat it as read-only.
+    #[inline]
+    pub const fn from_static(r: &'static T) -> Self {
+        // SAFETY: `r` is a non-null aligned `'static` reference.
+        StoreRef(unsafe { NonNull::new_unchecked(r as *const T as *mut T) })
+    }
+    /// Borrow the pointee (explicit form of `Deref`). Mirrors Zig's `.*` deref
+    /// in chained-option contexts (`next.map(|r| r.get())`).
+    #[inline]
+    pub fn get(&self) -> &T {
+        // SAFETY: StoreRef invariant — points into a live Store/arena block.
+        unsafe { self.0.as_ref() }
+    }
 }
 impl<T> Clone for StoreRef<T> {
     #[inline]

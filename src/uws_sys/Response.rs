@@ -619,16 +619,16 @@ impl AnyResponse {
     pub fn assert_ssl(self) -> *mut TLSResponse {
         match self {
             AnyResponse::SSL(resp) => resp,
-            AnyResponse::TCP(_) => bun_core::Output::panic("Expected SSL response, got TCP response"),
-            AnyResponse::H3(_) => bun_core::Output::panic("Expected SSL response, got H3 response"),
+            AnyResponse::TCP(_) => panic!("Expected SSL response, got TCP response"),
+            AnyResponse::H3(_) => panic!("Expected SSL response, got H3 response"),
         }
     }
 
     pub fn assert_no_ssl(self) -> *mut TCPResponse {
         match self {
-            AnyResponse::SSL(_) => bun_core::Output::panic("Expected TCP response, got SSL response"),
+            AnyResponse::SSL(_) => panic!("Expected TCP response, got SSL response"),
             AnyResponse::TCP(resp) => resp,
-            AnyResponse::H3(_) => bun_core::Output::panic("Expected TCP response, got H3 response"),
+            AnyResponse::H3(_) => panic!("Expected TCP response, got H3 response"),
         }
     }
 
@@ -650,7 +650,7 @@ impl AnyResponse {
 
     pub fn socket(self) -> *mut c::uws_res {
         match self {
-            AnyResponse::H3(_) => bun_core::Output::panic("socket() is not available for HTTP/3 responses"),
+            AnyResponse::H3(_) => panic!("socket() is not available for HTTP/3 responses"),
             AnyResponse::SSL(ptr) => {
                 // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
                 unsafe { (&mut *ptr).downcast() }
@@ -666,7 +666,7 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.get_socket_data())
     }
 
-    pub fn get_remote_socket_info(self) -> Option<SocketAddress> {
+    pub fn get_remote_socket_info(self) -> Option<SocketAddress<'static>> {
         any_dispatch!(self, |r| r.get_remote_socket_info())
     }
 
@@ -790,11 +790,11 @@ impl AnyResponse {
             AnyResponse::SSL(ptr) => unsafe {
                 // SAFETY: live FFI socket handle.
                 // TODO(port): crate::us_socket_t::close signature / CloseCode::Failure
-                (&mut *(&mut *ptr).downcast_socket()).close(crate::us_socket_t::CloseCode::Failure);
+                (&mut *(&mut *ptr).downcast_socket()).close(crate::us_socket::CloseCode::failure);
             },
             AnyResponse::TCP(ptr) => unsafe {
                 // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
-                (&mut *(&mut *ptr).downcast_socket()).close(crate::us_socket_t::CloseCode::Failure);
+                (&mut *(&mut *ptr).downcast_socket()).close(crate::us_socket::CloseCode::failure);
             },
             AnyResponse::H3(ptr) => {
                 // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
@@ -805,7 +805,7 @@ impl AnyResponse {
 
     pub fn get_native_handle(self) -> Fd {
         match self {
-            AnyResponse::H3(_) => bun_core::Fd::invalid(),
+            AnyResponse::H3(_) => bun_core::Fd::INVALID,
             AnyResponse::SSL(ptr) => {
                 // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
                 unsafe { (&mut *ptr).get_native_handle() }
@@ -920,6 +920,9 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.corked(f))
     }
 
+    // TODO(b2-blocked): h3::Response::run_corked_with_type takes &mut U; H1 takes *mut U.
+    // Unify signatures before un-gating.
+    #[cfg(any())]
     pub fn run_corked_with_type<U>(self, handler: fn(*mut U), optional_data: *mut U) {
         any_dispatch!(self, |r| r.run_corked_with_type(handler, optional_data))
     }
@@ -980,7 +983,7 @@ impl From<*mut H3Response> for AnyResponse {
     }
 }
 
-pub type H3Response = crate::h3::Response::Response;
+pub type H3Response = crate::h3::Response;
 
 bitflags::bitflags! {
     /// Non-exhaustive bitset (`enum(u8) { ..., _ }` in Zig) — values may carry

@@ -33,6 +33,8 @@ impl ListenSocket {
         unsafe { &mut *(self as *mut ListenSocket).cast::<us_socket_t>() }
     }
 
+    // TODO(b2-blocked): crate::socket::NewSocketHandler::from() not yet wired.
+    #[cfg(any())]
     pub fn socket<const IS_SSL: bool>(&mut self) -> crate::socket::NewSocketHandler<IS_SSL> {
         // NewSocketHandler is local (crate::socket); no upward dep.
         crate::socket::NewSocketHandler::<IS_SSL>::from(self.get_socket())

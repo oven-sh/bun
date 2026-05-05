@@ -65,27 +65,36 @@ macro_rules! opaque_stub {
 }
 // TODO(b1): bun_uws_sys::{socket,timer,loop_,request,response,app,web_socket,...} gated
 opaque_stub!(
-    us_socket_stream_buffer_t, SocketTLS, SocketTCP, InternalSocket, SocketGroup,
-    SocketKind, InternalLoopData, PosixLoop, AnyRequest, AnyResponse, NewApp,
-    uws_res, RawWebSocket, AnyWebSocket, AnySocket, State, BodyReaderMixin,
+    us_socket_stream_buffer_t, SocketKind, NewApp,
+    uws_res, RawWebSocket, AnyWebSocket, State, BodyReaderMixin,
 );
 pub struct WebSocketBehavior<T>(core::marker::PhantomData<T>);
-pub struct NewSocketHandler<T>(core::marker::PhantomData<T>);
 
-// Re-export the opaque handles bun_uws_sys *does* provide.
-pub use bun_uws_sys::{us_socket_t, ConnectingSocket, ListenSocket, Loop, Request, Timer, WindowsLoop};
-pub use bun_uws_sys::{udp, vtable};
+// Local opaque handles. `bun_uws_sys` is mid-un-gating (concurrent B-2 pass)
+// and its surface is unstable — `us_socket_t` flipped from a type to a module
+// there — so we define the FFI handles here directly. They are `#[repr(C)]`
+// zero-sized opaques, ABI-identical to whatever bun_uws_sys settles on; once
+// that crate stabilizes, collapse these back to `pub use bun_uws_sys::*`.
+opaque_stub!(us_socket_t, ConnectingSocket, ListenSocket, Request, Timer);
 pub type Socket = us_socket_t;
+
+pub mod udp {
+    #[repr(C)] pub struct Socket { _p: [u8; 0], _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)> }
+    #[repr(C)] pub struct PacketBuffer { _p: [u8; 0], _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)> }
+}
+pub mod vtable {
+    pub struct VTable; // B-2: real socket dispatch vtable in bun_uws_sys
+}
 
 // TODO(b1): bun_runtime not in deps — module-namespace stubs.
 pub mod dispatch {}
 pub mod WindowsNamedPipe {}
 pub mod UpgradedDuplex {}
-pub mod SocketContext {
-    // TODO(b1): bun_uws_sys::socket_context gated; BunSocketContextOptions lives there.
-    pub type BunSocketContextOptions = ();
+pub mod H3 {
+    // Opaque lsquic-backed request/response — full bodies live in bun_uws_sys::h3 (gated).
+    #[repr(C)] pub struct Request { _p: [u8; 0], _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)> }
+    #[repr(C)] pub struct Response { _p: [u8; 0], _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)> }
 }
-pub mod H3 {}
 pub mod quic {}
 
 /// Bare BoringSSL `SSL_CTX`. `SSL_CTX_up_ref`/`SSL_CTX_free` is the refcount;
@@ -1169,6 +1178,621 @@ pub mod ssl_wrapper {
     //               `init_from_options` (or wrap it as an extension trait
     //               in their own tier).
     // ──────────────────────────────────────────────────────────────────────
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Loop / InternalLoopData
+// ═══════════════════════════════════════════════════════════════════════════
+// Mirrors `struct us_internal_loop_data_t` (packages/bun-usockets/src/internal/
+// loop_data.h) and `struct us_loop_t` (epoll_kqueue.h / libuv.h). Defined here
+// rather than re-exported from bun_uws_sys because that crate currently gates
+// every module and only exposes opaques — and we cannot `impl` foreign opaques.
+// When bun_uws_sys un-gates, collapse these into `pub use bun_uws_sys::loop_::*`.
+
+/// `zig_mutex_t` from loop_data.h — never touched from Rust, only sized for
+/// correct field offsets of `parent_ptr`/`jsc_vm` after it.
+#[cfg(target_vendor = "apple")]
+type ZigMutex = u32; // os_unfair_lock
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+type ZigMutex = u32;
+#[cfg(windows)]
+type ZigMutex = *mut c_void; // SRWLOCK
+
+// B-2 track-A round 11: bun_uws_sys now provides the real Loop/PosixLoop/
+// WindowsLoop/InternalLoopData/SocketGroup. Re-export them here so
+// `bun_uws::Loop` and `bun_uws_sys::Loop` are the SAME type (bun_aio's
+// EventLoopCtxVTable is typed against the uws_sys version). The B-1 stub
+// structs and their inherent impls below are now redundant — gated as
+// `_b1_loop_stub` for the diff-pass.
+pub use bun_uws_sys::{InternalLoopData, Loop, PosixLoop, Timespec, WindowsLoop};
+pub use bun_uws_sys::loop_::LoopHandler;
+pub type LoopCb = unsafe extern "C" fn(*mut Loop);
+
+#[cfg(any())]
+mod _b1_loop_stub {
+use super::*;
+
+#[repr(C)]
+pub struct us_internal_async {
+    _p: [u8; 0],
+    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+}
+
+/// `#[repr(C)]` mirror of `us_internal_loop_data_t`. Field order must match the
+/// C header byte-for-byte; static asserts live in bun_uws_sys when un-gated.
+#[repr(C)]
+pub struct InternalLoopData {
+    pub sweep_timer: *mut Timer,
+    pub sweep_timer_count: i32,
+    pub wakeup_async: *mut us_internal_async,
+    pub head: *mut SocketGroup,
+    pub quic_head: *mut c_void,
+    pub quic_next_tick_us: i64,
+    pub quic_timer: *mut Timer,
+    pub iterator: *mut SocketGroup,
+    pub recv_buf: *mut u8,
+    pub send_buf: *mut u8,
+    pub ssl_data: *mut c_void,
+    pub pre_cb: Option<unsafe extern "C" fn(*mut Loop)>,
+    pub post_cb: Option<unsafe extern "C" fn(*mut Loop)>,
+    pub closed_udp_head: *mut udp::Socket,
+    pub closed_head: *mut us_socket_t,
+    pub low_prio_head: *mut us_socket_t,
+    pub low_prio_budget: i32,
+    pub dns_ready_head: *mut ConnectingSocket,
+    pub closed_connecting_head: *mut ConnectingSocket,
+    mutex: ZigMutex,
+    pub parent_ptr: *mut c_void,
+    pub parent_tag: core::ffi::c_char,
+    pub iteration_nr: usize,
+    /// Erased `?*jsc::VM` — tier-0/1 cannot name JSC types. Higher tiers cast.
+    pub jsc_vm: *mut c_void,
+    pub tick_depth: c_int,
+}
+
+/// Carrier trait so `set_parent_event_loop` can accept the higher-tier
+/// `EventLoopHandle` without depending on it. The event-loop crate impls this
+/// on its enum (`.js` → tag 1, `.mini` → tag 2).
+pub trait ParentEventLoopHandle {
+    fn into_tag_ptr(self) -> (core::ffi::c_char, *mut c_void);
+}
+
+impl InternalLoopData {
+    const LIBUS_RECV_BUFFER_LENGTH: usize = 524288;
+
+    pub fn recv_slice(&mut self) -> &mut [u8] {
+        // SAFETY: `recv_buf` is malloc'd by C `us_internal_loop_data_init` with
+        // at least LIBUS_RECV_BUFFER_LENGTH bytes and lives as long as the loop.
+        unsafe { core::slice::from_raw_parts_mut(self.recv_buf, Self::LIBUS_RECV_BUFFER_LENGTH) }
+    }
+
+    #[inline]
+    pub fn should_enable_date_header_timer(&self) -> bool {
+        self.sweep_timer_count > 0
+    }
+
+    /// Zig: `setParentEventLoop(this, parent: jsc.EventLoopHandle)`. Tag 1 = JS
+    /// event loop, tag 2 = mini event loop. Generic over the handle so this
+    /// crate stays free of the `jsc` dependency.
+    #[inline]
+    pub fn set_parent_event_loop<H: ParentEventLoopHandle>(&mut self, parent: H) {
+        let (tag, ptr) = parent.into_tag_ptr();
+        self.parent_tag = tag;
+        self.parent_ptr = ptr;
+    }
+
+    /// Raw form for callers that already have (tag, ptr). See `set_parent_event_loop`.
+    #[inline]
+    pub fn set_parent_raw(&mut self, tag: core::ffi::c_char, ptr: *mut c_void) {
+        self.parent_tag = tag;
+        self.parent_ptr = ptr;
+    }
+
+    /// Zig: `getParent() jsc.EventLoopHandle`. Low tier returns the (tag, ptr)
+    /// pair; the typed enum wrapper lives in the higher-tier crate that can
+    /// name `jsc::EventLoop` / `jsc::MiniEventLoop`.
+    #[inline]
+    pub fn get_parent(&self) -> (core::ffi::c_char, *mut c_void) {
+        if self.parent_ptr.is_null() {
+            panic!("Parent loop not set - pointer is null");
+        }
+        if self.parent_tag == 0 {
+            panic!("Parent loop not set - tag is zero");
+        }
+        (self.parent_tag, self.parent_ptr)
+    }
+}
+
+/// `struct timespec`-shaped argument for `us_loop_run_bun_tick`. Mirrors
+/// `bun.timespec` (i64 sec, i64 nsec).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct Timespec {
+    pub sec: i64,
+    pub nsec: i64,
+}
+
+// ── Loop (PosixLoop / WindowsLoop) ────────────────────────────────────────
+
+#[cfg(target_os = "linux")]
+pub type LoopEventType = libc::epoll_event;
+#[cfg(target_os = "macos")]
+pub type LoopEventType = libc::kevent64_s;
+#[cfg(target_os = "freebsd")]
+pub type LoopEventType = libc::kevent;
+#[cfg(windows)]
+pub type LoopEventType = *mut c_void;
+
+/// `struct us_loop_t` on epoll/kqueue backends.
+#[repr(C, align(16))]
+pub struct PosixLoop {
+    pub internal_loop_data: InternalLoopData,
+    /// Number of non-fallthrough polls in the loop.
+    pub num_polls: i32,
+    /// Number of ready polls this iteration.
+    pub num_ready_polls: i32,
+    /// Current index in list of ready polls.
+    pub current_ready_poll: i32,
+    /// Loop's own file descriptor.
+    pub fd: i32,
+    /// Number of polls owned by Bun.
+    pub active: u32,
+    /// Atomically bumped by `wakeup()`; non-zero short-circuits the GC safepoint.
+    pub pending_wakeups: u32,
+    pub ready_polls: [LoopEventType; 1024],
+}
+
+/// `struct us_loop_t` on the libuv backend.
+#[cfg(windows)]
+#[repr(C, align(16))]
+pub struct WindowsLoop {
+    pub internal_loop_data: InternalLoopData,
+    pub uv_loop: *mut c_void, // *mut uv::Loop — bun_windows_sys::libuv lives in a higher tier
+    pub is_default: c_int,
+    pub pre: *mut c_void,   // *mut uv_prepare_t
+    pub check: *mut c_void, // *mut uv_check_t
+}
+#[cfg(not(windows))]
+pub type WindowsLoop = PosixLoop;
+
+#[cfg(windows)]
+pub type Loop = WindowsLoop;
+#[cfg(not(windows))]
+pub type Loop = PosixLoop;
+
+pub type LoopCb = unsafe extern "C" fn(*mut Loop);
+
+mod loop_c {
+    use super::{c_int, c_uint, c_void, Loop, Timespec};
+    unsafe extern "C" {
+        pub fn us_create_loop(
+            hint: *mut c_void,
+            wakeup_cb: Option<super::LoopCb>,
+            pre_cb: Option<super::LoopCb>,
+            post_cb: Option<super::LoopCb>,
+            ext_size: c_uint,
+        ) -> *mut Loop;
+        pub fn us_loop_free(loop_: *mut Loop);
+        pub fn us_loop_run(loop_: *mut Loop);
+        #[cfg(windows)]
+        pub fn us_loop_pump(loop_: *mut Loop);
+        pub fn us_wakeup_loop(loop_: *mut Loop);
+        pub fn us_loop_run_bun_tick(loop_: *mut Loop, timeout: *const Timespec);
+        pub fn uws_get_loop() -> *mut Loop;
+        #[cfg(windows)]
+        pub fn uws_get_loop_with_native(native: *mut c_void) -> *mut Loop;
+    }
+}
+
+#[cfg(not(windows))]
+impl PosixLoop {
+    /// Zig: `create(comptime Handler)`. Higher tiers pass their wakeup/pre/post
+    /// trampolines directly; the Zig comptime-handler indirection isn't needed.
+    pub fn create(wakeup: LoopCb, pre: LoopCb, post: LoopCb) -> *mut Loop {
+        // SAFETY: us_create_loop allocates and returns a new loop; null hint is valid.
+        let p = unsafe { loop_c::us_create_loop(core::ptr::null_mut(), Some(wakeup), Some(pre), Some(post), 0) };
+        assert!(!p.is_null(), "us_create_loop returned null");
+        p
+    }
+
+    /// Process-lifetime singleton. Returned as `&'static mut` because callers
+    /// reach into `internal_loop_data` fields directly.
+    ///
+    /// # Safety
+    /// Single-threaded access only — the loop is per-thread in usockets but the
+    /// `'static mut` lets the borrow checker prove nothing about concurrent use.
+    pub fn get() -> &'static mut Loop {
+        // SAFETY: uws_get_loop returns the thread's singleton, never null after
+        // the runtime has called `create`.
+        unsafe { &mut *loop_c::uws_get_loop() }
+    }
+
+    /// `&InternalLoopData` accessor — the field is also `pub` for callers that
+    /// have a `*mut Loop` and dereference it directly.
+    #[inline]
+    pub fn internal_loop_data(&mut self) -> &mut InternalLoopData {
+        &mut self.internal_loop_data
+    }
+
+    pub fn iteration_number(&self) -> u64 {
+        self.internal_loop_data.iteration_nr as u64
+    }
+
+    pub fn inc(&mut self) {
+        self.num_polls += 1;
+    }
+    pub fn dec(&mut self) {
+        self.num_polls -= 1;
+    }
+    pub fn ref_(&mut self) {
+        self.num_polls += 1;
+        self.active += 1;
+    }
+    pub fn unref(&mut self) {
+        self.num_polls -= 1;
+        self.active = self.active.saturating_sub(1);
+    }
+    #[inline]
+    pub fn is_active(&self) -> bool {
+        self.active > 0
+    }
+
+    pub fn wakeup(&mut self) {
+        // SAFETY: self is a valid loop pointer.
+        unsafe { loop_c::us_wakeup_loop(self) };
+    }
+    #[inline]
+    pub fn wake(&mut self) {
+        self.wakeup();
+    }
+
+    pub fn tick(&mut self) {
+        // SAFETY: self is a valid loop pointer.
+        unsafe { loop_c::us_loop_run_bun_tick(self, core::ptr::null()) };
+    }
+    pub fn tick_without_idle(&mut self) {
+        let ts = Timespec { sec: 0, nsec: 0 };
+        // SAFETY: self is valid; &ts lives for the call.
+        unsafe { loop_c::us_loop_run_bun_tick(self, &ts) };
+    }
+    pub fn tick_with_timeout(&mut self, timespec: Option<&Timespec>) {
+        // SAFETY: self is a valid loop pointer.
+        unsafe { loop_c::us_loop_run_bun_tick(self, timespec.map_or(core::ptr::null(), |t| t as *const _)) };
+    }
+
+    pub fn run(&mut self) {
+        // SAFETY: self is a valid loop pointer.
+        unsafe { loop_c::us_loop_run(self) };
+    }
+
+    /// FFI-destroy: `us_loop_free` frees the C-allocated loop. Not `Drop`
+    /// because the loop is C-owned and never lives as a Rust-owned value.
+    ///
+    /// # Safety
+    /// `this` must have been returned by `create`/`get` and not yet freed.
+    pub unsafe fn deinit(this: *mut Loop) {
+        // SAFETY: caller contract.
+        unsafe { loop_c::us_loop_free(this) };
+    }
+}
+
+#[cfg(windows)]
+impl WindowsLoop {
+    pub fn create(wakeup: LoopCb, pre: LoopCb, post: LoopCb) -> *mut Loop {
+        // SAFETY: us_create_loop allocates and returns a new loop; null hint is valid.
+        let p = unsafe { loop_c::us_create_loop(core::ptr::null_mut(), Some(wakeup), Some(pre), Some(post), 0) };
+        assert!(!p.is_null(), "us_create_loop returned null");
+        p
+    }
+
+    pub fn get() -> &'static mut Loop {
+        // TODO(b2-blocked): bun_windows_sys::libuv::Loop::get() — pass libuv
+        // default loop as the native hint. Null hint also works for the singleton.
+        // SAFETY: uws_get_loop_with_native returns the thread's singleton.
+        unsafe { &mut *loop_c::uws_get_loop_with_native(core::ptr::null_mut()) }
+    }
+
+    #[inline]
+    pub fn internal_loop_data(&mut self) -> &mut InternalLoopData {
+        &mut self.internal_loop_data
+    }
+
+    pub fn iteration_number(&self) -> u64 {
+        self.internal_loop_data.iteration_nr as u64
+    }
+
+    // ref/unref/inc/dec forward to libuv on Windows; the uv loop pointer is
+    // type-erased here so we cannot call `(*self.uv_loop).inc()` directly.
+    // TODO(b2-blocked): bun_windows_sys::libuv::Loop — wire to uv_loop->active_handles.
+    pub fn inc(&mut self) {}
+    pub fn dec(&mut self) {}
+    #[inline] pub fn ref_(&mut self) { self.inc(); }
+    #[inline] pub fn unref(&mut self) { self.dec(); }
+    pub fn is_active(&self) -> bool {
+        // TODO(b2-blocked): bun_windows_sys::libuv::Loop::is_active
+        false
+    }
+
+    pub fn wakeup(&mut self) {
+        // SAFETY: self is a valid loop pointer.
+        unsafe { loop_c::us_wakeup_loop(self) };
+    }
+    #[inline] pub fn wake(&mut self) { self.wakeup(); }
+
+    pub fn tick(&mut self) {
+        // SAFETY: self is a valid loop pointer.
+        unsafe { loop_c::us_loop_run(self) };
+    }
+    pub fn tick_with_timeout(&mut self, _timespec: Option<&Timespec>) {
+        // SAFETY: self is a valid loop pointer.
+        unsafe { loop_c::us_loop_run(self) };
+    }
+    pub fn tick_without_idle(&mut self) {
+        // SAFETY: self is a valid loop pointer.
+        unsafe { loop_c::us_loop_pump(self) };
+    }
+    pub fn run(&mut self) {
+        // SAFETY: self is a valid loop pointer.
+        unsafe { loop_c::us_loop_run(self) };
+    }
+
+    /// # Safety
+    /// `this` must have been returned by `create`/`get` and not yet freed.
+    pub unsafe fn deinit(this: *mut Loop) {
+        // SAFETY: caller contract.
+        unsafe { loop_c::us_loop_free(this) };
+    }
+}
+
+} // end #[cfg(any())] mod _b1_loop_stub
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SocketGroup
+// ═══════════════════════════════════════════════════════════════════════════
+// `#[repr(C)]` mirror of `struct us_socket_group_t`. Embedded by value in its
+// owner; the loop links it lazily on first socket and unlinks on last.
+
+#[repr(C)]
+pub struct SocketGroupVTable {
+    pub on_open: Option<unsafe extern "C" fn(*mut us_socket_t, c_int, *mut u8, c_int) -> *mut us_socket_t>,
+    pub on_data: Option<unsafe extern "C" fn(*mut us_socket_t, *mut u8, c_int) -> *mut us_socket_t>,
+    pub on_fd: Option<unsafe extern "C" fn(*mut us_socket_t, c_int) -> *mut us_socket_t>,
+    pub on_writable: Option<unsafe extern "C" fn(*mut us_socket_t) -> *mut us_socket_t>,
+    pub on_close: Option<unsafe extern "C" fn(*mut us_socket_t, c_int, *mut c_void) -> *mut us_socket_t>,
+    pub on_timeout: Option<unsafe extern "C" fn(*mut us_socket_t) -> *mut us_socket_t>,
+    pub on_long_timeout: Option<unsafe extern "C" fn(*mut us_socket_t) -> *mut us_socket_t>,
+    pub on_end: Option<unsafe extern "C" fn(*mut us_socket_t) -> *mut us_socket_t>,
+    pub on_connect_error: Option<unsafe extern "C" fn(*mut us_socket_t, c_int) -> *mut us_socket_t>,
+    pub on_connecting_error: Option<unsafe extern "C" fn(*mut ConnectingSocket, c_int) -> *mut ConnectingSocket>,
+    pub on_handshake: Option<unsafe extern "C" fn(*mut us_socket_t, c_int, us_bun_verify_error_t, *mut c_void)>,
+}
+
+#[repr(C)]
+pub struct SocketGroup {
+    pub loop_: *mut Loop,
+    pub vtable: Option<&'static SocketGroupVTable>,
+    /// Embedding owner — heterogenous (`Listener` / uWS App / RareData / null).
+    /// Typed access via `owner<T>()` in bun_uws_sys when un-gated.
+    pub ext: *mut c_void,
+    pub head_sockets: *mut us_socket_t,
+    pub head_connecting_sockets: *mut ConnectingSocket,
+    pub head_listen_sockets: *mut ListenSocket,
+    pub iterator: *mut us_socket_t,
+    pub prev: *mut SocketGroup,
+    pub next: *mut SocketGroup,
+    pub global_tick: u32,
+    pub low_prio_count: u16,
+    pub timestamp: u8,
+    pub long_timestamp: u8,
+    pub linked: u8,
+}
+
+impl Default for SocketGroup {
+    fn default() -> Self {
+        // SAFETY: all-zero is a valid SocketGroup — every field is a raw
+        // pointer (null), `Option<&'static _>` (None via NPO), or an integer (0).
+        unsafe { core::mem::zeroed() }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SocketContext::BunSocketContextOptions
+// ═══════════════════════════════════════════════════════════════════════════
+pub mod SocketContext {
+    use core::ffi::c_char;
+    use core::ptr;
+
+    /// `#[repr(C)]` mirror of `us_bun_socket_context_options_t`. What
+    /// `SSLConfig.asUSockets()` produces and `us_ssl_ctx_from_options` consumes.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct BunSocketContextOptions {
+        pub key_file_name: *const c_char,
+        pub cert_file_name: *const c_char,
+        pub passphrase: *const c_char,
+        pub dh_params_file_name: *const c_char,
+        pub ca_file_name: *const c_char,
+        pub ssl_ciphers: *const c_char,
+        pub ssl_prefer_low_memory_usage: i32,
+        pub key: *const *const c_char,
+        pub key_count: u32,
+        pub cert: *const *const c_char,
+        pub cert_count: u32,
+        pub ca: *const *const c_char,
+        pub ca_count: u32,
+        pub secure_options: u32,
+        pub reject_unauthorized: i32,
+        pub request_cert: i32,
+        pub client_renegotiation_limit: u32,
+        pub client_renegotiation_window: u32,
+    }
+
+    impl Default for BunSocketContextOptions {
+        fn default() -> Self {
+            Self {
+                key_file_name: ptr::null(),
+                cert_file_name: ptr::null(),
+                passphrase: ptr::null(),
+                dh_params_file_name: ptr::null(),
+                ca_file_name: ptr::null(),
+                ssl_ciphers: ptr::null(),
+                ssl_prefer_low_memory_usage: 0,
+                key: ptr::null(),
+                key_count: 0,
+                cert: ptr::null(),
+                cert_count: 0,
+                ca: ptr::null(),
+                ca_count: 0,
+                secure_options: 0,
+                reject_unauthorized: 0,
+                request_cert: 0,
+                client_renegotiation_limit: 3,
+                client_renegotiation_window: 600,
+            }
+        }
+    }
+
+    impl BunSocketContextOptions {
+        /// Build a BoringSSL `SSL_CTX*` from these options. Caller owns one ref
+        /// and releases with `SSL_CTX_free`.
+        pub fn create_ssl_context(
+            self,
+            err: &mut crate::create_bun_socket_error_t,
+        ) -> Option<*mut crate::SslCtx> {
+            // SAFETY: `self` is `#[repr(C)]` passed by value; `err` is a valid out-param.
+            let ctx = unsafe { us_ssl_ctx_from_options(self, err) };
+            if ctx.is_null() { None } else { Some(ctx) }
+        }
+    }
+
+    unsafe extern "C" {
+        fn us_ssl_ctx_from_options(
+            options: BunSocketContextOptions,
+            err: *mut crate::create_bun_socket_error_t,
+        ) -> *mut crate::SslCtx;
+    }
+}
+/// Snake-case module alias for the porting tooling that lowercases Zig namespaces.
+pub use SocketContext as socket_context;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Socket handlers (NewSocketHandler / SocketHandler / AnySocket)
+// ═══════════════════════════════════════════════════════════════════════════
+// Thin placeholders: full bodies live in `bun_uws_sys::socket` (gated). Higher
+// tiers need the *types* to compile their own dispatch tables; method bodies
+// arrive when the sys crate un-gates.
+
+/// State of a single connection. Full impl lives in bun_uws_sys::socket.
+pub enum InternalSocket {
+    Connected(*mut us_socket_t),
+    Connecting(*mut ConnectingSocket),
+    Detached,
+    /// `*mut UpgradedDuplex` (type-erased — higher-tier owned).
+    UpgradedDuplex(*mut c_void),
+    #[cfg(windows)]
+    Pipe(*mut c_void), // *mut WindowsNamedPipe
+    #[cfg(not(windows))]
+    Pipe,
+}
+
+/// Zig `NewSocketHandler(comptime is_ssl: bool)`. The const generic only
+/// selects `*SSL` vs fd for `get_native_handle`; it is NOT forwarded to C.
+pub struct NewSocketHandler<const SSL: bool> {
+    pub socket: InternalSocket,
+}
+
+impl<const SSL: bool> NewSocketHandler<SSL> {
+    pub const DETACHED: Self = Self { socket: InternalSocket::Detached };
+}
+
+pub type SocketTCP = NewSocketHandler<false>;
+pub type SocketTLS = NewSocketHandler<true>;
+/// Alias used by `http`, `ipc`, `websocket_client` — same type, less ceremony.
+pub type SocketHandler<const SSL: bool> = NewSocketHandler<SSL>;
+
+/// TODO: rename to ConnectedSocket
+pub enum AnySocket {
+    SocketTcp(SocketTCP),
+    SocketTls(SocketTLS),
+}
+
+impl AnySocket {
+    #[inline]
+    pub fn is_ssl(&self) -> bool {
+        matches!(self, AnySocket::SocketTls(_))
+    }
+    #[inline]
+    pub fn socket(&self) -> &InternalSocket {
+        match self {
+            AnySocket::SocketTcp(s) => &s.socket,
+            AnySocket::SocketTls(s) => &s.socket,
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AnyRequest / AnyResponse
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Transport-agnostic request handle. Static/file routes take this so the same
+/// handler body serves HTTP/1.1 and HTTP/3.
+pub enum AnyRequest {
+    H1(*mut Request),
+    H3(*mut H3::Request),
+}
+
+impl AnyRequest {
+    /// Look up a request header by lowercase name. Borrows request-internal
+    /// storage; valid for the duration of the request callback only.
+    pub fn header(&self, name: &[u8]) -> Option<&[u8]> {
+        debug_assert!(name.first().is_none_or(|b| b.is_ascii_lowercase()));
+        let mut ptr: *const u8 = core::ptr::null();
+        // SAFETY: variant pointers are non-null FFI handles owned by uWS/lsquic
+        // for the duration of the request callback; the C side writes a pointer
+        // into request-owned storage and returns its length.
+        let len = match self {
+            Self::H1(r) => unsafe { req_c::uws_req_get_header(*r, name.as_ptr(), name.len(), &mut ptr) },
+            Self::H3(r) => unsafe { req_c::us_h3_req_get_header(*r, name.as_ptr(), name.len(), &mut ptr) },
+        };
+        if len == 0 {
+            return None;
+        }
+        // SAFETY: ptr/len describe a slice owned by the request for its lifetime.
+        Some(unsafe { core::slice::from_raw_parts(ptr, len) })
+    }
+}
+
+mod req_c {
+    use super::{H3, Request};
+    unsafe extern "C" {
+        pub fn uws_req_get_header(
+            res: *const Request,
+            lower_case_header: *const u8,
+            lower_case_header_length: usize,
+            dest: *mut *const u8,
+        ) -> usize;
+        pub fn us_h3_req_get_header(
+            res: *const H3::Request,
+            lower_case_header: *const u8,
+            lower_case_header_length: usize,
+            dest: *mut *const u8,
+        ) -> usize;
+    }
+}
+
+/// Opaque `uws::Response<SSL>` — bodies live in bun_uws_sys::Response (gated).
+#[repr(C)]
+pub struct Response<const SSL: bool> {
+    _p: [u8; 0],
+    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+}
+
+/// Transport-agnostic response handle.
+#[derive(Clone, Copy)]
+pub enum AnyResponse {
+    SSL(*mut Response<true>),
+    TCP(*mut Response<false>),
+    H3(*mut H3::Response),
 }
 
 // ──────────────────────────────────────────────────────────────────────────

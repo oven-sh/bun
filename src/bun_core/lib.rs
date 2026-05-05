@@ -66,7 +66,20 @@ pub type OOM = AllocError;
 // `mark_binding!` and `zstr!` are defined in Global.rs / util.rs respectively.
 
 pub use env as Environment;
+/// Zig: `pub const FeatureFlags = @import("./bun_core/feature_flags.zig")`.
+pub use feature_flags as FeatureFlags;
 #[inline] pub fn start_time() -> i128 { 0 } // TODO(port): wire to a global set at main()
+
+/// `bun.schema` — `src/options_types/schema.zig`. The full generated API
+/// types live in `bun_api` (tier-2); tier-0 only needs the namespace to
+/// exist so `bun_core::schema::api::StringPointer` etc. resolve as re-exports
+/// once that crate un-gates. For now expose the one type tier-0 itself owns.
+pub mod schema {
+    pub mod api {
+        pub use crate::util::StringPointer;
+        // Remaining schema types re-exported from bun_api in Phase B-2.
+    }
+}
 
 pub use output as Output;
 

@@ -1,6 +1,7 @@
 use core::ffi::{c_int, c_longlong, c_uint, c_void};
 
 use crate::InternalLoopData;
+use crate::Timespec;
 
 #[cfg(windows)]
 use bun_windows_sys::libuv as uv;
@@ -188,12 +189,12 @@ impl PosixLoop {
     }
 
     pub fn tick_without_idle(&mut self) {
-        let timespec = bun_core::Timespec { sec: 0, nsec: 0 };
+        let timespec = Timespec { sec: 0, nsec: 0 };
         // SAFETY: self is a valid loop pointer; &timespec lives for the call
         unsafe { c::us_loop_run_bun_tick(self, &timespec) };
     }
 
-    pub fn tick_with_timeout(&mut self, timespec: Option<&bun_core::Timespec>) {
+    pub fn tick_with_timeout(&mut self, timespec: Option<&Timespec>) {
         // SAFETY: self is a valid loop pointer
         unsafe {
             c::us_loop_run_bun_tick(
@@ -379,7 +380,7 @@ impl WindowsLoop {
         self.wakeup();
     }
 
-    pub fn tick_with_timeout(&mut self, _: Option<&bun_core::Timespec>) {
+    pub fn tick_with_timeout(&mut self, _: Option<&Timespec>) {
         // SAFETY: self is a valid loop pointer
         unsafe { c::us_loop_run(self) };
     }
@@ -539,7 +540,7 @@ mod c {
         pub fn uws_loop_removePostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         pub fn uws_loop_addPreHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         pub fn uws_loop_removePreHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
-        pub fn us_loop_run_bun_tick(loop_: *mut Loop, timeout_ms: *const bun_core::Timespec);
+        pub fn us_loop_run_bun_tick(loop_: *mut Loop, timeout_ms: *const Timespec);
         pub fn us_internal_free_closed_sockets(loop_: *mut Loop);
         pub fn us_loop_close_all_groups(loop_: *mut Loop) -> c_int;
         pub fn uws_get_loop() -> *mut Loop;

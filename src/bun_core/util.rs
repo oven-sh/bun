@@ -1526,6 +1526,735 @@ impl StringBuilder {
     }
 }
 
+// ── ZStr trait sugar (downstream ergonomics) ──────────────────────────────
+impl AsRef<ZStr> for ZStr { #[inline] fn as_ref(&self) -> &ZStr { self } }
+impl AsRef<[u8]> for ZStr { #[inline] fn as_ref(&self) -> &[u8] { &self.0 } }
+impl PartialEq<[u8]> for ZStr { #[inline] fn eq(&self, other: &[u8]) -> bool { &self.0 == other } }
+impl<const N: usize> PartialEq<&[u8; N]> for ZStr {
+    #[inline] fn eq(&self, other: &&[u8; N]) -> bool { &self.0 == *other }
+}
+
+// ── Hasher trait (Zig "anytype with .update([]const u8)") ─────────────────
+// Used by `bun_core::write_any_to_hasher` and bundler/css hashing. Mirrors
+// the minimal Zig hasher protocol — *not* `core::hash::Hasher` because Bun's
+// hashers (Wyhash, XxHash64, sha1) expose `.update(&[u8])` + `.final()`.
+pub trait Hasher {
+    fn update(&mut self, bytes: &[u8]);
+}
+// Blanket: anything that already is a `core::hash::Hasher` also satisfies
+// Bun's Hasher (its `.write` IS the byte-feed).
+impl<H: core::hash::Hasher> Hasher for H {
+    #[inline] fn update(&mut self, bytes: &[u8]) { self.write(bytes) }
+}
+
+/// Port of `bun.writeAnyToHasher`. Zig fed `std.mem.asBytes(&thing)`; Rust
+/// can't take a generic by-value-as-bytes safely without `bytemuck`, so this
+/// accepts anything that is itself viewable as bytes (covers the actual call
+/// sites: `u8` tags, `usize` lengths, `Index` newtypes).
+#[inline]
+pub fn write_any_to_hasher<H: Hasher + ?Sized, T: AsBytes + ?Sized>(hasher: &mut H, thing: T)
+where T: Sized {
+    hasher.update(thing.as_bytes_for_hash());
+}
+
+/// Helper trait for `write_any_to_hasher` — "viewable as raw bytes".
+/// Blanket-implemented for all `Copy` plain-data ints and references-to-slices.
+pub trait AsBytes {
+    fn as_bytes_for_hash(&self) -> &[u8];
+}
+macro_rules! as_bytes_pod {
+    ($($t:ty),* $(,)?) => { $(
+        impl AsBytes for $t {
+            #[inline] fn as_bytes_for_hash(&self) -> &[u8] {
+                // SAFETY: POD integer; size_of::<Self> readable bytes.
+                unsafe { core::slice::from_raw_parts(
+                    (self as *const Self).cast::<u8>(),
+                    core::mem::size_of::<Self>(),
+                ) }
+            }
+        }
+    )* }
+}
+as_bytes_pod!(u8, i8, u16, i16, u32, i32, u64, i64, usize, isize, u128, i128);
+impl<T: AsBytes> AsBytes for &T {
+    #[inline] fn as_bytes_for_hash(&self) -> &[u8] { (**self).as_bytes_for_hash() }
+}
+
+// ── GenericIndex ──────────────────────────────────────────────────────────
+// Port of `bun.GenericIndex(backing_int, uid)` (bun.zig:3513). Zig used a
+// distinct enum-per-uid for nominal typing; Rust gets that via a phantom
+// marker. `MAX` is reserved as the "none" sentinel for `Optional`.
+#[repr(transparent)]
+pub struct GenericIndex<I, M = ()>(I, core::marker::PhantomData<M>);
+
+impl<I: Copy, M> Clone for GenericIndex<I, M> { #[inline] fn clone(&self) -> Self { *self } }
+impl<I: Copy, M> Copy for GenericIndex<I, M> {}
+impl<I: PartialEq, M> PartialEq for GenericIndex<I, M> {
+    #[inline] fn eq(&self, o: &Self) -> bool { self.0 == o.0 }
+}
+impl<I: Eq, M> Eq for GenericIndex<I, M> {}
+impl<I: core::hash::Hash, M> core::hash::Hash for GenericIndex<I, M> {
+    #[inline] fn hash<H: core::hash::Hasher>(&self, h: &mut H) { self.0.hash(h) }
+}
+impl<I: core::fmt::Display, M> core::fmt::Display for GenericIndex<I, M> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result { self.0.fmt(f) }
+}
+impl<I: core::fmt::Debug, M> core::fmt::Debug for GenericIndex<I, M> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result { self.0.fmt(f) }
+}
+
+impl<I: GenericIndexInt, M> GenericIndex<I, M> {
+    /// Prefer over a raw cast — asserts `int != MAX` (would alias `.none`).
+    #[inline] pub fn init(int: I) -> Self {
+        debug_assert!(int != I::NULL_VALUE, "GenericIndex::init: maxInt is reserved for Optional::none");
+        Self(int, core::marker::PhantomData)
+    }
+    #[inline] pub fn get(self) -> I {
+        debug_assert!(self.0 != I::NULL_VALUE, "GenericIndex::get: corrupted (== none sentinel)");
+        self.0
+    }
+    #[inline] pub fn to_optional(self) -> GenericIndexOptional<I, M> {
+        GenericIndexOptional(self.0, core::marker::PhantomData)
+    }
+    #[inline] pub fn sort_fn_asc(_: &(), a: &Self, b: &Self) -> bool { a.0 < b.0 }
+}
+
+/// `GenericIndex::Optional` — `MAX` is `none`.
+#[repr(transparent)]
+pub struct GenericIndexOptional<I, M = ()>(I, core::marker::PhantomData<M>);
+impl<I: Copy, M> Clone for GenericIndexOptional<I, M> { #[inline] fn clone(&self) -> Self { *self } }
+impl<I: Copy, M> Copy for GenericIndexOptional<I, M> {}
+impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
+    pub const NONE: Self = Self(I::NULL_VALUE, core::marker::PhantomData);
+    #[inline] pub fn init(maybe: Option<I>) -> Self {
+        match maybe { Some(i) => GenericIndex::<I, M>::init(i).to_optional(), None => Self::NONE }
+    }
+    #[inline] pub fn unwrap(self) -> Option<GenericIndex<I, M>> {
+        if self.0 == I::NULL_VALUE { None } else { Some(GenericIndex(self.0, core::marker::PhantomData)) }
+    }
+    #[inline] pub fn unwrap_get(self) -> Option<I> {
+        if self.0 == I::NULL_VALUE { None } else { Some(self.0) }
+    }
+}
+
+/// Backing-integer bound for `GenericIndex` (replaces Zig's `comptime backing_int: type`).
+pub trait GenericIndexInt: Copy + Eq + PartialOrd {
+    const NULL_VALUE: Self;
+}
+macro_rules! generic_index_int { ($($t:ty),*) => { $(
+    impl GenericIndexInt for $t { const NULL_VALUE: Self = <$t>::MAX; }
+)* } }
+generic_index_int!(u8, u16, u32, u64, usize);
+
+// ── mach_port ─────────────────────────────────────────────────────────────
+// Zig: `if (Environment.isMac) std.c.mach_port_t else u32`.
+#[cfg(target_os = "macos")]
+pub type mach_port = libc::mach_port_t;
+#[cfg(not(target_os = "macos"))]
+pub type mach_port = u32;
+
+// ── rand ──────────────────────────────────────────────────────────────────
+// `std.Random.DefaultPrng` is xoshiro256++ in Zig stdlib. Port the exact
+// algorithm so `bun.fastRandom()` output is reproducible across the rewrite.
+pub mod rand {
+    /// xoshiro256++ — `std.Random.DefaultPrng`.
+    #[derive(Clone, Copy)]
+    pub struct DefaultPrng { s: [u64; 4] }
+    impl DefaultPrng {
+        /// Seed via splitmix64 (matches Zig stdlib `Xoshiro256.init`).
+        pub fn init(seed: u64) -> Self {
+            let mut sm = seed;
+            let mut s = [0u64; 4];
+            for slot in &mut s {
+                sm = sm.wrapping_add(0x9e3779b97f4a7c15);
+                let mut z = sm;
+                z = (z ^ (z >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+                z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
+                *slot = z ^ (z >> 31);
+            }
+            Self { s }
+        }
+        #[inline]
+        pub fn next_u64(&mut self) -> u64 {
+            let r = self.s[0]
+                .wrapping_add(self.s[3])
+                .rotate_left(23)
+                .wrapping_add(self.s[0]);
+            let t = self.s[1] << 17;
+            self.s[2] ^= self.s[0];
+            self.s[3] ^= self.s[1];
+            self.s[1] ^= self.s[2];
+            self.s[0] ^= self.s[3];
+            self.s[2] ^= t;
+            self.s[3] = self.s[3].rotate_left(45);
+            r
+        }
+    }
+}
+
+/// Port of `bun.fastRandom()`. Thread-local xoshiro256++ seeded once per
+/// process from the OS CSPRNG (or `BUN_DEBUG_HASH_RANDOM_SEED` in debug).
+pub fn fast_random() -> u64 {
+    use core::cell::Cell;
+    use core::sync::atomic::{AtomicU64, Ordering as O};
+    static SEED: AtomicU64 = AtomicU64::new(0);
+    fn random_seed() -> u64 {
+        let mut v = SEED.load(O::Relaxed);
+        while v == 0 {
+            #[cfg(debug_assertions)]
+            if let Some(s) = crate::getenv_z(crate::zstr!("BUN_DEBUG_HASH_RANDOM_SEED")) {
+                if let Ok(n) = core::str::from_utf8(s).unwrap_or("").parse::<u64>() {
+                    SEED.store(n, O::Relaxed);
+                    return n;
+                }
+            }
+            let mut buf = [0u8; 8];
+            csprng(&mut buf);
+            v = u64::from_ne_bytes(buf);
+            SEED.store(v, O::Relaxed);
+            v = SEED.load(O::Relaxed);
+        }
+        v
+    }
+    thread_local! {
+        static PRNG: Cell<Option<rand::DefaultPrng>> = const { Cell::new(None) };
+    }
+    PRNG.with(|p| {
+        let mut prng = p.take().unwrap_or_else(|| rand::DefaultPrng::init(random_seed()));
+        let v = prng.next_u64();
+        p.set(Some(prng));
+        v
+    })
+}
+
+// ── hash ──────────────────────────────────────────────────────────────────
+// `bun.hash` (Wyhash) lives in deprecated.rs as RapidHash; this module adds
+// the xxhash64 entry point that ETag/bundler need.
+pub mod hash {
+    unsafe extern "C" {
+        // Provided by vendor/zstd's bundled xxhash (XXH64). Linked at Phase C.
+        fn XXH64(input: *const core::ffi::c_void, len: usize, seed: u64) -> u64;
+    }
+    /// `std.hash.XxHash64.hash(seed, bytes)`.
+    #[inline]
+    pub fn xxhash64(seed: u64, bytes: &[u8]) -> u64 {
+        // SAFETY: FFI reads exactly `bytes.len()` bytes.
+        unsafe { XXH64(bytes.as_ptr().cast(), bytes.len(), seed) }
+    }
+    /// Wyhash one-shot (Zig `bun.hash`).
+    #[inline]
+    pub fn wyhash(bytes: &[u8]) -> u64 { crate::deprecated::RapidHash::hash(0, bytes) }
+}
+
+// ── base64 ────────────────────────────────────────────────────────────────
+// Thin simdutf-backed encoders + scalar decoder. Port of the subset of
+// `src/base64/base64.zig` that tier-0/1 callers need (npm auth, sourcemaps,
+// ansi_renderer). Full URL-safe / streaming variants stay in bun_base64.
+pub mod base64 {
+    use bun_simdutf_sys::simdutf;
+
+    /// Max encoded length for `source.len()` input bytes (standard alphabet,
+    /// padded). Port of `bun.base64.encodeLen`.
+    #[inline]
+    pub fn encode_len(source: &[u8]) -> usize {
+        // simdutf::base64_length_from_binary(len, default)
+        ((source.len() + 2) / 3) * 4
+    }
+
+    /// `bun.base64.encode` — standard alphabet, padded. Returns bytes written.
+    pub fn encode(dest: &mut [u8], source: &[u8]) -> usize {
+        debug_assert!(dest.len() >= encode_len(source));
+        simdutf::base64::encode(source, dest, false)
+    }
+
+    /// `std.base64.standard.Encoder.calcSize` — alias of `encode_len` taking a length.
+    #[inline]
+    pub fn standard_encoder_calc_size(source_len: usize) -> usize {
+        ((source_len + 2) / 3) * 4
+    }
+
+    /// `std.base64.standard.Encoder.encode` returning the written sub-slice.
+    pub fn standard_encode<'a>(dest: &'a mut [u8], source: &[u8]) -> &'a [u8] {
+        let n = encode(dest, source);
+        &dest[..n]
+    }
+
+    /// Upper bound on decoded length (standard, may be 0..2 bytes over).
+    #[inline]
+    pub fn decode_len(source: &[u8]) -> usize { (source.len() / 4) * 3 + 3 }
+
+    /// Result of a decode-into-buffer call.
+    #[derive(Clone, Copy, Debug)]
+    pub struct DecodeResult { pub written: usize, pub fail: bool }
+
+    /// `bun.base64.decode`. Scalar fallback (PERF(port): simdutf path in
+    /// bun_base64). Tolerates missing padding; stops at first invalid char.
+    pub fn decode(dest: &mut [u8], source: &[u8]) -> DecodeResult {
+        const INV: u8 = 0xFF;
+        static LUT: [u8; 256] = {
+            let mut t = [INV; 256];
+            let mut i = 0u8;
+            while i < 26 { t[(b'A' + i) as usize] = i; i += 1; }
+            let mut i = 0u8;
+            while i < 26 { t[(b'a' + i) as usize] = 26 + i; i += 1; }
+            let mut i = 0u8;
+            while i < 10 { t[(b'0' + i) as usize] = 52 + i; i += 1; }
+            t[b'+' as usize] = 62;
+            t[b'/' as usize] = 63;
+            t
+        };
+        let mut w = 0usize;
+        let mut acc: u32 = 0;
+        let mut bits: u32 = 0;
+        for &c in source {
+            if c == b'=' || c == b'\n' || c == b'\r' { continue; }
+            let v = LUT[c as usize];
+            if v == INV { return DecodeResult { written: w, fail: true }; }
+            acc = (acc << 6) | v as u32;
+            bits += 6;
+            if bits >= 8 {
+                bits -= 8;
+                if w >= dest.len() { return DecodeResult { written: w, fail: true }; }
+                dest[w] = (acc >> bits) as u8;
+                w += 1;
+            }
+        }
+        DecodeResult { written: w, fail: false }
+    }
+}
+
+// ── dupe_z / free_sensitive ───────────────────────────────────────────────
+/// `allocator.dupeZ(u8, bytes)` → heap-allocated NUL-terminated copy. Returns
+/// a raw `*const c_char` because the SSLConfig FFI surface stores C-strings.
+/// Caller frees via `free_sensitive` (or libc `free` for non-sensitive).
+pub fn dupe_z(bytes: &[u8]) -> *const core::ffi::c_char {
+    // SAFETY: malloc is the allocator SSLConfig's C side expects to free.
+    unsafe {
+        let p = libc::malloc(bytes.len() + 1) as *mut u8;
+        if p.is_null() { crate::out_of_memory(); }
+        core::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
+        *p.add(bytes.len()) = 0;
+        p as *const core::ffi::c_char
+    }
+}
+
+/// Port of `bun.freeSensitive` for the C-string case used by http SSLConfig.
+/// Zeros the allocation before freeing (defence-in-depth for keys/passphrases).
+/// `p` must have been allocated by `dupe_z` (i.e. `libc::malloc`, NUL-terminated).
+pub fn free_sensitive(p: *const core::ffi::c_char) {
+    if p.is_null() { return; }
+    // SAFETY: p is a NUL-terminated malloc'd buffer per `dupe_z` contract.
+    unsafe {
+        let len = libc::strlen(p);
+        // Volatile zero so the optimizer can't elide it (`std.crypto.secureZero`).
+        let mut q = p as *mut u8;
+        for _ in 0..len { core::ptr::write_volatile(q, 0); q = q.add(1); }
+        libc::free(p as *mut core::ffi::c_void);
+    }
+}
+
+// ── argv ──────────────────────────────────────────────────────────────────
+// `bun.argv` — process argv as a slice of NUL-terminated byte strings.
+// Zig: `pub var argv: [][:0]const u8`. Exposed as a tiny wrapper so call
+// sites can use it both as a slice (`.get(0)`, `.iter()`, `.len()`) and as
+// an `IntoIterator<Item = &[u8]>` for `for arg in argv()`.
+static ARGV_STORAGE: std::sync::OnceLock<Vec<ZBox>> = std::sync::OnceLock::new();
+
+fn argv_storage() -> &'static [ZBox] {
+    ARGV_STORAGE.get_or_init(|| {
+        std::env::args_os()
+            .map(|a| ZBox::from_vec_with_nul(a.into_encoded_bytes()))
+            .collect()
+    })
+}
+
+#[derive(Clone, Copy)]
+pub struct Argv(&'static [ZBox]);
+impl Argv {
+    #[inline] pub fn len(&self) -> usize { self.0.len() }
+    #[inline] pub fn is_empty(&self) -> bool { self.0.is_empty() }
+    #[inline] pub fn get(&self, i: usize) -> Option<&'static ZStr> {
+        self.0.get(i).map(|z| {
+            // SAFETY: ZBox storage is process-static via OnceLock.
+            unsafe { core::mem::transmute::<&ZStr, &'static ZStr>(z.as_zstr()) }
+        })
+    }
+    #[inline] pub fn iter(&self) -> ArgvIter { ArgvIter { inner: self.0, i: 0 } }
+}
+impl IntoIterator for Argv {
+    type Item = &'static [u8];
+    type IntoIter = ArgvIter;
+    #[inline] fn into_iter(self) -> ArgvIter { self.iter() }
+}
+pub struct ArgvIter { inner: &'static [ZBox], i: usize }
+impl Iterator for ArgvIter {
+    type Item = &'static [u8];
+    #[inline]
+    fn next(&mut self) -> Option<&'static [u8]> {
+        let z = self.inner.get(self.i)?;
+        self.i += 1;
+        // SAFETY: storage is 'static (OnceLock).
+        Some(unsafe { core::mem::transmute::<&[u8], &'static [u8]>(z.as_bytes()) })
+    }
+}
+
+/// `bun.argv` accessor.
+#[inline] pub fn argv() -> Argv { Argv(argv_storage()) }
+
+// ── getcwd ────────────────────────────────────────────────────────────────
+/// Port of `bun.getcwd(buf)` → `Maybe([:0]u8)`. Writes into the caller's
+/// `PathBuffer` and returns the NUL-terminated slice on success.
+pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
+    #[cfg(unix)]
+    unsafe {
+        let p = libc::getcwd(buf.0.as_mut_ptr().cast(), buf.0.len());
+        if p.is_null() {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        let len = libc::strlen(p);
+        Ok(ZStr::from_raw(buf.0.as_ptr(), len))
+    }
+    #[cfg(windows)]
+    {
+        // TODO(port): GetCurrentDirectoryW → WTF-8. Phase B via bun_sys.
+        let _ = buf;
+        Err(crate::Error::TODO)
+    }
+    #[cfg(not(any(unix, windows)))]
+    { let _ = buf; Err(crate::Error::TODO) }
+}
+
+// ── which ─────────────────────────────────────────────────────────────────
+/// Port of `bun.which` (`src/which/which.zig`). Searches `cwd` then each
+/// `PATH` entry for an executable named `bin`; returns the NUL-terminated
+/// match written into `buf`. POSIX semantics; Windows `PATHEXT` handling
+/// stays in `bun_which` (tier-2).
+pub fn which<'a>(
+    buf: &'a mut PathBuffer,
+    path: &[u8],
+    cwd: &[u8],
+    bin: &[u8],
+) -> Option<&'a ZStr> {
+    if bin.is_empty() { return None; }
+    // If `bin` contains a separator, resolve relative to cwd only.
+    let has_sep = bin.iter().any(|&b| b == b'/' || (cfg!(windows) && b == b'\\'));
+    let check = |buf: &mut PathBuffer, dir: &[u8], bin: &[u8]| -> Option<usize> {
+        let mut n = 0usize;
+        if !dir.is_empty() {
+            if dir.len() + 1 + bin.len() + 1 > buf.0.len() { return None; }
+            buf.0[..dir.len()].copy_from_slice(dir);
+            n = dir.len();
+            if buf.0[n - 1] != b'/' { buf.0[n] = b'/'; n += 1; }
+        }
+        if n + bin.len() + 1 > buf.0.len() { return None; }
+        buf.0[n..n + bin.len()].copy_from_slice(bin);
+        n += bin.len();
+        buf.0[n] = 0;
+        #[cfg(unix)]
+        unsafe {
+            if libc::access(buf.0.as_ptr().cast(), libc::X_OK) == 0 { return Some(n); }
+        }
+        #[cfg(not(unix))]
+        {
+            // TODO(port): Windows X_OK via GetFileAttributesW; defer to bun_which.
+        }
+        None
+    };
+    if has_sep {
+        // SAFETY: n < buf.len, buf[n]==0.
+        return check(buf, cwd, bin).map(|n| unsafe { ZStr::from_raw(buf.0.as_ptr(), n) });
+    }
+    // cwd first (matches Zig).
+    if let Some(n) = check(buf, cwd, bin) {
+        return Some(unsafe { ZStr::from_raw(buf.0.as_ptr(), n) });
+    }
+    let delim: u8 = if cfg!(windows) { b';' } else { b':' };
+    for dir in path.split(|&b| b == delim) {
+        if dir.is_empty() { continue; }
+        if let Some(n) = check(buf, dir, bin) {
+            return Some(unsafe { ZStr::from_raw(buf.0.as_ptr(), n) });
+        }
+    }
+    None
+}
+
+// ── auto_reload_on_crash / reload_process group ───────────────────────────
+// Port of `bun.zig:1527-1686`. Full body of `reloadProcess` depends on
+// `bun.spawn` (tier-4); the crash-handler only needs the flag + the
+// thread-coordination helpers + a best-effort POSIX `execve` path.
+use core::sync::atomic::{AtomicBool, Ordering as AOrdering};
+static AUTO_RELOAD_ON_CRASH: AtomicBool = AtomicBool::new(false);
+static RELOAD_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+thread_local! {
+    static RELOAD_IN_PROGRESS_ON_CURRENT_THREAD: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+}
+
+#[inline] pub fn auto_reload_on_crash() -> bool { AUTO_RELOAD_ON_CRASH.load(AOrdering::Relaxed) }
+#[inline] pub fn set_auto_reload_on_crash(v: bool) { AUTO_RELOAD_ON_CRASH.store(v, AOrdering::Relaxed) }
+
+#[inline]
+pub fn is_process_reload_in_progress_on_another_thread() -> bool {
+    RELOAD_IN_PROGRESS.load(AOrdering::Relaxed)
+        && !RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.get())
+}
+
+/// Port of `bun.maybeHandlePanicDuringProcessReload`.
+#[inline(never)]
+pub fn maybe_handle_panic_during_process_reload() {
+    if is_process_reload_in_progress_on_another_thread() {
+        crate::output::flush();
+        #[cfg(debug_assertions)]
+        crate::output::debug_warn(format_args!("panic() called during process reload, ignoring\n"));
+        // Zig: `bun.exitThread()`. POSIX `pthread_exit`; Windows `ExitThread`.
+        #[cfg(unix)]
+        unsafe { libc::pthread_exit(core::ptr::null_mut()); }
+        #[cfg(windows)]
+        unsafe { extern "system" { fn ExitThread(code: u32) -> !; } ExitThread(0); }
+    }
+    // Spin if pthread_exit was a no-op (pathological).
+    while is_process_reload_in_progress_on_another_thread() {
+        core::hint::spin_loop();
+        #[cfg(unix)]
+        unsafe { libc::nanosleep(&libc::timespec { tv_sec: 1, tv_nsec: 0 }, core::ptr::null_mut()); }
+    }
+}
+
+/// Port of `bun.reloadProcess`. Allocator param dropped (uses libc malloc via
+/// `dupe_z`). `may_return == true` → returns on failure; `false` → panics.
+/// macOS posix_spawn path is deferred to bun_spawn (tier-4); tier-0 falls
+/// back to plain `execve` on all POSIX which is correct on Linux/BSD and
+/// best-effort on macOS (CLOEXEC handled by `on_before_reload_process_linux`
+/// hook on Linux; Darwin gets the simpler path until tier-4 wires spawn).
+pub fn reload_process(clear_terminal: bool, may_return: bool) {
+    RELOAD_IN_PROGRESS.store(true, AOrdering::Relaxed);
+    RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.set(true));
+
+    if clear_terminal {
+        crate::output::flush();
+        crate::output::disable_buffering();
+        crate::output::reset_terminal_all();
+    }
+    crate::output::stdio::restore();
+
+    #[cfg(windows)]
+    {
+        // Signal the watcher-manager parent via magic exit code.
+        extern "system" {
+            fn TerminateProcess(h: *mut core::ffi::c_void, code: u32) -> i32;
+            fn GetCurrentProcess() -> *mut core::ffi::c_void;
+        }
+        const WATCHER_RELOAD_EXIT: u32 = 0xBEEF_CAFE; // bun.windows.watcher_reload_exit
+        let rc = unsafe { TerminateProcess(GetCurrentProcess(), WATCHER_RELOAD_EXIT) };
+        if may_return {
+            crate::output::pretty_errorln(format_args!("error: Failed to reload process"));
+            return;
+        }
+        panic!("Unexpected error while reloading process");
+    }
+
+    #[cfg(unix)]
+    unsafe {
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        { unsafe extern "C" { fn on_before_reload_process_linux(); } on_before_reload_process_linux(); }
+
+        // Clone argv as a NULL-terminated array of C strings.
+        let args = argv_storage();
+        let mut newargv: Vec<*const core::ffi::c_char> =
+            args.iter().map(|z| z.as_ptr()).collect();
+        newargv.push(core::ptr::null());
+
+        // Clone environ.
+        unsafe extern "C" { static environ: *const *const core::ffi::c_char; }
+        let envp = environ;
+
+        // selfExePath
+        let exec_path = match self_exe_path() {
+            Ok(p) => p.as_ptr(),
+            Err(_) => newargv[0],
+        };
+
+        libc::execve(exec_path, newargv.as_ptr().cast(), envp.cast());
+        // execve only returns on error.
+        let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
+        if may_return {
+            crate::output::pretty_errorln(format_args!("error: Failed to reload process: errno {}", errno));
+            return;
+        }
+        panic!("Unexpected error while reloading: errno {}", errno);
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    { let _ = may_return; unimplemented!("reload_process: unsupported platform"); }
+}
+
+// ── spawn_sync_inherit ────────────────────────────────────────────────────
+/// Minimal "spawn argv, inherit stdio, wait" used by crash_handler's
+/// symbolizer. Port of the subset of `bun.spawnSync` needed at tier-0.
+/// Full `bun.spawnSync` (with buffered stdio, env, cwd) is in bun_spawn.
+#[derive(Debug, Clone, Copy)]
+pub struct SpawnStatus { pub code: i32 }
+impl SpawnStatus { #[inline] pub fn is_ok(&self) -> bool { self.code == 0 } }
+
+pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crate::Error> {
+    #[cfg(unix)]
+    unsafe {
+        let cargs: Vec<ZBox> = argv.iter().map(|a| ZBox::from_vec_with_nul(a.as_ref().to_vec())).collect();
+        let mut ptrs: Vec<*const core::ffi::c_char> = cargs.iter().map(|z| z.as_ptr()).collect();
+        ptrs.push(core::ptr::null());
+        let mut pid: libc::pid_t = 0;
+        unsafe extern "C" { static environ: *const *const core::ffi::c_char; }
+        let rc = libc::posix_spawnp(
+            &mut pid,
+            ptrs[0],
+            core::ptr::null(),
+            core::ptr::null(),
+            ptrs.as_ptr() as *const *mut core::ffi::c_char,
+            environ as *const *mut core::ffi::c_char,
+        );
+        if rc != 0 { return Err(crate::Error::from_errno(rc)); }
+        let mut status: i32 = 0;
+        loop {
+            let r = libc::waitpid(pid, &mut status, 0);
+            if r == -1 {
+                let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
+                if e == libc::EINTR { continue; }
+                return Err(crate::Error::from_errno(e));
+            }
+            break;
+        }
+        let code = if libc::WIFEXITED(status) { libc::WEXITSTATUS(status) } else { -1 };
+        Ok(SpawnStatus { code })
+    }
+    #[cfg(not(unix))]
+    {
+        // TODO(port): Windows path via CreateProcessW in bun_spawn.
+        let _ = argv;
+        Err(crate::Error::TODO)
+    }
+}
+
+// ── Timespec ──────────────────────────────────────────────────────────────
+// Port of `bun.timespec` (bun.zig:3257). `extern struct { sec: i64, nsec: i64 }`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Timespec { pub sec: i64, pub nsec: i64 }
+
+/// Lowercase alias (Zig spells it `bun.timespec`).
+#[allow(non_camel_case_types)]
+pub type timespec = Timespec;
+
+impl Timespec {
+    pub const EPOCH: Timespec = Timespec { sec: 0, nsec: 0 };
+    const NS_PER_S: i64 = 1_000_000_000;
+    const NS_PER_MS: i64 = 1_000_000;
+
+    #[inline]
+    pub const fn new(sec: i64, nsec: i64) -> Self { Self { sec, nsec } }
+
+    #[inline] pub fn eql(&self, other: &Timespec) -> bool { self == other }
+
+    /// `self - other` (Zig: `duration`). Mimics C wrapping behaviour.
+    pub fn duration(&self, other: &Timespec) -> Timespec {
+        let mut sec = self.sec.wrapping_sub(other.sec);
+        let mut nsec = self.nsec.wrapping_sub(other.nsec);
+        if nsec < 0 { sec = sec.wrapping_sub(1); nsec = nsec.wrapping_add(Self::NS_PER_S); }
+        Timespec { sec, nsec }
+    }
+
+    pub fn order(&self, other: &Timespec) -> core::cmp::Ordering {
+        match self.sec.cmp(&other.sec) {
+            core::cmp::Ordering::Equal => self.nsec.cmp(&other.nsec),
+            o => o,
+        }
+    }
+
+    /// Nanoseconds (saturating at `u64::MAX`).
+    pub fn ns(&self) -> u64 {
+        if self.sec <= 0 { return self.nsec.max(0) as u64; }
+        let s_ns = (self.sec as u64).checked_mul(Self::NS_PER_S as u64).unwrap_or(u64::MAX);
+        s_ns.checked_add(self.nsec.max(0) as u64).unwrap_or(u64::MAX)
+    }
+
+    /// Milliseconds (signed, wrapping).
+    #[inline] pub fn ms(&self) -> i64 {
+        self.sec.wrapping_mul(1000).wrapping_add(self.nsec.div_euclid(Self::NS_PER_MS))
+    }
+    #[inline] pub fn ms_unsigned(&self) -> u64 { self.ns() / Self::NS_PER_MS as u64 }
+
+    #[inline] pub fn greater(&self, other: &Timespec) -> bool { self.order(other).is_gt() }
+
+    pub fn add_ms(&self, interval: i64) -> Timespec {
+        let sec_inc = interval / 1000;
+        let nsec_inc = (interval % 1000) * Self::NS_PER_MS;
+        let mut t = *self;
+        t.sec = t.sec.wrapping_add(sec_inc);
+        t.nsec = t.nsec.wrapping_add(nsec_inc);
+        if t.nsec >= Self::NS_PER_S { t.sec = t.sec.wrapping_add(1); t.nsec -= Self::NS_PER_S; }
+        t
+    }
+
+    #[inline] pub fn min(a: Timespec, b: Timespec) -> Timespec { if a.order(&b).is_lt() { a } else { b } }
+    #[inline] pub fn max(a: Timespec, b: Timespec) -> Timespec { if a.order(&b).is_gt() { a } else { b } }
+
+    /// `bun.timespec.now(.allow_mocked_time)` — monotonic-ish "rough tick".
+    /// Real impl routes through `getRoughTickCount` (jsc); tier-0 reads the
+    /// monotonic clock directly. Mocked-time hook installed by bun_jsc at
+    /// startup via `set_now_hook`.
+    #[inline]
+    pub fn now(_mode: TimespecMockMode) -> Timespec {
+        if let Some(hook) = NOW_HOOK.load() { return hook(); }
+        Self::now_real()
+    }
+    /// Convenience for `now(AllowMockedTime)` (downstream short-name).
+    #[inline] pub fn now_allow_mocked_time() -> Timespec { Self::now(TimespecMockMode::AllowMockedTime) }
+
+    fn now_real() -> Timespec {
+        #[cfg(unix)]
+        unsafe {
+            let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+            libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
+            Timespec { sec: ts.tv_sec as i64, nsec: ts.tv_nsec as i64 }
+        }
+        #[cfg(not(unix))]
+        {
+            let n = crate::time::nano_timestamp();
+            Timespec { sec: (n / 1_000_000_000) as i64, nsec: (n % 1_000_000_000) as i64 }
+        }
+    }
+
+    #[inline] pub fn since_now(&self, mode: TimespecMockMode) -> u64 { Self::now(mode).duration(self).ns() }
+    #[inline] pub fn ms_from_now(mode: TimespecMockMode, interval: i64) -> Timespec { Self::now(mode).add_ms(interval) }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum TimespecMockMode { AllowMockedTime, ForceRealTime }
+
+/// `bun_core::timespec::Mode` namespace shim — Zig nested it under the struct;
+/// Rust can't do inherent associated types stably, so expose a module with the
+/// same path. Callers write `bun_core::timespec_mode::AllowMockedTime` or use
+/// the `Timespec::now_allow_mocked_time()` helper.
+pub mod timespec_mode {
+    pub use super::TimespecMockMode::*;
+    pub type Mode = super::TimespecMockMode;
+}
+
+/// Mocked-time injection hook (set by bun_jsc when `useFakeTimers` is active).
+struct NowHookSlot(core::sync::atomic::AtomicPtr<()>);
+impl NowHookSlot {
+    const fn new() -> Self { Self(core::sync::atomic::AtomicPtr::new(core::ptr::null_mut())) }
+    fn load(&self) -> Option<fn() -> Timespec> {
+        let p = self.0.load(AOrdering::Relaxed);
+        if p.is_null() { None } else { Some(unsafe { core::mem::transmute::<*mut (), fn() -> Timespec>(p) }) }
+    }
+}
+static NOW_HOOK: NowHookSlot = NowHookSlot::new();
+pub fn set_timespec_now_hook(hook: Option<fn() -> Timespec>) {
+    NOW_HOOK.0.store(
+        hook.map(|f| f as *mut ()).unwrap_or(core::ptr::null_mut()),
+        AOrdering::Relaxed,
+    );
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bun_core/util.zig (235 lines)

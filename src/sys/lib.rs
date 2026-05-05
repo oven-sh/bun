@@ -164,7 +164,11 @@ pub use bun_core::{Fd, FdNative, FdKind, FdOptional, Stdio, Mode, FileKind, kind
 /// `std.posix.socket_t` — `c_int` on POSIX, `SOCKET` (`usize`) on Windows.
 #[cfg(not(windows))] pub type SocketT = core::ffi::c_int;
 #[cfg(windows)] pub type SocketT = usize;
-pub use bun_errno::{E, S, SystemErrno, get_errno, posix};
+pub use bun_errno::{E, S, SystemErrno, get_errno, GetErrno};
+// `bun_errno::posix` is the small move-down stub (mode_t/E/S/errno). The full
+// `std.posix` surface dependents need (`Sigaction`, `getrlimit`, `tcgetattr`,
+// raw `read`/`write`/`poll`, …) is widened below in this crate's own `posix`
+// module which re-exports the errno stub and layers libc on top.
 
 /// `Maybe(T)` — Zig's `union(enum) { result: T, err: Error }`. In Rust this is
 /// just `Result<T, Error>`; keep the alias so Phase-A drafts type-check.
@@ -1173,6 +1177,49 @@ pub mod c {
         #[cfg(unix)] { unsafe { libc::dlsym(handle, name) } }
         #[cfg(windows)] { unsafe { core::ptr::null_mut() } /* GetProcAddress in windows mod */ }
     }
+
+    /// `fork(2)` — POSIX only.
+    #[cfg(unix)]
+    #[inline] pub unsafe fn fork() -> libc::pid_t { unsafe { libc::fork() } }
+
+    // ── Darwin libproc — process introspection (`<libproc.h>`). ──
+    /// `struct proc_bsdinfo` (PROC_PIDTBSDINFO flavour). Fields match the SDK
+    /// header; only `pbi_ppid` is currently consumed.
+    #[cfg(target_os = "macos")]
+    #[repr(C)]
+    pub struct struct_proc_bsdinfo {
+        pub pbi_flags: u32,
+        pub pbi_status: u32,
+        pub pbi_xstatus: u32,
+        pub pbi_pid: u32,
+        pub pbi_ppid: u32,
+        pub pbi_uid: u32,
+        pub pbi_gid: u32,
+        pub pbi_ruid: u32,
+        pub pbi_rgid: u32,
+        pub pbi_svuid: u32,
+        pub pbi_svgid: u32,
+        pub rfu_1: u32,
+        pub pbi_comm: [u8; 16],
+        pub pbi_name: [u8; 32],
+        pub pbi_nfiles: u32,
+        pub pbi_pgid: u32,
+        pub pbi_pjobc: u32,
+        pub e_tdev: u32,
+        pub e_tpgid: u32,
+        pub pbi_nice: i32,
+        pub pbi_start_tvsec: u64,
+        pub pbi_start_tvusec: u64,
+    }
+    #[cfg(target_os = "macos")]
+    pub const PROC_PIDTBSDINFO: c_int = 3;
+    #[cfg(target_os = "macos")]
+    unsafe extern "C" {
+        /// `proc_pidinfo(pid, flavor, arg, buffer, buffersize)` — bytes written or ≤0.
+        pub fn proc_pidinfo(pid: c_int, flavor: c_int, arg: u64, buffer: *mut c_void, buffersize: c_int) -> c_int;
+        /// `proc_listchildpids(ppid, buffer, buffersize)` — count of pids written.
+        pub fn proc_listchildpids(ppid: c_int, buffer: *mut c_void, buffersize: c_int) -> c_int;
+    }
 }
 
 // ── `bun.linux` / `std.os.linux` — raw kernel syscalls (Linux only). ──
@@ -1182,9 +1229,107 @@ pub mod linux {
     pub use libc::pollfd;
     pub use libc::epoll_event;
 
+    /// `std.os.linux.timespec` — Zig-shape (`sec`/`nsec`, no `tv_` prefix).
+    /// Layout-identical to `libc::timespec` so a `*const timespec` can be
+    /// passed straight to `syscall(SYS_futex, ..)`.
+    #[repr(C)] #[derive(Clone, Copy)]
+    pub struct timespec {
+        pub sec: libc::time_t,
+        pub nsec: libc::c_long,
+    }
+
     /// `std.os.linux.E` — errno; aliased to `bun_errno::E`.
     pub type Errno = super::E;
     #[inline] pub fn errno() -> c_int { super::last_errno() }
+
+    /// `std.os.linux.E` — kernel errno enum with unprefixed variants and
+    /// `init(rc)` decoding the `-errno`-in-return-value Linux raw-syscall ABI.
+    /// Newtype (not an alias of `bun_errno::E`) because callers match on
+    /// `E::AGAIN`/`E::INTR` (no `E` prefix).
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    #[repr(transparent)]
+    pub struct E(pub u16);
+    impl E {
+        pub const SUCCESS:  E = E(0);
+        pub const PERM:     E = E(libc::EPERM as u16);
+        pub const NOENT:    E = E(libc::ENOENT as u16);
+        pub const INTR:     E = E(libc::EINTR as u16);
+        pub const AGAIN:    E = E(libc::EAGAIN as u16);
+        pub const NOMEM:    E = E(libc::ENOMEM as u16);
+        pub const FAULT:    E = E(libc::EFAULT as u16);
+        pub const INVAL:    E = E(libc::EINVAL as u16);
+        pub const NOSYS:    E = E(libc::ENOSYS as u16);
+        pub const TIMEDOUT: E = E(libc::ETIMEDOUT as u16);
+        /// Decode a raw Linux syscall return (`-errno` on failure, ≥0 on success).
+        #[inline]
+        pub fn init(rc: isize) -> E {
+            // Zig: `if (rc > -4096) @enumFromInt(-rc) else .SUCCESS`.
+            let u = rc as usize;
+            if u > (-4096isize) as usize { E((u.wrapping_neg()) as u16) } else { E::SUCCESS }
+        }
+    }
+    impl From<E> for &'static str {
+        fn from(e: E) -> &'static str {
+            bun_errno::SystemErrno::init(e.0 as i64).map(<&str>::from).unwrap_or("UNKNOWN")
+        }
+    }
+
+    // ── epoll ──
+    /// `std.os.linux.EPOLL` — flag/op constants. Exposed both as a module
+    /// (`linux::EPOLL::IN`) and flat (`linux::EPOLL_IN`) since callers use both.
+    pub mod EPOLL {
+        pub const IN:      u32 = libc::EPOLLIN as u32;
+        pub const OUT:     u32 = libc::EPOLLOUT as u32;
+        pub const ERR:     u32 = libc::EPOLLERR as u32;
+        pub const HUP:     u32 = libc::EPOLLHUP as u32;
+        pub const RDHUP:   u32 = libc::EPOLLRDHUP as u32;
+        pub const ET:      u32 = libc::EPOLLET as u32;
+        pub const ONESHOT: u32 = libc::EPOLLONESHOT as u32;
+        pub const CTL_ADD: i32 = libc::EPOLL_CTL_ADD;
+        pub const CTL_MOD: i32 = libc::EPOLL_CTL_MOD;
+        pub const CTL_DEL: i32 = libc::EPOLL_CTL_DEL;
+    }
+    pub const EPOLL_IN:      u32 = EPOLL::IN;
+    pub const EPOLL_OUT:     u32 = EPOLL::OUT;
+    pub const EPOLL_ERR:     u32 = EPOLL::ERR;
+    pub const EPOLL_HUP:     u32 = EPOLL::HUP;
+    pub const EPOLL_RDHUP:   u32 = EPOLL::RDHUP;
+    pub const EPOLL_ET:      u32 = EPOLL::ET;
+    pub const EPOLL_ONESHOT: u32 = EPOLL::ONESHOT;
+    pub const EPOLL_CTL_ADD: i32 = EPOLL::CTL_ADD;
+    pub const EPOLL_CTL_MOD: i32 = EPOLL::CTL_MOD;
+    pub const EPOLL_CTL_DEL: i32 = EPOLL::CTL_DEL;
+
+    // ── futex ──
+    /// `std.os.linux.FUTEX` op (cmd + private flag), packed as Zig does.
+    #[derive(Clone, Copy)]
+    pub struct FutexOp { pub cmd: FutexCmd, pub private: bool }
+    impl FutexOp {
+        #[inline] fn raw(self) -> c_int {
+            self.cmd as c_int | if self.private { libc::FUTEX_PRIVATE_FLAG } else { 0 }
+        }
+    }
+    #[derive(Clone, Copy)] #[repr(i32)]
+    pub enum FutexCmd {
+        WAIT = libc::FUTEX_WAIT,
+        WAKE = libc::FUTEX_WAKE,
+        REQUEUE = libc::FUTEX_REQUEUE,
+        WAIT_BITSET = libc::FUTEX_WAIT_BITSET,
+        WAKE_BITSET = libc::FUTEX_WAKE_BITSET,
+    }
+    /// `syscall(SYS_futex, uaddr, op, val)` — 3-arg form (WAKE).
+    /// Returns the raw kernel rc (decode with `E::init`).
+    #[inline]
+    pub unsafe fn futex_3arg(uaddr: *const u32, op: FutexOp, val: u32) -> isize {
+        unsafe { libc::syscall(libc::SYS_futex, uaddr, op.raw(), val) as isize }
+    }
+    /// `syscall(SYS_futex, uaddr, op, val, timeout)` — 4-arg form (WAIT).
+    #[inline]
+    pub unsafe fn futex_4arg(
+        uaddr: *const u32, op: FutexOp, val: u32, timeout: *const timespec,
+    ) -> isize {
+        unsafe { libc::syscall(libc::SYS_futex, uaddr, op.raw(), val, timeout) as isize }
+    }
 
     /// inotify mask flags (`std.os.linux.IN`).
     pub mod IN {
@@ -1312,6 +1457,31 @@ pub mod darwin {
             os_log::Signpost { log: self, name }
         }
     }
+    /// `std.c.EVFILT` — kqueue filter constants.
+    pub mod EVFILT {
+        pub const READ:   i16 = libc::EVFILT_READ;
+        pub const WRITE:  i16 = libc::EVFILT_WRITE;
+        pub const VNODE:  i16 = libc::EVFILT_VNODE;
+        pub const PROC:   i16 = libc::EVFILT_PROC;
+        pub const SIGNAL: i16 = libc::EVFILT_SIGNAL;
+        pub const TIMER:  i16 = libc::EVFILT_TIMER;
+        pub const USER:   i16 = libc::EVFILT_USER;
+        pub const MACHPORT: i16 = libc::EVFILT_MACHPORT;
+    }
+    /// Darwin `struct kevent64_s` (extended kevent with 2-slot `ext[]`).
+    pub use libc::kevent64_s;
+    /// `kevent64()` — Darwin's wider kevent. Thin re-export so callers don't
+    /// need a direct `libc` dep.
+    #[inline]
+    pub unsafe fn kevent64(
+        kq: core::ffi::c_int,
+        changelist: *const kevent64_s, nchanges: core::ffi::c_int,
+        eventlist: *mut kevent64_s, nevents: core::ffi::c_int,
+        flags: core::ffi::c_uint, timeout: *const libc::timespec,
+    ) -> core::ffi::c_int {
+        unsafe { libc::kevent64(kq, changelist, nchanges, eventlist, nevents, flags, timeout) }
+    }
+
     pub mod os_log {
         pub struct Signpost<'a> { pub log: &'a super::OSLog, pub name: i32 }
         impl<'a> Signpost<'a> {
@@ -1754,6 +1924,16 @@ pub fn copy_file(in_: Fd, out: Fd) -> Maybe<()> {
     }
 }
 
+/// `bun.makePath` — free-fn form taking a `Dir` (Zig: `bun.makePath(dir, sub)`).
+#[inline]
+pub fn make_path(dir: Dir, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
+    mkdir_recursive_at(dir.fd, sub_path).map_err(Into::into)
+}
+/// `bun.mkdirRecursive` — like `make_path` but cwd-relative, taking a slice.
+#[inline]
+pub fn mkdir_recursive(sub_path: &[u8]) -> Maybe<()> {
+    mkdir_recursive_at(Fd::cwd(), sub_path)
+}
 /// bun.zig:2319 — Windows-only `makePath` over UTF-16. On POSIX, transcodes
 /// to UTF-8 and delegates to `mkdir_recursive_at`.
 pub fn make_path_w(dir: Fd, sub_path: &[u16]) -> Maybe<()> {
@@ -1774,6 +1954,457 @@ pub fn make_path_w(dir: Fd, sub_path: &[u16]) -> Maybe<()> {
     }
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// `std.posix` — wider surface than `bun_errno::posix` (which only has
+// mode_t/E/S/errno). Dependents (`bun_resolver`, `bun_md`, `bun_crash`,
+// `bun_threading`) reach for `Sigaction`, `getrlimit`, `tcgetattr`, raw
+// `read`/`write`/`poll`, `dl_iterate_phdr` etc. We re-export the errno stub
+// and layer the libc bits on top so `bun_sys::posix::*` is the single import.
+// ──────────────────────────────────────────────────────────────────────────
+pub mod posix {
+    use core::ffi::{c_int, c_void};
+    pub use bun_errno::posix::*;
+
+    // ── signals ──
+    #[cfg(unix)] pub use libc::sigaction as Sigaction;
+    #[cfg(unix)] pub use libc::siginfo_t;
+    #[cfg(unix)] pub use libc::sigset_t;
+    /// `std.posix.sigaction(sig, &act, *oact)`.
+    #[cfg(unix)]
+    #[inline]
+    pub unsafe fn sigaction(
+        sig: c_int, act: *const Sigaction, oact: *mut Sigaction,
+    ) -> c_int {
+        unsafe { libc::sigaction(sig, act, oact) }
+    }
+
+    // ── time ──
+    #[cfg(unix)] pub use libc::timespec;
+    #[cfg(windows)]
+    #[repr(C)] #[derive(Clone, Copy, Default)]
+    pub struct timespec { pub tv_sec: i64, pub tv_nsec: i64 }
+
+    // ── raw I/O (no `Maybe` wrapping; Zig: `std.posix.read/write`) ──
+    #[cfg(unix)]
+    #[inline]
+    pub unsafe fn read(fd: c_int, buf: *mut u8, count: usize) -> isize {
+        unsafe { libc::read(fd, buf.cast(), count) }
+    }
+    #[cfg(unix)]
+    #[inline]
+    pub unsafe fn write(fd: c_int, buf: *const u8, count: usize) -> isize {
+        unsafe { libc::write(fd, buf.cast(), count) }
+    }
+
+    // ── poll ──
+    /// `std.posix.pollfd`.
+    #[cfg(unix)]
+    #[repr(C)] #[derive(Clone, Copy)]
+    pub struct PollFd { pub fd: c_int, pub events: i16, pub revents: i16 }
+    #[cfg(unix)] pub const POLL_IN: i16 = libc::POLLIN;
+    #[cfg(unix)] pub const POLL_OUT: i16 = libc::POLLOUT;
+    /// `std.posix.poll(fds, timeout_ms)` — returns count ready or error.
+    #[cfg(unix)]
+    pub fn poll(fds: &mut [PollFd], timeout_ms: c_int) -> core::result::Result<c_int, super::Error> {
+        // SAFETY: PollFd is layout-identical to libc::pollfd.
+        let rc = unsafe { libc::poll(fds.as_mut_ptr().cast(), fds.len() as _, timeout_ms) };
+        if rc < 0 { return Err(super::err_with(super::Tag::ppoll)); }
+        Ok(rc)
+    }
+
+    // ── termios ──
+    #[cfg(unix)] pub use libc::termios as Termios;
+    #[cfg(unix)]
+    #[derive(Clone, Copy)] #[repr(i32)]
+    pub enum TCSA { Now = libc::TCSANOW, Drain = libc::TCSADRAIN, Flush = libc::TCSAFLUSH }
+    #[cfg(unix)]
+    pub fn tcgetattr(fd: c_int) -> core::result::Result<Termios, super::Error> {
+        let mut t = core::mem::MaybeUninit::<Termios>::uninit();
+        // SAFETY: tcgetattr fully initializes `t` on success.
+        let rc = unsafe { libc::tcgetattr(fd, t.as_mut_ptr()) };
+        if rc < 0 { return Err(super::err_with(super::Tag::ioctl)); }
+        Ok(unsafe { t.assume_init() })
+    }
+    #[cfg(unix)]
+    pub fn tcsetattr(fd: c_int, action: TCSA, t: &Termios) -> core::result::Result<(), super::Error> {
+        // SAFETY: t is a valid termios.
+        let rc = unsafe { libc::tcsetattr(fd, action as c_int, t) };
+        if rc < 0 { return Err(super::err_with(super::Tag::ioctl)); }
+        Ok(())
+    }
+
+    // ── rlimit ──
+    #[cfg(unix)]
+    #[repr(C)] #[derive(Clone, Copy)]
+    pub struct Rlimit { pub cur: u64, pub max: u64 }
+    #[cfg(unix)]
+    #[derive(Clone, Copy)] #[repr(i32)]
+    pub enum RlimitResource {
+        NOFILE = libc::RLIMIT_NOFILE as _,
+        STACK  = libc::RLIMIT_STACK as _,
+        CORE   = libc::RLIMIT_CORE as _,
+    }
+    #[cfg(unix)]
+    pub fn getrlimit(res: RlimitResource) -> core::result::Result<Rlimit, super::Error> {
+        let mut r = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+        // SAFETY: r is written on success.
+        let rc = unsafe { libc::getrlimit(res as _, &mut r) };
+        if rc < 0 { return Err(super::err_with(super::Tag::TODO)); }
+        Ok(Rlimit { cur: r.rlim_cur as u64, max: r.rlim_max as u64 })
+    }
+    #[cfg(unix)]
+    pub fn setrlimit(res: RlimitResource, lim: Rlimit) -> core::result::Result<(), super::Error> {
+        let r = libc::rlimit { rlim_cur: lim.cur as _, rlim_max: lim.max as _ };
+        // SAFETY: r is a valid rlimit.
+        let rc = unsafe { libc::setrlimit(res as _, &r) };
+        if rc < 0 { return Err(super::err_with(super::Tag::TODO)); }
+        Ok(())
+    }
+
+    // ── dynamic loading (Linux/FreeBSD) ──
+    /// `std.posix.dl_iterate_phdr` — iterate loaded ELF objects.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[inline]
+    pub unsafe fn dl_iterate_phdr(
+        callback: unsafe extern "C" fn(*mut libc::dl_phdr_info, usize, *mut c_void) -> c_int,
+        data: *mut c_void,
+    ) -> c_int {
+        unsafe { libc::dl_iterate_phdr(Some(callback), data) }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// `std.net` — socket address. Minimal port of Zig's `std.net.Address`
+// (just the sockaddr union + a couple of constructors; full resolver lives in
+// `bun_dns`). Dependents only need the data shape + Display.
+// ──────────────────────────────────────────────────────────────────────────
+pub mod net {
+    use core::fmt;
+
+    /// `std.net.Address` — tagged union over sockaddr_in/in6/un.
+    #[derive(Clone, Copy)]
+    pub struct Address {
+        /// Generic storage; `family()` discriminates.
+        pub any: libc::sockaddr_storage,
+    }
+    impl Address {
+        /// Construct from a borrowed `*const sockaddr` (Zig: `Address.initPosix`).
+        /// SAFETY: `addr` must point at a valid sockaddr of the family it declares.
+        pub unsafe fn init_posix(addr: *const libc::sockaddr) -> Self {
+            let mut storage: libc::sockaddr_storage = unsafe { core::mem::zeroed() };
+            let len = match unsafe { (*addr).sa_family } as i32 {
+                libc::AF_INET => core::mem::size_of::<libc::sockaddr_in>(),
+                libc::AF_INET6 => core::mem::size_of::<libc::sockaddr_in6>(),
+                _ => core::mem::size_of::<libc::sockaddr>(),
+            };
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    addr.cast::<u8>(),
+                    (&mut storage as *mut libc::sockaddr_storage).cast::<u8>(),
+                    len,
+                );
+            }
+            Self { any: storage }
+        }
+        #[inline] pub fn family(&self) -> i32 { self.any.ss_family as i32 }
+        #[inline] pub fn as_sockaddr(&self) -> *const libc::sockaddr {
+            (&self.any as *const libc::sockaddr_storage).cast()
+        }
+        #[inline] pub fn sock_len(&self) -> u32 {
+            match self.family() {
+                libc::AF_INET => core::mem::size_of::<libc::sockaddr_in>() as u32,
+                libc::AF_INET6 => core::mem::size_of::<libc::sockaddr_in6>() as u32,
+                _ => core::mem::size_of::<libc::sockaddr_storage>() as u32,
+            }
+        }
+    }
+    impl Default for Address {
+        fn default() -> Self { Self { any: unsafe { core::mem::zeroed() } } }
+    }
+    impl fmt::Display for Address {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            // PORT NOTE: Zig's std.net.Address.format prints "ip:port"/"[ip6]:port".
+            // Minimal: print family for now; full impl in `bun_dns::address_to_string`.
+            match self.family() {
+                libc::AF_INET => {
+                    // SAFETY: family checked.
+                    let v4 = unsafe { &*(self.as_sockaddr().cast::<libc::sockaddr_in>()) };
+                    let octets = v4.sin_addr.s_addr.to_ne_bytes();
+                    write!(f, "{}.{}.{}.{}:{}", octets[0], octets[1], octets[2], octets[3], u16::from_be(v4.sin_port))
+                }
+                _ => write!(f, "<addr family={}>", self.family()),
+            }
+        }
+    }
+}
+
+/// `std.elf` constants (just what `bun_exe_format`/`bun_crash` need).
+pub mod elf {
+    pub const PT_NULL: u32 = 0;
+    pub const PT_LOAD: u32 = 1;
+    pub const PT_DYNAMIC: u32 = 2;
+    pub const PT_INTERP: u32 = 3;
+    pub const PT_NOTE: u32 = 4;
+    pub const PT_PHDR: u32 = 6;
+    pub const PT_TLS: u32 = 7;
+    pub const PT_GNU_STACK: u32 = 0x6474e551;
+}
+
+/// FreeBSD platform surface.
+#[cfg(target_os = "freebsd")]
+pub mod freebsd {
+    /// `struct kevent` (FreeBSD).
+    pub type Kevent = libc::kevent;
+}
+#[cfg(not(target_os = "freebsd"))]
+pub mod freebsd {}
+
+// ──────────────────────────────────────────────────────────────────────────
+// `Dir` — `std.fs.Dir` replacement. Thin wrapper over `Fd`; close on Drop is
+// NOT done (matches Zig — callers explicitly `.close()` or hold for lifetime).
+// ──────────────────────────────────────────────────────────────────────────
+#[derive(Clone, Copy)]
+pub struct Dir { pub fd: Fd }
+
+/// Options for `Dir::make_open_path` (Zig: `std.fs.Dir.OpenOptions`).
+#[derive(Clone, Copy, Default)]
+pub struct OpenDirOptions {
+    pub iterate: bool,
+    pub no_follow: bool,
+}
+
+impl Dir {
+    #[inline] pub fn from_fd(fd: Fd) -> Self { Self { fd } }
+    #[inline] pub fn fd(&self) -> Fd { self.fd }
+    #[inline] pub fn cwd() -> Self { Self { fd: Fd::cwd() } }
+    #[inline] pub fn close(self) { let _ = close(self.fd); }
+
+    /// `std.fs.Dir.makePath` — `mkdir -p` relative to this dir.
+    #[inline]
+    pub fn make_path(&self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
+        mkdir_recursive_at(self.fd, sub_path).map_err(Into::into)
+    }
+    /// `std.fs.Dir.makeOpenPath` — `makePath` then `openDir`.
+    pub fn make_open_path(&self, sub_path: &[u8], _opts: OpenDirOptions)
+        -> core::result::Result<Dir, bun_core::Error>
+    {
+        mkdir_recursive_at(self.fd, sub_path)?;
+        open_dir_at(self.fd, sub_path).map(Dir::from_fd).map_err(Into::into)
+    }
+    /// `std.fs.Dir.deleteTree` — recursive `rm -rf`. Port stub: routes via
+    /// `walker_skippable` once that lands; for now best-effort `unlinkat`.
+    pub fn delete_tree(&self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
+        // TODO(b2): full recursive walk (Zig std.fs.Dir.deleteTree). For B-2
+        // surface this is best-effort: try `rmdir`, then `unlink`, ignoring ENOENT.
+        let mut buf = bun_paths::PathBuffer::default();
+        let len = sub_path.len().min(buf.0.len() - 1);
+        buf.0[..len].copy_from_slice(&sub_path[..len]);
+        buf.0[len] = 0;
+        // SAFETY: NUL-terminated above.
+        let z = unsafe { ZStr::from_raw(buf.0.as_ptr(), len) };
+        #[cfg(unix)]
+        match unlinkat(self.fd, z, libc::AT_REMOVEDIR) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.get_errno() == E::ENOENT => return Ok(()),
+            Err(e) if e.get_errno() == E::ENOTDIR => {
+                return unlinkat(self.fd, z, 0).map_err(Into::into);
+            }
+            Err(e) if e.get_errno() == E::ENOTEMPTY => {
+                // Full recursive impl pending; surface the error so callers can react.
+                return Err(e.into());
+            }
+            Err(e) => return Err(e.into()),
+        }
+        #[cfg(windows)]
+        Err(bun_core::err!("Unimplemented"))
+    }
+}
+
+/// `std.fs.Dir.makeOpenPath` reachable as a module (Zig callers do
+/// `bun.makePath` / `bun.makeOpenPath`).
+pub mod make_path {
+    use super::*;
+    #[inline]
+    pub fn make_open_path(dir: Dir, sub_path: &[u8], opts: OpenDirOptions)
+        -> core::result::Result<Dir, bun_core::Error>
+    {
+        dir.make_open_path(sub_path, opts)
+    }
+}
+
+// `Fd` parity: `Fd::cwd().make_open_path(..)` / `.make_path(..)` are used by
+// `bun_install` and `bun_bundler` directly on `Fd`. Extension trait so we
+// don't fight with `bun_core`'s inherent impl.
+pub trait FdDirExt: Copy {
+    fn make_path(self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error>;
+    fn make_open_path(self, sub_path: &[u8]) -> core::result::Result<Dir, bun_core::Error>;
+    fn from_std_dir(dir: &Dir) -> Self;
+}
+impl FdDirExt for Fd {
+    #[inline]
+    fn make_path(self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
+        mkdir_recursive_at(self, sub_path).map_err(Into::into)
+    }
+    #[inline]
+    fn make_open_path(self, sub_path: &[u8]) -> core::result::Result<Dir, bun_core::Error> {
+        Dir::from_fd(self).make_open_path(sub_path, OpenDirOptions::default())
+    }
+    #[inline]
+    fn from_std_dir(dir: &Dir) -> Fd { dir.fd }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// open helpers (additional)
+// ──────────────────────────────────────────────────────────────────────────
+
+bitflags::bitflags! {
+    /// `std.fs.File.OpenFlags` — convenience flagset for `open_file*` helpers.
+    #[derive(Clone, Copy, Default)]
+    pub struct OpenFlags: i32 {
+        const READ_ONLY  = O::RDONLY;
+        const WRITE_ONLY = O::WRONLY;
+        const READ_WRITE = O::RDWR;
+        const CREATE     = O::CREAT;
+        const TRUNCATE   = O::TRUNC;
+        const APPEND     = O::APPEND;
+        const EXCLUSIVE  = O::EXCL;
+    }
+}
+
+/// `std.fs.openFileAbsoluteZ` — open an absolute, NUL-terminated path.
+#[inline]
+pub fn open_file_absolute_z(path: &ZStr, flags: OpenFlags) -> Maybe<File> {
+    open(path, flags.bits() | O::CLOEXEC, 0).map(File::from_fd)
+}
+/// `std.fs.cwd().openFile` — non-NUL-terminated convenience.
+#[inline]
+pub fn open_file(path: &[u8], flags: OpenFlags) -> Maybe<File> {
+    open_a(path, flags.bits() | O::CLOEXEC, 0).map(File::from_fd)
+}
+/// bun.zig:883 — `openDirForIteration(dir, sub)`.
+#[inline]
+pub fn open_dir_for_iteration(dir: Fd, path: &[u8]) -> Maybe<Fd> {
+    open_dir_at(dir, path)
+}
+/// `bun.iterateDir(dir)` — convenience wrapper around `dir_iterator::iterate`.
+#[inline]
+pub fn iterate_dir(dir: Fd) -> dir_iterator::WrappedIterator {
+    dir_iterator::iterate(dir)
+}
+/// sys.zig:4246 — open `from` then delegate to `move_file_z_with_handle`.
+pub fn move_file_z(from_dir: Fd, filename: &ZStr, to_dir: Fd, destination: &ZStr)
+    -> core::result::Result<(), bun_core::Error>
+{
+    let handle = openat(from_dir, filename, O::RDONLY | O::CLOEXEC, 0)?;
+    let r = move_file_z_with_handle(handle, from_dir, filename, to_dir, destination);
+    let _ = close(handle);
+    r
+}
+/// `renameatZ` alias (bun_install reaches for it as the NUL-terminated form).
+#[inline]
+pub fn renameat_z(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> Maybe<()> {
+    renameat(from_dir, from, to_dir, to)
+}
+
+/// Linux `eventfd(initval, flags)` — kernel notification fd.
+#[cfg(target_os = "linux")]
+pub fn eventfd(initval: u32, flags: i32) -> Maybe<Fd> {
+    // SAFETY: eventfd(2) is safe to call with any args.
+    let rc = unsafe { libc::eventfd(initval, flags) };
+    if rc < 0 { return Err(err_with(Tag::open)); }
+    Ok(Fd::from_native(rc))
+}
+
+/// `bun.Output.stderrWriter()` — `std::io::Write` over stderr fd. Used by
+/// callers that want a borrowed writer without going through `bun_core::Output`.
+#[inline]
+pub fn stderr_writer() -> FileWriter { FileWriter(Fd::stderr()) }
+
+// ──────────────────────────────────────────────────────────────────────────
+// `NodeFS::writeFileWithPathBuffer` — CYCLEBREAK MOVE_DOWN landing.
+//
+// Real impl lives in `bun_runtime::node::node_fs` (T6, takes JS encodings,
+// JSArrayBuffer, etc). Bundler (T4) needs a sync write that doesn't pull JSC.
+// This is the minimal shape: `Buffer` data + `Path` target → openat+write+close.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Data payload for `write_file_with_path_buffer`.
+pub enum WriteFileData<'a> {
+    Buffer { buffer: &'a [u8] },
+    // T6 adds `String { value, encoding }` / `ArrayBuffer { .. }`.
+}
+/// Encoding tag (only `Buffer` is honoured at T1).
+#[derive(Clone, Copy, Default)]
+pub enum WriteFileEncoding { #[default] Buffer }
+/// Target — path (relative to `dirfd`) or an already-open fd.
+pub enum PathOrFileDescriptor {
+    Path(bun_string::PathString),
+    Fd(Fd),
+}
+impl Default for PathOrFileDescriptor {
+    fn default() -> Self { PathOrFileDescriptor::Fd(Fd::INVALID) }
+}
+/// Args struct (Zig: anon-struct init at call sites).
+pub struct WriteFileArgs<'a> {
+    pub data: WriteFileData<'a>,
+    pub encoding: WriteFileEncoding,
+    pub dirfd: Fd,
+    pub file: PathOrFileDescriptor,
+    pub mode: Mode,
+}
+impl<'a> Default for WriteFileArgs<'a> {
+    fn default() -> Self {
+        Self {
+            data: WriteFileData::Buffer { buffer: &[] },
+            encoding: WriteFileEncoding::Buffer,
+            dirfd: Fd::cwd(),
+            file: PathOrFileDescriptor::default(),
+            mode: 0o666,
+        }
+    }
+}
+/// `NodeFS::writeFileWithPathBuffer` — sync `openat(CREAT|TRUNC)` + write_all.
+/// `path_buf` is a scratch buffer for NUL-terminating the relative path.
+pub fn write_file_with_path_buffer(
+    path_buf: &mut bun_paths::PathBuffer,
+    args: WriteFileArgs<'_>,
+) -> Maybe<usize> {
+    let WriteFileData::Buffer { buffer } = args.data;
+    let fd = match args.file {
+        PathOrFileDescriptor::Fd(fd) => fd,
+        PathOrFileDescriptor::Path(ref p) => {
+            let bytes = p.slice();
+            if bytes.len() >= path_buf.0.len() {
+                return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::open).with_path(bytes));
+            }
+            path_buf.0[..bytes.len()].copy_from_slice(bytes);
+            path_buf.0[bytes.len()] = 0;
+            // SAFETY: NUL-terminated above.
+            let z = unsafe { ZStr::from_raw(path_buf.0.as_ptr(), bytes.len()) };
+            openat(args.dirfd, z, O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC, args.mode)?
+        }
+    };
+    let r = File::from_fd(fd).write_all(buffer);
+    if !matches!(args.file, PathOrFileDescriptor::Fd(_)) { let _ = close(fd); }
+    r.map(|_| buffer.len())
+}
+
+/// `bun.fetchCacheDirectoryPath` — resolve `$BUN_INSTALL_CACHE_DIR` /
+/// `$XDG_CACHE_HOME/.bun/install/cache` / `$HOME/.bun/install/cache`.
+/// PORT NOTE: full env-override chain lives in `bun_install`; this is the
+/// fallback so the symbol resolves at T1. Returns an owned path (caller frees).
+pub fn fetch_cache_directory_path() -> Vec<u8> {
+    if let Some(v) = bun_core::getenv_z(bun_core::zstr!("BUN_INSTALL_CACHE_DIR")) {
+        return v.to_vec();
+    }
+    if let Some(home) = bun_core::getenv_z(bun_core::zstr!("HOME")) {
+        let mut p = home.to_vec();
+        p.extend_from_slice(b"/.bun/install/cache");
+        return p;
+    }
+    b".bun-cache".to_vec()
+}
+
 // ── `bun.fs` — forward stubs for the resolver-FS singleton (T4). ──
 // CYCLEBREAK: real defs live in `bun_resolver::fs`; this gives `bun_install`
 // a stable import path so its `use bun_sys::fs::FileSystem` lines resolve.
@@ -1788,16 +2419,65 @@ pub mod fs {
         pub fn instance() -> &'static FileSystem {
             todo!("b2-blocked: bun_resolver::fs::FileSystem::instance vtable install")
         }
+        /// `fs.abs(parts)` — join `parts` against the cached cwd into a
+        /// thread-local buffer. CYCLEBREAK: real impl in `bun_resolver::fs`;
+        /// this delegates to `bun_paths::join_abs` against process cwd.
+        pub fn abs(&self, parts: &[&[u8]]) -> Vec<u8> {
+            let mut buf = bun_paths::PathBuffer::default();
+            self.abs_buf(parts, &mut buf).to_vec()
+        }
+        /// `fs.absBuf(parts, &mut buf)` — like `abs` but writes into `buf`.
+        pub fn abs_buf<'a>(&self, parts: &[&[u8]], buf: &'a mut bun_paths::PathBuffer) -> &'a [u8] {
+            // PORT NOTE: Zig threads cwd through the FileSystem singleton and
+            // calls `bun_paths::join_abs_string_buf::<Auto>`. That generic is
+            // `PlatformT`-monomorphised; until the resolver vtable lands we do
+            // a simple cwd-prefixed join (no `..` normalization).
+            let mut cwd = bun_paths::PathBuffer::default();
+            let cwd_len = super::getcwd(&mut cwd.0).unwrap_or(0);
+            let mut n = 0usize;
+            let push = |dst: &mut [u8], n: &mut usize, src: &[u8]| {
+                let m = src.len().min(dst.len().saturating_sub(*n));
+                dst[*n..*n + m].copy_from_slice(&src[..m]);
+                *n += m;
+            };
+            // Absolute first part wins; otherwise prefix cwd.
+            let first_abs = parts.first().map(|p| p.first() == Some(&bun_core::SEP)).unwrap_or(false);
+            if !first_abs { push(&mut buf.0, &mut n, &cwd.0[..cwd_len]); }
+            for p in parts {
+                if n > 0 && buf.0.get(n - 1) != Some(&bun_core::SEP) {
+                    push(&mut buf.0, &mut n, &[bun_core::SEP]);
+                }
+                push(&mut buf.0, &mut n, p);
+            }
+            &buf.0[..n]
+        }
+        /// `fs.dirnameStore` — interned-string store for parent dirs.
+        /// Stub: returns the resolver's global store once installed.
+        pub fn dirname_store(&self) -> &'static DirnameStore {
+            static STORE: DirnameStore = DirnameStore { _opaque: [] };
+            &STORE
+        }
+        /// `fs.setMaxFd(fd)` — track highest fd for stat-cache invalidation.
+        /// No-op stub; resolver overrides via vtable.
+        #[inline] pub fn set_max_fd(&self, _fd: super::FdNative) {}
     }
-    /// `bun.fs.Entry` — directory entry cache record.
+    /// `bun.fs.Entry` — single cached directory entry (name + kind).
+    #[repr(C)]
+    pub struct Entry { _opaque: [u8; 0] }
+    /// `bun.fs.DirEntry` — directory entry cache record (name → Entry map).
     #[repr(C)]
     pub struct DirEntry { _opaque: [u8; 0] }
+    /// `bun.fs.FileSystem.DirnameStore` — interned-dirname arena.
+    #[repr(C)]
+    pub struct DirnameStore { _opaque: [u8; 0] }
     /// `bun.fs.EntriesOption` — `Ok(DirEntry)` / `Err(err)`.
     pub enum EntriesOption {
         Entries(*const DirEntry),
         Err(bun_core::Error),
     }
 }
+/// Top-level alias (Zig: `bun.FileSystem`).
+pub type FileSystem = fs::FileSystem;
 
 // ──────────────────────────────────────────────────────────────────────────
 // OUTPUT_SINK — bun_core's stderr vtable, installed by us at init (B-0 hook).

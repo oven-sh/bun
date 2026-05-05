@@ -3,15 +3,16 @@ use core::marker::{PhantomData, PhantomPinned};
 use core::ptr;
 
 use bun_core::ZStr;
-use bun_http_types::Method;
+use bun_http_types::Method::Method;
 
 use crate::{
-    us_socket_t, uws_res, ListenSocket as UwsListenSocket, Opcode, Request, SocketHandler,
+    us_socket_t, uws_res, ListenSocket as UwsListenSocket, Opcode, Request,
     WebSocketBehavior,
 };
 use crate::socket_context::BunSocketContextOptions;
 use crate::response::Response;
-use crate::web_socket::{c::uws_ws, WebSocket};
+use crate::web_socket::c::uws_ws;
+use crate::web_socket::NewWebSocket as WebSocket;
 
 // This file provides Rust bindings for the uWebSockets App class.
 // It wraps the C API exposed in libuwsockets.cpp which provides a C interface
@@ -53,6 +54,9 @@ pub struct App<const SSL: bool> {
     _p: [u8; 0],
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
+
+/// Zig name compatibility (`uws.NewApp(ssl)`).
+pub type NewApp<const SSL: bool> = App<SSL>;
 
 impl<const SSL: bool> App<SSL> {
     pub const IS_SSL: bool = SSL;
@@ -626,17 +630,24 @@ impl<const SSL: bool> ListenSocket<SSL> {
         unsafe { (*(self as *mut Self as *mut UwsListenSocket)).get_local_port() }
     }
 
+    // TODO(b2-blocked): NewSocketHandler::from() not yet wired (see crate::socket).
+    #[cfg(any())]
     pub fn socket(&mut self) -> SocketHandler<SSL> {
         // SAFETY: opaque cast; SocketHandler::from accepts *mut us_socket_t-compatible ptr.
         unsafe { SocketHandler::<SSL>::from((self as *mut Self).cast()) }
     }
 }
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
+#[derive(strum::IntoStaticStr, Debug)]
 pub enum AddServerNameError {
-    #[error("FailedToAddServerName")]
     FailedToAddServerName,
 }
+impl core::fmt::Display for AddServerNameError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(<&'static str>::from(self))
+    }
+}
+impl std::error::Error for AddServerNameError {}
 
 impl From<AddServerNameError> for bun_core::Error {
     fn from(e: AddServerNameError) -> Self {

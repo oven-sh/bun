@@ -9,8 +9,6 @@ use core::ptr;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_boringssl_sys::SSL_CTX;
-// Forward ref: Sha256 wrapper to be provided by bun_boringssl_sys (move-in pass).
-use bun_boringssl_sys::Sha256;
 
 use crate::create_bun_socket_error_t;
 
@@ -89,6 +87,8 @@ impl BunSocketContextOptions {
     /// pointers so the digest is content-addressed (not pointer-addressed).
     /// Two option structs that build the same `SSL_CTX*` produce the same
     /// digest. Used as the key for `SSLContextCache`.
+    // TODO(b2-blocked): bun_boringssl_sys::Sha256 wrapper not yet exported.
+    #[cfg(any())]
     pub fn digest(&self) -> [u8; 32] {
         let mut h = Sha256::init();
 

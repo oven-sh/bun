@@ -21,6 +21,24 @@ unsafe extern "C" {
 }
 
 impl MarkedArgumentBuffer {
+    /// Stack-construct a `MarkedArgumentBuffer` and pass it to `f`. There is no
+    /// heap-allocated owning form (the C++ type is non-movable); `new` is a
+    /// scoped-borrow constructor like Zig's `MarkedArgumentBuffer.run`.
+    pub fn new<R>(f: impl FnOnce(&mut MarkedArgumentBuffer) -> R) -> R {
+        struct Ctx<F, R> { f: Option<F>, r: Option<R> }
+        extern "C" fn run<F, R>(ctx: *mut Ctx<F, R>, args: *mut MarkedArgumentBuffer)
+        where F: FnOnce(&mut MarkedArgumentBuffer) -> R {
+            // SAFETY: `ctx` is the `&mut ctx` passed to `run` below; `args` is the
+            // live stack-allocated buffer C++ hands us.
+            let ctx = unsafe { &mut *ctx };
+            let f = ctx.f.take().unwrap();
+            ctx.r = Some(f(unsafe { &mut *args }));
+        }
+        let mut ctx = Ctx { f: Some(f), r: None };
+        Self::run(&mut ctx, run::<_, R>);
+        ctx.r.unwrap()
+    }
+
     pub fn append(&mut self, value: JSValue) {
         // SAFETY: `self` is a valid `*mut MarkedArgumentBuffer` by construction (only ever
         // obtained from C++ via `MarkedArgumentBuffer__run`'s callback).

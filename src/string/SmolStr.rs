@@ -18,6 +18,19 @@ const _: () = assert!(mem::size_of::<usize>() == 8);
 #[repr(transparent)]
 pub struct SmolStr(u128);
 
+impl Clone for SmolStr {
+    /// Port of `SmolStr.clone` (allocator-free): inlined strings copy by value;
+    /// heap-backed strings duplicate the buffer.
+    fn clone(&self) -> Self {
+        if self.is_inlined() {
+            return SmolStr(self.0);
+        }
+        // Heap-backed: dupe the bytes into a fresh BabyList allocation.
+        // bun.handleOom: panic on OOM (matches Zig allocator semantics).
+        SmolStr::from_slice(self.slice()).expect("OOM")
+    }
+}
+
 const TAG: usize = 0x8000_0000_0000_0000; // bit 63 of the ptr word == bit 127 of the u128
 const NEGATED_TAG: usize = !TAG;
 

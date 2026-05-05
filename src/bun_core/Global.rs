@@ -198,10 +198,12 @@ pub mod features {
         TEXT_LOCKFILE, ISOLATED_BUN_INSTALL, HOISTED_BUN_INSTALL, MACROS, NO_AVX2, NO_AVX,
         SHELL, SPAWN, STANDALONE_EXECUTABLE, STANDALONE_SHELL, TODO_PANIC, TRANSPILER_CACHE,
         TSCONFIG, TSCONFIG_PATHS, VIRTUAL_MODULES, WORKERS_SPAWNED, WORKERS_TERMINATED,
-        NAPI_MODULE_REGISTER, EXITED,
+        NAPI_MODULE_REGISTER, EXITED, YAML_PARSE,
     }
     /// dotenv crate calls `bun_core::analytics::Features::dotenv_inc()`.
     #[inline] pub fn dotenv_inc() { DOTENV.fetch_add(1, core::sync::atomic::Ordering::Relaxed); }
+    /// yaml crate calls `bun_core::analytics::Features::yaml_parse_inc()`.
+    #[inline] pub fn yaml_parse_inc() { YAML_PARSE.fetch_add(1, core::sync::atomic::Ordering::Relaxed); }
 }
 /// Re-export under the `analytics` name so `bun_core::analytics::Features::*` resolves
 /// (per movein-skipped [dotenv] entry).

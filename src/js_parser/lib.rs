@@ -51,7 +51,14 @@ pub mod lexer_tables;
 // TODO(b2-blocked): bun_options_types::schema::api (or bun_schema crate)
 #[cfg(any())]
 #[path = "runtime.rs"]
-pub mod runtime;
+pub mod runtime_full;
+/// `runtime.rs` is gated until its `bun_core`/`bun_options` deps land. Surface
+/// the stub `Runtime` namespace (defined in `parser.rs`) at the path downstream
+/// crates expect (`bun_js_parser::runtime::Runtime::Imports` / `::Features`).
+pub mod runtime {
+    pub use crate::Runtime;
+    pub use crate::Runtime::{Features, Imports, Names, ReplaceableExport};
+}
 
 
 pub use crate::ast::ast_memory_allocator::ASTMemoryAllocator;

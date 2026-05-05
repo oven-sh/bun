@@ -164,6 +164,152 @@ gated_mod!(values, "values/mod.rs", {
             System(SystemColor),
         }
 
+        // ───── conversion impls hoisted from `values/color.rs` (gated) ─────
+        // Real math for the cheap byte↔float paths; the multi-hop colorspace
+        // chains (LAB→XYZd50→XYZd65→SRGBLinear→SRGB) stay `todo!()` until the
+        // full `values/color.rs` un-gates with its matrix tables.
+
+        impl RGBA {
+            #[inline] pub fn red_f32(&self)   -> f32 { self.red   as f32 / 255.0 }
+            #[inline] pub fn green_f32(&self) -> f32 { self.green as f32 / 255.0 }
+            #[inline] pub fn blue_f32(&self)  -> f32 { self.blue  as f32 / 255.0 }
+            /// Returns the alpha channel in floating point form, 0..1.
+            #[inline] pub fn alpha_f32(&self) -> f32 { self.alpha as f32 / 255.0 }
+
+            #[inline]
+            pub fn from_floats(red: f32, green: f32, blue: f32, alpha: f32) -> RGBA {
+                RGBA {
+                    red:   clamp_unit_f32(red),
+                    green: clamp_unit_f32(green),
+                    blue:  clamp_unit_f32(blue),
+                    alpha: clamp_unit_f32(alpha),
+                }
+            }
+
+            #[inline]
+            pub fn into_srgb(&self) -> SRGB {
+                SRGB { r: self.red_f32(), g: self.green_f32(), b: self.blue_f32(), alpha: self.alpha_f32() }
+            }
+        }
+
+        impl SRGB {
+            /// `none` components are NaN; resolve them to 0 before quantizing.
+            #[inline]
+            fn resolve(&self) -> SRGB {
+                #[inline] fn nz(v: f32) -> f32 { if v.is_nan() { 0.0 } else { v } }
+                SRGB { r: nz(self.r), g: nz(self.g), b: nz(self.b), alpha: nz(self.alpha) }
+            }
+            #[inline]
+            pub fn into_rgba(&self) -> RGBA {
+                let rgb = self.resolve();
+                RGBA::from_floats(rgb.r, rgb.g, rgb.b, rgb.alpha)
+            }
+        }
+
+        impl HSL {
+            #[inline]
+            fn resolve_missing(&self) -> HSL {
+                #[inline] fn nz(v: f32) -> f32 { if v.is_nan() { 0.0 } else { v } }
+                HSL { h: nz(self.h), s: nz(self.s), l: nz(self.l), alpha: nz(self.alpha) }
+            }
+            /// https://drafts.csswg.org/css-color/#hsl-to-rgb
+            pub fn into_srgb(&self) -> SRGB {
+                let hsl = self.resolve_missing();
+                let h = (hsl.h - 360.0 * (hsl.h / 360.0).floor()) / 360.0;
+                let (r, g, b) = hsl_to_rgb(h, hsl.s, hsl.l);
+                SRGB { r, g, b, alpha: hsl.alpha }
+            }
+        }
+
+        impl HWB {
+            #[inline]
+            fn resolve_missing(&self) -> HWB {
+                #[inline] fn nz(v: f32) -> f32 { if v.is_nan() { 0.0 } else { v } }
+                HWB { h: nz(self.h), w: nz(self.w), b: nz(self.b), alpha: nz(self.alpha) }
+            }
+            /// https://drafts.csswg.org/css-color/#hwb-to-rgb
+            pub fn into_srgb(&self) -> SRGB {
+                let hwb = self.resolve_missing();
+                if hwb.w + hwb.b >= 1.0 {
+                    let gray = hwb.w / (hwb.w + hwb.b);
+                    return SRGB { r: gray, g: gray, b: gray, alpha: hwb.alpha };
+                }
+                let mut rgba = HSL { h: hwb.h, s: 1.0, l: 0.5, alpha: hwb.alpha }.into_srgb();
+                let x = 1.0 - hwb.w - hwb.b;
+                rgba.r = rgba.r * x + hwb.w;
+                rgba.g = rgba.g * x + hwb.w;
+                rgba.b = rgba.b * x + hwb.w;
+                rgba
+            }
+        }
+
+        impl FloatColor {
+            /// Project any float-color variant into sRGB.
+            #[inline]
+            pub fn into_srgb(&self) -> SRGB {
+                match self {
+                    FloatColor::Rgb(c) => *c,
+                    FloatColor::Hsl(c) => c.into_srgb(),
+                    FloatColor::Hwb(c) => c.into_srgb(),
+                }
+            }
+        }
+
+        impl LABColor {
+            /// Project a LAB-space color into sRGB. The full chain
+            /// (LAB/LCH/OKLAB/OKLCH → XYZd50 → XYZd65 → sRGB-linear → sRGB)
+            /// lives in the gated `values/color.rs` matrix tables; this stub
+            /// keeps the surface available and panics if reached at runtime.
+            pub fn into_srgb(&self) -> SRGB {
+                let _ = self;
+                todo!("bun_css::values::color::LABColor::into_srgb — gated on values/color.rs un-gate")
+            }
+        }
+
+        impl CssColor {
+            /// Parse a CSS `<color>` from the parser cursor. Behavior body lives
+            /// in the gated `values/color.rs::CssColor::parse`.
+            pub fn parse(input: &mut crate::css_parser::Parser<'_>) -> CssColorParseResult {
+                let _ = input;
+                todo!("bun_css::CssColor::parse — gated on css_parser/values un-gate")
+            }
+            /// Serialize this color to CSS text via `dest`.
+            pub fn to_css(&self, dest: &mut crate::printer::Printer<'_>) -> Result<(), crate::PrintErr> {
+                let _ = (self, dest);
+                todo!("bun_css::CssColor::to_css — gated on printer/values un-gate")
+            }
+        }
+
+        #[inline]
+        fn clamp_unit_f32(val: f32) -> u8 {
+            // Scale by 255, round, clamp. Mirrors `values/color.rs::clamp_unit_f32`.
+            (val * 255.0).round().clamp(0.0, 255.0) as u8
+        }
+
+        /// https://drafts.csswg.org/css-color/#hsl-to-rgb (`hue` is 0..1 here).
+        pub fn hsl_to_rgb(hue: f32, saturation: f32, lightness: f32) -> (f32, f32, f32) {
+            #[inline]
+            fn hue_to_rgb(m1: f32, m2: f32, mut h3: f32) -> f32 {
+                if h3 < 0.0 { h3 += 1.0; }
+                if h3 > 1.0 { h3 -= 1.0; }
+                if h3 * 6.0 < 1.0 { return m1 + (m2 - m1) * h3 * 6.0; }
+                if h3 * 2.0 < 1.0 { return m2; }
+                if h3 * 3.0 < 2.0 { return m1 + (m2 - m1) * (2.0 / 3.0 - h3) * 6.0; }
+                m1
+            }
+            let m2 = if lightness <= 0.5 {
+                lightness * (saturation + 1.0)
+            } else {
+                lightness + saturation - lightness * saturation
+            };
+            let m1 = lightness * 2.0 - m2;
+            (
+                hue_to_rgb(m1, m2, hue + 1.0 / 3.0),
+                hue_to_rgb(m1, m2, hue),
+                hue_to_rgb(m1, m2, hue - 1.0 / 3.0),
+            )
+        }
+
         /// `Result(CssColor)` — Zig: `pub const ParseResult = Result(CssColor);`
         /// where `Result(T) = Maybe(T, ParseError(ParserError))` (css_parser.zig:278).
         /// Spelled as a concrete enum here (not a `type` alias) so dependents can
@@ -254,11 +400,35 @@ gated_mod!(printer, "printer.rs", {
         // keep the lifetime parameter live without committing to layout
         _life: core::marker::PhantomData<&'a ()>,
     }
+
+    impl<'a> Printer<'a> {
+        /// Construct a printer over `dest`. Signature mirrors
+        /// `printer.rs::Printer::new` (gated): `(allocator, scratchbuf, dest,
+        /// options, import_info, local_names, symbols)`. Body is a stub until
+        /// the real `printer.rs` un-gates with its full field set.
+        pub fn new(
+            allocator: &'a bun_alloc::Arena,
+            scratchbuf: Vec<u8>,
+            dest: &'a mut dyn std::io::Write,
+            options: PrinterOptions<'a>,
+            import_info: Option<ImportInfo<'a>>,
+            local_names: Option<&'a crate::css_parser::LocalsResultsMap>,
+            symbols: &'a bun_logger::symbol::Map,
+        ) -> Printer<'a> {
+            let _ = (allocator, scratchbuf, dest, options, import_info, local_names, symbols);
+            todo!("bun_css::Printer::new — gated on printer.rs un-gate")
+        }
+    }
 });
 
 gated_mod!(css_parser, "css_parser.rs", {
-    use crate::{css_modules, error, targets};
-    use bun_collections::ArrayHashMap;
+    use crate::{css_modules, error, printer, targets, PrintErr};
+    use crate::css_modules::{CssModuleExports, CssModuleReferences};
+    use bun_alloc::Arena;
+    use bun_collections::{ArrayHashMap, BabyList};
+    use bun_options_types::ImportRecord;
+    /// `bun.ast.Index` — source-file index (alias of the bundler's `Index`).
+    pub type SrcIndex = bun_options_types::BundleEnums::Index;
 
     /// Zero-sized default custom-at-rule used by `StyleSheet<DefaultAtRule>`
     /// when callers don't extend the at-rule grammar (css_parser.zig:1295).
@@ -336,6 +506,136 @@ gated_mod!(css_parser, "css_parser.rs", {
     pub struct StyleAttribute {
         _p: (),
     }
+
+    /// Side-table populated during parse and consumed by `minify`
+    /// (css_parser.zig:3211). Opaque stub: real layout carries `LocalScope`,
+    /// `SymbolList`, `ComposesMap`; depends on gated `selectors`/`rules`.
+    #[non_exhaustive]
+    #[derive(Default)]
+    pub struct StylesheetExtra {
+        _p: (),
+    }
+
+    /// Result of `StyleSheet::to_css` / `StyleAttribute::to_css`.
+    pub struct ToCssResult {
+        /// Serialized CSS code.
+        pub code: Vec<u8>,
+        /// CSS-module exports, if `css_modules` was enabled at parse time.
+        pub exports: Option<CssModuleExports<'static>>,
+        /// CSS-module `dashed_idents` references.
+        pub references: Option<CssModuleReferences<'static>>,
+        /// `@import` / `url()` dependencies, if `analyze_dependencies` was set.
+        pub dependencies: Option<Vec<crate::Dependency>>,
+    }
+
+    // ───── stub impls: bodies re-enable when `css_parser.rs` un-gates ─────
+
+    impl<'a> ParserOptions<'a> {
+        /// Associated default constructor matching the Zig
+        /// `ParserOptions.default(allocator, log)` shape (css_parser.zig:3736).
+        /// The arena is currently unused by the stub field set.
+        pub fn default(_arena: &'a Arena, log: &'a mut bun_logger::Log) -> ParserOptions<'a> {
+            ParserOptions {
+                filename: b"",
+                css_modules: None,
+                source_index: 0,
+                error_recovery: false,
+                logger: Some(log),
+                flags: ParserFlags::default(),
+            }
+        }
+    }
+
+    impl<'a> ParserInput<'a> {
+        /// Wrap a CSS source slice in a tokenizer + lookahead cache.
+        pub fn new(arena: &'a Arena, code: &'a [u8]) -> ParserInput<'a> {
+            let _ = (arena, code);
+            todo!("bun_css::ParserInput::new — gated on css_parser.rs Tokenizer un-gate")
+        }
+    }
+
+    impl<'a> Parser<'a> {
+        /// Construct a parser cursor over `input`. `import_records` collects
+        /// `@import`/`url()` references; pass `None` outside the bundler.
+        pub fn new(
+            input: &'a mut ParserInput<'a>,
+            import_records: Option<&'a mut BabyList<ImportRecord>>,
+            options: ParserOptions<'a>,
+            extra: Option<&'a mut StylesheetExtra>,
+        ) -> Parser<'a> {
+            let _ = (input, import_records, options, extra);
+            todo!("bun_css::Parser::new — gated on css_parser.rs un-gate")
+        }
+    }
+
+    impl<AtRule> StyleSheet<AtRule> {
+        /// Parse a top-level stylesheet from `code`.
+        pub fn parse(
+            arena: &Arena,
+            code: &[u8],
+            options: ParserOptions<'_>,
+            import_records: &mut BabyList<ImportRecord>,
+            source_index: SrcIndex,
+        ) -> Result<(Self, StylesheetExtra), error::Err<error::ParserError>> {
+            let _ = (arena, code, options, import_records, source_index);
+            todo!("bun_css::StyleSheet::parse — gated on css_parser.rs un-gate")
+        }
+
+        /// Minify and lower the stylesheet for `options.targets`.
+        pub fn minify(
+            &mut self,
+            arena: &Arena,
+            options: MinifyOptions,
+            extra: &mut StylesheetExtra,
+        ) -> Result<(), error::Err<error::MinifyErrorKind>> {
+            let _ = (arena, options, extra);
+            todo!("bun_css::StyleSheet::minify — gated on css_parser.rs un-gate")
+        }
+
+        /// Serialize the stylesheet to CSS text.
+        pub fn to_css(
+            &self,
+            arena: &Arena,
+            options: printer::PrinterOptions<'_>,
+            import_info: printer::ImportInfo<'_>,
+            local_names: &mut LocalsResultsMap,
+            symbols: &bun_logger::symbol::Map,
+        ) -> Result<ToCssResult, error::Err<error::PrinterErrorKind>> {
+            let _ = (arena, options, import_info, local_names, symbols);
+            todo!("bun_css::StyleSheet::to_css — gated on css_parser.rs un-gate")
+        }
+    }
+
+    impl StyleAttribute {
+        /// Parse an inline `style="…"` attribute.
+        pub fn parse(
+            arena: &Arena,
+            code: &[u8],
+            options: ParserOptions<'_>,
+            import_records: &mut BabyList<ImportRecord>,
+            source_index: SrcIndex,
+        ) -> Result<StyleAttribute, error::Err<error::ParserError>> {
+            let _ = (arena, code, options, import_records, source_index);
+            todo!("bun_css::StyleAttribute::parse — gated on css_parser.rs un-gate")
+        }
+
+        /// Minify and lower the declaration block for `options.targets`.
+        pub fn minify(&mut self, arena: &Arena, options: MinifyOptions) {
+            let _ = (arena, options);
+            todo!("bun_css::StyleAttribute::minify — gated on css_parser.rs un-gate")
+        }
+
+        /// Serialize the declaration block to CSS text.
+        pub fn to_css(
+            &self,
+            arena: &Arena,
+            options: printer::PrinterOptions<'_>,
+            import_info: printer::ImportInfo<'_>,
+        ) -> Result<ToCssResult, PrintErr> {
+            let _ = (arena, options, import_info);
+            todo!("bun_css::StyleAttribute::to_css — gated on css_parser.rs un-gate")
+        }
+    }
 });
 
 // ─── stub re-exports referenced cross-crate ────────────────────────────────
@@ -349,6 +649,12 @@ pub type CustomMedia = ();
 pub enum PrintErr {
     CSSPrintError,
 }
+impl PrintErr {
+    #[inline]
+    pub fn name(&self) -> &'static str {
+        "CSSPrintError"
+    }
+}
 impl core::fmt::Display for PrintErr {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str("CSS print error")
@@ -361,7 +667,7 @@ pub use dependencies::Dependency;
 // `bun_css::Foo` paths resolve for css_jsc / bundler.
 pub use css_parser::{
     DefaultAtRule, LocalsResultsMap, MinifyOptions, Parser, ParserFlags, ParserInput,
-    ParserOptions, StyleAttribute, StyleSheet,
+    ParserOptions, SrcIndex, StyleAttribute, StyleSheet, StylesheetExtra, ToCssResult,
 };
 pub use printer::{ImportInfo, Printer, PrinterOptions, PseudoClasses};
 /// Dependent crates name this `ImportRecordHandler` (Zig had a now-removed

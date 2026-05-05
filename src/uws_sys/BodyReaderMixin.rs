@@ -39,6 +39,9 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
     }
 
     /// Memory is freed after the callback returns, or automatically on failure.
+    // TODO(b2-blocked): R bound (uws Response trait with on_data/on_aborted)
+    // and AnyResponse::init() conversion not yet wired.
+    #[cfg(any())]
     pub fn read_body<R>(&mut self, resp: R)
     where
         // TODO(port): bound R by the uws Response trait (must provide
@@ -51,6 +54,7 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         resp.on_aborted(Self::on_aborted_handler::<R>, ctx);
     }
 
+    #[cfg(any())]
     fn on_data_generic<R: Copy>(mixin: *mut Self, r: R, chunk: &[u8], last: bool) {
         let any = AnyResponse::init(r);
         // SAFETY: mixin was registered via read_body and remains alive for the request duration.

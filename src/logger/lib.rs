@@ -2606,6 +2606,12 @@ pub struct AddErrorOptions<'a> {
     pub redact_sensitive_information: bool,
 }
 
+/// Downstream-compat alias: B-1 callers (`bunfig.rs`, `PnpmMatcher.rs`) spell
+/// the option-struct as `logger::ErrorOpts { .. }` (Zig: `Log.addError*` opts
+/// param). Same layout as `AddErrorOptions`; the canonical name is kept while
+/// the Zig side still calls it `addErrorOpts`.
+pub type ErrorOpts<'a> = AddErrorOptions<'a>;
+
 #[inline]
 pub fn alloc_print(args: fmt::Arguments<'_>) -> Result<Str, AllocError> {
     // TODO(port): Zig `allocPrint` runs `Output.prettyFmt(fmt, enable_ansi_colors)`
@@ -2672,6 +2678,22 @@ pub struct ErrorPosition {
 }
 
 impl Source {
+    /// Borrowed view of the source bytes. Provided as a method so callers that
+    /// were written against a future owning-`contents` shape (`Vec<u8>`/`Cow`)
+    /// don't need to change when the field type flips in Phase B.
+    #[inline]
+    pub fn contents(&self) -> &[u8] {
+        self.contents
+    }
+
+    /// Owned copy of the source bytes. Mirrors the Zig pattern of
+    /// `allocator.dupe(u8, source.contents)` at call-sites that need to retain
+    /// the bytes past the `Source`'s lifetime.
+    #[inline]
+    pub fn contents_owned(&self) -> Vec<u8> {
+        self.contents.to_vec()
+    }
+
     pub fn fmt_identifier(&self) -> bun_core::fmt::FormatValidIdentifier<'_> {
         self.path.name.fmt_identifier()
     }
@@ -2949,6 +2971,28 @@ pub struct ToSourceOptions {
     pub convert_bom: bool,
 }
 
+/// Downstream-compat alias: B-1 callers (`ini::load_npmrc_config`) spell the
+/// option-struct as `logger::ToSourceOpts { convert_bom: true }`.
+pub type ToSourceOpts = ToSourceOptions;
+
+/// Read `path` (rooted at cwd) into memory and wrap it in a `Source`.
+///
+/// MOVE_DOWN from `bun_sys::File::to_source` (T1 cannot name T2). Zig source:
+/// `src/sys/File.zig:toSource`.
+///
+/// TODO(b2-blocked): real body requires `bun_sys::file::File::read_from` (gated
+/// in `bun_sys`) **and** the `Source.contents` ownership rework — the Phase-A
+/// `Str = &'static [u8]` field cannot hold a heap buffer without `Box::leak`
+/// (forbidden, PORTING.md §Forbidden). Signature is exposed so dependents
+/// (`bun_ini`) can un-gate their bodies; calling this panics until Phase B.
+pub fn source_from_file(
+    path: &bun_string::ZStr,
+    opts: ToSourceOptions,
+) -> bun_sys::Maybe<Source> {
+    let _ = (path, opts);
+    todo!("source_from_file — gated on bun_sys::file + Source.contents ownership rework")
+}
+
 #[cfg(any())]
 mod file_source_ext_draft {
 use super::*;
@@ -3009,6 +3053,167 @@ impl FileSourceExt for bun_sys::file::File {
     }
 }
 } // end #[cfg(any())] mod file_source_ext_draft
+
+// ───────────────────────────────────────────────────────────────────────────
+// js_ast — MOVE_DOWN from bun_js_parser::ast (T4→T2, CYCLEBREAK §interchange).
+//
+// `bun_interchange::{json,json5,toml,yaml}` and `bun_install_types` parse
+// config files into the JS expression AST but cannot depend on `bun_js_parser`
+// (T4) without a cycle. The MOVE_DOWN plan lands the value-shaped AST nodes
+// (`Expr`/`E::*`/`G::Property`/`Stmt`) here in T2.
+//
+// TODO(b2-blocked): full AST port. The real `Expr`/`ExprData`/`E`/`G` surface
+// is ~5.4 KLoC (`src/js_parser/ast/{Expr,E,G}.rs`) and pulls in arena stores,
+// `Binding`, `Op`, `Scope`, etc. This stub exposes the *names* downstream
+// `use` statements reference so those crates can un-gate incrementally; every
+// constructor / accessor is `todo!()`. The heavy parse bodies in
+// `bun_interchange` remain `#[cfg(any())]` until the real types land.
+// ───────────────────────────────────────────────────────────────────────────
+
+pub mod js_ast {
+    use super::{BabyList, Loc};
+
+    /// `js_ast.ExprNodeList` (Zig: `BabyList(Expr)`).
+    pub type ExprNodeList = BabyList<Expr>;
+
+    /// `js_ast.Expr` — `{ loc, data }` pair. Field shape mirrors
+    /// `src/js_parser/ast/Expr.zig` so pattern-matching call-sites in
+    /// `bunfig.rs`/`PnpmMatcher.rs` (`expr.loc`, `&expr.data`) type-check.
+    #[derive(Clone, Default)]
+    pub struct Expr {
+        pub loc: Loc,
+        pub data: ExprData,
+    }
+
+    impl Expr {
+        /// `Expr.init(payload, loc)`. Real impl interns `payload` into the
+        /// per-thread `Expr.Data.Store` and returns a tagged pointer.
+        // TODO(b2-blocked): bun_js_parser::ast::Expr::init — needs Data.Store.
+        pub fn init<T: ExprInit>(t: T, loc: Loc) -> Expr {
+            let _ = (t, loc);
+            todo!("js_ast::Expr::init — MOVE_DOWN pending (bun_js_parser::ast)")
+        }
+
+        /// `Expr.Data.Store.assert()` — debug-only no-op until the store lands.
+        #[inline]
+        pub fn data_store_assert() {}
+    }
+
+    /// `js_ast.Expr.Data` — tagged union over `E::*`. Stub is opaque; the
+    /// real variant set (`EString`/`EArray`/`EObject`/…) arrives with the
+    /// full E-namespace port.
+    // TODO(b2-blocked): real enum with E::* payloads.
+    #[derive(Clone, Default)]
+    pub struct ExprData(());
+
+    /// `std.meta.Tag(Expr.Data)`.
+    // TODO(b2-blocked): real `#[repr(u8)]` discriminant enum.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+    pub struct ExprTag(());
+
+    /// Marker trait for types accepted by `Expr::init` (`E::String`,
+    /// `E::Number`, `E::Object`, …). In Zig this is the comptime
+    /// `@TypeOf`-dispatch inside `Expr.init`.
+    pub trait ExprInit {}
+
+    /// `js_ast.Stmt` placeholder — only `Stmt::data_store_assert()` is
+    /// referenced from T3 (json parser init).
+    #[derive(Clone, Default)]
+    pub struct Stmt(());
+
+    impl Stmt {
+        #[inline]
+        pub fn data_store_assert() {}
+    }
+
+    /// `js_ast.E` namespace — expression payload structs. All opaque until
+    /// the full port; `ExprInit` impls let `Expr::init(E::Foo { .. }, loc)`
+    /// call-sites resolve.
+    #[allow(non_snake_case)]
+    pub mod E {
+        use super::ExprInit;
+
+        // TODO(b2-blocked): real field sets from src/js_parser/ast/E.zig.
+        #[derive(Clone, Default)] pub struct String(());
+        #[derive(Clone, Default)] pub struct Number(());
+        #[derive(Clone, Default)] pub struct Boolean(());
+        #[derive(Clone, Default)] pub struct Null(());
+        #[derive(Clone, Default)] pub struct Array(());
+        #[derive(Clone, Default)] pub struct Object(());
+
+        impl ExprInit for String {}
+        impl ExprInit for Number {}
+        impl ExprInit for Boolean {}
+        impl ExprInit for Null {}
+        impl ExprInit for Array {}
+        impl ExprInit for Object {}
+    }
+
+    /// Lowercase `e::*` path some B-1 drafts use (`js_ast::e::object::Rope`).
+    pub mod e {
+        pub mod object {
+            /// `E.Object.Rope` — linked-list builder for object properties
+            /// during TOML/INI parsing.
+            // TODO(b2-blocked): real Rope { head, next, value } shape.
+            #[derive(Clone, Default)]
+            pub struct Rope(());
+        }
+        pub use super::E::String;
+    }
+
+    /// `js_ast.G` namespace — grouped/shared AST sub-structs (Property, Decl, …).
+    #[allow(non_snake_case)]
+    pub mod G {
+        // TODO(b2-blocked): real `G.Property { key, value, kind, flags, .. }`.
+        #[derive(Clone, Default)]
+        pub struct Property(());
+    }
+}
+
+/// Some B-1 callers (`yaml.rs`, `NodeLinker.rs`) import the AST namespace as
+/// `bun_logger::ast` rather than `bun_logger::js_ast`. Same module.
+pub use js_ast as ast;
+
+/// `bun_logger::ExprNodeList` flat re-export (json5.rs:647).
+pub use js_ast::ExprNodeList;
+
+// ───────────────────────────────────────────────────────────────────────────
+// js_printer — TYPE_ONLY MOVE_DOWN from bun_js_printer (T4→T2).
+//
+// Only the `Options.Indentation` value type is needed at T2/T3 (json parser
+// threads `Indentation` through to the printer). The printer *behaviour*
+// stays in `bun_js_printer`; this is the shared option struct.
+//
+// Source: src/js_printer/js_printer.zig:434 `Options.Indentation`.
+// ───────────────────────────────────────────────────────────────────────────
+
+pub mod js_printer {
+    /// Default indentation is 2 spaces.
+    #[derive(Clone, Copy)]
+    pub struct Indentation {
+        pub scalar: usize,
+        pub count: usize,
+        pub character: IndentationCharacter,
+    }
+
+    impl Default for Indentation {
+        fn default() -> Self {
+            Self { scalar: 2, count: 0, character: IndentationCharacter::Space }
+        }
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum IndentationCharacter {
+        Tab,
+        Space,
+    }
+
+    /// Downstream-compat re-export: B-1 callers reference
+    /// `bun_logger::js_printer::options::Indentation`.
+    pub mod options {
+        pub use super::{Indentation, IndentationCharacter};
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

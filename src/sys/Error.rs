@@ -109,6 +109,17 @@ impl Error {
         self.get_errno() == E::EAGAIN
     }
 
+    // TODO(port): was `pub const oom` in Zig; Box<[u8]> fields prevent a true `const` item.
+    /// `bun.sys.Error.oom` — `ENOMEM` with no syscall context.
+    #[inline]
+    pub fn oom() -> Error {
+        Error {
+            errno: E::ENOMEM as Int,
+            syscall: Tag::read,
+            ..Default::default()
+        }
+    }
+
     // TODO(port): was `pub const retry` in Zig; Box<[u8]> fields prevent a true `const` item.
     #[inline]
     pub fn retry() -> Error {

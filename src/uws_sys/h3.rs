@@ -210,10 +210,11 @@ impl Response {
         // SAFETY: self is a live FFI handle
         unsafe { c::uws_h3_res_pause(self) }
     }
-    pub fn resume(&mut self) {
+    pub fn resume_(&mut self) {
         // SAFETY: self is a live FFI handle
         unsafe { c::uws_h3_res_resume(self) }
     }
+    #[inline] pub fn resume(&mut self) { self.resume_() }
     pub fn timeout(&mut self, seconds: u8) {
         // SAFETY: self is a live FFI handle
         unsafe { c::uws_h3_res_timeout(self, seconds) }
@@ -385,11 +386,16 @@ enum RouteKind {
     Any,
 }
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+#[derive(Debug, strum::IntoStaticStr)]
 pub enum AddServerNameError {
-    #[error("FailedToAddServerName")]
     FailedToAddServerName,
 }
+impl core::fmt::Display for AddServerNameError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(<&'static str>::from(self))
+    }
+}
+impl std::error::Error for AddServerNameError {}
 
 impl App {
     pub fn create(opts: BunSocketContextOptions, idle_timeout_s: u32) -> Option<*mut App> {
@@ -479,12 +485,12 @@ impl App {
     }
     pub fn method<UD>(
         &mut self,
-        m: bun_http_types::Method,
+        m: bun_http_types::Method::Method,
         p: &[u8],
         ud: *mut UD,
         h: fn(&mut UD, &mut Request, &mut Response),
     ) {
-        use bun_http_types::Method as M;
+        use bun_http_types::Method::Method as M;
         match m {
             M::GET => self.get(p, ud, h),
             M::POST => self.post(p, ud, h),

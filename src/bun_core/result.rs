@@ -21,6 +21,14 @@ impl Error {
     pub const OUT_OF_MEMORY: Self = Self::from_errno(12); // ENOMEM
     /// B-1: Phase-A `bun_core::Error::from_name("...")`. Real impl: name→code lookup.
     pub fn from_name(_name: &'static str) -> Self { Self::TODO }
+    /// Raw errno as u16 (Zig: `@intFromError`/`.errno` truncated). Downstream
+    /// crates use this to pack into a `u16` syscall-error slot.
+    #[inline]
+    pub const fn as_u16(self) -> u16 { self.errno as u16 }
+    /// Construct from a raw errno integer (any width). Mirrors Zig's
+    /// `@errorFromInt` / `bun.sys.Error.fromCode`.
+    #[inline]
+    pub const fn from_raw(errno: i32) -> Self { Self::from_errno(errno) }
     /// Error tag name (e.g. "ENOENT"). Backed by `bun_errno` once that crate's
     /// table un-gates; falls back to "EUNKNOWN".
     pub fn name(self) -> &'static [u8] {

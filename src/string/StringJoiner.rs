@@ -85,6 +85,15 @@ impl StringJoiner {
         self.push(data, false);
     }
 
+    /// Takes ownership of `data` (no copy). Freed when the node is dropped.
+    pub fn push_owned(&mut self, data: Box<[u8]>) {
+        if data.is_empty() {
+            return;
+        }
+        let raw: *const [u8] = Box::into_raw(data);
+        self.push_raw(raw, true);
+    }
+
     /// `data` is cloned
     pub fn push_cloned(&mut self, data: &[u8]) {
         if data.is_empty() {

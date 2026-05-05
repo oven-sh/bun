@@ -4,16 +4,10 @@
 //! `lib_draft_b1.rs`. B-2: un-gate per-syscall, wire libc/kernel32/ntdll.
 
 #[cfg(any())] #[path = "lib_draft_b1.rs"] mod draft;
-// TODO(b2-design): fd.rs defines its own `pub struct Fd(BackingInt)` (the REAL
-// packed-struct port of bun.FD), but `bun_core::Fd` is already the canonical
-// type (T0, used by output/File/etc.). Can't add inherent methods cross-crate.
-// Options: (a) move Fd's full def to bun_core (it's pure data, no syscalls),
-// fd.rs becomes `impl Fd` via `pub trait FdExt`; (b) re-export fd::Fd here and
-// drop bun_core::Fd. (a) is cleaner — bun_core already has from_uv/from_system
-// stubs. Partial fixes applied in fd.rs (close path, EBADF, dump_stack_trace);
-// 8 errors remain on debug-only paths. Next round: lift fd.rs's struct def +
-// const accessors into bun_core/util.rs::Fd, leave syscall methods here as FdExt.
-#[cfg(any())] mod fd;
+// RESOLVED (B-2 round 7): `Fd` struct + pure-data accessors hoisted to
+// `bun_core::Fd` (canonical T0). `fd.rs` is now `pub trait FdExt` over that.
+pub mod fd;
+pub use fd::{FdExt, FdOptionalExt, ErrorCase, MakeLibUvOwnedError, HashMapContext, MovableIfWindowsFd, FdT, UvFile};
 #[cfg(any())] #[path = "File.rs"] pub mod file;
 #[path = "Error.rs"] mod error;
 pub use error::Error;
@@ -51,12 +45,15 @@ impl core::fmt::Display for SystemError {
         write!(f, "SystemError(errno={})", self.errno)
     }
 }
-#[cfg(any())] mod walker_skippable;
+// TODO(b2-round8): walker_skippable.rs has 12 errors — `&[[u8]]`→`&[&[u8]]`
+// (4×), `Result<'a, T>` lifetime (4×), bun_sys self-import, hash_with_seed.
+// Mechanical but voluminous; deferred to keep round-7 focused on FdExt+ref_count.
+#[cfg(any())] pub mod walker_skippable;
 pub mod coreutils_error_map;
 pub mod libuv_error_map;
 #[path = "SignalCode.rs"] pub mod signal_code;
 pub use signal_code::SignalCode;
-#[cfg(any())] mod tmp;
+pub mod tmp;
 #[cfg(any())] pub mod windows;
 
 use core::ffi::{c_char, c_int, c_void};
@@ -64,7 +61,10 @@ use core::ffi::{c_char, c_int, c_void};
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports from lower-tier crates (PORTING.md crate map).
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_core::{Fd, Mode, FileKind, kind_from_mode};
+pub use bun_core::{Fd, FdNative, FdKind, FdOptional, Stdio, Mode, FileKind, kind_from_mode};
+/// `std.posix.socket_t` — `c_int` on POSIX, `SOCKET` (`usize`) on Windows.
+#[cfg(not(windows))] pub type SocketT = core::ffi::c_int;
+#[cfg(windows)] pub type SocketT = usize;
 pub use bun_errno::{E, S, SystemErrno, get_errno, posix};
 
 /// `Maybe(T)` — Zig's `union(enum) { result: T, err: Error }`. In Rust this is
@@ -123,7 +123,7 @@ use bun_core::ZStr;
 /// Read thread-local libc errno (set by the failing syscall).
 #[cfg(unix)]
 #[inline]
-fn last_errno() -> i32 {
+pub fn last_errno() -> i32 {
     // SAFETY: __errno_location()/__error() return a valid thread-local int*.
     unsafe { *errno_ptr() }
 }
@@ -156,7 +156,8 @@ impl Tag {
     pub const symlink: Tag = Tag(13);pub const readlink: Tag = Tag(14);
     pub const dup: Tag = Tag(15);   pub const getcwd: Tag = Tag(16);
     pub const fchmod: Tag = Tag(17);pub const fchown: Tag = Tag(18);
-    pub const ftruncate: Tag = Tag(19);
+    pub const ftruncate: Tag = Tag(19); pub const closeHandle: Tag = Tag(20);
+    pub const mkdirat: Tag = Tag(21);
     pub const TODO: Tag = Tag(0);
     /// Full tag enum (~200 variants) lives in `lib_draft_b1.rs`. This subset
     /// covers the un-gated posix surface; B-2 widens as syscalls land.
@@ -230,11 +231,68 @@ mod posix_impl {
     pub fn mkdir(path: &ZStr, mode: Mode) -> Maybe<()> {
         check_p!(unsafe { libc::mkdir(path.as_ptr(), mode) }, Tag::mkdir, path); Ok(())
     }
+    pub fn mkdirat(dir: Fd, path: &ZStr, mode: Mode) -> Maybe<()> {
+        check_p!(unsafe { libc::mkdirat(dir.native(), path.as_ptr(), mode) }, Tag::mkdirat, path); Ok(())
+    }
+    /// `bun.makePath` — `mkdirat` walking up parents on ENOENT, like `mkdir -p`.
+    /// Port of std.fs.Dir.makePath (Zig std/fs/Dir.zig).
+    pub fn mkdir_recursive_at(dir: Fd, sub_path: &[u8]) -> Maybe<()> {
+        // PERF(port): Zig leaves the buffer `undefined`; zero-fill here for
+        // simplicity. Stack-local, no heap.
+        let mut buf = [0u8; bun_core::MAX_PATH_BYTES];
+        if sub_path.len() >= buf.len() {
+            return Err(Error::from_code_int(E::ENAMETOOLONG as _, Tag::mkdirat).with_path(sub_path));
+        }
+        buf[..sub_path.len()].copy_from_slice(sub_path);
+        let mut end = sub_path.len();
+        while end > 0 && buf[end - 1] == bun_core::SEP { end -= 1; } // trim trailing seps
+        let mut peel = end;
+        // Walk down: try mkdirat; on ENOENT, peel one component.
+        loop {
+            buf[peel] = 0;
+            // SAFETY: buf[0..=peel] is NUL-terminated immediately above.
+            let z = unsafe { ZStr::from_raw(buf.as_ptr(), peel) };
+            match mkdirat(dir, z, 0o755) {
+                Ok(()) => break,
+                Err(e) if e.get_errno() == E::EEXIST => break,
+                Err(e) if e.get_errno() == E::ENOENT => {
+                    let Some(slash) = buf[..peel].iter().rposition(|&b| b == bun_core::SEP) else {
+                        return Err(e);
+                    };
+                    if slash == 0 { return Err(e); }
+                    peel = slash;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        // Walk back up, creating each peeled component.
+        while peel < end {
+            buf[peel] = bun_core::SEP; // restore separator we NUL'd
+            peel += 1;
+            while peel < end && buf[peel] != bun_core::SEP { peel += 1; }
+            buf[peel] = 0;
+            // SAFETY: buf[0..=peel] is NUL-terminated immediately above.
+            let z = unsafe { ZStr::from_raw(buf.as_ptr(), peel) };
+            match mkdirat(dir, z, 0o755) {
+                Ok(()) => {}
+                Err(e) if e.get_errno() == E::EEXIST => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
+    }
     pub fn unlink(path: &ZStr) -> Maybe<()> {
         check_p!(unsafe { libc::unlink(path.as_ptr()) }, Tag::unlink, path); Ok(())
     }
     pub fn rename(from: &ZStr, to: &ZStr) -> Maybe<()> {
         check_p!(unsafe { libc::rename(from.as_ptr(), to.as_ptr()) }, Tag::rename, from); Ok(())
+    }
+    pub fn renameat(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> Maybe<()> {
+        check_p!(unsafe { libc::renameat(from_dir.native(), from.as_ptr(), to_dir.native(), to.as_ptr()) }, Tag::rename, from);
+        Ok(())
+    }
+    pub fn unlinkat(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()> {
+        check_p!(unsafe { libc::unlinkat(dir.native(), path.as_ptr(), flags) }, Tag::unlink, path); Ok(())
     }
     pub fn symlink(target: &ZStr, link: &ZStr) -> Maybe<()> {
         check_p!(unsafe { libc::symlink(target.as_ptr(), link.as_ptr()) }, Tag::symlink, link); Ok(())

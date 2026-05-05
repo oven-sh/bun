@@ -1,45 +1,37 @@
-use bun_str::ZStr;
+use bun_core::ZStr;
 
-use crate::{Errno, Fd, O};
+use crate::{E, Fd, FdExt, ErrorCase, O, Tag};
 
 // O_TMPFILE doesn't seem to work very well.
 const ALLOW_TMPFILE: bool = false;
 
 // To be used with files
 // not folders!
-pub struct Tmpfile {
+pub struct Tmpfile<'a> {
     pub destination_dir: Fd,
-    // TODO(port): lifetime — borrowed from caller for the lifetime of the Tmpfile;
-    // no LIFETIMES.tsv entry, so stored raw per Phase-A rules (no <'a> on struct).
-    pub tmpfilename: *const ZStr,
+    // BORROW_PARAM (Tmpfile.zig:5): caller-supplied tmp name, valid for the
+    // lifetime of the Tmpfile.
+    pub tmpfilename: &'a ZStr,
     pub fd: Fd,
     pub using_tmpfile: bool,
 }
 
-impl Default for Tmpfile {
-    fn default() -> Self {
-        Self {
-            destination_dir: Fd::invalid(),
-            tmpfilename: core::ptr::null(),
-            fd: Fd::invalid(),
-            using_tmpfile: ALLOW_TMPFILE,
-        }
-    }
-}
-
-impl Tmpfile {
-    pub fn create(destination_dir: Fd, tmpfilename: &ZStr) -> crate::Result<Tmpfile> {
+impl<'a> Tmpfile<'a> {
+    pub fn create(destination_dir: Fd, tmpfilename: &'a ZStr) -> crate::Result<Tmpfile<'a>> {
         let perm = 0o644;
         let mut tmpfile = Tmpfile {
             destination_dir,
-            tmpfilename: tmpfilename as *const ZStr,
-            ..Default::default()
+            tmpfilename,
+            fd: Fd::INVALID,
+            using_tmpfile: ALLOW_TMPFILE,
         };
 
         'open: loop {
+            // ALLOW_TMPFILE = false (Zig comment: O_TMPFILE doesn't seem to work
+            // very well). Dead in Zig too, but Zig comptime drops it; Rust still
+            // type-checks `if false` bodies, so cfg-gate it instead.
+            #[cfg(any())]
             if ALLOW_TMPFILE {
-                // TODO(port): dead branch (ALLOW_TMPFILE = false); Rust still type-checks it,
-                // so O::TMPFILE / make_libuv_owned_fd must exist or this block needs #[cfg].
                 match crate::openat(
                     destination_dir,
                     ZStr::from_lit(b".\0"),
@@ -47,18 +39,11 @@ impl Tmpfile {
                     perm,
                 ) {
                     Ok(fd) => {
-                        tmpfile.fd = match crate::make_libuv_owned_fd(
-                            fd,
-                            crate::Syscall::Open,
-                            crate::CloseOnFail,
-                        ) {
-                            Ok(owned_fd) => owned_fd,
-                            Err(err) => return Err(err),
-                        };
+                        tmpfile.fd = fd.make_lib_uv_owned_for_syscall(Tag::open, ErrorCase::CloseOnFail)?;
                         break 'open;
                     }
                     Err(err) => match err.get_errno() {
-                        Errno::INVAL | Errno::OPNOTSUPP | Errno::NOSYS => {
+                        E::EINVAL | E::EOPNOTSUPP | E::ENOSYS => {
                             tmpfile.using_tmpfile = false;
                         }
                         _ => return Err(err),
@@ -66,18 +51,13 @@ impl Tmpfile {
                 }
             }
 
-            tmpfile.fd = match crate::openat(
+            tmpfile.fd = crate::openat(
                 destination_dir,
                 tmpfilename,
                 O::CREAT | O::CLOEXEC | O::WRONLY,
                 perm,
-            ) {
-                Ok(fd) => match fd.make_libuv_owned_for_syscall(crate::Syscall::Open, crate::CloseOnFail) {
-                    Ok(owned_fd) => owned_fd,
-                    Err(err) => return Err(err),
-                },
-                Err(err) => return Err(err),
-            };
+            )?
+            .make_lib_uv_owned_for_syscall(Tag::open, ErrorCase::CloseOnFail)?;
             break 'open;
         }
 
@@ -86,43 +66,32 @@ impl Tmpfile {
 
     // TODO(port): narrow error set
     pub fn finish(&mut self, destname: &ZStr) -> Result<(), bun_core::Error> {
-        if ALLOW_TMPFILE {
-            if self.using_tmpfile {
-                let mut retry = true;
-                // SAFETY: basename returns a suffix of `destname`, which is NUL-terminated,
-                // so the suffix is also NUL-terminated at the same position.
-                let basename: &ZStr = unsafe {
-                    let b = bun_paths::basename(destname.as_bytes());
-                    ZStr::from_raw(b.as_ptr(), b.len())
-                };
-                while retry {
-                    let ret = crate::linkat_tmpfile(self.fd, self.destination_dir, basename);
-                    match ret {
-                        Ok(()) => {
-                            return Ok(());
-                        }
-                        Err(err) => {
-                            if err.get_errno() == Errno::EXIST && retry {
-                                let _ = crate::unlinkat(self.destination_dir, basename);
-                                retry = false;
-                                continue;
-                            } else {
-                                return Err(err.into());
-                            }
-                        }
+        // ALLOW_TMPFILE = false dead branch — see `create()` note above.
+        #[cfg(any())]
+        if ALLOW_TMPFILE && self.using_tmpfile {
+            let mut retry = true;
+            // SAFETY: basename returns a suffix of `destname`, which is NUL-terminated,
+            // so the suffix is also NUL-terminated at the same position.
+            let basename: &ZStr = unsafe {
+                let b = bun_paths::basename(destname.as_bytes());
+                ZStr::from_raw(b.as_ptr(), b.len())
+            };
+            while retry {
+                match crate::linkat_tmpfile(self.fd, self.destination_dir, basename) {
+                    Ok(()) => return Ok(()),
+                    Err(err) if err.get_errno() == E::EEXIST && retry => {
+                        let _ = crate::unlinkat(self.destination_dir, basename, 0);
+                        retry = false;
                     }
+                    Err(err) => return Err(err.into()),
                 }
             }
         }
 
-        crate::move_file_z_with_handle(
-            self.fd,
-            self.destination_dir,
-            // SAFETY: set in `create` from a caller-borrowed &ZStr that must outlive this Tmpfile.
-            unsafe { &*self.tmpfilename },
-            self.destination_dir,
-            destname,
-        )?;
+        // TODO(b2-blocked): `move_file_z_with_handle` lives in the gated 5500L
+        // sys draft (renameat with EXDEV fallback to copy_file_range+unlink).
+        // Until that lands, do a plain `renameat` — same as Zig's fast path.
+        crate::renameat(self.destination_dir, self.tmpfilename, self.destination_dir, destname)?;
         Ok(())
     }
 }

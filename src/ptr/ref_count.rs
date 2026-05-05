@@ -13,10 +13,25 @@ use core::mem::size_of;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
 
-use bun_alloc::allocation_scope::{self, AllocationScope};
 // MOVE_DOWN(b0): was bun_crash_handler::StoredTrace — type moves to bun_core.
 use bun_core::StoredTrace;
-use bun_safety::ThreadLock;
+use bun_core::ThreadLock;
+
+// `bun_alloc::allocation_scope` is itself gated (debug-only allocator
+// instrumentation). The AllocationScope integration here is debug-tracking
+// metadata; stub the types until allocation_scope un-gates.
+// TODO(b2-blocked): bun_alloc::allocation_scope
+mod allocation_scope {
+    use core::ffi::c_void;
+    pub struct AllocationScope;
+    impl AllocationScope {
+        pub fn track_external_allocation(&mut self, _bytes: &[u8], _ret: usize, _extra: Extra) {}
+        pub fn track_external_free(&mut self, _bytes: &[u8], _ret: usize) -> bool { true }
+    }
+    pub struct Extra { pub ptr: *mut c_void, pub vtable: &'static ExtraVTable }
+    pub struct ExtraVTable { pub on_allocation_leak: fn(*mut c_void, &mut [u8]) }
+}
+use allocation_scope::AllocationScope;
 // PORT NOTE(b0): was `bun_collections::{ArrayHashMap, HashMap}` (T1 → upward).
 // Debug-only diagnostic storage; std HashMap drops insertion order for `frees`
 // which is acceptable for leak reports.
@@ -123,10 +138,22 @@ pub trait AnyRefCounted: Sized {
     unsafe fn rc_ref(this: *mut Self);
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn rc_deref(this: *mut Self);
+    unsafe fn rc_deref_with_context(this: *mut Self, ctx: Self::DestructorCtx);
+    /// Zig's `deref(self)` forwards `{}` (void) as the ctx — equivalent to
+    /// `Default::default()`. Types with a non-unit `DestructorCtx` must call
+    /// `rc_deref_with_context` explicitly (matches Zig's compile error when
+    /// `destructor_ctx != null`).
+    ///
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn rc_deref_with_context(this: *mut Self, ctx: Self::DestructorCtx);
+    #[inline]
+    unsafe fn rc_deref(this: *mut Self)
+    where
+        Self::DestructorCtx: Default,
+    {
+        // SAFETY: caller contract — `this` points to a live Self.
+        unsafe { Self::rc_deref_with_context(this, Default::default()) }
+    }
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn rc_has_one_ref(this: *const Self) -> bool;
@@ -348,15 +375,6 @@ impl<T: RefCounted> AnyRefCounted for T {
         // SAFETY: caller contract — `this` points to a live T
         unsafe { RefCount::<T>::ref_(this) }
     }
-    unsafe fn rc_deref(this: *mut Self) {
-        // Zig's `deref(self)` forwards `{}` (void) and only compiles when
-        // `destructor_ctx` is null. Rust cannot conjure a Ctx; callers with a
-        // non-unit DestructorCtx must use `rc_deref_with_context`.
-        // TODO(port): split blanket impl so this fn is only provided when
-        // DestructorCtx = ().
-        let _ = this;
-        unimplemented!("rc_deref requires DestructorCtx = (); use rc_deref_with_context");
-    }
     unsafe fn rc_deref_with_context(this: *mut Self, ctx: Self::DestructorCtx) {
         // SAFETY: caller contract — `this` points to a live T
         unsafe { RefCount::<T>::deref_with_context(this, ctx) }
@@ -577,36 +595,27 @@ impl<T: AnyRefCounted> RefPtr<T> {
     // methods for clarity (matches Zig comment).
 
     /// Decrement the reference count, and destroy the object if the count is 0.
-    pub fn deref(&self) {
-        self.deref_with_context_impl(None);
+    pub fn deref(&self)
+    where
+        T::DestructorCtx: Default,
+    {
+        self.deref_with_context(Default::default());
     }
 
     /// Decrement the reference count, and destroy the object if the count is 0.
     pub fn deref_with_context(&self, ctx: T::DestructorCtx) {
-        self.deref_with_context_impl(Some(ctx));
-    }
-
-    fn deref_with_context_impl(&self, ctx: Option<T::DestructorCtx>) {
         #[cfg(debug_assertions)]
         {
             // SAFETY: data is live (we hold a ref)
             unsafe { (*T::rc_debug_data(self.data.as_ptr())).release(self.debug, return_address()) };
         }
         // SAFETY: data is live (we hold a ref)
-        unsafe {
-            match ctx {
-                Some(c) => T::rc_deref_with_context(self.data.as_ptr(), c),
-                None => T::rc_deref(self.data.as_ptr()),
-            }
-        }
-        #[cfg(debug_assertions)]
-        {
-            // make UAF fail faster (ideally integrate this with ASAN)
-            // PORT NOTE: Zig did `@constCast(self).data = undefined`. In Rust
-            // we cannot mutate through `&self` without UnsafeCell; and `RefPtr`
-            // is consumed-by-value in idiomatic use anyway.
-            // TODO(port): consider taking `self` by value and dropping.
-        }
+        unsafe { T::rc_deref_with_context(self.data.as_ptr(), ctx) };
+        // make UAF fail faster (ideally integrate this with ASAN)
+        // PORT NOTE: Zig did `@constCast(self).data = undefined`. In Rust we
+        // cannot mutate through `&self` without UnsafeCell; and `RefPtr` is
+        // consumed-by-value in idiomatic use anyway.
+        // TODO(port): consider taking `self` by value and dropping.
     }
 
     pub fn dupe_ref(&self) -> Self {
@@ -774,7 +783,8 @@ pub struct DebugData<Count> {
     // 4. Rust cannot under-align a field; consider `[u32; 4]` if layout matters.
     magic: u128,
     // TODO(port): Zig used `if (thread_safe) std.debug.SafetyLock else bun.Mutex`.
-    lock: bun_core::Mutex,
+    // Debug-only — always parking_lot Mutex<()> here for simplicity.
+    lock: bun_core::Mutex<()>,
     next_id: AtomicU32,
     map: HashMap<TrackedRefId, TrackedRef>,
     frees: ArrayHashMap<TrackedRefId, TrackedDeref>,
@@ -792,7 +802,7 @@ impl<Count: CountLoad> DebugData<Count> {
     pub fn empty() -> Self {
         Self {
             magic: MAGIC_VALID,
-            lock: bun_core::Mutex::new(),
+            lock: bun_core::Mutex::new(()),
             next_id: AtomicU32::new(0),
             map: HashMap::new(),
             frees: ArrayHashMap::new(),
@@ -805,14 +815,12 @@ impl<Count: CountLoad> DebugData<Count> {
         debug_assert!(self.magic == MAGIC_VALID);
     }
 
-    fn dump(&mut self, type_name: Option<&[u8]>, ptr: *mut c_void, ref_count: u32) {
-        self.lock.lock();
-        let _guard = scopeguard::guard(&mut self.lock, |l| l.unlock());
-
-        generic_dump(type_name, ptr, ref_count as usize, &mut self.map);
+    fn dump(&mut self, type_name: Option<&[u8]>, ptr: *mut c_void, rc: u32) {
+        let _guard = self.lock.lock();
+        generic_dump(type_name, ptr, rc as usize, &mut self.map);
     }
 
-    fn next_id(&self) -> TrackedRefId {
+    fn alloc_id(&self) -> TrackedRefId {
         // PORT NOTE: Zig branched on `thread_safe` (atomic RMW vs plain ++).
         // Debug-only path; always atomic here.
         TrackedRefId::new(self.next_id.fetch_add(1, Ordering::SeqCst))
@@ -823,25 +831,21 @@ impl<Count: CountLoad> DebugData<Count> {
         count_pointer: NonNull<Count>,
         return_address: usize,
     ) -> TrackedRefId {
-        self.lock.lock();
-        let _guard = scopeguard::guard((), |_| self.lock.unlock());
-        // PORT NOTE: reshaped for borrowck — guard above borrows lock; below borrows other fields
-        // TODO(port): scopeguard captures &mut self.lock disjointly; verify in Phase B
+        let _guard = self.lock.lock();
         self.count_pointer = Some(count_pointer);
-        let id = self.next_id();
+        let id = self.alloc_id();
         self.map.insert(
             id,
             TrackedRef {
-                acquired_at: StoredTrace::capture(return_address),
+                acquired_at: StoredTrace::capture(Some(return_address)),
             },
         );
         id
     }
 
     fn release_impl(&mut self, id: TrackedRefId, return_address: usize) {
-        self.lock.lock(); // If this triggers ASAN, the RefCounted object is double-freed.
-        let _guard = scopeguard::guard((), |_| self.lock.unlock());
-        // TODO(port): scopeguard borrow split — see note in acquire_with_count
+        // If this triggers ASAN, the RefCounted object is double-freed.
+        let _guard = self.lock.lock();
         let Some(entry) = self.map.remove(&id) else {
             return;
         };
@@ -849,7 +853,7 @@ impl<Count: CountLoad> DebugData<Count> {
             id,
             TrackedDeref {
                 acquired_at: entry.acquired_at,
-                released_at: StoredTrace::capture(return_address),
+                released_at: StoredTrace::capture(Some(return_address)),
             },
         );
     }
@@ -857,9 +861,7 @@ impl<Count: CountLoad> DebugData<Count> {
     fn deinit(&mut self, data: &[u8], ret_addr: usize) {
         self.assert_valid();
         self.magic = 0; // Zig: `= undefined`
-        self.lock.lock();
-        let _guard = scopeguard::guard((), |_| self.lock.unlock());
-        // TODO(port): scopeguard borrow split — see note in acquire_with_count
+        let _guard = self.lock.lock();
         self.map.clear();
         self.map.shrink_to_fit();
         self.frees.clear();
@@ -874,17 +876,13 @@ impl<Count: CountLoad> DebugData<Count> {
     fn on_allocation_leak(ptr: *mut c_void, data: &mut [u8]) {
         // SAFETY: vtable contract — ptr is &mut DebugData<Count>
         let debug: &mut Self = unsafe { &mut *(ptr.cast::<Self>()) };
-        debug.lock.lock();
-        let _guard = scopeguard::guard((), |_| debug.lock.unlock());
-        // TODO(port): scopeguard borrow split
         // TODO(port): count_pointer not wired through the dyn `acquire` path
         // (only `acquire_with_count` sets it) — this unwrap will panic for
         // refs created via `RefPtr::unchecked_and_unsafe_init`.
         // SAFETY: count_pointer was set in acquire_with_count and points into
         // the sibling raw_count field, which lives as long as self.
-        let count = unsafe { debug.count_pointer.unwrap().as_ref() };
-        let ref_count = count.load_count();
-        debug.dump(None, data.as_mut_ptr() as *mut c_void, ref_count);
+        let rc = unsafe { debug.count_pointer.unwrap().as_ref() }.load_count();
+        debug.dump(None, data.as_mut_ptr() as *mut c_void, rc);
     }
 
     fn get_scope_extra_vtable(&self) -> &'static allocation_scope::ExtraVTable {
@@ -906,13 +904,12 @@ impl<Count: CountLoad> DebugDataOps for DebugData<Count> {
         // separately. Here we acquire without updating count_pointer.
         // TODO(port): plumb count_pointer through AnyRefCounted if leak-dump
         // needs it for RefPtr-created refs.
-        self.lock.lock();
-        let _guard = scopeguard::guard((), |_| self.lock.unlock());
-        let id = self.next_id();
+        let _guard = self.lock.lock();
+        let id = self.alloc_id();
         self.map.insert(
             id,
             TrackedRef {
-                acquired_at: StoredTrace::capture(return_address),
+                acquired_at: StoredTrace::capture(Some(return_address)),
             },
         );
         id
@@ -929,17 +926,16 @@ impl<Count: CountLoad> DebugDataOps for DebugData<Count> {
         data_size: usize,
         ret_addr: usize,
     ) {
-        self.lock.lock();
-        let _guard = scopeguard::guard((), |_| self.lock.unlock());
+        // PORT NOTE: reshaped for borrowck — capture self ptr before guard borrows lock.
+        let self_ptr = self as *mut Self as *mut c_void;
+        let vtable = self.get_scope_extra_vtable();
+        let _guard = self.lock.lock();
         // SAFETY: data_ptr/data_size describe a live T allocation
         let bytes = unsafe { core::slice::from_raw_parts(data_ptr as *const u8, data_size) };
         scope.track_external_allocation(
             bytes,
             ret_addr,
-            allocation_scope::Extra {
-                ptr: self as *mut Self as *mut c_void,
-                vtable: self.get_scope_extra_vtable(),
-            },
+            allocation_scope::Extra { ptr: self_ptr, vtable },
         );
         // TODO(port): lifetime — TSV says `&'a mut` but the scope outlives this
         // borrow; raw ptr (debug-only). See field note on `allocation_scope`.
@@ -991,32 +987,32 @@ fn generic_dump(
 ) {
     let tracked_refs = map.len();
     let untracked_refs = total_ref_count - tracked_refs;
-    bun_core::Output::pretty_error(format_args!(
+    bun_core::pretty_error!(
         "<blue>{}{}{:x} has ",
         bstr::BStr::new(type_name.unwrap_or(b"")),
         if type_name.is_some() { "@" } else { "" },
         ptr as usize,
-    ));
+    );
     if tracked_refs > 0 {
-        bun_core::Output::pretty_error(format_args!(
+        bun_core::pretty_error!(
             "{} tracked{}",
             tracked_refs,
             if untracked_refs > 0 { ", " } else { "" },
-        ));
+        );
     }
     if untracked_refs > 0 {
-        bun_core::Output::pretty_error(format_args!("{} untracked refs<r>\n", untracked_refs));
+        bun_core::pretty_error!("{} untracked refs<r>\n", untracked_refs);
     } else {
-        bun_core::Output::pretty_error(format_args!("refs<r>\n"));
+        bun_core::pretty_error!("refs<r>\n");
     }
     let mut i: usize = 0;
     for (_, entry) in map.iter() {
-        bun_core::Output::pretty_error(format_args!("<b>RefPtr acquired at:<r>\n"));
+        bun_core::pretty_error!("<b>RefPtr acquired at:<r>\n");
         // TODO(b0-genuine): was dump_stack_trace(trace, AllocationScope::TRACE_LIMITS)
         dump_stack_hook(&entry.acquired_at, 0);
         i += 1;
         if i >= 3 {
-            bun_core::Output::pretty_error(format_args!("  {} omitted ...\n", map.len() - i));
+            bun_core::pretty_error!("  {} omitted ...\n", map.len() - i);
             break;
         }
     }

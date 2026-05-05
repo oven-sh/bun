@@ -35,15 +35,13 @@ pub mod tagged_pointer;
 // Compat aliases — Phase-A draft used short names; downstream uses long ones.
 pub use tagged_pointer::{TaggedPtr as TaggedPointer, TaggedPtrUnion as TaggedPointerUnion};
 
-// TODO(b2-large): ref_count.rs (1079L) — intrusive RefCount mixin. Heavy
-// inherent-assoc-type usage; needs trait redesign. Downstream FFI types
-// (`.classes.ts` payloads, WTFStringImpl) embed this.
-#[cfg(any())] pub mod ref_count;
-pub trait RefCount { fn ref_(&self); fn deref_(&self); }
-pub trait ThreadSafeRefCount: Send + Sync { fn ref_(&self); fn deref_(&self); }
-pub type RefPtr<T> = *mut T;
-pub type IntrusiveRc<T> = *mut T;
-pub type IntrusiveArc<T> = *mut T;
+pub mod ref_count;
+pub use ref_count::{
+    RefCounted, ThreadSafeRefCounted, AnyRefCounted, RefCount, ThreadSafeRefCount, RefPtr,
+};
+// Compat aliases for Phase-A drafts that used pointer-typedef stubs.
+pub type IntrusiveRc<T> = RefPtr<T>;
+pub type IntrusiveArc<T> = RefPtr<T>;
 
 pub use raw_ref_count::RawRefCount;
 pub use weak_ptr::WeakPtr;

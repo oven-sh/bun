@@ -323,20 +323,16 @@ pub fn getenv_z(key: &ZStr) -> Option<&'static [u8]> {
     }
     #[cfg(windows)]
     {
-        // Windows: env names are case-insensitive. Scan std::env (which decodes
-        // the wide env block) and return a leaked byte copy. Zig avoids the leak
-        // by walking `std.os.environ` directly; the Win32 wide-walk port lands
-        // when `windows_sys::env_block()` is real.
-        // PERF(port): leaks one Box<[u8]> per first-read of each var on Windows.
-        for (k, v) in std::env::vars_os() {
-            let kb = k.as_encoded_bytes();
-            if kb.len() == key.len()
-                && kb.iter().zip(key.as_bytes()).all(|(a, b)| a.eq_ignore_ascii_case(b))
-            {
-                let bytes: Box<[u8]> = v.as_encoded_bytes().to_vec().into_boxed_slice();
-                return Some(Box::leak(bytes));
-            }
-        }
+        // Windows env names are case-insensitive. Zig walks `std.os.environ`
+        // (`PEB.ProcessParameters.Environment`) and returns a borrowed slice
+        // into the WTF-16 block. Box::leak is forbidden (PORTING.md §Forbidden);
+        // returning a borrowed UTF-8 slice requires walking the *narrow* C
+        // runtime environ, which `_wgetenv`/`GetEnvironmentVariableW` don't
+        // expose. Correct port lands with `windows_sys::env_block()` (UTF-16
+        // walk) + a process-lifetime intern table OR returning &[u16].
+        // TODO(b2-blocked): bun_windows_sys::env_block — until then, no env on
+        // Windows via this path (callers use `bun.DotEnv.Loader` instead).
+        let _ = key;
         None
     }
 }
@@ -488,8 +484,9 @@ pub fn dirname(path: &[u8]) -> Option<&[u8]> {
             return Some(&path[..j.max(root_end)]);
         }
     }
-    // No separator after root: return the root if there is one, else None.
-    if root_end > 0 { Some(&path[..root_end]) } else { None }
+    // No separator after root: Zig dirnamePosix/dirnameWindows return null for
+    // root-only inputs ("/", "C:\", "//") AND for non-root single components.
+    None
 }
 
 // ─── Fd + fd module (from bun_sys::fd) ────────────────────────────────────
@@ -534,14 +531,56 @@ impl Fd {
         debug_assert!((h as u64) <= FD_VALUE_MASK);
         Fd((h as u64) & FD_VALUE_MASK)
     }
-    #[inline] pub const fn native(self) -> FdBacking { self.0 }
-    /// libuv c_int file number (`fd.value.as_uv` in Zig). On posix this equals
-    /// `native()`; on Windows it extracts the low 63→32 bits when kind=.uv.
-    #[inline] pub const fn uv(self) -> i32 {
-        #[cfg(windows)]
-        { (self.0 & FD_VALUE_MASK) as u32 as i32 }
-        #[cfg(not(windows))]
-        { self.0 }
+    /// Native OS file descriptor (`fd_t`). On POSIX this is just the backing
+    /// `c_int`. On Windows, when `kind == Uv`, calls `uv_get_osfhandle` to
+    /// obtain the underlying HANDLE — so the returned value may not be safely
+    /// closed via libc; use `FdExt::close()` instead.
+    #[cfg(not(windows))]
+    #[inline] pub const fn native(self) -> FdNative { self.0 }
+    #[cfg(windows)]
+    #[inline] pub fn native(self) -> FdNative {
+        match self.decode_windows() {
+            DecodeWindows::Windows(handle) => handle,
+            // SAFETY: FFI call into libuv; file_number came from _open_osfhandle.
+            DecodeWindows::Uv(file_number) => unsafe { fd::uv_get_osfhandle(file_number) },
+        }
+    }
+    /// libuv c_int file number. On POSIX this equals `native()`. On Windows,
+    /// when kind=uv this extracts the stored uv_file; when kind=system this
+    /// maps stdio handles to 0/1/2 (checking both the cached statics and the
+    /// live `GetStdHandle` result) and **panics** otherwise — converting an
+    /// arbitrary HANDLE to a uv fd makes closing impossible. The supplier
+    /// should call `make_lib_uv_owned()` near where `open()` was called.
+    #[cfg(not(windows))]
+    #[inline] pub const fn uv(self) -> i32 { self.0 }
+    #[cfg(windows)]
+    pub fn uv(self) -> i32 {
+        match self.decode_windows() {
+            DecodeWindows::Uv(v) => v,
+            DecodeWindows::Windows(handle) => {
+                // `.stdin()`/`.stdout()`/`.stderr()` hand out the cached
+                // `WINDOWS_CACHED_STD{IN,OUT,ERR}` (snapshotted at startup),
+                // so round-trip against those first. Comparing only against
+                // the live `GetStdHandle` result panics if the process std
+                // handle was swapped after startup via `SetStdHandle`,
+                // `AllocConsole`, `AttachConsole`, etc.
+                // SAFETY: cached statics written once at startup.
+                unsafe {
+                    if self == fd::WINDOWS_CACHED_STDIN { return 0; }
+                    if self == fd::WINDOWS_CACHED_STDOUT { return 1; }
+                    if self == fd::WINDOWS_CACHED_STDERR { return 2; }
+                }
+                if fd::is_stdio_handle(fd::STD_INPUT_HANDLE, handle) { return 0; }
+                if fd::is_stdio_handle(fd::STD_OUTPUT_HANDLE, handle) { return 1; }
+                if fd::is_stdio_handle(fd::STD_ERROR_HANDLE, handle) { return 2; }
+                panic!(
+                    "Cast bun.FD.uv({}) makes closing impossible!\n\n\
+                     The supplier of fd FD should call 'FD.makeLibUVOwned',\n\
+                     probably where open() was called.",
+                    self,
+                );
+            }
+        }
     }
 
     #[cfg(not(windows))] #[inline] pub const fn stdin()  -> Fd { Fd(0) }
@@ -552,19 +591,248 @@ impl Fd {
     #[cfg(windows)] #[inline] pub fn stdin()  -> Fd { unsafe { fd::WINDOWS_CACHED_STDIN } }
     #[cfg(windows)] #[inline] pub fn stdout() -> Fd { unsafe { fd::WINDOWS_CACHED_STDOUT } }
     #[cfg(windows)] #[inline] pub fn stderr() -> Fd { unsafe { fd::WINDOWS_CACHED_STDERR } }
-    #[cfg(windows)] #[inline] pub fn cwd() -> Fd { Fd::INVALID /* AT_FDCWD unsupported; callers use "." */ }
+    #[cfg(windows)] #[inline] pub fn cwd() -> Fd {
+        // SAFETY: PEB is process-global; only reading the cached cwd handle.
+        Fd::from_system(unsafe { fd::windows_current_directory_handle() })
+    }
+
+    // ── Kind tag (Windows: bit 63 = uv/system) ───────────────────────────
+    #[cfg(not(windows))] #[inline] pub const fn kind(self) -> FdKind { FdKind::System }
+    #[cfg(windows)]
+    #[inline] pub const fn kind(self) -> FdKind {
+        if self.0 & FD_KIND_BIT == 0 { FdKind::System } else { FdKind::Uv }
+    }
+
+    #[cfg(windows)]
+    #[inline] const fn value_as_system(self) -> u64 { self.0 & FD_VALUE_MASK }
+
+    /// Perform different logic for each kind of windows file descriptor.
+    #[cfg(windows)]
+    #[inline]
+    pub fn decode_windows(self) -> DecodeWindows {
+        match self.kind() {
+            FdKind::System => {
+                // Zig `numberToHandle`: `if (handle == 0) return INVALID_HANDLE_VALUE`.
+                let n = self.value_as_system();
+                let h = if n == 0 { usize::MAX } else { n as usize };
+                DecodeWindows::Windows(h as *mut core::ffi::c_void)
+            }
+            // Direct extract — do NOT recurse into self.uv() (which calls decode_windows).
+            FdKind::Uv => DecodeWindows::Uv((self.0 & FD_VALUE_MASK) as u32 as i32),
+        }
+    }
+
+    #[inline]
+    pub fn is_valid(self) -> bool {
+        #[cfg(not(windows))]
+        { self.0 != Fd::INVALID.0 }
+        #[cfg(windows)]
+        {
+            match self.kind() {
+                FdKind::System => self.value_as_system() != 0, // INVALID_VALUE = minInt(u63) = 0
+                FdKind::Uv => true,
+            }
+        }
+    }
+    #[inline]
+    pub fn unwrap_valid(self) -> Option<Fd> {
+        if self.is_valid() { Some(self) } else { None }
+    }
+
+    /// Deprecated: renamed to `native` because it is unclear what `cast` would cast to.
+    #[deprecated = "use native()"]
+    #[inline] pub fn cast(self) -> FdNative { self.native() }
+
+    /// Properly converts `Fd::INVALID` into `FdOptional::NONE`.
+    #[inline] pub const fn to_optional(self) -> FdOptional { FdOptional(self.0) }
+
+    pub fn stdio_tag(self) -> Option<Stdio> {
+        #[cfg(not(windows))]
+        {
+            match self.0 {
+                0 => Some(Stdio::StdIn),
+                1 => Some(Stdio::StdOut),
+                2 => Some(Stdio::StdErr),
+                _ => None,
+            }
+        }
+        #[cfg(windows)]
+        {
+            match self.decode_windows() {
+                DecodeWindows::Windows(handle) => {
+                    // SAFETY: PEB is process-global, read-only access.
+                    let p = unsafe { fd::windows_process_parameters() };
+                    if handle == p.hStdInput { Some(Stdio::StdIn) }
+                    else if handle == p.hStdOutput { Some(Stdio::StdOut) }
+                    else if handle == p.hStdError { Some(Stdio::StdErr) }
+                    else { None }
+                }
+                DecodeWindows::Uv(n) => match n {
+                    0 => Some(Stdio::StdIn),
+                    1 => Some(Stdio::StdOut),
+                    2 => Some(Stdio::StdErr),
+                    _ => None,
+                },
+            }
+        }
+    }
 }
 
-/// Zig fd.zig module-level statics (windows std-handle cache).
+/// `std.posix.fd_t` — `c_int` on POSIX, `HANDLE` (`*anyopaque`) on Windows.
+#[cfg(not(windows))] pub type FdNative = i32;
+#[cfg(windows)] pub type FdNative = *mut core::ffi::c_void;
+
+/// Zig `Kind` — tag in bit 63 on Windows, `enum(u0)` (zero-width) on POSIX.
+#[cfg(not(windows))]
+#[repr(u8)] #[derive(Copy, Clone, Eq, PartialEq)]
+pub enum FdKind { System = 0 }
+#[cfg(windows)]
+#[repr(u8)] #[derive(Copy, Clone, Eq, PartialEq)]
+pub enum FdKind { System = 0, Uv = 1 }
+
+#[cfg(windows)]
+pub enum DecodeWindows {
+    Windows(*mut core::ffi::c_void),
+    Uv(i32),
+}
+
+#[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
+pub enum Stdio { StdIn = 0, StdOut = 1, StdErr = 2 }
+impl Stdio {
+    #[inline] pub fn fd(self) -> Fd {
+        match self {
+            Stdio::StdIn => Fd::stdin(),
+            Stdio::StdOut => Fd::stdout(),
+            Stdio::StdErr => Fd::stderr(),
+        }
+    }
+    #[inline] pub fn from_int(v: i32) -> Option<Stdio> {
+        match v { 0 => Some(Stdio::StdIn), 1 => Some(Stdio::StdOut), 2 => Some(Stdio::StdErr), _ => None }
+    }
+    #[inline] pub fn to_int(self) -> i32 { self as i32 }
+}
+
+/// Niche-packed `Option<Fd>` (`enum(backing_int) { none = @bitCast(invalid), _ }`).
+/// Use instead of encoding the invalid value directly.
+#[repr(transparent)]
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub struct FdOptional(FdBacking);
+impl FdOptional {
+    pub const NONE: FdOptional = FdOptional(Fd::INVALID.0);
+    #[inline] pub const fn init(maybe: Option<Fd>) -> FdOptional {
+        match maybe { Some(fd) => fd.to_optional(), None => FdOptional::NONE }
+    }
+    #[inline] pub const fn unwrap(self) -> Option<Fd> {
+        if self.0 == FdOptional::NONE.0 { None } else { Some(Fd(self.0)) }
+    }
+    #[inline] pub fn take(&mut self) -> Option<Fd> {
+        let r = self.unwrap(); *self = FdOptional::NONE; r
+    }
+}
+
+/// Debug-only hook: bun_sys installs a fn that resolves an FD to its path
+/// (readlink `/proc/self/fd/N` on Linux, `F_GETPATH` on macOS). Display calls
+/// it when set so T0 doesn't depend on bun_paths.
+pub static FD_PATH_HOOK: core::sync::atomic::AtomicPtr<()> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+type FdPathHookFn = unsafe fn(Fd, buf: *mut u8, cap: usize) -> isize;
+
+impl core::fmt::Display for Fd {
+    fn fmt(&self, w: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let fd = *self;
+        if !fd.is_valid() { return w.write_str("[invalid_fd]"); }
+        #[cfg(not(windows))]
+        {
+            write!(w, "{}", fd.0)?;
+            #[cfg(debug_assertions)]
+            if fd.0 >= 3 {
+                let hook = FD_PATH_HOOK.load(core::sync::atomic::Ordering::Acquire);
+                if !hook.is_null() {
+                    // SAFETY: hook was installed by bun_sys with FdPathHookFn signature.
+                    let f: FdPathHookFn = unsafe { core::mem::transmute(hook) };
+                    let mut buf = [0u8; 1024];
+                    // SAFETY: buf is 1024 bytes, passed with matching cap.
+                    let n = unsafe { f(fd, buf.as_mut_ptr(), buf.len()) };
+                    if n > 0 {
+                        write!(w, "[{}]", bstr::BStr::new(&buf[..n as usize]))?;
+                    } else if n == -1 {
+                        w.write_str("[BADF]")?;
+                    }
+                }
+            }
+            Ok(())
+        }
+        #[cfg(windows)]
+        {
+            match fd.decode_windows() {
+                DecodeWindows::Windows(_) => write!(w, "{}[handle]", fd.value_as_system()),
+                DecodeWindows::Uv(n) => write!(w, "{}[libuv]", n),
+            }
+        }
+    }
+}
+
+/// Zig fd.zig module-level statics + Windows libuv/PEB FFI shims (T0 → no
+/// crate dep, just `extern` symbols; libuv is linked into the final binary).
 pub mod fd {
     use super::Fd;
+    use core::ffi::{c_int, c_void};
+
     // SAFETY: written once in windows_stdio::init() during single-threaded startup.
-    #[cfg(windows)] pub static mut WINDOWS_CACHED_STDIN:  Fd = Fd::INVALID;
-    #[cfg(windows)] pub static mut WINDOWS_CACHED_STDOUT: Fd = Fd::INVALID;
-    #[cfg(windows)] pub static mut WINDOWS_CACHED_STDERR: Fd = Fd::INVALID;
-    #[cfg(windows)] pub static mut WINDOWS_CACHED_FD_SET: bool = false;
-    // Non-windows: no statics; module exists so `use crate::fd as fd_internals` resolves.
-    #[cfg(not(windows))] #[allow(dead_code)] const _PLACEHOLDER: () = ();
+    pub static mut WINDOWS_CACHED_STDIN:  Fd = Fd::INVALID;
+    pub static mut WINDOWS_CACHED_STDOUT: Fd = Fd::INVALID;
+    pub static mut WINDOWS_CACHED_STDERR: Fd = Fd::INVALID;
+    #[cfg(debug_assertions)]
+    pub static mut WINDOWS_CACHED_FD_SET: bool = false;
+
+    #[cfg(windows)]
+    unsafe extern "C" {
+        // libuv: convert C-runtime fd → OS HANDLE.
+        pub fn uv_get_osfhandle(fd: c_int) -> *mut c_void;
+    }
+    #[cfg(windows)]
+    unsafe extern "system" {
+        fn GetStdHandle(n: u32) -> *mut c_void;
+    }
+    #[cfg(windows)] pub const STD_INPUT_HANDLE:  u32 = (-10i32) as u32;
+    #[cfg(windows)] pub const STD_OUTPUT_HANDLE: u32 = (-11i32) as u32;
+    #[cfg(windows)] pub const STD_ERROR_HANDLE:  u32 = (-12i32) as u32;
+    #[cfg(windows)]
+    pub fn is_stdio_handle(id: u32, handle: *mut c_void) -> bool {
+        // SAFETY: GetStdHandle is always safe to call.
+        let h = unsafe { GetStdHandle(id) };
+        // Zig: `getStdHandle catch return false; handle == h`. INVALID_HANDLE_VALUE
+        // (failure) won't equal a valid handle, so the equality check suffices.
+        !h.is_null() && handle == h
+    }
+
+    /// PEB ProcessParameters subset for stdio/cwd handle lookup.
+    /// Full struct lives in `bun_windows_sys::PEB`; only the handle fields are
+    /// read here, so a minimal view is exposed via accessor fns.
+    #[cfg(windows)]
+    #[repr(C)]
+    pub struct ProcessParametersStdio {
+        pub hStdInput: *mut c_void,
+        pub hStdOutput: *mut c_void,
+        pub hStdError: *mut c_void,
+    }
+    #[cfg(windows)]
+    pub unsafe fn windows_process_parameters() -> &'static ProcessParametersStdio {
+        // TODO(b2-windows): PEB → ProcessParameters → {hStdInput,hStdOutput,hStdError}
+        // via bun_windows_sys::peb(). Until that crate is real, return cached values.
+        static FALLBACK: ProcessParametersStdio = ProcessParametersStdio {
+            hStdInput: core::ptr::null_mut(),
+            hStdOutput: core::ptr::null_mut(),
+            hStdError: core::ptr::null_mut(),
+        };
+        &FALLBACK
+    }
+    #[cfg(windows)]
+    pub unsafe fn windows_current_directory_handle() -> *mut c_void {
+        // TODO(b2-windows): PEB().ProcessParameters.CurrentDirectory.Handle
+        core::ptr::null_mut()
+    }
 }
 
 // ─── FileKind / Mode / kind_from_mode (from bun_sys) ──────────────────────
@@ -671,25 +939,34 @@ pub struct Version {
 
 // ─── ThreadLock (from bun_safety) ─────────────────────────────────────────
 // Debug-only re-entrancy guard. Release builds compile to a ZST.
+//
+// `locked_at` is `UnsafeCell` so `lock()`/`lock_or_assert()` can take `&self`
+// (callers like `RefCount::assert_single_threaded` only have `&self`). The
+// whole point of ThreadLock is asserting single-threaded access, so the
+// unsynchronized write to `locked_at` is exactly the Zig semantics — if two
+// threads race here, the `owning_thread.swap` panic fires first.
 pub struct ThreadLock {
     #[cfg(debug_assertions)] owning_thread: core::sync::atomic::AtomicU64,
-    #[cfg(debug_assertions)] locked_at: crate::StoredTrace,
+    #[cfg(debug_assertions)] locked_at: core::cell::UnsafeCell<crate::StoredTrace>,
 }
+// SAFETY: `locked_at` is only written after `owning_thread.swap` proves the
+// current thread is the unique acquirer; concurrent access panics first.
+unsafe impl Sync for ThreadLock {}
 const INVALID_THREAD_ID: u64 = 0;
 impl ThreadLock {
     pub const fn init_unlocked() -> Self {
         Self {
             #[cfg(debug_assertions)] owning_thread: core::sync::atomic::AtomicU64::new(INVALID_THREAD_ID),
-            #[cfg(debug_assertions)] locked_at: crate::StoredTrace::EMPTY,
+            #[cfg(debug_assertions)] locked_at: core::cell::UnsafeCell::new(crate::StoredTrace::EMPTY),
         }
     }
-    #[inline] pub fn init_locked() -> Self { let mut s = Self::init_unlocked(); s.lock(); s }
+    #[inline] pub fn init_locked() -> Self { let s = Self::init_unlocked(); s.lock(); s }
     /// Zig `initLockedIfNonComptime` — Zig comptime evaluation has no thread;
     /// in Rust there is no comptime execution, so this is just `init_locked`.
     #[inline] pub fn init_locked_if_non_comptime() -> Self { Self::init_locked() }
     /// Zig `lockOrAssert` — acquire if unlocked, else assert this thread holds it.
     #[inline]
-    pub fn lock_or_assert(&mut self) {
+    pub fn lock_or_assert(&self) {
         #[cfg(debug_assertions)]
         {
             let held = self.owning_thread.load(core::sync::atomic::Ordering::Acquire);
@@ -701,24 +978,34 @@ impl ThreadLock {
         }
     }
     #[inline]
-    pub fn lock(&mut self) {
+    pub fn lock(&self) {
         #[cfg(debug_assertions)]
         {
             let cur = thread_id();
             let prev = self.owning_thread.swap(cur, core::sync::atomic::Ordering::AcqRel);
             if prev != INVALID_THREAD_ID {
-                crate::dump_stack_trace(&self.locked_at.trace(), crate::DumpStackTraceOptions {
+                // SAFETY: read-only path; the prior holder wrote `locked_at`
+                // before its `swap` released, and we observe via AcqRel above.
+                let trace = unsafe { (*self.locked_at.get()).trace() };
+                crate::dump_stack_trace(&trace, crate::DumpStackTraceOptions {
                     frame_count: 10, stop_at_jsc_llint: true, ..Default::default()
                 });
                 panic!("ThreadLock: thread {cur} tried to lock, already held by {prev}");
             }
-            self.locked_at = crate::StoredTrace::capture(None);
+            // SAFETY: swap above proved we are the unique acquirer (prev was
+            // INVALID); no other thread can be in this branch concurrently.
+            unsafe { *self.locked_at.get() = crate::StoredTrace::capture(None); }
         }
     }
     #[inline]
-    pub fn unlock(&mut self) {
+    pub fn unlock(&self) {
         #[cfg(debug_assertions)]
-        self.owning_thread.store(INVALID_THREAD_ID, core::sync::atomic::Ordering::Release);
+        {
+            self.assert_locked(); // Zig: assert current thread holds it before reset.
+            self.owning_thread.store(INVALID_THREAD_ID, core::sync::atomic::Ordering::Release);
+            // SAFETY: assert_locked above proved we are the unique holder.
+            unsafe { *self.locked_at.get() = crate::StoredTrace::EMPTY; }
+        }
     }
     #[inline]
     pub fn assert_locked(&self) {

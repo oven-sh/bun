@@ -21,12 +21,35 @@ pub const ParseResult = struct {
         none: void,
         source_code: void,
         source_code_cjs: void,
-        bytecode: []u8,
+        bytecode: BytecodeBundle,
         bytecode_cjs: []u8,
+
+        /// ESM bytecode sidecar. `module_info` is the optional serialized
+        /// import/export metadata read from the `.jsm` sidecar — when
+        /// present, JSC can skip re-parsing during the analyze phase.
+        ///
+        /// Ownership: these slices are intentionally not freed here. Both
+        /// buffers are handed to JSC (as `CachedBytecode` / deserialized
+        /// `ModuleInfoDeserialized`) whose destructors free them on module
+        /// eviction. Same lifetime model as the sibling `.bytecode_cjs`
+        /// variant — don't add a `deinit` without also tracing through
+        /// `ResolvedSource` consumers first.
+        pub const BytecodeBundle = struct {
+            bytecode: []u8,
+            module_info: []u8 = &.{},
+        };
 
         pub fn bytecodeSlice(this: AlreadyBundled) []u8 {
             return switch (this) {
-                inline .bytecode, .bytecode_cjs => |slice| slice,
+                .bytecode => |b| b.bytecode,
+                .bytecode_cjs => |slice| slice,
+                else => &.{},
+            };
+        }
+
+        pub fn moduleInfoSlice(this: AlreadyBundled) []u8 {
+            return switch (this) {
+                .bytecode => |b| b.module_info,
                 else => &.{},
             };
         }
@@ -971,14 +994,31 @@ pub const Transpiler = struct {
                             .bytecode_cjs, .bytecode => brk: {
                                 const default_value: ParseResult.AlreadyBundled = if (already_bundled == .bytecode_cjs) .source_code_cjs else .source_code;
                                 if (this_parse.virtual_source == null and this_parse.allow_bytecode_cache) {
+                                    const base_fd = dirname_fd.unwrapValid() orelse bun.FD.cwd();
                                     var path_buf2: bun.PathBuffer = undefined;
                                     @memcpy(path_buf2[0..path.text.len], path.text);
                                     path_buf2[path.text.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
-                                    const bytecode = bun.sys.File.toSourceAt(dirname_fd.unwrapValid() orelse bun.FD.cwd(), path_buf2[0 .. path.text.len + bun.bytecode_extension.len], bun.default_allocator, .{}).asValue() orelse break :brk default_value;
+                                    const bytecode = bun.sys.File.toSourceAt(base_fd, path_buf2[0 .. path.text.len + bun.bytecode_extension.len], bun.default_allocator, .{}).asValue() orelse break :brk default_value;
                                     if (bytecode.contents.len == 0) {
                                         break :brk default_value;
                                     }
-                                    break :brk if (already_bundled == .bytecode_cjs) .{ .bytecode_cjs = @constCast(bytecode.contents) } else .{ .bytecode = @constCast(bytecode.contents) };
+                                    if (already_bundled == .bytecode_cjs) {
+                                        break :brk .{ .bytecode_cjs = @constCast(bytecode.contents) };
+                                    }
+                                    // ESM bytecode: also try to load the `.jsm` sidecar containing
+                                    // the serialized module_info blob. If it's missing we still pass
+                                    // the bytecode through — JSC will just re-parse during analyze.
+                                    var mi_path_buf: bun.PathBuffer = undefined;
+                                    @memcpy(mi_path_buf[0..path.text.len], path.text);
+                                    mi_path_buf[path.text.len..][0..bun.module_info_extension.len].* = bun.module_info_extension.*;
+                                    const module_info_bytes: []u8 = if (bun.sys.File.toSourceAt(base_fd, mi_path_buf[0 .. path.text.len + bun.module_info_extension.len], bun.default_allocator, .{}).asValue()) |mi|
+                                        @constCast(mi.contents)
+                                    else
+                                        &.{};
+                                    break :brk .{ .bytecode = .{
+                                        .bytecode = @constCast(bytecode.contents),
+                                        .module_info = module_info_bytes,
+                                    } };
                                 }
                                 break :brk default_value;
                             },

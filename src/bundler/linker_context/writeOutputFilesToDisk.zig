@@ -297,6 +297,106 @@ pub fn writeOutputFilesToDisk(
             break :brk null;
         };
 
+        // For ESM bytecode, write a .jsm sidecar containing the serialized
+        // module_info blob so the runtime loader can skip re-parsing during
+        // JSC's analyze phase. Mirror the .jsc loader gate above so the
+        // number of supplementary output files matches the capacity
+        // OutputFileListBuilder reserved. Also gate on bytecode success —
+        // an orphan .jsm without a matching .jsc is useless at runtime
+        // (the loader only reads .jsm after the .jsc load succeeds) and
+        // would leave one reserved bytecode slot unfilled, tripping
+        // OutputFileListBuilder.take()'s total-insertions assertion.
+        //
+        // Ownership: `module_info_bytes` was allocated unconditionally by
+        // `serializeModuleInfo` in the cross-chunk fixup loop. Every exit
+        // from this block (disk-write success OR any early-skip) must free
+        // it and null the chunk field, otherwise `Bun.build` callers that
+        // rebuild in a loop accumulate the sidecar bytes indefinitely.
+        const module_info_output_file: ?options.OutputFile = brk: {
+            const mi_bytes_opt = if (chunk.content == .javascript)
+                chunk.content.javascript.module_info_bytes
+            else
+                null;
+            defer {
+                if (mi_bytes_opt) |mi| {
+                    bun.default_allocator.free(mi);
+                    if (chunk.content == .javascript) {
+                        chunk.content.javascript.module_info_bytes = null;
+                    }
+                }
+            }
+
+            if (bytecode_output_file == null) break :brk null;
+            if (!c.options.generate_bytecode_cache or c.options.output_format != .esm) break :brk null;
+            if (chunk.content != .javascript) break :brk null;
+
+            const mi_loader: Loader = if (chunk.entry_point.is_entry_point)
+                c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index]
+            else
+                .js;
+            if (!mi_loader.isJavaScriptLike()) break :brk null;
+
+            const mi_bytes = mi_bytes_opt orelse break :brk null;
+
+            const out_size: u32 = @as(u32, @truncate(mi_bytes.len));
+            const out_hash: ?u64 = if (chunk.template.placeholder.hash != null) bun.hash(mi_bytes) else null;
+
+            var fdpath: bun.PathBuffer = undefined;
+            @memcpy(fdpath[0..chunk.final_rel_path.len], chunk.final_rel_path);
+            fdpath[chunk.final_rel_path.len..][0..bun.module_info_extension.len].* = bun.module_info_extension.*;
+            const full_path = fdpath[0 .. chunk.final_rel_path.len + bun.module_info_extension.len];
+
+            switch (jsc.Node.fs.NodeFS.writeFileWithPathBuffer(
+                &pathbuf,
+                .{
+                    .data = .{
+                        .buffer = .{
+                            .buffer = .{
+                                .ptr = @constCast(mi_bytes.ptr),
+                                .len = out_size,
+                                .byte_len = out_size,
+                            },
+                        },
+                    },
+                    .encoding = .buffer,
+                    .mode = if (chunk.flags.is_executable) 0o755 else 0o644,
+
+                    .dirfd = .fromStdDir(root_dir),
+                    .file = .{
+                        .path = .{
+                            .string = bun.PathString.init(full_path),
+                        },
+                    },
+                },
+            )) {
+                .result => {},
+                .err => |err| {
+                    c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{f} writing module info for chunk {f}", .{
+                        err,
+                        bun.fmt.quote(chunk.final_rel_path),
+                    }) catch unreachable;
+                    return error.WriteFailed;
+                },
+            }
+
+            break :brk options.OutputFile.init(.{
+                .output_path = std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.module_info_extension, .{chunk.final_rel_path}) catch unreachable,
+                .input_path = std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.module_info_extension, .{chunk.final_rel_path}) catch unreachable,
+                .input_loader = .file,
+                .hash = out_hash,
+                .output_kind = .module_info,
+                .loader = .file,
+                .size = out_size,
+                .display_size = out_size,
+                .data = .{
+                    .saved = 0,
+                },
+                .side = null,
+                .entry_point_index = null,
+                .is_executable = false,
+            });
+        };
+
         switch (jsc.Node.fs.NodeFS.writeFileWithPathBuffer(
             &pathbuf,
             .{
@@ -340,6 +440,11 @@ pub fn writeOutputFilesToDisk(
         else
             null;
 
+        const module_info_index: ?u32 = if (module_info_output_file != null)
+            try output_files.insertForSourcemapOrBytecode(module_info_output_file.?)
+        else
+            null;
+
         const output_kind = if (chunk.content == .css)
             .asset
         else if (chunk.entry_point.is_entry_point)
@@ -359,6 +464,7 @@ pub fn writeOutputFilesToDisk(
             .loader = chunk.content.loader(),
             .source_map_index = source_map_index,
             .bytecode_index = bytecode_index,
+            .module_info_index = module_info_index,
             .size = @as(u32, @truncate(code_result.buffer.len)),
             .display_size = @as(u32, @truncate(display_size)),
             .is_executable = chunk.flags.is_executable,

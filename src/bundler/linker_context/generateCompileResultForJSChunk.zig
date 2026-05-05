@@ -46,7 +46,10 @@ fn generateCompileResultForJSChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCon
     const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
     const runtimeRequireRef = if (c.options.output_format == .cjs) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
-    const collect_decls = c.options.generate_bytecode_cache and c.options.output_format == .esm and c.options.compile;
+    // Collect top-level decls for ESM bytecode — both --compile (embedded
+    // module_info) and --outdir (.jsm sidecar) need this so the deserialized
+    // module_info matches what JSC's fallbackParse computes.
+    const collect_decls = c.options.generate_bytecode_cache and c.options.output_format == .esm;
     var dc = DeclCollector{ .allocator = allocator };
 
     const result = c.generateCodeForFileInChunkJS(

@@ -1074,13 +1074,6 @@ pub const JSBundler = struct {
                 }
             }
 
-            // ESM bytecode requires compile because module_info (import/export metadata)
-            // is only available in compiled binaries. Without it, JSC must parse the file
-            // twice (once for module analysis, once for bytecode), which is a deopt.
-            if (this.bytecode and this.format == .esm and this.compile == null) {
-                return globalThis.throwInvalidArguments("ESM bytecode requires compile: true. Use format: 'cjs' for bytecode without compile.", .{});
-            }
-
             // Validate standalone HTML mode: compile + browser target + all HTML entrypoints
             if (this.compile != null and this.target == .browser) {
                 const has_all_html = brk: {

@@ -25,10 +25,27 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
     const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
     const runtimeRequireRef = if (c.options.output_format == .cjs) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
-    // Create ModuleInfo for ESM bytecode in --compile builds
-    const generate_module_info = c.options.generate_bytecode_cache and c.options.output_format == .esm and c.options.compile;
-    const loader = c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index];
+    // Mirror the loader fallback used in the bytecode/sourcemap emission paths
+    // (`generateChunksInParallel`, `writeOutputFilesToDisk`, and
+    // `OutputFileListBuilder.calculateOutputFileListCapacity`): non-entry
+    // chunks are treated as `.js`. Using the entry-point's original source
+    // loader here would skip ModuleInfo for split chunks and desync from the
+    // capacity reservation, reintroducing the slot/accounting mismatch this
+    // gate is meant to prevent.
+    const loader: bun.Loader = if (chunk.entry_point.is_entry_point)
+        c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index]
+    else
+        .js;
     const is_typescript = loader.isTypeScript();
+    // Create ModuleInfo for ESM bytecode — needed for both --compile (embedded)
+    // and sidecar (.jsm next to .js/.jsc) builds so JSC can skip re-parsing.
+    // Gate on `loader.isJavaScriptLike()` to match `OutputFileListBuilder`'s
+    // capacity reservation, which only reserves supplementary slots for
+    // JS-like chunks. Without this gate a JSON/TOML/YAML entry point under
+    // `--bytecode --format=esm` would allocate a ModuleInfo that nothing
+    // downstream claims (in-memory path leaks it, disk path crashes the
+    // `take()` insertion assertion).
+    const generate_module_info = c.options.generate_bytecode_cache and c.options.output_format == .esm and loader.isJavaScriptLike();
     const module_info: ?*analyze_transpiled_module.ModuleInfo = if (generate_module_info)
         analyze_transpiled_module.ModuleInfo.create(bun.default_allocator, is_typescript) catch null
     else
@@ -100,9 +117,14 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
         // 1. Add declarations collected by DeclCollector during parallel part printing.
         // These come from the CONVERTED statements (after convertStmtsForChunk transforms
         // export default → var, strips exports, etc.), so they match what's actually printed.
-        for (chunk.compile_results_for_chunk) |cr| {
-            const decls = switch (cr) {
-                .javascript => |js| js.decls,
+        //
+        // The `decls` slice was handed over from `DeclCollector.decls.items` in
+        // `generateCompileResultForJSChunkImpl` and never consumed anywhere else;
+        // free it once we're done copying into ModuleInfo so repeated `Bun.build`
+        // calls don't accumulate the backing buffers.
+        for (chunk.compile_results_for_chunk) |*cr| {
+            const decls = switch (cr.*) {
+                .javascript => |*js| js.decls,
                 else => continue,
             };
             for (decls) |decl| {
@@ -112,6 +134,10 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
                 };
                 const string_id = mi.str(decl.name) catch continue;
                 mi.addVar(string_id, var_kind) catch continue;
+            }
+            if (decls.len > 0) {
+                bun.default_allocator.free(decls);
+                cr.javascript.decls = &.{};
             }
         }
 

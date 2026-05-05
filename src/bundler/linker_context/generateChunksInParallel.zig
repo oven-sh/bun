@@ -308,7 +308,7 @@ pub fn generateChunksInParallel(
     // cross-chunk import specifiers. During printing, cross-chunk imports use
     // unique_key placeholders as paths. Now that final paths are known, replace
     // those placeholders with the resolved paths and serialize.
-    if (c.options.generate_bytecode_cache and c.options.output_format == .esm and c.options.compile) {
+    if (c.options.generate_bytecode_cache and c.options.output_format == .esm) {
         // Build map from unique_key -> final resolved path
         const b = @as(*bun.bundle_v2.BundleV2, @fieldParentPtr("linker", c));
         var unique_key_to_path = bun.StringHashMap([]const u8).init(c.allocator());
@@ -650,36 +650,63 @@ pub fn generateChunksInParallel(
                 break :brk null;
             };
 
-            // Create module_info output file for ESM bytecode in --compile builds
+            // Create module_info output file for ESM bytecode — embedded by
+            // --compile builds, or written as a .jsm sidecar next to .js/.jsc
+            // when emitting to --outdir so the runtime loader can hand JSC
+            // pre-computed import/export metadata. Mirror the disk-write
+            // path: skip `.jsm` when bytecode generation failed, otherwise
+            // the supplementary slot for the missing `.jsc` stays unfilled
+            // and `OutputFileListBuilder.take()` asserts.
+            //
+            // `chunk.content.javascript.module_info_bytes` was allocated
+            // unconditionally by `serializeModuleInfo` in the cross-chunk
+            // fixup loop. Every exit path here either transfers ownership
+            // to the returned `OutputFile` (buffer variant frees on deinit)
+            // or releases it below — otherwise the bytes leak in `Bun.build`
+            // callers that rebuild in a loop.
             const module_info_output_file: ?options.OutputFile = brk: {
-                if (c.options.generate_bytecode_cache and c.options.output_format == .esm and c.options.compile) {
+                const mi_bytes_opt = if (chunk.content == .javascript)
+                    chunk.content.javascript.module_info_bytes
+                else
+                    null;
+                errdefer_mi: {
+                    if (bytecode_output_file == null) break :errdefer_mi;
+                    if (!c.options.generate_bytecode_cache or c.options.output_format != .esm) break :errdefer_mi;
+                    if (chunk.content != .javascript) break :errdefer_mi;
+
                     const loader: Loader = if (chunk.entry_point.is_entry_point)
-                        c.parse_graph.input_files.items(.loader)[
-                            chunk.entry_point.source_index
-                        ]
+                        c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index]
                     else
                         .js;
+                    if (!loader.isJavaScriptLike()) break :errdefer_mi;
 
-                    if (chunk.content == .javascript and loader.isJavaScriptLike()) {
-                        if (chunk.content.javascript.module_info_bytes) |module_info_bytes| {
-                            break :brk options.OutputFile.init(.{
-                                .output_path = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}.module-info", .{chunk.final_rel_path})),
-                                .input_path = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}.module-info", .{chunk.final_rel_path})),
-                                .input_loader = .js,
-                                .hash = if (chunk.template.placeholder.hash != null) bun.hash(module_info_bytes) else null,
-                                .output_kind = .module_info,
-                                .loader = .file,
-                                .size = @as(u32, @truncate(module_info_bytes.len)),
-                                .display_size = @as(u32, @truncate(module_info_bytes.len)),
-                                .data = .{
-                                    .buffer = .{ .data = module_info_bytes, .allocator = bun.default_allocator },
-                                },
-                                .side = side,
-                                .entry_point_index = null,
-                                .is_executable = false,
-                            });
-                        }
-                    }
+                    const module_info_bytes = mi_bytes_opt orelse break :errdefer_mi;
+                    // Ownership transfers into the buffer variant; clear
+                    // the chunk field so nothing else tries to reach in.
+                    chunk.content.javascript.module_info_bytes = null;
+                    break :brk options.OutputFile.init(.{
+                        .output_path = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.module_info_extension, .{chunk.final_rel_path})),
+                        .input_path = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.module_info_extension, .{chunk.final_rel_path})),
+                        .input_loader = .file,
+                        .hash = if (chunk.template.placeholder.hash != null) bun.hash(module_info_bytes) else null,
+                        .output_kind = .module_info,
+                        .loader = .file,
+                        .size = @as(u32, @truncate(module_info_bytes.len)),
+                        .display_size = @as(u32, @truncate(module_info_bytes.len)),
+                        .data = .{
+                            .buffer = .{ .data = module_info_bytes, .allocator = bun.default_allocator },
+                        },
+                        .side = side,
+                        .entry_point_index = null,
+                        .is_executable = false,
+                    });
+                }
+
+                // Emission was skipped — release the serialized bytes so
+                // `Bun.build` callers that hit this path don't leak.
+                if (mi_bytes_opt) |mi| {
+                    bun.default_allocator.free(mi);
+                    chunk.content.javascript.module_info_bytes = null;
                 }
                 break :brk null;
             };

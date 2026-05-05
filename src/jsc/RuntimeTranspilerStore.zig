@@ -508,6 +508,15 @@ pub const RuntimeTranspilerStore = struct {
 
             if (parse_result.already_bundled != .none) {
                 const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
+                const module_info_slice = parse_result.already_bundled.moduleInfoSlice();
+                // See `ModuleLoader.zig`: `createFromCachedRecord` dupes the
+                // bytes, so the raw `.jsm` bytes read by the transpiler are
+                // ours to free.
+                const module_info_deserialized: ?*anyopaque = if (module_info_slice.len > 0) blk: {
+                    defer bun.default_allocator.free(module_info_slice);
+                    const mi = analyze_transpiled_module.ModuleInfoDeserialized.createFromCachedRecord(module_info_slice, bun.default_allocator) orelse break :blk null;
+                    break :blk @ptrCast(mi);
+                } else null;
                 this.resolved_source = ResolvedSource{
                     .allocator = null,
                     .source_code = bun.String.cloneLatin1(parse_result.source.contents),
@@ -515,6 +524,7 @@ pub const RuntimeTranspilerStore = struct {
                     .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
                     .bytecode_cache_size = bytecode_slice.len,
                     .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
+                    .module_info = module_info_deserialized,
                     .tag = this.resolved_source.tag,
                 };
                 this.resolved_source.source_code.ensureHash();

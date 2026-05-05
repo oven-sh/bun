@@ -185,6 +185,73 @@ test("nested pushStream() throws ERR_HTTP2_NESTED_PUSH", async () => {
   }
 });
 
+test("pushStream() inherits :authority from the client's request headers", async () => {
+  let client: ReturnType<typeof http2.connect> | undefined;
+  const { promise: done, resolve, reject } = Promise.withResolvers<string | undefined>();
+
+  const server = http2.createSecureServer({ key: tls.key, cert: tls.cert });
+
+  function cleanup() {
+    try {
+      client?.close();
+    } catch {}
+    try {
+      server.close();
+    } catch {}
+  }
+
+  server.on("stream", (stream: any) => {
+    stream.on("error", () => {});
+    // Omit :authority from the push headers so pushStream() has to derive it
+    // from the inbound request headers (Node: stream[kHeaders][':authority']).
+    // Without the fix, it would fall back to "localhost".
+    stream.pushStream({ ":path": "/a.css" }, (err: Error | null, pushStream: any) => {
+      if (err) {
+        cleanup();
+        reject(err);
+        return;
+      }
+      pushStream.on("error", () => {});
+      pushStream.respond({ [http2.constants.HTTP2_HEADER_STATUS]: 200 });
+      pushStream.end("a");
+    });
+    stream.respond({ [http2.constants.HTTP2_HEADER_STATUS]: 200 });
+    stream.end("root");
+  });
+
+  server.on("error", () => {});
+  server.listen(0, () => {
+    const port = (server.address() as any).port;
+    client = http2.connect(`https://localhost:${port}`, { rejectUnauthorized: false });
+    client.on("error", (err: Error) => {
+      cleanup();
+      reject(err);
+    });
+    client.on("stream", (pushedStream: any, pushHeaders: any) => {
+      pushedStream.on("error", () => {});
+      pushedStream.resume();
+      resolve(pushHeaders[":authority"]);
+    });
+    // Send the request with a distinct :authority so the fallback "localhost"
+    // path would not coincidentally match.
+    const req = client.request({ ":path": "/", ":authority": `localhost:${port}` });
+    req.on("error", () => {});
+    req.resume();
+    req.end();
+  });
+
+  try {
+    const authority = await done;
+    expect(authority).toBeDefined();
+    // The :authority on the pushed stream must contain the port the client
+    // actually connected to (localhost:PORT). Plain "localhost" means the
+    // fix didn't wire up — that's the buggy fallback.
+    expect(authority).toMatch(/^localhost:\d+$/);
+  } finally {
+    cleanup();
+  }
+});
+
 test("pushStream() does not leak http2.sensitiveHeaders symbol as a bogus header", async () => {
   let client: ReturnType<typeof http2.connect> | undefined;
   const { promise: done, resolve, reject } = Promise.withResolvers<string[]>();

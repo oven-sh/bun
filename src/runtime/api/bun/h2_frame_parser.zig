@@ -2461,16 +2461,19 @@ pub const H2FrameParser = struct {
                 if (stream.endAfterHeaders) {
                     const identifier = stream.getIdentifier();
                     identifier.ensureStillAlive();
-                    if (stream.state == .HALF_CLOSED_REMOTE) {
-                        // no more continuation headers we can call it closed
+                    // Mirror the state transitions in handleHeadersFrame's
+                    // END_STREAM path. The prior HEADERS frame already set
+                    // the stream to HALF_CLOSED_REMOTE when END_STREAM is
+                    // accompanied by END_HEADERS=0, so:
+                    //   - HALF_CLOSED_REMOTE: on the server this stays open
+                    //     for the local response; do NOT transition to CLOSED.
+                    //   - HALF_CLOSED_LOCAL / RESERVED_REMOTE: client push
+                    //     stream whose local side already ended → CLOSED.
+                    //   - anything else: fall through to HALF_CLOSED_LOCAL.
+                    if (stream.state == .HALF_CLOSED_LOCAL or stream.state == .RESERVED_REMOTE) {
                         stream.state = .CLOSED;
                         stream.freeResources(this, false);
-                    } else if (stream.state == .RESERVED_REMOTE or stream.state == .HALF_CLOSED_LOCAL) {
-                        // Client-side push stream finishing its response with
-                        // END_STREAM on the initial HEADERS frame.
-                        stream.state = .CLOSED;
-                        stream.freeResources(this, false);
-                    } else {
+                    } else if (stream.state != .HALF_CLOSED_REMOTE) {
                         stream.state = .HALF_CLOSED_LOCAL;
                     }
                     this.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(@intFromEnum(stream.state)));
@@ -2498,6 +2501,19 @@ pub const H2FrameParser = struct {
             return data.len;
         };
         const parent_stream_id = frame.streamIdentifier;
+
+        // RFC 7540 Section 6.6: PUSH_PROMISE MUST only be sent on a
+        // peer-initiated stream. On the client, peer-initiated means
+        // client-initiated — i.e. odd-numbered. The state check below is
+        // insufficient on its own because a client-side push stream (even
+        // id) legitimately reaches HALF_CLOSED_LOCAL after receiving its
+        // response HEADERS without END_STREAM, so without this parity guard
+        // a server could chain nested push promises on server-initiated
+        // streams.
+        if (frame.streamIdentifier % 2 != 1) {
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "PUSH_PROMISE on server-initiated stream", this.lastStreamID, true);
+            return data.len;
+        }
 
         // RFC 7540 Section 6.10: After a frame without END_HEADERS the only
         // permissible next frame type is CONTINUATION. Reject a PUSH_PROMISE

@@ -750,6 +750,7 @@ declare function $ERR_HTTP2_SEND_FILE(): Error;
 declare function $ERR_HTTP2_SEND_FILE_NOSEEK(): Error;
 declare function $ERR_HTTP2_PUSH_DISABLED(): Error;
 declare function $ERR_HTTP2_NESTED_PUSH(): Error;
+declare function $ERR_HTTP2_FRAME_ERROR(): Error;
 declare function $ERR_HTTP2_HEADERS_AFTER_RESPOND(): Error;
 declare function $ERR_HTTP2_STATUS_101(): Error;
 declare function $ERR_HTTP2_ALTSVC_INVALID_ORIGIN(): TypeError;

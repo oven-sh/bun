@@ -85,7 +85,8 @@ it("fetch() does not leak intermediate redirect URLs in multi-hop chains", async
   `;
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
+    // Raise the header size limit since the test deliberately sends ~96 KiB Location headers.
+    cmd: [bunExe(), "--max-http-header-size=131072", "-e", script],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

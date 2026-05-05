@@ -451,6 +451,36 @@ const fixture = [
         },
       },
     ),
+  () => {
+    // Proxy in the prototype chain where a getter on the underlying
+    // prototype throws. This used to leave a pending exception that
+    // caused a null dereference when walking to the next prototype.
+    const proto = Object.create(Object.prototype, {
+      foo: { get: () => 1, enumerable: true, configurable: true },
+      bar: {
+        get() {
+          throw new Error("boom");
+        },
+        enumerable: true,
+        configurable: true,
+      },
+      baz: { get: () => 2, enumerable: true, configurable: true },
+    });
+    return Object.create(new Proxy(proto, {}));
+  },
+  () => {
+    // Proxy in the prototype chain whose getPrototypeOf trap throws.
+    const proto = Object.create(Object.prototype, {
+      foo: { get: () => 1, enumerable: true, configurable: true },
+    });
+    return Object.create(
+      new Proxy(proto, {
+        getPrototypeOf() {
+          throw new Error("getPrototypeOf trap");
+        },
+      }),
+    );
+  },
 ];
 
 describe("crash testing", () => {

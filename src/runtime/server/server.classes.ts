@@ -119,6 +119,10 @@ export default [
         fn: "getBytesWritten",
         length: 0,
       },
+      getBytesRead: {
+        fn: "getBytesRead",
+        length: 0,
+      },
       flushHeaders: {
         fn: "flushHeaders",
         length: 0,

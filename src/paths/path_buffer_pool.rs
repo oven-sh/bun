@@ -1,80 +1,100 @@
+//! This pool exists because on Windows, each path buffer costs 64 KB.
+//! This makes the stack memory usage very unpredictable, which means we can't
+//! really know how much stack space we have left. This pool is a workaround to
+//! make the stack memory usage more predictable. We keep up to 4 path buffers
+//! alive per thread at a time.
+//!
+//! PORT NOTE: Zig used `bun.ObjectPool<T, null, true, 4>` (a thread-safe
+//! 4-slot freelist). Rewritten over `thread_local!` + `RefCell<Vec<Box<T>>>`
+//! per PORTING.md §Concurrency (init-once / per-thread → no lock needed).
+//! Same observable behavior: at most 4 buffers cached per thread; excess `put`s
+//! drop. RAII guard replaces the manual `get`/`put` pairing.
+
+use core::cell::RefCell;
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 
-use bun_alloc::ObjectPool;
-
 use crate::{PathBuffer, WPathBuffer};
 
-// This pool exists because on Windows, each path buffer costs 64 KB.
-// This makes the stack memory usage very unpredictable, which means we can't really know how much stack space we have left.
-// This pool is a workaround to make the stack memory usage more predictable.
-// We keep up to 4 path buffers alive per thread at a time.
-pub struct PathBufferPoolT<T: 'static>(PhantomData<T>);
+const POOL_CAP: usize = 4;
 
-impl<T: 'static> PathBufferPoolT<T> {
-    // TODO(port): ObjectPool<T, INIT, THREADSAFE, CAP> generic shape is assumed; verify against bun_alloc::ObjectPool in Phase B.
-    type Pool = ObjectPool<T, (), true, 4>;
+/// Per-thread pool of reusable path buffers.
+pub struct PathBufferPoolT<T: 'static + Default>(PhantomData<T>);
 
-    /// Returns an RAII guard that derefs to `&mut T` and is returned to the pool on `Drop`.
-    /// Callers no longer pair this with a manual `put()` (see PORTING.md idiom map).
+// One thread-local Vec per buffer type. Zig's threadsafe pool used a global
+// lock; per-thread is closer to "use a thread-local allocator so mimalloc
+// deletes it on thread deinit" (the original comment) and avoids any lock.
+thread_local! {
+    static U8_POOL: RefCell<Vec<Box<PathBuffer>>> = const { RefCell::new(Vec::new()) };
+    static U16_POOL: RefCell<Vec<Box<WPathBuffer>>> = const { RefCell::new(Vec::new()) };
+}
+
+trait PoolStorage: Sized + Default + 'static {
+    fn with_pool<R>(f: impl FnOnce(&RefCell<Vec<Box<Self>>>) -> R) -> R;
+}
+impl PoolStorage for PathBuffer {
+    fn with_pool<R>(f: impl FnOnce(&RefCell<Vec<Box<Self>>>) -> R) -> R {
+        U8_POOL.with(f)
+    }
+}
+impl PoolStorage for WPathBuffer {
+    fn with_pool<R>(f: impl FnOnce(&RefCell<Vec<Box<Self>>>) -> R) -> R {
+        U16_POOL.with(f)
+    }
+}
+
+impl<T: PoolStorage> PathBufferPoolT<T> {
+    /// Returns an RAII guard that derefs to `&mut T` and returns the buffer to
+    /// the pool on `Drop`. Replaces manual `get`/`put` pairing.
     pub fn get() -> PoolGuard<T> {
-        // use a thread-local allocator so mimalloc deletes it on thread deinit.
-        // (Rust: global mimalloc + thread_local pool storage handles this; allocator param dropped.)
-        PoolGuard {
-            node: Self::Pool::get(),
-        }
+        let buf = T::with_pool(|p| p.borrow_mut().pop()).unwrap_or_else(|| Box::new(T::default()));
+        PoolGuard { buf: Some(buf) }
     }
 
-    pub fn put(buffer: &T) {
-        let buffer = buffer as *const T;
-        // there's no deinit function on T so casting away const is fine
-        // SAFETY: `buffer` points to the `data` field of a live `Pool::Node` handed out by `get()`.
-        let node: *mut <Self::Pool as ObjectPoolNode>::Node = unsafe {
-            (buffer as *mut T as *mut u8)
-                .sub(core::mem::offset_of!(<Self::Pool as ObjectPoolNode>::Node, data))
-                .cast()
-        };
-        // SAFETY: node was produced by Pool::get and not yet released.
-        unsafe { (*node).release() };
+    /// Manual return path (kept for structure parity with Zig). Prefer dropping
+    /// the `PoolGuard` instead.
+    pub fn put(buf: Box<T>) {
+        T::with_pool(|p| {
+            let mut p = p.borrow_mut();
+            if p.len() < POOL_CAP {
+                p.push(buf);
+            }
+            // else: drop — mimalloc frees it.
+        });
     }
 
     pub fn delete_all() {
-        Self::Pool::delete_all();
+        T::with_pool(|p| p.borrow_mut().clear());
     }
 }
 
-/// RAII guard returned by `PathBufferPoolT::get()`. Derefs to the pooled buffer
-/// and returns it to the pool on `Drop`.
-pub struct PoolGuard<T: 'static> {
-    // TODO(port): exact node handle type depends on bun_alloc::ObjectPool API.
-    node: *mut <ObjectPool<T, (), true, 4> as ObjectPoolNode>::Node,
+/// RAII guard returned by `PathBufferPoolT::get()`.
+pub struct PoolGuard<T: PoolStorage> {
+    buf: Option<Box<T>>,
 }
 
-impl<T: 'static> Deref for PoolGuard<T> {
+impl<T: PoolStorage> Deref for PoolGuard<T> {
     type Target = T;
+    #[inline]
     fn deref(&self) -> &T {
-        // SAFETY: node is live for the lifetime of the guard.
-        unsafe { &(*self.node).data }
+        // SAFETY-ish: `buf` is always `Some` until `Drop`.
+        self.buf.as_deref().unwrap()
     }
 }
 
-impl<T: 'static> DerefMut for PoolGuard<T> {
+impl<T: PoolStorage> DerefMut for PoolGuard<T> {
+    #[inline]
     fn deref_mut(&mut self) -> &mut T {
-        // SAFETY: node is live and uniquely borrowed for the lifetime of the guard.
-        unsafe { &mut (*self.node).data }
+        self.buf.as_deref_mut().unwrap()
     }
 }
 
-impl<T: 'static> Drop for PoolGuard<T> {
+impl<T: PoolStorage> Drop for PoolGuard<T> {
     fn drop(&mut self) {
-        // SAFETY: node was produced by Pool::get and not yet released.
-        unsafe { (*self.node).release() };
+        if let Some(buf) = self.buf.take() {
+            PathBufferPoolT::<T>::put(buf);
+        }
     }
-}
-
-// TODO(port): helper trait to name `ObjectPool::Node` in associated-type position; remove once bun_alloc exposes it directly.
-trait ObjectPoolNode {
-    type Node;
 }
 
 #[allow(non_camel_case_types)]
@@ -92,7 +112,7 @@ pub type os_path_buffer_pool = path_buffer_pool;
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/paths/path_buffer_pool.zig (34 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      ObjectPool API/node shape assumed; get() now returns RAII guard per idiom map, put() kept for structure parity.
+//   confidence: high
+//   todos:      0
+//   notes:      ObjectPool → thread_local Vec<Box<T>> (cap 4); get() now RAII guard.
 // ──────────────────────────────────────────────────────────────────────────

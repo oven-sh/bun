@@ -65,6 +65,10 @@ impl PathBuffer {
         unsafe { core::mem::zeroed() }
     }
 }
+impl Default for PathBuffer {
+    #[inline]
+    fn default() -> Self { Self::ZEROED }
+}
 impl core::ops::Deref for PathBuffer {
     type Target = [u8];
     #[inline]
@@ -89,6 +93,10 @@ impl WPathBuffer {
         // SAFETY: all-zero is a valid [u16; N].
         unsafe { core::mem::zeroed() }
     }
+}
+impl Default for WPathBuffer {
+    #[inline]
+    fn default() -> Self { Self::ZEROED }
 }
 impl core::ops::Deref for WPathBuffer {
     type Target = [u16];
@@ -119,9 +127,13 @@ pub type OSPathBuffer = WPathBuffer;
 #[cfg(not(windows))]
 pub type OSPathBuffer = PathBuffer;
 
+pub mod path_buffer_pool;
+
+// TODO(b2-large): Path.rs (1220L) uses adt_const_params for `enum Style`
+// const-generic; rewrite as `const STYLE: u8`. resolve_path.rs (2614L) is the
+// join/normalize engine. EnvPath.rs wraps `Path<U>` so blocked on Path.rs.
 #[cfg(any())] #[path = "Path.rs"] mod path_draft;
 #[cfg(any())] #[path = "EnvPath.rs"] mod env_path;
-#[cfg(any())] mod path_buffer_pool;
 #[cfg(any())] mod resolve_path;
 
 // ──────────────────────────────────────────────────────────────────────────

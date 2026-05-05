@@ -88,29 +88,242 @@ devTest("live bindings through export from", {
   },
   test: liveBindingTest.test,
 });
-// devTest("live bindings through export star", {
-//   framework: minimalFramework,
-//   files: {
-//     "state.ts": `
-//       export var value = 0;
-//       export function increment() {
-//         value++;
-//       }
-//     `,
-//     "proxy.ts": `
-//       export * from './state';
-//     `,
-//     "routes/index.ts": `
-//       import { increment } from '../state';
-//       import { live } from '../proxy';
-//       export default function(req, meta) {
-//         increment();
-//         return new Response('State: ' + live);
-//       }
-//     `,
-//   },
-//   test: liveBindingTest.test,
-// });
+devTest("live bindings through export star (issue #29747)", {
+  framework: minimalFramework,
+  files: {
+    "state.ts": `
+      export var value = 0;
+      export function increment() {
+        value++;
+      }
+    `,
+    "proxy.ts": `
+      export * from './state';
+    `,
+    "routes/index.ts": `
+      import { increment, value } from '../proxy';
+      export default function(req, meta) {
+        increment();
+        return new Response('State: ' + value);
+      }
+    `,
+  },
+  test: liveBindingTest.test,
+});
+devTest("live bindings through export star namespace read (issue #29747)", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "lib.ts": `
+      export let count = 0;
+      export function increment() { count++; }
+    `,
+    "barrel.ts": `
+      export * from './lib';
+    `,
+    "index.ts": `
+      import * as barrel from './barrel';
+      barrel.increment();
+      if (barrel.count !== 1) {
+        console.log("FAIL: expected 1, got " + barrel.count);
+      } else {
+        console.log("PASS");
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
+devTest("export star with direct export precedence", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "lib.ts": `
+      export const x = "from-lib";
+      export const y = "lib-y";
+    `,
+    "barrel.ts": `
+      export * from './lib';
+      export const x = "from-barrel";
+    `,
+    "index.ts": `
+      import { x, y } from './barrel';
+      if (x !== "from-barrel") { console.log("FAIL x: " + x); }
+      else if (y !== "lib-y") { console.log("FAIL y: " + y); }
+      else console.log("PASS");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
+devTest("export star does not forward 'default'", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "lib.ts": `
+      export default "DEFAULT";
+      export const x = 1;
+    `,
+    "barrel.ts": `
+      export * from './lib';
+    `,
+    "index.ts": `
+      import * as barrel from './barrel';
+      if ("default" in barrel) { console.log("FAIL: 'default' should not be re-exported"); }
+      else if (barrel.x !== 1) { console.log("FAIL x: " + barrel.x); }
+      else console.log("PASS");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
+devTest("export star chain (barrel -> barrel -> lib) preserves live bindings", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "lib.ts": `
+      export let count = 0;
+      export function increment() { count++; }
+    `,
+    "mid.ts": `
+      export * from './lib';
+    `,
+    "top.ts": `
+      export * from './mid';
+    `,
+    "index.ts": `
+      import * as barrel from './top';
+      barrel.increment();
+      barrel.increment();
+      if (barrel.count === 2) console.log("PASS");
+      else console.log("FAIL: expected 2, got " + barrel.count);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
+devTest("export star tolerates circular import when re-exported module is mid-load", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "a.ts": `
+      export * from './b';
+      export const aVal = "A";
+    `,
+    "b.ts": `
+      export * from './a';
+      export const bVal = "B";
+    `,
+    "index.ts": `
+      import * as a from './a';
+      import * as b from './b';
+      // Loading must not throw during the circular star-export setup, and
+      // after both modules finish, each side sees the other's direct export.
+      if (a.aVal === "A" && a.bVal === "B" && b.aVal === "A" && b.bVal === "B") {
+        console.log("PASS");
+      } else {
+        console.log("FAIL: " + JSON.stringify({
+          aVal_on_a: a.aVal, bVal_on_a: a.bVal,
+          aVal_on_b: b.aVal, bVal_on_b: b.bVal,
+        }));
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
+devTest("export * as ns from preserves live bindings across HMR", {
+  // Regression guard for the aliased star branch of ConvertESMExportsForHmr.
+  // A plain data property would snapshot the source's exports at barrel
+  // init; emitting a getter makes the namespace member re-read the
+  // reassignable local, which `patchImporters` rebinds after an HMR update
+  // replaces the source's exports wholesale.
+  framework: minimalFramework,
+  files: {
+    "state.ts": `
+      export var value = 0;
+      export function increment() {
+        value++;
+      }
+    `,
+    "proxy.ts": `
+      export * as ns from './state';
+    `,
+    "routes/index.ts": `
+      import { ns } from '../proxy';
+      export default function(req, meta) {
+        ns.increment();
+        return new Response('State: ' + ns.value);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("State: 1");
+    await dev.fetch("/").equals("State: 2");
+    await dev.write(
+      "state.ts",
+      `
+        export var value = 100;
+        export function increment() { value--; }
+      `,
+    );
+    // After source HMR replaces state.ts's exports object, proxy.ns must
+    // see the new object. value starts at 100 now, and each fetch
+    // decrements it — confirms both that the namespace rebound (not
+    // snapshotted) and that the properties on it still live-bind.
+    await dev.fetch("/").equals("State: 99");
+    await dev.fetch("/").equals("State: 98");
+  },
+});
+devTest("export star through require() (sync loader) circular", {
+  // Exercises the sync path — loadModuleSync — which has its own
+  // patchImporters call so `export * from` forwarders set up against a
+  // null mid-load source get re-run once the source finishes.
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "a.ts": `
+      export * from './b';
+      export const aVal = "A";
+    `,
+    "b.ts": `
+      export * from './a';
+      export const bVal = "B";
+    `,
+    "index.ts": `
+      const a = require('./a');
+      const b = require('./b');
+      if (a.aVal === "A" && a.bVal === "B" && b.aVal === "A" && b.bVal === "B") {
+        console.log("PASS");
+      } else {
+        console.log("FAIL: " + JSON.stringify({
+          aVal_on_a: a.aVal, bVal_on_a: a.bVal,
+          aVal_on_b: b.aVal, bVal_on_b: b.bVal,
+        }));
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
 devTest("export { x as y }", {
   framework: minimalFramework,
   files: {
@@ -277,8 +490,9 @@ devTest("cannot require a module with top level await", {
   // handler can hang (never responds), so the client overlay never mounts and
   // expectErrorOverlay times out. The error itself is thrown correctly.
   // Previously gated on !(isCI && isASAN) for the same symptom. Tracked for
-  // follow-up — re-enable once the report_error hang is fixed.
-  skip: ["ci"],
+  // follow-up — re-enable once the report_error hang is fixed. The hang
+  // reproduces on ASAN outside of CI too, so skip there as well.
+  skip: ["ci", "asan"],
   files: {
     "index.html": emptyHtmlFile({
       scripts: ["index.ts"],

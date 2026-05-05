@@ -49,8 +49,8 @@ describe("bundler", () => {
       `,
       "/db.sqlite": (() => {
         const db = new Database(":memory:");
-        db.exec("create table messages (message text)");
-        db.exec("insert into messages values ('Hello, world!')");
+        db.run("create table messages (message text)");
+        db.run("insert into messages values ('Hello, world!')");
         return db.serialize();
       })(),
     },
@@ -67,8 +67,8 @@ describe("bundler", () => {
     runtimeFiles: {
       "/db.sqlite": (() => {
         const db = new Database(":memory:");
-        db.exec("create table messages (message text)");
-        db.exec("insert into messages values ('Hello, world!')");
+        db.run("create table messages (message text)");
+        db.run("insert into messages values ('Hello, world!')");
         return db.serialize();
       })(),
     },
@@ -92,7 +92,9 @@ describe("bundler", () => {
       exitCode: 1,
       validate({ stderr }) {
         expect(stderr).toInclude("\nnote: missing sourcemaps for ");
-        expect(stderr).toInclude("\nnote: consider bundling with '--sourcemap' to get unminified traces\n");
+        expect(stderr).toInclude(
+          "\nnote: consider bundling with '--sourcemap' to get unminified traces\n"
+        );
       },
     },
   });
@@ -122,7 +124,7 @@ describe("bundler", () => {
 5 |   // hello world
 6 |           throw   new
                       ^
-error: Hello World`,
+error: Hello World`
         );
         expect(stderr).toInclude("entry.ts:6:19");
       },
@@ -160,10 +162,12 @@ error: Hello World`,
           stdout: "SUCCESS",
         },
       });
-      itBundled("bun/ExportsConditionsDevelopmentInProduction" + backend.toUpperCase(), {
-        files: {
-          "src/entry.js": `import 'pkg1'`,
-          "node_modules/pkg1/package.json": /* json */ `
+      itBundled(
+        "bun/ExportsConditionsDevelopmentInProduction" + backend.toUpperCase(),
+        {
+          files: {
+            "src/entry.js": `import 'pkg1'`,
+            "node_modules/pkg1/package.json": /* json */ `
         {
           "exports": {
             "development": "./custom1.js",
@@ -171,16 +175,17 @@ error: Hello World`,
           }
         }
       `,
-          "node_modules/pkg1/custom1.js": `console.log('FAIL')`,
-          "node_modules/pkg1/default.js": `console.log('SUCCESS')`,
-        },
-        backend,
-        outfile: "/Users/user/project/out.js",
-        define: { "process.env.NODE_ENV": '"production"' },
-        run: {
-          stdout: "SUCCESS",
-        },
-      });
+            "node_modules/pkg1/custom1.js": `console.log('FAIL')`,
+            "node_modules/pkg1/default.js": `console.log('SUCCESS')`,
+          },
+          backend,
+          outfile: "/Users/user/project/out.js",
+          define: { "process.env.NODE_ENV": '"production"' },
+          run: {
+            stdout: "SUCCESS",
+          },
+        }
+      );
     }
   }
 });

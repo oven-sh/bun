@@ -365,44 +365,51 @@ it("setTimeout should not refresh after clearTimeout", done => {
 // Runs in a child process so the baseline isn't polluted by earlier tests
 // in this file (`extraMemorySize` accumulates across GCs for objects that
 // stay live).
-it("setTimeout reports native size to JSC heap (#30261)", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-        const { heapStats } = require("bun:jsc");
-        Bun.gc(true);
-        const baseline = heapStats().extraMemorySize;
-        const N = 2000;
-        const timers = [];
-        for (let i = 0; i < N; i++) timers.push(setTimeout(() => {}, 100_000));
-        Bun.gc(true);
-        const delta = heapStats().extraMemorySize - baseline;
-        timers.forEach(t => clearTimeout(t));
-        console.log(delta);
-      `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+it(
+  "setTimeout reports native size to JSC heap (#30261)",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { heapStats } = require("bun:jsc");
+          Bun.gc(true);
+          const baseline = heapStats().extraMemorySize;
+          const N = 2000;
+          const timers = [];
+          // .unref() so the timers don't keep the event loop alive past
+          // console.log — the subprocess needs to exit promptly to stay
+          // inside the parent test's timeout on slow CI shards.
+          for (let i = 0; i < N; i++) timers.push(setTimeout(() => {}, 100_000).unref());
+          Bun.gc(true);
+          const delta = heapStats().extraMemorySize - baseline;
+          timers.forEach(t => clearTimeout(t));
+          console.log(delta);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const filteredStderr = stderr
-    .split("\n")
-    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
-    .join("\n");
-  expect(filteredStderr).toBe("");
+    const filteredStderr = stderr
+      .split("\n")
+      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+      .join("\n");
+    expect(filteredStderr).toBe("");
 
-  const delta = Number(stdout.trim());
-  // With the fix: ~512 bytes × 2000 timers = ~1,024,000 bytes reported via
-  // visitChildren. Without it: a few KB from unrelated JSC-internal
-  // growth. 512,000 sits an order of magnitude above the noise floor.
-  expect(delta).toBeGreaterThan(512_000);
-  expect(exitCode).toBe(0);
-});
+    const delta = Number(stdout.trim());
+    // With the fix: ~512 bytes × 2000 timers = ~1,024,000 bytes reported via
+    // visitChildren. Without it: a few KB from unrelated JSC-internal
+    // growth. 512,000 sits an order of magnitude above the noise floor.
+    expect(delta).toBeGreaterThan(512_000);
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
 
 it("setTimeout Timeout objects are unprotected after called", async () => {
   let { promise, resolve } = Promise.withResolvers();

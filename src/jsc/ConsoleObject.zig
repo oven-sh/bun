@@ -2570,6 +2570,12 @@ pub const Formatter = struct {
                             this.estimated_line_length = 0;
                             this.writeIndent(Writer, writer_) catch unreachable;
                             writer.pretty("<r><d>... {d} more items<r>", enable_ansi_colors, .{len - i});
+                            // The `more items` summary covers everything from
+                            // `i` onward, including any pending hole run.
+                            // Clear `empty_start` so the trailing-holes block
+                            // after the loop doesn't emit a second (wrong)
+                            // `N x empty items` over the same range.
+                            empty_start = null;
                             break;
                         }
                         nonempty_count += 1;

@@ -136,6 +136,34 @@ test("console.log on a sparse double array with NaN values renders correctly (#2
   expect(exitCode).toBe(0);
 });
 
+test("console.log elision past 100 items does not emit a spurious trailing-hole summary (#29178)", async () => {
+  // When the `... N more items` elision fires mid-iteration, any
+  // pending hole run must be considered consumed by that summary —
+  // leaving `empty_start` set caused a bogus `N x empty items` to
+  // be emitted after the elision (claiming more slots than the
+  // array actually had).
+  const code = `
+    const a = Array.from({ length: 200 }, (_, i) => i);
+    for (let k = 100; k < 150; k++) delete a[k];
+    console.log(a);
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain("... 50 more items");
+  // The trailing-holes block must not re-describe the same slots
+  // the `more items` summary already covered.
+  expect(stdout).not.toContain("100 x empty items");
+  expect(exitCode).toBe(0);
+});
+
 test("console.log on a fully-empty `new Array(N)` prints the summary (#29175)", async () => {
   const code = `
     console.log(new Array(42));

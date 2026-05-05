@@ -216,7 +216,6 @@ impl ParsedSourceMap {
     pub fn standalone_module_graph_data(
         &self,
     ) -> *mut crate::SerializedSourceMap::Loaded {
-        // TODO(b0): SerializedSourceMap::Loaded arrives from move-in (standalone_graph → sourcemap)
         debug_assert!(self.is_standalone_module_graph);
         self.underlying_provider.data() as usize
             as *mut crate::SerializedSourceMap::Loaded

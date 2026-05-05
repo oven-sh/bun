@@ -16,11 +16,136 @@ use bun_threading::UnboundedQueue;
 
 // ─── Task (hot-dispatch tag+ptr, see CYCLEBREAK.md §Hot dispatch list) ──────
 // Low tier (event_loop) stores `(tag, ptr)`; `bun_runtime::dispatch::run_task`
-// owns the `match` over ~70 variants. Tag constants live in
-// `crate::task_tag::*` (populated by the move-in pass).
+// owns the `match` over ~96 variants. Tag constants live in
+// `crate::task_tag::*` below.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct TaskTag(pub u8);
+
+/// Tag constants for `Task` — one per variant of Zig's `jsc.Task`
+/// `TaggedPointerUnion` (src/jsc/Task.zig). Values are sequential by source
+/// order; `bun_runtime::dispatch::run_task` matches on these. Both sides MUST
+/// agree — adding a variant requires updating both this list and the runtime
+/// match arm.
+// PORT NOTE: Zig `TaggedPointerUnion` derived tags from a comptime type list;
+// Rust splits the table (here) from the type→arm mapping (runtime tier-6).
+#[allow(non_upper_case_globals)]
+pub mod task_tag {
+    use super::TaskTag;
+    macro_rules! tags {
+        ($($name:ident),* $(,)?) => {
+            tags!(@ 0u8, $($name,)*);
+            /// Number of task tags. `bun_runtime::dispatch::run_task` asserts
+            /// exhaustiveness against this.
+            pub const COUNT: u8 = tags!(@count 0u8, $($name,)*);
+        };
+        (@ $n:expr, $head:ident, $($rest:ident,)*) => {
+            pub const $head: TaskTag = TaskTag($n);
+            tags!(@ $n + 1u8, $($rest,)*);
+        };
+        (@ $n:expr,) => {};
+        (@count $n:expr, $head:ident, $($rest:ident,)*) => { tags!(@count $n + 1u8, $($rest,)*) };
+        (@count $n:expr,) => { $n };
+    }
+    tags! {
+        Access,
+        AnyTask,
+        AppendFile,
+        ArchiveExtractTask,
+        ArchiveBlobTask,
+        ArchiveWriteTask,
+        ArchiveFilesTask,
+        AsyncGlobWalkTask,
+        AsyncImageTask,
+        AsyncTransformTask,
+        BakeHotReloadEvent,       // bun.bake.DevServer.HotReloadEvent
+        BundleV2DeferredBatchTask, // bun.bundle_v2.DeferredBatchTask
+        ShellYesTask,             // shell.Interpreter.Builtin.Yes.YesTask
+        Chmod,
+        Chown,
+        Close,
+        CopyFile,
+        CopyFilePromiseTask,
+        CppTask,
+        Exists,
+        Fchmod,
+        FChown,
+        Fdatasync,
+        FetchTasklet,
+        Fstat,
+        FSWatchTask,
+        Fsync,
+        FTruncate,
+        Futimes,
+        GetAddrInfoRequestTask,
+        HotReloadTask,
+        ImmediateObject,
+        JSCDeferredWorkTask,
+        Lchmod,
+        Lchown,
+        Link,
+        Lstat,
+        Lutimes,
+        ManagedTask,
+        Mkdir,
+        Mkdtemp,
+        NapiAsyncWork,            // napi_async_work
+        NapiFinalizerTask,
+        NativePromiseContextDeferredDerefTask,
+        NativeBrotli,
+        NativeZlib,
+        NativeZstd,
+        Open,
+        PollPendingModulesTask,
+        PosixSignalTask,
+        ProcessWaiterThreadTask,
+        Read,
+        Readdir,
+        ReaddirRecursive,
+        ReadFile,
+        ReadFileTask,
+        Readlink,
+        Readv,
+        FlushPendingFileSinkTask,
+        Realpath,
+        RealpathNonNative,
+        Rename,
+        Rm,
+        Rmdir,
+        RuntimeTranspilerStore,
+        S3HttpDownloadStreamingTask,
+        S3HttpSimpleTask,
+        ServerAllConnectionsClosedTask,
+        ShellAsync,
+        ShellAsyncSubprocessDone,
+        ShellCondExprStatTask,
+        ShellCpTask,
+        ShellGlobTask,
+        ShellIOReaderAsyncDeinit,
+        ShellIOWriterAsyncDeinit,
+        ShellIOWriter,
+        ShellLsTask,
+        ShellMkdirTask,
+        ShellMvBatchedTask,
+        ShellMvCheckTargetTask,
+        ShellRmDirTask,
+        ShellRmTask,
+        ShellTouchTask,
+        Stat,
+        StatFS,
+        StreamPending,
+        Symlink,
+        ThreadSafeFunction,
+        TimeoutObject,
+        Truncate,
+        Unlink,
+        Utimes,
+        Write,
+        WriteFile,
+        WriteFileTask,
+        Writev,
+    }
+}
 
 #[derive(Copy, Clone)]
 pub struct Task {

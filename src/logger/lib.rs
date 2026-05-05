@@ -65,6 +65,523 @@ pub enum ImportKind {
     Internal = 11,
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// Ref / Symbol — MOVE_DOWN from bun_js_parser::ast (T4→T2, CYCLEBREAK §css/§ini).
+//
+// Canonical definitions live here now; bun_js_parser re-exports
+// `pub use bun_logger::{Ref, Symbol, SymbolKind, ImportItemStatus, NamespaceAlias, symbol};`.
+// Source: src/js_parser/ast/base.zig (Ref), src/js_parser/ast/Symbol.zig,
+//         src/js_parser/ast/G.zig (NamespaceAlias),
+//         src/js_parser/js_parser.zig (ImportItemStatus).
+// ───────────────────────────────────────────────────────────────────────────
+
+use bun_collections::BabyList;
+
+/// Tag bits of `Ref` (Zig: anonymous `enum(u2)` field).
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RefTag {
+    Invalid = 0,
+    AllocatedName = 1,
+    SourceContentsSlice = 2,
+    Symbol = 3,
+}
+
+/// Packed-u64 symbol reference: `{inner_index: u31, tag: u2, source_index: u31}`.
+///
+/// Layout matches `src/js_parser/ast/base.zig:Ref` exactly (LSB-first packing) so
+/// `as_u64()` hashes identically to the Zig original.
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Ref(u64);
+
+/// Zig `Ref.Int = u31`; we mask to 31 bits in pack/unpack.
+pub type RefInt = u32;
+
+impl Ref {
+    const INNER_MASK: u64 = (1u64 << 31) - 1;
+    const SRC_SHIFT: u32 = 33;
+
+    /// Represents a null state without using an extra bit.
+    pub const NONE: Ref = Ref(0); // tag=Invalid, inner=0, src=0
+
+    #[inline]
+    const fn pack(inner: u32, tag: RefTag, src: u32) -> Ref {
+        Ref((inner as u64 & Self::INNER_MASK)
+            | ((tag as u64) << 31)
+            | ((src as u64 & Self::INNER_MASK) << Self::SRC_SHIFT))
+    }
+
+    #[inline]
+    pub const fn inner_index(self) -> u32 {
+        (self.0 & Self::INNER_MASK) as u32
+    }
+    #[inline]
+    pub const fn source_index(self) -> u32 {
+        (self.0 >> Self::SRC_SHIFT) as u32 & Self::INNER_MASK as u32
+    }
+    #[inline]
+    pub const fn tag(self) -> RefTag {
+        match (self.0 >> 31) as u8 & 0b11 {
+            0 => RefTag::Invalid,
+            1 => RefTag::AllocatedName,
+            2 => RefTag::SourceContentsSlice,
+            _ => RefTag::Symbol,
+        }
+    }
+
+    #[inline]
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+    #[inline]
+    pub const fn is_valid(self) -> bool {
+        !matches!(self.tag(), RefTag::Invalid)
+    }
+    #[inline]
+    pub const fn is_symbol(self) -> bool {
+        matches!(self.tag(), RefTag::Symbol)
+    }
+    #[inline]
+    pub const fn is_source_contents_slice(self) -> bool {
+        matches!(self.tag(), RefTag::SourceContentsSlice)
+    }
+    #[inline]
+    pub fn is_source_index_null(i: u32) -> bool {
+        i == Self::INNER_MASK as u32 // maxInt(u31)
+    }
+
+    pub fn init(inner_index: u32, source_index: u32, is_source_contents_slice: bool) -> Ref {
+        let tag = if is_source_contents_slice {
+            RefTag::SourceContentsSlice
+        } else {
+            RefTag::AllocatedName
+        };
+        Self::pack(inner_index, tag, source_index)
+    }
+
+    pub fn init_source_end(old: Ref) -> Ref {
+        debug_assert!(old.is_valid());
+        Self::init(
+            old.inner_index(),
+            old.source_index(),
+            matches!(old.tag(), RefTag::SourceContentsSlice),
+        )
+    }
+
+    #[inline]
+    pub const fn as_u64(self) -> u64 {
+        self.0
+    }
+    #[inline]
+    pub fn hash64(self) -> u64 {
+        // Zig: `bun.hash(&@as([8]u8, @bitCast(key.asU64())))` (wyhash of the 8 bytes).
+        // TODO(port): route through bun_wyhash once that crate exposes a public
+        // `hash(seed, &[u8])`. The packed u64 is already collision-free per
+        // (source, inner, tag), so identity is acceptable for Phase A HashMap use;
+        // only on-disk hash stability needs the wyhash mixing.
+        self.0
+    }
+    #[inline]
+    pub fn hash(self) -> u32 {
+        self.hash64() as u32
+    }
+    #[inline]
+    pub const fn eql(self, other: Ref) -> bool {
+        self.0 == other.0
+    }
+    /// deprecated alias
+    #[inline]
+    pub const fn is_null(self) -> bool {
+        self.is_empty()
+    }
+}
+
+impl Default for Ref {
+    fn default() -> Self {
+        Ref::NONE
+    }
+}
+
+impl fmt::Debug for Ref {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Ref[inner={}, src={}, .{:?}]",
+            self.inner_index(),
+            self.source_index(),
+            self.tag()
+        )
+    }
+}
+
+/// `js_ast.ImportItemStatus` (src/js_parser/js_parser.zig:42).
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ImportItemStatus {
+    #[default]
+    None = 0,
+    /// The linker doesn't report import/export mismatch errors
+    Generated = 1,
+    /// The printer will replace this import with "undefined"
+    Missing = 2,
+}
+
+/// `js_ast.G.NamespaceAlias` (src/js_parser/ast/G.zig:8).
+#[derive(Clone, Debug)]
+pub struct NamespaceAlias {
+    pub namespace_ref: Ref,
+    pub alias: Str,
+    pub was_originally_property_access: bool,
+    pub import_record_index: u32,
+}
+
+impl Default for NamespaceAlias {
+    fn default() -> Self {
+        NamespaceAlias {
+            namespace_ref: Ref::NONE,
+            alias: b"",
+            was_originally_property_access: false,
+            import_record_index: u32::MAX,
+        }
+    }
+}
+
+/// `js_ast.Symbol.Kind` (src/js_parser/ast/Symbol.zig:192).
+/// Re-exported as `SymbolKind` for css consumers (`bun_logger::SymbolKind`).
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum SymbolKind {
+    /// An unbound symbol is one that isn't declared in the file it's referenced in.
+    Unbound,
+    /// Function args, function statements, `var` — hoisted to nearest fn/module scope.
+    Hoisted,
+    HoistedFunction,
+    /// Weird catch-clause-identifier hoisting special case.
+    CatchIdentifier,
+    /// Generator/async functions: not hoisted, but can overwrite prior fn of same name.
+    GeneratorOrAsyncFunction,
+    /// The special "arguments" variable inside functions.
+    Arguments,
+    /// Classes can merge with TypeScript namespaces.
+    Class,
+    /// A class-private identifier (i.e. "#foo").
+    PrivateField,
+    PrivateMethod,
+    PrivateGet,
+    PrivateSet,
+    PrivateGetSetPair,
+    PrivateStaticField,
+    PrivateStaticMethod,
+    PrivateStaticGet,
+    PrivateStaticSet,
+    PrivateStaticGetSetPair,
+    /// Labels are in their own namespace.
+    Label,
+    /// TypeScript enums can merge with TypeScript namespaces and other TS enums.
+    TsEnum,
+    /// TypeScript namespaces can merge with classes, functions, TS enums, other TS namespaces.
+    TsNamespace,
+    /// In TypeScript, imports may silently collide with module symbols (type-only).
+    Import,
+    /// Assigning to a "const" symbol will throw a TypeError at runtime.
+    Constant,
+    /// CSS identifiers renamed to be unique to the file they are in.
+    LocalCss,
+    /// All other symbols that don't have special behavior.
+    #[default]
+    Other,
+}
+
+impl SymbolKind {
+    #[inline]
+    pub const fn is_private(self) -> bool {
+        (self as u8) >= (SymbolKind::PrivateField as u8)
+            && (self as u8) <= (SymbolKind::PrivateStaticGetSetPair as u8)
+    }
+    #[inline]
+    pub const fn is_hoisted(self) -> bool {
+        matches!(self, SymbolKind::Hoisted | SymbolKind::HoistedFunction)
+    }
+    #[inline]
+    pub const fn is_hoisted_or_function(self) -> bool {
+        matches!(
+            self,
+            SymbolKind::Hoisted | SymbolKind::HoistedFunction | SymbolKind::GeneratorOrAsyncFunction
+        )
+    }
+    #[inline]
+    pub const fn is_function(self) -> bool {
+        matches!(
+            self,
+            SymbolKind::HoistedFunction | SymbolKind::GeneratorOrAsyncFunction
+        )
+    }
+}
+
+/// `js_ast.Symbol.SlotNamespace`.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SlotNamespace {
+    MustNotBeRenamed,
+    Default,
+    Label,
+    PrivateName,
+    MangledProp,
+}
+
+/// `js_ast.Symbol` (src/js_parser/ast/Symbol.zig).
+///
+/// Zig packs this to 88 bytes; Rust layout is left to the compiler (no `repr(C)`)
+/// since cross-language ABI is not needed post-port.
+/// PERF(port): was `comptime { assert(@sizeOf(Symbol) == 88) }` — re-tighten in Phase B.
+#[derive(Clone, Debug)]
+pub struct Symbol {
+    /// Name from the parser. Printed names may be renamed; do not use during printing.
+    pub original_name: Str,
+    /// Set for symbols representing items in an ES6 import clause.
+    pub namespace_alias: Option<NamespaceAlias>,
+    /// Used by the parser for single-pass parsing.
+    pub link: Ref,
+    /// Estimate of use count (zero ⇒ unused, e.g. type-only TS imports).
+    pub use_count_estimate: u32,
+    /// Do not access directly — use `chunk_index()`.
+    pub chunk_index: u32,
+    /// Do not access directly — use `nested_scope_slot()`.
+    pub nested_scope_slot: u32,
+    pub did_keep_name: bool,
+    pub must_start_with_capital_letter_for_jsx: bool,
+    pub kind: SymbolKind,
+    pub must_not_be_renamed: bool,
+    pub import_item_status: ImportItemStatus,
+    pub private_symbol_must_be_lowered: bool,
+    pub remove_overwritten_function_declaration: bool,
+    /// Used in HMR to decide when live-binding code is needed.
+    pub has_been_assigned_to: bool,
+}
+
+impl Default for Symbol {
+    fn default() -> Self {
+        Symbol {
+            original_name: b"",
+            namespace_alias: None,
+            link: Ref::NONE,
+            use_count_estimate: 0,
+            chunk_index: Symbol::INVALID_CHUNK_INDEX,
+            nested_scope_slot: Symbol::INVALID_NESTED_SCOPE_SLOT,
+            did_keep_name: true,
+            must_start_with_capital_letter_for_jsx: false,
+            kind: SymbolKind::Other,
+            must_not_be_renamed: false,
+            import_item_status: ImportItemStatus::None,
+            private_symbol_must_be_lowered: false,
+            remove_overwritten_function_declaration: false,
+            has_been_assigned_to: false,
+        }
+    }
+}
+
+// NOTE: Zig nested decls `Symbol.{Kind,Use,List,NestedList,Map}` cannot be inherent
+// associated types on stable Rust. Consumers use the flat names below; bun_js_parser
+// re-exports them under its own `Symbol` namespace if it needs the nested path.
+pub use symbol::List as SymbolList;
+pub use symbol::Map as SymbolMap;
+pub use symbol::NestedList as SymbolNestedList;
+
+impl Symbol {
+    const INVALID_CHUNK_INDEX: u32 = u32::MAX;
+    pub const INVALID_NESTED_SCOPE_SLOT: u32 = u32::MAX;
+
+    /// For generating cross-chunk imports/exports for code splitting.
+    #[inline]
+    pub fn chunk_index(&self) -> Option<u32> {
+        (self.chunk_index != Self::INVALID_CHUNK_INDEX).then_some(self.chunk_index)
+    }
+    #[inline]
+    pub fn nested_scope_slot(&self) -> Option<u32> {
+        (self.nested_scope_slot != Self::INVALID_NESTED_SCOPE_SLOT).then_some(self.nested_scope_slot)
+    }
+    #[inline]
+    pub fn has_link(&self) -> bool {
+        !matches!(self.link.tag(), RefTag::Invalid)
+    }
+    #[inline]
+    pub fn is_hoisted(&self) -> bool {
+        self.kind.is_hoisted()
+    }
+
+    pub fn slot_namespace(&self) -> SlotNamespace {
+        if self.kind == SymbolKind::Unbound || self.must_not_be_renamed {
+            return SlotNamespace::MustNotBeRenamed;
+        }
+        if self.kind.is_private() {
+            return SlotNamespace::PrivateName;
+        }
+        match self.kind {
+            SymbolKind::Label => SlotNamespace::Label,
+            _ => SlotNamespace::Default,
+        }
+    }
+
+    pub fn merge_contents_with(&mut self, old: &Symbol) {
+        self.use_count_estimate += old.use_count_estimate;
+        if old.must_not_be_renamed {
+            self.original_name = old.original_name;
+            self.must_not_be_renamed = true;
+        }
+        // TODO: MustStartWithCapitalLetterForJSX
+    }
+
+    // Zig re-exported the Kind helpers under the parent struct (`Symbol.isKindHoisted` etc.).
+    #[inline] pub const fn is_kind_function(k: SymbolKind) -> bool { k.is_function() }
+    #[inline] pub const fn is_kind_hoisted(k: SymbolKind) -> bool { k.is_hoisted() }
+    #[inline] pub const fn is_kind_hoisted_or_function(k: SymbolKind) -> bool { k.is_hoisted_or_function() }
+    #[inline] pub const fn is_kind_private(k: SymbolKind) -> bool { k.is_private() }
+}
+
+/// `js_ast.Symbol.Use`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SymbolUse {
+    pub count_estimate: u32,
+}
+
+/// `js_ast.Symbol.{List,NestedList,Map}` — exposed as `bun_logger::symbol` so css's
+/// `bun_logger::symbol::{Map, List}` forward-refs resolve.
+pub mod symbol {
+    use super::{BabyList, Ref, Symbol};
+
+    pub type List = BabyList<Symbol>;
+    pub type NestedList = BabyList<List>;
+
+    /// Two-level array indexed by `(source_index, inner_index)`. See comment on `Ref`.
+    #[derive(Default)]
+    pub struct Map {
+        pub symbols_for_source: NestedList,
+    }
+
+    impl Map {
+        pub fn init_list(list: NestedList) -> Map {
+            Map { symbols_for_source: list }
+        }
+
+        pub fn init_with_one_list(list: List) -> Map {
+            let mut nested = NestedList::default();
+            // PERF(port): Zig used `fromBorrowedSliceDangerous((&list)[0..1])` (no alloc).
+            // BabyList::append owns; revisit if this shows up in profiles.
+            let _ = nested.append(list);
+            Map { symbols_for_source: nested }
+        }
+
+        pub fn get(&self, r: Ref) -> Option<&mut Symbol> {
+            if Ref::is_source_index_null(r.source_index()) || r.is_source_contents_slice() {
+                return None;
+            }
+            // SAFETY: matches Zig's `.mut(ref.innerIndex())` on a `*const Map` —
+            // the symbol table is single-owner per parse and never aliased across
+            // threads. TODO(port): tighten to `&mut self` once callers are ported.
+            unsafe {
+                let nested = &mut *(core::ptr::addr_of!(self.symbols_for_source)
+                    as *mut NestedList);
+                Some(nested.mut_(r.source_index() as usize).mut_(r.inner_index() as usize))
+            }
+        }
+
+        pub fn get_const(&self, r: Ref) -> Option<&Symbol> {
+            if Ref::is_source_index_null(r.source_index()) || r.is_source_contents_slice() {
+                return None;
+            }
+            Some(
+                self.symbols_for_source
+                    .at(r.source_index() as usize)
+                    .at(r.inner_index() as usize),
+            )
+        }
+
+        pub fn get_with_link(&self, r: Ref) -> Option<&mut Symbol> {
+            let symbol = self.get(r)?;
+            if symbol.has_link() {
+                let link = symbol.link;
+                return Some(self.get(link).unwrap_or(symbol));
+            }
+            Some(symbol)
+        }
+
+        pub fn get_with_link_const(&self, r: Ref) -> Option<&Symbol> {
+            let symbol = self.get_const(r)?;
+            if symbol.has_link() {
+                return Some(self.get_const(symbol.link).unwrap_or(symbol));
+            }
+            Some(symbol)
+        }
+
+        pub fn merge(&self, old: Ref, new: Ref) -> Ref {
+            if old.eql(new) {
+                return new;
+            }
+            let old_symbol = match self.get(old) {
+                Some(s) => s,
+                None => return new,
+            };
+            if old_symbol.has_link() {
+                let old_link = old_symbol.link;
+                old_symbol.link = self.merge(old_link, new);
+                return old_symbol.link;
+            }
+            let new_symbol = match self.get(new) {
+                Some(s) => s,
+                None => return new,
+            };
+            if new_symbol.has_link() {
+                let new_link = new_symbol.link;
+                new_symbol.link = self.merge(old, new_link);
+                return new_symbol.link;
+            }
+            old_symbol.link = new;
+            // SAFETY: old_symbol/new_symbol point at distinct slots (old != new checked above).
+            let old_ro: &Symbol = unsafe { &*(old_symbol as *const Symbol) };
+            new_symbol.merge_contents_with(old_ro);
+            new
+        }
+
+        /// Equivalent to `followSymbols` in esbuild.
+        pub fn follow(&self, r: Ref) -> Ref {
+            let symbol = match self.get(r) {
+                Some(s) => s,
+                None => return r,
+            };
+            if !symbol.has_link() {
+                return r;
+            }
+            let link = self.follow(symbol.link);
+            if !symbol.link.eql(link) {
+                symbol.link = link;
+            }
+            link
+        }
+
+        pub fn follow_all(&self) {
+            // PERF(port): was `bun.perf.trace("Symbols.followAll")`.
+            for i in 0..self.symbols_for_source.len {
+                let list = self.symbols_for_source.at(i as usize);
+                for j in 0..list.len {
+                    // SAFETY: see `get` — single-owner table.
+                    let sym = unsafe {
+                        &mut *(list.at(j as usize) as *const Symbol as *mut Symbol)
+                    };
+                    if !sym.has_link() {
+                        continue;
+                    }
+                    sym.link = self.follow(sym.link);
+                }
+            }
+        }
+
+        // NOTE: `assignChunkIndex` / `dump` omitted — they reference
+        // `js_ast.DeclaredSymbol` / `Output.prettyln` (T4). bun_js_parser keeps
+        // those as inherent helpers on its re-exported `symbol::Map`.
+    }
+}
+
 // TODO(b0-move-in): bun_paths must define `PathContentsPair` (TYPE_ONLY from bun_resolver::fs).
 // Local mirror so init_file / init_recycled_file resolve until paths' move-in lands.
 #[allow(dead_code)]
@@ -2230,6 +2747,71 @@ impl Source {
 
 pub fn range_data(source: Option<&Source>, r: Range, text: Str) -> Data {
     Data { text, location: Location::init_or_null(source, r) }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// File → Source helpers — MOVE_DOWN from bun_sys::File (T1 cannot name T2).
+//
+// Source: src/sys/File.zig:436 `toSourceAt` / `toSource`. Exposed both as free
+// fns and as an extension trait so callers can write `File::to_source(...)`-ish
+// code via `use bun_logger::FileSourceExt`.
+// ───────────────────────────────────────────────────────────────────────────
+
+pub use bun_sys::file::ToSourceOptions;
+
+/// Read `path` (relative to `dir_fd`) into memory and wrap it in a `Source`.
+pub fn to_source_at(
+    dir_fd: impl Into<bun_sys::file::File>,
+    path: &bun_str::ZStr,
+    opts: ToSourceOptions,
+) -> bun_sys::Result<Source> {
+    let bytes = match bun_sys::file::File::read_from(dir_fd, path) {
+        bun_sys::Maybe::Err(err) => return bun_sys::Maybe::Err(err),
+        bun_sys::Maybe::Ok(bytes) => bytes,
+    };
+    let bytes = if opts.convert_bom {
+        // TODO(port): bun_str::strings::Bom::{detect, remove_and_convert_to_utf8_and_free}
+        // not yet ported — pass through unchanged for now.
+        bytes
+    } else {
+        bytes
+    };
+    // TODO(port): OWNERSHIP — `Source.contents` is `&'static [u8]` in Phase A (see
+    // module-level note). Leak the heap buffer until Phase B threads a real lifetime
+    // or moves `contents` to `Vec<u8>`/`bun_str::String`.
+    let contents: &'static [u8] = Box::leak(bytes.into_boxed_slice());
+    let path_bytes: &'static [u8] = Box::leak(path.as_bytes().to_vec().into_boxed_slice());
+    bun_sys::Maybe::Ok(Source::init_path_string(path_bytes, contents))
+}
+
+/// `to_source_at` rooted at the process CWD.
+pub fn to_source(path: &bun_str::ZStr, opts: ToSourceOptions) -> bun_sys::Result<Source> {
+    to_source_at(bun_sys::Fd::cwd(), path, opts)
+}
+
+/// Extension trait so `bun_sys::File` callers get the old static-method shape back.
+pub trait FileSourceExt {
+    fn to_source_at(
+        dir_fd: Self,
+        path: &bun_str::ZStr,
+        opts: ToSourceOptions,
+    ) -> bun_sys::Result<Source>
+    where
+        Self: Sized;
+    fn to_source(path: &bun_str::ZStr, opts: ToSourceOptions) -> bun_sys::Result<Source>;
+}
+
+impl FileSourceExt for bun_sys::file::File {
+    fn to_source_at(
+        dir_fd: Self,
+        path: &bun_str::ZStr,
+        opts: ToSourceOptions,
+    ) -> bun_sys::Result<Source> {
+        to_source_at(dir_fd, path, opts)
+    }
+    fn to_source(path: &bun_str::ZStr, opts: ToSourceOptions) -> bun_sys::Result<Source> {
+        to_source(path, opts)
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

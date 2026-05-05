@@ -38,6 +38,72 @@ use crate::{
 bun_output::declare_scope!(LinkerCtx, visible);
 bun_output::declare_scope!(TreeShake, hidden);
 
+// ══════════════════════════════════════════════════════════════════════════
+// CYCLEBREAK(b0): vtable instance for `bun_crash_handler::BundleGenerateChunkVTable`
+// (cold-path §Dispatch — crash trace only). crash_handler (T1) holds erased
+// `(*const LinkerContext, *const Chunk, *const PartRange)`; bundler supplies
+// the formatter that knows their layout. Mirrors src/crash_handler/crash_handler.zig:135.
+// ══════════════════════════════════════════════════════════════════════════
+#[cfg(feature = "show_crash_trace")]
+pub static BUNDLE_GENERATE_CHUNK_VTABLE: bun_crash_handler::BundleGenerateChunkVTable =
+    bun_crash_handler::BundleGenerateChunkVTable {
+        fmt: |context, chunk, part_range, writer| {
+            // SAFETY: erased pointers were constructed by `bundle_generate_chunk_action`
+            // below from live `&LinkerContext` / `&Chunk` / `&PartRange`.
+            let ctx = unsafe { &*(context as *const LinkerContext) };
+            let chunk = unsafe { &*(chunk as *const Chunk) };
+            let pr = unsafe { &*(part_range as *const PartRange) };
+            // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid for
+            // the lifetime of the link step that constructed this Action.
+            let parse_graph = unsafe { &*ctx.parse_graph };
+            let sources = parse_graph.input_files.items_source();
+            let entry = if pr.source_index.is_valid() {
+                sources
+                    .get(chunk.entry_point.source_index as usize)
+                    .map(|s| bstr::BStr::new(&s.path.text))
+            } else {
+                None
+            };
+            let source = if pr.source_index.is_valid() {
+                sources
+                    .get(pr.source_index.get() as usize)
+                    .map(|s| bstr::BStr::new(&s.path.text))
+            } else {
+                None
+            };
+            write!(
+                writer,
+                "generating bundler chunk\n  chunk entry point: {:?}\n  source: {:?}\n  part range: {}..{}",
+                entry, source, pr.part_index_begin, pr.part_index_end,
+            )
+        },
+    };
+
+/// Helper for call-sites that previously wrote `Action::BundleGenerateChunk(.{...})`.
+#[cfg(feature = "show_crash_trace")]
+#[inline]
+pub fn bundle_generate_chunk_action(
+    ctx: &LinkerContext,
+    chunk: &Chunk,
+    part_range: &PartRange,
+) -> bun_crash_handler::Action {
+    bun_crash_handler::Action::BundleGenerateChunk(bun_crash_handler::BundleGenerateChunk {
+        context: ctx as *const LinkerContext as *const (),
+        chunk: chunk as *const Chunk as *const (),
+        part_range: part_range as *const PartRange as *const (),
+        vtable: &BUNDLE_GENERATE_CHUNK_VTABLE,
+    })
+}
+#[cfg(not(feature = "show_crash_trace"))]
+#[inline]
+pub fn bundle_generate_chunk_action(
+    _ctx: &LinkerContext,
+    _chunk: &Chunk,
+    _part_range: &PartRange,
+) -> bun_crash_handler::Action {
+    bun_crash_handler::Action::BundleGenerateChunk(())
+}
+
 macro_rules! debug {
     ($($arg:tt)*) => { bun_output::scoped_log!(LinkerCtx, $($arg)*) };
 }

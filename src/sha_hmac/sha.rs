@@ -184,8 +184,85 @@ pub mod evp {
     // preserved even though MD5+SHA1 is conventionally 36 bytes.
     new_evp!(MD5_SHA1, SHA1_DIGEST_LENGTH, EVP_md5_sha1);
     new_evp!(Blake2, 256 / 8, EVP_blake2b256);
+
+    // ──────────────────────────────────────────────────────────────────────
+    // CYCLEBREAK MOVE_DOWN: bun_jsc::api::bun::crypto::evp::Algorithm
+    //   source: src/runtime/crypto/EVP.zig (`pub const Algorithm = enum { ... }`)
+    //   moved here so `csrf` and `sha_hmac::hmac` can name it without
+    //   depending upward on bun_jsc/bun_runtime.
+    //   Only the enum + `md()` are lowered; `names` (needs bun.String) and
+    //   the comptime string map stay in the higher-tier EVP wrapper.
+    // ──────────────────────────────────────────────────────────────────────
+
+    /// We do this to avoid asking BoringSSL what the digest name is, because
+    /// that API is confusing.
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+    #[non_exhaustive]
+    pub enum Algorithm {
+        // DsaSha,
+        // DsaSha1,
+        // Md5Sha1,
+        // RsaMd5,
+        // RsaRipemd160,
+        // RsaSha1,
+        // RsaSha1_2,
+        // RsaSha224,
+        // RsaSha256,
+        // RsaSha384,
+        // RsaSha512,
+        // EcdsaWithSha1,
+        Blake2b256,
+        Blake2b512,
+        Blake2s256,
+        Md4,
+        Md5,
+        Ripemd160,
+        Sha1,
+        Sha224,
+        Sha256,
+        Sha384,
+        Sha512,
+        Sha512_224,
+        Sha512_256,
+
+        Sha3_224,
+        Sha3_256,
+        Sha3_384,
+        Sha3_512,
+        Shake128,
+        Shake256,
+    }
+
+    impl Algorithm {
+        pub fn md(self) -> Option<*const boringssl_sys::EVP_MD> {
+            // SAFETY: BoringSSL EVP_* md getters take no arguments and return a
+            // static const singleton (never NULL for the ones listed here).
+            unsafe {
+                match self {
+                    Algorithm::Blake2b256 => Some(boringssl_sys::EVP_blake2b256()),
+                    Algorithm::Blake2b512 => Some(boringssl_sys::EVP_blake2b512()),
+                    Algorithm::Md4 => Some(boringssl_sys::EVP_md4()),
+                    Algorithm::Md5 => Some(boringssl_sys::EVP_md5()),
+                    Algorithm::Ripemd160 => Some(boringssl_sys::EVP_ripemd160()),
+                    Algorithm::Sha1 => Some(boringssl_sys::EVP_sha1()),
+                    Algorithm::Sha224 => Some(boringssl_sys::EVP_sha224()),
+                    Algorithm::Sha256 => Some(boringssl_sys::EVP_sha256()),
+                    Algorithm::Sha384 => Some(boringssl_sys::EVP_sha384()),
+                    Algorithm::Sha512 => Some(boringssl_sys::EVP_sha512()),
+                    Algorithm::Sha512_224 => Some(boringssl_sys::EVP_sha512_224()),
+                    Algorithm::Sha512_256 => Some(boringssl_sys::EVP_sha512_256()),
+                    Algorithm::Sha3_224 => Some(boringssl_sys::EVP_sha3_224()),
+                    Algorithm::Sha3_256 => Some(boringssl_sys::EVP_sha3_256()),
+                    Algorithm::Sha3_384 => Some(boringssl_sys::EVP_sha3_384()),
+                    Algorithm::Sha3_512 => Some(boringssl_sys::EVP_sha3_512()),
+                    _ => None,
+                }
+            }
+        }
+    }
 }
 
+pub use evp::Algorithm;
 pub use evp::SHA1;
 pub use evp::MD5;
 pub use evp::MD4;

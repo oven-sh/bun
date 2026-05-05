@@ -12,6 +12,217 @@ use crate::js_printer;
 
 /// SHA-512 digest length in bytes. Local constant to avoid bun_sha (T2) dependency.
 const SHA512_DIGEST: usize = 64;
+
+// ════════════════════════════════════════════════════════════════════════════
+// MOVE-IN: strings / js_lexer / js_printer minimal subsets (CYCLEBREAK §→core)
+// Only the free functions fmt.rs/output.rs actually call. The full modules
+// (SIMD search, codepoint tables, JSON printer) stay in bun_str / bun_js_parser
+// which add `pub use bun_core::strings::*` and extend with the heavy bits.
+// ════════════════════════════════════════════════════════════════════════════
+
+pub mod strings {
+    /// Zig: `bun.strings.contains` / fmt.rs+output.rs call site name.
+    #[inline]
+    pub fn includes(haystack: &[u8], needle: &[u8]) -> bool {
+        if needle.is_empty() { return true; }
+        haystack.windows(needle.len()).any(|w| w == needle)
+        // PERF(port): was SIMD memmem — profile in Phase B
+    }
+    #[inline] pub fn contains(h: &[u8], n: &[u8]) -> bool { includes(h, n) }
+
+    #[inline]
+    pub fn index_of_char(s: &[u8], c: u8) -> Option<usize> {
+        s.iter().position(|&b| b == c)
+    }
+    #[inline]
+    pub fn index_of_any(s: &[u8], chars: &[u8]) -> Option<usize> {
+        s.iter().position(|b| chars.contains(b))
+    }
+    #[inline]
+    pub fn first_non_ascii(s: &[u8]) -> Option<usize> {
+        s.iter().position(|&b| b >= 0x80)
+    }
+
+    /// Zig: `eqlCaseInsensitiveASCII(a, b, check_len)`.
+    pub fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], check_len: bool) -> bool {
+        if check_len && a.len() != b.len() { return false; }
+        let n = core::cmp::min(a.len(), b.len());
+        for i in 0..n {
+            if a[i].to_ascii_lowercase() != b[i].to_ascii_lowercase() { return false; }
+        }
+        true
+    }
+
+    /// Zig: `bun.strings.isIPV6Address` — heuristic (contains ':', not parseable as v4).
+    #[inline]
+    pub fn is_ipv6_address(s: &[u8]) -> bool {
+        index_of_char(s, b':').is_some()
+    }
+
+    /// Allocating replace (output.rs uses it once for `{pid}` substitution).
+    pub fn replace_owned(input: &[u8], needle: &[u8], with: &[u8]) -> Vec<u8> {
+        if needle.is_empty() { return input.to_vec(); }
+        let mut out = Vec::with_capacity(input.len());
+        let mut i = 0;
+        while i + needle.len() <= input.len() {
+            if &input[i..i + needle.len()] == needle {
+                out.extend_from_slice(with);
+                i += needle.len();
+            } else {
+                out.push(input[i]);
+                i += 1;
+            }
+        }
+        out.extend_from_slice(&input[i..]);
+        out
+    }
+
+    // ─── secret/uuid sniffers (fmt.rs URL redaction) ──────────────────────
+    pub fn starts_with_uuid(s: &[u8]) -> bool {
+        // 8-4-4-4-12 hex with dashes
+        if s.len() < 36 { return false; }
+        for (i, &b) in s[..36].iter().enumerate() {
+            let ok = match i { 8 | 13 | 18 | 23 => b == b'-', _ => b.is_ascii_hexdigit() };
+            if !ok { return false; }
+        }
+        true
+    }
+    pub fn starts_with_npm_secret(s: &[u8]) -> usize {
+        if s.len() >= 40 && s.starts_with(b"npm_") && s[4..40].iter().all(|b| b.is_ascii_alphanumeric()) {
+            40
+        } else { 0 }
+    }
+    /// Generic high-entropy-looking token. Returns (offset_into_match, len).
+    pub fn starts_with_secret(s: &[u8]) -> Option<(usize, usize)> {
+        // TODO(port): Zig impl scans for ghp_/glpat-/sk-/xoxb- etc. Minimal
+        // subset; bun_str extends.
+        for prefix in [b"ghp_".as_slice(), b"sk-", b"glpat-", b"xoxb-", b"xoxp-"] {
+            if s.starts_with(prefix) {
+                let mut n = prefix.len();
+                while n < s.len() && (s[n].is_ascii_alphanumeric() || s[n] == b'_' || s[n] == b'-') {
+                    n += 1;
+                }
+                if n > prefix.len() + 8 { return Some((0, n)); }
+            }
+        }
+        None
+    }
+
+    // ─── encoding ─────────────────────────────────────────────────────────
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Encoding { Ascii, Latin1, Utf8, Utf16 }
+
+    #[derive(Clone, Copy, Default)]
+    pub struct EncodeResult { pub read: usize, pub written: usize }
+
+    /// Zig: `copyUTF16IntoUTF8`. Scalar fallback; bun_str overrides with SIMD.
+    pub fn copy_utf16_into_utf8(dst: &mut [u8], src: &[u16]) -> EncodeResult {
+        let mut r = 0usize; let mut w = 0usize;
+        while r < src.len() {
+            let c = src[r] as u32;
+            // TODO(port): surrogate-pair handling — bun_str owns the correct impl.
+            if c < 0x80 {
+                if w >= dst.len() { break; }
+                dst[w] = c as u8; w += 1;
+            } else if c < 0x800 {
+                if w + 2 > dst.len() { break; }
+                dst[w] = 0xC0 | (c >> 6) as u8;
+                dst[w+1] = 0x80 | (c & 0x3F) as u8; w += 2;
+            } else {
+                if w + 3 > dst.len() { break; }
+                dst[w] = 0xE0 | (c >> 12) as u8;
+                dst[w+1] = 0x80 | ((c >> 6) & 0x3F) as u8;
+                dst[w+2] = 0x80 | (c & 0x3F) as u8; w += 3;
+            }
+            r += 1;
+        }
+        EncodeResult { read: r, written: w }
+    }
+    /// Zig: `copyLatin1IntoUTF8`.
+    pub fn copy_latin1_into_utf8(dst: &mut [u8], src: &[u8]) -> EncodeResult {
+        let mut r = 0usize; let mut w = 0usize;
+        while r < src.len() {
+            let c = src[r];
+            if c < 0x80 {
+                if w >= dst.len() { break; }
+                dst[w] = c; w += 1;
+            } else {
+                if w + 2 > dst.len() { break; }
+                dst[w] = 0xC0 | (c >> 6);
+                dst[w+1] = 0x80 | (c & 0x3F); w += 2;
+            }
+            r += 1;
+        }
+        EncodeResult { read: r, written: w }
+    }
+
+    // ─── CodepointIterator (fmt.rs identifier formatter) ──────────────────
+    #[derive(Default, Clone, Copy)]
+    pub struct CodepointIteratorCursor { pub i: usize, pub c: i32, pub width: u8 }
+    pub struct CodepointIterator<'a> { bytes: &'a [u8] }
+    impl<'a> CodepointIterator<'a> {
+        #[inline] pub fn init(bytes: &'a [u8]) -> Self { Self { bytes } }
+        pub fn next(&self, cursor: &mut CodepointIteratorCursor) -> bool {
+            let i = cursor.i + cursor.width as usize;
+            if i >= self.bytes.len() { return false; }
+            let b = self.bytes[i];
+            // TODO(port): full UTF-8 decode — bun_str owns the table-driven impl.
+            let (cp, w) = if b < 0x80 { (b as i32, 1u8) } else { (b as i32, 1u8) };
+            cursor.i = i; cursor.c = cp; cursor.width = w;
+            true
+        }
+    }
+}
+
+pub mod js_lexer {
+    /// Zig: js_lexer.isIdentifierStart — ASCII fast path; bun_js_parser extends
+    /// with the full Unicode ID_Start table.
+    #[inline]
+    pub fn is_identifier_start(c: i32) -> bool {
+        matches!(c, 0x24 /* $ */ | 0x5F /* _ */)
+            || (c >= b'a' as i32 && c <= b'z' as i32)
+            || (c >= b'A' as i32 && c <= b'Z' as i32)
+            || c > 0x7F // PERF(port): defer Unicode table to bun_js_parser
+    }
+    #[inline]
+    pub fn is_identifier_continue(c: i32) -> bool {
+        is_identifier_start(c) || (c >= b'0' as i32 && c <= b'9' as i32)
+    }
+}
+
+pub mod js_printer {
+    use core::fmt;
+    use super::strings::Encoding;
+    /// Zig: js_printer.writeJSONString — minimal escape set for fmt.rs quoting.
+    /// bun_js_printer overrides with the full (ctrl-char, \u escape, encoding-aware) impl.
+    pub fn write_json_string(input: &[u8], f: &mut impl fmt::Write, _enc: Encoding) -> fmt::Result {
+        f.write_char('"')?;
+        for &b in input {
+            match b {
+                b'"' => f.write_str("\\\"")?,
+                b'\\' => f.write_str("\\\\")?,
+                b'\n' => f.write_str("\\n")?,
+                b'\r' => f.write_str("\\r")?,
+                b'\t' => f.write_str("\\t")?,
+                0x00..=0x1F => write!(f, "\\u{:04x}", b)?,
+                _ => f.write_char(b as char)?,
+            }
+        }
+        f.write_char('"')
+    }
+    pub fn write_pre_quoted_string(
+        input: &[u8],
+        f: &mut impl fmt::Write,
+        quote: u8,
+        _allow_backtick: bool,
+        enc: Encoding,
+    ) -> fmt::Result {
+        let _ = (quote, enc);
+        // TODO(port): full impl in bun_js_printer; this tier only needs the
+        // "already quoted" passthrough for fmt.rs JS-string display.
+        write_json_string(input, f, enc)
+    }
+}
 use strum::IntoStaticStr;
 
 // ───────────────────────────────────────────────────────────────────────────

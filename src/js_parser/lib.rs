@@ -47,7 +47,7 @@ use crate::ast::char_freq::CHAR_FREQ_COUNT;
 pub use crate::ast::ts as TS;
 pub use crate::ast::ts::{TSNamespaceMember, TSNamespaceMemberMap, TSNamespaceScope};
 
-pub use crate::ast::base::{Index, Ref, RefCtx, RefHashCtx};
+pub use crate::ast::base::{Index, Ref, RefCtx, RefFields, RefHashCtx, RefTag};
 
 pub use bun_collections::BabyList as BabyListAlias; // `pub const BabyList = bun.BabyList;`
 // TODO(port): Zig re-exports BabyList under the same name; Rust can't shadow
@@ -947,6 +947,611 @@ pub type NewBatcher<T> = Batcher<T>;
 // TODO(port): replace with the actual JSON writer protocol once ported.
 pub trait JsonWriter {
     fn write<V: ?Sized>(&mut self, value: &V) -> core::result::Result<(), bun_core::Error>;
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// MOVE-IN (CYCLEBREAK §→js_parser): symbols pulled DOWN from higher-tier
+// crates so lower-tier callers (css, interchange, js_parser itself) can
+// resolve them here without forming a cycle. Ground truth for each port is
+// the named .zig file, NOT the sibling .rs (which may already forward-ref).
+// ═════════════════════════════════════════════════════════════════════════
+
+// ─── from bun_jsc::math (src/jsc/jsc.zig) ───────────────────────────────────
+pub mod math {
+    /// `Number.MAX_SAFE_INTEGER` (2^53 - 1)
+    pub const MAX_SAFE_INTEGER: f64 = 9007199254740991.0;
+    /// `Number.MIN_SAFE_INTEGER` (-(2^53 - 1))
+    pub const MIN_SAFE_INTEGER: f64 = -9007199254740991.0;
+
+    extern "C" {
+        // Zig: `extern "c" fn Bun__JSC__operationMathPow(f64, f64) f64;`
+        fn Bun__JSC__operationMathPow(x: f64, y: f64) -> f64;
+    }
+
+    /// JSC-compatible `Math.pow` (matches WebKit's `operationMathPow` corner-case
+    /// handling for NaN/±∞/±0 — `std::powf` differs on a handful of inputs).
+    #[inline]
+    pub fn pow(x: f64, y: f64) -> f64 {
+        // SAFETY: pure FFI, no pointers, no errno.
+        unsafe { Bun__JSC__operationMathPow(x, y) }
+    }
+}
+
+// ─── from bun_js_printer::Options::Indentation (src/js_printer/js_printer.zig) ─
+#[derive(Copy, Clone, Debug)]
+pub struct Indentation {
+    pub scalar: usize,
+    pub count: usize,
+    pub character: IndentationCharacter,
+}
+
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum IndentationCharacter {
+    Tab,
+    Space,
+}
+
+// Zig nests `Character` inside the struct; Rust callers that wrote
+// `Indentation::Character::Space` use the top-level enum directly.
+// TODO(port): inherent associated types are unstable — if many call sites
+// need the nested path, gate behind `#![feature(inherent_associated_types)]`.
+
+impl Default for Indentation {
+    fn default() -> Self {
+        Self { scalar: 2, count: 0, character: IndentationCharacter::Space }
+    }
+}
+
+// ─── from bun_bundler::v2::MangledProps (src/bundler/bundle_v2.zig) ─────────
+// Zig: `std.AutoArrayHashMapUnmanaged(Ref, []const u8)`
+// LIFETIMES.tsv: value slices point into the parser arena → raw `*const [u8]`
+// pending crate-wide `'bump`.
+pub type MangledProps = ArrayHashMap<Ref, *const [u8]>;
+
+// ─── from bun_jsc::RuntimeTranspilerCache (src/jsc/RuntimeTranspilerCache.zig) ─
+// Only the surface the parser touches (input_hash / exports_kind / get) lives
+// here. The on-disk encode/decode + Metadata + Entry machinery stay in
+// `bun_jsc` and operate on `*mut RuntimeTranspilerCache` via the vtable below;
+// they need `bun.sys`/`bun.String`/hashing which are tier-6 deps.
+pub struct RuntimeTranspilerCache {
+    pub input_hash: Option<u64>,
+    pub input_byte_length: Option<u64>,
+    pub features_hash: Option<u64>,
+    pub exports_kind: ExportsKind,
+    /// Set by `get()` when a cache hit returns transpiled output. Owned by
+    /// `output_code_allocator` on the jsc side; parser only inspects presence.
+    pub output_code: Option<bun_str::String>,
+    /// Opaque storage for `bun_jsc::RuntimeTranspilerCache::Entry` — the
+    /// concrete type lives in tier-6 and is round-tripped via the vtable.
+    pub entry: Option<*mut ()>,
+
+    /// Dispatch slot — `bun_jsc` writes `&JSC_TRANSPILER_CACHE_VTABLE` at init.
+    /// `None` ⇒ caching disabled (e.g. wasm builds, `--no-transpiler-cache`).
+    pub vtable: Option<&'static RuntimeTranspilerCacheVTable>,
+}
+
+/// Manual vtable per PORTING.md §Dispatch (cold path: at most twice per parse).
+/// Low tier (`js_parser`) names no `bun_jsc` types; high tier owns the impls.
+// PERF(port): was direct call into bun.jsc — acceptable, callee does file I/O.
+pub struct RuntimeTranspilerCacheVTable {
+    /// Zig `RuntimeTranspilerCache.get(source, parser_options, used_jsx) bool`.
+    /// `parser_options` is passed as `*const ()` because `parser::Options`
+    /// would be a forward edge here; the jsc impl casts it back.
+    pub get: unsafe fn(
+        this: *mut RuntimeTranspilerCache,
+        source: *const logger::Source,
+        parser_options: *const (),
+        used_jsx: bool,
+    ) -> bool,
+    /// Zig `RuntimeTranspilerCache.is_disabled` — runtime flag, not const.
+    pub is_disabled: fn() -> bool,
+}
+
+impl RuntimeTranspilerCache {
+    #[inline]
+    pub fn get(
+        &mut self,
+        source: &logger::Source,
+        parser_options: *const (),
+        used_jsx: bool,
+    ) -> bool {
+        match self.vtable {
+            // SAFETY: `self` is a valid &mut; vtable contract per §Dispatch.
+            Some(vt) => unsafe { (vt.get)(self as *mut _, source as *const _, parser_options, used_jsx) },
+            None => false,
+        }
+    }
+
+    #[inline]
+    pub fn is_disabled(&self) -> bool {
+        self.vtable.map_or(true, |vt| (vt.is_disabled)())
+    }
+}
+
+// ─── from bun_bundler::defines (src/bundler/defines.zig) ────────────────────
+pub mod defines {
+    use bun_collections::{ArrayHashMap, StringHashMap};
+    use bun_logger as logger;
+    use bun_str as strings;
+
+    use crate::ast::base::Ref;
+    use crate::ast::e as E;
+    use crate::ast::expr;
+    use crate::lexer as js_lexer;
+
+    // Zig: `bun.StringArrayHashMap(string)` / `bun.StringHashMap(DefineData)`
+    pub type RawDefines = ArrayHashMap<Box<[u8]>, Box<[u8]>>;
+    pub type UserDefines = StringHashMap<DefineData>;
+    pub type UserDefinesArray = ArrayHashMap<Box<[u8]>, DefineData>;
+
+    pub type IdentifierDefine = DefineData;
+
+    #[derive(Clone)]
+    pub struct DotDefine {
+        // ARENA: parts borrow the original define key string.
+        pub parts: *const [*const [u8]],
+        pub data: DefineData,
+    }
+
+    bitflags::bitflags! {
+        // Zig: `packed struct(u8) { _padding: u3, valueless, can_be_removed_if_unused,
+        //        call_can_be_unwrapped_if_unused: E.CallUnwrap (u2), method_call_must_be_replaced_with_undefined }`
+        // Packed LSB-first → bit positions below match the Zig layout exactly.
+        #[derive(Copy, Clone, Default)]
+        pub struct DefineDataFlags: u8 {
+            const VALUELESS                                  = 1 << 3;
+            const CAN_BE_REMOVED_IF_UNUSED                   = 1 << 4;
+            // bits 5..7 hold `E::CallUnwrap` (2 bits) — read via accessor below.
+            const METHOD_CALL_MUST_BE_REPLACED_WITH_UNDEFINED = 1 << 7;
+        }
+    }
+    const CALL_UNWRAP_SHIFT: u8 = 5;
+    const CALL_UNWRAP_MASK: u8 = 0b11 << CALL_UNWRAP_SHIFT;
+
+    #[derive(Clone)]
+    pub struct DefineData {
+        pub value: expr::Data<'static>,
+        // Not using a slice here shrinks the size from 48 bytes to 40 bytes.
+        pub original_name_ptr: Option<*const u8>,
+        pub original_name_len: u32,
+        pub flags: DefineDataFlags,
+    }
+
+    impl Default for DefineData {
+        fn default() -> Self {
+            Self {
+                value: expr::Data::EUndefined(E::Undefined {}),
+                original_name_ptr: None,
+                original_name_len: 0,
+                flags: DefineDataFlags::empty(),
+            }
+        }
+    }
+
+    impl DefineData {
+        #[inline]
+        pub fn original_name(&self) -> Option<&[u8]> {
+            if self.original_name_len > 0 {
+                // SAFETY: ptr/len were set together from a borrowed slice; the
+                // owning string outlives the Define (caller contract).
+                Some(unsafe {
+                    core::slice::from_raw_parts(self.original_name_ptr.unwrap(), self.original_name_len as usize)
+                })
+            } else {
+                None
+            }
+        }
+
+        /// True if accessing this value is known to not have any side effects. For
+        /// example, a bare reference to "Object.create" can be removed because it
+        /// does not have any observable side effects.
+        #[inline]
+        pub fn can_be_removed_if_unused(&self) -> bool {
+            self.flags.contains(DefineDataFlags::CAN_BE_REMOVED_IF_UNUSED)
+        }
+
+        /// True if a call to this value is known to not have any side effects. For
+        /// example, a bare call to "Object()" can be removed because it does not
+        /// have any observable side effects.
+        #[inline]
+        pub fn call_can_be_unwrapped_if_unused(&self) -> E::CallUnwrap {
+            // SAFETY: 2-bit field, all 3 used values (<4) are valid discriminants.
+            unsafe {
+                core::mem::transmute::<u8, E::CallUnwrap>(
+                    (self.flags.bits() & CALL_UNWRAP_MASK) >> CALL_UNWRAP_SHIFT,
+                )
+            }
+        }
+
+        #[inline]
+        pub fn method_call_must_be_replaced_with_undefined(&self) -> bool {
+            self.flags.contains(DefineDataFlags::METHOD_CALL_MUST_BE_REPLACED_WITH_UNDEFINED)
+        }
+
+        #[inline]
+        pub fn valueless(&self) -> bool {
+            self.flags.contains(DefineDataFlags::VALUELESS)
+        }
+
+        pub fn init_boolean(value: bool) -> DefineData {
+            DefineData {
+                value: expr::Data::EBoolean(E::Boolean { value }),
+                flags: DefineDataFlags::CAN_BE_REMOVED_IF_UNUSED,
+                ..Default::default()
+            }
+        }
+
+        pub fn init_static_string(str_: &'static E::String<'static>) -> DefineData {
+            DefineData {
+                // Zig `@constCast` — Expr.Data stores *mut; the static is never mutated.
+                value: expr::Data::EString(str_ as *const _ as *mut _),
+                flags: DefineDataFlags::CAN_BE_REMOVED_IF_UNUSED,
+                ..Default::default()
+            }
+        }
+
+        pub fn merge(a: &DefineData, b: &DefineData) -> DefineData {
+            let mut flags = DefineDataFlags::empty();
+            if a.can_be_removed_if_unused() {
+                flags |= DefineDataFlags::CAN_BE_REMOVED_IF_UNUSED;
+            }
+            flags = DefineDataFlags::from_bits_retain(
+                flags.bits() | ((a.call_can_be_unwrapped_if_unused() as u8) << CALL_UNWRAP_SHIFT),
+            );
+            // TODO: investigate if this is correct. This is what it was before. But that looks strange.
+            if a.method_call_must_be_replaced_with_undefined()
+                || b.method_call_must_be_replaced_with_undefined()
+            {
+                flags |= DefineDataFlags::VALUELESS;
+                flags |= DefineDataFlags::METHOD_CALL_MUST_BE_REPLACED_WITH_UNDEFINED;
+            }
+            DefineData {
+                value: b.value.clone(),
+                flags,
+                original_name_ptr: b.original_name_ptr,
+                original_name_len: b.original_name_len,
+            }
+        }
+
+        pub fn parse(
+            key: &[u8],
+            value_str: &[u8],
+            value_is_undefined: bool,
+            method_call_must_be_replaced_with_undefined: bool,
+            log: &mut logger::Log,
+            bump: &bun_alloc::Arena,
+        ) -> core::result::Result<DefineData, bun_core::Error> {
+            for part in key.split(|&c| c == b'.') {
+                if !js_lexer::is_identifier(part) {
+                    if strings::eql(part, key) {
+                        log.add_error_fmt(
+                            None,
+                            logger::Loc::default(),
+                            bump,
+                            format_args!("define key \"{}\" must be a valid identifier", strings::fmt(key)),
+                        )?;
+                    } else {
+                        log.add_error_fmt(
+                            None,
+                            logger::Loc::default(),
+                            bump,
+                            format_args!(
+                                "define key \"{}\" contains invalid identifier \"{}\"",
+                                strings::fmt(part),
+                                strings::fmt(value_str)
+                            ),
+                        )?;
+                    }
+                    break;
+                }
+            }
+
+            // check for nested identifiers
+            let mut is_ident = true;
+            for part in value_str.split(|&c| c == b'.') {
+                if !js_lexer::is_identifier(part) || js_lexer::Keywords::has(part) {
+                    is_ident = false;
+                    break;
+                }
+            }
+
+            let mut flags = DefineDataFlags::empty();
+            if value_is_undefined {
+                flags |= DefineDataFlags::VALUELESS;
+            }
+            if method_call_must_be_replaced_with_undefined {
+                flags |= DefineDataFlags::METHOD_CALL_MUST_BE_REPLACED_WITH_UNDEFINED;
+            }
+
+            if is_ident {
+                // Special-case undefined. it's not an identifier here
+                // https://github.com/evanw/esbuild/issues/1407
+                let value = if value_is_undefined || value_str == b"undefined" {
+                    expr::Data::EUndefined(E::Undefined {})
+                } else {
+                    expr::Data::EIdentifier(E::Identifier {
+                        ref_: Ref::NONE,
+                        can_be_removed_if_unused: true,
+                        ..Default::default()
+                    })
+                };
+                flags |= DefineDataFlags::CAN_BE_REMOVED_IF_UNUSED;
+                return Ok(DefineData {
+                    value,
+                    original_name_ptr: if value_str.is_empty() { None } else { Some(value_str.as_ptr()) },
+                    original_name_len: value_str.len() as u32,
+                    flags,
+                });
+            }
+
+            // Value is JSON — round-trip through the env-JSON parser.
+            let source = logger::Source {
+                contents: value_str,
+                path: bun_paths::fs::Path::init_with_namespace("defines.json", "internal"),
+                ..Default::default()
+            };
+            // TODO(b0-genuine): same-tier T4 dep on bun_interchange::json — direct call.
+            let expr = bun_interchange::json::parse_env_json(&source, log, bump)?;
+            let cloned = expr.data.deep_clone(bump)?;
+            if expr.is_primitive_literal() {
+                flags |= DefineDataFlags::CAN_BE_REMOVED_IF_UNUSED;
+            }
+            Ok(DefineData {
+                value: cloned,
+                original_name_ptr: if value_str.is_empty() { None } else { Some(value_str.as_ptr()) },
+                original_name_len: value_str.len() as u32,
+                flags,
+            })
+        }
+    }
+
+    pub struct Define {
+        pub identifiers: StringHashMap<IdentifierDefine>,
+        pub dots: StringHashMap<Vec<DotDefine>>,
+        pub drop_debugger: bool,
+    }
+
+    impl Define {
+        // Zig: `pub const Data = DefineData;` — Rust callers import `DefineData` directly.
+
+        pub fn for_identifier(&self, name: &[u8]) -> Option<&IdentifierDefine> {
+            if let Some(data) = self.identifiers.get(name) {
+                return Some(data);
+            }
+            // TODO(port): pure_global_identifier_map lives in
+            // bun_bundler::defines_table — moves down with the rest of the
+            // table in a later pass (large comptime string map).
+            None
+        }
+
+        pub fn insert(
+            &mut self,
+            bump: &bun_alloc::Arena,
+            key: &[u8],
+            value: DefineData,
+        ) -> core::result::Result<(), bun_alloc::AllocError> {
+            // If it has a dot, then it's a DotDefine.
+            // e.g. process.env.NODE_ENV
+            if let Some(last_dot) = strings::last_index_of_char(key, b'.') {
+                let tail = &key[last_dot + 1..];
+                let remainder = &key[..last_dot];
+                let count = remainder.iter().filter(|&&c| c == b'.').count() + 1;
+                let parts = bump.alloc_slice_fill_default::<*const [u8]>(count + 1);
+                for (i, split) in remainder.split(|&c| c == b'.').enumerate() {
+                    parts[i] = split as *const [u8];
+                }
+                parts[count] = tail as *const [u8];
+
+                // "NODE_ENV"
+                let entry = self.dots.entry(tail.into()).or_default();
+                for part in entry.iter_mut() {
+                    // ["process", "env"] === ["process", "env"]
+                    if are_parts_equal(part.parts, parts) {
+                        part.data = DefineData::merge(&part.data, &value);
+                        return Ok(());
+                    }
+                }
+                entry.push(DotDefine { data: value, parts: parts as *const [_] });
+            } else {
+                // e.g. IS_BROWSER
+                self.identifiers.insert(key.into(), value);
+            }
+            Ok(())
+        }
+
+        pub fn init(
+            user_defines: Option<UserDefines>,
+            string_defines: Option<UserDefinesArray>,
+            drop_debugger: bool,
+            omit_unused_global_calls: bool,
+            bump: &bun_alloc::Arena,
+        ) -> core::result::Result<Box<Define>, bun_alloc::AllocError> {
+            let _ = omit_unused_global_calls;
+            let mut define = Box::new(Define {
+                identifiers: StringHashMap::default(),
+                dots: StringHashMap::default(),
+                drop_debugger,
+            });
+            // TODO(port): Step 1/2 — load global_no_side_effect_* tables from
+            // bun_bundler::defines_table once that table moves down. Omitting
+            // here is safe-ish: only affects pure-annotation tree shaking.
+
+            // Step 3. Load user data into hash tables
+            if let Some(user_defines) = user_defines {
+                for (k, v) in user_defines.into_iter() {
+                    define.insert(bump, &k, v)?;
+                }
+            }
+            // Step 4. Load environment data into hash tables.
+            if let Some(string_defines) = string_defines {
+                for (k, v) in string_defines.into_iter() {
+                    define.insert(bump, &k, v)?;
+                }
+            }
+            Ok(define)
+        }
+    }
+
+    fn are_parts_equal(a: *const [*const [u8]], b: &[*const [u8]]) -> bool {
+        // SAFETY: `a` was constructed from a valid arena slice in `insert`.
+        let a = unsafe { &*a };
+        if a.len() != b.len() {
+            return false;
+        }
+        for i in 0..a.len() {
+            // SAFETY: each part is a valid borrow of the original key slice.
+            if unsafe { &*a[i] } != unsafe { &*b[i] } {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+// ─── from bun_js_printer::renamer (src/js_printer/renamer.zig) ──────────────
+// Only the slot-assignment helpers the parser calls (`P.rs:6658`) live here;
+// the full `NumberRenamer`/`MinifyRenamer` machinery stays in `bun_js_printer`
+// (it depends on the printer's name-buffer and reserved-names tables).
+pub mod renamer {
+    use crate::ast::base::Ref;
+    use crate::ast::scope::Scope;
+    use crate::ast::symbol::{self, Symbol, SlotNamespace, INVALID_NESTED_SCOPE_SLOT};
+    use crate::SlotCounts;
+
+    pub fn assign_nested_scope_slots(
+        _allocator: &bun_alloc::Arena,
+        module_scope: &mut Scope,
+        symbols: &mut [Symbol],
+    ) -> SlotCounts {
+        let mut slot_counts = SlotCounts::default();
+        let mut sorted_members: Vec<u32> = Vec::new();
+
+        // Temporarily set the nested scope slots of top-level symbols to valid so
+        // they aren't renamed in nested scopes. This prevents us from accidentally
+        // assigning nested scope slots to variables declared using "var" in a nested
+        // scope that are actually hoisted up to the module scope to become a top-
+        // level symbol.
+        const VALID_SLOT: u32 = 0;
+        for member in module_scope.members.values() {
+            symbols[member.ref_.inner_index() as usize].nested_scope_slot = VALID_SLOT;
+        }
+        for ref_ in module_scope.generated.slice() {
+            symbols[ref_.inner_index() as usize].nested_scope_slot = VALID_SLOT;
+        }
+
+        for child in module_scope.children.slice() {
+            // SAFETY: child scopes are arena-allocated and live for the parse.
+            let child = unsafe { &mut *child.as_ptr() };
+            slot_counts.union_max(assign_nested_scope_slots_helper(
+                &mut sorted_members,
+                child,
+                symbols,
+                SlotCounts::default(),
+            ));
+        }
+
+        // Then set the nested scope slots of top-level symbols back to zero. Top-
+        // level symbols are not supposed to have nested scope slots.
+        for member in module_scope.members.values() {
+            symbols[member.ref_.inner_index() as usize].nested_scope_slot = INVALID_NESTED_SCOPE_SLOT;
+        }
+        for ref_ in module_scope.generated.slice() {
+            symbols[ref_.inner_index() as usize].nested_scope_slot = INVALID_NESTED_SCOPE_SLOT;
+        }
+
+        slot_counts
+    }
+
+    pub fn assign_nested_scope_slots_helper(
+        sorted_members: &mut Vec<u32>,
+        scope: &mut Scope,
+        symbols: &mut [Symbol],
+        slot_to_copy: SlotCounts,
+    ) -> SlotCounts {
+        let mut slot = slot_to_copy;
+
+        // Sort member map keys for determinism
+        {
+            sorted_members.clear();
+            sorted_members.reserve(scope.members.len());
+            for member in scope.members.values() {
+                sorted_members.push(member.ref_.inner_index());
+            }
+            sorted_members.sort_unstable();
+
+            // Assign slots for this scope's symbols. Only do this if the slot is
+            // not already assigned. Nested scopes have copies of symbols from parent
+            // scopes and we want to use the slot from the parent scope, not child scopes.
+            for &inner_index in sorted_members.iter() {
+                let symbol = &mut symbols[inner_index as usize];
+                let ns = symbol.slot_namespace();
+                if ns != SlotNamespace::MustNotBeRenamed && symbol.nested_scope_slot().is_none() {
+                    symbol.nested_scope_slot = slot.slots[ns];
+                    slot.slots[ns] += 1;
+                }
+            }
+        }
+
+        for ref_ in scope.generated.slice() {
+            let symbol = &mut symbols[ref_.inner_index() as usize];
+            let ns = symbol.slot_namespace();
+            if ns != SlotNamespace::MustNotBeRenamed && symbol.nested_scope_slot().is_none() {
+                symbol.nested_scope_slot = slot.slots[ns];
+                slot.slots[ns] += 1;
+            }
+        }
+
+        // Labels are always declared in a nested scope, so we don't need to check.
+        if let Some(ref_) = scope.label_ref {
+            let symbol = &mut symbols[ref_.inner_index() as usize];
+            let ns = SlotNamespace::Label;
+            symbol.nested_scope_slot = slot.slots[ns];
+            slot.slots[ns] += 1;
+        }
+
+        // Assign slots for the symbols of child scopes
+        let mut slot_counts = slot.clone();
+        for child in scope.children.slice() {
+            // SAFETY: child scopes are arena-allocated and live for the parse.
+            let child = unsafe { &mut *child.as_ptr() };
+            slot_counts.union_max(assign_nested_scope_slots_helper(
+                sorted_members,
+                child,
+                symbols,
+                slot.clone(),
+            ));
+        }
+
+        slot_counts
+    }
+
+    #[derive(Copy, Clone)]
+    pub struct StableSymbolCount {
+        pub stable_source_index: u32,
+        pub ref_: Ref,
+        pub count: u32,
+    }
+
+    pub type StableSymbolCountArray = Vec<StableSymbolCount>;
+
+    impl StableSymbolCount {
+        pub fn less_than(i: &StableSymbolCount, j: &StableSymbolCount) -> bool {
+            if i.count > j.count { return true; }
+            if i.count < j.count { return false; }
+            if i.stable_source_index < j.stable_source_index { return true; }
+            if i.stable_source_index > j.stable_source_index { return false; }
+            i.ref_.inner_index() < j.ref_.inner_index()
+        }
+    }
+
+    // Zig: `js_parser.renamer` re-exports the printer module wholesale; the
+    // remaining types (`NoOpRenamer`, `NumberRenamer`, `MinifyRenamer`,
+    // `SymbolSlot`, `Renamer` union) are only consumed by the printer and
+    // bundler — they stay in `bun_js_printer` and import the helpers above.
+    // TODO(port): if Phase B shows another js_parser caller, hoist further.
+    #[allow(unused_imports)]
+    use symbol as _;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

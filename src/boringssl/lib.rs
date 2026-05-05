@@ -9,12 +9,40 @@ use bun_boringssl_sys as boring;
 use bun_cares_sys as c_ares;
 use bun_str::strings;
 
-// MOVE_DOWN: bun_runtime::api::bun::x509::is_safe_alt_name → boringssl (this crate).
-// TODO(b0): is_safe_alt_name body arrives from move-in (src/runtime/api/bun/x509.rs).
+// MOVE_DOWN: ported from `src/runtime/api/bun/x509.zig::isSafeAltName`.
+// Lives here so `boringssl` does not depend on `bun_runtime` (tier-6).
 pub mod x509 {
-    #[allow(unused_variables)]
+    /// Returns `true` iff `name` contains no characters that would require
+    /// escaping in a subjectAltName entry.
+    #[inline]
     pub fn is_safe_alt_name(name: &[u8], utf8: bool) -> bool {
-        unimplemented!("TODO(b0): pending move-in from bun_runtime::api::bun::x509")
+        for &c in name {
+            match c {
+                // These mess with encoding rules.
+                // Commas make it impossible to split the list of subject
+                // alternative names unambiguously, which is why we escape.
+                // Single quotes are unlikely to appear in any legitimate values,
+                // but they could be used to make a value look like it was escaped
+                // (i.e., enclosed in single/double quotes).
+                b'"' | b'\\' | b',' | b'\'' => return false,
+                _ => {
+                    if utf8 {
+                        // In UTF-8 strings, require escaping for any ASCII control
+                        // character, but NOT for non-ASCII characters. All bytes of
+                        // any multi-byte code point have their MSB set.
+                        if c < b' ' || c == 0x7f {
+                            return false;
+                        }
+                    } else {
+                        // Reject control characters and non-ASCII characters.
+                        if c < b' ' || c > b'~' {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        true
     }
 }
 use x509 as X509;

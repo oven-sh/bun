@@ -40,6 +40,91 @@ pub type RawDefines = ArrayHashMap<Box<[u8]>, Box<[u8]>>;
 pub type UserDefines = StringHashMap<DefineData>;
 pub type UserDefinesArray = ArrayHashMap<Box<[u8]>, DefineData>;
 
+// ══════════════════════════════════════════════════════════════════════════
+// CYCLEBREAK(b0): vtable instances for `bun_dotenv::DefineStoreVTable`
+// (cold-path §Dispatch). dotenv (T2) calls through `DefineStoreRef`; bundler
+// (T5) owns the concrete `E::String` + `DefineData` construction. Mirrors
+// src/dotenv/env_loader.zig:399 `copyForDefine` — `to_string` is a
+// `StringHashMap<DefineData>` (= UserDefines), `to_json` is a
+// `StringHashMap<Box<[u8]>>` (= RawDefines / framework defaults).
+// ══════════════════════════════════════════════════════════════════════════
+
+/// Backs `to_string: *StringStore` in `Loader.copyForDefine`.
+/// Owner type: `*mut UserDefines` (`StringHashMap<DefineData>`).
+pub static ENV_DEFINE_STRING_STORE_VTABLE: bun_dotenv::DefineStoreVTable = bun_dotenv::DefineStoreVTable {
+    contains: |owner, key| {
+        // SAFETY: vtable contract — owner is `*mut UserDefines`.
+        unsafe { &*(owner as *const UserDefines) }.contains_key(key)
+    },
+    put_string_define: |owner, key, value| {
+        // SAFETY: vtable contract — owner is `*mut UserDefines`.
+        let store = unsafe { &mut *(owner as *mut UserDefines) };
+        // Mirrors Zig: allocate an `E.String` slab entry, point Expr::Data at it,
+        // wrap in DefineData::init({can_be_removed_if_unused: true,
+        // call_can_be_unwrapped_if_unused: .if_unused}). The E.String is leaked
+        // for the bundle's lifetime (Zig used a bump-alloc'd slab).
+        let e_string: &'static js_ast::E::String = Box::leak(Box::new(js_ast::E::String {
+            data: value.to_vec().into_boxed_slice(),
+            ..Default::default()
+        }));
+        let data = DefineData::init(Options {
+            value: js_ast::Expr::Data::EString(e_string),
+            can_be_removed_if_unused: true,
+            call_can_be_unwrapped_if_unused: js_ast::E::CallUnwrap::IfUnused,
+            ..Default::default()
+        });
+        store.get_or_put_value(key, data)?;
+        Ok(())
+    },
+    put_raw: |owner, key, value| {
+        // String-store fallback: treat raw as a string literal too (Zig never
+        // routes `put_raw` to the StringStore — keep it total for safety).
+        (ENV_DEFINE_STRING_STORE_VTABLE.put_string_define)(owner, key, value)
+    },
+};
+
+/// Backs `to_json: *JSONStore` in `Loader.copyForDefine`.
+/// Owner type: `*mut StringHashMap<Box<[u8]>>` (raw key→source mapping that
+/// `DefineData::from_input` later parses).
+pub static ENV_DEFINE_JSON_STORE_VTABLE: bun_dotenv::DefineStoreVTable = bun_dotenv::DefineStoreVTable {
+    contains: |owner, key| {
+        // SAFETY: vtable contract — owner is `*mut StringHashMap<Box<[u8]>>`.
+        unsafe { &*(owner as *const StringHashMap<Box<[u8]>>) }.contains_key(key)
+    },
+    put_string_define: |owner, key, value| {
+        // JSON store wants the raw bytes (later fed to DefineData::from_input).
+        // SAFETY: vtable contract.
+        let store = unsafe { &mut *(owner as *mut StringHashMap<Box<[u8]>>) };
+        store.get_or_put_value(key, value.to_vec().into_boxed_slice())?;
+        Ok(())
+    },
+    put_raw: |owner, key, value| {
+        // SAFETY: vtable contract.
+        let store = unsafe { &mut *(owner as *mut StringHashMap<Box<[u8]>>) };
+        store.get_or_put_value(key, value.to_vec().into_boxed_slice())?;
+        Ok(())
+    },
+};
+
+/// Convenience: build a `DefineStoreRef` over a `UserDefines` map.
+#[inline]
+pub fn env_define_string_store_ref(store: &mut UserDefines) -> bun_dotenv::DefineStoreRef<'_> {
+    bun_dotenv::DefineStoreRef::new(
+        store as *mut UserDefines as *mut (),
+        &ENV_DEFINE_STRING_STORE_VTABLE,
+    )
+}
+/// Convenience: build a `DefineStoreRef` over a raw JSON-string map.
+#[inline]
+pub fn env_define_json_store_ref(
+    store: &mut StringHashMap<Box<[u8]>>,
+) -> bun_dotenv::DefineStoreRef<'_> {
+    bun_dotenv::DefineStoreRef::new(
+        store as *mut StringHashMap<Box<[u8]>> as *mut (),
+        &ENV_DEFINE_JSON_STORE_VTABLE,
+    )
+}
+
 #[derive(Clone)]
 pub struct DefineData {
     pub value: js_ast::Expr::Data,

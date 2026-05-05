@@ -1,7 +1,7 @@
 use core::ffi::{c_uint, c_void};
 
 use bun_boringssl_sys as boring;
-// TODO(b0): evp::Algorithm arrives from move-in (MOVE_DOWN bun_jsc::api::bun::crypto::evp::Algorithm → sha_hmac)
+// CYCLEBREAK MOVE_DOWN: evp::Algorithm now lives in this crate (sha.rs `pub mod evp`).
 use crate::evp::Algorithm;
 
 pub fn generate<'a>(

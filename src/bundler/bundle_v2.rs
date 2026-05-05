@@ -131,9 +131,443 @@ pub mod bake_types {
         // file_system_router_types, ...) — bundler does not read them; bake constructs.
         _opaque_tail: (),
     }
+
+    /// Mirrors src/bake/bake.zig:840 `HmrRuntime`. TYPE_ONLY moved down so the
+    /// linker can splice the runtime preamble without depending on bun_bake.
+    #[derive(Clone, Copy)]
+    pub struct HmrRuntime {
+        pub code: &'static [u8],
+        /// Precomputed `\n` count — sourcemap generation skips this many lines.
+        pub line_count: u32,
+    }
+    impl HmrRuntime {
+        pub const fn init(code: &'static [u8]) -> Self {
+            // const-fn line counter (mirrors `std.mem.count(u8, code, "\n")`).
+            let mut n: u32 = 0;
+            let mut i = 0usize;
+            while i < code.len() {
+                if code[i] == b'\n' { n += 1; }
+                i += 1;
+            }
+            Self { code, line_count: n }
+        }
+    }
+    /// Alias used at the crate root (`crate::HmrRuntimeSide`); identical to `Side`.
+    pub type HmrRuntimeSide = Side;
+
+    /// Mirrors src/bake/bake.zig:855 `getHmrRuntime`. MOVE_DOWN bake→bundler.
+    /// Embed bytes are produced by codegen (`bake.client.js` / `bake.server.js`);
+    /// in dev builds those came from `runtimeEmbedFile` (lazy disk read), which is
+    /// a tier-6 hook — the static fallback here uses `include_bytes!` so the
+    /// linker has a real preamble even before runtime registers a loader.
+    #[inline]
+    pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
+        match side {
+            Side::Client => HmrRuntime::init(include_bytes!(concat!(env!("OUT_DIR"), "/bake.client.js"))),
+            Side::Server => HmrRuntime::init(include_bytes!(concat!(env!("OUT_DIR"), "/bake.server.js"))),
+        }
+    }
+
+    /// Mirrors src/bake/bake.zig:936 `server_virtual_source` / :942 `client_virtual_source`.
+    /// `Logger::Source` is not `const`-constructible (owns a `fs::Path`), so these
+    /// are lazy statics. PERF(port): was `pub const` — verify in Phase B.
+    pub static SERVER_VIRTUAL_SOURCE: std::sync::LazyLock<bun_logger::Source> =
+        std::sync::LazyLock::new(|| bun_logger::Source {
+            path: bun_fs::Path::init_for_kit_built_in(b"bun", b"bake/server"),
+            contents: b"".as_slice().into(), // Virtual
+            index: bun_js_parser::Index::BAKE_SERVER_DATA,
+            ..Default::default()
+        });
+    pub static CLIENT_VIRTUAL_SOURCE: std::sync::LazyLock<bun_logger::Source> =
+        std::sync::LazyLock::new(|| bun_logger::Source {
+            path: bun_fs::Path::init_for_kit_built_in(b"bun", b"bake/client"),
+            contents: b"".as_slice().into(), // Virtual
+            index: bun_js_parser::Index::BAKE_CLIENT_DATA,
+            ..Default::default()
+        });
+    /// Alias kept for callers that referenced the DevServer constant name directly.
+    pub const DEV_SERVER_ASSET_PREFIX: &str = ASSET_PREFIX;
+
+    /// TYPE_ONLY mirror of src/bake/production.zig:844 `EntryPointMap`. The bundler
+    /// only reads `.root` and iterates `.files` (key → InputFile, value →
+    /// OutputFile.Index); router-integration methods stay in bun_runtime::bake.
+    pub mod production {
+        use super::Side;
+
+        /// `OpaqueFileId` is the index into `files`.
+        #[repr(transparent)]
+        #[derive(Copy, Clone, Eq, PartialEq, Hash)]
+        pub struct OpaqueFileId(pub u32);
+        impl OpaqueFileId {
+            #[inline] pub const fn init(i: u32) -> Self { Self(i) }
+            #[inline] pub const fn get(self) -> u32 { self.0 }
+        }
+
+        /// Mirrors `EntryPointMap.InputFile` (raw ptr+len so `Side` packs in the
+        /// trailing word — keeps the 16-byte key layout the Zig hasher relies on).
+        #[derive(Copy, Clone)]
+        pub struct InputFile {
+            abs_path_ptr: *const u8,
+            abs_path_len: u32,
+            pub side: Side,
+        }
+        // SAFETY: abs_path_ptr borrows arena-owned bytes that outlive the map; the
+        // map itself is single-producer (bake build thread) per Zig contract.
+        unsafe impl Send for InputFile {}
+        unsafe impl Sync for InputFile {}
+        impl InputFile {
+            #[inline]
+            pub fn init(abs_path: &[u8], side: Side) -> Self {
+                Self { abs_path_ptr: abs_path.as_ptr(), abs_path_len: abs_path.len() as u32, side }
+            }
+            #[inline]
+            pub fn abs_path(&self) -> &[u8] {
+                // SAFETY: ptr/len were derived from a slice in `init`; the backing
+                // allocation is owned by `EntryPointMap` (duped on insert).
+                unsafe { core::slice::from_raw_parts(self.abs_path_ptr, self.abs_path_len as usize) }
+            }
+        }
+        impl core::hash::Hash for InputFile {
+            fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+                state.write(self.abs_path());
+                state.write_u8(self.side as u8);
+            }
+        }
+        impl PartialEq for InputFile {
+            fn eq(&self, other: &Self) -> bool {
+                self.side == other.side && self.abs_path() == other.abs_path()
+            }
+        }
+        impl Eq for InputFile {}
+
+        /// Value side is `OutputFile.Index` (u32) — left uninitialized until the
+        /// bundle is indexed, so the bundler treats it as opaque.
+        pub type OutputFileIndex = u32;
+
+        #[derive(Default)]
+        pub struct EntryPointMap {
+            pub root: Box<[u8]>,
+            /// `OpaqueFileId` is the insertion index into this map.
+            pub files: bun_collections::ArrayHashMap<InputFile, OutputFileIndex>,
+        }
+        impl EntryPointMap {
+            /// Mirrors `getOrPutEntryPoint`. Dupes `abs_path` on first insert.
+            pub fn get_or_put_entry_point(
+                &mut self,
+                abs_path: &[u8],
+                side: Side,
+            ) -> Result<OpaqueFileId, bun_core::Error> {
+                let k = InputFile::init(abs_path, side);
+                let gop = self.files.get_or_put(k)?;
+                if !gop.found_existing {
+                    let owned: Box<[u8]> = abs_path.to_vec().into_boxed_slice();
+                    // SAFETY: leak the box so the raw ptr in `InputFile` stays valid
+                    // for the map's lifetime (mirrors Zig `allocator.dupe` ownership).
+                    let leaked: &'static [u8] = Box::leak(owned);
+                    *gop.key_ptr = InputFile::init(leaked, side);
+                }
+                Ok(OpaqueFileId::init(gop.index as u32))
+            }
+        }
+    }
 }
 // TODO(b0): jsc::api arrives from move-in (TYPE_ONLY → bundler)
 use crate::api as jsc_api;
+
+/// CYCLEBREAK(b0) TYPE_ONLY: data-only halves of `jsc::api::JSBundler` and
+/// `jsc::api::BuildArtifact` that the bundler reads/constructs without touching
+/// JSC. The JS-thread halves (dispatch onto the JS event loop, `toJS`, plugin
+/// FFI bodies) stay in tier-6 (`bun_runtime::api`) and re-export these.
+pub mod api {
+    /// Mirrors src/runtime/api/JSBundler.zig:1799 `BuildArtifact.OutputKind`.
+    pub mod build_artifact {
+        #[repr(u8)]
+        #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+        pub enum OutputKind {
+            #[default]
+            Chunk = 0,
+            Asset,
+            EntryPoint,
+            Sourcemap,
+            Bytecode,
+            ModuleInfo,
+            MetafileJson,
+            MetafileMarkdown,
+        }
+        impl OutputKind {
+            #[inline]
+            pub fn is_file_in_standalone_mode(self) -> bool {
+                !matches!(
+                    self,
+                    OutputKind::Sourcemap
+                        | OutputKind::Bytecode
+                        | OutputKind::ModuleInfo
+                        | OutputKind::MetafileJson
+                        | OutputKind::MetafileMarkdown
+                )
+            }
+            /// String form used by `BuildArtifact.getOutputKind` (`@tagName`).
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    OutputKind::Chunk => "chunk",
+                    OutputKind::Asset => "asset",
+                    OutputKind::EntryPoint => "entry-point",
+                    OutputKind::Sourcemap => "sourcemap",
+                    OutputKind::Bytecode => "bytecode",
+                    OutputKind::ModuleInfo => "module_info",
+                    OutputKind::MetafileJson => "metafile-json",
+                    OutputKind::MetafileMarkdown => "metafile-markdown",
+                }
+            }
+        }
+    }
+
+    /// Mirrors src/runtime/api/JSBundler.zig:3 `JSBundler` — TYPE_ONLY subset.
+    /// Exposed as a module (not a struct) so callers can write
+    /// `api::JSBundler::Load` / `api::JSBundler::Resolve::MiniImportRecord`.
+    #[allow(non_snake_case)]
+    pub mod JSBundler {
+        use bun_options_types::ImportKind;
+        use crate::options::{Loader, Target};
+        use crate::parse_task::ParseTask;
+        use crate::bundle_v2::BundleV2;
+
+        /// `Plugin = opaque {}` — backed by C++ `BunPlugin`. The bundler only
+        /// calls `has_any_matches` / `match_on_load` / `match_on_resolve`,
+        /// which are `extern "C"` entry points; the body lives in T6.
+        #[repr(C)]
+        pub struct Plugin {
+            _opaque: [u8; 0],
+        }
+        extern "C" {
+            #[link_name = "JSBundlerPlugin__anyMatchesCrossingBoundaries"]
+            fn JSBundlerPlugin__anyMatches(this: *const Plugin, path: *const bun_fs::Path, is_on_load: bool) -> bool;
+        }
+        impl Plugin {
+            #[inline]
+            pub fn has_any_matches(&self, path: &bun_fs::Path, is_on_load: bool) -> bool {
+                // SAFETY: `self` is a live opaque C++ BunPlugin; FFI signature matches.
+                unsafe { JSBundlerPlugin__anyMatches(self, path, is_on_load) }
+            }
+        }
+
+        /// Mirrors `JSBundler.FileMap` — virtual in-memory files for the build.
+        /// The Zig value type is `jsc.Node.BlobOrStringOrBuffer` (T6); bundler
+        /// only ever reads `.slice()`, so the moved-down map stores raw bytes
+        /// and T6 owns the JSC handle that keeps those bytes alive.
+        #[derive(Default)]
+        pub struct FileMap {
+            pub map: bun_collections::StringHashMap<Box<[u8]>>,
+        }
+        impl FileMap {
+            pub fn get(&self, specifier: &[u8]) -> Option<&[u8]> {
+                if self.map.is_empty() { return None; }
+                #[cfg(not(windows))]
+                { self.map.get(specifier).map(|b| b.as_ref()) }
+                #[cfg(windows)]
+                {
+                    let buf = bun_paths::path_buffer_pool::get();
+                    let normalized = bun_paths::path_to_posix_buf(specifier, &mut *buf);
+                    let r = self.map.get(normalized).map(|b| b.as_ref());
+                    bun_paths::path_buffer_pool::put(buf);
+                    r
+                }
+            }
+            #[inline]
+            pub fn contains(&self, specifier: &[u8]) -> bool { self.get(specifier).is_some() }
+            /// Minimal `resolve` — bundler only needs the owned key back so it
+            /// can build a `Resolver::Result` around it.
+            pub fn resolve(&self, _source_file: &[u8], specifier: &[u8]) -> Option<bun_resolver::Result> {
+                if self.map.is_empty() { return None; }
+                let key = self.map.get_key(specifier)?;
+                Some(bun_resolver::Result {
+                    path_pair: bun_resolver::PathPair {
+                        primary: bun_fs::Path::init(key.clone()),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })
+            }
+        }
+
+        /// Mirrors `JSBundler.Resolve.MiniImportRecord` (zig:1242).
+        #[derive(Clone, Default)]
+        pub struct MiniImportRecord {
+            pub kind: ImportKind,
+            pub source_file: Box<[u8]>,
+            pub namespace: Box<[u8]>,
+            pub specifier: Box<[u8]>,
+            pub importer_source_index: u32,
+            pub import_record_index: u32,
+            pub range: bun_logger::Range,
+            pub original_target: Target,
+        }
+
+        /// Mirrors `JSBundler.Resolve.Value.success` payload.
+        #[derive(Clone, Default)]
+        pub struct ResolveSuccess {
+            pub path: Box<[u8]>,
+            pub namespace: Box<[u8]>,
+            pub external: bool,
+        }
+        /// Mirrors `JSBundler.Resolve.Value` (`union(enum)`).
+        #[derive(Default)]
+        pub enum ResolveValue {
+            Err(bun_logger::Msg),
+            Success(ResolveSuccess),
+            NoMatch,
+            #[default]
+            Pending,
+            Consumed,
+        }
+        impl ResolveValue {
+            #[inline]
+            pub fn consume(&mut self) -> ResolveValue {
+                core::mem::replace(self, ResolveValue::Consumed)
+            }
+        }
+
+        /// Mirrors `JSBundler.Resolve` (zig:1234). `js_task`/`task` slots are
+        /// erased — T6 (`bun_runtime`) writes its concrete `jsc::AnyTask` /
+        /// `AnyEventLoop::Task` via `dispatch()` and never reads them here.
+        pub struct Resolve {
+            pub bv2: *mut BundleV2<'static>,
+            pub import_record: MiniImportRecord,
+            pub value: ResolveValue,
+            // SAFETY: erased `jsc::AnyTask` / `jsc::AnyEventLoop::Task` storage.
+            // Layout reserved so T6 can `cast` and fill in-place.
+            pub js_task: [usize; 2],
+            pub task: [usize; 4],
+        }
+        impl Default for Resolve {
+            fn default() -> Self {
+                Self {
+                    bv2: core::ptr::null_mut(),
+                    import_record: MiniImportRecord::default(),
+                    value: ResolveValue::Pending,
+                    js_task: [0; 2],
+                    task: [0; 4],
+                }
+            }
+        }
+        impl Resolve {
+            pub fn init(bv2: &mut BundleV2<'_>, record: MiniImportRecord) -> Self {
+                Self {
+                    // SAFETY: lifetime erased — Resolve is owned by the dispatch
+                    // chain and never outlives `bv2` (mirrors Zig raw `*BundleV2`).
+                    bv2: bv2 as *mut BundleV2<'_> as *mut BundleV2<'static>,
+                    import_record: record,
+                    value: ResolveValue::Pending,
+                    js_task: [0; 2],
+                    task: [0; 4],
+                }
+            }
+            /// Hops to the JS thread via the registered event-loop hook. The
+            /// actual `runOnJSThread` body (which calls into the C++ plugin)
+            /// is owned by T6; here we hand the boxed `Resolve` to it.
+            pub fn dispatch(&mut self) {
+                let hook = crate::dispatch::PLUGIN_RESOLVE_HOOK
+                    .load(core::sync::atomic::Ordering::Acquire);
+                if !hook.is_null() {
+                    // SAFETY: hook was registered by runtime with matching sig.
+                    unsafe { (*hook)(self) };
+                }
+            }
+        }
+
+        /// Mirrors `JSBundler.Load.Value.success` payload.
+        #[derive(Clone, Default)]
+        pub struct LoadSuccess {
+            pub source_code: Box<[u8]>,
+            pub loader: Loader,
+        }
+        /// Mirrors `JSBundler.Load.Value` (`union(enum)`).
+        #[derive(Default)]
+        pub enum LoadValue {
+            Err(bun_logger::Msg),
+            Success(LoadSuccess),
+            #[default]
+            Pending,
+            NoMatch,
+            Consumed,
+        }
+        impl LoadValue {
+            #[inline]
+            pub fn consume(&mut self) -> LoadValue {
+                core::mem::replace(self, LoadValue::Consumed)
+            }
+        }
+
+        /// Mirrors `JSBundler.Load` (zig:1369).
+        pub struct Load {
+            pub bv2: *mut BundleV2<'static>,
+            pub source_index: bun_js_parser::Index,
+            pub default_loader: Loader,
+            pub path: Box<[u8]>,
+            pub namespace: Box<[u8]>,
+            pub value: LoadValue,
+            pub parse_task: *mut ParseTask,
+            /// Faster path: skip the extra threadpool dispatch when the file is not found.
+            pub was_file: bool,
+            /// Defer may only be called once.
+            pub called_defer: bool,
+            // SAFETY: erased `jsc::AnyTask` / `jsc::AnyEventLoop::Task` storage.
+            pub js_task: [usize; 2],
+            pub task: [usize; 4],
+        }
+        impl Load {
+            pub fn init(bv2: &mut BundleV2<'_>, parse: &mut ParseTask) -> Self {
+                let default_loader = parse
+                    .path
+                    .loader(&unsafe { &*((bv2) as *const BundleV2<'_>) }.transpiler.options.loaders)
+                    .unwrap_or(Loader::Js);
+                Self {
+                    bv2: bv2 as *mut BundleV2<'_> as *mut BundleV2<'static>,
+                    parse_task: parse,
+                    source_index: parse.source_index,
+                    default_loader,
+                    value: LoadValue::Pending,
+                    path: parse.path.text.clone(),
+                    namespace: parse.path.namespace.into(),
+                    was_file: false,
+                    called_defer: false,
+                    js_task: [0; 2],
+                    task: [0; 4],
+                }
+            }
+            #[inline]
+            pub fn bake_graph(&self) -> crate::bake_types::Graph {
+                // SAFETY: parse_task is live for the duration of the load.
+                unsafe { (*self.parse_task).known_target.bake_graph() }
+            }
+            pub fn dispatch(&mut self) {
+                let hook = crate::dispatch::PLUGIN_LOAD_HOOK
+                    .load(core::sync::atomic::Ordering::Acquire);
+                if !hook.is_null() {
+                    // SAFETY: hook was registered by runtime with matching sig.
+                    unsafe { (*hook)(self) };
+                }
+            }
+        }
+    }
+}
+
+/// CYCLEBREAK(b0) TYPE_ONLY: `SavedFile` is a unit struct in Zig
+/// (src/bundler_jsc/output_file_jsc.zig:4) — its only member is `toJS`, which
+/// is JSC-bound and stays in T6. The bundler stores it as an `OutputFile` value
+/// tag, so a unit struct here is sufficient.
+pub mod saved_file {
+    #[derive(Default, Clone, Copy)]
+    pub struct SavedFile;
+}
+
+// ── crate-root re-exports for forward-refs left by move-out ───────────────
+pub use crate::cache::RuntimeTranspilerCache;
+pub use crate::bake_types::{get_hmr_runtime, HmrRuntimeSide};
+/// `crate::bundle_v2::JSBundlerPlugin` — see BundleThread.rs.
+pub type JSBundlerPlugin = crate::api::JSBundler::Plugin;
+pub type FileMap = crate::api::JSBundler::FileMap;
+
 use bun_sourcemap as SourceMap;
 use bun_paths as resolve_path;
 
@@ -292,6 +726,14 @@ pub mod dispatch {
 
     /// Debug hook: bundler state dump for crash handler.
     pub static DUMP_BUNDLER: AtomicPtr<()> = AtomicPtr::new(null_mut());
+
+    /// One-shot hooks for `JSBundler::{Resolve,Load}::dispatch` — runtime writes
+    /// the JS-thread trampoline (`runOnJSThread`) at init. See PORTING.md
+    /// §Dispatch "Debug/crash hooks" pattern (AtomicPtr fn-ptr registration).
+    pub static PLUGIN_RESOLVE_HOOK: AtomicPtr<unsafe fn(*mut crate::api::JSBundler::Resolve)> =
+        AtomicPtr::new(null_mut());
+    pub static PLUGIN_LOAD_HOOK: AtomicPtr<unsafe fn(*mut crate::api::JSBundler::Load)> =
+        AtomicPtr::new(null_mut());
 }
 
 // CYCLEBREAK GENUINE: jsc::hot_reloader::NewHotReloader<BundleV2, EventLoop, true>
@@ -859,7 +1301,7 @@ impl<'a> BundleV2<'a> {
     /// This runs on the Bundle Thread.
     pub fn run_resolver(
         &mut self,
-        import_record: jsc_api::JSBundler::Resolve::MiniImportRecord,
+        import_record: jsc_api::JSBundler::MiniImportRecord,
         target: options::Target,
     ) {
         let transpiler = self.transpiler_for_target(target);
@@ -3005,7 +3447,7 @@ impl<'a> BundleV2<'a> {
                 self.increment_scan_counter();
 
                 let resolve = Box::leak(resolve); // TODO(port): owned by dispatch chain
-                *resolve = jsc_api::JSBundler::Resolve::init(self, jsc_api::JSBundler::Resolve::MiniImportRecord {
+                *resolve = jsc_api::JSBundler::Resolve::init(self, jsc_api::JSBundler::MiniImportRecord {
                     kind: import_record.kind,
                     source_file: source_file.into(),
                     namespace: import_record.path.namespace.clone(),
@@ -3038,7 +3480,7 @@ impl<'a> BundleV2<'a> {
                 let resolve = Box::leak(Box::new(jsc_api::JSBundler::Resolve::default()));
                 self.increment_scan_counter();
 
-                *resolve = jsc_api::JSBundler::Resolve::init(self, jsc_api::JSBundler::Resolve::MiniImportRecord {
+                *resolve = jsc_api::JSBundler::Resolve::init(self, jsc_api::JSBundler::MiniImportRecord {
                     kind: ImportKind::EntryPointBuild,
                     source_file: b"".into(), // No importer for entry points
                     namespace: b"file".into(),

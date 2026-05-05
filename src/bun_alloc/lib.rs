@@ -1,6 +1,7 @@
 //! Port of `src/bun_alloc/bun_alloc.zig`.
 
 use core::ffi::c_void;
+use core::fmt::Write as _;
 use core::mem::size_of;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU16, Ordering};
@@ -45,6 +46,334 @@ pub struct AllocError;
 /// The mimalloc-backed `#[global_allocator]` payload (see PORTING.md "Prereq for every crate").
 /// TODO(port): wire to `mi_malloc`/`mi_free` in Phase B.
 pub struct Mimalloc;
+
+// ──────────────────────────────────────────────────────────────────────────
+// MOVE-IN: cycle-break landings (CYCLEBREAK.md §→alloc)
+//   Symbols hoisted DOWN into T0 so higher tiers can re-import without cycles.
+// ──────────────────────────────────────────────────────────────────────────
+
+// ── out_of_memory ─────────────────────────────────────────────────────────
+// Source: src/bun.zig `outOfMemory()` → `crash_handler.crashHandler(.out_of_memory, ..)`.
+// crash_handler is higher-tier; per PORTREF §Dispatch debug-hooks pattern, T0
+// exposes an AtomicPtr hook the crash_handler crate populates at init.
+
+/// Set by `bun_crash_handler::install_hooks()`. Signature: `extern "C" fn() -> !`.
+pub static OOM_CRASH_HOOK: core::sync::atomic::AtomicPtr<()> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+#[cold]
+#[inline(never)]
+pub fn out_of_memory() -> ! {
+    let hook = OOM_CRASH_HOOK.load(core::sync::atomic::Ordering::Acquire);
+    if !hook.is_null() {
+        // SAFETY: `install_hooks` only ever stores an `extern "C" fn() -> !`.
+        let f: extern "C" fn() -> ! = unsafe { core::mem::transmute(hook) };
+        f();
+    }
+    // Fallback before hooks are installed (very early startup / tests).
+    std::process::abort()
+}
+
+// ── page_size ─────────────────────────────────────────────────────────────
+// Source: Zig `std.heap.pageSize()` (used by LinuxMemFdAllocator / standalone_graph).
+// Cached via OnceLock per PORTING.md §Concurrency (was lazy-init in std).
+
+static PAGE_SIZE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+
+#[inline]
+pub fn page_size() -> usize {
+    *PAGE_SIZE.get_or_init(|| {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        // SAFETY: `sysconf(_SC_PAGESIZE)` is infallible and side-effect-free.
+        unsafe {
+            libc::sysconf(libc::_SC_PAGESIZE) as usize
+        }
+        #[cfg(windows)]
+        // SAFETY: `GetSystemInfo` writes a fully-initialized SYSTEM_INFO.
+        unsafe {
+            let mut info = core::mem::zeroed::<windows_sys::Win32::System::SystemInformation::SYSTEM_INFO>();
+            windows_sys::Win32::System::SystemInformation::GetSystemInfo(&mut info);
+            info.dwPageSize as usize
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+        {
+            4096
+        }
+    })
+}
+
+// ── wtf (FastMalloc thread-cache release) ─────────────────────────────────
+// Source: src/jsc/WTF.zig `releaseFastMallocFreeMemoryForThisThread`.
+// MOVE_DOWN from bun_jsc so bun_threading (T2) can call it without a T6 dep.
+pub mod wtf {
+    extern "C" {
+        // Defined in WebKit's WTF (linked into the final binary).
+        fn WTF__releaseFastMallocFreeMemoryForThisThread();
+    }
+
+    #[inline]
+    pub fn release_fast_malloc_free_memory_for_this_thread() {
+        // Zig: jsc.markBinding(@src()) — debug-only binding marker, dropped at T0.
+        // SAFETY: FFI call is thread-safe and takes no arguments.
+        unsafe { WTF__releaseFastMallocFreeMemoryForThisThread() }
+    }
+}
+
+// ── String (bun.String) — TYPE_ONLY landing ───────────────────────────────
+// Source: src/string/string.zig + src/jsc/ZigString.zig + src/string/wtf.zig.
+// Layout-only (#[repr(C)]) so T0/T1 crates can name the type; rich methods
+// (toJS, toUTF8, WTF refcounting) remain in bun_str via extension traits.
+// PORTING.md: "#[repr(C)] struct { tag: u8, value: StringValue } — NOT a Rust
+// enum (C++ mutates tag and value independently across FFI)."
+
+/// Port of `bun.String.Tag`.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Tag {
+    Dead = 0,
+    WTFStringImpl = 1,
+    ZigString = 2,
+    StaticZigString = 3,
+    Empty = 4,
+}
+
+/// Port of `jsc.ZigString` — extern struct `{ ptr: [*]const u8, len: usize }`
+/// where `ptr` carries tag bits in the high byte (bit 63 = UTF-16, 62 = global,
+/// 61 = UTF-8, 60 = static). Untagging masks to the low 53 bits.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ZigString {
+    /// Tagged pointer — never dereference directly; use `untagged()`.
+    pub _unsafe_ptr_do_not_use: *const u8,
+    pub len: usize,
+}
+
+impl ZigString {
+    pub const EMPTY: ZigString = ZigString { _unsafe_ptr_do_not_use: b"".as_ptr(), len: 0 };
+
+    #[inline]
+    pub const fn init(slice: &[u8]) -> ZigString {
+        ZigString { _unsafe_ptr_do_not_use: slice.as_ptr(), len: slice.len() }
+    }
+
+    #[inline]
+    pub fn init_utf16(items: &[u16]) -> ZigString {
+        let mut out = ZigString { _unsafe_ptr_do_not_use: items.as_ptr().cast(), len: items.len() };
+        out.mark_utf16();
+        out
+    }
+
+    #[inline] pub const fn length(&self) -> usize { self.len }
+    #[inline] pub const fn is_empty(&self) -> bool { self.len == 0 }
+
+    #[inline]
+    pub fn is_16bit(&self) -> bool {
+        (self._unsafe_ptr_do_not_use as usize) & (1usize << 63) != 0
+    }
+    #[inline]
+    pub fn is_utf8(&self) -> bool {
+        (self._unsafe_ptr_do_not_use as usize) & (1usize << 61) != 0
+    }
+    #[inline]
+    pub fn is_globally_allocated(&self) -> bool {
+        (self._unsafe_ptr_do_not_use as usize) & (1usize << 62) != 0
+    }
+    #[inline]
+    pub fn mark_utf16(&mut self) {
+        self._unsafe_ptr_do_not_use =
+            ((self._unsafe_ptr_do_not_use as usize) | (1usize << 63)) as *const u8;
+    }
+    #[inline]
+    pub fn mark_utf8(&mut self) {
+        self._unsafe_ptr_do_not_use =
+            ((self._unsafe_ptr_do_not_use as usize) | (1usize << 61)) as *const u8;
+    }
+
+    /// Zig `untagged`: `@ptrFromInt(@as(u53, @truncate(@intFromPtr(ptr))))`.
+    #[inline]
+    pub fn untagged(ptr: *const u8) -> *const u8 {
+        ((ptr as usize) & ((1usize << 53) - 1)) as *const u8
+    }
+
+    /// 8-bit byte view (latin1 or utf8). Caller must ensure `!is_16bit()`.
+    #[inline]
+    pub fn slice(&self) -> &[u8] {
+        debug_assert!(self.len == 0 || !self.is_16bit());
+        // SAFETY: ptr is valid for `len` bytes when not 16-bit; len capped to u32::MAX as in Zig.
+        unsafe {
+            core::slice::from_raw_parts(
+                Self::untagged(self._unsafe_ptr_do_not_use),
+                core::cmp::min(self.len, u32::MAX as usize),
+            )
+        }
+    }
+
+    /// UTF-16 code-unit view. Caller must ensure `is_16bit()`.
+    #[inline]
+    pub fn utf16_slice_aligned(&self) -> &[u16] {
+        debug_assert!(self.len == 0 || self.is_16bit());
+        // SAFETY: ptr is valid for `len` u16 units when 16-bit-tagged.
+        unsafe {
+            core::slice::from_raw_parts(
+                Self::untagged(self._unsafe_ptr_do_not_use).cast::<u16>(),
+                self.len,
+            )
+        }
+    }
+}
+
+/// Port of `WTFStringImplStruct` — must match WebKit's `WTF::StringImpl` layout.
+#[repr(C)]
+pub struct WTFStringImplStruct {
+    pub m_ref_count: u32,
+    pub m_length: u32,
+    pub m_ptr: WTFStringImplPtr,
+    pub m_hash_and_flags: u32,
+}
+
+#[repr(C)]
+pub union WTFStringImplPtr {
+    pub latin1: *const u8,
+    pub utf16: *const u16,
+}
+
+/// `*WTFStringImplStruct` — always non-null when `tag == WTFStringImpl`.
+pub type WTFStringImpl = *mut WTFStringImplStruct;
+
+impl WTFStringImplStruct {
+    const S_HASH_FLAG_8BIT_BUFFER: u32 = 1 << 2;
+
+    #[inline] pub fn length(&self) -> u32 { self.m_length }
+    #[inline]
+    pub fn is_8bit(&self) -> bool {
+        (self.m_hash_and_flags & Self::S_HASH_FLAG_8BIT_BUFFER) != 0
+    }
+    #[inline]
+    pub fn latin1_slice(&self) -> &[u8] {
+        debug_assert!(self.is_8bit());
+        // SAFETY: WebKit guarantees m_ptr.latin1 valid for m_length bytes when 8-bit.
+        unsafe { core::slice::from_raw_parts(self.m_ptr.latin1, self.m_length as usize) }
+    }
+    #[inline]
+    pub fn utf16_slice(&self) -> &[u16] {
+        debug_assert!(!self.is_8bit());
+        // SAFETY: WebKit guarantees m_ptr.utf16 valid for m_length u16s when !8-bit.
+        unsafe { core::slice::from_raw_parts(self.m_ptr.utf16, self.m_length as usize) }
+    }
+    #[inline]
+    pub fn to_zig_string(&self) -> ZigString {
+        if self.is_8bit() {
+            ZigString::init(self.latin1_slice())
+        } else {
+            ZigString::init_utf16(self.utf16_slice())
+        }
+    }
+}
+
+/// Port of `bun.String.StringImpl` — `extern union`.
+#[repr(C)]
+pub union StringImpl {
+    pub zig_string: ZigString,
+    pub wtf_string_impl: WTFStringImpl,
+    // .StaticZigString aliases .zig_string; .Dead/.Empty are zero-width.
+}
+
+/// Port of `bun.String` (a.k.a. `BunString` in C++).
+///
+/// 5-variant tagged union over WTF-backed and Zig-slice-backed strings. NOT a
+/// Rust `enum` because C++ mutates `tag` and `value` independently across FFI.
+#[repr(C)]
+pub struct String {
+    pub tag: Tag,
+    pub value: StringImpl,
+}
+
+impl String {
+    pub const NAME: &'static str = "BunString";
+
+    pub const EMPTY: String = String {
+        tag: Tag::Empty,
+        value: StringImpl { zig_string: ZigString::EMPTY },
+    };
+    pub const DEAD: String = String {
+        tag: Tag::Dead,
+        value: StringImpl { zig_string: ZigString::EMPTY },
+    };
+
+    #[inline]
+    pub fn to_zig_string(&self) -> ZigString {
+        match self.tag {
+            Tag::StaticZigString | Tag::ZigString => unsafe { self.value.zig_string },
+            Tag::WTFStringImpl => unsafe { (*self.value.wtf_string_impl).to_zig_string() },
+            _ => ZigString::EMPTY,
+        }
+    }
+
+    #[inline]
+    pub fn length(&self) -> usize {
+        if self.tag == Tag::WTFStringImpl {
+            // SAFETY: tag == WTFStringImpl ⇒ non-null.
+            unsafe { (*self.value.wtf_string_impl).length() as usize }
+        } else {
+            self.to_zig_string().length()
+        }
+    }
+
+    #[inline] pub fn is_empty(&self) -> bool { self.length() == 0 }
+
+    #[inline]
+    pub fn is_8bit(&self) -> bool {
+        match self.tag {
+            Tag::WTFStringImpl => unsafe { (*self.value.wtf_string_impl).is_8bit() },
+            Tag::ZigString => unsafe { !self.value.zig_string.is_16bit() },
+            _ => true,
+        }
+    }
+
+    /// Zig `eqlComptime` — compare against a (typically literal) byte slice.
+    /// PERF(port): Zig dispatched to SIMD `bun.strings.eqlComptime*`; this T0
+    /// version uses scalar `==` / widening compare. Phase B re-routes to
+    /// `bun_str::strings` via inlining once tier ordering settles.
+    pub fn eql_comptime(&self, other: &[u8]) -> bool {
+        let zs = self.to_zig_string();
+        if zs.is_16bit() {
+            let u16s = zs.utf16_slice_aligned();
+            if u16s.len() != other.len() {
+                return false;
+            }
+            u16s.iter().copied().zip(other.iter().copied()).all(|(a, b)| a == b as u16)
+        } else {
+            zs.slice() == other
+        }
+    }
+}
+
+impl core::fmt::Display for String {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // Port of `ZigString.format`: utf8 → write bytes; utf16 → transcode;
+        // latin1 → widen each byte to a Unicode scalar.
+        // PERF(port): was `bun.fmt.formatUTF16Type` / `formatLatin1` (SIMD).
+        let zs = self.to_zig_string();
+        if zs.len == 0 {
+            return Ok(());
+        }
+        if zs.is_16bit() {
+            for c in core::char::decode_utf16(zs.utf16_slice_aligned().iter().copied()) {
+                f.write_char(c.unwrap_or(core::char::REPLACEMENT_CHARACTER))?;
+            }
+            Ok(())
+        } else if zs.is_utf8() {
+            // Zig wrote raw bytes; mirror that via lossy decode for Formatter.
+            f.write_str(&std::string::String::from_utf8_lossy(zs.slice()))
+        } else {
+            for &b in zs.slice() {
+                // Latin-1 byte → Unicode codepoint of the same value.
+                f.write_char(b as char)?;
+            }
+            Ok(())
+        }
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Slice-in-buffer helpers

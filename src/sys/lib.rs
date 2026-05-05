@@ -4725,13 +4725,752 @@ unsafe extern "C" {
 
 pub use crate::file as File;
 
+// ══════════════════════════════════════════════════════════════════════════
+// MOVE-IN PASS (CYCLEBREAK.md §→sys + /tmp/movein-skipped.txt)
+//
+// Symbols below were forward-referenced by lower/peer-tier crates after the
+// move-out pass rewrote their imports to point at `bun_sys::*`. Ground truth
+// is the source `.zig`; JSC-touching surface is stripped (lives in *_jsc).
+// ══════════════════════════════════════════════════════════════════════════
+
+// ──────────────────────────────────────────────────────────────────────────
+// `node` module — MOVE_DOWN bun_runtime::node → sys (TYPE_ONLY subset)
+// Consumers: sys::Result<T>, patch, install, bundler.
+// ──────────────────────────────────────────────────────────────────────────
+pub mod node {
+    use super::{Error, Fd, Tag, E};
+
+    /// `bun.api.node.uid_t` — POSIX `uid_t` / libuv `uv_uid_t` on Windows.
+    #[cfg(not(windows))]
+    pub type uid_t = libc::uid_t;
+    #[cfg(windows)]
+    pub type uid_t = i32; // bun.windows.libuv.uv_uid_t == c_int
+
+    /// `bun.api.node.gid_t` — POSIX `gid_t` / libuv `uv_gid_t` on Windows.
+    #[cfg(not(windows))]
+    pub type gid_t = libc::gid_t;
+    #[cfg(windows)]
+    pub type gid_t = i32; // bun.windows.libuv.uv_gid_t == c_int
+
+    /// `bun.api.node.TimeLike` — `timespec` on POSIX, `f64` seconds on Windows.
+    #[cfg(not(windows))]
+    pub type TimeLike = libc::timespec;
+    #[cfg(windows)]
+    pub type TimeLike = f64;
+
+    /// `bun.api.node.Maybe<R, E>` — tagged result mirroring Zig's `union(Tag){err,result}`.
+    ///
+    /// Kept as a distinct enum (not `core::result::Result`) so the `errno_sys*`
+    /// associated helpers and `.err`/`.result` field-style usage port 1:1.
+    #[must_use]
+    #[derive(Debug)]
+    pub enum Maybe<R, E = Error> {
+        Err(E),
+        Ok(R),
+    }
+
+    impl<R, E> Maybe<R, E> {
+        #[inline]
+        pub fn init_err(e: E) -> Self { Maybe::Err(e) }
+        #[inline]
+        pub fn init_result(r: R) -> Self { Maybe::Ok(r) }
+
+        #[inline]
+        pub fn as_err(&self) -> Option<&E> {
+            match self { Maybe::Err(e) => Some(e), Maybe::Ok(_) => None }
+        }
+        #[inline]
+        pub fn as_value(self) -> Option<R> {
+            match self { Maybe::Ok(r) => Some(r), Maybe::Err(_) => None }
+        }
+        #[inline]
+        pub fn unwrap_or(self, default_value: R) -> R {
+            match self { Maybe::Ok(r) => r, Maybe::Err(_) => default_value }
+        }
+        #[inline]
+        pub fn is_ok(&self) -> bool { matches!(self, Maybe::Ok(_)) }
+        #[inline]
+        pub fn is_err(&self) -> bool { matches!(self, Maybe::Err(_)) }
+    }
+
+    impl<R: Default, E> Maybe<R, E> {
+        #[inline]
+        pub fn success() -> Self { Maybe::Ok(R::default()) }
+    }
+
+    impl<R> Maybe<R, Error> {
+        #[inline]
+        pub fn retry() -> Self { Maybe::Err(Error::retry()) }
+
+        /// Zig `Maybe(T).aborted` — placeholder err for an aborted `AbortSignal`.
+        #[inline]
+        pub fn aborted() -> Self {
+            Maybe::Err(Error { errno: E::INTR as _, syscall: Tag::access, ..Error::default() })
+        }
+
+        /// Zig `Maybe(T).errnoSys(rc, syscall)`: `Some(Err)` if `rc` indicates
+        /// failure (errno set), else `None` so the caller proceeds with `rc`.
+        #[inline]
+        pub fn errno_sys(rc: impl Into<i64>, syscall: Tag) -> Option<Self> {
+            let rc: i64 = rc.into();
+            if rc != -1 { return None; }
+            Some(Maybe::Err(Error {
+                errno: super::get_errno() as _,
+                syscall,
+                ..Error::default()
+            }))
+        }
+
+        /// `errnoSys` variant that records the fd on the error.
+        #[inline]
+        pub fn errno_sys_fd(rc: impl Into<i64>, syscall: Tag, fd: Fd) -> Option<Self> {
+            let rc: i64 = rc.into();
+            if rc != -1 { return None; }
+            Some(Maybe::Err(Error {
+                errno: super::get_errno() as _,
+                syscall,
+                fd,
+                ..Error::default()
+            }))
+        }
+
+        /// `errnoSys` variant that records a path slice on the error.
+        #[inline]
+        pub fn errno_sys_p(rc: impl Into<i64>, syscall: Tag, path: &[u8]) -> Option<Self> {
+            let rc: i64 = rc.into();
+            if rc != -1 { return None; }
+            Some(Maybe::Err(
+                Error { errno: super::get_errno() as _, syscall, ..Error::default() }
+                    .with_path(path),
+            ))
+        }
+
+        #[inline]
+        pub fn get_errno(&self) -> E {
+            match self {
+                Maybe::Err(e) => e.get_errno(),
+                Maybe::Ok(_) => E::SUCCESS,
+            }
+        }
+
+        #[inline]
+        pub fn unwrap(self) -> R {
+            match self {
+                Maybe::Ok(r) => r,
+                Maybe::Err(e) => panic!("called `Maybe::unwrap()` on an `Err` value: {:?}", e),
+            }
+        }
+    }
+
+    impl<R, E> From<Maybe<R, E>> for core::result::Result<R, E> {
+        #[inline]
+        fn from(m: Maybe<R, E>) -> Self {
+            match m { Maybe::Ok(r) => Ok(r), Maybe::Err(e) => Err(e) }
+        }
+    }
+
+    /// `bun.api.node.FileSystemFlags` — fopen-style mode strings mapped to `O_*`
+    /// bitmasks. The string→flag table (`"r+"`, `"wx"`, …) is preserved for
+    /// `from_bytes`; the JSC `fromJS` entrypoint stays in `bun_runtime`.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub struct FileSystemFlags(pub core::ffi::c_int);
+
+    impl FileSystemFlags {
+        pub const A: Self = Self(super::O::APPEND | super::O::WRONLY | super::O::CREAT);
+        pub const R: Self = Self(super::O::RDONLY);
+        pub const W: Self = Self(super::O::WRONLY | super::O::CREAT);
+
+        #[inline]
+        pub fn as_int(self) -> core::ffi::c_int { self.0 }
+
+        /// Map an ASCII flag string (e.g. `b"rs+"`) to its `O_*` mask.
+        pub fn from_bytes(s: &[u8]) -> Option<i32> {
+            use super::O;
+            // Mirrors the `bun.ComptimeStringMap` table in
+            // src/runtime/node/types.zig (case-folded — Zig listed both cases).
+            let lower = match s.len() {
+                1 | 2 | 3 => {
+                    let mut buf = [0u8; 3];
+                    for (i, &b) in s.iter().enumerate() { buf[i] = b.to_ascii_lowercase(); }
+                    buf
+                }
+                _ => return None,
+            };
+            Some(match &lower[..s.len()] {
+                b"r" => O::RDONLY,
+                b"rs" | b"sr" => O::RDONLY | O::SYNC,
+                b"r+" => O::RDWR,
+                b"rs+" | b"sr+" => O::RDWR | O::SYNC,
+                b"w" => O::TRUNC | O::CREAT | O::WRONLY,
+                b"wx" | b"xw" => O::TRUNC | O::CREAT | O::WRONLY | O::EXCL,
+                b"w+" => O::TRUNC | O::CREAT | O::RDWR,
+                b"wx+" | b"xw+" => O::TRUNC | O::CREAT | O::RDWR | O::EXCL,
+                b"a" => O::APPEND | O::CREAT | O::WRONLY,
+                b"ax" | b"xa" => O::APPEND | O::CREAT | O::WRONLY | O::EXCL,
+                b"as" | b"sa" => O::APPEND | O::CREAT | O::WRONLY | O::SYNC,
+                b"a+" => O::APPEND | O::CREAT | O::RDWR,
+                b"ax+" | b"xa+" => O::APPEND | O::CREAT | O::RDWR | O::EXCL,
+                b"as+" | b"sa+" => O::APPEND | O::CREAT | O::RDWR | O::SYNC,
+                _ => return None,
+            })
+        }
+    }
+
+    /// `bun.api.node.PathOrFileDescriptor` — TYPE_ONLY (JSC `fromJS` stays in
+    /// `bun_runtime`). The `path` arm stores an owned UTF-8 byte buffer in this
+    /// tier; higher tiers wrap it back into `PathLike` where JS ownership matters.
+    #[derive(Debug)]
+    pub enum PathOrFileDescriptor {
+        Fd(Fd),
+        Path(Box<[u8]>),
+    }
+
+    impl PathOrFileDescriptor {
+        /// This will drop the path string if it is `Path`.
+        /// Does nothing for file descriptors, **does not** close file descriptors.
+        #[inline]
+        pub fn deinit(self) { drop(self) }
+
+        #[inline]
+        pub fn estimated_size(&self) -> usize {
+            match self { Self::Path(p) => p.len(), Self::Fd(_) => 0 }
+        }
+
+        pub fn hash(&self) -> u64 {
+            match self {
+                Self::Path(p) => bun_core::hash(p),
+                Self::Fd(fd) => bun_core::hash(bytemuck::bytes_of(fd)),
+            }
+        }
+    }
+
+    impl core::fmt::Display for PathOrFileDescriptor {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            match self {
+                Self::Path(p) => f.write_str(&String::from_utf8_lossy(p)),
+                Self::Fd(fd) => write!(f, "{}", fd),
+            }
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// `SystemError` — TYPE_ONLY MOVE_DOWN from `bun_jsc::SystemError`.
+// JSC conversion (`toErrorInstance*`) stays in `bun_jsc`; this struct is the
+// `extern` payload that `Error::to_system_error()` produces.
+// ──────────────────────────────────────────────────────────────────────────
+#[repr(C)]
+#[derive(Clone)]
+pub struct SystemError {
+    pub errno: c_int,
+    /// label for errno
+    pub code: bun_str::String,
+    /// it is illegal to have an empty message
+    pub message: bun_str::String,
+    pub path: bun_str::String,
+    pub syscall: bun_str::String,
+    pub hostname: bun_str::String,
+    /// `c_int::MIN` = no file descriptor
+    pub fd: c_int,
+    pub dest: bun_str::String,
+}
+
+impl Default for SystemError {
+    fn default() -> Self {
+        Self {
+            errno: 0,
+            code: bun_str::String::empty(),
+            message: bun_str::String::empty(),
+            path: bun_str::String::empty(),
+            syscall: bun_str::String::empty(),
+            hostname: bun_str::String::empty(),
+            fd: c_int::MIN,
+            dest: bun_str::String::empty(),
+        }
+    }
+}
+
+impl SystemError {
+    /// The inverse in `bun.sys.Error.toSystemError()`.
+    #[inline]
+    pub fn get_errno(&self) -> E {
+        // SAFETY: errno is stored negated; -errno is a valid `E` discriminant.
+        unsafe { core::mem::transmute::<i32, E>(self.errno * -1) }
+    }
+
+    pub fn deref(&self) {
+        self.path.deref();
+        self.code.deref();
+        self.message.deref();
+        self.syscall.deref();
+        self.hostname.deref();
+        self.dest.deref();
+    }
+
+    pub fn ref_(&self) {
+        self.path.ref_();
+        self.code.ref_();
+        self.message.ref_();
+        self.syscall.ref_();
+        self.hostname.ref_();
+        self.dest.ref_();
+    }
+}
+
+impl core::fmt::Display for SystemError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if !self.code.is_empty() {
+            write!(f, "{}: {} ({})", self.code, self.message, self.syscall)
+        } else {
+            write!(f, "{} ({})", self.message, self.syscall)
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// `generate_header` — MOVE_DOWN from `bun_analytics::GenerateHeader`.
+// Only the `GeneratePlatform` kernel-probe surface is needed here (used by
+// `copy_file.rs` for `kernelVersion()` gating and by udp `sendmsg_x` checks).
+// The `analytics::Platform` reporting payload stays in `bun_analytics`.
+// ──────────────────────────────────────────────────────────────────────────
+pub mod generate_header {
+    pub use self::generate_platform as GeneratePlatform;
+
+    pub mod generate_platform {
+        use std::sync::OnceLock;
+
+        #[cfg(target_os = "linux")]
+        pub static LINUX_OS_NAME: OnceLock<libc::utsname> = OnceLock::new();
+
+        static LINUX_KERNEL_VERSION: OnceLock<bun_semver::Version> = OnceLock::new();
+
+        #[cfg(target_os = "linux")]
+        fn compute_kernel_version() -> bun_semver::Version {
+            let uts = LINUX_OS_NAME.get_or_init(|| {
+                // SAFETY: `uname(2)` fills the struct on success; zero-init beforehand
+                // so a (theoretical) failure leaves a valid all-zero utsname.
+                let mut name: libc::utsname = unsafe { core::mem::zeroed() };
+                unsafe { libc::uname(&mut name) };
+                name
+            });
+            // Confusingly, the "release" tends to contain the kernel version much
+            // more frequently than the "version" field.
+            // SAFETY: utsname.release is a NUL-terminated C buffer.
+            let release = unsafe {
+                core::ffi::CStr::from_ptr(uts.release.as_ptr())
+            }.to_bytes();
+            let sliced = bun_semver::SlicedString::init(release, release);
+            bun_semver::Version::parse(sliced).version.min()
+        }
+
+        /// Linux kernel version (parsed from `uname -r`). Panics on non-Linux to
+        /// match the Zig `@compileError` — callers are `cfg(linux)`-guarded.
+        pub fn kernel_version() -> bun_semver::Version {
+            #[cfg(target_os = "linux")]
+            { *LINUX_KERNEL_VERSION.get_or_init(compute_kernel_version) }
+            #[cfg(not(target_os = "linux"))]
+            { unreachable!("kernel_version() is only implemented on Linux") }
+        }
+
+        // On macOS 13, tests that use sendmsg_x or recvmsg_x hang.
+        static USE_MSGX_ON_MACOS_14_OR_LATER: OnceLock<bool> = OnceLock::new();
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn Bun__doesMacOSVersionSupportSendRecvMsgX() -> i32 {
+            #[cfg(not(target_os = "macos"))]
+            { return 0; } // this should not be used on non-mac platforms.
+            #[cfg(target_os = "macos")]
+            {
+                *USE_MSGX_ON_MACOS_14_OR_LATER.get_or_init(|| {
+                    let mut buf = [0u8; 32];
+                    let mut len = buf.len() - 1;
+                    // SAFETY: FFI call; buf/len are valid for the duration.
+                    let rc = unsafe {
+                        libc::sysctlbyname(
+                            c"kern.osproductversion".as_ptr(),
+                            buf.as_mut_ptr().cast(),
+                            &mut len,
+                            core::ptr::null_mut(),
+                            0,
+                        )
+                    };
+                    if rc == -1 { return false; }
+                    let version = bun_semver::Version::parse_utf8(&buf[..len]);
+                    version.valid && version.version.max().major >= 14
+                }) as i32
+            }
+        }
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn Bun__isEpollPwait2SupportedOnLinuxKernel() -> i32 {
+            #[cfg(not(target_os = "linux"))]
+            { return 0; }
+            #[cfg(target_os = "linux")]
+            {
+                // https://man.archlinux.org/man/epoll_pwait2.2.en#HISTORY
+                let min = bun_semver::Version { major: 5, minor: 11, patch: 0, ..Default::default() };
+                match kernel_version().order(&min, b"", b"") {
+                    core::cmp::Ordering::Greater | core::cmp::Ordering::Equal => 1,
+                    core::cmp::Ordering::Less => 0,
+                }
+            }
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// `os` — MOVE_DOWN `bun_runtime::node::os::{totalmem,freemem}` → sys.
+// Pure syscall surface; the JSC bindings stay in runtime.
+// ──────────────────────────────────────────────────────────────────────────
+pub mod os {
+    /// Free physical memory in bytes (Node `os.freemem()`).
+    /// Backed by `Bun__Os__getFreeMemory` in OsBinding.cpp.
+    #[inline]
+    pub fn freemem() -> u64 {
+        unsafe extern "C" { fn Bun__Os__getFreeMemory() -> u64; }
+        // SAFETY: FFI call with no arguments.
+        unsafe { Bun__Os__getFreeMemory() }
+    }
+
+    /// Total physical memory in bytes (Node `os.totalmem()`).
+    pub fn totalmem() -> u64 {
+        #[cfg(target_os = "macos")]
+        {
+            let mut memory: [libc::c_ulonglong; 32] = [0; 32];
+            let mut size: usize = core::mem::size_of_val(&memory);
+            // SAFETY: FFI call; out-params are valid for the duration.
+            let rc = unsafe {
+                libc::sysctlbyname(
+                    c"hw.memsize".as_ptr(),
+                    memory.as_mut_ptr().cast(),
+                    &mut size,
+                    core::ptr::null_mut(),
+                    0,
+                )
+            };
+            if rc != 0 { return 0; }
+            memory[0]
+        }
+        #[cfg(target_os = "linux")]
+        {
+            // SAFETY: zero-init is a valid `sysinfo` repr; sysinfo(2) overwrites it.
+            let mut info: libc::sysinfo = unsafe { core::mem::zeroed() };
+            // SAFETY: FFI call; out-param is valid for the duration.
+            if unsafe { libc::sysinfo(&mut info) } == 0 {
+                return (info.totalram as u64).wrapping_mul(info.mem_unit as u64);
+            }
+            0
+        }
+        #[cfg(target_os = "freebsd")]
+        {
+            let mut physmem: u64 = 0;
+            let mut size: usize = core::mem::size_of::<u64>();
+            // SAFETY: FFI call; out-params are valid for the duration.
+            let rc = unsafe {
+                libc::sysctlbyname(
+                    c"hw.physmem".as_ptr(),
+                    (&mut physmem as *mut u64).cast(),
+                    &mut size,
+                    core::ptr::null_mut(),
+                    0,
+                )
+            };
+            if rc != 0 { return 0; }
+            physmem
+        }
+        #[cfg(windows)]
+        {
+            unsafe extern "C" { fn uv_get_total_memory() -> u64; }
+            // SAFETY: FFI call with no arguments.
+            unsafe { uv_get_total_memory() }
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// `PollFlag` / `is_readable` / `is_writable` — MOVE_DOWN from `bun.zig`.
+// Requested by `[io]` move-out as `bun_sys::is_readable` + `bun_sys::Readable`.
+// ──────────────────────────────────────────────────────────────────────────
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PollFlag { Ready, NotReady, Hup }
+/// Legacy alias requested by `bun_io` move-out (`bun_sys::Readable`).
+pub use PollFlag as Readable;
+
+/// Non-blocking `poll(fd, POLLIN)`; reports readability or hangup.
+pub fn is_readable(fd: Fd) -> PollFlag {
+    #[cfg(windows)]
+    { unimplemented!("TODO on Windows"); }
+    #[cfg(not(windows))]
+    {
+        debug_assert!(fd.is_valid());
+        let mut polls = [libc::pollfd {
+            fd: fd.native(),
+            events: libc::POLLIN | libc::POLLERR | libc::POLLHUP,
+            revents: 0,
+        }];
+        // SAFETY: FFI call; `polls` is valid for the duration of the call.
+        let n = unsafe { libc::poll(polls.as_mut_ptr(), 1, 0) };
+        let result = n > 0;
+        let rc = if result && polls[0].revents & (libc::POLLHUP | libc::POLLERR) != 0 {
+            PollFlag::Hup
+        } else if result {
+            PollFlag::Ready
+        } else {
+            PollFlag::NotReady
+        };
+        log!(
+            "poll({}, .readable): {} ({:?}{})",
+            fd, result, rc,
+            if polls[0].revents & libc::POLLERR != 0 { " ERR " } else { "" },
+        );
+        rc
+    }
+}
+
+/// Non-blocking `poll(fd, POLLOUT)` (or `WSAPoll` on Windows); reports writability.
+pub fn is_writable(fd: Fd) -> PollFlag {
+    #[cfg(windows)]
+    {
+        use crate::windows::ws2_32;
+        let mut polls = [ws2_32::WSAPOLLFD {
+            fd: fd.as_socket_fd(),
+            events: ws2_32::POLLWRNORM,
+            revents: 0,
+        }];
+        // SAFETY: FFI call; `polls` is valid for the duration of the call.
+        let rc = unsafe { ws2_32::WSAPoll(polls.as_mut_ptr(), 1, 0) };
+        let result = rc != ws2_32::SOCKET_ERROR && rc != 0;
+        log!("poll({}) writable: {} ({})", fd, result, polls[0].revents);
+        return if result && polls[0].revents & ws2_32::POLLWRNORM != 0 {
+            PollFlag::Hup
+        } else if result {
+            PollFlag::Ready
+        } else {
+            PollFlag::NotReady
+        };
+    }
+    #[cfg(not(windows))]
+    {
+        debug_assert!(fd.is_valid());
+        let mut polls = [libc::pollfd {
+            fd: fd.native(),
+            events: libc::POLLOUT | libc::POLLERR | libc::POLLHUP,
+            revents: 0,
+        }];
+        // SAFETY: FFI call; `polls` is valid for the duration of the call.
+        let n = unsafe { libc::poll(polls.as_mut_ptr(), 1, 0) };
+        let result = n > 0;
+        let rc = if result && polls[0].revents & (libc::POLLHUP | libc::POLLERR) != 0 {
+            PollFlag::Hup
+        } else if result {
+            PollFlag::Ready
+        } else {
+            PollFlag::NotReady
+        };
+        log!(
+            "poll({}, .writable): {} ({:?}{})",
+            fd, result, rc,
+            if polls[0].revents & libc::POLLERR != 0 { " ERR " } else { "" },
+        );
+        rc
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// `mkdir_recursive` — MOVE_DOWN simplified `mkdir -p` (replaces
+// `bun_runtime::node::fs::NodeFs::mkdir_recursive` for `bun_patch`).
+// Returns `()` (the `Return.Mkdir` first-created-path variant is JS-only).
+// ──────────────────────────────────────────────────────────────────────────
+pub fn mkdir_recursive(path: &[u8], mode: Mode) -> Result<()> {
+    #[inline]
+    fn is_sep(c: u8) -> bool {
+        if cfg!(windows) { c == b'/' || c == b'\\' } else { c == b'/' }
+    }
+
+    let mut buf: PathBuffer = [0; MAX_PATH_BYTES];
+    let len = path.len().min(MAX_PATH_BYTES - 1);
+    buf[..len].copy_from_slice(&path[..len]);
+    buf[len] = 0;
+
+    // First, attempt to create the desired directory.
+    // If that fails, then walk back up the path until we have a match.
+    match mkdir_os_path(bun_paths::os_path_from_bytes_z(&buf[..=len]), mode) {
+        Result::Ok(()) => return Result::Ok(()),
+        Result::Err(err) => match err.get_errno() {
+            // `mkpath_np` in macOS also checks for `EISDIR`.
+            E::ISDIR | E::EXIST => return Result::Ok(()),
+            E::NOENT if len > 0 => {} // continue below
+            _ => return Result::Err(err.with_path(&path[..len])),
+        },
+    }
+
+    // Walk backwards to find the first existing ancestor.
+    let mut i = len;
+    while i > 0 {
+        i -= 1;
+        while i > 0 && !is_sep(buf[i]) { i -= 1; }
+        if i == 0 { break; }
+        let saved = buf[i];
+        buf[i] = 0;
+        let res = mkdir_os_path(bun_paths::os_path_from_bytes_z(&buf[..=i]), mode);
+        buf[i] = saved;
+        match res {
+            Result::Ok(()) => break,
+            Result::Err(err) => match err.get_errno() {
+                E::ISDIR | E::EXIST => break,
+                E::NOENT => continue,
+                _ => return Result::Err(err.with_path(&path[..i])),
+            },
+        }
+    }
+
+    // Walk forward creating each remaining component.
+    while i < len {
+        i += 1;
+        while i < len && !is_sep(buf[i]) { i += 1; }
+        let saved = buf[i];
+        buf[i] = 0;
+        let res = mkdir_os_path(bun_paths::os_path_from_bytes_z(&buf[..=i]), mode);
+        buf[i] = saved;
+        match res {
+            Result::Ok(()) => {}
+            Result::Err(err) => match err.get_errno() {
+                E::ISDIR | E::EXIST => {}
+                _ => return Result::Err(err.with_path(&path[..i])),
+            },
+        }
+    }
+
+    Result::Ok(())
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// `bun_core::output::ErrName` impls — orphan rule lets the higher tier (sys)
+// implement the lower-tier trait for its own types.
+// ──────────────────────────────────────────────────────────────────────────
+impl bun_core::output::ErrName for Error {
+    fn name(&self) -> &[u8] { self.name() }
+    fn as_sys_err_info(&self) -> Option<bun_core::output::SysErrInfo> {
+        Some(bun_core::output::SysErrInfo {
+            tag_name: self.name(),
+            errno: c_int::from(self.errno),
+            syscall: self.syscall.as_str(),
+        })
+    }
+}
+
+impl bun_core::output::ErrName for SystemErrno {
+    fn name(&self) -> &[u8] {
+        bun_core::tag_name(*self).map(str::as_bytes).unwrap_or(b"Unknown")
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// VTable instances (CYCLEBREAK §Dispatch — cold path). Low-tier crates
+// declare the slot structs; sys provides the concrete syscall-backed impls.
+// PERF(port): was inline switch over concrete File methods.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Backs `bun_core::Progress::File` — wraps stderr as a terminal handle.
+pub static PROGRESS_TERMINAL_VTABLE: bun_core::Progress::ProgressTerminalVTable =
+    bun_core::Progress::ProgressTerminalVTable {
+        stderr: || bun_core::Progress::File {
+            owner: Fd::stderr().native() as usize as *mut (),
+            vtable: &PROGRESS_TERMINAL_VTABLE,
+        },
+        supports_ansi_escape_codes: |_owner| bun_core::output::enable_ansi_colors_stderr(),
+        is_tty: |owner| isatty(Fd::from_native(owner as usize as _)),
+        handle: |owner| owner,
+        write_all: |owner, bytes| {
+            let fd = Fd::from_native(owner as usize as _);
+            match (crate::file::File { handle: fd }).write_all(bytes) {
+                Result::Ok(()) => Ok(()),
+                Result::Err(e) => Err(bun_core::Error::from_errno(e.errno as i32)),
+            }
+        },
+    };
+
+/// Backs `bun_core::output::OUTPUT_SINK_VTABLE` — stderr/mkdir/open/QuietWriter.
+pub static OUTPUT_SINK_VTABLE: bun_core::output::OutputSinkVTable =
+    bun_core::output::OutputSinkVTable {
+        stderr: || bun_core::Progress::File {
+            owner: Fd::stderr().native() as usize as *mut (),
+            vtable: &PROGRESS_TERMINAL_VTABLE,
+        },
+        make_path: |cwd, dir| {
+            // Debug-log file setup only; ignore mode on Windows.
+            let _ = cwd;
+            match mkdir_recursive(dir, 0o755) {
+                Result::Ok(()) => Ok(()),
+                Result::Err(e) => Err(bun_core::Error::from_errno(e.errno as i32)),
+            }
+        },
+        create_file: |cwd, path| {
+            let mut buf: PathBuffer = [0; MAX_PATH_BYTES];
+            let z = bun_paths::z(path, &mut buf);
+            match openat(Fd::from_native(cwd.native()), z, O::WRONLY | O::CREAT | O::TRUNC, 0o664) {
+                Result::Ok(fd) => Ok(bun_core::Fd::from_native(fd.native())),
+                Result::Err(e) => Err(bun_core::Error::from_errno(e.errno as i32)),
+            }
+        },
+        quiet_writer_from_fd: |fd| {
+            // bun_core::QuietWriter is an opaque `[*mut (); 4]`; sys's QuietWriter
+            // is `{ context: File { handle: Fd } }`. Stash the fd in slot 0.
+            let mut out = bun_core::output::QuietWriter::ZEROED;
+            // SAFETY: QuietWriter is repr(C) [*mut (); 4]; slot 0 carries the fd.
+            unsafe {
+                *(&mut out as *mut _ as *mut *mut ()) = fd.native() as usize as *mut ();
+            }
+            out
+        },
+    };
+
+/// Backs `libarchive_sys::ArchiveFileSink` — `owner` is the raw native fd.
+pub static FD_ARCHIVE_FILE_SINK: libarchive_sys::ArchiveFileSinkVTable =
+    libarchive_sys::ArchiveFileSinkVTable {
+        write_all: |owner, buf| {
+            let fd = Fd::from_native(owner as usize as _);
+            matches!((crate::file::File { handle: fd }).write_all(buf), Result::Ok(()))
+        },
+        pwrite_all: |owner, buf, offset| {
+            let fd = Fd::from_native(owner as usize as _);
+            matches!((crate::file::File { handle: fd }).pwrite_all(buf, offset), Result::Ok(()))
+        },
+        set_offset: |owner, offset| {
+            let fd = Fd::from_native(owner as usize as _);
+            matches!(set_file_offset(fd, offset as usize), Result::Ok(()))
+        },
+        ftruncate: |owner, len| {
+            let fd = Fd::from_native(owner as usize as _);
+            let _ = ftruncate(fd, len as isize);
+        },
+    };
+
+/// Build an [`libarchive_sys::ArchiveFileSink`] backed by an [`Fd`].
+/// Callers of `Archive::read_data_into_fd` pass `&archive_file_sink(fd)`
+/// instead of the raw `Fd`.
+#[inline]
+pub fn archive_file_sink(fd: Fd) -> libarchive_sys::ArchiveFileSink {
+    libarchive_sys::ArchiveFileSink {
+        owner: fd.native() as usize as *mut (),
+        vtable: &FD_ARCHIVE_FILE_SINK,
+    }
+}
+
+/// One-shot vtable/hook registration. `bun_runtime::init()` calls this before
+/// any `bun_core::Output` write so `OUTPUT_SINK_VTABLE` is always live.
+pub fn install_hooks() {
+    bun_core::output::install_output_sink(&OUTPUT_SINK_VTABLE);
+    // DUMP_STACK / TOP_LEVEL_DIR_HOOK are written by bun_runtime (higher tier).
+}
+
+
 // ──────────────────────────────────────────────────────────────────────────
 // Imports / type aliases (Zig had these at the bottom)
 // ──────────────────────────────────────────────────────────────────────────
 pub use crate::fd::Fd;
-// TODO(b0): `node` module (uid_t/gid_t/TimeLike/FileSystemFlags/Maybe) arrives from move-in
-// (CYCLEBREAK MOVE_DOWN bun_runtime::node → sys).
-use crate::node;
+pub use crate::node::{Maybe, PathOrFileDescriptor};
 #[cfg(target_os = "macos")]
 use bun_sys::darwin::nocancel as darwin_nocancel;
 use bun_sys::c; // translated c headers (bun.c)

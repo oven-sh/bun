@@ -13,6 +13,78 @@ use crate::defines::Define;
 // TODO(port): verify crate path for `bun.json` (json_parser)
 use bun_interchange::json_parser;
 
+// ══════════════════════════════════════════════════════════════════════════
+// CYCLEBREAK(b0) MOVE_DOWN: `jsc::RuntimeTranspilerCache` (src/jsc/RuntimeTranspilerCache.zig:28)
+// — TYPE_ONLY fields the parser writes through `ParseOptions.runtime_transpiler_cache`.
+// The disk I/O (`get`/`put`/`Entry.load`) bodies stay here jsc-free; the
+// `bun.String` output_code field becomes an owned byte buffer (the only
+// JSC use was `bun.String.createLatin1` on the JS thread, which T6 wraps).
+// ══════════════════════════════════════════════════════════════════════════
+
+/// Bump when the cache wire format or parser output changes. Mirrors
+/// `expected_version` in src/jsc/RuntimeTranspilerCache.zig.
+pub const RUNTIME_TRANSPILER_CACHE_VERSION: u32 = 20;
+
+#[derive(Default)]
+pub struct RuntimeTranspilerCache {
+    pub input_hash: Option<u64>,
+    pub input_byte_length: Option<u64>,
+    pub features_hash: Option<u64>,
+    pub exports_kind: js_ast::ExportsKind,
+    /// Zig: `?bun.String` — bundler only stores/reads the bytes; T6 owns the
+    /// `bun.String` wrapper when surfacing to JS.
+    pub output_code: Option<Box<[u8]>>,
+    pub entry: Option<RuntimeTranspilerCacheEntry>,
+    /// Set via env var `BUN_RUNTIME_TRANSPILER_CACHE=0`; T6 init writes this.
+    pub is_disabled: bool,
+}
+
+impl RuntimeTranspilerCache {
+    /// Mirrors the Zig `pub var is_disabled` namespaced const — kept as an
+    /// associated fn so call-sites read `RuntimeTranspilerCache::is_disabled()`.
+    #[inline]
+    pub fn disabled() -> bool {
+        // PERF(port): was a global `var`; OnceLock written by T6 init.
+        static DISABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *DISABLED.get_or_init(|| {
+            bun_core::env_var::get(b"BUN_RUNTIME_TRANSPILER_CACHE_PATH")
+                .map(|v| v == b"0")
+                .unwrap_or(false)
+        })
+    }
+}
+
+/// Mirrors `RuntimeTranspilerCache.Entry` — on-disk blob handle.
+#[derive(Default)]
+pub struct RuntimeTranspilerCacheEntry {
+    pub metadata: RuntimeTranspilerCacheMetadata,
+    pub output_code: Box<[u8]>,
+    pub sourcemap: Box<[u8]>,
+    pub esm_record: Box<[u8]>,
+    pub cache_file_path: Box<[u8]>,
+}
+
+/// Mirrors `RuntimeTranspilerCache.Metadata` — fixed-width LE header.
+#[repr(C)]
+#[derive(Default, Clone, Copy)]
+pub struct RuntimeTranspilerCacheMetadata {
+    pub cache_version: u32,
+    pub output_encoding: u8, // Encoding
+    pub module_type: u8,     // ModuleType
+    pub features_hash: u64,
+    pub input_byte_length: u64,
+    pub input_hash: u64,
+    pub output_byte_offset: u64,
+    pub output_byte_length: u64,
+    pub output_hash: u64,
+    pub sourcemap_byte_offset: u64,
+    pub sourcemap_byte_length: u64,
+    pub sourcemap_hash: u64,
+    pub esm_record_byte_offset: u64,
+    pub esm_record_byte_length: u64,
+    pub esm_record_hash: u64,
+}
+
 pub struct Set {
     pub js: JavaScript,
     pub fs: Fs,

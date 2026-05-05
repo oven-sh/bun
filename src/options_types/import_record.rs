@@ -1,10 +1,9 @@
 use bun_collections::BabyList;
 use bun_logger::Range;
 use bun_fs::Path;
-// TODO(b0): Loader arrives from move-in (TYPE_ONLY bun_bundler::options::Loader → options_types)
-use crate::Loader;
-// TODO(b0): Index arrives from move-in (TYPE_ONLY bun_js_parser::Index → options_types)
-use crate::Index as AstIndex;
+// move-in resolved: Loader & ast::Index now live in this crate (BundleEnums.rs)
+use crate::bundle_enums::Loader;
+use crate::bundle_enums::Index as AstIndex;
 use bun_schema::api;
 use enum_map::{Enum, EnumMap};
 

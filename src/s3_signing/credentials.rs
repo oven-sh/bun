@@ -12,11 +12,54 @@ use bun_str::strings;
 
 use super::acl::ACL;
 use super::storage_class::StorageClass;
-// TODO(b0): MultiPartUploadOptions arrives from move-in (MOVE_DOWN from
-// bun_runtime::webcore::s3::multipart_options → s3_signing). Referenced bare
-// below; the move-in pass adds the struct def to this crate.
 
 bun_output::declare_scope!(AWS, visible);
+
+// ──────────────────────────────────────────────────────────────────────────
+// MultiPartUploadOptions
+// CYCLEBREAK(b0): MOVE_DOWN from bun_runtime::webcore::s3::multipart_options.
+// Pure config (no JSC deps), so it lives here at the signing tier; runtime
+// re-exports it. Source of truth: src/runtime/webcore/s3/multipart_options.zig
+// ──────────────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, Debug)]
+pub struct MultiPartUploadOptions {
+    /// more than 255 doesn't make sense — http thread cannot handle more than that
+    pub queue_size: u8,
+    /// In the AWS S3 client SDK this is set in bytes but the min is still 5 MiB.
+    /// ```js
+    /// var params = {Bucket: 'bucket', Key: 'key', Body: stream};
+    /// var options = {partSize: 10 * 1024 * 1024, queueSize: 1};
+    /// s3.upload(params, options, function(err, data) {
+    ///   console.log(err, data);
+    /// });
+    /// ```
+    /// See <https://docs.aws.amazon.com/AWSJavaScriptSDK/latest/AWS/S3.html#upload-property>.
+    /// The value is in MiB; min is 5 and max 5120 (but we limit to 4 GiB aka 4096).
+    pub part_size: u64,
+    /// default is 3, max 255
+    pub retry: u8,
+}
+
+impl MultiPartUploadOptions {
+    pub const ONE_MIB: usize = 1_048_576;
+    /// we limit to 5 GiB
+    pub const MAX_SINGLE_UPLOAD_SIZE: usize = 5120 * Self::ONE_MIB;
+    pub const MIN_SINGLE_UPLOAD_SIZE: usize = 5 * Self::ONE_MIB;
+    pub const DEFAULT_PART_SIZE: usize = Self::MIN_SINGLE_UPLOAD_SIZE;
+    /// dont make sense more than this because we use fetch; anything greater will be 64
+    pub const MAX_QUEUE_SIZE: u8 = 64;
+}
+
+impl Default for MultiPartUploadOptions {
+    fn default() -> Self {
+        Self {
+            queue_size: 5,
+            part_size: Self::DEFAULT_PART_SIZE as u64,
+            retry: 3,
+        }
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // CYCLEBREAK(b0) hooks — break upward dep on bun_jsc::VirtualMachine.

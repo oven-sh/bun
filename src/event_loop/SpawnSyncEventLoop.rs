@@ -24,7 +24,7 @@ use bun_core::Timespec;
 #[cfg(windows)]
 use bun_sys::windows::libuv;
 
-// TODO(b0): EventLoopHandle arrives from move-in (was bun_jsc::EventLoopHandle).
+// MOVE-IN: EventLoopHandle relocated from bun_jsc — see AnyEventLoop.rs.
 use crate::EventLoopHandle;
 
 // TODO(port): `@FieldType(jsc.VirtualMachine, "event_loop_handle")` — comptime reflection on a

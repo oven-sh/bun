@@ -3,6 +3,80 @@ pub use crate::posix::mode_t as Mode;
 pub use crate::posix::E;
 pub use crate::posix::S;
 
+// ──────────────────────────────────────────────────────────────────────────
+// posix — MOVE_DOWN landing for std.posix.{mode_t,E,S} + std.c._errno()
+//
+// Ground truth: Zig `std.posix` (darwin) / `std.c` re-exports. Landed here so
+// the errno crate stays leaf (T0) and bun_sys (T≥1) imports forward.
+// ──────────────────────────────────────────────────────────────────────────
+#[allow(non_camel_case_types, non_snake_case)]
+pub mod posix {
+    use core::ffi::c_int;
+
+    /// Darwin `mode_t` (`__uint16_t` in <sys/types.h>).
+    pub type mode_t = u16;
+
+    /// Kernel errno enum. Zig's `std.posix.E` and Bun's `SystemErrno` share the
+    /// exact same discriminant space on Darwin; we alias rather than duplicate.
+    /// TODO(port): Zig's `E` uses unprefixed variant names (`PERM`, `NOENT`);
+    /// `SystemErrno` uses `EPERM`, `ENOENT`. Callers matching on `E::PERM` must
+    /// migrate to `E::EPERM` (or this becomes a distinct enum in Phase B).
+    pub type E = super::SystemErrno;
+
+    /// `stat` mode-flag constants and predicates (Zig: `std.posix.S`).
+    /// Values are POSIX-standard octal; identical across linux/darwin/freebsd.
+    pub mod S {
+        use super::mode_t;
+
+        pub const IFMT:   mode_t = 0o170000;
+        pub const IFSOCK: mode_t = 0o140000;
+        pub const IFLNK:  mode_t = 0o120000;
+        pub const IFREG:  mode_t = 0o100000;
+        pub const IFBLK:  mode_t = 0o060000;
+        pub const IFDIR:  mode_t = 0o040000;
+        pub const IFCHR:  mode_t = 0o020000;
+        pub const IFIFO:  mode_t = 0o010000;
+        pub const IFWHT:  mode_t = 0o160000; // Darwin whiteout
+
+        pub const ISUID: mode_t = 0o4000;
+        pub const ISGID: mode_t = 0o2000;
+        pub const ISVTX: mode_t = 0o1000;
+        pub const IRWXU: mode_t = 0o0700;
+        pub const IRUSR: mode_t = 0o0400;
+        pub const IWUSR: mode_t = 0o0200;
+        pub const IXUSR: mode_t = 0o0100;
+        pub const IRWXG: mode_t = 0o0070;
+        pub const IRGRP: mode_t = 0o0040;
+        pub const IWGRP: mode_t = 0o0020;
+        pub const IXGRP: mode_t = 0o0010;
+        pub const IRWXO: mode_t = 0o0007;
+        pub const IROTH: mode_t = 0o0004;
+        pub const IWOTH: mode_t = 0o0002;
+        pub const IXOTH: mode_t = 0o0001;
+
+        #[inline] pub const fn ISREG(m: mode_t)  -> bool { m & IFMT == IFREG }
+        #[inline] pub const fn ISDIR(m: mode_t)  -> bool { m & IFMT == IFDIR }
+        #[inline] pub const fn ISCHR(m: mode_t)  -> bool { m & IFMT == IFCHR }
+        #[inline] pub const fn ISBLK(m: mode_t)  -> bool { m & IFMT == IFBLK }
+        #[inline] pub const fn ISFIFO(m: mode_t) -> bool { m & IFMT == IFIFO }
+        #[inline] pub const fn ISLNK(m: mode_t)  -> bool { m & IFMT == IFLNK }
+        #[inline] pub const fn ISSOCK(m: mode_t) -> bool { m & IFMT == IFSOCK }
+    }
+
+    extern "C" {
+        // Darwin libc: `int *__error(void)`
+        fn __error() -> *mut c_int;
+    }
+
+    /// Read the thread-local libc errno (Zig: `std.c._errno().*`).
+    #[inline]
+    pub fn errno() -> c_int {
+        // SAFETY: __error is guaranteed by libc to return a valid thread-local
+        // pointer for the calling thread's lifetime.
+        unsafe { *__error() }
+    }
+}
+
 #[repr(u16)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr)]
 pub enum SystemErrno {

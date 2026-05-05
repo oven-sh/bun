@@ -15,6 +15,175 @@ use bun_aio::Loop as AsyncLoop;
 
 bun_output::declare_scope!(Script, visible);
 
+// ──────────────────────────────────────────────────────────────────────────
+// MOVE_DOWN(b0): bun_cli::run_command::replacePackageManagerRun → install
+// Shared by `bun run` and lifecycle scripts; install must own a copy so it
+// does not depend on bun_cli (cycle).
+// ──────────────────────────────────────────────────────────────────────────
+
+const BUN_BIN_NAME: &[u8] = if cfg!(debug_assertions) { b"bun-debug" } else { b"bun" };
+// `BUN_BIN_NAME ++ " run"` / `" x "` — kept as separate writes below since
+// const byte concat is awkward in Rust.
+
+/// Yarn built-in subcommands (union of v1 + v2.3 sets).
+/// Port of `src/cli/list-of-yarn-commands.zig::all_yarn_commands` (deduped).
+// PERF(port): Zig used `bun.ComptimeStringMap(void, .{...})` (length-bucketed,
+// comptime-sorted). The Rust `comptime_string_map!` macro currently returns a
+// Lazy with inferred const generics that can't be named in a `static` item, so
+// use a sorted slice + binary_search for now. ~50 entries → <7 comparisons.
+struct YarnCommands;
+static YARN_COMMANDS: YarnCommands = YarnCommands;
+impl YarnCommands {
+    // Must stay byte-lexically sorted for binary_search.
+    const SORTED: &'static [&'static [u8]] = &[
+        b"access", b"add", b"audit", b"autoclean", b"bin", b"cache", b"check", b"config",
+        b"create", b"dedupe", b"dlx", b"exec", b"explain", b"generate-lock-entry",
+        b"generateLockEntry", b"global", b"help", b"import", b"info", b"init", b"install",
+        b"licenses", b"link", b"list", b"login", b"logout", b"node", b"npm", b"outdated",
+        b"owner", b"pack", b"patch", b"plugin", b"policies", b"publish", b"rebuild",
+        b"remove", b"run", b"set", b"tag", b"team", b"unlink", b"unplug", b"up", b"upgrade",
+        b"upgrade-interactive", b"upgradeInteractive", b"version", b"versions", b"why",
+        b"workspace", b"workspaces",
+    ];
+
+    #[inline]
+    fn has(&self, cmd: &[u8]) -> bool {
+        Self::SORTED.binary_search(&cmd).is_ok()
+    }
+}
+
+/// Look for invocations of any: `yarn run` / `yarn $cmd` / `pnpm run` /
+/// `pnpm dlx` / `pnpx` / `npm run` / `npx` and replace them with `bun run`
+/// / `bun x` so that lifecycle scripts re-enter Bun instead of spawning
+/// another package manager.
+///
+/// Port of `RunCommand.replacePackageManagerRun` (src/cli/run_command.zig).
+pub fn replace_package_manager_run(
+    copy_script: &mut Vec<u8>,
+    script: &[u8],
+) -> Result<(), bun_alloc::AllocError> {
+    use bun_str::strings;
+
+    #[inline]
+    fn append_bun_run(out: &mut Vec<u8>) {
+        out.extend_from_slice(BUN_BIN_NAME);
+        out.extend_from_slice(b" run");
+    }
+    #[inline]
+    fn append_bun_x(out: &mut Vec<u8>) {
+        out.extend_from_slice(BUN_BIN_NAME);
+        out.extend_from_slice(b" x ");
+    }
+
+    let mut entry_i: usize = 0;
+    let mut delimiter: u8 = b' ';
+
+    while entry_i < script.len() {
+        let start = entry_i;
+
+        match script[entry_i] {
+            b'y' => {
+                if delimiter > 0 {
+                    let remainder = &script[start..];
+                    if strings::has_prefix_comptime(remainder, b"yarn ") {
+                        let next = &remainder[b"yarn ".len()..];
+                        // We have yarn
+                        // Find the next space
+                        if let Some(space) = strings::index_of_char(next, b' ') {
+                            let yarn_cmd = &next[..space as usize];
+                            if strings::eql_comptime(yarn_cmd, b"run") {
+                                append_bun_run(copy_script);
+                                entry_i += b"yarn run".len();
+                                continue;
+                            }
+
+                            // yarn npm is a yarn 2 subcommand
+                            if strings::eql_comptime(yarn_cmd, b"npm") {
+                                entry_i += b"yarn npm ".len();
+                                copy_script.extend_from_slice(b"yarn npm ");
+                                continue;
+                            }
+
+                            if yarn_cmd.first() == Some(&b'-') {
+                                // Skip the rest of the command
+                                entry_i += b"yarn ".len() + yarn_cmd.len();
+                                copy_script.extend_from_slice(b"yarn ");
+                                copy_script.extend_from_slice(yarn_cmd);
+                                continue;
+                            }
+
+                            // implicit yarn commands
+                            if !YARN_COMMANDS.has(yarn_cmd) {
+                                append_bun_run(copy_script);
+                                copy_script.push(b' ');
+                                copy_script.extend_from_slice(yarn_cmd);
+                                entry_i += b"yarn ".len() + yarn_cmd.len();
+                                delimiter = 0;
+                                continue;
+                            }
+                        }
+                    }
+                }
+                delimiter = 0;
+            }
+
+            b' ' => delimiter = b' ',
+            b'"' => delimiter = b'"',
+            b'\'' => delimiter = b'\'',
+
+            b'n' => {
+                if delimiter > 0 {
+                    if strings::has_prefix_comptime(&script[start..], b"npm run ") {
+                        append_bun_run(copy_script);
+                        copy_script.push(b' ');
+                        entry_i += b"npm run ".len();
+                        delimiter = 0;
+                        continue;
+                    }
+
+                    if strings::has_prefix_comptime(&script[start..], b"npx ") {
+                        append_bun_x(copy_script);
+                        entry_i += b"npx ".len();
+                        delimiter = 0;
+                        continue;
+                    }
+                }
+                delimiter = 0;
+            }
+            b'p' => {
+                if delimiter > 0 {
+                    if strings::has_prefix_comptime(&script[start..], b"pnpm run ") {
+                        append_bun_run(copy_script);
+                        copy_script.push(b' ');
+                        entry_i += b"pnpm run ".len();
+                        delimiter = 0;
+                        continue;
+                    }
+                    if strings::has_prefix_comptime(&script[start..], b"pnpm dlx ") {
+                        append_bun_x(copy_script);
+                        entry_i += b"pnpm dlx ".len();
+                        delimiter = 0;
+                        continue;
+                    }
+                    if strings::has_prefix_comptime(&script[start..], b"pnpx ") {
+                        append_bun_x(copy_script);
+                        entry_i += b"pnpx ".len();
+                        delimiter = 0;
+                        continue;
+                    }
+                }
+                delimiter = 0;
+            }
+            _ => delimiter = 0,
+        }
+
+        copy_script.push(script[entry_i]);
+        entry_i += 1;
+    }
+
+    Ok(())
+}
+
 pub struct LifecycleScriptSubprocess<'a> {
     pub package_name: &'a [u8],
 

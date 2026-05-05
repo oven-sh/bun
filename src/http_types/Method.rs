@@ -203,6 +203,116 @@ pub extern "C" fn Bun__HTTPMethod__from(str: *const u8, len: usize) -> i16 {
 
 // Zig `comptime { _ = Bun__HTTPMethod__from; }` force-reference dropped — Rust links what's `pub`.
 
+// ═══════════════════════════════════════════════════════════════════════
+// TYPE_ONLY: bun_runtime::webcore::FetchHeaders::HTTPHeaderName → http_types
+// (CYCLEBREAK.md §→http_types, requested by `http`)
+// Source: src/jsc/FetchHeaders.zig
+//
+// `enum(u8)` discriminant crosses the FFI boundary to
+// `WebCore__FetchHeaders__put`/`fastHas`/`fastGet` — order MUST match
+// WebCore's `HTTPHeaderNames.in` exactly. The `fastGet`/`fastHas`/`put`
+// methods that consume this enum stay on `FetchHeaders` (T6).
+// ═══════════════════════════════════════════════════════════════════════
+
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum HeaderName {
+    Accept,
+    AcceptCharset,
+    AcceptEncoding,
+    AcceptLanguage,
+    AcceptRanges,
+    AccessControlAllowCredentials,
+    AccessControlAllowHeaders,
+    AccessControlAllowMethods,
+    AccessControlAllowOrigin,
+    AccessControlExposeHeaders,
+    AccessControlMaxAge,
+    AccessControlRequestHeaders,
+    AccessControlRequestMethod,
+    Age,
+    Authorization,
+    CacheControl,
+    Connection,
+    ContentDisposition,
+    ContentEncoding,
+    ContentLanguage,
+    ContentLength,
+    ContentLocation,
+    ContentRange,
+    ContentSecurityPolicy,
+    ContentSecurityPolicyReportOnly,
+    ContentType,
+    Cookie,
+    Cookie2,
+    CrossOriginEmbedderPolicy,
+    CrossOriginEmbedderPolicyReportOnly,
+    CrossOriginOpenerPolicy,
+    CrossOriginOpenerPolicyReportOnly,
+    CrossOriginResourcePolicy,
+    DNT,
+    Date,
+    DefaultStyle,
+    ETag,
+    Expect,
+    Expires,
+    Host,
+    IcyMetaInt,
+    IcyMetadata,
+    IfMatch,
+    IfModifiedSince,
+    IfNoneMatch,
+    IfRange,
+    IfUnmodifiedSince,
+    KeepAlive,
+    LastEventID,
+    LastModified,
+    Link,
+    Location,
+    Origin,
+    PingFrom,
+    PingTo,
+    Pragma,
+    ProxyAuthorization,
+    ProxyConnection,
+    Purpose,
+    Range,
+    Referer,
+    ReferrerPolicy,
+    Refresh,
+    ReportTo,
+    SecFetchDest,
+    SecFetchMode,
+    SecWebSocketAccept,
+    SecWebSocketExtensions,
+    SecWebSocketKey,
+    SecWebSocketProtocol,
+    SecWebSocketVersion,
+    ServerTiming,
+    ServiceWorker,
+    ServiceWorkerAllowed,
+    ServiceWorkerNavigationPreload,
+    SetCookie,
+    SetCookie2,
+    SourceMap,
+    StrictTransportSecurity,
+    TE,
+    TimingAllowOrigin,
+    Trailer,
+    TransferEncoding,
+    Upgrade,
+    UpgradeInsecureRequests,
+    UserAgent,
+    Vary,
+    Via,
+    XContentTypeOptions,
+    XDNSPrefetchControl,
+    XFrameOptions,
+    XSourceMap,
+    XTempTablet,
+    XXSSProtection,
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/http_types/Method.zig (192 lines)

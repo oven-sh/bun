@@ -2,10 +2,337 @@ use core::ptr;
 
 use bun_alloc::{AllocError, Arena as Bump};
 use bun_collections::SmallList;
-// TODO(b0): CharIter, ShellCharIter, has_eq_sign, StringEncoding arrive from move-in (MOVE_DOWN/TYPE_ONLY bun_shell → shell_parser)
+// move-in (CYCLEBREAK MOVE_DOWN/TYPE_ONLY bun_shell → shell_parser): defined below.
 use crate::{has_eq_sign as shell_has_eq_sign, CharIter, ShellCharIter, StringEncoding as Encoding};
 use bun_str::{strings, SmolStr};
 use bumpalo::collections::Vec as BumpVec;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CYCLEBREAK move-in from `bun_shell` (src/shell/shell.zig):
+//   StringEncoding, SrcAscii, SrcUnicode, ShellCharIter, CharIter, has_eq_sign
+// These live here so `bun_shell` (higher tier) can depend on `shell_parser`
+// without a back-edge. `bun_shell` re-exports these under its old paths.
+// ═══════════════════════════════════════════════════════════════════════════
+
+use bun_core::CodePoint;
+// TODO(port): `Cursor` is not in the `bun_str::strings` `pub use unicode::{…}` list yet —
+// Phase B must add it (and `CodePointZero`) to that re-export.
+use bun_str::strings::{CodepointIterator, Cursor};
+
+/// Zig: `pub const StringEncoding = enum { ascii, wtf8, utf16 };`
+#[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
+pub enum StringEncoding {
+    Ascii,
+    Wtf8,
+    Utf16,
+}
+
+// ─── SrcAscii ──────────────────────────────────────────────────────────────
+
+#[derive(Clone)]
+struct SrcAscii {
+    bytes: *const [u8], // PORT NOTE: raw slice ptr — Zig held a borrowed `[]const u8`; lifetime erased (BACKREF).
+    i: usize,
+}
+
+/// Zig: `packed struct(u8) { char: u7, escaped: bool = false }`.
+// PERF(port): widened `char` to u32 so ascii/unicode share one `InputChar` shape and
+// `ShellCharIter<const E>` needs no type-level branching on `E`. Phase B may split.
+#[derive(Copy, Clone)]
+pub struct InputChar {
+    pub char: u32,
+    pub escaped: bool,
+}
+
+#[derive(Copy, Clone)]
+struct AsciiIndexValue {
+    char: u32, // u7 in Zig
+    escaped: bool,
+}
+
+impl SrcAscii {
+    #[inline]
+    fn init(bytes: &[u8]) -> Self {
+        Self { bytes: bytes as *const [u8], i: 0 }
+    }
+    #[inline]
+    fn bytes(&self) -> &[u8] {
+        // SAFETY: `bytes` outlives the iter by construction (caller contract, same as Zig).
+        unsafe { &*self.bytes }
+    }
+    #[inline]
+    fn index(&self) -> Option<AsciiIndexValue> {
+        let b = self.bytes();
+        if self.i >= b.len() {
+            return None;
+        }
+        Some(AsciiIndexValue { char: b[self.i] as u32, escaped: false })
+    }
+    #[inline]
+    fn index_next(&self) -> Option<AsciiIndexValue> {
+        let b = self.bytes();
+        if self.i + 1 >= b.len() {
+            return None;
+        }
+        Some(AsciiIndexValue { char: b[self.i + 1] as u32, escaped: false })
+    }
+    #[inline]
+    fn eat(&mut self, escaped: bool) {
+        self.i += 1 + escaped as usize;
+    }
+}
+
+// ─── SrcUnicode ────────────────────────────────────────────────────────────
+
+struct SrcUnicode {
+    iter: CodepointIterator<'static>, // PORT NOTE: lifetime erased; see SrcAscii.bytes note.
+    cursor: Cursor<CodePoint>,
+    next_cursor: Cursor<CodePoint>,
+}
+
+#[derive(Copy, Clone)]
+struct UnicodeIndexValue {
+    char: u32,
+    width: u8,
+}
+
+impl SrcUnicode {
+    #[inline]
+    fn next_cursor(iter: &CodepointIterator<'static>, cursor: &mut Cursor<CodePoint>) {
+        if !CodepointIterator::next(iter, cursor) {
+            // This will make `i > sourceBytes.len` so the condition in `index` will fail
+            cursor.i = (iter.bytes.len() + 1) as u32;
+            cursor.width = 1;
+            cursor.c = CodepointIterator::ZERO_VALUE;
+        }
+    }
+    fn init(bytes: &[u8]) -> Self {
+        // SAFETY: erase lifetime — caller guarantees `bytes` outlives the iter (same as Zig).
+        let bytes: &'static [u8] =
+            unsafe { core::slice::from_raw_parts(bytes.as_ptr(), bytes.len()) };
+        let iter = CodepointIterator::init(bytes);
+        let mut cursor = Cursor::<CodePoint>::default();
+        Self::next_cursor(&iter, &mut cursor);
+        let mut next_cursor = cursor;
+        Self::next_cursor(&iter, &mut next_cursor);
+        Self { iter, cursor, next_cursor }
+    }
+    #[inline]
+    fn index(&self) -> Option<UnicodeIndexValue> {
+        if self.cursor.width as usize + self.cursor.i as usize > self.iter.bytes.len() {
+            return None;
+        }
+        Some(UnicodeIndexValue { char: self.cursor.c as u32, width: self.cursor.width as u8 })
+    }
+    #[inline]
+    fn index_next(&self) -> Option<UnicodeIndexValue> {
+        if self.next_cursor.width as usize + self.next_cursor.i as usize > self.iter.bytes.len() {
+            return None;
+        }
+        Some(UnicodeIndexValue {
+            char: self.next_cursor.c as u32,
+            width: self.next_cursor.width as u8,
+        })
+    }
+    #[inline]
+    fn eat(&mut self, escaped: bool) {
+        if escaped {
+            // eat two codepoints
+            Self::next_cursor(&self.iter, &mut self.next_cursor);
+            self.cursor = self.next_cursor;
+            Self::next_cursor(&self.iter, &mut self.next_cursor);
+        } else {
+            // eat one codepoint
+            self.cursor = self.next_cursor;
+            Self::next_cursor(&self.iter, &mut self.next_cursor);
+        }
+    }
+}
+
+// ─── ShellCharIter ─────────────────────────────────────────────────────────
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum ShellCharIterState {
+    Normal,
+    Single,
+    Double,
+}
+
+// PERF(port): Zig selected `Src` at comptime via `switch (encoding)`. Rust const
+// generics can't pick a field type from an enum value without an aux trait, so we
+// store both arms in a small enum and branch at runtime. Phase B may split into
+// three `impl CharIter for ShellCharIter<{StringEncoding::*}>` blocks if profiling
+// shows the branch matters.
+enum ShellSrc {
+    Ascii(SrcAscii),
+    Unicode(SrcUnicode),
+}
+
+pub struct ShellCharIter<const E: StringEncoding> {
+    src: ShellSrc,
+    pub state: ShellCharIterState,
+    pub prev: Option<InputChar>,
+    pub current: Option<InputChar>,
+}
+
+/// Surface trait so callers can name `<ShellCharIter<E> as CharIter>::InputChar` /
+/// `::CodepointType` without inherent associated types.
+pub trait CharIter: Sized {
+    type CodepointType: Copy;
+    type InputChar: Copy;
+    fn init(bytes: &[u8]) -> Self;
+    fn eat(&mut self) -> Option<Self::InputChar>;
+    fn peek(&mut self) -> Option<Self::InputChar>;
+    fn read_char(&mut self) -> Option<Self::InputChar>;
+    fn src_bytes(&self) -> &[u8];
+    fn src_bytes_at_cursor(&self) -> &[u8];
+    fn cursor_pos(&self) -> usize;
+}
+
+impl<const E: StringEncoding> ShellCharIter<E> {
+    #[inline]
+    pub fn is_whitespace(c: InputChar) -> bool {
+        matches!(c.char, 0x09 /* \t */ | 0x0D /* \r */ | 0x0A /* \n */ | 0x20 /* ' ' */)
+    }
+}
+
+impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
+    // PERF(port): Zig used `u7` for ascii; unified to u32 (see InputChar note).
+    type CodepointType = u32;
+    type InputChar = InputChar;
+
+    fn init(bytes: &[u8]) -> Self {
+        let src = if E == StringEncoding::Ascii {
+            ShellSrc::Ascii(SrcAscii::init(bytes))
+        } else {
+            ShellSrc::Unicode(SrcUnicode::init(bytes))
+        };
+        Self { src, state: ShellCharIterState::Normal, prev: None, current: None }
+    }
+
+    fn src_bytes(&self) -> &[u8] {
+        match &self.src {
+            ShellSrc::Ascii(a) => a.bytes(),
+            ShellSrc::Unicode(u) => u.iter.bytes,
+        }
+    }
+
+    fn src_bytes_at_cursor(&self) -> &[u8] {
+        let bytes = self.src_bytes();
+        match &self.src {
+            ShellSrc::Ascii(a) => {
+                if a.i >= bytes.len() {
+                    return b"";
+                }
+                &bytes[a.i..]
+            }
+            ShellSrc::Unicode(u) => {
+                if u.cursor.i as usize >= bytes.len() {
+                    return b"";
+                }
+                &bytes[u.cursor.i as usize..]
+            }
+        }
+    }
+
+    fn cursor_pos(&self) -> usize {
+        match &self.src {
+            ShellSrc::Ascii(a) => a.i,
+            ShellSrc::Unicode(u) => u.cursor.i as usize,
+        }
+    }
+
+    fn eat(&mut self) -> Option<InputChar> {
+        if let Some(result) = self.read_char() {
+            self.prev = self.current;
+            self.current = Some(result);
+            match &mut self.src {
+                ShellSrc::Ascii(a) => a.eat(result.escaped),
+                ShellSrc::Unicode(u) => u.eat(result.escaped),
+            }
+            return Some(result);
+        }
+        None
+    }
+
+    fn peek(&mut self) -> Option<InputChar> {
+        self.read_char()
+    }
+
+    fn read_char(&mut self) -> Option<InputChar> {
+        let (mut ch, _width_or_escaped);
+        match &self.src {
+            ShellSrc::Ascii(a) => {
+                let iv = a.index()?;
+                ch = iv.char;
+                _width_or_escaped = iv.escaped as u8;
+            }
+            ShellSrc::Unicode(u) => {
+                let iv = u.index()?;
+                ch = iv.char;
+                _width_or_escaped = iv.width;
+            }
+        }
+        if ch != b'\\' as u32 || self.state == ShellCharIterState::Single {
+            return Some(InputChar { char: ch, escaped: false });
+        }
+
+        // Handle backslash
+        match self.state {
+            ShellCharIterState::Normal => {
+                let peeked = match &self.src {
+                    ShellSrc::Ascii(a) => a.index_next()?.char,
+                    ShellSrc::Unicode(u) => u.index_next()?.char,
+                };
+                ch = peeked;
+            }
+            ShellCharIterState::Double => {
+                let peeked = match &self.src {
+                    ShellSrc::Ascii(a) => a.index_next()?.char,
+                    ShellSrc::Unicode(u) => u.index_next()?.char,
+                };
+                match peeked {
+                    // Backslash only applies to these characters
+                    c if c == b'$' as u32
+                        || c == b'`' as u32
+                        || c == b'"' as u32
+                        || c == b'\\' as u32
+                        || c == b'\n' as u32
+                        || c == b'#' as u32 =>
+                    {
+                        ch = peeked;
+                    }
+                    _ => return Some(InputChar { char: ch, escaped: false }),
+                }
+            }
+            // We checked `self.state == .Single` above so this is impossible
+            ShellCharIterState::Single => unsafe { core::hint::unreachable_unchecked() },
+        }
+
+        Some(InputChar { char: ch, escaped: true })
+    }
+}
+
+// ─── has_eq_sign ───────────────────────────────────────────────────────────
+
+/// Zig: `pub fn hasEqSign(str: []const u8) ?u32`.
+pub fn has_eq_sign(str_: &[u8]) -> Option<u32> {
+    if strings::is_all_ascii(str_) {
+        return strings::index_of_char(str_, b'=');
+    }
+
+    // TODO actually i think that this can also use the simd stuff
+    let iter = CodepointIterator::init(str_);
+    let mut cursor = Cursor::<CodePoint>::default();
+    while CodepointIterator::next(&iter, &mut cursor) {
+        if cursor.c == b'=' as CodePoint {
+            return Some(cursor.i);
+        }
+    }
+    None
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 
 bun_output::declare_scope!(BRACES, visible);
 

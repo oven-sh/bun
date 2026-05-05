@@ -11,9 +11,468 @@ use bun_sourcemap as SourceMap;
 use bun_options_types::{ImportRecord, ImportKind};
 // TYPE_ONLY: bun_bundler::options::{Target, ModuleType, Format} → bun_options_types
 use bun_options_types as options;
-// TODO(b0): `analyze_transpiled_module` module arrives from move-in (was bun_bundler::analyze_transpiled_module).
-// Once landed, `pub mod analyze_transpiled_module;` here resolves all `analyze_transpiled_module::*` paths below.
-// TODO(b0): `MangledProps` type arrives from move-in (was bun_bundler::MangledProps).
+/// Map of mangled property `Ref` → final mangled name bytes.
+/// Zig: `std.AutoArrayHashMapUnmanaged(Ref, []const u8)` (values borrow bundler arena).
+// MOVE_DOWN: from bun_bundler::MangledProps (src/bundler/bundle_v2.zig:47).
+// PERF(port): Zig values were arena-borrowed `[]const u8`; Box<[u8]> here owns —
+// revisit if profiling shows allocation pressure during link.
+pub type MangledProps = bun_collections::ArrayHashMap<bun_js_parser::Ref, Box<[u8]>>;
+
+// ──────────────────────────────────────────────────────────────────────────
+// MOVE_DOWN: bun_bundler::analyze_transpiled_module (src/bundler/analyze_transpiled_module.zig)
+// Inline module — js_printer is the sole producer of ModuleInfo records; the
+// bundler/runtime only consume the serialized form. FFI exports
+// (zig__ModuleInfo__destroy, zig__ModuleInfoDeserialized__toJSModuleRecord) and
+// the JSC IdentifierArray bridge stay in tier-6 (bun_bundler_jsc) — deferred to Pass C.
+// ──────────────────────────────────────────────────────────────────────────
+pub mod analyze_transpiled_module {
+    use bun_collections::{ArrayHashMap, HashMap};
+
+    #[repr(u8)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum RecordKind {
+        /// var_name
+        DeclaredVariable,
+        /// let_name
+        LexicalVariable,
+        /// module_name, import_name, local_name
+        ImportInfoSingle,
+        /// module_name, import_name, local_name
+        ImportInfoSingleTypeScript,
+        /// module_name, import_name = '*', local_name
+        ImportInfoNamespace,
+        /// export_name, import_name, module_name
+        ExportInfoIndirect,
+        /// export_name, local_name, padding (for local => indirect conversion)
+        ExportInfoLocal,
+        /// export_name, module_name
+        ExportInfoNamespace,
+        /// module_name
+        ExportInfoStar,
+    }
+    impl RecordKind {
+        pub fn len(self) -> usize {
+            match self {
+                Self::DeclaredVariable | Self::LexicalVariable => 1,
+                Self::ImportInfoSingle => 3,
+                Self::ImportInfoSingleTypeScript => 3,
+                Self::ImportInfoNamespace => 3,
+                Self::ExportInfoIndirect => 3,
+                Self::ExportInfoLocal => 3,
+                Self::ExportInfoNamespace => 2,
+                Self::ExportInfoStar => 1,
+            }
+        }
+        #[inline]
+        pub fn try_from_u8(v: u8) -> Option<Self> {
+            if v <= Self::ExportInfoStar as u8 {
+                // SAFETY: RecordKind is #[repr(u8)] with contiguous discriminants 0..=8.
+                Some(unsafe { core::mem::transmute::<u8, Self>(v) })
+            } else {
+                None
+            }
+        }
+    }
+
+    /// Zig: `packed struct(u8)`. Kept as plain bools for ergonomic field access
+    /// (`mi.flags.contains_import_meta = true`); bitcast at the (de)serialize boundary.
+    #[derive(Clone, Copy, Default)]
+    pub struct Flags {
+        pub contains_import_meta: bool,
+        pub is_typescript: bool,
+        pub has_tla: bool,
+    }
+    impl Flags {
+        #[inline]
+        pub fn to_byte(self) -> u8 {
+            (self.contains_import_meta as u8)
+                | ((self.is_typescript as u8) << 1)
+                | ((self.has_tla as u8) << 2)
+        }
+        #[inline]
+        pub fn from_byte(b: u8) -> Self {
+            Self {
+                contains_import_meta: b & 0b001 != 0,
+                is_typescript: b & 0b010 != 0,
+                has_tla: b & 0b100 != 0,
+            }
+        }
+    }
+
+    /// Index into `ModuleInfo`'s interned-string table. Two reserved sentinels.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct StringID(pub u32);
+    impl StringID {
+        pub const STAR_DEFAULT: Self = Self(u32::MAX);
+        pub const STAR_NAMESPACE: Self = Self(u32::MAX - 1);
+    }
+
+    /// Zig: `enum(u32)` with open range — non-reserved values bitcast to `StringID`.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub struct FetchParameters(pub u32);
+    #[allow(non_upper_case_globals)]
+    impl FetchParameters {
+        pub const None: Self = Self(u32::MAX);
+        pub const Javascript: Self = Self(u32::MAX - 1);
+        pub const Webassembly: Self = Self(u32::MAX - 2);
+        pub const Json: Self = Self(u32::MAX - 3);
+        #[inline]
+        pub fn host_defined(value: StringID) -> Self {
+            Self(value.0)
+        }
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum VarKind {
+        Declared,
+        Lexical,
+    }
+
+    /// Borrowing view over a finalized/serialized `ModuleInfo`.
+    /// Zig kept this self-referentially inside `ModuleInfo`; Rust builds it on demand
+    /// (`ModuleInfo::as_deserialized`) or borrows from an owned byte buffer
+    /// (`ModuleInfoDeserializedOwned::as_ref`).
+    pub struct ModuleInfoDeserialized<'a> {
+        pub strings_buf: &'a [u8],
+        pub strings_lens: &'a [u32],
+        pub requested_modules_keys: &'a [StringID],
+        pub requested_modules_values: &'a [FetchParameters],
+        pub buffer: &'a [StringID],
+        pub record_kinds: &'a [RecordKind],
+        pub flags: Flags,
+    }
+    impl<'a> ModuleInfoDeserialized<'a> {
+        pub fn serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
+            w.write_all(&(self.record_kinds.len() as u32).to_le_bytes())?;
+            // SAFETY: RecordKind is #[repr(u8)].
+            w.write_all(unsafe {
+                core::slice::from_raw_parts(self.record_kinds.as_ptr().cast::<u8>(), self.record_kinds.len())
+            })?;
+            let pad = (4 - (self.record_kinds.len() % 4)) % 4;
+            w.write_all(&[0u8; 4][..pad])?; // alignment padding
+
+            w.write_all(&(self.buffer.len() as u32).to_le_bytes())?;
+            w.write_all(slice_as_bytes(self.buffer))?;
+
+            w.write_all(&(self.requested_modules_keys.len() as u32).to_le_bytes())?;
+            w.write_all(slice_as_bytes(self.requested_modules_keys))?;
+            w.write_all(slice_as_bytes(self.requested_modules_values))?;
+
+            w.write_all(&[self.flags.to_byte()])?;
+            w.write_all(&[0u8; 3])?; // alignment padding
+
+            w.write_all(&(self.strings_lens.len() as u32).to_le_bytes())?;
+            w.write_all(slice_as_bytes(self.strings_lens))?;
+            w.write_all(self.strings_buf)?;
+            Ok(())
+        }
+    }
+
+    /// Owns a duplicated byte buffer and exposes a `ModuleInfoDeserialized` view into it.
+    /// Replaces Zig's `.owner = .allocated_slice` arm.
+    pub struct ModuleInfoDeserializedOwned {
+        #[allow(dead_code)]
+        backing: Box<[u8]>,
+        // Offsets/lengths into `backing` — reconstructed as slices in `as_ref()`.
+        record_kinds: (usize, usize),
+        buffer: (usize, usize),
+        requested_modules_keys: (usize, usize),
+        requested_modules_values: (usize, usize),
+        strings_lens: (usize, usize),
+        strings_buf: (usize, usize),
+        flags: Flags,
+    }
+    impl ModuleInfoDeserializedOwned {
+        pub fn create(source: &[u8]) -> Result<Box<Self>, BadModuleInfo> {
+            let duped: Box<[u8]> = source.to_vec().into_boxed_slice();
+            let mut off = 0usize;
+            macro_rules! eat { ($len:expr) => {{
+                let len = $len;
+                if duped.len() < off + len { return Err(BadModuleInfo); }
+                let r = (off, len);
+                off += len;
+                r
+            }}; }
+            macro_rules! eat_u32 { () => {{
+                let (o, _) = eat!(4);
+                u32::from_le_bytes(duped[o..o + 4].try_into().unwrap()) as usize
+            }}; }
+
+            let record_kinds_len = eat_u32!();
+            let record_kinds = eat!(record_kinds_len * core::mem::size_of::<RecordKind>());
+            let _ = eat!((4 - (record_kinds_len % 4)) % 4); // alignment padding
+
+            let buffer_len = eat_u32!();
+            let buffer = eat!(buffer_len * core::mem::size_of::<StringID>());
+
+            let requested_modules_len = eat_u32!();
+            let requested_modules_keys = eat!(requested_modules_len * core::mem::size_of::<StringID>());
+            let requested_modules_values = eat!(requested_modules_len * core::mem::size_of::<FetchParameters>());
+
+            let (flags_off, _) = eat!(1);
+            let flags = Flags::from_byte(duped[flags_off]);
+            let _ = eat!(3); // alignment padding
+
+            let strings_len = eat_u32!();
+            let strings_lens = eat!(strings_len * core::mem::size_of::<u32>());
+            let strings_buf = (off, duped.len() - off);
+
+            Ok(Box::new(Self {
+                backing: duped,
+                record_kinds,
+                buffer,
+                requested_modules_keys,
+                requested_modules_values,
+                strings_lens,
+                strings_buf,
+                flags,
+            }))
+        }
+        /// Wrapper around `create` for cache loads; returns `None` on corrupt data.
+        pub fn create_from_cached_record(source: &[u8]) -> Option<Box<Self>> {
+            Self::create(source).ok()
+        }
+        pub fn as_ref(&self) -> ModuleInfoDeserialized<'_> {
+            // SAFETY: offsets/lengths were validated in `create`; backing types are
+            // #[repr(transparent)] u32 / #[repr(u8)] and the serialized stream is
+            // 4-byte aligned at every u32 boundary by construction.
+            unsafe {
+                ModuleInfoDeserialized {
+                    record_kinds: core::slice::from_raw_parts(
+                        self.backing.as_ptr().add(self.record_kinds.0).cast(),
+                        self.record_kinds.1,
+                    ),
+                    buffer: core::slice::from_raw_parts(
+                        self.backing.as_ptr().add(self.buffer.0).cast(),
+                        self.buffer.1 / 4,
+                    ),
+                    requested_modules_keys: core::slice::from_raw_parts(
+                        self.backing.as_ptr().add(self.requested_modules_keys.0).cast(),
+                        self.requested_modules_keys.1 / 4,
+                    ),
+                    requested_modules_values: core::slice::from_raw_parts(
+                        self.backing.as_ptr().add(self.requested_modules_values.0).cast(),
+                        self.requested_modules_values.1 / 4,
+                    ),
+                    strings_lens: core::slice::from_raw_parts(
+                        self.backing.as_ptr().add(self.strings_lens.0).cast(),
+                        self.strings_lens.1 / 4,
+                    ),
+                    strings_buf: &self.backing[self.strings_buf.0..self.strings_buf.0 + self.strings_buf.1],
+                    flags: self.flags,
+                }
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct BadModuleInfo;
+
+    pub struct ModuleInfo {
+        /// all strings in wtf-8. index in hashmap = StringID
+        // Zig used an adapted ArrayHashMap keyed by offset; Rust keys by content
+        // directly (wyhash via bun_collections::HashMap) and keeps the parallel
+        // buf/lens vectors for the on-wire format.
+        strings_map: HashMap<Vec<u8>, u32>,
+        strings_buf: Vec<u8>,
+        strings_lens: Vec<u32>,
+        requested_modules: ArrayHashMap<StringID, FetchParameters>,
+        buffer: Vec<StringID>,
+        record_kinds: Vec<RecordKind>,
+        pub flags: Flags,
+        exported_names: ArrayHashMap<StringID, ()>,
+        pub finalized: bool,
+    }
+
+    impl ModuleInfo {
+        pub fn create(is_typescript: bool) -> Box<Self> {
+            Box::new(Self::init(is_typescript))
+        }
+        fn init(is_typescript: bool) -> Self {
+            Self {
+                strings_map: HashMap::default(),
+                strings_buf: Vec::new(),
+                strings_lens: Vec::new(),
+                requested_modules: ArrayHashMap::default(),
+                buffer: Vec::new(),
+                record_kinds: Vec::new(),
+                flags: Flags { is_typescript, ..Flags::default() },
+                exported_names: ArrayHashMap::default(),
+                finalized: false,
+            }
+        }
+        pub fn destroy(self: Box<Self>) {
+            drop(self);
+        }
+
+        pub fn as_deserialized(&self) -> ModuleInfoDeserialized<'_> {
+            debug_assert!(self.finalized);
+            ModuleInfoDeserialized {
+                strings_buf: &self.strings_buf,
+                strings_lens: &self.strings_lens,
+                requested_modules_keys: self.requested_modules.keys(),
+                requested_modules_values: self.requested_modules.values(),
+                buffer: &self.buffer,
+                record_kinds: &self.record_kinds,
+                flags: self.flags,
+            }
+        }
+
+        pub fn add_var(&mut self, name: StringID, kind: VarKind) {
+            match kind {
+                VarKind::Declared => self.add_declared_variable(name),
+                VarKind::Lexical => self.add_lexical_variable(name),
+            }
+        }
+
+        fn add_record(&mut self, kind: RecordKind, data: &[StringID]) {
+            debug_assert!(!self.finalized);
+            debug_assert_eq!(data.len(), kind.len());
+            self.record_kinds.push(kind);
+            self.buffer.extend_from_slice(data);
+        }
+        pub fn add_declared_variable(&mut self, id: StringID) {
+            self.add_record(RecordKind::DeclaredVariable, &[id]);
+        }
+        pub fn add_lexical_variable(&mut self, id: StringID) {
+            self.add_record(RecordKind::LexicalVariable, &[id]);
+        }
+        pub fn add_import_info_single(&mut self, module_name: StringID, import_name: StringID, local_name: StringID, only_used_as_type: bool) {
+            self.add_record(
+                if only_used_as_type { RecordKind::ImportInfoSingleTypeScript } else { RecordKind::ImportInfoSingle },
+                &[module_name, import_name, local_name],
+            );
+        }
+        pub fn add_import_info_namespace(&mut self, module_name: StringID, local_name: StringID) {
+            self.add_record(RecordKind::ImportInfoNamespace, &[module_name, StringID::STAR_NAMESPACE, local_name]);
+        }
+        pub fn add_export_info_indirect(&mut self, export_name: StringID, import_name: StringID, module_name: StringID) {
+            if self.has_or_add_exported_name(export_name) { return; } // a syntax error will be emitted later in this case
+            self.add_record(RecordKind::ExportInfoIndirect, &[export_name, import_name, module_name]);
+        }
+        pub fn add_export_info_local(&mut self, export_name: StringID, local_name: StringID) {
+            if self.has_or_add_exported_name(export_name) { return; } // a syntax error will be emitted later in this case
+            self.add_record(RecordKind::ExportInfoLocal, &[export_name, local_name, StringID(u32::MAX)]);
+        }
+        pub fn add_export_info_namespace(&mut self, export_name: StringID, module_name: StringID) {
+            if self.has_or_add_exported_name(export_name) { return; } // a syntax error will be emitted later in this case
+            self.add_record(RecordKind::ExportInfoNamespace, &[export_name, module_name]);
+        }
+        pub fn add_export_info_star(&mut self, module_name: StringID) {
+            self.add_record(RecordKind::ExportInfoStar, &[module_name]);
+        }
+
+        fn has_or_add_exported_name(&mut self, name: StringID) -> bool {
+            self.exported_names.insert(name, ()).is_some()
+        }
+
+        pub fn str(&mut self, value: &[u8]) -> StringID {
+            if let Some(&idx) = self.strings_map.get(value) {
+                return StringID(idx);
+            }
+            let idx = self.strings_lens.len() as u32;
+            self.strings_buf.extend_from_slice(value);
+            self.strings_lens.push(value.len() as u32);
+            // PERF(port): Zig avoided this owned-key dupe via adapted hashmap over
+            // strings_buf offsets; revisit with a raw-entry API in Phase B.
+            self.strings_map.insert(value.to_vec(), idx);
+            StringID(idx)
+        }
+
+        pub fn request_module(&mut self, import_record_path: StringID, fetch_parameters: FetchParameters) {
+            // jsc only records the attributes of the first import with the given import_record_path. so only put if not exists.
+            self.requested_modules.entry(import_record_path).or_insert(fetch_parameters);
+        }
+
+        /// Replace all occurrences of `old_id` with `new_id` in records and requested_modules.
+        /// Used to fix up cross-chunk import specifiers after final paths are computed.
+        pub fn replace_string_id(&mut self, old_id: StringID, new_id: StringID) {
+            debug_assert!(!self.finalized);
+            for item in self.buffer.iter_mut() {
+                if *item == old_id { *item = new_id; }
+            }
+            if let Some(v) = self.requested_modules.swap_remove(&old_id) {
+                // Zig preserved insertion order via reIndex(); ArrayHashMap::swap_remove
+                // does not. Acceptable: callers re-serialize immediately after.
+                // PERF(port): verify ordering is not load-bearing for JSC linking.
+                self.requested_modules.insert(new_id, v);
+            }
+        }
+
+        /// find any exports marked as 'local' that are actually 'indirect' and fix them
+        pub fn finalize(&mut self) -> Result<(), ()> {
+            debug_assert!(!self.finalized);
+            #[derive(Clone, Copy)]
+            struct LocalImport {
+                module_name: StringID,
+                import_name: StringID,
+                record_kinds_idx: usize,
+                is_namespace: bool,
+            }
+            let mut local_name_to_module_name: HashMap<StringID, LocalImport> = HashMap::default();
+            {
+                let mut i = 0usize;
+                for (idx, &k) in self.record_kinds.iter().enumerate() {
+                    if matches!(k, RecordKind::ImportInfoSingle | RecordKind::ImportInfoSingleTypeScript) {
+                        local_name_to_module_name.insert(self.buffer[i + 2], LocalImport {
+                            module_name: self.buffer[i],
+                            import_name: self.buffer[i + 1],
+                            record_kinds_idx: idx,
+                            is_namespace: false,
+                        });
+                    } else if k == RecordKind::ImportInfoNamespace {
+                        local_name_to_module_name.insert(self.buffer[i + 2], LocalImport {
+                            module_name: self.buffer[i],
+                            import_name: StringID::STAR_NAMESPACE,
+                            record_kinds_idx: idx,
+                            is_namespace: true,
+                        });
+                    }
+                    i += k.len();
+                }
+            }
+            {
+                let mut i = 0usize;
+                // Can't borrow self.record_kinds mutably while reading buffer; collect fixups.
+                let mut ts_fixups: Vec<usize> = Vec::new();
+                for k in self.record_kinds.iter_mut() {
+                    let klen = k.len();
+                    if *k == RecordKind::ExportInfoLocal {
+                        if let Some(ip) = local_name_to_module_name.get(&self.buffer[i + 1]).copied() {
+                            // `import * as z from M; export { z }` is a Namespace export per
+                            // spec; encode it as indirect with import_name = STAR_NAMESPACE
+                            // so the record stays the same length and toJSModuleRecord
+                            // dispatches to addNamespaceExport.
+                            *k = RecordKind::ExportInfoIndirect;
+                            self.buffer[i + 1] = ip.import_name;
+                            self.buffer[i + 2] = ip.module_name;
+                            // In TypeScript, the re-exported import may target a type-only
+                            // export that was elided. Convert the import to SingleTypeScript
+                            // so JSC tolerates it being NotFound during linking.
+                            if !ip.is_namespace && self.flags.is_typescript {
+                                ts_fixups.push(ip.record_kinds_idx);
+                            }
+                        }
+                    }
+                    i += klen;
+                }
+                for idx in ts_fixups {
+                    self.record_kinds[idx] = RecordKind::ImportInfoSingleTypeScript;
+                }
+            }
+            self.finalized = true;
+            Ok(())
+        }
+    }
+
+    #[inline]
+    fn slice_as_bytes<T: Copy>(s: &[T]) -> &[u8] {
+        // SAFETY: T is Copy + #[repr(transparent)]/#[repr(u8)] POD at every call site.
+        unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<u8>(), core::mem::size_of_val(s)) }
+    }
+}
 
 /// Erased handle to the high-tier `RuntimeTranspilerCache` (lives in `bun_jsc`, T6).
 /// Cold path — called at most once per print to persist output. The high tier provides
@@ -763,7 +1222,7 @@ const fn may_have_module_info(is_bun_platform: bool, rewrite_esm_to_cjs: bool) -
 #[derive(Clone, Copy, Default)]
 pub struct TopLevelAndIsExport {
     pub is_export: bool,
-    pub is_top_level: Option<analyze_transpiled_module::ModuleInfo::VarKind>,
+    pub is_top_level: Option<analyze_transpiled_module::VarKind>,
 }
 
 #[derive(Clone, Copy)]
@@ -1144,15 +1603,15 @@ where
             if let Some(mi) = self.module_info() {
                 if import.star_name_loc.is_some() {
                     let name = self.renamer.name_for_symbol(import.namespace_ref);
-                    mi.add_var(mi.str(name), analyze_transpiled_module::ModuleInfo::VarKind::Declared);
+                    mi.add_var(mi.str(name), analyze_transpiled_module::VarKind::Declared);
                 }
                 if let Some(default) = &import.default_name {
                     let name = self.renamer.name_for_symbol(default.ref_.unwrap());
-                    mi.add_var(mi.str(name), analyze_transpiled_module::ModuleInfo::VarKind::Declared);
+                    mi.add_var(mi.str(name), analyze_transpiled_module::VarKind::Declared);
                 }
                 for item in import.items.iter() {
                     let name = self.renamer.name_for_symbol(item.name.ref_.unwrap());
-                    mi.add_var(mi.str(name), analyze_transpiled_module::ModuleInfo::VarKind::Declared);
+                    mi.add_var(mi.str(name), analyze_transpiled_module::VarKind::Declared);
                 }
             }
         }
@@ -3715,7 +4174,7 @@ where
                         let name_id = mi.str(local_name);
                         // function declarations are lexical (block-scoped in modules);
                         // only record at true top-level, not inside blocks.
-                        if tlmtlo.is_top_level == IsTopLevel::Yes { mi.add_var(name_id, analyze_transpiled_module::ModuleInfo::VarKind::Lexical); }
+                        if tlmtlo.is_top_level == IsTopLevel::Yes { mi.add_var(name_id, analyze_transpiled_module::VarKind::Lexical); }
                         if s.func.flags.contains(G::FnFlags::IsExport) { mi.add_export_info_local(name_id, name_id); }
                     }
                 }
@@ -3751,7 +4210,7 @@ where
                 if Self::MAY_HAVE_MODULE_INFO {
                     if let Some(mi) = self.module_info() {
                         let name_id = mi.str(name_str);
-                        if tlmtlo.is_top_level == IsTopLevel::Yes { mi.add_var(name_id, analyze_transpiled_module::ModuleInfo::VarKind::Lexical); }
+                        if tlmtlo.is_top_level == IsTopLevel::Yes { mi.add_var(name_id, analyze_transpiled_module::VarKind::Lexical); }
                         if s.is_export { mi.add_export_info_local(name_id, name_id); }
                     }
                 }
@@ -3794,7 +4253,7 @@ where
                         if Self::MAY_HAVE_MODULE_INFO {
                             if let Some(mi) = self.module_info() {
                                 mi.add_export_info_local(mi.str(b"default"), analyze_transpiled_module::StringID::STAR_DEFAULT);
-                                mi.add_var(analyze_transpiled_module::StringID::STAR_DEFAULT, analyze_transpiled_module::ModuleInfo::VarKind::Lexical);
+                                mi.add_var(analyze_transpiled_module::StringID::STAR_DEFAULT, analyze_transpiled_module::VarKind::Lexical);
                             }
                         }
                         self.prev_stmt_tag = new_tag;
@@ -3829,7 +4288,7 @@ where
                                             None => analyze_transpiled_module::StringID::STAR_DEFAULT,
                                         };
                                         mi.add_export_info_local(mi.str(b"default"), local_name);
-                                        mi.add_var(local_name, analyze_transpiled_module::ModuleInfo::VarKind::Lexical);
+                                        mi.add_var(local_name, analyze_transpiled_module::VarKind::Lexical);
                                     }
                                 }
 
@@ -3857,7 +4316,7 @@ where
                                             None => analyze_transpiled_module::StringID::STAR_DEFAULT,
                                         };
                                         mi.add_export_info_local(mi.str(b"default"), local_name);
-                                        mi.add_var(local_name, analyze_transpiled_module::ModuleInfo::VarKind::Lexical);
+                                        mi.add_var(local_name, analyze_transpiled_module::VarKind::Lexical);
                                     }
                                 }
 
@@ -3897,7 +4356,7 @@ where
                 if Self::MAY_HAVE_MODULE_INFO {
                     if let Some(mi) = self.module_info() {
                         let irp_id = mi.str(irp);
-                        mi.request_module(irp_id, analyze_transpiled_module::ModuleInfo::FetchParameters::None);
+                        mi.request_module(irp_id, analyze_transpiled_module::FetchParameters::None);
                         if let Some(alias) = &s.alias {
                             mi.add_export_info_namespace(mi.str(&alias.original_name), irp_id);
                         } else {
@@ -4100,7 +4559,7 @@ where
                 if Self::MAY_HAVE_MODULE_INFO {
                     if let Some(mi) = self.module_info() {
                         let irp_id = mi.str(irp);
-                        mi.request_module(irp_id, analyze_transpiled_module::ModuleInfo::FetchParameters::None);
+                        mi.request_module(irp_id, analyze_transpiled_module::FetchParameters::None);
                         for item in s.items.iter() {
                             let name = self.renamer.name_for_symbol(item.name.ref_.unwrap());
                             mi.add_export_info_indirect(mi.str(&item.alias), mi.str(name), irp_id);
@@ -4504,7 +4963,7 @@ where
                     if let Some(mi) = self.module_info() {
                         let import_record_path = &record.path.text;
                         let irp_id = mi.str(import_record_path);
-                        use analyze_transpiled_module::ModuleInfo::FetchParameters as FP;
+                        use analyze_transpiled_module::FetchParameters as FP;
                         let fetch_parameters: FP = if IS_BUN_PLATFORM {
                             if let Some(loader) = record.loader {
                                 use options::Loader;
@@ -4537,20 +4996,20 @@ where
                         if let Some(name) = &s.default_name {
                             let local_name = self.renamer.name_for_symbol(name.ref_.unwrap());
                             let local_name_id = mi.str(local_name);
-                            mi.add_var(local_name_id, analyze_transpiled_module::ModuleInfo::VarKind::Lexical);
+                            mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
                             mi.add_import_info_single(irp_id, mi.str(b"default"), local_name_id, false);
                         }
 
                         for item in s.items.iter() {
                             let local_name = self.renamer.name_for_symbol(item.name.ref_.unwrap());
                             let local_name_id = mi.str(local_name);
-                            mi.add_var(local_name_id, analyze_transpiled_module::ModuleInfo::VarKind::Lexical);
+                            mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
                             mi.add_import_info_single(irp_id, mi.str(&item.alias), local_name_id, false);
                         }
 
                         if record.flags.contains_import_star {
                             let local_name = self.renamer.name_for_symbol(s.namespace_ref);
-                            mi.add_var(mi.str(local_name), analyze_transpiled_module::ModuleInfo::VarKind::Lexical);
+                            mi.add_var(mi.str(local_name), analyze_transpiled_module::VarKind::Lexical);
                             mi.add_import_info_namespace(irp_id, mi.str(local_name));
                         }
                     }
@@ -4956,11 +5415,11 @@ where
             TopLevelAndIsExport {
                 is_export,
                 is_top_level: if keyword == b"var" {
-                    if tlmtlo.is_top_level() { Some(analyze_transpiled_module::ModuleInfo::VarKind::Declared) } else { None }
+                    if tlmtlo.is_top_level() { Some(analyze_transpiled_module::VarKind::Declared) } else { None }
                 } else {
                     // let/const are block-scoped: only record at true top-level,
                     // not inside blocks where subVar() downgrades to .var_only.
-                    if tlmtlo.is_top_level == IsTopLevel::Yes { Some(analyze_transpiled_module::ModuleInfo::VarKind::Lexical) } else { None }
+                    if tlmtlo.is_top_level == IsTopLevel::Yes { Some(analyze_transpiled_module::VarKind::Lexical) } else { None }
                 },
             }
         } else {
@@ -5853,7 +6312,7 @@ pub fn print_ast<W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_M
         if PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO {
             if let Some(mi) = printer.module_info() {
                 mi.flags.contains_import_meta = true;
-                mi.add_var(mi.str(b"require"), analyze_transpiled_module::ModuleInfo::VarKind::Declared);
+                mi.add_var(mi.str(b"require"), analyze_transpiled_module::VarKind::Declared);
             }
         }
     }

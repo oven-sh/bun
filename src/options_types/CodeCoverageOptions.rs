@@ -2,8 +2,22 @@
 //! so `options_types/Context.zig` (and `cli/cli.zig` `TestOptions`) can hold
 //! it without depending on `cli/`.
 
-// TODO(b0): Fraction arrives from move-in (TYPE_ONLY bun_sourcemap::coverage::Fraction → options_types)
-use crate::Fraction;
+// move-in: TYPE_ONLY from bun_sourcemap_jsc::CodeCoverage (`sourcemap_jsc/CodeCoverage.zig` `Fraction`).
+// Lifted here so the option struct (and CLI tier) needn't depend on tier-6 sourcemap_jsc.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Fraction {
+    pub functions: f64,
+    pub lines: f64,
+    /// This metric is less accurate right now
+    pub stmts: f64,
+    pub failing: bool,
+}
+
+impl Default for Fraction {
+    fn default() -> Self {
+        Self { functions: 0.9, lines: 0.9, stmts: 0.75, failing: false }
+    }
+}
 
 pub struct CodeCoverageOptions {
     pub skip_test_files: bool,

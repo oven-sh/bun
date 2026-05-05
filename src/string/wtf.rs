@@ -337,8 +337,33 @@ impl StringImplAllocator {
     }
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// move-in: parse_double (MOVE_DOWN ← src/jsc/WTF.zig `WTF.parseDouble`)
+//
+// Thin wrapper around WebKit's WTF__parseDouble. Lives here so
+// `bun_interchange` (yaml) and `bun_js_parser::lexer` can call it without
+// depending on `bun_jsc`.
+// ──────────────================================================────────────
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct InvalidCharacter;
+
+pub fn parse_double(buf: &[u8]) -> Result<f64, InvalidCharacter> {
+    if buf.is_empty() {
+        return Err(InvalidCharacter);
+    }
+    let mut count: usize = 0;
+    // SAFETY: buf is a valid slice; WTF__parseDouble reads at most `length` bytes.
+    let res = unsafe { WTF__parseDouble(buf.as_ptr(), buf.len(), &mut count) };
+    if count == 0 {
+        return Err(InvalidCharacter);
+    }
+    Ok(res)
+}
+
 // TODO(port): move to bun_str_sys (or bun_jsc_sys — these are WebKit C++ shims).
 unsafe extern "C" {
+    fn WTF__parseDouble(bytes: *const u8, length: usize, counted: *mut usize) -> f64;
     fn WTFStringImpl__isThreadSafe(this: *const WTFStringImplStruct) -> bool;
     fn Bun__WTFStringImpl__deref(this: *const WTFStringImplStruct);
     fn Bun__WTFStringImpl__ref(this: *const WTFStringImplStruct);

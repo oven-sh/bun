@@ -152,6 +152,11 @@ pub trait PathUnit: Copy + Eq + 'static {
 
     fn buffer_as_mut_slice(buf: &mut Self::Buffer) -> &mut [Self];
     fn buffer_as_slice(buf: &Self::Buffer) -> &[Self];
+
+    /// MOVE_DOWN(CYCLEBREAK): `bun.windows.long_path_prefix{,_u8}` lifted into the unit trait so
+    /// `crate::windows::long_path_prefix_for::<U>()` can pick the right width without a runtime
+    /// switch. Mirrors Zig's comptime branch on `.u8`/`.u16` in `paths/Path.zig`.
+    const LONG_PATH_PREFIX: &'static [Self];
 }
 
 impl PathUnit for u8 {
@@ -159,6 +164,7 @@ impl PathUnit for u8 {
     type Buffer = PathBuffer;
     const MAX_PATH: usize = MAX_PATH_BYTES;
     type ZSlice = ZStr;
+    const LONG_PATH_PREFIX: &'static [u8] = &crate::windows::LONG_PATH_PREFIX_U8;
 
     #[inline]
     fn from_ascii(c: u8) -> Self {
@@ -197,6 +203,7 @@ impl PathUnit for u16 {
     type Buffer = WPathBuffer;
     const MAX_PATH: usize = PATH_MAX_WIDE;
     type ZSlice = WStr;
+    const LONG_PATH_PREFIX: &'static [u16] = &crate::windows::LONG_PATH_PREFIX;
 
     #[inline]
     fn from_ascii(c: u8) -> Self {

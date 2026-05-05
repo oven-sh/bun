@@ -410,6 +410,57 @@ pub fn addr_info_count(addrinfo: &libc::addrinfo) -> u32 {
     count
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Order — DNS result ordering (verbatim/ipv4first/ipv6first).
+//
+// Moved down from `bun_runtime::api::dns::Resolver::Order` (src/runtime/
+// dns_jsc/dns.zig) per CYCLEBREAK §→dns: `cli` (repl_command, Arguments)
+// needs `Order::from_string_or_die` to parse `--dns-result-order` before the
+// runtime exists. The `toJS` method stays in tier-6 (`bun_runtime::dns_jsc`)
+// as an extension; only the pure enum + string parsing live here.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
+pub enum Order {
+    #[strum(serialize = "verbatim")]
+    Verbatim = 0,
+    #[strum(serialize = "ipv4first")]
+    Ipv4first = 4,
+    #[strum(serialize = "ipv6first")]
+    Ipv6first = 6,
+}
+
+impl Default for Order {
+    fn default() -> Self {
+        Order::Verbatim
+    }
+}
+
+pub static ORDER_MAP: phf::Map<&'static [u8], Order> = phf::phf_map! {
+    b"verbatim"  => Order::Verbatim,
+    b"ipv4first" => Order::Ipv4first,
+    b"ipv6first" => Order::Ipv6first,
+    b"0"         => Order::Verbatim,
+    b"4"         => Order::Ipv4first,
+    b"6"         => Order::Ipv6first,
+};
+
+impl Order {
+    pub const DEFAULT: Self = Order::Verbatim;
+
+    pub fn from_string(order: &[u8]) -> Option<Order> {
+        ORDER_MAP.get(order).copied()
+    }
+
+    pub fn from_string_or_die(order: &[u8]) -> Order {
+        Self::from_string(order).unwrap_or_else(|| {
+            bun_core::pretty_errorln!("<r><red>error<r><d>:<r> Invalid DNS result order.");
+            bun_core::Global::exit(1)
+        })
+    }
+}
+
 // TODO(port): `pub const internal = bun.api.dns.internal;` — re-export of
 // runtime DNS internals. Phase B: decide crate boundary (likely
 // `bun_runtime::api::dns::internal`); omitted here to avoid base→runtime dep.

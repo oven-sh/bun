@@ -8,8 +8,8 @@ use core::mem::offset_of;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
-// CYCLEBREAK(MOVE_DOWN): `Waker` moves from bun_aio (T3) into io (T2). The
-// `crate::waker` module is added by the move-in pass.
+// CYCLEBREAK(MOVE_DOWN): `Waker` moved from bun_aio (T3) into io (T2). See
+// the `crate::waker` module body below.
 use crate::waker::Waker;
 use bun_collections::TaggedPtr;
 use bun_sys::{self as sys, Fd};
@@ -1179,8 +1179,323 @@ pub enum PathOrFileDescriptor {
     Fd(Fd),
 }
 
+// ─── Waker (CYCLEBREAK MOVE_DOWN from bun_aio) ────────────────────────────────
+//
+// Ported from src/aio/posix_event_loop.zig:1272-1384 (LinuxWaker / KEventWaker)
+// and src/aio/windows_event_loop.zig:361-383 (Windows Waker). io (T2) owns the
+// Waker so `Loop::load` has no upward dep on bun_aio (T3). bun_aio re-exports.
+
+pub mod waker {
+    use bun_sys::Fd;
+
+    #[cfg(target_os = "macos")]
+    pub type Waker = KEventWaker;
+    /// FreeBSD 13+ has eventfd(2), so the Linux waker works as-is.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    pub type Waker = LinuxWaker;
+    #[cfg(windows)]
+    pub type Waker = WindowsWaker;
+
+    // ── Linux / FreeBSD ───────────────────────────────────────────────────────
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    pub struct LinuxWaker {
+        pub fd: Fd,
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    impl LinuxWaker {
+        pub fn init() -> Result<Self, bun_core::Error> {
+            // TODO(port): std.posix.eventfd(0, 0) → bun_sys::eventfd. Phase B
+            // should confirm bun_sys exposes the wrapper; falls back to libc.
+            // SAFETY: direct syscall wrapper.
+            let raw = unsafe { libc::eventfd(0, 0) };
+            if raw < 0 {
+                return Err(bun_core::Error::last_os_error());
+            }
+            Ok(Self::init_with_file_descriptor(Fd::from_native(raw)))
+        }
+
+        #[inline]
+        pub fn get_fd(&self) -> Fd {
+            self.fd
+        }
+
+        #[inline]
+        pub fn init_with_file_descriptor(fd: Fd) -> Self {
+            Self { fd }
+        }
+
+        pub fn wait(&self) {
+            let mut bytes: usize = 0;
+            // SAFETY: usize is 8 bytes on supported targets; reinterpret as [u8; 8].
+            let buf = unsafe { &mut *(&mut bytes as *mut usize as *mut [u8; 8]) };
+            // SAFETY: valid fd + 8-byte buffer; result intentionally discarded.
+            let _ = unsafe { libc::read(self.fd.cast(), buf.as_mut_ptr().cast(), 8) };
+        }
+
+        pub fn wake(&self) {
+            let bytes: usize = 1;
+            // SAFETY: usize is 8 bytes; reinterpret as [u8; 8].
+            let buf = unsafe { &*(&bytes as *const usize as *const [u8; 8]) };
+            // SAFETY: valid fd + 8-byte buffer; result intentionally discarded.
+            let _ = unsafe { libc::write(self.fd.cast(), buf.as_ptr().cast(), 8) };
+        }
+    }
+
+    // ── macOS (kqueue + machport) ─────────────────────────────────────────────
+
+    #[cfg(target_os = "macos")]
+    use core::ffi::{c_int, c_void};
+
+    #[cfg(target_os = "macos")]
+    pub struct KEventWaker {
+        pub kq: i32,
+        pub machport: bun_core::mach_port,
+        pub machport_buf: Box<[u8]>,
+        pub has_pending_wake: bool,
+    }
+
+    #[cfg(target_os = "macos")]
+    type Kevent64 = libc::kevent64_s;
+
+    #[cfg(target_os = "macos")]
+    unsafe extern "C" {
+        // Defined in src/io/io_darwin.cpp.
+        fn io_darwin_close_machport(port: bun_core::mach_port);
+        fn io_darwin_create_machport(
+            kq: i32,
+            buf: *mut c_void,
+            len: usize,
+        ) -> bun_core::mach_port;
+        fn io_darwin_schedule_wakeup(port: bun_core::mach_port) -> bool;
+    }
+
+    #[cfg(target_os = "macos")]
+    impl KEventWaker {
+        // SAFETY: all-zero is a valid kevent64_s array (POD).
+        const ZEROED: [Kevent64; 16] = unsafe { core::mem::zeroed() };
+
+        pub fn wake(&mut self) {
+            // SAFETY: FFI call with a valid mach_port created in init.
+            if unsafe { io_darwin_schedule_wakeup(self.machport) } {
+                self.has_pending_wake = false;
+                return;
+            }
+            self.has_pending_wake = true;
+        }
+
+        #[inline]
+        pub fn get_fd(&self) -> Fd {
+            Fd::from_native(self.kq)
+        }
+
+        pub fn wait(&self) {
+            if !Fd::from_native(self.kq).is_valid() {
+                return;
+            }
+            let mut events = Self::ZEROED;
+            // SAFETY: FFI syscall; pointers reference a stack-local array valid for the call.
+            unsafe {
+                libc::kevent64(
+                    self.kq,
+                    events.as_ptr(),
+                    0,
+                    events.as_mut_ptr(),
+                    c_int::try_from(events.len()).unwrap(),
+                    0,
+                    core::ptr::null(),
+                );
+            }
+        }
+
+        pub fn init() -> Result<Self, bun_core::Error> {
+            // SAFETY: direct syscall wrapper.
+            let kq = unsafe { libc::kqueue() };
+            if kq < 0 {
+                return Err(bun_core::Error::last_os_error());
+            }
+            Self::init_with_file_descriptor(kq)
+        }
+
+        pub fn init_with_file_descriptor(kq: i32) -> Result<Self, bun_core::Error> {
+            debug_assert!(kq > -1);
+            // PERF(port): Zig used bun.default_allocator.alloc(u8, 1024); Box<[u8]>
+            // owns the buffer for the machport's lifetime.
+            let mut machport_buf = vec![0u8; 1024].into_boxed_slice();
+            // SAFETY: FFI call; buf outlives the machport (owned by the returned Waker).
+            let machport = unsafe {
+                io_darwin_create_machport(kq, machport_buf.as_mut_ptr().cast::<c_void>(), 1024)
+            };
+            if machport == 0 {
+                return Err(bun_core::err!("MachportCreationFailed"));
+            }
+            Ok(Self { kq, machport, machport_buf, has_pending_wake: false })
+        }
+    }
+
+    // ── Windows (uws WindowsLoop wakeup) ──────────────────────────────────────
+
+    #[cfg(windows)]
+    pub struct WindowsWaker {
+        pub loop_: *mut bun_uws_sys::WindowsLoop,
+    }
+
+    #[cfg(windows)]
+    impl WindowsWaker {
+        pub fn init() -> Result<Self, bun_core::Error> {
+            Ok(Self { loop_: bun_uws_sys::WindowsLoop::get() })
+        }
+
+        // TODO(port): Zig used @compileError; on Windows these must never be linked.
+        #[allow(unused)]
+        pub fn get_fd(&self) -> Fd {
+            unreachable!("Waker.getFd is unsupported on Windows");
+        }
+
+        // TODO(port): Zig used @compileError; on Windows these must never be linked.
+        #[allow(unused)]
+        pub fn init_with_file_descriptor(_fd: Fd) -> Self {
+            unreachable!("Waker.initWithFileDescriptor is unsupported on Windows");
+        }
+
+        pub fn wait(&self) {
+            // SAFETY: loop_ is the process-global WindowsLoop singleton.
+            unsafe { (*self.loop_).wait() };
+        }
+
+        pub fn wake(&self) {
+            // SAFETY: loop_ is the process-global WindowsLoop singleton.
+            unsafe { (*self.loop_).wakeup() };
+        }
+    }
+}
+
+// ─── Closer (CYCLEBREAK MOVE_DOWN from bun_aio) ───────────────────────────────
+//
+// Ported from src/aio/posix_event_loop.zig:1386-1406 and
+// src/aio/windows_event_loop.zig:385-411. Schedules an async fd close on the
+// thread pool (POSIX) or via uv_fs_close (Windows). io (T2) owns it so
+// `pipes::PollOrFd::close` has no upward dep on bun_aio (T3).
+
+pub mod closer {
+    use bun_sys::Fd;
+
+    // ── POSIX ────────────────────────────────────────────────────────────────
+
+    #[cfg(not(windows))]
+    use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
+
+    #[cfg(not(windows))]
+    #[repr(C)]
+    pub struct Closer {
+        pub fd: Fd,
+        pub task: WorkPoolTask,
+    }
+
+    #[cfg(not(windows))]
+    impl Closer {
+        /// `_compat`: for signature compatibility with the Windows version.
+        pub fn close(fd: Fd, _compat: ()) {
+            debug_assert!(fd.is_valid());
+            // Zig: bun.TrivialNew → heap-allocate, freed in on_close.
+            let closer = Box::into_raw(Box::new(Closer {
+                fd,
+                task: WorkPoolTask { node: Default::default(), callback: Self::on_close },
+            }));
+            // SAFETY: closer is a valid heap allocation; task is its embedded field.
+            WorkPool::schedule(unsafe { &mut (*closer).task });
+        }
+
+        unsafe fn on_close(task: *mut WorkPoolTask) {
+            // SAFETY: `task` points to `Closer.task`; recover the parent via offset_of
+            // (Zig: @fieldParentPtr("task", task)).
+            let closer = unsafe {
+                (task as *mut u8)
+                    .sub(core::mem::offset_of!(Closer, task))
+                    .cast::<Closer>()
+            };
+            // Zig: `defer bun.destroy(closer)` — reclaim Box; drop after fd.close().
+            // SAFETY: closer was Box::into_raw'd in `close`; reclaim ownership.
+            let closer_box = unsafe { Box::from_raw(closer) };
+            closer_box.fd.close();
+            // closer_box dropped here.
+        }
+    }
+
+    // ── Windows ──────────────────────────────────────────────────────────────
+
+    #[cfg(windows)]
+    use bun_sys::windows::libuv as uv;
+    #[cfg(windows)]
+    use core::ffi::c_void;
+
+    #[cfg(windows)]
+    #[repr(C)]
+    pub struct Closer {
+        io_request: uv::fs_t,
+    }
+
+    #[cfg(windows)]
+    impl Closer {
+        pub fn close(fd: Fd, loop_: *mut uv::Loop) {
+            // SAFETY: all-zero is a valid uv::fs_t (libuv C struct, zero-init by convention).
+            let io_request: uv::fs_t = unsafe { core::mem::zeroed() };
+            let closer = Box::into_raw(Box::new(Closer { io_request }));
+            // data is not overridden by libuv when calling uv_fs_close, its ok to set it here
+            // SAFETY: closer is a freshly-boxed valid pointer.
+            unsafe {
+                (*closer).io_request.data = closer.cast::<c_void>();
+                if let Some(err) = uv::uv_fs_close(
+                    loop_,
+                    &mut (*closer).io_request,
+                    fd.uv(),
+                    Some(Self::on_close),
+                )
+                .err_enum()
+                {
+                    bun_core::Output::debug_warn(format_args!("libuv close() failed = {}", err));
+                    drop(Box::from_raw(closer));
+                }
+            }
+        }
+
+        extern "C" fn on_close(req: *mut uv::fs_t) {
+            // SAFETY: req points to Closer.io_request (set in `close` above);
+            // recover the parent via offset_of (Zig: @fieldParentPtr).
+            let closer: *mut Closer = unsafe {
+                (req as *mut u8)
+                    .sub(core::mem::offset_of!(Closer, io_request))
+                    .cast::<Closer>()
+            };
+            // SAFETY: req.data was set to `closer` in `close`; both valid for the callback.
+            unsafe {
+                debug_assert!(closer == (*req).data.cast::<Closer>());
+                bun_sys::syslog!(
+                    "uv_fs_close({}) = {}",
+                    Fd::from_uv((*req).file.fd),
+                    (*req).result
+                );
+
+                #[cfg(debug_assertions)]
+                if let Some(err) = (*closer).io_request.result.err_enum() {
+                    bun_core::Output::debug_warn(format_args!(
+                        "libuv close() failed = {}",
+                        err
+                    ));
+                }
+
+                (*req).deinit();
+                drop(Box::from_raw(closer));
+            }
+        }
+    }
+}
+
 // ─── re-exports ───────────────────────────────────────────────────────────────
 
+pub use crate::waker::Waker;
+pub use crate::closer::Closer;
 pub use crate::pipes::ReadState;
 pub use crate::pipe_reader::{BufferedReader, PipeReader};
 pub use crate::pipe_writer::{BufferedWriter, StreamBuffer, StreamingWriter, WriteResult, WriteStatus};

@@ -174,9 +174,34 @@ impl RefTag {
     }
 }
 
+/// Field-init form for callers (e.g. `bun_css`) that constructed the Zig packed
+/// struct via `.{ .inner_index, .source_index, .tag }`. The packed `Ref(u64)`
+/// layout has no public fields, so this struct + `From` impl reconciles the API.
+#[derive(Clone, Copy)]
+pub struct RefFields {
+    pub inner_index: RefInt,
+    pub source_index: RefInt,
+    pub tag: RefTag,
+}
+
+impl From<RefFields> for Ref {
+    #[inline]
+    fn from(f: RefFields) -> Ref {
+        Ref::new(f.inner_index, f.source_index, f.tag)
+    }
+}
+
 impl Ref {
     /// Represents a null state without using an extra bit
     pub const NONE: Ref = Ref(0);
+
+    /// General constructor exposing all three packed fields. Prefer `init` for
+    /// the common source-contents/allocated-name case; this exists for callers
+    /// that need to set `tag` explicitly (e.g. `RefTag::Symbol`).
+    #[inline]
+    pub const fn new(inner_index: RefInt, source_index: RefInt, tag: RefTag) -> Ref {
+        Self::pack(inner_index, tag, source_index)
+    }
 
     // Zig: `pub const ArrayHashCtx = RefHashCtx; pub const HashCtx = RefCtx;`
     // Rust can't nest type aliases in inherent impls — callers use the

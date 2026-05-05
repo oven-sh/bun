@@ -1,5 +1,17 @@
 use core::ffi::c_int;
 
+// ─── MOVE-IN: Winsize (TYPE_ONLY from bun_sys → bun_core) ─────────────────
+// Zig: `std.posix.winsize` — used by output.rs::TERMINAL_SIZE. Field names
+// match the move-out forward-ref in output.rs (row/col, not ws_row/ws_col).
+#[repr(C)]
+#[derive(Clone, Copy, Default, Debug)]
+pub struct Winsize {
+    pub row: u16,
+    pub col: u16,
+    pub xpixel: u16,
+    pub ypixel: u16,
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Mode {

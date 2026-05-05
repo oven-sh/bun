@@ -25,13 +25,134 @@ use bun_schema::api;
 // CYCLEBREAK Phase B-0 — cross-tier decoupling
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(b0): RouteConfig arrives from move-in (was bun_bundler::options::RouteConfig).
-// Minimal placeholder so this crate is self-contained at T4; the move-in pass
-// replaces this with the full definition extracted from src/bundler/options.zig.
+// MOVE_DOWN(b0): RouteConfig (was bun_bundler::options::RouteConfig).
+// Ground truth: src/bundler/options.zig `pub const RouteConfig = struct { ... }`.
+// Moved here so T4 router is self-contained; bun_bundler re-exports this
+// (`pub use bun_router::RouteConfig`) to preserve the old path.
 #[derive(Clone, Default)]
 pub struct RouteConfig {
-    pub dir: Vec<u8>,
-    pub extensions: Vec<Box<[u8]>>,
+    pub dir: Box<[u8]>,
+    pub possible_dirs: Box<[Box<[u8]>]>,
+
+    /// Frameworks like Next.js (and others) use a special prefix for bundled/transpiled assets.
+    /// This is combined with "origin" when printing import paths.
+    pub asset_prefix_path: Box<[u8]>,
+
+    // TODO: do we need a separate list for data-only extensions?
+    // e.g. /foo.json just to get the data for the route, without rendering the html
+    // I think it's fine to hardcode as .json for now, but if I personally were writing a framework
+    // I would consider using a custom binary format to minimize request size
+    // maybe like CBOR
+    pub extensions: Box<[Box<[u8]>]>,
+    pub routes_enabled: bool,
+
+    pub static_dir: Box<[u8]>,
+    pub static_dir_enabled: bool,
+}
+
+impl RouteConfig {
+    pub const DEFAULT_DIR: &'static [u8] = b"pages";
+    pub const DEFAULT_STATIC_DIR: &'static [u8] = b"public";
+    pub const DEFAULT_EXTENSIONS: &'static [&'static [u8]] =
+        &[b"tsx", b"ts", b"mjs", b"jsx", b"js"];
+
+    pub fn to_api(&self) -> api::LoadedRouteConfig {
+        api::LoadedRouteConfig {
+            asset_prefix: self.asset_prefix_path.clone(),
+            dir: if self.routes_enabled { self.dir.clone() } else { Box::default() },
+            extensions: self.extensions.clone(),
+            static_dir: if self.static_dir_enabled {
+                self.static_dir.clone()
+            } else {
+                Box::default()
+            },
+        }
+    }
+
+    #[inline]
+    pub fn zero() -> RouteConfig {
+        RouteConfig {
+            dir: Box::from(Self::DEFAULT_DIR),
+            extensions: Self::DEFAULT_EXTENSIONS
+                .iter()
+                .map(|s| Box::<[u8]>::from(*s))
+                .collect(),
+            static_dir: Box::from(Self::DEFAULT_STATIC_DIR),
+            routes_enabled: false,
+            ..Default::default()
+        }
+    }
+
+    pub fn from_loaded_routes(loaded: api::LoadedRouteConfig) -> RouteConfig {
+        RouteConfig {
+            extensions: loaded.extensions,
+            routes_enabled: !loaded.dir.is_empty(),
+            static_dir_enabled: !loaded.static_dir.is_empty(),
+            dir: loaded.dir,
+            asset_prefix_path: loaded.asset_prefix,
+            static_dir: loaded.static_dir,
+            possible_dirs: Box::default(),
+        }
+    }
+
+    pub fn from_api(router_: &api::RouteConfig) -> Result<RouteConfig, bun_core::Error> {
+        let mut router = Self::zero();
+
+        let static_dir: &[u8] =
+            strings::trim_right(router_.static_dir.as_deref().unwrap_or(b""), b"/\\");
+        let asset_prefix: &[u8] =
+            strings::trim_right(router_.asset_prefix.as_deref().unwrap_or(b""), b"/\\");
+
+        match router_.dir.len() {
+            0 => {}
+            1 => {
+                router.dir = Box::from(strings::trim_right(&router_.dir[0], b"/\\"));
+                router.routes_enabled = !router.dir.is_empty();
+            }
+            _ => {
+                router.possible_dirs = router_.dir.clone();
+                for dir in router_.dir.iter() {
+                    let trimmed = strings::trim_right(dir, b"/\\");
+                    if !trimmed.is_empty() {
+                        router.dir = Box::from(trimmed);
+                    }
+                }
+                router.routes_enabled = !router.dir.is_empty();
+            }
+        }
+
+        if !static_dir.is_empty() {
+            router.static_dir = Box::from(static_dir);
+        }
+
+        if !asset_prefix.is_empty() {
+            router.asset_prefix_path = Box::from(asset_prefix);
+        }
+
+        if !router_.extensions.is_empty() {
+            let mut count: usize = 0;
+            for _ext in router_.extensions.iter() {
+                let ext = strings::trim_left(_ext, b".");
+                if ext.is_empty() {
+                    continue;
+                }
+                count += 1;
+            }
+
+            let mut extensions: Vec<Box<[u8]>> = Vec::with_capacity(count);
+            for _ext in router_.extensions.iter() {
+                let ext = strings::trim_left(_ext, b".");
+                if ext.is_empty() {
+                    continue;
+                }
+                extensions.push(Box::from(ext));
+            }
+
+            router.extensions = extensions.into_boxed_slice();
+        }
+
+        Ok(router)
+    }
 }
 
 // GENUINE(b0): bun_resolver::dir_info::DirInfo — erased via manual vtable (cold path).
@@ -65,16 +186,14 @@ fn index_route_hash() -> u32 {
     wyhash(b"$$/index-route$$-!(@*@#&*%-901823098123") as u32
 }
 
-#[derive(Clone, Copy)]
-pub struct Param {
-    // TODO(port): lifetime — name/value borrow from route name + request path
-    pub name: &'static [u8],
-    pub value: &'static [u8],
-}
-
-impl Param {
-    pub type List = MultiArrayList<Param>;
-}
+// TYPE_ONLY(b0): Param + List moved down into bun_url (T3) so the URL
+// PathnameScanner can name them without depending on router (T4). Re-export
+// here so existing `bun_router::Param` / `bun_router::route_param::List` users
+// keep resolving. The old `route_param::List` inherent-associated-type spelling is
+// gone (unstable + can't `impl` a foreign type); call sites use
+// `route_param::List` instead.
+pub use bun_url::route_param;
+pub use bun_url::route_param::Param;
 
 pub struct Router<'a> {
     pub dir: Fd,
@@ -265,7 +384,7 @@ impl<'a> Routes<'a> {
         &mut self,
         _: &[u8],
         url_path: URLPath,
-        params: &'p mut Param::List,
+        params: &'p mut route_param::List,
     ) -> Option<Match<'p>> {
         // Trim trailing slash
         let mut path = url_path.path;
@@ -323,7 +442,7 @@ impl<'a> Routes<'a> {
         }
 
         struct MatchContextType {
-            params: Param::List,
+            params: route_param::List,
         }
         // PORT NOTE: reshaped for borrowck — Zig moved params into a local struct then back via defer.
         let mut matcher = MatchContextType {
@@ -354,12 +473,12 @@ impl<'a> Routes<'a> {
         &mut self,
         _: &[u8],
         url_path: URLPath,
-        params: &'p mut Param::List,
+        params: &'p mut route_param::List,
     ) -> Option<Match<'p>> {
         self.match_page_with_allocator(b"", url_path, params)
     }
 
-    fn match_dynamic(&mut self, path: &[u8], params: &mut Param::List) -> Option<*const Route> {
+    fn match_dynamic(&mut self, path: &[u8], params: &mut route_param::List) -> Option<*const Route> {
         // its cleaned, so now we search the big list of strings
         debug_assert_eq!(self.dynamic_names.len(), self.dynamic_match_names.len());
         debug_assert_eq!(self.dynamic_names.len(), self.dynamic.len());
@@ -377,7 +496,7 @@ impl<'a> Routes<'a> {
         None
     }
 
-    fn match_(&mut self, pathname_: &[u8], params: &mut Param::List) -> Option<&Route> {
+    fn match_(&mut self, pathname_: &[u8], params: &mut route_param::List) -> Option<&Route> {
         let pathname = strings::trim_left(pathname_, b"/");
 
         if pathname.is_empty() {
@@ -1159,7 +1278,7 @@ thread_local! {
 }
 
 thread_local! {
-    static PARAMS_LIST: RefCell<Param::List> = RefCell::new(Param::List::default());
+    static PARAMS_LIST: RefCell<route_param::List> = RefCell::new(route_param::List::default());
 }
 
 pub struct Match<'a> {
@@ -1178,7 +1297,7 @@ pub struct Match<'a> {
     pub basename: &'a [u8],
 
     pub hash: u32,
-    pub params: &'a mut Param::List,
+    pub params: &'a mut route_param::List,
     pub redirect_path: Option<&'a [u8]>,
     pub query_string: &'a [u8],
 }
@@ -1262,7 +1381,7 @@ pub mod pattern {
             name: &[u8],
             /// case-insensitive, must not have a leading slash
             match_name: &[u8],
-            params: &mut Param::List,
+            params: &mut route_param::List,
         ) -> bool {
             let mut offset: RoutePathInt = 0;
             let mut path_ = path;
@@ -1295,7 +1414,7 @@ pub mod pattern {
                         if let Some(i) = path_.iter().position(|&b| b == b'/') {
                             // TODO(port): lifetime — borrows from `name` and `path_`
                             // SAFETY: name borrows route name (DirnameStore-backed), value borrows
-                            // request path; both outlive the Param::List owner. Phase B must thread
+                            // request path; both outlive the route_param::List owner. Phase B must thread
                             // the actual lifetime through Param instead of transmuting to 'static.
                             params.push(unsafe {
                                 Param {
@@ -1312,7 +1431,7 @@ pub mod pattern {
 
                             continue;
                         } else if pattern.is_end(name) {
-                            // SAFETY: borrows route name / request path; outlive Param::List owner
+                            // SAFETY: borrows route name / request path; outlive route_param::List owner
                             // (see lifetime TODO above).
                             params.push(unsafe {
                                 Param {
@@ -1326,7 +1445,7 @@ pub mod pattern {
                                 Pattern::init(match_name, offset).expect("unreachable");
 
                             if matches!(pattern.value, Value::OptionalCatchAll(_)) {
-                                // SAFETY: borrows route name / request path; outlive Param::List owner
+                                // SAFETY: borrows route name / request path; outlive route_param::List owner
                                 // (see lifetime TODO above).
                                 params.push(unsafe {
                                     Param {
@@ -1347,7 +1466,7 @@ pub mod pattern {
                     }
                     Value::CatchAll(dynamic) => {
                         if !path_.is_empty() {
-                            // SAFETY: borrows route name / request path; outlive Param::List owner
+                            // SAFETY: borrows route name / request path; outlive route_param::List owner
                             // (see lifetime TODO above).
                             params.push(unsafe {
                                 Param {
@@ -1363,7 +1482,7 @@ pub mod pattern {
                     Value::OptionalCatchAll(dynamic) => {
                         if ALLOW_OPTIONAL_CATCH_ALL {
                             if !path_.is_empty() {
-                                // SAFETY: borrows route name / request path; outlive Param::List owner
+                                // SAFETY: borrows route name / request path; outlive route_param::List owner
                                 // (see lifetime TODO above).
                                 params.push(unsafe {
                                     Param {
@@ -1780,7 +1899,7 @@ mod tests {
         fn enqueue(
             _: &mut MockRequestContextType,
             _: &mut MockServer,
-            _: &mut Param::List,
+            _: &mut route_param::List,
         ) -> Result<(), bun_core::Error> {
             Ok(())
         }
@@ -1943,7 +2062,7 @@ mod tests {
         ];
 
         fn run(list: &[(&[u8], &[u8], &[Entry])]) -> usize {
-            let mut parameters = Param::List::default();
+            let mut parameters = route_param::List::default();
             let mut failures: usize = 0;
             for (pattern, pathname, entries) in list.iter() {
                 parameters.shrink_retaining_capacity(0);

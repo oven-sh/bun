@@ -12,8 +12,8 @@ use bun_str::strings::CodepointIterator;
 use bun_js_parser::ast as js_ast;
 use bun_js_parser::lexer::identifier as js_identifier;
 use bun_js_parser::lexer_tables as tables;
-// TODO(b0): Indentation arrives from move-in (was bun_js_printer::Options::Indentation → js_parser)
-use crate::Indentation;
+// MOVE-IN: Indentation now lives in this crate (was bun_js_printer::Options::Indentation).
+use crate::{Indentation, IndentationCharacter};
 // TODO(port): arena threading — js_parser is an AST crate; many `allocator.*` calls below
 // should use `&'bump bumpalo::Bump`. For Phase A we keep a `&dyn Allocator`-ish slot and
 // route owned buffers through `Vec`/`Box`.
@@ -1527,11 +1527,10 @@ lexer_impl_header!() {
 
                             self.indent_info.guess.character =
                                 if indent_character == b' ' as i32 {
-                                    Indentation::Character::Space
+                                    IndentationCharacter::Space
                                 } else {
-                                    Indentation::Character::Tab
+                                    IndentationCharacter::Tab
                                 };
-                            // TODO(port): exact field name on `Indentation`
                             self.indent_info.guess.scalar = count;
                             continue;
                         }

@@ -27,6 +27,237 @@ pub static FS_EVENTS_CLOSE_HOOK: core::sync::atomic::AtomicPtr<()> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
 // ──────────────────────────────────────────────────────────────────────────
+// MOVE-IN: crash_handler primitives (CYCLEBREAK §→core, from ptr/safety/collections/sys)
+// StoredTrace + dump_stack_trace + panicking state are pure data + libc; the
+// platform-specific symbolication / SEH bits stay in bun_crash_handler (T>core).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Zig: `std.builtin.StackTrace` — slice of return addresses + cursor.
+#[derive(Clone, Copy)]
+pub struct StackTrace<'a> {
+    pub index: usize,
+    pub instruction_addresses: &'a [usize],
+}
+
+/// Zig: src/crash_handler/crash_handler.zig::StoredTrace — fixed 31-frame buffer.
+#[derive(Clone, Copy)]
+pub struct StoredTrace {
+    pub data: [usize; 31],
+    pub index: usize,
+}
+impl StoredTrace {
+    pub const EMPTY: StoredTrace = StoredTrace { data: [0; 31], index: 0 };
+
+    #[inline]
+    pub fn trace(&self) -> StackTrace<'_> {
+        StackTrace { index: self.index, instruction_addresses: &self.data }
+    }
+
+    /// Capture the current call stack starting at `begin` (or the caller's return addr).
+    pub fn capture(begin: Option<usize>) -> StoredTrace {
+        let mut stored = StoredTrace::EMPTY;
+        // TODO(port): Zig used std.debug.captureStackTrace. Use the C++ helper
+        // (also used by the WTF fallback path) so we don't pull in `backtrace` crate.
+        unsafe extern "C" {
+            fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usize) -> usize;
+        }
+        let n = unsafe {
+            Bun__captureStackTrace(begin.unwrap_or(0), stored.data.as_mut_ptr(), stored.data.len())
+        };
+        stored.index = n;
+        // Trim trailing nulls (matches Zig loop).
+        for (i, &addr) in stored.data[..n].iter().enumerate() {
+            if addr == 0 { stored.index = i; break; }
+        }
+        stored
+    }
+
+    pub fn from(stack_trace: Option<&StackTrace<'_>>) -> StoredTrace {
+        match stack_trace {
+            None => StoredTrace::EMPTY,
+            Some(stack) => {
+                let mut data = [0usize; 31];
+                let items = core::cmp::min(stack.instruction_addresses.len(), 31);
+                data[..items].copy_from_slice(&stack.instruction_addresses[..items]);
+                StoredTrace { data, index: core::cmp::min(items, stack.index) }
+            }
+        }
+    }
+}
+
+/// Zig: `WriteStackTraceLimits`. Aliased as `DumpOptions` for safety/sys callers.
+#[derive(Clone, Debug)]
+pub struct DumpStackTraceOptions {
+    pub frame_count: usize,
+    pub stop_at_jsc_llint: bool,
+    pub skip_stdlib: bool,
+    pub skip_file_patterns: &'static [&'static [u8]],
+    pub skip_function_patterns: &'static [&'static [u8]],
+}
+impl Default for DumpStackTraceOptions {
+    fn default() -> Self {
+        Self {
+            frame_count: usize::MAX,
+            stop_at_jsc_llint: false,
+            skip_stdlib: false,
+            skip_file_patterns: &[],
+            skip_function_patterns: &[],
+        }
+    }
+}
+pub type DumpOptions = DumpStackTraceOptions;
+
+/// Low-tier hook: bun_crash_handler installs the real symbolicating dumper.
+/// Signature: `fn(trace: &StackTrace, limits: &DumpStackTraceOptions)`.
+pub static DUMP_STACK_TRACE_HOOK: core::sync::atomic::AtomicPtr<()> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+/// Zig: crash_handler.dumpStackTrace. Core fallback prints raw addresses via
+/// the WTF C++ helper; full symbolication arrives via DUMP_STACK_TRACE_HOOK.
+pub fn dump_stack_trace(trace: &StackTrace<'_>, limits: DumpStackTraceOptions) {
+    crate::output::flush();
+    let hook = DUMP_STACK_TRACE_HOOK.load(Ordering::Acquire);
+    if !hook.is_null() {
+        // SAFETY: hook is a valid `fn(&StackTrace, &DumpStackTraceOptions)` written by
+        // bun_crash_handler init; never freed.
+        let f: fn(&StackTrace<'_>, &DumpStackTraceOptions) =
+            unsafe { core::mem::transmute(hook) };
+        return f(trace, &limits);
+    }
+    // Fallback: WTF__DumpStackTrace prints raw addresses to stderr.
+    unsafe extern "C" {
+        fn WTF__DumpStackTrace(ptr: *const usize, count: usize);
+    }
+    let n = core::cmp::min(trace.index, limits.frame_count);
+    unsafe { WTF__DumpStackTrace(trace.instruction_addresses.as_ptr(), n) };
+}
+
+pub fn dump_current_stack_trace(first_address: Option<usize>, limits: DumpStackTraceOptions) {
+    let stored = StoredTrace::capture(first_address);
+    dump_stack_trace(&stored.trace(), limits);
+}
+
+// ─── panicking state (from bun_crash_handler) ─────────────────────────────
+// Zig: `var panicking = std.atomic.Value(u8).init(0)`. Owned here so the
+// crash handler crate writes to `bun_core::PANICKING` (forward dep, allowed).
+pub static PANICKING: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
+#[inline]
+pub fn is_panicking() -> bool {
+    PANICKING.load(Ordering::Relaxed) > 0
+}
+
+/// Zig: crash_handler.sleepForeverIfAnotherThreadIsCrashing.
+pub fn sleep_forever_if_another_thread_is_crashing() {
+    if PANICKING.load(Ordering::Acquire) > 0 {
+        // Sleep forever without hammering the CPU. Zig used `bun.Futex.waitForever`;
+        // parking_lot's `park()` is the moral equivalent (never unparked).
+        loop {
+            std::thread::park();
+        }
+    }
+}
+
+// ─── SignalCode (from bun_sys, TYPE_ONLY) ─────────────────────────────────
+// Zig: src/sys/SignalCode.zig — enum(u8) with POSIX numbering. Only the
+// discriminant is needed at this tier (raise_ignoring_panic_handler casts to c_int).
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[allow(clippy::upper_case_acronyms)]
+pub enum SignalCode {
+    SIGHUP = 1, SIGINT = 2, SIGQUIT = 3, SIGILL = 4, SIGTRAP = 5, SIGABRT = 6,
+    SIGBUS = 7, SIGFPE = 8, SIGKILL = 9, SIGUSR1 = 10, SIGSEGV = 11, SIGUSR2 = 12,
+    SIGPIPE = 13, SIGALRM = 14, SIGTERM = 15, SIG16 = 16, SIGCHLD = 17, SIGCONT = 18,
+    SIGSTOP = 19, SIGTSTP = 20, SIGTTIN = 21, SIGTTOU = 22, SIGURG = 23, SIGXCPU = 24,
+    SIGXFSZ = 25, SIGVTALRM = 26, SIGPROF = 27, SIGWINCH = 28, SIGIO = 29, SIGPWR = 30,
+    SIGSYS = 31,
+}
+impl SignalCode {
+    pub const DEFAULT: SignalCode = SignalCode::SIGTERM;
+}
+
+// ─── analytics::features (MOVE_DOWN from bun_analytics) ───────────────────
+// Zig: src/analytics/analytics.zig::Features — bag of `pub var X: usize`.
+// Port as atomic counters so cross-thread `.fetch_add` is sound. Only the
+// counters are tier-0; `builtin_modules` (EnumSet over jsc HardcodedModule)
+// stays in bun_analytics (depends on tier-6).
+pub mod features {
+    use core::sync::atomic::AtomicUsize;
+    macro_rules! feat { ($($name:ident),* $(,)?) => { $(pub static $name: AtomicUsize = AtomicUsize::new(0);)* } }
+    feat! {
+        BUN_STDERR, BUN_STDIN, BUN_STDOUT, WEBSOCKET, ABORT_SIGNAL, BINLINKS, BUNFIG,
+        DEFINE, DOTENV, DEBUGGER, EXTERNAL, EXTRACTED_PACKAGES, FETCH, GIT_DEPENDENCIES,
+        HTML_REWRITER, TCP_SERVER, TLS_SERVER, HTTP_SERVER, HTTPS_SERVER, HTTP_CLIENT_PROXY,
+        JSC, DEV_SERVER, LIFECYCLE_SCRIPTS, LOADERS, LOCKFILE_MIGRATION_FROM_PACKAGE_LOCK,
+        TEXT_LOCKFILE, ISOLATED_BUN_INSTALL, HOISTED_BUN_INSTALL, MACROS, NO_AVX2, NO_AVX,
+        SHELL, SPAWN, STANDALONE_EXECUTABLE, STANDALONE_SHELL, TODO_PANIC, TRANSPILER_CACHE,
+        TSCONFIG, TSCONFIG_PATHS, VIRTUAL_MODULES, WORKERS_SPAWNED, WORKERS_TERMINATED,
+        NAPI_MODULE_REGISTER, EXITED,
+    }
+    /// dotenv crate calls `bun_core::analytics::Features::dotenv_inc()`.
+    #[inline] pub fn dotenv_inc() { DOTENV.fetch_add(1, core::sync::atomic::Ordering::Relaxed); }
+}
+/// Re-export under the `analytics` name so `bun_core::analytics::Features::*` resolves
+/// (per movein-skipped [dotenv] entry).
+pub mod analytics {
+    pub use super::features as Features;
+    pub use super::features;
+}
+
+// ─── mark_binding! (MOVE_DOWN from bun_jsc, for aio/event_loop/http_jsc) ──
+// Zig: jsc.zig::markBinding(@src()) → scoped_log!(JSC, "{fn} ({file}:{line})").
+// Pure logging; no jsc dep. Declares the JSC scope on first use.
+crate::declare_scope!(JSC, hidden);
+#[macro_export]
+macro_rules! mark_binding {
+    () => {
+        $crate::scoped_log!(
+            JSC,
+            "{} ({}:{})",
+            ::core::panic::Location::caller().file(), // TODO(port): fn_name needs #[track_caller] or stringify at call site
+            ::core::file!(),
+            ::core::line!()
+        );
+    };
+    ($fn_name:expr) => {
+        $crate::scoped_log!(JSC, "{} ({}:{})", $fn_name, ::core::file!(), ::core::line!());
+    };
+}
+
+// ─── debug_flags (MOVE_DOWN from bun_cli, for bun_resolver) ───────────────
+// Zig: src/cli/cli.zig::debug_flags — debug-build-only breakpoint matchers.
+pub mod debug_flags {
+    #[cfg(debug_assertions)]
+    pub static mut RESOLVE_BREAKPOINTS: &[&[u8]] = &[];
+    #[cfg(debug_assertions)]
+    pub static mut PRINT_BREAKPOINTS: &[&[u8]] = &[];
+
+    #[inline]
+    pub fn has_resolve_breakpoint(str_: &[u8]) -> bool {
+        #[cfg(debug_assertions)]
+        unsafe {
+            for bp in RESOLVE_BREAKPOINTS {
+                if crate::strings::includes(str_, bp) { return true; }
+            }
+        }
+        false
+    }
+    #[inline]
+    pub fn has_print_breakpoint(pretty: &[u8], text: &[u8]) -> bool {
+        #[cfg(debug_assertions)]
+        unsafe {
+            for bp in PRINT_BREAKPOINTS {
+                if crate::strings::includes(pretty, bp) || crate::strings::includes(text, bp) {
+                    return true;
+                }
+            }
+        }
+        let _ = (pretty, text);
+        false
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Version strings
 // ──────────────────────────────────────────────────────────────────────────
 

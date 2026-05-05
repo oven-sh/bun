@@ -17,9 +17,13 @@ use bun_core::Fd;
 use crate::us_socket_t;
 
 // ─── Forward-declared opaques (cycle-break: were `bun_uws::*`, tier > 0) ───
-// TODO(b0): SocketAddress arrives from move-in (TYPE_ONLY bun_uws::SocketAddress → uws_sys).
 /// Remote socket address as returned by uWS. `ip` borrows uWS-owned memory
-/// valid for the lifetime of the response.
+/// valid for the lifetime of the response/connection that produced it.
+///
+/// CYCLEBREAK(TYPE_ONLY): canonical definition moved down from `bun_uws`
+/// (Zig: `uws.SocketAddress = struct { ip: []const u8, port: i32, is_ipv6: bool }`).
+/// Higher tiers (`bun_uws`, `bun_runtime`) re-export this as
+/// `pub use bun_uws_sys::SocketAddress;`.
 pub struct SocketAddress<'a> {
     pub ip: &'a [u8],
     pub port: i32,

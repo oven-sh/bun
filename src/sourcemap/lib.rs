@@ -32,6 +32,205 @@ pub use vlq::VLQ;
 
 use vlq::{decode as decode_vlq, decode_assume_valid as decode_vlq_assume_valid};
 
+// ── move-in: types pulled down from higher tiers (jsc / standalone_graph) so
+//    this crate has no upward edges. See docs/CYCLEBREAK.md "→ sourcemap". ──
+
+/// `SavedSourceMap` proper (the path-hash → provider table that hangs off the
+/// VirtualMachine) stays in tier-6 `bun_jsc` — its `Value` union names
+/// `BakeSourceProvider` / `DevServerSourceProvider` / `js_printer` and so
+/// cannot live here without a cycle. Only the leaf global state that this
+/// crate's parse path actually touches is moved down.
+#[allow(non_snake_case)]
+pub mod SavedSourceMap {
+    /// Process-global "we hit a file with no / a broken sourcemap" note,
+    /// printed once after an error stack to nudge `--sourcemap`.
+    ///
+    /// Zig: `pub const MissingSourceMapNoteInfo = struct { pub var ... }` — a
+    /// namespace of mutable globals. Ported as a module over atomics + a
+    /// `parking_lot::Mutex` (PORTING.md §Concurrency: never bare `static mut`,
+    /// never `std::sync::Mutex`). Contended only on the error path.
+    pub mod MissingSourceMapNoteInfo {
+        use core::sync::atomic::{AtomicBool, Ordering};
+
+        static SEEN_INVALID: AtomicBool = AtomicBool::new(false);
+        // Zig kept a `PathBuffer` static + a borrowed slice into it; here the
+        // mutex *owns* the bytes so the (storage, view) split disappears.
+        static PATH: parking_lot::Mutex<Option<Box<[u8]>>> = parking_lot::Mutex::new(None);
+
+        #[inline]
+        pub fn set_seen_invalid(v: bool) {
+            SEEN_INVALID.store(v, Ordering::Relaxed);
+        }
+
+        #[inline]
+        pub fn seen_invalid() -> bool {
+            SEEN_INVALID.load(Ordering::Relaxed)
+        }
+
+        /// Record the most-recent path that had no sourcemap (last-wins, like
+        /// the Zig `@memcpy` into the static buffer).
+        pub fn set_path(path: &[u8]) {
+            let mut guard = PATH.lock();
+            match guard.as_mut() {
+                Some(buf) if buf.len() >= path.len() => {
+                    // Reuse existing allocation when it fits — mirrors the
+                    // fixed-buffer behaviour without the MAX_PATH_BYTES cap.
+                    let mut v = core::mem::take(&mut *guard).unwrap().into_vec();
+                    v.clear();
+                    v.extend_from_slice(path);
+                    *guard = Some(v.into_boxed_slice());
+                }
+                _ => *guard = Some(path.to_vec().into_boxed_slice()),
+            }
+        }
+
+        pub fn print() {
+            if SEEN_INVALID.load(Ordering::Relaxed) {
+                return;
+            }
+            if let Some(note) = PATH.lock().as_deref() {
+                bun_core::Output::note(format_args!(
+                    "missing sourcemaps for {}",
+                    ::bstr::BStr::new(note)
+                ));
+                bun_core::Output::note(format_args!(
+                    "consider bundling with '--sourcemap' to get unminified traces"
+                ));
+            }
+        }
+    }
+}
+
+/// Source-map serialization for `bun build --compile` standalone executables.
+/// The bundler writes this blob; the runtime mmaps it and hands a
+/// `SerializedSourceMap::Loaded` to `ParsedSourceMap` for on-demand source
+/// retrieval. Moved down from `bun_standalone_graph` so `ParsedSourceMap` can
+/// name `Loaded` without an upward dep.
+///
+/// Zig nests `Header` / `Loaded` inside the struct; Rust models that namespace
+/// as a module so `crate::SerializedSourceMap::Loaded` resolves as a path.
+#[allow(non_snake_case)]
+pub mod SerializedSourceMap {
+    use bun_str::StringPointer;
+    use core::mem::size_of;
+
+    /// Following the header bytes:
+    /// - `source_files_count` × `StringPointer` — file names
+    /// - `source_files_count` × `StringPointer` — zstd-compressed contents
+    /// - the `InternalSourceMap` blob, `map_bytes_length` bytes
+    /// - all the `StringPointer` payload bytes
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct Header {
+        pub source_files_count: u32,
+        pub map_bytes_length: u32,
+    }
+
+    /// The on-disk view (`bytes` points into the standalone-graph trailer, so
+    /// it lives for the process — modelled as `'static`).
+    #[derive(Clone, Copy)]
+    pub struct SerializedSourceMap {
+        pub bytes: &'static [u8],
+    }
+
+    impl SerializedSourceMap {
+        #[inline]
+        pub fn header(self) -> Header {
+            // Zig: `*align(1) const Header` — read_unaligned because the blob
+            // sits at an arbitrary offset inside the executable.
+            // SAFETY: callers guarantee `bytes.len() >= size_of::<Header>()`.
+            unsafe { core::ptr::read_unaligned(self.bytes.as_ptr().cast::<Header>()) }
+        }
+
+        pub fn mapping_blob(self) -> Option<&'static [u8]> {
+            if self.bytes.len() < size_of::<Header>() {
+                return None;
+            }
+            let head = self.header();
+            let start = size_of::<Header>()
+                + head.source_files_count as usize * size_of::<StringPointer>() * 2;
+            if start > self.bytes.len()
+                || head.map_bytes_length as usize > self.bytes.len() - start
+            {
+                return None;
+            }
+            Some(&self.bytes[start..][..head.map_bytes_length as usize])
+        }
+
+        pub fn source_file_names(self) -> &'static [StringPointer] {
+            let head = self.header();
+            // SAFETY: layout per `Header` doc; `StringPointer` is `repr(C)`
+            // `{u32,u32}` so unaligned reads through the slice are fine on all
+            // targets we ship (x86_64 / aarch64).
+            unsafe {
+                core::slice::from_raw_parts(
+                    self.bytes[size_of::<Header>()..].as_ptr().cast::<StringPointer>(),
+                    head.source_files_count as usize,
+                )
+            }
+        }
+
+        fn compressed_source_files(self) -> &'static [StringPointer] {
+            let head = self.header();
+            // SAFETY: second contiguous `StringPointer` array immediately
+            // follows the first (see `Header` layout doc).
+            unsafe {
+                core::slice::from_raw_parts(
+                    self.bytes[size_of::<Header>()..]
+                        .as_ptr()
+                        .cast::<StringPointer>()
+                        .add(head.source_files_count as usize),
+                    head.source_files_count as usize,
+                )
+            }
+        }
+    }
+
+    /// Once loaded, this map stores additional data for keeping track of
+    /// source code. Held behind `ParsedSourceMap.underlying_provider` as a raw
+    /// pointer (see `ParsedSourceMap::standalone_module_graph_data`).
+    pub struct Loaded {
+        pub map: SerializedSourceMap,
+        /// Only decompress source code once! Once a file is decompressed,
+        /// it is stored here. Decompression failure is recorded as an empty
+        /// `Vec`, which `source_file_contents` treats as "no contents".
+        pub decompressed_files: Box<[Option<Vec<u8>>]>,
+    }
+
+    impl Loaded {
+        pub fn source_file_contents(&mut self, index: usize) -> Option<&[u8]> {
+            if let Some(decompressed) = &self.decompressed_files[index] {
+                return if decompressed.is_empty() {
+                    None
+                } else {
+                    Some(decompressed)
+                };
+            }
+
+            let compressed_codes = self.map.compressed_source_files();
+            let compressed_file = compressed_codes[index].slice(self.map.bytes);
+            let size = bun_zstd::get_decompressed_size(compressed_file);
+
+            let mut bytes = vec![0u8; size];
+            match bun_zstd::decompress(&mut bytes, compressed_file) {
+                bun_zstd::Result::Err(err) => {
+                    bun_core::Output::warn(format_args!(
+                        "Source map decompression error: {}",
+                        ::bstr::BStr::new(err.as_bytes())
+                    ));
+                    self.decompressed_files[index] = Some(Vec::new());
+                    None
+                }
+                bun_zstd::Result::Success(n) => {
+                    bytes.truncate(n);
+                    self.decompressed_files[index] = Some(bytes);
+                    self.decompressed_files[index].as_deref()
+                }
+            }
+        }
+    }
+}
+
 bun_core::declare_scope!(SourceMap, visible);
 
 /// Coordinates in source maps are stored using relative offsets for size
@@ -561,7 +760,6 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                                 err.name(),
                             ));
                             // Disable the "try using --sourcemap=external" hint
-                            // TODO(b0): SavedSourceMap arrives from move-in (jsc → sourcemap)
                             crate::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(
                                 true,
                             );
@@ -592,7 +790,6 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                                     err.name(),
                                 ));
                                 // Disable the "try using --sourcemap=external" hint
-                                // TODO(b0): SavedSourceMap arrives from move-in (jsc → sourcemap)
                                 crate::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(
                                     true,
                                 );
@@ -630,7 +827,6 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                             err.name(),
                         ));
                         // Disable the "try using --sourcemap=external" hint
-                        // TODO(b0): SavedSourceMap arrives from move-in (jsc → sourcemap)
                         crate::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(true);
                         return None;
                     }
@@ -645,7 +841,6 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                 err.name(),
             ));
             // Disable the "try using --sourcemap=external" hint
-            // TODO(b0): SavedSourceMap arrives from move-in (jsc → sourcemap)
             crate::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(true);
             return None;
         }

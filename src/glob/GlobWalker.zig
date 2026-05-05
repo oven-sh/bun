@@ -110,6 +110,26 @@ pub fn statatWindows(fd: bun.FD, path: [:0]const u8) Maybe(bun.Stat) {
     return Syscall.stat(statpath);
 }
 
+/// Windows `lstatat`. Mirrors `statatWindows` but ends in `Syscall.lstat`
+/// instead of `Syscall.stat` so the dirent's own mode is returned (ISLNK
+/// for symlinks). `SyscallAccessor.lstatat` on Windows routes through
+/// `statatWindows` which follows links; for callers that actually need
+/// the no-follow view (`trailing_sep` disambiguation) use this directly.
+pub fn lstatatWindows(fd: bun.FD, path: [:0]const u8) Maybe(bun.Stat) {
+    if (comptime !bun.Environment.isWindows) @compileError("oi don't use this");
+    var buf: bun.PathBuffer = undefined;
+    const dir = switch (Syscall.getFdPath(fd, &buf)) {
+        .err => |e| return .{ .err = e },
+        .result => |s| s,
+    };
+    const parts: []const []const u8 = &.{
+        dir[0..dir.len],
+        path,
+    };
+    const statpath = ResolvePath.joinZBuf(&buf, parts, .auto);
+    return Syscall.lstat(statpath);
+}
+
 pub const SyscallAccessor = struct {
     const count_fds = true;
 
@@ -169,7 +189,7 @@ pub const SyscallAccessor = struct {
 
     /// Like statat but does not follow symlinks.
     pub fn lstatat(handle: Handle, path: [:0]const u8) Maybe(bun.Stat) {
-        if (comptime bun.Environment.isWindows) return statatWindows(handle.value, path);
+        if (comptime bun.Environment.isWindows) return lstatatWindows(handle.value, path);
         return Syscall.lstatat(handle.value, path);
     }
 
@@ -969,16 +989,19 @@ pub fn GlobWalker_(
                         // every symlink as a potential directory, so we
                         // only filter when the dirent is both non-dir and
                         // non-link — regular files, block/char devices,
-                        // fifos, sockets. `statat` followed the link
-                        // already, so when `trailing_sep` is set and the
-                        // statat target isn't a directory we need a
-                        // separate `lstatat` to see the dirent's own mode
-                        // (ISLNK → emit, anything else → filter). Matches
-                        // the absolute-literal fast-path's lstat-success
-                        // arms, which see ISLNK directly because they
-                        // land here only when `open(O_DIRECTORY)` failed.
+                        // fifos, sockets. `statat` follows links, so when
+                        // `trailing_sep` is set and the statat target
+                        // isn't a directory we need a separate `lstatat`
+                        // to see the dirent's own mode (ISLNK → emit,
+                        // anything else → filter). The `!ISLNK` clause
+                        // short-circuits when `stat_result` already came
+                        // from the ENOENT/ELOOP lstatat fallbacks above
+                        // — `statat` itself can never return ISLNK since
+                        // it follows symlinks, so ISLNK is a reliable
+                        // signal that the fallback already produced a
+                        // true-lstat view.
                         const trailing_sep = this.walker.patternComponents.items[idx].trailing_sep;
-                        if (trailing_sep and !bun.S.ISDIR(@intCast(stat_result.mode))) {
+                        if (trailing_sep and !bun.S.ISDIR(@intCast(stat_result.mode)) and !bun.S.ISLNK(@intCast(stat_result.mode))) {
                             const dirent_is_symlink = switch (Accessor.lstatat(fd, pathz)) {
                                 .err => false,
                                 .result => |s| bun.S.ISLNK(@intCast(s.mode)),

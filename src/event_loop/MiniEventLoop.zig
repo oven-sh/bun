@@ -139,12 +139,12 @@ pub fn tickConcurrentWithCount(this: *MiniEventLoop) usize {
     }
 
     this.tasks.ensureUnusedCapacity(count) catch unreachable;
-    var writable = this.tasks.writableSlice(0);
     while (iter.next()) |task| {
-        writable[0] = task;
-        writable = writable[1..];
-        this.tasks.count += 1;
-        if (writable.len == 0) break;
+        // writeItemAssumeCapacity handles the case where the ring buffer's
+        // writable region wraps around. writableSlice(0) alone does not: it
+        // returns only the first contiguous chunk, which can be shorter than
+        // `count` when head > 0 and there are existing tasks in the FIFO.
+        this.tasks.writeItemAssumeCapacity(task);
     }
 
     return this.tasks.count - start_count;

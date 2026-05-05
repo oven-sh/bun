@@ -329,14 +329,24 @@ public:
                 auto scope = DECLARE_THROW_SCOPE(vm);
                 JSC::Structure* structure = globalObject->mockModule.mockObjectStructure.getInitializedOnMainThread(globalObject);
                 JSObject* object = JSC::constructEmptyObject(init.vm, structure);
-                auto orUndefined = [](JSArray* v) -> JSValue { return v ? JSValue(v) : jsUndefined(); };
-                object->putDirectOffset(init.vm, 0, orUndefined(mock->getCalls()));
-                object->putDirectOffset(init.vm, 1, orUndefined(mock->getContexts()));
-                object->putDirectOffset(init.vm, 2, orUndefined(mock->getInstances()));
-                object->putDirectOffset(init.vm, 3, orUndefined(mock->getReturnValues()));
-                object->putDirectOffset(init.vm, 4, orUndefined(mock->getInvocationCallOrder()));
+                for (unsigned i = 0; i < 5; i++)
+                    object->putDirectOffset(init.vm, i, jsUndefined());
                 init.set(object);
+                auto* calls = mock->getCalls();
                 RETURN_IF_EXCEPTION(scope, );
+                object->putDirectOffset(init.vm, 0, calls);
+                auto* contexts = mock->getContexts();
+                RETURN_IF_EXCEPTION(scope, );
+                object->putDirectOffset(init.vm, 1, contexts);
+                auto* instances = mock->getInstances();
+                RETURN_IF_EXCEPTION(scope, );
+                object->putDirectOffset(init.vm, 2, instances);
+                auto* returnValues = mock->getReturnValues();
+                RETURN_IF_EXCEPTION(scope, );
+                object->putDirectOffset(init.vm, 3, returnValues);
+                auto* invocationCallOrder = mock->getInvocationCallOrder();
+                RETURN_IF_EXCEPTION(scope, );
+                object->putDirectOffset(init.vm, 4, invocationCallOrder);
             });
     }
 

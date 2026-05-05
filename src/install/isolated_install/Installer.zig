@@ -609,11 +609,22 @@ pub const Installer = struct {
                                         // `root` is a stable Expr value pointing at
                                         // default_allocator-owned tree nodes, safe to
                                         // use without the lock.
+                                        //
+                                        // Don't pass `manager.log` — that's a plain
+                                        // ArrayList with no mutex, mutated by the
+                                        // main thread from `runTasks` while this
+                                        // worker would be appending parser diagnostics.
+                                        // The `cache.lock` above only guards the cache
+                                        // map, not the shared `Log`. Parse errors are
+                                        // discarded here (fall back to the Walker path)
+                                        // so a throwaway per-task log is fine.
+                                        var tmp_log = bun.logger.Log.init(manager.allocator);
+                                        defer tmp_log.deinit();
                                         const root = blk: {
                                             const cache = &manager.workspace_package_json_cache;
                                             cache.lock.lock();
                                             defer cache.lock.unlock();
-                                            switch (cache.getWithPath(manager.allocator, manager.log, pkg_path, .{})) {
+                                            switch (cache.getWithPath(manager.allocator, &tmp_log, pkg_path, .{})) {
                                                 .entry => |e| break :blk e.root,
                                                 else => break :publishable null,
                                             }
@@ -677,9 +688,42 @@ pub const Installer = struct {
                                         installer.appendGlobalStoreEntryPath(&final, this.entry_id, .final);
                                         FD.cwd().deleteTree(final.slice()) catch {};
                                     } else {
+                                        // An entry that was GVS-eligible on the
+                                        // previous install (npm-resolved, unpatched,
+                                        // untrusted) left `node_modules/.bun/<storepath>`
+                                        // as a symlink / junction into the shared
+                                        // `<cache>/links/` entry. Writing the new
+                                        // project-local tree *through* that link
+                                        // would mutate the shared cache entry under
+                                        // every other consumer on the machine. The
+                                        // `continue :next_step` at the bottom of this
+                                        // override block bypasses the post-switch
+                                        // detachment at lines ~994-1032, so replicate
+                                        // that detachment here before any write.
+                                        var local: bun.Path(.{ .sep = .auto }) = .initTopLevelDir();
+                                        defer local.deinit();
+                                        installer.appendLocalStoreEntryPath(&local, this.entry_id);
+                                        const is_stale_link = if (comptime Environment.isWindows)
+                                            if (sys.getFileAttributes(local.sliceZ())) |a| a.is_reparse_point else false
+                                        else if (sys.lstat(local.sliceZ()).asValue()) |st|
+                                            std.posix.S.ISLNK(@intCast(st.mode))
+                                        else
+                                            false;
+                                        if (is_stale_link) {
+                                            const remove_err: ?sys.Error = if (comptime Environment.isWindows) win: {
+                                                if (sys.rmdir(local.sliceZ()).asErr()) |_| {
+                                                    if (sys.unlink(local.sliceZ()).asErr()) |e| break :win e;
+                                                }
+                                                break :win null;
+                                            } else sys.unlink(local.sliceZ()).asErr();
+                                            if (remove_err) |e| if (e.getErrno() != .NOENT) {
+                                                return .failure(.{ .link_package = e });
+                                            };
+                                        }
+
                                         // Non-global linked entries write straight to
                                         // the project-local final path (no staging).
-                                        // Re-hardlinking would layer atop whatever
+                                        // Re-materializing would layer atop whatever
                                         // was left from the previous install, so
                                         // files the producer has since deleted would
                                         // remain. Wipe the entry dir first.

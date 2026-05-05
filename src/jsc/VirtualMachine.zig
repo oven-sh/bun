@@ -879,6 +879,22 @@ pub fn reload(this: *VirtualMachine, _: ?*HotReloader.Task) void {
     }
     // reloadEntryPoint() stores into pending_internal_promise on every return path.
     _ = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
+
+    // `reloadEntryPoint` returns while the fetch/link/evaluate chain is
+    // still queued as JSC microtasks. When this `reload()` is invoked
+    // from inside `tick()` (the common single-save path), the
+    // `HotReloadTask` handler returns → `tick()`'s else-branch drains.
+    // But out-of-`tick()` callers — `reportExceptionInHotReloadedModule
+    // IfNeeded` (the stranded-flag consumer, see field doc on
+    // `hot_reload_deferred`) and the pre-existing `bun.js.zig` dispatch
+    // after an initial-load rejection — would return to the main loop
+    // with the new module body still unexecuted. `tickPossiblyForever`
+    // then blocks in `loop.tick()` before `this.tick()` ever drains the
+    // microtask queue, so the new module doesn't evaluate until the
+    // next loop wakeup (another save, or `forever_timer` firing in up
+    // to 4 minutes). Drain here to guarantee the reload takes effect
+    // before `reload()` returns, covering every call site.
+    this.eventLoop().drainMicrotasksWithGlobal(this.global, this.jsc_vm) catch {};
 }
 
 pub inline fn nodeFS(this: *VirtualMachine) *Node.fs.NodeFS {

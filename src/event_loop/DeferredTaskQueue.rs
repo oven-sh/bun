@@ -40,33 +40,53 @@ pub struct DeferredTaskQueue {
 
 impl DeferredTaskQueue {
     pub fn post_task(&mut self, ctx: Option<NonNull<c_void>>, task: DeferredRepeatingTask) -> bool {
-        let existing = self.map.get_or_put_value(ctx, task);
-        existing.found_existing
+        #[cfg(any())]
+        {
+            // TODO(b1): bun_collections::ArrayHashMap is currently aliased to
+            // std HashMap which lacks get_or_put_value. Un-gate in B-2 once
+            // the real IndexMap-backed ArrayHashMap lands.
+            let existing = self.map.get_or_put_value(ctx, task);
+            return existing.found_existing;
+        }
+        let _ = (ctx, task);
+        todo!("B-2: DeferredTaskQueue::post_task — needs ArrayHashMap::get_or_put_value")
     }
 
     pub fn unregister_task(&mut self, ctx: Option<NonNull<c_void>>) -> bool {
-        self.map.swap_remove(&ctx)
+        #[cfg(any())]
+        {
+            return self.map.swap_remove(&ctx);
+        }
+        let _ = ctx;
+        todo!("B-2: DeferredTaskQueue::unregister_task — needs ArrayHashMap::swap_remove")
     }
 
     pub fn run(&mut self) {
-        let mut i: usize = 0;
-        let mut last = self.map.len();
-        while i < last {
-            let Some(key) = self.map.keys()[i] else {
-                self.map.swap_remove_at(i);
-                last = self.map.len();
-                continue;
-            };
+        #[cfg(any())]
+        {
+            // TODO(b1): bun_collections::ArrayHashMap (std HashMap stub) lacks
+            // indexable keys()/values()/swap_remove_at. Un-gate in B-2.
+            let mut i: usize = 0;
+            let mut last = self.map.len();
+            while i < last {
+                let Some(key) = self.map.keys()[i] else {
+                    self.map.swap_remove_at(i);
+                    last = self.map.len();
+                    continue;
+                };
 
-            // PORT NOTE: reshaped for borrowck — copy fn ptr out before calling
-            let task = self.map.values()[i];
-            if !task(key.as_ptr()) {
-                self.map.swap_remove_at(i);
-                last = self.map.len();
-            } else {
-                i += 1;
+                // PORT NOTE: reshaped for borrowck — copy fn ptr out before calling
+                let task = self.map.values()[i];
+                if !task(key.as_ptr()) {
+                    self.map.swap_remove_at(i);
+                    last = self.map.len();
+                } else {
+                    i += 1;
+                }
             }
+            return;
         }
+        todo!("B-2: DeferredTaskQueue::run — needs ArrayHashMap indexable iteration")
     }
 }
 

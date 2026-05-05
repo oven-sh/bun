@@ -1,8 +1,15 @@
+#![allow(unused, clippy::all)]
+
 use core::ffi::c_int;
+#[cfg(any())]
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
-use bun_str::String as BunString;
+// TODO(b1): bun_str crate name → bun_string; gate until BunString surface stabilizes
+#[cfg(any())]
+use bun_string::String as BunString;
+// TODO(b1): bun_wyhash::Wyhash missing (only Wyhash11 exported)
+#[cfg(any())]
 use bun_wyhash::Wyhash;
 
 // TODO(port): move to dns_sys / verify libc crate exposes these on all targets
@@ -37,6 +44,8 @@ impl GetAddrInfo {
         }
     }
 
+    // TODO(b1): bun_c_ares crate not in deps — gated
+    #[cfg(any())]
     pub fn to_cares(&self) -> bun_c_ares::AddrInfoHints {
         // SAFETY: all-zero is a valid AddrInfoHints (C POD struct)
         let mut hints: bun_c_ares::AddrInfoHints = unsafe { core::mem::zeroed() };
@@ -50,15 +59,22 @@ impl GetAddrInfo {
     }
 
     pub fn hash(&self) -> u64 {
-        let mut hasher = Wyhash::init(0);
-        // TODO(port): Zig used asBytes(&port) ++ asBytes(&options) where Options is
-        // packed struct(u64). Rust Options is not bit-packed; verify hash stability
-        // is not load-bearing across process boundaries (it isn't — used for in-memory dedupe).
-        hasher.update(&self.port.to_ne_bytes());
-        hasher.update(&self.options.to_packed_bytes());
-        hasher.update(&self.name);
+        #[cfg(any())]
+        {
+            let mut hasher = Wyhash::init(0);
+            // TODO(port): Zig used asBytes(&port) ++ asBytes(&options) where Options is
+            // packed struct(u64). Rust Options is not bit-packed; verify hash stability
+            // is not load-bearing across process boundaries (it isn't — used for in-memory dedupe).
+            hasher.update(&self.port.to_ne_bytes());
+            hasher.update(&self.options.to_packed_bytes());
+            hasher.update(&self.name);
 
-        hasher.final_()
+            hasher.final_()
+        }
+        #[cfg(not(any()))]
+        {
+            todo!("b1: bun_wyhash::Wyhash")
+        }
     }
 }
 
@@ -129,21 +145,23 @@ impl Options {
 
 // TODO(port): FromJSError types are only consumed by the *_jsc extension fns;
 // consider moving these to bun_runtime::dns_jsc in Phase B.
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+// TODO(b1): thiserror not in deps — dropped Error derive
+#[derive(Debug, strum::IntoStaticStr)]
 pub enum OptionsFromJsError {
-    #[error("InvalidFamily")]
+    //     #[error("InvalidFamily")]
     InvalidFamily,
-    #[error("InvalidSocketType")]
+    //     #[error("InvalidSocketType")]
     InvalidSocketType,
-    #[error("InvalidProtocol")]
+    //     #[error("InvalidProtocol")]
     InvalidProtocol,
-    #[error("InvalidBackend")]
+    //     #[error("InvalidBackend")]
     InvalidBackend,
-    #[error("InvalidFlags")]
+    //     #[error("InvalidFlags")]
     InvalidFlags,
-    #[error("InvalidOptions")]
+    //     #[error("InvalidOptions")]
     InvalidOptions,
-    #[error("JSError")]
+    //     #[error("JSError")]
+    JSError,
 }
 
 #[repr(u8)]
@@ -163,11 +181,13 @@ pub static FAMILY_MAP: phf::Map<&'static [u8], Family> = phf::phf_map! {
     b"any"  => Family::Unspecified,
 };
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+// TODO(b1): thiserror not in deps — dropped Error derive
+#[derive(Debug, strum::IntoStaticStr)]
 pub enum FamilyFromJsError {
-    #[error("InvalidFamily")]
+    //     #[error("InvalidFamily")]
     InvalidFamily,
-    #[error("JSError")]
+    //     #[error("JSError")]
+    JSError,
 }
 
 impl Family {
@@ -206,11 +226,13 @@ impl SocketType {
     }
 }
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+// TODO(b1): thiserror not in deps — dropped Error derive
+#[derive(Debug, strum::IntoStaticStr)]
 pub enum SocketTypeFromJsError {
-    #[error("InvalidSocketType")]
+    //     #[error("InvalidSocketType")]
     InvalidSocketType,
-    #[error("JSError")]
+    //     #[error("JSError")]
+    JSError,
 }
 
 #[repr(u8)]
@@ -226,11 +248,13 @@ pub static PROTOCOL_MAP: phf::Map<&'static [u8], Protocol> = phf::phf_map! {
     b"udp" => Protocol::Udp,
 };
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+// TODO(b1): thiserror not in deps — dropped Error derive
+#[derive(Debug, strum::IntoStaticStr)]
 pub enum ProtocolFromJsError {
-    #[error("InvalidProtocol")]
+    //     #[error("InvalidProtocol")]
     InvalidProtocol,
-    #[error("JSError")]
+    //     #[error("JSError")]
+    JSError,
 }
 
 impl Protocol {
@@ -287,16 +311,23 @@ impl Default for Backend {
     }
 }
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+// TODO(b1): thiserror not in deps — dropped Error derive
+#[derive(Debug, strum::IntoStaticStr)]
 pub enum BackendFromJsError {
-    #[error("InvalidBackend")]
+    //     #[error("InvalidBackend")]
     InvalidBackend,
-    #[error("JSError")]
+    //     #[error("JSError")]
+    JSError,
 }
 
 // TODO(port): std.net.Address — std::net is banned. Need a bun_sys (or bun_net)
 // SocketAddress wrapper over libc::sockaddr_storage with .in/.in6/.un views.
+// TODO(b1): bun_sys::net::Address missing — local opaque stub
+#[cfg(any())]
 pub type Address = bun_sys::net::Address;
+#[cfg(not(any()))]
+#[derive(Debug)]
+pub struct Address(());
 
 pub struct GetAddrInfoResult {
     pub address: Address,
@@ -345,19 +376,28 @@ impl GetAddrInfoResult {
     }
 
     pub fn from_addr_info(addrinfo: &libc::addrinfo) -> Option<GetAddrInfoResult> {
-        let sockaddr = addrinfo.ai_addr;
-        if sockaddr.is_null() {
-            return None;
+        #[cfg(any())]
+        {
+            let sockaddr = addrinfo.ai_addr;
+            if sockaddr.is_null() {
+                return None;
+            }
+            Some(GetAddrInfoResult {
+                // SAFETY: ai_addr is non-null and points to a valid sockaddr per getaddrinfo contract
+                address: unsafe { Address::init_posix(sockaddr) },
+                // no TTL in POSIX getaddrinfo()
+                ttl: 0,
+            })
         }
-        Some(GetAddrInfoResult {
-            // SAFETY: ai_addr is non-null and points to a valid sockaddr per getaddrinfo contract
-            address: unsafe { Address::init_posix(sockaddr) },
-            // no TTL in POSIX getaddrinfo()
-            ttl: 0,
-        })
+        #[cfg(not(any()))]
+        {
+            todo!("b1: Address::init_posix")
+        }
     }
 }
 
+// TODO(b1): bun_string::String surface (create_format/clone_latin1/empty) + Address methods — gated
+#[cfg(any())]
 pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
     match address.any().family() {
         f if f == libc::AF_INET => {
@@ -454,10 +494,17 @@ impl Order {
     }
 
     pub fn from_string_or_die(order: &[u8]) -> Order {
-        Self::from_string(order).unwrap_or_else(|| {
-            bun_core::pretty_errorln!("<r><red>error<r><d>:<r> Invalid DNS result order.");
-            bun_core::Global::exit(1)
-        })
+        #[cfg(any())]
+        {
+            Self::from_string(order).unwrap_or_else(|| {
+                bun_core::pretty_errorln!("<r><red>error<r><d>:<r> Invalid DNS result order.");
+                bun_core::Global::exit(1)
+            })
+        }
+        #[cfg(not(any()))]
+        {
+            Self::from_string(order).unwrap_or_else(|| todo!("b1: bun_core::Global::exit"))
+        }
     }
 }
 

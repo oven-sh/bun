@@ -1,6 +1,6 @@
 use core::cell::RefCell;
 
-use bun_str::strings;
+use bun_string::strings;
 use bun_url::PercentEncoding;
 
 // TODO(port): lifetime — every `&'static [u8]` field below actually borrows from
@@ -62,6 +62,10 @@ thread_local! {
 }
 
 pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Error> {
+    // TODO(b1): body gated — PercentEncoding::decode_fault_tolerant signature
+    // mismatch (W: bun_io::Write bound + arg arity) vs Phase-A draft. Un-gate in B-2.
+    #[cfg(any())]
+    {
     // TODO(port): narrow error set
     let mut decoded_pathname: &[u8] = possibly_encoded_pathname_;
     let mut needs_redirect = false;
@@ -217,6 +221,9 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
             needs_redirect,
         }
     })
+    } // end #[cfg(any())]
+    let _ = possibly_encoded_pathname_;
+    todo!("b1-stub: URLPath::parse")
 }
 
 // ──────────────────────────────────────────────────────────────────────────

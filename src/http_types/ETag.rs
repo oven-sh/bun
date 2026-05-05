@@ -1,4 +1,4 @@
-use bun_str::strings;
+use bun_string::strings;
 
 // PORT NOTE: Zig anonymous return struct `{ tag: []const u8, is_weak: bool }`.
 // Borrows from the input slice; not a persistent heap struct.
@@ -9,6 +9,9 @@ struct Parsed<'a> {
 
 /// Parse a single entity tag from a string, returns the tag without quotes and whether it's weak
 fn parse(tag_str: &[u8]) -> Parsed<'_> {
+    // TODO(b1): bun_string::strings missing trim/trim_left — body gated.
+    #[cfg(any())]
+    {
     let mut str = strings::trim(tag_str, b" \t");
 
     // Check for weak indicator
@@ -25,6 +28,9 @@ fn parse(tag_str: &[u8]) -> Parsed<'_> {
     }
 
     Parsed { tag: str, is_weak }
+    }
+    let _ = tag_str;
+    todo!("b1-stub")
 }
 
 /// Perform weak comparison between two entity tags according to RFC 9110 Section 8.8.3.2
@@ -35,7 +41,10 @@ fn weak_match(tag1: &[u8], is_weak1: bool, tag2: &[u8], is_weak2: bool) -> bool 
     tag1 == tag2
 }
 
-pub fn append_to_headers(bytes: &[u8], headers: &mut crate::Headers) -> Result<(), bun_core::Error> {
+pub fn append_to_headers(bytes: &[u8], headers: &mut Headers) -> Result<(), bun_core::Error> {
+    // TODO(b1): Headers::append gated (MultiArrayList stub has no methods) — body gated.
+    #[cfg(any())]
+    {
     // TODO(port): narrow error set
     // TODO(port): std.hash.XxHash64 — pick xxhash crate (e.g. xxhash-rust) or bun_core wrapper in Phase B
     let hash: u64 = xxhash64(0, bytes);
@@ -50,6 +59,9 @@ pub fn append_to_headers(bytes: &[u8], headers: &mut crate::Headers) -> Result<(
     let etag_str = &etag_buf[..len];
     headers.append(b"etag", etag_str);
     Ok(())
+    }
+    let _ = (bytes, headers);
+    todo!("b1-stub")
 }
 
 // TODO(port): replace with real XxHash64 impl in Phase B (std.hash.XxHash64.hash(0, bytes))
@@ -58,11 +70,14 @@ fn xxhash64(_seed: u64, _bytes: &[u8]) -> u64 {
 }
 
 pub fn if_none_match(
-    /// "ETag" header
+    // "ETag" header
     etag: &[u8],
-    /// "If-None-Match" header
+    // "If-None-Match" header
     if_none_match: &[u8],
 ) -> bool {
+    // TODO(b1): bun_string::strings missing trim — body gated.
+    #[cfg(any())]
+    {
     let our_parsed = parse(etag);
 
     // Handle "*" case
@@ -79,6 +94,9 @@ pub fn if_none_match(
     }
 
     false // Condition is true, continue with normal processing
+    }
+    let _ = (etag, if_none_match);
+    todo!("b1-stub")
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -112,7 +130,8 @@ pub struct HeaderEntry {
 
 pub type HeaderEntryList = bun_collections::MultiArrayList<HeaderEntry>;
 
-#[derive(Default)]
+// TODO(b1): bun_collections::MultiArrayList stub lacks Default — derive gated.
+#[cfg_attr(any(), derive(Default))]
 pub struct Headers {
     pub entries: HeaderEntryList,
     pub buf: Vec<u8>,
@@ -120,6 +139,9 @@ pub struct Headers {
     // global mimalloc, field dropped (PORTING.md §allocators).
 }
 
+// TODO(b1): bun_collections::MultiArrayList stub has no methods (memory_cost/clone/
+// slice/append) and eql_case_insensitive_ascii arity differs — impl gated until B-2.
+#[cfg(any())]
 impl Headers {
     pub fn memory_cost(&self) -> usize {
         self.buf.len() + self.entries.memory_cost()
@@ -200,7 +222,7 @@ impl Headers {
 // ═══════════════════════════════════════════════════════════════════════
 
 pub mod wtf {
-    extern "C" {
+    unsafe extern "C" {
         // SAFETY: implemented in C++ (bindings); `buffer` must point to ≥32 bytes.
         fn Bun__writeHTTPDate(buffer: *mut u8, length: usize, timestamp_ms: u64) -> core::ffi::c_int;
     }

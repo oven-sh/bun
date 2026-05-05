@@ -17,7 +17,8 @@ enum-map.workspace = true
 enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
-bun_analytics.workspace = true
+# TODO(b1): bun_analytics gated out — does not compile yet (E0658 macro_metavar_expr, unresolved imports).
+# bun_analytics.workspace = true
 bun_base64.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true

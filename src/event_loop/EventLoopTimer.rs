@@ -2,8 +2,28 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
-use bun_core::Timespec as timespec; // TODO(port): confirm crate for `bun.timespec`
-use bun_io::heap::IntrusiveField;
+// TODO(b1): bun_core::Timespec missing from lower tier — local stub until B-2.
+#[derive(Copy, Clone, Default, Eq, PartialEq)]
+pub struct Timespec {
+    pub sec: i64,
+    pub nsec: i64,
+}
+impl Timespec {
+    pub const EPOCH: Self = Self { sec: 0, nsec: 0 };
+    pub fn ns(&self) -> u64 {
+        todo!("B-2: Timespec::ns")
+    }
+}
+use Timespec as timespec;
+
+// TODO(b1): bun_io::heap::IntrusiveField missing from lower tier (only
+// IntrusiveHeap is exposed) — local stub until B-2.
+pub struct IntrusiveField<T>(core::marker::PhantomData<T>);
+impl<T> Default for IntrusiveField<T> {
+    fn default() -> Self {
+        Self(core::marker::PhantomData)
+    }
+}
 
 const NS_PER_MS: i64 = 1_000_000;
 

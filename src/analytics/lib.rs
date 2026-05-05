@@ -4,10 +4,17 @@ use std::sync::Once;
 
 use enumset::EnumSet;
 
+// TODO(b1): bun_core::env_var is gated out in the lower-tier crate.
+#[cfg(any())]
 use bun_core::env_var;
+// TODO(b1): bun_semver crate not yet wired as a dep.
+#[cfg(any())]
 use bun_semver as semver;
+// TODO(b1): bun_str::slice_to_nul missing (crate not linked).
+#[cfg(any())]
 use bun_str::slice_to_nul;
 
+#[allow(unused_imports)]
 use crate::schema::analytics;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -59,21 +66,29 @@ pub fn is_enabled() -> bool {
         TriState::Yes => true,
         TriState::No => false,
         TriState::Unknown => {
-            let detected = 'detect: {
-                if env_var::DO_NOT_TRACK.get() {
-                    break 'detect TriState::No;
-                }
-                if env_var::HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET
-                    .get()
-                    .is_some()
-                {
-                    break 'detect TriState::No;
-                }
-                TriState::Yes
-            };
-            set_enabled(detected);
-            debug_assert!(matches!(enabled(), TriState::Yes | TriState::No));
-            enabled() == TriState::Yes
+            #[cfg(any())]
+            {
+                let detected = 'detect: {
+                    if env_var::DO_NOT_TRACK.get() {
+                        break 'detect TriState::No;
+                    }
+                    if env_var::HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET
+                        .get()
+                        .is_some()
+                    {
+                        break 'detect TriState::No;
+                    }
+                    TriState::Yes
+                };
+                set_enabled(detected);
+                debug_assert!(matches!(enabled(), TriState::Yes | TriState::No));
+                enabled() == TriState::Yes
+            }
+            #[cfg(not(any()))]
+            {
+                // TODO(b1): env_var gated out
+                todo!("is_enabled: env_var detection")
+            }
         }
     }
 }
@@ -89,6 +104,7 @@ pub fn is_enabled() -> bool {
 /// the feature list is declared once via `define_features!` and that macro
 /// generates the statics, `PACKED_FEATURES_LIST`, `PackedFeatures`,
 /// `packed_features()`, and the `Display` body.
+#[cfg(any())] // TODO(b1): gated — nightly macro_metavar_expr + bun_options_types dep missing
 pub mod features {
     use super::*;
 
@@ -127,7 +143,9 @@ pub mod features {
                 #[repr(transparent)]
                 #[derive(Default, Copy, Clone, PartialEq, Eq)]
                 pub struct PackedFeatures: u64 {
-                    $( const $ident = 1 << ${index()}; )*
+                    // TODO(b1): `${index()}` requires nightly macro_metavar_expr;
+                    // module is cfg-gated so this body is inert. Restore in B-2.
+                    $( const $ident = 0; )*
                 }
             }
             // TODO(port): `${index()}` requires `#![feature(macro_metavar_expr)]`
@@ -286,6 +304,21 @@ pub mod features {
     // stable, split the macro arm or use a proc-macro in Phase B.
 }
 
+// TODO(b1): stub surface for the gated `features` module.
+#[cfg(not(any()))]
+pub mod features {
+    #[derive(Default, Copy, Clone, PartialEq, Eq)]
+    pub struct PackedFeatures(pub u64);
+    pub const PACKED_FEATURES_LIST: &[&str] = &[];
+    pub fn packed_features() -> PackedFeatures {
+        todo!()
+    }
+    pub struct Formatter;
+    pub fn formatter() -> Formatter {
+        todo!()
+    }
+}
+
 // Re-exports to mirror Zig's `Features.packedFeatures()` etc. at module scope.
 pub use features::{packed_features, Formatter as FeaturesFormatter, PackedFeatures, PACKED_FEATURES_LIST};
 
@@ -322,14 +355,20 @@ pub enum EventName {
 // Zig: `var random: std.rand.DefaultPrng = undefined;`
 // TODO(port): unused in this file; keep a placeholder for parity.
 // PERF(port): Zig left this uninitialized; Rust requires init.
+// TODO(b1): bun_core::rand::DefaultPrng missing
+#[cfg(any())]
 #[allow(dead_code)]
 static RANDOM: parking_lot::Mutex<Option<bun_core::rand::DefaultPrng>> =
     parking_lot::const_mutex(None);
 
-#[cfg(target_arch = "aarch64")]
-const PLATFORM_ARCH: analytics::Architecture = analytics::Architecture::arm;
-#[cfg(not(target_arch = "aarch64"))]
-const PLATFORM_ARCH: analytics::Architecture = analytics::Architecture::x64;
+// TODO(b1): analytics::Architecture variants need schema regen
+#[cfg(any())]
+const PLATFORM_ARCH: analytics::Architecture = {
+    #[cfg(target_arch = "aarch64")]
+    { analytics::Architecture::arm }
+    #[cfg(not(target_arch = "aarch64"))]
+    { analytics::Architecture::x64 }
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 // GenerateHeader
@@ -338,6 +377,7 @@ const PLATFORM_ARCH: analytics::Architecture = analytics::Architecture::x64;
 // TODO: move this code somewhere more appropriate, and remove it from "analytics"
 // The following code is not currently even used for analytics, just feature-detection
 // in order to determine if certain APIs are usable.
+#[cfg(any())] // TODO(b1): gated — bun_sys::linux, bun_semver, bun_str, schema::analytics deps missing
 pub mod generate_header {
     use super::*;
 
@@ -568,6 +608,25 @@ pub mod generate_header {
                 version: unsafe { slice_to_nul(&FREEBSD_OS_NAME.release) },
                 arch: PLATFORM_ARCH,
             }
+        }
+    }
+}
+
+// TODO(b1): stub surface for the gated `generate_header` module.
+#[cfg(not(any()))]
+pub mod generate_header {
+    pub mod generate_platform {
+        pub type Platform = crate::schema::analytics::Platform;
+        pub fn for_os() -> Platform {
+            todo!()
+        }
+        #[unsafe(no_mangle)]
+        pub extern "C" fn Bun__doesMacOSVersionSupportSendRecvMsgX() -> i32 {
+            todo!()
+        }
+        #[unsafe(no_mangle)]
+        pub extern "C" fn Bun__isEpollPwait2SupportedOnLinuxKernel() -> i32 {
+            todo!()
         }
     }
 }

@@ -278,6 +278,28 @@ const _: () = assert!(
 
 // TODO(port): UnboundedQueue's second param `.next` is the intrusive link field name.
 // Rust side will need an intrusive-link trait or `offset_of!(ConcurrentTask, next)`.
+//
+// SAFETY: all four accessors route through the same `next: PackedNextPtr` field;
+// the atomic variants delegate to `PackedNextPtr::atomic_*` which use
+// `AtomicUsize` over the repr(transparent) backing word.
+unsafe impl bun_threading::unbounded_queue::Node for ConcurrentTask {
+    unsafe fn get_next(item: *mut Self) -> *mut Self {
+        unsafe { (*item).next.get_ptr().unwrap_or(core::ptr::null_mut()) }
+    }
+    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
+        unsafe { (*item).next.set_ptr(if ptr.is_null() { None } else { Some(ptr) }) };
+    }
+    unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
+        unsafe { (*item).next.atomic_load_ptr(ordering).unwrap_or(core::ptr::null_mut()) }
+    }
+    unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering) {
+        unsafe {
+            (*item)
+                .next
+                .atomic_store_ptr(if ptr.is_null() { None } else { Some(ptr) }, ordering)
+        };
+    }
+}
 pub type Queue = UnboundedQueue<ConcurrentTask>;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -321,7 +343,15 @@ impl ConcurrentTask {
     // callback. ManagedTask::New(T, callback).init(ptr) likely becomes ManagedTask::new::<T>.
     pub fn from_callback<T>(ptr: *mut T, callback: fn(*mut T)) -> *mut ConcurrentTask {
         bun_core::mark_binding!();
-        Self::create(ManagedTask::new::<T>(callback).init(ptr))
+        #[cfg(any())]
+        {
+            // TODO(b1): ManagedTask::New(T, cb).init(ptr) shape changed in the
+            // Rust port (see ManagedTask::new<T>(ctx, callback) -> Task). Phase B
+            // must rewrite this call site once the JsResult callback ABI settles.
+            return Self::create(ManagedTask::new::<T>(callback).init(ptr));
+        }
+        let _ = (ptr, callback);
+        todo!("B-2: ConcurrentTask::from_callback — ManagedTask::new signature mismatch")
     }
 
     pub fn from<T>(&mut self, of: T, auto_deinit: AutoDeinit) -> &mut ConcurrentTask {

@@ -1,6 +1,7 @@
 use core::ffi::c_void;
+use core::ptr::NonNull;
 
-use crate::DeferredTaskQueue;
+use crate::DeferredTaskQueue::DeferredTaskQueue;
 
 /// Zig file-level struct: `src/event_loop/AutoFlusher.zig`
 #[derive(Default)]
@@ -47,7 +48,7 @@ pub fn unregister_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
     deferred: &mut DeferredTaskQueue,
 ) {
     debug_assert!(this.auto_flusher().registered);
-    debug_assert!(deferred.unregister_task(this as *mut T as *mut c_void));
+    debug_assert!(deferred.unregister_task(NonNull::new(this as *mut T as *mut c_void)));
     this.auto_flusher().registered = false;
 }
 
@@ -58,7 +59,7 @@ pub fn register_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
     debug_assert!(!this.auto_flusher().registered);
     this.auto_flusher().registered = true;
     debug_assert!(!deferred.post_task(
-        this as *mut T as *mut c_void,
+        NonNull::new(this as *mut T as *mut c_void),
         // SAFETY: Zig `@ptrCast(&Type.onAutoFlush)` — erases the typed fn pointer
         // to the DeferredTaskQueue callback ABI. Layout is identical (single
         // pointer arg, bool return).

@@ -1,3 +1,36 @@
+#![allow(unused, dead_code, non_snake_case, non_upper_case_globals)]
+// ──────────────────────────────────────────────────────────────────────────
+// Phase B-1 gate-and-stub: the Phase-A draft body does not yet compile
+// (depends on bun_logger::{E,Expr,ExprData}, bun_schema, bun_dot_env,
+// bun_str, bun_install_types, bumpalo, thiserror, adt_const_params).
+// Preserve the draft verbatim inside a `#[cfg(any())]` module and expose a
+// minimal stub surface so dependents type-check. Un-gating happens in B-2.
+// ──────────────────────────────────────────────────────────────────────────
+
+// TODO(b1): bun_dot_env::Loader missing
+// TODO(b1): bun_logger::{E,Expr,ExprData,e::object::Rope} missing
+// TODO(b1): bun_schema::api::{BunInstall,NpmRegistry,NpmRegistryMap} missing
+// TODO(b1): bun_str::{strings,ZStr} missing (crate is bun_string)
+// TODO(b1): bun_install_types::NodeLinker missing
+
+pub struct Parser<'a>(core::marker::PhantomData<&'a ()>);
+pub struct Options;
+pub struct ToStringFormatter<'a>(core::marker::PhantomData<&'a ()>);
+pub enum IniOption<T> { Some(T), None }
+pub struct ConfigIterator<'a>(core::marker::PhantomData<&'a ()>);
+pub struct ConfigItem;
+pub enum ConfigOpt { Stub }
+pub struct ScopeIterator<'a>(core::marker::PhantomData<&'a ()>);
+#[derive(Debug)]
+pub enum ScopeError { NoValue }
+pub struct ScopeItem;
+
+pub fn load_npmrc_config() { todo!("b1 stub: load_npmrc_config") }
+pub fn load_npmrc() { todo!("b1 stub: load_npmrc") }
+
+#[cfg(any())]
+mod draft {
+
 use core::fmt;
 use core::marker::ConstParamTy;
 use std::io::Write as _;
@@ -1740,6 +1773,8 @@ fn handle_auth(
     v.password = Box::<[u8]>::from(password);
     Ok(())
 }
+
+} // mod draft
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -2,6 +2,78 @@
 //!
 //! Port of `src/patch/patch.zig`.
 
+#![allow(unused, dead_code, non_snake_case)]
+
+// ──────────────────────────────────────────────────────────────────────────
+// B-1 stub surface — Phase-A draft body is gated below until lower-tier
+// crates (bun_sys, bun_paths, bun_str, bun_spawn, bun_event_loop, bun_output,
+// bun_collections::IntegerBitSet, bun_core::env_var) expose the symbols it
+// needs. Un-gating happens in B-2.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Opaque stub. Real definition lives in the gated `phase_a_draft` module.
+pub struct PatchFile<'a>(core::marker::PhantomData<&'a [u8]>);
+/// Opaque stub.
+pub struct PatchFilePart<'a>(core::marker::PhantomData<&'a [u8]>);
+/// Opaque stub.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct ParseErr;
+
+pub fn parse_patch_file(_file: &[u8]) -> Result<PatchFile<'_>, ParseErr> {
+    todo!("b1-stub: parse_patch_file")
+}
+
+// TODO(b1): bun_event_loop::AnyEventLoop missing (crate gated out — pulls broken bun_aio).
+// TODO(b1): bun_spawn::sync::{Options,Result,Stdio} missing.
+pub fn spawn_opts(
+    _old_folder: &[u8],
+    _new_folder: &[u8],
+    _cwd: &[u8],
+    _git: &[u8],
+    _loop: *mut core::ffi::c_void,
+) -> () {
+    todo!("b1-stub: spawn_opts")
+}
+
+pub fn diff_post_process(
+    _result: *mut core::ffi::c_void,
+    _old_folder: &[u8],
+    _new_folder: &[u8],
+) -> Result<(), ()> {
+    todo!("b1-stub: diff_post_process")
+}
+
+pub fn git_diff_preprocess_paths<const SENTINEL: bool>(
+    _old_folder: &[u8],
+    _new_folder: &[u8],
+    _is_windows: bool,
+) -> [&'static [u8]; 2] {
+    todo!("b1-stub: git_diff_preprocess_paths")
+}
+
+pub fn git_diff_internal(
+    _old_folder: &[u8],
+    _new_folder: &[u8],
+) -> Result<(), ()> {
+    todo!("b1-stub: git_diff_internal")
+}
+
+pub fn json_fmt<'a>(_pf: &'a PatchFile<'a>) -> impl core::fmt::Display + 'a {
+    struct Stub;
+    impl core::fmt::Display for Stub {
+        fn fmt(&self, _: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            todo!("b1-stub: json_fmt")
+        }
+    }
+    Stub
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Phase-A draft (preserved verbatim, gated off until B-2).
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(any())]
+mod phase_a_draft {
+
 use core::mem;
 
 use bun_collections::IntegerBitSet;
@@ -1800,3 +1872,5 @@ fn should_skip_line(line: &[u8]) -> bool {
 //   todos:      10
 //   notes:      All `&'a [u8]` borrow input patch text (Phase-A lifetime exception); git_diff_internal stubbed (std::process banned); spawn_opts/NodeFs/bun_spawn shapes guessed; git_diff_postprocess iterator reshaped for borrowck.
 // ──────────────────────────────────────────────────────────────────────────
+
+} // mod phase_a_draft

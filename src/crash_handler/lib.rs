@@ -18,6 +18,61 @@
 //! A lot of this handler is based on the Zig Standard Library implementation
 //! for std.debug.panicImpl and their code for gathering backtraces.
 
+// ──────────────────────────────────────────────────────────────────────────
+// B-1 GATE-AND-STUB
+// The Phase-A draft below is gated behind `#[cfg(any())]` until lower-tier
+// crates expose the required surface. Un-gating happens in B-2.
+//   TODO(b1): bun_analytics — crate does not compile (removed from Cargo.toml)
+//   TODO(b1): bun_debug::{SelfInfo, SourceLocation, StackTrace, TtyConfig} missing
+//   TODO(b1): bun_str / bun_str::ZStr / bun_str::strings missing
+//   TODO(b1): bun_core::{env_var, Environment, Global, Output, fmt, Error} missing
+//   TODO(b1): bun_sys::posix::Sigaction missing
+//   TODO(b1): bun_threading::{Mutex, current_thread_id} missing
+// ──────────────────────────────────────────────────────────────────────────
+#![allow(unused, nonstandard_style)]
+
+#[cfg(any())]
+#[path = "CPUFeatures.rs"]
+pub mod cpu_features;
+
+#[cfg(any())]
+#[path = "handle_oom.rs"]
+pub mod handle_oom;
+
+// ── minimal stub surface ─────────────────────────────────────────────────
+pub type StackTrace = ();
+pub type StoredTrace = ();
+pub type CrashReason = ();
+pub type Action = ();
+pub type WriteStackTraceLimits = ();
+
+pub fn init() { todo!("bun_crash_handler::init (gated B-1)") }
+pub fn install_hooks() { todo!("bun_crash_handler::install_hooks (gated B-1)") }
+pub fn reset_segfault_handler() { todo!("bun_crash_handler::reset_segfault_handler (gated B-1)") }
+pub fn reset_on_posix() { todo!("bun_crash_handler::reset_on_posix (gated B-1)") }
+pub fn is_panicking() -> bool { false }
+pub fn suppress_reporting() { todo!("bun_crash_handler::suppress_reporting (gated B-1)") }
+pub fn suppress_core_dumps_if_necessary() { todo!("bun_crash_handler::suppress_core_dumps_if_necessary (gated B-1)") }
+pub fn report_base_url() -> &'static [u8] { b"https://bun.report" }
+pub fn fix_dead_code_elimination() {}
+pub fn sleep_forever_if_another_thread_is_crashing() { todo!("(gated B-1)") }
+pub fn dump_current_stack_trace(_first_address: Option<usize>, _limits: WriteStackTraceLimits) {
+    todo!("(gated B-1)")
+}
+pub fn append_pre_crash_handler<T>(_ctx: *mut T, _callback: ()) { todo!("(gated B-1)") }
+pub fn remove_pre_crash_handler(_ptr: *mut core::ffi::c_void) { todo!("(gated B-1)") }
+
+pub mod cli_state {
+    pub fn set_main_thread_id(_id: usize) {}
+    pub fn set_cmd_char(_c: u8) {}
+    pub fn is_main_thread() -> bool { todo!("(gated B-1)") }
+    pub fn cmd_char() -> Option<u8> { None }
+}
+
+// ── Phase-A draft (preserved verbatim, not compiled) ─────────────────────
+#[cfg(any())]
+mod draft {
+
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_long, c_void};
 use core::fmt;
@@ -29,6 +84,7 @@ use bun_base64::VLQ; // MOVE_DOWN(b0): was bun_sourcemap::VLQ
 use bun_str::strings;
 use bun_threading::Mutex;
 
+#[path = "CPUFeatures.rs"]
 mod cpu_features;
 use cpu_features::CPUFeatures;
 
@@ -2595,6 +2651,8 @@ pub fn fix_dead_code_elimination() {
     core::hint::black_box(CrashHandler__unsupportedUVFunction as extern "C" fn(*const c_char));
 }
 // In Zig: comptime { _ = &Bun__crashHandler; ... } — Rust links #[no_mangle] symbols unconditionally.
+
+} // end #[cfg(any())] mod draft
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

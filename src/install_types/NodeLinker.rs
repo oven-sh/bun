@@ -79,9 +79,20 @@ pub mod npm {
 // where JSC is uninitialised anyway).
 // ══════════════════════════════════════════════════════════════════════════
 
+// ──────────────────────────────────────────────────────────────────────────
+// B-1 GATE: PnpmMatcher draft references symbols absent from lower-tier stub
+// surfaces (bun_logger::ast, bun_logger::ErrorOpts, bun_str crate, thiserror,
+// strings::trim/escape_reg_exp_*, BunString::from_bytes/clone_utf8). Preserve
+// the Phase-A body verbatim under #[cfg(any())]; expose opaque stub types so
+// dependents compile. Un-gating in B-2 once lower tiers fill in.
+// ──────────────────────────────────────────────────────────────────────────
+
 use core::ptr::{null_mut, NonNull};
 use core::sync::atomic::{AtomicPtr, Ordering};
 
+#[cfg(any())]
+mod _draft_pnpm_matcher {
+use super::*;
 use bun_alloc::AllocError;
 // Expr/ExprData moved down from `bun_js_parser` → `bun_logger::ast` per
 // CYCLEBREAK §→logger; install_types (≤T3) may depend on logger.
@@ -418,3 +429,62 @@ fn create_matcher(raw: &[u8], buf: &mut Vec<u8>) -> Result<Matcher, CreateMatche
 //               home); jsc::RegularExpression erased behind REGEX_VTABLE hook
 //               (tier-6 registers in bun_runtime::init — Pass C).
 // ──────────────────────────────────────────────────────────────────────────
+} // end #[cfg(any())] mod _draft_pnpm_matcher
+
+// ── B-1 stub surface for gated PnpmMatcher ────────────────────────────────
+// TODO(b1): bun_logger::ast / bun_logger::ErrorOpts missing — gated above.
+// TODO(b1): bun_str crate (should be bun_string) missing trim/escape helpers.
+
+/// Erased `bun_jsc::RegularExpression` vtable. Registered once at startup by
+/// `bun_runtime`; `compile` performs `jsc::initialize(false)` lazily.
+pub struct RegexVTable {
+    pub compile: unsafe fn(pattern: bun_string::String) -> Option<NonNull<()>>,
+    pub matches: unsafe fn(regex: NonNull<()>, input: &bun_string::String) -> bool,
+    pub drop: unsafe fn(regex: NonNull<()>),
+}
+
+/// Hook: tier-6 writes a leaked `&'static RegexVTable`. Null = JSC unavailable.
+pub static REGEX_VTABLE: AtomicPtr<RegexVTable> = AtomicPtr::new(null_mut());
+
+pub struct RegularExpression(NonNull<()>);
+
+pub struct PnpmMatcher {
+    pub matchers: Box<[Matcher]>,
+    pub behavior: Behavior,
+}
+
+pub struct Matcher {
+    pub pattern: Pattern,
+    pub is_exclude: bool,
+}
+
+pub enum Pattern {
+    MatchAll,
+    Regex(RegularExpression),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Behavior {
+    AllMatchersInclude,
+    AllMatchersExclude,
+    HasExcludeAndIncludeMatchers,
+}
+
+#[derive(Debug, strum::IntoStaticStr)]
+pub enum FromExprError {
+    OutOfMemory,
+    InvalidRegExp,
+    UnexpectedExpr,
+}
+
+#[derive(Debug, strum::IntoStaticStr)]
+pub enum CreateMatcherError {
+    OutOfMemory,
+    InvalidRegExp,
+}
+
+impl PnpmMatcher {
+    pub fn is_match(&self, _name: &[u8]) -> bool {
+        todo!("B-2: un-gate _draft_pnpm_matcher")
+    }
+}

@@ -1,56 +1,92 @@
+#![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
+
 use core::ffi::{c_char, c_int, c_uint, c_void};
 
-use bun_str::ZStr;
+use bun_string::ZStr;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Thin re-exports from uws_sys / runtime
 // ──────────────────────────────────────────────────────────────────────────
+// B-1: lower-tier crates (bun_uws_sys, bun_runtime) gate most of these modules
+// behind `#[cfg(any())]`. Preserve the Phase-A re-export list under a gate and
+// expose local opaque stubs so higher tiers compile. Un-gate in B-2.
 
-pub use bun_uws_sys::us_socket_t::us_socket_t;
-pub use bun_uws_sys::us_socket_t::us_socket_stream_buffer_t;
-pub use bun_uws_sys::socket::SocketTLS;
-pub use bun_uws_sys::socket::SocketTCP;
-pub use bun_uws_sys::socket::InternalSocket;
+#[cfg(any())]
+mod _phase_a_reexports {
+    pub use bun_uws_sys::us_socket_t::us_socket_t;
+    pub use bun_uws_sys::us_socket_t::us_socket_stream_buffer_t;
+    pub use bun_uws_sys::socket::SocketTLS;
+    pub use bun_uws_sys::socket::SocketTCP;
+    pub use bun_uws_sys::socket::InternalSocket;
+    pub use bun_uws_sys::timer::Timer;
+    pub use bun_uws_sys::socket_group::SocketGroup;
+    pub use bun_uws_sys::socket_kind::SocketKind;
+    pub use bun_uws_sys::vtable;
+    pub use bun_runtime::socket::uws_dispatch as dispatch;
+    pub use bun_uws_sys::socket_context as SocketContext;
+    pub use bun_uws_sys::connecting_socket::ConnectingSocket;
+    pub use bun_uws_sys::internal_loop_data::InternalLoopData;
+    pub use bun_runtime::socket::windows_named_pipe as WindowsNamedPipe;
+    pub use bun_uws_sys::loop_::PosixLoop;
+    pub use bun_uws_sys::loop_::WindowsLoop;
+    pub use bun_uws_sys::request::Request;
+    pub use bun_uws_sys::request::AnyRequest;
+    pub use bun_uws_sys::response::AnyResponse;
+    pub use bun_uws_sys::app::NewApp;
+    pub use bun_uws_sys::response::uws_res;
+    pub use bun_uws_sys::web_socket::RawWebSocket;
+    pub use bun_uws_sys::web_socket::AnyWebSocket;
+    pub use bun_uws_sys::web_socket::WebSocketBehavior;
+    pub use bun_uws_sys::socket::AnySocket;
+    pub use bun_uws_sys::socket::NewSocketHandler;
+    pub use bun_runtime::socket::upgraded_duplex as UpgradedDuplex;
+    pub use bun_uws_sys::listen_socket::ListenSocket;
+    pub use bun_uws_sys::response::State;
+    pub use bun_uws_sys::loop_::Loop;
+    pub use bun_uws_sys::udp;
+    pub use bun_uws_sys::body_reader_mixin::BodyReaderMixin;
+    pub use bun_uws_sys::h3 as H3;
+    pub use bun_uws_sys::quic;
+}
+
+// ── B-1 stub surface ──────────────────────────────────────────────────────
+// Opaque placeholders for the gated re-exports above. Higher tiers reference
+// these by name; bodies arrive in B-2 when uws_sys un-gates.
+macro_rules! opaque_stub {
+    ($($name:ident),+ $(,)?) => {$(
+        #[repr(C)] pub struct $name { _p: [u8; 0], _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)> }
+    )+};
+}
+// TODO(b1): bun_uws_sys::{socket,timer,loop_,request,response,app,web_socket,...} gated
+opaque_stub!(
+    us_socket_stream_buffer_t, SocketTLS, SocketTCP, InternalSocket, SocketGroup,
+    SocketKind, InternalLoopData, PosixLoop, AnyRequest, AnyResponse, NewApp,
+    uws_res, RawWebSocket, AnyWebSocket, AnySocket, State, BodyReaderMixin,
+);
+pub struct WebSocketBehavior<T>(core::marker::PhantomData<T>);
+pub struct NewSocketHandler<T>(core::marker::PhantomData<T>);
+
+// Re-export the opaque handles bun_uws_sys *does* provide.
+pub use bun_uws_sys::{us_socket_t, ConnectingSocket, ListenSocket, Loop, Request, Timer, WindowsLoop};
+pub use bun_uws_sys::{udp, vtable};
 pub type Socket = us_socket_t;
-pub use bun_uws_sys::timer::Timer;
-pub use bun_uws_sys::socket_group::SocketGroup;
-pub use bun_uws_sys::socket_kind::SocketKind;
-pub use bun_uws_sys::vtable;
-pub use bun_runtime::socket::uws_dispatch as dispatch;
-/// The opaque `us_socket_context_t` is gone; this namespace now only carries
-/// the SSL-options extern struct (`SSLConfig.asUSockets()` return type).
-// TODO(port): module aliased to PascalCase to mirror Zig namespace; revisit in Phase B.
-pub use bun_uws_sys::socket_context as SocketContext;
+
+// TODO(b1): bun_runtime not in deps — module-namespace stubs.
+pub mod dispatch {}
+pub mod WindowsNamedPipe {}
+pub mod UpgradedDuplex {}
+pub mod SocketContext {
+    // TODO(b1): bun_uws_sys::socket_context gated; BunSocketContextOptions lives there.
+    pub type BunSocketContextOptions = ();
+}
+pub mod H3 {}
+pub mod quic {}
+
 /// Bare BoringSSL `SSL_CTX`. `SSL_CTX_up_ref`/`SSL_CTX_free` is the refcount;
 /// policy (verify mode, reneg limits) is encoded on the SSL_CTX itself via
 /// `us_ssl_ctx_from_options`, so there's no wrapper struct. `Option<*mut SslCtx>`
 /// is what listen/connect/adopt take.
 pub type SslCtx = bun_boringssl::c::SSL_CTX;
-pub use bun_uws_sys::connecting_socket::ConnectingSocket;
-pub use bun_uws_sys::internal_loop_data::InternalLoopData;
-// TODO(port): module aliased to PascalCase to mirror Zig namespace; revisit in Phase B.
-pub use bun_runtime::socket::windows_named_pipe as WindowsNamedPipe;
-pub use bun_uws_sys::loop_::PosixLoop;
-pub use bun_uws_sys::loop_::WindowsLoop;
-pub use bun_uws_sys::request::Request;
-pub use bun_uws_sys::request::AnyRequest;
-pub use bun_uws_sys::response::AnyResponse;
-pub use bun_uws_sys::app::NewApp;
-pub use bun_uws_sys::response::uws_res;
-pub use bun_uws_sys::web_socket::RawWebSocket;
-pub use bun_uws_sys::web_socket::AnyWebSocket;
-pub use bun_uws_sys::web_socket::WebSocketBehavior;
-pub use bun_uws_sys::socket::AnySocket;
-pub use bun_uws_sys::socket::NewSocketHandler;
-// TODO(port): module aliased to PascalCase to mirror Zig namespace; revisit in Phase B.
-pub use bun_runtime::socket::upgraded_duplex as UpgradedDuplex;
-pub use bun_uws_sys::listen_socket::ListenSocket;
-pub use bun_uws_sys::response::State;
-pub use bun_uws_sys::loop_::Loop;
-pub use bun_uws_sys::udp;
-pub use bun_uws_sys::body_reader_mixin::BodyReaderMixin;
-pub use bun_uws_sys::h3 as H3;
-pub use bun_uws_sys::quic;
 
 /// uWS C++ `WebSocketContext<SSL,true,UserData>*`. Only ever produced by the
 /// upgrade-handler thunk and round-tripped to `uws_res_upgrade`; Rust never
@@ -210,14 +246,18 @@ pub fn on_thread_exit() {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn BUN__warn__extra_ca_load_failed(filename: *const c_char, error_msg: *const c_char) {
-    // SAFETY: C++ caller passes valid NUL-terminated strings.
-    let filename = unsafe { core::ffi::CStr::from_ptr(filename) };
-    let error_msg = unsafe { core::ffi::CStr::from_ptr(error_msg) };
-    bun_core::Output::warn(format_args!(
-        "ignoring extra certs from {}, load failed: {}",
-        bstr::BStr::new(filename.to_bytes()),
-        bstr::BStr::new(error_msg.to_bytes()),
-    ));
+    #[cfg(any())] // TODO(b1): bun_core::Output::warn missing
+    {
+        // SAFETY: C++ caller passes valid NUL-terminated strings.
+        let filename = unsafe { core::ffi::CStr::from_ptr(filename) };
+        let error_msg = unsafe { core::ffi::CStr::from_ptr(error_msg) };
+        bun_core::Output::warn(format_args!(
+            "ignoring extra certs from {}, load failed: {}",
+            bstr::BStr::new(filename.to_bytes()),
+            bstr::BStr::new(error_msg.to_bytes()),
+        ));
+    }
+    let _ = (filename, error_msg);
 }
 
 #[cfg(windows)]
@@ -233,8 +273,12 @@ mod c {
 }
 
 pub fn get_default_ciphers() -> &'static ZStr {
-    // SAFETY: us_get_default_ciphers returns a static NUL-terminated string.
-    unsafe { ZStr::from_ptr(c::us_get_default_ciphers().cast()) }
+    #[cfg(any())] // TODO(b1): ZStr::from_ptr missing — use from_raw + strlen in B-2
+    {
+        // SAFETY: us_get_default_ciphers returns a static NUL-terminated string.
+        unsafe { ZStr::from_ptr(c::us_get_default_ciphers().cast()) }
+    }
+    todo!("b1-stub")
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -242,6 +286,10 @@ pub fn get_default_ciphers() -> &'static ZStr {
 // Ground truth: src/runtime/socket/ssl_wrapper.zig
 // Requested by: http_jsc (CYCLEBREAK §move-in → uws)
 // ═══════════════════════════════════════════════════════════════════════════
+// B-1: gated — depends on bun_boringssl_sys / bun_output (not in deps) and
+// bun_uws_sys::socket_context::BunSocketContextOptions (gated in lower tier).
+// Stub surface follows below; full Phase-A body preserved here for B-2.
+#[cfg(any())]
 pub mod ssl_wrapper {
     use core::ffi::{c_int, c_void};
     use core::ptr::NonNull;
@@ -1023,6 +1071,41 @@ pub mod ssl_wrapper {
     //               `init_from_options` (or wrap it as an extension trait
     //               in their own tier).
     // ──────────────────────────────────────────────────────────────────────
+}
+
+// B-1 stub surface for ssl_wrapper (gated body above).
+pub mod ssl_wrapper {
+    use crate::us_bun_verify_error_t;
+
+    pub struct SSLWrapper<T: Copy>(core::marker::PhantomData<T>);
+    pub type SslWrapper<T> = SSLWrapper<T>;
+
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Default)]
+    pub struct Flags(u8);
+
+    #[repr(u8)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum HandshakeState {
+        HandshakePending = 0,
+        HandshakeCompleted = 1,
+        HandshakeRenegotiationPending = 2,
+    }
+
+    pub struct Handlers<T: Copy> {
+        pub ctx: T,
+        pub on_open: fn(T),
+        pub on_handshake: fn(T, bool, us_bun_verify_error_t),
+        pub write: fn(T, &[u8]),
+        pub on_data: fn(T, &[u8]),
+        pub on_close: fn(T),
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum InitError { OutOfMemory, InvalidOptions }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum WriteDataError { ConnectionClosed, WantRead, WantWrite }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

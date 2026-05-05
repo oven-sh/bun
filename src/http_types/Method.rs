@@ -50,7 +50,9 @@ pub enum Method {
 
 pub type Set = EnumSet<Method>;
 
-// TODO(port): verify EnumSet::all()/.remove() are usable in const context; if not, switch to `enum_set!(...)` complement or a once-init static.
+// TODO(b1): EnumSet::remove is not const on stable — Phase-A const-init gated.
+// Rewritten as `matches!` complements below; revisit if a const Set is needed for FFI.
+#[cfg(any())]
 const WITH_BODY: Set = {
     let mut values = Set::all();
     values.remove(Method::HEAD);
@@ -58,6 +60,7 @@ const WITH_BODY: Set = {
     values
 };
 
+#[cfg(any())]
 const WITH_REQUEST_BODY: Set = {
     let mut values = Set::all();
     values.remove(Method::GET);
@@ -69,11 +72,11 @@ const WITH_REQUEST_BODY: Set = {
 
 impl Method {
     pub fn has_body(self) -> bool {
-        WITH_BODY.contains(self)
+        !matches!(self, Method::HEAD | Method::TRACE)
     }
 
     pub fn has_request_body(self) -> bool {
-        WITH_REQUEST_BODY.contains(self)
+        !matches!(self, Method::GET | Method::HEAD | Method::OPTIONS | Method::TRACE)
     }
 
     pub fn find(str: &[u8]) -> Option<Method> {

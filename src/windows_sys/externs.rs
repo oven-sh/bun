@@ -85,7 +85,7 @@ pub struct UNICODE_STRING {
 // ──────────────────────────────────────────────────────────────────────────
 // libuv re-export (tier-0 sibling). Zig: `pub const libuv = @import("../../libuv_sys/libuv.zig")`
 // ──────────────────────────────────────────────────────────────────────────
-pub use libuv_sys as libuv;
+pub use bun_libuv_sys as libuv;
 
 // ──────────────────────────────────────────────────────────────────────────
 // kernel32 namespace (subset). Zig: `pub const kernel32 = windows.kernel32`

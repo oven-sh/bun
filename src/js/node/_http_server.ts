@@ -841,12 +841,16 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
     nodeSocket.emit("error", err);
   }
   // If the socket is still writable and no response was sent, send a default error response.
-  // Use end() so _final() → handle.end() → us_socket_shutdown() sends a graceful FIN.
-  // On Windows, us_socket_close() alone does not call shutdown() first, so using destroy()
-  // here would produce an abortive close (RST) on the client side on Windows libuv builds,
-  // breaking tests that assert `client.on('end')` fires.
+  // Use end() first so _final() → handle.end() → us_socket_shutdown() sends a graceful FIN
+  // (required on Windows libuv where us_socket_close() alone does not call shutdown() and
+  // would produce an abortive close), then destroy() in the end callback to free the FD
+  // immediately — avoids FIN_WAIT_2 linger on keep-alive connections where idleTimeout=0.
+  // This mirrors pre-PR C++ behavior: write → shutdown → close.
   if (!nodeSocket.writableEnded && !nodeSocket.destroyed) {
     const bytesAfterEmit = handle?.bytesWritten ?? 0;
+    const destroyAfterFlush = () => {
+      if (!nodeSocket.destroyed) nodeSocket.destroy();
+    };
     if (nodeSocket.writable && bytesAfterEmit === bytesBeforeEmit) {
       // Match the status codes that uWS used to send directly (see packages/bun-uws/src/HttpErrors.h)
       const response =
@@ -855,9 +859,9 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
           : errorCode === HttpParserError.HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE
             ? "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n"
             : "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
-      nodeSocket.end(response);
+      nodeSocket.end(response, destroyAfterFlush);
     } else {
-      nodeSocket.end();
+      nodeSocket.end(undefined, destroyAfterFlush);
     }
   }
 }

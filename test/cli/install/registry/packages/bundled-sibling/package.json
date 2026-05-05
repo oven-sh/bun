@@ -1,0 +1,48 @@
+{
+	"name": "bundled-sibling",
+	"versions": {
+		"1.0.0": {
+			"name": "bundled-sibling",
+			"version": "1.0.0",
+			"dependencies": {
+				"no-deps": "^2.0.0",
+				"bundled-inner": "1.0.0"
+			},
+			"bundleDependencies": [
+				"bundled-inner"
+			],
+			"_id": "bundled-sibling@1.0.0",
+			"_integrity": "sha512-3BzCvkrGhJNImUggrXCbtaCvcAa0p46JM3R9wiRmc1TWHuYtJZR75CRHCuHb+Vei39cekWeB9WcdvK1w5/PVeQ==",
+			"_nodeVersion": "22.6.0",
+			"_npmVersion": "10.8.3",
+			"integrity": "sha512-3BzCvkrGhJNImUggrXCbtaCvcAa0p46JM3R9wiRmc1TWHuYtJZR75CRHCuHb+Vei39cekWeB9WcdvK1w5/PVeQ==",
+			"shasum": "53250721725f3cbc4c2fae7a7766c9771ebcfcc1",
+			"dist": {
+				"integrity": "sha512-3BzCvkrGhJNImUggrXCbtaCvcAa0p46JM3R9wiRmc1TWHuYtJZR75CRHCuHb+Vei39cekWeB9WcdvK1w5/PVeQ==",
+				"shasum": "53250721725f3cbc4c2fae7a7766c9771ebcfcc1",
+				"tarball": "http://localhost:4873/bundled-sibling/-/bundled-sibling-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2025-04-13T00:00:00.000Z",
+		"created": "2025-04-13T00:00:00.000Z",
+		"1.0.0": "2025-04-13T00:00:00.000Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"bundled-sibling-1.0.0.tgz": {
+			"shasum": "53250721725f3cbc4c2fae7a7766c9771ebcfcc1",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "bundled-sibling",
+	"readme": ""
+}

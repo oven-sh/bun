@@ -1,0 +1,44 @@
+{
+	"name": "bundled-inner",
+	"versions": {
+		"1.0.0": {
+			"name": "bundled-inner",
+			"version": "1.0.0",
+			"dependencies": {
+				"no-deps": "1.0.0"
+			},
+			"_id": "bundled-inner@1.0.0",
+			"_integrity": "sha512-TGa4dELa+fOMOFmaF4qE0Qj3mgc4KiaSB/55MQpreVl9eb8XopdvXw9IXooyUmUOApOGU1TOQuXjYkK7HjBxKw==",
+			"_nodeVersion": "22.6.0",
+			"_npmVersion": "10.8.3",
+			"integrity": "sha512-TGa4dELa+fOMOFmaF4qE0Qj3mgc4KiaSB/55MQpreVl9eb8XopdvXw9IXooyUmUOApOGU1TOQuXjYkK7HjBxKw==",
+			"shasum": "0efc98943e42e190a29280369714226841a1f96b",
+			"dist": {
+				"integrity": "sha512-TGa4dELa+fOMOFmaF4qE0Qj3mgc4KiaSB/55MQpreVl9eb8XopdvXw9IXooyUmUOApOGU1TOQuXjYkK7HjBxKw==",
+				"shasum": "0efc98943e42e190a29280369714226841a1f96b",
+				"tarball": "http://localhost:4873/bundled-inner/-/bundled-inner-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2025-04-13T00:00:00.000Z",
+		"created": "2025-04-13T00:00:00.000Z",
+		"1.0.0": "2025-04-13T00:00:00.000Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"bundled-inner-1.0.0.tgz": {
+			"shasum": "0efc98943e42e190a29280369714226841a1f96b",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "bundled-inner",
+	"readme": ""
+}

@@ -765,6 +765,21 @@ fn hoistDependency(
         if (!as_defined or id != .dependency_loop) return id; // 1 or 2
     }
 
+    // If we're here because we've hit a `hoist_root_id` boundary (set by a
+    // bundled ancestor) — not because we've reached the top of the tree — we
+    // must NOT hoist the dependency to this level. The bundled package has its
+    // own isolated subtree, and the dep should stay at its original (deepest)
+    // tree. Returning `.dependency_loop` from a recursive call (`as_defined ==
+    // false`) propagates back to the outer call, which falls through to place
+    // the dep at the outer (original) tree.
+    //
+    // Without this, a deeply-nested transitive dependency of a bundled package
+    // gets hoisted all the way up to the bundled package's parent tree,
+    // polluting its `packages` key set with bundled transitives (#29263).
+    if (!as_defined and this.parent != invalid_id and this.id == hoist_root_id) {
+        return .dependency_loop; // 3
+    }
+
     // place the dependency in the current tree
     return .{ .placement = .{ .id = this.id } }; // 2
 }

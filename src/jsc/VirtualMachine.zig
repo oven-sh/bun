@@ -947,6 +947,16 @@ pub fn enterUWSLoop(this: *VirtualMachine) void {
 
 pub fn onBeforeExit(this: *VirtualMachine) void {
     this.exit_handler.dispatchOnBeforeExit();
+    // A `process.on('beforeExit', …)` handler may queue JSC microtasks
+    // (e.g. by resolving a TLA that `waitForPromiseOrLoopExit` bailed
+    // out on). `isEventLoopAlive()` can't see those — it checks handles,
+    // tasks, and refs, not the microtask queue — so without this drain
+    // the inner `while` below would skip and the continuation would be
+    // silently dropped before process exit. The analogous gap for
+    // `unhandledRejection` handlers is covered by the drain at the tail
+    // of `waitForPromiseOrLoopExit` (see event_loop.zig); this is the
+    // same pattern one frame later.
+    this.eventLoop().drainMicrotasksWithGlobal(this.global, this.jsc_vm) catch {};
     var dispatch = false;
     while (true) {
         while (this.isEventLoopAlive()) : (dispatch = true) {
@@ -956,6 +966,7 @@ pub fn onBeforeExit(this: *VirtualMachine) void {
 
         if (dispatch) {
             this.exit_handler.dispatchOnBeforeExit();
+            this.eventLoop().drainMicrotasksWithGlobal(this.global, this.jsc_vm) catch {};
             dispatch = false;
 
             if (this.isEventLoopAlive()) continue;

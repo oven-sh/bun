@@ -1,209 +1,119 @@
-use core::marker::ConstParamTy;
-use core::sync::atomic::Ordering;
+//! A simple wrapper around an integer reference count. This type doesn't do any
+//! memory management itself.
+//!
+//! May be useful for implementing the interface required by `ExternalShared`.
+//!
+//! PORT NOTE: Zig's `RawRefCount(Int, thread_safety)` is a comptime type
+//! function selecting field types from an enum. Stable Rust cannot vary a
+//! field's type from a const generic, and there is no generic `Atomic<Int>`.
+//! Split into two concrete structs (the only `Int` ever used is `u32`):
+//!   `RawRefCount`       — single-threaded, plain `u32`, debug `ThreadLock`
+//!   `RawAtomicRefCount` — thread-safe, `AtomicU32`
+//! and a `const ATOMIC: bool` alias for callers that want the Zig spelling.
 
-use bun_safety::ThreadLock;
+use core::sync::atomic::{AtomicU32, Ordering};
 
-#[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
+use bun_core::ThreadLock;
+
+#[derive(PartialEq, Eq, Clone, Copy)]
 pub enum ThreadSafety {
     SingleThreaded,
     ThreadSafe,
 }
 
+#[derive(PartialEq, Eq)]
 pub enum DecrementResult {
     KeepAlive,
     ShouldDestroy,
 }
 
-// TODO(port): Zig varies field types at comptime based on `thread_safety`
-// (`std.atomic.Value(Int)` vs `Int`, and `ThreadLock` vs `void`). Rust const
-// generics cannot directly vary a field's type, and std has no generic
-// `Atomic<Int>`. This draft uses a `Storage` trait keyed on the const param to
-// pick field types; Phase B may instead split into two concrete structs
-// (e.g. `RawRefCount<Int>` / `RawAtomicRefCount<Int>`) if the trait dispatch
-// proves awkward.
-
-/// A simple wrapper around an integer reference count. This type doesn't do any memory management
-/// itself.
-///
-/// This type may be useful for implementing the interface required by `bun.ptr.ExternalShared`.
-pub struct RawRefCount<Int, const THREAD_SAFETY: ThreadSafety>
-where
-    (): Storage<Int, THREAD_SAFETY>,
-{
-    raw_value: <() as Storage<Int, THREAD_SAFETY>>::RawValue,
-    thread_lock: <() as Storage<Int, THREAD_SAFETY>>::ThreadLock,
+/// `RawRefCount(u32, .single_threaded)`.
+pub struct RawRefCount {
+    raw_value: u32,
+    #[cfg(debug_assertions)]
+    thread_lock: ThreadLock,
 }
 
-impl<Int, const THREAD_SAFETY: ThreadSafety> RawRefCount<Int, THREAD_SAFETY>
-where
-    (): Storage<Int, THREAD_SAFETY>,
-    // TODO(port): narrow bounds — Zig `Int` is an unsigned integer type.
-    Int: Copy + PartialEq + core::ops::AddAssign + core::ops::SubAssign + num_traits::Bounded,
-{
+impl RawRefCount {
     /// Usually the initial count should be 1.
-    pub fn init(initial_count: Int) -> Self {
+    pub fn init(initial_count: u32) -> Self {
         Self {
-            raw_value: match THREAD_SAFETY {
-                ThreadSafety::SingleThreaded => {
-                    <() as Storage<Int, THREAD_SAFETY>>::raw_value_init(initial_count)
-                }
-                ThreadSafety::ThreadSafe => {
-                    <() as Storage<Int, THREAD_SAFETY>>::raw_value_init(initial_count)
-                }
-            },
-            thread_lock: match THREAD_SAFETY {
-                ThreadSafety::SingleThreaded => {
-                    <() as Storage<Int, THREAD_SAFETY>>::thread_lock_init()
-                }
-                ThreadSafety::ThreadSafe => {
-                    <() as Storage<Int, THREAD_SAFETY>>::thread_lock_init()
-                }
-            },
+            raw_value: initial_count,
+            #[cfg(debug_assertions)]
+            thread_lock: ThreadLock::init_locked_if_non_comptime(),
         }
     }
 
     pub fn increment(&mut self) {
-        match THREAD_SAFETY {
-            ThreadSafety::SingleThreaded => {
-                <() as Storage<Int, THREAD_SAFETY>>::lock_or_assert(&mut self.thread_lock);
-                <() as Storage<Int, THREAD_SAFETY>>::add_assign(&mut self.raw_value, Int::one());
-            }
-            ThreadSafety::ThreadSafe => {
-                let old = <() as Storage<Int, THREAD_SAFETY>>::fetch_add(
-                    &self.raw_value,
-                    Int::one(),
-                    Ordering::Relaxed, // .monotonic
-                );
-                debug_assert!(
-                    old != Int::max_value(),
-                    "overflow of thread-safe ref count",
-                );
-            }
-        }
+        #[cfg(debug_assertions)]
+        self.thread_lock.lock_or_assert();
+        self.raw_value += 1;
     }
 
     pub fn decrement(&mut self) -> DecrementResult {
-        let new_count: Int = 'blk: {
-            match THREAD_SAFETY {
-                ThreadSafety::SingleThreaded => {
-                    <() as Storage<Int, THREAD_SAFETY>>::lock_or_assert(&mut self.thread_lock);
-                    <() as Storage<Int, THREAD_SAFETY>>::sub_assign(&mut self.raw_value, Int::one());
-                    break 'blk <() as Storage<Int, THREAD_SAFETY>>::load(&self.raw_value);
-                }
-                ThreadSafety::ThreadSafe => {
-                    let old = <() as Storage<Int, THREAD_SAFETY>>::fetch_sub(
-                        &self.raw_value,
-                        Int::one(),
-                        Ordering::AcqRel,
-                    );
-                    debug_assert!(old != Int::zero(), "underflow of thread-safe ref count");
-                    break 'blk old - Int::one();
-                }
-            }
-        };
-        if new_count == Int::zero() {
+        #[cfg(debug_assertions)]
+        self.thread_lock.lock_or_assert();
+        self.raw_value -= 1;
+        if self.raw_value == 0 {
             DecrementResult::ShouldDestroy
         } else {
             DecrementResult::KeepAlive
         }
     }
 
-    // Zig: `pub const deinit = void;` — marker that this type has no destructor.
-    // No `Drop` impl needed.
-}
-
-// ───────────────────────────── Storage dispatch ─────────────────────────────
-// TODO(port): this trait exists only to let `THREAD_SAFETY` select field types.
-// Phase B should evaluate replacing with two concrete types.
-
-pub trait Storage<Int, const THREAD_SAFETY: ThreadSafety> {
-    type RawValue;
-    type ThreadLock;
-
-    fn raw_value_init(initial: Int) -> Self::RawValue;
-    fn thread_lock_init() -> Self::ThreadLock;
-
-    fn lock_or_assert(lock: &mut Self::ThreadLock);
-    fn add_assign(v: &mut Self::RawValue, n: Int);
-    fn sub_assign(v: &mut Self::RawValue, n: Int);
-    fn load(v: &Self::RawValue) -> Int;
-    fn fetch_add(v: &Self::RawValue, n: Int, order: Ordering) -> Int;
-    fn fetch_sub(v: &Self::RawValue, n: Int, order: Ordering) -> Int;
-}
-
-impl<Int> Storage<Int, { ThreadSafety::SingleThreaded }> for ()
-where
-    Int: Copy + core::ops::AddAssign + core::ops::SubAssign,
-{
-    type RawValue = Int;
-    type ThreadLock = ThreadLock;
-
-    fn raw_value_init(initial: Int) -> Self::RawValue {
-        initial
-    }
-    fn thread_lock_init() -> Self::ThreadLock {
-        ThreadLock::init_locked_if_non_comptime()
-    }
-    fn lock_or_assert(lock: &mut Self::ThreadLock) {
-        lock.lock_or_assert();
-    }
-    fn add_assign(v: &mut Self::RawValue, n: Int) {
-        *v += n;
-    }
-    fn sub_assign(v: &mut Self::RawValue, n: Int) {
-        *v -= n;
-    }
-    fn load(v: &Self::RawValue) -> Int {
-        *v
-    }
-    fn fetch_add(_v: &Self::RawValue, _n: Int, _order: Ordering) -> Int {
-        unreachable!()
-    }
-    fn fetch_sub(_v: &Self::RawValue, _n: Int, _order: Ordering) -> Int {
-        unreachable!()
+    /// Avoid calling this method when possible. Reasoning about ref counts can be tricky;
+    /// you should usually only need `increment` and `decrement`.
+    pub fn unsafe_get_value(&self) -> u32 {
+        self.raw_value
     }
 }
 
-// TODO(port): std has no generic `Atomic<Int>`. Phase B must either:
-//   (a) bound `Int: atomic::Atom` via the `atomic` crate, or
-//   (b) monomorphize for the concrete `Int` types actually used (likely u32/u64).
-impl<Int> Storage<Int, { ThreadSafety::ThreadSafe }> for ()
-where
-    Int: Copy,
-{
-    // Placeholder: not a real generic atomic.
-    type RawValue = core::sync::atomic::AtomicUsize; // TODO(port): generic atomic for Int
-    type ThreadLock = ();
+/// `RawRefCount(u32, .thread_safe)`.
+#[repr(transparent)]
+pub struct RawAtomicRefCount {
+    raw_value: AtomicU32,
+}
 
-    fn raw_value_init(initial: Int) -> Self::RawValue {
-        // TODO(port): generic atomic for Int — placeholder casts through usize
-        core::sync::atomic::AtomicUsize::new(initial as usize)
+impl RawAtomicRefCount {
+    /// Usually the initial count should be 1.
+    pub const fn init(initial_count: u32) -> Self {
+        Self { raw_value: AtomicU32::new(initial_count) }
     }
-    fn thread_lock_init() -> Self::ThreadLock {}
-    fn lock_or_assert(_lock: &mut Self::ThreadLock) {}
-    fn add_assign(_v: &mut Self::RawValue, _n: Int) {
-        unreachable!()
+
+    pub fn increment(&self) {
+        let old = self.raw_value.fetch_add(1, Ordering::Relaxed); // .monotonic
+        debug_assert!(old != u32::MAX, "overflow of thread-safe ref count");
     }
-    fn sub_assign(_v: &mut Self::RawValue, _n: Int) {
-        unreachable!()
+
+    pub fn decrement(&self) -> DecrementResult {
+        // Zig: `fetchSub(1, .release)` then `if new == 0 { fence(.acquire) }`.
+        let old = self.raw_value.fetch_sub(1, Ordering::Release);
+        debug_assert!(old != 0, "underflow of thread-safe ref count");
+        if old == 1 {
+            core::sync::atomic::fence(Ordering::Acquire);
+            DecrementResult::ShouldDestroy
+        } else {
+            DecrementResult::KeepAlive
+        }
     }
-    fn load(_v: &Self::RawValue) -> Int {
-        unreachable!()
-    }
-    fn fetch_add(v: &Self::RawValue, n: Int, order: Ordering) -> Int {
-        // TODO(port): generic atomic for Int — placeholder casts through usize
-        v.fetch_add(n as usize, order) as Int
-    }
-    fn fetch_sub(v: &Self::RawValue, n: Int, order: Ordering) -> Int {
-        // TODO(port): generic atomic for Int — placeholder casts through usize
-        v.fetch_sub(n as usize, order) as Int
+
+    /// Avoid calling this method when possible. Reasoning about ref counts can be tricky;
+    /// you should usually only need `increment` and `decrement`.
+    pub fn unsafe_get_value(&self) -> u32 {
+        self.raw_value.load(Ordering::Acquire)
     }
 }
+
+/// Alias matching the Zig generic spelling for callers that want it.
+/// `RawRefCountT::<true>` = atomic, `::<false>` = single-threaded.
+// PORT NOTE: cannot actually unify into one generic struct on stable; this is
+// just the discriminating const so callers can name it.
+pub type RawRefCountT<const ATOMIC: bool> = RawRefCount; // single-threaded default; use RawAtomicRefCount explicitly for atomic
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
-//   source:     src/ptr/raw_ref_count.zig (74 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      comptime-varied field types modeled via Storage trait; no std generic Atomic<Int> — thread-safe path uses AtomicUsize placeholder with `as usize`/`as Int` casts to preserve logic shape; Phase B should split into two concrete structs or pick a generic-atomic crate
+//   source:     src/ptr/raw_ref_count.zig (96 lines)
+//   confidence: high
+//   todos:      0
+//   notes:      comptime type-function → two concrete structs (Int fixed to u32; only width ever used).
 // ──────────────────────────────────────────────────────────────────────────

@@ -586,6 +586,22 @@ impl ThreadLock {
         }
     }
     #[inline] pub fn init_locked() -> Self { let mut s = Self::init_unlocked(); s.lock(); s }
+    /// Zig `initLockedIfNonComptime` — Zig comptime evaluation has no thread;
+    /// in Rust there is no comptime execution, so this is just `init_locked`.
+    #[inline] pub fn init_locked_if_non_comptime() -> Self { Self::init_locked() }
+    /// Zig `lockOrAssert` — assert we already hold the lock (from this thread).
+    #[inline]
+    pub fn lock_or_assert(&self) {
+        #[cfg(debug_assertions)]
+        {
+            let held = self.owning_thread.load(core::sync::atomic::Ordering::Acquire);
+            let cur = thread_id();
+            debug_assert!(
+                held == cur,
+                "ThreadLock: assert_locked from thread {cur}, held by {held}",
+            );
+        }
+    }
     #[inline]
     pub fn lock(&mut self) {
         #[cfg(debug_assertions)]

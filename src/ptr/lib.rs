@@ -14,37 +14,50 @@ pub type CowSlice<'a, T> = Cow<'a, [T]>;
 pub type CowSliceZ<'a> = Cow<'a, core::ffi::CStr>;
 pub type CowString<'a> = Cow<'a, [u8]>;
 
+// owned/shared/external_shared — OBSOLETE per PORTING.md §Pointers: callers
+// use std `Box`/`Rc`/`Arc` directly. Draft modules kept for diff-pass only.
 #[cfg(any())] pub mod owned;
-pub type Owned<T> = Box<T>;
-pub type OwnedIn<T> = Box<T>; // B-2: arena-aware
-pub type DynamicOwned<T> = Box<T>;
-
 #[cfg(any())] pub mod shared;
+#[cfg(any())] pub mod external_shared;
+pub type Owned<T> = Box<T>;
+pub type OwnedIn<T> = Box<T>;
+pub type DynamicOwned<T> = Box<T>;
 pub type Shared<T> = std::rc::Rc<T>;
 pub type AtomicShared<T> = std::sync::Arc<T>;
-#[cfg(any())] pub mod external_shared;
-pub struct ExternalShared<T>(*mut T); // B-2: FFI-crossing Arc
+pub struct ExternalShared<T>(*mut T); // FFI-crossing Arc — TODO(b2) if any caller actually needs it
 
+pub mod raw_ref_count;
+pub mod weak_ptr;
+
+// TODO(b2-large): tagged_pointer.rs (320L) uses inherent assoc types for
+// `TaggedPtr::Tag` / `TaggedPtrUnion::TagInt` (6× E0223). Rewrite via free
+// type aliases or a `TaggedPtrUnionTypes` trait. Per PORTING.md §Dispatch,
+// most users move to `(tag: u8, ptr: *mut ())` anyway.
+#[cfg(any())] pub mod tagged_pointer;
+pub mod tagged_pointer_stub {
+    /// 49 addr bits + 15 tag bits packed into u64 (PORTING.md §Type map).
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Default)]
+    pub struct TaggedPointer(pub u64);
+    #[repr(transparent)]
+    #[derive(Clone, Copy)]
+    pub struct TaggedPointerUnion<T>(pub TaggedPointer, core::marker::PhantomData<T>);
+}
+use tagged_pointer_stub as tagged_pointer;
+
+// TODO(b2-large): ref_count.rs (1079L) — intrusive RefCount mixin. Heavy
+// inherent-assoc-type usage; needs trait redesign. Downstream FFI types
+// (`.classes.ts` payloads, WTFStringImpl) embed this.
 #[cfg(any())] pub mod ref_count;
-#[cfg(any())] pub mod raw_ref_count;
-// Intrusive ref-count mixins — B-2 implements; B-1 stubs as marker traits.
 pub trait RefCount { fn ref_(&self); fn deref_(&self); }
 pub trait ThreadSafeRefCount: Send + Sync { fn ref_(&self); fn deref_(&self); }
 pub type RefPtr<T> = *mut T;
 pub type IntrusiveRc<T> = *mut T;
 pub type IntrusiveArc<T> = *mut T;
-#[repr(transparent)] pub struct RawRefCount(core::sync::atomic::AtomicU32);
 
-#[cfg(any())] pub mod tagged_pointer;
-// 49 addr bits + 15 tag bits packed into u64 (PORTING.md §Type map).
-#[repr(transparent)]
-#[derive(Clone, Copy)]
-pub struct TaggedPointer(pub u64);
-#[repr(transparent)]
-pub struct TaggedPointerUnion<T>(pub TaggedPointer, core::marker::PhantomData<T>); // B-2: tag enum T
-
-#[cfg(any())] pub mod weak_ptr;
-pub type WeakPtr<T> = *mut T; // B-2: intrusive 2-arg weak
+pub use raw_ref_count::RawRefCount;
+pub use tagged_pointer::{TaggedPointer, TaggedPointerUnion};
+pub use weak_ptr::WeakPtr;
 
 pub mod meta; // small, used by other crates
 

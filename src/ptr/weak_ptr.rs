@@ -82,9 +82,10 @@ pub struct WeakPtr<T: HasWeakPtrData> {
     raw_ptr: Option<NonNull<T>>,
 }
 
-impl<T: HasWeakPtrData> WeakPtr<T> {
-    pub type Data = WeakPtrData;
+// Zig's `WeakPtr.Data` — inherent assoc types unstable; expose at module level.
+pub type Data = WeakPtrData;
 
+impl<T: HasWeakPtrData> WeakPtr<T> {
     pub const EMPTY: Self = Self { raw_ptr: None };
 
     pub fn init_ref(req: &mut T) -> Self {

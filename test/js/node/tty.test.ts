@@ -60,9 +60,14 @@ describe("ReadStream.prototype.setRawMode", () => {
     proc.terminal?.close();
     output += decoder.decode();
 
+    // Bun.Terminal always gives the child a TTY stdin (openpty / ConPTY), so
+    // the SKIP path should never trigger. If RESULT is missing for any
+    // reason, surface the raw terminal output rather than a bare null match.
     const match = output.match(/RESULT (\{[^}]*\})/);
-    expect(match).not.toBeNull();
-    expect(JSON.parse(match![1])).toEqual({
+    if (!match) {
+      throw new Error("child did not emit RESULT; terminal output was: " + JSON.stringify(output));
+    }
+    expect(JSON.parse(match[1])).toEqual({
       before: false,
       afterTrue: true,
       afterFalse: false,

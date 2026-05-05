@@ -8,14 +8,8 @@ pub struct CheckedAllocator; // B-2: wraps allocator with debug bookkeeping
 #[cfg(any())] #[path = "CriticalSection.rs"] mod critical_section;
 pub struct CriticalSection; // B-2: re-entrancy guard
 
-#[cfg(any())] #[path = "ThreadLock.rs"] mod thread_lock;
-#[derive(Clone, Copy, Default)] pub struct ThreadLock; // B-2: debug-only owner-thread assert
-impl ThreadLock {
-    pub const fn new() -> Self { Self }
-    pub fn lock(&self) {}
-    pub fn unlock(&self) {}
-    pub fn assert_locked(&self) {}
-}
+#[path = "ThreadLock.rs"] mod thread_lock;
+pub use thread_lock::ThreadLock;
 
 pub mod thread_id;
 

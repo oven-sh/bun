@@ -54,6 +54,15 @@ pub type MimallocArena = bumpalo::Bump;
 // ── B-1 gate ───────────────────────────────────────────────────────────────
 // These modules pull in higher-tier crates (bun_collections, bun_core, bun_ptr,
 // bun_runtime). Gated until B-2 makes those available; bodies preserved.
+// TODO(b2-blocked): allocator-vtable modules (NullableAllocator, MaxHeapAllocator,
+// BufferFallbackAllocator, maybe_owned, fallback, MimallocArena, allocation_scope,
+// LinuxMemFdAllocator) all model Zig's `std.mem.Allocator` interface as a Rust
+// trait + dyn vtable. They're blocked on settling the `Allocator` trait surface
+// (currently 14× E0277 GenericAllocator + 3× E0782 trait-vs-type). Once the
+// trait is fixed in this file's `pub trait Allocator { ... }` section (~L400),
+// all of these un-gate together. Per PORTING.md §Allocators, most call sites
+// drop the allocator param entirely (global mimalloc), so several of these
+// modules may be deletable rather than ported.
 #[cfg(any())] #[path = "MimallocArena.rs"]    pub mod mimalloc_arena;
 #[cfg(any())]                                 pub mod allocation_scope;
 #[cfg(any())] #[path = "NullableAllocator.rs"] pub mod nullable_allocator;
@@ -61,8 +70,9 @@ pub type MimallocArena = bumpalo::Bump;
 #[cfg(any())]                                 pub mod maybe_owned;
 #[cfg(any())] #[path = "MaxHeapAllocator.rs"] pub mod max_heap_allocator;
 #[cfg(any())] #[path = "BufferFallbackAllocator.rs"] pub mod buffer_fallback_allocator;
+#[cfg(any())]                                 pub mod fallback;
 
-// Stub types for the gated modules (so re-exports / downstream `use` resolve).
+// Stub types so re-exports / downstream `use` resolve.
 pub struct AllocationScope;
 pub struct AllocationScopeIn;
 pub struct NullableAllocator;
@@ -1491,7 +1501,6 @@ pub struct DefaultAlloc;
 
 // B-1: always use mimalloc-backed basic.rs (Zig's `bun.use_mimalloc` is always true).
 #[cfg(any())] #[path = "basic.rs"] pub mod basic; // gated until AllocatorVTable callers align
-#[cfg(any())] pub mod fallback;
 #[cfg(any())] pub mod heap_breakdown; // macOS-only debug zones; needs StringHashMap + libc malloc_zone_*
 pub mod memory;
 

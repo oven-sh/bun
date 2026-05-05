@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isLinux } from "harness";
 
 // https://github.com/oven-sh/bun/issues/28741
 // `Bun.gc(true)` called `mimalloc_cleanup(false)` BEFORE running the JS GC.
@@ -10,7 +10,15 @@ import { bunEnv, bunExe } from "harness";
 //
 // Fix: call `mimalloc_cleanup(true)` after `runGC(true)` so mimalloc actually
 // reclaims pages freed by finalizers.
-test("fetch response body memory is reclaimed by GC", async () => {
+//
+// Linux-only: only on Linux does mimalloc's post-cleanup `madvise(MADV_DONTNEED)`
+// cause the kernel to immediately evict pages and drop RSS. macOS uses
+// `MADV_FREE_REUSABLE` (lazy — reclaimed only under memory pressure) and
+// Windows uses `VirtualAlloc(MEM_RESET)` (stays in the working set), so
+// `process.memoryUsage().rss` doesn't move on those platforms even though
+// the fix is working. The runtime change applies everywhere; only the
+// `rss`-based measurement is non-portable.
+test.skipIf(!isLinux)("fetch response body memory is reclaimed by GC", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

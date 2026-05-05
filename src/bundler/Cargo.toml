@@ -1,0 +1,50 @@
+[package]
+name = "bun_bundler"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+parking_lot.workspace = true
+strum.workspace = true
+phf.workspace = true
+bstr.workspace = true
+scopeguard.workspace = true
+const_format.workspace = true
+enum-map.workspace = true
+enumset.workspace = true
+libc.workspace = true
+bitflags.workspace = true
+bumpalo.workspace = true
+typed-arena.workspace = true
+bun_base64.workspace = true
+bun_alloc.workspace = true
+bun_core.workspace = true
+bun_collections.workspace = true
+bun_crash_handler.workspace = true
+bun_css.workspace = true
+bun_dotenv.workspace = true
+bun_event_loop.workspace = true
+bun_glob.workspace = true
+bun_http.workspace = true
+bun_http_types.workspace = true
+bun_interchange.workspace = true
+bun_io.workspace = true
+bun_js_parser.workspace = true
+bun_js_printer.workspace = true
+bun_logger.workspace = true
+bun_md.workspace = true
+bun_options_types.workspace = true
+bun_paths.workspace = true
+bun_perf.workspace = true
+bun_resolve_builtins.workspace = true
+bun_resolver.workspace = true
+bun_router.workspace = true
+bun_sourcemap.workspace = true
+bun_string.workspace = true
+bun_sys.workspace = true
+bun_threading.workspace = true
+bun_url.workspace = true
+bun_wyhash.workspace = true

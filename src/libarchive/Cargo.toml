@@ -1,0 +1,25 @@
+[package]
+name = "bun_libarchive"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+parking_lot.workspace = true
+strum.workspace = true
+phf.workspace = true
+bstr.workspace = true
+scopeguard.workspace = true
+const_format.workspace = true
+enum-map.workspace = true
+enumset.workspace = true
+libc.workspace = true
+bitflags.workspace = true
+bun_core.workspace = true
+bun_collections.workspace = true
+bun_paths.workspace = true
+bun_string.workspace = true
+bun_sys.workspace = true
+bun_wyhash.workspace = true

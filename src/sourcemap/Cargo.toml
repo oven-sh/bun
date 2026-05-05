@@ -1,0 +1,34 @@
+[package]
+name = "bun_sourcemap"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+parking_lot.workspace = true
+strum.workspace = true
+phf.workspace = true
+bstr.workspace = true
+scopeguard.workspace = true
+const_format.workspace = true
+enum-map.workspace = true
+enumset.workspace = true
+libc.workspace = true
+bitflags.workspace = true
+bumpalo.workspace = true
+typed-arena.workspace = true
+bun_alloc.workspace = true
+bun_core.workspace = true
+bun_collections.workspace = true
+bun_interchange.workspace = true
+bun_io.workspace = true
+bun_js_parser.workspace = true
+bun_logger.workspace = true
+bun_paths.workspace = true
+bun_ptr.workspace = true
+bun_semver.workspace = true
+bun_string.workspace = true
+bun_sys.workspace = true
+bun_zstd.workspace = true

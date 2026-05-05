@@ -1,0 +1,35 @@
+[package]
+name = "bun_http_jsc"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+parking_lot.workspace = true
+strum.workspace = true
+phf.workspace = true
+bstr.workspace = true
+scopeguard.workspace = true
+const_format.workspace = true
+enum-map.workspace = true
+enumset.workspace = true
+libc.workspace = true
+bitflags.workspace = true
+bun_aio.workspace = true
+bun_analytics.workspace = true
+bun_base64.workspace = true
+bun_alloc.workspace = true
+bun_core.workspace = true
+bun_collections.workspace = true
+bun_highway.workspace = true
+bun_http.workspace = true
+bun_http_types.workspace = true
+bun_io.workspace = true
+bun_jsc.workspace = true
+bun_ptr.workspace = true
+bun_runtime.workspace = true
+bun_string.workspace = true
+bun_uws.workspace = true
+bun_uws_sys.workspace = true

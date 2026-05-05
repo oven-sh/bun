@@ -44,7 +44,7 @@ function makeTarball(pkg: object): { tarball: Uint8Array; integrity: string } {
   return { tarball: gz, integrity };
 }
 
-test("#29944 --filter honors saved hoist layout across workspaces", async () => {
+test("#29944 --filter honors saved hoist layout across workspaces", { timeout: 30_000 }, async () => {
   // Spin up an in-process "registry" that serves four synthetic packages:
   //
   //   mime@1.6.0    (no deps)

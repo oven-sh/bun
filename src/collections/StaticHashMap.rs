@@ -19,8 +19,16 @@ pub trait HashContext<K>: Default {
 }
 
 /// Mirrors Zig's `std.hash_map.AutoContext(K)`.
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct AutoContext<K>(PhantomData<fn(&K)>);
+
+// Hand-roll Default to avoid the derive's spurious `K: Default` bound.
+impl<K> Default for AutoContext<K> {
+    #[inline]
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
 
 impl<K: core::hash::Hash + Eq> HashContext<K> for AutoContext<K> {
     #[inline]
@@ -28,8 +36,8 @@ impl<K: core::hash::Hash + Eq> HashContext<K> for AutoContext<K> {
         // TODO(port): Zig's AutoContext uses std.hash.autoHash (Wyhash-based).
         // Confirm bun_wyhash matches std.hash_map.getAutoHashFn output for the K's
         // actually used with this map (currently only `usize` in tests).
-        let mut h = bun_wyhash::Wyhash::new(0);
-        key.hash(&mut h);
+        let mut h = bun_wyhash::Wyhash11::init(0);
+        core::hash::Hash::hash(key, &mut h);
         core::hash::Hasher::finish(&h)
     }
     #[inline]
@@ -45,8 +53,8 @@ impl<K: core::hash::Hash + Eq> HashContext<K> for AutoContext<K> {
 pub type AutoHashMap<K, V, const MAX_LOAD_PERCENTAGE: u64> =
     HashMap<K, V, AutoContext<K>, MAX_LOAD_PERCENTAGE>;
 
-pub type AutoStaticHashMap<K, V, const CAPACITY: usize> =
-    StaticHashMap<K, V, AutoContext<K>, CAPACITY>;
+pub type AutoStaticHashMap<K, V, const CAPACITY: usize, const SLOTS: usize> =
+    StaticHashMap<K, V, AutoContext<K>, CAPACITY, SLOTS>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Shared Entry / GetOrPutResult / constants
@@ -125,16 +133,18 @@ pub const fn static_slots(capacity: usize) -> usize {
 // StaticHashMap
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(port): the inline `[Entry; CAPACITY + overflow]` array length depends on
+// PORT NOTE: the inline `[Entry; CAPACITY + overflow]` array length depends on
 // a const fn of `CAPACITY`, which requires nightly `feature(generic_const_exprs)`.
-// Phase B options: (a) gate on nightly, (b) add a second `const SLOTS: usize`
-// param with a `const _: () = assert!(SLOTS == static_slots(CAPACITY));` check,
-// (c) macro_rules! that expands to a concrete-N struct per call site.
-pub struct StaticHashMap<K, V, Ctx, const CAPACITY: usize>
-where
-    [(); static_slots(CAPACITY)]:,
-{
-    pub entries: [Entry<K, V>; static_slots(CAPACITY)],
+// Stable workaround (same as ArrayBitSet): callers pass `SLOTS = static_slots(CAPACITY)`
+// as a second const param; a const-assert in `Default::default()` checks they match.
+pub struct StaticHashMap<
+    K,
+    V,
+    Ctx,
+    const CAPACITY: usize,
+    const SLOTS: usize, // = static_slots(CAPACITY), asserted in default()
+> {
+    pub entries: [Entry<K, V>; SLOTS],
     pub len: usize,
     /// Zig `u6`; stored as u8.
     pub shift: u8,
@@ -144,16 +154,21 @@ where
     _ctx: PhantomData<Ctx>,
 }
 
-impl<K: Copy, V: Copy, Ctx, const CAPACITY: usize> Default for StaticHashMap<K, V, Ctx, CAPACITY>
-where
-    [(); static_slots(CAPACITY)]:,
+impl<K: Copy + Default, V: Copy + Default, Ctx, const CAPACITY: usize, const SLOTS: usize> Default
+    for StaticHashMap<K, V, Ctx, CAPACITY, SLOTS>
 {
     fn default() -> Self {
-        const { assert!((CAPACITY as u64).is_power_of_two()) };
+        const {
+            assert!((CAPACITY as u64).is_power_of_two());
+            assert!(
+                SLOTS == static_slots(CAPACITY),
+                "StaticHashMap: SLOTS must equal static_slots(CAPACITY)"
+            );
+        };
         Self {
             // TODO(port): `[Entry::empty(); N]` needs `Entry<K,V>: Copy` const-init;
             // may need `MaybeUninit` + loop in Phase B if K/V aren't const-zeroable.
-            entries: [Entry::empty(); static_slots(CAPACITY)],
+            entries: [Entry::empty(); SLOTS],
             len: 0,
             shift: compute_shift(CAPACITY as u64),
             _ctx: PhantomData,
@@ -161,10 +176,8 @@ where
     }
 }
 
-impl<K, V, Ctx, const CAPACITY: usize> HashMapMixin<K, V, Ctx>
-    for StaticHashMap<K, V, Ctx, CAPACITY>
-where
-    [(); static_slots(CAPACITY)]:,
+impl<K: 'static, V: 'static, Ctx, const CAPACITY: usize, const SLOTS: usize> HashMapMixin<K, V, Ctx>
+    for StaticHashMap<K, V, Ctx, CAPACITY, SLOTS>
 {
     #[inline]
     fn storage(&self) -> &[Entry<K, V>] {
@@ -199,7 +212,7 @@ pub struct HashMap<K, V, Ctx, const MAX_LOAD_PERCENTAGE: u64> {
     _ctx: PhantomData<Ctx>,
 }
 
-impl<K, V, Ctx, const MAX_LOAD_PERCENTAGE: u64> HashMapMixin<K, V, Ctx>
+impl<K: 'static, V: 'static, Ctx, const MAX_LOAD_PERCENTAGE: u64> HashMapMixin<K, V, Ctx>
     for HashMap<K, V, Ctx, MAX_LOAD_PERCENTAGE>
 {
     #[inline]
@@ -220,7 +233,7 @@ impl<K, V, Ctx, const MAX_LOAD_PERCENTAGE: u64> HashMapMixin<K, V, Ctx>
     }
 }
 
-impl<K: Copy, V: Copy, Ctx: HashContext<K>, const MAX_LOAD_PERCENTAGE: u64>
+impl<K: Copy + 'static, V: Copy + 'static, Ctx: HashContext<K>, const MAX_LOAD_PERCENTAGE: u64>
     HashMap<K, V, Ctx, MAX_LOAD_PERCENTAGE>
 {
     pub fn init_capacity(capacity: u64) -> Result<Self, AllocError> {
@@ -315,7 +328,7 @@ impl<K: Copy, V: Copy, Ctx: HashContext<K>, const MAX_LOAD_PERCENTAGE: u64>
 
 /// Mirrors Zig's `fn HashMapMixin(Self, K, V, Context) type`. Implementors
 /// supply the backing storage; default methods provide the Robin-Hood logic.
-pub trait HashMapMixin<K, V, Ctx> {
+pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
     fn storage(&self) -> &[Entry<K, V>];
     fn storage_mut(&mut self) -> &mut [Entry<K, V>];
     fn len_mut(&mut self) -> &mut usize;

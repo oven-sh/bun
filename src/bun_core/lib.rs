@@ -109,6 +109,16 @@ pub mod strings {
         if check_len && a.len() != b.len() { return false; }
         a.iter().zip(b).all(|(x, y)| x.eq_ignore_ascii_case(y))
     }
+    /// `strings.eqlComptimeIgnoreLen` — caller has already checked `a.len() ==
+    /// b.len()` (the "ignore len" means "don't re-check"). PERF(port): the Zig
+    /// version generates length-specialized SWAR loads at comptime; this scalar
+    /// fallback is fine for the only T0/T1 caller (ComptimeStringMap, where
+    /// `b` is a small static).
+    #[inline]
+    pub fn eql_comptime_ignore_len(a: &[u8], b: &'static [u8]) -> bool {
+        debug_assert_eq!(a.len(), b.len());
+        a == b
+    }
 
     // ──────────────────────────────────────────────────────────────────────
     // Transcoding (from src/string/immutable/unicode.zig). Lives in T0 so
@@ -414,6 +424,50 @@ pub mod strings {
 
     /// Port of `convertUTF8ToUTF16InBuffer`. Writes WTF-16 into `out`; returns
     /// the slice written. Caller must size `out` ≥ utf8.len() (worst case 1:1).
+    /// `strings.convertUTF16ToUTF8InBuffer` — write WTF-8 into `out`, return
+    /// the written sub-slice. Uses simdutf for valid input; falls back to a
+    /// `Vec`-backed scalar path on surrogate errors.
+    pub fn convert_utf16_to_utf8_in_buffer<'a>(out: &'a mut [u8], utf16: &[u16]) -> Result<&'a mut [u8], EncodeIntoResult> {
+        // Fast path: simdutf in-place. `utf8::from::utf16::le` returns the
+        // byte length needed; convert writes that many.
+        let need = simdutf::length::utf8::from::utf16::le(utf16);
+        if need <= out.len() {
+            let r = simdutf::convert::utf16::to::utf8::with_errors::le(utf16, out);
+            if r.status == simdutf::Status::SUCCESS {
+                return Ok(&mut out[..r.count]);
+            }
+        }
+        // Fallback: append into a Vec (handles unpaired surrogates as WTF-8),
+        // then copy. PERF(port): Zig writes directly into `out`; revisit.
+        let mut v = Vec::with_capacity(need.max(utf16.len()));
+        convert_utf16_to_utf8_append(&mut v, utf16);
+        if v.len() > out.len() {
+            return Err(EncodeIntoResult { read: 0, written: 0 });
+        }
+        out[..v.len()].copy_from_slice(&v);
+        Ok(&mut out[..v.len()])
+    }
+    /// `bun.strings.basename` — pass-through to the path-module impl. Lives
+    /// here so T1 `bun_paths` (which can't depend on `bun_string`) can call it
+    /// via `bun_core::strings`.
+    #[inline]
+    pub fn basename(path: &[u8]) -> &[u8] {
+        // PORT NOTE: matches std.fs.path.basenamePosix — last component after
+        // stripping trailing separators; "/" → "".
+        let mut end = path.len();
+        while end > 0 && (path[end - 1] == b'/' || path[end - 1] == b'\\') { end -= 1; }
+        if end == 0 { return b""; }
+        let mut start = end;
+        while start > 0 && path[start - 1] != b'/' && path[start - 1] != b'\\' { start -= 1; }
+        &path[start..end]
+    }
+    /// `bun.strings.withoutTrailingSlash`
+    #[inline]
+    pub fn without_trailing_slash(s: &[u8]) -> &[u8] {
+        let mut e = s.len();
+        while e > 1 && (s[e - 1] == b'/' || s[e - 1] == b'\\') { e -= 1; }
+        &s[..e]
+    }
     pub fn convert_utf8_to_utf16_in_buffer<'a>(out: &'a mut [u16], utf8: &[u8]) -> &'a mut [u16] {
         // SAFETY: simdutf reads utf8.len() bytes, writes ≤ utf8.len() u16.
         let r = unsafe {

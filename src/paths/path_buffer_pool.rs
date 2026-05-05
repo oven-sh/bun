@@ -108,6 +108,23 @@ pub type path_buffer_pool = PathBufferPoolT<PathBuffer>;
 #[allow(non_camel_case_types)]
 pub type w_path_buffer_pool = PathBufferPoolT<WPathBuffer>;
 
+/// `bun.path_buffer_pool.get()` — convenience wrapper returning the RAII guard.
+/// `Path<U>` callers store this in a `ManuallyDrop` and explicitly `put` on
+/// reset (matches Zig's manual get/put), so also expose `into_box`/free `put`.
+pub type Guard = PoolGuard<PathBuffer>;
+#[inline] pub fn get() -> PoolGuard<PathBuffer> { PathBufferPoolT::<PathBuffer>::get() }
+#[inline] pub fn put(buf: Box<PathBuffer>) { PathBufferPoolT::<PathBuffer>::put(buf) }
+
+impl<T: PoolStorage> PoolGuard<T> {
+    /// Extract the `Box` without returning it to the pool (for `ManuallyDrop`
+    /// owners that will `put` explicitly later). `Drop` is a no-op once `buf`
+    /// is `None`, so no leak.
+    #[inline]
+    pub fn into_box(mut self) -> Box<T> {
+        self.buf.take().unwrap()
+    }
+}
+
 #[cfg(windows)]
 #[allow(non_camel_case_types)]
 pub type os_path_buffer_pool = w_path_buffer_pool;

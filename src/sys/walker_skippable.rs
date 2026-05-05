@@ -2,11 +2,16 @@ use core::ops::Range;
 
 use bun_alloc::AllocError;
 use bun_paths::{OSPathChar, OSPathSlice, OSPathSliceZ, SEP};
-use bun_sys::{self as sys, dir_iterator, Fd};
-use bun_wyhash::hash_with_seed;
+use crate::{self as sys, dir_iterator, Fd, FdExt};
+use bun_wyhash::Wyhash11;
+
+#[inline]
+fn hash_with_seed(seed: u64, bytes: &[u8]) -> u64 {
+    Wyhash11::hash(seed, bytes)
+}
 
 // TODO(port): `DirIterator.NewWrappedIterator(if (Environment.isWindows) .u16 else .u8)` —
-// assumed `dir_iterator::WrappedIterator` is already parameterized on the native OS path char.
+// `dir_iterator::WrappedIterator` is parameterized on the native OS path char in Zig.
 type WrappedIterator = dir_iterator::WrappedIterator;
 
 type NameBufferList = Vec<OSPathChar>;
@@ -29,9 +34,10 @@ pub struct WalkerEntry<'a> {
     /// rather than `path`, avoiding `error.NameTooLong` for deeply nested paths.
     /// The directory remains open until `next` or `deinit` is called.
     pub dir: Fd,
-    pub basename: OSPathSliceZ<'a>,
-    pub path: OSPathSliceZ<'a>,
-    // TODO(port): Zig used `std.fs.Dir.Entry.Kind`; assumed `bun_sys::EntryKind` is the port.
+    pub basename: &'a OSPathSliceZ,
+    pub path: &'a OSPathSliceZ,
+    // PORT NOTE: Zig used `std.fs.Dir.Entry.Kind`; mapped to `bun_core::FileKind`
+    // (re-exported as `crate::EntryKind`).
     pub kind: sys::EntryKind,
 }
 
@@ -51,8 +57,8 @@ impl Walker {
             let top_idx = self.stack.len() - 1;
             let mut dirname_len = self.stack[top_idx].dirname_len;
             match self.stack[top_idx].iter.next() {
-                sys::Result::Err(err) => return sys::Result::Err(err),
-                sys::Result::Ok(res) => {
+                Err(err) => return Err(err),
+                Ok(res) => {
                     if let Some(base) = res {
                         // Some filesystems (NFS, FUSE, bind mounts) don't provide
                         // d_type and return DT_UNKNOWN. Optionally resolve via
@@ -65,8 +71,8 @@ impl Walker {
                             let dir_fd = self.stack[top_idx].iter.dir();
                             // TODO(port): `base.name.sliceAssumeZ()` — assumed `.as_zstr()`
                             match sys::lstatat(dir_fd, base.name.as_zstr()) {
-                                sys::Result::Ok(stat_buf) => sys::kind_from_mode(stat_buf.mode),
-                                sys::Result::Err(_) => continue, // skip entries we can't stat
+                                Ok(stat_buf) => sys::kind_from_mode(stat_buf.st_mode as sys::Mode),
+                                Err(_) => continue, // skip entries we can't stat
                             }
                         } else {
                             base.kind
@@ -144,8 +150,8 @@ impl Walker {
                                 self.stack[top_idx].iter.dir(),
                                 base.name.as_slice(),
                             ) {
-                                sys::Result::Ok(fd) => fd,
-                                sys::Result::Err(err) => return sys::Result::Err(err),
+                                Ok(fd) => fd,
+                                Err(err) => return Err(err),
                             };
                             {
                                 self.stack.push(StackItem {
@@ -168,7 +174,7 @@ impl Walker {
                                 OSPathSliceZ::from_raw(self.name_buffer.as_ptr(), cur_len),
                             )
                         };
-                        return sys::Result::Ok(Some(WalkerEntry {
+                        return Ok(Some(WalkerEntry {
                             dir: self.stack[top_idx].iter.dir(),
                             basename,
                             path,
@@ -183,7 +189,7 @@ impl Walker {
                 }
             }
         }
-        sys::Result::Ok(None)
+        Ok(None)
     }
 }
 
@@ -209,8 +215,8 @@ impl Drop for Walker {
 /// `self` will not be closed after walking it.
 pub fn walk(
     self_: Fd,
-    skip_filenames: &[OSPathSlice<'_>],
-    skip_dirnames: &[OSPathSlice<'_>],
+    skip_filenames: &[&OSPathSlice],
+    skip_dirnames: &[&OSPathSlice],
 ) -> Result<Walker, AllocError> {
     let name_buffer = NameBufferList::new();
 

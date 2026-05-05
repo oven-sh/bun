@@ -45,10 +45,92 @@ impl core::fmt::Display for SystemError {
         write!(f, "SystemError(errno={})", self.errno)
     }
 }
-// TODO(b2-round8): walker_skippable.rs has 12 errors — `&[[u8]]`→`&[&[u8]]`
-// (4×), `Result<'a, T>` lifetime (4×), bun_sys self-import, hash_with_seed.
-// Mechanical but voluminous; deferred to keep round-7 focused on FdExt+ref_count.
-#[cfg(any())] pub mod walker_skippable;
+pub mod walker_skippable;
+
+// `std.fs.Dir.Entry.Kind` — same set as `bun_core::FileKind`.
+pub use bun_core::FileKind as EntryKind;
+
+// TODO(b2-blocked): `bun.DirIterator` lives in `bun_runtime::node::dir_iterator`
+// (T6). Per PORTING.md §Dispatch this is the cold-path vtable case: low-tier
+// owns the interface, high-tier installs an impl. Until then, stub the surface
+// `walker_skippable` (and `bun_glob`) need.
+pub mod dir_iterator {
+    use super::{EntryKind, Fd};
+    use bun_paths::OSPathChar;
+
+    /// Native-encoding directory entry returned by `WrappedIterator::next()`.
+    pub struct IteratorResult {
+        pub name: Name,
+        pub kind: EntryKind,
+    }
+    /// Length-known, NUL-terminated entry name in OS-native encoding.
+    pub struct Name(Vec<OSPathChar>);
+    impl Name {
+        #[inline] pub fn as_slice(&self) -> &[OSPathChar] { &self.0 }
+        #[inline] pub fn as_zstr(&self) -> &bun_core::ZStr {
+            // SAFETY: `0` always pushed as terminator on construction (T6 impl).
+            // Stub: unreachable until `iterate` is wired.
+            unsafe { bun_core::ZStr::from_raw(self.0.as_ptr().cast(), self.0.len()) }
+        }
+    }
+
+    /// `DirIterator.NewWrappedIterator(if windows .u16 else .u8)`
+    pub struct WrappedIterator {
+        dir: Fd,
+        // TODO(b2-blocked): platform-specific readdir state (DIR* / HANDLE+buf).
+    }
+    impl WrappedIterator {
+        #[inline] pub fn dir(&self) -> Fd { self.dir }
+        pub fn next(&mut self) -> super::Result<Option<IteratorResult>> {
+            todo!("b2-blocked: bun_runtime::node::dir_iterator (T6) — vtable install pending")
+        }
+    }
+
+    pub fn iterate(dir: Fd) -> WrappedIterator {
+        WrappedIterator { dir }
+    }
+}
+
+/// `bun.openDirForIterationOSPath` — `openat(dir, path, O_DIRECTORY|O_RDONLY)`
+/// on POSIX; `CreateFileW` with `FILE_FLAG_BACKUP_SEMANTICS` on Windows.
+pub fn open_dir_for_iteration_os_path(dir: Fd, path: &bun_paths::OSPathSlice) -> Result<Fd> {
+    #[cfg(not(windows))] {
+        // PORT NOTE: Zig `openDirForIterationOSPath` uses
+        // `O_DIRECTORY | O_RDONLY | O_CLOEXEC` (`| O_NONBLOCK` on Linux).
+        let mut buf = bun_paths::PathBuffer::default();
+        let len = path.len().min(buf.len() - 1);
+        buf[..len].copy_from_slice(&path[..len]);
+        buf[len] = 0;
+        // SAFETY: NUL-terminated above.
+        let z = unsafe { ZStr::from_raw(buf.as_ptr(), len) };
+        let flags = libc::O_DIRECTORY | libc::O_RDONLY | libc::O_CLOEXEC;
+        #[cfg(target_os = "linux")] let flags = flags | libc::O_NONBLOCK;
+        openat(dir, z, flags, 0)
+    }
+    #[cfg(windows)] {
+        let _ = (dir, path);
+        todo!("b2-blocked: open_dir_for_iteration_os_path windows")
+    }
+}
+
+pub fn lstatat(fd: Fd, path: &ZStr) -> Result<Stat> {
+    #[cfg(not(windows))] {
+        let mut st = core::mem::MaybeUninit::<libc::stat>::uninit();
+        // SAFETY: path is NUL-terminated; st is written on success.
+        let rc = unsafe {
+            libc::fstatat(fd.native(), path.as_ptr().cast(), st.as_mut_ptr(), libc::AT_SYMLINK_NOFOLLOW)
+        };
+        if rc == 0 {
+            Ok(unsafe { st.assume_init() })
+        } else {
+            Err(Error::from_code_int(last_errno(), Tag::lstat).with_path(path.as_bytes()))
+        }
+    }
+    #[cfg(windows)] {
+        let _ = (fd, path);
+        todo!("b2-blocked: lstatat windows (NtQueryInformationFile)")
+    }
+}
 pub mod coreutils_error_map;
 pub mod libuv_error_map;
 #[path = "SignalCode.rs"] pub mod signal_code;

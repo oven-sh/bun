@@ -65,20 +65,21 @@ impl<T> HasLength for &[T] {
     }
 }
 // TODO(b0): `String` arrives in bun_alloc via move-in (was bun_str::String — same-tier cycle).
-impl HasLength for bun_alloc::String {
+impl HasLength for &bun_alloc::String {
     #[inline]
     fn length(&self) -> usize {
-        self.length()
+        bun_alloc::String::length(self)
     }
 }
+
+// PORT NOTE: `pub const Value = V;` (inherent assoc type) is nightly-only;
+// callers can write `V` directly.
 
 impl<K, V, const N: usize, const LEN_TABLE: usize> ComptimeStringMapWithKeyType<K, V, N, LEN_TABLE>
 where
     K: Copy + Eq + Ord + 'static,
     V: Copy + 'static,
 {
-    pub type Value = V;
-
     /// Builds the precomputed tables. Called by the `comptime_string_map!` macro.
     ///
     /// Mirrors the `comptime blk:` in the Zig: sort by (len asc, bytes asc), then

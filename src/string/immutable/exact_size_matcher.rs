@@ -115,19 +115,12 @@ where
 
     /// Zig: `pub fn case(comptime str: []const u8) T`
     ///
-    /// Used at call sites as `Matcher.case("foo")` inside `switch` arms, so it
-    /// must be usable in const position.
-    // TODO(port): `const fn` with trait-associated types + `copy_from_slice` is
-    // not fully stable; if this fails to const-eval in Phase B, replace with a
-    // `macro_rules! case!` that emits the integer literal at compile time.
+    /// Runtime variant. For const-position (Zig's comptime use in `switch`
+    /// arms), use the [`exact_case!`] macro below — `const fn` cannot call
+    /// the non-const trait method `read_le` on stable.
     #[inline(always)]
-    pub const fn case(str: &'static [u8]) -> <Self as ExactSizeInt<MAX_BYTES>>::T
-    where
-        // TODO(port): const-trait bound — Phase B may need `#![feature(const_trait_impl)]`
-        Self: ExactSizeInt<MAX_BYTES>,
-    {
+    pub fn case(str: &'static [u8]) -> <Self as ExactSizeInt<MAX_BYTES>>::T {
         // if (str.len < max_bytes) { zero-pad } else if (== max_bytes) { read } else { @compileError }
-        const { assert!(MAX_BYTES > 0) };
         // PORT NOTE: reshaped — Zig branches on `<` vs `==` vs `@compileError`;
         // here we assert `<=` (the compile error) and unify the two valid arms.
         assert!(
@@ -142,6 +135,33 @@ where
         }
         Self::read_le(&bytes)
     }
+}
+
+/// Const-position equivalent of `ExactSizeMatcher::<N>::case(b"..")` for the
+/// common N (1/2/4/8/16). Expands to a `<uN>::from_le_bytes` of a zero-padded
+/// literal, which IS const-evaluable.
+///
+/// Usage: `match ExactSizeMatcher::<4>::r#match(s) { exact_case!(4, b"foo") => .., _ => .. }`
+#[macro_export]
+macro_rules! exact_case {
+    (1,  $s:expr) => {{ const _A: [u8;1]  = $crate::strings::exact_size_matcher::__pad::<1>($s);  u8::from_le_bytes(_A) }};
+    (2,  $s:expr) => {{ const _A: [u8;2]  = $crate::strings::exact_size_matcher::__pad::<2>($s);  u16::from_le_bytes(_A) }};
+    (4,  $s:expr) => {{ const _A: [u8;4]  = $crate::strings::exact_size_matcher::__pad::<4>($s);  u32::from_le_bytes(_A) }};
+    (8,  $s:expr) => {{ const _A: [u8;8]  = $crate::strings::exact_size_matcher::__pad::<8>($s);  u64::from_le_bytes(_A) }};
+    (12, $s:expr) => {{ const _A: [u8;16] = $crate::strings::exact_size_matcher::__pad::<16>(&$crate::strings::exact_size_matcher::__pad::<12>($s)); u128::from_le_bytes(_A) }};
+    (16, $s:expr) => {{ const _A: [u8;16] = $crate::strings::exact_size_matcher::__pad::<16>($s); u128::from_le_bytes(_A) }};
+}
+
+#[doc(hidden)]
+pub const fn __pad<const N: usize>(s: &[u8]) -> [u8; N] {
+    assert!(s.len() <= N, "str too long for exact_case!");
+    let mut out = [0u8; N];
+    let mut i = 0;
+    while i < s.len() {
+        out[i] = s[i];
+        i += 1;
+    }
+    out
 }
 
 // ──────────────────────────────────────────────────────────────────────────

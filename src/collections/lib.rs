@@ -14,10 +14,13 @@ pub mod linear_fifo;
 // const generics, generic_const_exprs, inherent assoc types). Rewrite to
 // stable: enum const params → const usize/bool, inherent assoc → free aliases.
 pub mod bit_set;
-#[cfg(any())] pub mod pool;                // 15 errors: SinglyLinkedList inherent assoc + missing methods
-#[cfg(any())] pub mod comptime_string_map; // 6 errors: per PORTING.md → phf::phf_map!, callers should use that directly
-#[cfg(any())] #[path = "StaticHashMap.rs"]
-              pub mod static_hash_map;     // 11 errors: Metadata inherent assoc; rarely used
+pub mod pool;
+pub use pool::{ObjectPool, ObjectPoolType};
+pub mod comptime_string_map;
+pub use comptime_string_map::{ComptimeStringMap, ComptimeStringMapWithKeyType};
+#[path = "StaticHashMap.rs"]
+pub mod static_hash_map;
+pub use static_hash_map::StaticHashMap;
 
 pub use multi_array_list::MultiArrayList;
 pub use baby_list::{BabyList, ByteList, OffsetByteList};
@@ -27,10 +30,6 @@ pub use linear_fifo::LinearFifo;
 
 pub use bit_set::{AutoBitSet, IntegerBitSet, StaticBitSet, DynamicBitSetUnmanaged};
 
-pub mod pool {
-    #[cfg(any())] include!("pool.rs"); // draft preserved
-    pub struct ObjectPool<T>(core::marker::PhantomData<T>);
-}
 
 // HashMap aliases. PORTING.md: must be wyhash-backed for determinism.
 // B-1 stub: std hasher until bun_wyhash::Hasher lands (TODO(b1): swap in B-2).

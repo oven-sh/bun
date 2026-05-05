@@ -1,19 +1,22 @@
-// TODO(port): requires #![feature(adt_const_params)] for enum const generics (ConstParamTy).
+// PORT NOTE: Zig's comptime enum options become `const u8` generics on stable
+// (adt_const_params is nightly-only). Each fn that branches on an option
+// reconstructs the enum from the u8 via `decode_opts!` so the original
+// `match Kind::Abs => ..` arms stay unchanged. The optimizer sees through the
+// `const fn from_u8` so monomorphization is preserved.
 // Phase B: either enable the feature crate-wide or lower the const-generic enums to a
 // trait-per-option encoding if nightly is unacceptable.
 
-use core::marker::{ConstParamTy, PhantomData};
+use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 
 use bun_core::Environment;
 use crate::{
-    self as path, PathBuffer, WPathBuffer, MAX_PATH_BYTES, PATH_MAX_WIDE, SEP, SEP_POSIX,
+    resolve_path as path, PathBuffer, WPathBuffer, MAX_PATH_BYTES, PATH_MAX_WIDE, SEP, SEP_POSIX,
     SEP_WINDOWS,
 };
-// MOVE_DOWN(CYCLEBREAK): ZStr/WStr live in bun_core; `strings` stays in bun_str (T1).
-use bun_core::{WStr, ZStr};
-use bun_str::strings;
-use bun_sys::Fd;
+// MOVE_DOWN(CYCLEBREAK): ZStr/WStr/Fd live in bun_core; `strings` subset too
+// (paths is T1, cannot depend on bun_string/bun_sys per same-tier ordering).
+use bun_core::{strings, Fd, WStr, ZStr};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Options
@@ -28,21 +31,21 @@ use bun_sys::Fd;
 pub mod options {
     use super::*;
 
-    #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy, Debug)]
+    #[derive(PartialEq, Eq, Clone, Copy, Debug)]
     pub enum Unit {
         U8,
         U16,
         Os,
     }
 
-    #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy, Debug)]
+    #[derive(PartialEq, Eq, Clone, Copy, Debug)]
     pub enum BufType {
         Pool,
         // Stack,
         // ArrayList,
     }
 
-    #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy, Debug)]
+    #[derive(PartialEq, Eq, Clone, Copy, Debug)]
     pub enum Kind {
         Abs,
         Rel,
@@ -51,18 +54,49 @@ pub mod options {
         Any,
     }
 
-    #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy, Debug)]
+    #[derive(PartialEq, Eq, Clone, Copy, Debug)]
     pub enum CheckLength {
         AssumeAlwaysLessThanMaxPath,
         CheckForGreaterThanMaxPath,
     }
 
-    #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy, Debug)]
+    #[derive(PartialEq, Eq, Clone, Copy, Debug)]
     pub enum PathSeparators {
         Any,
         Auto,
         Posix,
         Windows,
+    }
+
+    // ── const-generic encoding ────────────────────────────────────────────
+    // Stable Rust forbids enum-typed const generics; encode each option enum
+    // as a `u8` const param and decode at fn entry via `from_u8`.
+    impl Kind {
+        pub const ABS: u8 = 0;
+        pub const REL: u8 = 1;
+        pub const ANY: u8 = 2;
+        #[inline(always)]
+        pub const fn from_u8(v: u8) -> Self {
+            match v { 0 => Self::Abs, 1 => Self::Rel, _ => Self::Any }
+        }
+    }
+    impl PathSeparators {
+        pub const ANY: u8 = 0;
+        pub const AUTO: u8 = 1;
+        pub const POSIX: u8 = 2;
+        pub const WINDOWS: u8 = 3;
+        #[inline(always)]
+        pub const fn from_u8(v: u8) -> Self {
+            match v { 1 => Self::Auto, 2 => Self::Posix, 3 => Self::Windows, _ => Self::Any }
+        }
+    }
+    impl CheckLength {
+        pub const ASSUME: u8 = 0;
+        pub const CHECK: u8 = 1;
+        #[inline(always)]
+        pub const fn from_u8(v: u8) -> Self {
+            if v == 0 { Self::AssumeAlwaysLessThanMaxPath } else { Self::CheckForGreaterThanMaxPath }
+        }
     }
 
     impl PathSeparators {
@@ -114,6 +148,19 @@ pub mod options {
 }
 
 use options::{BufType, CheckLength, Error as PathError, Kind, PathSeparators, Unit};
+
+// Runtime → type-param dispatch for `resolve_path`'s `<P: PlatformT>` fns,
+// keyed on `SEP_OPT`. PERF: SEP_OPT is a const generic so the optimizer
+// const-folds the match to a single monomorphized call.
+macro_rules! sep_dispatch {
+    ($fn:ident ( $($a:expr),* $(,)? )) => {
+        match PathSeparators::from_u8(SEP_OPT) {
+            PathSeparators::Any | PathSeparators::Auto => path::$fn::<path::platform::Auto>($($a),*),
+            PathSeparators::Posix => path::$fn::<path::platform::Posix>($($a),*),
+            PathSeparators::Windows => path::$fn::<path::platform::Windows>($($a),*),
+        }
+    };
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PathUnit trait — replaces `opts.pathUnit()` / `opts.notPathUnit()` /
@@ -183,7 +230,7 @@ impl PathUnit for u8 {
         ZStr::from_raw(ptr, len)
     }
     fn pool_get() -> Box<PathBuffer> {
-        crate::path_buffer_pool::get()
+        crate::path_buffer_pool::get().into_box()
     }
     fn pool_put(buf: Box<PathBuffer>) {
         crate::path_buffer_pool::put(buf)
@@ -222,7 +269,7 @@ impl PathUnit for u16 {
         WStr::from_raw(ptr, len)
     }
     fn pool_get() -> Box<WPathBuffer> {
-        crate::w_path_buffer_pool::get()
+        crate::w_path_buffer_pool::get().into_box()
     }
     fn pool_put(buf: Box<WPathBuffer>) {
         crate::w_path_buffer_pool::put(buf)
@@ -247,7 +294,7 @@ pub type OsUnit = u8;
 // Buf — `opts.Buf()` (only the `.pool` variant is implemented in Zig)
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct Buf<U: PathUnit, const SEP_OPT: PathSeparators> {
+pub struct Buf<U: PathUnit, const SEP_OPT: u8> {
     // LIFETIMES.tsv: OWNED → Box<PathBuffer> (pool.get() in init(); pool.put() in deinit()).
     // Wrapped in ManuallyDrop so `Path::drop` can move the Box back into the pool
     // without leaving a dangling Box behind for the field destructor.
@@ -255,7 +302,7 @@ pub struct Buf<U: PathUnit, const SEP_OPT: PathSeparators> {
     len: usize,
 }
 
-impl<U: PathUnit, const SEP_OPT: PathSeparators> Buf<U, SEP_OPT> {
+impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
     #[inline]
     pub fn set_length(&mut self, new_len: usize) {
         self.len = new_len;
@@ -265,7 +312,7 @@ impl<U: PathUnit, const SEP_OPT: PathSeparators> Buf<U, SEP_OPT> {
     pub fn append(&mut self, characters: &[U], add_separator: bool) {
         let buf = U::buffer_as_mut_slice(&mut self.pooled);
         if add_separator {
-            buf[self.len] = match SEP_OPT {
+            buf[self.len] = match PathSeparators::from_u8(SEP_OPT) {
                 PathSeparators::Any | PathSeparators::Auto => U::from_ascii(SEP),
                 PathSeparators::Posix => U::from_ascii(SEP_POSIX),
                 PathSeparators::Windows => U::from_ascii(SEP_WINDOWS),
@@ -274,7 +321,7 @@ impl<U: PathUnit, const SEP_OPT: PathSeparators> Buf<U, SEP_OPT> {
         }
 
         // opts.inputChildType(@TypeOf(characters)) == opts.pathUnit() — same-unit branch.
-        match SEP_OPT {
+        match PathSeparators::from_u8(SEP_OPT) {
             PathSeparators::Any => {
                 buf[self.len..][..characters.len()].copy_from_slice(characters);
                 self.len += characters.len();
@@ -282,7 +329,7 @@ impl<U: PathUnit, const SEP_OPT: PathSeparators> Buf<U, SEP_OPT> {
             PathSeparators::Auto | PathSeparators::Posix | PathSeparators::Windows => {
                 for &c in characters {
                     buf[self.len] = if c.eq_ascii(b'/') || c.eq_ascii(b'\\') {
-                        U::from_ascii(SEP_OPT.char())
+                        U::from_ascii(PathSeparators::from_u8(SEP_OPT).char())
                     } else {
                         c
                     };
@@ -296,7 +343,7 @@ impl<U: PathUnit, const SEP_OPT: PathSeparators> Buf<U, SEP_OPT> {
     pub fn append_other(&mut self, characters: &[U::Other], add_separator: bool) {
         let buf = U::buffer_as_mut_slice(&mut self.pooled);
         if add_separator {
-            buf[self.len] = match SEP_OPT {
+            buf[self.len] = match PathSeparators::from_u8(SEP_OPT) {
                 PathSeparators::Any | PathSeparators::Auto => U::from_ascii(SEP),
                 PathSeparators::Posix => U::from_ascii(SEP_POSIX),
                 PathSeparators::Windows => U::from_ascii(SEP_WINDOWS),
@@ -309,11 +356,11 @@ impl<U: PathUnit, const SEP_OPT: PathSeparators> Buf<U, SEP_OPT> {
         // type parameter at runtime; route through a helper trait in Phase B. For now this
         // dispatches via TypeId-equivalent specialization on the two concrete impls.
         let converted_len = convert_into_buffer::<U>(&mut buf[self.len..], characters);
-        if SEP_OPT != PathSeparators::Any {
+        if SEP_OPT != PathSeparators::ANY {
             for off in 0..converted_len {
                 let c = buf[self.len + off];
                 if c.eq_ascii(b'/') || c.eq_ascii(b'\\') {
-                    buf[self.len + off] = U::from_ascii(SEP_OPT.char());
+                    buf[self.len + off] = U::from_ascii(PathSeparators::from_u8(SEP_OPT).char());
                 }
             }
         }
@@ -324,6 +371,162 @@ impl<U: PathUnit, const SEP_OPT: PathSeparators> Buf<U, SEP_OPT> {
     fn convert_append(&mut self, _characters: &[U::Other]) {
         // Intentionally empty — Zig body is fully commented out.
     }
+}
+
+/// Width-generic `bun.strings.basename` (Zig: `src/string/immutable/paths.zig:413`).
+/// Platform-split: POSIX recognizes only `/`; Windows recognizes `/`, `\`, and
+/// the `X:` drive designator at index 1.
+fn basename_generic<U: PathUnit>(path: &[U]) -> &[U] {
+    #[cfg(not(windows))]
+    return basename_posix(path);
+    #[cfg(windows)]
+    return basename_windows(path);
+}
+
+#[inline]
+fn basename_posix<U: PathUnit>(path: &[U]) -> &[U] {
+    if path.is_empty() {
+        return &path[..0];
+    }
+    let mut end_index = path.len() - 1;
+    while path[end_index].eq_ascii(b'/') {
+        if end_index == 0 {
+            return &path[..0];
+        }
+        end_index -= 1;
+    }
+    let mut start_index = end_index;
+    end_index += 1;
+    while !path[start_index].eq_ascii(b'/') {
+        if start_index == 0 {
+            return &path[0..end_index];
+        }
+        start_index -= 1;
+    }
+    &path[start_index + 1..end_index]
+}
+
+#[allow(dead_code)]
+#[inline]
+fn basename_windows<U: PathUnit>(path: &[U]) -> &[U] {
+    if path.is_empty() {
+        return &path[..0];
+    }
+    let mut end_index = path.len() - 1;
+    loop {
+        let c = path[end_index];
+        if c.eq_ascii(b'/') || c.eq_ascii(b'\\') {
+            if end_index == 0 {
+                return &path[..0];
+            }
+            end_index -= 1;
+            continue;
+        }
+        if c.eq_ascii(b':') && end_index == 1 {
+            return &path[..0];
+        }
+        break;
+    }
+    let mut start_index = end_index;
+    end_index += 1;
+    while !path[start_index].eq_ascii(b'/')
+        && !path[start_index].eq_ascii(b'\\')
+        && !(path[start_index].eq_ascii(b':') && start_index == 1)
+    {
+        if start_index == 0 {
+            return &path[0..end_index];
+        }
+        start_index -= 1;
+    }
+    &path[start_index + 1..end_index]
+}
+
+/// Width-generic `bun.Dirname.dirname` (Zig: `src/bun.zig:2520`).
+/// Platform-split: POSIX is `std.fs.path.dirnamePosix` (only `/`); Windows is
+/// `dirnameWindows` with disk-designator handling.
+fn dirname_generic<U: PathUnit>(path: &[U]) -> Option<&[U]> {
+    #[cfg(not(windows))]
+    return dirname_posix(path);
+    #[cfg(windows)]
+    return dirname_windows(path);
+}
+
+#[inline]
+fn dirname_posix<U: PathUnit>(path: &[U]) -> Option<&[U]> {
+    if path.is_empty() {
+        return None;
+    }
+    let mut end_index = path.len() - 1;
+    while path[end_index].eq_ascii(b'/') {
+        if end_index == 0 {
+            return None;
+        }
+        end_index -= 1;
+    }
+    while !path[end_index].eq_ascii(b'/') {
+        if end_index == 0 {
+            return None;
+        }
+        end_index -= 1;
+    }
+    // end_index is now at a '/'
+    if end_index == 0 {
+        // path[0] == '/' (loop exited because is_sep, not because index hit 0)
+        return Some(&path[..1]);
+    }
+    Some(&path[..end_index])
+}
+
+#[allow(dead_code)]
+#[inline]
+fn dirname_windows<U: PathUnit>(path: &[U]) -> Option<&[U]> {
+    if path.is_empty() {
+        return None;
+    }
+    let root_len = disk_designator_len_windows(path);
+    if path.len() == root_len {
+        return None;
+    }
+    let have_root_slash = path.len() > root_len
+        && (path[root_len].eq_ascii(b'/') || path[root_len].eq_ascii(b'\\'));
+
+    let mut end_index = path.len() - 1;
+    while path[end_index].eq_ascii(b'/') || path[end_index].eq_ascii(b'\\') {
+        if end_index == 0 {
+            return None;
+        }
+        end_index -= 1;
+    }
+    while !path[end_index].eq_ascii(b'/') && !path[end_index].eq_ascii(b'\\') {
+        if end_index == 0 {
+            return None;
+        }
+        end_index -= 1;
+    }
+    if have_root_slash && end_index == root_len {
+        end_index += 1;
+    }
+    if end_index == 0 {
+        return None;
+    }
+    Some(&path[..end_index])
+}
+
+/// Minimal width-generic port of `diskDesignatorWindows` covering the
+/// drive-letter case (`C:` → 2). Returns the length of the disk designator.
+// TODO(port): UNC (`\\server\share`) and device (`\\.\`) prefixes per
+// `std.fs.path.windowsParsePath`.
+#[allow(dead_code)]
+#[inline]
+fn disk_designator_len_windows<U: PathUnit>(path: &[U]) -> usize {
+    if path.len() >= 2 && path[1].eq_ascii(b':') {
+        if let Some(c0) = path[0].to_ascii() {
+            if c0.is_ascii_alphabetic() {
+                return 2;
+            }
+        }
+    }
+    0
 }
 
 // TODO(port): proper trait-based dispatch for cross-width conversion; this is a
@@ -354,22 +557,22 @@ fn convert_into_buffer<U: PathUnit>(dest: &mut [U], src: &[U::Other]) -> usize {
 /// `AbsPath(opts)` — forces `kind = .abs`.
 pub type AbsPath<
     U = u8,
-    const SEP_OPT: PathSeparators = { PathSeparators::Any },
-    const CHECK: CheckLength = { CheckLength::AssumeAlwaysLessThanMaxPath },
-> = Path<U, { Kind::Abs }, SEP_OPT, CHECK>;
+    const SEP_OPT: u8 = { PathSeparators::ANY },
+    const CHECK: u8 = { CheckLength::ASSUME },
+> = Path<U, { Kind::ABS }, SEP_OPT, CHECK>;
 
 /// `Path(.{ .kind = .abs, .sep = .auto })`
-pub type AutoAbsPath = Path<u8, { Kind::Abs }, { PathSeparators::Auto }>;
+pub type AutoAbsPath = Path<u8, { Kind::ABS }, { PathSeparators::AUTO }>;
 
 /// `RelPath(opts)` — forces `kind = .rel`.
 pub type RelPath<
     U = u8,
-    const SEP_OPT: PathSeparators = { PathSeparators::Any },
-    const CHECK: CheckLength = { CheckLength::AssumeAlwaysLessThanMaxPath },
-> = Path<U, { Kind::Rel }, SEP_OPT, CHECK>;
+    const SEP_OPT: u8 = { PathSeparators::ANY },
+    const CHECK: u8 = { CheckLength::ASSUME },
+> = Path<U, { Kind::REL }, SEP_OPT, CHECK>;
 
 /// `Path(.{ .kind = .rel, .sep = .auto })`
-pub type AutoRelPath = Path<u8, { Kind::Rel }, { PathSeparators::Auto }>;
+pub type AutoRelPath = Path<u8, { Kind::REL }, { PathSeparators::AUTO }>;
 
 /// `Path(comptime opts: Options) type`
 ///
@@ -377,15 +580,15 @@ pub type AutoRelPath = Path<u8, { Kind::Rel }, { PathSeparators::Auto }>;
 /// `Unit` is encoded as the type parameter `U: PathUnit` (use `u8`, `u16`, or `OsUnit`).
 pub struct Path<
     U: PathUnit = u8,
-    const KIND: Kind = { Kind::Any },
-    const SEP_OPT: PathSeparators = { PathSeparators::Any },
-    const CHECK: CheckLength = { CheckLength::AssumeAlwaysLessThanMaxPath },
+    const KIND: u8 = { Kind::ANY },
+    const SEP_OPT: u8 = { PathSeparators::ANY },
+    const CHECK: u8 = { CheckLength::ASSUME },
 > {
     _buf: Buf<U, SEP_OPT>,
     _unit: PhantomData<U>,
 }
 
-impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: CheckLength>
+impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     Path<U, KIND, SEP_OPT, CHECK>
 {
     pub fn init() -> Self {
@@ -413,7 +616,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
         debug_assert!(crate::fs::FileSystem::instance_loaded());
         let top_level_dir = crate::fs::FileSystem::instance().top_level_dir();
 
-        let trimmed = match KIND {
+        let trimmed = match Kind::from_u8(KIND) {
             Kind::Abs => {
                 debug_assert!(is_input_absolute(top_level_dir));
                 trim_input(TrimInputKind::Abs, top_level_dir)
@@ -435,7 +638,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
         debug_assert!(crate::fs::FileSystem::instance_loaded());
         let top_level_dir = crate::fs::FileSystem::instance().top_level_dir();
 
-        let trimmed = match KIND {
+        let trimmed = match Kind::from_u8(KIND) {
             Kind::Abs => {
                 debug_assert!(is_input_absolute(top_level_dir));
                 trim_input(TrimInputKind::Abs, top_level_dir)
@@ -459,28 +662,35 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
     }
 
     pub fn init_fd_path(fd: Fd) -> Result<Self, bun_core::Error> {
-        match KIND {
+        match Kind::from_u8(KIND) {
             Kind::Abs => {}
             Kind::Rel => panic!("cannot create a relative path from getFdPath"),
             Kind::Any => {}
         }
 
-        let mut this = Self::init();
-        // match BufType::Pool
+        // TODO(b2-blocked): `Fd::get_fd_path` is a syscall (`bun_sys::FdExt`, T1).
+        // `bun_paths` is also T1 and (per gen-cargo same-tier ordering) cannot
+        // depend on `bun_sys`. Route through a `bun_core` AtomicPtr hook
+        // (CYCLEBREAK §Debug-hook), or hoist this constructor to `bun_sys`.
+        #[cfg(any())]
         {
+            let mut this = Self::init();
             let buf = U::buffer_as_mut_slice(&mut this._buf.pooled);
-            // TODO(port): narrow error set
             let raw = fd.get_fd_path(buf)?;
             let trimmed = trim_input(TrimInputKind::Abs, raw);
             this._buf.len = trimmed.len();
+            Ok(this)
         }
-
-        Ok(this)
+        #[cfg(not(any()))]
+        {
+            let _ = fd;
+            todo!("init_fd_path: bun_sys::FdExt::get_fd_path hook (T1 same-tier)")
+        }
     }
 
     pub fn from_long_path<C: PathUnit>(input: &[C]) -> options::Result<Self> {
         // Zig restricts @TypeOf(input) to u8/u16 slices; the `C: PathUnit` bound enforces that.
-        let trimmed = match KIND {
+        let trimmed = match Kind::from_u8(KIND) {
             Kind::Abs => {
                 debug_assert!(is_input_absolute(input));
                 trim_input(TrimInputKind::Abs, input)
@@ -499,7 +709,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
             ),
         };
 
-        if CHECK == CheckLength::CheckForGreaterThanMaxPath {
+        if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
             if trimmed.len() >= U::MAX_PATH {
                 return Err(PathError::MaxPathExceeded);
             }
@@ -517,7 +727,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
     }
 
     pub fn from<C: PathUnit>(input: &[C]) -> options::Result<Self> {
-        let trimmed = match KIND {
+        let trimmed = match Kind::from_u8(KIND) {
             Kind::Abs => {
                 debug_assert!(is_input_absolute(input));
                 trim_input(TrimInputKind::Abs, input)
@@ -536,7 +746,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
             ),
         };
 
-        if CHECK == CheckLength::CheckForGreaterThanMaxPath {
+        if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
             if trimmed.len() >= U::MAX_PATH {
                 return Err(PathError::MaxPathExceeded);
             }
@@ -548,7 +758,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
     }
 
     pub fn is_absolute(&self) -> bool {
-        match KIND {
+        match Kind::from_u8(KIND) {
             // Zig: @compileError — Rust can't compile-error on a const-generic value
             // without specialization; debug-panic instead.
             Kind::Abs => panic!("already known to be absolute"),
@@ -558,7 +768,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
     }
 
     pub fn basename(&self) -> &[U] {
-        strings::basename(self.slice())
+        basename_generic(self.slice())
     }
 
     pub fn basename_z(&mut self) -> &U::ZSlice {
@@ -566,13 +776,18 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
         let len = self._buf.len;
         let buf = U::buffer_as_mut_slice(&mut self._buf.pooled);
         buf[len] = U::from_ascii(0);
-        let base = strings::basename(&buf[..len]);
-        // SAFETY: `base` is a suffix of `buf[..len]`, and `buf[len] == 0` was written above.
-        unsafe { U::zslice_from_raw(base.as_ptr(), base.len()) }
+        let base_len = basename_generic(&buf[..len]).len();
+        // Mirror Zig `full[full.len - base.len ..][0..base.len :0]` exactly:
+        // index from the END of `buf[..len]`, not from `base.as_ptr()`, so that
+        // when `base_len == 0` the result points at `buf[len]` (the NUL just
+        // written) and the sentinel invariant holds.
+        // SAFETY: `base_len <= len`, `buf[len] == 0`, and `buf` outlives the
+        // returned borrow.
+        unsafe { U::zslice_from_raw(buf.as_ptr().add(len - base_len), base_len) }
     }
 
     pub fn dirname(&self) -> Option<&[U]> {
-        crate::Dirname::dirname(self.slice())
+        dirname_generic(self.slice())
     }
 
     pub fn slice(&self) -> &[U] {
@@ -599,7 +814,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
     pub fn set_length(&mut self, new_length: usize) {
         self._buf.set_length(new_length);
 
-        let trimmed_len = match KIND {
+        let trimmed_len = match Kind::from_u8(KIND) {
             Kind::Abs => trim_input(TrimInputKind::Abs, self.slice()).len(),
             Kind::Rel => trim_input(TrimInputKind::Rel, self.slice()).len(),
             Kind::Any => {
@@ -637,15 +852,15 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
 
     pub fn append<C: PathUnit>(&mut self, input: &[C]) -> options::Result<()> {
         let needs_sep = self.len() > 0
-            && match SEP_OPT {
+            && match PathSeparators::from_u8(SEP_OPT) {
                 PathSeparators::Any => {
                     let last = self.slice()[self.len() - 1];
                     !(last.eq_ascii(b'/') || last.eq_ascii(b'\\'))
                 }
-                _ => !self.slice()[self.len() - 1].eq_ascii(SEP_OPT.char()),
+                _ => !self.slice()[self.len() - 1].eq_ascii(PathSeparators::from_u8(SEP_OPT).char()),
             };
 
-        match KIND {
+        match Kind::from_u8(KIND) {
             Kind::Abs => {
                 let has_root = self.len() > 0;
 
@@ -670,7 +885,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
                     return Ok(());
                 }
 
-                if CHECK == CheckLength::CheckForGreaterThanMaxPath {
+                if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
                     if self.len() + trimmed.len() + (needs_sep as usize) >= U::MAX_PATH {
                         return Err(PathError::MaxPathExceeded);
                     }
@@ -687,7 +902,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
                     return Ok(());
                 }
 
-                if CHECK == CheckLength::CheckForGreaterThanMaxPath {
+                if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
                     if self.len() + trimmed.len() + (needs_sep as usize) >= U::MAX_PATH {
                         return Err(PathError::MaxPathExceeded);
                     }
@@ -722,7 +937,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
                     return Ok(());
                 }
 
-                if CHECK == CheckLength::CheckForGreaterThanMaxPath {
+                if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
                     if self.len() + trimmed.len() + (needs_sep as usize) >= U::MAX_PATH {
                         return Err(PathError::MaxPathExceeded);
                     }
@@ -736,7 +951,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
 
     pub fn append_fmt(&mut self, args: core::fmt::Arguments<'_>) -> options::Result<()> {
         // TODO: there's probably a better way to do this. needed for trimming slashes
-        let mut temp: Path<u8, { Kind::Any }, { PathSeparators::Any }> = Path::init();
+        let mut temp: Path<u8, { Kind::ANY }, { PathSeparators::ANY }> = Path::init();
 
         // match BufType::Pool
         let input = {
@@ -750,7 +965,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
                     &u8::buffer_as_slice(&temp._buf.pooled)[..written]
                 }
                 Err(_) => {
-                    if CHECK == CheckLength::CheckForGreaterThanMaxPath {
+                    if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
                         return Err(PathError::MaxPathExceeded);
                     }
                     unreachable!();
@@ -767,7 +982,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
             panic!("unsupported unit type");
         }
 
-        match KIND {
+        match Kind::from_u8(KIND) {
             Kind::Abs => {}
             Kind::Rel => panic!("cannot join with relative path"),
             Kind::Any => {
@@ -787,16 +1002,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
             let cloned_slice: &[u8] = unsafe { core::mem::transmute(cloned.slice()) };
             // SAFETY: TypeId check above proves U == u8; &[&[U]] and &[&[u8]] have identical layout.
             let parts_u8: &[&[u8]] = unsafe { core::mem::transmute(parts) };
-            let joined = path::join_abs_string_buf(
-                cloned_slice,
-                pooled,
-                parts_u8,
-                match SEP_OPT {
-                    PathSeparators::Any | PathSeparators::Auto => path::Platform::Auto,
-                    PathSeparators::Posix => path::Platform::Posix,
-                    PathSeparators::Windows => path::Platform::Windows,
-                },
-            );
+            let joined = sep_dispatch!(join_abs_string_buf(cloned_slice, pooled, parts_u8));
 
             let trimmed = trim_input(TrimInputKind::Abs, joined);
             self._buf.len = trimmed.len();
@@ -805,7 +1011,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
     }
 
     pub fn append_join<C: PathUnit>(&mut self, part: &[C]) -> options::Result<()> {
-        match KIND {
+        match Kind::from_u8(KIND) {
             Kind::Abs => {}
             Kind::Rel => panic!("cannot join with relative path"),
             Kind::Any => {
@@ -825,7 +1031,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
         match (c_is_u8, u_is_u8) {
             (true, true) => {
                 // part: &[u8], unit: u8
-                let cwd_path_buf = crate::path_buffer_pool::get();
+                let mut cwd_path_buf = crate::path_buffer_pool::get();
                 // RAII guard puts back on Drop.
                 // SAFETY: TypeId check above proves U == u8; transmute is an identity slice cast.
                 let current_slice: &[u8] = unsafe { core::mem::transmute(self.slice()) };
@@ -837,22 +1043,14 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
                     unsafe { core::mem::transmute(U::buffer_as_mut_slice(&mut self._buf.pooled)) };
                 // SAFETY: TypeId check above proves C == u8; identity slice cast.
                 let part_u8: &[u8] = unsafe { core::mem::transmute(part) };
-                let joined = path::join_string_buf(
-                    pooled,
-                    &[cwd_path, part_u8],
-                    match SEP_OPT {
-                        PathSeparators::Any | PathSeparators::Auto => path::Platform::Auto,
-                        PathSeparators::Posix => path::Platform::Posix,
-                        PathSeparators::Windows => path::Platform::Windows,
-                    },
-                );
+                let joined = sep_dispatch!(join_string_buf(pooled, &[cwd_path, part_u8]));
 
                 let trimmed = trim_input(TrimInputKind::Abs, joined);
                 self._buf.len = trimmed.len();
             }
             (true, false) => {
                 // part: &[u8], unit: u16 → transcode then recurse
-                let path_buf = crate::w_path_buffer_pool::get();
+                let mut path_buf = crate::w_path_buffer_pool::get();
                 // SAFETY: TypeId check above proves C == u8; identity slice cast.
                 let part_u8: &[u8] = unsafe { core::mem::transmute(part) };
                 let converted = strings::convert_utf8_to_utf16_in_buffer(&mut path_buf[..], part_u8);
@@ -863,7 +1061,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
             }
             (false, false) => {
                 // part: &[u16], unit: u16
-                let cwd_path_buf = crate::w_path_buffer_pool::get();
+                let mut cwd_path_buf = crate::w_path_buffer_pool::get();
                 // SAFETY: TypeId check above proves U == u16; identity slice cast.
                 let current_slice: &[u16] = unsafe { core::mem::transmute(self.slice()) };
                 let cwd_path = &mut cwd_path_buf[..current_slice.len()];
@@ -874,22 +1072,22 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
                     unsafe { core::mem::transmute(U::buffer_as_mut_slice(&mut self._buf.pooled)) };
                 // SAFETY: TypeId check above proves C == u16; identity slice cast.
                 let part_u16: &[u16] = unsafe { core::mem::transmute(part) };
-                let joined = path::join_string_buf_w(
-                    pooled,
-                    &[cwd_path, part_u16],
-                    match SEP_OPT {
-                        PathSeparators::Any | PathSeparators::Auto => path::Platform::Auto,
-                        PathSeparators::Posix => path::Platform::Posix,
-                        PathSeparators::Windows => path::Platform::Windows,
-                    },
-                );
-
-                let trimmed = trim_input(TrimInputKind::Abs, joined);
-                self._buf.len = trimmed.len();
+                // TODO(b2-blocked): `resolve_path::join_string_buf_w` currently
+                // only accepts `&[&[u8]]` parts (its TODO notes Zig's `anytype`
+                // allowed u16). Needs a `parts: &[&[u16]]` overload (or
+                // `join_string_buf_t::<u16, P>` exposed). Windows-only path.
+                let _ = (pooled, cwd_path, part_u16);
+                #[cfg(any())]
+                {
+                    let joined = sep_dispatch!(join_string_buf_w(pooled, &[cwd_path, part_u16]));
+                    let trimmed = trim_input(TrimInputKind::Abs, joined);
+                    self._buf.len = trimmed.len();
+                }
+                todo!("append_join (u16,u16): join_string_buf_w &[&[u16]] overload");
             }
             (false, true) => {
                 // part: &[u16], unit: u8 → transcode then recurse
-                let path_buf = crate::path_buffer_pool::get();
+                let mut path_buf = crate::path_buffer_pool::get();
                 // SAFETY: TypeId check above proves C == u16; identity slice cast.
                 let part_u16: &[u16] = unsafe { core::mem::transmute(part) };
                 let converted =
@@ -909,24 +1107,36 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
         self.append_join(part)
     }
 
-    pub fn relative<const K2: Kind>(
+    pub fn relative<const K2: u8>(
         &self,
         to: &Path<U, K2, SEP_OPT, CHECK>,
     ) -> RelPath<U, SEP_OPT, CHECK> {
-        // match BufType::Pool
-        let mut output: RelPath<U, SEP_OPT, CHECK> = Path::init();
-        let rel = path::relative_buf_z(
-            U::buffer_as_mut_slice(&mut output._buf.pooled),
-            self.slice(),
-            to.slice(),
-        );
-        let trimmed = trim_input(TrimInputKind::Rel, rel);
-        output._buf.len = trimmed.len();
-        output
+        // TODO(b2-blocked): `resolve_path::relative_buf_z` is `&[u8]`-only;
+        // the Zig had no u16 variant either (Path.zig:301 calls
+        // `bun.path.relativeBufZ` which is u8). When `U == u16` this requires
+        // a transcode round-trip. Gate the body until a width-generic
+        // `relative_buf_z_t<C>` lands in resolve_path.
+        #[cfg(any())]
+        {
+            let mut output: RelPath<U, SEP_OPT, CHECK> = Path::init();
+            let rel = path::relative_buf_z(
+                U::buffer_as_mut_slice(&mut output._buf.pooled),
+                self.slice(),
+                to.slice(),
+            );
+            let trimmed = trim_input(TrimInputKind::Rel, rel);
+            output._buf.len = trimmed.len();
+            output
+        }
+        #[cfg(not(any()))]
+        {
+            let _ = to;
+            todo!("relative: width-generic relative_buf_z_t (resolve_path)")
+        }
     }
 
     pub fn undo(&mut self, n_components: usize) {
-        let min_len = match KIND {
+        let min_len = match Kind::from_u8(KIND) {
             Kind::Abs => root_len(self.slice()).unwrap_or(0),
             Kind::Rel => 0,
             Kind::Any => {
@@ -940,7 +1150,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
 
         let mut i: usize = 0;
         while i < n_components {
-            let slash = match SEP_OPT {
+            let slash = match PathSeparators::from_u8(SEP_OPT) {
                 PathSeparators::Any => self
                     .slice()
                     .iter()
@@ -999,7 +1209,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
     }
 }
 
-impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: CheckLength> Drop
+impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8> Drop
     for Path<U, KIND, SEP_OPT, CHECK>
 {
     fn drop(&mut self) {
@@ -1020,16 +1230,16 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
 pub struct ResetScope<
     'a,
     U: PathUnit,
-    const KIND: Kind,
-    const SEP_OPT: PathSeparators,
-    const CHECK: CheckLength,
+    const KIND: u8,
+    const SEP_OPT: u8,
+    const CHECK: u8,
 > {
     // LIFETIMES.tsv: BORROW_PARAM → &'a mut Path
     path: &'a mut Path<U, KIND, SEP_OPT, CHECK>,
     saved_len: usize,
 }
 
-impl<'a, U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: CheckLength>
+impl<'a, U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     ResetScope<'a, U, KIND, SEP_OPT, CHECK>
 {
     pub fn restore(&mut self) {

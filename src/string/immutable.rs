@@ -19,16 +19,22 @@ pub use self::unicode::{
 // Sub-modules (peer files under `src/string/immutable/`).
 // B-2: heavy submodules gated; minimal inline `unicode` provides the 5 fns
 // immutable.rs itself needs. Un-gate each below as their deps land.
-#[cfg(any())] #[path = "immutable/exact_size_matcher.rs"] pub mod exact_size_matcher_draft;
+#[path = "immutable/exact_size_matcher.rs"] pub mod exact_size_matcher;
+// TODO(b2-round9): escapeHTML.rs uses Zig `@Vector` SIMD ops (`.splat`,
+// `.simd_eq`, `.reduce`) on `AsciiVector`/`AsciiU16Vector`. With
+// `ENABLE_SIMD = false` the branches are unreachable but still must
+// type-check (Rust has no comptime laziness). Options: (a) `cfg(any())` each
+// `if ENABLE_SIMD { .. }` body (~6 blocks), (b) make AsciiVector a thin
+// wrapper with no-op `.splat`/`.simd_eq`/`.reduce_max`, (c) route through
+// `bun_highway::contains_any_of` (the actual scan). 17 errors.
 #[cfg(any())] #[path = "immutable/escapeHTML.rs"]         mod escape_html_draft;
-#[cfg(any())] #[path = "immutable/grapheme.rs"]           pub mod grapheme_draft;
+mod escape_html {}
+#[path = "immutable/grapheme.rs"] pub mod grapheme;
+#[path = "immutable/grapheme_tables.rs"] pub mod grapheme_tables;
 #[cfg(any())] #[path = "immutable/paths.rs"]              mod paths_draft;
 #[cfg(any())] #[path = "immutable/unicode.rs"]            mod unicode_draft;
 #[cfg(any())] #[path = "immutable/visible.rs"]            mod visible_draft;
 
-pub mod exact_size_matcher { pub struct ExactSizeMatcher<const N: usize>; }
-pub mod grapheme {}
-mod escape_html {}
 mod escape_reg_exp { pub use crate::escape_reg_exp::*; }
 mod paths {}
 mod visible {}
@@ -1466,11 +1472,65 @@ pub fn substring(self_: &[u8], start: Option<usize>, stop: Option<usize>) -> &[u
     &self_[sta.min(self_.len())..sto.min(self_.len())]
 }
 
-// PORT NOTE: AsciiVector / @Vector aliases dropped — Zig SIMD types have no
-// stable Rust equivalent. Hot loops below use scalar fallbacks with
-// `// PERF(port)` markers; Phase B routes through bun_highway/portable_simd.
+// PORT NOTE: AsciiVector / @Vector aliases — Zig SIMD types have no stable
+// Rust equivalent. Exposed as plain arrays so dead-SIMD branches type-check;
+// `ENABLE_SIMD = false` makes those branches unreachable. Hot loops use
+// scalar fallbacks with `// PERF(port)` markers; Phase B routes through
+// bun_highway/portable_simd.
+pub const ENABLE_SIMD: bool = false;
 pub const ASCII_VECTOR_SIZE: usize = 16;
 pub const ASCII_U16_VECTOR_SIZE: usize = 8;
+pub type AsciiVector = [u8; ASCII_VECTOR_SIZE];
+pub type AsciiU16Vector = [u16; ASCII_U16_VECTOR_SIZE];
+
+/// `strings.utf16Codepoint` — surrogate-pair length + decoded code point.
+/// Minimal version for `escape_html` (only `.len` is used there); the full
+/// FFFD-replacing variant lives in the gated `unicode_draft`.
+#[derive(Clone, Copy)]
+pub struct Utf16CodepointLen {
+    pub code_point: u32,
+    pub len: u8,
+}
+#[inline]
+pub fn utf16_codepoint(input: &[u16]) -> Utf16CodepointLen {
+    let c0 = input[0] as u32;
+    if c0 & !0x03ff == 0xd800 {
+        // high surrogate
+        if input.len() < 2 {
+            return Utf16CodepointLen { code_point: c0, len: 1 };
+        }
+        let c1 = input[1] as u32;
+        if c1 & !0x03ff != 0xdc00 {
+            return Utf16CodepointLen { code_point: c0, len: 1 };
+        }
+        Utf16CodepointLen {
+            code_point: 0x10000 + (((c0 & 0x03ff) << 10) | (c1 & 0x03ff)),
+            len: 2,
+        }
+    } else {
+        Utf16CodepointLen { code_point: c0, len: 1 }
+    }
+}
+
+/// `w!("foo")` → `&'static [u16]` UTF-16 literal (ASCII-only). Zig's `bun.w`.
+#[macro_export]
+macro_rules! w {
+    ($s:literal) => {{
+        const __B: &[u8] = $s.as_bytes();
+        const __N: usize = __B.len();
+        const __W: [u16; __N] = {
+            let mut out = [0u16; __N];
+            let mut i = 0;
+            while i < __N {
+                debug_assert!(__B[i] < 0x80, "w! is ASCII-only");
+                out[i] = __B[i] as u16;
+                i += 1;
+            }
+            out
+        };
+        &__W as &'static [u16]
+    }};
+}
 
 pub fn first_non_ascii(slice: &[u8]) -> Option<u32> {
     let result = simdutf::validate::with_errors::ascii(slice);

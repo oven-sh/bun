@@ -50,6 +50,7 @@ fn mix1(a: u64, b: u64, seed: u64) -> u64 {
 // Wyhash version which does not store internal state for handling partial buffers.
 // This is needed so that we can maximize the speed for the short key case, which will
 // use the non-iterative api which the public Wyhash exposes.
+#[derive(Clone, Copy)]
 struct WyhashStateless {
     seed: u64,
     msg_len: usize,
@@ -197,6 +198,23 @@ impl Wyhash11 {
 
     pub fn hash(seed: u64, input: &[u8]) -> u64 {
         WyhashStateless::hash(seed, input)
+    }
+}
+
+// Allow `Wyhash11` to be used with `core::hash::Hash::hash` (e.g., as the
+// state for std/HashMap-style hashing). Mirrors how Zig's `std.hash_map`
+// AutoContext drives a Wyhash state.
+impl core::hash::Hasher for Wyhash11 {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        self.update(bytes);
+    }
+    #[inline]
+    fn finish(&self) -> u64 {
+        // `final_` mutates `state`; clone so `Hasher::finish(&self)` stays
+        // semantically pure (matches std contract).
+        let mut s = self.state.clone();
+        s.final_(&self.buf[0..self.buf_len])
     }
 }
 

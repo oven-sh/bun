@@ -24,19 +24,43 @@ pub struct Node<T> {
     // could free via the originating allocator. In Rust the global mimalloc
     // allocator owns every `Box<Node<T>>`, so the field is dropped and
     // `destroy_node` uses `Box::from_raw`.
-    pub data: T,
+    //
+    // PORT NOTE: `MaybeUninit<T>` not `T` — Zig's `else undefined` (pool.zig:203)
+    // is well-defined-until-read, but Rust's `assume_init()` on uninit bytes is
+    // immediate UB for any `T` with validity invariants. Callers that use
+    // `INIT == None` write `data` before reading, so we keep the bytes
+    // uninitialized and only `assume_init_*` at access sites.
+    pub data: MaybeUninit<T>,
 }
 
+// PORT NOTE: `pub const Data = T;` (inherent assoc type) is nightly-only;
+// callers can write `T` directly.
+
 impl<T> Node<T> {
-    pub type Data = T;
+    /// Access the pooled value.
+    ///
+    /// # Safety
+    /// `data` must be initialized: either the pool was instantiated with
+    /// `T::INIT == Some(_)`, or the caller wrote to `data` after `get()`,
+    /// or the node was created via `push(value)`.
+    #[inline]
+    pub unsafe fn data_ref(&self) -> &T {
+        self.data.assume_init_ref()
+    }
+
+    /// See [`Node::data_ref`] for safety requirements.
+    #[inline]
+    pub unsafe fn data_mut(&mut self) -> &mut T {
+        self.data.assume_init_mut()
+    }
 
     /// Insert a new node after the current one.
     ///
     /// Arguments:
     ///     new_node: Pointer to the new node to insert.
-    pub fn insert_after(node: &mut Node<T>, new_node: &mut Node<T>) {
-        new_node.next = node.next;
-        node.next = new_node as *mut Node<T>;
+    pub fn insert_after(&mut self, new_node: &mut Node<T>) {
+        new_node.next = self.next;
+        self.next = new_node as *mut Node<T>;
     }
 
     /// Remove a node from the list.
@@ -45,21 +69,21 @@ impl<T> Node<T> {
     ///     node: Pointer to the node to be removed.
     /// Returns:
     ///     node removed
-    pub fn remove_next(node: &mut Node<T>) -> Option<*mut Node<T>> {
-        let next_node = if node.next.is_null() {
+    pub fn remove_next(&mut self) -> Option<*mut Node<T>> {
+        let next_node = if self.next.is_null() {
             return None;
         } else {
-            node.next
+            self.next
         };
         // SAFETY: next_node is non-null (checked above) and points to a live Node
-        node.next = unsafe { (*next_node).next };
+        self.next = unsafe { (*next_node).next };
         Some(next_node)
     }
 
     /// Iterate over the singly-linked list from this node, until the final node is found.
     /// This operation is O(N).
-    pub fn find_last(node: &mut Node<T>) -> *mut Node<T> {
-        let mut it: *mut Node<T> = node as *mut Node<T>;
+    pub fn find_last(&mut self) -> *mut Node<T> {
+        let mut it: *mut Node<T> = self as *mut Node<T>;
         loop {
             // SAFETY: `it` is always a valid live node in the list
             let next = unsafe { (*it).next };
@@ -72,9 +96,9 @@ impl<T> Node<T> {
 
     /// Iterate over each next node, returning the count of all nodes except the starting one.
     /// This operation is O(N).
-    pub fn count_children(node: &Node<T>) -> usize {
+    pub fn count_children(&self) -> usize {
         let mut count: usize = 0;
-        let mut it: *const Node<T> = node.next;
+        let mut it: *const Node<T> = self.next;
         while !it.is_null() {
             count += 1;
             // SAFETY: `it` is non-null and points to a live Node
@@ -104,24 +128,24 @@ impl<T> SinglyLinkedList<T> {
     ///
     /// Arguments:
     ///     new_node: Pointer to the new node to insert.
-    pub fn prepend(list: &mut Self, new_node: *mut Node<T>) {
+    pub fn prepend(&mut self, new_node: *mut Node<T>) {
         // SAFETY: caller guarantees new_node is a live, exclusively-owned Node
-        unsafe { (*new_node).next = list.first };
-        list.first = new_node;
+        unsafe { (*new_node).next = self.first };
+        self.first = new_node;
     }
 
     /// Remove a node from the list.
     ///
     /// Arguments:
     ///     node: Pointer to the node to be removed.
-    pub fn remove(list: &mut Self, node: *mut Node<T>) {
-        if list.first == node {
-            // SAFETY: node == list.first which is non-null and live
-            list.first = unsafe { (*node).next };
+    pub fn remove(&mut self, node: *mut Node<T>) {
+        if self.first == node {
+            // SAFETY: node == self.first which is non-null and live
+            self.first = unsafe { (*node).next };
         } else {
-            // SAFETY: list.first is non-null (else the `==` above would have
+            // SAFETY: self.first is non-null (else the `==` above would have
             // matched the null `node`, which callers never pass)
-            let mut current_elm = list.first;
+            let mut current_elm = self.first;
             // SAFETY: walk live list nodes; Zig's `.?` would panic on null —
             // mirror that with an unchecked deref (debug_assert in Phase B).
             unsafe {
@@ -137,23 +161,23 @@ impl<T> SinglyLinkedList<T> {
     ///
     /// Returns:
     ///     A pointer to the first node in the list.
-    pub fn pop_first(list: &mut Self) -> Option<*mut Node<T>> {
-        let first = if list.first.is_null() {
+    pub fn pop_first(&mut self) -> Option<*mut Node<T>> {
+        let first = if self.first.is_null() {
             return None;
         } else {
-            list.first
+            self.first
         };
         // SAFETY: first is non-null and live
-        list.first = unsafe { (*first).next };
+        self.first = unsafe { (*first).next };
         Some(first)
     }
 
     /// Iterate over all nodes, returning the count.
     /// This operation is O(N).
-    pub fn len(list: &Self) -> usize {
-        if !list.first.is_null() {
+    pub fn len(&self) -> usize {
+        if !self.first.is_null() {
             // SAFETY: first is non-null and live
-            1 + unsafe { (*list.first).count_children() }
+            1 + unsafe { (*self.first).count_children() }
         } else {
             0
         }
@@ -206,14 +230,17 @@ impl<T> Default for DataStruct<T> {
 ///
 /// `THREADSAFE == true`  ⇒ storage is thread-local (one free list per thread).
 /// `THREADSAFE == false` ⇒ storage is a single process-wide static.
-pub struct ObjectPool<T: ObjectPoolType, const THREADSAFE: bool, const MAX_COUNT: usize>;
+pub struct ObjectPool<T: ObjectPoolType, const THREADSAFE: bool, const MAX_COUNT: usize>(
+    core::marker::PhantomData<T>,
+);
 
-impl<T: ObjectPoolType, const THREADSAFE: bool, const MAX_COUNT: usize>
+// PORT NOTE: `pub const List = SinglyLinkedList(T)` / `pub const Node = Node(T)`
+// inherent assoc types are nightly-only; callers write `SinglyLinkedList<T>` /
+// `Node<T>` directly.
+
+impl<T: ObjectPoolType + 'static, const THREADSAFE: bool, const MAX_COUNT: usize>
     ObjectPool<T, THREADSAFE, MAX_COUNT>
 {
-    pub type List = SinglyLinkedList<T>;
-    pub type Node = Node<T>;
-
     // We want this to be global
     // but we don't want to create 3 global variables per pool
     // instead, we create one global variable per pool
@@ -253,7 +280,7 @@ impl<T: ObjectPoolType, const THREADSAFE: bool, const MAX_COUNT: usize>
 
         let new_node = Box::into_raw(Box::new(Node::<T> {
             next: ptr::null_mut(),
-            data: pooled,
+            data: MaybeUninit::new(pooled),
         }));
         Self::release(new_node);
     }
@@ -268,8 +295,10 @@ impl<T: ObjectPoolType, const THREADSAFE: bool, const MAX_COUNT: usize>
             Some(n) => n,
             None => return None,
         };
-        // SAFETY: node was just popped from the free list and is exclusively owned
-        unsafe { (*node).data.reset() };
+        // SAFETY: node was just popped from the free list and is exclusively owned;
+        // free-list nodes always carry initialized `data` (they reach the list
+        // via `push` or `release` of a previously-used node).
+        unsafe { (*node).data.assume_init_mut().reset() };
         if MAX_COUNT > 0 {
             d.count = d.count.saturating_sub(1);
         }
@@ -279,7 +308,7 @@ impl<T: ObjectPoolType, const THREADSAFE: bool, const MAX_COUNT: usize>
 
     pub fn first() -> *mut T {
         // SAFETY: `get()` always returns a valid, exclusively-owned node
-        unsafe { core::ptr::addr_of_mut!((*Self::get()).data) }
+        unsafe { (*Self::get()).data.as_mut_ptr() }
     }
 
     pub fn get() -> *mut Node<T> {
@@ -287,8 +316,9 @@ impl<T: ObjectPoolType, const THREADSAFE: bool, const MAX_COUNT: usize>
             let mut d = Self::data().borrow_mut();
             if d.loaded {
                 if let Some(node) = d.list.pop_first() {
-                    // SAFETY: node just popped from free list, exclusively owned
-                    unsafe { (*node).data.reset() };
+                    // SAFETY: node just popped from free list, exclusively owned;
+                    // free-list nodes always carry initialized `data`.
+                    unsafe { (*node).data.assume_init_mut().reset() };
                     if MAX_COUNT > 0 {
                         d.count = d.count.saturating_sub(1);
                     }
@@ -303,14 +333,13 @@ impl<T: ObjectPoolType, const THREADSAFE: bool, const MAX_COUNT: usize>
             // TODO(port): log "Allocate {type_name} - {size} bytes"
         }
 
+        // Matches Zig's `data = if (Init) |i| i(..) else undefined` (pool.zig:203).
+        // For `INIT == None` the bytes stay uninitialized; the caller MUST write
+        // `data` before any read (and before `release()`, since `destroy_node`
+        // assumes it is initialized when dropping).
         let data = match T::INIT {
-            Some(init_) => init_().expect("unreachable"),
-            None => {
-                // SAFETY: matches Zig's `else undefined` — caller is expected
-                // to fully initialize `data` before reading it.
-                unsafe { MaybeUninit::<T>::uninit().assume_init() }
-                // TODO(port): audit callers; consider requiring `Default` instead
-            }
+            Some(init_) => MaybeUninit::new(init_().expect("unreachable")),
+            None => MaybeUninit::uninit(),
         };
         Box::into_raw(Box::new(Node::<T> {
             next: ptr::null_mut(),
@@ -375,13 +404,18 @@ impl<T: ObjectPoolType, const THREADSAFE: bool, const MAX_COUNT: usize>
     fn destroy_node(node: *mut Node<T>) {
         // TODO(port): Zig special-cased `Type != bun.ByteList` here to skip
         // `bun.memory.deinit(&node.data)` for `ByteList` (a known leak the Zig
-        // comment calls out). In Rust, `Box::from_raw` runs `T`'s `Drop`, which
-        // is the moral equivalent of `bun.memory.deinit`. If `BabyList<u8>`
-        // (the `ByteList` port) must keep leaking for compat, gate its `Drop`
-        // there — not here.
+        // comment calls out). In Rust, dropping `T` is the moral equivalent of
+        // `bun.memory.deinit`. If `BabyList<u8>` (the `ByteList` port) must keep
+        // leaking for compat, gate its `Drop` there — not here.
+        //
         // SAFETY: `node` was created via `Box::into_raw` in `push`/`get` and
-        // is exclusively owned by the caller.
-        drop(unsafe { Box::from_raw(node) });
+        // is exclusively owned by the caller. `data` is initialized: `destroy_node`
+        // is only reached from `release()` (caller had a usable node, so `data`
+        // was written) or `delete_all()` (free-list nodes, always initialized).
+        unsafe {
+            (*node).data.assume_init_drop();
+            drop(Box::from_raw(node));
+        }
     }
 }
 

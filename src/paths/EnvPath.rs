@@ -1,8 +1,9 @@
 use bun_alloc::AllocError;
-use bun_str::strings;
+use bun_core::strings;
 
-use crate::AbsPath;
 use crate::DELIMITER;
+// `AbsPath(.{ .sep = .auto })`
+type AbsPath = crate::Path<u8, { crate::path::options::Kind::ABS }, { crate::path::options::PathSeparators::AUTO }>;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub struct EnvPathOptions {

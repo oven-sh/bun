@@ -393,8 +393,11 @@ it("setTimeout wrappers do not accumulate across bursts (#30261)", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
+  const filteredStderr = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(filteredStderr).toBe("");
 
   const count = Number(stdout.trim());
   // With the fix, the count stabilizes around ~200 (live during the last
@@ -402,6 +405,7 @@ it("setTimeout wrappers do not accumulate across bursts (#30261)", async () => {
   // runs because eden GC is never scheduled by timer creation alone.
   // 500 sits comfortably between the two populations.
   expect(count).toBeLessThan(500);
+  expect(exitCode).toBe(0);
 });
 
 it("setTimeout Timeout objects are unprotected after called", async () => {

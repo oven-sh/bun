@@ -1,7 +1,17 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
-import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, tmpdirSync, waitForFileToExist } from "harness";
+import {
+  copyFileSync,
+  cpSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  truncateSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
+import { bunEnv, bunExe, isDebug, isMacOS, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -728,4 +738,62 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
     // TODO: bun has a memory leak when --hot is used on very large files
   },
   longTimeout,
+);
+
+// Regression for macOS kqueue watcher: ftruncate that grows a file fires
+// NOTE_EXTEND on the vnode, not NOTE_WRITE. If NOTE_EXTEND is not in the
+// fflags passed to kevent(), the reload is silently dropped. This matches
+// libuv's watch flag set (NOTE_WRITE | RENAME | DELETE | ATTRIB | EXTEND | REVOKE).
+it.skipIf(!isMacOS)(
+  "should hot reload when a watched file is extended via truncate (NOTE_EXTEND)",
+  async () => {
+    const root = hotRunnerRoot;
+    // Rewrite so the file ends with a trailing line comment (no newline after).
+    // ftruncate(fd, size + 1) zero-fills the extended region; the NUL bytes
+    // land inside the trailing line comment and the file stays valid JS.
+    writeFileSync(root, readFileSync(root, "utf8").replace(/\n+$/, "") + "\n//");
+
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "run", root],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+
+    let reloadCounter = 0;
+    let str = "";
+    for await (const chunk of runner.stdout) {
+      str += new TextDecoder().decode(chunk);
+      if (!/\[#!root\].*[0-9]\n/g.test(str)) continue;
+
+      // Split on newline, keeping any incomplete trailing line in `str` so the
+      // next chunk can complete it. Processing lines directly from `str` and
+      // then clearing it would drop a partial "[#!root] Reloaded: N" fragment
+      // and can stall the loop until the test timeout.
+      const lines = str.split("\n");
+      str = lines.pop() ?? "";
+      let any = false;
+      for (const line of lines) {
+        if (!line.includes("[#!root]")) continue;
+        reloadCounter++;
+
+        if (reloadCounter === 3) {
+          runner.kill();
+          break;
+        }
+
+        expect(line).toContain(`[#!root] Reloaded: ${reloadCounter}`);
+        any = true;
+      }
+
+      if (any) {
+        truncateSync(root, statSync(root).size + 1);
+      }
+    }
+
+    expect(reloadCounter).toBeGreaterThanOrEqual(3);
+  },
+  timeout,
 );

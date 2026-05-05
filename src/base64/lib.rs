@@ -1,18 +1,6 @@
 use std::sync::LazyLock;
 
-// B-1: simdutf_sys doesn't yet export base64/Status; SIMD path gated.
-#[cfg(any())] use bun_simdutf_sys::{self as simdutf, SIMDUTFResult};
-#[derive(Clone, Copy)]
-pub struct SIMDUTFResult { pub count: usize, pub status: u32 }
-impl SIMDUTFResult { #[inline] pub fn is_successful(&self) -> bool { self.status == 0 } }
-mod simdutf {
-    pub mod base64 {
-        pub fn decode(_: &[u8], _: &mut [u8], _: bool) -> super::super::SIMDUTFResult { todo!("b1-gate") }
-        pub fn encode(_: &[u8], _: &mut [u8], _: bool) -> usize { todo!("b1-gate") }
-        pub fn encode_len(n: usize, _: bool) -> usize { (n + 2) / 3 * 4 }
-    }
-    pub mod Status { pub const Success: u32 = 0; pub const InvalidBase64Character: u32 = 4; }
-}
+use bun_simdutf_sys::simdutf::{self, SIMDUTFResult};
 
 // ASCII control codes used in the ignore set below.
 const VT: u8 = 0x0B; // std.ascii.control_code.vt
@@ -44,10 +32,10 @@ pub fn decode(destination: &mut [u8], source: &[u8]) -> SIMDUTFResult {
         if MIXED_DECODER.decode(destination, source, &mut wrote).is_err() {
             return SIMDUTFResult {
                 count: wrote,
-                status: simdutf::Status::InvalidBase64Character,
+                status: simdutf::Status::INVALID_BASE64_CHARACTER,
             };
         }
-        return SIMDUTFResult { count: wrote, status: simdutf::Status::Success };
+        return SIMDUTFResult { count: wrote, status: simdutf::Status::SUCCESS };
     }
 
     result

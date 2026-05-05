@@ -574,6 +574,37 @@ pub const Value = union(Tag) {
             };
         }
 
+        if (js_type == .Array or js_type == .DerivedArray) {
+            // Per the Fetch spec, `BodyInit` is a union of ReadableStream,
+            // Blob, BufferSource, FormData, URLSearchParams, and USVString.
+            // A plain Array is not part of that union, so it falls through
+            // to USVString and gets coerced via ToString — matching Node and
+            // browsers (e.g. `new Response([1,2,3]).text()` → "1,2,3").
+            //
+            // Materialize to UTF-8 bytes directly rather than reusing the
+            // string-like branch above: that branch asserts the returned
+            // `bun.String` has tag `.WTFStringImpl`, which is only guaranteed
+            // for already-string inputs — ToString on an Array may
+            // legitimately return a different tag on some platforms.
+            var sliced = try value.toSliceClone(globalThis);
+            // `toSliceClone` already allocated on `bun.default_allocator`, and
+            // `intoOwnedSlice` transfers that buffer into our ownership without
+            // a second copy when the allocators match (which they do here).
+            const bytes = sliced.intoOwnedSlice(bun.default_allocator) catch {
+                return globalThis.throwValue(ZigString.static("Failed to clone array body").toErrorInstance(globalThis));
+            };
+            if (bytes.len == 0) {
+                bun.default_allocator.free(bytes);
+                return Body.Value{ .Empty = {} };
+            }
+            return Body.Value{
+                .InternalBlob = .{
+                    .bytes = std.array_list.Managed(u8).fromOwnedSlice(bun.default_allocator, @constCast(bytes)),
+                    .was_string = true,
+                },
+            };
+        }
+
         if (js_type.isTypedArrayOrArrayBuffer()) {
             if (value.asArrayBuffer(globalThis)) |buffer| {
                 const bytes = buffer.byteSlice();
@@ -663,12 +694,8 @@ pub const Value = union(Tag) {
         }
 
         return Body.Value{
-            .Blob = Blob.get(globalThis, value, true, false) catch |err| {
+            .Blob = Blob.get(globalThis, value, true, false) catch {
                 if (!globalThis.hasException()) {
-                    if (err == error.InvalidArguments) {
-                        return globalThis.throwInvalidArguments("Expected an Array", .{});
-                    }
-
                     return globalThis.throwInvalidArguments("Invalid Body object", .{});
                 }
 

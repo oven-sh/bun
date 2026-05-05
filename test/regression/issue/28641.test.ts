@@ -39,7 +39,7 @@ server.listen(0, () => {
   client.on("data", (chunk) => { data += chunk.toString(); });
   client.on("end", () => finish());
   client.on("close", () => finish());
-  client.on("error", (err) => finish("ERROR:" + err.message));
+  client.on("error", (err) => finish(data + "ERROR:" + err.message));
 });
 `,
     ],
@@ -89,7 +89,7 @@ server.listen(0, () => {
   client.on("data", (chunk) => { data += chunk.toString(); });
   client.on("end", () => finish());
   client.on("close", () => finish());
-  client.on("error", (err) => finish("ERROR:" + err.message));
+  client.on("error", (err) => finish(data + "ERROR:" + err.message));
 });
 `,
     ],

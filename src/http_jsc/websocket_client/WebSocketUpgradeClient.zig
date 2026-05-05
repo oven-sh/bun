@@ -674,10 +674,25 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             // Proxy tunnel established
             log("Proxy tunnel established", .{});
 
+            const remain_src = body[@as(usize, @intCast(response.bytes_read))..];
+
+            // When the CONNECT reply was split across reads, `body` is
+            // `this.body.items` and `remain_src` points into `this.body`'s
+            // backing allocation. The ws:// branch below re-enters
+            // `handleData`, which on a ShortRead of the upstream 101 response
+            // would `appendSlice` that slice back into `this.body` — an
+            // overlapping `@memcpy` (UB; "@memcpy arguments alias" panic in
+            // safe builds). Copy it out before clearing so downstream
+            // consumers see stable, non-aliased bytes.
+            var remain_owned: []u8 = &.{};
+            defer if (remain_owned.len > 0) bun.default_allocator.free(remain_owned);
+            const remain_buf: []const u8 = if (remain_src.len > 0 and this.body.items.len > 0) brk: {
+                remain_owned = bun.handleOom(bun.default_allocator.dupe(u8, remain_src));
+                break :brk remain_owned;
+            } else remain_src;
+
             // Clear the body buffer for WebSocket handshake
             this.body.clearRetainingCapacity();
-
-            const remain_buf = body[@as(usize, @intCast(response.bytes_read))..];
 
             // Safely unwrap proxy state - it must exist if we're in proxy_handshake state
             const p = if (this.proxy) |*proxy| proxy else {

@@ -2501,11 +2501,7 @@ class ServerHttp2Stream extends Http2Stream {
     // too so we do not emit a PUSH_PROMISE on a stream we already ended,
     // which a conforming client must reject with PROTOCOL_ERROR and tears
     // down the whole connection.
-    if (
-      this.destroyed ||
-      this.closed ||
-      (this[bunHTTP2StreamStatus] & StreamState.WritableClosed) !== 0
-    ) {
+    if (this.destroyed || this.closed || (this[bunHTTP2StreamStatus] & StreamState.WritableClosed) !== 0) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
 
@@ -2551,8 +2547,7 @@ class ServerHttp2Stream extends Http2Stream {
     // be HPACK-encoded with never-index (RFC 7541 Section 7.1.3), matching
     // `request()`/`respond()` semantics. Honour a top-level options override
     // first, then fall back to the magic symbol on the headers object.
-    const sensitiveNames =
-      finalOptions[sensitiveHeaders] ?? pushHeaders[sensitiveHeaders] ?? [];
+    const sensitiveNames = finalOptions[sensitiveHeaders] ?? pushHeaders[sensitiveHeaders] ?? [];
     const sensitiveMap = {};
     if ($isArray(sensitiveNames)) {
       for (let i = 0; i < sensitiveNames.length; i++) {

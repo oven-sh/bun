@@ -533,6 +533,17 @@ pub const Bin = extern struct {
         err: ?anyerror = null,
         skipped_due_to_missing_bin: bool = false,
 
+        /// When set, `linkBinOrCreateShim` skips the "target must exist"
+        /// guard and proceeds to create the symlink/shim unconditionally.
+        /// Used by the isolated linker when the target path traverses a
+        /// dep symlink into a store entry whose staging→final rename has
+        /// not happened yet — the symlink resolves once all entries commit,
+        /// and blocking here would deadlock a cyclic peer edge
+        /// (issue #30209). Keep the default `false` everywhere else so
+        /// genuinely missing bins still get skipped rather than creating
+        /// dangling shims that surface as failures in postinstall scripts.
+        allow_dangling_target: bool = false,
+
         pub var umask: bun.Mode = 0;
 
         var has_set_umask = false;
@@ -575,8 +586,15 @@ pub const Bin = extern struct {
             }
 
             // Skip if the target does not exist. This is important because placing a dangling
-            // shim in path might break a postinstall
-            if (!bun.sys.exists(abs_target)) {
+            // shim in path might break a postinstall.
+            //
+            // `allow_dangling_target` is set by the isolated linker when the
+            // target resolves through a dep symlink that's still waiting on a
+            // staging→final rename from a concurrent entry. In that mode,
+            // the symlink *will* resolve once all entries commit, and the
+            // alternative (blocking for the peer's commit) would deadlock a
+            // cyclic peer edge.
+            if (!this.allow_dangling_target and !bun.sys.exists(abs_target)) {
                 this.skipped_due_to_missing_bin = true;
                 return;
             }

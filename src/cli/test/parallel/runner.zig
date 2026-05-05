@@ -87,10 +87,6 @@ pub fn runAsCoordinator(
     }
 
     const workers = try allocator.alloc(Worker, K);
-    const retries = try allocator.alloc(u8, sorted.len);
-    @memset(retries, 0);
-    const pending_retry = try allocator.alloc(?u32, K);
-    @memset(pending_retry, null);
 
     var coord = Coordinator{
         .vm = vm,
@@ -100,8 +96,6 @@ pub fn runAsCoordinator(
         .argv = argv,
         .envps = envps,
         .workers = workers,
-        .retries = retries,
-        .pending_retry = pending_retry,
         .worker_tmpdir = worker_tmpdir,
         .parallel_limit = K,
         .scale_up_after_ms = if (ctx.test_options.parallel_delay_ms) |d|
@@ -449,7 +443,7 @@ const Worker = @import("./Worker.zig");
 const aggregate = @import("./aggregate.zig");
 const std = @import("std");
 const Channel = @import("./Channel.zig").Channel;
-const Command = @import("../../../cli.zig").Command;
+const Command = @import("../../cli.zig").Command;
 const Coordinator = @import("./Coordinator.zig").Coordinator;
 
 const test_command = @import("../../test_command.zig");

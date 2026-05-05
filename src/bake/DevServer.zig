@@ -4130,7 +4130,18 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
                 // INotifyWatcher stores sub paths into `changed_files`
                 // the other platforms do not appear to write anything into `changed_files` ever.
                 if (Environment.isLinux) {
-                    ev.appendDir(dev.allocator(), file_path, if (event.name_len > 0) changed_files[event.name_off] else null);
+                    // A merged WatchEvent may carry multiple sub-path names
+                    // (e.g. CREATE a.tmp + MOVED_TO a.ts in one coalesced
+                    // batch). Forward every name; indexing only the first
+                    // would drop the rename target and leave it un-watched.
+                    const names = event.names(changed_files);
+                    if (names.len > 0) {
+                        for (names) |maybe_sub_path| {
+                            ev.appendDir(dev.allocator(), file_path, maybe_sub_path);
+                        }
+                    } else {
+                        ev.appendDir(dev.allocator(), file_path, null);
+                    }
                 } else {
                     ev.appendDir(dev.allocator(), file_path, null);
                 }
@@ -4459,6 +4470,14 @@ pub fn readString32(reader: anytype, alloc: Allocator) ![]const u8 {
 }
 
 const TestingBatch = struct {
+    /// Keys are borrowed. `IncrementalGraph.invalidate` populates the local
+    /// `entry_points` with graph-owned `bundled_files.keys()[index]` (and the
+    /// tailwind hack uses DevServer-owned map keys), both of which outlive
+    /// the batch. Borrowing — rather than duping and freeing after
+    /// `startAsyncBundle` returns — keeps the keys valid through the async
+    /// onResolve-plugin path, which stores `abs_path` as
+    /// `Resolve.import_record.specifier` without copying and reads it on a
+    /// later event-loop tick.
     entry_points: EntryPointList,
 
     pub const empty: @This() = .{ .entry_points = .empty };

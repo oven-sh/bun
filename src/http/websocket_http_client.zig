@@ -6,5 +6,5 @@ pub const WebSocketHTTPSClient = upgrade_client.NewHTTPUpgradeClient(true);
 pub const WebSocketClient = websocket_client.NewWebSocketClient(false);
 pub const WebSocketClientTLS = websocket_client.NewWebSocketClient(true);
 
-const upgrade_client = @import("./websocket_client/WebSocketUpgradeClient.zig");
-const websocket_client = @import("./websocket_client.zig");
+const upgrade_client = @import("../http_jsc/websocket_client/WebSocketUpgradeClient.zig");
+const websocket_client = @import("../http_jsc/websocket_client.zig");

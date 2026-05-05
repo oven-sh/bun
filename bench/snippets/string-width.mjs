@@ -10,7 +10,7 @@ const format = n => {
 const ESC = "\x1b";
 const ST = "\x1b\\"; // 7-bit String Terminator (ESC + backslash)
 const C1_ST = "\x9c"; // 8-bit C1 String Terminator
-const URL = "https://github.com/oven-sh/bun/blob/main/src/bun.js/bindings/ANSIHelpers.h";
+const URL = "https://github.com/oven-sh/bun/blob/main/src/jsc/bindings/ANSIHelpers.h";
 
 // Each input: [content, label, opts?]. opts.skipMismatchCheck=true skips ONLY
 // the cross-impl correctness check (still benchmarks both bun and npm) — for

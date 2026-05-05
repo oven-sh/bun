@@ -1597,13 +1597,18 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                     // retrieve the list of files and add them as stale.
                     continue;
                 };
+                // Store the graph-owned key, not the incoming `path`. `path`
+                // may be a slice into `HotReloadEvent.extra_files`, which is
+                // reset (and may be reallocated by the watcher thread) before
+                // `entry_points` is consumed by startAsyncBundle/TestingBatch.
+                const owned_path = keys[index];
                 g.stale_files.set(index);
                 const data = values[index].unpack();
                 switch (side) {
                     .client => switch (data.content) {
                         .css_root, .css_child => {
                             if (data.content == .css_root) {
-                                try entry_points.appendCss(alloc, path);
+                                try entry_points.appendCss(alloc, owned_path);
                             }
 
                             var it = g.first_dep.items[index].unwrap();
@@ -1646,20 +1651,20 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                                 it = entry.next_dependency.unwrap();
                             }
 
-                            try entry_points.appendJs(alloc, path, .client);
+                            try entry_points.appendJs(alloc, owned_path, .client);
                         },
                         // When re-bundling SCBs, only bundle the server. Otherwise
                         // the bundler gets confused and bundles both sides without
                         // knowledge of the boundary between them.
                         .js, .unknown => if (!data.is_hmr_root) {
-                            try entry_points.appendJs(alloc, path, .client);
+                            try entry_points.appendJs(alloc, owned_path, .client);
                         },
                     },
                     .server => {
                         if (data.is_rsc)
-                            try entry_points.appendJs(alloc, path, .server);
+                            try entry_points.appendJs(alloc, owned_path, .server);
                         if (data.is_ssr and !data.is_client_component_boundary)
-                            try entry_points.appendJs(alloc, path, .ssr);
+                            try entry_points.appendJs(alloc, owned_path, .ssr);
                     },
                 }
             }

@@ -51,10 +51,10 @@ make sqlite3.c > /dev/null 2>&1
 
 echo "Copying files to Bun source tree..."
 # Add clang-format off directive and copy the amalgamation
-echo "// clang-format off" > "$REPO_ROOT/src/bun.js/bindings/sqlite/sqlite3.c"
-cat sqlite3.c >> "$REPO_ROOT/src/bun.js/bindings/sqlite/sqlite3.c"
+echo "// clang-format off" > "$REPO_ROOT/src/jsc/bindings/sqlite/sqlite3.c"
+cat sqlite3.c >> "$REPO_ROOT/src/jsc/bindings/sqlite/sqlite3.c"
 
-echo "// clang-format off" > "$REPO_ROOT/src/bun.js/bindings/sqlite/sqlite3_local.h"
-cat sqlite3.h >> "$REPO_ROOT/src/bun.js/bindings/sqlite/sqlite3_local.h"
+echo "// clang-format off" > "$REPO_ROOT/src/jsc/bindings/sqlite/sqlite3_local.h"
+cat sqlite3.h >> "$REPO_ROOT/src/jsc/bindings/sqlite/sqlite3_local.h"
 
 echo "✓ Successfully updated SQLite amalgamation files"

@@ -1,5 +1,6 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
+import { renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
@@ -468,5 +469,61 @@ devTest("import.meta.hot on/off events", {
       `,
     );
     await c.expectMessage("Third update");
+  },
+});
+devTest("hmr forwards every merged inotify sub-path from a directory batch", {
+  // Windows can't rename over an open file (EPERM) and the merged-names
+  // code path under test is `Environment.isLinux`-gated anyway.
+  skip: ["win32", "darwin"],
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import value from "./dep";
+      console.log(value);
+      import.meta.hot.accept();
+    `,
+    "dep.ts": `
+      export default "initial";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("initial");
+
+    // Editors that save atomically (vim, emacs, IntelliJ) write to a temp
+    // file in the same directory and rename over the target. inotify
+    // reports CREATE tmp + MODIFY tmp + MOVED_FROM tmp + MOVED_TO target on
+    // the directory watch, and INotifyWatcher merges same-index events
+    // into one WatchEvent carrying N names. `DevServer.onFileUpdate` must
+    // forward every name to appendDir — indexing only the first drops the
+    // rename target.
+    //
+    // The per-file watch on the target's old inode is dead after rename-
+    // over, so to keep it from independently masking the directory-watch
+    // bug we first unlink the target (removing the file watch) and then
+    // flood the directory with decoy CREATE events so the rename target
+    // is never alone in its inotify batch.
+    for (let round = 1; round <= 5; round++) {
+      const target = dev.join("dep.ts");
+      const content = `export default "atomic ${round}";\n`;
+      {
+        await using _wait = await dev.batchChanges();
+        // Remove the direct file watch so only the directory watch can
+        // pick up the new dep.ts.
+        unlinkSync(target);
+        // Decoys: many rapid CREATEs in the same directory force inotify
+        // to coalesce into a single read() batch so the merge path runs.
+        for (let i = 0; i < 32; i++) {
+          writeFileSync(`${target}.${i}.swp`, content);
+        }
+        renameSync(`${target}.0.swp`, target);
+        for (let i = 1; i < 32; i++) {
+          unlinkSync(`${target}.${i}.swp`);
+        }
+      }
+      await c.expectMessage(`atomic ${round}`);
+    }
   },
 });

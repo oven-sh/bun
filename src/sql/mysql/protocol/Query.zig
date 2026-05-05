@@ -64,7 +64,7 @@ const bun = @import("bun");
 const std = @import("std");
 const CommandType = @import("./CommandType.zig").CommandType;
 const Data = @import("../../shared/Data.zig").Data;
-const Param = @import("../MySQLStatement.zig").Param;
+const Param = @import("../MySQLParam.zig").Param;
 
 const NewWriter = @import("./NewWriter.zig").NewWriter;
 const writeWrap = @import("./NewWriter.zig").writeWrap;

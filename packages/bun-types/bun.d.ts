@@ -8163,6 +8163,250 @@ declare module "bun" {
     match(str: string): boolean;
   }
 
+  namespace Image {
+    /**
+     * Stable `error.code` values set on rejections from `Bun.Image` terminals.
+     * Branch on these instead of parsing the message.
+     *
+     * - `ERR_IMAGE_FORMAT_UNSUPPORTED` — the requested format isn't available
+     *   on this *machine* (HEIC/AVIF without the OS codec, TIFF on Linux).
+     *   Catch this to fall back to a portable format.
+     * - `ERR_IMAGE_TOO_MANY_PIXELS` — header dimensions or resize output
+     *   exceed `maxPixels`, or a path-backed input is over the 256 MiB cap.
+     * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
+     * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
+     * - `ERR_INVALID_STATE` — the input ArrayBuffer was transferred between
+     *   construction and the terminal call.
+     * - File-backed inputs surface the underlying syscall code (`ENOENT`,
+     *   `EACCES`, …) directly.
+     */
+    type ErrorCode =
+      | "ERR_IMAGE_FORMAT_UNSUPPORTED"
+      | "ERR_IMAGE_TOO_MANY_PIXELS"
+      | "ERR_IMAGE_DECODE_FAILED"
+      | "ERR_IMAGE_ENCODE_FAILED"
+      | "ERR_IMAGE_UNKNOWN_FORMAT"
+      | "ERR_INVALID_STATE";
+
+    /**
+     * `bmp`/`tiff`/`gif` are decode-only — `metadata().format` may report them
+     * but there are no `.bmp()`/`.tiff()`/`.gif()` encoder methods. `tiff`
+     * decode rejects with `error.code === "ERR_IMAGE_FORMAT_UNSUPPORTED"` on Linux; `gif` decodes the first
+     * frame everywhere.
+     */
+    type Format = "jpeg" | "png" | "webp" | "heic" | "avif" | "bmp" | "tiff" | "gif";
+    type Filter =
+      | "nearest"
+      | "box"
+      | "bilinear"
+      | "linear" // alias for bilinear (Sharp)
+      | "cubic"
+      | "mitchell"
+      | "lanczos2"
+      | "lanczos3"
+      | "mks2013"
+      | "mks2021";
+
+    interface ConstructorOptions {
+      /**
+       * Reject inputs whose `width × height` exceeds this many pixels. The
+       * check runs after the header is read but before any pixel buffer is
+       * allocated, so a tiny file claiming a huge canvas is refused cheaply.
+       * @default 268402689 // 0x3FFF * 0x3FFF, same as Sharp
+       */
+      maxPixels?: number;
+      /**
+       * Apply EXIF Orientation (JPEG) before any other operation.
+       * @default true
+       */
+      autoOrient?: boolean;
+    }
+
+    interface ResizeOptions {
+      /** Resampling kernel. @default "lanczos3" */
+      filter?: Filter;
+      /**
+       * `"fill"` stretches to exactly width×height. `"inside"` preserves
+       * aspect ratio so the result fits *within* width×height.
+       * @default "fill"
+       */
+      fit?: "fill" | "inside";
+      /** Never upscale — if the source is already smaller, leave it. */
+      withoutEnlargement?: boolean;
+    }
+
+    interface ModulateOptions {
+      /** Multiplier; `1` leaves brightness unchanged. */
+      brightness?: number;
+      /** `0` = greyscale, `1` = unchanged, `>1` = more saturated. */
+      saturation?: number;
+    }
+
+    interface Metadata {
+      width: number;
+      height: number;
+      format: Format;
+    }
+  }
+
+  /**
+   * Decode, transform and re-encode images. Ships JPEG, PNG and WebP via
+   * statically-linked libjpeg-turbo / libspng / libwebp; resize and rotate
+   * are SIMD kernels — no native module install, no `sharp`.
+   *
+   * The constructor and every chainable method only *record* settings; the
+   * decode → transform → encode pipeline runs on a worker thread when a
+   * terminal (`bytes`, `buffer`, `blob`, `toBase64`, `metadata`) is awaited.
+   *
+   * Chainables overwrite (calling `.resize()` twice keeps the second). Order
+   * of execution is fixed regardless of call order:
+   * `autoOrient → rotate → flip/flop → resize → modulate`.
+   *
+   * The source ICC colour profile (Display P3, Adobe RGB, Jpegli XYB, etc.)
+   * is preserved through re-encode to JPEG, PNG, and WebP so non-sRGB
+   * images don't shift colour.
+   *
+   * @example
+   * ```ts
+   * const thumb = await new Bun.Image("photo.jpg")
+   *   .resize(400, 400, { fit: "inside", withoutEnlargement: true })
+   *   .webp({ quality: 80 })
+   *   .bytes();
+   * ```
+   */
+  export class Image {
+    /**
+     * Process-global pipeline backend.
+     *
+     * - `"system"` (default on macOS/Windows) — static codecs for
+     *   JPEG/PNG/WebP (same bytes as Linux), Accelerate/vImage for `lanczos3`
+     *   resize · rotate · flip on macOS, and ImageIO/WIC for HEIC/AVIF.
+     * - `"bun"` — static codecs + Highway geometry only. Byte-identical to a
+     *   Linux build; HEIC/AVIF reject with `ERR_IMAGE_FORMAT_UNSUPPORTED`.
+     *
+     * Set before awaiting a pipeline; in-flight tasks read the value as of
+     * when they were scheduled.
+     */
+    static backend: "system" | "bun";
+
+    /**
+     * Read an image from the system clipboard.
+     *
+     * Returns a `Bun.Image` wrapping whatever container the clipboard holds
+     * (PNG, TIFF, HEIC, JPEG, BMP, …); call {@link metadata}, {@link resize},
+     * etc. as usual. `null` if no image is present.
+     *
+     * - **macOS**: NSPasteboard
+     * - **Windows**: registered `"PNG"` / `CF_DIBV5` / `CF_DIB`
+     * - **Linux**: always `null` (use `wl-paste`/`xclip` and pass the bytes
+     *   to `new Bun.Image(...)`)
+     */
+    static fromClipboard(): Image | null;
+    /** Cheap probe — true if {@link fromClipboard} would return non-null. */
+    static hasClipboardImage(): boolean;
+    /**
+     * Monotone counter that increments on every system-wide clipboard write.
+     * Poll this and only call {@link hasClipboardImage} when it moves. `-1`
+     * on Linux.
+     */
+    static clipboardChangeCount(): number;
+
+    constructor(input: string | ArrayBuffer | NodeJS.TypedArray | Blob, options?: Image.ConstructorOptions);
+
+    /** Set target dimensions. Omit `height` to keep the source aspect ratio. */
+    resize(width: number, height?: number, options?: Image.ResizeOptions): this;
+    /** Rotate by a multiple of 90°. */
+    rotate(degrees: number): this;
+    /** Mirror about the x-axis (vertical). */
+    flip(): this;
+    /** Mirror about the y-axis (horizontal). */
+    flop(): this;
+    /** Adjust brightness/saturation. */
+    modulate(options: Image.ModulateOptions): this;
+
+    /** Set output format to JPEG. */
+    jpeg(options?: {
+      /** 1–100, default 80. */
+      quality?: number;
+      /** Emit a progressive (multi-scan) JPEG. Default `false`. */
+      progressive?: boolean;
+    }): this;
+    /** Set output format to PNG. */
+    png(options?: {
+      /** zlib level 0–9. */
+      compressionLevel?: number;
+      /** Quantize to a palette and emit indexed (colour-type 3) PNG. */
+      palette?: boolean;
+      /** Max palette size when `palette: true`. 2–256. @default 256 */
+      colors?: number;
+      /** Floyd–Steinberg error-diffusion dither (only with `palette: true`). */
+      dither?: boolean;
+    }): this;
+    /** Set output format to WebP. */
+    webp(options?: { quality?: number; lossless?: boolean }): this;
+    /**
+     * Set output format to HEIC. macOS / Windows-with-HEIF-Extension only —
+     * the terminal rejects with `error.code === "ERR_IMAGE_FORMAT_UNSUPPORTED"`
+     * elsewhere.
+     */
+    heic(options?: { quality?: number }): this;
+    /**
+     * Set output format to AVIF. Requires an OS AV1 encoder (macOS on Apple
+     * Silicon M3+, or Windows with the AV1 Video Extension) — the terminal
+     * rejects with `error.code === "ERR_IMAGE_FORMAT_UNSUPPORTED"` elsewhere.
+     */
+    avif(options?: { quality?: number }): this;
+
+    /**
+     * Run the pipeline and return the encoded bytes. If no format setter was
+     * called, re-encodes in the source format.
+     */
+    bytes(): Promise<Uint8Array>;
+    /** Like {@link bytes} but as a Node `Buffer`. */
+    buffer(): Promise<Buffer>;
+    /** Sharp-compatible alias for {@link buffer}. */
+    toBuffer(): Promise<Buffer>;
+    /**
+     * Run the pipeline and write the encoded result via {@link Bun.write} —
+     * `dest` may be a path string, {@link BunFile}, {@link S3File}, or fd.
+     * Resolves to the number of bytes written.
+     *
+     * If no format method was chained and `dest` is a path string, the format
+     * is inferred from its extension when it's one Bun can encode
+     * (`.jpg`/`.png`/`.webp`/`.heic`/`.avif`); otherwise the source format is
+     * reused.
+     */
+    write(dest: BunFile | S3File | Bun.PathLike | number): Promise<number>;
+    /**
+     * Like {@link toBase64} with a `data:image/{format};base64,` prefix.
+     * Drops straight into `<img src>`.
+     */
+    dataurl(): Promise<string>;
+    /**
+     * A [ThumbHash](https://github.com/evanw/thumbhash)-rendered low-quality
+     * placeholder of the *source* image as a `data:image/png;base64,…` URL —
+     * a ≤32px blur with the right average colour, aspect ratio and rough
+     * structure, ~400–700 bytes. Ready for `<img src>` or Next's
+     * `blurDataURL`; no client-side decoder needed.
+     *
+     * ```ts
+     * const lqip = await Bun.file("hero.jpg").image().placeholder();
+     * // "data:image/png;base64,iVBORw0KGgoAAAANSUhE…"
+     * ```
+     */
+    placeholder(as?: "dataurl"): Promise<string>;
+    /** Run the pipeline and return a `Blob` with the matching `type`. */
+    blob(): Promise<Blob>;
+    /** Run the pipeline and return base64-encoded output. */
+    toBase64(): Promise<string>;
+    /** Decode just enough to read width/height/format. */
+    metadata(): Promise<Image.Metadata>;
+
+    /** Populated after the first awaited terminal; `-1` before. */
+    readonly width: number;
+    readonly height: number;
+  }
+
   namespace WebView {
     type Modifier = "Shift" | "Control" | "Alt" | "Meta";
 

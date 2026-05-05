@@ -68,7 +68,7 @@ pub const ScanCommand = struct {
 };
 
 const security_scanner = @import("../install/PackageManager/security_scanner.zig");
-const Command = @import("../cli.zig").Command;
+const Command = @import("./cli.zig").Command;
 const PackageManager = @import("../install/install.zig").PackageManager;
 
 const bun = @import("bun");

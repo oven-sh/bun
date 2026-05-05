@@ -4,8 +4,8 @@
  * layer). On unix, bun's event loop is custom (kqueue/epoll direct).
  *
  * On POSIX, node-api addons that reference libuv symbols are served by
- * src/bun.js/bindings/uv-posix-stubs.c + uv-posix-polyfills*.c, with headers
- * from src/bun.js/bindings/libuv/ (see flags.ts) — vendor libuv is not built.
+ * src/jsc/bindings/uv-posix-stubs.c + uv-posix-polyfills*.c, with headers
+ * from src/jsc/bindings/libuv/ (see flags.ts) — vendor libuv is not built.
  */
 
 import type { Dependency } from "../source.ts";

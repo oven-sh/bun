@@ -2699,7 +2699,7 @@ pub const LinkerContext = struct {
 
 pub const Ref = bun.ast.Ref;
 pub const ThreadPoolLib = bun.ThreadPool;
-pub const Fs = @import("../fs.zig");
+pub const Fs = @import("../resolver/fs.zig");
 
 pub const Index = bun.ast.Index;
 const debugTreeShake = Output.scoped(.TreeShake, .hidden);
@@ -2710,21 +2710,21 @@ pub const ParseTask = bun.bundle_v2.ParseTask;
 
 const string = []const u8;
 
-const NodeFallbackModules = @import("../node_fallbacks.zig");
-const js_printer = @import("../js_printer.zig");
-const lex = @import("../js_lexer.zig");
-const linker = @import("../linker.zig");
-const runtime = @import("../runtime.zig");
+const NodeFallbackModules = @import("../resolver/node_fallbacks.zig");
+const js_printer = @import("../js_printer/js_printer.zig");
+const lex = @import("../js_parser/lexer.zig");
+const linker = @import("./linker.zig");
+const runtime = @import("../js_parser/runtime.zig");
 const std = @import("std");
 
-const Logger = @import("../logger.zig");
+const Logger = @import("../logger/logger.zig");
 const Loc = Logger.Loc;
-
-const options = @import("../options.zig");
-const Loader = options.Loader;
 
 const _resolver = @import("../resolver/resolver.zig");
 const Resolver = _resolver.Resolver;
+
+const options = @import("./options.zig");
+const Loader = options.Loader;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

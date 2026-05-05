@@ -1,7 +1,8 @@
 //! Process-pool coordinator for `bun test --parallel`. Owns the worker slice,
 //! drives the event loop, routes IPC frames to per-test output, and handles
-//! crash retry / bail / lazy scale-up. Construction and the run loop entry
-//! live in `runner.zig`; this file is the per-run state and its methods.
+//! crash accounting / panic-abort / bail / lazy scale-up. Construction and
+//! the run loop entry live in `runner.zig`; this file is the per-run state
+//! and its methods.
 
 pub const Coordinator = struct {
     vm: *jsc.VirtualMachine,
@@ -14,10 +15,6 @@ pub const Coordinator = struct {
     envps: []const [:null]?[*:0]const u8,
 
     workers: []Worker,
-    /// retries[i] counts how many times files[i] has been re-queued after a
-    /// worker crashed mid-run.
-    retries: []u8,
-    pending_retry: []?u32,
     /// Temp dir for per-worker JUnit XML and LCOV coverage fragments; null
     /// when neither was requested.
     worker_tmpdir: ?[:0]const u8,
@@ -295,24 +292,29 @@ pub const Coordinator = struct {
         // the IPC pipe has been drained and this reap actually runs.
         this.live_workers -= 1;
         this.flushCaptured(w);
-        var retry_idx: ?u32 = null;
         if (w.inflight) |idx| {
             this.breakDots();
             this.ensureHeader(idx);
-            const rel = this.relPath(idx);
-            if (this.retries[idx] < 1) {
-                this.retries[idx] += 1;
-                retry_idx = idx;
-                Output.prettyError("<r><yellow>⟳<r> crashed running <b>{s}<r>, retrying\n", .{rel});
-            } else {
-                this.accountCrash(idx, @tagName(status));
-            }
+            // A worker dying mid-file is never silently retried. If a test
+            // intentionally exits (process.exit) that file is marked failed
+            // and the run continues in a fresh worker. If the worker was
+            // killed by a fatal signal — SIGILL/SIGTRAP from Bun's own panic
+            // handler, SIGSEGV/SIGBUS/SIGFPE from native code, SIGABRT from a
+            // JSC/WTF assertion — that's a Bun or addon bug and must not be
+            // masked by the rest of the suite passing: abort the whole run so
+            // the exit status reflects the crash. SIGKILL is treated as a
+            // regular failure (commonly the OOM killer or the user).
+            const panicked = isPanicStatus(status);
+            this.accountCrash(idx, status);
             Output.flush();
             w.inflight = null;
+            if (panicked) {
+                this.abortOnWorkerPanic(idx, status);
+            }
         }
 
         var respawned = false;
-        if (!this.bailed and (this.hasUndispatchedFiles() or retry_idx != null)) {
+        if (!this.bailed and this.hasUndispatchedFiles()) {
             w.ipc.deinit();
             w.out.deinit();
             w.err.deinit();
@@ -322,23 +324,12 @@ pub const Coordinator = struct {
             w.process = null;
             if (w.start()) |_| {
                 respawned = true;
-                if (retry_idx) |idx| this.pending_retry[w.idx] = idx;
             } else |e| {
                 Output.err(e, "failed to respawn test worker", .{});
             }
         }
 
         if (!respawned) {
-            // The worker slot is dead. Any retry that was queued for it (either
-            // from this exit or from a prior respawn that died before .ready)
-            // will never be picked up — count it as a crash so totals stay
-            // correct and drive() doesn't wait on a files_done that can't
-            // advance.
-            if (retry_idx orelse this.pending_retry[w.idx]) |orphan| {
-                this.pending_retry[w.idx] = null;
-                this.accountCrash(orphan, "retry abandoned");
-                Output.flush();
-            }
             if (!this.bailed and this.live_workers == 0) {
                 this.abortQueuedFiles("no live workers");
             }
@@ -349,14 +340,84 @@ pub const Coordinator = struct {
         }
     }
 
-    fn accountCrash(this: *Coordinator, file_idx: u32, reason: []const u8) void {
+    fn accountCrash(this: *Coordinator, file_idx: u32, status: bun.spawn.Status) void {
         this.breakDots();
-        Output.prettyError("<r><red>✗<r> <b>{s}<r> <d>(crashed: {s})<r>\n", .{ this.relPath(file_idx), reason });
+        var buf: [32]u8 = undefined;
+        Output.prettyError("<r><red>✗<r> <b>{s}<r> <d>(worker crashed: {s})<r>\n", .{
+            this.relPath(file_idx),
+            describeStatus(&buf, status),
+        });
         this.reporter.summary().fail += 1;
         this.reporter.summary().files += 1;
         bun.handleOom(this.crashed_files.append(bun.default_allocator, file_idx));
         this.files_done += 1;
         if (this.bail > 0 and this.reporter.summary().fail >= this.bail) this.bailOut();
+    }
+
+    /// Fatal signals that indicate Bun itself (or a native addon) crashed,
+    /// as opposed to the test calling process.exit() or being SIGKILL'd by
+    /// the OOM killer. Bun's panic handler ends in @trap() → SIGILL on
+    /// POSIX; JSC/WTF assertion failures abort() → SIGABRT. On Windows
+    /// neither surfaces as a signal — abort() is exit code 3 and NTSTATUS
+    /// fault codes arrive as a plain exit status, both indistinguishable
+    /// from process.exit(N) — so this classification is effectively
+    /// POSIX-only and Windows worker crashes fall into the non-panic
+    /// per-file-failure branch.
+    fn isPanicStatus(status: bun.spawn.Status) bool {
+        const sig = status.signalCode() orelse return false;
+        return switch (sig) {
+            .SIGILL, .SIGTRAP, .SIGABRT, .SIGBUS, .SIGFPE, .SIGSEGV, .SIGSYS => true,
+            else => false,
+        };
+    }
+
+    fn describeStatus(buf: []u8, status: bun.spawn.Status) []const u8 {
+        return switch (status) {
+            .exited => |e| std.fmt.bufPrint(buf, "exit code {d}", .{e.code}) catch unreachable,
+            // SignalCode is non-exhaustive (`_`); @tagName on an unnamed value
+            // (e.g. Linux RT signals 32–64) is safety-checked illegal behavior.
+            .signaled => |sig| sig.name() orelse
+                std.fmt.bufPrint(buf, "signal {d}", .{@intFromEnum(sig)}) catch unreachable,
+            .err => |e| @tagName(e.getErrno()),
+            .running => "running",
+        };
+    }
+
+    /// A worker was killed by a crash signal — treat this as a Bun bug, not
+    /// a test failure. Print the panic banner (even if --bail already set
+    /// `bailed`), terminate every other worker, and mark all remaining
+    /// files as aborted so the run ends immediately with a non-zero exit
+    /// and the panic's stderr (already flushed via flushCaptured) is the
+    /// last meaningful output, not buried under hundreds of later passes.
+    fn abortOnWorkerPanic(this: *Coordinator, file_idx: u32, status: bun.spawn.Status) void {
+        this.breakDots();
+        var buf: [32]u8 = undefined;
+        Output.prettyError(
+            "\n<red>error<r>: a test worker process crashed with <b>{s}<r> while running <b>{s}<r>.\n" ++
+                "This indicates a bug in Bun or in a native addon, not in the test itself. Aborting.\n",
+            .{ describeStatus(&buf, status), this.relPath(file_idx) },
+        );
+        Output.flush();
+        // .shutdown() only takes effect between files, so a worker that's
+        // mid-file would keep producing output after the panic banner.
+        // Terminate the whole process group (same as the SIGINT path) so the
+        // run ends now; reapWorker() will account each inflight file as a
+        // crash when the exit arrives. Runs even if --bail already set
+        // `bailed`, since bailOut() only shutdown()s idle workers and would
+        // leave inflight ones running past the banner.
+        for (this.workers[0..this.spawned_count]) |*other| {
+            if (!other.alive) continue;
+            if (other.process) |p| {
+                if (Environment.isPosix) {
+                    _ = std.c.kill(-p.pid, std.posix.SIG.TERM);
+                } else {
+                    _ = p.kill(1);
+                }
+            }
+        }
+        if (this.bailed) return;
+        this.bailed = true;
+        this.abortQueuedFiles("aborted: worker panicked");
     }
 
     /// Mark every not-yet-dispatched file as failed so `drive()` can exit
@@ -375,13 +436,10 @@ pub const Coordinator = struct {
     }
 
     fn assignWorkOrRetry(this: *Coordinator, w: *Worker) void {
-        if (this.bailed) return w.shutdown();
-        if (this.pending_retry[w.idx]) |idx| {
-            this.pending_retry[w.idx] = null;
-            w.dispatch(idx, this.files[idx].slice());
-        } else {
-            this.assignWork(w);
-        }
+        // Kept as a separate entry point from assignWork so the .ready
+        // handler has one call site; retry is gone but the indirection
+        // costs nothing.
+        this.assignWork(w);
     }
 
     /// Coordinator-side SIGINT/SIGTERM handling. The signal handler only sets a

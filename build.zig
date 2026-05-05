@@ -14,7 +14,7 @@ const fs = std.fs;
 const Version = std.SemanticVersion;
 const Arch = std.Target.Cpu.Arch;
 
-const OperatingSystem = @import("src/env.zig").OperatingSystem;
+const OperatingSystem = @import("src/bun_core/env.zig").OperatingSystem;
 
 const pathRel = fs.path.relative;
 
@@ -43,7 +43,7 @@ const BunBuildOptions = struct {
     /// is set (to allow CI to build a portable executable). Affected files:
     ///
     /// - src/bake/runtime.ts (bundled)
-    /// - src/bun.js/api/FFI.h
+    /// - src/runtime/api/FFI.h
     ///
     /// A similar technique is used in C++ code for JavaScript builtins
     codegen_embed: bool = false,
@@ -513,28 +513,28 @@ pub fn build(b: *Build) !void {
 
     // zig build generate-grapheme-tables
     // Regenerates src/string/immutable/grapheme_tables.zig from the vendored uucode.
-    // Run this when updating src/deps/uucode. Normal builds use the committed file.
+    // Run this when updating src/unicode/uucode_lib. Normal builds use the committed file.
     {
         const step = b.step("generate-grapheme-tables", "Regenerate grapheme property tables from vendored uucode");
 
         // --- Phase 1: Build uucode tables (separate module graph, no tables dependency) ---
         const bt_config_mod = b.createModule(.{
-            .root_source_file = b.path("src/deps/uucode/src/config.zig"),
+            .root_source_file = b.path("src/unicode/uucode_lib/src/config.zig"),
             .target = b.graph.host,
         });
         const bt_types_mod = b.createModule(.{
-            .root_source_file = b.path("src/deps/uucode/src/types.zig"),
+            .root_source_file = b.path("src/unicode/uucode_lib/src/types.zig"),
             .target = b.graph.host,
         });
         bt_types_mod.addImport("config.zig", bt_config_mod);
         bt_config_mod.addImport("types.zig", bt_types_mod);
 
         const bt_config_x_mod = b.createModule(.{
-            .root_source_file = b.path("src/deps/uucode/src/x/config.x.zig"),
+            .root_source_file = b.path("src/unicode/uucode_lib/src/x/config.x.zig"),
             .target = b.graph.host,
         });
         const bt_types_x_mod = b.createModule(.{
-            .root_source_file = b.path("src/deps/uucode/src/x/types.x.zig"),
+            .root_source_file = b.path("src/unicode/uucode_lib/src/x/types.x.zig"),
             .target = b.graph.host,
         });
         bt_types_x_mod.addImport("config.x.zig", bt_config_x_mod);
@@ -552,7 +552,7 @@ pub fn build(b: *Build) !void {
         bt_build_config_mod.addImport("config.x.zig", bt_config_x_mod);
 
         const build_tables_mod = b.createModule(.{
-            .root_source_file = b.path("src/deps/uucode/src/build/tables.zig"),
+            .root_source_file = b.path("src/unicode/uucode_lib/src/build/tables.zig"),
             .target = b.graph.host,
             .optimize = .Debug,
         });
@@ -566,27 +566,27 @@ pub fn build(b: *Build) !void {
             .use_llvm = true,
         });
         const run_build_tables = b.addRunArtifact(build_tables_exe);
-        run_build_tables.setCwd(b.path("src/deps/uucode"));
+        run_build_tables.setCwd(b.path("src/unicode/uucode_lib"));
         const tables_path = run_build_tables.addOutputFileArg("tables.zig");
 
         // --- Phase 2: Build grapheme-gen with full uucode (separate module graph) ---
         const rt_config_mod = b.createModule(.{
-            .root_source_file = b.path("src/deps/uucode/src/config.zig"),
+            .root_source_file = b.path("src/unicode/uucode_lib/src/config.zig"),
             .target = b.graph.host,
         });
         const rt_types_mod = b.createModule(.{
-            .root_source_file = b.path("src/deps/uucode/src/types.zig"),
+            .root_source_file = b.path("src/unicode/uucode_lib/src/types.zig"),
             .target = b.graph.host,
         });
         rt_types_mod.addImport("config.zig", rt_config_mod);
         rt_config_mod.addImport("types.zig", rt_types_mod);
 
         const rt_config_x_mod = b.createModule(.{
-            .root_source_file = b.path("src/deps/uucode/src/x/config.x.zig"),
+            .root_source_file = b.path("src/unicode/uucode_lib/src/x/config.x.zig"),
             .target = b.graph.host,
         });
         const rt_types_x_mod = b.createModule(.{
-            .root_source_file = b.path("src/deps/uucode/src/x/types.x.zig"),
+            .root_source_file = b.path("src/unicode/uucode_lib/src/x/types.x.zig"),
             .target = b.graph.host,
         });
         rt_types_x_mod.addImport("config.x.zig", rt_config_x_mod);
@@ -613,7 +613,7 @@ pub fn build(b: *Build) !void {
         rt_tables_mod.addImport("build_config", rt_build_config_mod);
 
         const rt_get_mod = b.createModule(.{
-            .root_source_file = b.path("src/deps/uucode/src/get.zig"),
+            .root_source_file = b.path("src/unicode/uucode_lib/src/get.zig"),
             .target = b.graph.host,
         });
         rt_get_mod.addImport("types.zig", rt_types_mod);
@@ -621,7 +621,7 @@ pub fn build(b: *Build) !void {
         rt_types_mod.addImport("get.zig", rt_get_mod);
 
         const uucode_mod = b.createModule(.{
-            .root_source_file = b.path("src/deps/uucode/src/root.zig"),
+            .root_source_file = b.path("src/unicode/uucode_lib/src/root.zig"),
             .target = b.graph.host,
         });
         uucode_mod.addImport("types.zig", rt_types_mod);
@@ -963,8 +963,8 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
     mod.addImport("translated-c-headers", b.createModule(.{ .root_source_file = translate_c }));
 
     const zlib_internal_path = switch (os) {
-        .windows => "src/deps/zlib.win32.zig",
-        .linux, .mac, .freebsd => "src/deps/zlib.posix.zig",
+        .windows => "src/zlib_sys/win32.zig",
+        .linux, .mac, .freebsd => "src/zlib_sys/posix.zig",
         else => null,
     };
     if (zlib_internal_path) |path| {
@@ -974,9 +974,9 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
     }
 
     const async_path = switch (os) {
-        .linux, .mac, .freebsd => "src/async/posix_event_loop.zig",
-        .windows => "src/async/windows_event_loop.zig",
-        else => "src/async/stub_event_loop.zig",
+        .linux, .mac, .freebsd => "src/aio/posix_event_loop.zig",
+        .windows => "src/aio/windows_event_loop.zig",
+        else => "src/aio/stub_event_loop.zig",
     };
     mod.addAnonymousImport("async", .{
         .root_source_file = b.path(async_path),

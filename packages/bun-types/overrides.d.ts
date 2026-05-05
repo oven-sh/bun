@@ -53,6 +53,12 @@ declare module "buffer" {
     arrayBuffer(): Promise<ArrayBuffer>;
 
     /**
+     * Wrap this blob in a {@link Bun.Image} pipeline.
+     * Equivalent to `new Bun.Image(this, options)`.
+     */
+    image(options?: Bun.Image.ConstructorOptions): Bun.Image;
+
+    /**
      * Returns a readable stream of the blob's contents
      */
     stream(): ReadableStream<Uint8Array<ArrayBuffer>>;

@@ -1,4 +1,4 @@
-// Tests that exercise the decoupled fs.watch backend (src/bun.js/node/path_watcher.zig),
+// Tests that exercise the decoupled fs.watch backend (src/runtime/node/path_watcher.zig),
 // which no longer routes through bun.Watcher.
 //
 // The old backend piggy-backed on the bundler's watcher, carrying

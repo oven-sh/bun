@@ -198,7 +198,7 @@ export interface CompileOpts {
  * Compile a C++ source file. Returns absolute path to the .o output.
  *
  * Output path: {buildDir}/obj/{path-from-cwd-with-slashes-flattened}.o
- * E.g. src/bun.js/bindings/foo.cpp → obj/src_bun.js_bindings_foo.cpp.o
+ * E.g. src/jsc/bindings/foo.cpp → obj/src_jsc_bindings_foo.cpp.o
  */
 export function cxx(n: Ninja, cfg: Config, src: string, opts: CompileOpts): string {
   assert(
@@ -468,8 +468,8 @@ export function ar(n: Ninja, cfg: Config, out: string, objects: string[]): strin
 /**
  * Compute the .o output path for a source file.
  *
- * Mirrors the source tree under obj/, so `src/bun.js/bindings/foo.cpp` →
- * `obj/src/bun.js/bindings/foo.cpp.o`. Generated sources (codegen .cpp
+ * Mirrors the source tree under obj/, so `src/jsc/bindings/foo.cpp` →
+ * `obj/src/jsc/bindings/foo.cpp.o`. Generated sources (codegen .cpp
  * files under buildDir) go under `obj/codegen/` to keep a single tree.
  *
  * Ninja does NOT auto-create parent directories of outputs. Directories

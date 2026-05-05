@@ -22,9 +22,9 @@ The `format.yml` workflow runs code formatters (Prettier, clang-format, and Zig 
 **Important exclusions**:
 
 - `src/napi/` - Node API headers (third-party)
-- `src/bun.js/bindings/libuv/` - libuv headers (third-party)
-- `src/bun.js/bindings/sqlite/` - SQLite headers (third-party)
-- `src/bun.js/api/ffi-*.h` - FFI headers (generated/third-party)
+- `src/jsc/bindings/libuv/` - libuv headers (third-party)
+- `src/jsc/bindings/sqlite/` - SQLite headers (third-party)
+- `src/runtime/ffi/ffi-*.h` - FFI headers (generated/third-party)
 - `src/deps/` - Dependencies (third-party)
 - Files in `vendor/`, `third_party/`, `generated/` directories
 

@@ -234,7 +234,7 @@ pub const YarnLock = struct {
                     }
                 }
 
-                if (last_slash < dash_idx and url[last_slash + 1] == '@') {
+                if (last_slash < dash_idx and url[second_last_slash + 1] == '@') {
                     return url[second_last_slash + 1 .. dash_idx];
                 } else {
                     return url[last_slash + 1 .. dash_idx];

@@ -363,6 +363,15 @@ function ClientRequest(input, options, cb) {
               };
             });
 
+            // Drain any chunks that accumulated while the generator was suspended.
+            // Multiple synchronous write() calls between iterations each push to
+            // kBodyChunks, but only the first resolves the Promise above — the rest
+            // are buffered. Yield them all before checking the loop condition,
+            // otherwise they are abandoned when finished becomes true.
+            while (self[kBodyChunks]?.length > 0) {
+              yield self[kBodyChunks].shift();
+            }
+
             if (self[kBodyChunks]?.length === 0) {
               self.emit("drain");
             }

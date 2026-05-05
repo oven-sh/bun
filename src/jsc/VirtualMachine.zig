@@ -733,8 +733,17 @@ pub fn reportExceptionInHotReloadedModuleIfNeeded(this: *jsc.VirtualMachine) voi
             // observe the abandoned state and proceed). Guarded on the
             // same "nothing ref'd but forever_timer" check `reload()`
             // itself uses so we don't interrupt live ref'd work.
+            //
+            // Tail-recurse after the reload so the fresh
+            // `pending_internal_promise` is re-read from the caller
+            // rather than the stale capture at line 720 above. Without
+            // this, a new module body that synchronously rejects
+            // (top-level `throw`, transpile error) would leave the
+            // fresh `.rejected` unreported until the next loop wakeup
+            // — `tickPossiblyForever` blocks in `loop.tick()` first.
             if (this.hot_reload_deferred and !this.eventLoop().hasAnyHandleWorkIgnoringForeverTimer()) {
                 this.reload(null);
+                return this.reportExceptionInHotReloadedModuleIfNeeded();
             }
             return;
         },

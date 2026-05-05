@@ -599,12 +599,14 @@ pub fn NewParser_(
                 }
 
                 p.import_records.items[import_record_index].flags.handles_import_errors = (state.is_await_target and p.fn_or_arrow_data_visit.try_body_count != 0) or state.is_then_catch_target;
+                p.import_records.items[import_record_index].phase = state.phase;
                 p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
 
                 return p.newExpr(E.Import{
                     .expr = arg,
                     .import_record_index = @intCast(import_record_index),
                     .options = state.import_options,
+                    .phase = state.phase,
                 }, state.loc);
             }
 
@@ -620,6 +622,7 @@ pub fn NewParser_(
                 .expr = arg,
                 .options = state.import_options,
                 .import_record_index = std.math.maxInt(u32),
+                .phase = state.phase,
             }, state.loc);
         }
 
@@ -2707,7 +2710,7 @@ pub fn NewParser_(
             _ = children.pop();
         }
 
-        pub fn processImportStatement(p: *P, stmt_: S.Import, path: ParsedPath, loc: logger.Loc, was_originally_bare_import: bool) anyerror!Stmt {
+        pub fn processImportStatement(p: *P, stmt_: S.Import, path: ParsedPath, loc: logger.Loc, was_originally_bare_import: bool, phase: bun.ImportPhase) anyerror!Stmt {
             const is_macro = FeatureFlags.is_macro_enabled and (path.is_macro or js_ast.Macro.isMacroPath(path.text));
             var stmt = stmt_;
             if (is_macro) {
@@ -2780,6 +2783,7 @@ pub fn NewParser_(
 
             stmt.import_record_index = p.addImportRecord(.stmt, path.loc, path.text);
             p.import_records.items[stmt.import_record_index].flags.was_originally_bare_import = was_originally_bare_import;
+            p.import_records.items[stmt.import_record_index].phase = phase;
 
             if (stmt.star_name_loc) |star| {
                 const name = p.loadNameFromRef(stmt.namespace_ref);
@@ -2945,8 +2949,15 @@ pub fn NewParser_(
                 try p.validateAndSetImportType(&path, &stmt);
             }
 
-            // Track the items for this namespace
-            try p.import_items_for_namespace.put(p.allocator, stmt.namespace_ref, item_refs);
+            // Track the items for this namespace so maybeRewritePropertyAccess
+            // can later rewrite `ns.foo` to a direct import identifier under
+            // bundling. Skip non-evaluation phases: a deferred namespace must
+            // keep its property accesses intact so evaluation is gated on
+            // first access; registering it here would let the visit phase
+            // strip the E.Dot before ImportScanner ever runs.
+            if (phase == .evaluation) {
+                try p.import_items_for_namespace.put(p.allocator, stmt.namespace_ref, item_refs);
+            }
             return p.s(stmt, loc);
         }
 

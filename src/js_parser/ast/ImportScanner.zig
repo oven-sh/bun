@@ -93,7 +93,12 @@ pub fn scan(
                 // system and used for type-only imports).
                 if (!keep_unused_imports) {
                     var found_imports = false;
-                    var is_unused_in_typescript = true;
+                    // Non-evaluation-phase imports (`import defer * as ns` /
+                    // `import source x`) are never considered unused: the
+                    // deferred subgraph is still loaded/linked and TLA deps
+                    // eagerly evaluate, so the statement has observable effects
+                    // independent of whether the binding is referenced.
+                    var is_unused_in_typescript = record.phase == .evaluation;
 
                     if (st.default_name) |default_name| {
                         found_imports = true;
@@ -104,8 +109,11 @@ pub fn scan(
                             is_unused_in_typescript = false;
                         }
 
-                        // Remove the symbol if it's never used outside a dead code region
-                        if (symbol.use_count_estimate == 0) {
+                        // Remove the symbol if it's never used outside a dead code region.
+                        // Non-evaluation phases (`import source x from ...`) keep the
+                        // binding: the statement is pass-through and dropping it would
+                        // change load semantics.
+                        if (symbol.use_count_estimate == 0 and record.phase == .evaluation) {
                             st.default_name = null;
                         }
                     }
@@ -121,7 +129,7 @@ pub fn scan(
                         }
 
                         // Remove the symbol if it's never used outside a dead code region
-                        if (symbol.use_count_estimate == 0) {
+                        if (symbol.use_count_estimate == 0 and record.phase == .evaluation) {
                             // Make sure we don't remove this if it was used for a property
                             // access while bundling
                             var has_any = false;
@@ -198,7 +206,10 @@ pub fn scan(
                 }
 
                 const namespace_ref = st.namespace_ref;
-                const convert_star_to_clause = !p.options.bundle and (p.symbols.items[namespace_ref.innerIndex()].use_count_estimate == 0);
+                // Deferred imports always keep the namespace binding even if it
+                // appears unused; evaluating the module is a side effect that the
+                // user may be relying on via later property access.
+                const convert_star_to_clause = !p.options.bundle and record.phase == .evaluation and (p.symbols.items[namespace_ref.innerIndex()].use_count_estimate == 0);
 
                 if (convert_star_to_clause and !keep_unused_imports) {
                     st.star_name_loc = null;
@@ -210,7 +221,10 @@ pub fn scan(
                     ImportItemForNamespaceMap.init(allocator);
 
                 if (p.options.bundle) {
-                    if (st.star_name_loc != null and existing_items.count() > 0) {
+                    // Lowering `ns.foo` to a direct named import bypasses the
+                    // deferred namespace's evaluate-on-access gate, so only do
+                    // this for evaluation-phase imports.
+                    if (st.star_name_loc != null and existing_items.count() > 0 and record.phase == .evaluation) {
                         const sorted = try allocator.alloc(string, existing_items.count());
                         defer allocator.free(sorted);
                         for (sorted, existing_items.keys()) |*result, alias| {

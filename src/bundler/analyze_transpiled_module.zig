@@ -17,6 +17,10 @@ pub const RecordKind = enum(u8) {
     export_info_namespace,
     /// module_name
     export_info_star,
+    /// module_name, import_name = '*', local_name (import defer * as x from "...")
+    import_info_namespace_defer,
+    /// module_name (import defer requested-module entry)
+    requested_module_defer,
     _,
 
     pub fn len(record: RecordKind) !usize {
@@ -25,10 +29,12 @@ pub const RecordKind = enum(u8) {
             .import_info_single => 3,
             .import_info_single_type_script => 3,
             .import_info_namespace => 3,
+            .import_info_namespace_defer => 3,
             .export_info_indirect => 3,
             .export_info_local => 3,
             .export_info_namespace => 2,
             .export_info_star => 1,
+            .requested_module_defer => 1,
             else => return error.InvalidRecordKind,
         };
     }
@@ -174,6 +180,7 @@ pub const ModuleInfo = struct {
     strings_buf: std.ArrayListUnmanaged(u8),
     strings_lens: std.ArrayListUnmanaged(u32),
     requested_modules: std.AutoArrayHashMap(StringID, FetchParameters),
+    requested_modules_defer: std.AutoArrayHashMapUnmanaged(StringID, void),
     buffer: std.ArrayListUnmanaged(StringID),
     record_kinds: std.ArrayListUnmanaged(RecordKind),
     flags: Flags,
@@ -225,6 +232,17 @@ pub const ModuleInfo = struct {
     pub fn addImportInfoNamespace(self: *ModuleInfo, module_name: StringID, local_name: StringID) !void {
         try self._addRecord(.import_info_namespace, &.{ module_name, .star_namespace, local_name });
     }
+    pub fn addImportInfoNamespaceDefer(self: *ModuleInfo, module_name: StringID, local_name: StringID) !void {
+        try self._addRecord(.import_info_namespace_defer, &.{ module_name, .star_namespace, local_name });
+    }
+    pub fn addRequestedModuleDefer(self: *ModuleInfo, module_name: StringID) !void {
+        // JSC's ModuleAnalyzer dedups per (specifier, phase); mirror that here
+        // so the debug fallbackParse() diff in BunAnalyzeTranspiledModule.cpp
+        // agrees when the same specifier is deferred more than once.
+        const gop = try self.requested_modules_defer.getOrPut(self.gpa, module_name);
+        if (gop.found_existing) return;
+        try self._addRecord(.requested_module_defer, &.{module_name});
+    }
     pub fn addExportInfoIndirect(self: *ModuleInfo, export_name: StringID, import_name: StringID, module_name: StringID) !void {
         if (try self._hasOrAddExportedName(export_name)) return; // a syntax error will be emitted later in this case
         try self._addRecord(.export_info_indirect, &.{ export_name, import_name, module_name });
@@ -259,6 +277,7 @@ pub const ModuleInfo = struct {
             .strings_lens = .{},
             .exported_names = .{},
             .requested_modules = std.AutoArrayHashMap(StringID, FetchParameters).init(allocator),
+            .requested_modules_defer = .{},
             .buffer = .empty,
             .record_kinds = .empty,
             .flags = .{ .contains_import_meta = false, .is_typescript = is_typescript },
@@ -271,6 +290,7 @@ pub const ModuleInfo = struct {
         self.strings_lens.deinit(self.gpa);
         self.exported_names.deinit(self.gpa);
         self.requested_modules.deinit();
+        self.requested_modules_defer.deinit(self.gpa);
         self.buffer.deinit(self.gpa);
         self.record_kinds.deinit(self.gpa);
     }
@@ -326,6 +346,10 @@ pub const ModuleInfo = struct {
                 if (k == .import_info_single or k == .import_info_single_type_script) {
                     try local_name_to_module_name.put(self.buffer.items[i + 2], .{ .module_name = self.buffer.items[i], .import_name = self.buffer.items[i + 1], .record_kinds_idx = idx, .is_namespace = false });
                 } else if (k == .import_info_namespace) {
+                    // Deliberately excludes .import_info_namespace_defer: a deferred
+                    // namespace object lives in THIS module's environment, so
+                    // `export { ns }` must stay a Local export (proposal ParseModule
+                    // 11.a.ii). JSC's ModuleAnalyzer::exportVariable does the same.
                     try local_name_to_module_name.put(self.buffer.items[i + 2], .{ .module_name = self.buffer.items[i], .import_name = .star_namespace, .record_kinds_idx = idx, .is_namespace = true });
                 }
                 i += k.len() catch unreachable;

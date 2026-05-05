@@ -1002,6 +1002,44 @@ pub fn ParseStmt(
                     } };
                     try p.lexer.next();
 
+                    // "import defer * as ns from 'path'"
+                    // "import source ns from 'path'"
+                    // https://github.com/tc39/proposal-defer-import-eval
+                    // https://github.com/tc39/proposal-source-phase-imports
+                    //
+                    // Note: "import defer from 'path'" is a default import with the
+                    // binding "defer". Only "import defer *" triggers the phase syntax.
+                    //
+                    // Mirror the non-token terms of the TypeScript import-equals gate
+                    // below so `namespace Foo { import defer * as ns ... }` and
+                    // `export import defer * as ns ...` fall through to it and error
+                    // like every other import form here, rather than slipping through
+                    // as a real S.Import.
+                    const can_be_esm_phase_import = !opts.is_export and (!opts.is_namespace_scope or opts.is_typescript_declare);
+                    if (can_be_esm_phase_import and p.lexer.token == .t_asterisk and strings.eqlComptime(default_name, "defer")) {
+                        stmt.default_name = null;
+                        try p.lexer.next();
+                        try p.lexer.expectContextualKeyword("as");
+                        stmt.namespace_ref = try p.storeNameInRef(p.lexer.identifier);
+                        stmt.star_name_loc = p.lexer.loc();
+                        try p.lexer.expect(.t_identifier);
+                        try p.lexer.expectContextualKeyword("from");
+                        const path = try p.parsePath();
+                        try p.lexer.expectOrInsertSemicolon();
+                        return try p.processImportStatement(stmt, path, loc, false, .defer_);
+                    }
+                    if (can_be_esm_phase_import and p.lexer.token == .t_identifier and strings.eqlComptime(default_name, "source") and !p.lexer.isContextualKeyword("from")) {
+                        stmt.default_name = .{
+                            .loc = p.lexer.loc(),
+                            .ref = try p.storeNameInRef(p.lexer.identifier),
+                        };
+                        try p.lexer.expect(.t_identifier);
+                        try p.lexer.expectContextualKeyword("from");
+                        const path = try p.parsePath();
+                        try p.lexer.expectOrInsertSemicolon();
+                        return try p.processImportStatement(stmt, path, loc, false, .source);
+                    }
+
                     if (comptime is_typescript_enabled) {
                         // Skip over type-only imports
                         if (strings.eqlComptime(default_name, "type")) {
@@ -1093,7 +1131,7 @@ pub fn ParseStmt(
             const path = try p.parsePath();
             try p.lexer.expectOrInsertSemicolon();
 
-            return try p.processImportStatement(stmt, path, loc, was_originally_bare_import);
+            return try p.processImportStatement(stmt, path, loc, was_originally_bare_import, .evaluation);
         }
         fn t_break(p: *P, _: *ParseStatementOptions, loc: logger.Loc) anyerror!Stmt {
             try p.lexer.next();

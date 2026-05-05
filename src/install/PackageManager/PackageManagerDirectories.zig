@@ -518,18 +518,35 @@ pub fn populateLinkedNamesCache(this: *PackageManager) void {
 }
 
 /// Returns true when `entry` at `dir_fd` should be treated as a
-/// `bun link` registration — a symlink. On filesystems that don't
-/// populate `getdents64`'s `d_type` field (NFS / FUSE / XFS with
-/// ftype=0), `kind` arrives as `.unknown`; disambiguate with `lstatat`.
+/// `bun link` registration: a symlink whose target is an existing
+/// directory. On filesystems that don't populate `getdents64`'s
+/// `d_type` field (NFS / FUSE / XFS with ftype=0), `kind` arrives as
+/// `.unknown`; disambiguate with `lstatat` before following. A
+/// dangling link (producer dir moved/deleted without `bun unlink`)
+/// would otherwise make the installer skip the registry download
+/// and then fail ENOENT in the worker with no fallback.
 fn isLinkedEntry(kind: std.fs.File.Kind, dir_fd: bun.FD, name: [:0]const u8) bool {
-    return switch (kind) {
+    const is_symlink = switch (kind) {
         .sym_link => true,
         .unknown => switch (bun.sys.lstatat(dir_fd, name)) {
             .result => |st| std.posix.S.ISLNK(@intCast(st.mode)),
             .err => false,
         },
-        else => false,
+        else => return false,
     };
+    if (!is_symlink) return false;
+
+    // Follow the symlink and confirm it resolves to a readable
+    // directory. This matches what the installer's worker will do
+    // (`openDirForIteration(producer_path)`) — if that succeeds here,
+    // it'll succeed there too; if it fails, we want the main thread
+    // to treat the link as absent and queue the registry download.
+    const target_fd = switch (bun.sys.openat(dir_fd, name, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
+        .result => |fd| fd,
+        .err => return false,
+    };
+    target_fd.close();
+    return true;
 }
 
 /// If `<globalLinkDir>/<pkg_name>` exists (typically a symlink created by

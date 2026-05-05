@@ -2297,6 +2297,54 @@ describe("bun link integration", () => {
     void producer;
   });
 
+  // Dangling link (producer deleted without `bun unlink`) — a common dev
+  // workflow slip. Pre-fix this hard-failed every isolated install that
+  // resolved the same package name, with an ENOENT from the installer
+  // worker opening the orphan link and no registry fallback. Accept it
+  // as a registration only when the target resolves.
+  test.skipIf(isWindows)("isolated: dangling bun link is ignored, registry download still runs", async () => {
+    using home = tempDir("link-home-", {});
+    const env = hermeticEnv(String(home));
+
+    // Link a producer, then delete the producer dir WITHOUT bun unlink.
+    // The symlink at <globalLinkDir>/no-deps now dangles.
+    {
+      using doomed = await setupLinkedNoDeps(env);
+      await rm(String(doomed), { recursive: true, force: true });
+      // Confirm the dangling state: the link exists but its target doesn't.
+      const linkPath = join(String(home), "install", "global", "node_modules", "no-deps");
+      expect(lstatSync(linkPath).isSymbolicLink()).toBe(true);
+      expect(existsSync(linkPath)).toBe(false);
+    }
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "isolated-link-consumer-dangling",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    await using p = spawn({
+      cmd: [bunExe(), "install", "--backend=hardlink"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const bodyDir = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
+    expect(existsSync(join(bodyDir, "package.json"))).toBe(true);
+    // Registry tarball, not the deleted producer.
+    expect(existsSync(join(bodyDir, "marker.js"))).toBe(false);
+  });
+
   // Capability: the installed entry must reflect what a published package
   // would contain — NOT the producer's working tree.
   //

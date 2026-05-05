@@ -905,20 +905,34 @@ pub fn parseLab(
 
         pub fn innerfn(i: *css.Parser, p: *ComponentParser) Result(CssColor) {
             // f32::max() does not propagate NaN, so use clamp for now until f32::maximum() is stable.
+            // CSS Color 4: l accepts <number> or <percentage>.
+            // lab/oklab: percentage is unit value; number is divided by range max (100 for lab, 1 for oklab).
             const l = bun.clamp(
-                switch (p.parsePercentage(i)) {
-                    .result => |v| v,
+                switch (p.parseNumberOrPercentage(i)) {
+                    .result => |vv| switch (vv) {
+                        .number => |v| v.value / comptime (if (T == OKLAB) @as(f32, 1.0) else @as(f32, 100.0)),
+                        .percentage => |v| v.unit_value,
+                    },
                     .err => |e| return .{ .err = e },
                 },
                 0.0,
                 std.math.floatMax(f32),
             );
-            const a = switch (p.parseNumber(i)) {
-                .result => |vv| vv,
+            // CSS Color 4: a and b accept <number> or <percentage>.
+            // Percentage maps to number range: -125..125 for lab, -0.4..0.4 for oklab.
+            const ab_pct_basis: f32 = comptime if (T == OKLAB) 0.4 else 125.0;
+            const a = switch (p.parseNumberOrPercentage(i)) {
+                .result => |vv| switch (vv) {
+                    .number => |v| v.value,
+                    .percentage => |v| v.unit_value * ab_pct_basis,
+                },
                 .err => |e| return .{ .err = e },
             };
-            const b = switch (p.parseNumber(i)) {
-                .result => |vv| vv,
+            const b = switch (p.parseNumberOrPercentage(i)) {
+                .result => |vv| switch (vv) {
+                    .number => |v| v.value,
+                    .percentage => |v| v.unit_value * ab_pct_basis,
+                },
                 .err => |e| return .{ .err = e },
             };
             const alpha = switch (parseAlpha(i, p)) {
@@ -972,17 +986,27 @@ pub fn parseLch(
                 }
             }
 
+            // CSS Color 4: l accepts <number> or <percentage>.
+            // lch/oklch: percentage is unit value; number is divided by range max (100 for lch, 1 for oklch).
             const l = bun.clamp(
-                switch (p.parsePercentage(i)) {
-                    .result => |vv| vv,
+                switch (p.parseNumberOrPercentage(i)) {
+                    .result => |vv| switch (vv) {
+                        .number => |v| v.value / comptime (if (T == OKLCH) @as(f32, 1.0) else @as(f32, 100.0)),
+                        .percentage => |v| v.unit_value,
+                    },
                     .err => |e| return .{ .err = e },
                 },
                 0.0,
                 std.math.floatMax(f32),
             );
+            // CSS Color 4: c accepts <number> or <percentage>.
+            // Percentage maps to number range: 0..150 for lch, 0..0.4 for oklch.
             const c = bun.clamp(
-                switch (p.parseNumber(i)) {
-                    .result => |vv| vv,
+                switch (p.parseNumberOrPercentage(i)) {
+                    .result => |vv| switch (vv) {
+                        .number => |v| v.value,
+                        .percentage => |v| v.unit_value * comptime (if (T == OKLCH) @as(f32, 0.4) else @as(f32, 150.0)),
+                    },
                     .err => |e| return .{ .err = e },
                 },
                 0.0,

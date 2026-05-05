@@ -734,6 +734,26 @@ it("MessageEvent", () => {
   `);
 });
 
+it("WeakMap/WeakSet with fake size property does not crash", () => {
+  // Regression: WeakMap/WeakSet are not iterable and have no `size` getter,
+  // but user code can assign a `size` data property. Previously, formatting
+  // such an object tried to iterate it when `size > 0`, which threw a
+  // TypeError and left a pending JSC exception, causing an
+  // `Unexpected exception observed` assertion in debug builds.
+  const wm = new WeakMap();
+  wm.size = 1728;
+  expect(Bun.inspect(wm)).toBe("WeakMap {}");
+
+  const ws = new WeakSet();
+  ws.size = 42;
+  expect(Bun.inspect(ws)).toBe("WeakSet {}");
+
+  // Also make sure the jest diff formatter does not crash on these.
+  const ta = new Int16Array(2);
+  expect(() => expect(wm).toMatchObject(ta)).toThrow();
+  expect(() => expect(ta).toMatchObject(wm)).toThrow();
+});
+
 it("CustomEvent", () => {
   const customEvent = new CustomEvent("custom", {
     detail: { value: 42, name: "test" },

@@ -2462,19 +2462,34 @@ pub const H2FrameParser = struct {
                 if (stream.endAfterHeaders) {
                     const identifier = stream.getIdentifier();
                     identifier.ensureStillAlive();
-                    // Mirror the state transitions in handleHeadersFrame's
-                    // END_STREAM path. The prior HEADERS frame already set
-                    // the stream to HALF_CLOSED_REMOTE when END_STREAM is
-                    // accompanied by END_HEADERS=0, so:
-                    //   - HALF_CLOSED_REMOTE: on the server this stays open
-                    //     for the local response; do NOT transition to CLOSED.
-                    //   - HALF_CLOSED_LOCAL / RESERVED_REMOTE: client push
-                    //     stream whose local side already ended → CLOSED.
+                    // The preceding HEADERS frame with END_STREAM=1 + END_HEADERS=0
+                    // already transitioned this stream to HALF_CLOSED_REMOTE (see
+                    // handleHeadersFrame's `isWaitingMoreHeaders` branch). Here we
+                    // need to finalise it now that the block is complete:
+                    //   - Client: HALF_CLOSED_REMOTE → CLOSED. The client is either
+                    //     receiving a bodyless response on a stream it already
+                    //     sent END_STREAM on (HALF_CLOSED_LOCAL → HALF_CLOSED_REMOTE
+                    //     in the preceding frame) or a push-stream response, and in
+                    //     both cases there is nothing more to send locally.
+                    //   - Server: HALF_CLOSED_REMOTE must stay open so the user's
+                    //     async handler can still call respond(). Dropping here
+                    //     would destroy the stream before the response could be
+                    //     written, matching the single-frame HEADERS path at
+                    //     handleHeadersFrame.
+                    //   - HALF_CLOSED_LOCAL / RESERVED_REMOTE: client stream whose
+                    //     local side already ended; → CLOSED (defensive — with
+                    //     the HEADERS-side overwrite in place, this is rarely hit).
                     //   - anything else: fall through to HALF_CLOSED_LOCAL.
                     if (stream.state == .HALF_CLOSED_LOCAL or stream.state == .RESERVED_REMOTE) {
                         stream.state = .CLOSED;
                         stream.freeResources(this, false);
-                    } else if (stream.state != .HALF_CLOSED_REMOTE) {
+                    } else if (stream.state == .HALF_CLOSED_REMOTE) {
+                        if (!this.isServer) {
+                            stream.state = .CLOSED;
+                            stream.freeResources(this, false);
+                        }
+                        // else: server — leave HALF_CLOSED_REMOTE for respond()
+                    } else {
                         stream.state = .HALF_CLOSED_LOCAL;
                     }
                     this.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(@intFromEnum(stream.state)));

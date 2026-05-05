@@ -96,7 +96,7 @@ using namespace JSC;
 // terminated) appends after core flags. All pointers nullable.
 extern "C" int32_t Bun__Chrome__ensure(Zig::GlobalObject*, const char* userDataDir,
     const char* path, const char* const* extraArgv, uint32_t extraArgvLen,
-    bool stdoutInherit, bool stderrInherit);
+    bool stdoutInherit, bool stderrInherit, bool detached);
 extern "C" void* Blob__fromBytesWithType(JSC::JSGlobalObject*, const uint8_t* ptr, size_t len, const char* mime);
 extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Zig::GlobalObject*, void* impl);
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
@@ -281,7 +281,7 @@ static constexpr us_socket_vtable_t s_cdpVTable = {
 
 bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDataDir,
     const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
-    bool stdoutInherit, bool stderrInherit)
+    bool stdoutInherit, bool stderrInherit, bool detached)
 {
     if (m_mode != TransportMode::None && !m_dead) return true;
     if (m_dead) {
@@ -310,7 +310,7 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
         pathC.length() ? pathC.data() : nullptr,
         argvPtrs.isEmpty() ? nullptr : argvPtrs.span().data(),
         static_cast<uint32_t>(argvPtrs.size()),
-        stdoutInherit, stderrInherit);
+        stdoutInherit, stderrInherit, detached);
     if (fd < 0) {
         m_dead = true;
         return false;
@@ -425,7 +425,7 @@ static void wsOnClose(void* ctx, unsigned short code)
         // let ensureSpawned's m_dead-reset clear it.
         auto pending = std::exchange(t.m_wsPending, {});
         if (t.ensureSpawned(t.m_global, t.m_fallbackUserDataDir, {}, {},
-                t.m_fallbackStdoutInherit, t.m_fallbackStderrInherit)) {
+                t.m_fallbackStdoutInherit, t.m_fallbackStderrInherit, t.m_fallbackDetached)) {
             // Replay over the pipe. Same cancellation check as wsOnOpen
             // — skip ids close() already removed. Append the NUL
             // terminator the pipe protocol needs.
@@ -451,7 +451,7 @@ static void wsOnClose(void* ctx, unsigned short code)
 }
 
 bool Transport::ensureConnected(Zig::GlobalObject* zig, const WTF::String& wsUrl, bool autoDetected,
-    const WTF::String& userDataDir, bool stdoutInherit, bool stderrInherit)
+    const WTF::String& userDataDir, bool stdoutInherit, bool stderrInherit, bool detached)
 {
     // Already connected — singleton semantics, first call wins.
     if (m_mode != TransportMode::None && !m_dead) return true;
@@ -470,6 +470,7 @@ bool Transport::ensureConnected(Zig::GlobalObject* zig, const WTF::String& wsUrl
         m_fallbackUserDataDir = userDataDir;
         m_fallbackStdoutInherit = stdoutInherit;
         m_fallbackStderrInherit = stderrInherit;
+        m_fallbackDetached = detached;
     }
 
     auto* ctx = zig->scriptExecutionContext();

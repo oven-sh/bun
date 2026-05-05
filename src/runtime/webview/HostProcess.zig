@@ -38,11 +38,11 @@ pub export fn Bun__WebViewHost__kill() void {
 /// a bug" not "spawn failed". We deliberately don't store the fd — usockets
 /// owns it; re-returning a fd usockets may have already closed would be a
 /// use-after-close. Zig only owns process lifetime (watch + kill).
-pub export fn Bun__WebViewHost__ensure(global: *jsc.JSGlobalObject, stdoutInherit: bool, stderrInherit: bool) i32 {
+pub export fn Bun__WebViewHost__ensure(global: *jsc.JSGlobalObject, stdoutInherit: bool, stderrInherit: bool, detached: bool) i32 {
     if (comptime !bun.Environment.isMac) return -1;
     if (instance != null) return -1; // C++ already holds the fd
 
-    const fd = spawn(global.bunVM(), stdoutInherit, stderrInherit) catch |err| {
+    const fd = spawn(global.bunVM(), stdoutInherit, stderrInherit, detached) catch |err| {
         log("spawn failed: {s}", .{@errorName(err)});
         return -1;
     };
@@ -61,7 +61,7 @@ pub fn onProcessExit(this: *HostProcess, _: *bun.spawn.Process, status: bun.spaw
     instance = null;
 }
 
-fn spawn(vm: *jsc.VirtualMachine, stdoutInherit: bool, stderrInherit: bool) !bun.FD {
+fn spawn(vm: *jsc.VirtualMachine, stdoutInherit: bool, stderrInherit: bool, detached: bool) !bun.FD {
     if (comptime !bun.Environment.isMac) return error.Unsupported;
 
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
@@ -102,6 +102,10 @@ fn spawn(vm: *jsc.VirtualMachine, stdoutInherit: bool, stderrInherit: bool) !bun
         .stderr = if (stderrInherit) .inherit else .ignore,
         .extra_fds = &.{.{ .pipe = fds[1] }},
         .argv0 = exe.ptr,
+        // setsid() in the child — new session, no controlling TTY. Same
+        // rationale as ChromeProcess.zig: keeps endpoint-protection /dev/tty
+        // writes off the parent's terminal.
+        .detached = detached,
     };
 
     var spawned = try (try bun.spawn.spawnProcess(

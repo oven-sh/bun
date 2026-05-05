@@ -224,13 +224,21 @@ describe("node:http", () => {
             });
           });
           try {
-            const url = await listen(server);
+            // Bind to 127.0.0.1 explicitly. `listen({port:0})` without a host
+            // binds to `::`, and on darwin the CI agents may resolve `localhost`
+            // to `::1` while the dual-stack v6-any socket fails to accept pure
+            // IPv4 connections depending on IPV6_V6ONLY. Pin both sides to IPv4
+            // to keep this test deterministic.
+            await new Promise<void>((resolve, reject) => {
+              server.listen({ port: 0, host: "127.0.0.1" }, err => (err ? reject(err) : resolve()));
+            });
+            const { port } = server.address() as AddressInfo;
             const { promise, resolve, reject } = Promise.withResolvers<string>();
             let received = "";
-            const socket = connect(Number(url.port), url.hostname, () => {
+            const socket = connect(port, "127.0.0.1", () => {
               socket.write(
                 "POST /test HTTP/1.1\r\n" +
-                  `Host: ${url.host}\r\n` +
+                  `Host: 127.0.0.1:${port}\r\n` +
                   "Content-Length: 5\r\n" +
                   `Expect: ${expectValue}\r\n` +
                   "\r\n" +

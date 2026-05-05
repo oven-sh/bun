@@ -1900,6 +1900,10 @@ describe.concurrent("Expect: 100-continue (case-insensitive match)", () => {
   for (const expectValue of ["100-continue", "100-Continue", "100-CONTINUE", "100-cOnTiNuE"]) {
     it(`responds with 100 Continue for Expect: ${expectValue}`, async () => {
       using server = Bun.serve({
+        // Pin to 127.0.0.1 so the raw TCP client always reaches the right
+        // socket family — on darwin CI, `localhost` can resolve to `::1`
+        // only while a server defaulting to dual-stack may not accept it.
+        hostname: "127.0.0.1",
         port: 0,
         async fetch(req) {
           return new Response(await req.text());
@@ -1911,7 +1915,7 @@ describe.concurrent("Expect: 100-continue (case-insensitive match)", () => {
       const socket = net.connect(server.port, "127.0.0.1", () => {
         socket.write(
           "POST /test HTTP/1.1\r\n" +
-            "Host: localhost\r\n" +
+            `Host: 127.0.0.1:${server.port}\r\n` +
             "Content-Length: 5\r\n" +
             `Expect: ${expectValue}\r\n` +
             "\r\n" +

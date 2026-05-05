@@ -575,6 +575,134 @@ pub fn waitForPromise(this: *EventLoop, promise: jsc.AnyPromise) void {
     }
 }
 
+/// Whether the event loop has any source of work that could still resolve a
+/// pending promise — active uv/uws handles, queued tasks (main or
+/// concurrent), concurrent refs, or immediates.
+///
+/// This is intentionally NOT `VirtualMachine.isEventLoopAlive()`:
+/// `isEventLoopAlive()` short-circuits on `unhandled_error_counter != 0`
+/// (it is the "should the main event loop keep running" predicate, and a
+/// fatal error stops it). For the TLA wait path we only care about work
+/// that could still wake the loop — a side-path unhandled rejection must
+/// NOT abandon an in-flight fetch whose resolution will complete the TLA.
+///
+/// `concurrent_tasks.isEmpty()` is a single atomic acquire-load; it's safe
+/// from the JS thread without locking. Including it closes a narrow race
+/// where a thread (e.g. the hot-reloader watcher at `hot_reloader.zig:278`)
+/// pushes to the concurrent queue without bumping `concurrent_ref` and the
+/// other liveness signals happen to be zero between the tick drain and the
+/// check.
+pub fn hasAnyHandleWork(this: *EventLoop) bool {
+    const vm = this.virtual_machine;
+    return vm.event_loop_handle.?.isActive() or
+        vm.active_tasks > 0 or
+        this.tasks.count > 0 or
+        this.hasPendingRefs() or
+        !this.concurrent_tasks.isEmpty() or
+        this.immediate_tasks.items.len > 0 or
+        this.next_immediate_tasks.items.len > 0;
+}
+
+/// Like `hasAnyHandleWork`, but ignores the outer `--hot` main-loop's
+/// `forever_timer` when counting active uv handles.
+///
+/// On Windows, `tickPossiblyForever` creates `forever_timer` as a ref'd
+/// `uv_timer_t` specifically so `uv_run(UV_RUN_ONCE)` blocks on file-
+/// watcher wakeups without immediately returning on a dead loop. Because
+/// the handle is ref'd, `uv_loop_alive()` (and therefore
+/// `event_loop_handle.isActive()`) reports the loop as "alive" even when
+/// there's no real work to settle a pending promise. Callers that need
+/// to distinguish "only forever_timer is holding the loop open" from
+/// "a user-held ref'd handle is holding the loop open" should use this
+/// variant. On POSIX, uws timers don't bump the uws `active` counter, so
+/// the forever_timer is invisible to `isActive()` and this is equivalent
+/// to `hasAnyHandleWork`.
+///
+/// Windows parity with `uv_loop_alive()`: also consider
+/// `active_reqs.count`, `pending_reqs_tail`, and `endgame_handles`. A
+/// native addon submitting a raw uv request via `napi_get_uv_event_loop`
+/// bumps `active_reqs.count` without touching `active_handles` or any
+/// Bun-side liveness signal, and we must not drop such work on the floor
+/// (the false-negative direction is unrecoverable: we'd tear down the
+/// module registry while the addon's uv_after_work_cb was still pending).
+pub fn hasAnyHandleWorkIgnoringForeverTimer(this: *EventLoop) bool {
+    if (comptime Environment.isWindows) {
+        const vm = this.virtual_machine;
+        // Subtract the forever_timer's contribution from
+        // `active_handles` — it's always 1 ref'd handle when present.
+        // Note this is a heuristic: another handle closing as we sample
+        // would underreport, but the fall-back on a false positive is
+        // simply "defer the reload once more", which is recoverable.
+        const uv_loop = vm.event_loop_handle.?;
+        const active = uv_loop.active_handles;
+        const forever_timer_contribution: u32 = if (this.forever_timer != null) 1 else 0;
+        const effective_active = if (active > forever_timer_contribution) active - forever_timer_contribution else 0;
+        return effective_active > 0 or
+            uv_loop.active_reqs.count > 0 or
+            uv_loop.pending_reqs_tail != null or
+            uv_loop.endgame_handles != null or
+            vm.active_tasks > 0 or
+            this.tasks.count > 0 or
+            this.hasPendingRefs() or
+            !this.concurrent_tasks.isEmpty() or
+            this.immediate_tasks.items.len > 0 or
+            this.next_immediate_tasks.items.len > 0;
+    }
+    return this.hasAnyHandleWork();
+}
+
+/// Like `waitForPromise`, but returns early when the event loop has nothing
+/// left that could resolve the promise (see `hasAnyHandleWork`). Used by the
+/// top-level-await entry points where the promise may be "unsettled" — e.g.
+/// awaiting an abort event whose only source is an unref'd
+/// `AbortSignal.timeout()` timer.
+///
+/// Without this, POSIX busy-loops at 100% CPU until the unref'd timer fires
+/// and Windows hangs forever (`uv_run(UV_RUN_NOWAIT)` early-returns when
+/// `uv__loop_alive()` is false, so unref'd Bun timers never fire via the uv
+/// scheduler). Matches Node.js, which also exits an unsettled top-level
+/// await without waiting on unref'd handles.
+///
+/// Callers that require a resolved promise on return should keep using
+/// `waitForPromise` — this variant is specifically for the top-level-entry
+/// path, which is prepared to observe a still-pending promise.
+pub fn waitForPromiseOrLoopExit(this: *EventLoop, promise: jsc.AnyPromise) void {
+    const jsc_vm = this.virtual_machine.jsc_vm;
+    switch (promise.status()) {
+        .pending => {
+            while (promise.status() == .pending) {
+                if (jsc_vm.executionForbidden()) {
+                    break;
+                }
+                this.tick();
+
+                if (promise.status() == .pending) {
+                    this.autoTick();
+                }
+
+                if (promise.status() == .pending and !this.hasAnyHandleWork()) {
+                    // About to break because nothing holds the loop alive.
+                    // `autoTick` just called `handleRejectedPromises()`, which
+                    // may have run a user `process.on('unhandledRejection',
+                    // …)` handler that resolved the awaited promise via a
+                    // JSC microtask. In `.bun` mode with a registered
+                    // handler, that path returns WITHOUT a
+                    // `defer drainMicrotasks`, so the continuation hasn't
+                    // run yet and `hasAnyHandleWork` can't see it. Drain
+                    // once and re-check the status — if the microtask
+                    // settled the promise, fall through to the loop
+                    // condition and exit normally instead of breaking.
+                    this.drainMicrotasksWithGlobal(this.global, jsc_vm) catch return;
+                    if (promise.status() == .pending and !this.hasAnyHandleWork()) {
+                        break;
+                    }
+                }
+            }
+        },
+        else => {},
+    }
+}
+
 pub fn waitForPromiseWithTermination(this: *EventLoop, promise: jsc.AnyPromise) void {
     const worker = this.virtual_machine.worker orelse @panic("EventLoop.waitForPromiseWithTermination: worker is not initialized");
     switch (promise.status()) {

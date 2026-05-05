@@ -720,7 +720,33 @@ pub fn reportExceptionInHotReloadedModuleIfNeeded(this: *jsc.VirtualMachine) voi
     var promise = this.pending_internal_promise orelse return;
 
     switch (promise.status()) {
-        .pending => return,
+        .pending => {
+            // A prior `reload()` deferred because a ref'd await was in
+            // flight, and the await has now resolved into another
+            // pending state that the loop can no longer make progress
+            // on (e.g. `await Bun.sleep(N).then(() => new Promise(() =>
+            // {}))`). In that case `loadEntryPoint`'s watcher loop has
+            // already bailed out with the promise still `.pending` and
+            // no work to settle it — `hot_reload_deferred` would remain
+            // stranded and the deferred save silently dropped. Consume
+            // the flag here and let `reload()` re-evaluate (it'll
+            // observe the abandoned state and proceed). Guarded on the
+            // same "nothing ref'd but forever_timer" check `reload()`
+            // itself uses so we don't interrupt live ref'd work.
+            //
+            // Tail-recurse after the reload so the fresh
+            // `pending_internal_promise` is re-read from the caller
+            // rather than the stale capture at line 720 above. Without
+            // this, a new module body that synchronously rejects
+            // (top-level `throw`, transpile error) would leave the
+            // fresh `.rejected` unreported until the next loop wakeup
+            // — `tickPossiblyForever` blocks in `loop.tick()` first.
+            if (this.hot_reload_deferred and !this.eventLoop().hasAnyHandleWorkIgnoringForeverTimer()) {
+                this.reload(null);
+                return this.reportExceptionInHotReloadedModuleIfNeeded();
+            }
+            return;
+        },
         .rejected => if (this.pending_internal_promise_reported_at != this.hot_reload_counter) {
             this.pending_internal_promise_reported_at = this.hot_reload_counter;
             this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.toJS());
@@ -782,8 +808,49 @@ pub fn reload(this: *VirtualMachine, _: ?*HotReloader.Task) void {
     if (this.pending_internal_promise) |p| {
         switch (p.status()) {
             .pending => {
-                this.hot_reload_deferred = true;
-                return;
+                // Normally defer. A watcher event arrived while either:
+                //   (a) the C++ module loader / transpile chain is still
+                //       draining on the microtask queue,
+                //   (b) a user ref'd await (timer / network / fs) is
+                //       pending and will settle the promise.
+                // Both cases need the current continuation to run first;
+                // tearing down the module registry now would let the two
+                // chains interleave through one registry, or leave a
+                // zombie continuation firing against the freshly-reset
+                // global.
+                //
+                // The defer is consumed by
+                // `reportExceptionInHotReloadedModuleIfNeeded` once the
+                // promise settles. But `reportException…` early-returns
+                // on `.pending`, so if the promise NEVER settles (an
+                // abandoned top-level await — `await new Promise(() =>
+                // {})` or an unref'd `AbortSignal.timeout`) the deferral
+                // would be permanent and --hot would go silently dead.
+                //
+                // Drain microtasks first to collapse case (a): if a
+                // loader chain microtask flips the status to settled,
+                // one of the other arms handles it. If status is still
+                // `.pending` after the drain, check whether any source
+                // of work could advance it — using the
+                // `hasAnyHandleWorkIgnoringForeverTimer` variant because
+                // the --hot main loop holds a ref'd `forever_timer` on
+                // Windows that would otherwise make plain
+                // `hasAnyHandleWork`/`isActive` permanently true.
+                this.eventLoop().drainMicrotasksWithGlobal(this.global, this.jsc_vm) catch {};
+                switch (p.status()) {
+                    .pending => if (this.eventLoop().hasAnyHandleWorkIgnoringForeverTimer()) {
+                        // case (b): ref'd I/O will settle the promise.
+                        this.hot_reload_deferred = true;
+                        return;
+                    },
+                    // Fell through case (a) during the drain — let the
+                    // matching arm decide.
+                    .rejected => if (this.pending_internal_promise_reported_at != this.hot_reload_counter) {
+                        this.hot_reload_deferred = true;
+                        return;
+                    },
+                    .fulfilled => {},
+                }
             },
             .rejected => if (this.pending_internal_promise_reported_at != this.hot_reload_counter) {
                 this.hot_reload_deferred = true;
@@ -821,6 +888,22 @@ pub fn reload(this: *VirtualMachine, _: ?*HotReloader.Task) void {
     }
     // reloadEntryPoint() stores into pending_internal_promise on every return path.
     _ = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
+
+    // `reloadEntryPoint` returns while the fetch/link/evaluate chain is
+    // still queued as JSC microtasks. When this `reload()` is invoked
+    // from inside `tick()` (the common single-save path), the
+    // `HotReloadTask` handler returns → `tick()`'s else-branch drains.
+    // But out-of-`tick()` callers — `reportExceptionInHotReloadedModule
+    // IfNeeded` (the stranded-flag consumer, see field doc on
+    // `hot_reload_deferred`) and the pre-existing `bun.js.zig` dispatch
+    // after an initial-load rejection — would return to the main loop
+    // with the new module body still unexecuted. `tickPossiblyForever`
+    // then blocks in `loop.tick()` before `this.tick()` ever drains the
+    // microtask queue, so the new module doesn't evaluate until the
+    // next loop wakeup (another save, or `forever_timer` firing in up
+    // to 4 minutes). Drain here to guarantee the reload takes effect
+    // before `reload()` returns, covering every call site.
+    this.eventLoop().drainMicrotasksWithGlobal(this.global, this.jsc_vm) catch {};
 }
 
 pub inline fn nodeFS(this: *VirtualMachine) *Node.fs.NodeFS {
@@ -2467,6 +2550,24 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
                     if (this.pending_internal_promise.?.status() == .pending) {
                         this.eventLoop().autoTick();
                     }
+
+                    // Top-level await with no ref'd handle to resolve it:
+                    // bail so POSIX doesn't burn 100% CPU and Windows doesn't
+                    // hang on `uv_run(NOWAIT)` skipping its loop body. See
+                    // EventLoop.waitForPromiseOrLoopExit for the full rationale
+                    // (and for why this deliberately avoids `isEventLoopAlive`,
+                    // which short-circuits on `unhandled_error_counter != 0`).
+                    if (this.pending_internal_promise.?.status() == .pending and !this.eventLoop().hasAnyHandleWork()) {
+                        // Drain microtasks a user `process.on('unhandledRejection',
+                        // …)` handler may have queued inside `autoTick`'s
+                        // `handleRejectedPromises()` — see waitForPromiseOrLoopExit.
+                        // If the drain runs the continuation that settles the promise,
+                        // re-check and fall through to the loop condition.
+                        this.eventLoop().drainMicrotasksWithGlobal(this.global, this.jsc_vm) catch break;
+                        if (this.pending_internal_promise.?.status() == .pending and !this.eventLoop().hasAnyHandleWork()) {
+                            break;
+                        }
+                    }
                 }
             },
             else => {},
@@ -2477,7 +2578,7 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
         }
 
         this.eventLoop().performGC();
-        this.waitForPromise(.{ .internal = promise });
+        this.eventLoop().waitForPromiseOrLoopExit(.{ .internal = promise });
     }
 
     return this.pending_internal_promise.?;

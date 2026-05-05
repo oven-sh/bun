@@ -74,6 +74,7 @@ process.exit(pct > 50 ? 0 : 1);
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   expect(stdout).toContain("releasedPct");
   expect(exitCode).toBe(0);
 });

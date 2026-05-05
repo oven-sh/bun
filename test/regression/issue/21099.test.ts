@@ -87,3 +87,24 @@ test("Dirent constructed with missing or non-integer type returns false (does no
   expect(fileType.isFile()).toBe(true);
   expect(fileType.isDirectory()).toBe(false);
 });
+
+test("Dirent methods work via prototype-chain delegation", () => {
+  // Node.js reads this[kType] via a Symbol, which walks the prototype chain.
+  // Object.create(dirent) and Object.setPrototypeOf({}, dirent) must still
+  // resolve the inherited type slot and return the correct boolean, not throw.
+  const dirent = new Dirent("foo", 1 /* UV_DIRENT_FILE */, "/path");
+
+  const createWrapper = Object.create(dirent);
+  expect(createWrapper.isFile()).toBe(true);
+  expect(createWrapper.isDirectory()).toBe(false);
+
+  const setProtoWrapper = Object.setPrototypeOf({}, dirent);
+  expect(setProtoWrapper.isFile()).toBe(true);
+  expect(setProtoWrapper.isBlockDevice()).toBe(false);
+
+  // Subclass instances still work (they get @data as own property via constructDirent).
+  class MyDirent extends Dirent {}
+  const sub = new MyDirent("sub", 2 /* UV_DIRENT_DIR */, "/path");
+  expect(sub.isDirectory()).toBe(true);
+  expect(sub.isFile()).toBe(false);
+});

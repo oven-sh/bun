@@ -169,7 +169,6 @@ JSC_DEFINE_HOST_FUNCTION(constructDirent, (JSC::JSGlobalObject * globalObject, J
     auto* originalStructure = structure;
     JSValue newTarget = callFrame->newTarget();
     if (zigGlobalObject->m_JSDirentClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor Dirent cannot be invoked without 'new'"_s);
             return {};
@@ -209,11 +208,19 @@ static inline int32_t getType(JSC::ThrowScope& scope, JSC::VM& vm, JSValue value
             type = object->getDirect(2);
             hasType = true;
         } else {
-            // Slow path: look up @data as an own property. A subclass instance created via
-            // constructDirent has it set via putDirect; non-Dirent receivers (e.g. the global
-            // object when the method is destructured) won't have it at all.
-            type = object->getDirect(vm, Bun::builtinNames(vm).dataPrivateName());
-            hasType = !!type;
+            // Slow path: look up @data via the full property machinery so subclass
+            // instances, prototype-delegating wrappers (Object.create(dirent)), etc.
+            // still find the inherited type slot. Non-Dirent receivers (e.g. the
+            // global object when the method is destructured) won't have @data
+            // anywhere on their chain, so getPropertySlot returns false.
+            auto propertyName = Bun::builtinNames(vm).dataPrivateName();
+            JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::Get);
+            hasType = object->getPropertySlot(globalObject, propertyName, slot);
+            RETURN_IF_EXCEPTION(scope, std::numeric_limits<int32_t>::max());
+            if (hasType) {
+                type = slot.getValue(globalObject, propertyName);
+                RETURN_IF_EXCEPTION(scope, std::numeric_limits<int32_t>::max());
+            }
         }
 
         if (hasType) {

@@ -289,9 +289,7 @@ describe.concurrent("console.table control-character escaping", () => {
     // 0x1B is the first byte of every ANSI color sequence. VisibleCharacterCounter
     // already strips ANSI from the width calculation, so quoting these strings
     // would destroy chalk/picocolors output without fixing any layout bug.
-    const out = await runTable(
-      `(() => [[{ status: "\\x1b[31mFAIL\\x1b[0m" }, { status: "\\x1b[32mOK\\x1b[0m" }]])`,
-    );
+    const out = await runTable(`(() => [[{ status: "\\x1b[31mFAIL\\x1b[0m" }, { status: "\\x1b[32mOK\\x1b[0m" }]])`);
     assertRectangular(out);
     expect(out).toContain("\x1b[31mFAIL\x1b[0m");
     expect(out).toContain("\x1b[32mOK\x1b[0m");

@@ -252,6 +252,70 @@ test("pushStream() inherits :authority from the client's request headers", async
   }
 });
 
+test("client session.close() completes when server response headers span HEADERS + CONTINUATION", async () => {
+  let client: ReturnType<typeof http2.connect> | undefined;
+  const { promise: done, resolve, reject } = Promise.withResolvers<{ closed: boolean; status: number | undefined }>();
+
+  const server = http2.createSecureServer({ key: tls.key, cert: tls.cert });
+
+  function cleanup() {
+    try {
+      client?.close();
+    } catch {}
+    try {
+      server.close();
+    } catch {}
+  }
+
+  server.on("stream", (stream: any) => {
+    stream.on("error", () => {});
+    // Respond with a bodyless response whose headers exceed maxFrameSize
+    // (~16KB default) so the framing lands as HEADERS(END_STREAM=1,
+    // END_HEADERS=0) + CONTINUATION(END_HEADERS=1). Prior to the fix, the
+    // client's CONTINUATION path left the stream stuck in HALF_CLOSED_REMOTE
+    // and session.close() would hang because #connections never reached 0.
+    // Keep the pair count under maxHeaderListPairs (128) and total size
+    // under maxHeaderListSize (65535) so only the per-frame limit matters.
+    const bigHeaders: any = { [http2.constants.HTTP2_HEADER_STATUS]: 200 };
+    for (let i = 0; i < 100; i++) {
+      bigHeaders[`x-custom-header-${i}`] = "x".repeat(200);
+    }
+    stream.respond(bigHeaders, { endStream: true });
+  });
+
+  server.on("error", () => {});
+  server.listen(0, () => {
+    const port = (server.address() as any).port;
+    client = http2.connect(`https://localhost:${port}`, { rejectUnauthorized: false });
+    client.on("error", (err: Error) => {
+      cleanup();
+      reject(err);
+    });
+
+    let respStatus: number | undefined;
+    const req = client.request({ ":path": "/" });
+    req.on("response", headers => {
+      respStatus = headers[":status"];
+    });
+    req.on("error", () => {});
+    req.on("end", () => {
+      // Now try to close the session cleanly. If #connections is stuck
+      // at 1 (the stream leak scenario) this never fires.
+      client!.close(() => resolve({ closed: true, status: respStatus }));
+    });
+    req.resume();
+    req.end();
+  });
+
+  try {
+    const result = await done;
+    expect(result.closed).toBe(true);
+    expect(result.status).toBe(200);
+  } finally {
+    cleanup();
+  }
+});
+
 test("pushStream() does not leak http2.sensitiveHeaders symbol as a bogus header", async () => {
   let client: ReturnType<typeof http2.connect> | undefined;
   const { promise: done, resolve, reject } = Promise.withResolvers<string[]>();

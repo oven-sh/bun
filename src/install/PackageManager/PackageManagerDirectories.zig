@@ -468,8 +468,12 @@ pub fn populateLinkedNamesCache(this: *PackageManager) void {
         if (name.len == 0) continue;
 
         // Scope dirs (`@scope`) contain the actual links nested one
-        // level deeper; flatten to `@scope/name` in the cache.
-        if (name[0] == '@' and entry.kind == .directory) {
+        // level deeper; flatten to `@scope/name` in the cache. Accept
+        // `.unknown` too: readdir on NFS / FUSE / XFS-ftype=0 returns
+        // `DT_UNKNOWN` for every entry, and rejecting it here would
+        // drop real scope dirs. `openDirForIteration` below will reject
+        // non-dirs as EACCES/ENOTDIR and we'll just skip them.
+        if (name[0] == '@' and (entry.kind == .directory or entry.kind == .unknown)) {
             if (comptime bun.Environment.isWindows) {
                 // WTF-16 name; skip scope flattening on Windows for now.
                 // Falls through to the lstat path in linkedPackagePath.
@@ -490,7 +494,13 @@ pub fn populateLinkedNamesCache(this: *PackageManager) void {
                 // same path when the hoisted linker is in use. A real
                 // directory there means a global install, not a link,
                 // and must not trigger the linked-package override.
-                if (scope_entry.kind != .sym_link) continue;
+                //
+                // On filesystems where readdir doesn't populate d_type
+                // (NFS / FUSE / XFS-ftype=0) `entry.kind == .unknown`;
+                // lstat as a fallback. The DirIterator docs call this
+                // the lazy-stat pattern; walker_skippable.zig uses it
+                // the same way.
+                if (!isLinkedEntry(scope_entry.kind, scope_fd, scope_entry.name.sliceAssumeZ())) continue;
                 const full = bun.handleOom(std.fmt.allocPrint(this.allocator, "{s}/{s}", .{ name, sub_name }));
                 bun.handleOom(this.linked_names.put(this.allocator, full, {}));
             }
@@ -498,12 +508,28 @@ pub fn populateLinkedNamesCache(this: *PackageManager) void {
         }
 
         if (comptime bun.Environment.isWindows) continue;
-        // See note above — the global link dir is shared with `bun add -g`.
-        // Only treat symlinks as registered links.
-        if (entry.kind != .sym_link) continue;
+        // See notes above — symlink-only filter with `.unknown` lstat
+        // fallback so NFS / FUSE / ftype=0 hosts don't silently drop
+        // every entry.
+        if (!isLinkedEntry(entry.kind, root_fd, entry.name.sliceAssumeZ())) continue;
         const dup = bun.handleOom(this.allocator.dupe(u8, name));
         bun.handleOom(this.linked_names.put(this.allocator, dup, {}));
     }
+}
+
+/// Returns true when `entry` at `dir_fd` should be treated as a
+/// `bun link` registration — a symlink. On filesystems that don't
+/// populate `getdents64`'s `d_type` field (NFS / FUSE / XFS with
+/// ftype=0), `kind` arrives as `.unknown`; disambiguate with `lstatat`.
+fn isLinkedEntry(kind: std.fs.File.Kind, dir_fd: bun.FD, name: [:0]const u8) bool {
+    return switch (kind) {
+        .sym_link => true,
+        .unknown => switch (bun.sys.lstatat(dir_fd, name)) {
+            .result => |st| std.posix.S.ISLNK(@intCast(st.mode)),
+            .err => false,
+        },
+        else => false,
+    };
 }
 
 /// If `<globalLinkDir>/<pkg_name>` exists (typically a symlink created by

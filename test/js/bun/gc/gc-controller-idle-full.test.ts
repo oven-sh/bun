@@ -31,9 +31,10 @@ process.stdout.write(\`INITIAL=\${initial}\\n\`);
 
 // Keep the event loop alive without allocating. With BUN_GC_TIMER_INTERVAL=20
 // the controller ticks every 20ms; once it sees 30 non-growing ticks (~600ms)
-// it requests an async Full GC and converges to the slow interval. 2.5s of
-// pure idle gives ~4x headroom on slow/ASAN builds.
-await Bun.sleep(2500);
+// it requests an async Full GC and converges to the slow interval. 5s of
+// pure idle gives ~8x headroom for loaded darwin-x64 hosts where uws timers
+// can be coalesced to coarser effective intervals under CPU pressure.
+await Bun.sleep(5000);
 
 // The Full GC is async — poll until its result is visible in heapSize().
 // Without the idle Full GC the loop runs to completion with heap unchanged.

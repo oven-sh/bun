@@ -9,6 +9,7 @@ test/cli/run/run-crash-handler.test.ts [ FAIL ] # automatic crash reporter > seg
 
 # Tests that are flaky
 test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
+[ WINDOWS-AARCH64 ] test/js/bun/test/parallel/test-http-should-emit-close-when-connection-is-aborted.ts [ FLAKY ] # req 'close' not emitted within 20s after controller.abort() on win-arm, hit ≥4 times across unrelated PRs
 
 # Tests skipped due to different log/line outputs
 [ ASAN ] test/js/bun/util/reportError.test.ts [ SKIP ] # log line mismatch

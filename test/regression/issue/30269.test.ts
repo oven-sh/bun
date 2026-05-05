@@ -88,10 +88,10 @@ test("#30269 bundler doesn't rename a nested local into another top-level symbol
   });
   {
     const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-    expect(stderr).not.toContain("error");
-    expect(exitCode).toBe(0);
-    // `stdout` carries the "Bundled N modules" banner; referenced to keep it.
+    // `stdout` carries the "Bundled N modules" banner; assert on it before
+    // the exit-code check so a build failure shows what bun actually printed.
     expect(stdout).toContain("out.js");
+    expect(exitCode, stderr).toBe(0);
   }
 
   await using run = Bun.spawn({

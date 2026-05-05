@@ -2028,15 +2028,20 @@ pub const H2FrameParser = struct {
             return data.len;
         };
 
-        // RFC 7540 Section 6.1: DATA frames are subject to flow control and can
-        // only be sent when a stream is in the "open" or "half-closed (local)"
-        // state. Receiving DATA on a RESERVED_REMOTE push stream before the
-        // server has sent the response HEADERS is a stream error of type
-        // PROTOCOL_ERROR — the payload must not be delivered to JS, otherwise
-        // a misbehaving server could inject data onto a stream that was never
-        // legitimately opened.
+        // RFC 7540 Section 6.1 / 5.1: DATA frames are only legal on an "open"
+        // or "half-closed (local)" stream. Receipt on a reserved or idle
+        // stream is permitted to be a connection error of type PROTOCOL_ERROR
+        // (see Section 5.1, "reserved (remote)" state) and we treat it as one
+        // here. The payload must not be delivered to JS (a misbehaving server
+        // could otherwise inject data onto a stream that was never
+        // legitimately opened) and stream-level RST is insufficient — the
+        // outer readBytes() set `currentFrame`/`remainingLength` before
+        // dispatch, and a stream-scoped reject would leave that bookkeeping
+        // stale for the next TCP read, desynchronising connection framing.
+        // Sending GOAWAY tears the connection down, which matches every
+        // other early-return in this handler.
         if (stream.state == .RESERVED_REMOTE or stream.state == .RESERVED_LOCAL or stream.state == .IDLE) {
-            this.endStream(stream, ErrorCode.PROTOCOL_ERROR);
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "DATA on reserved/idle stream", this.lastStreamID, true);
             return data.len;
         }
 
@@ -4865,8 +4870,11 @@ pub const H2FrameParser = struct {
         // open for receiving. If we already sent END_STREAM (HALF_CLOSED_LOCAL,
         // CLOSED) or never saw the request (IDLE, RESERVED_*) then emitting a
         // PUSH_PROMISE here is a protocol violation the peer must reject.
+        // Return -3 (distinct from -1 = push disabled by peer) so the JS layer
+        // can surface ERR_HTTP2_INVALID_STREAM instead of the misleading
+        // ERR_HTTP2_PUSH_DISABLED.
         if (orig_stream.state != .OPEN and orig_stream.state != .HALF_CLOSED_REMOTE) {
-            return jsc.JSValue.jsNumber(-1);
+            return jsc.JSValue.jsNumber(-3);
         }
 
         // Check remote settings allow push
@@ -5018,9 +5026,12 @@ pub const H2FrameParser = struct {
         // callers get a consistent rejection instead of silently emitting a
         // header block larger than the application opted into. We reject here
         // before reserving a stream id so the lastPushStreamID counter stays
-        // in sync with what actually went on the wire.
+        // in sync with what actually went on the wire. Return -4 (distinct
+        // from -1 = push disabled, -3 = parent stream invalid) so the JS
+        // layer can surface an ERR_HTTP2_FRAME_ERROR rather than the
+        // misleading ERR_HTTP2_PUSH_DISABLED.
         if (this.maxSendHeaderBlockLength != 0 and encoded_size > this.maxSendHeaderBlockLength) {
-            return jsc.JSValue.jsNumber(-1);
+            return jsc.JSValue.jsNumber(-4);
         }
 
         // Create the promised stream in RESERVED_LOCAL state.

@@ -4,7 +4,7 @@ use core::ffi::c_int;
 
 use bun_sys::Error;
 
-use crate::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult};
+use crate::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, SystemErrorJsc};
 
 // PORT NOTE: In Rust, `to_js`/`from_js` live as extension-trait methods in the
 // `*_jsc` crate (per PORTING.md). The Zig free fns `toJS`/`toJSWithAsyncStack`
@@ -25,13 +25,7 @@ pub trait ErrorJsc {
 
 impl ErrorJsc for Error {
     fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        #[cfg(any())]
-        // TODO(b2-blocked): bun_jsc::SystemError::to_error_instance
-        {
-            return self.to_system_error().to_error_instance(global);
-        }
-        let _ = (self.to_system_error(), global);
-        todo!("b2-blocked: bun_jsc::SystemError::to_error_instance")
+        Ok(self.to_system_error().to_error_instance(global))
     }
 
     fn to_js_with_async_stack(
@@ -39,15 +33,9 @@ impl ErrorJsc for Error {
         global: &JSGlobalObject,
         promise: &JSPromise,
     ) -> JsResult<JSValue> {
-        #[cfg(any())]
-        // TODO(b2-blocked): bun_jsc::SystemError::to_error_instance_with_async_stack
-        {
-            return self
-                .to_system_error()
-                .to_error_instance_with_async_stack(global, promise);
-        }
-        let _ = (self.to_system_error(), global, promise);
-        todo!("b2-blocked: bun_jsc::SystemError::to_error_instance_with_async_stack")
+        Ok(self
+            .to_system_error()
+            .to_error_instance_with_async_stack(global, promise))
     }
 }
 
@@ -62,33 +50,28 @@ impl TestingAPIs {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        #[cfg(any())]
-        // TODO(b2-blocked): bun_jsc::CallFrame::arguments
-        // TODO(b2-blocked): bun_jsc::JSValue::{is_number,to_int32,UNDEFINED}
-        // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw
-        {
-            let arguments = frame.arguments();
-            if arguments.len() < 1 || !arguments[0].is_number() {
-                return Err(global.throw("sysErrorNameFromLibuv: expected 1 number argument"));
-            }
-            #[cfg(not(windows))]
-            {
-                return Ok(JSValue::UNDEFINED);
-            }
-            #[cfg(windows)]
-            {
-                let err = Error {
-                    // @intCast → checked narrowing; target is Error.errno's int type.
-                    errno: arguments[0].to_int32().try_into().unwrap(),
-                    syscall: bun_sys::Tag::open,
-                    from_libuv: true,
-                    ..Default::default()
-                };
-                return bun_string::String::create_utf8_for_js(global, err.name());
-            }
+        let arguments = frame.arguments();
+        if arguments.len() < 1 || !arguments[0].is_number() {
+            return Err(global.throw(format_args!(
+                "sysErrorNameFromLibuv: expected 1 number argument"
+            )));
         }
-        let _ = (global, frame);
-        todo!("b2-blocked: bun_jsc CallFrame/JSValue/JSGlobalObject methods unavailable")
+        #[cfg(not(windows))]
+        {
+            return Ok(JSValue::UNDEFINED);
+        }
+        #[cfg(windows)]
+        {
+            let err = Error {
+                // @intCast → checked narrowing; target is Error.errno's int type.
+                errno: arguments[0].to_int32().try_into().unwrap(),
+                syscall: bun_sys::Tag::open,
+                from_libuv: true,
+                ..Default::default()
+            };
+            // TODO(b2-blocked): bun_string::String::create_utf8_for_js (tier-6 string_jsc)
+            return bun_string::String::create_utf8_for_js(global, err.name());
+        }
     }
 
     /// Exposes libuv -> `bun.sys.E` translation so tests can feed out-of-range
@@ -98,37 +81,35 @@ impl TestingAPIs {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        #[cfg(any())]
-        // TODO(b2-blocked): bun_jsc::CallFrame::arguments
-        // TODO(b2-blocked): bun_jsc::JSValue::{is_number,to_int32,UNDEFINED}
-        // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw
-        // TODO(b2-blocked): bun_sys::windows::libuv::translate_uv_error_to_e
-        {
-            let arguments = frame.arguments();
-            if arguments.len() < 1 || !arguments[0].is_number() {
-                return Err(global.throw("translateUVErrorToE: expected 1 number argument"));
-            }
-            #[cfg(not(windows))]
-            {
-                return Ok(JSValue::UNDEFINED);
-            }
-            #[cfg(windows)]
-            {
-                let code: c_int = arguments[0].to_int32();
-                let result = bun_sys::windows::libuv::translate_uv_error_to_e(code);
-                // @tagName(result) → IntoStaticStr derive on the E enum.
-                return bun_string::String::create_utf8_for_js(global, <&'static str>::from(result));
-            }
+        let arguments = frame.arguments();
+        if arguments.len() < 1 || !arguments[0].is_number() {
+            return Err(global.throw(format_args!(
+                "translateUVErrorToE: expected 1 number argument"
+            )));
         }
-        let _ = (global, frame);
-        todo!("b2-blocked: bun_jsc CallFrame/JSValue/JSGlobalObject methods unavailable")
+        #[cfg(not(windows))]
+        {
+            return Ok(JSValue::UNDEFINED);
+        }
+        #[cfg(windows)]
+        {
+            let code: c_int = arguments[0].to_int32();
+            // TODO(b2-blocked): bun_sys::windows::libuv::translate_uv_error_to_e
+            let result = bun_sys::windows::libuv::translate_uv_error_to_e(code);
+            // @tagName(result) → IntoStaticStr derive on the E enum.
+            // TODO(b2-blocked): bun_string::String::create_utf8_for_js (tier-6 string_jsc)
+            return bun_string::String::create_utf8_for_js(global, <&'static str>::from(result));
+        }
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/sys_jsc/error_jsc.zig (54 lines)
-//   confidence: medium (bodies gated on bun_jsc stub surface)
-//   blocked:    bun_jsc::{SystemError methods, CallFrame::arguments, host_fn macro,
-//               JSValue::{is_number,to_int32,UNDEFINED}, JSGlobalObject::throw}
+//   confidence: high — bodies un-gated and type-checked against crate-local
+//               bun_jsc shim surface (see lib.rs); Windows arms remain
+//               unchecked on posix builds
+//   blocked:    bun_jsc::{SystemError::to_error_instance*, CallFrame::arguments,
+//               host_fn macro, JSValue::{is_number,to_int32,UNDEFINED},
+//               JSGlobalObject::throw} — shimmed in lib.rs until bun_jsc compiles
 // ──────────────────────────────────────────────────────────────────────────

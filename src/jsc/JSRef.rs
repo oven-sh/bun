@@ -1,6 +1,10 @@
 use core::marker::PhantomData;
 
-use crate::{JSGlobalObject, JSValue, Strong};
+// PORT NOTE: JSRef.zig stores `jsc.Strong.Optional`, not `jsc.Strong`. The
+// methods below (`get() -> Option`, `has()`, `try_swap()`) live on the
+// Optional wrapper, so import it under the local name `Strong`.
+use crate::strong::Optional as Strong;
+use crate::{JSGlobalObject, JSValue};
 
 /// Holds a reference to a JSValue with lifecycle management.
 ///

@@ -68,21 +68,11 @@ pub fn testing_impl(
 ) -> JsResult<JSValue> {
     #[cfg(any())]
     {
-        // TODO(b2-blocked): bun_jsc::CallFrame::arguments_old
-        // TODO(b2-blocked): bun_jsc::ArgumentsSlice
-        // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw / throw_value / bun_vm
-        // TODO(b2-blocked): bun_jsc::JSValue::is_string / to_bun_string / is_object
-        // TODO(b2-blocked): bun_css::ParserOptions
-        // TODO(b2-blocked): bun_css::StyleSheet
-        // TODO(b2-blocked): bun_css::DefaultAtRule
-        // TODO(b2-blocked): bun_css::MinifyOptions
-        // TODO(b2-blocked): bun_css::PrinterOptions
-        // TODO(b2-blocked): bun_css::ImportRecordHandler
-        // TODO(b2-blocked): bun_css::LocalsResultsMap
-        // TODO(b2-blocked): bun_options_types::ImportRecord
-        // TODO(b2-blocked): bun_bundler::Index
-        // TODO(b2-blocked): bun_string::String::from_bytes
-        // TODO(b2-blocked): bun_jsc::StringJsc::to_js
+        // TODO(b2-blocked): bun_css::StyleSheet::parse
+        // TODO(b2-blocked): bun_css::StyleSheet::minify
+        // TODO(b2-blocked): bun_css::StyleSheet::to_css
+        // TODO(b2-blocked): bun_css::ParserOptions::default (arena+log ctor)
+        // TODO(b2-blocked): bun_jsc::LogJsc::to_js
         use bun_css::{
             DefaultAtRule, ImportRecordHandler, LocalsResultsMap, MinifyOptions, ParserOptions,
             PrinterOptions, StyleSheet,
@@ -214,32 +204,29 @@ pub fn testing_impl(
     }
 }
 
-#[cfg(any())]
 fn parser_options_from_js(
     global: &JSGlobalObject,
     _arena: &Arena,
     opts: &mut bun_css::ParserOptions,
     jsobj: JSValue,
 ) -> JsResult<()> {
-    // TODO(b2-blocked): bun_css::ParserOptions
-    // TODO(b2-blocked): bun_jsc::JSValue::get_truthy / is_array / array_iterator / to_bun_string
-    if let Some(val) = jsobj.get_truthy(global, "flags")? {
+    if let Some(val) = jsobj.get_truthy(global, b"flags")? {
         if val.is_array() {
             let mut iter = val.array_iterator(global)?;
             while let Some(item) = iter.next()? {
                 let bunstr = item.to_bun_string(global)?;
                 let str = bunstr.to_utf8();
                 if str.slice() == b"DEEP_SELECTOR_COMBINATOR" {
-                    opts.flags.deep_selector_combinator = true;
+                    opts.flags |= bun_css::ParserFlags::DEEP_SELECTOR_COMBINATOR;
                 } else {
-                    return global.throw(format_args!(
+                    return Err(global.throw(format_args!(
                         "invalid flag: {}",
                         bstr::BStr::new(str.slice())
-                    ));
+                    )));
                 }
             }
         } else {
-            return global.throw(format_args!("flags must be an array"));
+            return Err(global.throw(format_args!("flags must be an array")));
         }
     }
 
@@ -258,12 +245,9 @@ fn parser_options_from_js(
 }
 
 fn targets_from_js(global: &JSGlobalObject, jsobj: JSValue) -> JsResult<Browsers> {
-    #[cfg(any())]
-    {
-        // TODO(b2-blocked): bun_jsc::JSValue::get_truthy / is_int32 / get_number
-        let mut targets = Browsers::default();
+    let mut targets = Browsers::default();
 
-        if let Some(val) = jsobj.get_truthy(global, "android")? {
+    if let Some(val) = jsobj.get_truthy(global, b"android")? {
             if val.is_int32() {
                 if let Some(value) = val.get_number() {
                     // note: Rust `as` saturates on overflow/NaN where Zig is UB
@@ -271,84 +255,74 @@ fn targets_from_js(global: &JSGlobalObject, jsobj: JSValue) -> JsResult<Browsers
                 }
             }
         }
-        if let Some(val) = jsobj.get_truthy(global, "chrome")? {
+    if let Some(val) = jsobj.get_truthy(global, b"chrome")? {
             if val.is_int32() {
                 if let Some(value) = val.get_number() {
                     targets.chrome = Some(value as u32);
                 }
             }
         }
-        if let Some(val) = jsobj.get_truthy(global, "edge")? {
+    if let Some(val) = jsobj.get_truthy(global, b"edge")? {
             if val.is_int32() {
                 if let Some(value) = val.get_number() {
                     targets.edge = Some(value as u32);
                 }
             }
         }
-        if let Some(val) = jsobj.get_truthy(global, "firefox")? {
+    if let Some(val) = jsobj.get_truthy(global, b"firefox")? {
             if val.is_int32() {
                 if let Some(value) = val.get_number() {
                     targets.firefox = Some(value as u32);
                 }
             }
         }
-        if let Some(val) = jsobj.get_truthy(global, "ie")? {
+    if let Some(val) = jsobj.get_truthy(global, b"ie")? {
             if val.is_int32() {
                 if let Some(value) = val.get_number() {
                     targets.ie = Some(value as u32);
                 }
             }
         }
-        if let Some(val) = jsobj.get_truthy(global, "ios_saf")? {
+    if let Some(val) = jsobj.get_truthy(global, b"ios_saf")? {
             if val.is_int32() {
                 if let Some(value) = val.get_number() {
                     targets.ios_saf = Some(value as u32);
                 }
             }
         }
-        if let Some(val) = jsobj.get_truthy(global, "opera")? {
+    if let Some(val) = jsobj.get_truthy(global, b"opera")? {
             if val.is_int32() {
                 if let Some(value) = val.get_number() {
                     targets.opera = Some(value as u32);
                 }
             }
         }
-        if let Some(val) = jsobj.get_truthy(global, "safari")? {
+    if let Some(val) = jsobj.get_truthy(global, b"safari")? {
             if val.is_int32() {
                 if let Some(value) = val.get_number() {
                     targets.safari = Some(value as u32);
                 }
             }
         }
-        if let Some(val) = jsobj.get_truthy(global, "samsung")? {
-            if val.is_int32() {
-                if let Some(value) = val.get_number() {
-                    targets.samsung = Some(value as u32);
-                }
+    if let Some(val) = jsobj.get_truthy(global, b"samsung")? {
+        if val.is_int32() {
+            if let Some(value) = val.get_number() {
+                targets.samsung = Some(value as u32);
             }
         }
-
-        return Ok(targets);
     }
-    let _ = (global, jsobj);
-    todo!("bun_css_jsc::css_internals::targets_from_js — gated on bun_jsc::JSValue methods")
+
+    Ok(targets)
 }
 
 pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     #[cfg(any())]
     {
-        // TODO(b2-blocked): bun_jsc::CallFrame::arguments_old
-        // TODO(b2-blocked): bun_jsc::ArgumentsSlice
-        // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw / bun_vm
-        // TODO(b2-blocked): bun_jsc::JSValue::is_string / to_bun_string / is_boolean / to_boolean / is_object
-        // TODO(b2-blocked): bun_css::ParserOptions
-        // TODO(b2-blocked): bun_css::StyleAttribute
-        // TODO(b2-blocked): bun_css::MinifyOptions
-        // TODO(b2-blocked): bun_css::PrinterOptions
-        // TODO(b2-blocked): bun_css::ImportRecordHandler
-        // TODO(b2-blocked): bun_options_types::ImportRecord
-        // TODO(b2-blocked): bun_bundler::Index
-        // TODO(b2-blocked): bun_jsc::JSValue::UNDEFINED
+        // TODO(b2-blocked): bun_css::StyleAttribute::parse
+        // TODO(b2-blocked): bun_css::StyleAttribute::minify
+        // TODO(b2-blocked): bun_css::StyleAttribute::to_css
+        // TODO(b2-blocked): bun_css::ParserOptions::default (arena+log ctor)
+        // TODO(b2-blocked): bun_jsc::LogJsc::to_js
         use bun_css::{ImportRecordHandler, MinifyOptions, ParserOptions, PrinterOptions, StyleAttribute};
         use bun_options_types::ImportRecord;
 

@@ -18,9 +18,9 @@ enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
 bun_core.workspace = true
-# TODO(b2-blocked): bun_jsc does not compile yet (78 errors — duplicate-name
-# conflicts between stub_ty! surface and partially un-gated modules). Re-enable
-# once bun_jsc is green; lib.rs re-gates the fn body that needs it.
+# TODO(b2-blocked): bun_jsc does not compile yet (transitive: bun_bundler →
+# bun_css E0119 conflicting impls). Re-enable once bun_jsc's dep tree is green;
+# lib.rs re-gates the fn body that needs it.
 # bun_jsc.workspace = true
 bun_string.workspace = true
 bun_url.workspace = true

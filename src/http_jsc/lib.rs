@@ -3,49 +3,34 @@
 
 // ──────────────────────────────────────────────────────────────────────────
 // B-2 STATUS
-// `bun_jsc` itself does not compile yet (its own B-2 pass is incomplete), and
-// every module here names `JSGlobalObject`/`JSValue`. `headers_jsc` is un-gated
-// (its unit structs `H2TestingAPIs`/`H3TestingAPIs` carry no JSC types; the
-// fns inside remain individually `#[cfg(any())]`-gated). The other three
-// modules stay module-gated until `bun_jsc` is green — their entire public
-// surface is JSC-typed.
-//
-// Import-path fixes already applied inside the gated files so un-gating is a
-// pure `#[cfg(any())]` removal once bun_jsc lands:
-//   - method_jsc.rs:      bun_http_types::Method        → bun_http_types::Method::Method
-//   - fetch_enums_jsc.rs: bun_http::Fetch*              → bun_http_types::Fetch*::Fetch*
-//   - headers_jsc.rs:     bun_str::ZigString            → bun_string::ZigString
+// `bun_jsc` is now linked and its stub surface (`JSGlobalObject`/`JSValue`/
+// `CallFrame`/`JsResult`) is sufficient for the small bridges:
+//   - method_jsc       → un-gated, compiles
+//   - fetch_enums_jsc  → un-gated, compiles
+//   - headers_jsc      → un-gated; `live_counts`/`quic_live_counts` signatures
+//                        compile, bodies re-gated on `bun_http::{h2,h3}_client`;
+//                        `to_fetch_headers` stays whole-fn gated (FetchHeaders
+//                        lives in a higher-tier crate)
+//   - websocket_client → still module-gated (see blockers below)
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(b2-blocked): bun_jsc::JSGlobalObject — bun_jsc crate does not compile
-// TODO(b2-blocked): bun_jsc::JSValue
-#[cfg(any())]
 pub mod method_jsc;
-#[cfg(any())]
 pub mod fetch_enums_jsc;
 
 pub mod headers_jsc;
 
 #[cfg(any())]
 pub mod websocket_client;
-// TODO(b2-blocked): bun_jsc::JSGlobalObject / JSValue / CallFrame / JsResult — bun_jsc does not compile
-// TODO(b2-blocked): bun_jsc::EventLoop (as a type, not module) — `event_loop: &'static EventLoop` field
+// TODO(b2-blocked): bun_jsc::EventLoop (as a TYPE, not module) — `event_loop: &'static EventLoop` field;
+//                   bun_jsc currently only re-exports `event_loop` as a module alias
 // TODO(b2-blocked): bun_jsc::VirtualMachine (as a type, not module) — CppWebSocket bridge
 // TODO(b2-blocked): bun_uws::NewSocketHandler<const SSL: bool> — current stub is `<T>` not const-generic
-// TODO(b2-blocked): bun_string::strings (full surface used by websocket_client body)
-// TODO(b2-blocked): bun_core::Output::scoped (declare_scope!/scoped_log! macro re-export as bun_output)
+// TODO(b2-blocked): bun_http::websocket_http_client surface (Mask/ReceiveState/DataType shared types)
 // `bun_str` / `bun_output` crate names in the Phase-A draft are wrong (per crate-map: bun_string / bun_core);
-// fix on un-gate.
+// fix on un-gate. 2298 LOC + 5 submodules; out of scope for this pass while the
+// const-generic socket handler and EventLoop type are absent.
 
 // ─── Minimal stub surface (still-gated modules only) ─────────────────────
-pub mod method_jsc_stub {
-    pub trait MethodJsc {}
-}
-pub use method_jsc_stub as method_jsc;
-
-pub mod fetch_enums_jsc_stub {}
-pub use fetch_enums_jsc_stub as fetch_enums_jsc;
-
 pub mod websocket_client_stub {
     /// Opaque stub; real def gated in `websocket_client.rs`.
     pub struct WebSocket<const SSL: bool>;

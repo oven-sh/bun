@@ -3,115 +3,106 @@
 //! `to_js`/`from_js` surface lives here as extension-trait methods on the base
 //! type (see PORTING.md "Idiom map" — `*_jsc` alias lines are deleted).
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 
-// TODO(b2-blocked): bun_jsc::JsResult
-// TODO(b2-blocked): bun_jsc::JSValue::create_empty_object
-// TODO(b2-blocked): bun_jsc::JSValue::put
-// TODO(b2-blocked): bun_jsc::JSGlobalObject::throw_todo
-// TODO(b2-blocked): bun_jsc::StringJsc (to_js / transfer_to_js on bun_string::String)
-// TODO(b2-blocked): bun_install::dependency::Version
-// TODO(b2-blocked): bun_install::dependency::version::Tag
-// TODO(b2-blocked): bun_install::dependency::tarball
-// TODO(b2-blocked): bun_string::String::create_format
-// TODO(b2-blocked): bun_semver_jsc::SemverStringJsc (to_js with buf)
-#[cfg(any())]
+/// Local helper: `bun_semver::String` → JS string. Mirrors
+/// `bun_semver_jsc::SemverStringJsc::to_js`, but that crate stubs its own JSC
+/// types (concurrent B-2), so its `JSGlobalObject`/`JSValue` are not the
+/// `bun_jsc` ones. Inline the body here against the real `bun_jsc` types.
+#[inline]
+fn semver_string_to_js(s: &bun_semver::String, buf: &[u8], global: &JSGlobalObject) -> JsResult<JSValue> {
+    bun_jsc::bun_string_jsc::create_utf8_for_js(global, s.slice(buf))
+}
+
 pub fn version_to_js(
     dep: &bun_install::dependency::Version,
     buf: &[u8],
     global: &JSGlobalObject,
-) -> bun_jsc::JsResult<JSValue> {
+) -> JsResult<JSValue> {
     use bun_string::String as BunString;
     use bun_install::dependency::{self, version::Tag};
 
     let object = JSValue::create_empty_object(global, 0);
     object.put(
         global,
-        "type",
-        BunString::static_(<&'static str>::from(dep.tag)).to_js(global)?,
+        b"type",
+        BunString::static_(<&'static str>::from(dep.tag).as_bytes()).to_js(global)?,
     );
 
-    // TODO(port): `dependency::Version` in Zig is `struct { tag: Tag, value: Value /* bare union */ }`.
-    // If the Rust port of bun_install collapses tag+value into a single Rust enum,
-    // rewrite this as `match &dep.value { Value::DistTag { name, tag } => ... }`
-    // and drop the unsafe union reads.
+    // PORT NOTE: `dependency::Version` in Zig is `struct { tag: Tag, value: Value /* bare union */ }`.
+    // The bun_install stub models `Value` as a struct-of-fields (not a Rust union),
+    // so the per-tag field reads below are safe plain field accesses. If the real
+    // un-gated `dependency.rs` switches to a Rust enum, rewrite as a single `match`.
     match dep.tag {
         Tag::DistTag => {
-            // SAFETY: tag == DistTag guarantees the dist_tag union arm is active.
-            let v = unsafe { &dep.value.dist_tag };
-            object.put(global, "name", v.name.to_js(buf, global)?);
-            object.put(global, "tag", v.tag.to_js(buf, global)?);
+            let v = &dep.value.dist_tag;
+            object.put(global, b"name", semver_string_to_js(&v.name, buf, global)?);
+            object.put(global, b"tag", semver_string_to_js(&v.tag, buf, global)?);
         }
         Tag::Folder => {
-            // SAFETY: tag == Folder
-            let v = unsafe { &dep.value.folder };
-            object.put(global, "folder", v.to_js(buf, global)?);
+            let v = &dep.value.folder;
+            object.put(global, b"folder", semver_string_to_js(v, buf, global)?);
         }
         Tag::Git => {
-            // SAFETY: tag == Git
-            let v = unsafe { &dep.value.git };
-            object.put(global, "owner", v.owner.to_js(buf, global)?);
-            object.put(global, "repo", v.repo.to_js(buf, global)?);
-            object.put(global, "ref", v.committish.to_js(buf, global)?);
+            let v = &dep.value.git;
+            object.put(global, b"owner", semver_string_to_js(&v.owner, buf, global)?);
+            object.put(global, b"repo", semver_string_to_js(&v.repo, buf, global)?);
+            object.put(global, b"ref", semver_string_to_js(&v.committish, buf, global)?);
         }
         Tag::Github => {
-            // SAFETY: tag == Github
-            let v = unsafe { &dep.value.github };
-            object.put(global, "owner", v.owner.to_js(buf, global)?);
-            object.put(global, "repo", v.repo.to_js(buf, global)?);
-            object.put(global, "ref", v.committish.to_js(buf, global)?);
+            let v = &dep.value.github;
+            object.put(global, b"owner", semver_string_to_js(&v.owner, buf, global)?);
+            object.put(global, b"repo", semver_string_to_js(&v.repo, buf, global)?);
+            object.put(global, b"ref", semver_string_to_js(&v.committish, buf, global)?);
         }
         Tag::Npm => {
-            // SAFETY: tag == Npm
-            let v = unsafe { &dep.value.npm };
-            object.put(global, "name", v.name.to_js(buf, global)?);
-            let mut version_str =
-                BunString::create_format(format_args!("{}", v.version.fmt(buf)))?;
-            object.put(global, "version", version_str.transfer_to_js(global)?);
-            object.put(global, "alias", JSValue::from(v.is_alias));
+            let v = &dep.value.npm;
+            object.put(global, b"name", semver_string_to_js(&v.name, buf, global)?);
+            // TODO(b2-blocked): bun_install::dependency::NpmInfo::version
+            // (bun_semver::query::Group field — not yet on the stub).
+            #[cfg(any())]
+            {
+                let version_str =
+                    BunString::create_format(format_args!("{}", v.version.fmt(buf)));
+                object.put(global, b"version", version_str.to_js(global)?);
+            }
+            object.put(global, b"alias", JSValue::js_boolean(v.is_alias));
         }
         Tag::Symlink => {
-            // SAFETY: tag == Symlink
-            let v = unsafe { &dep.value.symlink };
-            object.put(global, "path", v.to_js(buf, global)?);
+            let v = &dep.value.symlink;
+            object.put(global, b"path", semver_string_to_js(v, buf, global)?);
         }
         Tag::Workspace => {
-            // SAFETY: tag == Workspace
-            let v = unsafe { &dep.value.workspace };
-            object.put(global, "name", v.to_js(buf, global)?);
+            let v = &dep.value.workspace;
+            object.put(global, b"name", semver_string_to_js(v, buf, global)?);
         }
         Tag::Tarball => {
-            // SAFETY: tag == Tarball
-            let v = unsafe { &dep.value.tarball };
-            object.put(global, "name", v.package_name.to_js(buf, global)?);
+            let v = &dep.value.tarball;
+            object.put(global, b"name", semver_string_to_js(&v.package_name, buf, global)?);
             match &v.uri {
                 dependency::tarball::Uri::Local(local) => {
-                    object.put(global, "path", local.to_js(buf, global)?);
+                    object.put(global, b"path", semver_string_to_js(local, buf, global)?);
                 }
                 dependency::tarball::Uri::Remote(remote) => {
-                    object.put(global, "url", remote.to_js(buf, global)?);
+                    object.put(global, b"url", semver_string_to_js(remote, buf, global)?);
                 }
             }
         }
         _ => {
-            return global.throw_todo("Unsupported dependency type");
+            return Err(global.throw_todo("Unsupported dependency type"));
         }
     }
 
     Ok(object)
 }
 
-// TODO(b2-blocked): bun_jsc::host_fn (proc-macro)
-// TODO(b2-blocked): bun_jsc::CallFrame::arguments_old
-// TODO(b2-blocked): bun_jsc::JSValue::to_bun_string
-// TODO(b2-blocked): bun_install::dependency::version::Tag::infer
-#[cfg(any())]
-#[bun_jsc::host_fn]
-pub fn tag_infer_from_js(global: &JSGlobalObject, frame: &CallFrame) -> bun_jsc::JsResult<JSValue> {
+// TODO(port): proc-macro — `#[bun_jsc::host_fn]` ABI wrapper.
+pub fn tag_infer_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_string::String as BunString;
     use bun_install::dependency::version::Tag;
 
-    let arguments = frame.arguments_old(1).slice();
+    let arguments = frame.arguments_old::<1>();
+    let arguments = arguments.slice();
     if arguments.is_empty() || !arguments[0].is_string() {
         return Ok(JSValue::UNDEFINED);
     }
@@ -119,27 +110,33 @@ pub fn tag_infer_from_js(global: &JSGlobalObject, frame: &CallFrame) -> bun_jsc:
     let dependency_str = arguments[0].to_bun_string(global)?;
     let as_utf8 = dependency_str.to_utf8();
 
-    let tag = Tag::infer(as_utf8.as_bytes());
-    let mut str = BunString::init(<&'static str>::from(tag));
-    str.transfer_to_js(global)
+    let tag = Tag::infer(as_utf8.slice());
+    BunString::static_(<&'static str>::from(tag).as_bytes()).to_js(global)
 }
 
-// TODO(b2-blocked): bun_jsc::JSValue::to_slice
-// TODO(b2-blocked): bun_jsc::JSGlobalObject::throw_value
-// TODO(b2-blocked): bun_string::StringBuilder::init_capacity
-// TODO(b2-blocked): bun_install::Dependency::parse
-// TODO(b2-blocked): bun_logger_jsc::LogJsc (Log::to_js)
-#[cfg(any())]
-#[bun_jsc::host_fn]
-pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> bun_jsc::JsResult<JSValue> {
-    use bun_string::String as BunString;
+/// Local helper for `log.toJS(global, msg)` while `bun_logger_jsc` still stubs
+/// its own JSC types (concurrent B-2 — its `JSGlobalObject` ≠ `bun_jsc::JSGlobalObject`).
+// TODO(b2-blocked): bun_logger_jsc::log_to_js (typed against bun_jsc)
+pub(crate) fn log_to_js(_log: &bun_logger::Log, global: &JSGlobalObject, msg: &[u8]) -> JsResult<JSValue> {
+    #[cfg(any())]
+    {
+        return bun_logger_jsc::log_to_js(_log, global, msg);
+    }
+    // Fallback: throw a plain error with the summary message until logger_jsc
+    // is wired against bun_jsc types.
+    Err(global.throw(format_args!("{}", bstr::BStr::new(msg))))
+}
+
+// TODO(port): proc-macro — `#[bun_jsc::host_fn]` ABI wrapper.
+pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_string::StringBuilder;
     use bun_logger::Log;
     use bun_semver::SlicedString;
     use bun_install::Dependency;
     use bun_install::dependency;
 
-    let arguments = frame.arguments_old(2).slice();
+    let arguments = frame.arguments_old::<2>();
+    let arguments = arguments.slice();
     if arguments.len() == 1 {
         return crate::update_request_jsc::from_js(global, arguments[0]);
     }
@@ -157,7 +154,7 @@ pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> bun_jsc
     }
     let alias_slice = alias_value.to_slice(global)?;
 
-    if alias_slice.len() == 0 {
+    if alias_slice.slice().is_empty() {
         return Ok(JSValue::UNDEFINED);
     }
 
@@ -168,21 +165,26 @@ pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> bun_jsc
     };
     let name_slice = name_value.to_slice(global)?;
 
-    let mut name = alias_slice.slice();
-    let mut alias = alias_slice.slice();
-
-    let mut buf = alias;
-
-    // PORT NOTE: reshaped for borrowck — `builder` must outlive `name`/`alias`/`buf`
-    // which borrow from its allocated slice; declared in outer scope so the
-    // borrows below remain valid past the `if`.
-    let mut builder;
-    if name_value.is_string() {
-        builder = StringBuilder::init_capacity(name_slice.len() + alias_slice.len());
-        name = builder.append(name_slice.slice());
-        alias = builder.append(alias_slice.slice());
-        buf = builder.allocated_slice();
-    }
+    // PORT NOTE: reshaped for borrowck — Zig built `name`/`alias`/`buf` as
+    // overlapping slices into a StringBuilder's single allocation. Rust's
+    // `StringBuilder::append` returns `&[u8]` borrowing `&mut self`, so we
+    // can't hold two appended slices at once. Instead, build into an owned
+    // `Vec<u8>` and reslice by offset (same memory layout, no aliasing fight).
+    let owned_buf: Vec<u8>;
+    let (buf, name, alias): (&[u8], &[u8], &[u8]) = if name_value.is_string() {
+        let nlen = name_slice.slice().len();
+        let alen = alias_slice.slice().len();
+        let mut v = Vec::with_capacity(nlen + alen);
+        v.extend_from_slice(name_slice.slice());
+        v.extend_from_slice(alias_slice.slice());
+        owned_buf = v;
+        let b: &[u8] = owned_buf.as_slice();
+        (b, &b[..nlen], &b[nlen..nlen + alen])
+    } else {
+        let a = alias_slice.slice();
+        (a, a, a)
+    };
+    let _ = StringBuilder::init_capacity; // keep import live for Phase-B swap-back
 
     let mut log = Log::init();
     let sliced = SlicedString::init(buf, name);
@@ -192,14 +194,14 @@ pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> bun_jsc
         None,
         buf,
         &sliced,
-        &mut log,
+        Some(&mut log),
         None,
     ) {
         Some(d) => d,
         None => {
             if !log.msgs.is_empty() {
-                return global
-                    .throw_value(log.to_js(global, "Failed to parse dependency")?);
+                return Err(global
+                    .throw_value(log_to_js(&log, global, b"Failed to parse dependency")?));
             }
 
             return Ok(JSValue::UNDEFINED);
@@ -207,7 +209,7 @@ pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> bun_jsc
     };
 
     if !log.msgs.is_empty() {
-        return global.throw_value(log.to_js(global, "Failed to parse dependency")?);
+        return Err(global.throw_value(log_to_js(&log, global, b"Failed to parse dependency")?));
     }
     drop(log);
 

@@ -27,12 +27,7 @@ bun_highway.workspace = true
 bun_http.workspace = true
 bun_http_types.workspace = true
 bun_io.workspace = true
-# TODO(b2-blocked): bun_jsc does not compile yet (18+ errors in its own B-2
-# pass — unresolved bun_str/bun_jsc self-imports, mark_binding! macro, etc.).
-# Every module in this crate names JSGlobalObject/JSValue, so nothing can
-# fully un-gate until bun_jsc is green. Uncomment once `cargo check -p bun_jsc`
-# passes; lib.rs re-gates the items that need it.
-# bun_jsc.workspace = true
+bun_jsc.workspace = true
 bun_ptr.workspace = true
 bun_string.workspace = true
 bun_uws.workspace = true

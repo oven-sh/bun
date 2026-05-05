@@ -1,4 +1,4 @@
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSObject, JSValue, JsResult};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 #[derive(Default, Clone, Copy)]
 pub struct Counters {
@@ -22,13 +22,27 @@ impl Counters {
         // TODO(port): `JSObject::create(struct_value, global)` relies on field reflection in Zig
         // (builds an object with one property per struct field). Phase B: hand-roll the two
         // `put` calls or add a small derive.
-        Ok(JSObject::create(*self, global)?.to_js())
+        let obj = JSValue::create_empty_object(global, 2);
+        obj.put(global, b"spawnSync_blocking", JSValue::js_number_from_int32(self.spawn_sync_blocking));
+        obj.put(global, b"spawn_memfd", JSValue::js_number_from_int32(self.spawn_memfd));
+        Ok(obj)
     }
 }
 
-#[bun_jsc::host_fn]
+// TODO(port): proc-macro — `#[bun_jsc::host_fn]` emits the `extern "sysv64"`/"C"
+// trampoline. Until the macro crate exists, expose the Zig-shape signature
+// directly; the trampoline is wired by codegen.
 pub fn create_counters_object(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    global.bun_vm().counters.to_js(global)
+    #[cfg(any())]
+    {
+        global.bun_vm().counters.to_js(global)
+    }
+    #[cfg(not(any()))]
+    {
+        // TODO(b2-blocked): bun_jsc::VirtualMachine::counters (field on the real VM struct)
+        let _ = global;
+        todo!("create_counters_object")
+    }
 }
 
 // Zig: `const Field = std.meta.FieldEnum(Counters);`

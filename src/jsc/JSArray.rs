@@ -34,7 +34,7 @@ impl JSArray {
         })
     }
 
-    pub fn iterator(&self, global: &JSGlobalObject) -> JsResult<JSArrayIterator> {
+    pub fn iterator<'a>(&self, global: &'a JSGlobalObject) -> JsResult<JSArrayIterator<'a>> {
         JSValue::from_cell(self).array_iterator(global)
     }
 }

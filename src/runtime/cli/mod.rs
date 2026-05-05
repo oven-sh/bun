@@ -11,18 +11,26 @@ use core::cell::Cell;
 #[cfg(any())]
 #[path = "cli_body.rs"]
 mod cli_body;
-#[cfg(any())]
-#[path = "ci_info.rs"]
-pub mod ci_info; // TODO(b2-blocked): bun_core::Once / crate::ci_info_generated
-
 // ─── compiling submodules ────────────────────────────────────────────────────
+#[path = "ci_info.rs"]
+pub mod ci_info;
+/// Stub for the build.zig-registered `@import("ci_info")` module (output of
+/// `src/codegen/ci_info.ts`). Real codegen wiring lands in Phase B; until then
+/// the generated probes are no-ops so `ci_info::is_ci`/`detect_ci_name` compile.
+// TODO(port): wire to actual codegen output (src/codegen/ci_info.ts).
+pub(crate) mod ci_info_generated {
+    #[inline]
+    pub fn is_ci_uncached_generated() -> bool { false }
+    #[inline]
+    pub fn detect_uncached_generated() -> Option<&'static [u8]> { None }
+}
+
 #[path = "which_npm_client.rs"]
 pub mod which_npm_client;
 #[path = "add_completions.rs"]
 pub mod add_completions;
-#[cfg(any())]
 #[path = "colon_list_type.rs"]
-pub mod colon_list_type; // TODO(b2-blocked): bun_core::output::pretty_errorln (private macro)
+pub mod colon_list_type;
 
 // TODO(port): Zig `var start_time: i128 = undefined;` — mutable static, single-threaded init in Cli::start
 // Per PORTING.md §Concurrency: mutable globals → OnceLock or atomic. Kept as

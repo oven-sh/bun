@@ -8,11 +8,7 @@ use core::marker::{PhantomData, PhantomPinned};
 use crate::{JSGlobalObject, VM};
 
 use bun_bundler::analyze_transpiled_module as analyze;
-use analyze::{ModuleInfoDeserialized, StringID};
-// TODO(b2-blocked): bun_bundler::analyze_transpiled_module::RecordKind (enum variants — currently `struct RecordKind(u8)`)
-// TODO(b2-blocked): bun_bundler::analyze_transpiled_module::RequestedModuleValue (currently `FetchParameters(u32)`)
-#[cfg(any())]
-use analyze::{RecordKind, RequestedModuleValue};
+use analyze::{ModuleInfoDeserialized, RecordKind, RequestedModuleValue, StringID};
 
 #[unsafe(no_mangle)]
 pub extern "C" fn zig__renderDiff(
@@ -51,28 +47,44 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     lexical_variables: &mut VariableEnvironment,
     res: &ModuleInfoDeserialized,
 ) -> *mut JSModuleRecord {
-    #[cfg(any())]
-    {
     // Ownership of `res` stays with the caller; this function only reads it.
     // The caller (BunAnalyzeTranspiledModule.cpp) decides whether to free
     // immediately or keep it alive on the SourceProvider for the isolation
     // SourceProvider cache.
 
-    let identifiers = IdentifierArray::create(res.strings_lens.len());
+    // SAFETY: caller (C++ BunAnalyzeTranspiledModule.cpp) passes a valid
+    // `ModuleInfoDeserialized` whose `*const [T]` fields point into the live
+    // `owner` allocation for the duration of this call; we hold no `&mut`
+    // aliases to that storage. `RecordKind` is `u8`-transparent so element
+    // reads are aligned; `StringID`/`FetchParameters`/`u32` slices are
+    // `align(1)` in the Zig serialization — supported targets (x86_64/aarch64)
+    // tolerate the unaligned loads the slice ops emit.
+    // TODO(port): switch element reads to `read_unaligned` per the upstream
+    // note in `analyze_transpiled_module.rs` if a strict-alignment target is
+    // ever added.
+    let strings_buf: &[u8] = unsafe { &*res.strings_buf };
+    let strings_lens: &[u32] = unsafe { &*res.strings_lens };
+    let requested_modules_keys: &[StringID] = unsafe { &*res.requested_modules_keys };
+    let requested_modules_values: &[RequestedModuleValue] =
+        unsafe { &*res.requested_modules_values };
+    let buffer: &[StringID] = unsafe { &*res.buffer };
+    let record_kinds: &[RecordKind] = unsafe { &*res.record_kinds };
+
+    let identifiers = IdentifierArray::create(strings_lens.len());
     // SAFETY: `identifiers` is non-null (returned by `create`); destroyed exactly once at scope exit,
     // mirroring Zig's `defer identifiers.destroy()` (runs on both success and early-return paths).
-    let identifiers = scopeguard::guard(identifiers, |p| unsafe {
+    let _identifiers_guard = scopeguard::guard(identifiers, |p| unsafe {
         IdentifierArray::destroy(p);
     });
-    let identifiers: *mut IdentifierArray = *identifiers;
+    let identifiers: *mut IdentifierArray = *_identifiers_guard;
 
     let mut offset: usize = 0;
-    for (index, &len) in res.strings_lens.iter().enumerate() {
-        let len = usize::from(len);
-        if res.strings_buf.len() < offset + len {
+    for (index, &len) in strings_lens.iter().enumerate() {
+        let len = len as usize;
+        if strings_buf.len() < offset + len {
             return core::ptr::null_mut(); // error!
         }
-        let sub = &res.strings_buf[offset..offset + len];
+        let sub = &strings_buf[offset..offset + len];
         // SAFETY: `identifiers` is live for the scope of this fn (guard above).
         unsafe { IdentifierArray::set_from_utf8(identifiers, index, vm, sub) };
         offset += len;
@@ -80,13 +92,13 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
 
     {
         let mut i: usize = 0;
-        for &k in res.record_kinds.iter() {
-            if i + k.len().unwrap_or(0) > res.buffer.len() {
+        for &k in record_kinds.iter() {
+            if i + k.len().unwrap_or(0) > buffer.len() {
                 return core::ptr::null_mut();
             }
             match k {
-                RecordKind::DeclaredVariable => declared_variables.add(vm, identifiers, res.buffer[i]),
-                RecordKind::LexicalVariable => lexical_variables.add(vm, identifiers, res.buffer[i]),
+                RecordKind::DeclaredVariable => declared_variables.add(vm, identifiers, buffer[i]),
+                RecordKind::LexicalVariable => lexical_variables.add(vm, identifiers, buffer[i]),
                 RecordKind::ImportInfoSingle
                 | RecordKind::ImportInfoSingleTypeScript
                 | RecordKind::ImportInfoNamespace
@@ -107,19 +119,18 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
         source_code,
         declared_variables,
         lexical_variables,
-        res.flags.contains_import_meta,
-        res.flags.is_typescript,
-        res.flags.has_tla,
+        res.flags.contains_import_meta(),
+        res.flags.is_typescript(),
+        res.flags.has_tla(),
     );
 
     debug_assert_eq!(
-        res.requested_modules_keys.len(),
-        res.requested_modules_values.len()
+        requested_modules_keys.len(),
+        requested_modules_values.len()
     );
-    for (&reqk, &reqv) in res
-        .requested_modules_keys
+    for (&reqk, &reqv) in requested_modules_keys
         .iter()
-        .zip(res.requested_modules_values.iter())
+        .zip(requested_modules_values.iter())
     {
         match reqv {
             RequestedModuleValue::None => {
@@ -134,67 +145,66 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
             RequestedModuleValue::Json => {
                 module_record.add_requested_module_json(identifiers, reqk)
             }
+            // Zig open-enum tail: `else => |uv| @enumFromInt(@intFromEnum(uv))`.
             uv => module_record.add_requested_module_host_defined(
                 identifiers,
                 reqk,
-                // TODO(port): confirm StringID is #[repr(u32)]; Zig: @enumFromInt(@intFromEnum(uv))
-                // SAFETY: StringID is #[repr(u32)] per analyze_transpiled_module; discriminant is in-range (host-defined values are StringID indices).
-                unsafe { core::mem::transmute::<u32, StringID>(uv as u32) },
+                uv.as_string_id(),
             ),
         }
     }
 
     {
         let mut i: usize = 0;
-        for &k in res.record_kinds.iter() {
-            if i + k.len().expect("unreachable") > res.buffer.len() {
+        for &k in record_kinds.iter() {
+            if i + k.len().expect("unreachable") > buffer.len() {
                 unreachable!(); // handled above
             }
             match k {
                 RecordKind::DeclaredVariable | RecordKind::LexicalVariable => {}
                 RecordKind::ImportInfoSingle => module_record.add_import_entry_single(
                     identifiers,
-                    res.buffer[i + 1],
-                    res.buffer[i + 2],
-                    res.buffer[i],
+                    buffer[i + 1],
+                    buffer[i + 2],
+                    buffer[i],
                 ),
                 RecordKind::ImportInfoSingleTypeScript => module_record
                     .add_import_entry_single_type_script(
                         identifiers,
-                        res.buffer[i + 1],
-                        res.buffer[i + 2],
-                        res.buffer[i],
+                        buffer[i + 1],
+                        buffer[i + 2],
+                        buffer[i],
                     ),
                 RecordKind::ImportInfoNamespace => module_record.add_import_entry_namespace(
                     identifiers,
-                    res.buffer[i + 1],
-                    res.buffer[i + 2],
-                    res.buffer[i],
+                    buffer[i + 1],
+                    buffer[i + 2],
+                    buffer[i],
                 ),
                 RecordKind::ExportInfoIndirect => {
-                    if res.buffer[i + 1] == StringID::STAR_NAMESPACE {
+                    if buffer[i + 1] == StringID::STAR_NAMESPACE {
                         module_record.add_namespace_export(
                             identifiers,
-                            res.buffer[i + 0],
-                            res.buffer[i + 2],
+                            buffer[i + 0],
+                            buffer[i + 2],
                         )
                     } else {
                         module_record.add_indirect_export(
                             identifiers,
-                            res.buffer[i + 0],
-                            res.buffer[i + 1],
-                            res.buffer[i + 2],
+                            buffer[i + 0],
+                            buffer[i + 1],
+                            buffer[i + 2],
                         )
                     }
                 }
                 RecordKind::ExportInfoLocal => {
-                    module_record.add_local_export(identifiers, res.buffer[i], res.buffer[i + 1])
+                    module_record.add_local_export(identifiers, buffer[i], buffer[i + 1])
                 }
                 RecordKind::ExportInfoNamespace => {
-                    module_record.add_namespace_export(identifiers, res.buffer[i], res.buffer[i + 1])
+                    module_record.add_namespace_export(identifiers, buffer[i], buffer[i + 1])
                 }
                 RecordKind::ExportInfoStar => {
-                    module_record.add_star_export(identifiers, res.buffer[i])
+                    module_record.add_star_export(identifiers, buffer[i])
                 }
                 _ => unreachable!(), // handled above
             }
@@ -202,14 +212,7 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
         }
     }
 
-    return module_record;
-    }
-    // TODO(b2-blocked): bun_bundler::analyze_transpiled_module::RecordKind (enum variants)
-    // TODO(b2-blocked): bun_bundler::analyze_transpiled_module::RequestedModuleValue
-    // TODO(b2-blocked): bun_bundler::analyze_transpiled_module::StringID::STAR_NAMESPACE
-    // TODO(b2-blocked): bun_bundler::analyze_transpiled_module::Flags::{contains_import_meta,is_typescript,has_tla} (field accessors)
-    let _ = (global_object, vm, module_key, source_code, declared_variables, lexical_variables, res);
-    core::ptr::null_mut()
+    module_record
 }
 
 // ─── opaque FFI types ─────────────────────────────────────────────────────────

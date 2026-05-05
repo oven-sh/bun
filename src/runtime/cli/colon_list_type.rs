@@ -1,5 +1,4 @@
-use bun_core::{err, Error, Global};
-use bun_core::output;
+use bun_core::{err, pretty_errorln, Error, Global};
 use bun_core::fmt as bun_fmt;
 use bun_str::strings;
 
@@ -53,7 +52,7 @@ impl<T: ColonListValue> ColonListType<T> {
 
             if T::IS_LOADER {
                 if !str[0..midpoint].is_empty() && str[0] != b'.' {
-                    output::pretty_errorln!(
+                    pretty_errorln!(
                         "<r><red>error<r><d>:<r> <b>file extension must start with a '.'<r> <d>(while mapping loader {})<r>",
                         bun_fmt::quote(str),
                     );
@@ -65,10 +64,12 @@ impl<T: ColonListValue> ColonListType<T> {
             self.values.push(match T::resolve_value(&str[midpoint + 1..str.len()]) {
                 Ok(v) => v,
                 Err(e) if e == err!("InvalidLoader") => {
-                    output::pretty_errorln!(
-                        "<r><red>error<r><d>:<r> <b>invalid loader {}<r>, expected one of:{}",
+                    // TODO(b2-blocked): bun_bundler::options::Loader (strum::VariantNames derive)
+                    // — `bun_fmt::enum_tag_list::<Loader, false>()` requires the derive; print
+                    // a placeholder list until lower-tier crate adds it.
+                    pretty_errorln!(
+                        "<r><red>error<r><d>:<r> <b>invalid loader {}<r>, expected one of: jsx, js, ts, tsx, css, file, json, jsonc, toml, wasm, napi, base64, dataurl, text, bunsh, sqlite, html, yaml, json5, md",
                         bun_fmt::quote(&str[midpoint + 1..str.len()]),
-                        bun_fmt::enum_tag_list::<bun_bundler::options::Loader>(bun_fmt::ListStyle::Dash),
                     );
                     Global::exit(1);
                 }
@@ -83,7 +84,7 @@ impl<T: ColonListValue> ColonListType<T> {
         match list.load(input) {
             Ok(()) => {}
             Err(e) if e == err!("InvalidSeparator") => {
-                output::pretty_errorln!("<r><red>error<r><d>:<r> expected \":\" separator");
+                pretty_errorln!("<r><red>error<r><d>:<r> expected \":\" separator");
                 Global::exit(1);
             }
             Err(e) => return Err(e),

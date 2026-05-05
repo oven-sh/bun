@@ -3,18 +3,13 @@
 //! references.
 
 use crate::{JSGlobalObject, JSValue, JsResult};
+use bun_options_types::schema::api::SourceMapMode;
 
-// TODO(b2-blocked): bun_options_types::schema::api::SourceMapMode
-// schema.rs is a peechy-generated stub that does not yet emit `SourceMapMode`.
-// The fn is gated whole (signature names the missing type).
-#[cfg(any())]
 pub fn source_map_mode_from_js(
     global: &JSGlobalObject,
     value: JSValue,
-) -> JsResult<Option<bun_options_types::schema::api::SourceMapMode>> {
-    use bun_options_types::schema::api::SourceMapMode;
-    // TODO(b2-blocked): bun_jsc::JSValue::is_string
-    // TODO(b2-blocked): bun_jsc::JSValue::to_slice_or_null
+) -> JsResult<Option<SourceMapMode>> {
+    #[cfg(any())]
     if value.is_string() {
         let str = value.to_slice_or_null(global)?;
         let utf8 = str.slice();
@@ -31,6 +26,9 @@ pub fn source_map_mode_from_js(
             return Ok(Some(SourceMapMode::Linked));
         }
     }
+    // TODO(b2-blocked): bun_jsc::JSValue::is_string
+    // TODO(b2-blocked): bun_jsc::JSValue::to_slice_or_null
+    let _ = (global, value);
     Ok(None)
 }
 

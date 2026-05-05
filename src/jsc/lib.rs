@@ -74,6 +74,23 @@ pub const CONV: &str = "C";
 #[path = "JSFunction.rs"] pub mod js_function;
 #[path = "Strong.rs"] pub mod strong;
 #[path = "Weak.rs"] pub mod weak;
+#[path = "JSInternalPromise.rs"] pub mod js_internal_promise;
+#[path = "DecodedJSValue.rs"] pub mod decoded_js_value;
+#[path = "JSArray.rs"] pub mod js_array;
+#[path = "DeprecatedStrong.rs"] pub mod deprecated_strong;
+#[path = "Counters.rs"] pub mod counters;
+#[path = "uuid.rs"] pub mod uuid;
+#[path = "JSRef.rs"] pub mod js_ref;
+#[path = "StringBuilder.rs"] pub mod string_builder;
+
+pub use self::js_ref::JsRef;
+pub use self::string_builder::StringBuilder;
+pub use self::js_internal_promise::JSInternalPromise;
+pub use self::decoded_js_value::DecodedJSValue;
+pub use self::js_array::JSArray;
+pub use self::deprecated_strong::DeprecatedStrong;
+pub use self::counters::Counters;
+pub use self::uuid::{UUID, UUID5, UUID7};
 
 pub use self::js_module_loader::JSModuleLoader;
 pub use self::js_function::JSFunction;
@@ -120,15 +137,11 @@ mod _gated {
     #[path = "CachedBytecode.rs"] pub mod cached_bytecode;
     #[path = "CallFrame.rs"] pub mod call_frame;
     #[path = "DOMFormData.rs"] pub mod dom_form_data;
-    #[path = "DecodedJSValue.rs"] pub mod decoded_js_value;
     #[path = "DeferredError.rs"] pub mod deferred_error;
-    #[path = "JSArray.rs"] pub mod js_array;
     #[path = "JSArrayIterator.rs"] pub mod js_array_iterator;
     #[path = "JSGlobalObject.rs"] pub mod js_global_object;
-    #[path = "JSInternalPromise.rs"] pub mod js_internal_promise;
     #[path = "JSObject.rs"] pub mod js_object;
     #[path = "JSPromise.rs"] pub mod js_promise;
-    #[path = "JSRef.rs"] pub mod js_ref;
     #[path = "JSString.rs"] pub mod js_string;
     #[path = "RefString.rs"] pub mod ref_string;
     #[path = "SystemError.rs"] pub mod system_error;
@@ -158,9 +171,7 @@ mod _gated {
     #[path = "BunCPUProfiler.rs"] pub mod bun_cpu_profiler;
     #[path = "BunHeapProfiler.rs"] pub mod bun_heap_profiler;
     #[path = "ConcurrentPromiseTask.rs"] pub mod concurrent_promise_task;
-    #[path = "Counters.rs"] pub mod counters;
     #[path = "CppTask.rs"] pub mod cpp_task;
-    #[path = "DeprecatedStrong.rs"] pub mod deprecated_strong;
     #[path = "EventLoopHandle.rs"] pub mod event_loop_handle;
     #[path = "FFI.rs"] pub mod ffi;
     #[path = "FetchHeaders.rs"] pub mod fetch_headers;
@@ -173,7 +184,6 @@ mod _gated {
     #[path = "PosixSignalHandle.rs"] pub mod posix_signal_handle;
     #[path = "ProcessAutoKiller.rs"] pub mod process_auto_killer;
     #[path = "ResolveMessage.rs"] pub mod resolve_message;
-    #[path = "StringBuilder.rs"] pub mod string_builder;
     #[path = "Task.rs"] pub mod task;
     #[path = "WorkTask.rs"] pub mod work_task;
     #[path = "ZigString.rs"] pub mod zig_string;
@@ -188,7 +198,6 @@ mod _gated {
     #[path = "ipc.rs"] pub mod ipc;
     #[path = "resolve_path_jsc.rs"] pub mod resolve_path_jsc;
     #[path = "resolver_jsc.rs"] pub mod resolver_jsc;
-    #[path = "uuid.rs"] pub mod uuid;
     #[path = "virtual_machine_exports.rs"] pub mod virtual_machine_exports;
     #[path = "web_worker.rs"] pub mod web_worker;
 }
@@ -207,7 +216,7 @@ macro_rules! stub_ty {
         $(
             $(#[$m])*
             #[repr(transparent)]
-            #[derive(Debug, Clone, Copy, Default)]
+            #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
             pub struct $name(pub usize);
         )*
     };
@@ -500,6 +509,12 @@ impl JSValue {
         // SAFETY: `global` is live; `zs` borrowed for the call.
         unsafe { JSC__JSValue__put(self, global, &zs, value) }
     }
+    pub fn put_to_property_key(target: JSValue, global: &JSGlobalObject, key: JSValue, value: JSValue) -> JsResult<()> {
+        // SAFETY: `global` is live; key/value are valid encoded JSValues per caller invariant.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__putToPropertyKey(target, global, key, value)
+        })
+    }
     pub fn put_index(self, global: &JSGlobalObject, i: u32, out: JSValue) -> JsResult<()> {
         // SAFETY: `global` is live; FFI may set an exception.
         unsafe { JSC__JSValue__putIndex(self, global, i, out) };
@@ -568,6 +583,7 @@ unsafe extern "C" {
     fn JSC__JSValue__getOwnByValue(this: JSValue, global: *const JSGlobalObject, key: JSValue) -> JSValue;
     fn JSC__JSValue__put(this: JSValue, global: *const JSGlobalObject, key: *const bun_string::ZigString, value: JSValue);
     fn JSC__JSValue__putIndex(this: JSValue, global: *const JSGlobalObject, i: u32, value: JSValue);
+    fn JSC__JSValue__putToPropertyKey(target: JSValue, global: *const JSGlobalObject, key: JSValue, value: JSValue);
 }
 
 /// `bun.JSError` — the canonical Bun JS error union (`error{Thrown, OutOfMemory, Terminated}`).
@@ -596,20 +612,39 @@ macro_rules! mark_binding {
     }};
 }
 
-// B-2 stub: WTF.rs re-exports `crate::string_builder::StringBuilder`; the real
-// StringBuilder.rs is still gated (depends on TopExceptionScope FFI). Expose a
-// minimal opaque type here so wtf compiles.
-pub mod string_builder {
-    #[repr(C, align(8))]
-    pub struct StringBuilder { bytes: [u8; 24] }
-}
-
 // Host functions are the native function pointer type that can be used by a
 // JSC::JSFunction to call native code from JavaScript.
 pub mod host_fn {
-    // TODO(b1): gated — see _gated::host_fn
-    pub fn from_js_host_call() { todo!() }
-    pub fn from_js_host_call_generic() { todo!() }
+    use super::{JSGlobalObject, JSValue, JsError, JsResult};
+
+    /// Call an FFI function that returns a `JSValue`, then check the VM for a
+    /// pending exception. Mirrors Zig `bun.jsc.fromJSHostCall(global, @src(), fn, .{args})`;
+    /// the Rust port collapses `(fn, args)` into a closure.
+    #[inline]
+    #[track_caller]
+    pub fn from_js_host_call(
+        global: &JSGlobalObject,
+        f: impl FnOnce() -> JSValue,
+    ) -> JsResult<JSValue> {
+        let v = f();
+        if global.has_exception() { return Err(JsError::Thrown); }
+        // Zig: asserts a non-empty return when no exception is pending.
+        debug_assert!(!v.is_empty(), "fromJSHostCall: empty JSValue with no pending exception");
+        Ok(v)
+    }
+
+    /// Generic variant for FFI functions whose return type carries no exception
+    /// signal (e.g. `void`, `bool`, `f64`). See host_fn.zig:179.
+    #[inline]
+    #[track_caller]
+    pub fn from_js_host_call_generic<R>(
+        global: &JSGlobalObject,
+        f: impl FnOnce() -> R,
+    ) -> JsResult<R> {
+        let r = f();
+        if global.has_exception() { Err(JsError::Thrown) } else { Ok(r) }
+    }
+
     pub fn to_js_host_call() { todo!() }
     pub fn to_js_host_fn() { todo!() }
     pub fn to_js_host_fn_result() { todo!() }
@@ -639,12 +674,64 @@ pub use self::host_fn::{
     JSHostFunctionTypeWithContext,
 };
 
+// ──────────────────────────────────────────────────────────────────────────
+// B-2 Track A — JSValue tag constants (from FFI.zig). Surfaced as `crate::ffi`
+// so leaf modules (DecodedJSValue.rs etc.) compile without un-gating FFI.rs.
+// ──────────────────────────────────────────────────────────────────────────
+pub mod ffi {
+    use core::ffi::c_ulonglong;
+    pub const NUMBER_TAG: c_ulonglong = 0xfffe_0000_0000_0000;
+    pub const OTHER_TAG: c_ulonglong = 0x2;
+    pub const BOOL_TAG: c_ulonglong = 0x4;
+    pub const UNDEFINED_TAG: c_ulonglong = 0x8;
+    pub const NOT_CELL_MASK: c_ulonglong = NUMBER_TAG | OTHER_TAG;
+    pub const DOUBLE_ENCODE_OFFSET_BIT: u32 = 49;
+    pub const DOUBLE_ENCODE_OFFSET: i64 = 1i64 << DOUBLE_ENCODE_OFFSET_BIT;
+}
+
+// TODO(port): move to jsc_sys
+unsafe extern "C" {
+    fn Bun__JSValue__protect(this: JSValue);
+    fn Bun__JSValue__unprotect(this: JSValue);
+}
+
+impl JSValue {
+    /// Construct a JSValue from an opaque encoded bit-pattern (Zig: `@enumFromInt`).
+    #[inline]
+    pub const fn from_encoded(bits: usize) -> JSValue { JSValue(bits) }
+    /// Read the raw encoded bit-pattern (Zig: `@intFromEnum`).
+    #[inline]
+    pub const fn encoded(self) -> usize { self.0 }
+
+    /// Wrap a JSCell pointer as a JSValue (cell-tagged JSValues *are* the pointer
+    /// — `NotCellMask` bits are zero). Mirrors `JSValue.fromCell`.
+    #[inline]
+    pub fn from_cell<T>(cell: *const T) -> JSValue {
+        debug_assert!(!cell.is_null());
+        JSValue(cell as usize)
+    }
+
+    /// Protects a JSValue from garbage collection (refcounted). The is_cell
+    /// check happens on the C++ side (bindings.cpp).
+    #[inline]
+    pub fn protect(self) {
+        // SAFETY: pure FFI; C++ side handles non-cell values.
+        unsafe { Bun__JSValue__protect(self) }
+    }
+    /// Inverse of `protect`.
+    #[inline]
+    pub fn unprotect(self) {
+        // SAFETY: pure FFI; C++ side handles non-cell values.
+        unsafe { Bun__JSValue__unprotect(self) }
+    }
+}
+
 // JSC Classes Bindings — opaque stubs (B-2: trimmed as real modules un-gate)
 stub_ty!(
     AnyPromise, CachedBytecode, CallFrame,
-    DOMFormData, DecodedJSValue, DeferredError, JSArray,
-    JSGlobalObject, JSInternalPromise, JSObject,
-    JSPromise, JsRef, JSString,
+    DOMFormData, DeferredError,
+    JSGlobalObject, JSObject,
+    JSPromise, JSString,
     URL, VM,
     ResolvedSource, ZigStackTrace, ZigStackFrame,
     ZigException, Formatter, JSPropertyIteratorOptions, RuntimeTranspilerCache,

@@ -27,6 +27,7 @@ bun_collections.workspace = true
 # crate uses local opaque stubs in the meantime (see lib.rs `mod jsc`).
 # bun_jsc.workspace = true
 bun_ptr.workspace = true
+bun_sha_hmac.workspace = true
 # TODO(b2-blocked): bun_runtime fails to compile (concurrent B-2 work in
 # server.rs / node.rs). Only gated SASL::compute_salted_password references it.
 # bun_runtime.workspace = true

@@ -2,7 +2,7 @@
 
 use bun_semver::String as SemverString;
 
-use crate::jsc_stub::{JSGlobalObject, JSValue, JsResult};
+use crate::jsc_stub::{bun_string_jsc, JSGlobalObject, JSValue, JsResult};
 
 pub trait SemverStringJsc {
     fn to_js(&self, buffer: &[u8], global: &JSGlobalObject) -> JsResult<JSValue>;
@@ -10,13 +10,7 @@ pub trait SemverStringJsc {
 
 impl SemverStringJsc for SemverString {
     fn to_js(&self, buffer: &[u8], global: &JSGlobalObject) -> JsResult<JSValue> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_jsc::bun_string_jsc::create_utf8_for_js
-            return bun_jsc::bun_string_jsc::create_utf8_for_js(global, self.slice(buffer));
-        }
-        let _ = (buffer, global);
-        todo!("SemverStringJsc::to_js — gated on bun_jsc::bun_string_jsc::create_utf8_for_js")
+        bun_string_jsc::create_utf8_for_js(global, self.slice(buffer))
     }
 }
 
@@ -25,5 +19,5 @@ impl SemverStringJsc for SemverString {
 //   source:     src/semver_jsc/SemverString_jsc.zig (9 lines)
 //   confidence: high
 //   todos:      0
-//   notes:      extension-trait pattern; create_utf8_for_js lives in bun_jsc::bun_string_jsc (gated in B-2)
+//   notes:      extension-trait pattern; create_utf8_for_js routed through local jsc_stub::bun_string_jsc until bun_jsc is green
 // ──────────────────────────────────────────────────────────────────────────

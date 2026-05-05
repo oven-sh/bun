@@ -1,43 +1,33 @@
 //! JSC bridge for `bun.install.PackageManager.UpdateRequest`.
 
-use bun_jsc::{JSGlobalObject, JSValue};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
-// TODO(b2-blocked): bun_jsc::JsResult
-// TODO(b2-blocked): bun_install::package_manager::update_request
-// TODO(b2-blocked): bun_install::Subcommand
-// TODO(b2-blocked): bun_jsc::JSValue::to_slice_clone
-// TODO(b2-blocked): bun_jsc::JSValue::array_iterator
-// TODO(b2-blocked): bun_jsc::JSValue::create_empty_object
-// TODO(b2-blocked): bun_jsc::JSGlobalObject::throw_value
-// TODO(b2-blocked): bun_logger_jsc::LogJsc (Log::to_js)
-// TODO(b2-blocked): bun_string::String::transfer_to_js
-#[cfg(any())]
-pub fn from_js(global: &JSGlobalObject, input: JSValue) -> bun_jsc::JsResult<JSValue> {
+pub fn from_js(global: &JSGlobalObject, input: JSValue) -> JsResult<JSValue> {
     use bun_install::package_manager::update_request::{self, UpdateRequest};
+    use bun_install::Subcommand;
     use bun_logger::Log;
-    use bun_string::String as BunString;
 
     // PERF(port): was arena bulk-free — profile in Phase B
     // PERF(port): was stack-fallback — profile in Phase B
-    // TODO(port): `to_slice_clone` exact return type — Zig `toSliceCloneWithAllocator` yields
-    // `ZigString.Slice` (len + slice()); here we keep owned `Box<[u8]>` since the arena is gone.
-    let mut all_positionals: Vec<Box<[u8]>> = Vec::new();
+    // PORT NOTE: `to_slice_clone` returns `ZigStringSlice`; convert to owned
+    // `Vec<u8>` via `.into_vec()` since the Zig arena is gone.
+    let mut all_positionals: Vec<Vec<u8>> = Vec::new();
 
     let mut log = Log::init();
 
     if input.is_string() {
         let input_str = input.to_slice_clone(global)?;
-        if input_str.len() > 0 {
-            all_positionals.push(input_str.into_bytes());
+        if !input_str.slice().is_empty() {
+            all_positionals.push(input_str.into_vec());
         }
     } else if input.is_array() {
         let mut iter = input.array_iterator(global)?;
-        while let Some(item) = iter.next(global)? {
+        while let Some(item) = iter.next()? {
             let slice = item.to_slice_clone(global)?;
-            if slice.len() == 0 {
+            if slice.slice().is_empty() {
                 continue;
             }
-            all_positionals.push(slice.into_bytes());
+            all_positionals.push(slice.into_vec());
         }
     } else {
         return Ok(JSValue::UNDEFINED);
@@ -50,20 +40,21 @@ pub fn from_js(global: &JSGlobalObject, input: JSValue) -> bun_jsc::JsResult<JSV
     let mut array = update_request::Array::default();
 
     // PORT NOTE: reshaped for borrowck — build a `&[&[u8]]` view over the owned buffers
-    let positionals_view: Vec<&[u8]> = all_positionals.iter().map(|s| s.as_ref()).collect();
+    let positionals_view: Vec<&[u8]> = all_positionals.iter().map(|s| s.as_slice()).collect();
 
     let update_requests = match UpdateRequest::parse_with_error(
         None,
         &mut log,
         &positionals_view,
         &mut array,
-        // TODO(port): `.add` enum literal — confirm exact Rust path for the subcommand enum
-        bun_install::Subcommand::Add,
+        Subcommand::Add,
         false,
     ) {
         Ok(v) => v,
         Err(_) => {
-            return global.throw_value(log.to_js(global, "Failed to parse dependencies")?);
+            return Err(global.throw_value(
+                crate::dependency_jsc::log_to_js(&log, global, b"Failed to parse dependencies")?,
+            ));
         }
     };
     if update_requests.is_empty() {
@@ -71,30 +62,31 @@ pub fn from_js(global: &JSGlobalObject, input: JSValue) -> bun_jsc::JsResult<JSV
     }
 
     if !log.msgs.is_empty() {
-        return global.throw_value(log.to_js(global, "Failed to parse dependencies")?);
+        return Err(global.throw_value(
+            crate::dependency_jsc::log_to_js(&log, global, b"Failed to parse dependencies")?,
+        ));
     }
 
     if update_requests[0].failed {
-        return global.throw(format_args!("Failed to parse dependencies"));
+        return Err(global.throw(format_args!("Failed to parse dependencies")));
     }
 
     let object = JSValue::create_empty_object(global, 2);
-    let mut name_str = BunString::init(&update_requests[0].name);
-    object.put(global, "name", name_str.transfer_to_js(global)?);
     object.put(
         global,
-        "version",
-        update_requests[0]
-            .version
-            .to_js(&update_requests[0].version_buf, global)?,
+        b"name",
+        bun_jsc::bun_string_jsc::create_utf8_for_js(global, &update_requests[0].name)?,
+    );
+    object.put(
+        global,
+        b"version",
+        crate::dependency_jsc::version_to_js(
+            &update_requests[0].version,
+            &update_requests[0].version_buf,
+            global,
+        )?,
     );
     Ok(object)
-}
-
-#[cfg(not(any()))]
-pub fn from_js(_global: &JSGlobalObject, _input: JSValue) -> Result<JSValue, JSValue> {
-    // TODO(b2-blocked): bun_jsc::JsResult / bun_install::package_manager::update_request
-    todo!("update_request_jsc::from_js — gated on bun_jsc + bun_install lower-tier surface")
 }
 
 // ──────────────────────────────────────────────────────────────────────────

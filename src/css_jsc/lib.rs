@@ -11,6 +11,4 @@ pub mod color_js;
 
 pub use color_js::js_function_color;
 
-// Local until `bun_jsc::JsResult` lands (T0 stub surface lacks it).
-// TODO(b2-blocked): bun_jsc::JsResult
-pub(crate) type JsResult<T> = Result<T, bun_jsc::JSValue>;
+pub(crate) use bun_jsc::JsResult;

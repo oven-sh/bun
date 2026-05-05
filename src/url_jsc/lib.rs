@@ -3,7 +3,7 @@
 #![allow(unused, dead_code)]
 
 use bun_string::{String as BunString, Tag};
-use bun_url::URL;
+use bun_url::{OwnedURL, URL};
 
 // ── bun_jsc surface ──────────────────────────────────────────────────────
 // TODO(b2-blocked): bun_jsc::JSGlobalObject / bun_jsc::JSValue — the bun_jsc
@@ -19,20 +19,26 @@ pub struct JSValue(usize);
 pub fn url_from_js(
     js_value: JSValue,
     global: &JSGlobalObject,
-) -> Result<URL<'static>, bun_core::Error> {
+) -> Result<OwnedURL, bun_core::Error> {
     // TODO(port): narrow error set (InvalidURL | OOM)
-    // TODO(port): ownership — Zig returns a URL borrowing from a freshly-allocated
-    // owned slice (`href.toOwnedSlice`). Per PORTING.md §Forbidden, no Box::leak;
-    // needs an owning `OwnedURL` wrapper (or `(Vec<u8>, URL<'_>)` pair). See the
-    // sibling note on `bun_url::URL::from_string`.
+    // PORT NOTE: ownership — Zig returns a `URL` borrowing from a freshly-allocated
+    // owned slice (`href.toOwnedSlice`); caller frees `url.href` later. Per
+    // PORTING.md §Forbidden (no Box::leak / unsafe lifetime extension), Rust
+    // returns `bun_url::OwnedURL`; callers borrow via `.url()` and Drop frees it.
     #[cfg(any())]
     {
-        // TODO(b2-blocked): bun_jsc::URL::href_from_js
+        // TODO(b2-blocked): bun_jsc::URL::href_from_js — bun_jsc red (transitive
+        // bun_css E0119s). Swap local `JSValue`/`JSGlobalObject` newtypes to
+        // `bun_jsc::{JSValue, JSGlobalObject}` at the same time.
         let href: BunString = bun_jsc::URL::href_from_js(js_value, global)?;
         if href.tag() == Tag::Dead {
             return Err(bun_core::err!(InvalidURL));
         }
-        return Ok(URL::parse(href.to_owned_slice()));
+        let owned = href.to_owned_slice().into_boxed_slice();
+        href.deref();
+        // TODO(b2-blocked): bun_url::OwnedURL::from_href — `OwnedURL { href }` is
+        // private; needs a pub bytes-ctor (mirror of `URL::from_string`'s tail).
+        return Ok(OwnedURL::from_href(owned));
     }
     #[allow(unreachable_code)]
     {
@@ -46,6 +52,7 @@ pub fn url_from_js(
 //   source:     src/url_jsc/url_jsc.zig (16 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      allocator param dropped; body re-gated on bun_jsc (crate red);
-//               'static lifetime is a lie until OwnedURL lands.
+//   notes:      allocator param dropped; return type now OwnedURL (no 'static
+//               lie); body re-gated on bun_jsc (transitive bun_css red) +
+//               bun_url::OwnedURL::from_href ctor.
 // ──────────────────────────────────────────────────────────────────────────

@@ -6,30 +6,12 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
 pub struct IniTestingAPIs;
 
 impl IniTestingAPIs {
-    // TODO(b2-blocked): bun_jsc::host_fn (proc-macro)
-    // TODO(b2-blocked): bun_jsc::JsResult
-    // TODO(b2-blocked): bun_jsc::CallFrame::argument
-    // TODO(b2-blocked): bun_jsc::JSValue::to_bun_string
-    // TODO(b2-blocked): bun_jsc::JSValue::is_empty_or_undefined_or_null
-    // TODO(b2-blocked): bun_jsc::JSValue::get_object
-    // TODO(b2-blocked): bun_jsc::JSGlobalObject::bun_vm
-    // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw_type_error
-    // TODO(b2-blocked): bun_jsc::JSPropertyIterator::init
-    // TODO(b2-blocked): bun_jsc::JSObject::create
-    // TODO(b2-blocked): bun_jsc::StringJsc (to_js on bun_string::String)
-    // TODO(b2-blocked): bun_logger::Source::init_path_string
-    // TODO(b2-blocked): bun_logger::Log::new
-    // TODO(b2-blocked): bun_logger_jsc::LogJsc (Log::to_js)
-    // TODO(b2-blocked): bun_dotenv::Loader
-    // TODO(b2-blocked): bun_dotenv::Map
-    // TODO(b2-blocked): bun_dotenv::map::HashTable
+    // TODO(b2-blocked): bun_jsc::JSPropertyIterator::next (full iterator surface)
+    // TODO(b2-blocked): bun_jsc::VirtualMachine::transpiler (field on stub VM)
     // TODO(b2-blocked): bun_api::BunInstall
-    // TODO(b2-blocked): bun_ini::load_npmrc (signature)
-    // TODO(b2-blocked): bun_install::npm::Registry::DEFAULT_URL
-    // TODO(b2-blocked): bun_string::String::from_bytes
-    // TODO(b2-blocked): bun_string::String::from_static
+    // TODO(b2-blocked): bun_ini::load_npmrc (real signature — currently stubbed `fn()`)
+    // TODO(b2-blocked): bun_logger_jsc::log_to_js (typed against bun_jsc)
     #[cfg(any())]
-    #[bun_jsc::host_fn]
     pub fn load_npmrc_from_js(
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -158,16 +140,14 @@ impl IniTestingAPIs {
         .to_js())
     }
 
-    // TODO(b2-blocked): bun_jsc::CallFrame::arguments_old
-    // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw_error
-    // TODO(b2-blocked): bun_ini::Parser::init
-    // TODO(b2-blocked): bun_ini::Parser::parse
+    // TODO(b2-blocked): bun_jsc::VirtualMachine::transpiler (field on stub VM)
+    // TODO(b2-blocked): bun_ini::Parser::parse (Arena param + `out` Expr accessors gated)
+    // TODO(b2-blocked): bun_js_parser_jsc::Expr::to_js (parser.out is js_parser::Expr)
     #[cfg(any())]
-    #[bun_jsc::host_fn]
     pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> bun_jsc::JsResult<JSValue> {
         use bun_ini::Parser;
 
-        let arguments_ = frame.arguments_old(1);
+        let arguments_ = frame.arguments_old::<1>();
         let arguments = arguments_.slice();
 
         let jsstr = arguments[0];
@@ -176,7 +156,7 @@ impl IniTestingAPIs {
 
         let mut parser = Parser::init(
             b"<src>",
-            utf8str.as_bytes(),
+            utf8str.slice(),
             global.bun_vm().transpiler.env,
         );
 

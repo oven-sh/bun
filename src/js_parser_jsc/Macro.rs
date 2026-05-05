@@ -14,12 +14,11 @@ use bun_bundler::{entry_points::MacroEntryPoint, Transpiler};
 use bun_http::MimeType;
 use bun_string::strings;
 
-// TODO(b2-blocked): bun_jsc (crate does not yet compile — B-2 of bun_jsc pending)
-#[cfg(any())]
 use bun_jsc::{
     self as jsc, c as js, ConsoleObject, JSArrayIterator, JSGlobalObject, JSPropertyIterator,
-    JSValue, JsError, MarkedArgumentBuffer, ModuleLoader, VirtualMachine, WebCore, ZigException,
+    JSValue, JsError, MarkedArgumentBuffer, ModuleLoader, WebCore, ZigException,
 };
+use bun_jsc::VirtualMachine::VirtualMachine;
 // TODO(b2-blocked): bun_runtime::api::BuildMessage
 // TODO(b2-blocked): bun_runtime::api::ResolveMessage
 #[cfg(any())]
@@ -38,30 +37,27 @@ pub fn is_macro_path(str: &[u8]) -> bool {
 // MacroContext
 // ══════════════════════════════════════════════════════════════════════════
 
-// TODO(b2-blocked): bun_jsc::JSValue
-#[cfg(any())]
 pub struct MacroContext<'a> {
     pub resolver: &'a mut Resolver,
-    pub env: &'a mut DotEnvLoader,
+    pub env: &'a mut DotEnvLoader<'a>,
     pub macros: MacroMap<'a>,
     pub remap: MacroRemap,
     pub javascript_object: JSValue,
 }
-/// B-2 stub: real struct gated above (needs `bun_jsc::JSValue`).
-pub struct MacroContext<'a>(core::marker::PhantomData<&'a ()>);
 
 pub type MacroMap<'a> = ArrayHashMap<i32, Macro<'a>>;
 
-#[cfg(any())]
 impl<'a> MacroContext<'a> {
-    // TODO(b2-blocked): bun_resolver::package_json::MacroMap::get (StringArrayHashMap::get by &[u8])
-    pub fn get_remap(&self, path: &[u8]) -> Option<MacroRemapEntry> {
-        if self.remap.entries.len() == 0 {
+    pub fn get_remap(&self, path: &[u8]) -> Option<&MacroRemapEntry> {
+        if self.remap.is_empty() {
             return None;
         }
         self.remap.get(path)
     }
+}
 
+#[cfg(any())]
+impl<'a> MacroContext<'a> {
     // TODO(b2-blocked): bun_bundler::Transpiler (real fields — currently opaque stub)
     pub fn init(transpiler: &'a mut Transpiler) -> MacroContext<'a> {
         MacroContext {
@@ -239,23 +235,16 @@ impl<'a> MacroContext<'a> {
 // MacroResult
 // ══════════════════════════════════════════════════════════════════════════
 
-// TODO(b2-blocked): bun_js_parser::S::Import
-#[cfg(any())]
 #[derive(Default)]
 pub struct MacroResult {
     pub import_statements: Box<[S::Import]>,
     pub replacement: Expr,
 }
-/// B-2 stub: real struct gated above (needs `bun_js_parser::S::Import`).
-#[derive(Default)]
-pub struct MacroResult(());
 
 // ══════════════════════════════════════════════════════════════════════════
 // Macro
 // ══════════════════════════════════════════════════════════════════════════
 
-// TODO(b2-blocked): bun_jsc::VirtualMachine
-#[cfg(any())]
 pub struct Macro<'a> {
     pub resolver: &'a mut Resolver,
     pub vm: &'static VirtualMachine,
@@ -263,8 +252,6 @@ pub struct Macro<'a> {
     pub resolved: ResolveResult,
     pub disabled: bool,
 }
-/// B-2 stub: real struct gated above (needs `bun_jsc::VirtualMachine`).
-pub struct Macro<'a>(core::marker::PhantomData<&'a ()>);
 
 #[cfg(any())]
 impl<'a> Macro<'a> {
@@ -369,10 +356,17 @@ pub enum MacroError {
     OutOfMemory,
     #[error(transparent)]
     ToJs(#[from] ToJSError),
-    // TODO(b2-blocked): bun_jsc::JsError
-    #[cfg(any())]
-    #[error(transparent)]
-    Js(#[from] JsError),
+    // PORT NOTE: `JsError` does not impl `std::error::Error` in the stub surface,
+    // so `#[error(transparent)]` / `#[from]` (which generates a `source()` requiring
+    // `Error`) are unavailable; format via Debug + manual `From` instead.
+    #[error("{0:?}")]
+    Js(JsError),
+}
+
+impl From<JsError> for MacroError {
+    fn from(e: JsError) -> Self {
+        MacroError::Js(e)
+    }
 }
 
 impl From<bun_alloc::AllocError> for MacroError {
@@ -387,9 +381,9 @@ impl From<MacroError> for Error {
             MacroError::MacroFailed => err!("MacroFailed"),
             MacroError::OutOfMemory => err!("OutOfMemory"),
             MacroError::ToJs(e) => e.into(),
-            // TODO(b2-blocked): bun_jsc::JsError
-            #[cfg(any())]
-            MacroError::Js(e) => e.into(),
+            MacroError::Js(JsError::OutOfMemory) => err!("OutOfMemory"),
+            MacroError::Js(JsError::Terminated) => err!("JSTerminated"),
+            MacroError::Js(JsError::Thrown) => err!("JSError"),
         }
     }
 }

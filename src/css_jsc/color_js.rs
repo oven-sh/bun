@@ -29,8 +29,21 @@ pub enum OutputColorFormat {
     RgbaObject, // Zig: `@"{rgba}"`
 }
 
+impl bun_jsc::FromJsEnum for OutputColorFormat {
+    fn from_js_value(
+        v: JSValue,
+        global: &JSGlobalObject,
+        property_name: &'static str,
+    ) -> JsResult<Self> {
+        use bun_jsc::ComptimeStringMapExt as _;
+        match Self::MAP.from_js(global, v)? {
+            Some(e) => Ok(e),
+            None => Err(global.throw_invalid_argument_type("color", property_name, "OutputColorFormat string")),
+        }
+    }
+}
+
 impl OutputColorFormat {
-    // TODO(port): wire into JSValue::to_enum lookup
     pub const MAP: phf::Map<&'static [u8], OutputColorFormat> = phf::phf_map! {
         b"[r,g,b,a]" => OutputColorFormat::RgbaArray,
         b"[rgb]" => OutputColorFormat::RgbArray,
@@ -64,18 +77,11 @@ fn color_int_from_js(
     input: JSValue,
     property: &'static str,
 ) -> JsResult<i32> {
-    #[cfg(any())]
-    {
-        // TODO(b2-blocked): bun_jsc::JSValue::is_empty / is_undefined / is_number / coerce
-        // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw_invalid_argument_type
-        if input.is_empty() || input.is_undefined() || !input.is_number() {
-            return global.throw_invalid_argument_type("color", property, "integer");
-        }
-        // CSS spec says to clamp values to their valid range so we'll respect that here
-        return Ok(input.coerce::<i32>(global)?.clamp(0, 255));
+    if input.is_empty() || input.is_undefined() || !input.is_number() {
+        return Err(global.throw_invalid_argument_type("color", property, "integer"));
     }
-    let _ = (global, input, property);
-    todo!("bun_css_jsc::color_js::color_int_from_js — gated on bun_jsc::JSValue methods")
+    // CSS spec says to clamp values to their valid range so we'll respect that here
+    Ok(input.coerce::<i32>(global)?.clamp(0, 255))
 }
 
 // https://github.com/tmux/tmux/blob/dae2868d1227b95fd076fb4a5efa6256c7245943/colour.c#L44-L55
@@ -182,23 +188,17 @@ pub mod ansi256 {
 pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     #[cfg(any())]
     {
-        // TODO(b2-blocked): bun_jsc::CallFrame::arguments_as_array
-        // TODO(b2-blocked): bun_jsc::JSValue (is_undefined / is_number / to_int64 / js_type / get_length / get_index / get / get_truthy / is_object / to_enum / to_slice / is_empty_or_undefined_or_null / as_number / put / put_index / create_empty_object / create_empty_array / js_number / js_empty_string / NULL / ZERO)
-        // TODO(b2-blocked): bun_jsc::JSGlobalObject (throw / throw_invalid_argument_type / has_exception)
-        // TODO(b2-blocked): bun_jsc::ZigString::Slice
-        // TODO(b2-blocked): bun_css::CssColor
-        // TODO(b2-blocked): bun_css::CssColorParseResult
-        // TODO(b2-blocked): bun_css::values::color::{HSL, LAB, RGBA, SRGB}
-        // TODO(b2-blocked): bun_css::FloatColor
-        // TODO(b2-blocked): bun_css::LabColor
-        // TODO(b2-blocked): bun_css::ParserInput
-        // TODO(b2-blocked): bun_css::Parser
-        // TODO(b2-blocked): bun_css::ParserOptions
-        // TODO(b2-blocked): bun_css::Printer
-        // TODO(b2-blocked): bun_css::PrinterOptions
-        // TODO(b2-blocked): bun_string::String::create_format
-        // TODO(b2-blocked): bun_jsc::StringJsc::transfer_to_js
-        // TODO(b2-blocked): bun_jsc::StringJsc::create_utf8_for_js
+        // TODO(b2-blocked): bun_css::ParserInput::new
+        // TODO(b2-blocked): bun_css::Parser::new
+        // TODO(b2-blocked): bun_css::CssColor::parse
+        // TODO(b2-blocked): bun_css::CssColor::to_css
+        // TODO(b2-blocked): bun_css::Printer::new
+        // TODO(b2-blocked): bun_css::values::color::RGBA::into_srgb
+        // TODO(b2-blocked): bun_css::values::color::RGBA::alpha_f32
+        // TODO(b2-blocked): bun_css::values::color::SRGB::into_rgba
+        // TODO(b2-blocked): bun_css::values::color::FloatColor::into_srgb
+        // TODO(b2-blocked): bun_css::values::color::LABColor::into_srgb
+        // TODO(b2-blocked): bun_jsc::bun_string_jsc::transfer_to_js
         use bun_css as css;
         use bun_css::values::color::{HSL, LAB, RGBA, SRGB};
         use bun_css::CssColor;

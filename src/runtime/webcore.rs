@@ -90,10 +90,8 @@ pub mod streams {
 // `#[unsafe(no_mangle)] pub extern "C" fn` in `bun_http::websocket_http_client` and need no
 // force-reference here. Dropped per PORTING.md §Don't translate.
 
-#[cfg(any())]
 pub enum PathOrFileDescriptor {
-    // TODO(port): `jsc.ZigString.Slice` mapped to `bun_str::zig_string::Slice` — verify path in Phase B.
-    // TODO(b2-blocked): bun_string::zig_string::Slice
+    // PORT NOTE: `jsc.ZigString.Slice` → `bun_str::zig_string::Slice` (= `ZigStringSlice`).
     Path(bun_str::zig_string::Slice),
     Fd(bun_sys::Fd),
 }

@@ -22,13 +22,11 @@ impl TestingAPIs {
     pub fn make_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         #[cfg(any())]
         {
-            // TODO(b2-blocked): bun_jsc::CallFrame::arguments_old
-            // TODO(b2-blocked): bun_jsc::call_frame::ArgumentsSlice
-            // TODO(b2-blocked): bun_jsc::JSGlobalObject::bun_vm
-            // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw
-            // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw_error
-            // TODO(b2-blocked): bun_jsc::JSValue::to_bun_string
-            // TODO(b2-blocked): bun_string::String::to_js
+            // TODO(b2-blocked): bun_jsc — crate fails to compile (transitive deps bun_css/
+            // bun_js_printer/bun_http/bun_sourcemap error). All needed symbols
+            // (CallFrame::arguments_old, ArgumentsSlice, JSGlobalObject::{bun_vm,throw,
+            // throw_error}, JSValue::to_bun_string, StringJsc::to_js) already exist in
+            // bun_jsc/lib.rs; un-gate once the dep is green.
             let arguments_ = frame.arguments_old(2);
             let mut arguments = ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
 
@@ -76,9 +74,9 @@ impl TestingAPIs {
     pub fn apply(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         #[cfg(any())]
         {
-            // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw_value
-            // TODO(b2-blocked): bun_jsc::JSValue::TRUE
-            // TODO(b2-blocked): bun_sys::Error::to_js
+            // TODO(b2-blocked): bun_jsc — crate fails to compile (see make_diff note).
+            // TODO(b2-blocked): bun_jsc::SysErrorJsc — no `to_js` bridge for bun_sys::Error
+            //   yet (Zig: `err.toJS(globalThis)` → `SystemError__toErrorInstance`).
             let args = match Self::parse_apply_args(global, frame) {
                 Err(e) => return Ok(e),
                 Ok(a) => a,
@@ -102,13 +100,9 @@ impl TestingAPIs {
     pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         #[cfg(any())]
         {
-            // TODO(b2-blocked): bun_jsc::CallFrame::arguments_old
-            // TODO(b2-blocked): bun_jsc::call_frame::ArgumentsSlice
-            // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw
-            // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw_error
-            // TODO(b2-blocked): bun_jsc::JSValue::to_bun_string
-            // TODO(b2-blocked): bun_patch::json_fmt
-            // TODO(b2-blocked): bun_string::String::to_js
+            // TODO(b2-blocked): bun_jsc — crate fails to compile (see make_diff note).
+            // TODO(b2-blocked): bun_patch::json_fmt — no JSON `Display` adapter for
+            //   `PatchFile` yet (Zig: `std.json.fmt(patchfile, .{})`).
             let arguments_ = frame.arguments_old(2);
             let mut arguments = ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
 
@@ -156,15 +150,9 @@ impl TestingAPIs {
         // TODO(port): Zig return type was `bun.jsc.Node.Maybe(ApplyArgs, jsc.JSValue)`; mapped to plain Result.
         #[cfg(any())]
         {
-            // TODO(b2-blocked): bun_jsc::CallFrame::arguments_old
-            // TODO(b2-blocked): bun_jsc::call_frame::ArgumentsSlice
-            // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw
-            // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw_error
-            // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw_value
-            // TODO(b2-blocked): bun_jsc::JSValue::to_bun_string
-            // TODO(b2-blocked): bun_jsc::JSValue::UNDEFINED
-            // TODO(b2-blocked): bun_string::String::to_owned_slice_z
-            // TODO(b2-blocked): bun_sys::Error::to_js
+            // TODO(b2-blocked): bun_jsc — crate fails to compile (see make_diff note).
+            // TODO(b2-blocked): bun_jsc::SysErrorJsc — no `to_js` bridge for bun_sys::Error yet.
+            // (bun_string::String::to_owned_slice_z exists; bun_sys::open/O exist.)
             let arguments_ = frame.arguments_old(2);
             let mut arguments = ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
 

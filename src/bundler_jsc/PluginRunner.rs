@@ -33,8 +33,7 @@ impl<'a> PluginRunner<'a> {
             return b"";
         };
         let colon = colon as usize;
-        // TODO(b2-blocked): bun_paths::is_sep_any — inlined (`/` or `\`) until exported.
-        let is_sep_any = |c: u8| c == b'/' || c == b'\\';
+        use bun_paths::resolve_path::is_sep_any;
         if cfg!(windows)
             && colon == 1
             && specifier.len() > 3

@@ -2,12 +2,13 @@
 //! JSC bridge surface for `bun_install`. Keeps `src/install/` free of
 //! `JSValue`/`JSGlobalObject`/`CallFrame` references.
 //!
-//! B-2: all six modules are un-gated. Function bodies that depend on missing
-//! lower-tier surface (`bun_jsc::JsResult`, `#[bun_jsc::host_fn]`, `bun_jsc`
-//! method tables, `bun_install::{hosted_git_info,dependency::version,npm::*,
-//! lockfile::LoadResult,package_manager::update_request,Subcommand}`, etc.)
-//! are individually `#[cfg(any())]`-gated inside each file with
-//! `// TODO(b2-blocked): bun_X::Y` markers — see Track-A blocked_on report.
+//! B-2: all six modules are un-gated. The host-fn bodies for hosted_git_info /
+//! dependency / update_request / npm `*_is_match` now compile against the real
+//! `bun_jsc` + `bun_install` stub surface. Remaining `#[cfg(any())]` gates are
+//! narrowed to the exact missing lower-tier symbols (`#[bun_jsc::host_fn]`
+//! proc-macro, `VirtualMachine::transpiler`, `bun_api::BunInstall`,
+//! `npm::PackageManifest` fields, `bun_logger_jsc` typed against bun_jsc, etc.)
+//! and tagged `// TODO(b2-blocked): bun_X::Y` — see Track-A blocked_on report.
 
 pub mod update_request_jsc;
 pub mod install_binding;

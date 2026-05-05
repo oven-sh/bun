@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, TopExceptionScope};
-use bun_str::String;
+use crate::{JSGlobalObject, JSValue, JsResult};
+use bun_string::String;
 
 const SIZE: usize = 24;
 // alignment = 8 is encoded in #[repr(align(8))] below.
@@ -78,15 +78,13 @@ impl StringBuilder {
     }
 
     pub fn to_string(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        // TODO(port): @src() — TopExceptionScope wants a source location; Phase B
-        // should provide a `bun_jsc::src_location!()` macro or equivalent.
-        let mut scope = TopExceptionScope::init(global);
-        // `defer scope.deinit()` → handled by Drop on TopExceptionScope.
-
-        // SAFETY: self.bytes is a live StringBuilder; global is a valid borrow.
-        let result = unsafe { StringBuilder__toString(self.bytes.as_mut_ptr().cast(), global) };
-        scope.return_if_exception()?;
-        Ok(result)
+        // PORT NOTE: Zig wraps this in a TopExceptionScope. `from_js_host_call`
+        // is the equivalent shape (call FFI → check pending exception); using it
+        // here avoids the in-place-init / pinning dance TopExceptionScope needs.
+        crate::from_js_host_call(global, || unsafe {
+            // SAFETY: self.bytes is a live StringBuilder; global is a valid borrow.
+            StringBuilder__toString(self.bytes.as_mut_ptr().cast(), global)
+        })
     }
 
     pub fn ensure_unused_capacity(&mut self, additional: usize) {

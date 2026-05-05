@@ -18,14 +18,13 @@ where
 {
     #[cfg(any())]
     {
-        // TODO(b2-blocked): bun_string::String::create_format
-        // TODO(b2-blocked): bun_jsc::StringJsc::to_error_instance
-        let str = BunString::create_format(format_args!("{}", this.kind))?;
+        // TODO(b2-blocked): bun_jsc::bun_string_jsc::to_error_instance
+        let str = BunString::create_format(format_args!("{}", this.kind));
         // `defer str.deref()` — handled by `Drop for bun_str::String`.
-        return Ok(str.to_error_instance(global_this));
+        return Ok(bun_jsc::bun_string_jsc::to_error_instance(&str, global_this));
     }
     let _ = (this, global_this);
-    todo!("bun_css_jsc::error_jsc::to_error_instance — gated on bun_string::create_format / bun_jsc::StringJsc")
+    todo!("bun_css_jsc::error_jsc::to_error_instance — gated on bun_jsc::bun_string_jsc::to_error_instance")
 }
 
 // ──────────────────────────────────────────────────────────────────────────

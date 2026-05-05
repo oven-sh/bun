@@ -4,19 +4,14 @@
 use core::sync::atomic::Ordering;
 
 use bun_http::Headers;
-// TODO(b2-blocked): bun_jsc::JSGlobalObject — bun_jsc crate does not compile yet
-// TODO(b2-blocked): bun_jsc::JSValue
-// TODO(b2-blocked): bun_jsc::CallFrame
-#[cfg(any())]
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_string::ZigString;
 
-// TODO(b2-blocked): bun_jsc::JsResult
-// TODO(b2-blocked): bun_jsc::JsError
 // TODO(b2-blocked): bun_runtime::webcore::FetchHeaders
-// `to_fetch_headers` signature names `JsResult<*mut FetchHeaders>`; both types are
-// missing from the lower-tier stub surfaces, so the whole fn (not just the body)
-// must stay gated.
+// `bun_runtime` is a higher-tier crate (would create a dep cycle: runtime → http_jsc).
+// FetchHeaders is an opaque C++ type; the bridge type needs to live in `bun_jsc` or a
+// lower-tier `*_sys` crate before this fn signature can be expressed here. Whole fn
+// stays gated.
 #[cfg(any())]
 pub fn to_fetch_headers(
     this: &Headers,
@@ -43,26 +38,30 @@ pub fn to_fetch_headers(
 pub struct H2TestingAPIs;
 
 impl H2TestingAPIs {
-    // TODO(b2-blocked): bun_jsc::host_fn (proc-macro attribute)
-    // TODO(b2-blocked): bun_jsc::JsResult
-    // TODO(b2-blocked): bun_http::h2_client (gated in bun_http)
-    // TODO(b2-blocked): bun_jsc::JSValue::create_empty_object / put / js_number
-    #[cfg(any())]
-    #[bun_jsc::host_fn]
-    pub fn live_counts(global: &JSGlobalObject, _frame: &CallFrame) -> bun_jsc::JsResult<JSValue> {
-        use bun_http::h2_client;
-        let obj = JSValue::create_empty_object(global, 2);
-        obj.put(
-            global,
-            ZigString::static_(b"sessions"),
-            JSValue::js_number(h2_client::live_sessions.load(Ordering::Relaxed)),
-        );
-        obj.put(
-            global,
-            ZigString::static_(b"streams"),
-            JSValue::js_number(h2_client::live_streams.load(Ordering::Relaxed)),
-        );
-        Ok(obj)
+    // Zig source has no attribute — generate-js2native.ts scans by signature shape.
+    // TODO(port): once a `#[bun_jsc::host_fn]` proc-macro lands, annotate this so the
+    // extern "C" thunk is emitted (currently no proc-macro crate exists).
+    pub fn live_counts(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_http::h2_client — module is `#[cfg(any())]`-gated in bun_http/lib.rs
+            use bun_http::h2_client;
+            let obj = JSValue::create_empty_object(global, 2);
+            obj.put(
+                global,
+                b"sessions",
+                JSValue::js_number_from_uint64(h2_client::live_sessions.load(Ordering::Relaxed)),
+            );
+            obj.put(
+                global,
+                b"streams",
+                JSValue::js_number_from_uint64(h2_client::live_streams.load(Ordering::Relaxed)),
+            );
+            return Ok(obj);
+        }
+        // TODO(b2-blocked): bun_http::h2_client
+        let _ = global;
+        todo!("H2TestingAPIs::live_counts — blocked on bun_http::h2_client un-gate")
     }
 }
 
@@ -72,26 +71,29 @@ impl H3TestingAPIs {
     /// Named distinctly from H2's `live_counts` because generate-js2native.ts
     /// mangles `[^A-Za-z]` to `_`, so `H2Client.zig` and `H3Client.zig` produce
     /// the same path prefix and the function name has to differ.
-    // TODO(b2-blocked): bun_jsc::host_fn (proc-macro attribute)
-    // TODO(b2-blocked): bun_jsc::JsResult
-    // TODO(b2-blocked): bun_http::h3_client (gated in bun_http)
-    // TODO(b2-blocked): bun_jsc::JSValue::create_empty_object / put / js_number
-    #[cfg(any())]
-    #[bun_jsc::host_fn]
-    pub fn quic_live_counts(global: &JSGlobalObject, _frame: &CallFrame) -> bun_jsc::JsResult<JSValue> {
-        use bun_http::h3_client;
-        let obj = JSValue::create_empty_object(global, 2);
-        obj.put(
-            global,
-            ZigString::static_(b"sessions"),
-            JSValue::js_number(h3_client::live_sessions.load(Ordering::Relaxed)),
-        );
-        obj.put(
-            global,
-            ZigString::static_(b"streams"),
-            JSValue::js_number(h3_client::live_streams.load(Ordering::Relaxed)),
-        );
-        Ok(obj)
+    // TODO(port): once a `#[bun_jsc::host_fn]` proc-macro lands, annotate this so the
+    // extern "C" thunk is emitted (currently no proc-macro crate exists).
+    pub fn quic_live_counts(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_http::h3_client — module is `#[cfg(any())]`-gated in bun_http/lib.rs
+            use bun_http::h3_client;
+            let obj = JSValue::create_empty_object(global, 2);
+            obj.put(
+                global,
+                b"sessions",
+                JSValue::js_number_from_uint64(h3_client::live_sessions.load(Ordering::Relaxed)),
+            );
+            obj.put(
+                global,
+                b"streams",
+                JSValue::js_number_from_uint64(h3_client::live_streams.load(Ordering::Relaxed)),
+            );
+            return Ok(obj);
+        }
+        // TODO(b2-blocked): bun_http::h3_client
+        let _ = global;
+        todo!("H3TestingAPIs::quic_live_counts — blocked on bun_http::h3_client un-gate")
     }
 }
 

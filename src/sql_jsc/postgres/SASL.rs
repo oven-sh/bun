@@ -2,9 +2,7 @@ use bun_base64;
 
 use super::postgres_sql_connection::PostgresSQLConnection;
 
-// TODO(b2-blocked): bun_boringssl_sys::EVP_MAX_MD_SIZE — constant exists in
-// boringssl.zig (= 64) but not yet in the Rust sys crate.
-const EVP_MAX_MD_SIZE: usize = 64;
+use bun_sha_hmac::hmac::EVP_MAX_MD_SIZE;
 
 const NONCE_BYTE_LEN: usize = 18;
 // PORT NOTE: `bun_base64::encode_len_from_size` is not `const fn` yet; inlined
@@ -50,23 +48,14 @@ pub enum SASLStatus {
 }
 
 fn hmac(password: &[u8], data: &[u8]) -> Option<[u8; 32]> {
-    #[cfg(any())]
-    {
-        // TODO(b2-blocked): bun_sha_hmac::generate (and Algorithm enum)
-        // SAFETY: all-zero is a valid [u8; N]
-        let mut buf: [u8; EVP_MAX_MD_SIZE as usize] = unsafe { core::mem::zeroed() };
-        // TODO: I don't think this is failable.
-        let result = bun_sha_hmac::generate(password, data, bun_sha_hmac::Algorithm::Sha256, &mut buf)?;
-        debug_assert!(result.len() == 32);
-        let mut out = [0u8; 32];
-        out.copy_from_slice(&buf[0..32]);
-        return Some(out);
-    }
-    #[cfg(not(any()))]
-    {
-        let _ = (password, data);
-        unimplemented!("b2-blocked: bun_sha_hmac::generate")
-    }
+    // SAFETY: all-zero is a valid [u8; N]
+    let mut buf: [u8; EVP_MAX_MD_SIZE] = unsafe { core::mem::zeroed() };
+    // TODO: I don't think this is failable.
+    let result = bun_sha_hmac::generate(password, data, bun_sha_hmac::Algorithm::Sha256, &mut buf)?;
+    debug_assert!(result.len() == 32);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&buf[0..32]);
+    Some(out)
 }
 
 impl SASL {
@@ -133,41 +122,23 @@ impl SASL {
     }
 
     pub fn client_key_signature(&self, client_key: &[u8], auth_string: &[u8]) -> [u8; 32] {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_sha_hmac::SHA256 (Hasher trait + Digest assoc type)
-            // TODO(b2-blocked): bun_jsc::VirtualMachine::get / RareData::boring_engine
-            use bun_sha_hmac::SHA256;
-            // SAFETY: all-zero is a valid [u8; N]
-            let mut sha_digest: <SHA256 as bun_sha_hmac::Hasher>::Digest = unsafe { core::mem::zeroed() };
-            SHA256::hash(
-                client_key,
-                &mut sha_digest,
-                bun_jsc::VirtualMachine::get().rare_data().boring_engine(),
-            );
-            return hmac(&sha_digest, auth_string).unwrap();
-        }
-        #[cfg(not(any()))]
-        {
-            let _ = (client_key, auth_string);
-            unimplemented!("b2-blocked: bun_sha_hmac::SHA256 / bun_jsc::VirtualMachine::get")
-        }
+        use bun_sha_hmac::SHA256;
+        // SAFETY: all-zero is a valid [u8; N]
+        let mut sha_digest: [u8; SHA256::DIGEST] = unsafe { core::mem::zeroed() };
+        // TODO(b2-blocked): bun_jsc::VirtualMachine::get / RareData::boring_engine
+        // Zig passes `jsc.VirtualMachine.get().rareData().boringEngine()` here;
+        // `None` falls through to BoringSSL's default engine, which is
+        // functionally equivalent for SHA256. Swap once bun_jsc compiles.
+        SHA256::hash(client_key, &mut sha_digest, None);
+        hmac(&sha_digest, auth_string).unwrap()
     }
 
     pub fn nonce(&mut self) -> &[u8] {
         if self.nonce_len == 0 {
-            #[cfg(any())]
-            {
-                let mut bytes: [u8; NONCE_BYTE_LEN] = [0; NONCE_BYTE_LEN];
-                // TODO(b2-blocked): bun_core::csprng
-                bun_core::csprng(&mut bytes);
-                self.nonce_len =
-                    u8::try_from(bun_base64::encode(&mut self.nonce_base64_bytes, &bytes)).unwrap();
-            }
-            // SECURITY: must NOT silently encode an all-zero nonce; fail loudly until
-            // bun_core::csprng lands so callers don't authenticate with a fixed value.
-            #[cfg(not(any()))]
-            unimplemented!("b2-blocked: bun_core::csprng — refusing fixed-nonce SASL auth");
+            let mut bytes: [u8; NONCE_BYTE_LEN] = [0; NONCE_BYTE_LEN];
+            bun_core::csprng(&mut bytes);
+            self.nonce_len =
+                u8::try_from(bun_base64::encode(&mut self.nonce_base64_bytes, &bytes)).unwrap();
         }
         &self.nonce_base64_bytes[0..self.nonce_len as usize]
     }
@@ -180,6 +151,7 @@ impl SASL {
 // PORT STATUS
 //   source:     src/sql_jsc/postgres/SASL.zig (94 lines)
 //   confidence: medium
-//   todos:      5
-//   notes:      crypto fn bodies gated on bun_sha_hmac/bun_runtime/bun_core; struct + accessors compile
+//   todos:      1
+//   notes:      hmac/nonce/client_key_signature un-gated (bun_sha_hmac + bun_core::csprng);
+//               compute_salted_password remains gated on bun_runtime::api::crypto::EVP::pbkdf2
 // ──────────────────────────────────────────────────────────────────────────

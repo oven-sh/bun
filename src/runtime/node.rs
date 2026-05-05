@@ -222,20 +222,14 @@ impl<E> Maybe<bool, E> {
 }
 
 // ─── methods that assume `E` carries an errno (i.e. `bun_sys::Error`) ─────
-// Gated: depends on `bun_sys::ErrorInt` (missing), `bun_sys::posix::E::INTR`/
-// `SUCCESS` shape, `bun_sys::Tag::access` (missing), `bun_core::errno_to_zig_err`
-// (missing), and `bun_jsc::{ArrayBuffer, JSGlobalObject, JSValue}` method
-// surface (bun_jsc broken).
-#[cfg(any())]
 impl<R> Maybe<R, bun_sys::Error> {
     /// This value is technically garbage, but that is okay as `.aborted` is
     /// only meant to be returned in an operation when there is an aborted
     /// `AbortSignal` object associated with the operation.
     pub fn aborted() -> Self {
-        // TODO(b2-blocked): bun_sys::Tag::access
-        // TODO(b2-blocked): bun_sys::ErrorInt
         Maybe::Err(bun_sys::Error {
-            errno: bun_sys::posix::E::INTR as bun_sys::ErrorInt,
+            // PORT NOTE: Zig `posix.E.INTR` → `SystemErrno::EINTR` (variants keep `E` prefix).
+            errno: bun_sys::posix::E::EINTR as bun_sys::ErrorInt,
             syscall: bun_sys::Tag::access,
             ..Default::default()
         })
@@ -243,10 +237,9 @@ impl<R> Maybe<R, bun_sys::Error> {
 
     pub fn unwrap(self) -> Result<R, bun_core::Error> {
         // TODO(port): narrow error set
-        // TODO(b2-blocked): bun_core::errno_to_zig_err
         match self {
             Maybe::Result(r) => Ok(r),
-            Maybe::Err(e) => Err(bun_core::errno_to_zig_err(e.errno)),
+            Maybe::Err(e) => Err(bun_core::errno_to_zig_err(e.errno as i32)),
         }
     }
 
@@ -268,15 +261,20 @@ impl<R> Maybe<R, bun_sys::Error> {
     where
         R: Into<Vec<u8>>,
     {
-        // TODO(b2-blocked): bun_jsc::ArrayBuffer::from_bytes
-        // TODO(b2-blocked): bun_jsc::TypedArrayType
-        match self {
-            Maybe::Result(r) => {
-                bun_jsc::ArrayBuffer::from_bytes(r.into(), bun_jsc::TypedArrayType::ArrayBuffer)
-                    .to_js(global_object, None)
-            }
-            Maybe::Err(e) => e.to_js(global_object),
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_jsc::ArrayBuffer::from_bytes
+            // TODO(b2-blocked): bun_jsc::TypedArrayType
+            return match self {
+                Maybe::Result(r) => {
+                    bun_jsc::ArrayBuffer::from_bytes(r.into(), bun_jsc::TypedArrayType::ArrayBuffer)
+                        .to_js(global_object, None)
+                }
+                Maybe::Err(e) => e.to_js(global_object),
+            };
         }
+        let _ = (self, global_object);
+        todo!("Maybe::to_array_buffer: blocked on bun_jsc::ArrayBuffer")
     }
 
     pub fn get_errno(self) -> bun_sys::posix::E {
@@ -285,12 +283,30 @@ impl<R> Maybe<R, bun_sys::Error> {
             Maybe::Err(e) => {
                 // SAFETY: `e.errno` was produced from `@intFromEnum(posix.E)` /
                 // `translateToErrInt`, so it is always a valid `posix::E`
-                // discriminant.
+                // discriminant. `posix::E` (= SystemErrno) is `#[repr(u16)]`
+                // matching `ErrorInt`.
                 unsafe { core::mem::transmute::<bun_sys::ErrorInt, bun_sys::posix::E>(e.errno) }
             }
         }
     }
 
+    pub fn errno<Er: IntoErrInt>(err: Er, syscall: bun_sys::Tag) -> Self {
+        Maybe::Err(bun_sys::Error {
+            // always truncate
+            errno: translate_to_err_int(err),
+            syscall,
+            ..Default::default()
+        })
+    }
+}
+
+// `errno_sys*` family: blocked on `bun_sys::get_errno` accepting the generic
+// `SyscallRc` (the `GetErrno` trait is not exported from `bun_errno`/`bun_sys`,
+// so we cannot bound `SyscallRc: GetErrno` here without editing lower tiers).
+// TODO(b2-blocked): bun_sys::GetErrno — once exported, add `SyscallRc: GetErrno`
+// supertrait and un-gate this impl.
+#[cfg(any())]
+impl<R> Maybe<R, bun_sys::Error> {
     pub fn errno_sys<Rc: SyscallRc>(rc: Rc, syscall: bun_sys::Tag) -> Option<Self> {
         #[cfg(windows)]
         {
@@ -309,15 +325,6 @@ impl<R> Maybe<R, bun_sys::Error> {
                 ..Default::default()
             })),
         }
-    }
-
-    pub fn errno<Er: IntoErrInt>(err: Er, syscall: bun_sys::Tag) -> Self {
-        Maybe::Err(bun_sys::Error {
-            // always truncate
-            errno: translate_to_err_int(err),
-            syscall,
-            ..Default::default()
-        })
     }
 
     pub fn errno_sys_fd<Rc: SyscallRc>(rc: Rc, syscall: bun_sys::Tag, fd: bun_sys::Fd) -> Option<Self> {
@@ -362,7 +369,7 @@ impl<R> Maybe<R, bun_sys::Error> {
                 // Always truncate
                 errno: translate_to_err_int(e),
                 syscall,
-                path: bun_str::as_byte_slice(file_path.as_ref()).into(),
+                path: file_path.as_ref().into(),
                 ..Default::default()
             })),
         }
@@ -389,7 +396,7 @@ impl<R> Maybe<R, bun_sys::Error> {
                 errno: translate_to_err_int(e),
                 syscall,
                 fd,
-                path: bun_str::as_byte_slice(file_path.as_ref()).into(),
+                path: file_path.as_ref().into(),
                 ..Default::default()
             })),
         }
@@ -416,20 +423,17 @@ impl<R> Maybe<R, bun_sys::Error> {
                 // Always truncate
                 errno: translate_to_err_int(e),
                 syscall,
-                path: bun_str::as_byte_slice(file_path.as_ref()).into(),
-                dest: bun_str::as_byte_slice(dest.as_ref()).into(),
+                path: file_path.as_ref().into(),
+                dest: dest.as_ref().into(),
                 ..Default::default()
             })),
         }
     }
 }
 
-// Gated: bun_css::BasicParseError lacks `into_default_parse_error`.
-#[cfg(any())]
 impl<R> Maybe<R, bun_css::BasicParseError> {
     #[inline]
     pub fn to_css_result(self) -> Maybe<R, bun_css::ParseError<bun_css::ParserError>> {
-        // TODO(b2-blocked): bun_css::BasicParseError::into_default_parse_error
         // Zig comptime-switched on `ErrorTypeT`; in Rust we express each arm
         // as a separate inherent impl. The `ParseError(ParserError)` and
         // catch-all arms were `@compileError`s and need no Rust body.
@@ -543,25 +547,22 @@ pub trait IntoErrInt: Copy {
     fn into_err_int(self) -> u16;
 }
 
-// Gated: depends on bun_sys::posix::E enum repr matching ErrorInt and
-// bun_sys::windows::translate_ntstatus_to_errno.
-#[cfg(any())]
-mod _gated_err_int {
-    use super::*;
-    impl IntoErrInt for bun_sys::posix::E {
-        fn into_err_int(self) -> bun_sys::ErrorInt {
-            // @truncate(@intFromEnum(err))
-            // TODO(b2-blocked): bun_sys::ErrorInt
-            self as bun_sys::ErrorInt
-        }
+impl IntoErrInt for bun_sys::posix::E {
+    fn into_err_int(self) -> bun_sys::ErrorInt {
+        // @truncate(@intFromEnum(err)) — SystemErrno is #[repr(u16)], ErrorInt = u16.
+        self as bun_sys::ErrorInt
     }
+}
 
-    #[cfg(windows)]
-    impl IntoErrInt for bun_sys::windows::NTSTATUS {
-        fn into_err_int(self) -> bun_sys::ErrorInt {
+#[cfg(windows)]
+impl IntoErrInt for bun_sys::windows::NTSTATUS {
+    fn into_err_int(self) -> bun_sys::ErrorInt {
+        #[cfg(any())]
+        {
             // TODO(b2-blocked): bun_sys::windows::translate_ntstatus_to_errno
-            bun_sys::windows::translate_ntstatus_to_errno(self) as bun_sys::ErrorInt
+            return bun_sys::windows::translate_ntstatus_to_errno(self) as bun_sys::ErrorInt;
         }
+        unreachable!("blocked on bun_sys::windows::translate_ntstatus_to_errno")
     }
 }
 

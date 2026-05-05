@@ -78,35 +78,29 @@ impl Report {
         byte_range_mapping: &mut ByteRangeMapping,
         ignore_sourcemap_: bool,
     ) -> Option<Report> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_jsc::JSGlobalObject::vm
-            bun_jsc::mark_binding(core::panic::Location::caller());
-            let vm = global_this.vm();
+        bun_jsc::mark_binding(core::panic::Location::caller());
+        let vm = global_this.vm();
 
-            let mut result: Option<Report> = None;
+        let mut result: Option<Report> = None;
 
-            let mut generator = Generator { result: &mut result, byte_range_mapping };
+        let mut generator = Generator { result: &mut result, byte_range_mapping };
 
-            // SAFETY: Generator and the callback are kept alive for the duration of the FFI call;
-            // CodeCoverage__withBlocksAndFunctions invokes the callback synchronously.
-            let ok = unsafe {
-                CodeCoverage__withBlocksAndFunctions(
-                    vm,
-                    generator.byte_range_mapping.source_id,
-                    (&mut generator as *mut Generator).cast::<c_void>(),
-                    ignore_sourcemap_,
-                    Generator::do_,
-                )
-            };
-            if !ok {
-                return None;
-            }
-
-            return result;
+        // SAFETY: Generator and the callback are kept alive for the duration of the FFI call;
+        // CodeCoverage__withBlocksAndFunctions invokes the callback synchronously.
+        let ok = unsafe {
+            CodeCoverage__withBlocksAndFunctions(
+                vm as *const VM as *mut VM,
+                generator.byte_range_mapping.source_id,
+                (&mut generator as *mut Generator).cast::<c_void>(),
+                ignore_sourcemap_,
+                Generator::do_,
+            )
+        };
+        if !ok {
+            return None;
         }
-        let _ = (global_this, byte_range_mapping, ignore_sourcemap_);
-        None
+
+        result
     }
 }
 
@@ -479,10 +473,12 @@ impl ByteRangeMapping {
         function_blocks: &[BasicBlockRange],
         ignore_sourcemap: bool,
     ) -> Result<Report, bun_alloc::AllocError> {
-        // TODO(b2-blocked): bun_jsc::VirtualMachine::get
-        // TODO(b2-blocked): bun_sourcemap::line_offset_table::List::items_byte_offset_to_start_of_line
+        // TODO(b2-blocked): bun_jsc::VirtualMachine::source_mappings — stub
+        // `VirtualMachine` has no `source_mappings` field; un-gate once
+        // VirtualMachine.rs (and SavedSourceMap) un-gates in bun_jsc.
         #[cfg(any())]
         return (|| {
+        use bun_sourcemap::LineOffsetTableListExt as _;
         let line_starts = self.line_offset_table.items_byte_offset_to_start_of_line();
 
         let mut executable_lines: Bitset = Bitset::default();
@@ -759,8 +755,11 @@ impl ByteRangeMapping {
             stmts_which_have_executed,
         })
         })();
-        let _ = (source_url, blocks, function_blocks, ignore_sourcemap);
-        todo!("blocked on bun_jsc::VirtualMachine::get + MultiArrayList column accessor")
+        #[cfg_attr(any(), allow(unreachable_code))]
+        {
+            let _ = (source_url, blocks, function_blocks, ignore_sourcemap);
+            todo!("blocked on bun_jsc::VirtualMachine::source_mappings")
+        }
     }
 
     pub fn compute(source_contents: &[u8], source_id: i32, source_url: ZigStringSlice) -> ByteRangeMapping {

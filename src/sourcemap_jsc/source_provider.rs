@@ -7,7 +7,10 @@
 use core::marker::{PhantomData, PhantomPinned};
 
 use bun_jsc::JSGlobalObject;
-use bun_sourcemap::{self as source_map, ParseUrl, ParseUrlResultHint, SourceMapLoadHint};
+use bun_sourcemap::{
+    self as source_map, ParseUrl, ParseUrlResultHint, SourceContentPtr, SourceMapLoadHint,
+    SourceProvider,
+};
 use bun_str::String as BunString;
 
 // TODO(port): move to sourcemap_jsc_sys (or bake_sys) — extern decls
@@ -28,17 +31,24 @@ pub struct BakeSourceProvider {
 
 impl BakeSourceProvider {
     #[inline]
-    pub fn get_source_slice(&mut self) -> BunString {
-        // SAFETY: `self` is a live `*BakeSourceProvider` handed back to C++.
-        unsafe { BakeSourceProvider__getSourceSlice(self as *mut Self) }
+    fn as_ffi_ptr(&self) -> *mut Self {
+        // Opaque ZST handle: Rust holds no state, so the `*mut` is purely for
+        // C++'s benefit. Casting through `*const` avoids `&mut` aliasing rules.
+        self as *const Self as *mut Self
     }
 
-    pub fn to_source_content_ptr(&mut self) -> source_map::parsed_source_map::SourceContentPtr {
+    #[inline]
+    pub fn get_source_slice(&self) -> BunString {
+        // SAFETY: `self` is a live `*BakeSourceProvider` handed back to C++.
+        unsafe { BakeSourceProvider__getSourceSlice(self.as_ffi_ptr()) }
+    }
+
+    pub fn to_source_content_ptr(&self) -> source_map::parsed_source_map::SourceContentPtr {
         // PORT NOTE: `bun_sourcemap` defines its own opaque `BakeSourceProvider` so it
         // can name the pointer without a tier-6 dep. Both are `#[repr(C)]` ZST opaques
         // for the same C++ type, so the pointer cast is layout-correct.
         source_map::parsed_source_map::SourceContentPtr::from_bake_provider(
-            (self as *mut Self).cast::<source_map::BakeSourceProvider>(),
+            self.as_ffi_ptr().cast::<source_map::BakeSourceProvider>(),
         )
     }
 
@@ -46,11 +56,11 @@ impl BakeSourceProvider {
     /// current global is a `Bake::GlobalObject`; `None` otherwise (caller falls
     /// back to reading `<source>.map` from disk).
     // TODO(port): returned slice borrows from `PerThread.bundled_outputs`; lifetime
-    // is not expressible against `&mut self`. Phase B: thread `'pt` or return owned.
-    pub fn get_external_data(&mut self, source_filename: &[u8]) -> Option<&'static [u8]> {
+    // is not expressible against `&self`. Phase B: thread `'pt` or return owned.
+    pub fn get_external_data(&self, source_filename: &[u8]) -> Option<&'static [u8]> {
         #[cfg(any())]
         {
-            // TODO(b2-blocked): bun_jsc::VirtualMachine::get
+            // TODO(b2-blocked): bun_jsc::VirtualMachine::global — stub VM has no `global` field
             // TODO(b2-blocked): bun_runtime::bake::production::PerThread
             let global = bun_jsc::VirtualMachine::get().global;
             // SAFETY: `global` is the live JSGlobalObject for this VM thread.
@@ -77,18 +87,31 @@ impl BakeSourceProvider {
         load_hint: SourceMapLoadHint,
         result: ParseUrlResultHint,
     ) -> Option<ParseUrl> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_sourcemap::get_source_map_impl
-            return source_map::get_source_map_impl::<BakeSourceProvider>(
-                self,
-                source_filename,
-                load_hint,
-                result,
-            );
-        }
-        let _ = (source_filename, load_hint, result);
-        None
+        source_map::get_source_map_impl::<BakeSourceProvider>(
+            self,
+            source_filename,
+            load_hint,
+            result,
+        )
+    }
+}
+
+// PORT NOTE: Zig dispatched via `comptime SourceProviderKind: type` + `@hasDecl`;
+// Rust uses a trait per PORTING.md §Dispatch.
+impl SourceProvider for BakeSourceProvider {
+    const HAS_EXTERNAL_DATA: bool = true;
+
+    fn get_source_slice(&self) -> BunString {
+        Self::get_source_slice(self)
+    }
+
+    fn to_source_content_ptr(&self) -> SourceContentPtr {
+        Self::to_source_content_ptr(self)
+    }
+
+    fn get_external_data(&self, source_filename: &[u8]) -> Option<&[u8]> {
+        // `Option<&'static [u8]>` covariant-narrows to `Option<&'self [u8]>`.
+        Self::get_external_data(self, source_filename)
     }
 }
 

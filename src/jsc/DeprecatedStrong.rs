@@ -205,7 +205,7 @@ impl Optional {
 
 // suppress unused warning in release builds
 #[allow(unused_macros)]
-use enable_safety as _;
+const _: bool = enable_safety!();
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

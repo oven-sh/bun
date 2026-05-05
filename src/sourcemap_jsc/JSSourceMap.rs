@@ -5,12 +5,9 @@ use std::sync::Arc;
 
 use bstr::BStr;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
-use bun_sourcemap::{Mapping, Ordinal, ParsedSourceMap};
+use bun_jsc::{bun_string_jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
+use bun_sourcemap::{mapping, Mapping, Ordinal, ParseResult, ParsedSourceMap};
 use bun_str::{self as bstring, strings};
-
-// TODO(b2-blocked): bun_jsc::JsResult — local shim until bun_jsc un-gates host_fn.rs.
-type JsResult<T> = Result<T, bun_core::Error>;
 
 // TODO(b2-blocked): bun_jsc::JsClass — `#[bun_jsc::JsClass]` derive proc-macro not yet
 // implemented; the codegen-provided `to_js`/`from_js`/cached-setter accessors are
@@ -30,11 +27,10 @@ pub static ENABLE_SOURCE_MAPS: AtomicBool = AtomicBool::new(false);
 fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     #[cfg(any())]
     {
-        // TODO(b2-blocked): bun_jsc::JSValue::{UNDEFINED, is_string}
-        // TODO(b2-blocked): bun_jsc::CallFrame::argument
-        // TODO(b2-blocked): bun_jsc::URL::path_from_file_url
-        // TODO(b2-blocked): bun_jsc::JSGlobalObject::{err_invalid_url, bun_vm}
-        // TODO(b2-blocked): bun_string::String::{from_js, is_dead}
+        // TODO(b2-blocked): bun_jsc::VirtualMachine::source_mappings — stub
+        // `VirtualMachine` has no `source_mappings` field; un-gate once
+        // VirtualMachine.rs (and SavedSourceMap) un-gates in bun_jsc.
+        // TODO(b2-blocked): bun_jsc::JsClass — `to_js` codegen accessor.
         // Node.js doesn't enable source maps by default.
         // In Bun, we do use them for almost all files since we transpile almost all files
         // If we enable this by default, we don't have a `payload` object since we don't internally create one.
@@ -114,102 +110,108 @@ impl JSSourceMap {
         frame: &CallFrame,
         this_value: JSValue,
     ) -> JsResult<Box<JSSourceMap>> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_jsc::CallFrame::argument
-            // TODO(b2-blocked): bun_jsc::JSGlobalObject::{validate_object, throw_invalid_arguments, throw_value, create_syntax_error_instance}
-            // TODO(b2-blocked): bun_jsc::JSValue::{ZERO, is_object, get_if_property_exists, js_type, get_stringish, get_array, array_iterator, to_bun_string, is_empty}
-            // TODO(b2-blocked): bun_sourcemap::mapping::ParseOptions
-            let payload_arg = frame.argument(0);
-            let options_arg = frame.argument(1);
+        let payload_arg = frame.argument(0);
+        let options_arg = frame.argument(1);
 
-            global.validate_object("payload", payload_arg, Default::default())?;
+        global.validate_object("payload", payload_arg, Default::default())?;
 
-            let mut line_lengths = JSValue::ZERO;
-            if options_arg.is_object() {
-                // Node doesn't check it further than this.
-                if let Some(lengths) = options_arg.get_if_property_exists(global, "lineLengths")? {
-                    if lengths.js_type().is_array() {
-                        line_lengths = lengths;
-                    }
+        let mut line_lengths = JSValue::ZERO;
+        if options_arg.is_object() {
+            // Node doesn't check it further than this.
+            if let Some(lengths) = options_arg.get_if_property_exists(global, b"lineLengths")? {
+                if lengths.js_type().is_array() {
+                    line_lengths = lengths;
                 }
             }
-
-            // Parse the payload to create a proper sourcemap
-            // PORT NOTE: Zig used a local ArenaAllocator solely for `mappings_str` UTF-8 transcode;
-            // Rust `to_utf8()` owns its buffer, so the arena is dropped entirely.
-
-            // Extract mappings string from payload
-            let Some(mappings_value) = payload_arg.get_stringish(global, "mappings")? else {
-                return global.throw_invalid_arguments(format_args!(
-                    "payload 'mappings' must be a string"
-                ));
-            };
-
-            let mappings_str = mappings_value.to_utf8();
-
-            // errdefer blocks deleted: Vec<bun_str::String> drops each element (deref) on `?` unwind.
-            let mut names: Vec<bstring::String> = Vec::new();
-            let mut sources: Vec<bstring::String> = Vec::new();
-
-            if let Some(sources_value) = payload_arg.get_array(global, "sources")? {
-                let mut iter = sources_value.array_iterator(global)?;
-                while let Some(source) = iter.next()? {
-                    let source_str = source.to_bun_string(global)?;
-                    sources.push(source_str);
-                }
-            }
-
-            if let Some(names_value) = payload_arg.get_array(global, "names")? {
-                let mut iter = names_value.array_iterator(global)?;
-                while let Some(name) = iter.next()? {
-                    let name_str = name.to_bun_string(global)?;
-                    names.push(name_str);
-                }
-            }
-
-            // Parse the VLQ mappings
-            let parse_result = Mapping::parse(
-                mappings_str.slice(),
-                None, // estimated_mapping_count
-                i32::try_from(sources.len()).unwrap(), // sources_count
-                i32::MAX,
-                bun_sourcemap::mapping::ParseOptions { allow_names: true, sort: true },
-            );
-
-            let mapping_list = match parse_result {
-                bun_sourcemap::mapping::ParseResult::Success(parsed) => parsed,
-                bun_sourcemap::mapping::ParseResult::Fail(fail) => {
-                    if let Some(loc) = fail.loc.to_nullable() {
-                        return global.throw_value(global.create_syntax_error_instance(
-                            format_args!("{} at {}", BStr::new(fail.msg), loc.start),
-                        ));
-                    }
-                    return global.throw_value(
-                        global.create_syntax_error_instance(format_args!("{}", BStr::new(fail.msg))),
-                    );
-                }
-            };
-
-            let source_map = Box::new(JSSourceMap {
-                sourcemap: Arc::new(mapping_list),
-                sources: sources.into_boxed_slice(),
-                names: names.into_boxed_slice(),
-            });
-
-            if !payload_arg.is_empty() {
-                // TODO(port): codegen accessor — js.payloadSetCached
-                Self::payload_set_cached(this_value, global, payload_arg);
-            }
-            if !line_lengths.is_empty() {
-                // TODO(port): codegen accessor — js.lineLengthsSetCached
-                Self::line_lengths_set_cached(this_value, global, line_lengths);
-            }
-
-            return Ok(source_map);
         }
-        let _ = (global, frame, this_value);
-        todo!("bun_jsc method surface gated")
+
+        // Parse the payload to create a proper sourcemap
+        // PORT NOTE: Zig used a local ArenaAllocator solely for `mappings_str` UTF-8 transcode;
+        // Rust `to_utf8()` owns its buffer, so the arena is dropped entirely.
+
+        // Extract mappings string from payload
+        let Some(mappings_value) = payload_arg.get_stringish(global, b"mappings")? else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "payload 'mappings' must be a string"
+            )));
+        };
+
+        let mappings_str = mappings_value.to_utf8();
+
+        // errdefer blocks deleted: Vec<bun_str::String> drops each element (deref) on `?` unwind.
+        let mut names: Vec<bstring::String> = Vec::new();
+        let mut sources: Vec<bstring::String> = Vec::new();
+
+        if let Some(sources_value) = payload_arg.get_array(global, b"sources")? {
+            let mut iter = sources_value.array_iterator(global)?;
+            while let Some(source) = iter.next()? {
+                let source_str = source.to_bun_string(global)?;
+                sources.push(source_str);
+            }
+        }
+
+        if let Some(names_value) = payload_arg.get_array(global, b"names")? {
+            let mut iter = names_value.array_iterator(global)?;
+            while let Some(name) = iter.next()? {
+                let name_str = name.to_bun_string(global)?;
+                names.push(name_str);
+            }
+        }
+
+        // Parse the VLQ mappings
+        let parse_result = mapping::parse(
+            mappings_str.slice(),
+            None, // estimated_mapping_count
+            i32::try_from(sources.len()).unwrap(), // sources_count
+            i32::MAX as usize,
+            mapping::ParseOptions { allow_names: true, sort: true },
+        );
+
+        let mapping_list = match parse_result {
+            ParseResult::Success(parsed) => parsed,
+            ParseResult::Fail(fail) => {
+                if let Some(loc) = fail.loc.to_nullable() {
+                    return Err(global.throw_value(global.create_syntax_error_instance(
+                        format_args!("{} at {}", BStr::new(fail.msg), loc.start),
+                    )));
+                }
+                return Err(global.throw_value(
+                    global.create_syntax_error_instance(format_args!("{}", BStr::new(fail.msg))),
+                ));
+            }
+        };
+
+        let source_map = Box::new(JSSourceMap {
+            sourcemap: Arc::new(mapping_list),
+            sources: sources.into_boxed_slice(),
+            names: names.into_boxed_slice(),
+        });
+
+        if !payload_arg.is_empty() {
+            // TODO(port): codegen accessor — js.payloadSetCached
+            Self::payload_set_cached(this_value, global, payload_arg);
+        }
+        if !line_lengths.is_empty() {
+            // TODO(port): codegen accessor — js.lineLengthsSetCached
+            Self::line_lengths_set_cached(this_value, global, line_lengths);
+        }
+
+        Ok(source_map)
+    }
+
+    // ── codegen accessors (provided by `#[bun_jsc::JsClass]` once it lands) ──
+    // TODO(b2-blocked): bun_jsc::JsClass — generate-classes.ts emits the real
+    // `*_set_cached`/`to_js` thunks; these forward to extern stubs so the
+    // constructor body type-checks today.
+    #[inline]
+    fn payload_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
+        // SAFETY: `global` is live; `this_value` is the freshly-constructed wrapper.
+        unsafe { SourceMapPrototype__payloadSetCachedValue(this_value, global.as_ptr(), value) };
+    }
+    #[inline]
+    fn line_lengths_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
+        // SAFETY: `global` is live; `this_value` is the freshly-constructed wrapper.
+        unsafe { SourceMapPrototype__lineLengthsSetCachedValue(this_value, global.as_ptr(), value) };
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -235,39 +237,26 @@ impl JSSourceMap {
     }
 
     fn mapping_name_to_js(&self, global: &JSGlobalObject, mapping: &Mapping) -> JsResult<JSValue> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_string::String::{create_utf8_for_js, to_js}
-            // TODO(b2-blocked): bun_sourcemap::mapping::List::get_name
-            let name_index = mapping.name_index;
-            if name_index >= 0 {
-                if let Some(name) = self.sourcemap.mappings.get_name(name_index) {
-                    return bstring::String::create_utf8_for_js(global, name);
-                } else {
-                    let index = usize::try_from(name_index).unwrap();
-                    if index < self.names.len() {
-                        return self.names[index].to_js(global);
-                    }
+        let name_index = mapping.name_index;
+        if name_index >= 0 {
+            if let Some(name) = self.sourcemap.mappings.get_name(name_index) {
+                return bun_string_jsc::create_utf8_for_js(global, name);
+            } else {
+                let index = usize::try_from(name_index).unwrap();
+                if index < self.names.len() {
+                    return self.names[index].to_js(global);
                 }
             }
-            return Ok(JSValue::UNDEFINED);
         }
-        let _ = (global, mapping);
-        todo!("bun_jsc method surface gated")
+        Ok(JSValue::UNDEFINED)
     }
 
     fn source_name_to_js(&self, global: &JSGlobalObject, mapping: &Mapping) -> JsResult<JSValue> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_string::String::to_js
-            let source_index = mapping.source_index;
-            if source_index >= 0 && source_index < i32::try_from(self.sources.len()).unwrap() {
-                return self.sources[usize::try_from(source_index).unwrap()].to_js(global);
-            }
-            return Ok(JSValue::UNDEFINED);
+        let source_index = mapping.source_index;
+        if source_index >= 0 && source_index < i32::try_from(self.sources.len()).unwrap() {
+            return self.sources[usize::try_from(source_index).unwrap()].to_js(global);
         }
-        let _ = (global, mapping);
-        todo!("bun_jsc method surface gated")
+        Ok(JSValue::UNDEFINED)
     }
 
     // TODO(b2-blocked): bun_jsc::host_fn — `#[bun_jsc::host_fn(method)]`
@@ -276,32 +265,26 @@ impl JSSourceMap {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_jsc::JSValue::{create_empty_object, js_number}
-            let [line_number, column_number] = get_line_column(global, frame)?;
+        let [line_number, column_number] = get_line_column(global, frame)?;
 
-            let Some(mapping) = this.sourcemap.find_mapping(
-                Ordinal::from_zero_based(line_number),
-                Ordinal::from_zero_based(column_number),
-            ) else {
-                return Ok(JSValue::create_empty_object(global, 0));
-            };
-            let name = this.mapping_name_to_js(global, &mapping)?;
-            let source = this.source_name_to_js(global, &mapping)?;
-            // SAFETY: C++ FFI; arguments are valid JSValues and a live JSGlobalObject.
-            return Ok(unsafe {
-                Bun__createNodeModuleSourceMapOriginObject(
-                    global as *const _ as *mut JSGlobalObject,
-                    name,
-                    JSValue::js_number(mapping.original.lines.zero_based()),
-                    JSValue::js_number(mapping.original.columns.zero_based()),
-                    source,
-                )
-            });
-        }
-        let _ = (this, global, frame);
-        todo!("bun_jsc method surface gated")
+        let Some(mapping) = this.sourcemap.find_mapping(
+            Ordinal::from_zero_based(line_number),
+            Ordinal::from_zero_based(column_number),
+        ) else {
+            return Ok(JSValue::create_empty_object(global, 0));
+        };
+        let name = this.mapping_name_to_js(global, &mapping)?;
+        let source = this.source_name_to_js(global, &mapping)?;
+        // SAFETY: C++ FFI; arguments are valid JSValues and a live JSGlobalObject.
+        Ok(unsafe {
+            Bun__createNodeModuleSourceMapOriginObject(
+                global as *const _ as *mut JSGlobalObject,
+                name,
+                JSValue::js_number(mapping.original.lines.zero_based() as f64),
+                JSValue::js_number(mapping.original.columns.zero_based() as f64),
+                source,
+            )
+        })
     }
 
     // TODO(b2-blocked): bun_jsc::host_fn — `#[bun_jsc::host_fn(method)]`
@@ -310,35 +293,29 @@ impl JSSourceMap {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_jsc::JSValue::{create_empty_object, js_number}
-            let [line_number, column_number] = get_line_column(global, frame)?;
+        let [line_number, column_number] = get_line_column(global, frame)?;
 
-            let Some(mapping) = this.sourcemap.find_mapping(
-                Ordinal::from_zero_based(line_number),
-                Ordinal::from_zero_based(column_number),
-            ) else {
-                return Ok(JSValue::create_empty_object(global, 0));
-            };
+        let Some(mapping) = this.sourcemap.find_mapping(
+            Ordinal::from_zero_based(line_number),
+            Ordinal::from_zero_based(column_number),
+        ) else {
+            return Ok(JSValue::create_empty_object(global, 0));
+        };
 
-            let name = this.mapping_name_to_js(global, &mapping)?;
-            let source = this.source_name_to_js(global, &mapping)?;
-            // SAFETY: C++ FFI; arguments are valid JSValues and a live JSGlobalObject.
-            return Ok(unsafe {
-                Bun__createNodeModuleSourceMapEntryObject(
-                    global as *const _ as *mut JSGlobalObject,
-                    JSValue::js_number(mapping.generated.lines.zero_based()),
-                    JSValue::js_number(mapping.generated.columns.zero_based()),
-                    JSValue::js_number(mapping.original.lines.zero_based()),
-                    JSValue::js_number(mapping.original.columns.zero_based()),
-                    source,
-                    name,
-                )
-            });
-        }
-        let _ = (this, global, frame);
-        todo!("bun_jsc method surface gated")
+        let name = this.mapping_name_to_js(global, &mapping)?;
+        let source = this.source_name_to_js(global, &mapping)?;
+        // SAFETY: C++ FFI; arguments are valid JSValues and a live JSGlobalObject.
+        Ok(unsafe {
+            Bun__createNodeModuleSourceMapEntryObject(
+                global as *const _ as *mut JSGlobalObject,
+                JSValue::js_number(mapping.generated.lines.zero_based() as f64),
+                JSValue::js_number(mapping.generated.columns.zero_based() as f64),
+                JSValue::js_number(mapping.original.lines.zero_based() as f64),
+                JSValue::js_number(mapping.original.columns.zero_based() as f64),
+                source,
+                name,
+            )
+        })
     }
 
     /// Called by the GC sweeper (mutator thread). Do not touch JS values here.
@@ -351,25 +328,31 @@ impl JSSourceMap {
 }
 
 fn get_line_column(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<[i32; 2]> {
-    #[cfg(any())]
-    {
-        // TODO(b2-blocked): bun_jsc::CallFrame::argument
-        // TODO(b2-blocked): bun_jsc::JSValue::coerce_to_i32
-        let line_number_value = frame.argument(0);
-        let column_number_value = frame.argument(1);
+    let line_number_value = frame.argument(0);
+    let column_number_value = frame.argument(1);
 
-        return Ok([
-            // Node.js does no validations.
-            line_number_value.coerce_to_i32(global)?,
-            column_number_value.coerce_to_i32(global)?,
-        ]);
-    }
-    let _ = (global, frame);
-    todo!("bun_jsc method surface gated")
+    Ok([
+        // Node.js does no validations.
+        line_number_value.coerce_to_i32(global)?,
+        column_number_value.coerce_to_i32(global)?,
+    ])
 }
 
 // TODO(port): move to sourcemap_jsc_sys (or bun_jsc_sys)
 unsafe extern "C" {
+    // Codegen-emitted cached-value setters (see `js.payloadSetCached` in
+    // JSSourceMap.zig); name matches generated_classes.ts output.
+    fn SourceMapPrototype__payloadSetCachedValue(
+        thisValue: JSValue,
+        globalObject: *mut JSGlobalObject,
+        value: JSValue,
+    );
+    fn SourceMapPrototype__lineLengthsSetCachedValue(
+        thisValue: JSValue,
+        globalObject: *mut JSGlobalObject,
+        value: JSValue,
+    );
+
     fn Bun__createNodeModuleSourceMapOriginObject(
         globalObject: *mut JSGlobalObject,
         name: JSValue,

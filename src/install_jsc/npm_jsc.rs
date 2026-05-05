@@ -3,23 +3,15 @@
 //! `pub const jsFunction… = @import(...)` alias so call sites and the
 //! `$newZigFunction("npm.zig", "…")` codegen path are unchanged.
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-// TODO(b2-blocked): bun_jsc::host_fn (proc-macro)
-// TODO(b2-blocked): bun_jsc::JsResult
-// TODO(b2-blocked): bun_jsc::CallFrame::arguments_old
-// TODO(b2-blocked): bun_jsc::JSValue::array_iterator
-// TODO(b2-blocked): bun_jsc::JSValue::to_slice
-// TODO(b2-blocked): bun_jsc::JSGlobalObject::has_exception
-// TODO(b2-blocked): bun_install::npm::OperatingSystem
-// TODO(b2-blocked): bun_install::npm::Libc
-// TODO(b2-blocked): bun_install::npm::Architecture
-#[cfg(any())]
-#[bun_jsc::host_fn]
-pub fn operating_system_is_match(global: &JSGlobalObject, frame: &CallFrame) -> bun_jsc::JsResult<JSValue> {
+// TODO(port): proc-macro — `#[bun_jsc::host_fn]` will wrap these into the
+// `JSHostFn` ABI for `JSFunction::create`. Until that lands, the bodies are
+// plain `JSHostFnZig`-shaped fns (compile-checked, not yet ABI-wrapped).
+pub fn operating_system_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_install::npm;
-    let args = frame.arguments_old(1);
-    let mut operating_system = npm::OperatingSystem::negatable(npm::OperatingSystem::NONE);
+    let args = frame.arguments_old::<1>();
+    let mut operating_system = npm::OperatingSystem::NONE.negatable();
     let mut iter = args.ptr[0].array_iterator(global)?;
     while let Some(item) = iter.next()? {
         let slice = item.to_slice(global)?;
@@ -31,17 +23,15 @@ pub fn operating_system_is_match(global: &JSGlobalObject, frame: &CallFrame) -> 
     if global.has_exception() {
         return Ok(JSValue::ZERO);
     }
-    Ok(JSValue::from(
+    Ok(JSValue::js_boolean(
         operating_system.combine().is_match(npm::OperatingSystem::CURRENT),
     ))
 }
 
-#[cfg(any())]
-#[bun_jsc::host_fn]
-pub fn libc_is_match(global: &JSGlobalObject, frame: &CallFrame) -> bun_jsc::JsResult<JSValue> {
+pub fn libc_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_install::npm;
-    let args = frame.arguments_old(1);
-    let mut libc = npm::Libc::negatable(npm::Libc::NONE);
+    let args = frame.arguments_old::<1>();
+    let mut libc = npm::Libc::NONE.negatable();
     // PORT NOTE: Zig source omits `try` on arrayIterator/next/toSlice here (unlike the
     // sibling fns above/below). Added `?` for type consistency; verify in Phase B.
     // TODO(port): confirm Zig source intent for missing `try` in libcIsMatch
@@ -56,15 +46,13 @@ pub fn libc_is_match(global: &JSGlobalObject, frame: &CallFrame) -> bun_jsc::JsR
     if global.has_exception() {
         return Ok(JSValue::ZERO);
     }
-    Ok(JSValue::from(libc.combine().is_match(npm::Libc::CURRENT)))
+    Ok(JSValue::js_boolean(libc.combine().is_match(npm::Libc::CURRENT)))
 }
 
-#[cfg(any())]
-#[bun_jsc::host_fn]
-pub fn architecture_is_match(global: &JSGlobalObject, frame: &CallFrame) -> bun_jsc::JsResult<JSValue> {
+pub fn architecture_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_install::npm;
-    let args = frame.arguments_old(1);
-    let mut architecture = npm::Architecture::negatable(npm::Architecture::NONE);
+    let args = frame.arguments_old::<1>();
+    let mut architecture = npm::Architecture::NONE.negatable();
     let mut iter = args.ptr[0].array_iterator(global)?;
     while let Some(item) = iter.next()? {
         let slice = item.to_slice(global)?;
@@ -76,7 +64,7 @@ pub fn architecture_is_match(global: &JSGlobalObject, frame: &CallFrame) -> bun_
     if global.has_exception() {
         return Ok(JSValue::ZERO);
     }
-    Ok(JSValue::from(
+    Ok(JSValue::js_boolean(
         architecture.combine().is_match(npm::Architecture::CURRENT),
     ))
 }
@@ -85,52 +73,49 @@ pub fn architecture_is_match(global: &JSGlobalObject, frame: &CallFrame) -> bun_
 pub struct ManifestBindings;
 
 impl ManifestBindings {
-    // TODO(b2-blocked): bun_jsc::JSValue::create_empty_object
-    // TODO(b2-blocked): bun_jsc::JSValue::put
-    // TODO(b2-blocked): bun_jsc::JSFunction::create
-    // TODO(b2-blocked): bun_string::ZigString::static_
     pub fn generate(_global: &JSGlobalObject) -> JSValue {
+        // TODO(b2-blocked): bun_jsc::host_fn (proc-macro) — `JSFunction::create`
+        // takes a raw-ABI `JSHostFn`, which the proc-macro produces from a
+        // `JSHostFnZig`-shaped fn. Until that lands, `Self::js_parse_manifest`
+        // has the wrong fn-pointer type to pass here.
         #[cfg(any())]
         {
             use bun_jsc::JSFunction;
-            use bun_string::ZigString;
             let obj = JSValue::create_empty_object(_global, 1);
-            let parse_manifest_string = ZigString::static_(b"parseManifest");
             obj.put(
                 _global,
-                parse_manifest_string,
-                JSFunction::create(_global, b"parseManifest", Self::js_parse_manifest, 2, Default::default()),
+                b"parseManifest",
+                JSFunction::create(
+                    _global,
+                    bun_string::String::static_(b"parseManifest"),
+                    Self::js_parse_manifest,
+                    2,
+                    Default::default(),
+                ),
             );
             return obj;
         }
         #[cfg(not(any()))]
-        todo!("npm_jsc::ManifestBindings::generate — gated on bun_jsc method surface")
+        todo!("npm_jsc::ManifestBindings::generate — gated on bun_jsc::host_fn proc-macro")
     }
 
-    // TODO(b2-blocked): bun_jsc::JsError
-    // TODO(b2-blocked): bun_jsc::JSValue::to_bun_string
-    // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw
-    // TODO(b2-blocked): bun_sys::File::open_at
+    // TODO(b2-blocked): bun_install::npm::PackageManifest (fields: name(), versions, string_buf)
     // TODO(b2-blocked): bun_sys::Fd::cwd
-    // TODO(b2-blocked): bun_install::npm::registry
-    // TODO(b2-blocked): bun_install::npm::package_manifest
-    // TODO(b2-blocked): bun_string::strings::without_trailing_slash
-    // TODO(b2-blocked): bun_string::strings::without_prefix
-    // TODO(b2-blocked): bun_string::String::to_js_by_parse_json
+    // TODO(b2-blocked): bun_jsc::StringJsc::to_js_by_parse_json
     #[cfg(any())]
-    #[bun_jsc::host_fn]
-    pub fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> bun_jsc::JsResult<JSValue> {
+    pub fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         use std::io::Write as _;
         use bstr::BStr;
         use bun_jsc::JsError;
         use bun_string::{strings, String as BunString, ZigString};
         use bun_install::npm;
 
-        let args = frame.arguments_old(2).slice();
+        let args = frame.arguments_old::<2>();
+        let args = args.slice();
         if args.len() < 2 || !args[0].is_string() || !args[1].is_string() {
-            return global.throw(format_args!(
+            return Err(global.throw(format_args!(
                 "expected manifest filename and registry string arguments"
-            ));
+            )));
         }
 
         let manifest_filename_str = args[0].to_bun_string(global)?;

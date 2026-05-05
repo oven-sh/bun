@@ -9,7 +9,7 @@ pub fn hasAny(this: *const CatalogMap) bool {
     return this.default.count() > 0 or this.groups.count() > 0;
 }
 
-pub fn get(this: *CatalogMap, lockfile: *const Lockfile, catalog_name: String, dep_name: String) ?Dependency {
+pub fn get(this: *const CatalogMap, lockfile: *const Lockfile, catalog_name: String, dep_name: String) ?Dependency {
     if (catalog_name.isEmpty()) {
         if (this.default.count() == 0) {
             return null;

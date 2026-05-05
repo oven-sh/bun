@@ -719,9 +719,17 @@ fn hoistDependency(
         // or hoist if peer version allows it
 
         if (dependency.behavior.isPeer()) {
-            if (dependency.version.tag == .npm) {
+            // `catalog:` peer dependencies only carry the catalog name, not the
+            // resolved npm version range. Look it up so a catalog peer hoists
+            // the same way the equivalent npm range would.
+            const peer_version = if (dependency.version.tag == .catalog)
+                builder.lockfile.resolveCatalogDependency(dependency) orelse dependency.version
+            else
+                dependency.version;
+
+            if (peer_version.tag == .npm) {
                 const resolution: Resolution = builder.lockfile.packages.items(.resolution)[res_id];
-                const version = dependency.version.value.npm.version;
+                const version = peer_version.value.npm.version;
                 if (resolution.tag == .npm and version.satisfies(resolution.value.npm.version, builder.buf(), builder.buf())) {
                     return .hoisted; // 1
                 }

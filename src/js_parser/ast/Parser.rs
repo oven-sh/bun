@@ -4,29 +4,34 @@ use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_collections::BabyList;
 use bun_core::{self, err, Error, Output};
 use bun_logger as logger;
-use bun_str::strings;
-use bun_wyhash::Wyhash;
+use bun_string::strings;
+use bun_wyhash::Wyhash11 as Wyhash;
 
-use bun_options_types as options; // TYPE_ONLY: was bun_bundler::options
-// TODO(b0): defines arrives from move-in (was bun_bundler::defines → js_parser)
-use crate::defines::Define;
+use crate::parser::options;
 use bun_options_types::import_record::ImportRecord;
 
-use bun_js_parser as js_parser;
-use bun_js_parser::js_lexer;
-use bun_js_parser::ast as js_ast;
-use bun_js_parser::ast::{B, DeclaredSymbol, E, Expr, G, S, Stmt, StmtList, Symbol};
-use bun_js_parser::ast::G::Decl;
-use bun_js_parser::runtime::Runtime;
-
-use js_parser::{
-    JSXImportScanner, JSXParser, JavaScriptImportScanner, JavaScriptParser, Jest,
-    ParseStatementOptions, ScanPassResult, SideEffects, TSXImportScanner, TSXParser,
-    TypeScriptImportScanner, TypeScriptParser, WrapMode,
+use crate::defines::Define;
+use crate::lexer as js_lexer;
+use crate::ast as js_ast;
+use crate::ast::{B, E, Expr, G, S, Stmt, Symbol};
+use crate::ast::g::Decl;
+use crate::ast::p::P;
+use crate::{self as js_parser, DeclaredSymbol, StmtList};
+use crate::parser::{
+    Jest, JsxNone, JsxReact, ParseStatementOptions, Runtime, RuntimeFeatures, RuntimeImports,
+    ScanPassResult, SideEffects, WrapMode,
 };
 
-type RuntimeFeatures = Runtime::Features;
-type RuntimeImports = Runtime::Imports;
+// Named instantiations of `P<'_, TS, J, SCAN>` matching the Zig
+// `JavaScriptParser`/`TypeScriptParser`/etc. comptime aliases.
+pub type JavaScriptParser<'a> = P<'a, false, JsxNone, false>;
+pub type JSXParser<'a> = P<'a, false, JsxReact, false>;
+pub type TypeScriptParser<'a> = P<'a, true, JsxNone, false>;
+pub type TSXParser<'a> = P<'a, true, JsxReact, false>;
+pub type JavaScriptImportScanner<'a> = P<'a, false, JsxNone, true>;
+pub type JSXImportScanner<'a> = P<'a, false, JsxReact, true>;
+pub type TypeScriptImportScanner<'a> = P<'a, true, JsxNone, true>;
+pub type TSXImportScanner<'a> = P<'a, true, JsxReact, true>;
 
 // In AST crates, ListManaged(T) backed by the arena → bumpalo Vec.
 type BumpVec<'bump, T> = bumpalo::collections::Vec<'bump, T>;
@@ -73,7 +78,7 @@ pub struct Options<'a> {
 
     /// When using react fast refresh or server components, the framework is
     /// able to customize what import sources are used.
-    pub framework: Option<&'a bun_options_types::Framework>, // TYPE_ONLY: was bun_runtime::bake::Framework
+    pub framework: Option<&'a options::Framework>, // TYPE_ONLY: was bun_runtime::bake::Framework
 
     /// REPL mode: transforms code for interactive evaluation
     /// - Wraps lone object literals `{...}` in parentheses
@@ -92,6 +97,9 @@ impl<'a> Default for Options<'a> {
     }
 }
 
+// Round-D: method bodies reference options::JSX::* fields beyond the round-C
+// stub (parse, hash_for_runtime_transpiler) and call into gated P methods.
+#[cfg(any())]
 impl<'a> Options<'a> {
     pub fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash, did_use_jsx: bool) {
         debug_assert!(!self.bundle);
@@ -172,6 +180,10 @@ impl<'a> Options<'a> {
     }
 }
 
+// Round-D: parse()/analyze()/_parse()/scan_imports() drive the full P method
+// surface (init/prepare_for_visit_pass/to_ast) which is gated. Struct + named
+// instantiations stay live so downstream crates can name `Parser<'a>`.
+#[cfg(any())]
 impl<'a> Parser<'a> {
     pub fn scan_imports(&mut self, scan_pass: &mut ScanPassResult) -> Result<(), Error> {
         if self.options.ts && self.options.jsx.parse {
@@ -278,7 +290,7 @@ impl<'a> Parser<'a> {
         &mut self,
         expr: Expr,
         runtime_api_call: &'static [u8],
-        symbols: Symbol::List,
+        symbols: js_ast::symbol::List,
     ) -> Result<js_ast::Result, Error> {
         // TODO(port): narrow error set
         let mut p = JavaScriptParser::init(
@@ -396,7 +408,7 @@ impl<'a> Parser<'a> {
 
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions { is_module_scope: true, ..Default::default() };
-        let parse_tracer = bun_core::perf::trace("JSParser.parse");
+        let parse_tracer = /* TODO(b2-blocked): bun_perf */ (); // TODO(b2-blocked): bun_perf::trace
 
         let stmts = match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
             Ok(s) => s,
@@ -432,7 +444,7 @@ impl<'a> Parser<'a> {
             return Err(err!("SyntaxError"));
         }
 
-        let visit_tracer = bun_core::perf::trace("JSParser.visit");
+        let visit_tracer = /* TODO(b2-blocked): bun_perf */ (); // TODO(b2-blocked): bun_perf::trace
         p.prepare_for_visit_pass()?;
 
         let mut parts = BumpVec::new_in(p.bump);
@@ -440,7 +452,7 @@ impl<'a> Parser<'a> {
         p.append_part(&mut parts, stmts)?;
         visit_tracer.end();
 
-        let analyze_tracer = bun_core::perf::trace("JSParser.analyze");
+        let analyze_tracer = /* TODO(b2-blocked): bun_perf */ (); // TODO(b2-blocked): bun_perf::trace
         callback(context, &mut p, parts.as_mut_slice())?;
         analyze_tracer.end();
         Ok(())
@@ -449,11 +461,11 @@ impl<'a> Parser<'a> {
     // TODO(port): `P` needs a trait bound; see _scan_imports note.
     fn _parse<P>(&mut self) -> Result<js_ast::Result, Error> {
         // TODO(port): narrow error set
-        let prev_action = bun_crash_handler::current_action();
+        let prev_action = (); // TODO(b2-blocked): bun_crash_handler::current_action
         let _restore = scopeguard::guard((), |_| {
-            bun_crash_handler::set_current_action(prev_action);
+            /* TODO(b2-blocked): set_current_action */ drop(prev_action);
         });
-        bun_crash_handler::set_current_action(bun_crash_handler::Action::Parse(
+        /* TODO(b2-blocked): set_current_action */ drop(bun_crash_handler::Action::Parse(
             self.source.path.text,
         ));
 
@@ -509,7 +521,7 @@ impl<'a> Parser<'a> {
         // We must check the cache only after we've consumed the hashbang and leading // @bun pragma
         // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
         #[cfg(not(target_arch = "wasm32"))]
-        if bun_core::FeatureFlags::RUNTIME_TRANSPILER_CACHE {
+        if true /* TODO(b2-blocked): feature_flag */ {
             // TODO(b0): RuntimeTranspilerCache arrives from move-in (was bun_jsc → js_parser)
             let runtime_transpiler_cache: Option<&mut crate::RuntimeTranspilerCache> =
                 p.options.features.runtime_transpiler_cache;
@@ -527,7 +539,7 @@ impl<'a> Parser<'a> {
 
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions { is_module_scope: true, ..Default::default() };
-        let parse_tracer = bun_core::perf::trace("JSParser.parse");
+        let parse_tracer = /* TODO(b2-blocked): bun_perf */ (); // TODO(b2-blocked): bun_perf::trace
 
         // Parsing seems to take around 2x as much time as visiting.
         // Which makes sense.
@@ -560,11 +572,11 @@ impl<'a> Parser<'a> {
             return Err(err!("SyntaxError"));
         }
 
-        bun_crash_handler::set_current_action(bun_crash_handler::Action::Visit(
+        /* TODO(b2-blocked): set_current_action */ drop(bun_crash_handler::Action::Visit(
             self.source.path.text,
         ));
 
-        let visit_tracer = bun_core::perf::trace("JSParser.visit");
+        let visit_tracer = /* TODO(b2-blocked): bun_perf */ (); // TODO(b2-blocked): bun_perf::trace
         p.prepare_for_visit_pass()?;
 
         let mut before = BumpVec::<js_ast::Part>::new_in(p.bump);
@@ -781,7 +793,7 @@ impl<'a> Parser<'a> {
             return Err(err!("SyntaxError"));
         }
 
-        let postvisit_tracer = bun_core::perf::trace("JSParser.postvisit");
+        let postvisit_tracer = /* TODO(b2-blocked): bun_perf */ (); // TODO(b2-blocked): bun_perf::trace
         let _postvisit_guard = scopeguard::guard((), move |_| postvisit_tracer.end());
 
         let mut uses_dirname =
@@ -993,7 +1005,7 @@ impl<'a> Parser<'a> {
                         if let js_ast::Expr::Data::EBinary(bin) = &value.data {
                             let left = bin.left;
                             let right = bin.right;
-                            if bin.op == js_ast::Op::BinAssign
+                            if bin.op == js_ast::op::Code::BinAssign
                                 && matches!(&left.data, js_ast::Expr::Data::EDot(d)
                                     if d.name == b"exports"
                                         && matches!(&d.target.data, js_ast::Expr::Data::EIdentifier(id)
@@ -1081,7 +1093,7 @@ impl<'a> Parser<'a> {
                                     let left = bin.left;
                                     let right = bin.right;
 
-                                    if bin.op == js_ast::Op::BinAssign
+                                    if bin.op == js_ast::op::Code::BinAssign
                                         && matches!(right.data, js_ast::Expr::Data::ERequireString(_))
                                         && matches!(&left.data, js_ast::Expr::Data::EDot(d)
                                             if d.name == b"exports"
@@ -1179,7 +1191,7 @@ impl<'a> Parser<'a> {
             //    export const foo = 123
             //    export * as ns from './foo'
             //
-            if bun_core::FeatureFlags::EXPORT_STAR_REDIRECT {
+            if true /* TODO(b2-blocked): feature_flag */ {
                 // If the file only contains "export * from './blah'
                 // we pretend the file never existed in the first place.
                 // the semantic difference here is in export default statements
@@ -1382,7 +1394,7 @@ impl<'a> Parser<'a> {
                         || uses_filename
                         || (!p.options.bundle
                             && p.module_scope.strict_mode
-                                == js_ast::StrictMode::ExplicitStrictMode)
+                                == crate::StrictModeKind::ExplicitStrictMode)
                     {
                         exports_kind = js_ast::ExportsKind::Cjs;
                     } else {
@@ -1707,7 +1719,7 @@ impl<'a> Parser<'a> {
             p.generate_react_refresh_import(
                 &mut before,
                 sc.server_runtime_import,
-                &[js_parser::ReactRefreshImportItem {
+                &[crate::ast::p::ReactRefreshImportClause {
                     name: sc.server_register_client_reference,
                     ref_: p.server_components_wrap_ref,
                     enabled: true,
@@ -1724,12 +1736,12 @@ impl<'a> Parser<'a> {
                     b"react-refresh/runtime"
                 },
                 &[
-                    js_parser::ReactRefreshImportItem {
+                    crate::ast::p::ReactRefreshImportClause {
                         name: b"register",
                         enabled: p.react_refresh.register_used,
                         ref_: p.react_refresh.register_ref,
                     },
-                    js_parser::ReactRefreshImportItem {
+                    crate::ast::p::ReactRefreshImportClause {
                         name: b"createSignatureFunctionForTransform",
                         enabled: p.react_refresh.signature_used,
                         ref_: p.react_refresh.create_signature_ref,
@@ -1791,7 +1803,7 @@ impl<'a> Parser<'a> {
         // p.popScope();
 
         #[cfg(not(target_arch = "wasm32"))]
-        if bun_core::FeatureFlags::RUNTIME_TRANSPILER_CACHE {
+        if true /* TODO(b2-blocked): feature_flag */ {
             let runtime_transpiler_cache: Option<&mut crate::RuntimeTranspilerCache> =
                 p.options.features.runtime_transpiler_cache;
             if let Some(cache) = runtime_transpiler_cache {
@@ -1826,7 +1838,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn has_bun_pragma(&self, has_hashbang: bool) -> Option<js_ast::result::AlreadyBundled> {
+    fn has_bun_pragma(&self, has_hashbang: bool) -> Option<crate::AlreadyBundled> {
         const BUN_PRAGMA: &[u8] = b"// @bun";
         let contents = self.lexer.source.contents;
         let end = contents.len();
@@ -1887,15 +1899,15 @@ impl<'a> Parser<'a> {
 
         if state.seen_cjs {
             Some(if state.seen_bytecode {
-                js_ast::result::AlreadyBundled::BytecodeCjs
+                crate::AlreadyBundled::BytecodeCjs
             } else {
-                js_ast::result::AlreadyBundled::BunCjs
+                crate::AlreadyBundled::BunCjs
             })
         } else {
             Some(if state.seen_bytecode {
-                js_ast::result::AlreadyBundled::Bytecode
+                crate::AlreadyBundled::Bytecode
             } else {
-                js_ast::result::AlreadyBundled::Bun
+                crate::AlreadyBundled::Bun
             })
         }
     }
@@ -1910,7 +1922,7 @@ struct PragmaState {
 #[cfg(target_arch = "wasm32")]
 pub type MacroContext = Option<*mut c_void>;
 #[cfg(not(target_arch = "wasm32"))]
-pub type MacroContext = js_ast::macro_::MacroContext;
+pub type MacroContext = crate::Macro::MacroContext;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

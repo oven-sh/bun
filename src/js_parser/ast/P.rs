@@ -12,36 +12,40 @@ use bumpalo::Bump;
 
 use bun_alloc::Arena;
 use bun_collections::{BabyList, HashMap, ArrayHashMap, StringHashMap};
-use bun_core::{Environment, FeatureFlags, Output};
+use bun_core::{Environment, Output};
 use bun_logger as logger;
 use bun_options_types::{ImportRecord, ImportKind};
-use bun_str::strings;
-use bun_wyhash as wyhash;
+use bun_string::strings;
+use bun_wyhash::Wyhash11 as Wyhash;
 
-use crate::js_lexer;
+use crate::lexer as js_lexer;
 use crate::ast as js_ast;
 use crate::ast::{
-    B, Binding, BindingNodeIndex, DeclaredSymbol, E, Expr, ExprNodeIndex, ExprNodeList, Flags,
-    LocRef, S, Scope, Stmt, StmtNodeIndex, StmtNodeList, Symbol,
-    G, SlotCounts,
+    B, Binding, BindingNodeIndex, E, Expr, ExprNodeIndex, ExprNodeList, Flags, LocRef, S, Scope,
+    Stmt, StmtNodeIndex, StmtNodeList, Symbol, G, SlotCounts,
 };
-use crate::ast::G::{Arg, Decl, Property};
-use crate::ast::Part::{SymbolPropertyUseMap, SymbolUseMap};
+use crate::ast::g::{Arg, Decl, Property};
+use crate::part::{SymbolPropertyUseMap, SymbolUseMap};
 use crate::{
-    ConvertESMExportsForHmr, DeferredArrowArgErrors, DeferredErrors, DeferredImportNamespace,
-    ExprBindingTuple, ExpressionTransposer, FindLabelSymbolResult, FnOnlyDataVisit,
-    FnOrArrowDataParse, FnOrArrowDataVisit, FunctionKind, IdentifierOpts,
-    ImportItemForNamespaceMap, ImportNamespaceCallOrConstruct, ImportScanner, InvalidLoc,
-    JSXImport, JSXTransformType, Jest, LocList, MacroState, ParseStatementOptions, ParsedPath,
-    Parser, Prefill, PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap, RuntimeFeatures,
-    RuntimeImports, ScanPassResult, ScopeOrder, ScopeOrderList, SideEffects, StmtList,
-    StrictModeFeature, StringBoolMap, Substitution, TempRef, ThenCatchChain, TransposeState,
-    TypeScript, WrapMode, arguments_str, exports_string_name, fs, generated_symbol_name,
-    is_eval_or_arguments, loc_module_scope, options, renamer, statement_cares_about_scope,
+    ConvertESMExportsForHmr, DeclaredSymbol, DeferredArrowArgErrors, DeferredErrors,
+    DeferredImportNamespace, ExprBindingTuple, ExpressionTransposer, FindLabelSymbolResult,
+    FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit, FunctionKind, IdentifierOpts,
+    ImportItemForNamespaceMap, ImportNamespaceCallOrConstruct, ImportScanner, InvalidLoc, JSXImport,
+    JSXTransformType, Jest, JsxT, LocList, MacroState, ParseStatementOptions, ParsedPath,
+    PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap, RuntimeFeatures, RuntimeImports,
+    ScanPassResult, ScopeOrder, ScopeOrderList, SideEffects, StmtList, StrictModeFeature,
+    StringBoolMap, Substitution, TempRef, ThenCatchChain, TransposeState, TypeScript, WrapMode,
+    fs, is_eval_or_arguments, options, statement_cares_about_scope,
+    prefill as Prefill, ARGUMENTS_STR as arguments_str, EXPORTS_STRING_NAME as exports_string_name,
+    LOC_MODULE_SCOPE as loc_module_scope,
 };
-use crate::repl_transforms;
-// TODO(b0): defines arrives from move-in (was bun_bundler::defines → js_parser)
+use crate::generated_symbol_name;
+use crate::ast::parser_entry::{Parser, Options as ParserOptions};
 use crate::defines::{Define, DefineData};
+// Round-D/E modules: stub re-exports so type signatures referencing them compile.
+// Real bodies un-gate per-file later.
+use crate::renamer;
+use crate::repl_transforms;
 
 // Type aliases matching the Zig `const List = std.ArrayListUnmanaged;` etc.
 // In this AST crate, lists are arena-backed.
@@ -49,6 +53,35 @@ type BumpVec<'a, T> = bumpalo::collections::Vec<'a, T>;
 type List<'a, T> = BumpVec<'a, T>;
 type ListManaged<'a, T> = BumpVec<'a, T>;
 type Map<K, V> = HashMap<K, V>;
+
+/// Erases `P<'a, TS, J, SCAN>`'s const-generics so helpers like `JSXTag::parse`
+/// (which Zig wrote as `comptime P: type`) can take any instantiation. Only the
+/// surface those helpers actually touch is exposed; round-D widens this as the
+/// parse_* / visit_* sibling files un-gate.
+pub trait ParserLike<'a> {
+    fn lexer(&mut self) -> &mut js_lexer::Lexer<'a>;
+    fn log(&mut self) -> &mut logger::Log;
+    fn bump(&self) -> &'a Bump;
+    fn new_expr<T: js_ast::expr::IntoExprData>(&mut self, t: T, loc: logger::Loc) -> Expr;
+    fn store_name_in_ref(&mut self, name: &'a [u8]) -> Result<Ref, bun_core::Error>;
+}
+// Round-C: trait + impl defined so round-B Expr methods can bound on it. Method
+// bodies forward to the (currently-gated) inherent impls; until those un-gate
+// in round-D, calling through ParserLike panics — which is fine since no live
+// code does so yet (callers are in parse_*/visit_* which are also gated).
+impl<'a, const TS: bool, J: JsxT, const SCAN: bool> ParserLike<'a> for P<'a, TS, J, SCAN> {
+    #[inline] fn lexer(&mut self) -> &mut js_lexer::Lexer<'a> { &mut self.lexer }
+    #[inline] fn log(&mut self) -> &mut logger::Log { self.log }
+    #[inline] fn bump(&self) -> &'a Bump { self.allocator }
+    #[inline] fn new_expr<T: js_ast::expr::IntoExprData>(&mut self, _t: T, _loc: logger::Loc) -> Expr {
+        #[cfg(any())] { return P::new_expr(self, _t, _loc); }
+        unimplemented!("ParserLike::new_expr — P impl block gated until round-D")
+    }
+    #[inline] fn store_name_in_ref(&mut self, _name: &'a [u8]) -> Result<Ref, bun_core::Error> {
+        #[cfg(any())] { return P::store_name_in_ref(self, _name); }
+        unimplemented!("ParserLike::store_name_in_ref — P impl block gated until round-D")
+    }
+}
 
 #[derive(Default, Clone, Copy)]
 pub struct ParserFeatures {
@@ -59,8 +92,8 @@ pub struct ParserFeatures {
 
 // workaround for https://github.com/ziglang/zig/issues/10903 — not needed in Rust;
 // `NewParser` is just an alias for the generic struct.
-pub type NewParser<const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: bool> =
-    P<'static, TYPESCRIPT, JSX, SCAN_ONLY>;
+pub type NewParser<'a, const TYPESCRIPT: bool, J, const SCAN_ONLY: bool> =
+    P<'a, TYPESCRIPT, J, SCAN_ONLY>;
 // TODO(port): the Zig `NewParser(features)` call sites pass a struct literal; in Rust callers
 // must spell out the three const params directly.
 
@@ -104,11 +137,11 @@ impl<'a> ImportRecordList<'a> {
 }
 
 pub enum NamedImportsType<'a> {
-    Owned(js_ast::Ast::NamedImports),
-    Borrowed(&'a mut js_ast::Ast::NamedImports),
+    Owned(js_ast::ast::NamedImports),
+    Borrowed(&'a mut js_ast::ast::NamedImports),
 }
 impl<'a> core::ops::Deref for NamedImportsType<'a> {
-    type Target = js_ast::Ast::NamedImports;
+    type Target = js_ast::ast::NamedImports;
     fn deref(&self) -> &Self::Target {
         match self {
             Self::Owned(v) => v,
@@ -128,24 +161,27 @@ impl<'a> core::ops::DerefMut for NamedImportsType<'a> {
 // In Zig: `if (only_scan_imports_and_do_not_visit) bool else void`.
 pub type NeedsJSXType = bool;
 // In Zig: `if (track_symbol_usage_during_parse_pass) *Map else void`.
-pub type ParsePassSymbolUsageType<'a> = Option<&'a mut ScanPassResult::ParsePassSymbolUsageMap>;
+pub type ParsePassSymbolUsageType<'a> = Option<&'a mut crate::ParsePassSymbolUsageMap>;
 // In Zig: `if (allow_macros) u32 else u0`.
 pub type MacroCallCountType = u32;
 
 // ─── Re-exports of sibling-module impls (Zig: `pub const X = mod.X;`) ───
 // In Rust these are inherent methods on `P` defined in sibling files via separate
-// `impl<...> P<...>` blocks. We re-export the modules so call sites resolve.
-pub use super::skip_typescript::*;
-pub use super::parse::*;
-pub use super::visit::*;
-pub use super::visit_binary_expression::BinaryExpressionVisitor;
-pub use super::maybe::*;
-pub use super::symbols::*;
-pub use super::lower_decorators::*;
-
+// `impl<...> P<...>` blocks. Round-D/E: those files un-gate per-module; until
+// then their re-exports are gated so the *struct* + core helpers compile.
+#[cfg(any())] pub use super::skip_typescript::*;
+#[cfg(any())] pub use super::parse::*;
+#[cfg(any())] pub use super::visit::*;
+#[cfg(any())] pub use super::maybe::*;
+#[cfg(any())] pub use super::symbols::*;
+#[cfg(any())] pub use super::lower_decorators::*;
+// `BinaryExpressionVisitor` is referenced as a field type; provide an opaque
+// stand-in until visit_binary_expression.rs un-gates.
 #[derive(Default)]
+pub struct BinaryExpressionVisitor;
+
 pub struct RecentlyVisitedTSNamespace {
-    pub expr: Expr::Data,
+    pub expr: js_ast::ExprData,
     pub map: Option<*const js_ast::TSNamespaceMemberMap>,
 }
 
@@ -172,14 +208,15 @@ pub enum ReactRefreshExportKind {
 // P — the parser struct.
 // `'a` covers borrowed init() params (log/define/source) AND the arena (`bump`).
 // ─────────────────────────────────────────────────────────────────────────────
-pub struct P<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: bool> {
-    pub macro_: MacroState,
+pub struct P<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> {
+    _jsx: core::marker::PhantomData<J>,
+    pub macro_: MacroState<'a>,
     pub allocator: &'a Bump,
-    pub options: Parser::Options,
+    pub options: ParserOptions<'a>,
     pub log: &'a mut logger::Log,
     pub define: &'a Define,
     pub source: &'a logger::Source,
-    pub lexer: js_lexer::Lexer,
+    pub lexer: js_lexer::Lexer<'a>,
     pub allow_in: bool,
     pub allow_private_identifiers: bool,
 
@@ -190,7 +227,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN
     pub top_level_await_keyword: logger::Range,
     pub fn_or_arrow_data_parse: FnOrArrowDataParse,
     pub fn_or_arrow_data_visit: FnOrArrowDataVisit,
-    pub fn_only_data_visit: FnOnlyDataVisit,
+    pub fn_only_data_visit: FnOnlyDataVisit<'a>,
     pub allocated_names: List<'a, &'a [u8]>,
     // allocated_names: ListManaged(string) = ListManaged(string).init(bun.default_allocator),
     // allocated_names_pool: ?*AllocatedNamesPool.Node = null,
@@ -250,15 +287,15 @@ pub struct P<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN
 
     pub injected_define_symbols: List<'a, Ref>,
     pub symbol_uses: SymbolUseMap,
-    pub declared_symbols: DeclaredSymbol::List,
-    pub declared_symbols_for_reuse: DeclaredSymbol::List,
+    pub declared_symbols: crate::DeclaredSymbolList,
+    pub declared_symbols_for_reuse: crate::DeclaredSymbolList,
     pub runtime_imports: RuntimeImports,
 
     /// Used with unwrap_commonjs_packages
     pub imports_to_convert_from_require: List<'a, DeferredImportNamespace>,
     pub unwrap_all_requires: bool,
 
-    pub commonjs_named_exports: js_ast::Ast::CommonJSNamedExports,
+    pub commonjs_named_exports: js_ast::ast::CommonJSNamedExports,
     pub commonjs_named_exports_deoptimized: bool,
     pub commonjs_module_exports_assigned_deoptimized: bool,
     pub commonjs_named_exports_needs_conversion: u32,
@@ -324,11 +361,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN
     // "visit" pass.
     pub enclosing_namespace_arg_ref: Option<Ref>,
 
-    pub jsx_imports: JSXImport::Symbols,
+    pub jsx_imports: crate::JSXImportSymbols,
 
     /// only applicable when `.options.features.react_fast_refresh` is set.
     /// populated before visit pass starts.
-    pub react_refresh: ReactRefresh,
+    pub react_refresh: ReactRefresh<'a>,
 
     /// only applicable when `.options.features.server_components` is
     /// configured to wrap exports. populated before visit pass starts.
@@ -349,7 +386,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN
     pub import_items_for_namespace: HashMap<Ref, ImportItemForNamespaceMap>,
     pub is_import_item: RefMap,
     pub named_imports: NamedImportsType<'a>,
-    pub named_exports: js_ast::Ast::NamedExports,
+    pub named_exports: js_ast::ast::NamedExports,
     pub import_namespace_cc_map: Map<ImportNamespaceCallOrConstruct, bool>,
 
     // When we're only scanning the imports
@@ -374,17 +411,17 @@ pub struct P<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN
     // symbols must be separate from the pass that binds identifiers to declared
     // symbols to handle declaring a hoisted "var" symbol in a nested scope and
     // binding a name to it in a parent or sibling scope.
-    pub scopes_in_order: ScopeOrderList,
-    pub scope_order_to_visit: &'a mut [ScopeOrder],
+    pub scopes_in_order: ScopeOrderList<'a>,
+    pub scope_order_to_visit: &'a mut [ScopeOrder<'a>],
 
     // These properties are for the visit pass, which runs after the parse pass.
     // The visit pass binds identifiers to declared symbols, does constant
     // folding, substitutes compile-time variable definitions, and lowers certain
     // syntactic constructs as appropriate.
-    pub stmt_expr_value: Expr::Data,
-    pub call_target: Expr::Data,
-    pub delete_target: Expr::Data,
-    pub loop_body: Stmt::Data,
+    pub stmt_expr_value: js_ast::ExprData,
+    pub call_target: js_ast::ExprData,
+    pub delete_target: js_ast::ExprData,
+    pub loop_body: js_ast::StmtData,
     pub module_scope: *mut js_ast::Scope,
     pub module_scope_directive_loc: logger::Loc,
     pub is_control_flow_dead: bool,
@@ -452,7 +489,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN
 
     // This helps recognize the "await import()" pattern. When this is present,
     // warnings about non-string import paths will be omitted inside try blocks.
-    pub await_target: Option<js_ast::Expr::Data>,
+    pub await_target: Option<js_ast::ExprData>,
 
     pub to_expr_wrapper_namespace: Binding2ExprWrapperNamespace,
     pub to_expr_wrapper_hoisted: Binding2ExprWrapperHoisted,
@@ -489,16 +526,17 @@ pub struct P<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN
     //     Expression , AssignmentExpression
     //
     pub after_arrow_body_loc: logger::Loc,
-    pub import_transposer: ImportTransposer,
-    pub require_transposer: RequireTransposer,
-    pub require_resolve_transposer: RequireResolveTransposer,
+    pub import_transposer: ImportTransposer<'a>,
+    pub require_transposer: RequireTransposer<'a>,
+    pub require_resolve_transposer: RequireResolveTransposer<'a>,
 
-    pub const_values: js_ast::Ast::ConstValuesMap,
+    pub const_values: js_ast::ast::ConstValuesMap,
 
     // These are backed by stack fallback allocators in _parse, and are uninitialized until then.
     // PERF(port): was stack-fallback alloc — profile in Phase B
     pub binary_expression_stack: ListManaged<'a, BinaryExpressionVisitor>,
-    pub binary_expression_simplify_stack: ListManaged<'a, SideEffects::BinaryExpressionSimplifyVisitor>,
+    // TODO(b2-blocked): SideEffects::BinaryExpressionSimplifyVisitor — round-D (SideEffects.rs)
+    pub binary_expression_simplify_stack: ListManaged<'a, ()>,
 
     /// We build up enough information about the TypeScript namespace hierarchy to
     /// be able to resolve scope lookups and property accesses for TypeScript enum
@@ -508,7 +546,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN
     /// In addition, there is a map from each relevant symbol reference to the data
     /// associated with that namespace or namespace member: "ref_to_ts_namespace_member".
     /// This gives enough info to be able to resolve queries into the namespace.
-    pub ref_to_ts_namespace_member: HashMap<Ref, js_ast::TSNamespaceMember::Data>,
+    pub ref_to_ts_namespace_member: HashMap<Ref, js_ast::ts::Data>,
     /// When visiting expressions, namespace metadata is associated with the most
     /// recently visited node. If namespace metadata is present, "tsNamespaceTarget"
     /// will be set to the most recently visited node (as a way to mark that this
@@ -516,7 +554,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN
     pub ts_namespace: RecentlyVisitedTSNamespace,
     pub top_level_enums: List<'a, Ref>,
 
-    pub scopes_in_order_for_enum: ArrayHashMap<logger::Loc, &'a mut [ScopeOrder]>,
+    pub scopes_in_order_for_enum: ArrayHashMap<logger::Loc, &'a mut [ScopeOrder<'a>]>,
 
     // If this is true, then all top-level statements are wrapped in a try/catch
     pub will_wrap_module_in_try_catch_for_using: bool,
@@ -533,29 +571,50 @@ pub struct P<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN
 // Transposer type aliases (Zig: `const ImportTransposer = ExpressionTransposer(P, ..., P.transposeImport);`)
 // TODO(port): ExpressionTransposer is a comptime fn-returning-type in Zig; in Rust it
 // becomes a generic struct parameterized by a callback. Phase B wires the exact shape.
-pub type ImportTransposer = ExpressionTransposer<TransposeState>;
-pub type RequireTransposer = ExpressionTransposer<TransposeState>;
-pub type RequireResolveTransposer = ExpressionTransposer<Expr>;
+pub type ImportTransposer<'a> = ExpressionTransposer<'a, (), TransposeState>;
+pub type RequireTransposer<'a> = ExpressionTransposer<'a, (), TransposeState>;
+pub type RequireResolveTransposer<'a> = ExpressionTransposer<'a, (), Expr>;
 
 // Zig: `const Binding2ExprWrapper = struct { pub const Namespace = Binding.ToExpr(P, P.wrapIdentifierNamespace); ... }`
-pub type Binding2ExprWrapperNamespace = Binding::ToExpr;
-pub type Binding2ExprWrapperHoisted = Binding::ToExpr;
 // TODO(port): Binding.ToExpr(P, fn) is a comptime type-generator; needs a Rust trait/closure in Phase B.
+pub type Binding2ExprWrapperNamespace = ();
+pub type Binding2ExprWrapperHoisted = ();
 
-impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: bool>
-    P<'a, TYPESCRIPT, JSX, SCAN_ONLY>
+// ═══════════════════════════════════════════════════════════════════════════
+// Round-C: associated consts kept live (cheap, used by ParserLike + Parser.rs).
+// The full method-body impl block below is gated wholesale — 600+ type errors
+// from method bodies referencing not-yet-real Expr/Symbol/Log surface; round-D
+// un-gates method-groups (scope mgmt → allocate → error reporting → predicates).
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
+    P<'a, TYPESCRIPT, J, SCAN_ONLY>
 {
     pub const IS_TYPESCRIPT_ENABLED: bool = TYPESCRIPT;
-    pub const IS_JSX_ENABLED: bool = !matches!(JSX, JSXTransformType::None);
+    pub const IS_JSX_ENABLED: bool = J::ENABLED;
     pub const ONLY_SCAN_IMPORTS_AND_DO_NOT_VISIT: bool = SCAN_ONLY;
     pub const TRACK_SYMBOL_USAGE_DURING_PARSE_PASS: bool = SCAN_ONLY && TYPESCRIPT;
     pub const PARSER_FEATURES: ParserFeatures = ParserFeatures {
         typescript: TYPESCRIPT,
-        jsx: JSX,
+        jsx: J::KIND,
         scan_only: SCAN_ONLY,
     };
-    pub const JSX_TRANSFORM_TYPE: JSXTransformType = JSX;
-    pub const ALLOW_MACROS: bool = FeatureFlags::IS_MACRO_ENABLED;
+    pub const JSX_TRANSFORM_TYPE: JSXTransformType = J::KIND;
+}
+
+#[cfg(any())]
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
+    P<'a, TYPESCRIPT, J, SCAN_ONLY>
+{
+    pub const IS_TYPESCRIPT_ENABLED: bool = TYPESCRIPT;
+    pub const IS_JSX_ENABLED: bool = J::ENABLED;
+    pub const ONLY_SCAN_IMPORTS_AND_DO_NOT_VISIT: bool = SCAN_ONLY;
+    pub const TRACK_SYMBOL_USAGE_DURING_PARSE_PASS: bool = SCAN_ONLY && TYPESCRIPT;
+    pub const PARSER_FEATURES: ParserFeatures = ParserFeatures {
+        typescript: TYPESCRIPT,
+        jsx: J::KIND,
+        scan_only: SCAN_ONLY,
+    };
+    pub const JSX_TRANSFORM_TYPE: JSXTransformType = J::KIND;
+    pub const ALLOW_MACROS: bool = true /* TODO(b2-blocked): feature_flag::IS_MACRO_ENABLED */;
 
     /// use this instead of checking p.source.index
     /// because when not bundling, p.source.index is `0`
@@ -714,7 +773,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
     pub fn transpose_require_resolve(&mut self, arg: Expr, require_resolve_ref: Expr) -> Expr {
         // The argument must be a string
-        if matches!(arg.data, Expr::Data::EString(_)) {
+        if matches!(arg.data, js_ast::ExprData::EString(_)) {
             return self.transpose_require_resolve_known_string(arg);
         }
 
@@ -746,7 +805,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
     #[inline]
     pub fn transpose_require_resolve_known_string(&mut self, arg: Expr) -> Expr {
-        debug_assert!(matches!(arg.data, Expr::Data::EString(_)));
+        debug_assert!(matches!(arg.data, js_ast::ExprData::EString(_)));
 
         // Ignore calls to import() if the control flow is provably dead here.
         // We don't want to spend time scanning the required files if they will
@@ -788,7 +847,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         }
 
         match &arg.data {
-            Expr::Data::EString(str_) => {
+            js_ast::ExprData::EString(str_) => {
                 // Ignore calls to require() if the control flow is provably dead here.
                 // We don't want to spend time scanning the required files if they will
                 // never be used.
@@ -825,7 +884,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                     // Note that this symbol may be completely removed later.
                     let mut path_name = fs::PathName::init(path.text);
                     let name = path_name.non_unique_name_string(self.allocator);
-                    let namespace_ref = self.new_symbol(Symbol::Kind::Other, name).expect("oom");
+                    let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, name).expect("oom");
 
                     self.imports_to_convert_from_require.push(DeferredImportNamespace {
                         namespace: LocRef { r#ref: Some(namespace_ref), loc: arg.loc },
@@ -937,7 +996,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                 let is_dead = part.can_be_removed_if_unused && 'can_remove_part: {
                     for stmt in part.stmts.iter() {
                         match &stmt.data {
-                            Stmt::Data::SLocal(local) => {
+                            js_ast::StmtData::SLocal(local) => {
                                 if local.is_export {
                                     break 'can_remove_part false;
                                 }
@@ -947,19 +1006,19 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                                     }
                                 }
                             }
-                            Stmt::Data::SIf(if_statement) => {
+                            js_ast::StmtData::SIf(if_statement) => {
                                 let result = SideEffects::to_boolean(self, if_statement.test_.data);
                                 if !(result.ok && result.side_effects == SideEffects::NoSideEffects && !result.value) {
                                     break 'can_remove_part false;
                                 }
                             }
-                            Stmt::Data::SWhile(while_statement) => {
+                            js_ast::StmtData::SWhile(while_statement) => {
                                 let result = SideEffects::to_boolean(self, while_statement.test_.data);
                                 if !(result.ok && result.side_effects == SideEffects::NoSideEffects && !result.value) {
                                     break 'can_remove_part false;
                                 }
                             }
-                            Stmt::Data::SFor(for_statement) => {
+                            js_ast::StmtData::SFor(for_statement) => {
                                 if let Some(expr) = &for_statement.test_ {
                                     let result = SideEffects::to_boolean(self, expr.data);
                                     if !(result.ok && result.side_effects == SideEffects::NoSideEffects && !result.value) {
@@ -967,7 +1026,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                                     }
                                 }
                             }
-                            Stmt::Data::SFunction(func) => {
+                            js_ast::StmtData::SFunction(func) => {
                                 if func.func.flags.contains(Flags::Function::IsExport) {
                                     break 'can_remove_part false;
                                 }
@@ -985,12 +1044,12 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                                     }
                                 }
                             }
-                            Stmt::Data::SImport(_)
-                            | Stmt::Data::SExportClause(_)
-                            | Stmt::Data::SExportFrom(_)
-                            | Stmt::Data::SExportDefault(_) => break 'can_remove_part false,
+                            js_ast::StmtData::SImport(_)
+                            | js_ast::StmtData::SExportClause(_)
+                            | js_ast::StmtData::SExportFrom(_)
+                            | js_ast::StmtData::SExportDefault(_) => break 'can_remove_part false,
 
-                            Stmt::Data::SClass(class) => {
+                            js_ast::StmtData::SClass(class) => {
                                 if class.is_export {
                                     break 'can_remove_part false;
                                 }
@@ -1083,7 +1142,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
     pub fn s<T>(&self, t: T, loc: logger::Loc) -> Stmt
     where
-        T: js_ast::StmtPayload,
+        T: js_ast::stmt::StatementData,
     {
         // TODO(port): Zig used @typeInfo to detect *T vs T and pick Stmt.init vs Stmt.alloc.
         // In Rust we expose this via a `StmtPayload` trait that knows how to construct itself.
@@ -1142,18 +1201,18 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
     pub fn new_expr<T>(&mut self, t: T, loc: logger::Loc) -> Expr
     where
-        T: js_ast::ExprPayload,
+        T: js_ast::expr::IntoExprData,
     {
         // TODO(port): Zig branched on @typeInfo(Type) == .pointer and on
         // `only_scan_imports_and_do_not_visit` to scan E.Call for require("..").
         // The pointer/value distinction collapses in Rust (Expr::init handles both).
         if SCAN_ONLY {
             if let Some(call) = t.as_e_call() {
-                if let Expr::Data::EIdentifier(ident) = call.target.data {
+                if let js_ast::ExprData::EIdentifier(ident) = call.target.data {
                     // is this a require("something")
                     if self.load_name_from_ref(ident.r#ref) == b"require"
                         && call.args.len == 1
-                        && matches!(call.args.at(0).data, Expr::Data::EString(_))
+                        && matches!(call.args.at(0).data, js_ast::ExprData::EString(_))
                     {
                         let _ = self.add_import_record(
                             ImportKind::Require,
@@ -1167,11 +1226,12 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         Expr::init(t, loc)
     }
 
+    // TODO(b2-blocked): BindingAlloc trait gated in Binding.rs (round-A _draft).
+    #[cfg(any())]
     pub fn b<T>(&mut self, t: T, loc: logger::Loc) -> Binding
     where
-        T: js_ast::BindingPayload,
+        T: js_ast::binding::BindingAlloc,
     {
-        // TODO(port): Zig branched on pointer-ness; Rust unifies via trait.
         Binding::alloc(self.allocator, t, loc)
     }
 
@@ -1223,7 +1283,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                 notes,
                 format_args!(
                     "Multiple exports with the same name \"{}\"",
-                    bstr::BStr::new(bun_str::strings::trim(alias, b"\"'"))
+                    bstr::BStr::new(bun_string::strings::trim(alias, b"\"'"))
                 ),
             )?;
         } else if !self.is_deoptimized_common_js() {
@@ -1283,8 +1343,8 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
     pub fn key_name_for_error(&mut self, key: &js_ast::Expr) -> &'a [u8] {
         match &key.data {
-            Expr::Data::EString(s) => s.string(self.allocator).expect("unreachable"),
-            Expr::Data::EPrivateIdentifier(private) => self.load_name_from_ref(private.r#ref),
+            js_ast::ExprData::EString(s) => s.string(self.allocator).expect("unreachable"),
+            js_ast::ExprData::EPrivateIdentifier(private) => self.load_name_from_ref(private.r#ref),
             _ => b"property",
         }
     }
@@ -1309,7 +1369,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
         // Create an error for assigning to an import namespace
         if (opts.assign_target != js_ast::AssignTarget::None || opts.is_delete_target)
-            && self.symbols[r#ref.inner_index() as usize].kind == Symbol::Kind::Import
+            && self.symbols[r#ref.inner_index() as usize].kind == js_ast::symbol::Kind::Import
         {
             let r = js_lexer::range_of_identifier(self.source, loc);
             self.log
@@ -1331,25 +1391,25 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
             if let Some(ns_alias) = &symbol.namespace_alias {
                 let ns_alias = ns_alias.clone();
                 if let Some(ts_member_data) = self.ref_to_ts_namespace_member.get(&ns_alias.namespace_ref) {
-                    if let js_ast::TSNamespaceMember::Data::Namespace(ns) = ts_member_data {
+                    if let js_ast::ts::Data::Namespace(ns) = ts_member_data {
                         // SAFETY: arena-owned TSNamespaceMemberMap valid for parser 'a lifetime
                         if let Some(member) = unsafe { &**ns }.get(ns_alias.alias) {
                             match &member.data {
-                                js_ast::TSNamespaceMember::Data::EnumNumber(num) => {
+                                js_ast::ts::Data::EnumNumber(num) => {
                                     let name = self.symbols[r#ref.inner_index() as usize].original_name;
                                     return self.wrap_inlined_enum(
-                                        Expr { loc, data: Expr::Data::ENumber(E::Number { value: *num }) },
+                                        Expr { loc, data: js_ast::ExprData::ENumber(E::Number { value: *num }) },
                                         name,
                                     );
                                 }
-                                js_ast::TSNamespaceMember::Data::EnumString(str_) => {
+                                js_ast::ts::Data::EnumString(str_) => {
                                     let name = self.symbols[r#ref.inner_index() as usize].original_name;
                                     return self.wrap_inlined_enum(
-                                        Expr { loc, data: Expr::Data::EString(*str_) },
+                                        Expr { loc, data: js_ast::ExprData::EString(*str_) },
                                         name,
                                     );
                                 }
-                                js_ast::TSNamespaceMember::Data::Namespace(map) => {
+                                js_ast::ts::Data::Namespace(map) => {
                                     let map = *map;
                                     let expr = self.new_expr(
                                         E::Dot {
@@ -1390,22 +1450,22 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         if TYPESCRIPT {
             if let Some(member_data) = self.ref_to_ts_namespace_member.get(&r#ref).cloned() {
                 match member_data {
-                    js_ast::TSNamespaceMember::Data::EnumNumber(num) => {
+                    js_ast::ts::Data::EnumNumber(num) => {
                         let name = self.symbols[r#ref.inner_index() as usize].original_name;
                         return self.wrap_inlined_enum(
-                            Expr { loc, data: Expr::Data::ENumber(E::Number { value: num }) },
+                            Expr { loc, data: js_ast::ExprData::ENumber(E::Number { value: num }) },
                             name,
                         );
                     }
-                    js_ast::TSNamespaceMember::Data::EnumString(str_) => {
+                    js_ast::ts::Data::EnumString(str_) => {
                         let name = self.symbols[r#ref.inner_index() as usize].original_name;
                         return self.wrap_inlined_enum(
-                            Expr { loc, data: Expr::Data::EString(str_) },
+                            Expr { loc, data: js_ast::ExprData::EString(str_) },
                             name,
                         );
                     }
-                    js_ast::TSNamespaceMember::Data::Namespace(map) => {
-                        let expr = Expr { data: Expr::Data::EIdentifier(ident), loc };
+                    js_ast::ts::Data::Namespace(map) => {
+                        let expr = Expr { data: js_ast::ExprData::EIdentifier(ident), loc };
                         self.ts_namespace = RecentlyVisitedTSNamespace { expr: expr.data, map: Some(map) };
                         return expr;
                     }
@@ -1428,7 +1488,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                     loc,
                 );
 
-                if matches!(self.ts_namespace.expr, Expr::Data::EIdentifier(e) if e.r#ref.eql(ident.r#ref)) {
+                if matches!(self.ts_namespace.expr, js_ast::ExprData::EIdentifier(e) if e.r#ref.eql(ident.r#ref)) {
                     self.ts_namespace.expr = prop.data;
                 }
 
@@ -1443,7 +1503,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
             return self.new_expr(id_clone, loc);
         }
 
-        Expr { data: Expr::Data::EIdentifier(ident), loc }
+        Expr { data: js_ast::ExprData::EIdentifier(ident), loc }
     }
 
     pub fn generate_import_stmt_for_bake_response(
@@ -1458,7 +1518,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
         let import_record_i = self.add_import_record_by_range(ImportKind::Stmt, logger::Range::NONE, import_path);
 
-        let mut declared_symbols = DeclaredSymbol::List::default();
+        let mut declared_symbols = crate::DeclaredSymbolList::default();
         declared_symbols.ensure_total_capacity(allocator, 2)?;
 
         let stmts = allocator.alloc_slice_fill_default::<Stmt>(1);
@@ -1562,10 +1622,10 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
         let clause_items = allocator.alloc_slice_fill_default::<js_ast::ClauseItem>(imports.len());
         let stmts = allocator.alloc_slice_fill_default::<Stmt>(1 + usize::from(additional_stmt.is_some()));
-        let mut declared_symbols = DeclaredSymbol::List::default();
+        let mut declared_symbols = crate::DeclaredSymbolList::default();
         declared_symbols.ensure_total_capacity(allocator, imports.len() + 1)?;
 
-        let namespace_ref = self.new_symbol(Symbol::Kind::Other, namespace_identifier)?;
+        let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, namespace_identifier)?;
         declared_symbols.push(DeclaredSymbol { r#ref: namespace_ref, is_top_level: true });
         // PERF(port): was assume_capacity
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
@@ -1677,10 +1737,10 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         let mut items_import = BumpVec::<js_ast::ClauseItem>::with_capacity_in(len, allocator);
 
         let stmts = allocator.alloc_slice_fill_default::<Stmt>(1);
-        let mut declared_symbols = DeclaredSymbol::List::default();
+        let mut declared_symbols = crate::DeclaredSymbolList::default();
         declared_symbols.ensure_total_capacity(allocator, len)?;
 
-        let namespace_ref = self.new_symbol(Symbol::Kind::Other, b"RefreshRuntime")?;
+        let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, b"RefreshRuntime")?;
         declared_symbols.push(DeclaredSymbol { r#ref: namespace_ref, is_top_level: true });
         // PERF(port): was assume_capacity
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
@@ -1724,7 +1784,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         stmts[0] = if HOT_MODULE_RELOADING {
             self.s(
                 S::Local {
-                    kind: S::Local::Kind::KConst,
+                    kind: js_ast::s::Kind::KConst,
                     decls: Decl::List::from_slice(
                         self.allocator,
                         &[Decl {
@@ -1767,16 +1827,16 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
     ) -> bool {
         let expr: *mut Expr = 'brk: {
             match &stmt.data {
-                Stmt::Data::SExpr(exp) => break 'brk &mut exp.value as *const _ as *mut _,
-                Stmt::Data::SThrow(throw) => break 'brk &mut throw.value as *const _ as *mut _,
-                Stmt::Data::SReturn(ret) => {
+                js_ast::StmtData::SExpr(exp) => break 'brk &mut exp.value as *const _ as *mut _,
+                js_ast::StmtData::SThrow(throw) => break 'brk &mut throw.value as *const _ as *mut _,
+                js_ast::StmtData::SReturn(ret) => {
                     if let Some(value) = &ret.value {
                         break 'brk value as *const _ as *mut _;
                     }
                 }
-                Stmt::Data::SIf(if_stmt) => break 'brk &mut if_stmt.test_ as *const _ as *mut _,
-                Stmt::Data::SSwitch(switch_stmt) => break 'brk &mut switch_stmt.test_ as *const _ as *mut _,
-                Stmt::Data::SLocal(local) => {
+                js_ast::StmtData::SIf(if_stmt) => break 'brk &mut if_stmt.test_ as *const _ as *mut _,
+                js_ast::StmtData::SSwitch(switch_stmt) => break 'brk &mut switch_stmt.test_ as *const _ as *mut _,
+                js_ast::StmtData::SLocal(local) => {
                     if local.decls.len > 0 {
                         let first = &mut local.decls.ptr_mut()[0];
                         if let Some(value) = &mut first.value {
@@ -1790,9 +1850,9 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
             }
             return false;
         };
-        // TODO(port): the above takes raw *mut Expr because Stmt::Data variants store
+        // TODO(port): the above takes raw *mut Expr because js_ast::StmtData variants store
         // arena-backed boxed payloads with interior mutability in Zig. Phase B should
-        // re-type these as `&'a mut` once Stmt::Data is finalized.
+        // re-type these as `&'a mut` once js_ast::StmtData is finalized.
         // SAFETY: raw *mut Expr into arena-owned tree; parser holds exclusive access during visit
         let expr = unsafe { &mut *expr };
 
@@ -1814,7 +1874,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         let replacement_can_be_removed = self.expr_can_be_removed_if_unused(&replacement);
         match self.substitute_single_use_symbol_in_expr(*expr, r#ref, replacement, replacement_can_be_removed) {
             Substitution::Success(result) => {
-                if matches!(result.data, Expr::Data::EBinary(_) | Expr::Data::EUnary(_) | Expr::Data::EIf(_)) {
+                if matches!(result.data, js_ast::ExprData::EBinary(_) | js_ast::ExprData::EUnary(_) | js_ast::ExprData::EIf(_)) {
                     let prev_substituting = self.is_revisit_for_substitution;
                     self.is_revisit_for_substitution = true;
                     // O(n^2) and we will need to think more carefully about
@@ -1841,7 +1901,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
     ) -> Substitution {
         'outer: {
             match &expr.data {
-                Expr::Data::EIdentifier(ident) => {
+                js_ast::ExprData::EIdentifier(ident) => {
                     if ident.r#ref.eql(r#ref)
                         || self.symbols[ident.r#ref.inner_index() as usize].link.eql(r#ref)
                     {
@@ -1849,7 +1909,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                         return Substitution::Success(replacement);
                     }
                 }
-                Expr::Data::ENew(new) => {
+                js_ast::ExprData::ENew(new) => {
                     match self.substitute_single_use_symbol_in_expr(new.target, r#ref, replacement, replacement_can_be_removed) {
                         Substitution::Continue(_) => {}
                         Substitution::Success(result) => {
@@ -1878,7 +1938,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                         }
                     }
                 }
-                Expr::Data::ESpread(spread) => {
+                js_ast::ExprData::ESpread(spread) => {
                     match self.substitute_single_use_symbol_in_expr(spread.value, r#ref, replacement, replacement_can_be_removed) {
                         Substitution::Continue(_) => {}
                         Substitution::Success(result) => {
@@ -1891,7 +1951,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                         }
                     }
                 }
-                Expr::Data::EAwait(await_expr) => {
+                js_ast::ExprData::EAwait(await_expr) => {
                     match self.substitute_single_use_symbol_in_expr(await_expr.value, r#ref, replacement, replacement_can_be_removed) {
                         Substitution::Continue(_) => {}
                         Substitution::Success(result) => {
@@ -1904,9 +1964,9 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                         }
                     }
                 }
-                Expr::Data::EYield(yield_) => {
+                js_ast::ExprData::EYield(yield_) => {
                     let value = yield_.value.unwrap_or(Expr {
-                        data: Expr::Data::EMissing(E::Missing {}),
+                        data: js_ast::ExprData::EMissing(E::Missing {}),
                         loc: expr.loc,
                     });
                     match self.substitute_single_use_symbol_in_expr(value, r#ref, replacement, replacement_can_be_removed) {
@@ -1921,7 +1981,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                         }
                     }
                 }
-                Expr::Data::EImport(import) => {
+                js_ast::ExprData::EImport(import) => {
                     match self.substitute_single_use_symbol_in_expr(import.expr, r#ref, replacement, replacement_can_be_removed) {
                         Substitution::Continue(_) => {}
                         Substitution::Success(result) => {
@@ -1943,10 +2003,10 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                         return Substitution::Continue(expr);
                     }
                 }
-                Expr::Data::EUnary(e) => {
+                js_ast::ExprData::EUnary(e) => {
                     use js_ast::Op;
                     match e.op {
-                        Op::UnPreInc | Op::UnPostInc | Op::UnPreDec | Op::UnPostDec | Op::UnDelete => {
+                        js_ast::op::Code::UnPreInc | js_ast::op::Code::UnPostInc | js_ast::op::Code::UnPreDec | js_ast::op::Code::UnPostDec | js_ast::op::Code::UnDelete => {
                             // Do not substitute into an assignment position
                         }
                         _ => match self.substitute_single_use_symbol_in_expr(e.value, r#ref, replacement, replacement_can_be_removed) {
@@ -1962,7 +2022,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                         },
                     }
                 }
-                Expr::Data::EDot(e) => {
+                js_ast::ExprData::EDot(e) => {
                     match self.substitute_single_use_symbol_in_expr(e.target, r#ref, replacement, replacement_can_be_removed) {
                         Substitution::Continue(_) => {}
                         Substitution::Success(result) => {
@@ -1975,7 +2035,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                         }
                     }
                 }
-                Expr::Data::EBinary(e) => {
+                js_ast::ExprData::EBinary(e) => {
                     // Do not substitute into an assignment position
                     if e.op.binary_assign_target() == js_ast::AssignTarget::None {
                         match self.substitute_single_use_symbol_in_expr(e.left, r#ref, replacement, replacement_can_be_removed) {
@@ -2023,7 +2083,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                         }
                     }
                 }
-                Expr::Data::EIf(e) => {
+                js_ast::ExprData::EIf(e) => {
                     match self.substitute_single_use_symbol_in_expr(e.test_, r#ref, replacement, replacement_can_be_removed) {
                         Substitution::Continue(_) => {}
                         Substitution::Success(result) => {
@@ -2064,7 +2124,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                         }
                     }
                 }
-                Expr::Data::EIndex(index) => {
+                js_ast::ExprData::EIndex(index) => {
                     match self.substitute_single_use_symbol_in_expr(index.target, r#ref, replacement, replacement_can_be_removed) {
                         Substitution::Continue(_) => {}
                         Substitution::Success(result) => {
@@ -2093,11 +2153,11 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                         }
                     }
                 }
-                Expr::Data::ECall(e) => {
+                js_ast::ExprData::ECall(e) => {
                     // Don't substitute something into a call target that could change "this"
                     match replacement.data {
-                        Expr::Data::EDot(_) | Expr::Data::EIndex(_) => {
-                            if matches!(e.target.data, Expr::Data::EIdentifier(id) if id.r#ref.eql(r#ref)) {
+                        js_ast::ExprData::EDot(_) | js_ast::ExprData::EIndex(_) => {
+                            if matches!(e.target.data, js_ast::ExprData::EIdentifier(id) if id.r#ref.eql(r#ref)) {
                                 break 'outer;
                             }
                         }
@@ -2134,7 +2194,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                         }
                     }
                 }
-                Expr::Data::EArray(e) => {
+                js_ast::ExprData::EArray(e) => {
                     for item in e.items.slice_mut() {
                         match self.substitute_single_use_symbol_in_expr(*item, r#ref, replacement, replacement_can_be_removed) {
                             Substitution::Continue(_) => {}
@@ -2149,7 +2209,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                         }
                     }
                 }
-                Expr::Data::EObject(e) => {
+                js_ast::ExprData::EObject(e) => {
                     for property in e.properties.slice_mut() {
                         // Check the key
                         if property.flags.contains(Flags::Property::IsComputed) {
@@ -2174,18 +2234,18 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                             match self.substitute_single_use_symbol_in_expr(value, r#ref, replacement, replacement_can_be_removed) {
                                 Substitution::Continue(_) => {}
                                 Substitution::Success(result) => {
-                                    property.value = if matches!(result.data, Expr::Data::EMissing(_)) { None } else { Some(result) };
+                                    property.value = if matches!(result.data, js_ast::ExprData::EMissing(_)) { None } else { Some(result) };
                                     return Substitution::Success(expr);
                                 }
                                 Substitution::Failure(result) => {
-                                    property.value = if matches!(result.data, Expr::Data::EMissing(_)) { None } else { Some(result) };
+                                    property.value = if matches!(result.data, js_ast::ExprData::EMissing(_)) { None } else { Some(result) };
                                     return Substitution::Failure(expr);
                                 }
                             }
                         }
                     }
                 }
-                Expr::Data::ETemplate(e) => {
+                js_ast::ExprData::ETemplate(e) => {
                     if let Some(tag) = &mut e.tag {
                         match self.substitute_single_use_symbol_in_expr(*tag, r#ref, replacement, replacement_can_be_removed) {
                             Substitution::Continue(_) => {}
@@ -2236,6 +2296,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         Substitution::Failure(expr)
     }
 
+    #[cfg(any())] // round-D: heavy body, depends on parse_*/visit_*/ImportScanner/full E surface
     pub fn prepare_for_visit_pass(&mut self) -> Result<(), bun_core::Error> {
         {
             let mut i: usize = 0;
@@ -2253,7 +2314,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
             || !self.esm_export_keyword.is_empty()
             || self.options.module_type == options::ModuleType::Esm;
 
-        self.push_scope_for_visit_pass(js_ast::Scope::Kind::Entry, loc_module_scope())?;
+        self.push_scope_for_visit_pass(js_ast::scope::Kind::Entry, loc_module_scope())?;
         self.fn_or_arrow_data_visit.is_outside_fn_or_arrow = true;
         self.module_scope = self.current_scope;
         self.has_es_module_syntax = self.has_es_module_syntax
@@ -2331,40 +2392,40 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
             generated_symbols_count as usize * 3 + module_scope.members.count(),
         )?;
 
-        self.exports_ref = self.declare_common_js_symbol(Symbol::Kind::Hoisted, b"exports")?;
-        self.module_ref = self.declare_common_js_symbol(Symbol::Kind::Hoisted, b"module")?;
+        self.exports_ref = self.declare_common_js_symbol(js_ast::symbol::Kind::Hoisted, b"exports")?;
+        self.module_ref = self.declare_common_js_symbol(js_ast::symbol::Kind::Hoisted, b"module")?;
 
-        self.require_ref = self.declare_common_js_symbol(Symbol::Kind::Unbound, b"require")?;
-        self.dirname_ref = self.declare_common_js_symbol(Symbol::Kind::Unbound, b"__dirname")?;
-        self.filename_ref = self.declare_common_js_symbol(Symbol::Kind::Unbound, b"__filename")?;
+        self.require_ref = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"require")?;
+        self.dirname_ref = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"__dirname")?;
+        self.filename_ref = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"__filename")?;
 
         if self.options.features.inject_jest_globals {
-            self.jest.test = self.declare_common_js_symbol(Symbol::Kind::Unbound, b"test")?;
-            self.jest.it = self.declare_common_js_symbol(Symbol::Kind::Unbound, b"it")?;
-            self.jest.describe = self.declare_common_js_symbol(Symbol::Kind::Unbound, b"describe")?;
-            self.jest.expect = self.declare_common_js_symbol(Symbol::Kind::Unbound, b"expect")?;
-            self.jest.expect_type_of = self.declare_common_js_symbol(Symbol::Kind::Unbound, b"expectTypeOf")?;
-            self.jest.before_all = self.declare_common_js_symbol(Symbol::Kind::Unbound, b"beforeAll")?;
-            self.jest.before_each = self.declare_common_js_symbol(Symbol::Kind::Unbound, b"beforeEach")?;
-            self.jest.after_each = self.declare_common_js_symbol(Symbol::Kind::Unbound, b"afterEach")?;
-            self.jest.after_all = self.declare_common_js_symbol(Symbol::Kind::Unbound, b"afterAll")?;
-            self.jest.jest = self.declare_common_js_symbol(Symbol::Kind::Unbound, b"jest")?;
-            self.jest.vi = self.declare_common_js_symbol(Symbol::Kind::Unbound, b"vi")?;
-            self.jest.xit = self.declare_common_js_symbol(Symbol::Kind::Unbound, b"xit")?;
-            self.jest.xtest = self.declare_common_js_symbol(Symbol::Kind::Unbound, b"xtest")?;
-            self.jest.xdescribe = self.declare_common_js_symbol(Symbol::Kind::Unbound, b"xdescribe")?;
+            self.jest.test = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"test")?;
+            self.jest.it = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"it")?;
+            self.jest.describe = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"describe")?;
+            self.jest.expect = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"expect")?;
+            self.jest.expect_type_of = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"expectTypeOf")?;
+            self.jest.before_all = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"beforeAll")?;
+            self.jest.before_each = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"beforeEach")?;
+            self.jest.after_each = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"afterEach")?;
+            self.jest.after_all = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"afterAll")?;
+            self.jest.jest = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"jest")?;
+            self.jest.vi = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"vi")?;
+            self.jest.xit = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"xit")?;
+            self.jest.xtest = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"xtest")?;
+            self.jest.xdescribe = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"xdescribe")?;
         }
 
         if self.options.features.react_fast_refresh {
-            self.react_refresh.create_signature_ref = self.declare_generated_symbol(Symbol::Kind::Other, b"$RefreshSig$")?;
-            self.react_refresh.register_ref = self.declare_generated_symbol(Symbol::Kind::Other, b"$RefreshReg$")?;
+            self.react_refresh.create_signature_ref = self.declare_generated_symbol(js_ast::symbol::Kind::Other, b"$RefreshSig$")?;
+            self.react_refresh.register_ref = self.declare_generated_symbol(js_ast::symbol::Kind::Other, b"$RefreshReg$")?;
         }
 
         match self.options.features.server_components {
             options::ServerComponents::None | options::ServerComponents::ClientSide => {}
             options::ServerComponents::WrapExportsForClientReference => {
                 self.server_components_wrap_ref =
-                    self.declare_generated_symbol(Symbol::Kind::Other, b"registerClientReference")?;
+                    self.declare_generated_symbol(js_ast::symbol::Kind::Other, b"registerClientReference")?;
             }
             // TODO: these wrapping modes.
             options::ServerComponents::WrapAnonServerFunctions => {}
@@ -2376,8 +2437,8 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         match self.options.features.server_components {
             options::ServerComponents::None | options::ServerComponents::ClientSide => {}
             _ => {
-                self.response_ref = self.declare_generated_symbol(Symbol::Kind::Import, b"Response")?;
-                self.bun_app_namespace_ref = self.new_symbol(Symbol::Kind::Other, b"import_bun_app")?;
+                self.response_ref = self.declare_generated_symbol(js_ast::symbol::Kind::Import, b"Response")?;
+                self.bun_app_namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, b"import_bun_app")?;
                 let symbol = &mut self.symbols[self.response_ref.inner_index() as usize];
                 symbol.namespace_alias = Some(js_ast::NamespaceAlias {
                     namespace_ref: self.bun_app_namespace_ref,
@@ -2388,18 +2449,19 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         }
 
         if self.options.features.hot_module_reloading {
-            self.hmr_api_ref = self.declare_common_js_symbol(Symbol::Kind::Unbound, b"hmr")?;
+            self.hmr_api_ref = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"hmr")?;
         }
         Ok(())
     }
 
+    #[cfg(any())] // TODO(b2-blocked): generated_symbol_name! macro PConvWrapper for &[u8;N]
     fn ensure_require_symbol(&mut self) {
         if self.runtime_imports.__require.is_some() {
             return;
         }
-        let static_symbol = generated_symbol_name(b"__require");
+        let static_symbol = generated_symbol_name!(b"__require");
         self.runtime_imports.__require =
-            Some(self.declare_symbol_maybe_generated::<true>(Symbol::Kind::Other, logger::Loc::EMPTY, static_symbol).expect("oom"));
+            Some(self.declare_symbol_maybe_generated::<true>(js_ast::symbol::Kind::Other, logger::Loc::EMPTY, static_symbol).expect("oom"));
         self.runtime_imports.put(b"__require", self.runtime_imports.__require.unwrap());
     }
 
@@ -2434,8 +2496,8 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                     let name = self.symbols[symbol_idx].original_name;
                     let mut hash: Option<u64> = None;
 
-                    if parent_scope.kind == Scope::Kind::CatchBinding
-                        && self.symbols[symbol_idx].kind != Symbol::Kind::Hoisted
+                    if parent_scope.kind == js_ast::scope::Kind::CatchBinding
+                        && self.symbols[symbol_idx].kind != js_ast::symbol::Kind::Hoisted
                     {
                         hash = Some(Scope::get_member_hash(name));
                         if let Some(existing_member) = parent_scope.get_member_with_hash(name, hash.unwrap()) {
@@ -2462,7 +2524,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                     let mut is_sloppy_mode_block_level_fn_stmt = false;
                     let original_member_ref = value.r#ref;
 
-                    if self.will_use_renamer() && self.symbols[symbol_idx].kind == Symbol::Kind::HoistedFunction {
+                    if self.will_use_renamer() && self.symbols[symbol_idx].kind == js_ast::symbol::Kind::HoistedFunction {
                         // Block-level function declarations behave like "let" in strict mode
                         if scope_ref.strict_mode != js_ast::StrictModeKind::SloppyMode {
                             continue;
@@ -2487,7 +2549,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                         //   f();
                         //
                         let original_name = self.symbols[symbol_idx].original_name;
-                        let hoisted_ref = self.new_symbol(Symbol::Kind::Hoisted, original_name).expect("unreachable");
+                        let hoisted_ref = self.new_symbol(js_ast::symbol::Kind::Hoisted, original_name).expect("unreachable");
                         scope_ref.generated.push(self.allocator, hoisted_ref).expect("oom");
                         self.hoisted_ref_for_sloppy_mode_block_fn
                             .put(self.allocator, value.r#ref, hoisted_ref)
@@ -2516,7 +2578,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                         //   assert(foo === undefined)
                         //   assert(obj.foo === 2)
                         //
-                        if scope_kind == Scope::Kind::With {
+                        if scope_kind == js_ast::scope::Kind::With {
                             self.symbols[symbol_idx].must_not_be_renamed = true;
                         }
 
@@ -2533,10 +2595,10 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                             //   - The symbol is a function of any kind and we're in a function or module scope
                             //
                             // Is this unbound (i.e. a global access) or also hoisted?
-                            if existing_kind == Symbol::Kind::Unbound
-                                || existing_kind == Symbol::Kind::Hoisted
+                            if existing_kind == js_ast::symbol::Kind::Unbound
+                                || existing_kind == js_ast::symbol::Kind::Hoisted
                                 || (Symbol::is_kind_function(existing_kind)
-                                    && (scope_kind == Scope::Kind::Entry || scope_kind == Scope::Kind::FunctionBody))
+                                    && (scope_kind == js_ast::scope::Kind::Entry || scope_kind == js_ast::scope::Kind::FunctionBody))
                             {
                                 // Silently merge this symbol into the existing symbol
                                 self.symbols[symbol_idx].link = member_in_scope.r#ref;
@@ -2549,11 +2611,11 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                             }
 
                             // Otherwise if this isn't a catch identifier, it's a collision
-                            if existing_kind != Symbol::Kind::CatchIdentifier && existing_kind != Symbol::Kind::Arguments {
+                            if existing_kind != js_ast::symbol::Kind::CatchIdentifier && existing_kind != js_ast::symbol::Kind::Arguments {
                                 // An identifier binding from a catch statement and a function
                                 // declaration can both silently shadow another hoisted symbol
-                                if self.symbols[symbol_idx].kind != Symbol::Kind::CatchIdentifier
-                                    && self.symbols[symbol_idx].kind != Symbol::Kind::HoistedFunction
+                                if self.symbols[symbol_idx].kind != js_ast::symbol::Kind::CatchIdentifier
+                                    && self.symbols[symbol_idx].kind != js_ast::symbol::Kind::HoistedFunction
                                 {
                                     if !is_sloppy_mode_block_level_fn_stmt {
                                         let r = js_lexer::range_of_identifier(self.source, value.loc);
@@ -2622,7 +2684,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
     pub fn push_scope_for_visit_pass(
         &mut self,
-        kind: js_ast::Scope::Kind,
+        kind: js_ast::scope::Kind,
         loc: logger::Loc,
     ) -> Result<(), bun_core::Error> {
         let order = self.next_scope_in_order_for_visit_pass();
@@ -2652,11 +2714,14 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         Ok(())
     }
 
-    pub fn push_scope_for_parse_pass<const KIND: js_ast::Scope::Kind>(
+    // PORT NOTE: Zig took `comptime kind` (adt_const_params on stable). All
+    // call sites pass a literal so the branch on `kind` is trivially predicted.
+    #[allow(non_snake_case)]
+    pub fn push_scope_for_parse_pass(
         &mut self,
+        KIND: js_ast::scope::Kind,
         loc: logger::Loc,
     ) -> Result<usize, bun_core::Error> {
-        // TODO(port): Zig took `comptime kind`; modeled as const generic for branch elision.
         let parent: *mut Scope = self.current_scope;
         let allocator = self.allocator;
         let scope = allocator.alloc(Scope {
@@ -2674,7 +2739,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
         self.current_scope = scope;
 
-        if KIND == Scope::Kind::With {
+        if KIND == js_ast::scope::Kind::With {
             // "with" statements change the default from ESModule to CommonJS at runtime.
             // "with" statements are not allowed in strict mode.
             if self.options.features.commonjs_at_runtime {
@@ -2708,9 +2773,9 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         // Copy down function arguments into the function body scope. That way we get
         // errors if a statement in the function body tries to re-declare any of the
         // arguments.
-        if KIND == js_ast::Scope::Kind::FunctionBody {
+        if KIND == js_ast::scope::Kind::FunctionBody {
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            debug_assert!(unsafe { &*parent }.kind == js_ast::Scope::Kind::FunctionArgs);
+            debug_assert!(unsafe { &*parent }.kind == js_ast::scope::Kind::FunctionArgs);
 
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
             let parent_ref = unsafe { &mut *(scope.parent.unwrap()) };
@@ -2720,7 +2785,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                 // the name of a function expression is allowed.
                 let value = *entry.value();
                 let adjacent_kind = self.symbols[value.r#ref.inner_index() as usize].kind;
-                if adjacent_kind != Symbol::Kind::HoistedFunction {
+                if adjacent_kind != js_ast::symbol::Kind::HoistedFunction {
                     scope.members.put(allocator, *entry.key(), value)?;
                 }
             }
@@ -2737,13 +2802,14 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
     // from expression to binding should be written to "invalidLog" instead. That
     // way we can potentially keep this as an expression if it turns out it's not
     // needed as a binding after all.
+    #[cfg(any())] // round-D: needs ArrayBinding (B.rs gated trait), Flags::PropertyInit
     fn convert_expr_to_binding(&mut self, expr: ExprNodeIndex, invalid_loc: &mut LocList) -> Option<Binding> {
         match expr.data {
-            Expr::Data::EMissing(_) => return None,
-            Expr::Data::EIdentifier(ex) => {
+            js_ast::ExprData::EMissing(_) => return None,
+            js_ast::ExprData::EIdentifier(ex) => {
                 return Some(self.b(B::Identifier { r#ref: ex.r#ref }, expr.loc));
             }
-            Expr::Data::EArray(ex) => {
+            js_ast::ExprData::EArray(ex) => {
                 if let Some(spread) = ex.comma_after_spread {
                     invalid_loc.push(InvalidLoc { loc: spread, kind: InvalidLoc::Tag::Spread });
                 }
@@ -2760,13 +2826,13 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                 let mut is_spread = false;
                 for i in 0..ex.items.len as usize {
                     let mut item = ex.items.ptr()[i];
-                    if matches!(item.data, Expr::Data::ESpread(_)) {
+                    if matches!(item.data, js_ast::ExprData::ESpread(_)) {
                         is_spread = true;
                         item = item.data.e_spread().value;
                     }
                     let res = self.convert_expr_to_binding_and_initializer(&mut item, invalid_loc, is_spread);
 
-                    items.push(js_ast::ArrayBinding {
+                    items.push(js_ast::b::ArrayBinding {
                         // It's valid for it to be missing
                         // An example:
                         //      Promise.all(promises).then(([, len]) => true);
@@ -2782,7 +2848,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                     expr.loc,
                 ));
             }
-            Expr::Data::EObject(ex) => {
+            js_ast::ExprData::EObject(ex) => {
                 if let Some(sp) = ex.comma_after_spread {
                     invalid_loc.push(InvalidLoc { loc: sp, kind: InvalidLoc::Tag::Spread });
                 }
@@ -2840,6 +2906,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         None
     }
 
+    #[cfg(any())] // round-D: heavy body, depends on parse_*/visit_*/ImportScanner/full E surface
     pub fn convert_expr_to_binding_and_initializer(
         &mut self,
         _expr: &mut ExprNodeIndex,
@@ -2849,8 +2916,8 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         let mut initializer: Option<ExprNodeIndex> = None;
         let mut expr = _expr;
         // zig syntax is sometimes painful
-        if let Expr::Data::EBinary(bin) = &mut expr.data {
-            if bin.op == js_ast::Op::BinAssign {
+        if let js_ast::ExprData::EBinary(bin) = &mut expr.data {
+            if bin.op == js_ast::op::Code::BinAssign {
                 initializer = Some(bin.right);
                 expr = &mut bin.left;
             }
@@ -2935,7 +3002,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         loc: logger::Loc,
         was_originally_bare_import: bool,
     ) -> Result<Stmt, bun_core::Error> {
-        let is_macro = FeatureFlags::IS_MACRO_ENABLED && (path.is_macro || js_ast::Macro::is_macro_path(path.text));
+        let is_macro = true /* TODO(b2-blocked): feature_flag::IS_MACRO_ENABLED */ && (path.is_macro || js_ast::Macro::is_macro_path(path.text));
         let mut stmt = stmt_;
         if is_macro {
             let id = self.add_import_record(ImportKind::Stmt, path.loc, path.text);
@@ -2944,21 +3011,21 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
             if let Some(name_loc) = stmt.default_name {
                 let name = self.load_name_from_ref(name_loc.r#ref.unwrap());
-                let r#ref = self.declare_symbol(Symbol::Kind::Other, name_loc.loc, name)?;
+                let r#ref = self.declare_symbol(js_ast::symbol::Kind::Other, name_loc.loc, name)?;
                 self.is_import_item.put(self.allocator, r#ref, ())?;
                 self.macro_.refs.put(r#ref, MacroState::RefData { import_record_id: id, name: b"default" })?;
             }
 
             if let Some(star) = stmt.star_name_loc {
                 let name = self.load_name_from_ref(stmt.namespace_ref);
-                let r#ref = self.declare_symbol(Symbol::Kind::Other, star, name)?;
+                let r#ref = self.declare_symbol(js_ast::symbol::Kind::Other, star, name)?;
                 stmt.namespace_ref = r#ref;
                 self.macro_.refs.put(r#ref, MacroState::RefData { import_record_id: id, ..Default::default() })?;
             }
 
             for item in stmt.items.iter() {
                 let name = self.load_name_from_ref(item.name.r#ref.unwrap());
-                let r#ref = self.declare_symbol(Symbol::Kind::Other, item.name.loc, name)?;
+                let r#ref = self.declare_symbol(js_ast::symbol::Kind::Other, item.name.loc, name)?;
                 self.is_import_item.put(self.allocator, r#ref, ())?;
                 self.macro_.refs.put(r#ref, MacroState::RefData { import_record_id: id, name: item.alias })?;
             }
@@ -2984,7 +3051,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                     }
                     // Declare the symbol and store the ref
                     let name = self.load_name_from_ref(item.name.r#ref.unwrap());
-                    let r#ref = self.declare_symbol(Symbol::Kind::Other, item.name.loc, name)?;
+                    let r#ref = self.declare_symbol(js_ast::symbol::Kind::Other, item.name.loc, name)?;
                     self.bundler_feature_flag_ref = r#ref;
                 } else {
                     self.log.add_error_fmt(
@@ -3012,7 +3079,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
         if let Some(star) = stmt.star_name_loc {
             let name = self.load_name_from_ref(stmt.namespace_ref);
-            stmt.namespace_ref = self.declare_symbol(Symbol::Kind::Import, star, name)?;
+            stmt.namespace_ref = self.declare_symbol(js_ast::symbol::Kind::Import, star, name)?;
 
             if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
                 if let Some(uses) = &mut self.parse_pass_symbol_uses {
@@ -3029,7 +3096,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         } else {
             let mut path_name = fs::PathName::init(path.text);
             let name = strings::append(self.allocator, b"import_", path_name.non_unique_name_string(self.allocator)?)?;
-            stmt.namespace_ref = self.new_symbol(Symbol::Kind::Other, name)?;
+            stmt.namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, name)?;
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
             let scope = unsafe { &mut *self.current_scope };
             scope.generated.push(self.allocator, stmt.namespace_ref)?;
@@ -3049,7 +3116,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         if let Some(name_loc) = &mut stmt.default_name {
             'outer: {
                 let name = self.load_name_from_ref(name_loc.r#ref.unwrap());
-                let r#ref = self.declare_symbol(Symbol::Kind::Import, name_loc.loc, name)?;
+                let r#ref = self.declare_symbol(js_ast::symbol::Kind::Import, name_loc.loc, name)?;
                 name_loc.r#ref = Some(r#ref);
                 self.is_import_item.put(self.allocator, r#ref, ())?;
 
@@ -3106,7 +3173,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         for i in 0..stmt.items.len() {
             let mut item = stmt.items[i];
             let name = self.load_name_from_ref(item.name.r#ref.expect("unreachable"));
-            let r#ref = self.declare_symbol(Symbol::Kind::Import, item.name.loc, name)?;
+            let r#ref = self.declare_symbol(js_ast::symbol::Kind::Import, item.name.loc, name)?;
             item.name.r#ref = Some(r#ref);
 
             self.is_import_item.put(self.allocator, r#ref, ())?;
@@ -3226,7 +3293,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         );
         let identifier = buf.into_bump_slice();
 
-        let name = js_ast::LocRef { loc, r#ref: Some(self.new_symbol(Symbol::Kind::Other, identifier)?) };
+        let name = js_ast::LocRef { loc, r#ref: Some(self.new_symbol(js_ast::symbol::Kind::Other, identifier)?) };
 
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
         let scope = unsafe { &mut *self.current_scope };
@@ -3235,7 +3302,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         Ok(name)
     }
 
-    pub fn new_symbol(&mut self, kind: Symbol::Kind, identifier: &'a [u8]) -> Result<Ref, bun_core::Error> {
+    pub fn new_symbol(&mut self, kind: js_ast::symbol::Kind, identifier: &'a [u8]) -> Result<Ref, bun_core::Error> {
         // TODO(port): narrow error set
         let inner_index = self.symbols.len() as Ref::Int; // @truncate
         self.symbols.push(Symbol { kind, original_name: identifier, ..Default::default() });
@@ -3253,22 +3320,22 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
     pub fn default_name_for_expr(&mut self, expr: Expr, loc: logger::Loc) -> LocRef {
         match &expr.data {
-            Expr::Data::EFunction(func_container) => {
+            js_ast::ExprData::EFunction(func_container) => {
                 if let Some(_name) = &func_container.func.name {
                     if let Some(r#ref) = _name.r#ref {
                         return LocRef { loc, r#ref: Some(r#ref) };
                     }
                 }
             }
-            Expr::Data::EIdentifier(ident) => {
+            js_ast::ExprData::EIdentifier(ident) => {
                 return LocRef { loc, r#ref: Some(ident.r#ref) };
             }
-            Expr::Data::EImportIdentifier(ident) => {
+            js_ast::ExprData::EImportIdentifier(ident) => {
                 if !Self::ALLOW_MACROS || (Self::ALLOW_MACROS && !self.macro_.refs.contains(&ident.r#ref)) {
                     return LocRef { loc, r#ref: Some(ident.r#ref) };
                 }
             }
-            Expr::Data::EClass(class) => {
+            js_ast::ExprData::EClass(class) => {
                 if let Some(_name) = &class.class_name {
                     if let Some(r#ref) = _name.r#ref {
                         return LocRef { loc, r#ref: Some(r#ref) };
@@ -3325,9 +3392,9 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                 exported_members.put(
                     self.allocator,
                     name,
-                    js_ast::TSNamespaceMember { loc: binding.loc, data: js_ast::TSNamespaceMember::Data::Property },
+                    js_ast::TSNamespaceMember { loc: binding.loc, data: js_ast::ts::Data::Property },
                 )?;
-                self.ref_to_ts_namespace_member.put(self.allocator, id.r#ref, js_ast::TSNamespaceMember::Data::Property)?;
+                self.ref_to_ts_namespace_member.put(self.allocator, id.r#ref, js_ast::ts::Data::Property)?;
             }
             Binding::Data::BObject(obj) => {
                 for prop in obj.properties.iter() {
@@ -3379,13 +3446,15 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         Ok(())
     }
 
-    pub fn require_initializers<const KIND: S::Local::Kind>(
+    #[allow(non_snake_case)]
+    pub fn require_initializers(
         &mut self,
+        KIND: js_ast::s::Kind,
         decls: &[G::Decl],
     ) -> Result<(), bun_core::Error> {
         let what = match KIND {
-            S::Local::Kind::KAwaitUsing | S::Local::Kind::KUsing => "declaration",
-            S::Local::Kind::KConst => "constant",
+            js_ast::s::Kind::KAwaitUsing | js_ast::s::Kind::KUsing => "declaration",
+            js_ast::s::Kind::KConst => "constant",
             _ => unreachable!(), // @compileError("unreachable") in Zig
         };
 
@@ -3434,7 +3503,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
             if let Some(existing_member) = unsafe { &*self.current_scope }.members.get(name) {
                 if let Some(member_data) = self.ref_to_ts_namespace_member.get(&existing_member.r#ref) {
-                    if let js_ast::TSNamespaceMember::Data::Namespace(ns) = member_data {
+                    if let js_ast::ts::Data::Namespace(ns) = member_data {
                         break 'brk Some(*ns as *mut _);
                     }
                 }
@@ -3446,7 +3515,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                 if let Some(ns) = unsafe { &*self.current_scope }.ts_namespace {
                     // SAFETY: arena-owned TSNamespaceMemberMap valid for parser 'a lifetime
                     if let Some(member) = unsafe { &*ns }.exported_members.get(name) {
-                        if let js_ast::TSNamespaceMember::Data::Namespace(m) = member.data {
+                        if let js_ast::ts::Data::Namespace(m) = member.data {
                             break 'brk Some(m as *mut _);
                         }
                     }
@@ -3561,7 +3630,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
     pub fn declare_common_js_symbol(
         &mut self,
-        kind: Symbol::Kind,
+        kind: js_ast::symbol::Kind,
         name: &'static [u8],
     ) -> Result<Ref, bun_core::Error> {
         let name_hash = Scope::get_member_hash(name);
@@ -3588,8 +3657,8 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         // Both the "exports" argument and "var exports" are hoisted variables, so
         // they don't collide.
         if let Some(_member) = &member {
-            if self.symbols[_member.r#ref.inner_index() as usize].kind == Symbol::Kind::Hoisted
-                && kind == Symbol::Kind::Hoisted
+            if self.symbols[_member.r#ref.inner_index() as usize].kind == js_ast::symbol::Kind::Hoisted
+                && kind == js_ast::symbol::Kind::Hoisted
                 && !self.has_es_module_syntax
             {
                 return Ok(_member.r#ref);
@@ -3616,21 +3685,29 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         Ok(r#ref)
     }
 
+    /// Zig: `comptime name: string` — every call site passes a literal, and
+    /// `generatedSymbolName` concatenates a comptime hash. Rust can't macro-call
+    /// on a runtime param, so callers must pre-hash via `generated_symbol_name!`
+    /// and pass the result, OR (non-bundle) we runtime-hash into the bump arena.
     pub fn declare_generated_symbol(
         &mut self,
-        kind: Symbol::Kind,
+        kind: js_ast::symbol::Kind,
         name: &'static [u8],
     ) -> Result<Ref, bun_core::Error> {
         // The bundler runs the renamer, so it is ok to not append a hash
         if self.options.bundle {
             return self.declare_symbol_maybe_generated::<true>(kind, logger::Loc::EMPTY, name);
         }
-        self.declare_symbol_maybe_generated::<true>(kind, logger::Loc::EMPTY, generated_symbol_name(name))
+        // Runtime equivalent of `generated_symbol_name!` (Zig comptime concat).
+        // Same bytes as the macro produces; arena-owned for symbol lifetime.
+        let hash = bun_wyhash::hash(0, name) as u32;
+        let hashed: &'a [u8] = bumpalo::format!(in self.bump, "{}_{}", bstr::BStr::new(name), bun_core::fmt::truncated_hash32(hash)).into_bump_str().as_bytes();
+        self.declare_symbol_maybe_generated::<true>(kind, logger::Loc::EMPTY, hashed)
     }
 
     pub fn declare_symbol(
         &mut self,
-        kind: Symbol::Kind,
+        kind: js_ast::symbol::Kind,
         loc: logger::Loc,
         name: &'a [u8],
     ) -> Result<Ref, bun_core::Error> {
@@ -3640,7 +3717,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
     pub fn declare_symbol_maybe_generated<const IS_GENERATED: bool>(
         &mut self,
-        kind: Symbol::Kind,
+        kind: js_ast::symbol::Kind,
         loc: logger::Loc,
         name: &'a [u8],
     ) -> Result<Ref, bun_core::Error> {
@@ -3649,7 +3726,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
             // Forbid declaring a symbol with a reserved word in strict mode
             if self.is_strict_mode()
                 && name.as_ptr() != arguments_str().as_ptr()
-                && js_lexer::STRICT_MODE_RESERVED_WORDS.has(name)
+                && crate::lexer_tables::STRICT_MODE_RESERVED_WORDS.has(name)
             {
                 self.mark_strict_mode_feature(StrictModeFeature::ReservedWord, js_lexer::range_of_identifier(self.source, loc), name)?;
             }
@@ -3690,11 +3767,11 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                     }
                     Scope::MergeResult::BecomePrivateGetSetPair => {
                         r#ref = existing.r#ref;
-                        self.symbols[symbol_idx].kind = Symbol::Kind::PrivateGetSetPair;
+                        self.symbols[symbol_idx].kind = js_ast::symbol::Kind::PrivateGetSetPair;
                     }
                     Scope::MergeResult::BecomePrivateStaticGetSetPair => {
                         r#ref = existing.r#ref;
-                        self.symbols[symbol_idx].kind = Symbol::Kind::PrivateStaticGetSetPair;
+                        self.symbols[symbol_idx].kind = js_ast::symbol::Kind::PrivateStaticGetSetPair;
                     }
                     Scope::MergeResult::OverwriteWithNew => {}
                 }
@@ -3740,7 +3817,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
     pub fn declare_binding(
         &mut self,
-        kind: Symbol::Kind,
+        kind: js_ast::symbol::Kind,
         binding: &mut BindingNodeIndex,
         opts: &ParseStatementOptions,
     ) -> Result<(), bun_core::Error> {
@@ -3880,8 +3957,8 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
     pub fn mark_expr_as_parenthesized(&mut self, expr: &mut Expr) {
         match &mut expr.data {
-            Expr::Data::EArray(ex) => ex.is_parenthesized = true,
-            Expr::Data::EObject(ex) => ex.is_parenthesized = true,
+            js_ast::ExprData::EArray(ex) => ex.is_parenthesized = true,
+            js_ast::ExprData::EObject(ex) => ex.is_parenthesized = true,
             _ => {}
         }
     }
@@ -3916,6 +3993,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         Output::panic(format_args!("{}\n{}{}", fmt, args, bstr::BStr::new(&panic_buffer[..written])));
     }
 
+    #[cfg(any())] // round-D: heavy body, depends on parse_*/visit_*/ImportScanner/full E surface
     pub fn jsx_strings_to_member_expression(
         &mut self,
         loc: logger::Loc,
@@ -3941,6 +4019,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         Ok(value)
     }
 
+    #[cfg(any())] // round-D: needs MaybeRewritePropertyAccessOpts (visit-phase opts)
     fn member_expression(&mut self, loc: logger::Loc, initial_value: Expr, parts: &[&'a [u8]]) -> Expr {
         let mut value = initial_value;
 
@@ -4129,21 +4208,21 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         for stmt in stmts {
             match &stmt.data {
                 // These never have side effects
-                Stmt::Data::SFunction(_) | Stmt::Data::SEmpty(_) => {}
+                js_ast::StmtData::SFunction(_) | js_ast::StmtData::SEmpty(_) => {}
 
                 // Let these be removed if they are unused. Note that we also need to
                 // check if the imported file is marked as "sideEffects: false" before we
                 // can remove a SImport statement. Otherwise the import must be kept for
                 // its side effects.
-                Stmt::Data::SImport(_) => {}
+                js_ast::StmtData::SImport(_) => {}
 
-                Stmt::Data::SClass(st) => {
+                js_ast::StmtData::SClass(st) => {
                     if !self.class_can_be_removed_if_unused(&st.class) {
                         return false;
                     }
                 }
 
-                Stmt::Data::SExpr(st) => {
+                js_ast::StmtData::SExpr(st) => {
                     if st.does_not_affect_tree_shaking {
                         // Expressions marked with this are automatically generated and have
                         // no side effects by construction.
@@ -4154,9 +4233,9 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                     }
                 }
 
-                Stmt::Data::SLocal(st) => {
+                js_ast::StmtData::SLocal(st) => {
                     // "await" is a side effect because it affects code timing
-                    if st.kind == S::Local::Kind::KAwaitUsing {
+                    if st.kind == js_ast::s::Kind::KAwaitUsing {
                         return false;
                     }
 
@@ -4167,9 +4246,9 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                         if let Some(decl_value) = &decl.value {
                             if !self.expr_can_be_removed_if_unused_without_dce_check(decl_value) {
                                 return false;
-                            } else if st.kind == S::Local::Kind::KUsing {
+                            } else if st.kind == js_ast::s::Kind::KUsing {
                                 // "using" declarations are only side-effect free if they are initialized to null or undefined
-                                if !matches!(decl_value.data, Expr::Data::ENull(_) | Expr::Data::EUndefined(_)) {
+                                if !matches!(decl_value.data, js_ast::ExprData::ENull(_) | js_ast::ExprData::EUndefined(_)) {
                                     return false;
                                 }
                             }
@@ -4177,7 +4256,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                     }
                 }
 
-                Stmt::Data::STry(try_) => {
+                js_ast::StmtData::STry(try_) => {
                     if !self.stmts_can_be_removed_if_unused_without_dce_check(try_.body)
                         || (try_.finally.is_some()
                             && !self.stmts_can_be_removed_if_unused_without_dce_check(try_.finally.as_ref().unwrap().stmts))
@@ -4187,18 +4266,18 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                 }
 
                 // Exports are tracked separately, so this isn't necessary
-                Stmt::Data::SExportClause(_) | Stmt::Data::SExportFrom(_) => {}
+                js_ast::StmtData::SExportClause(_) | js_ast::StmtData::SExportFrom(_) => {}
 
-                Stmt::Data::SExportDefault(st) => match &st.value {
+                js_ast::StmtData::SExportDefault(st) => match &st.value {
                     js_ast::StmtOrExpr::Stmt(s2) => match &s2.data {
-                        Stmt::Data::SExpr(s_expr) => {
+                        js_ast::StmtData::SExpr(s_expr) => {
                             if !self.expr_can_be_removed_if_unused_without_dce_check(&s_expr.value) {
                                 return false;
                             }
                         }
                         // These never have side effects
-                        Stmt::Data::SFunction(_) => {}
-                        Stmt::Data::SClass(sc) => {
+                        js_ast::StmtData::SFunction(_) => {}
+                        js_ast::StmtData::SClass(sc) => {
                             if !self.class_can_be_removed_if_unused(&sc.class) {
                                 return false;
                             }
@@ -4273,11 +4352,11 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
     pub fn is_valid_assignment_target(&self, expr: Expr) -> bool {
         match &expr.data {
-            Expr::Data::EIdentifier(ident) => !is_eval_or_arguments(self.load_name_from_ref(ident.r#ref)),
-            Expr::Data::EDot(e) => e.optional_chain.is_none(),
-            Expr::Data::EIndex(e) => e.optional_chain.is_none(),
-            Expr::Data::EArray(e) => !e.is_parenthesized,
-            Expr::Data::EObject(e) => !e.is_parenthesized,
+            js_ast::ExprData::EIdentifier(ident) => !is_eval_or_arguments(self.load_name_from_ref(ident.r#ref)),
+            js_ast::ExprData::EDot(e) => e.optional_chain.is_none(),
+            js_ast::ExprData::EIndex(e) => e.optional_chain.is_none(),
+            js_ast::ExprData::EArray(e) => !e.is_parenthesized,
+            js_ast::ExprData::EObject(e) => !e.is_parenthesized,
             _ => false,
         }
     }
@@ -4307,7 +4386,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
     #[inline]
     pub fn value_for_require(&self, loc: logger::Loc) -> Expr {
         debug_assert!(!self.is_source_runtime());
-        Expr { data: Expr::Data::ERequireCallTarget(()), loc }
+        Expr { data: js_ast::ExprData::ERequireCallTarget(()), loc }
     }
 
     #[inline]
@@ -4315,7 +4394,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         if let Some(known) = self.options.import_meta_main_value {
             return Expr {
                 loc,
-                data: Expr::Data::EBoolean(E::Boolean { value: if inverted { !known } else { known } }),
+                data: js_ast::ExprData::EBoolean(E::Boolean { value: if inverted { !known } else { known } }),
             };
         }
         // Node.js does not have import.meta.main, so we end up lowering
@@ -4332,7 +4411,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         if self.options.lower_import_meta_main_for_node_js {
             self.record_usage_of_runtime_require();
         }
-        Expr { loc, data: Expr::Data::EImportMetaMain(E::ImportMetaMain { inverted }) }
+        Expr { loc, data: js_ast::ExprData::EImportMetaMain(E::ImportMetaMain { inverted }) }
     }
 
     pub fn keep_expr_symbol_name(&mut self, _value: Expr, _name: &[u8]) -> Expr {
@@ -4411,25 +4490,25 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
     fn expr_can_be_removed_if_unused_without_dce_check(&mut self, expr: &Expr) -> bool {
         use js_ast::Op;
         match &expr.data {
-            Expr::Data::ENull(_)
-            | Expr::Data::EUndefined(_)
-            | Expr::Data::EMissing(_)
-            | Expr::Data::EBoolean(_)
-            | Expr::Data::EBranchBoolean(_)
-            | Expr::Data::ENumber(_)
-            | Expr::Data::EBigInt(_)
-            | Expr::Data::EString(_)
-            | Expr::Data::EThis(_)
-            | Expr::Data::ERegExp(_)
-            | Expr::Data::EFunction(_)
-            | Expr::Data::EArrow(_)
-            | Expr::Data::EImportMeta(_) => return true,
+            js_ast::ExprData::ENull(_)
+            | js_ast::ExprData::EUndefined(_)
+            | js_ast::ExprData::EMissing(_)
+            | js_ast::ExprData::EBoolean(_)
+            | js_ast::ExprData::EBranchBoolean(_)
+            | js_ast::ExprData::ENumber(_)
+            | js_ast::ExprData::EBigInt(_)
+            | js_ast::ExprData::EString(_)
+            | js_ast::ExprData::EThis(_)
+            | js_ast::ExprData::ERegExp(_)
+            | js_ast::ExprData::EFunction(_)
+            | js_ast::ExprData::EArrow(_)
+            | js_ast::ExprData::EImportMeta(_) => return true,
 
-            Expr::Data::EInlinedEnum(e) => return self.expr_can_be_removed_if_unused_without_dce_check(&e.value),
+            js_ast::ExprData::EInlinedEnum(e) => return self.expr_can_be_removed_if_unused_without_dce_check(&e.value),
 
-            Expr::Data::EDot(ex) => return ex.can_be_removed_if_unused,
-            Expr::Data::EClass(ex) => return self.class_can_be_removed_if_unused(ex),
-            Expr::Data::EIdentifier(ex) => {
+            js_ast::ExprData::EDot(ex) => return ex.can_be_removed_if_unused,
+            js_ast::ExprData::EClass(ex) => return self.class_can_be_removed_if_unused(ex),
+            js_ast::ExprData::EIdentifier(ex) => {
                 debug_assert!(!ex.r#ref.is_source_contents_slice()); // was not visited
 
                 if ex.must_keep_due_to_with_stmt {
@@ -4456,12 +4535,12 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                 // be very conservative, which would inhibit a lot of optimizations of code
                 // inside closures. This may need to be revisited if it proves problematic.
                 if ex.can_be_removed_if_unused
-                    || self.symbols[ex.r#ref.inner_index() as usize].kind != Symbol::Kind::Unbound
+                    || self.symbols[ex.r#ref.inner_index() as usize].kind != js_ast::symbol::Kind::Unbound
                 {
                     return true;
                 }
             }
-            Expr::Data::ECommonjsExportIdentifier(_) | Expr::Data::EImportIdentifier(_) => {
+            js_ast::ExprData::ECommonjsExportIdentifier(_) | js_ast::ExprData::EImportIdentifier(_) => {
                 // References to an ES6 import item are always side-effect free in an
                 // ECMAScript environment.
                 //
@@ -4480,14 +4559,14 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                 // references as being side-effect free.
                 return true;
             }
-            Expr::Data::EIf(ex) => {
+            js_ast::ExprData::EIf(ex) => {
                 return self.expr_can_be_removed_if_unused_without_dce_check(&ex.test_)
                     && (self.is_side_effect_free_unbound_identifier_ref(ex.yes, ex.test_, true)
                         || self.expr_can_be_removed_if_unused_without_dce_check(&ex.yes))
                     && (self.is_side_effect_free_unbound_identifier_ref(ex.no, ex.test_, false)
                         || self.expr_can_be_removed_if_unused_without_dce_check(&ex.no));
             }
-            Expr::Data::EArray(ex) => {
+            js_ast::ExprData::EArray(ex) => {
                 for item in ex.items.slice() {
                     if !self.expr_can_be_removed_if_unused_without_dce_check(item) {
                         return false;
@@ -4495,7 +4574,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                 }
                 return true;
             }
-            Expr::Data::EObject(ex) => {
+            js_ast::ExprData::EObject(ex) => {
                 for property in ex.properties.slice() {
                     // The key must still be evaluated if it's computed or a spread
                     if property.kind == Property::Kind::Spread
@@ -4513,13 +4592,13 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                 }
                 return true;
             }
-            Expr::Data::ECall(ex) => {
+            js_ast::ExprData::ECall(ex) => {
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
-                if ex.can_be_unwrapped_if_unused != E::CanBeUnwrapped::Never {
+                if ex.can_be_unwrapped_if_unused != js_ast::CanBeUnwrapped::Never {
                     for arg in ex.args.slice() {
                         if !(self.expr_can_be_removed_if_unused_without_dce_check(arg)
-                            || (ex.can_be_unwrapped_if_unused == E::CanBeUnwrapped::IfUnusedAndToStringSafe
+                            || (ex.can_be_unwrapped_if_unused == js_ast::CanBeUnwrapped::IfUnusedAndToStringSafe
                                 && arg.data.is_safe_to_string()))
                         {
                             return false;
@@ -4528,13 +4607,13 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                     return true;
                 }
             }
-            Expr::Data::ENew(ex) => {
+            js_ast::ExprData::ENew(ex) => {
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
-                if ex.can_be_unwrapped_if_unused != E::CanBeUnwrapped::Never {
+                if ex.can_be_unwrapped_if_unused != js_ast::CanBeUnwrapped::Never {
                     for arg in ex.args.slice() {
                         if !(self.expr_can_be_removed_if_unused_without_dce_check(arg)
-                            || (ex.can_be_unwrapped_if_unused == E::CanBeUnwrapped::IfUnusedAndToStringSafe
+                            || (ex.can_be_unwrapped_if_unused == js_ast::CanBeUnwrapped::IfUnusedAndToStringSafe
                                 && arg.data.is_safe_to_string()))
                         {
                             return false;
@@ -4543,10 +4622,10 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                     return true;
                 }
             }
-            Expr::Data::EUnary(ex) => match ex.op {
+            js_ast::ExprData::EUnary(ex) => match ex.op {
                 // These operators must not have any type conversions that can execute code
                 // such as "toString" or "valueOf". They must also never throw any exceptions.
-                Op::UnVoid | Op::UnNot => return self.expr_can_be_removed_if_unused_without_dce_check(&ex.value),
+                js_ast::op::Code::UnVoid | js_ast::op::Code::UnNot => return self.expr_can_be_removed_if_unused_without_dce_check(&ex.value),
 
                 // The "typeof" operator doesn't do any type conversions so it can be removed
                 // if the result is unused and the operand has no side effects. However, it
@@ -4558,29 +4637,29 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                 // when "x" is being referenced inside of its TDZ (temporal dead zone). TDZ
                 // checks are not yet handled correctly by bun or esbuild, so this possibility is
                 // currently ignored.
-                Op::UnTypeof => {
-                    if matches!(ex.value.data, Expr::Data::EIdentifier(_)) && ex.flags.was_originally_typeof_identifier {
+                js_ast::op::Code::UnTypeof => {
+                    if matches!(ex.value.data, js_ast::ExprData::EIdentifier(_)) && ex.flags.was_originally_typeof_identifier {
                         return true;
                     }
                     return self.expr_can_be_removed_if_unused_without_dce_check(&ex.value);
                 }
                 _ => {}
             },
-            Expr::Data::EBinary(ex) => match ex.op {
+            js_ast::ExprData::EBinary(ex) => match ex.op {
                 // These operators must not have any type conversions that can execute code
                 // such as "toString" or "valueOf". They must also never throw any exceptions.
-                Op::BinStrictEq | Op::BinStrictNe | Op::BinComma | Op::BinNullishCoalescing => {
+                js_ast::op::Code::BinStrictEq | js_ast::op::Code::BinStrictNe | js_ast::op::Code::BinComma | js_ast::op::Code::BinNullishCoalescing => {
                     return self.expr_can_be_removed_if_unused_without_dce_check(&ex.left)
                         && self.expr_can_be_removed_if_unused_without_dce_check(&ex.right);
                 }
                 // Special-case "||" to make sure "typeof x === 'undefined' || x" can be removed
-                Op::BinLogicalOr => {
+                js_ast::op::Code::BinLogicalOr => {
                     return self.expr_can_be_removed_if_unused_without_dce_check(&ex.left)
                         && (self.is_side_effect_free_unbound_identifier_ref(ex.right, ex.left, false)
                             || self.expr_can_be_removed_if_unused_without_dce_check(&ex.right));
                 }
                 // Special-case "&&" to make sure "typeof x !== 'undefined' && x" can be removed
-                Op::BinLogicalAnd => {
+                js_ast::op::Code::BinLogicalAnd => {
                     return self.expr_can_be_removed_if_unused_without_dce_check(&ex.left)
                         && (self.is_side_effect_free_unbound_identifier_ref(ex.right, ex.left, true)
                             || self.expr_can_be_removed_if_unused_without_dce_check(&ex.right));
@@ -4591,13 +4670,13 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                 // logic will convert "typeof x === 'object'" into "typeof x == 'object'"
                 // and since "typeof x === 'object'" is considered to be side-effect free,
                 // we must also consider "typeof x == 'object'" to be side-effect free.
-                Op::BinLooseEq | Op::BinLooseNe => {
+                js_ast::op::Code::BinLooseEq | js_ast::op::Code::BinLooseNe => {
                     return SideEffects::can_change_strict_to_loose(ex.left.data, ex.right.data)
                         && self.expr_can_be_removed_if_unused_without_dce_check(&ex.left)
                         && self.expr_can_be_removed_if_unused_without_dce_check(&ex.right);
                 }
                 // Special-case "<" and ">" with string, number, or bigint arguments
-                Op::BinLt | Op::BinGt | Op::BinLe | Op::BinGe => {
+                js_ast::op::Code::BinLt | js_ast::op::Code::BinGt | js_ast::op::Code::BinLe | js_ast::op::Code::BinGe => {
                     let left = ex.left.known_primitive();
                     let right = ex.right.known_primitive();
                     match left {
@@ -4613,7 +4692,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                 }
                 _ => {}
             },
-            Expr::Data::ETemplate(templ) => {
+            js_ast::ExprData::ETemplate(templ) => {
                 if templ.tag.is_none() {
                     for part in templ.parts.iter() {
                         if !self.expr_can_be_removed_if_unused_without_dce_check(&part.value)
@@ -4639,62 +4718,62 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         is_yes_branch_: bool,
     ) -> bool {
         use js_ast::Op;
-        let Expr::Data::EIdentifier(id) = value.data else { return false };
-        if self.symbols[id.r#ref.inner_index() as usize].kind != Symbol::Kind::Unbound {
+        let js_ast::ExprData::EIdentifier(id) = value.data else { return false };
+        if self.symbols[id.r#ref.inner_index() as usize].kind != js_ast::symbol::Kind::Unbound {
             return false;
         }
-        let Expr::Data::EBinary(binary) = guard_condition.data else { return false };
+        let js_ast::ExprData::EBinary(binary) = guard_condition.data else { return false };
         let binary = *binary;
         let mut is_yes_branch = is_yes_branch_;
 
         match binary.op {
-            Op::BinStrictEq | Op::BinStrictNe | Op::BinLooseEq | Op::BinLooseNe => {
+            js_ast::op::Code::BinStrictEq | js_ast::op::Code::BinStrictNe | js_ast::op::Code::BinLooseEq | js_ast::op::Code::BinLooseNe => {
                 // typeof x !== 'undefined'
-                let mut typeof_: Expr::Data = binary.left.data;
-                let mut compare: Expr::Data = binary.right.data;
+                let mut typeof_: js_ast::ExprData = binary.left.data;
+                let mut compare: js_ast::ExprData = binary.right.data;
                 // typeof 'undefined' !== x
-                if matches!(typeof_, Expr::Data::EString(_)) {
+                if matches!(typeof_, js_ast::ExprData::EString(_)) {
                     typeof_ = binary.right.data;
                     compare = binary.left.data;
                 }
 
                 // this order because Expr.Data Tag is not a pointer
                 // so it should be slightly faster to compare
-                let Expr::Data::EString(compare_str) = compare else { return false };
-                let Expr::Data::EUnary(unary) = typeof_ else { return false };
+                let js_ast::ExprData::EString(compare_str) = compare else { return false };
+                let js_ast::ExprData::EUnary(unary) = typeof_ else { return false };
                 let unary = *unary;
 
-                if unary.op != Op::UnTypeof || !matches!(unary.value.data, Expr::Data::EIdentifier(_)) {
+                if unary.op != js_ast::op::Code::UnTypeof || !matches!(unary.value.data, js_ast::ExprData::EIdentifier(_)) {
                     return false;
                 }
 
                 let id2 = unary.value.data.e_identifier().r#ref;
                 ((compare_str.eql_comptime(b"undefined") == is_yes_branch)
-                    == (binary.op == Op::BinStrictNe || binary.op == Op::BinLooseNe))
+                    == (binary.op == js_ast::op::Code::BinStrictNe || binary.op == js_ast::op::Code::BinLooseNe))
                     && id.r#ref.eql(id2)
             }
-            Op::BinLt | Op::BinGt | Op::BinLe | Op::BinGe => {
+            js_ast::op::Code::BinLt | js_ast::op::Code::BinGt | js_ast::op::Code::BinLe | js_ast::op::Code::BinGe => {
                 // Pattern match for "typeof x < <string>"
-                let mut typeof_: Expr::Data = binary.left.data;
-                let mut str_: Expr::Data = binary.right.data;
+                let mut typeof_: js_ast::ExprData = binary.left.data;
+                let mut str_: js_ast::ExprData = binary.right.data;
 
                 // Check if order is flipped: 'u' >= typeof x
-                if matches!(typeof_, Expr::Data::EString(_)) {
+                if matches!(typeof_, js_ast::ExprData::EString(_)) {
                     typeof_ = binary.right.data;
                     str_ = binary.left.data;
                     is_yes_branch = !is_yes_branch;
                 }
 
-                if let (Expr::Data::EUnary(unary), Expr::Data::EString(s)) = (typeof_, str_) {
+                if let (js_ast::ExprData::EUnary(unary), js_ast::ExprData::EString(s)) = (typeof_, str_) {
                     let unary = *unary;
-                    if unary.op == Op::UnTypeof
-                        && matches!(unary.value.data, Expr::Data::EIdentifier(_))
+                    if unary.op == js_ast::op::Code::UnTypeof
+                        && matches!(unary.value.data, js_ast::ExprData::EIdentifier(_))
                         && unary.flags.was_originally_typeof_identifier
                         && s.eql_comptime(b"u")
                     {
                         // In "typeof x < 'u' ? x : null", the reference to "x" is side-effect free
                         // In "typeof x > 'u' ? x : null", the reference to "x" is side-effect free
-                        if is_yes_branch == (binary.op == Op::BinLt || binary.op == Op::BinLe) {
+                        if is_yes_branch == (binary.op == js_ast::op::Code::BinLt || binary.op == js_ast::op::Code::BinLe) {
                             let id2 = unary.value.data.e_identifier().r#ref;
                             if id.r#ref.eql(id2) {
                                 return true;
@@ -4710,7 +4789,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
     pub fn jsx_import_automatic(&mut self, loc: logger::Loc, is_static: bool) -> Expr {
         self.jsx_import(
-            if is_static && !self.options.jsx.development && FeatureFlags::SUPPORT_JSXS_IN_JSX_TRANSFORM {
+            if is_static && !self.options.jsx.development && false /* TODO(b2-blocked): feature_flag */ {
                 JSXImport::Jsxs
             } else if self.options.jsx.development {
                 JSXImport::JsxDEV
@@ -4729,7 +4808,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                 let symbol_name = kind.tag_name();
                 let loc_ref = LocRef {
                     loc,
-                    r#ref: Some(self.declare_generated_symbol(Symbol::Kind::Other, symbol_name).expect("unreachable")),
+                    r#ref: Some(self.declare_generated_symbol(js_ast::symbol::Kind::Other, symbol_name).expect("unreachable")),
                 };
                 // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
                 unsafe { &mut *self.module_scope }
@@ -4757,7 +4836,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         )
     }
 
-    pub fn select_local_kind(&self, kind: S::Local::Kind) -> S::Local::Kind {
+    pub fn select_local_kind(&self, kind: js_ast::s::Kind) -> js_ast::s::Kind {
         // Use "var" instead of "let" and "const" if the variable declaration may
         // need to be separated from the initializer. This allows us to safely move
         // this declaration into a nested scope.
@@ -4766,13 +4845,13 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
             && unsafe { &*self.current_scope }.parent.is_none()
             && !kind.is_using()
         {
-            return S::Local::Kind::KVar;
+            return js_ast::s::Kind::KVar;
         }
 
         // Optimization: use "let" instead of "const" because it's shorter. This is
         // only done when bundling because assigning to "const" is only an error when bundling.
-        if self.options.bundle && kind == S::Local::Kind::KConst && self.options.features.minify_syntax {
-            return S::Local::Kind::KLet;
+        if self.options.bundle && kind == js_ast::s::Kind::KConst && self.options.features.minify_syntax {
+            return js_ast::s::Kind::KLet;
         }
 
         kind
@@ -4800,14 +4879,14 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         let mut current = expr;
         loop {
             match &current.data {
-                Expr::Data::EIdentifier(id) => {
+                js_ast::ExprData::EIdentifier(id) => {
                     self.ignore_usage(id.r#ref);
                 }
-                Expr::Data::EDot(dot) => {
+                js_ast::ExprData::EDot(dot) => {
                     current = dot.target;
                     continue;
                 }
-                Expr::Data::EIndex(index) => {
+                js_ast::ExprData::EIndex(index) => {
                     if index.index.is_string() {
                         current = index.target;
                         continue;
@@ -4829,11 +4908,11 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         stmts: &mut StmtList,
         name_ref: Ref,
         loc: logger::Loc,
-        replacement: &RuntimeFeatures::ReplaceableExport,
+        replacement: &crate::parser::Runtime::ReplaceableExport,
     ) -> bool {
         match replacement {
-            RuntimeFeatures::ReplaceableExport::Delete => false,
-            RuntimeFeatures::ReplaceableExport::Replace(value) => {
+            crate::parser::Runtime::ReplaceableExport::Delete => false,
+            crate::parser::Runtime::ReplaceableExport::Replace(value) => {
                 let count = stmts.len();
                 let decls = self.allocator.alloc_slice_copy(&[G::Decl {
                     binding: self.b(B::Identifier { r#ref: name_ref }, loc),
@@ -4846,11 +4925,11 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                 self.visit_and_append_stmt(stmts, &mut local).expect("unreachable");
                 count != stmts.len()
             }
-            RuntimeFeatures::ReplaceableExport::Inject(with) => {
+            crate::parser::Runtime::ReplaceableExport::Inject(with) => {
                 let count = stmts.len();
                 let decls = self.allocator.alloc_slice_copy(&[G::Decl {
                     binding: self.b(
-                        B::Identifier { r#ref: self.declare_symbol(Symbol::Kind::Other, loc, with.name).expect("unreachable") },
+                        B::Identifier { r#ref: self.declare_symbol(js_ast::symbol::Kind::Other, loc, with.name).expect("unreachable") },
                         loc,
                     ),
                     value: Some(with.value),
@@ -4868,20 +4947,20 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
     pub fn replace_decl_and_possibly_remove(
         &mut self,
         decl: &mut G::Decl,
-        replacement: &RuntimeFeatures::ReplaceableExport,
+        replacement: &crate::parser::Runtime::ReplaceableExport,
     ) -> bool {
         match replacement {
-            RuntimeFeatures::ReplaceableExport::Delete => false,
-            RuntimeFeatures::ReplaceableExport::Replace(value) => {
+            crate::parser::Runtime::ReplaceableExport::Delete => false,
+            crate::parser::Runtime::ReplaceableExport::Replace(value) => {
                 decl.value = Some(self.visit_expr(*value));
                 true
             }
-            RuntimeFeatures::ReplaceableExport::Inject(with) => {
+            crate::parser::Runtime::ReplaceableExport::Inject(with) => {
                 let bind_loc = decl.binding.loc;
                 let val_loc = decl.value.map(|v| v.loc).unwrap_or(bind_loc);
                 *decl = G::Decl {
                     binding: self.b(
-                        B::Identifier { r#ref: self.declare_symbol(Symbol::Kind::Other, bind_loc, with.name).expect("unreachable") },
+                        B::Identifier { r#ref: self.declare_symbol(js_ast::symbol::Kind::Other, bind_loc, with.name).expect("unreachable") },
                         bind_loc,
                     ),
                     value: Some(self.visit_expr(Expr { data: with.value.data, loc: val_loc })),
@@ -4902,7 +4981,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         stmts: &mut ListManaged<'a, Stmt>,
         body: Stmt,
     ) -> Result<(), bun_core::Error> {
-        if let Stmt::Data::SBlock(block) = &body.data {
+        if let js_ast::StmtData::SBlock(block) = &body.data {
             let mut keep_block = false;
             for stmt in block.stmts.iter() {
                 if statement_cares_about_scope(*stmt) {
@@ -4969,7 +5048,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
         // Make sure to only emit a variable once for a given namespace, since there
         // can be multiple namespace blocks for the same namespace
-        if (symbol.kind == Symbol::Kind::TsNamespace || symbol.kind == Symbol::Kind::TsEnum)
+        if (symbol.kind == js_ast::symbol::Kind::TsNamespace || symbol.kind == js_ast::symbol::Kind::TsEnum)
             && !self.emitted_namespace_vars.contains(&name_ref)
         {
             self.emitted_namespace_vars.put_no_clobber(allocator, name_ref, ()).expect("oom");
@@ -4982,13 +5061,13 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
             if self.enclosing_namespace_arg_ref.is_none() {
                 // Top-level namespace: "var"
                 stmts.push(self.s(
-                    S::Local { kind: S::Local::Kind::KVar, decls: G::Decl::List::from_owned_slice(decls), is_export, ..Default::default() },
+                    S::Local { kind: js_ast::s::Kind::KVar, decls: G::Decl::List::from_owned_slice(decls), is_export, ..Default::default() },
                     stmt_loc,
                 ));
             } else {
                 // Nested namespace: "let"
                 stmts.push(self.s(
-                    S::Local { kind: S::Local::Kind::KLet, decls: G::Decl::List::from_owned_slice(decls), ..Default::default() },
+                    S::Local { kind: js_ast::s::Kind::KLet, decls: G::Decl::List::from_owned_slice(decls), ..Default::default() },
                     stmt_loc,
                 ));
             }
@@ -5008,7 +5087,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                         Expr::init_identifier(name_ref, name_loc),
                         self.new_expr(
                             E::Binary {
-                                op: js_ast::Op::BinLogicalOrAssign,
+                                op: js_ast::op::Code::BinLogicalOrAssign,
                                 left: self.new_expr(
                                     E::Dot {
                                         target: Expr::init_identifier(namespace, name_loc),
@@ -5030,7 +5109,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
             self.record_usage(name_ref);
             self.new_expr(
                 E::Binary {
-                    op: js_ast::Op::BinLogicalOrAssign,
+                    op: js_ast::op::Code::BinLogicalOrAssign,
                     left: Expr::init_identifier(name_ref, name_loc),
                     right: self.new_expr(E::Object::default(), name_loc),
                 },
@@ -5048,7 +5127,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         let target = 'target: {
             // "(() => { foo() })()" => "(() => foo())()"
             if self.options.features.minify_syntax && stmts_inside_closure.len() == 1 {
-                if let Stmt::Data::SExpr(se) = &stmts_inside_closure[0].data {
+                if let js_ast::StmtData::SExpr(se) = &stmts_inside_closure[0].data {
                     let val = se.value;
                     let l = stmts_inside_closure[0].loc;
                     stmts_inside_closure[0] = self.s(S::Return { value: Some(val) }, l);
@@ -5088,7 +5167,17 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         stmts.push(closure);
         Ok(())
     }
+}
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Round-D/E heavy method bodies (lower_class / to_ast / react_refresh / etc.).
+// These depend on ImportScanner, ConvertESMExportsForHmr, full E-method
+// surface, repl_transforms, and the parse_*/visit_* sibling files. Gated
+// wholesale; the struct + scope-mgmt/allocate/error helpers above compile.
+#[cfg(any())]
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
+    P<'a, TYPESCRIPT, J, SCAN_ONLY>
+{
     pub fn lower_class(&mut self, stmtorexpr: js_ast::StmtOrExpr) -> &'a mut [Stmt] {
         match stmtorexpr {
             js_ast::StmtOrExpr::Stmt(stmt) => {
@@ -5116,8 +5205,8 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                     if prop.flags.contains(Flags::Property::IsMethod) {
                         if let Some(prop_value) = &prop.value {
                             match &prop_value.data {
-                                Expr::Data::EFunction(func) => {
-                                    let is_constructor = matches!(&prop.key, Some(k) if matches!(&k.data, Expr::Data::EString(s) if s.eql_comptime(b"constructor")));
+                                js_ast::ExprData::EFunction(func) => {
+                                    let is_constructor = matches!(&prop.key, Some(k) if matches!(&k.data, js_ast::ExprData::EString(s) if s.eql_comptime(b"constructor")));
 
                                     if is_constructor {
                                         constructor_function = Some(func as *const _ as *mut _);
@@ -5212,7 +5301,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
                     if prop.kind != Property::Kind::ClassStaticBlock
                         && !prop.flags.contains(Flags::Property::IsMethod)
-                        && !matches!(prop.key.as_ref().map(|k| &k.data), Some(Expr::Data::EPrivateIdentifier(_)))
+                        && !matches!(prop.key.as_ref().map(|k| &k.data), Some(js_ast::ExprData::EPrivateIdentifier(_)))
                         && prop.ts_decorators.len > 0
                     {
                         // remove decorated fields without initializers to avoid assigning undefined.
@@ -5230,7 +5319,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                         }
 
                         if prop.flags.contains(Flags::Property::IsComputed)
-                            || matches!(prop.key.unwrap().data, Expr::Data::ENumber(_))
+                            || matches!(prop.key.unwrap().data, js_ast::ExprData::ENumber(_))
                         {
                             target = self.new_expr(E::Index { target, index: prop.key.unwrap(), ..Default::default() }, prop.key.unwrap().loc);
                         } else {
@@ -5266,7 +5355,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
                         if class.extends.is_some() {
                             let target = self.new_expr(E::Super {}, stmt.loc);
-                            let arguments_ref = self.new_symbol(Symbol::Kind::Unbound, arguments_str()).expect("unreachable");
+                            let arguments_ref = self.new_symbol(js_ast::symbol::Kind::Unbound, arguments_str()).expect("unreachable");
                             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
                             unsafe { &mut *self.current_scope }.generated.push(self.allocator, arguments_ref).expect("oom");
 
@@ -5315,7 +5404,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                         // statements coming from class body inserted after super call or beginning of constructor.
                         let mut super_index: Option<usize> = None;
                         for (index, item) in constructor_stmts.iter().enumerate() {
-                            if !matches!(&item.data, Stmt::Data::SExpr(se) if matches!(&se.value.data, Expr::Data::ECall(c) if matches!(c.target.data, Expr::Data::ESuper(_))))
+                            if !matches!(&item.data, js_ast::StmtData::SExpr(se) if matches!(&se.value.data, js_ast::ExprData::ECall(c) if matches!(c.target.data, js_ast::ExprData::ESuper(_))))
                             {
                                 continue;
                             }
@@ -5590,7 +5679,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
                 let mut maybe_defined_dots = self.new_expr(
                     E::Binary {
-                        op: js_ast::Op::BinLogicalOr,
+                        op: js_ast::op::Code::BinLogicalOr,
                         right: self.check_if_defined_helper(current_dot)?,
                         left: Expr::default(), // patched below
                     },
@@ -5607,7 +5696,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                     unsafe {
                         *current_expr = self.new_expr(
                             E::Binary {
-                                op: js_ast::Op::BinLogicalOr,
+                                op: js_ast::op::Code::BinLogicalOr,
                                 right: self.check_if_defined_helper(current_dot)?,
                                 left: Expr::default(),
                             },
@@ -5684,7 +5773,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         define_data: &DefineData,
     ) -> Expr {
         match &define_data.value {
-            Expr::Data::EIdentifier(id) => {
+            js_ast::ExprData::EIdentifier(id) => {
                 return self.handle_identifier(
                     loc,
                     *id,
@@ -5692,7 +5781,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                     IdentifierOpts { assign_target, is_delete_target, was_originally_identifier: true, ..Default::default() },
                 );
             }
-            Expr::Data::EString(str_) => {
+            js_ast::ExprData::EString(str_) => {
                 return self.new_expr(*str_, loc);
             }
             _ => {}
@@ -5702,7 +5791,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
     pub fn is_dot_define_match(&mut self, expr: Expr, parts: &[&[u8]]) -> bool {
         match &expr.data {
-            Expr::Data::EDot(ex) => {
+            js_ast::ExprData::EDot(ex) => {
                 if parts.len() > 1 {
                     if ex.optional_chain.is_some() {
                         return false;
@@ -5713,16 +5802,16 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                     return is_tail_match && self.is_dot_define_match(ex.target, &parts[..last]);
                 }
             }
-            Expr::Data::EImportMeta(_) => {
+            js_ast::ExprData::EImportMeta(_) => {
                 return parts.len() == 2 && parts[0] == b"import" && parts[1] == b"meta";
             }
             // Note: this behavior differs from esbuild
             // esbuild does not try to match index accessors
             // we do, but only if it's a UTF8 string
             // the intent is to handle people using this form instead of E.Dot. So we really only want to do this if the accessor can also be an identifier
-            Expr::Data::EIndex(index) => {
+            js_ast::ExprData::EIndex(index) => {
                 if parts.len() > 1 {
-                    if let Expr::Data::EString(s) = &index.index.data {
+                    if let js_ast::ExprData::EString(s) = &index.index.data {
                         if s.is_utf8() {
                             if index.optional_chain.is_some() {
                                 return false;
@@ -5734,7 +5823,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                     }
                 }
             }
-            Expr::Data::EIdentifier(ex) => {
+            js_ast::ExprData::EIdentifier(ex) => {
                 // The last expression must be an identifier
                 if parts.len() == 1 {
                     let name = self.load_name_from_ref(ex.r#ref);
@@ -5754,7 +5843,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                     // when there's actually no symbol by that name, we return Ref.None
                     // If a symbol had already existed by that name, we return .unbound
                     return result.r#ref.is_null()
-                        || self.symbols[result.r#ref.inner_index() as usize].kind == Symbol::Kind::Unbound;
+                        || self.symbols[result.r#ref.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound;
                 }
             }
             _ => {}
@@ -5765,7 +5854,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
     // One statement could potentially expand to several statements
     pub fn stmts_to_single_stmt(&mut self, loc: logger::Loc, stmts: &'a mut [Stmt]) -> Stmt {
         if stmts.is_empty() {
-            return Stmt { data: Prefill::Data::S_EMPTY, loc };
+            return Stmt { data: Prefill::data::S_EMPTY, loc };
         }
 
         if stmts.len() == 1 && !statement_cares_about_scope(stmts[0]) {
@@ -5788,7 +5877,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                 break;
             }
             if let Some(label_ref) = scope.label_ref {
-                if scope.kind == Scope::Kind::Label
+                if scope.kind == js_ast::scope::Kind::Label
                     && strings::eql(name, self.symbols[label_ref.inner_index() as usize].original_name)
                 {
                     // Track how many times we've referenced this symbol
@@ -5808,7 +5897,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
             .expect("unreachable");
 
         // Allocate an "unbound" symbol
-        let r#ref = self.new_symbol(Symbol::Kind::Unbound, self.allocator.alloc_slice_copy(name)).expect("unreachable");
+        let r#ref = self.new_symbol(js_ast::symbol::Kind::Unbound, self.allocator.alloc_slice_copy(name)).expect("unreachable");
 
         // Track how many times we've referenced this symbol
         self.record_usage(r#ref);
@@ -5827,13 +5916,13 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
         if !self.runtime_imports.contains(name) {
             if !self.options.bundle {
-                let generated_symbol = self.declare_generated_symbol(Symbol::Kind::Other, name).expect("unreachable");
+                let generated_symbol = self.declare_generated_symbol(js_ast::symbol::Kind::Other, name).expect("unreachable");
                 self.runtime_imports.put(name, generated_symbol);
                 generated_symbol
             } else {
                 let loc_ref = js_ast::LocRef {
                     loc,
-                    r#ref: Some(self.new_symbol(Symbol::Kind::Other, name).expect("unreachable")),
+                    r#ref: Some(self.new_symbol(js_ast::symbol::Kind::Other, name).expect("unreachable")),
                 };
                 self.runtime_imports.put(name, loc_ref.r#ref.unwrap());
                 // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
@@ -5946,7 +6035,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
             let _ = write!(&mut v, "__bun_temp_ref_{:x}$", self.temp_ref_count);
             v.into_bump_slice()
         });
-        let r#ref = self.new_symbol(Symbol::Kind::Other, name).expect("oom");
+        let r#ref = self.new_symbol(js_ast::symbol::Kind::Other, name).expect("oom");
 
         self.temp_refs_to_declare.push(TempRef { r#ref, ..Default::default() });
 
@@ -5975,10 +6064,10 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
             // SAFETY: arena-owned TSNamespaceMemberMap valid for parser 'a lifetime
             for (key, val) in unsafe { &*namespace }.iter() {
                 match &val.data {
-                    js_ast::TSNamespaceMember::Data::EnumNumber(num) => {
+                    js_ast::ts::Data::EnumNumber(num) => {
                         inner_map.put_assume_capacity_no_clobber(key, InlinedEnumValue::encode(InlinedEnumValue::Decoded::Number(*num)));
                     }
-                    js_ast::TSNamespaceMember::Data::EnumString(str_) => {
+                    js_ast::ts::Data::EnumString(str_) => {
                         inner_map.put_assume_capacity_no_clobber(key, InlinedEnumValue::encode(InlinedEnumValue::Decoded::String(*str_)));
                     }
                     _ => continue,
@@ -5999,10 +6088,10 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         }
 
         for stmt in stmts {
-            if let Stmt::Data::SLocal(local) = &stmt.data {
+            if let js_ast::StmtData::SLocal(local) = &stmt.data {
                 // Need to re-check lower_using for the k_using case in case lower_await is true
-                if (local.kind == S::Local::Kind::KUsing && self.options.features.lower_using)
-                    || local.kind == S::Local::Kind::KAwaitUsing
+                if (local.kind == js_ast::s::Kind::KUsing && self.options.features.lower_using)
+                    || local.kind == js_ast::s::Kind::KAwaitUsing
                 {
                     return true;
                 }
@@ -6031,14 +6120,14 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
             return;
         }
         match &call.args.at(0).data {
-            Expr::Data::EString(str_) => {
+            js_ast::ExprData::EString(str_) => {
                 let loc = call.args.at(0).loc;
                 let Some(d) = self.rewrite_import_meta_hot_accept_string(str_, loc) else { return };
                 call.args.mut_(0).data = d;
             }
-            Expr::Data::EArray(arr) => {
+            js_ast::ExprData::EArray(arr) => {
                 for item in arr.items.slice_mut() {
-                    let Expr::Data::EString(s) = &item.data else {
+                    let js_ast::ExprData::EString(s) = &item.data else {
                         let _ = self.log.add_error(self.source, item.loc, Self::IMPORT_META_HOT_ACCEPT_ERR);
                         continue;
                     };
@@ -6049,10 +6138,10 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
             _ => return,
         }
 
-        call.target.data = Expr::Data::ESpecial(E::Special::HotAcceptVisited);
+        call.target.data = js_ast::ExprData::ESpecial(E::Special::HotAcceptVisited);
     }
 
-    fn rewrite_import_meta_hot_accept_string(&mut self, str_: &E::String, loc: logger::Loc) -> Option<Expr::Data> {
+    fn rewrite_import_meta_hot_accept_string(&mut self, str_: &E::String, loc: logger::Loc) -> Option<js_ast::ExprData> {
         let _ = str_.to_utf8(self.allocator);
         let specifier = str_.data;
 
@@ -6066,7 +6155,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
             return None;
         };
 
-        Some(Expr::Data::ESpecial(E::Special::ResolvedSpecifierString(
+        Some(js_ast::ExprData::ESpecial(E::Special::ResolvedSpecifierString(
             E::Special::ResolvedSpecifierStringIndex::init(u32::try_from(import_record_index).unwrap()),
         )))
     }
@@ -6138,7 +6227,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         debug_assert!(self.current_scope == self.module_scope);
 
         if self.options.features.server_components == options::ServerComponents::WrapExportsForServerReference {
-            bun_core::todo_panic!("registerServerReference");
+            todo!("registerServerReference");
         }
 
         let module_path = self.new_expr(
@@ -6146,7 +6235,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                 data: if self.options.jsx.development {
                     self.source.path.pretty
                 } else {
-                    bun_core::todo_panic!("TODO: unique_key here")
+                    todo!("TODO: unique_key here")
                 },
             },
             logger::Loc::EMPTY,
@@ -6191,7 +6280,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
             loop {
                 // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
                 let s = unsafe { &*scope };
-                if s.kind == Scope::Kind::FunctionBody || s.kind == Scope::Kind::Block || s.kind == Scope::Kind::Entry {
+                if s.kind == js_ast::scope::Kind::FunctionBody || s.kind == js_ast::scope::Kind::Block || s.kind == js_ast::scope::Kind::Entry {
                     break;
                 }
                 let Some(p) = s.parent else { break };
@@ -6199,7 +6288,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
             }
 
             *ctx_storage = Some(ReactRefresh::HookContext {
-                hasher: wyhash::Wyhash::init(0),
+                hasher: Wyhash::init(0),
                 signature_cb: self.generate_temp_ref_with_scope(Some(b"_s"), scope),
                 user_hooks: Default::default(),
             });
@@ -6235,22 +6324,22 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
             // TODO(port): Zig used `inline .e_identifier, .e_import_identifier, .e_commonjs_export_identifier => |id, tag|`
             // with @unionInit. We expand the three arms.
             match &hook_call.target.data {
-                Expr::Data::EIdentifier(id) => {
+                js_ast::ExprData::EIdentifier(id) => {
                     let gop = ctx.user_hooks.get_or_put(self.allocator, id.r#ref).expect("oom");
                     if !gop.found_existing {
-                        *gop.value_ptr = Expr { data: Expr::Data::EIdentifier(*id), loc: logger::Loc::EMPTY };
+                        *gop.value_ptr = Expr { data: js_ast::ExprData::EIdentifier(*id), loc: logger::Loc::EMPTY };
                     }
                 }
-                Expr::Data::EImportIdentifier(id) => {
+                js_ast::ExprData::EImportIdentifier(id) => {
                     let gop = ctx.user_hooks.get_or_put(self.allocator, id.r#ref).expect("oom");
                     if !gop.found_existing {
-                        *gop.value_ptr = Expr { data: Expr::Data::EImportIdentifier(*id), loc: logger::Loc::EMPTY };
+                        *gop.value_ptr = Expr { data: js_ast::ExprData::EImportIdentifier(*id), loc: logger::Loc::EMPTY };
                     }
                 }
-                Expr::Data::ECommonjsExportIdentifier(id) => {
+                js_ast::ExprData::ECommonjsExportIdentifier(id) => {
                     let gop = ctx.user_hooks.get_or_put(self.allocator, id.r#ref).expect("oom");
                     if !gop.found_existing {
-                        *gop.value_ptr = Expr { data: Expr::Data::ECommonjsExportIdentifier(*id), loc: logger::Loc::EMPTY };
+                        *gop.value_ptr = Expr { data: js_ast::ExprData::ECommonjsExportIdentifier(*id), loc: logger::Loc::EMPTY };
                     }
                 }
                 _ => {}
@@ -6330,8 +6419,8 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         let final_ = ctx.hasher.final_();
         let hash_data = self
             .allocator
-            .alloc_slice_fill_default::<u8>(bun_core::base64::encode_len_from_size(core::mem::size_of_val(&final_)));
-        debug_assert!(bun_core::base64::encode(hash_data, bytemuck::bytes_of(&final_)) == hash_data.len());
+            .alloc_slice_fill_default::<u8>(bun_base64::encode_len_from_size(core::mem::size_of_val(&final_)));
+        debug_assert!(bun_base64::encode(hash_data, bytemuck::bytes_of(&final_)) == hash_data.len());
 
         let have_custom_hooks = ctx.user_hooks.count() > 0;
         let have_force_arg = have_custom_hooks || self.react_refresh.force_reset;
@@ -6419,7 +6508,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
 
             for part in parts.iter() {
                 // Bake does not care about 'import =', as it handles it on it's own
-                let _ = ImportScanner::scan(self, part.stmts, wrap_mode != WrapMode::None, true, Some(&mut hmr_transform_ctx))?;
+                let _ = /* TODO(b2-blocked): ImportScanner round-D */ return Err(bun_core::Error::TODO); ImportScanner::scan_stub(self, part.stmts, wrap_mode != WrapMode::None, true, Some(&mut hmr_transform_ctx))?;
             }
 
             hmr_transform_ctx.finalize(self, parts.as_mut_slice())?;
@@ -6439,7 +6528,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                     self.import_records_for_current_part.clear();
                     self.declared_symbols.clear();
 
-                    let result = ImportScanner::scan(self, part.stmts, wrap_mode != WrapMode::None, false, None)?;
+                    let result = /* TODO(b2-blocked): ImportScanner round-D */ return Err(bun_core::Error::TODO); ImportScanner::scan_stub(self, part.stmts, wrap_mode != WrapMode::None, false, None)?;
                     kept_import_equals = kept_import_equals || result.kept_import_equals;
                     removed_import_equals = removed_import_equals || result.removed_import_equals;
 
@@ -6487,7 +6576,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
             // This isn't done for HMR because it already deletes all `.s_export_clause`s
             for part in parts.iter() {
                 for stmt in part.stmts.iter() {
-                    if let Stmt::Data::SExportClause(clause) = &stmt.data {
+                    if let js_ast::StmtData::SExportClause(clause) = &stmt.data {
                         for item in clause.items.iter() {
                             if let Some(_import) = self.named_imports.get_entry(&item.name.r#ref.unwrap()) {
                                 _import.value_mut().is_exported = true;
@@ -6513,7 +6602,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
             args[3] = Arg { binding: self.b(B::Identifier { r#ref: self.filename_ref }, logger::Loc::EMPTY), ..Default::default() };
             args[4] = Arg { binding: self.b(B::Identifier { r#ref: self.dirname_ref }, logger::Loc::EMPTY), ..Default::default() };
             if self.has_import_meta {
-                self.import_meta_ref = self.new_symbol(Symbol::Kind::Other, b"$Bun_import_meta").expect("oom");
+                self.import_meta_ref = self.new_symbol(js_ast::symbol::Kind::Other, b"$Bun_import_meta").expect("oom");
                 args[5] = Arg { binding: self.b(B::Identifier { r#ref: self.import_meta_ref }, logger::Loc::EMPTY), ..Default::default() };
             }
 
@@ -6527,7 +6616,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                 == js_ast::StrictModeKind::ExplicitStrictMode
                 && !(parts.len() > 0
                     && parts[0].stmts.len() > 0
-                    && matches!(parts[0].stmts[0].data, Stmt::Data::SDirective(_)));
+                    && matches!(parts[0].stmts[0].data, js_ast::StmtData::SDirective(_)));
 
             total_stmts_count += usize::from(preserve_strict_mode);
 
@@ -6621,7 +6710,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
             if self.options.bundle && (self.options.code_splitting || self.needs_wrapper_ref(parts.as_slice())) {
                 let mut buf = BumpVec::new_in(self.allocator);
                 let _ = write!(&mut buf, "require_{}", self.source.fmt_identifier());
-                break 'brk self.new_symbol(Symbol::Kind::Other, buf.into_bump_slice()).expect("oom");
+                break 'brk self.new_symbol(js_ast::symbol::Kind::Other, buf.into_bump_slice()).expect("oom");
             }
 
             Ref::NONE
@@ -6684,7 +6773,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
             ts_enums: self.compute_ts_enums_map(allocator)?,
             import_meta_ref: self.import_meta_ref,
 
-            symbols: js_ast::Symbol::List::move_from_list(&mut self.symbols),
+            symbols: js_ast::symbol::List::move_from_list(&mut self.symbols),
             parts: BabyList::<js_ast::Part>::move_from_list(parts),
             import_records: ImportRecord::List::move_from_list(&mut self.import_records),
             // TODO(port): ImportRecordList enum needs a move_from_list adapter
@@ -6711,17 +6800,17 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         for part in parts {
             for stmt in part.stmts.iter() {
                 match &stmt.data {
-                    Stmt::Data::SFunction(_) => {}
-                    Stmt::Data::SClass(class) => {
+                    js_ast::StmtData::SFunction(_) => {}
+                    js_ast::StmtData::SClass(class) => {
                         if !class.class.can_be_moved() {
                             return true;
                         }
                     }
-                    Stmt::Data::SLocal(local) => {
+                    js_ast::StmtData::SLocal(local) => {
                         if local.was_commonjs_export || self.commonjs_named_exports.count() == 0 {
                             for decl in local.decls.slice() {
                                 if let Some(value) = &decl.value {
-                                    if !matches!(value.data, Expr::Data::EMissing(_)) && !value.can_be_moved() {
+                                    if !matches!(value.data, js_ast::ExprData::EMissing(_)) && !value.can_be_moved() {
                                         return true;
                                     }
                                 }
@@ -6730,12 +6819,12 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
                         }
                         return true;
                     }
-                    Stmt::Data::SExportDefault(ed) => {
+                    js_ast::StmtData::SExportDefault(ed) => {
                         if !ed.can_be_moved() {
                             return true;
                         }
                     }
-                    Stmt::Data::SExportEquals(e) => {
+                    js_ast::StmtData::SExportEquals(e) => {
                         if !e.value.can_be_moved() {
                             return true;
                         }
@@ -6752,8 +6841,8 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
         log: &'a mut logger::Log,
         source: &'a logger::Source,
         define: &'a Define,
-        lexer: js_lexer::Lexer,
-        opts: Parser::Options,
+        lexer: js_lexer::Lexer<'a>,
+        opts: ParserOptions<'a>,
     ) -> Result<Self, bun_core::Error> {
         // PORT NOTE: out-param constructor reshaped to return Self.
         let mut scope_order = ScopeOrderList::with_capacity_in(1, allocator);
@@ -6761,7 +6850,7 @@ impl<'a, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: b
             members: Default::default(),
             children: Default::default(),
             generated: Default::default(),
-            kind: Scope::Kind::Entry,
+            kind: js_ast::scope::Kind::Entry,
             label_ref: None,
             parent: None,
             ..Default::default()
@@ -6958,8 +7047,9 @@ pub struct LowerUsingDeclarationsContext {
     pub has_await_using: bool,
 }
 
+#[cfg(any())] // round-D: bodies call gated P methods (generate_temp_ref, call_runtime, etc.)
 impl LowerUsingDeclarationsContext {
-    pub fn init<'a, const T: bool, const J: JSXTransformType, const S_: bool>(
+    pub fn init<'a, const T: bool, J: JsxT, const S_: bool>(
         p: &mut P<'a, T, J, S_>,
     ) -> Result<Self, bun_core::Error> {
         Ok(Self {
@@ -6969,13 +7059,13 @@ impl LowerUsingDeclarationsContext {
         })
     }
 
-    pub fn scan_stmts<'a, const T: bool, const J: JSXTransformType, const S_: bool>(
+    pub fn scan_stmts<'a, const T: bool, J: JsxT, const S_: bool>(
         &mut self,
         p: &mut P<'a, T, J, S_>,
         stmts: &mut [Stmt],
     ) {
         for stmt in stmts.iter_mut() {
-            let Stmt::Data::SLocal(local) = &mut stmt.data else { continue };
+            let js_ast::StmtData::SLocal(local) = &mut stmt.data else { continue };
             if !local.kind.is_using() {
                 continue;
             }
@@ -6983,7 +7073,7 @@ impl LowerUsingDeclarationsContext {
             if self.first_using_loc.is_empty() {
                 self.first_using_loc = stmt.loc;
             }
-            if local.kind == S::Local::Kind::KAwaitUsing {
+            if local.kind == js_ast::s::Kind::KAwaitUsing {
                 self.has_await_using = true;
             }
             for decl in local.decls.slice_mut() {
@@ -6991,13 +7081,13 @@ impl LowerUsingDeclarationsContext {
                     let value_loc = decl_value.loc;
                     p.record_usage(self.stack_ref);
                     let args = p.allocator.alloc_slice_copy(&[
-                        Expr { data: Expr::Data::EIdentifier(E::Identifier { r#ref: self.stack_ref, ..Default::default() }), loc: stmt.loc },
+                        Expr { data: js_ast::ExprData::EIdentifier(E::Identifier { r#ref: self.stack_ref, ..Default::default() }), loc: stmt.loc },
                         *decl_value,
                         // 1. always pass this param for hopefully better jit performance
                         // 2. pass 1 or 0 to be shorter than `true` or `false`
                         Expr {
-                            data: Expr::Data::ENumber(E::Number {
-                                value: if local.kind == S::Local::Kind::KAwaitUsing { 1.0 } else { 0.0 },
+                            data: js_ast::ExprData::ENumber(E::Number {
+                                value: if local.kind == js_ast::s::Kind::KAwaitUsing { 1.0 } else { 0.0 },
                             }),
                             loc: stmt.loc,
                         },
@@ -7006,15 +7096,15 @@ impl LowerUsingDeclarationsContext {
                 }
             }
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            if p.will_wrap_module_in_try_catch_for_using && unsafe { &*p.current_scope }.kind == Scope::Kind::Entry {
-                local.kind = S::Local::Kind::KVar;
+            if p.will_wrap_module_in_try_catch_for_using && unsafe { &*p.current_scope }.kind == js_ast::scope::Kind::Entry {
+                local.kind = js_ast::s::Kind::KVar;
             } else {
-                local.kind = S::Local::Kind::KConst;
+                local.kind = js_ast::s::Kind::KConst;
             }
         }
     }
 
-    pub fn finalize<'a, const T: bool, const J: JSXTransformType, const S_: bool>(
+    pub fn finalize<'a, const T: bool, J: JsxT, const S_: bool>(
         &mut self,
         p: &mut P<'a, T, J, S_>,
         stmts: &'a mut [Stmt],
@@ -7026,37 +7116,37 @@ impl LowerUsingDeclarationsContext {
         for i in 0..stmts.len() {
             let stmt = stmts[i];
             match &stmt.data {
-                Stmt::Data::SDirective(_)
-                | Stmt::Data::SImport(_)
-                | Stmt::Data::SExportFrom(_)
-                | Stmt::Data::SExportStar(_) => {
+                js_ast::StmtData::SDirective(_)
+                | js_ast::StmtData::SImport(_)
+                | js_ast::StmtData::SExportFrom(_)
+                | js_ast::StmtData::SExportStar(_) => {
                     // These can't go in a try/catch block
                     result.push(stmt);
                     continue;
                 }
-                Stmt::Data::SClass(c) => {
+                js_ast::StmtData::SClass(c) => {
                     if c.is_export {
                         // can't go in try/catch; hoist out
                         result.push(stmt);
                         continue;
                     }
                 }
-                Stmt::Data::SExportDefault(_) => {
+                js_ast::StmtData::SExportDefault(_) => {
                     continue; // this prevents re-exporting default since we already have it as an .s_export_clause
                 }
-                Stmt::Data::SExportClause(data) => {
+                js_ast::StmtData::SExportClause(data) => {
                     // Merge export clauses together
                     exports.extend_from_slice(data.items);
                     continue;
                 }
-                Stmt::Data::SFunction(_) => {
+                js_ast::StmtData::SFunction(_) => {
                     if should_hoist_fns {
                         // Hoist function declarations for cross-file ESM references
                         result.push(stmt);
                         continue;
                     }
                 }
-                Stmt::Data::SLocal(local) => {
+                js_ast::StmtData::SLocal(local) => {
                     // If any of these are exported, turn it into a "var" and add export clauses
                     if local.is_export {
                         local.is_export = false;
@@ -7068,7 +7158,7 @@ impl LowerUsingDeclarationsContext {
                                     alias_loc: decl.binding.loc,
                                     ..Default::default()
                                 });
-                                local.kind = S::Local::Kind::KVar;
+                                local.kind = js_ast::s::Kind::KVar;
                             }
                         }
                     }
@@ -7118,9 +7208,9 @@ impl LowerUsingDeclarationsContext {
             p.record_usage(err_ref);
             p.record_usage(has_err_ref);
             let args = p.allocator.alloc_slice_copy(&[
-                Expr { data: Expr::Data::EIdentifier(E::Identifier { r#ref: self.stack_ref, ..Default::default() }), loc },
-                Expr { data: Expr::Data::EIdentifier(E::Identifier { r#ref: err_ref, ..Default::default() }), loc },
-                Expr { data: Expr::Data::EIdentifier(E::Identifier { r#ref: has_err_ref, ..Default::default() }), loc },
+                Expr { data: js_ast::ExprData::EIdentifier(E::Identifier { r#ref: self.stack_ref, ..Default::default() }), loc },
+                Expr { data: js_ast::ExprData::EIdentifier(E::Identifier { r#ref: err_ref, ..Default::default() }), loc },
+                Expr { data: js_ast::ExprData::EIdentifier(E::Identifier { r#ref: has_err_ref, ..Default::default() }), loc },
             ]);
             p.call_runtime(loc, b"__callDispose", args)
         };
@@ -7160,7 +7250,7 @@ impl LowerUsingDeclarationsContext {
             statements[1] = p.s(
                 S::SExpr {
                     value: p.new_expr(
-                        E::Binary { op: js_ast::Op::BinLogicalAnd, left: promise_ref_expr, right: await_expr },
+                        E::Binary { op: js_ast::op::Code::BinLogicalAnd, left: promise_ref_expr, right: await_expr },
                         loc,
                     ),
                     ..Default::default()
@@ -7185,7 +7275,7 @@ impl LowerUsingDeclarationsContext {
                     }]);
                     G::Decl::List::from_owned_slice(decls)
                 },
-                kind: S::Local::Kind::KLet,
+                kind: js_ast::s::Kind::KLet,
                 ..Default::default()
             },
             loc,
@@ -7195,7 +7285,7 @@ impl LowerUsingDeclarationsContext {
             S::Try {
                 body: non_exported_statements,
                 body_loc: loc,
-                catch_: Some(S::Catch {
+                catch_: Some(js_ast::Catch {
                     binding: Some(p.b(B::Identifier { r#ref: caught_ref }, loc)),
                     body: {
                         let statements = p.allocator.alloc_slice_fill_default::<Stmt>(1);
@@ -7223,7 +7313,7 @@ impl LowerUsingDeclarationsContext {
                     body_loc: loc,
                     loc,
                 }),
-                finally: Some(S::Finally { loc, stmts: finally_stmts }),
+                finally: Some(js_ast::Finally { loc, stmts: finally_stmts }),
             },
             loc,
         ));
@@ -7247,26 +7337,27 @@ pub trait GenerateImportSymbols {
 
 // ─── Module-level statics (Zig: `var ... = ...;` at file scope) ───
 // In Zig these were mutable file-level vars used as canonical singletons; in Rust we
-// expose constructor fns since `Expr::Data` has interior pointers and isn't `const`.
+// expose constructor fns since `js_ast::ExprData` has interior pointers and isn't `const`.
 #[inline]
-pub fn null_expr_data() -> Expr::Data {
-    Expr::Data::EMissing(E::Missing {})
+pub fn null_expr_data() -> js_ast::ExprData {
+    js_ast::ExprData::EMissing(E::Missing {})
 }
 #[inline]
-pub fn null_stmt_data() -> Stmt::Data {
-    Stmt::Data::SEmpty(S::Empty {})
+pub fn null_stmt_data() -> js_ast::StmtData {
+    js_ast::StmtData::SEmpty(S::Empty {})
+}
+#[cfg(any())] // round-D: ExprData::EString wants StoreRef<EString>; Prefill::string::KEY is const-by-value now
+#[inline]
+pub fn key_expr_data() -> js_ast::ExprData {
+    js_ast::ExprData::EString(&Prefill::string::KEY)
 }
 #[inline]
-pub fn key_expr_data() -> Expr::Data {
-    Expr::Data::EString(&Prefill::String::KEY)
+pub fn null_value_expr() -> js_ast::ExprData {
+    js_ast::ExprData::ENull(E::Null {})
 }
 #[inline]
-pub fn null_value_expr() -> Expr::Data {
-    Expr::Data::ENull(E::Null {})
-}
-#[inline]
-pub fn false_value_expr() -> Expr::Data {
-    Expr::Data::EBoolean(E::Boolean { value: false })
+pub fn false_value_expr() -> js_ast::ExprData {
+    js_ast::ExprData::EBoolean(E::Boolean { value: false })
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -7274,5 +7365,5 @@ pub fn false_value_expr() -> Expr::Data {
 //   source:     src/js_parser/ast/P.zig (6966 lines)
 //   confidence: low
 //   todos:      31
-//   notes:      Massive comptime type-generator (NewParser_). Const-generic struct + single 'a lifetime for log/define/source/bump. Conditional field types (ImportRecordList/NamedImportsType when scan_only) modeled as enums since Rust const generics cannot select types. Heavy raw *mut Scope per LIFETIMES.tsv ARENA classification. ExpressionTransposer/Binding.ToExpr/generate_import_stmt anytype params need Phase B trait wiring. lower_class metadata emission condensed into helper — diff carefully. Many `.data` payload mutations use raw ptrs pending Expr::Data finalization.
+//   notes:      Massive comptime type-generator (NewParser_). Const-generic struct + single 'a lifetime for log/define/source/bump. Conditional field types (ImportRecordList/NamedImportsType when scan_only) modeled as enums since Rust const generics cannot select types. Heavy raw *mut Scope per LIFETIMES.tsv ARENA classification. ExpressionTransposer/Binding.ToExpr/generate_import_stmt anytype params need Phase B trait wiring. lower_class metadata emission condensed into helper — diff carefully. Many `.data` payload mutations use raw ptrs pending js_ast::ExprData finalization.
 // ──────────────────────────────────────────────────────────────────────────

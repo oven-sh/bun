@@ -22,8 +22,24 @@ use bun_logger as logger;
 // remaining un-gated files keep inline stubs there. `parser.rs` stays gated
 // until ast types + P.rs land.
 pub mod ast;
-#[cfg(any())]
+#[path = "parser.rs"]
 pub mod parser;
+// Re-export parser-helper types at crate root so P.rs can `use crate::{...}`.
+pub use parser::*;
+
+// ── round-C stubs for gated modules P.rs/Parser.rs reference ────────────
+pub mod renamer {
+    pub type SymbolMap = crate::ast::symbol::Map;
+}
+pub mod repl_transforms {
+    pub type ReplPrelude = ();
+}
+/// Zig: `Part.SymbolUseMap` / `Part.SymbolPropertyUseMap` — module-style alias
+/// so `crate::part::{SymbolUseMap, SymbolPropertyUseMap}` resolves.
+pub mod part {
+    pub use crate::{PartSymbolPropertyUseMap as SymbolPropertyUseMap, PartSymbolUseMap as SymbolUseMap};
+}
+// `generated_symbol_name!` is `#[macro_export]` in parser.rs → already at crate root.
 #[path = "lexer.rs"]
 pub mod lexer;
 #[path = "lexer_tables.rs"]
@@ -180,9 +196,10 @@ impl ImportItemStatus {
 }
 
 #[repr(u8)] // Zig: enum(u2)
-#[derive(Copy, Clone, PartialEq, Eq, Debug, strum::IntoStaticStr)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum AssignTarget {
+    #[default]
     None = 0,
     /// "a = b"
     Replace = 1,
@@ -894,6 +911,12 @@ pub enum StmtOrExpr {
     Expr(Expr),
 }
 
+impl Default for StmtOrExpr {
+    fn default() -> Self {
+        StmtOrExpr::Expr(Expr::default())
+    }
+}
+
 impl StmtOrExpr {
     pub fn to_expr(self) -> Expr {
         #[cfg(any())]
@@ -1198,10 +1221,34 @@ impl RuntimeTranspilerCache {
 }
 
 // ─── from bun_bundler::defines (src/bundler/defines.zig) ────────────────────
-// TODO(b1): gated — depends on un-stubbed `ast::expr::Data` variants,
-// `bun_interchange::json::parse_env_json`, `crate::lexer`, and `bun_str`.
-#[cfg(any())]
+// Round-C stub: P.rs only needs `Define` (read-only handle) + `DefineData`
+// (lookup result). Full impl below stays gated.
 pub mod defines {
+    use crate::ast::expr;
+    #[derive(Default)]
+    pub struct Define {
+        pub identifiers: bun_collections::StringHashMap<IdentifierDefine>,
+        pub dots: bun_collections::StringHashMap<Vec<DotDefine>>,
+    }
+    #[derive(Clone, Default)]
+    pub struct DefineData {
+        pub value: Option<expr::Data>,
+        pub original_name: Option<Box<[u8]>>,
+        pub can_be_removed_if_unused: bool,
+        pub call_can_be_unwrapped_if_unused: bool,
+        pub method_call_must_be_replaced_with_undefined: bool,
+    }
+    pub type IdentifierDefine = DefineData;
+    #[derive(Clone, Default)]
+    pub struct DotDefine {
+        pub parts: Vec<Box<[u8]>>,
+        pub data: DefineData,
+    }
+}
+pub use defines::{Define, DefineData};
+
+#[cfg(any())]
+pub mod defines_full_draft {
     use bun_collections::{ArrayHashMap, StringHashMap};
     use bun_logger as logger;
     use bun_str as strings;

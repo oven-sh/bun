@@ -1176,6 +1176,10 @@ impl EString {
     pub const fn is_utf8(&self) -> bool {
         !self.is_utf16
     }
+    /// Const constructor for `'static` literals (Prefill globals).
+    pub const fn from_static(data: &'static [u8]) -> Self {
+        Self { data, prefer_template: false, next: None, end: None, rope_len: 0, is_utf16: false }
+    }
     /// `data` is arena-owned (source text or `Expr.Data.Store` / bump arena)
     /// and bulk-freed; per the Phase-A `Str` convention the lifetime is
     /// erased. Phase B threads `'bump`.

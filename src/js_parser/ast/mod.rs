@@ -132,22 +132,39 @@ impl<T> DebugOnlyDisabler<T> {
 
 // ── flat re-exports (the rest of lib.rs/ast/ expects these at `crate::ast::X`) ──
 
+pub use ast::Ast;
 pub use ast_memory_allocator::ASTMemoryAllocator;
+pub use b as B;
 pub use base::{Index, Ref};
+pub use binding::Binding;
 pub use char_freq::CharFreq;
 pub use e as E;
 pub use expr::{Data as ExprData, Expr, Tag as ExprTag};
 pub use g as G;
-pub use op::{Code as OpCode, Op};
+pub use op as Op;
+pub use op::Code as OpCode;
 pub use s as S;
+pub use s::Kind as LocalKind;
 pub use scope::Scope;
 pub use stmt::{Data as StmtData, Stmt, Tag as StmtTag};
 pub use symbol::Symbol;
 pub use crate::{
-    Case, Catch, ClauseItem, EnumValue, ExportsKind, ExprNodeIndex, ExprNodeList, Finally, Flags,
-    InlinedEnumValue, JsonWriter, LocRef, NamedExport, NamedImport, NewBatcher, OptionalChain,
-    Part, SlotCounts, StmtNodeIndex, StmtNodeList, StmtOrExpr,
+    AssignTarget, BindingNodeList, Case, Catch, ClauseItem, EnumValue, ExportsKind, ExprNodeIndex,
+    ExprNodeList, Finally, Flags, InlinedEnumValue, JsonWriter, LocRef, NamedExport, NamedImport,
+    NewBatcher, OptionalChain, Part, SlotCounts, StmtNodeIndex, StmtNodeList, StmtOrExpr,
 };
+pub type BindingNodeIndex = Binding;
+
+// ── round-C re-exports so `js_ast::X` resolves for P.rs ───────────────────
+pub use crate::{DeclaredSymbol, DeclaredSymbolList, StrictModeKind, Result as result, Macro};
+pub use e::CallUnwrap as CanBeUnwrapped;
+pub use expr::PrimitiveType as KnownPrimitive;
+pub use g::NamespaceAlias;
+pub use ts::{TSNamespaceMember, TSNamespaceMemberMap, TSNamespaceScope};
+pub use crate::NAMESPACE_EXPORT_PART_INDEX;
+// `Op::BinAssign` etc. — Zig flattens enum members at the type level; in Rust
+// they're at `op::Code::*`. Re-export the variants under the `Op` mod alias.
+pub use op::Code::*;
 // `ArenaStr`/helpers are `pub(crate)`; surface them for the ast/ submodules.
 pub(crate) use crate::{empty_arena_slice_mut, empty_arena_str, ArenaStr};
 
@@ -194,7 +211,21 @@ pub mod TypeScript {
     }
 }
 
-// ── STUB (round-C+ targets) ────────────────────────────────────────────────
+// ── round-C: P.rs / Parser.rs (parser state + entry point) ─────────────────
+// Real files; declared here so `crate::ast::p::P` / `crate::ast::p::Parser`
+// resolve. Heavy parse_*/visit_* method bodies stay #[cfg(any())]-gated inside.
+#[path = "P.rs"]
+pub mod p;
+pub use p::P;
+#[path = "Parser.rs"]
+pub mod parser_entry;
+pub use parser_entry::{Parser, Options as ParserOptions};
+
+// `ast::Result` is the variant the public `Parser::parse` returns
+// (defined at crate root in lib.rs, re-exported here for `js_ast::Result`).
+pub use crate::Result;
+
+// ── STUB (round-D+ targets) ────────────────────────────────────────────────
 
 pub mod bundled_ast {
     #[derive(Default)]

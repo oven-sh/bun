@@ -8,35 +8,119 @@ use core::ffi::c_void;
 use bun_collections::{ArrayHashMap, HashMap, StringArrayHashMap, StringHashMap};
 use bun_core::Output;
 use bun_logger as logger;
-use bun_options_types::import_record::{self, ImportKind, ImportRecord};
-use bun_str::strings;
-use bun_wyhash::Wyhash;
+use bun_options_types::import_record::{ImportKind, ImportRecord};
+use bun_string::strings;
+use bun_wyhash::Wyhash11 as Wyhash;
 
-// Re-exports (mirrors the Zig `pub const X = @import(...)` block at the bottom)
-pub use crate::ast::convert_esm_exports_for_hmr as ConvertESMExportsForHmr;
-pub use crate::ast::import_scanner as ImportScanner;
-pub use crate::ast::type_script as TypeScript;
-pub use bun_paths::fs; // TODO(b0): fs arrives from move-in (was bun_resolver::fs → paths)
-pub use bun_options_types as options; // TYPE_ONLY: was bun_bundler::options
-// TODO(b0): renamer arrives from move-in (was bun_js_printer::renamer → js_parser)
+// Re-exports (mirrors the Zig `pub const X = @import(...)` block at the bottom).
+// Round-C: stub the still-gated submodules so the helper *types* in this file
+// compile; the real bodies arrive in rounds D/E.
+pub mod ConvertESMExportsForHmr { pub type Ctx = (); }
+pub mod ImportScanner { pub type State = (); }
+pub use crate::ast::TypeScript;
+pub use bun_paths::fs;
+
+/// `bun_options_types` is missing several items P.rs/Parser.rs reference
+/// (`JSX`, `ServerComponents`, `ModuleType`, etc.). Per directive we cannot
+/// edit other crates; provide a local `options` mod that re-exports the real
+/// crate plus stand-ins. Tracked in `blocked_on`.
+pub mod options {
+    pub use bun_options_types::*;
+    // TODO(b2-blocked): bun_options_types::{JSX, ServerComponents, OutputFormat,
+    // AllowUnresolved, Format, Framework} — missing from lower-tier surface.
+    pub use bun_options_types::BundleEnums::ModuleType;
+    #[allow(non_snake_case)]
+    pub mod JSX {
+        #[derive(Clone, Default)]
+        pub struct Pragma {
+            pub runtime: Runtime,
+            pub import_source: ImportSource,
+            pub development: bool,
+        }
+        #[derive(Clone, Copy, Default, PartialEq, Eq)]
+        pub enum Runtime { #[default] Automatic, Classic, Solid }
+        #[derive(Clone, Default)]
+        pub struct ImportSource {
+            pub development: Box<[u8]>,
+            pub production: Box<[u8]>,
+        }
+        pub static RUNTIME_MAP: phf::Map<&'static [u8], Runtime> = phf::phf_map! {
+            b"automatic" => Runtime::Automatic,
+            b"classic" => Runtime::Classic,
+            b"solid" => Runtime::Solid,
+        };
+    }
+    pub use JSX::Runtime as JSXRuntime;
+    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    pub struct ServerComponents { pub is_client_component_boundary: bool }
+    impl ServerComponents { pub const fn is_enabled(self) -> bool { false } }
+    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    pub enum OutputFormat { #[default] Preserve, Cjs, Esm, Iife, Internal_BakeDev }
+    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    pub enum Format { #[default] Preserve, Cjs, Esm }
+    #[derive(Clone, Default)]
+    pub struct AllowUnresolved;
+    #[derive(Clone, Default)]
+    pub struct Framework;
+    pub type MacroRemap = bun_collections::StringHashMap<bun_collections::StringHashMap<Box<[u8]>>>;
+}
 pub use crate::renamer;
-pub use crate::ast::known_global::KnownGlobal;
-pub use crate::ast::parser::Parser;
-pub use crate::ast::side_effects::SideEffects;
-pub use crate::ast::fold_string_addition::fold_string_addition;
-pub use bun_paths::is_package_path; // TODO(b0): arrives from move-in (was bun_resolver::resolver::is_package_path → paths)
+#[derive(Copy, Clone, Default)]
+pub struct KnownGlobal;
+pub use crate::ast::parser_entry::{Parser, Options as ParserOptions};
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
+pub enum SideEffects { #[default] CouldHaveSideEffects, NoSideEffects }
+pub fn fold_string_addition(_l: Expr, _r: Expr) -> Option<Expr> { None /* round-E */ }
+pub use bun_paths::is_package_path;
 
 pub use crate::ast::base::Ref;
 pub use crate::ast::base::{Index, RefCtx};
 
-pub use import_record as importRecord;
+pub use bun_options_types::import_record as importRecord;
 
-pub use crate::runtime::Runtime;
+// `runtime` mod is gated; provide a local Runtime stub so RuntimeFeatures/Imports
+// resolve. Real surface arrives when runtime.rs un-gates.
+pub mod Runtime {
+    #[derive(Default, Clone, Copy)]
+    pub struct Features {
+        pub allow_runtime: bool,
+        pub auto_import_jsx: bool,
+        pub commonjs_at_runtime: bool,
+        pub dead_code_elimination: bool,
+        pub dynamic_require: bool,
+        pub hot_module_reloading: bool,
+        pub inject_jest_globals: bool,
+        pub inlining: bool,
+        pub jsx_optimization_inline: bool,
+        pub minify_identifiers: bool,
+        pub minify_syntax: bool,
+        pub no_macros: bool,
+        pub react_fast_refresh: bool,
+        pub remove_whitespace: bool,
+        pub replace_exports: bool,
+        pub server_components: bool,
+        pub set_breakpoint_on_first_line: bool,
+        pub top_level_await: bool,
+        pub trim_unused_imports: bool,
+        pub use_import_meta_require: bool,
+    }
+    #[derive(Default, Clone, Copy)]
+    pub struct Imports;
+    #[derive(Default, Clone, Copy)]
+    pub struct Names;
+    #[derive(Clone)]
+    pub enum ReplaceableExport {
+        Delete,
+        Replace(crate::ast::Expr),
+        Inject { name: Box<[u8]>, value: crate::ast::Expr },
+    }
+    pub fn is_runtime_module(_: &[u8]) -> bool { false }
+}
 pub type RuntimeFeatures = Runtime::Features;
 pub type RuntimeImports = Runtime::Imports;
 pub type RuntimeNames = Runtime::Names;
 
-pub use crate::ast::p::{NewParser, NewParser_};
+pub use crate::ast::p::{NewParser, P};
 
 pub use bun_collections::StringHashMap as StringHashMapRe; // TODO(port): name collision with `StringHashMap` re-export
 // NOTE(b0): `pub use bun_js_printer as js_printer;` removed — js_printer is same-tier mutual
@@ -119,30 +203,30 @@ pub struct JSXImportSymbols {
 impl JSXImportSymbols {
     pub fn get(&self, name: &[u8]) -> Option<Ref> {
         if name == b"jsx" {
-            return self.jsx.map(|jsx| jsx.r#ref.unwrap());
+            return self.jsx.map(|jsx| jsx.ref_.unwrap());
         }
         if name == b"jsxDEV" {
-            return self.jsx_dev.map(|jsx| jsx.r#ref.unwrap());
+            return self.jsx_dev.map(|jsx| jsx.ref_.unwrap());
         }
         if name == b"jsxs" {
-            return self.jsxs.map(|jsxs| jsxs.r#ref.unwrap());
+            return self.jsxs.map(|jsxs| jsxs.ref_.unwrap());
         }
         if name == b"Fragment" {
-            return self.fragment.map(|f| f.r#ref.unwrap());
+            return self.fragment.map(|f| f.ref_.unwrap());
         }
         if name == b"createElement" {
-            return self.create_element.map(|c| c.r#ref.unwrap());
+            return self.create_element.map(|c| c.ref_.unwrap());
         }
         None
     }
 
     pub fn get_with_tag(&self, tag: JSXImport) -> Option<Ref> {
         match tag {
-            JSXImport::Jsx => self.jsx.map(|jsx| jsx.r#ref.unwrap()),
-            JSXImport::JsxDEV => self.jsx_dev.map(|jsx| jsx.r#ref.unwrap()),
-            JSXImport::Jsxs => self.jsxs.map(|jsxs| jsxs.r#ref.unwrap()),
-            JSXImport::Fragment => self.fragment.map(|f| f.r#ref.unwrap()),
-            JSXImport::CreateElement => self.create_element.map(|c| c.r#ref.unwrap()),
+            JSXImport::Jsx => self.jsx.map(|jsx| jsx.ref_.unwrap()),
+            JSXImport::JsxDEV => self.jsx_dev.map(|jsx| jsx.ref_.unwrap()),
+            JSXImport::Jsxs => self.jsxs.map(|jsxs| jsxs.ref_.unwrap()),
+            JSXImport::Fragment => self.fragment.map(|f| f.ref_.unwrap()),
+            JSXImport::CreateElement => self.create_element.map(|c| c.ref_.unwrap()),
         }
     }
 
@@ -266,6 +350,7 @@ impl<'a, Context, State: Copy> ExpressionTransposer<'a, Context, State> {
         Self { context: c, visitor }
     }
 
+    #[cfg(any())] // round-D: ExprData::e_if() accessor + Expr::init for E::If gated
     pub fn maybe_transpose_if(&mut self, arg: Expr, state: State) -> Expr {
         match arg.data {
             js_ast::ExprData::EIf(ex) => Expr::init(
@@ -280,6 +365,7 @@ impl<'a, Context, State: Copy> ExpressionTransposer<'a, Context, State> {
         }
     }
 
+    #[cfg(any())] // round-D: as above
     pub fn transpose_known_to_be_if(&mut self, arg: Expr, state: State) -> Expr {
         // SAFETY: caller guarantees `arg.data` is `e_if`
         let ex = arg.data.e_if();
@@ -303,13 +389,13 @@ pub fn loc_after_op(e: &E::Binary) -> logger::Loc {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct TransposeState {
     pub is_await_target: bool,
     pub is_then_catch_target: bool,
     pub is_require_immediately_assigned_to_decl: bool,
     pub loc: logger::Loc,
-    pub import_record_tag: Option<ImportRecord::Tag>,
+    pub import_record_tag: Option<bun_options_types::ImportRecordTag>,
     pub import_loader: Option<bun_options_types::Loader>,
     pub import_options: Expr,
 }
@@ -355,11 +441,13 @@ pub struct JSXTag<'a> {
     pub name: &'a [u8],
 }
 
+// Round-D: body uses ParserLike methods (lexer_mut/source/arena) not yet on the
+// trait, plus E::String/E::Dot struct-init that doesn't match round-B field set.
+#[cfg(any())]
 impl<'a> JSXTag<'a> {
-    // TODO(port): generic parser trait bound — Zig used `comptime P: type, p: *P`.
     pub fn parse<P>(p: &'a mut P) -> Result<JSXTag<'a>, bun_core::Error>
     where
-        P: crate::ast::p::ParserLike, // TODO(port): trait covering lexer/log/allocator/newExpr/storeNameInRef
+        P: crate::ast::p::ParserLike<'a>,
     {
         let loc = p.lexer().loc();
 
@@ -679,7 +767,7 @@ pub enum StmtsKind {
 
 #[cold]
 fn notimpl() -> ! {
-    Output::panic("Not implemented yet!!", &[]);
+    Output::panic(format_args!("Not implemented yet!!"));
 }
 
 #[derive(Default)]
@@ -715,7 +803,7 @@ pub struct ParsedPath<'a> {
     pub loc: logger::Loc,
     pub text: &'a [u8],
     pub is_macro: bool,
-    pub import_tag: ImportRecord::Tag,
+    pub import_tag: bun_options_types::ImportRecordTag,
     pub loader: Option<bun_options_types::Loader>,
 }
 
@@ -759,7 +847,7 @@ impl InvalidLoc {
             InvalidLocTag::Method => b"Unexpected method in binding pattern",
             InvalidLocTag::Unknown => b"Invalid binding pattern",
         };
-        log.add_error(source, self.loc, text).expect("unreachable");
+        log.add_error(Some(source), self.loc, text).expect("unreachable");
     }
 }
 
@@ -781,7 +869,7 @@ impl StringVoidMap {
     }
 
     pub fn contains(&self, key: &[u8]) -> bool {
-        self.map.contains(key)
+        self.map.contains_key(key)
     }
 
     fn init() -> Result<StringVoidMap, bun_core::Error> {
@@ -798,6 +886,10 @@ impl StringVoidMap {
     /// Returns an RAII guard that derefs to `&mut StringVoidMap` and is
     /// returned to the pool on `Drop` (replaces Zig's `get` + `defer release`).
     #[inline]
+    // TODO(b2-blocked): bun_collections::pool::PoolGuard — ObjectPool::data() is
+    // still `unreachable!()` (round-B incomplete). The Zig side returns a pooled
+    // node guard; for now hand back a fresh owned map.
+    #[cfg(any())]
     pub fn get() -> bun_collections::pool::PoolGuard<'static, StringVoidMap> {
         StringVoidMapPool::get()
     }
@@ -805,7 +897,10 @@ impl StringVoidMap {
 
 // TODO(port): ObjectPool<StringVoidMap, init, true, 32> — `true` is thread-local,
 // `32` is preheated capacity. bun_collections::pool::ObjectPool needs equivalent params.
-pub type StringVoidMapPool = ObjectPool<StringVoidMap, 32>;
+// TODO(b2-blocked): ObjectPool::data() inert (round-B incomplete) + no
+// `ObjectPoolType` impl yet. Gate the alias; no caller uses it directly.
+#[cfg(any())]
+pub type StringVoidMapPool = ObjectPool<StringVoidMap, false, 32>;
 
 pub type StringBoolMap = StringHashMap<bool>;
 pub type RefMap = HashMap<Ref, ()>; // TODO(port): RefCtx hasher + 80% load factor
@@ -1060,7 +1155,7 @@ impl<'a> Default for PropertyOpts<'a> {
 
 pub struct ScanPassResult {
     pub import_records: Vec<ImportRecord>,
-    pub named_imports: js_ast::Ast::NamedImports,
+    pub named_imports: js_ast::ast::NamedImports,
     pub used_symbols: ParsePassSymbolUsageMap,
     pub import_records_to_keep: Vec<u32>,
     pub approximate_newline_count: usize,
@@ -1093,9 +1188,14 @@ impl ScanPassResult {
     }
 
     pub fn reset(&mut self) {
-        self.named_imports.clear();
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_collections::ArrayHashMap::clear / StringArrayHashMap::clear
+            self.named_imports.clear();
+            self.import_records.clear();
+            self.used_symbols.clear();
+        }
         self.import_records.clear();
-        self.used_symbols.clear();
         self.approximate_newline_count = 0;
     }
 }
@@ -1203,20 +1303,21 @@ pub mod prefill {
 
     pub mod string {
         use super::*;
-        // TODO(port): these are `pub var` (mutable) E.String holding &'static [u8].
-        // Represented here as `pub static` — verify nothing actually mutates them.
-        pub static KEY: E::String = E::String { data: &string_literal::KEY };
-        pub static CHILDREN: E::String = E::String { data: &string_literal::CHILDREN };
-        pub static FILENAME: E::String = E::String { data: &string_literal::FILENAME };
-        pub static LINE_NUMBER: E::String = E::String { data: &string_literal::LINE_NUMBER };
-        pub static COLUMN_NUMBER: E::String = E::String { data: &string_literal::COLUMN_NUMBER };
+        // Zig: `pub var` E.String holding &'static [u8]. Nothing mutates them, so
+        // `pub const` (each use copies the small struct) — avoids the !Sync from
+        // EString's StoreRef rope fields.
+        pub const KEY: E::String = E::String::from_static(&string_literal::KEY);
+        pub const CHILDREN: E::String = E::String::from_static(&string_literal::CHILDREN);
+        pub const FILENAME: E::String = E::String::from_static(&string_literal::FILENAME);
+        pub const LINE_NUMBER: E::String = E::String::from_static(&string_literal::LINE_NUMBER);
+        pub const COLUMN_NUMBER: E::String = E::String::from_static(&string_literal::COLUMN_NUMBER);
 
-        pub static TYPEOF_SYMBOL: E::String = E::String { data: b"$$typeof" };
-        pub static TYPE_: E::String = E::String { data: b"type" };
-        pub static REF: E::String = E::String { data: b"ref" };
-        pub static PROPS: E::String = E::String { data: b"props" };
-        pub static OWNER: E::String = E::String { data: b"_owner" };
-        pub static REACT_ELEMENT_TYPE: E::String = E::String { data: b"react.element" };
+        pub const TYPEOF_SYMBOL: E::String = E::String::from_static(b"$$typeof");
+        pub const TYPE_: E::String = E::String::from_static(b"type");
+        pub const REF: E::String = E::String::from_static(b"ref");
+        pub const PROPS: E::String = E::String::from_static(b"props");
+        pub const OWNER: E::String = E::String::from_static(b"_owner");
+        pub const REACT_ELEMENT_TYPE: E::String = E::String::from_static(b"react.element");
     }
 
     pub mod data {
@@ -1249,6 +1350,21 @@ pub enum JSXTransformType {
     None,
     React,
 }
+
+/// adt_const_params lowering: `<const JSX: JSXTransformType>` → `<J: JsxT>`.
+/// Same sealed-trait+ZST pattern as `paths::PlatformT`. Monomorphizes
+/// identically to the Zig `comptime jsx: JSXTransformType` param.
+mod jsx_seal { pub trait Sealed {} }
+pub trait JsxT: jsx_seal::Sealed + Copy + Default + 'static {
+    const KIND: JSXTransformType;
+    const ENABLED: bool = matches!(Self::KIND, JSXTransformType::React);
+}
+#[derive(Copy, Clone, Default)] pub struct JsxNone;
+impl jsx_seal::Sealed for JsxNone {}
+impl JsxT for JsxNone { const KIND: JSXTransformType = JSXTransformType::None; }
+#[derive(Copy, Clone, Default)] pub struct JsxReact;
+impl jsx_seal::Sealed for JsxReact {}
+impl JsxT for JsxReact { const KIND: JSXTransformType = JSXTransformType::React; }
 
 pub type ImportItemForNamespaceMap = StringArrayHashMap<LocRef>;
 
@@ -1325,14 +1441,12 @@ impl Default for Jest {
 // a struct of bools (jsx/typescript/scan_only). The Rust port in `ast/P.rs`
 // will expose this via const generics or a marker-type strategy; these aliases
 // pin the eight monomorphizations.
-pub type JavaScriptParser = NewParser!({});
-pub type JSXParser = NewParser!({ jsx: react });
-pub type TSXParser = NewParser!({ jsx: react, typescript: true });
-pub type TypeScriptParser = NewParser!({ typescript: true });
-pub type JavaScriptImportScanner = NewParser!({ scan_only: true });
-pub type JSXImportScanner = NewParser!({ jsx: react, scan_only: true });
-pub type TSXImportScanner = NewParser!({ jsx: react, typescript: true, scan_only: true });
-pub type TypeScriptImportScanner = NewParser!({ typescript: true, scan_only: true });
+// `NewParser!` Zig comptime-type-fn lowering: named aliases now live in
+// `ast/Parser.rs` (where the JsxT ZSTs are in scope). Re-export here.
+pub use crate::ast::parser_entry::{
+    JSXImportScanner, JSXParser, JavaScriptImportScanner, JavaScriptParser, TSXImportScanner,
+    TSXParser, TypeScriptImportScanner, TypeScriptParser,
+};
 
 /// The "await" and "yield" expressions are never allowed in argument lists but
 /// may or may not be allowed otherwise depending on the details of the enclosing
@@ -1370,10 +1484,11 @@ impl Default for DeferredArrowArgErrors {
     }
 }
 
+#[cfg(any())] // round-D: Parser::to_lazy_export_ast (gated impl)
 pub fn new_lazy_export_ast<'bump>(
     bump: &'bump bun_alloc::Arena,
     define: &mut Define,
-    opts: Parser::Options,
+    opts: ParserOptions,
     log_to_copy_into: &mut logger::Log,
     expr: Expr,
     source: &logger::Source,
@@ -1387,46 +1502,52 @@ pub fn new_lazy_export_ast<'bump>(
         expr,
         source,
         runtime_api_call,
-        Symbol::List::default(),
+        js_ast::symbol::List::default(),
     )
 }
 
 pub fn new_lazy_export_ast_impl<'bump>(
     bump: &'bump bun_alloc::Arena,
     define: &mut Define,
-    opts: Parser::Options,
+    opts: ParserOptions,
     log_to_copy_into: &mut logger::Log,
     expr: Expr,
     source: &logger::Source,
     runtime_api_call: &'static [u8], // PERF(port): was comptime monomorphization — profile in Phase B
-    symbols: Symbol::List,
+    symbols: js_ast::symbol::List,
 ) -> Result<Option<js_ast::Ast>, bun_core::Error> {
-    let mut temp_log = logger::Log::init(bump);
-    let log = &mut temp_log;
-    let mut parser = Parser {
-        options: opts,
-        allocator: bump,
-        lexer: js_lexer::Lexer::init_without_reading(log, source, bump),
-        define,
-        source,
-        log,
-    };
-    let mut result = match parser.to_lazy_export_ast(expr, runtime_api_call, symbols) {
-        Ok(r) => r,
-        Err(err) => {
-            if temp_log.errors == 0 {
-                log_to_copy_into
-                    .add_range_error(source, parser.lexer.range(), err.name())
-                    .expect("unreachable");
+    #[cfg(any())]
+    {
+        // TODO(b2-blocked): Parser::to_lazy_export_ast (round-D parse_* methods)
+        let mut temp_log = logger::Log::init();
+        let log = &mut temp_log;
+        let mut parser = Parser {
+            options: opts,
+            bump,
+            lexer: js_lexer::Lexer::init_without_reading(log, source, bump),
+            define,
+            source,
+            log,
+        };
+        let mut result = match parser.to_lazy_export_ast(expr, runtime_api_call, symbols) {
+            Ok(r) => r,
+            Err(err) => {
+                if temp_log.errors == 0 {
+                    log_to_copy_into
+                        .add_range_error(Some(source), parser.lexer.range(), err.name())
+                        .expect("unreachable");
+                }
+                let _ = temp_log.append_to_maybe_recycled(log_to_copy_into, source);
+                return Ok(None);
             }
-            let _ = temp_log.append_to_maybe_recycled(log_to_copy_into, source);
-            return Ok(None);
-        }
-    };
+        };
 
-    let _ = temp_log.append_to_maybe_recycled(log_to_copy_into, source);
-    result.ast.has_lazy_export = true;
-    Ok(Some(result.ast))
+        let _ = temp_log.append_to_maybe_recycled(log_to_copy_into, source);
+        result.ast.has_lazy_export = true;
+        return Ok(Some(result.ast));
+    }
+    let _ = (bump, define, opts, log_to_copy_into, expr, source, runtime_api_call, symbols);
+    todo!("b2-blocked: Parser::to_lazy_export_ast")
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]

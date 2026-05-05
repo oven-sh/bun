@@ -128,6 +128,19 @@ uw_update_context_1  [SVE]
 
 
 # ----------------------------------------------------------------------------
+# libgcc ARM SME TPIDR2 thread-pointer save. AAPCS helper that's only reached
+# when a caller is invoked in SME streaming mode or has live ZA state —
+# neither exists on armv8-a+crc baseline CPUs, so the SVE insns inside are
+# unreachable. Started appearing on musl-aarch64 when #29683 switched it to
+# -static-libgcc (Alpine's libgcc is newer and ships this helper; the Ubuntu
+# libgcc used for the glibc build doesn't have it yet, hence no match there).
+# Gate: AAPCS SME save/restore prologues, only emitted by SME-aware code.
+# (1 symbols)
+# ----------------------------------------------------------------------------
+__arm_tpidr2_save    [SVE]
+
+
+# ----------------------------------------------------------------------------
 # libdeflate Adler-32 NEON DotProd. Gate: HWCAP_ASIMDDP.
 # (1 symbols)
 # ----------------------------------------------------------------------------

@@ -124,6 +124,7 @@ const brotliFixture = /* js */ `
   const inBuf = Buffer.from("hello");
   const outBuf = Buffer.alloc(1024);
   handle.writeSync(0, inBuf, 0, inBuf.length, outBuf, 0, outBuf.length);
+  if (state[0] === 0) throw new Error("sanity: writeSync did not update writeState");
 
   const stolen = new Uint32Array(state.buffer.transfer());
   stolen.fill(0xdeadbeef);
@@ -167,6 +168,7 @@ const zstdFixture = /* js */ `
   const inBuf = Buffer.from("hello");
   const outBuf = Buffer.alloc(1024);
   handle.writeSync(0, inBuf, 0, inBuf.length, outBuf, 0, outBuf.length);
+  if (state[0] === 0) throw new Error("sanity: writeSync did not update writeState");
 
   const stolen = new Uint32Array(state.buffer.transfer());
   stolen.fill(0xdeadbeef);

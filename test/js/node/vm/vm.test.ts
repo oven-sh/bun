@@ -856,6 +856,66 @@ describe("codeGeneration options", () => {
   });
 });
 
+test("ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING is allocated in the vm realm", async () => {
+  // Errors injected into a vm context by the host must be created using the
+  // vm realm's intrinsics. Otherwise guest code can observe host-realm
+  // objects via the error's prototype chain (e.constructor.constructor is the
+  // host Function constructor).
+  const context = createContext({});
+  const guestError = runInContext("Error", context);
+  const guestTypeError = runInContext("TypeError", context);
+  const guestFunction = runInContext("Function", context);
+
+  // import() from code evaluated via vm.Script (runInContext wraps code in
+  // a Script internally, so the source origin carries a NodeVMScriptFetcher).
+  const err1 = await runInContext(`import("x").catch(e => e)`, context);
+  expect({
+    code: err1.code,
+    hostError: err1 instanceof Error,
+    hostTypeError: err1 instanceof TypeError,
+    guestError: err1 instanceof guestError,
+    guestTypeError: err1 instanceof guestTypeError,
+    ctorCtorIsGuestFunction: err1.constructor.constructor === guestFunction,
+    ctorCtorIsHostFunction: err1.constructor.constructor === Function,
+  }).toEqual({
+    code: "ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING",
+    hostError: false,
+    hostTypeError: false,
+    guestError: true,
+    guestTypeError: true,
+    ctorCtorIsGuestFunction: true,
+    ctorCtorIsHostFunction: false,
+  });
+
+  // Verify that guest code running entirely inside the context cannot reach
+  // the host `process` via the rejection's prototype chain.
+  const escaped = await runInContext(
+    `import("x").catch(e => {
+      try {
+        return e.constructor.constructor("return typeof process")();
+      } catch {
+        return "threw";
+      }
+    })`,
+    context,
+  );
+  expect(escaped).toBe("undefined");
+
+  // import() from a source origin with no NodeVM script fetcher (indirect
+  // eval discards the outer Script's fetcher), which takes the fallback
+  // path through NodeVMGlobalObject::moduleLoaderImportModule.
+  const err2 = await runInContext(`(0, eval)("import('x')").catch(e => e)`, context);
+  expect({
+    code: err2.code,
+    hostError: err2 instanceof Error,
+    guestError: err2 instanceof guestError,
+  }).toEqual({
+    code: "ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING",
+    hostError: false,
+    guestError: true,
+  });
+});
+
 test("Loader is not defined in vm context", () => {
   // Test with empty context - internal Loader should not leak through
   const emptyContext = createContext({});

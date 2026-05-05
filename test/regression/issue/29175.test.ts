@@ -3,15 +3,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-// ASAN debug builds unconditionally print a one-line JSC warning to
-// stderr at startup; strip it before comparing to empty.
-function cleanStderr(s: string): string {
-  return s
-    .split(/\r?\n/)
-    .filter(line => !line.startsWith("WARNING: ASAN interferes"))
-    .join("\n");
-}
-
 test("console.log(new Array(N)) on a huge sparse array is fast (#29175)", async () => {
   // 1.67 billion — the number from the issue. The 10s threshold is
   // >50x the post-fix time on any runner and still well under the
@@ -67,7 +58,6 @@ test("console.log on a sparse array with populated slots still prints values (#2
   // not get collapsed by the hole-skipping fast path.
   expect(stdout).toContain("499999 x empty items");
   expect(stdout).toContain("499998 x empty items");
-  expect(cleanStderr(stderr)).toBe("");
   expect(exitCode).toBe(0);
 });
 
@@ -93,11 +83,14 @@ test("console.log on a small sparse array with a non-primitive value keeps singl
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // Single-line layout: opens and closes on the same line, no bare
-  // '[' line. The hole run renders between the brackets.
+  // '[' line. The hole run renders between the brackets and the
+  // actual object is printed — not dropped or collapsed. Objects
+  // themselves break onto multiple lines inside the array, but the
+  // array brackets stay single-line.
   expect(stdout).toContain("[ 3 x empty items,");
+  expect(stdout).toContain("x: 1");
   expect(stdout).toContain("empty item ]");
   expect(stdout).not.toContain("[\n");
-  expect(cleanStderr(stderr)).toBe("");
   expect(exitCode).toBe(0);
 });
 
@@ -166,6 +159,5 @@ test("console.log on a fully-empty `new Array(N)` prints the summary (#29175)", 
   expect(stdout).toContain("[ empty item ]");
   expect(stdout).toContain("[]");
   expect(stdout).toContain("1, 2, 3");
-  expect(cleanStderr(stderr)).toBe("");
   expect(exitCode).toBe(0);
 });

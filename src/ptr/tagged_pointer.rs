@@ -4,6 +4,8 @@ use core::marker::PhantomData;
 /// Logically a u49. Rust has no native u49, so we carry it in a u64 and mask.
 pub type AddressableSize = u64;
 
+/// `TaggedPtr::Tag` — logically u15, carried in u16. (Inherent assoc types are nightly; hoisted here.)
+pub type TagType = u16;
 /// Zig: `packed struct(u64) { _ptr: u49, data: u15 }`
 /// Packed-struct field order in Zig is LSB-first, so:
 ///   bits  0..49 → `_ptr`
@@ -14,14 +16,14 @@ pub struct TaggedPtr(u64);
 
 impl TaggedPtr {
     /// Logically a u15.
-    pub type Tag = u16;
+    // pub type Tag = u16; → hoisted to module-level TagType (inherent assoc types are nightly-only)
 
     const ADDR_BITS: u32 = 49;
     const ADDR_MASK: u64 = (1u64 << Self::ADDR_BITS) - 1;
     const TAG_MASK: u16 = (1u16 << 15) - 1;
 
     #[inline]
-    pub fn init<T>(ptr: *const T, data: Self::Tag) -> TaggedPtr {
+    pub fn init<T>(ptr: *const T, data: TagType) -> TaggedPtr {
         // Zig's `if (Ptr == @TypeOf(null))` branch is subsumed: a null `*const T`
         // yields address 0 below. The `@typeInfo(Ptr) != .pointer` compile error
         // is enforced by `*const T` in the signature.
@@ -43,8 +45,8 @@ impl TaggedPtr {
     }
 
     #[inline]
-    pub fn data(self) -> Self::Tag {
-        (self.0 >> Self::ADDR_BITS) as Self::Tag
+    pub fn data(self) -> TagType {
+        (self.0 >> Self::ADDR_BITS) as TagType
     }
 
     #[inline]
@@ -123,17 +125,17 @@ impl From<Option<*mut c_void>> for TaggedPtr {
 pub trait TypeList {
     const LEN: usize;
     /// `@intFromEnum(@field(Tag, @typeName(Types[Types.len - 1])))` = 1024 - (LEN-1)
-    const MIN_TAG: TaggedPtr::Tag;
+    const MIN_TAG: TagType;
     /// `@intFromEnum(@field(Tag, @typeName(Types[0])))` = 1024
-    const MAX_TAG: TaggedPtr::Tag = 1024;
+    const MAX_TAG: TagType = 1024;
     /// Runtime tag → `@typeName` of the variant, or `None` if not a member.
-    fn type_name_from_tag(tag: TaggedPtr::Tag) -> Option<&'static str>;
+    fn type_name_from_tag(tag: TagType) -> Option<&'static str>;
 }
 
 /// `T: UnionMember<Ts>` ⇔ `T` is one of the types in the list `Ts`.
 /// Replaces Zig's `assert_type` / `@hasField(Tag, @typeName(Type))`.
 pub trait UnionMember<Ts: TypeList> {
-    const TAG: TaggedPtr::Tag;
+    const TAG: TagType;
     const NAME: &'static str;
 }
 
@@ -148,10 +150,10 @@ macro_rules! impl_tagged_ptr_union {
     ($($T:ty),+ $(,)?) => {
         impl $crate::tagged_pointer::TypeList for ($($T,)+) {
             const LEN: usize = $crate::impl_tagged_ptr_union!(@count $($T),+);
-            const MIN_TAG: $crate::tagged_pointer::TaggedPtr::Tag =
-                1024 - (Self::LEN as $crate::tagged_pointer::TaggedPtr::Tag - 1);
+            const MIN_TAG: $crate::tagged_pointer::TagType =
+                1024 - (Self::LEN as $crate::tagged_pointer::TagType - 1);
             fn type_name_from_tag(
-                tag: $crate::tagged_pointer::TaggedPtr::Tag,
+                tag: $crate::tagged_pointer::TagType,
             ) -> Option<&'static str> {
                 $crate::impl_tagged_ptr_union!(@names tag, 0, $($T),+);
                 None
@@ -168,7 +170,7 @@ macro_rules! impl_tagged_ptr_union {
     (@names $tag:ident, $i:expr,) => {};
     (@members $Ts:ty, $i:expr, $H:ty $(, $T:ty)*) => {
         impl $crate::tagged_pointer::UnionMember<$Ts> for $H {
-            const TAG: $crate::tagged_pointer::TaggedPtr::Tag = 1024 - $i;
+            const TAG: $crate::tagged_pointer::TagType = 1024 - $i;
             const NAME: &'static str = ::core::stringify!($H);
         }
         $crate::impl_tagged_ptr_union!(@members $Ts, $i + 1, $($T),*);
@@ -190,7 +192,7 @@ impl<Ts: TypeList> Clone for TaggedPtrUnion<Ts> {
 impl<Ts: TypeList> Copy for TaggedPtrUnion<Ts> {}
 
 impl<Ts: TypeList> TaggedPtrUnion<Ts> {
-    pub type TagInt = TaggedPtr::Tag;
+    // pub type TagInt → use module-level TagType
 
     pub const NULL: Self = Self { repr: TaggedPtr(0), _types: PhantomData };
 
@@ -202,7 +204,7 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
     // return a type from a const value). Callers must name the type directly.
     // TODO(port): if any callsite needs this, it becomes a trait associated type.
 
-    pub fn type_name_from_tag(the_tag: Self::TagInt) -> Option<&'static str> {
+    pub fn type_name_from_tag(the_tag: TagType) -> Option<&'static str> {
         Ts::type_name_from_tag(the_tag)
     }
 
@@ -219,14 +221,14 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
     }
 
     #[inline]
-    pub fn tag(self) -> Self::TagInt {
+    pub fn tag(self) -> TagType {
         // Zig returns the reified enum; we return the raw integer.
         self.repr.data()
     }
 
     /// Zig `case(comptime Type) Tag` → the tag constant for `Type`.
     #[inline]
-    pub const fn case<Type: UnionMember<Ts>>() -> Self::TagInt {
+    pub const fn case<Type: UnionMember<Ts>>() -> TagType {
         Type::TAG
     }
 

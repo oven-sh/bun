@@ -35,7 +35,7 @@
 //!   A variant of DynamicBitSet which does not store a pointer to its
 //!   allocator, in order to save space.
 
-use core::marker::ConstParamTy;
+
 use core::mem;
 use core::ptr;
 use core::slice;
@@ -64,7 +64,7 @@ const fn bool_mask_usize(value: bool) -> usize {
 // pick `IntegerBitSet<N>` or `ArrayBitSet<N>` directly; this alias resolves to
 // the array form (always correct, possibly one word larger than needed for
 // N <= 64).
-pub type StaticBitSet<const SIZE: usize> = ArrayBitSet<SIZE>;
+pub type StaticBitSet<const SIZE: usize> = IntegerBitSet<SIZE>; // TODO(b2): callers needing >64 bits use ArrayBitSet<SIZE, {num_masks_for(SIZE)}> directly
 
 // ───────────────────────────── IntegerBitSet ─────────────────────────────
 
@@ -78,22 +78,22 @@ pub type StaticBitSet<const SIZE: usize> = ArrayBitSet<SIZE>;
 // picks u8/u16/u32/u64/u128.
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct IntegerBitSet<const SIZE: u16> {
+pub struct IntegerBitSet<const SIZE: usize> {
     /// The bit mask, as a single integer
     pub mask: usize,
 }
 
-impl<const SIZE: u16> IntegerBitSet<SIZE> {
+impl<const SIZE: usize> IntegerBitSet<SIZE> {
     /// The number of items in this bit set
     pub const BIT_LENGTH: usize = SIZE as usize;
 
     /// The integer type used to represent a mask in this bit set
     // TODO(port): Zig: `pub const MaskInt = std.meta.Int(.unsigned, size);`
-    pub type MaskInt = usize;
+    // type MaskInt = usize (inherent assoc → inline usize)
 
     /// The integer type used to shift a mask in this bit set
     // TODO(port): Zig: `pub const ShiftInt = std.math.Log2Int(MaskInt);`
-    pub type ShiftInt = u32;
+    // type ShiftInt = u32 (inherent assoc → inline u32)
 
     const FULL_MASK: usize = if SIZE as u32 == usize::BITS {
         usize::MAX
@@ -321,14 +321,11 @@ impl<const SIZE: u16> IntegerBitSet<SIZE> {
     /// The default options (.{}) will iterate indices of set bits in
     /// ascending order.  Modifications to the underlying bit set may
     /// or may not be observed by the iterator.
-    pub fn iterator<const KIND: IteratorKind, const DIRECTION: IteratorDirection>(
+    pub fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(
         &self,
-    ) -> SingleWordIterator<SIZE, DIRECTION> {
+    ) -> SingleWordIterator<SIZE, DIR_FWD> {
         SingleWordIterator {
-            bits_remain: match KIND {
-                IteratorKind::Set => self.mask,
-                IteratorKind::Unset => !self.mask & Self::FULL_MASK,
-            },
+            bits_remain: if KIND_SET { self.mask } else { !self.mask & Self::FULL_MASK },
         }
     }
 
@@ -351,12 +348,12 @@ impl<const SIZE: u16> IntegerBitSet<SIZE> {
 }
 
 /// Iterator over a single-word `IntegerBitSet`.
-pub struct SingleWordIterator<const SIZE: u16, const DIRECTION: IteratorDirection> {
+pub struct SingleWordIterator<const SIZE: usize, const DIR_FWD: bool> {
     // all bits which have not yet been iterated over
     bits_remain: usize,
 }
 
-impl<const SIZE: u16, const DIRECTION: IteratorDirection> SingleWordIterator<SIZE, DIRECTION> {
+impl<const SIZE: usize, const DIR_FWD: bool> SingleWordIterator<SIZE, DIR_FWD> {
     /// Returns the index of the next unvisited set bit
     /// in the bit set, in ascending order.
     pub fn next(&mut self) -> Option<usize> {
@@ -364,21 +361,15 @@ impl<const SIZE: u16, const DIRECTION: IteratorDirection> SingleWordIterator<SIZ
             return None;
         }
 
-        match DIRECTION {
-            IteratorDirection::Forward => {
-                let next_index = self.bits_remain.trailing_zeros() as usize;
-                self.bits_remain &= self.bits_remain - 1;
-                Some(next_index)
-            }
-            IteratorDirection::Reverse => {
-                let leading_zeroes = self.bits_remain.leading_zeros();
-                // TODO(port): Zig uses `@bitSizeOf(MaskInt)` (== SIZE). With
-                // usize backing this is `usize::BITS`; result is the same
-                // because high bits beyond SIZE are kept zero.
-                let top_bit = (usize::BITS - 1 - leading_zeroes) as usize;
-                self.bits_remain &= (1usize << top_bit) - 1;
-                Some(top_bit)
-            }
+        if DIR_FWD {
+            let next_index = self.bits_remain.trailing_zeros() as usize;
+            self.bits_remain &= self.bits_remain - 1;
+            Some(next_index)
+        } else {
+            let leading_zeroes = self.bits_remain.leading_zeros();
+            let top_bit = (usize::BITS - 1 - leading_zeroes) as usize;
+            self.bits_remain &= (1usize << top_bit) - 1;
+            Some(top_bit)
         }
     }
 }
@@ -397,39 +388,39 @@ pub const fn num_masks_for(bit_length: usize) -> usize {
 ///
 // TODO(port): Zig is generic over `MaskIntType`; every in-tree caller uses
 // `usize`. Dropped the type parameter. Phase B can re-generify if needed.
-// TODO(port): `[usize; num_masks_for(SIZE)]` requires
+// TODO(port): `[usize; NUM_MASKS]` requires
 // `#![feature(generic_const_exprs)]`. Phase B may instead take NUM_MASKS as a
 // second const generic and assert `NUM_MASKS == num_masks_for(SIZE)`.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct ArrayBitSet<const SIZE: usize>
-where
-    [(); num_masks_for(SIZE)]:,
+pub struct ArrayBitSet<const SIZE: usize, const NUM_MASKS: usize>
+
+
 {
     /// The bit masks, ordered with lower indices first.
     /// Padding bits at the end are undefined.
-    pub masks: [usize; num_masks_for(SIZE)],
+    pub masks: [usize; NUM_MASKS],
 }
 
-impl<const SIZE: usize> ArrayBitSet<SIZE>
-where
-    [(); num_masks_for(SIZE)]:,
+impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS>
+
+
 {
     /// The number of items in this bit set
     pub const BIT_LENGTH: usize = SIZE;
 
     /// The integer type used to represent a mask in this bit set
-    pub type MaskInt = usize;
+    // type MaskInt = usize (inherent assoc → inline usize)
 
     /// The integer type used to shift a mask in this bit set
-    pub type ShiftInt = u32;
+    // type ShiftInt = u32 (inherent assoc → inline u32)
 
     // bits in one mask
     const MASK_LEN: u32 = usize::BITS;
     // total number of masks
-    const NUM_MASKS: usize = num_masks_for(SIZE);
+    const _ASSERT: () = assert!(NUM_MASKS == num_masks_for(SIZE), "ArrayBitSet: NUM_MASKS must equal num_masks_for(SIZE)");
     // padding bits in the last mask (may be 0)
-    const LAST_PAD_BITS: u32 = (Self::MASK_LEN as usize * Self::NUM_MASKS - SIZE) as u32;
+    const LAST_PAD_BITS: u32 = (Self::MASK_LEN as usize * NUM_MASKS - SIZE) as u32;
     /// Mask of valid bits in the last mask.
     /// All functions will ensure that the invalid
     /// bits in the last mask are zero.
@@ -437,16 +428,16 @@ where
 
     /// Creates a bit set with no elements present.
     pub const fn init_empty() -> Self {
-        Self { masks: [0usize; num_masks_for(SIZE)] }
+        Self { masks: [0usize; NUM_MASKS] }
     }
 
     /// Creates a bit set with all elements present.
     pub const fn init_full() -> Self {
-        if Self::NUM_MASKS == 0 {
-            Self { masks: [0usize; num_masks_for(SIZE)] }
+        if NUM_MASKS == 0 {
+            Self { masks: [0usize; NUM_MASKS] }
         } else {
-            let mut masks = [usize::MAX; num_masks_for(SIZE)];
-            masks[Self::NUM_MASKS - 1] = Self::LAST_ITEM_MASK;
+            let mut masks = [usize::MAX; NUM_MASKS];
+            masks[NUM_MASKS - 1] = Self::LAST_ITEM_MASK;
             Self { masks }
         }
     }
@@ -461,7 +452,7 @@ where
     /// is present in the set, false otherwise.
     pub fn is_set(&self, index: usize) -> bool {
         debug_assert!(index < Self::BIT_LENGTH);
-        if Self::NUM_MASKS == 0 {
+        if NUM_MASKS == 0 {
             return false; // doesn't compile in this case
         }
         (self.masks[Self::mask_index(index)] & Self::mask_bit(index)) != 0
@@ -480,7 +471,7 @@ where
     /// set to match the passed boolean.
     pub fn set_value(&mut self, index: usize, value: bool) {
         debug_assert!(index < Self::BIT_LENGTH);
-        if Self::NUM_MASKS == 0 {
+        if NUM_MASKS == 0 {
             return; // doesn't compile in this case
         }
         let bit = Self::mask_bit(index);
@@ -492,7 +483,7 @@ where
     /// Adds a specific bit to the bit set
     pub fn set(&mut self, index: usize) {
         debug_assert!(index < Self::BIT_LENGTH);
-        if Self::NUM_MASKS == 0 {
+        if NUM_MASKS == 0 {
             return; // doesn't compile in this case
         }
         self.masks[Self::mask_index(index)] |= Self::mask_bit(index);
@@ -506,7 +497,7 @@ where
         if range.start == range.end {
             return;
         }
-        if Self::NUM_MASKS == 0 {
+        if NUM_MASKS == 0 {
             return;
         }
 
@@ -551,7 +542,7 @@ where
     /// Removes a specific bit from the bit set
     pub fn unset(&mut self, index: usize) {
         debug_assert!(index < Self::BIT_LENGTH);
-        if Self::NUM_MASKS == 0 {
+        if NUM_MASKS == 0 {
             return; // doesn't compile in this case
         }
         self.masks[Self::mask_index(index)] &= !Self::mask_bit(index);
@@ -560,7 +551,7 @@ where
     /// Flips a specific bit in the bit set
     pub fn toggle(&mut self, index: usize) {
         debug_assert!(index < Self::BIT_LENGTH);
-        if Self::NUM_MASKS == 0 {
+        if NUM_MASKS == 0 {
             return; // doesn't compile in this case
         }
         self.masks[Self::mask_index(index)] ^= Self::mask_bit(index);
@@ -582,8 +573,8 @@ where
         }
 
         // Zero the padding bits
-        if Self::NUM_MASKS > 0 {
-            self.masks[Self::NUM_MASKS - 1] &= Self::LAST_ITEM_MASK;
+        if NUM_MASKS > 0 {
+            self.masks[NUM_MASKS - 1] &= Self::LAST_ITEM_MASK;
         }
     }
 
@@ -592,8 +583,8 @@ where
         self.masks.fill(if value { usize::MAX } else { 0 });
 
         // Zero the padding bits
-        if Self::NUM_MASKS > 0 {
-            self.masks[Self::NUM_MASKS - 1] &= Self::LAST_ITEM_MASK;
+        if NUM_MASKS > 0 {
+            self.masks[NUM_MASKS - 1] &= Self::LAST_ITEM_MASK;
         }
     }
 
@@ -655,7 +646,7 @@ where
     /// bit sets are the same.
     pub fn eql(&self, other: &Self) -> bool {
         let mut i: usize = 0;
-        while i < Self::NUM_MASKS {
+        while i < NUM_MASKS {
             if self.masks[i] != other.masks[i] {
                 return false;
             }
@@ -734,9 +725,9 @@ where
     /// The default options (.{}) will iterate indices of set bits in
     /// ascending order.  Modifications to the underlying bit set may
     /// or may not be observed by the iterator.
-    pub fn iterator<const KIND: IteratorKind, const DIRECTION: IteratorDirection>(
+    pub fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(
         &self,
-    ) -> BitSetIterator<'_, KIND, DIRECTION> {
+    ) -> BitSetIterator<'_, KIND_SET, DIR_FWD> {
         BitSetIterator::init(&self.masks, Self::LAST_ITEM_MASK)
     }
 
@@ -1321,9 +1312,9 @@ impl DynamicBitSetUnmanaged {
     /// ascending order.  Modifications to the underlying bit set may
     /// or may not be observed by the iterator.  Resizing the underlying
     /// bit set invalidates the iterator.
-    pub fn iterator<const KIND: IteratorKind, const DIRECTION: IteratorDirection>(
+    pub fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(
         &self,
-    ) -> BitSetIterator<'_, KIND, DIRECTION> {
+    ) -> BitSetIterator<'_, KIND_SET, DIR_FWD> {
         let num_masks = Self::num_masks(self.bit_length);
         let padding_bits =
             u32::try_from(num_masks * DYN_MASK_BITS as usize - self.bit_length).unwrap();
@@ -1452,7 +1443,7 @@ unsafe fn dyn_realloc(
 /// Static arm size: `@bitSizeOf(DynamicBitSetUnmanaged) - 1`.
 pub const AUTO_STATIC_BITS: usize = mem::size_of::<DynamicBitSetUnmanaged>() * 8 - 1;
 
-pub type AutoBitSetStatic = ArrayBitSet<AUTO_STATIC_BITS>;
+pub type AutoBitSetStatic = ArrayBitSet<AUTO_STATIC_BITS, {num_masks_for(AUTO_STATIC_BITS)}>;
 
 pub enum AutoBitSet {
     Static(AutoBitSetStatic),
@@ -1531,7 +1522,7 @@ impl AutoBitSet {
 
     pub fn eql(&self, b: &AutoBitSet) -> bool {
         // TODO(b0): `strings` arrives in bun_core via move-in (was bun_str::strings).
-        bun_core::strings::eql_long(self.raw_bytes(), b.raw_bytes(), true)
+        self.raw_bytes() == b.raw_bytes()
     }
 
     pub fn hash(&self) -> u64 {
@@ -1542,14 +1533,14 @@ impl AutoBitSet {
         match self {
             AutoBitSet::Static(s) => {
                 let mut iter =
-                    s.iterator::<{ IteratorKind::Set }, { IteratorDirection::Forward }>();
+                    s.iterator::<true, true>();
                 while let Some(index) = iter.next() {
                     function(ctx, index);
                 }
             }
             AutoBitSet::Dynamic(d) => {
                 let mut iter =
-                    d.iterator::<{ IteratorKind::Set }, { IteratorDirection::Forward }>();
+                    d.iterator::<true, true>();
                 while let Some(index) = iter.next() {
                     function(ctx, index);
                 }
@@ -1578,27 +1569,27 @@ impl AutoBitSet {
         }
     }
 
-    pub fn iterator<const KIND: IteratorKind, const DIRECTION: IteratorDirection>(
+    pub fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(
         &self,
-    ) -> AutoBitSetIterator<'_, KIND, DIRECTION> {
+    ) -> AutoBitSetIterator<'_, KIND_SET, DIR_FWD> {
         match self {
             AutoBitSet::Static(s) => {
-                AutoBitSetIterator::Static(s.iterator::<KIND, DIRECTION>())
+                AutoBitSetIterator::Static(s.iterator::<KIND_SET, DIR_FWD>())
             }
             AutoBitSet::Dynamic(d) => {
-                AutoBitSetIterator::Dynamic(d.iterator::<KIND, DIRECTION>())
+                AutoBitSetIterator::Dynamic(d.iterator::<KIND_SET, DIR_FWD>())
             }
         }
     }
 }
 
-pub enum AutoBitSetIterator<'a, const KIND: IteratorKind, const DIRECTION: IteratorDirection> {
-    Static(BitSetIterator<'a, KIND, DIRECTION>),
-    Dynamic(BitSetIterator<'a, KIND, DIRECTION>),
+pub enum AutoBitSetIterator<'a, const KIND_SET: bool, const DIR_FWD: bool> {
+    Static(BitSetIterator<'a, KIND_SET, DIR_FWD>),
+    Dynamic(BitSetIterator<'a, KIND_SET, DIR_FWD>),
 }
 
-impl<'a, const KIND: IteratorKind, const DIRECTION: IteratorDirection>
-    AutoBitSetIterator<'a, KIND, DIRECTION>
+impl<'a, const KIND_SET: bool, const DIR_FWD: bool>
+    AutoBitSetIterator<'a, KIND_SET, DIR_FWD>
 {
     pub fn next(&mut self) -> Option<usize> {
         match self {
@@ -1639,10 +1630,10 @@ impl Default for DynamicBitSet {
 
 impl DynamicBitSet {
     /// The integer type used to represent a mask in this bit set
-    pub type MaskInt = usize;
+    // type MaskInt = usize (inherent assoc → inline usize)
 
     /// The integer type used to shift a mask in this bit set
-    pub type ShiftInt = u32;
+    // type ShiftInt = u32 (inherent assoc → inline u32)
 
     /// Creates a bit set with no elements present.
     pub fn init_empty(bit_length: usize) -> Result<Self, AllocError> {
@@ -1760,10 +1751,10 @@ impl DynamicBitSet {
     /// ascending order.  Modifications to the underlying bit set may
     /// or may not be observed by the iterator.  Resizing the underlying
     /// bit set invalidates the iterator.
-    pub fn iterator<const KIND: IteratorKind, const DIRECTION: IteratorDirection>(
+    pub fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(
         &self,
-    ) -> BitSetIterator<'_, KIND, DIRECTION> {
-        self.unmanaged.iterator::<KIND, DIRECTION>()
+    ) -> BitSetIterator<'_, KIND_SET, DIR_FWD> {
+        self.unmanaged.iterator::<KIND_SET, DIR_FWD>()
     }
 }
 
@@ -1787,7 +1778,7 @@ pub struct IteratorOptions {
     pub direction: IteratorDirection,
 }
 
-#[derive(ConstParamTy, PartialEq, Eq, Clone, Copy, Default)]
+#[derive(PartialEq, Eq, Clone, Copy, Default)]
 pub enum IteratorKind {
     /// visit indexes of set bits
     #[default]
@@ -1796,7 +1787,7 @@ pub enum IteratorKind {
     Unset,
 }
 
-#[derive(ConstParamTy, PartialEq, Eq, Clone, Copy, Default)]
+#[derive(PartialEq, Eq, Clone, Copy, Default)]
 pub enum IteratorDirection {
     /// visit indices in ascending order
     #[default]
@@ -1811,7 +1802,7 @@ pub enum IteratorDirection {
 // The iterator is reusable between several bit set types
 // TODO(port): Zig is generic over `MaskInt`; fixed to `usize` here since every
 // in-tree caller uses `usize`.
-pub struct BitSetIterator<'a, const KIND: IteratorKind, const DIRECTION: IteratorDirection> {
+pub struct BitSetIterator<'a, const KIND_SET: bool, const DIR_FWD: bool> {
     // all bits which have not yet been iterated over
     bits_remain: usize,
     // all words which have not yet been iterated over
@@ -1822,8 +1813,8 @@ pub struct BitSetIterator<'a, const KIND: IteratorKind, const DIRECTION: Iterato
     last_word_mask: usize,
 }
 
-impl<'a, const KIND: IteratorKind, const DIRECTION: IteratorDirection>
-    BitSetIterator<'a, KIND, DIRECTION>
+impl<'a, const KIND_SET: bool, const DIR_FWD: bool>
+    BitSetIterator<'a, KIND_SET, DIR_FWD>
 {
     fn init(masks: &'a [usize], last_word_mask: usize) -> Self {
         if masks.is_empty() {
@@ -1838,7 +1829,7 @@ impl<'a, const KIND: IteratorKind, const DIRECTION: IteratorDirection>
                 bits_remain: 0,
                 words_remain: masks,
                 last_word_mask,
-                bit_offset: if matches!(DIRECTION, IteratorDirection::Forward) {
+                bit_offset: if DIR_FWD {
                     0
                 } else {
                     (masks.len() - 1) * usize::BITS as usize
@@ -1857,25 +1848,19 @@ impl<'a, const KIND: IteratorKind, const DIRECTION: IteratorDirection>
                 return None;
             }
             self.next_word::<false>();
-            match DIRECTION {
-                IteratorDirection::Forward => self.bit_offset += usize::BITS as usize,
-                IteratorDirection::Reverse => self.bit_offset -= usize::BITS as usize,
-            }
+            if DIR_FWD { self.bit_offset += usize::BITS as usize }
+            else { self.bit_offset -= usize::BITS as usize }
         }
 
-        match DIRECTION {
-            IteratorDirection::Forward => {
-                let next_index = self.bits_remain.trailing_zeros() as usize + self.bit_offset;
-                self.bits_remain &= self.bits_remain - 1;
-                Some(next_index)
-            }
-            IteratorDirection::Reverse => {
-                let leading_zeroes = self.bits_remain.leading_zeros();
-                let top_bit = (usize::BITS - 1 - leading_zeroes) as usize;
-                let no_top_bit_mask = (1usize << top_bit) - 1;
-                self.bits_remain &= no_top_bit_mask;
-                Some(top_bit + self.bit_offset)
-            }
+        if DIR_FWD {
+            let next_index = self.bits_remain.trailing_zeros() as usize + self.bit_offset;
+            self.bits_remain &= self.bits_remain - 1;
+            Some(next_index)
+        } else {
+            let leading_zeroes = self.bits_remain.leading_zeros();
+            let top_bit = (usize::BITS - 1 - leading_zeroes) as usize;
+            self.bits_remain &= (1usize << top_bit) - 1;
+            Some(top_bit + self.bit_offset)
         }
     }
 
@@ -1885,29 +1870,16 @@ impl<'a, const KIND: IteratorKind, const DIRECTION: IteratorDirection>
     // don't visit them.
     #[inline(always)]
     fn next_word<const IS_FIRST_WORD: bool>(&mut self) {
-        let mut word = match DIRECTION {
-            IteratorDirection::Forward => self.words_remain[0],
-            IteratorDirection::Reverse => self.words_remain[self.words_remain.len() - 1],
-        };
-        match KIND {
-            IteratorKind::Set => {}
-            IteratorKind::Unset => {
-                word = !word;
-                if (matches!(DIRECTION, IteratorDirection::Reverse) && IS_FIRST_WORD)
-                    || (matches!(DIRECTION, IteratorDirection::Forward)
-                        && self.words_remain.len() == 1)
-                {
-                    word &= self.last_word_mask;
-                }
+        let mut word = if DIR_FWD { self.words_remain[0] }
+            else { self.words_remain[self.words_remain.len() - 1] };
+        if !KIND_SET {
+            word = !word;
+            if (!DIR_FWD && IS_FIRST_WORD) || (DIR_FWD && self.words_remain.len() == 1) {
+                word &= self.last_word_mask;
             }
         }
-        match DIRECTION {
-            IteratorDirection::Forward => self.words_remain = &self.words_remain[1..],
-            IteratorDirection::Reverse => {
-                // PORT NOTE: reshaped for borrowck — Zig does `len -= 1`.
-                self.words_remain = &self.words_remain[..self.words_remain.len() - 1];
-            }
-        }
+        if DIR_FWD { self.words_remain = &self.words_remain[1..]; }
+        else { self.words_remain = &self.words_remain[..self.words_remain.len() - 1]; }
         self.bits_remain = word;
     }
 }
@@ -1938,7 +1910,7 @@ mod tests {
     // Phase B trait extraction.
 
     #[allow(dead_code)]
-    fn fill_even<const SIZE: usize>(set: &mut ArrayBitSet<SIZE>, len: usize)
+    fn fill_even<const SIZE: usize, const M: usize>(set: &mut ArrayBitSet<SIZE, M>, len: usize)
     where
         [(); num_masks_for(SIZE)]:,
     {
@@ -1948,7 +1920,7 @@ mod tests {
     }
 
     #[allow(dead_code)]
-    fn fill_odd<const SIZE: usize>(set: &mut ArrayBitSet<SIZE>, len: usize)
+    fn fill_odd<const SIZE: usize, const M: usize>(set: &mut ArrayBitSet<SIZE, M>, len: usize)
     where
         [(); num_masks_for(SIZE)]:,
     {

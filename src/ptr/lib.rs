@@ -29,21 +29,9 @@ pub struct ExternalShared<T>(*mut T); // FFI-crossing Arc — TODO(b2) if any ca
 pub mod raw_ref_count;
 pub mod weak_ptr;
 
-// TODO(b2-large): tagged_pointer.rs (320L) uses inherent assoc types for
-// `TaggedPtr::Tag` / `TaggedPtrUnion::TagInt` (6× E0223). Rewrite via free
-// type aliases or a `TaggedPtrUnionTypes` trait. Per PORTING.md §Dispatch,
-// most users move to `(tag: u8, ptr: *mut ())` anyway.
-#[cfg(any())] pub mod tagged_pointer;
-pub mod tagged_pointer_stub {
-    /// 49 addr bits + 15 tag bits packed into u64 (PORTING.md §Type map).
-    #[repr(transparent)]
-    #[derive(Clone, Copy, Default)]
-    pub struct TaggedPointer(pub u64);
-    #[repr(transparent)]
-    #[derive(Clone, Copy)]
-    pub struct TaggedPointerUnion<T>(pub TaggedPointer, core::marker::PhantomData<T>);
-}
-use tagged_pointer_stub as tagged_pointer;
+pub mod tagged_pointer;
+// Compat aliases — Phase-A draft used short names; downstream uses long ones.
+pub use tagged_pointer::{TaggedPtr as TaggedPointer, TaggedPtrUnion as TaggedPointerUnion};
 
 // TODO(b2-large): ref_count.rs (1079L) — intrusive RefCount mixin. Heavy
 // inherent-assoc-type usage; needs trait redesign. Downstream FFI types
@@ -56,7 +44,6 @@ pub type IntrusiveRc<T> = *mut T;
 pub type IntrusiveArc<T> = *mut T;
 
 pub use raw_ref_count::RawRefCount;
-pub use tagged_pointer::{TaggedPointer, TaggedPointerUnion};
 pub use weak_ptr::WeakPtr;
 
 pub mod meta; // small, used by other crates

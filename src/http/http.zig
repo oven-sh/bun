@@ -2958,7 +2958,20 @@ pub fn handleResponseMetadata(
                         defer url_arena.deinit();
                         var fba = std.heap.stackFallback(4096, url_arena.allocator());
                         const url_allocator = fba.get();
-                        if (strings.indexOf(location, "://")) |i| {
+
+                        // Only treat the Location as an absolute URL if "://" appears
+                        // in scheme position. Per RFC 3986 a scheme cannot contain
+                        // '/', '?' or '#', so if any of those occur before "://" the
+                        // match is inside a path/query/fragment (e.g. a relative
+                        // "/login?next=https://app.example.com") and must be resolved
+                        // against the request URL via bun.jsc.URL.join below.
+                        const scheme_end: ?usize = scheme: {
+                            const i = strings.indexOf(location, "://") orelse break :scheme null;
+                            if (strings.indexOfAny(location[0..i], "/?#") != null) break :scheme null;
+                            break :scheme i;
+                        };
+
+                        if (scheme_end) |i| {
                             var string_builder = bun.StringBuilder{};
 
                             const is_protocol_relative = i == 0;

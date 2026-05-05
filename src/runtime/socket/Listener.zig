@@ -189,21 +189,34 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
                     // `node:net`'s `Server.prototype.listen` and re-emitted
                     // via `setTimeout` as the async 'error' event.
                     //
-                    // `toSystemError().toErrorInstance()` builds the standard
-                    // "listen EADDRINUSE: address already in use" message and
-                    // populates `.code`, `.errno`, `.syscall`. Force the
-                    // syscall tag to `listen` — libuv reports `bind2` for
-                    // `uv_pipe_bind2`, but Node surfaces the listen step
-                    // (which bundles bind+listen) as `listen`.
+                    // Match Node's `uvExceptionWithHostPort` output exactly:
+                    //   message: "listen EADDRINUSE: address already in use <addr>"
+                    //   fields:  .code, .errno, .syscall, .address   (no .path)
                     //
-                    // Use `this.connection.unix` (the user's original input)
-                    // rather than `pipe_name` (rewritten to canonical
-                    // `\\.\pipe\` by `normalizePipeName`) so `.address` and
-                    // the message path round-trip the exact string passed to
-                    // `server.listen()` — same contract as Node's
-                    // `uvExceptionWithHostPort`.
+                    // `bun.sys.Error.toSystemError()` would produce Node's
+                    // UVException shape instead — "<code>: <label>, <syscall>
+                    // '<path>'" — and attach a `.path` property that Node's
+                    // listen error never has. Build the error manually to
+                    // avoid that divergence; the label comes from
+                    // `libuv_error_map` which is what `node:errors` uses.
+                    //
+                    // `this.connection.unix` is the user's original input (not
+                    // `pipe_name`, which `normalizePipeName` rewrites to the
+                    // canonical `\\.\pipe\` form). Node round-trips it verbatim.
                     const user_path = this.connection.unix;
-                    const err = sys_err.withPathAndSyscall(user_path, .listen).toSystemError().toErrorInstance(globalObject);
+                    var code_label: [:0]const u8 = "UNKNOWN";
+                    var label_text: []const u8 = "unknown error";
+                    if (sys_err.getErrorCodeTagName()) |resolved| {
+                        code_label = resolved[0];
+                        if (bun.sys.libuv_error_map.get(resolved[1])) |text| label_text = text;
+                    }
+                    const err = globalObject.createErrorInstance(
+                        "listen {s}: {s} {s}",
+                        .{ code_label, label_text, user_path },
+                    );
+                    err.put(globalObject, ZigString.static("code"), ZigString.init(code_label).toJS(globalObject));
+                    err.put(globalObject, ZigString.static("errno"), JSValue.jsNumber(-%@as(i32, @intCast(sys_err.errno))));
+                    err.put(globalObject, ZigString.static("syscall"), try bun.String.createUTF8ForJS(globalObject, "listen"));
                     err.put(globalObject, ZigString.static("address"), ZigString.initUTF8(user_path).toJS(globalObject));
                     return globalObject.throwValue(err);
                 },

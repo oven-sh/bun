@@ -105,8 +105,12 @@ describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
             syscall: err.syscall,
             address: err.address,
             errnoType: typeof err.errno,
-            messageHasCode: err.message.includes("EADDRINUSE"),
-            messageHasAddress: err.message.includes(pipe),
+            message: err.message,
+            // Node's net.Server listen error (built via uvExceptionWithHostPort)
+            // has .address but no .path — keep parity here so user code that
+            // discriminates between filesystem errors and address-in-use
+            // errors by presence of .path keeps working.
+            hasPath: "path" in err,
           };
           console.log(JSON.stringify(result));
           first.close();
@@ -124,9 +128,10 @@ describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const shape = JSON.parse(stdout.trim() || "null");
 
     expect({
-      shape: JSON.parse(stdout.trim() || "null"),
+      shape,
       stderr: stderr.trim(),
       exitCode,
       signalCode: proc.signalCode ?? null,
@@ -136,8 +141,11 @@ describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
         syscall: "listen",
         address: expect.stringMatching(/^\\\\\.\\pipe\\bun-test-net-listen-/),
         errnoType: "number",
-        messageHasCode: true,
-        messageHasAddress: true,
+        // Node's exact format: "listen EADDRINUSE: address already in use \\.\pipe\..."
+        message: expect.stringMatching(
+          /^listen EADDRINUSE: address already in use \\\\\.\\pipe\\bun-test-net-listen-/,
+        ),
+        hasPath: false,
       },
       stderr: "",
       exitCode: 0,

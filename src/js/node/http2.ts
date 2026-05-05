@@ -321,6 +321,13 @@ const bunHTTP2StreamStatus = Symbol.for("::bunhttp2StreamStatus::");
 
 const bunHTTP2Session = Symbol.for("::bunhttp2session::");
 const bunHTTP2Headers = Symbol.for("::bunhttp2headers::");
+// Accumulator for multi-fragment header blocks (HEADERS/PUSH_PROMISE spanning
+// CONTINUATION frames). The native layer dispatches streamHeaders once per
+// fragment; we merge here and only emit the user-visible event when the
+// END_HEADERS flag is present on the current fragment.
+const bunHTTP2PartialHeaders = Symbol("::bunhttp2partialheaders::");
+const bunHTTP2PartialRawHeaders = Symbol("::bunhttp2partialrawheaders::");
+const bunHTTP2PartialSensitive = Symbol("::bunhttp2partialsensitive::");
 
 const ReflectGetPrototypeOf = Reflect.getPrototypeOf;
 
@@ -2116,6 +2123,11 @@ class Http2Stream extends Duplex {
   get pushAllowed() {
     const session = this[bunHTTP2Session];
     if (!session) return false;
+    // pushStream() is server-only — clients never send PUSH_PROMISE.
+    // RFC 7540 Section 6.6: "A client cannot push." Return false regardless
+    // of remoteSettings on ClientHttp2Stream; the base getter still returns
+    // the peer's enablePush value for ServerHttp2Stream.
+    if (!session[kServer]) return false;
     // RFC 7540 Section 6.5.2: SETTINGS_ENABLE_PUSH has an initial value of 1.
     // If we have not yet received a SETTINGS frame from the peer, assume push
     // is enabled — the peer may still disable it in the first SETTINGS frame.
@@ -2476,12 +2488,24 @@ class ServerHttp2Stream extends Http2Stream {
   pushStream(headers, options, callback) {
     if (typeof options === "function") {
       callback = options;
-      options = {};
+      options = undefined;
     }
 
     validateFunction(callback, "callback");
 
-    if (this.destroyed || this.closed) {
+    // RFC 7540 Section 6.6: PUSH_PROMISE MUST only be sent on an open or
+    // half-closed (remote) parent stream. `this.closed` only tracks the
+    // StreamState.Closed bit, but after `respond({endStream: true})` the
+    // state machine transitions to HALF_CLOSED_LOCAL and only the
+    // WritableClosed bit is set — the Closed bit is not. Gate on that bit
+    // too so we do not emit a PUSH_PROMISE on a stream we already ended,
+    // which a conforming client must reject with PROTOCOL_ERROR and tears
+    // down the whole connection.
+    if (
+      this.destroyed ||
+      this.closed ||
+      (this[bunHTTP2StreamStatus] & StreamState.WritableClosed) !== 0
+    ) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
 
@@ -2498,6 +2522,11 @@ class ServerHttp2Stream extends Http2Stream {
     if (!$isObject(headers)) {
       throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
     }
+
+    if (options !== undefined && !$isObject(options)) {
+      throw $ERR_INVALID_ARG_TYPE("options", "object", options);
+    }
+    const finalOptions = options ? { ...options } : {};
 
     // Ensure required pseudo-headers for push promise
     const pushHeaders = { ...headers };
@@ -2517,8 +2546,22 @@ class ServerHttp2Stream extends Http2Stream {
       pushHeaders[":authority"] = (reqHeaders ? getAuthority(reqHeaders) : undefined) ?? "localhost";
     }
 
+    // Forward per-header never-index hints to native. `sensitiveHeaders` is a
+    // well-known Symbol carrying an array of header names whose values must
+    // be HPACK-encoded with never-index (RFC 7541 Section 7.1.3), matching
+    // `request()`/`respond()` semantics. Honour a top-level options override
+    // first, then fall back to the magic symbol on the headers object.
+    const sensitiveNames =
+      finalOptions[sensitiveHeaders] ?? pushHeaders[sensitiveHeaders] ?? [];
+    const sensitiveMap = {};
+    if ($isArray(sensitiveNames)) {
+      for (let i = 0; i < sensitiveNames.length; i++) {
+        sensitiveMap[String(sensitiveNames[i]).toLowerCase()] = true;
+      }
+    }
+
     const parser = session[bunHTTP2Native];
-    const streamId = parser.sendPushPromise(this.id, pushHeaders, {});
+    const streamId = parser.sendPushPromise(this.id, pushHeaders, sensitiveMap);
     if (streamId === -2) {
       // Stream ID space exhausted — push is still enabled, we just ran out of IDs.
       process.nextTick(callback, $ERR_HTTP2_OUT_OF_STREAMS());
@@ -2532,8 +2575,13 @@ class ServerHttp2Stream extends Http2Stream {
     // The streamStart handler already created a ServerHttp2Stream and
     // incremented #connections via handleReceivedStreamID -> onStreamStart
     const pushStream = parser.getStreamContext(streamId);
+    // Node marks pushed streams whose :method is HEAD so that respond() on
+    // the push rejects payload bodies. Mirror that here.
+    if (pushStream && pushHeaders[HTTP2_HEADER_METHOD] === HTTP2_METHOD_HEAD) {
+      pushStream[kHeadRequest] = true;
+    }
 
-    process.nextTick(callback, null, pushStream, pushHeaders, options || {});
+    process.nextTick(callback, null, pushStream, pushHeaders, finalOptions);
   }
 
   respondWithFile(path, headers, options) {
@@ -3012,13 +3060,37 @@ class ServerHttp2Session extends Http2Session {
       flags: number,
     ) {
       if (!self || typeof stream !== "object" || self.closed || stream.closed) return;
-      const headers = toHeaderObject(rawheaders, sensitiveHeadersValue || []);
+      // Accumulate multi-frame header blocks (HEADERS + CONTINUATION). See
+      // the matching comment in the client streamHeaders handler — the
+      // native decoder dispatches once per fragment, we only surface the
+      // complete block to user code on END_HEADERS.
+      const END_HEADERS = 0x4;
+      const partialRaw = stream[bunHTTP2PartialRawHeaders];
+      const partialSensitive = stream[bunHTTP2PartialSensitive];
+      let finalRaw: string[];
+      let finalSensitive: string[];
+      if (partialRaw !== undefined) {
+        finalRaw = partialRaw.concat(rawheaders);
+        finalSensitive = partialSensitive.concat(sensitiveHeadersValue || []);
+      } else {
+        finalRaw = rawheaders;
+        finalSensitive = sensitiveHeadersValue || [];
+      }
+      if ((flags & END_HEADERS) === 0) {
+        stream[bunHTTP2PartialRawHeaders] = finalRaw;
+        stream[bunHTTP2PartialSensitive] = finalSensitive;
+        return;
+      }
+      stream[bunHTTP2PartialRawHeaders] = undefined;
+      stream[bunHTTP2PartialSensitive] = undefined;
+
+      const headers = toHeaderObject(finalRaw, finalSensitive);
       if (headers[HTTP2_HEADER_METHOD] === HTTP2_METHOD_HEAD) {
         stream[kHeadRequest] = true;
       }
       const status = stream[bunHTTP2StreamStatus];
       if ((status & StreamState.StreamResponded) !== 0) {
-        stream.emit("trailers", headers, flags, rawheaders);
+        stream.emit("trailers", headers, flags, finalRaw);
       } else {
         // Set the StreamResponded bit BEFORE dispatching the 'stream' event
         // synchronously to user code. The user handler may call
@@ -3028,8 +3100,8 @@ class ServerHttp2Session extends Http2Session {
         // user handler — in particular, losing WantTrailer/FinalCalled breaks
         // any later `sendTrailers()` with ERR_HTTP2_TRAILERS_NOT_READY.
         stream[bunHTTP2StreamStatus] |= StreamState.StreamResponded;
-        self[kServer].emit("stream", stream, headers, flags, rawheaders);
-        self.emit("stream", stream, headers, flags, rawheaders);
+        self[kServer].emit("stream", stream, headers, flags, finalRaw);
+        self.emit("stream", stream, headers, flags, finalRaw);
       }
     },
     localSettings(self: ServerHttp2Session, settings: Settings) {
@@ -3517,14 +3589,42 @@ class ClientHttp2Session extends Http2Session {
       flags: number,
     ) {
       if (!self || typeof stream !== "object" || stream.rstCode) return;
-      const headers = toHeaderObject(rawheaders, sensitiveHeadersValue || []);
+      // RFC 7540 Section 6.10: a header block can be split across one HEADERS
+      // (or PUSH_PROMISE) plus zero or more CONTINUATION frames; the native
+      // layer decodes each fragment and dispatches `streamHeaders` once per
+      // fragment. Accumulate the pieces here and only surface the complete
+      // block to user code on the frame carrying END_HEADERS — without this,
+      // custom request/response headers that land in a CONTINUATION fragment
+      // are silently lost (partial `response` event, stale `trailers`, or
+      // missing push-promise metadata).
+      const END_HEADERS = 0x4;
+      const partialRaw = stream[bunHTTP2PartialRawHeaders];
+      const partialSensitive = stream[bunHTTP2PartialSensitive];
+      let finalRaw: string[];
+      let finalSensitive: string[];
+      if (partialRaw !== undefined) {
+        finalRaw = partialRaw.concat(rawheaders);
+        finalSensitive = partialSensitive.concat(sensitiveHeadersValue || []);
+      } else {
+        finalRaw = rawheaders;
+        finalSensitive = sensitiveHeadersValue || [];
+      }
+      if ((flags & END_HEADERS) === 0) {
+        stream[bunHTTP2PartialRawHeaders] = finalRaw;
+        stream[bunHTTP2PartialSensitive] = finalSensitive;
+        return;
+      }
+      stream[bunHTTP2PartialRawHeaders] = undefined;
+      stream[bunHTTP2PartialSensitive] = undefined;
+
+      const headers = toHeaderObject(finalRaw, finalSensitive);
       const status = stream[bunHTTP2StreamStatus];
       const header_status = headers[HTTP2_HEADER_STATUS];
 
       // Push promise request headers: even stream ID, no PushPromiseReceived yet, no :status
       if (stream.id % 2 === 0 && (status & StreamState.PushPromiseReceived) === 0 && header_status === undefined) {
         stream[bunHTTP2StreamStatus] = status | StreamState.PushPromiseReceived;
-        self.emit("stream", stream, headers, flags, rawheaders);
+        self.emit("stream", stream, headers, flags, finalRaw);
         return;
       }
 
@@ -3533,18 +3633,17 @@ class ClientHttp2Session extends Http2Session {
         if (header_status === HTTP_STATUS_CONTINUE) {
           stream.emit("continue");
         }
-        // CONTINUATION fragments of a multi-frame header block can arrive here
-        // without a :status (partial block). Don't consume StreamResponded yet.
-        if (header_status === undefined) {
-          return;
-        }
         // Informational 1xx headers don't count as final response
         if (header_status >= 100 && header_status < 200) {
-          stream.emit("headers", headers, flags, rawheaders);
+          stream.emit("headers", headers, flags, finalRaw);
           return;
         }
         stream[bunHTTP2StreamStatus] = status | StreamState.StreamResponded;
-        stream.emit("response", headers, flags, rawheaders);
+        // Node's client emits 'push' on ClientHttp2Stream when a pushed stream
+        // receives its final response headers. `stream` (session-level) was
+        // already fired for the push-promise request headers above, so we use
+        // 'push' here instead of 'response' to mirror Node's API.
+        stream.emit("push", headers, flags, finalRaw);
         return;
       }
 
@@ -3553,10 +3652,10 @@ class ClientHttp2Session extends Http2Session {
       }
 
       if ((status & StreamState.StreamResponded) !== 0) {
-        stream.emit("trailers", headers, flags, rawheaders);
+        stream.emit("trailers", headers, flags, finalRaw);
       } else {
         if (header_status >= 100 && header_status < 200) {
-          stream.emit("headers", headers, flags, rawheaders);
+          stream.emit("headers", headers, flags, finalRaw);
         } else {
           // Set the bit BEFORE dispatching synchronously to user code — a
           // 'response' handler that mutates stream state would otherwise be
@@ -3569,9 +3668,9 @@ class ClientHttp2Session extends Http2Session {
           }
           // Don't emit session 'stream' again for push streams (already emitted for push promise)
           if ((status & StreamState.PushPromiseReceived) === 0) {
-            self.emit("stream", stream, headers, flags, rawheaders);
+            self.emit("stream", stream, headers, flags, finalRaw);
           }
-          stream.emit("response", headers, flags, rawheaders);
+          stream.emit("response", headers, flags, finalRaw);
         }
       }
     },

@@ -681,6 +681,11 @@ pub const H2FrameParser = struct {
     // pollutes lastStreamID (which is used for GOAWAY Last-Stream-ID and for
     // allocating the next client-initiated stream).
     lastPushStreamID: u32 = 0,
+    // Client-side monotonicity guard for inbound PUSH_PROMISE. Section 5.1.1
+    // requires the peer to use numerically increasing stream identifiers;
+    // we reject any promised stream id <= the highest we have accepted so
+    // far so a server cannot reuse a lower even id after advancing.
+    highestReceivedPushPromiseID: u32 = 0,
     // RFC 7540 Section 6.10: CONTINUATION frames after PUSH_PROMISE carry the
     // parent stream identifier, but the header block belongs to the promised
     // stream. Track both the promised stream ID (decode target) and the
@@ -1912,7 +1917,17 @@ pub const H2FrameParser = struct {
     }
 
     pub fn decodeHeaderBlock(this: *H2FrameParser, payload: []const u8, stream: *Stream, flags: u8) bun.JSError!?*Stream {
-        log("decodeHeaderBlock isSever: {}", .{this.isServer});
+        return this.decodeHeaderBlockInternal(payload, stream, flags, false);
+    }
+
+    /// `is_push_promise=true` requests request-header validation semantics for
+    /// the header block even on the client side — PUSH_PROMISE carries the
+    /// associated request headers, so response-only pseudo-headers like
+    /// `:status` are illegal and must produce a PROTOCOL_ERROR (RFC 7540
+    /// §8.1.2.1, §8.2.1). Without this the peer could misroute the stream by
+    /// injecting `:status` into a PUSH_PROMISE.
+    pub fn decodeHeaderBlockInternal(this: *H2FrameParser, payload: []const u8, stream: *Stream, flags: u8, is_push_promise: bool) bun.JSError!?*Stream {
+        log("decodeHeaderBlock isSever: {} is_push_promise: {}", .{ this.isServer, is_push_promise });
 
         var offset: usize = 0;
         const globalObject = this.handlers.globalObject;
@@ -1933,7 +1948,7 @@ pub const H2FrameParser = struct {
             const header = this.decode(payload[offset..]) catch break;
             offset += header.next;
             log("header {s} {s}", .{ header.name, header.value });
-            if (this.isServer and strings.eqlComptime(header.name, ":status")) {
+            if ((this.isServer or is_push_promise) and strings.eqlComptime(header.name, ":status")) {
                 this.sendGoAway(stream_id, ErrorCode.PROTOCOL_ERROR, "Server received :status header", this.lastStreamID, true);
 
                 return this.streams.get(stream_id);
@@ -2012,6 +2027,18 @@ pub const H2FrameParser = struct {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Data frame on connection stream", this.lastStreamID, true);
             return data.len;
         };
+
+        // RFC 7540 Section 6.1: DATA frames are subject to flow control and can
+        // only be sent when a stream is in the "open" or "half-closed (local)"
+        // state. Receiving DATA on a RESERVED_REMOTE push stream before the
+        // server has sent the response HEADERS is a stream error of type
+        // PROTOCOL_ERROR — the payload must not be delivered to JS, otherwise
+        // a misbehaving server could inject data onto a stream that was never
+        // legitimately opened.
+        if (stream.state == .RESERVED_REMOTE or stream.state == .RESERVED_LOCAL or stream.state == .IDLE) {
+            this.endStream(stream, ErrorCode.PROTOCOL_ERROR);
+            return data.len;
+        }
 
         if (frame.length > this.localSettings.maxFrameSize) {
             log("received data frame with length: {d} and max frame size: {d}", .{ frame.length, this.localSettings.maxFrameSize });
@@ -2104,10 +2131,13 @@ pub const H2FrameParser = struct {
                 const identifier = stream.getIdentifier();
                 identifier.ensureStillAlive();
 
-                // Client-side push streams start in RESERVED_REMOTE and can
-                // only receive from the server. END_STREAM from the remote
-                // transitions them directly to CLOSED.
-                if (stream.state == .HALF_CLOSED_LOCAL or stream.state == .RESERVED_REMOTE) {
+                // Client-side push streams transition through HALF_CLOSED_LOCAL
+                // (after receiving the response HEADERS frame) before DATA is
+                // legal per RFC 7540 Section 5.1. The early RESERVED_REMOTE
+                // guard above rejects DATA that arrives before HEADERS, so by
+                // the time we reach here we are in either HALF_CLOSED_LOCAL
+                // (push) or OPEN (normal) state.
+                if (stream.state == .HALF_CLOSED_LOCAL) {
                     stream.state = .CLOSED;
                     stream.freeResources(this, false);
                 } else {
@@ -2365,7 +2395,7 @@ pub const H2FrameParser = struct {
                 if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
                     const payload = content.data;
                     this.readBuffer.reset();
-                    const maybe_result = try this.decodeHeaderBlock(payload[0..payload.len], promised_stream, frame.flags);
+                    const maybe_result = try this.decodeHeaderBlockInternal(payload[0..payload.len], promised_stream, frame.flags, true);
                     // decodeHeaderBlock fires JS callbacks which may grow the
                     // streams HashMap and invalidate any prior *Stream pointer.
                     // Always re-fetch the parent by id before touching it.
@@ -2408,17 +2438,27 @@ pub const H2FrameParser = struct {
         if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
             const payload = content.data;
             this.readBuffer.reset();
-            stream.endAfterHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_STREAM) != 0;
+            // RFC 7540 Section 6.10: CONTINUATION frames have no flags other
+            // than END_HEADERS. The END_STREAM sentinel is carried only on the
+            // original HEADERS frame that opened this header-block sequence,
+            // so preserve stream.endAfterHeaders across CONTINUATION frames
+            // rather than re-deriving it from the CONTINUATION flag bits
+            // (which are always 0 for END_STREAM).
             stream = (try this.decodeHeaderBlock(payload[0..payload.len], stream, frame.flags)) orelse {
                 return content.end;
             };
-            if (stream.endAfterHeaders) {
+            if (frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) != 0) {
                 stream.isWaitingMoreHeaders = false;
-                if (frame.flags & @intFromEnum(HeadersFrameFlags.END_STREAM) != 0) {
+                if (stream.endAfterHeaders) {
                     const identifier = stream.getIdentifier();
                     identifier.ensureStillAlive();
                     if (stream.state == .HALF_CLOSED_REMOTE) {
                         // no more continuation headers we can call it closed
+                        stream.state = .CLOSED;
+                        stream.freeResources(this, false);
+                    } else if (stream.state == .RESERVED_REMOTE or stream.state == .HALF_CLOSED_LOCAL) {
+                        // Client-side push stream finishing its response with
+                        // END_STREAM on the initial HEADERS frame.
                         stream.state = .CLOSED;
                         stream.freeResources(this, false);
                     } else {
@@ -2521,6 +2561,15 @@ pub const H2FrameParser = struct {
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Invalid promised stream ID", this.lastStreamID, true);
                 return content.end;
             }
+            // RFC 7540 Section 5.1.1: stream identifiers must be numerically
+            // greater than all previously opened or reserved streams in the
+            // same direction. Reject a peer that attempts to reuse or rewind
+            // promised ids — pure existence-in-map check is insufficient once
+            // a previous push was processed and the map entry freed.
+            if (promised_stream_id <= this.highestReceivedPushPromiseID) {
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "PUSH_PROMISE stream ID not monotonically increasing", this.lastStreamID, true);
+                return content.end;
+            }
             if (this.streams.get(promised_stream_id) != null) {
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Promised stream ID already in use", this.lastStreamID, true);
                 return content.end;
@@ -2538,10 +2587,15 @@ pub const H2FrameParser = struct {
                 return content.end;
             };
             this.lastStreamID = saved_last_stream_id;
+            this.highestReceivedPushPromiseID = promised_stream_id;
             promised_stream.state = .RESERVED_REMOTE;
 
-            // Decode the header block on the promised stream
-            _ = (try this.decodeHeaderBlock(payload[offset..end], promised_stream, frame.flags)) orelse {
+            // Decode the header block on the promised stream.
+            // PUSH_PROMISE carries the associated request headers (RFC 7540
+            // §8.2.1); pass is_push_promise=true so `:status` and other
+            // response-only pseudo-headers are rejected with PROTOCOL_ERROR
+            // instead of being silently forwarded.
+            _ = (try this.decodeHeaderBlockInternal(payload[offset..end], promised_stream, frame.flags, true)) orelse {
                 return content.end;
             };
 
@@ -4796,9 +4850,19 @@ pub const H2FrameParser = struct {
         if (orig_stream_id % 2 != 1) {
             return globalObject.throw("PUSH_PROMISE must be sent on a client-initiated (odd) stream", .{});
         }
-        _ = this.streams.get(orig_stream_id) orelse {
+        const orig_stream = this.streams.get(orig_stream_id) orelse {
             return globalObject.throw("Invalid original stream id", .{});
         };
+
+        // RFC 7540 Section 6.6: PUSH_PROMISE MUST only be sent on a stream
+        // that is in either the "open" or "half-closed (remote)" state from
+        // the server's perspective — i.e. the client still has the stream
+        // open for receiving. If we already sent END_STREAM (HALF_CLOSED_LOCAL,
+        // CLOSED) or never saw the request (IDLE, RESERVED_*) then emitting a
+        // PUSH_PROMISE here is a protocol violation the peer must reject.
+        if (orig_stream.state != .OPEN and orig_stream.state != .HALF_CLOSED_REMOTE) {
+            return jsc.JSValue.jsNumber(-1);
+        }
 
         // Check remote settings allow push
         if (this.remoteSettings) |rs| {
@@ -4943,6 +5007,16 @@ pub const H2FrameParser = struct {
 
         const encoded_data = encoded_headers.items;
         const encoded_size = encoded_data.len;
+
+        // Check if headers block exceeds maxSendHeaderBlockLength — mirrors
+        // the same guard in `request()` and `respond()` so push-promise
+        // callers get a consistent rejection instead of silently emitting a
+        // header block larger than the application opted into. We reject here
+        // before reserving a stream id so the lastPushStreamID counter stays
+        // in sync with what actually went on the wire.
+        if (this.maxSendHeaderBlockLength != 0 and encoded_size > this.maxSendHeaderBlockLength) {
+            return jsc.JSValue.jsNumber(-1);
+        }
 
         // Create the promised stream in RESERVED_LOCAL state.
         // handleReceivedStreamID advances this.lastStreamID to any id larger

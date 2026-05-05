@@ -73,20 +73,10 @@ pub fn disk_designator_windows(p: &[u8]) -> &[u8] {
     &[]
 }
 
-/// Character types valid in path slices (u8 / u16).
-pub trait PathChar: Copy + Eq + Ord + 'static {
-    fn from_u8(c: u8) -> Self;
-    fn to_u8(self) -> u8;
-    #[inline] fn is_ascii_alphabetic(self) -> bool { self.to_u8().is_ascii_alphabetic() }
-}
-impl PathChar for u8 {
-    #[inline] fn from_u8(c: u8) -> u8 { c }
-    #[inline] fn to_u8(self) -> u8 { self }
-}
-impl PathChar for u16 {
-    #[inline] fn from_u8(c: u8) -> u16 { c as u16 }
-    #[inline] fn to_u8(self) -> u8 { self as u8 }
-}
+/// Character types valid in path slices (u8 / u16). Defined in resolve_path
+/// (richer: IS_U16/to_ascii_upper/lit); re-exported here so `is_absolute_*_t`
+/// shares the same trait as resolve_path's generics.
+pub use resolve_path::PathChar;
 pub const DELIMITER: u8 = if cfg!(windows) { b';' } else { b':' };
 pub fn is_absolute(p: &[u8]) -> bool {
     #[cfg(not(windows))] { p.first() == Some(&b'/') }
@@ -194,8 +184,9 @@ pub mod path_buffer_pool;
 // compile; the convenience wrappers don't yet. Gate the module; expose Platform.
 // TODO(b2): annotate the 46 TLS-wrapper return lifetimes as `'static` (matches
 // Zig "valid until next call" semantics).
-#[cfg(any())] pub mod resolve_path;
-pub use platform_stub::{Platform, PlatformT, platform};
+pub mod resolve_path;
+pub use resolve_path::{Platform, PlatformT, platform};
+#[cfg(any())]
 mod platform_stub {
     #[derive(Copy, Clone, PartialEq, Eq, Debug)]
     pub enum Platform { Loose, Windows, Posix, Nt }
@@ -215,6 +206,9 @@ mod platform_stub {
 // TODO(b2-large): Path.rs (1220L) — typed path-builder with 5 ConstParamTy
 // option enums. Same trait-lowering pattern as resolve_path::PlatformT; defer.
 // EnvPath.rs wraps Path<U> so blocked on Path.rs.
+// TODO(b2-large): Path.rs (1220L) — 6× adt_const_params enums need same
+// trait-lowering as resolve_path::PlatformT, plus path_buffer_pool API gaps.
+// 33 errors. Defer to next round; resolve_path (the dependency) is now real.
 #[cfg(any())] #[path = "Path.rs"] mod path_draft;
 #[cfg(any())] #[path = "EnvPath.rs"] mod env_path;
 

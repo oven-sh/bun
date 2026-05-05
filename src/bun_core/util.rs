@@ -535,6 +535,14 @@ impl Fd {
         Fd((h as u64) & FD_VALUE_MASK)
     }
     #[inline] pub const fn native(self) -> FdBacking { self.0 }
+    /// libuv c_int file number (`fd.value.as_uv` in Zig). On posix this equals
+    /// `native()`; on Windows it extracts the low 63→32 bits when kind=.uv.
+    #[inline] pub const fn uv(self) -> i32 {
+        #[cfg(windows)]
+        { (self.0 & FD_VALUE_MASK) as u32 as i32 }
+        #[cfg(not(windows))]
+        { self.0 }
+    }
 
     #[cfg(not(windows))] #[inline] pub const fn stdin()  -> Fd { Fd(0) }
     #[cfg(not(windows))] #[inline] pub const fn stdout() -> Fd { Fd(1) }

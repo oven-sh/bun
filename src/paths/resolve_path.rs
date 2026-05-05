@@ -121,9 +121,9 @@ pub fn is_parent_or_equal(parent_: &[u8], child: &[u8]) -> ParentEqual {
     ParentEqual::Unrelated
 }
 
-pub fn get_if_exists_longest_common_path_generic<P: PlatformT>(
-    input: &[&[u8]],
-) -> Option<&[u8]> {
+pub fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
+    input: &[&'a [u8]],
+) -> Option<&'a [u8]> {
     // TODO(port): return lifetime — borrows from `input` strings; caller must ensure outlives
     let separator = P::P.separator();
     let is_path_separator = P::P.get_separator_func();
@@ -246,7 +246,7 @@ fn nql_at_index_case_insensitive_dyn(string_count: usize, index: usize, input: &
 // TODO: is it faster to determine longest_common_separator in the while loop
 // or as an extra step at the end?
 // only boether to check if this function appears in benchmarking
-pub fn longest_common_path_generic<P: PlatformT>(input: &[&[u8]]) -> &[u8] {
+pub fn longest_common_path_generic<'a, P: PlatformT>(input: &[&'a [u8]]) -> &'a [u8] {
     let separator = P::P.separator();
     let is_path_separator = P::P.get_separator_func();
 
@@ -364,19 +364,19 @@ pub fn longest_common_path_generic<P: PlatformT>(input: &[&[u8]]) -> &[u8] {
     &input[0][0..last_common_separator + 1]
 }
 
-pub fn longest_common_path(input: &[&[u8]]) -> &[u8] {
+pub fn longest_common_path<'a>(input: &[&'a [u8]]) -> &'a [u8] {
     longest_common_path_generic::<platform::Loose>(input)
 }
 
-pub fn get_if_exists_longest_common_path(input: &[&[u8]]) -> Option<&[u8]> {
+pub fn get_if_exists_longest_common_path<'a>(input: &[&'a [u8]]) -> Option<&'a [u8]> {
     get_if_exists_longest_common_path_generic::<platform::Loose>(input)
 }
 
-pub fn longest_common_path_windows(input: &[&[u8]]) -> &[u8] {
+pub fn longest_common_path_windows<'a>(input: &[&'a [u8]]) -> &'a [u8] {
     longest_common_path_generic::<platform::Windows>(input)
 }
 
-pub fn longest_common_path_posix(input: &[&[u8]]) -> &[u8] {
+pub fn longest_common_path_posix<'a>(input: &[&'a [u8]]) -> &'a [u8] {
     longest_common_path_generic::<platform::Posix>(input)
 }
 
@@ -411,12 +411,12 @@ pub fn relative_to_common_path_buf() -> &'static mut PathBuffer {
 /// Find a relative path from a common path
 // Loosely based on Node.js' implementation of path.relative
 // https://github.com/nodejs/node/blob/9a7cbe25de88d87429a69050a1a1971234558d97/lib/path.js#L1250-L1259
-pub fn relative_to_common_path<const ALWAYS_COPY: bool, P: PlatformT>(
+pub fn relative_to_common_path<'a, const ALWAYS_COPY: bool, P: PlatformT>(
     common_path_: &[u8],
     normalized_from_: &[u8],
-    normalized_to_: &[u8],
-    buf: &mut [u8],
-) -> &[u8] {
+    normalized_to_: &'a [u8],
+    buf: &'a mut [u8],
+) -> &'a [u8] {
     // TODO(port): return borrows either `buf` or `normalized_to_`; lifetime needs unification in Phase B
     let mut normalized_from = normalized_from_;
     let mut normalized_to = normalized_to_;
@@ -587,11 +587,11 @@ pub fn relative_to_common_path<const ALWAYS_COPY: bool, P: PlatformT>(
     &buf[..out_len]
 }
 
-pub fn relative_normalized_buf<P: PlatformT, const ALWAYS_COPY: bool>(
-    buf: &mut [u8],
-    from: &[u8],
-    to: &[u8],
-) -> &[u8] {
+pub fn relative_normalized_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
+    buf: &'a mut [u8],
+    from: &'a [u8],
+    to: &'a [u8],
+) -> &'a [u8] {
     let equal = if P::P == Platform::Windows {
         strings::eql_case_insensitive_ascii(from, to, true)
     } else {
@@ -607,10 +607,14 @@ pub fn relative_normalized_buf<P: PlatformT, const ALWAYS_COPY: bool>(
     relative_to_common_path::<ALWAYS_COPY, P>(common_path, from, to, buf)
 }
 
-pub fn relative_normalized<P: PlatformT, const ALWAYS_COPY: bool>(
-    from: &[u8],
-    to: &[u8],
-) -> &[u8] {
+// PORT NOTE: result borrows either the thread-local common-path buf ('static)
+// or `to` (when !ALWAYS_COPY and result==to). Return lifetime is `'a` (=to's),
+// since 'static: 'a. Zig's "valid until next call" semantics still applies for
+// the buf-backed case.
+pub fn relative_normalized<'a, P: PlatformT, const ALWAYS_COPY: bool>(
+    from: &'a [u8],
+    to: &'a [u8],
+) -> &'a [u8] {
     relative_normalized_buf::<P, ALWAYS_COPY>(relative_to_common_path_buf(), from, to)
 }
 
@@ -662,11 +666,11 @@ pub fn dirname_w(str: &[u16]) -> &[u16] {
     &str[..separator]
 }
 
-pub fn relative(from: &[u8], to: &[u8]) -> &[u8] {
+pub fn relative(from: &[u8], to: &[u8]) -> &'static [u8] {
     relative_platform::<platform::Auto, false>(from, to)
 }
 
-pub fn relative_z(from: &[u8], to: &[u8]) -> &ZStr {
+pub fn relative_z(from: &[u8], to: &[u8]) -> &'static ZStr {
     relative_buf_z(relative_to_common_path_buf(), from, to)
 }
 
@@ -679,11 +683,11 @@ pub fn relative_buf_z<'a>(buf: &'a mut [u8], from: &[u8], to: &[u8]) -> &'a ZStr
     unsafe { ZStr::from_raw(buf.as_ptr(), len) }
 }
 
-pub fn relative_platform_buf<P: PlatformT, const ALWAYS_COPY: bool>(
-    buf: &mut [u8],
+pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
+    buf: &'a mut [u8],
     from: &[u8],
     to: &[u8],
-) -> &[u8] {
+) -> &'a [u8] {
     // TODO(port): thread-local buffer access via raw pointers; see relative_to_common_path_buf note
     // SAFETY: thread-local, single-threaded access; matches Zig threadlocal-var pointer semantics
     let relative_from_buf = RELATIVE_BUFS.with(|b| unsafe { &mut (*b.as_ptr()).relative_from_buf });
@@ -702,25 +706,27 @@ pub fn relative_platform_buf<P: PlatformT, const ALWAYS_COPY: bool>(
                 platform_to_posix_in_place::<u8>(normalized);
                 break 'brk &*normalized;
             }
-            let path = normalize_string_buf::<true, P, true>(from, &mut relative_from_buf[1..]);
+            // PORT NOTE: reshaped for borrowck — capture len, drop inner &mut, re-slice
+            let path_len =
+                normalize_string_buf::<true, P, true>(from, &mut relative_from_buf[1..]).len();
             if P::P == Platform::Windows {
-                break 'brk &*path;
+                break 'brk &relative_from_buf[1..1 + path_len];
             }
-            let path_len = path.len();
             relative_from_buf[0] = P::P.separator();
             break 'brk &relative_from_buf[0..path_len + 1];
         }
     } else {
+        // PORT NOTE: Zig aliased relative_from_buf as both input (normalize result)
+        // and output (join target). Reshape: normalize into relative_to_buf scratch,
+        // then join into relative_from_buf. Safe because normalized_to is computed
+        // afterwards (overwrites relative_to_buf anyway).
+        let norm_len =
+            normalize_string_buf::<true, P, true>(from, &mut relative_to_buf[..]).len();
         join_abs_string_buf::<P>(
             Fs::FileSystem::instance().top_level_dir(),
             relative_from_buf,
-            &[normalize_string_buf::<true, P, true>(
-                from,
-                &mut relative_from_buf[1..],
-            )],
+            &[&relative_to_buf[..norm_len]],
         )
-        // TODO(port): aliasing — Zig passes a slice of relative_from_buf as both
-        // input and output; reshape in Phase B if borrowck rejects.
     };
 
     let normalized_to: &[u8] = if P::P.is_absolute(to) {
@@ -733,23 +739,32 @@ pub fn relative_platform_buf<P: PlatformT, const ALWAYS_COPY: bool>(
                 platform_to_posix_in_place::<u8>(normalized);
                 break 'brk &*normalized;
             }
-            let path = normalize_string_buf::<true, P, true>(to, &mut relative_to_buf[1..]);
+            // PORT NOTE: reshaped for borrowck — capture len, drop inner &mut, re-slice
+            let path_len =
+                normalize_string_buf::<true, P, true>(to, &mut relative_to_buf[1..]).len();
             if P::P == Platform::Windows {
-                break 'brk &*path;
+                break 'brk &relative_to_buf[1..1 + path_len];
             }
-            let path_len = path.len();
             relative_to_buf[0] = P::P.separator();
             break 'brk &relative_to_buf[0..path_len + 1];
         }
     } else {
-        join_abs_string_buf::<P>(
-            Fs::FileSystem::instance().top_level_dir(),
-            relative_to_buf,
-            &[normalize_string_buf::<true, P, true>(
-                to,
-                &mut relative_to_buf[1..],
-            )],
-        )
+        // PORT NOTE: Zig aliased relative_to_buf as both input and output.
+        // Reshape: normalize into relative_from_buf scratch (already consumed
+        // above into normalized_from, which is &[u8] not &mut), then join.
+        // SAFETY: normalized_from points into relative_from_buf; we need a
+        // disjoint scratch. Use raw-ptr re-derive of relative_from_buf tail
+        // past normalized_from.len() — too fragile. Gate this arm.
+        #[cfg(any())]
+        {
+            join_abs_string_buf::<P>(
+                Fs::FileSystem::instance().top_level_dir(),
+                relative_to_buf,
+                &[normalize_string_buf::<true, P, true>(to, &mut relative_to_buf[1..])],
+            )
+        }
+        // TODO(b2-reshape): non-absolute `to` path — needs separate scratch buffer.
+        todo!("relative_platform_buf: non-absolute `to` — needs aliasing reshape")
     };
 
     relative_normalized_buf::<P, ALWAYS_COPY>(buf, normalized_from, normalized_to)
@@ -758,7 +773,7 @@ pub fn relative_platform_buf<P: PlatformT, const ALWAYS_COPY: bool>(
 pub fn relative_platform<P: PlatformT, const ALWAYS_COPY: bool>(
     from: &[u8],
     to: &[u8],
-) -> &[u8] {
+) -> &'static [u8] {
     relative_platform_buf::<P, ALWAYS_COPY>(relative_to_common_path_buf(), from, to)
 }
 
@@ -909,15 +924,15 @@ pub fn windows_filesystem_root_t<T: PathChar>(path: &[T]) -> &[T] {
 
 // This function is based on Go's filepath.Clean function
 // https://cs.opensource.google/go/go/+/refs/tags/go1.17.6:src/path/filepath/path.go;l=89
-pub fn normalize_string_generic<
+pub fn normalize_string_generic<'a,
     const ALLOW_ABOVE_ROOT: bool,
     const SEPARATOR: u8,
     const PRESERVE_TRAILING_SLASH: bool,
 >(
     path_: &[u8],
-    buf: &mut [u8],
+    buf: &'a mut [u8],
     is_separator: impl Fn(u8) -> bool + Copy,
-) -> &mut [u8] {
+) -> &'a mut [u8] {
     normalize_string_generic_t::<u8, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(
         path_,
         buf,
@@ -929,16 +944,16 @@ pub fn normalize_string_generic<
 // TODO(port): `separatorAdapter(T, func)` wrapped a `fn(comptime T, char) bool`
 // into `fn(T) bool`. In Rust we pass closures directly; no adapter needed.
 
-pub fn normalize_string_generic_t<
+pub fn normalize_string_generic_t<'a,
     T: PathChar,
     const ALLOW_ABOVE_ROOT: bool,
     const PRESERVE_TRAILING_SLASH: bool,
 >(
     path_: &[T],
-    buf: &mut [T],
+    buf: &'a mut [T],
     separator: T,
     is_separator_t: impl Fn(T) -> bool + Copy,
-) -> &mut [T] {
+) -> &'a mut [T] {
     normalize_string_generic_tz::<T, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH, false, false>(
         path_,
         buf,
@@ -983,7 +998,7 @@ impl<T: PathChar> Default for NormalizeOptions<T> {
 // Rust cannot vary the return type on a const-generic bool without specialization;
 // we always return `&mut [T]` and write the NUL when `ZERO_TERMINATE`. Callers
 // that need `&ZStr`/`&WStr` re-wrap with `from_raw`.
-pub fn normalize_string_generic_tz<
+pub fn normalize_string_generic_tz<'a,
     T: PathChar,
     const ALLOW_ABOVE_ROOT: bool,
     const PRESERVE_TRAILING_SLASH: bool,
@@ -991,10 +1006,10 @@ pub fn normalize_string_generic_tz<
     const ADD_NT_PREFIX: bool,
 >(
     path_: &[T],
-    buf: &mut [T],
+    buf: &'a mut [T],
     separator: T,
     is_separator: impl Fn(T) -> bool + Copy,
-) -> &mut [T] {
+) -> &'a mut [T] {
     let is_windows = separator == T::from_u8(SEP_WINDOWS);
     // sep_str: single-char slice [separator]
     // PERF(port): Zig built `sep_str` at comptime; we build per-call.
@@ -1279,12 +1294,12 @@ impl Platform {
     // via `last_index_of_separator_*_t::<T>` directly.
 
     #[inline]
-    pub const fn is_separator(self, char: u8) -> bool {
+    pub fn is_separator(self, char: u8) -> bool {
         self.is_separator_t::<u8>(char)
     }
 
     #[inline]
-    pub const fn is_separator_t<T: PathChar>(self, char: T) -> bool {
+    pub fn is_separator_t<T: PathChar>(self, char: T) -> bool {
         match self {
             Platform::Loose => is_sep_any_t::<T>(char),
             Platform::Nt | Platform::Windows => is_sep_any_t::<T>(char),
@@ -1375,11 +1390,11 @@ pub fn normalize_string_z<const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(
     })
 }
 
-pub fn normalize_buf<P: PlatformT>(str: &[u8], buf: &mut [u8]) -> &mut [u8] {
+pub fn normalize_buf<'a, P: PlatformT>(str: &[u8], buf: &'a mut [u8]) -> &'a mut [u8] {
     normalize_buf_t::<u8, P>(str, buf)
 }
 
-pub fn normalize_buf_z<P: PlatformT>(str: &[u8], buf: &mut [u8]) -> &mut ZStr {
+pub fn normalize_buf_z<'a, P: PlatformT>(str: &[u8], buf: &'a mut [u8]) -> &'a mut ZStr {
     let norm = normalize_buf_t::<u8, P>(str, buf);
     let len = norm.len();
     buf[len] = 0;
@@ -1387,10 +1402,10 @@ pub fn normalize_buf_z<P: PlatformT>(str: &[u8], buf: &mut [u8]) -> &mut ZStr {
     unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), len) }
 }
 
-pub fn normalize_buf_t<T: PathChar, P: PlatformT>(
+pub fn normalize_buf_t<'a, T: PathChar, P: PlatformT>(
     str: &[T],
-    buf: &mut [T],
-) -> &mut [T] {
+    buf: &'a mut [T],
+) -> &'a mut [T] {
     if str.is_empty() {
         buf[0] = T::from_u8(b'.');
         return &mut buf[0..1];
@@ -1417,26 +1432,26 @@ pub fn normalize_buf_t<T: PathChar, P: PlatformT>(
     normalize_string_buf_t::<T, false, P, true>(str, buf)
 }
 
-pub fn normalize_string_buf<
+pub fn normalize_string_buf<'a,
     const ALLOW_ABOVE_ROOT: bool,
     P: PlatformT,
     const PRESERVE_TRAILING_SLASH: bool,
 >(
     str: &[u8],
-    buf: &mut [u8],
-) -> &mut [u8] {
+    buf: &'a mut [u8],
+) -> &'a mut [u8] {
     normalize_string_buf_t::<u8, ALLOW_ABOVE_ROOT, P, PRESERVE_TRAILING_SLASH>(str, buf)
 }
 
-pub fn normalize_string_buf_t<
+pub fn normalize_string_buf_t<'a,
     T: PathChar,
     const ALLOW_ABOVE_ROOT: bool,
     P: PlatformT,
     const PRESERVE_TRAILING_SLASH: bool,
 >(
     str: &[T],
-    buf: &mut [T],
-) -> &mut [T] {
+    buf: &'a mut [T],
+) -> &'a mut [T] {
     match P::P {
         Platform::Nt => unreachable!("not implemented"),
         Platform::Windows => normalize_string_windows_t::<T, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(str, buf),
@@ -1462,7 +1477,7 @@ pub fn join_abs2<P: PlatformT>(
     join_abs_string::<P>(cwd, &parts)
 }
 
-pub fn join_abs<P: PlatformT>(cwd: &[u8], part: &[u8]) -> &[u8] {
+pub fn join_abs<'a, P: PlatformT>(cwd: &'a [u8], part: &[u8]) -> &'a [u8] {
     join_abs_string::<P>(cwd, &[part])
 }
 
@@ -1471,7 +1486,9 @@ pub fn join_abs<P: PlatformT>(cwd: &[u8], part: &[u8]) -> &[u8] {
 /// This is the equivalent of path.resolve
 ///
 /// Returned path is stored in a temporary buffer. It must be copied if it needs to be stored.
-pub fn join_abs_string<P: PlatformT>(cwd: &[u8], parts: &[&[u8]]) -> &[u8] {
+// PORT NOTE: result borrows the thread-local buffer ('static) OR returns `cwd`
+// directly when `parts.is_empty()`. Return tied to `cwd`'s lifetime ('static: 'a).
+pub fn join_abs_string<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a [u8] {
     PARSER_JOIN_INPUT_BUFFER.with(|b| {
         // SAFETY: thread-local, single-threaded access; matches Zig threadlocal-var pointer semantics
         let buf = unsafe { &mut *b.as_ptr() };
@@ -1484,7 +1501,7 @@ pub fn join_abs_string<P: PlatformT>(cwd: &[u8], parts: &[&[u8]]) -> &[u8] {
 /// This is the equivalent of path.resolve
 ///
 /// Returned path is stored in a temporary buffer. It must be copied if it needs to be stored.
-pub fn join_abs_string_z<P: PlatformT>(cwd: &[u8], parts: &[&[u8]]) -> &ZStr {
+pub fn join_abs_string_z<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a ZStr {
     PARSER_JOIN_INPUT_BUFFER.with(|b| {
         // SAFETY: thread-local, single-threaded access; matches Zig threadlocal-var pointer semantics
         let buf = unsafe { &mut *b.as_ptr() };
@@ -1496,7 +1513,7 @@ thread_local! {
     pub static JOIN_BUF: RefCell<[u8; 4096]> = const { RefCell::new([0u8; 4096]) };
 }
 
-pub fn join<P: PlatformT>(parts: &[&[u8]]) -> &[u8] {
+pub fn join<P: PlatformT>(parts: &[&[u8]]) -> &'static [u8] {
     JOIN_BUF.with(|b| {
         // SAFETY: thread-local, single-threaded access; matches Zig threadlocal-var pointer semantics
         let buf = unsafe { &mut *b.as_ptr() };
@@ -1504,7 +1521,7 @@ pub fn join<P: PlatformT>(parts: &[&[u8]]) -> &[u8] {
     })
 }
 
-pub fn join_z<P: PlatformT>(parts: &[&[u8]]) -> &ZStr {
+pub fn join_z<P: PlatformT>(parts: &[&[u8]]) -> &'static ZStr {
     JOIN_BUF.with(|b| {
         // SAFETY: thread-local, single-threaded access; matches Zig threadlocal-var pointer semantics
         let buf = unsafe { &mut *b.as_ptr() };
@@ -1512,53 +1529,65 @@ pub fn join_z<P: PlatformT>(parts: &[&[u8]]) -> &ZStr {
     })
 }
 
-pub fn join_z_buf<P: PlatformT>(buf: &mut [u8], parts: &[&[u8]]) -> &ZStr {
+pub fn join_z_buf<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a ZStr {
+    // PORT NOTE: reshaped for borrowck — capture buf base ptr before sub-borrow
+    let buf_base = buf.as_mut_ptr();
     let buf_len = buf.len();
-    let joined = join_string_buf::<P>(&mut buf[..buf_len - 1], parts);
-    debug_assert!(is_slice_in_buffer(joined, buf));
-    let start_offset = (joined.as_ptr() as usize) - (buf.as_ptr() as usize);
-    let len = joined.len();
-    buf[len + start_offset] = 0;
-    // SAFETY: NUL written at buf[start_offset + len]
-    unsafe { ZStr::from_raw(buf.as_ptr().add(start_offset), len) }
+    let (start_offset, len) = {
+        let joined = join_string_buf::<P>(&mut buf[..buf_len - 1], parts);
+        ((joined.as_ptr() as usize) - (buf_base as usize), joined.len())
+    };
+    debug_assert!(start_offset + len < buf_len);
+    buf[start_offset + len] = 0;
+    // SAFETY: NUL written at buf[start_offset + len]; slice is within buf
+    unsafe { ZStr::from_raw(buf_base.add(start_offset), len) }
 }
 
-pub fn join_string_buf<P: PlatformT>(buf: &mut [u8], parts: &[&[u8]]) -> &[u8] {
+pub fn join_string_buf<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a [u8] {
     join_string_buf_t::<u8, P>(buf, parts)
 }
 
-pub fn join_string_buf_w<P: PlatformT>(buf: &mut [u16], parts: &[&[u8]]) -> &[u16] {
+pub fn join_string_buf_w<'a, P: PlatformT>(buf: &'a mut [u16], parts: &[&[u8]]) -> &'a [u16] {
     // TODO(port): Zig `parts: anytype` allowed mixed u8/u16 elements; we accept
     // &[&[u8]] and transcode below to match the common callsite.
     join_string_buf_t::<u16, P>(buf, parts)
 }
 
-pub fn join_string_buf_wz<P: PlatformT>(buf: &mut [u16], parts: &[&[u8]]) -> &WStr {
+pub fn join_string_buf_wz<'a, P: PlatformT>(buf: &'a mut [u16], parts: &[&[u8]]) -> &'a WStr {
+    // PORT NOTE: reshaped for borrowck — capture buf base ptr before sub-borrow
+    let buf_base = buf.as_mut_ptr();
     let buf_len = buf.len();
-    let joined = join_string_buf_t::<u16, P>(&mut buf[..buf_len - 1], parts);
-    debug_assert!(is_slice_in_buffer_t::<u16>(joined, buf));
-    let start_offset = (joined.as_ptr() as usize) / 2 - (buf.as_ptr() as usize) / 2;
-    let len = joined.len();
-    buf[len + start_offset] = 0;
-    // SAFETY: NUL written at buf[start_offset + len]
-    unsafe { WStr::from_raw(buf.as_ptr().add(start_offset), len) }
+    let (start_offset, len) = {
+        let joined = join_string_buf_t::<u16, P>(&mut buf[..buf_len - 1], parts);
+        (
+            (joined.as_ptr() as usize - buf_base as usize) / 2,
+            joined.len(),
+        )
+    };
+    debug_assert!(start_offset + len < buf_len);
+    buf[start_offset + len] = 0;
+    // SAFETY: NUL written at buf[start_offset + len]; slice is within buf
+    unsafe { WStr::from_raw(buf_base.add(start_offset), len) }
 }
 
-pub fn join_string_buf_z<P: PlatformT>(buf: &mut [u8], parts: &[&[u8]]) -> &ZStr {
+pub fn join_string_buf_z<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a ZStr {
+    // PORT NOTE: reshaped for borrowck — capture buf base ptr before sub-borrow
+    let buf_base = buf.as_mut_ptr();
     let buf_len = buf.len();
-    let joined = join_string_buf_t::<u8, P>(&mut buf[..buf_len - 1], parts);
-    debug_assert!(is_slice_in_buffer_t::<u8>(joined, buf));
-    let start_offset = (joined.as_ptr() as usize) - (buf.as_ptr() as usize);
-    let len = joined.len();
-    buf[len + start_offset] = 0;
-    // SAFETY: NUL written at buf[start_offset + len]
-    unsafe { ZStr::from_raw(buf.as_ptr().add(start_offset), len) }
+    let (start_offset, len) = {
+        let joined = join_string_buf_t::<u8, P>(&mut buf[..buf_len - 1], parts);
+        ((joined.as_ptr() as usize) - (buf_base as usize), joined.len())
+    };
+    debug_assert!(start_offset + len < buf_len);
+    buf[start_offset + len] = 0;
+    // SAFETY: NUL written at buf[start_offset + len]; slice is within buf
+    unsafe { ZStr::from_raw(buf_base.add(start_offset), len) }
 }
 
-pub fn join_string_buf_t<T: PathChar, P: PlatformT>(
-    buf: &mut [T],
+pub fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(
+    buf: &'a mut [T],
     parts: &[&[u8]],
-) -> &[T] {
+) -> &'a [T] {
     // TODO(port): Zig used `parts: anytype` (tuple of slices, possibly mixed
     // element types). Rust takes `&[&[u8]]`; transcoding to u16 handled below.
     let mut written: usize = 0;
@@ -1640,11 +1669,11 @@ impl JoinScratch {
     }
 }
 
-pub fn join_abs_string_buf<P: PlatformT>(
-    cwd: &[u8],
-    buf: &mut [u8],
+pub fn join_abs_string_buf<'a, P: PlatformT>(
+    cwd: &'a [u8],
+    buf: &'a mut [u8],
     parts: &[&[u8]],
-) -> &[u8] {
+) -> &'a [u8] {
     _join_abs_string_buf::<false, P>(cwd, buf, parts)
 }
 
@@ -1653,11 +1682,11 @@ pub fn join_abs_string_buf<P: PlatformT>(
 /// input of arbitrary length. `..` segments are handled correctly: a path
 /// whose unnormalized length exceeds `buf.len` but normalizes down will still
 /// succeed.
-pub fn join_abs_string_buf_checked<P: PlatformT>(
-    cwd: &[u8],
-    buf: &mut [u8],
+pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
+    cwd: &'a [u8],
+    buf: &'a mut [u8],
     parts: &[&[u8]],
-) -> Option<&[u8]> {
+) -> Option<&'a [u8]> {
     debug_assert!(!matches!(P::P, Platform::Nt));
     // Fast path: size check only — don't allocate a JoinScratch here since the
     // inner join_abs_string_buf already has its own (avoids doubling stack usage).
@@ -1683,21 +1712,21 @@ pub fn join_abs_string_buf_checked<P: PlatformT>(
     Some(&buf[..len])
 }
 
-pub fn join_abs_string_buf_z<P: PlatformT>(
-    cwd: &[u8],
-    buf: &mut [u8],
+pub fn join_abs_string_buf_z<'a, P: PlatformT>(
+    cwd: &'a [u8],
+    buf: &'a mut [u8],
     parts: &[&[u8]],
-) -> &ZStr {
+) -> &'a ZStr {
     let r = _join_abs_string_buf::<true, P>(cwd, buf, parts);
     // SAFETY: IS_SENTINEL=true wrote NUL at r.len()
     unsafe { ZStr::from_raw(r.as_ptr(), r.len()) }
 }
 
-pub fn join_abs_string_buf_znt<P: PlatformT>(
-    cwd: &[u8],
-    buf: &mut [u8],
+pub fn join_abs_string_buf_znt<'a, P: PlatformT>(
+    cwd: &'a [u8],
+    buf: &'a mut [u8],
     parts: &[&[u8]],
-) -> &ZStr {
+) -> &'a ZStr {
     if (matches!(P::P, Platform::AUTO | Platform::Loose | Platform::Windows)) && cfg!(windows) {
         let r = _join_abs_string_buf::<true, platform::Nt>(cwd, buf, parts);
         // SAFETY: NUL written at r.len()
@@ -1709,14 +1738,19 @@ pub fn join_abs_string_buf_znt<P: PlatformT>(
     unsafe { ZStr::from_raw(r.as_ptr(), r.len()) }
 }
 
-pub fn join_abs_string_buf_z_trailing_slash<P: PlatformT>(
-    cwd: &[u8],
-    buf: &mut [u8],
+pub fn join_abs_string_buf_z_trailing_slash<'a, P: PlatformT>(
+    cwd: &'a [u8],
+    buf: &'a mut [u8],
     parts: &[&[u8]],
-) -> &ZStr {
-    let out = _join_abs_string_buf::<true, P>(cwd, buf, parts);
-    let out_len = out.len();
-    if out_len + 2 < buf.len() && out_len > 0 && buf[out_len - 1] != P::P.separator() {
+) -> &'a ZStr {
+    // PORT NOTE: capture last byte of `out` before dropping the borrow so we
+    // compare the actual result, not whatever happens to be in buf[out_len-1]
+    // (matters if a fast-path ever returns a non-buf[0]-anchored slice).
+    let (out_len, out_last) = {
+        let out = _join_abs_string_buf::<true, P>(cwd, buf, parts);
+        (out.len(), out.last().copied())
+    };
+    if out_len + 2 < buf.len() && out_len > 0 && out_last != Some(P::P.separator()) {
         buf[out_len] = P::P.separator();
         buf[out_len + 1] = 0;
         // SAFETY: NUL written at out_len + 1
@@ -1730,11 +1764,11 @@ pub fn join_abs_string_buf_z_trailing_slash<P: PlatformT>(
 // TODO(port): Zig used `comptime ReturnType: type` to vary `[:0]const u8` vs
 // `[]const u8`. We always return `&[u8]`; when `IS_SENTINEL` a NUL is written
 // at `result.len()` and callers re-wrap as `ZStr`.
-fn _join_abs_string_buf<const IS_SENTINEL: bool, P: PlatformT>(
-    _cwd: &[u8],
-    buf: &mut [u8],
+fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
+    _cwd: &'a [u8],
+    buf: &'a mut [u8],
     _parts: &[&[u8]],
-) -> &[u8] {
+) -> &'a [u8] {
     if P::P == Platform::Windows || (cfg!(windows) && P::P == Platform::Loose) {
         return _join_abs_string_buf_windows::<IS_SENTINEL>(_cwd, buf, _parts);
     }
@@ -1762,7 +1796,15 @@ fn _join_abs_string_buf<const IS_SENTINEL: bool, P: PlatformT>(
         && parts[0].len() == 1
         && parts[0][0] == SEP_POSIX
     {
-        return b"/";
+        // PORT NOTE: Zig returned the literal `"/"` (`[:0]const u8` — NUL-backed).
+        // Rust `b"/"` is NOT NUL-terminated and not in `buf`, breaking callers
+        // that assume buf-backing (`ZStr::from_raw`, trailing-slash check).
+        // Write into `buf` so the result is always buf-backed and sentinel-safe.
+        buf[0] = b'/';
+        if IS_SENTINEL {
+            buf[1] = 0;
+        }
+        return &buf[0..1];
     }
 
     let mut out: usize = 0;
@@ -1811,7 +1853,11 @@ fn _join_abs_string_buf<const IS_SENTINEL: bool, P: PlatformT>(
         out += part.len();
     }
 
-    let leading_separator: &[u8] =
+    // PORT NOTE: reshaped for borrowck — stash leading separator into a local
+    // [u8; 8] (max len: NT prefix `\\?\` = 4) so we don't hold a borrow into
+    // temp_buf across the normalize call below.
+    let mut leading_buf = [0u8; 8];
+    let leading_len: usize =
         if let Some(i) = P::P.leading_separator_index::<u8>(&temp_buf[0..out]) {
             let outdir = &mut temp_buf[0..i + 1];
             if P::P == Platform::Loose {
@@ -1821,20 +1867,15 @@ fn _join_abs_string_buf<const IS_SENTINEL: bool, P: PlatformT>(
                     }
                 }
             }
-            // PORT NOTE: reshaped for borrowck — we borrow from temp_buf below;
-            // capture leading separator length and re-slice.
-            &temp_buf[0..i + 1]
+            leading_buf[..i + 1].copy_from_slice(&temp_buf[0..i + 1]);
+            i + 1
         } else {
-            b"/"
+            leading_buf[0] = b'/';
+            1
         };
-    let leading_len = leading_separator.len();
-    // copy leading separator into buf first (Zig does this after normalize, but
-    // the normalize writes into buf[leading_len..] so it's order-independent)
-    // PORT NOTE: reshaped for borrowck — copy leading_separator now while
-    // temp_buf borrow is still valid.
-    buf[..leading_len].copy_from_slice(&temp_buf[0..leading_len].to_owned());
-    // TODO(port): the .to_owned() above is a workaround for overlapping borrows
-    // (leading_separator may point into temp_buf or a static). Phase B: avoid copy.
+    // Copy leading separator into buf (Zig does this after normalize; order-
+    // independent since normalize writes into buf[leading_len..]).
+    buf[..leading_len].copy_from_slice(&leading_buf[..leading_len]);
 
     let result = normalize_string_buf::<false, P, true>(
         &temp_buf[leading_len..out],
@@ -1848,11 +1889,11 @@ fn _join_abs_string_buf<const IS_SENTINEL: bool, P: PlatformT>(
     &buf[0..result_len + leading_len]
 }
 
-fn _join_abs_string_buf_windows<const IS_SENTINEL: bool>(
-    cwd: &[u8],
-    buf: &mut [u8],
+fn _join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
+    cwd: &'a [u8],
+    buf: &'a mut [u8],
     parts: &[&[u8]],
-) -> &[u8] {
+) -> &'a [u8] {
     debug_assert!(crate::is_absolute_windows(cwd));
 
     if parts.is_empty() {
@@ -2023,24 +2064,24 @@ pub fn last_index_of_separator_loose_t<T: PathChar>(slice: &[T]) -> Option<usize
     last_index_of_sep_t::<T>(slice)
 }
 
-pub fn normalize_string_loose_buf<
+pub fn normalize_string_loose_buf<'a,
     const ALLOW_ABOVE_ROOT: bool,
     const PRESERVE_TRAILING_SLASH: bool,
 >(
     str: &[u8],
-    buf: &mut [u8],
-) -> &mut [u8] {
+    buf: &'a mut [u8],
+) -> &'a mut [u8] {
     normalize_string_loose_buf_t::<u8, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(str, buf)
 }
 
-pub fn normalize_string_loose_buf_t<
+pub fn normalize_string_loose_buf_t<'a,
     T: PathChar,
     const ALLOW_ABOVE_ROOT: bool,
     const PRESERVE_TRAILING_SLASH: bool,
 >(
     str: &[T],
-    buf: &mut [T],
-) -> &mut [T] {
+    buf: &'a mut [T],
+) -> &'a mut [T] {
     normalize_string_generic_t::<T, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(
         str,
         buf,
@@ -2049,24 +2090,24 @@ pub fn normalize_string_loose_buf_t<
     )
 }
 
-pub fn normalize_string_windows<
+pub fn normalize_string_windows<'a,
     const ALLOW_ABOVE_ROOT: bool,
     const PRESERVE_TRAILING_SLASH: bool,
 >(
     str: &[u8],
-    buf: &mut [u8],
-) -> &mut [u8] {
+    buf: &'a mut [u8],
+) -> &'a mut [u8] {
     normalize_string_windows_t::<u8, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(str, buf)
 }
 
-pub fn normalize_string_windows_t<
+pub fn normalize_string_windows_t<'a,
     T: PathChar,
     const ALLOW_ABOVE_ROOT: bool,
     const PRESERVE_TRAILING_SLASH: bool,
 >(
     str: &[T],
-    buf: &mut [T],
-) -> &mut [T] {
+    buf: &'a mut [T],
+) -> &'a mut [T] {
     normalize_string_generic_t::<T, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(
         str,
         buf,
@@ -2075,7 +2116,7 @@ pub fn normalize_string_windows_t<
     )
 }
 
-pub fn normalize_string_node<P: PlatformT>(str: &[u8], buf: &mut [u8]) -> &mut [u8] {
+pub fn normalize_string_node<'a, P: PlatformT>(str: &[u8], buf: &'a mut [u8]) -> &'a mut [u8] {
     // TODO(port): Zig returned []u8 here but []const T from the T variant; we
     // unify to &[T] in the T variant and cast here.
     let r = normalize_string_node_t::<u8, P>(str, buf);
@@ -2083,10 +2124,10 @@ pub fn normalize_string_node<P: PlatformT>(str: &[u8], buf: &mut [u8]) -> &mut [
     unsafe { core::slice::from_raw_parts_mut(r.as_ptr() as *mut u8, r.len()) }
 }
 
-pub fn normalize_string_node_t<T: PathChar, P: PlatformT>(
+pub fn normalize_string_node_t<'a, T: PathChar, P: PlatformT>(
     str: &[T],
-    buf: &mut [T],
-) -> &[T] {
+    buf: &'a mut [T],
+) -> &'a [T] {
     if str.is_empty() {
         buf[0] = T::from_u8(b'.');
         return &buf[0..1];
@@ -2527,7 +2568,7 @@ pub fn dangerously_convert_path_to_windows_in_place<T: PathChar>(path: &mut [T])
     }
 }
 
-pub fn path_to_posix_buf<T: PathChar>(path: &[T], buf: &mut [T]) -> &mut [T] {
+pub fn path_to_posix_buf<'a, T: PathChar>(path: &[T], buf: &'a mut [T]) -> &'a mut [T] {
     let mut idx: usize = 0;
     while let Some(index) = path[idx..]
         .iter()

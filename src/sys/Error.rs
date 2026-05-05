@@ -3,16 +3,32 @@
 use core::ffi::c_int;
 use core::fmt;
 
-use bun_str::String as BunString;
+use bun_string::String as BunString;
 // TODO(b0): SystemError arrives from move-in (CYCLEBREAK TYPE_ONLY bun_jsc::SystemError → sys).
 use crate::SystemError;
 
 use crate::{coreutils_error_map, libuv_error_map, Fd, SystemErrno, Tag, E};
 
+// Local helpers replacing the `tag_name`/`errno_to_err` forward-refs.
+#[inline]
+fn tag_name(e: SystemErrno) -> Option<&'static str> {
+    // strum::IntoStaticStr — variant name (e.g., "ENOENT").
+    Some(<&'static str>::from(e))
+}
+#[inline]
+fn errno_to_err(errno: Int) -> bun_core::Error {
+    bun_core::Error::from_errno(errno as i32)
+}
+/// `Fd::unwrap_valid` — Some(fd) if fd != invalid_fd. Port of `bun.FD.unwrapValid`.
+#[inline]
+fn fd_unwrap_valid(fd: Fd) -> Option<Fd> {
+    if fd == Fd::INVALID { None } else { Some(fd) }
+}
+
 #[cfg(windows)]
-const RETRY_ERRNO: Int = E::INTR as Int;
+const RETRY_ERRNO: Int = E::EINTR as Int;
 #[cfg(not(windows))]
-const RETRY_ERRNO: Int = E::AGAIN as Int;
+const RETRY_ERRNO: Int = E::EAGAIN as Int;
 
 const TODO_ERRNO: Int = Int::MAX - 1;
 
@@ -22,7 +38,7 @@ pub type Int = u16;
 // TODO(port): was `pub const oom` in Zig; Box<[u8]> fields prevent a true `const` item.
 #[inline]
 pub fn oom() -> Error {
-    Error::from_code(E::NOMEM, Tag::read)
+    Error::from_code(E::ENOMEM, Tag::read)
 }
 
 #[derive(Clone)]
@@ -90,7 +106,7 @@ impl Error {
 
     #[inline]
     pub fn is_retry(&self) -> bool {
-        self.get_errno() == E::AGAIN
+        self.get_errno() == E::EAGAIN
     }
 
     // TODO(port): was `pub const retry` in Zig; Box<[u8]> fields prevent a true `const` item.
@@ -151,6 +167,7 @@ impl Error {
     }
 
     #[inline]
+    #[cfg(any())] // TODO(b2-blocked): PathLike lives in bun_runtime::node (tier-6)
     pub fn with_path_like(&self, pathlike: &crate::PathLike) -> Error {
         // TODO(port): exact PathLike enum shape lives elsewhere in bun_sys / bun_runtime::node.
         match pathlike {
@@ -181,19 +198,19 @@ impl Error {
             let system_errno: Option<SystemErrno> = if self.from_libuv {
                 let translated =
                     crate::windows::libuv::translate_uv_error_to_e(-c_int::from(self.errno));
-                SystemErrno::from_raw(translated as Int)
+                SystemErrno::init(translated as Int as i64)
             } else {
-                SystemErrno::from_raw(self.errno)
+                SystemErrno::init(self.errno as i64)
             };
-            if let Some(errname) = system_errno.and_then(bun_core::tag_name) {
+            if let Some(errname) = system_errno.and_then(tag_name) {
                 return errname.as_bytes();
             }
         }
         #[cfg(not(windows))]
         {
-            if self.errno > 0 && self.errno < SystemErrno::MAX {
-                if let Some(system_errno) = SystemErrno::from_raw(self.errno) {
-                    if let Some(errname) = bun_core::tag_name(system_errno) {
+            if self.errno > 0 && (self.errno) < SystemErrno::MAX {
+                if let Some(system_errno) = SystemErrno::init(self.errno as i64) {
+                    if let Some(errname) = tag_name(system_errno) {
                         return errname.as_bytes();
                     }
                 }
@@ -204,7 +221,7 @@ impl Error {
     }
 
     pub fn to_zig_err(&self) -> bun_core::Error {
-        bun_core::errno_to_err(self.errno)
+        errno_to_err(self.errno)
     }
 
     /// 1. Convert libuv errno values into libc ones.
@@ -212,9 +229,9 @@ impl Error {
     pub fn get_error_code_tag_name(&self) -> Option<(&'static str, SystemErrno)> {
         #[cfg(not(windows))]
         {
-            if self.errno > 0 && self.errno < SystemErrno::MAX {
+            if self.errno > 0 && (self.errno) < SystemErrno::MAX {
                 // TODO(port): Zig used unchecked @enumFromInt + @tagName; folded into checked lookup.
-                let system_errno = SystemErrno::from_raw(self.errno)?;
+                let system_errno = SystemErrno::init(self.errno as i64)?;
                 return Some((<&'static str>::from(system_errno), system_errno));
             }
         }
@@ -226,11 +243,11 @@ impl Error {
                 if self.from_libuv {
                     let translated =
                         crate::windows::libuv::translate_uv_error_to_e(c_int::from(self.errno) * -1);
-                    break 'brk SystemErrno::from_raw(translated as Int)?;
+                    break 'brk SystemErrno::init(translated as Int as i64)?;
                 }
-                SystemErrno::from_raw(self.errno)?
+                SystemErrno::init(self.errno as i64)?
             };
-            if let Some(errname) = bun_core::tag_name(system_errno) {
+            if let Some(errname) = tag_name(system_errno) {
                 return Some((errname, system_errno));
             }
         }
@@ -239,8 +256,8 @@ impl Error {
 
     pub fn msg(&self) -> Option<&'static [u8]> {
         if let Some((code, system_errno)) = self.get_error_code_tag_name() {
-            if let Some(label) = coreutils_error_map::get(system_errno) {
-                return Some(label);
+            if let Some(label) = Some(coreutils_error_map::COREUTILS_ERROR_MAP[system_errno]) {
+                return Some(label.as_bytes());
             }
             return Some(code.as_bytes());
         }
@@ -251,16 +268,16 @@ impl Error {
     pub fn to_shell_system_error(&self) -> SystemError {
         let mut err = SystemError {
             errno: c_int::from(self.errno) * -1,
-            syscall: BunString::static_(<&'static str>::from(self.syscall)),
+            syscall: BunString::static_(<&'static str>::from(self.syscall).as_bytes()),
             message: BunString::empty(),
             ..Default::default()
         };
 
         // errno label
         if let Some((code, system_errno)) = self.get_error_code_tag_name() {
-            err.code = BunString::static_(code);
-            if let Some(label) = coreutils_error_map::get(system_errno) {
-                err.message = BunString::static_(label);
+            err.code = BunString::static_(code.as_bytes());
+            if let Some(label) = Some(coreutils_error_map::COREUTILS_ERROR_MAP[system_errno]) {
+                err.message = BunString::static_(label.as_bytes());
             }
         }
 
@@ -272,7 +289,7 @@ impl Error {
             err.dest = BunString::clone_utf8(&self.dest);
         }
 
-        if let Some(valid) = self.fd.unwrap_valid() {
+        if let Some(valid) = fd_unwrap_valid(self.fd) {
             // When the FD is a windows handle, there is no sane way to report this.
             #[cfg(windows)]
             if valid.kind() == crate::FdKind::Uv {
@@ -292,7 +309,7 @@ impl Error {
     pub fn to_system_error(&self) -> SystemError {
         let mut err = SystemError {
             errno: c_int::from(self.errno).wrapping_neg(),
-            syscall: BunString::static_(<&'static str>::from(self.syscall)),
+            syscall: BunString::static_(<&'static str>::from(self.syscall).as_bytes()),
             message: BunString::empty(),
             ..Default::default()
         };
@@ -302,8 +319,8 @@ impl Error {
         let mut label: Option<&'static str> = None;
         if let Some((code, system_errno)) = self.get_error_code_tag_name() {
             maybe_code = Some(code);
-            err.code = BunString::static_(code);
-            label = libuv_error_map::get(system_errno);
+            err.code = BunString::static_(code.as_bytes());
+            label = Some(libuv_error_map::LIBUV_ERROR_MAP[system_errno]).filter(|s| !s.is_empty());
         }
 
         // format taken from Node.js 'exceptions.cc'
@@ -345,7 +362,7 @@ impl Error {
             err.dest = BunString::clone_utf8(&self.dest);
         }
 
-        if let Some(valid) = self.fd.unwrap_valid() {
+        if let Some(valid) = fd_unwrap_valid(self.fd) {
             // When the FD is a windows handle, there is no sane way to report this.
             #[cfg(windows)]
             if valid.kind() == crate::FdKind::Uv {
@@ -380,12 +397,12 @@ impl fmt::Display for Error {
         // because we're intending to pass them to writer.print()
         // which will convert them back into UTF*.
         let mut that = self.without_path().to_shell_system_error();
-        debug_assert!(that.path.tag() != bun_str::Tag::WTFStringImpl);
-        debug_assert!(that.dest.tag() != bun_str::Tag::WTFStringImpl);
+        debug_assert!(that.path.tag() != bun_string::Tag::WTF);
+        debug_assert!(that.dest.tag() != bun_string::Tag::WTF);
         that.path = BunString::borrow_utf8(&self.path);
         that.dest = BunString::borrow_utf8(&self.dest);
-        debug_assert!(that.path.tag() != bun_str::Tag::WTFStringImpl);
-        debug_assert!(that.dest.tag() != bun_str::Tag::WTFStringImpl);
+        debug_assert!(that.path.tag() != bun_string::Tag::WTF);
+        debug_assert!(that.dest.tag() != bun_string::Tag::WTF);
 
         fmt::Display::fmt(&that, f)
     }

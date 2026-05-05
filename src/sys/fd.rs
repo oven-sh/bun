@@ -8,10 +8,10 @@ use bun_sys::windows::{self, libuv, HANDLE};
 // Within the `bun_sys` crate: `crate::Error`, `crate::Tag`, `crate::E`, `crate::syslog`, etc.
 use crate as sys;
 
-bun_output::declare_scope!(SYS, visible);
+bun_core::declare_scope!(SYS, visible);
 // `log` in the Zig is `bun.sys.syslog`
 macro_rules! log {
-    ($($arg:tt)*) => { bun_output::scoped_log!(SYS, $($arg)*) };
+    ($($arg:tt)*) => { bun_core::scoped_log!(SYS, $($arg)*) };
 }
 
 #[cfg(unix)]
@@ -339,6 +339,7 @@ impl Fd {
         }
     }
 
+    #[cfg(any())] // TODO(b2): SocketT type (= c_int posix / SOCKET windows) — add to sys
     #[inline]
     pub fn as_socket_fd(self) -> sys::SocketT {
         #[cfg(windows)]
@@ -418,7 +419,7 @@ impl Fd {
     /// In debug, fd assertion failure can print where the FD was actually
     /// closed.
     pub fn close(self) {
-        let err = self.close_allowing_bad_file_descriptor(bun_core::return_address());
+        let err = self.close_allowing_bad_file_descriptor(None);
         debug_assert!(err.is_none()); // use after close!
     }
 
@@ -431,7 +432,7 @@ impl Fd {
             log!("close({}) SKIPPED", self);
             return None;
         }
-        self.close_allowing_standard_io(return_address.or_else(|| bun_core::return_address()))
+        self.close_allowing_standard_io(return_address.or_else(|| None))
     }
 
     /// fd allows you to close standard io. It also returns the error.
@@ -460,10 +461,10 @@ impl Fd {
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             {
                 debug_assert!(self.native() >= 0);
-                match sys::get_errno(sys::syscall::close(self.native())) {
-                    sys::E::BADF => Some(sys::Error {
-                        errno: sys::E::BADF as _,
-                        syscall: sys::Tag::Close,
+                match sys::get_errno(unsafe { libc::close(self.native()) }) {
+                    sys::E::EBADF => Some(sys::Error {
+                        errno: sys::E::EBADF as _,
+                        syscall: sys::Tag::close,
                         fd: self,
                         ..Default::default()
                     }),
@@ -474,9 +475,9 @@ impl Fd {
             {
                 debug_assert!(self.native() >= 0);
                 match sys::get_errno(sys::syscall::close_nocancel(self.native())) {
-                    sys::E::BADF => Some(sys::Error {
-                        errno: sys::E::BADF as _,
-                        syscall: sys::Tag::Close,
+                    sys::E::EBADF => Some(sys::Error {
+                        errno: sys::E::EBADF as _,
+                        syscall: sys::Tag::close,
                         fd: self,
                         ..Default::default()
                     }),
@@ -493,7 +494,7 @@ impl Fd {
                         if let Some(errno) = rc.errno() {
                             Some(sys::Error {
                                 errno,
-                                syscall: sys::Tag::Close,
+                                syscall: sys::Tag::close,
                                 fd: self,
                                 from_libuv: true,
                                 ..Default::default()
@@ -509,7 +510,7 @@ impl Fd {
                                 .to_system_errno()
                                 .map(|e| e as _)
                                 .unwrap_or(1),
-                            syscall: sys::Tag::CloseHandle,
+                            syscall: sys::Tag::closeHandle,
                             fd: self,
                             ..Default::default()
                         }),
@@ -525,13 +526,13 @@ impl Fd {
         #[cfg(debug_assertions)]
         {
             if let Some(ref err) = result {
-                if err.errno == sys::E::BADF as _ {
+                if err.errno == sys::E::EBADF as _ {
                     Output::debug_warn(format_args!(
                         "close({}) = EBADF. This is an indication of a file descriptor UAF",
                         bstr::BStr::new(&fd_fmt),
                     ));
-                    crate::dump_stack_trace(
-                        return_address.or_else(|| bun_core::return_address()),
+                    bun_core::dump_stack_trace(
+                        return_address.or_else(|| None),
                         4,
                         true,
                     );
@@ -594,12 +595,13 @@ impl Fd {
         Optional(self.0)
     }
 
-    pub fn make_path_u8(self, subpath: &[u8]) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        bun_core::make_path(self, subpath)
+    pub fn make_path_u8(self, subpath: &[u8]) -> sys::Maybe<()> {
+        // Port of `bun.makePath` — `mkdirat` walking up parents on ENOENT.
+        // TODO(b2): full impl in sys/dirname_util_map; for now thin mkdirat.
+        sys::mkdir_recursive_at(self, subpath)
     }
+    #[cfg(any())] // TODO(b2): make_path_w (UTF-16) — windows-only, after sys/windows un-gates
     pub fn make_path_u16(self, subpath: &[u16]) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         bun_core::make_path_w(self, subpath)
     }
 
@@ -630,8 +632,8 @@ impl Fd {
 
     // TODO: move these methods defined in bun.sys.File to bun.sys. follow
     // similar pattern as above. then delete bun.sys.File
+    #[cfg(any())] // TODO(b2): File_QuietWriter — moves to OutputSinkVTable consumer side
     pub fn quiet_writer(self) -> sys::File_QuietWriter {
-        // TODO(port): `bun.sys.File.QuietWriter` wraps `{ handle: fd }`.
         sys::File_QuietWriter::new(sys::File { handle: self })
     }
 }

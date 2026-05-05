@@ -4,9 +4,53 @@
 //! `lib_draft_b1.rs`. B-2: un-gate per-syscall, wire libc/kernel32/ntdll.
 
 #[cfg(any())] #[path = "lib_draft_b1.rs"] mod draft;
+// TODO(b2-design): fd.rs defines its own `pub struct Fd(BackingInt)` (the REAL
+// packed-struct port of bun.FD), but `bun_core::Fd` is already the canonical
+// type (T0, used by output/File/etc.). Can't add inherent methods cross-crate.
+// Options: (a) move Fd's full def to bun_core (it's pure data, no syscalls),
+// fd.rs becomes `impl Fd` via `pub trait FdExt`; (b) re-export fd::Fd here and
+// drop bun_core::Fd. (a) is cleaner — bun_core already has from_uv/from_system
+// stubs. Partial fixes applied in fd.rs (close path, EBADF, dump_stack_trace);
+// 8 errors remain on debug-only paths. Next round: lift fd.rs's struct def +
+// const accessors into bun_core/util.rs::Fd, leave syscall methods here as FdExt.
 #[cfg(any())] mod fd;
 #[cfg(any())] #[path = "File.rs"] pub mod file;
-#[cfg(any())] #[path = "Error.rs"] mod error;
+#[path = "Error.rs"] mod error;
+pub use error::Error;
+// `bun_sys::Error` is the rich syscall error (errno+tag+path); `bun_core::Error`
+// is the lightweight NonZeroU16 code. They are distinct types (matching Zig:
+// `bun.sys.Error` vs `anyerror`). Downstream that just wants "an error" gets the
+// code via `From`.
+impl From<Error> for bun_core::Error {
+    #[inline]
+    fn from(e: Error) -> bun_core::Error {
+        // Encode as the errno's name (e.g., "ENOENT") in the interned table.
+        bun_core::Error::from_errno(e.errno as i32)
+    }
+}
+// Stub: `SystemError` is the JS-facing rich error (path/dest/syscall as bun.String).
+// Full def lives in `bun_jsc` (TYPE_ONLY move-in pending per CYCLEBREAK).
+#[derive(Default)]
+pub struct SystemError {
+    // PORT NOTE: full Display lives in src/jsc/SystemError.zig (rich JS-side
+    // formatting). For T1 we provide a minimal impl so `bun_sys::Error` can
+    // delegate; Display matches `SystemError.format` shell-variant shape.
+    pub errno: i32,
+    pub code: bun_string::String,
+    pub message: bun_string::String,
+    pub path: bun_string::String,
+    pub dest: bun_string::String,
+    pub syscall: bun_string::String,
+    pub fd: i32,
+    pub hostname: bun_string::String,
+}
+impl core::fmt::Display for SystemError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // TODO(b2): match SystemError.zig writeFormat exactly (color, syscall, fd).
+        // Minimal: "<code>: <message> '<path>'"
+        write!(f, "SystemError(errno={})", self.errno)
+    }
+}
 #[cfg(any())] mod walker_skippable;
 pub mod coreutils_error_map;
 pub mod libuv_error_map;
@@ -20,7 +64,7 @@ use core::ffi::{c_char, c_int, c_void};
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports from lower-tier crates (PORTING.md crate map).
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_core::{Fd, Mode, FileKind, kind_from_mode, Error};
+pub use bun_core::{Fd, Mode, FileKind, kind_from_mode};
 pub use bun_errno::{E, S, SystemErrno, get_errno, posix};
 
 /// `Maybe(T)` — Zig's `union(enum) { result: T, err: Error }`. In Rust this is
@@ -94,16 +138,11 @@ fn last_errno() -> i32 {
 
 #[inline]
 fn err_with(tag: Tag) -> Error {
-    let mut e = Error::from_errno(last_errno());
-    e.syscall = tag.0;
-    e
+    Error::from_code_int(last_errno(), tag)
 }
 #[inline]
 fn err_with_path(tag: Tag, path: &ZStr) -> Error {
-    let mut e = err_with(tag);
-    e.path_ptr = path.as_bytes().as_ptr();
-    e.path_len = path.len() as u32;
-    e
+    err_with(tag).with_path(path.as_bytes())
 }
 
 // Syscall tags — subset; full enum in `lib_draft_b1.rs`.
@@ -118,6 +157,22 @@ impl Tag {
     pub const dup: Tag = Tag(15);   pub const getcwd: Tag = Tag(16);
     pub const fchmod: Tag = Tag(17);pub const fchown: Tag = Tag(18);
     pub const ftruncate: Tag = Tag(19);
+    pub const TODO: Tag = Tag(0);
+    /// Full tag enum (~200 variants) lives in `lib_draft_b1.rs`. This subset
+    /// covers the un-gated posix surface; B-2 widens as syscalls land.
+    pub fn name(self) -> &'static str {
+        match self.0 {
+            0 => "TODO", 1 => "open", 2 => "close", 3 => "read", 4 => "write",
+            5 => "pread", 6 => "pwrite", 7 => "stat", 8 => "fstat", 9 => "lstat",
+            10 => "mkdir", 11 => "unlink", 12 => "rename", 13 => "symlink",
+            14 => "readlink", 15 => "dup", 16 => "getcwd", 17 => "fchmod",
+            18 => "fchown", 19 => "ftruncate",
+            _ => "unknown",
+        }
+    }
+}
+impl From<Tag> for &'static str {
+    #[inline] fn from(t: Tag) -> &'static str { t.name() }
 }
 
 #[cfg(unix)]
@@ -262,7 +317,7 @@ impl File {
     pub fn write_all(&self, mut buf: &[u8]) -> Maybe<()> {
         while !buf.is_empty() {
             let n = write(self.0, buf)?;
-            if n == 0 { return Err(Error::from_errno(libc::EIO)); }
+            if n == 0 { return Err(Error::from_code_int(libc::EIO, Tag::write)); }
             buf = &buf[n..];
         }
         Ok(())

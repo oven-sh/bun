@@ -40,13 +40,30 @@ pub struct String {
 pub enum Tag { Dead = 0, WTF, Zig, Static, Empty }
 impl String {
     pub const EMPTY: Self = Self { tag: Tag::Empty, _pad: [0; 7], ptr: core::ptr::null(), len: 0 };
+    #[inline] pub const fn empty() -> Self { Self::EMPTY }
     pub fn borrow_utf8(s: &[u8]) -> Self {
         Self { tag: Tag::Zig, _pad: [0; 7], ptr: s.as_ptr(), len: s.len() }
+    }
+    /// `bun.String.static_` — borrow a 'static slice (never freed).
+    pub fn static_(s: &'static [u8]) -> Self {
+        Self { tag: Tag::Static, _pad: [0; 7], ptr: s.as_ptr(), len: s.len() }
+    }
+    /// `bun.String.cloneUTF8` — copy into a WTF-backed string.
+    /// TODO(b2): wire to `Bun__String__cloneUTF8` FFI; for now leaks a Box.
+    pub fn clone_utf8(s: &[u8]) -> Self {
+        let b = s.to_vec().into_boxed_slice();
+        let ptr = b.as_ptr();
+        let len = b.len();
+        core::mem::forget(b); // PERF(port): real impl ref-counts via WTFStringImpl
+        Self { tag: Tag::Zig, _pad: [0; 7], ptr, len }
     }
     pub fn deref(&self) {}
     pub fn ref_(&self) {}
     pub fn is_empty(&self) -> bool { self.len == 0 }
     pub fn tag(&self) -> Tag { self.tag }
+}
+impl Default for String {
+    #[inline] fn default() -> Self { Self::EMPTY }
 }
 unsafe impl Send for String {}
 unsafe impl Sync for String {}

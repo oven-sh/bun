@@ -494,6 +494,23 @@ it(
 
 const comment_line = "//" + Buffer.alloc(2000, "B").toString() + "\n";
 const comment_spam = Buffer.alloc(comment_line.length * 1000, comment_line).toString();
+
+// The source files in the sourcemap tests are ~2MB, so writeFileSync is a
+// truncate followed by several write() calls. Each emits its own inotify
+// IN_MODIFY event, and --hot's reload loop can read the file mid-write. When
+// that happens the per-path SavedSourceMap entry is overwritten with a map for
+// the truncated content, and the still-pending error from the previous full
+// transpile is printed with un-remapped transpiled coords (line 1). Write to a
+// sibling temp file and rename(2) it into place so the watched path only ever
+// flips between complete versions; the existing
+// "should hot reload when a file is renamed() into place" test covers that the
+// rename event itself triggers a reload.
+function writeHotFileAtomicSync(path: string, content: string) {
+  const tmp = path + ".next";
+  writeFileSync(tmp, content);
+  renameSync(tmp, path);
+}
+
 it(
   "should work with sourcemap generation",
   async () => {
@@ -514,7 +531,7 @@ throw new Error('0');`,
     const reloadCounter = await driveErrorReloadCycle(runner, {
       targetCount: 50,
       onReload: counter => {
-        writeFileSync(
+        writeHotFileAtomicSync(
           hotRunnerRoot,
           `// source content
 ${comment_spam}

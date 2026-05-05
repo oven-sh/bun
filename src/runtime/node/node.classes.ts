@@ -133,6 +133,7 @@ export default [
     construct: true,
     finalize: true,
     configurable: false,
+    estimatedSize: true,
     klass: {},
     JSType: "0b11101110",
     proto: {
@@ -202,6 +203,7 @@ export default [
     construct: true,
     finalize: true,
     configurable: false,
+    estimatedSize: true,
     klass: {},
     JSType: "0b11101110",
     proto: {

@@ -1609,7 +1609,6 @@ pub const JSZlib = struct {
 
     pub fn gunzipOrInflateSync(globalThis: *JSGlobalObject, buffer: jsc.Node.StringOrBuffer, options_val_: ?JSValue, is_gzip: bool) bun.JSError!JSValue {
         var opts = zlib.Options{
-            .gzip = is_gzip,
             .windowBits = if (is_gzip) 31 else -15,
         };
 
@@ -1738,11 +1737,26 @@ pub const JSZlib = struct {
     ) bun.JSError!JSValue {
         var level: ?i32 = null;
         var library: Library = .zlib;
-        var windowBits: i32 = 0;
+        // Default windowBits mirrors zlib: positive for zlib-wrap, +16 for gzip-wrap.
+        // `Bun.gzipSync` defaults to 31 (gzip-wrapped); `Bun.deflateSync` defaults to
+        // -15 (raw deflate) for backwards compatibility.
+        var windowBits: i32 = if (is_gzip) 31 else -15;
+        var memLevel: i32 = 8;
+        var strategy: i32 = 0;
 
         if (options_val_) |options_val| {
             if (try options_val.get(globalThis, "windowBits")) |window| {
                 windowBits = try window.coerce(i32, globalThis);
+                library = .zlib;
+            }
+
+            if (try options_val.get(globalThis, "memLevel")) |memLevel_value| {
+                memLevel = try memLevel_value.coerce(i32, globalThis);
+                library = .zlib;
+            }
+
+            if (try options_val.get(globalThis, "strategy")) |strategy_value| {
+                strategy = try strategy_value.coerce(i32, globalThis);
                 library = .zlib;
             }
 
@@ -1775,8 +1789,9 @@ pub const JSZlib = struct {
                 );
 
                 var reader = zlib.ZlibCompressorArrayList.init(compressed, &list, allocator, .{
-                    .windowBits = 15,
-                    .gzip = is_gzip,
+                    .windowBits = windowBits,
+                    .memLevel = memLevel,
+                    .strategy = strategy,
                     .level = level orelse 6,
                 }) catch |err| {
                     defer list.deinit(allocator);

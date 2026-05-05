@@ -45,7 +45,9 @@ impl Chunk {
     // `pub fn deinit` dropped — body only freed `self.buffer`, which `Drop` on
     // `MutableString` handles automatically.
 
-    // TODO(b2-blocked): bun_js_printer::quote_for_json, bun_sys::FileSystem
+    // TODO(b2-blocked): bun_js_printer::quote_for_json — dep cycle
+    // (bun_js_printer → bun_sourcemap). Un-gate once quote_for_json moves to
+    // bun_string (lib_draft_b1.rs:584) or a lower tier.
     #[cfg(any())]
     pub fn print_source_map_contents<const ASCII_ONLY: bool>(
         &self,
@@ -61,7 +63,7 @@ impl Chunk {
         )
     }
 
-    // TODO(b2-blocked): bun_js_printer::quote_for_json, bun_sys::FileSystem
+    // TODO(b2-blocked): bun_js_printer::quote_for_json — dep cycle (see above).
     #[cfg(any())]
     /// `chunk.buffer` holds an InternalSourceMap blob (the runtime path). Re-encode
     /// to a standard VLQ "mappings" string before emitting JSON.
@@ -85,8 +87,10 @@ impl Chunk {
     }
 }
 
-// TODO(b2-blocked): bun_js_printer::quote_for_json — bun_js_printer does not
-// compile yet (1302 errors via bun_css). bun_sys::FileSystem move-in pending.
+// TODO(b2-blocked): bun_js_printer::quote_for_json — dep cycle
+// (bun_js_printer depends on bun_sourcemap). bun_string::quote_for_json is
+// itself gated (string/lib_draft_b1.rs). FileSystem.top_level_dir is now
+// available via bun_sys::top_level_dir(); swap when un-gating.
 #[cfg(any())]
 fn print_source_map_contents_json<const ASCII_ONLY: bool>(
     source: &Source,

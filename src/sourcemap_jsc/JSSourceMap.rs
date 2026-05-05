@@ -25,66 +25,63 @@ pub static ENABLE_SOURCE_MAPS: AtomicBool = AtomicBool::new(false);
 // TODO(b2-blocked): bun_jsc::host_fn — `#[bun_jsc::host_fn(export = "Bun__JSSourceMap__find")]`
 // proc-macro not yet implemented; the Zig `comptime { @export(...) }` thunk is generated there.
 fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    // Node.js doesn't enable source maps by default.
+    // In Bun, we do use them for almost all files since we transpile almost all files
+    // If we enable this by default, we don't have a `payload` object since we don't internally create one.
+    // This causes Next.js to emit errors like the below on start:
+    //       .next/server/chunks/ssr/[root-of-the-server]__012ba519._.js: Invalid source map. Only conformant source maps can be used to filter stack frames. Cause: TypeError: payload is not an Object. (evaluating '"sections" in payload')
+    if !ENABLE_SOURCE_MAPS.load(Ordering::Relaxed) {
+        return Ok(JSValue::UNDEFINED);
+    }
+
+    let source_url_value = frame.argument(0);
+    if !source_url_value.is_string() {
+        return Ok(JSValue::UNDEFINED);
+    }
+
+    // PORT NOTE: reshaped for borrowck — `source_url_slice` borrows `source_url_string`;
+    // explicit deref/deinit calls become Drop on reassignment.
+    let mut source_url_string = bun_string_jsc::from_js(source_url_value, global)?;
+    let mut source_url_slice = source_url_string.to_utf8();
+
+    {
+        let source_url = source_url_slice.slice();
+        if source_url.starts_with(b"node:")
+            || source_url.starts_with(b"bun:")
+            || source_url.starts_with(b"data:")
+        {
+            return Ok(JSValue::UNDEFINED);
+        }
+    }
+
+    if let Some(source_url_index) = strings::index_of(source_url_slice.slice(), b"://") {
+        if &source_url_slice.slice()[..source_url_index] == b"file" {
+            let path = bun_jsc::URL::path_from_file_url(source_url_string.dupe_ref());
+
+            if path.is_dead() {
+                // TODO(port): verify ERR builder API shape (`global.ERR(.INVALID_URL, fmt, args).throw()`)
+                return Err(global.throw_value(global.err_invalid_url(format_args!(
+                    "Invalid URL: {}",
+                    BStr::new(source_url_slice.slice())
+                ))));
+            }
+
+            // Replace the file:// URL with the absolute path.
+            drop(source_url_slice);
+            source_url_string = path;
+            source_url_slice = source_url_string.to_utf8();
+        }
+    }
+
+    let source_url = source_url_slice.slice();
+
+    // TODO(b2-blocked): bun_jsc::SavedSourceMap::get — stub `SavedSourceMap` has no
+    // `get(&[u8]) -> Option<Arc<ParsedSourceMap>>` yet.
+    // TODO(b2-blocked): bun_jsc::JsClass — `to_js` codegen accessor.
     #[cfg(any())]
     {
-        // TODO(b2-blocked): bun_jsc::VirtualMachine::source_mappings — stub
-        // `VirtualMachine` has no `source_mappings` field; un-gate once
-        // VirtualMachine.rs (and SavedSourceMap) un-gates in bun_jsc.
-        // TODO(b2-blocked): bun_jsc::JsClass — `to_js` codegen accessor.
-        // Node.js doesn't enable source maps by default.
-        // In Bun, we do use them for almost all files since we transpile almost all files
-        // If we enable this by default, we don't have a `payload` object since we don't internally create one.
-        // This causes Next.js to emit errors like the below on start:
-        //       .next/server/chunks/ssr/[root-of-the-server]__012ba519._.js: Invalid source map. Only conformant source maps can be used to filter stack frames. Cause: TypeError: payload is not an Object. (evaluating '"sections" in payload')
-        if !ENABLE_SOURCE_MAPS.load(Ordering::Relaxed) {
-            return Ok(JSValue::UNDEFINED);
-        }
-
-        let source_url_value = frame.argument(0);
-        if !source_url_value.is_string() {
-            return Ok(JSValue::UNDEFINED);
-        }
-
-        // PORT NOTE: reshaped for borrowck — `source_url_slice` borrows `source_url_string`;
-        // explicit deref/deinit calls become Drop on reassignment.
-        let mut source_url_string = bstring::String::from_js(source_url_value, global)?;
-        let mut source_url_slice = source_url_string.to_utf8();
-
-        {
-            let source_url = source_url_slice.slice();
-            if source_url.starts_with(b"node:")
-                || source_url.starts_with(b"bun:")
-                || source_url.starts_with(b"data:")
-            {
-                return Ok(JSValue::UNDEFINED);
-            }
-        }
-
-        if let Some(source_url_index) = strings::index_of(source_url_slice.slice(), b"://") {
-            if &source_url_slice.slice()[..source_url_index] == b"file" {
-                let path = bun_jsc::URL::path_from_file_url(&source_url_string);
-
-                if path.is_dead() {
-                    // TODO(port): verify ERR builder API shape (`global.ERR(.INVALID_URL, fmt, args).throw()`)
-                    return global
-                        .err_invalid_url(format_args!(
-                            "Invalid URL: {}",
-                            BStr::new(source_url_slice.slice())
-                        ))
-                        .throw();
-                }
-
-                // Replace the file:// URL with the absolute path.
-                drop(source_url_slice);
-                source_url_string = path;
-                source_url_slice = source_url_string.to_utf8();
-            }
-        }
-
-        let source_url = source_url_slice.slice();
-
         let vm = global.bun_vm();
-        let Some(source_map) = vm.source_mappings.get(source_url) else {
+        let Some(source_map) = vm.source_mappings().get(source_url) else {
             return Ok(JSValue::UNDEFINED);
         };
         // Zig: `bun.default_allocator.alloc(bun.String, 1) catch return globalObject.throwOutOfMemory()`
@@ -99,8 +96,8 @@ fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 
         return Ok(this.to_js(global));
     }
-    let _ = (global, frame);
-    todo!("bun_jsc method surface gated")
+    let _ = (source_url, &source_url_string);
+    todo!("blocked on bun_jsc::SavedSourceMap::get / bun_jsc::JsClass")
 }
 
 impl JSSourceMap {
@@ -379,6 +376,9 @@ unsafe extern "C" {
 // PORT STATUS
 //   source:     src/sourcemap_jsc/JSSourceMap.zig (316 lines)
 //   confidence: medium
-//   todos:      8 fn bodies gated on bun_jsc method surface
-//   notes:      JsClass payload; Arc<ParsedSourceMap> per LIFETIMES.tsv; arena dropped; verify codegen cached-setter + host_fn export name + sourcemap position types in Phase B
+//   todos:      1 narrow re-gate (find_source_map tail) + JsClass/host_fn proc-macros
+//   notes:      find_source_map URL-parsing prefix un-gated and type-checks; tail
+//               (SavedSourceMap lookup + to_js codegen) re-gated. JsClass payload;
+//               Arc<ParsedSourceMap> per LIFETIMES.tsv; arena dropped; verify
+//               codegen cached-setter + host_fn export name in Phase B.
 // ──────────────────────────────────────────────────────────────────────────

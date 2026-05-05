@@ -99,15 +99,9 @@ pub mod protocol {
     pub mod signature;
     pub use signature::Signature;
 
-    // TODO(b2-blocked): bun_jsc::JSValue::{create_empty_object,put,js_number,ensure_still_alive}
-    // TODO(b2-blocked): bun_string::String::create_utf8_for_js
-    // TODO(b2-blocked): bun_jsc::JSGlobalObject::take_exception
-    #[cfg(any())]
     #[path = "error_packet_jsc.rs"]
     pub mod error_packet_jsc;
 
-    // TODO(b2-blocked): bun_jsc::JSGlobalObject::{take_exception,create_out_of_memory_error}
-    #[cfg(any())]
     #[path = "any_mysql_error_jsc.rs"]
     pub mod any_mysql_error_jsc;
 

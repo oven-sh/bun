@@ -1,7 +1,8 @@
-use bun_jsc::{JSGlobalObject, JSValue};
+use crate::jsc::{JSGlobalObject, JSValue, JsError};
 use bun_sql::mysql::protocol::any_mysql_error::Error;
+use bun_sql::mysql::protocol::error_packet::MySQLErrorOptions;
 
-use super::error_packet_jsc::{create_mysql_error, MySQLErrorOptions};
+use super::error_packet_jsc::create_mysql_error;
 
 pub fn mysql_error_to_js(
     global_object: &JSGlobalObject,
@@ -40,10 +41,10 @@ pub fn mysql_error_to_js(
         Error::UnknownError => b"ERR_MYSQL_UNKNOWN_ERROR",
         Error::InvalidState => b"ERR_MYSQL_INVALID_STATE",
         Error::JSError => {
-            return global_object.take_exception(bun_core::err!("JSError"));
+            return global_object.take_exception(JsError::Thrown);
         }
         Error::JSTerminated => {
-            return global_object.take_exception(bun_core::err!("JSTerminated"));
+            return global_object.take_exception(JsError::Terminated);
         }
         Error::OutOfMemory => {
             return global_object.create_out_of_memory_error();
@@ -56,20 +57,19 @@ pub fn mysql_error_to_js(
     create_mysql_error(
         global_object,
         msg,
-        // TODO(port): confirm exact options struct name/shape from error_packet_jsc.rs
         MySQLErrorOptions {
             code,
             errno: None,
             sql_state: None,
         },
     )
-    .unwrap_or_else(|ex| global_object.take_exception(ex.into()))
+    .unwrap_or_else(|ex| global_object.take_exception(ex))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/sql_jsc/mysql/protocol/any_mysql_error_jsc.zig (60 lines)
 //   confidence: medium
-//   todos:      1
-//   notes:      Error enum variants & MySQLErrorOptions shape depend on sibling ports; take_exception arg type may need adjusting
+//   todos:      0
+//   notes:      take_exception arg is JsError (matches bun_jsc surface)
 // ──────────────────────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use crate::jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_sql::postgres::types::int_types::Short;
 use bun_sql::shared::Data;
 
@@ -25,8 +25,17 @@ pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<i64> 
         value.as_number()
     } else if value.is_string() {
         // Zig: `catch @panic("unreachable")` → .expect; `defer str.deref()` → Drop on bun_str::String.
-        let str = value.to_bun_string(global_object).expect("unreachable");
-        str.parse_date(global_object)?
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_string::String::parse_date (jsc-side ext method)
+            let str = value.to_bun_string(global_object).expect("unreachable");
+            str.parse_date(global_object)?
+        }
+        #[cfg(not(any()))]
+        {
+            let _ = value.to_bun_string(global_object);
+            unimplemented!("b2-blocked: bun_string::String::parse_date")
+        }
     } else {
         return Ok(0);
     };
@@ -45,7 +54,7 @@ pub fn to_js_i64(global_object: &JSGlobalObject, value: i64) -> JSValue {
     JSValue::from_date_number(global_object, ms as f64)
 }
 
-pub fn to_js_data(global_object: &JSGlobalObject, mut value: Data) -> JSValue {
+pub fn to_js_data(global_object: &JSGlobalObject, value: Data) -> JSValue {
     // Zig: `defer value.deinit()` on `*Data` — function consumes the Data.
     // Taking `Data` by value lets Drop free it after we read the NUL-terminated slice.
     JSValue::from_date_string(global_object, value.slice_z().as_ptr())
@@ -56,5 +65,5 @@ pub fn to_js_data(global_object: &JSGlobalObject, mut value: Data) -> JSValue {
 //   source:     src/sql_jsc/postgres/types/date.zig (55 lines)
 //   confidence: medium
 //   todos:      1
-//   notes:      `toJS(anytype)` split into to_js_i64/to_js_data; Short type from bun_sql int_types
+//   notes:      `toJS(anytype)` split into to_js_i64/to_js_data; string-arm of from_js gated on bun_string::String::parse_date
 // ──────────────────────────────────────────────────────────────────────────

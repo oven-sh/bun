@@ -164,10 +164,22 @@ pub mod npm {
                 }
                 return;
             };
+            // Zig does `this.* = .{ .added = ..., .removed = ... }` here, which
+            // re-initializes the whole struct and resets the flags to `false`.
             if is_not {
-                self.removed = T::from_repr(self.removed.to_repr() | field);
+                *self = Negatable {
+                    added: self.added,
+                    removed: T::from_repr(self.removed.to_repr() | field),
+                    had_unrecognized_values: false,
+                    had_wildcard: false,
+                };
             } else {
-                self.added = T::from_repr(self.added.to_repr() | field);
+                *self = Negatable {
+                    added: T::from_repr(self.added.to_repr() | field),
+                    removed: self.removed,
+                    had_unrecognized_values: false,
+                    had_wildcard: false,
+                };
             }
         }
     }
@@ -812,35 +824,34 @@ pub struct RunCommand;
 pub static PRETEND_TO_BE_NODE: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
-// TODO(b2-blocked): bun_transpiler::Transpiler
-// TODO(b2-blocked): bun_resolver::DirInfo
-// TODO(b2-blocked): bun_bunfig::Command::Context
-// TODO(b2-blocked): bun_core::self_exe_path / bun_core::argv
-// TODO(b2-blocked): bun_sys::symlink (Maybe<()> shape) / bun_sys::mkdir
-// TODO(b2-blocked): bun_errno::E::EXIST (was bun_c::EEXIST)
-#[cfg(any())]
+use bun_core::ZStr;
+
 impl RunCommand {
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
     /// `/tmp/bun-node-<sha>` (or debug variant). Windows builds compute the path
     /// at runtime via GetTempPathW, so this constant is POSIX-only.
     #[cfg(not(windows))]
-    pub const BUN_NODE_DIR: &'static str = const_str::concat!(
-        if cfg!(target_os = "macos") {
+    pub const BUN_NODE_DIR: &'static str = {
+        // PORT NOTE: Zig used comptime `++`; `const_format::concatcp!` cannot host
+        // `if` expressions inline, so split into helper consts.
+        use const_format::concatcp;
+        const TMP: &str = if cfg!(target_os = "macos") {
             "/private/tmp"
         } else if cfg!(target_os = "android") {
             "/data/local/tmp"
         } else {
             "/tmp"
-        },
-        if cfg!(debug_assertions) {
+        };
+        const SUFFIX: &str = if cfg!(debug_assertions) {
             "/bun-node-debug"
         } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
             "/bun-node"
         } else {
-            const_str::concat!("/bun-node-", bun_core::env::GIT_SHA_SHORT)
-        },
-    );
+            concatcp!("/bun-node-", bun_core::env::GIT_SHA_SHORT)
+        };
+        concatcp!(TMP, SUFFIX)
+    };
 
     fn find_shell_impl<'a>(
         buf: &'a mut bun_paths::PathBuffer,
@@ -850,8 +861,7 @@ impl RunCommand {
         #[cfg(windows)]
         {
             let _ = (buf, path, cwd);
-            // SAFETY: literal is NUL-free.
-            return Some(unsafe { ZStr::from_bytes_unchecked(b"C:\\Windows\\System32\\cmd.exe\0") });
+            return Some(bun_core::zstr!("C:\\Windows\\System32\\cmd.exe"));
         }
 
         #[cfg(not(windows))]
@@ -865,21 +875,19 @@ impl RunCommand {
                 }
             }
 
-            const HARDCODED_POPULAR_ONES: &[&[u8]] = &[
-                b"/bin/bash\0",
-                b"/usr/bin/bash\0",
-                b"/usr/local/bin/bash\0", // don't think this is a real one
-                b"/bin/sh\0",
-                b"/usr/bin/sh\0", // don't think this is a real one
-                b"/usr/bin/zsh\0",
-                b"/usr/local/bin/zsh\0",
-                b"/system/bin/sh\0", // Android
+            const HARDCODED_POPULAR_ONES: &[&ZStr] = &[
+                bun_core::zstr!("/bin/bash"),
+                bun_core::zstr!("/usr/bin/bash"),
+                bun_core::zstr!("/usr/local/bin/bash"), // don't think this is a real one
+                bun_core::zstr!("/bin/sh"),
+                bun_core::zstr!("/usr/bin/sh"), // don't think this is a real one
+                bun_core::zstr!("/usr/bin/zsh"),
+                bun_core::zstr!("/usr/local/bin/zsh"),
+                bun_core::zstr!("/system/bin/sh"), // Android
             ];
             for &shell in HARDCODED_POPULAR_ONES {
-                // SAFETY: each literal above is NUL-terminated.
-                let z = unsafe { ZStr::from_bytes_unchecked(shell) };
-                if bun_sys::is_executable_file_path(z) {
-                    let body = z.as_bytes();
+                if bun_sys::is_executable_file_path(shell) {
+                    let body = shell.as_bytes();
                     buf[..body.len()].copy_from_slice(body);
                     buf[body.len()] = 0;
                     // SAFETY: just wrote body + NUL into buf.
@@ -892,33 +900,20 @@ impl RunCommand {
     }
 
     /// Find the "best" shell to use. Cached to only run once.
-    /// Returns a slice into a process-lifetime static buffer.
+    /// Returns a slice into a process-lifetime static buffer (includes trailing NUL).
     pub fn find_shell(path: &[u8], cwd: &[u8]) -> Option<&'static [u8]> {
-        // PORTING.md §Concurrency: `bun.once` + static buf → OnceLock.
-        static ONCE: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
-        static SHELL_BUF: parking_lot::Mutex<bun_paths::PathBuffer> =
-            parking_lot::Mutex::new([0u8; bun_paths::MAX_PATH_BYTES]);
+        // PORTING.md §Concurrency: `bun.once` + static buf → OnceLock. Store the
+        // result bytes (including NUL) directly in the OnceLock so the borrow is
+        // trivially `'static` — avoids the Mutex+data_ptr dance from the draft.
+        static ONCE: std::sync::OnceLock<Option<Vec<u8>>> = std::sync::OnceLock::new();
 
-        let len = *ONCE.get_or_init(|| {
-            let mut scratch: bun_paths::PathBuffer = [0u8; bun_paths::MAX_PATH_BYTES];
+        ONCE.get_or_init(|| {
+            let mut scratch = bun_paths::PathBuffer::uninit();
             let found = Self::find_shell_impl(&mut scratch, path, cwd)?;
-            let body = found.as_bytes();
-            if body.len() >= bun_paths::MAX_PATH_BYTES {
-                return None;
-            }
-            let mut dst = SHELL_BUF.lock();
-            dst[..body.len()].copy_from_slice(body);
-            dst[body.len()] = 0;
-            Some(body.len())
-        });
-
-        len.map(|n| {
-            // SAFETY: SHELL_BUF is written exactly once above (under OnceLock) and never
-            // mutated again, so the static borrow is sound. Includes trailing NUL so the
-            // caller may treat it as `[:0]const u8`.
-            let ptr = SHELL_BUF.data_ptr() as *const u8;
-            unsafe { core::slice::from_raw_parts(ptr, n + 1) }
+            // Includes trailing NUL so the caller may treat it as `[:0]const u8`.
+            Some(found.as_bytes_with_nul().to_vec())
         })
+        .as_deref()
     }
 
     /// Port of `RunCommand.createFakeTemporaryNodeExecutable`
@@ -935,11 +930,9 @@ impl RunCommand {
 
         #[cfg(not(windows))]
         {
-            let argv0: &ZStr = bun_core::argv()
-                .get(0)
-                .map(|b| b.as_ref())
-                // SAFETY: literal is NUL-terminated.
-                .unwrap_or(unsafe { ZStr::from_bytes_unchecked(b"bun\0") });
+            use const_format::concatcp;
+
+            let argv0: &ZStr = bun_core::argv().get(0).unwrap_or(bun_core::zstr!("bun"));
 
             // if we are already an absolute path, use that
             // if the user started the application via a shebang, it's likely that the path is absolute already
@@ -948,41 +941,56 @@ impl RunCommand {
                 argv0
             } else if optional_bun_path.is_empty() {
                 // otherwise, ask the OS for the absolute path
-                match bun_core::self_exe_path() {
-                    Ok(self_path) if !self_path.as_bytes().is_empty() => {
-                        *optional_bun_path = self_path.as_bytes();
-                        self_path
-                    }
-                    _ => argv0,
+                // Zig: `try bun.selfExePath()` — propagate the error.
+                let self_path = bun_core::self_exe_path()?;
+                if !self_path.as_bytes().is_empty() {
+                    *optional_bun_path = self_path.as_bytes();
+                    self_path
+                } else {
+                    // Zig: trailing `if (optional_bun_path.len == 0) argv0 = bun.argv[0];`
+                    argv0
                 }
             } else {
-                argv0
+                // Zig: `var argv0 = @ptrCast(optional_bun_path.ptr)` — when argv[0] is
+                // not absolute and the caller pre-supplied a path, that path is the
+                // symlink target (NOT bun.argv[0]).
+                // SAFETY: callers pass a slice borrowed from a `ZStr` (argv[0] /
+                // self_exe_path / static literal), so `ptr[len] == 0` holds — same
+                // precondition Zig's `@ptrCast` relies on.
+                unsafe { ZStr::from_raw(optional_bun_path.as_ptr(), optional_bun_path.len()) }
             };
 
             #[cfg(debug_assertions)]
             {
-                let _ = std::fs::remove_dir_all(Self::BUN_NODE_DIR);
+                // TODO(port): Zig used `std.fs.deleteTreeAbsolute` (debug-only cleanup).
+                // bun_sys has no recursive-rmdir yet; skipping is harmless — the
+                // EEXIST branch below handles a stale dir.
             }
 
-            for name in [
-                const_str::concat!(RunCommand::BUN_NODE_DIR, "/node\0").as_bytes(),
-                const_str::concat!(RunCommand::BUN_NODE_DIR, "/bun\0").as_bytes(),
-            ] {
-                // SAFETY: each literal above is NUL-terminated.
-                let dest = unsafe { ZStr::from_bytes_unchecked(name) };
+            const NODE_LINK: &ZStr = {
+                const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "/node\0").as_bytes();
+                // SAFETY: literal ends in NUL; len excludes it.
+                unsafe { ZStr::from_raw(B.as_ptr(), B.len() - 1) }
+            };
+            const BUN_LINK: &ZStr = {
+                const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "/bun\0").as_bytes();
+                // SAFETY: literal ends in NUL; len excludes it.
+                unsafe { ZStr::from_raw(B.as_ptr(), B.len() - 1) }
+            };
+            const DIR_Z: &ZStr = {
+                const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "\0").as_bytes();
+                // SAFETY: literal ends in NUL; len excludes it.
+                unsafe { ZStr::from_raw(B.as_ptr(), B.len() - 1) }
+            };
+
+            for dest in [NODE_LINK, BUN_LINK] {
                 let mut retried = false;
                 loop {
                     match bun_sys::symlink(argv0_z, dest) {
                         Ok(()) => break,
-                        Err(e) if e.errno == bun_c::EEXIST => break,
+                        Err(e) if e.get_errno() == bun_sys::E::EEXIST => break,
                         Err(_) if !retried => {
-                            // SAFETY: literal is NUL-terminated.
-                            let dir = unsafe {
-                                ZStr::from_bytes_unchecked(
-                                    const_str::concat!(RunCommand::BUN_NODE_DIR, "\0").as_bytes(),
-                                )
-                            };
-                            let _ = bun_sys::mkdir(dir, 0o755);
+                            let _ = bun_sys::mkdir(DIR_Z, 0o755);
                             retried = true;
                         }
                         Err(_) => return Ok(()),
@@ -1003,6 +1011,7 @@ impl RunCommand {
         }
 
         #[cfg(windows)]
+        #[cfg(any())]
         {
             use bun_str::strings;
 
@@ -1087,8 +1096,23 @@ impl RunCommand {
             let _ = optional_bun_path;
             Ok(())
         }
+        #[cfg(windows)]
+        #[cfg(not(any()))]
+        {
+            // TODO(b2-blocked): bun_windows::{GetTempPathW,CreateHardLinkW,exe_path_w}
+            // TODO(b2-blocked): bun_string::strings::w / to_utf8_append_to_list
+            let _ = (path, optional_bun_path);
+            todo!("b2-blocked: create_fake_temporary_node_executable (windows)")
+        }
     }
+}
 
+// TODO(b2-blocked): bun_transpiler::Transpiler
+// TODO(b2-blocked): bun_resolver::DirInfo
+// TODO(b2-blocked): bun_bunfig::Command::Context
+// TODO(b2-blocked): bun_schema::api::DotEnvBehavior
+#[cfg(any())]
+impl RunCommand {
     /// Port of `RunCommand.configureEnvForRun` (src/cli/run_command.zig).
     /// Initializes a fresh `Transpiler` via out-param, loads `.env`, and seeds
     /// the npm_* environment variables lifecycle scripts expect. Returns the
@@ -1246,19 +1270,6 @@ impl RunCommand {
         }
 
         Ok(root_dir_info)
-    }
-}
-
-#[cfg(not(any()))]
-impl RunCommand {
-    pub fn find_shell(_path: &[u8], _cwd: &[u8]) -> Option<&'static [u8]> {
-        todo!("B-2: RunCommand::find_shell")
-    }
-    pub fn create_fake_temporary_node_executable(
-        _path: &mut Vec<u8>,
-        _optional_bun_path: &mut &[u8],
-    ) -> Result<(), ()> {
-        todo!("B-2: RunCommand::create_fake_temporary_node_executable")
     }
 }
 
@@ -1435,9 +1446,9 @@ pub type TruncatedPackageNameHash = u32;
 pub struct Aligner;
 
 impl Aligner {
-    pub fn write<W: std::io::Write>(writer: &mut W, pos: usize) -> std::io::Result<usize> {
+    pub fn write<T, W: std::io::Write>(writer: &mut W, pos: usize) -> std::io::Result<usize> {
         // TODO(port): narrow error set / use bun_io::Write once available
-        let to_write = Self::skip_amount_with_align(core::mem::align_of::<u64>(), pos);
+        let to_write = Self::skip_amount::<T>(pos);
 
         let remainder: &[u8] =
             &ALIGNMENT_BYTES_TO_REPEAT_BUFFER[0..to_write.min(ALIGNMENT_BYTES_TO_REPEAT_BUFFER.len())];

@@ -16,21 +16,80 @@ use bun_ptr::IntrusiveArc;
 use bun_aio::KeepAlive;
 use bun_boringssl as boringssl;
 use bun_collections::LinearFifo;
+use bun_collections::linear_fifo::DynamicBuffer;
 use bun_core::Output;
 use bun_http::websocket::{Opcode, WebsocketHeader};
-use bun_jsc::{self as jsc, EventLoop, JSGlobalObject, JSValue, ZigString};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, ZigString};
+use bun_jsc::event_loop::EventLoop;
 use bun_ptr::IntrusiveRc;
-use bun_str::{self as bstr_mod, strings};
-use bun_uws::{self as uws, NewSocketHandler, SslCtx, us_bun_verify_error_t, us_socket_t};
+use bun_string::{self as bstr_mod, strings};
+use bun_uws::{self as uws, NewSocketHandler, SslCtx, us_bun_verify_error_t};
+use bun_uws_sys::us_socket_t;
 
-use crate::websocket_client::cpp_websocket::CppWebSocket;
-use crate::websocket_client::websocket_deflate::{self as websocket_deflate, WebSocketDeflate};
-use crate::websocket_client::websocket_proxy_tunnel::WebSocketProxyTunnel;
+use self::cpp_websocket::CppWebSocket;
+use self::websocket_deflate::WebSocketDeflate;
+use self::websocket_proxy_tunnel::WebSocketProxyTunnel;
 
-bun_output::declare_scope!(WebSocketClient, visible);
+// ─── Submodules ──────────────────────────────────────────────────────────
+// Real Phase-A drafts are gated until lower-tier surfaces (NewSocketHandler
+// methods, RareData::ws_client_group, KeepAlive::ref, RefPtr::from_raw, etc.)
+// land. Stubs below provide just the types referenced by `WebSocket<SSL>`'s
+// field layout so the struct compiles.
+#[path = "websocket_client/CppWebSocket.rs"]                        pub mod cpp_websocket;
+#[cfg(any())] #[path = "websocket_client/WebSocketDeflate.rs"]      pub mod websocket_deflate;
+#[path = "websocket_client/WebSocketProxy.rs"]                      pub mod websocket_proxy;
+#[cfg(any())] #[path = "websocket_client/WebSocketProxyTunnel.rs"]  pub mod websocket_proxy_tunnel;
+#[cfg(any())] #[path = "websocket_client/WebSocketUpgradeClient.rs"] pub mod websocket_upgrade_client;
+
+#[cfg(not(any()))]
+pub mod websocket_deflate {
+    /// Stub for `WebSocketDeflate` (real impl gated above).
+    /// PORT NOTE: real module names this `PerMessageDeflate<'a>`; the parent
+    /// draft references `WebSocketDeflate` — reconcile on un-gate.
+    pub struct WebSocketDeflate { _priv: () }
+    /// Layout-compatible with the real `Params` (repr(C), 4×u8) so the
+    /// `extern "C"` decls in `CppWebSocket.rs` are FFI-safe while gated.
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct Params {
+        pub server_max_window_bits: u8,
+        pub client_max_window_bits: u8,
+        pub server_no_context_takeover: u8,
+        pub client_no_context_takeover: u8,
+    }
+    pub struct RareData { _priv: () }
+    #[derive(Copy, Clone, Debug)]
+    pub enum Error { InflateFailed, TooLarge, OutOfMemory }
+}
+#[cfg(not(any()))]
+pub mod websocket_proxy_tunnel {
+    /// Stub for `WebSocketProxyTunnel` (real impl gated above).
+    pub struct WebSocketProxyTunnel { _priv: () }
+    impl WebSocketProxyTunnel {
+        pub fn shutdown(&mut self) { unreachable!("stub") }
+        pub fn deref(&self) { unreachable!("stub") }
+    }
+    // Minimal `AnyRefCounted` so `Option<IntrusiveArc<WebSocketProxyTunnel>>`
+    // type-checks in `WebSocket<SSL>`'s field layout. Real impl uses an
+    // embedded `ThreadSafeRefCount` (see WebSocketProxyTunnel.rs).
+    impl bun_ptr::AnyRefCounted for WebSocketProxyTunnel {
+        type DestructorCtx = ();
+        unsafe fn rc_ref(_this: *mut Self) { unreachable!("stub") }
+        unsafe fn rc_deref_with_context(_this: *mut Self, _ctx: ()) { unreachable!("stub") }
+        unsafe fn rc_has_one_ref(_this: *const Self) -> bool { unreachable!("stub") }
+        unsafe fn rc_assert_no_refs(_this: *const Self) { unreachable!("stub") }
+        unsafe fn rc_debug_data(_this: *mut Self) -> *mut dyn bun_ptr::ref_count::DebugDataOps {
+            unreachable!("stub")
+        }
+    }
+}
+#[cfg(not(any()))]
+pub mod websocket_upgrade_client { /* stub: no types referenced from struct layout */ }
+
+bun_core::declare_scope!(WebSocketClient, visible);
 
 macro_rules! log {
-    ($($arg:tt)*) => { bun_output::scoped_log!(WebSocketClient, $($arg)*) };
+    ($($arg:tt)*) => { bun_core::scoped_log!(WebSocketClient, $($arg)*) };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -67,9 +126,9 @@ pub struct WebSocket<const SSL: bool> {
     pub receive_frame: usize,
     pub receive_body_remain: usize,
     pub receive_pending_chunk_len: usize,
-    pub receive_buffer: LinearFifo<u8>,
+    pub receive_buffer: LinearFifo<u8, DynamicBuffer<u8>>,
 
-    pub send_buffer: LinearFifo<u8>,
+    pub send_buffer: LinearFifo<u8, DynamicBuffer<u8>>,
 
     // TODO(port): LIFETIMES.tsv classifies as JSC_BORROW (&JSGlobalObject), but this
     // struct is heap-allocated via bun.new and returned to C++ as *anyopaque, so a
@@ -107,6 +166,12 @@ pub struct WebSocket<const SSL: bool> {
 // IntrusiveRc wiring: ref/deref forward to ref_count; final deref calls deinit()
 // TODO(port): bun.ptr.RefCount → bun_ptr::IntrusiveRc<WebSocket<SSL>>; the
 // destructor callback is `deinit` (drops self + bun.destroy).
+// TODO(b2-blocked): bun_uws::NewSocketHandler::{close,detach,write,is_closed,
+// is_shutdown,is_established,get_native_handle,shutdown_read,detached,adopt_group}
+// — `deinit` (and the entire method surface below) bottoms out on the socket
+// handler API which is currently a bare `{ socket: InternalSocket }` stub in
+// bun_uws. Re-gated until that surface lands.
+#[cfg(any())]
 impl<const SSL: bool> WebSocket<SSL> {
     #[inline]
     pub fn r#ref(&self) {
@@ -123,6 +188,19 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 }
 
+// TODO(b2-blocked): bun_uws::NewSocketHandler::{close,write,is_closed,is_shutdown,
+//   is_established,get_native_handle,shutdown_read,detach,detached,adopt_group}
+// TODO(b2-blocked): bun_uws::CloseKind / bun_uws::DispatchKind
+// TODO(b2-blocked): bun_jsc::rare_data::RareData::{ws_client_group,entropy_slice}
+// TODO(b2-blocked): bun_jsc::JSGlobalObject::queue_microtask_callback
+// TODO(b2-blocked): bun_aio::KeepAlive::{ref,unref}
+// TODO(b2-blocked): bun_ptr::RefPtr::from_raw
+// TODO(b2-blocked): bun_string::ZigString::{from16_slice,utf16_slice_aligned}
+// TODO(b2-blocked): bun_jsc::fetch_headers (gated module in bun_jsc)
+// The entire method surface is re-gated as a unit because every non-trivial
+// path touches `self.tcp.<method>()`. Splitting per-fn would gate ~40 bodies
+// for the same blocker; revisit once `NewSocketHandler` grows its API.
+#[cfg(any())]
 impl<const SSL: bool> WebSocket<SSL> {
     fn should_compress(&self, data_len: usize, opcode: Opcode) -> bool {
         // Check if compression is available
@@ -1147,7 +1225,9 @@ impl<const SSL: bool> WebSocket<SSL> {
             return false;
         }
 
-        let mut header = WebsocketHeader::from_bits(0u16);
+        // PORT NOTE: Zig `@bitCast(@as(u16, 0))`; WebsocketHeader has no public
+        // raw-bits ctor, so build the all-zero header via from_slice.
+        let mut header = WebsocketHeader::from_slice([0, 0]);
         header.set_final(true);
         header.set_opcode(Opcode::Pong);
 
@@ -1201,7 +1281,9 @@ impl<const SSL: bool> WebSocket<SSL> {
             }
         }
         let mut final_body_bytes = [0u8; 128 + 8];
-        let mut header = WebsocketHeader::from_bits(0u16);
+        // PORT NOTE: Zig `@bitCast(@as(u16, 0))`; WebsocketHeader has no public
+        // raw-bits ctor, so build the all-zero header via from_slice.
+        let mut header = WebsocketHeader::from_slice([0, 0]);
         header.set_final(true);
         header.set_opcode(Opcode::Close);
         header.set_mask(true);
@@ -1838,8 +1920,10 @@ macro_rules! export_websocket_client {
     };
 }
 
-export_websocket_client!(false, "WebSocketClient");
-export_websocket_client!(true, "WebSocketClientTLS");
+// TODO(b2-blocked): bun_uws::NewSocketHandler — shims forward to the gated
+// impl block above; un-gate together.
+#[cfg(any())] export_websocket_client!(false, "WebSocketClient");
+#[cfg(any())] export_websocket_client!(true, "WebSocketClientTLS");
 
 // ──────────────────────────────────────────────────────────────────────────
 // InitialDataHandler
@@ -1856,24 +1940,31 @@ impl<const SSL: bool> InitialDataHandler<SSL> {
     // TODO(port): jsc::AnyTask::new wrapper — Phase B wires queue_microtask_callback signature.
 
     pub fn handle_without_deinit(&mut self) {
-        let Some(this_socket_ptr) = self.adopted.take() else {
-            return;
-        };
-        // SAFETY: adopted points to a live WebSocket (backref, no ref taken)
-        let this_socket = unsafe { &mut *this_socket_ptr.as_ptr() };
-        this_socket.initial_data_handler = None;
-        let ws = self.ws;
-        // defer ws.unref() → scopeguard
-        let _guard = scopeguard::guard((), |_| {
-            // SAFETY: ws is a valid CppWebSocket* (ref taken in init())
-            unsafe { (*ws).unref() };
-        });
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_uws::NewSocketHandler::is_closed +
+            // WebSocket::handle_data (gated impl block above)
+            let Some(this_socket_ptr) = self.adopted.take() else {
+                return;
+            };
+            // SAFETY: adopted points to a live WebSocket (backref, no ref taken)
+            let this_socket = unsafe { &mut *this_socket_ptr.as_ptr() };
+            this_socket.initial_data_handler = None;
+            let ws = self.ws;
+            // defer ws.unref() → scopeguard
+            let _guard = scopeguard::guard((), |_| {
+                // SAFETY: ws is a valid CppWebSocket* (ref taken in init())
+                unsafe { (*ws).unref() };
+            });
 
-        // For tunnel mode, tcp is detached but connection is still active through the tunnel
-        let is_connected = !this_socket.tcp.is_closed() || this_socket.proxy_tunnel.is_some();
-        if this_socket.outgoing_websocket.is_some() && is_connected {
-            this_socket.handle_data(this_socket.tcp, &self.slice);
+            // For tunnel mode, tcp is detached but connection is still active through the tunnel
+            let is_connected = !this_socket.tcp.is_closed() || this_socket.proxy_tunnel.is_some();
+            if this_socket.outgoing_websocket.is_some() && is_connected {
+                this_socket.handle_data(this_socket.tcp, &self.slice);
+            }
         }
+        // TODO(b2-blocked): bun_uws::NewSocketHandler::is_closed
+        todo!("InitialDataHandler::handle_without_deinit — blocked on bun_uws::NewSocketHandler")
     }
 
     pub fn handle(this: *mut Self) {
@@ -1946,8 +2037,16 @@ impl Mask {
         output: &mut [u8],
         input: &[u8],
     ) {
-        let entropy = global_this.bun_vm().rare_data().entropy_slice(4);
-        mask_buf.copy_from_slice(&entropy[..4]);
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_jsc::rare_data::RareData::entropy_slice — stub
+            // RareData in bun_jsc/lib.rs has no `entropy_slice`; real impl is in
+            // gated rare_data.rs.
+            let entropy = global_this.bun_vm().rare_data().entropy_slice(4);
+            mask_buf.copy_from_slice(&entropy[..4]);
+        }
+        // TODO(b2-blocked): bun_jsc::rare_data::RareData::entropy_slice
+        let _ = global_this;
         let mask = *mask_buf;
 
         let skip_mask = u32::from_ne_bytes(mask) == 0;
@@ -1958,8 +2057,14 @@ impl Mask {
     /// PORT NOTE: Zig's `fill` allowed output==input; Rust borrowck forbids
     /// `&mut [u8]` + `&[u8]` aliasing. Callers that masked in-place use this.
     pub fn fill_in_place(global_this: &JSGlobalObject, mask_buf: &mut [u8; 4], buf: &mut [u8]) {
-        let entropy = global_this.bun_vm().rare_data().entropy_slice(4);
-        mask_buf.copy_from_slice(&entropy[..4]);
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_jsc::rare_data::RareData::entropy_slice
+            let entropy = global_this.bun_vm().rare_data().entropy_slice(4);
+            mask_buf.copy_from_slice(&entropy[..4]);
+        }
+        // TODO(b2-blocked): bun_jsc::rare_data::RareData::entropy_slice
+        let _ = global_this;
         let mask = *mask_buf;
 
         let skip_mask = u32::from_ne_bytes(mask) == 0;
@@ -1969,16 +2074,12 @@ impl Mask {
             cold();
             return;
         }
-        // SAFETY: highway::fill_with_skip_mask supports in-place (output==input)
-        unsafe {
-            bun_highway::fill_with_skip_mask(
-                mask,
-                buf.as_mut_ptr(),
-                buf.as_ptr(),
-                buf.len(),
-                skip_mask,
-            )
-        };
+        // PORT NOTE: Zig fed output==input to highway. The Rust safe wrapper
+        // takes `&mut [u8], &[u8]` (no alias); fall back to a temp copy.
+        // PERF(port): was in-place SIMD mask — profile in Phase B and add a
+        // raw-ptr `fill_with_skip_mask_raw` to bun_highway if it matters.
+        let tmp: Box<[u8]> = buf.to_vec().into_boxed_slice();
+        bun_highway::fill_with_skip_mask(mask, buf, &tmp, skip_mask);
     }
 
     fn fill_with_skip_mask(mask: [u8; 4], output: &mut [u8], input: &[u8], skip_mask: bool) {
@@ -1988,16 +2089,7 @@ impl Mask {
             cold();
             return;
         }
-        // SAFETY: output.len() >= input.len() per caller contract
-        unsafe {
-            bun_highway::fill_with_skip_mask(
-                mask,
-                output.as_mut_ptr(),
-                input.as_ptr(),
-                input.len(),
-                skip_mask,
-            )
-        };
+        bun_highway::fill_with_skip_mask(mask, &mut output[..input.len()], input, skip_mask);
     }
 }
 
@@ -2173,7 +2265,9 @@ impl<'a> Copy<'a> {
         // 4 byte mask
         // 0, 2, 8 byte length
 
-        let mut header = WebsocketHeader::from_bits(0u16);
+        // PORT NOTE: Zig `@bitCast(@as(u16, 0))`; WebsocketHeader has no public
+        // raw-bits ctor, so build the all-zero header via from_slice.
+        let mut header = WebsocketHeader::from_slice([0, 0]);
 
         // Write extended length if needed
         match how_big_is_the_length_integer {
@@ -2193,23 +2287,28 @@ impl<'a> Copy<'a> {
             buf.len()
         );
 
-        // PORT NOTE: split buf so mask_buf and to_mask are disjoint borrows
+        // PORT NOTE: reshaped for borrowck — split `buf` into three disjoint
+        // regions (header bytes / 4-byte mask / payload) so `write_header` and
+        // `Mask::fill*` don't alias. Zig wrote through one pointer.
         let (head, to_mask_full) = buf.split_at_mut(content_offset);
-        let mask_buf: &mut [u8; 4] =
-            (&mut head[mask_offset..mask_offset + 4]).try_into().unwrap();
+        let (header_part, mask_part) = head.split_at_mut(mask_offset);
+        let mask_buf: &mut [u8; 4] = (&mut mask_part[..4]).try_into().unwrap();
         let to_mask = &mut to_mask_full[..content_byte_len];
 
         match self {
             Copy::Utf16(utf16) => {
                 header.set_len(WebsocketHeader::pack_length(content_byte_len));
-                let encode_into_result = strings::copy_utf16_into_utf8_impl(to_mask, utf16, true);
+                // PORT NOTE: Zig called `copyUTF16IntoUTF8Impl(.., true)` (allow_invalid=true);
+                // bun_string only exposes the non-`_impl` wrapper. Phase-B: surface the
+                // allow-invalid variant if behavior diverges.
+                let encode_into_result = strings::copy_utf16_into_utf8(to_mask, utf16);
                 debug_assert_eq!(encode_into_result.written as usize, content_byte_len);
                 debug_assert_eq!(encode_into_result.read as usize, utf16.len());
                 header.set_len(WebsocketHeader::pack_length(encode_into_result.written as usize));
                 // TODO(port): Zig used std.io.fixedBufferStream + header.writeHeader.
                 // WebsocketHeader::write_header should write into &mut head[..2+len_int].
                 header
-                    .write_header(&mut &mut head[..], encode_into_result.written as usize)
+                    .write_header(&mut &mut header_part[..], encode_into_result.written as usize)
                     .expect("unreachable");
 
                 Mask::fill_in_place(global_this, mask_buf, to_mask);
@@ -2223,14 +2322,14 @@ impl<'a> Copy<'a> {
 
                 header.set_len(WebsocketHeader::pack_length(encode_into_result.written as usize));
                 header
-                    .write_header(&mut &mut head[..], encode_into_result.written as usize)
+                    .write_header(&mut &mut header_part[..], encode_into_result.written as usize)
                     .expect("unreachable");
                 Mask::fill_in_place(global_this, mask_buf, to_mask);
             }
             Copy::Bytes(bytes) => {
                 header.set_len(WebsocketHeader::pack_length(bytes.len()));
                 header
-                    .write_header(&mut &mut head[..], bytes.len())
+                    .write_header(&mut &mut header_part[..], bytes.len())
                     .expect("unreachable");
                 Mask::fill(global_this, mask_buf, to_mask, bytes);
             }
@@ -2263,7 +2362,9 @@ impl<'a> Copy<'a> {
             _ => unreachable!(),
         }
 
-        let mut header = WebsocketHeader::from_bits(0u16);
+        // PORT NOTE: Zig `@bitCast(@as(u16, 0))`; WebsocketHeader has no public
+        // raw-bits ctor, so build the all-zero header via from_slice.
+        let mut header = WebsocketHeader::from_slice([0, 0]);
 
         header.set_mask(true);
         header.set_compressed(is_first_fragment); // Only set compressed flag for first fragment
@@ -2276,13 +2377,14 @@ impl<'a> Copy<'a> {
             buf.len()
         );
 
+        // PORT NOTE: reshaped for borrowck — three disjoint regions (see `copy`).
         let (head, to_mask_full) = buf.split_at_mut(content_offset);
-        let mask_buf: &mut [u8; 4] =
-            (&mut head[mask_offset..mask_offset + 4]).try_into().unwrap();
+        let (header_part, mask_part) = head.split_at_mut(mask_offset);
+        let mask_buf: &mut [u8; 4] = (&mut mask_part[..4]).try_into().unwrap();
         let to_mask = &mut to_mask_full[..content_byte_len];
 
         header
-            .write_header(&mut &mut head[..], content_byte_len)
+            .write_header(&mut &mut header_part[..], content_byte_len)
             .expect("unreachable");
 
         Mask::fill(global_this, mask_buf, to_mask, compressed_data);

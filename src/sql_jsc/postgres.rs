@@ -62,12 +62,6 @@ pub use signature::Signature;
 #[path = "postgres/command_tag_jsc.rs"]
 pub mod command_tag_jsc;
 
-// TODO(b2-blocked): bun_jsc::{JsResult,JsError}
-// TODO(b2-blocked): bun_jsc::JSValue::{create_empty_object,put,ensure_still_alive}
-// TODO(b2-blocked): bun_jsc::JSGlobalObject::{take_error,take_exception,create_out_of_memory_error}
-// TODO(b2-blocked): bun_string::String::create_utf8_for_js
-// TODO(b2-blocked): bun_sql::postgres::any_postgres_error::PostgresErrorOptions::optional_fields
-#[cfg(any())]
 #[path = "postgres/error_jsc.rs"]
 pub mod error_jsc;
 
@@ -120,36 +114,27 @@ pub mod postgres_request;
 pub mod data_cell;
 
 pub mod types {
-    // TODO(b2-blocked): bun_jsc::JSValue::from
-    #[cfg(any())]
     #[path = "bool.rs"]
     pub mod r#bool;
 
-    // TODO(b2-blocked): bun_jsc::JSValue::create_buffer
+    // TODO(b2-blocked): bun_jsc::JSValue::create_buffer (needs `&mut [u8]`;
+    // `Data::slice()` is `&[u8]` — ownership transfer reshape pending)
     #[cfg(any())]
     #[path = "bytea.rs"]
     pub mod bytea;
 
-    // TODO(b2-blocked): bun_jsc::JSValue::{is_date,get_unix_timestamp,is_number,as_number,is_string,to_bun_string,from_date_number,from_date_string}
-    // TODO(b2-blocked): bun_string::String::parse_date
-    #[cfg(any())]
     #[path = "date.rs"]
     pub mod date;
 
-    // TODO(b2-blocked): bun_jsc::JSValue::parse + bun_string::StringJsc trait
+    // TODO(b2-blocked): bun_jsc::JSValue::parse signature mismatch + upstream
+    // Zig body looks broken (`.AnyPostgresError()` on a JSValue)
     #[cfg(any())]
     #[path = "json.rs"]
     pub mod json;
 
-    // TODO(b2-blocked): bun_string::StringJsc trait (.to_js)
-    #[cfg(any())]
     #[path = "PostgresString.rs"]
     pub mod postgres_string;
 
-    // TODO(b2-blocked): bun_jsc::JSType (real enum w/ JSDate, Int32Array, ..)
-    // TODO(b2-blocked): bun_jsc::JSValue::{js_type,is_cell,is_int32,is_any_int,to_int64,is_number,is_boolean,js_number,from_int64_no_truncate}
-    // TODO(b2-blocked): bun_jsc::JSGlobalObject::ERR_INVALID_ARG_TYPE
-    #[cfg(any())]
     #[path = "tag_jsc.rs"]
     pub mod tag_jsc;
 }

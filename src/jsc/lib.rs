@@ -732,6 +732,14 @@ unsafe extern "C" {
     fn JSC__JSValue__parseJSON(string: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
     fn JSC__JSValue__toZigString(this: JSValue, out: *mut bun_string::ZigString, global: *const JSGlobalObject);
     fn JSC__JSValue__getIfPropertyExistsImpl(target: JSValue, global: *const JSGlobalObject, ptr: *const u8, len: usize) -> JSValue;
+    fn JSC__JSValue__isTerminationException(this: JSValue) -> bool;
+    fn Bun__JSValue__call(
+        global: *const JSGlobalObject,
+        function: JSValue,
+        this_value: JSValue,
+        args_len: usize,
+        args_ptr: *const JSValue,
+    ) -> JSValue;
 }
 
 /// `bun.JSError` — the canonical Bun JS error union (`error{Thrown, OutOfMemory, Terminated}`).
@@ -871,6 +879,35 @@ impl JSValue {
     pub fn unprotect(self) {
         // SAFETY: pure FFI; C++ side handles non-cell values.
         unsafe { Bun__JSValue__unprotect(self) }
+    }
+
+    /// `JSValue.isTerminationException()` (JSValue.zig:1182) — true if this
+    /// value is the VM's termination-exception sentinel.
+    #[inline]
+    pub fn is_termination_exception(self) -> bool {
+        // SAFETY: pure FFI predicate.
+        unsafe { JSC__JSValue__isTerminationException(self) }
+    }
+
+    /// `JSValue.call(global, thisValue, args)` (JSValue.zig:249).
+    /// Calls `function` with `this_value` as the receiver. Returns
+    /// `Err(JsError::Thrown)` if a JS exception was raised.
+    #[track_caller]
+    pub fn call(
+        self,
+        global: &JSGlobalObject,
+        this_value: JSValue,
+        args: &[JSValue],
+    ) -> JsResult<JSValue> {
+        // PORT NOTE: debug-only event-loop bookkeeping (JSValue.zig:251-258) is
+        // omitted while VirtualMachine.rs is gated; restore when it un-gates.
+        host_fn::from_js_host_call(global, || {
+            // SAFETY: `global` is live; `args` is a contiguous slice of valid
+            // JSValues for the duration of the call.
+            unsafe {
+                Bun__JSValue__call(global, self, this_value, args.len(), args.as_ptr())
+            }
+        })
     }
 }
 
@@ -1609,6 +1646,7 @@ pub mod virtual_machine {
     #[derive(Debug, Default)]
     pub struct VirtualMachine {
         pub active_tasks: u32,
+        pub counters: crate::counters::Counters,
         // TODO(b2): full field layout — gated until VirtualMachine.rs un-gates.
     }
     impl VirtualMachine {

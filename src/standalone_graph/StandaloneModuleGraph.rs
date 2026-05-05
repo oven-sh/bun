@@ -840,16 +840,20 @@ impl CompileResult {
     }
 }
 
-#[cfg(any())]
 pub fn inject(
     bytes: &[u8],
     self_exe: &ZStr,
     inject_options: InjectOptions,
     target: &CompileTarget,
 ) -> Fd {
-    // TODO(b2-blocked): bun_exe_format::{macho::MachoFile,pe::PEFile} write paths,
-    // bun_sys::{copy_file,clonefile,set_file_offset,ftruncate,File::read_to_end},
-    // bun_resolver::FileSystem::tmpname — un-gate once those land.
+    // TODO(b2-blocked): bun_resolver::fs::FileSystem::tmpname (T6; not in deps)
+    // TODO(b2-blocked): bun_resolver::fs::RealFS::tmpdir_path
+    // TODO(b2-blocked): bun_exe_format::{macho::MachoFile,pe::PEFile,elf::ElfFile}
+    //   write paths (init/write_section/build_and_sign/add_bun_section signatures)
+    // TODO(b2-blocked): bun_sys::File.read_to_end shape ({err,bytes} struct vs Maybe<Vec>)
+    // TODO(b2-blocked): bun_io::BufWriter
+    #[cfg(any())]
+    {
     let mut buf = PathBuffer::uninit();
     let mut zname: &ZStr = match bun_fs::FileSystem::tmpname(
         b"bun-build",
@@ -1322,21 +1326,25 @@ pub fn inject(
 
         cloned_executable_fd
     }
+    }
+    let _ = (bytes, self_exe, inject_options, target);
+    todo!("b2-blocked: bun_resolver::fs::FileSystem::tmpname + bun_exe_format write paths")
 }
 
 pub use bun_options_types::CompileTarget::CompileTarget;
 use bun_core::Environment::OperatingSystem as CompileTargetOs;
 
-#[cfg(any())]
 pub fn download(
     target: &CompileTarget,
-    env: &mut bun_dotenv::Loader,
+    env: &mut bun_dotenv::Loader<'_>,
 ) -> Result<bun_core::ZBox, BunError> {
     // TODO(b2-blocked): bun_options_types::CompileTarget::exe_path
     // TODO(b2-blocked): bun_options_types::CompileTarget::download_to_path
     // (both still cfg-gated upstream on bun_sys::fetch_cache_directory_path /
     // bun_sys::move_file_z). `err_generic` is `bun_core::err_generic!` — switch
     // to the macro when un-gating.
+    #[cfg(any())]
+    {
     let mut exe_path_buf = PathBuffer::uninit();
     let mut version_str_buf = [0u8; 1024];
     // TODO(port): std.fmt.bufPrintZ — write into fixed buffer with NUL.
@@ -1380,7 +1388,10 @@ pub fn download(
         }
     }
 
-    Ok(ZStr::from_bytes(dest_z.as_bytes()))
+    return Ok(ZStr::from_bytes(dest_z.as_bytes()));
+    }
+    let _ = (target, env);
+    todo!("b2-blocked: bun_options_types::CompileTarget::{{exe_path,download_to_path}}")
 }
 
 #[cfg(any())]
@@ -1867,16 +1878,20 @@ impl SerializedSourceMapLoaded {
     }
 }
 
-#[cfg(any())]
 pub fn serialize_json_source_map_for_standalone(
     header_list: &mut Vec<u8>,
     string_payload: &mut Vec<u8>,
     json_source: &[u8],
 ) -> Result<(), BunError> {
-    // TODO(b2-blocked): bun_interchange::json::parse
-    // TODO(b2-blocked): bun_js_parser::Expr (Data::Store::reset / .get / .e_string)
-    // (`InternalSourceMap::from_vlq` is available; only the JSON+AST surface blocks.)
+    // TODO(b2-blocked): bun_interchange::json::parse — currently returns opaque
+    //   stub `Expr(())` (json.rs draft gated on bun_js_parser::js_lexer cycle).
+    //   Un-gate once it returns `bun_js_parser::Expr`.
+    // TODO(b2-blocked): bun_js_parser::ast::e::EString::string_cloned (no-bump variant)
+    // (`InternalSourceMap::from_vlq` and `expr::data::Store::reset` are available;
+    //  only the JSON parse return type + EString utf8 helpers block.)
     // PERF(port): was arena bulk-free (arena param dropped)
+    #[cfg(any())]
+    {
     let json_src = bun_logger::Source::init_path_string(b"sourcemap.json", json_source);
     let mut log = bun_logger::Log::new();
 
@@ -1980,7 +1995,10 @@ pub fn serialize_json_source_map_for_standalone(
     header_list.extend_from_slice(&map_blob);
 
     debug_assert!(header_list.len() == string_payload_start_location);
-    Ok(())
+    return Ok(());
+    }
+    let _ = (header_list, string_payload, json_source);
+    todo!("b2-blocked: bun_interchange::json::parse → bun_js_parser::Expr")
 }
 
 // ──────────────────────────────────────────────────────────────────────────

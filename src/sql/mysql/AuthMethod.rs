@@ -20,22 +20,16 @@ impl AuthMethod {
 
         let len = self.scramble_length();
 
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_boringssl_sys::RSA_public_encrypt et al. —
-            // `protocol::auth` is gated on the same lower-tier FFI symbols (see
-            // lib.rs gate on `mod auth`). Re-enable once that module is un-gated.
-            use crate::mysql::protocol::auth;
-            match self {
-                AuthMethod::MysqlNativePassword => {
-                    buf[..len].copy_from_slice(&auth::mysql_native_password::scramble(password, auth_data)?);
-                }
-                AuthMethod::CachingSha2Password => {
-                    buf[..len].copy_from_slice(&auth::caching_sha2_password::scramble(password, auth_data)?);
-                }
-                AuthMethod::Sha256Password => {
-                    buf[..len].copy_from_slice(&auth::caching_sha2_password::scramble(password, auth_data)?);
-                }
+        use crate::mysql::protocol::auth;
+        match self {
+            AuthMethod::MysqlNativePassword => {
+                buf[..len].copy_from_slice(&auth::mysql_native_password::scramble(password, auth_data)?);
+            }
+            AuthMethod::CachingSha2Password => {
+                buf[..len].copy_from_slice(&auth::caching_sha2_password::scramble(password, auth_data)?);
+            }
+            AuthMethod::Sha256Password => {
+                buf[..len].copy_from_slice(&auth::caching_sha2_password::scramble(password, auth_data)?);
             }
         }
 

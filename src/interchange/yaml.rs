@@ -17,14 +17,9 @@ use bun_alloc::AllocError;
 use bun_collections::{BabyList, StringHashMap};
 use bun_core::{self, StackCheck};
 // MOVE_DOWN(b0): bun_js_parser::ast → bun_logger::ast (js_ast remapped into logger, T2)
-// TODO(b2-blocked): bun_logger::js_ast — MOVE_DOWN not yet landed in T2.
-#[cfg(any())]
+// `Expr`/`E`/`G` resolve to T2 stub shapes; AST-producing parse_* fns stay
+// gated below until the real `E::*` field sets land.
 use bun_logger::ast::{self, Expr, E, G};
-// Local opaque stub so `Document.root` / `Parser.anchors` and the scanner half
-// can type-check while the AST-producing parse_* fns stay gated below.
-#[cfg(not(any()))]
-#[derive(Clone, Default)]
-pub struct Expr;
 use bun_logger::{self as logger, Loc, Log, Source};
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -33,18 +28,29 @@ use bun_logger::{self as logger, Loc, Log, Source};
 
 pub struct YAML;
 
-// TODO(b2-blocked): bun_logger::js_ast::{Expr, E}
-// TODO(b2-blocked): bun_core::analytics::Features::yaml_parse_inc
-#[cfg(any())]
 impl YAML {
     pub fn parse(
         source: &logger::Source,
         log: &mut logger::Log,
+        bump: &bumpalo::Bump,
     ) -> Result<Expr, YamlParseError> {
+        // TODO(b2-blocked): bun_core::analytics::Features::yaml_parse_inc
+        #[cfg(any())]
         bun_core::analytics::Features::yaml_parse_inc(1);
 
+        // PORT NOTE: the Zig allocator param was dropped from `Parser::init`
+        // (global mimalloc); `bump` is accepted for signature parity with Zig
+        // and downstream callers, currently unused. See `// allocator dropped`
+        // on the `Parser` struct.
+        let _ = bump;
         let mut parser: Parser<Utf8> = Parser::init(source.contents());
 
+        // TODO(b2-blocked): bun_logger::js_ast::{Expr::init, E} — `Parser::parse`
+        //   chain (parse → parse_stream → parse_document → parse_node) constructs
+        //   `E::*` payloads via the 3-arg `Expr::init(tag, payload, loc)` form;
+        //   the T2 stub only exposes 2-arg `Expr::init`. Body re-gated.
+        #[cfg(any())]
+        {
         let stream = match parser.parse() {
             Ok(s) => s,
             Err(e) => {
@@ -69,6 +75,12 @@ impl YAML {
                 Ok(Expr::init(E::Array, E::Array { items, ..Default::default() }, Loc::EMPTY))
             }
         }
+        } // cfg(any())
+        #[allow(unreachable_code)]
+        {
+            let _ = (log, &mut parser);
+            todo!("b2-blocked: bun_logger::js_ast::E (YAML::parse)")
+        }
     }
 }
 
@@ -92,9 +104,10 @@ impl From<AllocError> for YamlParseError {
 // Top-level free functions
 // ───────────────────────────────────────────────────────────────────────────
 
-// TODO(b2-blocked): bun_logger::js_ast::Expr — Parser::parse() is gated.
-#[cfg(any())]
-pub fn parse<Enc: Encoding>(input: &[Enc::Unit]) -> ParseResult<Enc> {
+pub fn parse<Enc: Encoding>(bump: &bumpalo::Bump, input: &[Enc::Unit]) -> ParseResult<Enc> {
+    // PORT NOTE: allocator param accepted for Zig signature parity; `Parser`
+    // currently uses the global allocator (`// allocator dropped`).
+    let _ = bump;
     let mut parser: Parser<Enc> = Parser::init(input);
 
     match parser.parse() {
@@ -402,6 +415,16 @@ pub trait Encoding: Copy + 'static {
     /// `enc.literal("...")` — comptime string literal in the target encoding.
     /// TODO(port): for Utf16 this needs `bun_str::w!("...")`; callers pass ASCII only.
     fn literal(s: &'static [u8]) -> &'static [Self::Unit];
+
+    /// Reinterpret a `&[Unit]` slice as `&[u8]` for `StringHashMap` keying
+    /// (`anchors` / `tag_handles`). Zig's `bun.StringHashMap` is keyed by
+    /// `[]const u8`; calls like `tag_handles.put(handle.slice(self.input), {})`
+    /// only type-check there for `unit() == u8` thanks to lazy generic
+    /// instantiation. Rust eagerly checks generics, so we route through this
+    /// method — identity for `u8` encodings, `unimplemented!()` for `Utf16`
+    /// (matching the Zig behavior of "compile error on Utf16 instantiation").
+    /// TODO(port): Utf16 needs a real keying story (transcode or u16-keyed map).
+    fn key_bytes(s: &[Self::Unit]) -> &[u8];
 }
 
 #[derive(Clone, Copy)]
@@ -421,6 +444,10 @@ impl Encoding for Latin1 {
     fn literal(s: &'static [u8]) -> &'static [u8] {
         s
     }
+    #[inline]
+    fn key_bytes(s: &[u8]) -> &[u8] {
+        s
+    }
 }
 
 impl Encoding for Utf8 {
@@ -431,6 +458,10 @@ impl Encoding for Utf8 {
         c
     }
     fn literal(s: &'static [u8]) -> &'static [u8] {
+        s
+    }
+    #[inline]
+    fn key_bytes(s: &[u8]) -> &[u8] {
         s
     }
 }
@@ -446,6 +477,12 @@ impl Encoding for Utf16 {
         // TODO(port): Zig used std.unicode.utf8ToUtf16LeStringLiteral. Rust needs
         // a const transcoding macro (e.g. bun_str::w!). Phase B.
         unimplemented!("Utf16::literal requires const utf8->utf16 macro")
+    }
+    fn key_bytes(_s: &[u16]) -> &[u8] {
+        // TODO(port): Zig's `bun.StringHashMap` is u8-keyed; the Zig source
+        // would also fail to compile this call for Utf16. Phase B decides
+        // whether to transcode or switch to a u16-keyed map.
+        unimplemented!("Utf16::key_bytes — StringHashMap is u8-keyed")
     }
 }
 
@@ -2025,15 +2062,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         ParseError::UnexpectedToken
     }
 
-    // TODO(b2-blocked): bun_logger::js_ast::Expr — calls parse_stream → parse_document → parse_node.
-    #[cfg(any())]
     pub fn parse(&mut self) -> Result<Stream<Enc>, ParseError> {
         self.scan(ScanOptions { first_scan: true, ..Default::default() })?;
         self.parse_stream()
     }
 
-    // TODO(b2-blocked): bun_logger::js_ast::Expr — calls parse_document.
-    #[cfg(any())]
     pub fn parse_stream(&mut self) -> Result<Stream<Enc>, ParseError> {
         let mut docs: Vec<Document> = Vec::new();
 
@@ -2098,10 +2131,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     // not part of the root expression.
 
     // TODO: move most of this into `scan()`
-    // TODO(b2-blocked): bun_collections::StringHashMap::put with generic Enc::Unit key —
-    //   `tag_handles.put(handle.slice(self.input), ())` needs `&[u8]` but slice yields
-    //   `&[Enc::Unit]`. Only reachable from parse_document (also gated).
-    #[cfg(any())]
     fn parse_directive(&mut self) -> Result<Directive, ParseError> {
         if self.token.indent != Indent::NONE {
             return Err(ParseError::InvalidDirective);
@@ -2160,7 +2189,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             self.try_skip_s_white()?;
 
             // TODO(port): StringHashMap key type; for Utf16 needs different keying.
-            self.tag_handles.put(handle.slice(self.input), ())?;
+            self.tag_handles
+                .put(Enc::key_bytes(handle.slice(self.input)), ())?;
 
             let prefix = self.parse_directive_tag_prefix()?;
             self.try_skip_to_new_line()?;
@@ -2207,13 +2237,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         Err(ParseError::InvalidDirective)
     }
 
-    // TODO(b2-blocked): bun_logger::js_ast::Expr — calls parse_node / parse_directive.
-    #[cfg(any())]
     pub fn parse_document(&mut self) -> Result<Document, ParseError> {
         let mut directives: Vec<Directive> = Vec::new();
 
-        self.anchors.clear_retaining_capacity();
-        self.tag_handles.clear_retaining_capacity();
+        // PORT NOTE: Zig `clearRetainingCapacity()`; the T2 `StringHashMap`
+        // wraps `std::HashMap`, whose `.clear()` already retains capacity.
+        self.anchors.clear();
+        self.tag_handles.clear();
 
         let mut has_yaml_directive = false;
 
@@ -2735,8 +2765,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 // MappingProps
 // ───────────────────────────────────────────────────────────────────────────
 
-// TODO(b2-blocked): bun_logger::js_ast::G::Property
-#[cfg(any())]
 pub struct MappingProps {
     list: Vec<G::Property>,
 }
@@ -3008,7 +3036,20 @@ impl Escape {
 // ───────────────────────────────────────────────────────────────────────────
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
-    // TODO(b2-blocked): bun_logger::js_ast::{Expr, E, ExprData}
+    // TODO(b2-blocked): bun_logger::js_ast::{Expr::init, E, ExprData}
+    //   Body constructs `E::*` payloads and matches on `ExprData` variants;
+    //   the T2 stub shapes are field-less `(())` newtypes. Re-gated body-only
+    //   so the `parse → parse_stream → parse_document → parse_node` call chain
+    //   compiles for downstream symbol resolution.
+    #[cfg(not(any()))]
+    fn parse_node(&mut self, opts: ParseNodeOptions<Enc>) -> Result<Expr, ParseError> {
+        if !self.stack_check.is_safe_to_recurse() {
+            return Err(ParseError::StackOverflow);
+        }
+        let _ = opts;
+        todo!("b2-blocked: bun_logger::js_ast::E (parse_node)")
+    }
+
     #[cfg(any())]
     fn parse_node(&mut self, opts: ParseNodeOptions<Enc>) -> Result<Expr, ParseError> {
         if !self.stack_check.is_safe_to_recurse() {
@@ -4455,22 +4496,25 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 let len: u8 = if cp < 0x10000 { 1 } else { 2 };
                 // TODO(port): need Enc::Unit==u16 push helper; Enc::ch only takes u8.
                 // Phase B: add `Enc::ch16(u16) -> Self::Unit` or specialize per encoding.
+                // Until that lands, fail loudly rather than silently emitting an empty
+                // decode (matches the Utf16 arms of the named-escape table above).
                 match len {
                     1 => {
                         let unit = u16::try_from(cp).unwrap();
-                        let _ = unit;
+                        let _ = (unit, &text);
                         // text.push(Enc::ch16(unit));
+                        return Err(ParseError::UnexpectedCharacter);
                     }
                     2 => {
                         let high = 0xD800u16 + u16::try_from((cp - 0x10000) >> 10).unwrap();
                         let low = 0xDC00u16 + u16::try_from((cp - 0x10000) & 0x3FF).unwrap();
-                        let _ = (high, low);
+                        let _ = (high, low, &text);
                         // text.push(Enc::ch16(high));
                         // text.push(Enc::ch16(low));
+                        return Err(ParseError::UnexpectedCharacter);
                     }
                     _ => unreachable!(),
                 }
-                let _ = text;
             }
             EncodingKind::Latin1 => {
                 if cp > 0xFF {
@@ -4571,14 +4615,24 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                 if Enc::wide(self.next()) == 0x21 /* '!' */ {
                     self.inc(1);
-                    // PORT NOTE: yaml.zig:3488-3491 always checks `tag_handles.contains(handle)`.
-                    // The only writer (parse_directive %TAG) is gated, so the table is provably
-                    // empty here; Zig therefore ALWAYS errors on a named handle `!foo!bar`.
-                    // Match that until parse_directive lands (at which point this becomes a
-                    // real contains_key check against `handle_or_shorthand`).
-                    let _ = (&mut range, &handle_or_shorthand);
-                    self.pos = off;
-                    return Err(ParseError::UnresolvedTagHandle);
+                    if !self
+                        .tag_handles
+                        .contains_key(Enc::key_bytes(handle_or_shorthand.slice(self.input)))
+                    {
+                        self.pos = off;
+                        return Err(ParseError::UnresolvedTagHandle);
+                    }
+
+                    range = self.string_range();
+                    self.try_skip_ns_tag_chars()?;
+                    let shorthand = range.end(self.pos);
+
+                    return Ok(Token::tag(TagInit {
+                        start,
+                        indent: self.line_indent,
+                        line: self.line,
+                        tag: NodeTag::Unknown(shorthand),
+                    }));
                 }
 
                 // primary

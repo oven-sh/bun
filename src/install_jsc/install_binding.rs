@@ -29,9 +29,9 @@ pub mod bun_install_js_bindings {
         todo!("install_binding::generate — gated on bun_jsc::host_fn proc-macro")
     }
 
-    // TODO(b2-blocked): bun_jsc::VirtualMachine::transpiler (field on stub VM)
-    // TODO(b2-blocked): bun_paths::join_abs_string_z (re-export from resolve_path)
-    // TODO(b2-blocked): bun_jsc::StringJsc::to_js_by_parse_json
+    // TODO(b2-blocked): bun_bundler::Transpiler (stub is opaque `Transpiler(())` —
+    //   needs `.resolver.env_loader` / `.resolver.get_package_manager()` / `.env`)
+    // TODO(b2-blocked): bun_install::Lockfile::load_from_dir (stub body is todo!())
     #[cfg(any())]
     pub fn js_parse_lockfile(global: &JSGlobalObject, frame: &bun_jsc::CallFrame) -> bun_jsc::JsResult<JSValue> {
         use std::io::Write as _;

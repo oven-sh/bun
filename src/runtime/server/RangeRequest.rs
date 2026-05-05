@@ -4,8 +4,7 @@
 //! (serve full body) rather than 416, matching common static-server behavior.
 
 use bun_str::strings;
-#[cfg(any())]
-use bun_uws::AnyRequest; // TODO(b2-blocked): bun_uws::AnyRequest::header (opaque stub)
+use bun_uws::AnyRequest;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum Result {
@@ -110,18 +109,16 @@ pub fn parse(header: &[u8], total: u64) -> Result {
     parse_raw(header).resolve(total)
 }
 
-#[cfg(any())]
-pub fn from_request(req: AnyRequest, total: u64) -> Result {
-    // TODO(b2-blocked): bun_uws::AnyRequest::header
+// PORT NOTE: Zig passed `req` by value; `bun_uws::AnyRequest::header` borrows
+// `&self` and returns `&[u8]` tied to it, so take `&AnyRequest` here.
+pub fn from_request(req: &AnyRequest, total: u64) -> Result {
     let Some(h) = req.header(b"range") else {
         return Result::None;
     };
     parse(h, total)
 }
 
-#[cfg(any())]
-pub fn raw_from_request(req: AnyRequest) -> Raw {
-    // TODO(b2-blocked): bun_uws::AnyRequest::header
+pub fn raw_from_request(req: &AnyRequest) -> Raw {
     let Some(h) = req.header(b"range") else {
         return Raw::None;
     };

@@ -300,14 +300,10 @@ impl<R> Maybe<R, bun_sys::Error> {
     }
 }
 
-// `errno_sys*` family: blocked on `bun_sys::get_errno` accepting the generic
-// `SyscallRc` (the `GetErrno` trait is not exported from `bun_errno`/`bun_sys`,
-// so we cannot bound `SyscallRc: GetErrno` here without editing lower tiers).
-// TODO(b2-blocked): bun_sys::GetErrno — once exported, add `SyscallRc: GetErrno`
-// supertrait and un-gate this impl.
-#[cfg(any())]
+// `errno_sys*` family: bound `Rc: bun_sys::GetErrno` so the per-platform
+// `bun_sys::get_errno` accepts it (Zig used `rc: anytype`).
 impl<R> Maybe<R, bun_sys::Error> {
-    pub fn errno_sys<Rc: SyscallRc>(rc: Rc, syscall: bun_sys::Tag) -> Option<Self> {
+    pub fn errno_sys<Rc: SyscallRc + bun_sys::GetErrno>(rc: Rc, syscall: bun_sys::Tag) -> Option<Self> {
         #[cfg(windows)]
         {
             if !Rc::IS_NTSTATUS {
@@ -327,7 +323,7 @@ impl<R> Maybe<R, bun_sys::Error> {
         }
     }
 
-    pub fn errno_sys_fd<Rc: SyscallRc>(rc: Rc, syscall: bun_sys::Tag, fd: bun_sys::Fd) -> Option<Self> {
+    pub fn errno_sys_fd<Rc: SyscallRc + bun_sys::GetErrno>(rc: Rc, syscall: bun_sys::Tag, fd: bun_sys::Fd) -> Option<Self> {
         #[cfg(windows)]
         {
             if !Rc::IS_NTSTATUS {
@@ -348,7 +344,7 @@ impl<R> Maybe<R, bun_sys::Error> {
         }
     }
 
-    pub fn errno_sys_p<Rc: SyscallRc>(
+    pub fn errno_sys_p<Rc: SyscallRc + bun_sys::GetErrno>(
         rc: Rc,
         syscall: bun_sys::Tag,
         file_path: impl AsRef<[u8]>,
@@ -375,7 +371,7 @@ impl<R> Maybe<R, bun_sys::Error> {
         }
     }
 
-    pub fn errno_sys_fp<Rc: SyscallRc>(
+    pub fn errno_sys_fp<Rc: SyscallRc + bun_sys::GetErrno>(
         rc: Rc,
         syscall: bun_sys::Tag,
         fd: bun_sys::Fd,
@@ -402,7 +398,7 @@ impl<R> Maybe<R, bun_sys::Error> {
         }
     }
 
-    pub fn errno_sys_pd<Rc: SyscallRc>(
+    pub fn errno_sys_pd<Rc: SyscallRc + bun_sys::GetErrno>(
         rc: Rc,
         syscall: bun_sys::Tag,
         file_path: impl AsRef<[u8]>,

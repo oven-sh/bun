@@ -15,14 +15,17 @@ use bun_http::MimeType;
 use bun_string::strings;
 
 use bun_jsc::{
-    self as jsc, c as js, ConsoleObject, JSArrayIterator, JSGlobalObject, JSPropertyIterator,
-    JSValue, JsError, MarkedArgumentBuffer, ModuleLoader, WebCore, ZigException,
+    self as jsc, c as js, zig_exception, ConsoleObject, JSArrayIterator, JSGlobalObject,
+    JSPropertyIterator, JSValue, JsError, MarkedArgumentBuffer, ModuleLoader, WebCore,
 };
 use bun_jsc::VirtualMachine::VirtualMachine;
-// TODO(b2-blocked): bun_runtime::api::BuildMessage
-// TODO(b2-blocked): bun_runtime::api::ResolveMessage
+// PORT NOTE: Zig referenced these via `bun.jsc.API.{BuildMessage,ResolveMessage}`.
+// The stub structs live in `bun_jsc`, but lack `JsClass` impls so
+// `value.as_::<ResolveMessage>()` cannot dispatch yet.
+// TODO(b2-blocked): bun_jsc::ResolveMessage (JsClass impl)
+// TODO(b2-blocked): bun_jsc::BuildMessage (JsClass impl)
 #[cfg(any())]
-use bun_runtime::api::{BuildMessage, ResolveMessage};
+use bun_jsc::{BuildMessage, ResolveMessage};
 // TODO(b2-blocked): bun_resolver::Result (real fields — currently opaque stub)
 use bun_resolver::Result as ResolveResult;
 
@@ -56,9 +59,9 @@ impl<'a> MacroContext<'a> {
     }
 }
 
-#[cfg(any())]
 impl<'a> MacroContext<'a> {
     // TODO(b2-blocked): bun_bundler::Transpiler (real fields — currently opaque stub)
+    #[cfg(any())]
     pub fn init(transpiler: &'a mut Transpiler) -> MacroContext<'a> {
         MacroContext {
             macros: MacroMap::new(),
@@ -69,10 +72,6 @@ impl<'a> MacroContext<'a> {
         }
     }
 
-    // TODO(b2-blocked): bun_js_parser::Expr::Data::Store
-    // TODO(b2-blocked): bun_jsc::ModuleLoader::HardcodedModule
-    // TODO(b2-blocked): bun_resolver::Resolver::resolve
-    // TODO(b2-blocked): bun_jsc::VirtualMachine
     pub fn call(
         &mut self,
         import_record_path: &[u8],
@@ -83,6 +82,12 @@ impl<'a> MacroContext<'a> {
         caller: Expr,
         function_name: &[u8],
     ) -> Result<Expr, Error> {
+        // TODO(b2-blocked): bun_jsc::ModuleLoader::HardcodedModule::Alias
+        // TODO(b2-blocked): bun_resolver::Resolver::resolve (opaque stub)
+        // TODO(b2-blocked): bun_resolver::Result (path_pair field — opaque stub)
+        // TODO(b2-blocked): bun_jsc::VirtualMachine::VirtualMachine (run_with_api_lock ctx-ptr form / event_loop().ensure_waker)
+        #[cfg(any())]
+        {
         Expr::Data::Store::set_disable_reset(true);
         Stmt::Data::Store::set_disable_reset(true);
         let _reset_guard = scopeguard::guard((), |_| {
@@ -226,8 +231,13 @@ impl<'a> MacroContext<'a> {
         };
 
         macro_.vm.run_with_api_lock(&mut wrapper, Wrapper::call);
-        Ok(wrapper.ret?)
+        return Ok(wrapper.ret?);
         // this.macros.getOrPut(key: K)
+        }
+        let _ = (
+            import_record_path, source_dir, log, source, import_range, function_name,
+        );
+        Ok(caller)
     }
 }
 
@@ -253,7 +263,6 @@ pub struct Macro<'a> {
     pub disabled: bool,
 }
 
-#[cfg(any())]
 impl<'a> Macro<'a> {
     // TODO(port): see note in MacroContext::call — Zig uses an undefined-resolver sentinel.
     fn disabled_sentinel() -> Self {
@@ -262,9 +271,6 @@ impl<'a> Macro<'a> {
         todo!("port: disabled sentinel — restructure resolver/vm as Option<NonNull<_>> or enum {{ Disabled, Loaded(..) }}")
     }
 
-    // TODO(b2-blocked): bun_jsc::VirtualMachine
-    // TODO(b2-blocked): bun_jsc::initialize
-    // TODO(b2-blocked): bun_resolver::Resolver (real `opts` field — currently opaque stub)
     pub fn init(
         // allocator param deleted — always default_allocator
         resolver: &'a mut Resolver,
@@ -275,6 +281,11 @@ impl<'a> Macro<'a> {
         specifier: &[u8],
         hash: i32,
     ) -> Result<Macro<'a>, Error> {
+        // TODO(b2-blocked): bun_jsc::VirtualMachine::VirtualMachine (init / jsc_vm / load_macro_entry_point byte-slice sig)
+        // TODO(b2-blocked): bun_jsc::PromiseResult
+        // TODO(b2-blocked): bun_resolver::Resolver (real `opts` field — currently opaque stub)
+        #[cfg(any())]
+        {
         // TODO(port): narrow error set
         let vm: &'static VirtualMachine = if VirtualMachine::is_loaded() {
             VirtualMachine::get()
@@ -319,12 +330,15 @@ impl<'a> Macro<'a> {
             _ => {}
         }
 
-        Ok(Macro {
+        return Ok(Macro {
             vm,
             resolver,
             resolved: ResolveResult::default(), // TODO(port): Zig leaves `resolved` undefined
             disabled: false,
-        })
+        });
+        }
+        let _ = (resolver, input_specifier, log, env, function_name, specifier, hash);
+        Err(err!("MacroLoadError"))
     }
 }
 
@@ -334,18 +348,15 @@ impl<'a> Macro<'a> {
 
 pub struct Runner;
 
-// TODO(b2-blocked): bun_jsc::JSValue
-#[cfg(any())]
 type VisitMap = HashMap<JSValue, Expr>;
 
-// TODO(b2-blocked): bun_jsc::c::JSObjectRef
-// TODO(b2-blocked): bun_jsc::ZigException::Holder
-#[cfg(any())]
 thread_local! {
     static ARGS_BUF: RefCell<[js::JSObjectRef; 3]> =
         const { RefCell::new([core::ptr::null_mut(); 3]) };
-    static EXCEPTION_HOLDER: RefCell<ZigException::Holder> =
-        const { RefCell::new(ZigException::Holder::ZEROED) };
+    // PORT NOTE: `Holder` has no `const ZEROED` in the stub surface; use the
+    // non-const lazy initializer (cold path — written once per macro call).
+    static EXCEPTION_HOLDER: RefCell<zig_exception::Holder> =
+        RefCell::new(zig_exception::Holder::init());
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -388,9 +399,6 @@ impl From<MacroError> for Error {
     }
 }
 
-// TODO(b2-blocked): bun_jsc::JSGlobalObject
-// TODO(b2-blocked): bun_jsc::JSValue
-#[cfg(any())]
 pub struct Run<'a> {
     pub caller: Expr,
     pub function_name: &'a [u8],
@@ -403,13 +411,8 @@ pub struct Run<'a> {
     pub visited: VisitMap,
     pub is_top_level: bool,
 }
-/// B-2 stub: real struct gated above (needs `bun_jsc::JSGlobalObject`).
-pub struct Run<'a>(core::marker::PhantomData<&'a ()>);
 
-#[cfg(any())]
 impl<'a> Run<'a> {
-    // TODO(b2-blocked): bun_jsc::MarkedArgumentBuffer
-    // TODO(b2-blocked): bun_jsc::c::JSObjectCallAsFunctionReturnValueHoldingAPILock
     pub fn run_async(
         macro_: Macro<'a>,
         log: &'a mut Log,
@@ -419,6 +422,10 @@ impl<'a> Run<'a> {
         source: &'a Source,
         id: i32,
     ) -> Result<Expr, MacroError> {
+        // TODO(b2-blocked): bun_jsc::VirtualMachine::VirtualMachine (macros / global fields)
+        // TODO(b2-blocked): bun_jsc::MarkedArgumentBuffer (len / as_ptr — opaque FFI handle)
+        #[cfg(any())]
+        {
         let Some(macro_callback) = macro_.vm.macros.get(id) else {
             return Ok(caller);
         };
@@ -449,25 +456,30 @@ impl<'a> Run<'a> {
 
         // `runner.visited` dropped at scope exit (was `defer runner.visited.deinit(allocator)`)
 
-        runner.run(result)
+        return runner.run(result);
+        }
+        let _ = (macro_, log, function_name, args, source, id);
+        Ok(caller)
     }
 
-    // TODO(b2-blocked): bun_jsc::ConsoleObject::Formatter::Tag
     pub fn run(&mut self, value: JSValue) -> Result<Expr, MacroError> {
-        use ConsoleObject::Formatter::Tag as T;
-        match ConsoleObject::Formatter::Tag::get(value, self.global)?.tag {
-            T::Error => self.coerce::<{ T::Error }>(value),
-            T::Undefined => self.coerce::<{ T::Undefined }>(value),
-            T::Null => self.coerce::<{ T::Null }>(value),
-            T::Private => self.coerce::<{ T::Private }>(value),
-            T::Boolean => self.coerce::<{ T::Boolean }>(value),
-            T::Array => self.coerce::<{ T::Array }>(value),
-            T::Object => self.coerce::<{ T::Object }>(value),
-            T::ToJSON | T::JSON => self.coerce::<{ T::JSON }>(value),
-            T::Integer => self.coerce::<{ T::Integer }>(value),
-            T::Double => self.coerce::<{ T::Double }>(value),
-            T::String => self.coerce::<{ T::String }>(value),
-            T::Promise => self.coerce::<{ T::Promise }>(value),
+        // TODO(b2-blocked): bun_jsc::ConsoleObject::formatter::Tag (Private / ToJSON variants)
+        #[cfg(any())]
+        {
+        use ConsoleObject::formatter::Tag as T;
+        match ConsoleObject::formatter::Tag::get(value, self.global)?.tag {
+            T::Error => self.coerce(T::Error, value),
+            T::Undefined => self.coerce(T::Undefined, value),
+            T::Null => self.coerce(T::Null, value),
+            T::Private => self.coerce(T::Private, value),
+            T::Boolean => self.coerce(T::Boolean, value),
+            T::Array => self.coerce(T::Array, value),
+            T::Object => self.coerce(T::Object, value),
+            T::ToJSON | T::JSON => self.coerce(T::JSON, value),
+            T::Integer => self.coerce(T::Integer, value),
+            T::Double => self.coerce(T::Double, value),
+            T::String => self.coerce(T::String, value),
+            T::Promise => self.coerce(T::Promise, value),
             _ => {
                 let name = value.get_class_info_name().unwrap_or(b"unknown");
 
@@ -482,36 +494,38 @@ impl<'a> Run<'a> {
                         ),
                     )
                     .expect("unreachable");
-                Err(MacroError::MacroFailed)
+                return Err(MacroError::MacroFailed);
             }
         }
+        }
+        let _ = value;
+        Err(MacroError::MacroFailed)
     }
 
-    // TODO(port): `ConsoleObject::Formatter::Tag` must derive `core::marker::ConstParamTy`
-    // for this const-generic dispatch to compile. Phase B may instead inline each arm
-    // into `run` and drop the const generic.
-    //
-    // TODO(b2-blocked): bun_jsc::ConsoleObject::Formatter::Tag
-    // TODO(b2-blocked): bun_jsc::JSArrayIterator
-    // TODO(b2-blocked): bun_jsc::JSPropertyIterator
-    // TODO(b2-blocked): bun_jsc::WebCore::Blob
-    // TODO(b2-blocked): bun_jsc::WebCore::Response
-    // TODO(b2-blocked): bun_jsc::WebCore::Request
-    // TODO(b2-blocked): bun_runtime::api::ResolveMessage
-    // TODO(b2-blocked): bun_runtime::api::BuildMessage
-    // TODO(b2-blocked): bun_js_parser::Expr::init
-    // TODO(b2-blocked): bun_js_parser::Expr::from_blob
-    // TODO(b2-blocked): bun_js_parser::E::Array
-    // TODO(b2-blocked): bun_js_parser::E::Object
-    // TODO(b2-blocked): bun_js_parser::E::Number
-    // TODO(b2-blocked): bun_js_parser::E::Null
-    // TODO(b2-blocked): bun_js_parser::G::Property
-    pub fn coerce<const TAG: ConsoleObject::Formatter::Tag>(
+    // PORT NOTE: Zig dispatched on `comptime tag`; that requires
+    // `Tag: core::marker::ConstParamTy`, which the stub enum does not derive.
+    // Reshaped to a runtime `tag` param — every call site in `run` already
+    // matches once, so the comptime monomorphization was redundant.
+    // PERF(port): was comptime monomorphization — profile in Phase B.
+    pub fn coerce(
         &mut self,
+        tag: ConsoleObject::formatter::Tag,
         value: JSValue,
     ) -> Result<Expr, MacroError> {
-        use ConsoleObject::Formatter::Tag as T;
-        match TAG {
+        // TODO(b2-blocked): bun_jsc::ConsoleObject::formatter::Tag (Private / ToJSON variants)
+        // TODO(b2-blocked): bun_jsc::WebCore::Blob (JsClass + get_blob_without_call_frame)
+        // TODO(b2-blocked): bun_jsc::WebCore::Response (JsClass + get_blob_without_call_frame)
+        // TODO(b2-blocked): bun_jsc::WebCore::Request (JsClass + get_blob_without_call_frame)
+        // TODO(b2-blocked): bun_jsc::ResolveMessage (JsClass impl)
+        // TODO(b2-blocked): bun_jsc::BuildMessage (JsClass impl)
+        // TODO(b2-blocked): bun_jsc::VirtualMachine::VirtualMachine (uncaught_exception / wait_for_promise / unhandled_rejection / jsc_vm)
+        // TODO(b2-blocked): bun_jsc::AnyPromise (status / result)
+        // TODO(b2-blocked): bun_js_parser::Expr::from_blob
+        // TODO(b2-blocked): bun_string::String::encode_into
+        #[cfg(any())]
+        {
+        use ConsoleObject::formatter::Tag as T;
+        match tag {
             T::Error => {
                 let _ = self.macro_.vm.uncaught_exception(self.global, value, false);
                 return Ok(self.caller);
@@ -752,16 +766,14 @@ impl<'a> Run<'a> {
                 ),
             )
             .expect("unreachable");
+        return Err(MacroError::MacroFailed);
+        }
+        let _ = (tag, value);
         Err(MacroError::MacroFailed)
     }
 }
 
-#[cfg(any())]
 impl Runner {
-    // TODO(b2-blocked): bun_jsc::VirtualMachine
-    // TODO(b2-blocked): bun_jsc::MarkedArgumentBuffer
-    // TODO(b2-blocked): bun_jsc::ZigException::Holder
-    // TODO(b2-blocked): bun_js_parser::ExprData
     pub fn run(
         macro_: Macro<'_>,
         log: &mut Log,
@@ -771,6 +783,11 @@ impl Runner {
         id: i32,
         javascript_object: JSValue,
     ) -> Result<Expr, MacroError> {
+        // TODO(b2-blocked): bun_jsc::VirtualMachine::VirtualMachine (global field)
+        // TODO(b2-blocked): bun_jsc::MarkedArgumentBuffer (owning ctor — current API is scoped-closure only)
+        // TODO(b2-blocked): bun_core::Output::prettyln
+        #[cfg(any())]
+        {
         if cfg!(debug_assertions) {
             Output::prettyln(format_args!(
                 "<r><d>[macro]<r> call <d><b>{}<r>",
@@ -867,7 +884,10 @@ impl Runner {
             );
         }
         CALL_STATE.with(|s| s.set(core::ptr::null_mut()));
-        data.result
+        return data.result;
+        }
+        let _ = (macro_, log, function_name, source, id, javascript_object);
+        Ok(caller)
     }
 }
 

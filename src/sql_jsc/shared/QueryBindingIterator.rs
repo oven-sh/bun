@@ -1,18 +1,18 @@
-use bun_jsc::{JSArrayIterator, JSGlobalObject, JSValue, JsResult};
+use crate::jsc::{JSArrayIterator, JSGlobalObject, JSValue, JsResult};
 
 use super::object_iterator::ObjectIterator;
 
-pub enum QueryBindingIterator {
-    Array(JSArrayIterator),
-    Objects(ObjectIterator),
+pub enum QueryBindingIterator<'a> {
+    Array(JSArrayIterator<'a>),
+    Objects(ObjectIterator<'a>),
 }
 
-impl QueryBindingIterator {
+impl<'a> QueryBindingIterator<'a> {
     pub fn init(
         array: JSValue,
         columns: JSValue,
-        global: &JSGlobalObject,
-    ) -> JsResult<QueryBindingIterator> {
+        global: &'a JSGlobalObject,
+    ) -> JsResult<QueryBindingIterator<'a>> {
         if columns.is_empty_or_undefined_or_null() {
             return Ok(Self::Array(JSArrayIterator::init(array, global)?));
         }
@@ -21,9 +21,12 @@ impl QueryBindingIterator {
             array,
             columns,
             global_object: global,
-            columns_count: columns.get_length(global)?,
-            array_length: array.get_length(global)?,
-            ..Default::default()
+            cell_i: 0,
+            row_i: 0,
+            current_row: JSValue::ZERO,
+            columns_count: columns.get_length(global)? as u32,
+            array_length: array.get_length(global)? as u32,
+            any_failed: false,
         }))
     }
 
@@ -69,7 +72,7 @@ impl QueryBindingIterator {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/sql_jsc/shared/QueryBindingIterator.zig (64 lines)
-//   confidence: medium
+//   confidence: high
 //   todos:      0
-//   notes:      ObjectIterator field types/lifetime (global_object, index widths) deferred to Phase B; JSArrayIterator.next() return type assumed JsResult<Option<JSValue>>
+//   notes:      lifetime <'a> threaded through both variants; ObjectIterator filled explicitly (no Default — global_object is a borrow).
 // ──────────────────────────────────────────────────────────────────────────

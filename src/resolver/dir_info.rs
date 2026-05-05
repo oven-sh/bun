@@ -3,7 +3,10 @@ use core::ptr::NonNull;
 use enumset::{EnumSet, EnumSetType};
 
 use bun_alloc as allocators;
+#[allow(unused_imports)]
 use bun_core::feature_flags as FeatureFlags;
+#[allow(unused_imports)]
+use bun_core::Generation;
 use bun_sys::Fd;
 
 #[allow(unused_imports)]
@@ -11,17 +14,8 @@ use crate::fs;
 use crate::package_json::PackageJSON;
 use crate::tsconfig_json::TSConfigJSON;
 
-// TODO(b2-blocked): bun_core::Generation — defined in top-level `bun.rs`, not yet
-// re-exported via bun_core. Mirroring the Zig `pub const Generation = u16;` locally.
-type Generation = u16;
-
-// TODO(b2-blocked): bun_alloc::IndexType — gated inside bun_alloc (BSS section).
-// Local mirror of `packed struct(u32) { index: u31, is_overflow: bool }` so the
-// DirInfo struct shape compiles. Replace with `bun_alloc::IndexType` once un-gated.
-#[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub struct IndexType(u32);
-const NOT_FOUND: IndexType = IndexType(u32::MAX >> 1);
+pub use allocators::IndexType;
+use allocators::NOT_FOUND;
 
 pub type Index = IndexType;
 
@@ -121,7 +115,6 @@ impl DirInfo {
         Fd::INVALID
     }
 
-    #[cfg(any())] // TODO(b2-blocked): bun_resolver::fs::DirEntry — return type gated until fs.rs lands.
     pub fn get_entries(&self, generation: Generation) -> Option<&mut fs::DirEntry> {
         // TODO(b2-blocked): bun_resolver::fs::FileSystem (RealFS::entries_at) — gated until fs.rs lands.
         #[cfg(any())]
@@ -138,7 +131,6 @@ impl DirInfo {
         None
     }
 
-    #[cfg(any())] // TODO(b2-blocked): bun_resolver::fs::DirEntry — return type gated until fs.rs lands.
     pub fn get_entries_const(&self) -> Option<&fs::DirEntry> {
         // TODO(b2-blocked): bun_resolver::fs::FileSystem — gated until fs.rs lands.
         #[cfg(any())]
@@ -155,14 +147,15 @@ impl DirInfo {
     }
 
     pub fn get_parent(&self) -> Option<&mut DirInfo> {
-        // TODO(b2-blocked): bun_alloc::BSSMap::instance — per-type singleton not yet wired.
+        // TODO(b2-blocked): bun_alloc::BSSMapInner::at_index — full impl gated inside bun_alloc
+        // (per-type singleton + at_index live in the `_bss_gated` module).
         #[cfg(any())]
         { return HashMap::instance().at_index(self.parent); }
         None
     }
 
     pub fn get_enclosing_browser_scope(&self) -> Option<&mut DirInfo> {
-        // TODO(b2-blocked): bun_alloc::BSSMap::instance — per-type singleton not yet wired.
+        // TODO(b2-blocked): bun_alloc::BSSMapInner::at_index — full impl gated inside bun_alloc.
         #[cfg(any())]
         { return HashMap::instance().at_index(self.enclosing_browser_scope); }
         None
@@ -208,8 +201,6 @@ impl DirInfo {
 // PORT NOTE: Zig `BSSMap(DirInfo, COUNT, store_keys=false, est_key_len=128, rm_slash=true)`;
 // Rust splits the comptime branch — `store_keys=false` → `BSSMapInner<V, COUNT, RM_SLASH>`.
 // `est_key_len` is unused on the inner shape. COUNT mirrors `fs::preallocate::counts::DIR_ENTRY`.
-// TODO(b2-blocked): bun_alloc::BSSMapInner — gated inside bun_alloc.
-#[cfg(any())]
 pub type HashMap = allocators::BSSMapInner<DirInfo, 2048, true>;
 
 // ──────────────────────────────────────────────────────────────────────────

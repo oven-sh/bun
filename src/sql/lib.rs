@@ -1,6 +1,6 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
-// B-2: module tree wired in. Gated modules carry `#[cfg(any())]` until their
-// cross-crate deps land (see TODO(b2-blocked) markers inside).
+// B-2: module tree fully wired in. Remaining cross-tier deps are noted inline
+// as TODO(b2-blocked) (see prepared_statement::ExecuteParams re: sql_jsc::Value).
 
 pub mod shared {
     #[path = "SQLQueryResultMode.rs"]
@@ -88,21 +88,10 @@ pub mod mysql {
         pub mod column_definition41;
         #[path = "NewWriter.rs"]
         pub mod new_writer;
-        #[cfg(any())]
-        // TODO(b2-blocked): bun_sql_jsc::mysql::mysql_value::Value — `Value` was a *_jsc
-        // re-export deleted from MySQLTypes; param encoding needs the jsc-side type.
         #[path = "PreparedStatement.rs"]
         pub mod prepared_statement;
         #[path = "NewReader.rs"]
         pub mod new_reader;
-        #[cfg(any())]
-        // TODO(b2-blocked): bun_boringssl_sys::{BIO_new_mem_buf, BIO_free,
-        // PEM_read_bio_RSA_PUBKEY, RSA_public_encrypt, RSA_size, RSA_free,
-        // RSA_PKCS1_OAEP_PADDING, ERR_clear_error, ERR_get_error,
-        // ERR_error_string, ERR_load_ERR_strings, ERR_load_crypto_strings} —
-        // present in boringssl.zig but not yet ported to boringssl.rs.
-        // Also: bun_jsc::VirtualMachine (higher-tier) for the ENGINE* arg to
-        // SHA*::hash — cannot land here regardless.
         #[path = "Auth.rs"]
         pub mod auth;
     }

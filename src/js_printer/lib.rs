@@ -1,13 +1,11 @@
 //! JavaScript printer — translates the AST back to source text.
 //! Port of src/js_printer/js_printer.zig.
 //!
-//! B-2 UN-GATED. analyze_transpiled_module, string-escape helpers, Writer/BufferWriter,
-//! Indentation, ExprFlag, RequireOrImportMeta, RuntimeTranspilerCache vtable,
-//! SourceMapHandler, and the enum/const surface compile for real against
-//! `bun_sourcemap`. The `Printer` impl block, `Options<'a>`, `renamer.rs`, and
-//! the top-level `print_*` entry points stay `#[cfg(any())]`-gated on
-//! `bun_js_parser` (which itself compiles, but transitively pulls in
-//! `bun_interchange::yaml` which does not — see TODO(b2-blocked) notes inline).
+//! B-2 UN-GATED. `bun_js_parser` is now linked: `Options<'a>`, `renamer`,
+//! `ImportVariant::determine`, and the small AST helpers compile for real.
+//! The `Printer` impl block and the top-level `print_*` entry points stay
+//! `#[cfg(any())]`-gated until the per-node `bun_js_parser::ast::{e,s,b,g}`
+//! method surface (printing helpers, op tables) is filled in upstream.
 
 #![allow(unused, nonstandard_style, clippy::all)]
 #![allow(unsafe_op_in_unsafe_fn)]
@@ -54,22 +52,7 @@ impl Write for Vec<u8> {
     }
 }
 
-/// Local stand-in for `bun_js_parser` while that crate's dependency graph is
-/// being un-gated (B-2). `bun_js_parser` itself compiles, but its hard dep
-/// `bun_interchange` does not (yaml.rs borrowck + missing `bun_string::parse_double`),
-/// so the crate cannot be linked yet. Only the handful of leaf types the
-/// un-gated printer surface touches are mirrored here.
-// TODO(b2-blocked): bun_interchange::yaml — once it compiles, drop this shim
-// and `use bun_js_parser as js_ast` (the real surface is ready upstream).
-mod js_ast {
-    #[derive(Copy, Clone, Hash, PartialEq, Eq, Default, Debug)]
-    pub struct Ref(pub u64);
-    impl Ref {
-        pub const NONE: Ref = Ref(0);
-    }
-    #[derive(Copy, Clone, Default)]
-    pub struct Expr;
-}
+use bun_js_parser as js_ast;
 use js_ast::Ref;
 use bun_options_types::import_record::Flags as ImportRecordFlags;
 
@@ -95,31 +78,13 @@ pub enum CssInJsBehavior { #[default] Facade, FacadeOnlyCssFiles, AutoOnlyCssFil
 pub struct FsPath(());
 
 // ──────────────────────────────────────────────────────────────────────────
-// renamer — Phase-A draft preserved on disk in `renamer.rs`. The required
-// `bun_js_parser::ast::symbol::{Map, Symbol, SlotNamespace}` / `Scope` /
-// `lexer::{Keywords, StrictModeReservedWords}` surface now exists upstream,
-// but `bun_js_parser` cannot be linked (transitively blocked by
-// `bun_interchange::yaml` not compiling). Additionally contains four
-// `Box::leak` sites that must be reworked per PORTING.md §Forbidden
-// (`TinyString::init`, `NumberScope::find_unused_name` ×2,
-// `ExportRenamer::next_renamed_name`) — replace with arena-backed
-// `bumpalo::Bump` once the AST arena is threaded through.
+// renamer — Phase-A draft in `renamer.rs`. The five former `Box::leak` sites
+// have been replaced with `bumpalo::Bump`-backed allocation (PORTING.md §Forbidden);
+// renamed-name strings are arena-owned and typed `*const [u8]` (PORTING.md §Allocators).
+// Phase B threads the AST `'bump` lifetime to replace the raw pointers.
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
 #[path = "renamer.rs"]
 pub mod renamer;
-// TODO(b2-blocked): bun_interchange::yaml (blocks bun_js_parser link)
-// TODO(b2-blocked): bun_collections::StringHashMap::{get_adapted,contains_adapted,put_no_clobber,put_assume_capacity,ensure_total_capacity}
-// TODO(b2-blocked): bun_collections::StringHashMapContext::pre
-#[cfg(not(any()))]
-pub mod renamer {
-    //! B-2 shadow stub — un-gate `renamer.rs` once bun_js_parser's real ast/symbol
-    //! surface lands.
-    pub struct NoOpRenamer(());
-    pub struct NumberRenamer(());
-    pub struct MinifyRenamer(());
-    pub enum Renamer<'a> { NoOp(core::marker::PhantomData<&'a ()>), Number, Minify }
-}
 use renamer as rename;
 
 /// Map of mangled property `Ref` → final mangled name bytes.
@@ -406,6 +371,7 @@ pub mod analyze_transpiled_module {
             self.values.push(value);
             false
         }
+        #[allow(dead_code)]
         fn swap_remove(&mut self, key: &K) -> Option<V> {
             let i = self.index.remove(key)?;
             self.keys.swap_remove(i);
@@ -414,6 +380,14 @@ pub mod analyze_transpiled_module {
                 self.index.insert(self.keys[i], i);
             }
             Some(v)
+        }
+        /// Replace `old` with `new` **in place**, preserving insertion order.
+        /// Mirrors Zig `keys()[idx] = new; reIndex()`.
+        fn rename_key(&mut self, old: &K, new: K) -> bool {
+            let Some(i) = self.index.remove(old) else { return false };
+            self.keys[i] = new;
+            self.index.insert(new, i);
+            true
         }
     }
 
@@ -540,12 +514,9 @@ pub mod analyze_transpiled_module {
             for item in self.buffer.iter_mut() {
                 if *item == old_id { *item = new_id; }
             }
-            if let Some(v) = self.requested_modules.swap_remove(&old_id) {
-                // Zig preserved insertion order via reIndex(); swap_remove does not.
-                // Acceptable: callers re-serialize immediately after.
-                // PERF(port): verify ordering is not load-bearing for JSC linking.
-                self.requested_modules.insert_if_absent(new_id, v);
-            }
+            // Zig: `requested_modules.keys()[idx] = new_id; reIndex()` — must preserve
+            // insertion order (serialized verbatim into ModuleInfo for JSC).
+            self.requested_modules.rename_key(&old_id, new_id);
         }
 
         /// find any exports marked as 'local' that are actually 'indirect' and fix them
@@ -743,11 +714,42 @@ impl Whitespacer {
     }
 }
 
+#[doc(hidden)]
+pub const fn _ws_minify_len(s: &[u8]) -> usize {
+    let mut n = 0;
+    let mut i = 0;
+    while i < s.len() {
+        if s[i] != b' ' { n += 1; }
+        i += 1;
+    }
+    n
+}
+
+#[doc(hidden)]
+pub const fn _ws_minify<const N: usize>(s: &[u8]) -> [u8; N] {
+    let mut out = [0u8; N];
+    let mut i = 0;
+    let mut j = 0;
+    while i < s.len() {
+        if s[i] != b' ' {
+            out[j] = s[i];
+            j += 1;
+        }
+        i += 1;
+    }
+    out
+}
+
 /// Compile-time helper: produce a `Whitespacer` whose `.minify` strips spaces.
-// TODO(port): Zig computed `.minify` at comptime by stripping ' '. In Rust, use a
-// `macro_rules! ws { ($s:literal) => { ... } }` backed by `const_format` in Phase B.
-pub const fn ws(str: &'static [u8]) -> Whitespacer {
-    Whitespacer { normal: str, minify: str /* TODO(port): strip spaces at compile time */ }
+/// Zig computed `.minify` at comptime by stripping ' ' (js_printer.zig:92-108).
+#[macro_export]
+macro_rules! ws {
+    ($s:expr) => {{
+        const NORMAL: &'static [u8] = $s;
+        const N: usize = $crate::_ws_minify_len(NORMAL);
+        const MINIFY: [u8; N] = $crate::_ws_minify::<N>(NORMAL);
+        $crate::Whitespacer { normal: NORMAL, minify: &MINIFY }
+    }};
 }
 
 pub fn estimate_length_for_utf8<const ASCII_ONLY: bool, const QUOTE_CHAR: u8>(input: &[u8]) -> usize {
@@ -990,32 +992,28 @@ impl<'a> SourceMapHandler<'a> {
         ctx: &'a mut T,
         handler: fn(&mut T, SourceMap::Chunk, &logger::Source) -> Result<(), bun_core::Error>,
     ) -> SourceMapHandler<'a> {
-        // TODO(port): proc-macro — Zig used a comptime fn-type generator (`For`) to monomorphize
-        // the typed `handler` into the erased `callback`. Phase B should generate a thunk per `T`.
+        // TODO(port): Zig used a comptime fn-type generator (`For`) to monomorphize
+        // the typed `handler` into the erased `callback`. Rust cannot bake a runtime
+        // `fn(&mut T, ..)` into a captureless `fn(*mut (), ..)` thunk without either
+        // (a) const-generic fn pointers or (b) widening the struct to carry the typed
+        // pointer. Until one of those lands, fail loudly rather than silently dropping
+        // source-map chunks (PORTING.md: "Flagging is better than wrong code").
         let _ = handler;
         SourceMapHandler {
             // SAFETY: `ctx` is a live `&mut T` so the pointer is non-null; type-erased to `*mut ()`
             // and cast back to `*mut T` inside the thunk before dereference.
             ctx: unsafe { NonNull::new_unchecked(ctx as *mut T as *mut ()) },
-            callback: |_, _, _| Ok(()), // TODO(port): wire thunk
+            callback: |_, _, _| unreachable!("TODO(port): SourceMapHandler thunk not wired"),
             _marker: core::marker::PhantomData,
         }
     }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Options — gated on bun_js_parser (transitively blocked by bun_interchange).
-// SourceMapHandler above is un-gated (only needs bun_sourcemap::Chunk).
+// Options
 // ───────────────────────────────────────────────────────────────────────────
-// TODO(b2-blocked): bun_interchange::yaml (blocks bun_js_parser link)
-// TODO(b2-blocked): bun_js_parser::runtime::Imports
-// TODO(b2-blocked): bun_js_parser::ast::ast::CommonJSNamedExports
-// TODO(b2-blocked): bun_js_parser::ast::ast::TsEnumsMap
-#[cfg(any())]
-mod __gated_options {
-use super::*;
-use bun_js_parser::ast::ast::{CommonJSNamedExports, TsEnumsMap};
-use bun_js_parser::runtime;
+use js_ast::ast::ast::{CommonJSNamedExports, TsEnumsMap};
+use js_ast::runtime;
 
 pub struct Options<'a> {
     pub bundling: bool,
@@ -1126,12 +1124,6 @@ impl<'a> Default for Options<'a> {
         }
     }
 }
-} // mod __gated_options
-#[cfg(not(any()))]
-/// B-2 shadow stub — un-gate `__gated_options` once bun_interchange compiles
-/// (transitively unblocks `bun_js_parser::{runtime, ast::ast}`).
-#[derive(Default)]
-pub struct Options<'a>(core::marker::PhantomData<&'a ()>);
 
 // Default indentation is 2 spaces
 #[derive(Clone, Copy)]
@@ -1210,21 +1202,22 @@ impl RequireOrImportMetaCallback {
         ctx: &mut T,
         callback: fn(&mut T, u32, bool) -> RequireOrImportMeta,
     ) -> Self {
-        // TODO(port): proc-macro — Zig monomorphized `callback` at comptime via @ptrCast.
+        // TODO(port): Zig monomorphized `callback` at comptime via @ptrCast. Rust cannot
+        // bake a runtime `fn(&mut T, ..)` into a captureless `fn(*mut (), ..)` thunk; until
+        // the struct is widened to carry the typed pointer (or const-generic fn ptrs land),
+        // fail loudly instead of returning all-Ref::NONE wrapper refs for every source.
         let _ = callback;
         Self {
             // SAFETY: `ctx` is `&mut T` so the pointer is non-null; type-erased to `*mut ()`
             // and cast back to `*mut T` inside the thunk before dereference.
             ctx: Some(unsafe { NonNull::new_unchecked(ctx as *mut T as *mut ()) }),
-            callback: |_, _, _| RequireOrImportMeta::default(), // TODO(port): wire thunk
+            callback: |_, _, _| unreachable!("TODO(port): RequireOrImportMeta thunk not wired"),
         }
     }
 }
 
-// TODO(b2-blocked): bun_interchange::yaml (blocks bun_js_parser::{Expr, ExprData} link)
-#[cfg(any())]
-fn is_identifier_or_numeric_constant_or_property_access(expr: &bun_js_parser::Expr) -> bool {
-    use bun_js_parser::ExprData;
+fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> bool {
+    use js_ast::ExprData;
     match &expr.data {
         ExprData::EIdentifier(_) | ExprData::EDot(_) | ExprData::EIndex(_) => true,
         ExprData::ENumber(e) => e.value.is_infinite() || e.value.is_nan(),
@@ -1306,9 +1299,7 @@ impl ImportVariant {
         }
     }
 
-    // TODO(b2-blocked): bun_interchange::yaml (blocks bun_js_parser::S::Import link)
-    #[cfg(any())]
-    pub fn determine(record: &ImportRecord, s_import: &bun_js_parser::S::Import) -> ImportVariant {
+    pub fn determine(record: &ImportRecord, s_import: &js_ast::S::Import) -> ImportVariant {
         let mut variant = ImportVariant::PathOnly;
 
         if record.flags.contains(ImportRecordFlags::CONTAINS_IMPORT_STAR) {
@@ -1373,16 +1364,23 @@ impl TopLevel {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Printer (NewPrinter) — gated; the impl body is the bulk of this crate and
-// touches nearly every bun_js_parser AST node type. Those types now exist
-// upstream, but `bun_js_parser` cannot be linked (transitively blocked by
-// `bun_interchange::yaml` not compiling).
+// Printer (NewPrinter) — the impl body is the bulk of this crate and touches
+// nearly every bun_js_parser AST node type. `bun_js_parser` now links, but the
+// per-node API surface (op tables, FnFlags, Binding::Data dispatch, EString
+// `.data()` accessor, ImportRecord flag fields) does not yet match the shapes
+// the Phase-A draft assumed (~300 mismatches). Re-gated until those land.
 // ───────────────────────────────────────────────────────────────────────────
-// TODO(b2-blocked): bun_interchange::yaml (blocks bun_js_parser link)
-// TODO(b2-blocked): bun_js_parser::{E, S, B, G, Op, Expr, Stmt, Binding} (link only)
+// TODO(b2-blocked): bun_js_parser::ast::g::FnFlags
+// TODO(b2-blocked): bun_js_parser::ast::binding::Data
+// TODO(b2-blocked): bun_js_parser::ast::op::{TABLE::get_ptr_const, Code::is_prefix}
+// TODO(b2-blocked): bun_js_parser::ast::e::EString::data
+// TODO(b2-blocked): bun_options_types::import_record::Flags field-style accessors (contains_import_star/wrap_with_to_esm/handles_import_errors)
+// TODO(b2-blocked): bun_options_types::ImportRecord::module_id
 #[cfg(any())]
 mod __gated_printer {
 use super::*;
+use js_ast::ast::{e as E, s as S, b as B, g as G, op as Op, expr as Expr, stmt as Stmt, binding as Binding};
+use js_ast::ast::op::Level;
 
 /// `fn NewPrinter(...) type` → generic struct.
 pub struct Printer<
@@ -1742,7 +1740,7 @@ where
 
         if import.items.len() > 0 {
             self.print_semicolon_if_needed();
-            self.print_whitespacer(ws(b"var {"));
+            self.print_whitespacer(ws!(b"var {"));
 
             if !import.is_single_line {
                 self.print_newline();
@@ -1769,7 +1767,7 @@ where
                 self.print_space();
             }
 
-            self.print_whitespacer(ws(b"} = "));
+            self.print_whitespacer(ws!(b"} = "));
 
             if import.star_name_loc.is_none() && import.default_name.is_none() {
                 match statement {
@@ -2017,7 +2015,7 @@ where
                     self.temporary_bindings = temp_bindings;
                 }
 
-                self.print_whitespacer(ws(b" = "));
+                self.print_whitespacer(ws!(b" = "));
                 self.print_expr(second_e_dot.target, Level::Comma, flags);
 
                 if decls.is_empty() {
@@ -2033,7 +2031,7 @@ where
             self.print_binding(decls[0].binding, tlm);
 
             if let Some(value) = &decls[0].value {
-                self.print_whitespacer(ws(b" = "));
+                self.print_whitespacer(ws!(b" = "));
                 self.print_expr(*value, Level::Comma, flags);
             }
         }
@@ -2045,7 +2043,7 @@ where
             self.print_binding(decl.binding, tlm);
 
             if let Some(value) = &decl.value {
-                self.print_whitespacer(ws(b" = "));
+                self.print_whitespacer(ws!(b" = "));
                 self.print_expr(*value, Level::Comma, flags);
             }
         }
@@ -2111,7 +2109,7 @@ where
             self.print_binding(arg.binding, TopLevelAndIsExport::default());
 
             if let Some(default) = &arg.default {
-                self.print_whitespacer(ws(b" = "));
+                self.print_whitespacer(ws!(b" = "));
                 self.print_expr(*default, Level::Comma, ExprFlag::none());
             }
         }
@@ -2578,7 +2576,7 @@ where
         }
 
         if !import_options.is_missing() {
-            self.print_whitespacer(ws(b", "));
+            self.print_whitespacer(ws!(b", "));
             self.print_expr(import_options, Level::Comma, ExprFlagSet::empty());
         }
 
@@ -2601,7 +2599,7 @@ where
     #[inline]
     pub fn print_pure(&mut self) {
         if self.options.print_dce_annotations {
-            self.print_whitespacer(ws(b"/* @__PURE__ */ "));
+            self.print_whitespacer(ws!(b"/* @__PURE__ */ "));
         }
     }
 
@@ -2843,9 +2841,9 @@ where
                     }
 
                     if data.inverted {
-                        self.print_whitespacer(ws(b".main != "));
+                        self.print_whitespacer(ws!(b".main != "));
                     } else {
-                        self.print_whitespacer(ws(b".main == "));
+                        self.print_whitespacer(ws!(b".main == "));
                     }
 
                     if self.options.target == options::Target::Node {
@@ -3126,7 +3124,7 @@ where
                     self.print_expr(e.expr, Level::Comma, ExprFlag::none());
 
                     if !e.options.is_missing() {
-                        self.print_whitespacer(ws(b", "));
+                        self.print_whitespacer(ws!(b", "));
                         self.print_expr(e.options, Level::Comma, ExprFlagSet::empty());
                     }
 
@@ -3270,7 +3268,7 @@ where
                 }
 
                 self.print_fn_args(if e.is_async { None } else { Some(expr.loc) }, &e.args, e.has_rest_arg, true);
-                self.print_whitespacer(ws(b" => "));
+                self.print_whitespacer(ws!(b" => "));
 
                 let mut was_printed = false;
                 if e.body.stmts.len() == 1 && e.prefer_expr {
@@ -3590,7 +3588,7 @@ where
                                     && matches!(target, Expr::Data::EIdentifier(id) if id.ref_.eql(e.ref_));
                             }
 
-                            if wrap { self.print_whitespacer(ws(b"(0, ")); }
+                            if wrap { self.print_whitespacer(ws!(b"(0, ")); }
                             self.print_space_before_identifier();
                             self.add_source_mapping(expr.loc);
                             self.print_namespace_alias(import_record, *namespace);
@@ -3618,7 +3616,7 @@ where
                             false
                         };
 
-                        if wrap { self.print_whitespacer(ws(b"(0, ")); }
+                        if wrap { self.print_whitespacer(ws!(b"(0, ")); }
 
                         self.print_space_before_identifier();
                         self.add_source_mapping(expr.loc);
@@ -4528,13 +4526,13 @@ where
                     // TODO(port): comptime ws("export *").append(" as ")
                     self.print_whitespacer(Whitespacer { normal: b"export * as ", minify: b"export*as " });
                 } else {
-                    self.print_whitespacer(ws(b"export * from "));
+                    self.print_whitespacer(ws!(b"export * from "));
                 }
 
                 if let Some(alias) = &s.alias {
                     self.print_clause_alias(&alias.original_name);
                     self.print(b" ");
-                    self.print_whitespacer(ws(b"from "));
+                    self.print_whitespacer(ws!(b"from "));
                 }
 
                 let irp = &self.import_record(s.import_record_index as usize).path.text;
@@ -4715,7 +4713,7 @@ where
 
                 let import_record = self.import_record(s.import_record_index as usize);
 
-                self.print_whitespacer(ws(b"export {"));
+                self.print_whitespacer(ws!(b"export {"));
 
                 if !s.is_single_line { self.indent(); } else { self.print_space(); }
 
@@ -4739,7 +4737,7 @@ where
                     self.print_space();
                 }
 
-                self.print_whitespacer(ws(b"} from "));
+                self.print_whitespacer(ws!(b"} from "));
                 let irp = &import_record.path.text;
                 self.print_import_record_path(import_record);
                 self.print_semicolon_after_statement();
@@ -5008,7 +5006,7 @@ where
                     if !s.items.is_empty() || s.default_name.is_some() {
                         self.print_indent();
                         self.print_space_before_identifier();
-                        self.print_whitespacer(ws(b"var {"));
+                        self.print_whitespacer(ws!(b"var {"));
 
                         if let Some(default_name) = &s.default_name {
                             self.print_space();
@@ -5102,7 +5100,7 @@ where
                 if record.flags.contains_import_star {
                     if item_count > 0 { self.print(b","); }
                     self.print_space();
-                    self.print_whitespacer(ws(b"* as"));
+                    self.print_whitespacer(ws!(b"* as"));
                     self.print(b" ");
                     self.print_symbol(s.namespace_ref);
                     item_count += 1;
@@ -5112,7 +5110,7 @@ where
                     if !self.options.minify_whitespace || record.flags.contains_import_star || s.items.is_empty() {
                         self.print(b" ");
                     }
-                    self.print_whitespacer(ws(b"from "));
+                    self.print_whitespacer(ws!(b"from "));
                 }
 
                 self.print_import_record_path(record);
@@ -5122,26 +5120,26 @@ where
                     if let Some(loader) = record.loader {
                         use options::Loader;
                         match loader {
-                            Loader::Jsx => self.print_whitespacer(ws(b" with { type: \"jsx\" }")),
-                            Loader::Js => self.print_whitespacer(ws(b" with { type: \"js\" }")),
-                            Loader::Ts => self.print_whitespacer(ws(b" with { type: \"ts\" }")),
-                            Loader::Tsx => self.print_whitespacer(ws(b" with { type: \"tsx\" }")),
-                            Loader::Css => self.print_whitespacer(ws(b" with { type: \"css\" }")),
-                            Loader::File => self.print_whitespacer(ws(b" with { type: \"file\" }")),
-                            Loader::Json => self.print_whitespacer(ws(b" with { type: \"json\" }")),
-                            Loader::Jsonc => self.print_whitespacer(ws(b" with { type: \"jsonc\" }")),
-                            Loader::Toml => self.print_whitespacer(ws(b" with { type: \"toml\" }")),
-                            Loader::Yaml => self.print_whitespacer(ws(b" with { type: \"yaml\" }")),
-                            Loader::Json5 => self.print_whitespacer(ws(b" with { type: \"json5\" }")),
-                            Loader::Wasm => self.print_whitespacer(ws(b" with { type: \"wasm\" }")),
-                            Loader::Napi => self.print_whitespacer(ws(b" with { type: \"napi\" }")),
-                            Loader::Base64 => self.print_whitespacer(ws(b" with { type: \"base64\" }")),
-                            Loader::Dataurl => self.print_whitespacer(ws(b" with { type: \"dataurl\" }")),
-                            Loader::Text => self.print_whitespacer(ws(b" with { type: \"text\" }")),
-                            Loader::Bunsh => self.print_whitespacer(ws(b" with { type: \"sh\" }")),
-                            Loader::Sqlite | Loader::SqliteEmbedded => self.print_whitespacer(ws(b" with { type: \"sqlite\" }")),
-                            Loader::Html => self.print_whitespacer(ws(b" with { type: \"html\" }")),
-                            Loader::Md => self.print_whitespacer(ws(b" with { type: \"md\" }")),
+                            Loader::Jsx => self.print_whitespacer(ws!(b" with { type: \"jsx\" }")),
+                            Loader::Js => self.print_whitespacer(ws!(b" with { type: \"js\" }")),
+                            Loader::Ts => self.print_whitespacer(ws!(b" with { type: \"ts\" }")),
+                            Loader::Tsx => self.print_whitespacer(ws!(b" with { type: \"tsx\" }")),
+                            Loader::Css => self.print_whitespacer(ws!(b" with { type: \"css\" }")),
+                            Loader::File => self.print_whitespacer(ws!(b" with { type: \"file\" }")),
+                            Loader::Json => self.print_whitespacer(ws!(b" with { type: \"json\" }")),
+                            Loader::Jsonc => self.print_whitespacer(ws!(b" with { type: \"jsonc\" }")),
+                            Loader::Toml => self.print_whitespacer(ws!(b" with { type: \"toml\" }")),
+                            Loader::Yaml => self.print_whitespacer(ws!(b" with { type: \"yaml\" }")),
+                            Loader::Json5 => self.print_whitespacer(ws!(b" with { type: \"json5\" }")),
+                            Loader::Wasm => self.print_whitespacer(ws!(b" with { type: \"wasm\" }")),
+                            Loader::Napi => self.print_whitespacer(ws!(b" with { type: \"napi\" }")),
+                            Loader::Base64 => self.print_whitespacer(ws!(b" with { type: \"base64\" }")),
+                            Loader::Dataurl => self.print_whitespacer(ws!(b" with { type: \"dataurl\" }")),
+                            Loader::Text => self.print_whitespacer(ws!(b" with { type: \"text\" }")),
+                            Loader::Bunsh => self.print_whitespacer(ws!(b" with { type: \"sh\" }")),
+                            Loader::Sqlite | Loader::SqliteEmbedded => self.print_whitespacer(ws!(b" with { type: \"sqlite\" }")),
+                            Loader::Html => self.print_whitespacer(ws!(b" with { type: \"html\" }")),
+                            Loader::Md => self.print_whitespacer(ws!(b" with { type: \"md\" }")),
                         }
                     }
                 }
@@ -5367,11 +5365,11 @@ where
                     if !IS_BUN_PLATFORM {
                         self.print(b"(");
                         self.print_symbol(s.namespace_ref);
-                        self.print_whitespacer(ws(b" && \"default\" in "));
+                        self.print_whitespacer(ws!(b" && \"default\" in "));
                         self.print_symbol(s.namespace_ref);
-                        self.print_whitespacer(ws(b" ? "));
+                        self.print_whitespacer(ws!(b" ? "));
                         self.print_symbol(s.namespace_ref);
-                        self.print_whitespacer(ws(b".default : "));
+                        self.print_whitespacer(ws!(b".default : "));
                         self.print_symbol(s.namespace_ref);
                         self.print(b")");
                     } else {
@@ -5404,7 +5402,7 @@ where
 
     #[inline]
     fn print_disabled_import(&mut self) {
-        self.print_whitespacer(ws(b"(() => ({}))"));
+        self.print_whitespacer(ws!(b"(() => ({}))"));
     }
 
     pub fn print_load_from_bundle_without_call(&mut self, import_record_index: u32) {
@@ -5438,9 +5436,9 @@ where
         self.print_module_export_symbol();
         self.print(b",");
         self.print_string_literal_utf8(name, true);
-        self.print_whitespacer(ws(b",{get: () => ("));
+        self.print_whitespacer(ws!(b",{get: () => ("));
         self.print_load_from_bundle(import_record_index);
-        self.print_whitespacer(ws(b"), enumerable: true, configurable: true})"));
+        self.print_whitespacer(ws!(b"), enumerable: true, configurable: true})"));
     }
 
     // We must use Object.defineProperty() to handle re-exports from ESM -> CJS
@@ -6363,10 +6361,11 @@ pub enum Format {
 pub enum GenerateSourceMap { Disable, Lazy, Eager }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Top-level print entry points — gated on Printer + bun_js_parser::Ast surface.
+// Top-level print entry points — gated on `__gated_printer::Printer` (above)
+// plus the renamer driver path that mutates `Ast.module_scope`.
 // ───────────────────────────────────────────────────────────────────────────
-// TODO(b2-blocked): bun_interchange::yaml (blocks bun_js_parser link)
-// TODO(b2-blocked): bun_js_parser::{Ast, Part} (link only)
+// TODO(b2-blocked): bun_js_printer::__gated_printer (Printer<...>)
+// TODO(b2-blocked): bun_js_parser::ast::ast::Ast::{module_scope mut access, nested_scope_slot_counts}
 #[cfg(any())]
 mod __gated_entry_points {
 use super::*;

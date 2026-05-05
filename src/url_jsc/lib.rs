@@ -6,44 +6,40 @@ use bun_string::{String as BunString, Tag};
 use bun_url::{OwnedURL, URL};
 
 // ── bun_jsc surface ──────────────────────────────────────────────────────
-// TODO(b2-blocked): bun_jsc::JSGlobalObject / bun_jsc::JSValue — the bun_jsc
-// crate does not compile yet (stub_ty! vs un-gated module name collisions).
-// Keep opaque local newtypes so the public signature type-checks; swap to
-// `pub use bun_jsc::{JSGlobalObject, JSValue}` once bun_jsc is green.
-#[repr(transparent)]
-pub struct JSGlobalObject(usize);
-#[repr(transparent)]
-#[derive(Clone, Copy)]
-pub struct JSValue(usize);
+// bun_jsc is green now; re-export the real opaque handles so downstream
+// callers see the same types the rest of the JSC layer uses.
+pub use bun_jsc::{JSGlobalObject, JSValue};
 
 pub fn url_from_js(
     js_value: JSValue,
     global: &JSGlobalObject,
 ) -> Result<OwnedURL, bun_core::Error> {
-    // TODO(port): narrow error set (InvalidURL | OOM)
+    // TODO(port): narrow error set (InvalidURL | OOM | JSError)
     // PORT NOTE: ownership — Zig returns a `URL` borrowing from a freshly-allocated
     // owned slice (`href.toOwnedSlice`); caller frees `url.href` later. Per
     // PORTING.md §Forbidden (no Box::leak / unsafe lifetime extension), Rust
     // returns `bun_url::OwnedURL`; callers borrow via `.url()` and Drop frees it.
+    let href: BunString = bun_jsc::URL::href_from_js(js_value, global)
+        // PORT NOTE: Zig `hrefFromJS` is not `try`d — Dead-tag is the only
+        // failure signal there. The Rust wrapper additionally checks
+        // `has_exception()`; surface that as a generic error for now.
+        // TODO(port): revisit once bun_core::Error gains a JsError variant.
+        .map_err(|_| bun_core::err!(JSError))?;
+    if href.tag() == Tag::Dead {
+        return Err(bun_core::err!(InvalidURL));
+    }
+    let owned = href.to_owned_slice().into_boxed_slice();
+    href.deref();
+    // TODO(b2-blocked): bun_url::OwnedURL::from_href — `OwnedURL { href }` field
+    // is private; needs a pub bytes-ctor (mirror of `URL::from_string`'s tail).
     #[cfg(any())]
     {
-        // TODO(b2-blocked): bun_jsc::URL::href_from_js — bun_jsc red (transitive
-        // bun_css E0119s). Swap local `JSValue`/`JSGlobalObject` newtypes to
-        // `bun_jsc::{JSValue, JSGlobalObject}` at the same time.
-        let href: BunString = bun_jsc::URL::href_from_js(js_value, global)?;
-        if href.tag() == Tag::Dead {
-            return Err(bun_core::err!(InvalidURL));
-        }
-        let owned = href.to_owned_slice().into_boxed_slice();
-        href.deref();
-        // TODO(b2-blocked): bun_url::OwnedURL::from_href — `OwnedURL { href }` is
-        // private; needs a pub bytes-ctor (mirror of `URL::from_string`'s tail).
         return Ok(OwnedURL::from_href(owned));
     }
     #[allow(unreachable_code)]
     {
-        let _ = (js_value, global);
-        todo!("b2-blocked: bun_jsc::URL::href_from_js")
+        let _ = owned;
+        todo!("b2-blocked: bun_url::OwnedURL::from_href")
     }
 }
 
@@ -52,7 +48,7 @@ pub fn url_from_js(
 //   source:     src/url_jsc/url_jsc.zig (16 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      allocator param dropped; return type now OwnedURL (no 'static
-//               lie); body re-gated on bun_jsc (transitive bun_css red) +
-//               bun_url::OwnedURL::from_href ctor.
+//   notes:      allocator param dropped; return type OwnedURL (no 'static lie);
+//               bun_jsc now wired (JSValue/JSGlobalObject/href_from_js
+//               un-gated); body tail re-gated on bun_url::OwnedURL::from_href.
 // ──────────────────────────────────────────────────────────────────────────

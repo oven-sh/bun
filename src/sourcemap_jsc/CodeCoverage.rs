@@ -1,12 +1,17 @@
 use core::cell::UnsafeCell;
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
+use std::sync::Arc;
 
 use bun_collections::bit_set::DynamicBitSet;
 use bun_collections::BabyList;
 use bun_core::pretty_fmt; // TODO(port): comptime ANSI tag expander macro (Output.prettyFmt)
-use bun_jsc::{JSGlobalObject, JSValue, VM};
-use bun_sourcemap::{self as sourcemap, line_offset_table, LineOffsetTable, Ordinal};
+use bun_jsc::{bun_string_jsc, JSGlobalObject, JSValue, VM};
+use bun_logger::Loc;
+use bun_sourcemap::{
+    self as sourcemap, internal_source_map, line_offset_table, LineOffsetTable,
+    LineOffsetTableListExt as _, Ordinal, ParsedSourceMap,
+};
 use bun_str::{self, strings, ZigStringSlice};
 
 type LinesHits = BabyList<u32>;
@@ -384,17 +389,11 @@ impl<'a> Generator<'a> {
             return;
         }
 
-        // PORT NOTE: reshaped for borrowck — capture a borrowed view of source_url (Zig
-        // assigns the slice by value with no ownership transfer here).
-        let source_url = ZigStringSlice::from_utf8_never_free(unsafe {
-            // SAFETY: borrows bytes owned by `byte_range_mapping.source_url`; we
-            // erase the lifetime to break the &/&mut overlap and the slice is not
-            // accessed past `generate_report_from_blocks` (which moves it into Report).
-            core::slice::from_raw_parts(
-                this.byte_range_mapping.source_url.slice().as_ptr(),
-                this.byte_range_mapping.source_url.slice().len(),
-            )
-        });
+        // PORT NOTE: Zig assigns the slice by value with no ownership transfer here.
+        // `from_utf8_never_free` already detaches the lifetime by design, and
+        // `generate_report_from_blocks` only borrows `&self`, so no &/&mut overlap.
+        let source_url =
+            ZigStringSlice::from_utf8_never_free(this.byte_range_mapping.source_url.slice());
         *this.result = this
             .byte_range_mapping
             .generate_report_from_blocks(source_url, blocks, function_blocks, ignore_sourcemap)
@@ -467,24 +466,29 @@ impl ByteRangeMapping {
     }
 
     pub fn generate_report_from_blocks(
-        &mut self,
+        &self,
         source_url: ZigStringSlice,
         blocks: &[BasicBlockRange],
         function_blocks: &[BasicBlockRange],
         ignore_sourcemap: bool,
     ) -> Result<Report, bun_alloc::AllocError> {
-        // TODO(b2-blocked): bun_jsc::VirtualMachine::source_mappings — stub
-        // `VirtualMachine` has no `source_mappings` field; un-gate once
-        // VirtualMachine.rs (and SavedSourceMap) un-gates in bun_jsc.
-        #[cfg(any())]
-        return (|| {
-        use bun_sourcemap::LineOffsetTableListExt as _;
         let line_starts = self.line_offset_table.items_byte_offset_to_start_of_line();
 
         let mut executable_lines: Bitset = Bitset::default();
         let mut lines_which_have_executed: Bitset = Bitset::default();
-        let parsed_mappings_ = bun_jsc::VirtualMachine::get().source_mappings.get(source_url.slice());
-        // `parsed_mappings_` is refcounted; Drop on the returned guard handles deref().
+        // TODO(b2-blocked): bun_jsc::SavedSourceMap::get — stub `SavedSourceMap` (and
+        // stub `VirtualMachine.source_mappings`) have no `get(&[u8]) -> Option<Arc<_>>`
+        // yet; the lookup is re-gated to `None` so the rest of this body type-checks
+        // against the real `bun_sourcemap`/`bun_collections` surface today.
+        #[cfg(any())]
+        let parsed_mappings_: Option<Arc<ParsedSourceMap>> =
+            bun_jsc::VirtualMachine::get().source_mappings().get(source_url.slice());
+        #[cfg(not(any()))]
+        let parsed_mappings_: Option<Arc<ParsedSourceMap>> = {
+            let _ = source_url.slice();
+            None
+        };
+        // `parsed_mappings_` is refcounted; Drop on the Arc handles deref().
         let mut line_hits = LinesHits::default();
 
         let mut functions: Vec<Block> = Vec::new();
@@ -521,7 +525,7 @@ impl ByteRangeMapping {
                 for byte_offset in min..max {
                     let Some(new_line_index) = LineOffsetTable::find_index(
                         line_starts,
-                        sourcemap::Loc { start: i32::try_from(byte_offset).unwrap() },
+                        Loc { start: i32::try_from(byte_offset).unwrap() },
                     ) else {
                         continue;
                     };
@@ -563,7 +567,7 @@ impl ByteRangeMapping {
                 for byte_offset in min..max {
                     let Some(new_line_index) = LineOffsetTable::find_index(
                         line_starts,
-                        sourcemap::Loc { start: i32::try_from(byte_offset).unwrap() },
+                        Loc { start: i32::try_from(byte_offset).unwrap() },
                     ) else {
                         continue;
                     };
@@ -596,7 +600,7 @@ impl ByteRangeMapping {
                     functions_which_have_executed.set(i);
                 }
             }
-        } else if let Some(parsed_mapping) = parsed_mappings_.as_ref() {
+        } else if let Some(parsed_mapping) = parsed_mappings_.as_deref() {
             line_count = (parsed_mapping.input_line_count as u32) + 1;
             executable_lines = Bitset::init_empty(line_count as usize)?;
             lines_which_have_executed = Bitset::init_empty(line_count as usize)?;
@@ -605,8 +609,7 @@ impl ByteRangeMapping {
             let line_hits_slice = line_hits.slice_mut();
             line_hits_slice.fill(0);
 
-            let mut cur_: Option<sourcemap::internal_source_map::Cursor> =
-                parsed_mapping.internal_cursor();
+            let mut cur_: Option<internal_source_map::Cursor> = parsed_mapping.internal_cursor();
 
             for (i, block) in blocks.iter().enumerate() {
                 if block.end_offset < 0 || block.start_offset < 0 {
@@ -622,7 +625,7 @@ impl ByteRangeMapping {
                 for byte_offset in min..max {
                     let Some(new_line_index) = LineOffsetTable::find_index(
                         line_starts,
-                        sourcemap::Loc { start: i32::try_from(byte_offset).unwrap() },
+                        Loc { start: i32::try_from(byte_offset).unwrap() },
                     ) else {
                         continue;
                     };
@@ -634,13 +637,13 @@ impl ByteRangeMapping {
 
                     let found = if let Some(c) = cur_.as_mut() {
                         c.move_to(
-                            sourcemap::Line::from_zero_based(i32::try_from(new_line_index).unwrap()),
-                            sourcemap::Column::from_zero_based(i32::try_from(column_position).unwrap()),
+                            Ordinal::from_zero_based(i32::try_from(new_line_index).unwrap()),
+                            Ordinal::from_zero_based(i32::try_from(column_position).unwrap()),
                         )
                     } else {
                         parsed_mapping.find_mapping(
-                            sourcemap::Line::from_zero_based(i32::try_from(new_line_index).unwrap()),
-                            sourcemap::Column::from_zero_based(i32::try_from(column_position).unwrap()),
+                            Ordinal::from_zero_based(i32::try_from(new_line_index).unwrap()),
+                            Ordinal::from_zero_based(i32::try_from(column_position).unwrap()),
                         )
                     };
                     if let Some(point) = found.as_ref() {
@@ -683,7 +686,7 @@ impl ByteRangeMapping {
                 for byte_offset in min..max {
                     let Some(new_line_index) = LineOffsetTable::find_index(
                         line_starts,
-                        sourcemap::Loc { start: i32::try_from(byte_offset).unwrap() },
+                        Loc { start: i32::try_from(byte_offset).unwrap() },
                     ) else {
                         continue;
                     };
@@ -696,13 +699,13 @@ impl ByteRangeMapping {
 
                     let found = if let Some(c) = cur_.as_mut() {
                         c.move_to(
-                            sourcemap::Line::from_zero_based(i32::try_from(new_line_index).unwrap()),
-                            sourcemap::Column::from_zero_based(i32::try_from(column_position).unwrap()),
+                            Ordinal::from_zero_based(i32::try_from(new_line_index).unwrap()),
+                            Ordinal::from_zero_based(i32::try_from(column_position).unwrap()),
                         )
                     } else {
                         parsed_mapping.find_mapping(
-                            sourcemap::Line::from_zero_based(i32::try_from(new_line_index).unwrap()),
-                            sourcemap::Column::from_zero_based(i32::try_from(column_position).unwrap()),
+                            Ordinal::from_zero_based(i32::try_from(new_line_index).unwrap()),
+                            Ordinal::from_zero_based(i32::try_from(column_position).unwrap()),
                         )
                     };
                     if let Some(point) = found {
@@ -754,12 +757,6 @@ impl ByteRangeMapping {
             functions_which_have_executed,
             stmts_which_have_executed,
         })
-        })();
-        #[cfg_attr(any(), allow(unreachable_code))]
-        {
-            let _ = (source_url, blocks, function_blocks, ignore_sourcemap);
-            todo!("blocked on bun_jsc::VirtualMachine::source_mappings")
-        }
     }
 
     pub fn compute(source_contents: &[u8], source_id: i32, source_url: ZigStringSlice) -> ByteRangeMapping {
@@ -825,12 +822,6 @@ pub extern "C" fn ByteRangeMapping__findExecutedLines(
     function_start_offset: usize,
     ignore_sourcemap: bool,
 ) -> JSValue {
-    #[cfg(any())]
-    {
-    // TODO(b2-blocked): bun_jsc::JSValue::{NULL, ZERO}
-    // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw_out_of_memory_value
-    // TODO(b2-blocked): bun_string::String::{clone, utf8_byte_length, create_utf8_for_js}
-    // TODO(b2-blocked): bun_io::Write — text::write_format::<false>
     // SAFETY: global_this is a valid JSGlobalObject* from JSC.
     let global_this = unsafe { &*global_this };
 
@@ -838,7 +829,7 @@ pub extern "C" fn ByteRangeMapping__findExecutedLines(
         return JSValue::NULL;
     };
     // SAFETY: pointer into the thread-local map, valid for this call.
-    let this = unsafe { &mut *this_ptr.as_ptr() };
+    let this = unsafe { &*this_ptr.as_ptr() };
 
     // SAFETY: blocks_ptr[0..blocks_len] is a valid contiguous C array from JSC.
     let all = unsafe { core::slice::from_raw_parts(blocks_ptr, blocks_len) };
@@ -863,6 +854,10 @@ pub extern "C" fn ByteRangeMapping__findExecutedLines(
     // PORT NOTE: std.Io.Writer.Allocating → Vec<u8> byte buffer (bun_io::Write target).
     let mut buf: Vec<u8> = Vec::new();
 
+    // TODO(b2-blocked): bun_io::Write — `text::write_format::<false>` is gated on the
+    // byte-oriented `bun_io::Write` trait; re-gate just this call so the rest of the
+    // body type-checks against real `bun_jsc`/`bun_sourcemap` surface.
+    #[cfg(any())]
     if text::write_format::<false>(
         &report,
         source_url.utf8_byte_length(),
@@ -874,16 +869,14 @@ pub extern "C" fn ByteRangeMapping__findExecutedLines(
     {
         return global_this.throw_out_of_memory_value();
     }
+    let _ = (&report, source_url.utf8_byte_length(), &mut coverage_fraction);
 
     // flush is a no-op for Vec<u8> writer.
 
-    let Ok(v) = bun_str::String::create_utf8_for_js(global_this, &buf) else {
+    let Ok(v) = bun_string_jsc::create_utf8_for_js(global_this, &buf) else {
         return JSValue::ZERO;
     };
-    return v;
-    }
-    let _ = (global_this, source_url, blocks_ptr, blocks_len, function_start_offset, ignore_sourcemap);
-    todo!("bun_jsc method surface gated")
+    v
 }
 
 #[derive(Clone, Copy)]
@@ -913,6 +906,11 @@ pub struct Block {
 // PORT STATUS
 //   source:     src/sourcemap_jsc/CodeCoverage.zig (741 lines)
 //   confidence: medium
-//   todos:      6
-//   notes:      pretty_fmt! macro + sourcemap Line/Column/Loc/Cursor types are guessed; threadlocal map uses leaked Box for stable extern "C" pointers; writers use bun_io::Write (byte-safe for non-UTF8 paths)
+//   todos:      4 (text/lcov mods + 2 narrow re-gates)
+//   notes:      generate_report_from_blocks/findExecutedLines bodies un-gated and
+//               type-check against real bun_sourcemap/bun_collections; only the
+//               SavedSourceMap lookup and text::write_format call remain gated.
+//               text/lcov writers stay gated on bun_io::Write (also need
+//               DynamicBitSet::iter_set + const-generic-bool pretty_fmt!).
+//               threadlocal map uses Box owned by thread-local (no leak).
 // ──────────────────────────────────────────────────────────────────────────

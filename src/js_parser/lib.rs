@@ -421,17 +421,9 @@ pub struct EnumValue {
 
 impl EnumValue {
     pub fn name_as_e_string(&self, bump: &bun_alloc::Arena) -> E::String {
-        #[cfg(any())]
-        {
-            // SAFETY: `name` is a valid arena slice for the lifetime of the parse.
-            let name = unsafe { &*self.name };
-            E::String::init_re_encode_utf8(name, bump)
-        }
-        #[cfg(not(any()))]
-        {
-            let _ = bump;
-            todo!("b1-stub: EnumValue::name_as_e_string")
-        }
+        // SAFETY: `name` is a valid arena slice for the lifetime of the parse.
+        let name = unsafe { &*self.name };
+        E::String::init_re_encode_utf8(name, bump)
     }
 }
 
@@ -926,28 +918,25 @@ impl Default for StmtOrExpr {
 
 impl StmtOrExpr {
     pub fn to_expr(self) -> Expr {
-        #[cfg(any())]
-        {
-            match self {
-                StmtOrExpr::Expr(expr) => expr,
-                StmtOrExpr::Stmt(stmt) => match stmt.data {
-                    crate::ast::stmt::Data::SFunction(s) => {
-                        Expr::init(E::Function { func: s.func }, stmt.loc)
-                    }
-                    crate::ast::stmt::Data::SClass(s) => Expr::init_class(s.class, stmt.loc),
-                    // TODO(port): Expr::init signature — Zig is `Expr.init(E.Function, .{...}, loc)`
-                    // (comptime type + payload). Rust likely uses per-variant constructors.
-                    other => Output::panic(format_args!(
-                        "Unexpected statement type in default export: .{}",
-                        <&'static str>::from(&other)
-                    )),
-                },
-            }
-        }
-        #[cfg(not(any()))]
-        {
-            let _ = self;
-            todo!("b1-stub: StmtOrExpr::to_expr")
+        match self {
+            StmtOrExpr::Expr(expr) => expr,
+            StmtOrExpr::Stmt(stmt) => match stmt.data {
+                crate::ast::stmt::Data::SFunction(mut s) => {
+                    // PORT NOTE: Zig moved `func.func` out by value; StoreRef arena
+                    // slot is never individually dropped, so `take` (replace with
+                    // Default) is the safe Rust equivalent.
+                    let func = core::mem::take(&mut s.func);
+                    Expr::init(E::Function { func }, stmt.loc)
+                }
+                crate::ast::stmt::Data::SClass(mut s) => {
+                    let class = core::mem::take(&mut s.class);
+                    Expr::init::<E::Class>(class, stmt.loc)
+                }
+                other => Output::panic(format_args!(
+                    "Unexpected statement type in default export: .{}",
+                    <&'static str>::from(other.tag())
+                )),
+            },
         }
     }
 }
@@ -1006,11 +995,7 @@ impl StrictModeKind {
 
 pub fn printmem(args: fmt::Arguments<'_>) {
     // `defer Output.flush()` → executes after print; emulate ordering explicitly.
-    #[cfg(any())]
-    {
-        Output::init_test();
-    }
-    // TODO(b2-blocked): bun_core::Output::init_test
+    Output::init_test();
     Output::print(args);
     Output::flush();
 }

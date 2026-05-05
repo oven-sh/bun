@@ -1,15 +1,12 @@
-use bun_jsc::{JSGlobalObject, JSValue};
+use crate::jsc::{JSGlobalObject, JSValue};
 use bun_sql::postgres::types::int_types::short;
 use bun_sql::postgres::AnyPostgresError;
 
 pub const TO: short = 16;
 pub const FROM: [short; 1] = [16];
 
-pub fn to_js(
-    _: &JSGlobalObject,
-    value: bool,
-) -> Result<JSValue, AnyPostgresError> {
-    Ok(JSValue::from(value))
+pub fn to_js(_: &JSGlobalObject, value: bool) -> Result<JSValue, AnyPostgresError> {
+    Ok(JSValue::js_boolean(value))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

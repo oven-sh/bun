@@ -5,11 +5,11 @@ use core::ffi::{c_char, c_int};
 use bun_boringssl as boringssl;
 use bun_core::{self, err};
 
-use bun_sha::{SHA1, SHA256};
+use bun_sha_hmac::{SHA1, SHA256};
 
 use crate::shared::Data;
 use super::new_reader::{NewReader, ReaderContext};
-use super::new_writer::{write_wrap, NewWriter};
+use super::new_writer::{NewWriter, WriterContext};
 
 bun_core::declare_scope!(Auth, hidden);
 
@@ -34,17 +34,21 @@ pub mod mysql_native_password {
         }
 
         // Stage 1: SHA1(password)
-        SHA1::hash(password, &mut stage1, VirtualMachine::get().rare_data().boring_engine());
+        // TODO(port): Zig passed `jsc.VirtualMachine.get().rareData().boringEngine()`;
+        // engine is optional and bun_jsc is higher-tier — pass None (matches
+        // bun_install::integrity / bun_exe_format::macho precedent). Phase B may
+        // wire a BORING_ENGINE_HOOK like bun_s3_signing if profiling shows need.
+        SHA1::hash(password, &mut stage1, None);
 
         // Stage 2: SHA1(SHA1(password))
-        SHA1::hash(&stage1, &mut stage2, VirtualMachine::get().rare_data().boring_engine());
+        SHA1::hash(&stage1, &mut stage2, None);
 
         // Stage 3: SHA1(nonce + SHA1(SHA1(password)))
         let mut sha1 = SHA1::init();
         sha1.update(&nonce[0..8]);
         sha1.update(&nonce[8..20]);
         sha1.update(&stage2);
-        sha1.finalize(&mut stage3);
+        sha1.r#final(&mut stage3);
         // `defer sha1.deinit()` → handled by Drop on SHA1
 
         // Final: stage1 XOR stage3
@@ -69,16 +73,17 @@ pub mod caching_sha2_password {
         let mut result: [u8; 32] = [0u8; 32];
 
         // SHA256(password)
-        SHA256::hash(password, &mut digest1, VirtualMachine::get().rare_data().boring_engine());
+        // TODO(port): see note in mysql_native_password::scramble re: ENGINE*.
+        SHA256::hash(password, &mut digest1, None);
 
         // SHA256(SHA256(password))
-        SHA256::hash(&digest1, &mut digest2, VirtualMachine::get().rare_data().boring_engine());
+        SHA256::hash(&digest1, &mut digest2, None);
 
         // SHA256(SHA256(SHA256(password)) + nonce)
         let mut combined = vec![0u8; nonce.len() + digest2.len()];
         combined[0..nonce.len()].copy_from_slice(nonce);
         combined[nonce.len()..].copy_from_slice(&digest2);
-        SHA256::hash(&combined, &mut digest3, VirtualMachine::get().rare_data().boring_engine());
+        SHA256::hash(&combined, &mut digest3, None);
         // `defer bun.default_allocator.free(combined)` → Vec drops at scope exit
 
         // XOR(SHA256(password), digest3)
@@ -140,12 +145,13 @@ pub mod caching_sha2_password {
         }
 
         // TODO(port): `pub const decode = decoderWrap(Response, decodeInternal).decode;`
-        // — Phase B should confirm the decoder_wrap shape in new_reader.rs.
+        // — decoderWrap only auto-wraps a bare context into NewReader; here the
+        // arg is already wrapped, so forward directly (matches StmtPrepareOKPacket).
         pub fn decode<Context: ReaderContext>(
             &mut self,
             reader: NewReader<Context>,
         ) -> Result<(), bun_core::Error> {
-            decoder_wrap(Self::decode_internal, self, reader)
+            self.decode_internal(reader)
         }
     }
 
@@ -166,7 +172,7 @@ pub mod caching_sha2_password {
         // RSA encrypted value of XOR(password, seed) using server public key (RSA_PKCS1_OAEP_PADDING).
 
         // TODO(port): narrow error set
-        pub fn write_internal<Context: super::new_writer::WriterContext>(
+        pub fn write_internal<Context: WriterContext>(
             &self,
             writer: NewWriter<Context>,
         ) -> Result<(), bun_core::Error> {
@@ -204,7 +210,7 @@ pub mod caching_sha2_password {
             let bio = unsafe {
                 boringssl::c::BIO_new_mem_buf(
                     public_key.as_ptr() as *const core::ffi::c_void,
-                    c_int::try_from(public_key.len()).unwrap(),
+                    isize::try_from(public_key.len()).unwrap(),
                 )
             };
             if bio.is_null() {
@@ -262,7 +268,7 @@ pub mod caching_sha2_password {
             // lengths; *rsa is a valid RSA*; padding constant is a valid mode.
             let encrypted_password_len = unsafe {
                 boringssl::c::RSA_public_encrypt(
-                    c_int::try_from(plain_password.len()).unwrap(),
+                    plain_password.len(),
                     plain_password.as_ptr(),
                     encrypted_password.as_mut_ptr(),
                     *rsa,
@@ -282,8 +288,9 @@ pub mod caching_sha2_password {
         }
 
         // TODO(port): `pub const write = writeWrap(EncryptedPassword, writeInternal).write;`
-        pub fn write<Context: super::new_writer::WriterContext>(&self, writer: NewWriter<Context>) -> Result<(), bun_core::Error> {
-            write_wrap(Self::write_internal, self, writer)
+        // writeWrap only auto-wraps a bare context; arg is already wrapped, forward directly.
+        pub fn write<Context: WriterContext>(&self, writer: NewWriter<Context>) -> Result<(), bun_core::Error> {
+            self.write_internal(writer)
         }
     }
 
@@ -313,7 +320,7 @@ pub mod caching_sha2_password {
             &mut self,
             reader: NewReader<Context>,
         ) -> Result<(), bun_core::Error> {
-            decoder_wrap(Self::decode_internal, self, reader)
+            self.decode_internal(reader)
         }
     }
 
@@ -321,7 +328,7 @@ pub mod caching_sha2_password {
 
     impl PublicKeyRequest {
         // TODO(port): narrow error set
-        pub fn write_internal<Context: super::new_writer::WriterContext>(
+        pub fn write_internal<Context: WriterContext>(
             &self,
             writer: NewWriter<Context>,
         ) -> Result<(), bun_core::Error> {
@@ -330,8 +337,8 @@ pub mod caching_sha2_password {
         }
 
         // TODO(port): `pub const write = writeWrap(PublicKeyRequest, writeInternal).write;`
-        pub fn write<Context: super::new_writer::WriterContext>(&self, writer: NewWriter<Context>) -> Result<(), bun_core::Error> {
-            write_wrap(Self::write_internal, self, writer)
+        pub fn write<Context: WriterContext>(&self, writer: NewWriter<Context>) -> Result<(), bun_core::Error> {
+            self.write_internal(writer)
         }
     }
 }

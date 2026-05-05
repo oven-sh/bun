@@ -1,10 +1,8 @@
-use bun_jsc::{JSGlobalObject, JSValue, Strong};
-// TODO(port): `jsc.JSObject.ExternColumnIdentifier` — exact Rust path TBD in bun_jsc
-use bun_jsc::ExternColumnIdentifier;
+use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSValue, StrongOptional};
 
 #[derive(Default)]
 pub struct CachedStructure {
-    pub structure: Strong, // Strong.Optional = .empty
+    pub structure: StrongOptional, // Strong.Optional = .empty
     /// only populated if more than jsc.JSC__JSObject__maxInlineCapacity fields otherwise the structure will contain all fields inlined
     pub fields: Option<Box<[ExternColumnIdentifier]>>,
 }
@@ -32,7 +30,7 @@ impl CachedStructure {
 }
 
 // PORT NOTE: Zig `deinit` only freed owned fields:
-//   - `structure.deinit()`  → handled by `impl Drop for Strong`
+//   - `structure.deinit()`  → handled by `impl Drop for StrongOptional`
 //   - per-element `name.deinit()` + `default_allocator.free(fields)`
 //     → handled by `Drop` on `Box<[ExternColumnIdentifier]>` (each element drops itself)
 // so no explicit `impl Drop` body is needed.
@@ -41,6 +39,6 @@ impl CachedStructure {
 // PORT STATUS
 //   source:     src/sql_jsc/shared/CachedStructure.zig (32 lines)
 //   confidence: high
-//   todos:      1
-//   notes:      ExternColumnIdentifier import path needs confirming; deinit collapsed into field Drops
+//   todos:      0
+//   notes:      ExternColumnIdentifier / StrongOptional via crate::jsc shim until bun_jsc compiles; deinit collapsed into field Drops
 // ──────────────────────────────────────────────────────────────────────────

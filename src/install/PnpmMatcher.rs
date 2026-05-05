@@ -3,7 +3,7 @@
 use core::ptr::{null_mut, NonNull};
 use core::sync::atomic::{AtomicPtr, Ordering};
 
-use bun_alloc::AllocError;
+use bun_alloc::{AllocError, Arena};
 use bun_js_parser::ast;
 use bun_logger as logger;
 use bun_string::{escape_reg_exp, strings, String as BunString};
@@ -113,25 +113,30 @@ impl From<FromExprError> for bun_core::Error {
 }
 
 impl PnpmMatcher {
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_js_parser::ast::expr::Data (EString/EArray variants, .data, .loc, .as_string_cloned)
+    // PORT NOTE: Zig signature took `allocator: std.mem.Allocator`; the Rust AST
+    // accessors (`EString::slice` / `Expr::as_string_cloned`) need a `&Bump` for
+    // UTF-16→UTF-8 conversion / rope flattening, so the param surfaces as `bump`.
     pub fn from_expr(
+        bump: &Arena,
         expr: &ast::Expr,
         log: &mut logger::Log,
         source: &logger::Source,
     ) -> Result<PnpmMatcher, FromExprError> {
         let mut buf: Vec<u8> = Vec::new();
 
-        // jsc::initialize(false) is now performed lazily inside REGEX_COMPILE_HOOK (tier-6).
+        // jsc::initialize(false) is now performed lazily inside REGEX_VTABLE.compile (tier-6).
 
         let mut matchers: Vec<Matcher> = Vec::new();
 
         let mut has_include = false;
         let mut has_exclude = false;
 
-        match &expr.data {
-            ast::ExprData::EString(s) => {
-                let pattern = s.slice();
+        match expr.data {
+            ast::ExprData::EString(mut s) => {
+                // PORT NOTE: Zig `e_string.slice(allocator)` = resolve_rope + string();
+                // the gated Rust `EString::slice` is not live yet, so inline both calls.
+                s.resolve_rope_if_needed(bump);
+                let pattern = s.string(bump).expect("OOM");
                 let matcher = match create_matcher(pattern, &mut buf) {
                     Ok(m) => m,
                     Err(CreateMatcherError::OutOfMemory) => return Err(FromExprError::OutOfMemory),
@@ -154,15 +159,15 @@ impl PnpmMatcher {
             }
             ast::ExprData::EArray(patterns) => {
                 for pattern_expr in patterns.slice() {
-                    if let Some(pattern) = pattern_expr.as_string_cloned()? {
-                        let matcher = match create_matcher(&pattern, &mut buf) {
+                    if let Some(pattern) = pattern_expr.as_string_cloned(bump)? {
+                        let matcher = match create_matcher(pattern, &mut buf) {
                             Ok(m) => m,
                             Err(CreateMatcherError::OutOfMemory) => {
                                 return Err(FromExprError::OutOfMemory)
                             }
                             Err(CreateMatcherError::InvalidRegExp) => {
                                 log.add_error_fmt_opts(
-                                    format_args!("Invalid regex: {}", bstr::BStr::new(&pattern)),
+                                    format_args!("Invalid regex: {}", bstr::BStr::new(pattern)),
                                     logger::ErrorOpts {
                                         loc: pattern_expr.loc,
                                         redact_sensitive_information: true,
@@ -178,7 +183,7 @@ impl PnpmMatcher {
                         matchers.push(matcher);
                     } else {
                         log.add_error_opts(
-                            "Expected a string",
+                            b"Expected a string",
                             logger::ErrorOpts {
                                 loc: pattern_expr.loc,
                                 redact_sensitive_information: true,
@@ -192,7 +197,7 @@ impl PnpmMatcher {
             }
             _ => {
                 log.add_error_opts(
-                    "Expected a string or an array of strings",
+                    b"Expected a string or an array of strings",
                     logger::ErrorOpts {
                         loc: expr.loc,
                         redact_sensitive_information: true,
@@ -216,17 +221,6 @@ impl PnpmMatcher {
             matchers: matchers.into_boxed_slice(),
             behavior,
         })
-    }
-
-    #[cfg(not(any()))]
-    pub fn from_expr(
-        expr: &ast::expr::Expr,
-        log: &mut logger::Log,
-        source: &logger::Source,
-    ) -> Result<PnpmMatcher, FromExprError> {
-        // TODO(b2-blocked): bun_js_parser::ast::expr::Data
-        let _ = (expr, log, source);
-        todo!("b2-blocked: bun_js_parser::ast::expr::Data")
     }
 
     pub fn is_match(&self, name: &[u8]) -> bool {
@@ -333,7 +327,19 @@ fn create_matcher(raw: &[u8], buf: &mut Vec<u8>) -> Result<Matcher, CreateMatche
     buf.push(b'$');
 
     // PERF(port): was inline jsc::RegularExpression::init — now indirect via REGEX_VTABLE.
-    let regex = compile_regex(BunString::clone_utf8(buf.as_slice()))
+    // Distinguish vtable-absent (JSC unavailable / standalone install path → MatchAll
+    // fallback per the doc on REGEX_VTABLE) from vtable-present compile failure
+    // (genuine InvalidRegExp). Zig unconditionally `bun.jsc.initialize(false)`s, so
+    // valid patterns always compile there.
+    let Some(vt) = regex_vtable() else {
+        return Ok(Matcher {
+            pattern: Pattern::MatchAll,
+            is_exclude,
+        });
+    };
+    // SAFETY: vtable registered once at startup.
+    let regex = unsafe { (vt.compile)(BunString::clone_utf8(buf.as_slice())) }
+        .map(RegularExpression)
         .ok_or(CreateMatcherError::InvalidRegExp)?;
 
     Ok(Matcher {

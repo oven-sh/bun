@@ -257,17 +257,13 @@ pub struct FnBody {
 }
 
 impl FnBody {
-    // TODO(b2-ast-round): Stmt::alloc + S::Return — wire after Stmt store lands.
-    #[cfg(any())]
-    pub fn init_return_expr(bump: &bun_alloc::Arena, expr: Expr) -> core::result::Result<FnBody, bun_alloc::AllocError> {
+    pub fn init_return_expr(bump: &bun_alloc::Arena, expr: ExprNodeIndex) -> core::result::Result<FnBody, bun_alloc::AllocError> {
         // PERF(port): Zig used allocator.dupe over a 1-elem array literal; bumpalo equivalent
-        let stmts = bump.alloc_slice_copy(&[Stmt::alloc::<S::Return>(
-            S::Return { value: Some(expr) },
-            expr.loc,
-        )]);
+        let stmts: &mut [Stmt] = bump.alloc_slice_fill_with(1, |_| {
+            Stmt::alloc(crate::ast::s::Return { value: Some(expr) }, expr.loc)
+        });
         Ok(FnBody {
-            // TODO(port): StmtNodeList exact type — assuming `&'ast mut [Stmt]` / slice-compatible
-            stmts: stmts.into(),
+            stmts: stmts as *mut [Stmt],
             loc: expr.loc,
         })
     }

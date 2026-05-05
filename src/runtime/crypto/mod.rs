@@ -1,10 +1,9 @@
 use crate::jsc::{JSGlobalObject, JSValue};
 
 // ─── submodules ───────────────────────────────────────────────────────────
-// All submodules currently blocked on `bun_boringssl_sys` (bindgen output not
-// yet generated — see src/boringssl_sys/boringssl.rs) and on `bun_jsc` method
-// surface (stub types have no `.err()`/`.to_js()` etc.). Phase-A drafts are
-// preserved on disk via `#[path]`; un-gate per-file once the sys crate lands.
+// `bun_boringssl_sys` bindgen output now exists; `hmac` compiles standalone.
+// Remaining submodules blocked on `bun_jsc` method surface (stub types have
+// no `.err()`/`.to_js()` etc.). Phase-A drafts preserved on disk via `#[path]`.
 
 #[cfg(any())]
 #[path = "PasswordObject.rs"]
@@ -12,12 +11,11 @@ pub mod password_object;
 #[cfg(any())]
 #[path = "CryptoHasher.rs"]
 pub mod crypto_hasher;
-#[cfg(any())]
 #[path = "HMAC.rs"]
 pub mod hmac;
 #[cfg(any())]
 #[path = "EVP.rs"]
-pub mod evp;
+pub mod evp_draft;
 #[cfg(any())]
 #[path = "PBKDF2.rs"]
 pub mod pbkdf2;
@@ -46,43 +44,25 @@ pub mod crypto_hasher {
     macro_rules! stub_hasher { ($($n:ident),*) => { $(pub struct $n;)* } }
     stub_hasher!(MD4, MD5, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256);
 }
-pub mod hmac {
-    pub struct HMAC;
-}
 pub mod evp {
-    use core::ffi::{c_int, c_uint, c_void};
+    use core::ffi::c_uint;
+
+    use bun_boringssl_sys as boringssl;
+    use boringssl::EVP_MD;
 
     pub struct EVP;
     #[derive(Copy, Clone, Eq, PartialEq)]
     pub enum Algorithm {
-        // TODO(b2-blocked): bun_boringssl_sys::EVP_MD — full variant list gated
+        // TODO(b2-blocked): bun_jsc — full variant list (+ from_js) lives in gated EVP.rs draft.
         Sha256,
     }
 
-    // TODO(b2-blocked): bun_boringssl_sys — bindgen output not yet generated;
-    // declare the minimal BoringSSL surface needed for `pbkdf2` locally. Signatures
-    // match vendor/boringssl/include/openssl/evp.h and src/boringssl_sys/boringssl.zig.
-    unsafe extern "C" {
-        fn ERR_clear_error();
-        fn EVP_sha256() -> *const c_void;
-        fn PKCS5_PBKDF2_HMAC(
-            password: *const u8,
-            password_len: usize,
-            salt: *const u8,
-            salt_len: usize,
-            iterations: c_uint,
-            digest: *const c_void,
-            key_len: usize,
-            out_key: *mut u8,
-        ) -> c_int;
-    }
-
     impl Algorithm {
-        pub fn md(self) -> Option<*const c_void> {
+        pub fn md(self) -> Option<*const EVP_MD> {
             // SAFETY: BoringSSL digest accessor fns are thread-safe and return static singletons.
             unsafe {
                 match self {
-                    Algorithm::Sha256 => Some(EVP_sha256()),
+                    Algorithm::Sha256 => Some(boringssl::EVP_sha256()),
                 }
             }
         }
@@ -104,12 +84,12 @@ pub mod evp {
     ) -> Option<&'a [u8]> {
         output.fill(0);
         // SAFETY: FFI into BoringSSL; ERR_clear_error has no preconditions.
-        unsafe { ERR_clear_error() };
+        unsafe { boringssl::ERR_clear_error() };
         let digest = algorithm.md()?;
         // SAFETY: password/salt/output are valid for the given lengths; digest is a
         // static EVP_MD singleton returned by BoringSSL above.
         let rc = unsafe {
-            PKCS5_PBKDF2_HMAC(
+            boringssl::PKCS5_PBKDF2_HMAC(
                 if password.is_empty() { core::ptr::null() } else { password.as_ptr() },
                 password.len(),
                 salt.as_ptr(),

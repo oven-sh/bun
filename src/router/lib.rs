@@ -359,14 +359,25 @@ fn index_route_hash() -> u32 {
     wyhash(b"$$/index-route$$-!(@*@#&*%-901823098123") as u32
 }
 
-// TYPE_ONLY(b0): Param + List moved down into bun_url (T3) so the URL
-// PathnameScanner can name them without depending on router (T4). Re-export
-// here so existing `bun_router::Param` / `bun_router::route_param::List` users
-// keep resolving. The old `route_param::List` inherent-associated-type spelling is
-// gone (unstable + can't `impl` a foreign type); call sites use
-// `route_param::List` instead.
-pub use bun_url::route_param;
-pub use bun_url::route_param::Param;
+// Param/List are lifetime-parameterized: `name` borrows the route name
+// (DirnameStore-backed) and `value` borrows the *request URL buffer*. The Zig
+// version stores raw slices with no ownership; the correct Rust port is a
+// borrowed `&'a [u8]`, not a forged `'static`.
+//
+// NOTE: bun_url still carries a non-generic `route_param::Param` copy for
+// `PathnameScanner` (TYPE_ONLY move-down). Once bun_url adopts `Param<'a>`,
+// this module collapses back to a re-export.
+pub mod route_param {
+    #[derive(Clone, Copy)]
+    pub struct Param<'a> {
+        pub name: &'a [u8],
+        pub value: &'a [u8],
+    }
+    // TODO(b2-blocked): bun_collections::MultiArrayList — derive(MultiArrayElement)
+    // proc-macro not yet available. Using Vec; SoA layout is a perf concern only.
+    pub type List<'a> = Vec<Param<'a>>;
+}
+pub use route_param::Param;
 
 pub struct Router<'a> {
     pub dir: Fd,
@@ -460,11 +471,14 @@ impl<'a> Router<'a> {
             }
         }
 
-        PARAMS_LIST.with_borrow_mut(|params_list| -> Result<(), CoreError> {
-            params_list.truncate(0);
+        // PERF(port): Zig reused a threadlocal `params_list` to avoid realloc.
+        // A borrowed `List<'a>` cannot soundly live in a `'static` thread_local,
+        // so we allocate per-request; revisit with an arena/SmallVec if hot.
+        {
+            let mut params_list = route_param::List::default();
             if let Some(route) = app
                 .routes
-                .match_page(&app.config.dir, ctx.url(), params_list)
+                .match_page(&app.config.dir, ctx.url(), &mut params_list)
             {
                 if let Some(redirect) = route.redirect_path {
                     ctx.handle_redirect(redirect)?;
@@ -485,8 +499,7 @@ impl<'a> Router<'a> {
                 //     server.javascript_enabled = false;
                 // };
             }
-            Ok(())
-        })?;
+        }
 
         if !ctx.controlled() && !ctx.has_called_done() {
             ctx.handle_request()?;
@@ -549,10 +562,12 @@ impl RouteIndexList {
 
 pub struct Routes<'a> {
     pub list: RouteIndexList,
-    // TODO(port): self-referential — these slice into self.list columns; revisit in Phase B
-    pub dynamic: &'static [Box<Route>],
-    pub dynamic_names: &'static [&'static [u8]],
-    pub dynamic_match_names: &'static [&'static [u8]],
+    /// Index into `list`'s columns where dynamic routes begin (sorted after
+    /// static). Stored as an offset+len instead of materialized slices to avoid
+    /// a self-referential struct — Zig sliced `route_list.items(.route)[i..]`
+    /// directly; in Rust we re-slice on each `match_dynamic` call.
+    pub dynamic_start: Option<usize>,
+    pub dynamic_len: usize,
 
     /// completely static children of indefinite depth
     /// `"blog/posts"`
@@ -577,9 +592,8 @@ impl<'a> Default for Routes<'a> {
     fn default() -> Self {
         Self {
             list: RouteIndexList::default(),
-            dynamic: &[],
-            dynamic_names: &[],
-            dynamic_match_names: &[],
+            dynamic_start: None,
+            dynamic_len: 0,
             static_: StringHashMap::new(),
             index: None,
             index_id: Some(0),
@@ -594,7 +608,7 @@ impl<'a> Routes<'a> {
         &mut self,
         _: &[u8],
         url_path: &URLPath,
-        params: &'p mut route_param::List,
+        params: &'p mut route_param::List<'p>,
     ) -> Option<Match<'p>> {
         // Trim trailing slash
         let mut path = url_path.path;
@@ -651,17 +665,9 @@ impl<'a> Routes<'a> {
             return None;
         }
 
-        struct MatchContextType {
-            params: route_param::List,
-        }
-        // PORT NOTE: reshaped for borrowck — Zig moved params into a local struct then back via defer.
-        let mut matcher = MatchContextType {
-            params: core::mem::take(params),
-        };
-        let result = self.match_(path, &mut matcher.params);
-        *params = matcher.params;
-
-        if let Some(route_ptr) = result {
+        // PORT NOTE: Zig moved params into a local MatchContextType then back via
+        // defer; in Rust a plain reborrow suffices.
+        if let Some(route_ptr) = self.match_(path, params) {
             // SAFETY: pointers from static_/dynamic alias Box<Route> stored in
             // self.list, which outlives self.
             let route = unsafe { &*route_ptr };
@@ -686,20 +692,26 @@ impl<'a> Routes<'a> {
         &mut self,
         _: &[u8],
         url_path: &URLPath,
-        params: &'p mut route_param::List,
+        params: &'p mut route_param::List<'p>,
     ) -> Option<Match<'p>> {
         self.match_page_with_allocator(b"", url_path, params)
     }
 
-    fn match_dynamic(&self, path: &[u8], params: &mut route_param::List) -> Option<*const Route> {
+    fn match_dynamic<'p>(
+        &self,
+        path: &'p [u8],
+        params: &mut route_param::List<'p>,
+    ) -> Option<*const Route> {
         // its cleaned, so now we search the big list of strings
-        debug_assert_eq!(self.dynamic_names.len(), self.dynamic_match_names.len());
-        debug_assert_eq!(self.dynamic_names.len(), self.dynamic.len());
-        for ((case_sensitive_name, name), route) in self
-            .dynamic_names
+        let Some(start) = self.dynamic_start else { return None; };
+        let end = start + self.dynamic_len;
+        let dynamic = &self.list.items_route()[start..end];
+        let dynamic_names = &self.list.items_name()[start..end];
+        let dynamic_match_names = &self.list.items_match_name()[start..end];
+        for ((case_sensitive_name, name), route) in dynamic_names
             .iter()
-            .zip(self.dynamic_match_names.iter())
-            .zip(self.dynamic.iter())
+            .zip(dynamic_match_names.iter())
+            .zip(dynamic.iter())
         {
             if Pattern::match_::<true>(path, &case_sensitive_name[1..], name, params) {
                 return Some(&**route as *const Route);
@@ -709,7 +721,11 @@ impl<'a> Routes<'a> {
         None
     }
 
-    fn match_(&self, pathname_: &[u8], params: &mut route_param::List) -> Option<*const Route> {
+    fn match_<'p>(
+        &self,
+        pathname_: &'p [u8],
+        params: &mut route_param::List<'p>,
+    ) -> Option<*const Route> {
         // TODO(b2-blocked): bun_string::strings::trim_left — using local shim.
         let pathname = b1_stubs::strings_ext::trim_left(pathname_, b"/");
 
@@ -913,43 +929,22 @@ impl<'a> RouteLoader<'a> {
             });
         }
 
-        // TODO(port): self-referential slices into route_list columns — revisit in Phase B
-        let mut dynamic: &'static [Box<Route>] = &[];
-        let mut dynamic_names: &'static [&'static [u8]] = &[];
-        let mut dynamic_match_names: &'static [&'static [u8]] = &[];
-
+        let mut dynamic_len: usize = 0;
         if let Some(dynamic_i) = dynamic_start {
-            // SAFETY: route_list outlives the returned Routes (it is moved into it).
-            // These slices alias route_list's column storage; treated as 'static for Phase A.
-            unsafe {
-                dynamic = core::mem::transmute::<&[Box<Route>], &'static [Box<Route>]>(
-                    &route_list.items_route()[dynamic_i..],
-                );
-                dynamic_names = core::mem::transmute::<&[&[u8]], &'static [&'static [u8]]>(
-                    &route_list.items_name()[dynamic_i..],
-                );
-                dynamic_match_names = core::mem::transmute::<&[&[u8]], &'static [&'static [u8]]>(
-                    &route_list.items_match_name()[dynamic_i..],
-                );
-            }
-
+            dynamic_len = route_list.len() - dynamic_i;
             if let Some(index_i) = index_id {
                 if index_i > dynamic_i {
                     // Due to the sorting order, the index route can be the last route.
                     // We don't want to attempt to match the index route or different stuff will break.
-                    dynamic = &dynamic[0..dynamic.len() - 1];
-                    dynamic_names = &dynamic_names[0..dynamic_names.len() - 1];
-                    dynamic_match_names =
-                        &dynamic_match_names[0..dynamic_match_names.len() - 1];
+                    dynamic_len -= 1;
                 }
             }
         }
 
         Routes {
             list: route_list,
-            dynamic,
-            dynamic_names,
-            dynamic_match_names,
+            dynamic_start,
+            dynamic_len,
             static_: this.static_list,
             // SAFETY: points into a Box<Route> now owned by `route_list`;
             // Routes<'r> is the owner so the borrow is valid for its lifetime.
@@ -1499,10 +1494,6 @@ thread_local! {
     };
 }
 
-thread_local! {
-    static PARAMS_LIST: RefCell<route_param::List> = RefCell::new(route_param::List::default());
-}
-
 pub struct Match<'a> {
     /// normalized url path from the request
     pub path: &'a [u8],
@@ -1519,7 +1510,7 @@ pub struct Match<'a> {
     pub basename: &'a [u8],
 
     pub hash: u32,
-    pub params: &'a mut route_param::List,
+    pub params: &'a mut route_param::List<'a>,
     pub redirect_path: Option<&'a [u8]>,
     pub query_string: &'a [u8],
 }
@@ -1530,6 +1521,9 @@ impl<'a> Match<'a> {
         self.params.len() > 0
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_url::PathnameScanner still names the non-generic
+    // `bun_url::route_param::Param`; once it adopts `Param<'a>` this un-gates.
     pub fn params_iterator(&self) -> PathnameScanner<'_> {
         PathnameScanner::init(self.pathname, self.name, self.params)
     }
@@ -1600,14 +1594,14 @@ pub mod pattern {
 
     impl Pattern {
         /// Match a filesystem route pattern to a URL path.
-        pub fn match_<const ALLOW_OPTIONAL_CATCH_ALL: bool>(
+        pub fn match_<'a, const ALLOW_OPTIONAL_CATCH_ALL: bool>(
             // `path` must be lowercased and have no leading slash
-            path: &[u8],
+            path: &'a [u8],
             // case-sensitive, must not have a leading slash
-            name: &[u8],
+            name: &'a [u8],
             // case-insensitive, must not have a leading slash
             match_name: &[u8],
-            params: &mut route_param::List,
+            params: &mut route_param::List<'a>,
         ) -> bool {
             let mut offset: RoutePathInt = 0;
             let mut path_ = path;
@@ -1638,15 +1632,9 @@ pub mod pattern {
                     }
                     Value::Dynamic(dynamic) => {
                         if let Some(i) = path_.iter().position(|&b| b == b'/') {
-                            // TODO(port): lifetime — borrows from `name` and `path_`
-                            // SAFETY: name borrows route name (DirnameStore-backed), value borrows
-                            // request path; both outlive the route_param::List owner. Phase B must thread
-                            // the actual lifetime through Param instead of transmuting to 'static.
-                            params.push(unsafe {
-                                Param {
-                                    name: core::mem::transmute(dynamic.str(name)),
-                                    value: core::mem::transmute(&path_[0..i]),
-                                }
+                            params.push(Param {
+                                name: dynamic.str(name),
+                                value: &path_[0..i],
                             });
                             path_ = &path_[i + 1..];
 
@@ -1657,13 +1645,9 @@ pub mod pattern {
 
                             continue;
                         } else if pattern.is_end(name) {
-                            // SAFETY: borrows route name / request path; outlive route_param::List owner
-                            // (see lifetime TODO above).
-                            params.push(unsafe {
-                                Param {
-                                    name: core::mem::transmute(dynamic.str(name)),
-                                    value: core::mem::transmute(path_),
-                                }
+                            params.push(Param {
+                                name: dynamic.str(name),
+                                value: path_,
                             });
                             return true;
                         } else if ALLOW_OPTIONAL_CATCH_ALL {
@@ -1671,13 +1655,9 @@ pub mod pattern {
                                 Pattern::init(match_name, offset).expect("unreachable");
 
                             if matches!(pattern.value, Value::OptionalCatchAll(_)) {
-                                // SAFETY: borrows route name / request path; outlive route_param::List owner
-                                // (see lifetime TODO above).
-                                params.push(unsafe {
-                                    Param {
-                                        name: core::mem::transmute(dynamic.str(name)),
-                                        value: core::mem::transmute(path_),
-                                    }
+                                params.push(Param {
+                                    name: dynamic.str(name),
+                                    value: path_,
                                 });
                                 path_ = b"";
                                 let _ = path_;
@@ -1692,13 +1672,9 @@ pub mod pattern {
                     }
                     Value::CatchAll(dynamic) => {
                         if !path_.is_empty() {
-                            // SAFETY: borrows route name / request path; outlive route_param::List owner
-                            // (see lifetime TODO above).
-                            params.push(unsafe {
-                                Param {
-                                    name: core::mem::transmute(dynamic.str(name)),
-                                    value: core::mem::transmute(path_),
-                                }
+                            params.push(Param {
+                                name: dynamic.str(name),
+                                value: path_,
                             });
                             return true;
                         }
@@ -1708,13 +1684,9 @@ pub mod pattern {
                     Value::OptionalCatchAll(dynamic) => {
                         if ALLOW_OPTIONAL_CATCH_ALL {
                             if !path_.is_empty() {
-                                // SAFETY: borrows route name / request path; outlive route_param::List owner
-                                // (see lifetime TODO above).
-                                params.push(unsafe {
-                                    Param {
-                                        name: core::mem::transmute(dynamic.str(name)),
-                                        value: core::mem::transmute(path_),
-                                    }
+                                params.push(Param {
+                                    name: dynamic.str(name),
+                                    value: path_,
                                 });
                             }
 
@@ -2126,7 +2098,7 @@ mod tests {
         fn enqueue(
             _: &mut MockRequestContextType,
             _: &mut MockServer,
-            _: &mut route_param::List,
+            _: &mut route_param::List<'_>,
         ) -> Result<(), bun_core::Error> {
             Ok(())
         }
@@ -2194,7 +2166,7 @@ mod tests {
 
     #[test]
     fn pattern_match() {
-        type Entry = Param;
+        type Entry = Param<'static>;
 
         // TODO(port): Zig used anonymous-struct field iteration; ported as explicit array.
         let regular_list: &[(&[u8], &[u8], &[Entry])] = &[
@@ -2417,5 +2389,5 @@ mod tests {
 //   source:     src/router/router.zig (1918 lines)
 //   confidence: medium
 //   todos:      24
-//   notes:      Routes/RouteLoader self-reference Box<Route> in MultiArrayList (raw ptrs/'static transmute placeholder); Param/Route string fields treated as &'static (DirnameStore-backed) — Pattern::match_ transmutes name/path borrows into Param, Phase B must thread real lifetime; test harness (make_test/Test::make + 4 fixture-driven tests) stubbed pending bun_sys/bun_resolver; Route::Sorter nested-module shim is invalid Rust syntax — Phase B must hoist callers; TinyPtr is repr(transparent) u32 with shift accessors (Zig packed struct(u32))
+//   notes:      Routes/RouteLoader self-reference Box<Route> via raw *const Route into list columns; Route string fields treated as &'static (DirnameStore-backed); test harness (make_test/Test::make + 4 fixture-driven tests) stubbed pending bun_sys/bun_resolver; Route::Sorter nested-module shim is invalid Rust syntax — Phase B must hoist callers; TinyPtr is repr(transparent) u32 with shift accessors (Zig packed struct(u32))
 // ──────────────────────────────────────────────────────────────────────────

@@ -1,5 +1,4 @@
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
-use bun_str::{String as BunString, ZigString};
+use crate::jsc::{bun_string_jsc, JSGlobalObject, JSValue, JsResult};
 
 use bun_sql::mysql::protocol::error_packet::{ErrorPacket, MySQLErrorOptions};
 
@@ -12,23 +11,23 @@ pub fn create_mysql_error(
     opts_obj.ensure_still_alive();
     opts_obj.put(
         global,
-        ZigString::static_(b"code"),
-        BunString::create_utf8_for_js(global, options.code)?,
+        b"code",
+        bun_string_jsc::create_utf8_for_js(global, options.code)?,
     );
     if let Some(errno) = options.errno {
-        opts_obj.put(global, ZigString::static_(b"errno"), JSValue::js_number(errno));
+        opts_obj.put(global, b"errno", JSValue::js_number(f64::from(errno)));
     }
     if let Some(state) = options.sql_state {
         opts_obj.put(
             global,
-            ZigString::static_(b"sqlState"),
-            BunString::create_utf8_for_js(global, &state[..])?,
+            b"sqlState",
+            bun_string_jsc::create_utf8_for_js(global, &state[..])?,
         );
     }
     opts_obj.put(
         global,
-        ZigString::static_(b"message"),
-        BunString::create_utf8_for_js(global, message)?,
+        b"message",
+        bun_string_jsc::create_utf8_for_js(global, message)?,
     );
 
     Ok(opts_obj)
@@ -67,5 +66,5 @@ impl ErrorPacketJsc for ErrorPacket {
 //   source:     src/sql_jsc/mysql/protocol/error_packet_jsc.zig (40 lines)
 //   confidence: medium-high
 //   todos:      0
-//   notes:      ZigString::static_ name (reserved kw); sql_state passed through as Option (matches Zig ?[5]u8)
+//   notes:      JSValue::put takes &[u8] keys directly (no ZigString wrapper); sql_state passed through as Option (matches Zig ?[5]u8)
 // ──────────────────────────────────────────────────────────────────────────

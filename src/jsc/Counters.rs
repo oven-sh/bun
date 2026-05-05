@@ -1,6 +1,7 @@
 use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-#[derive(Default, Clone, Copy)]
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct Counters {
     pub spawn_sync_blocking: i32,
     pub spawn_memfd: i32,
@@ -33,16 +34,7 @@ impl Counters {
 // trampoline. Until the macro crate exists, expose the Zig-shape signature
 // directly; the trampoline is wired by codegen.
 pub fn create_counters_object(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    #[cfg(any())]
-    {
-        global.bun_vm().counters.to_js(global)
-    }
-    #[cfg(not(any()))]
-    {
-        // TODO(b2-blocked): bun_jsc::VirtualMachine::counters (field on the real VM struct)
-        let _ = global;
-        todo!("create_counters_object")
-    }
+    global.bun_vm().counters.to_js(global)
 }
 
 // Zig: `const Field = std.meta.FieldEnum(Counters);`

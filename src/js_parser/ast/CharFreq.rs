@@ -59,10 +59,8 @@ impl CharFreq {
         }
     }
 
-    // TODO(b2-ast-round): NameMinifier lives in renamer.rs (not yet un-gated).
-    #[cfg(any())]
-    pub fn compile<'bump>(&self, bump: &'bump bumpalo::Bump) -> crate::ast::NameMinifier<'bump> {
-        use crate::ast::NameMinifier;
+    pub fn compile(&self) -> crate::NameMinifier {
+        use crate::NameMinifier;
         let array: CharAndCountArray = 'brk: {
             let mut arr: [CharAndCount; CHAR_FREQ_COUNT] = [CharAndCount::default(); CHAR_FREQ_COUNT];
 
@@ -92,7 +90,7 @@ impl CharFreq {
             break 'brk arr;
         };
 
-        let mut minifier = NameMinifier::init(bump);
+        let mut minifier = NameMinifier::init();
         minifier
             .head
             .reserve_exact(NameMinifier::DEFAULT_HEAD.len().saturating_sub(minifier.head.len()));

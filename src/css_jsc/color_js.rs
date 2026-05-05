@@ -186,51 +186,42 @@ pub mod ansi256 {
 }
 
 pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    #[cfg(any())]
-    {
-        // TODO(b2-blocked): bun_css::ParserInput::new
-        // TODO(b2-blocked): bun_css::Parser::new
-        // TODO(b2-blocked): bun_css::CssColor::parse
-        // TODO(b2-blocked): bun_css::CssColor::to_css
-        // TODO(b2-blocked): bun_css::Printer::new
-        // TODO(b2-blocked): bun_css::values::color::RGBA::into_srgb
-        // TODO(b2-blocked): bun_css::values::color::RGBA::alpha_f32
-        // TODO(b2-blocked): bun_css::values::color::SRGB::into_rgba
-        // TODO(b2-blocked): bun_css::values::color::FloatColor::into_srgb
-        // TODO(b2-blocked): bun_css::values::color::LABColor::into_srgb
-        // TODO(b2-blocked): bun_jsc::bun_string_jsc::transfer_to_js
-        use bun_css as css;
-        use bun_css::values::color::{HSL, LAB, RGBA, SRGB};
-        use bun_css::CssColor;
-        use bun_jsc::ZigString;
-        use bun_logger::symbol::Map as SymbolMap;
+    use bun_css as css;
+    use bun_css::values::color::{HSL, LAB, RGBA, SRGB};
+    use bun_css::CssColor;
+    use bun_jsc::StringJsc as _;
+    use bun_logger::symbol::Map as SymbolMap;
+    use bun_string::ZigStringSlice;
 
-        let args = frame.arguments_as_array::<2>();
-        if args[0].is_undefined() {
-            return global.throw_invalid_argument_type("color", "input", "string, number, or object");
-        }
+    let args = frame.arguments_as_array::<2>();
+    if args[0].is_undefined() {
+        return Err(global.throw_invalid_argument_type(
+            "color",
+            "input",
+            "string, number, or object",
+        ));
+    }
 
-        // PERF(port): was ArenaAllocator + stackFallback(4096) — profile in Phase B
-        let arena = Arena::new();
+    // PERF(port): was ArenaAllocator + stackFallback(4096) — profile in Phase B
+    let arena = Arena::new();
 
-        let mut log = Log::init();
+    let mut log = Log::init();
 
-        let unresolved_format: OutputColorFormat = 'brk: {
-            if !args[1].is_empty_or_undefined_or_null() {
-                if !args[1].is_string() {
-                    return global.throw_invalid_argument_type("color", "format", "string");
-                }
-
-                // TODO(port): toEnum needs to wire OutputColorFormat::MAP for lookup
-                break 'brk args[1].to_enum::<OutputColorFormat>(global, "format")?;
+    let unresolved_format: OutputColorFormat = 'brk: {
+        if !args[1].is_empty_or_undefined_or_null() {
+            if !args[1].is_string() {
+                return Err(global.throw_invalid_argument_type("color", "format", "string"));
             }
 
-            break 'brk OutputColorFormat::Css;
-        };
-        let mut input = ZigString::Slice::empty();
+            break 'brk args[1].to_enum::<OutputColorFormat>(global, "format")?;
+        }
 
-        let mut parsed_color: css::CssColorParseResult = 'brk: {
-            if args[0].is_number() {
+        break 'brk OutputColorFormat::Css;
+    };
+    let mut input = ZigStringSlice::EMPTY;
+
+    let parsed_color: css::CssColorParseResult = 'brk: {
+        if args[0].is_number() {
                 let number: i64 = args[0].to_int64();
                 // Zig: packed struct(u32) { blue: u8, green: u8, red: u8, alpha: u8 }
                 let int: u32 = number.rem_euclid(u32::MAX as i64).unsigned_abs() as u32;
@@ -271,27 +262,27 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                         }));
                     }
                     _ => {
-                        return global.throw(format_args!("Expected array length 3 or 4"));
+                        return Err(global.throw(format_args!("Expected array length 3 or 4")));
                     }
                 }
             } else if args[0].is_object() {
                 let r = color_int_from_js(
                     global,
-                    args[0].get(global, "r")?.unwrap_or(JSValue::ZERO),
+                    args[0].get(global, b"r")?.unwrap_or(JSValue::ZERO),
                     "r",
                 )?;
                 let g = color_int_from_js(
                     global,
-                    args[0].get(global, "g")?.unwrap_or(JSValue::ZERO),
+                    args[0].get(global, b"g")?.unwrap_or(JSValue::ZERO),
                     "g",
                 )?;
                 let b = color_int_from_js(
                     global,
-                    args[0].get(global, "b")?.unwrap_or(JSValue::ZERO),
+                    args[0].get(global, b"b")?.unwrap_or(JSValue::ZERO),
                     "b",
                 )?;
 
-                let a: Option<u8> = if let Some(a_value) = args[0].get_truthy(global, "a")? {
+                let a: Option<u8> = if let Some(a_value) = args[0].get_truthy(global, b"a")? {
                     'brk2: {
                         if a_value.is_number() {
                             break 'brk2 Some(
@@ -321,20 +312,28 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
             input = args[0].to_slice(global)?;
 
             let mut parser_input = css::ParserInput::new(&arena, input.slice());
-            let mut parser = css::Parser::new(&mut parser_input, None, css::ParserOptions::default(), None);
+            let mut parser = css::Parser::new(
+                &mut parser_input,
+                None,
+                <css::ParserOptions<'_> as Default>::default(),
+                None,
+            );
             break 'brk CssColor::parse(&mut parser);
         };
 
-        match &mut parsed_color {
+        match parsed_color {
             css::CssColorParseResult::Err(err) => {
                 if log.msgs.is_empty() {
                     return Ok(JSValue::NULL);
                 }
 
-                return global.throw(format_args!(
+                // TODO(port): Zig used `@tagName(err.basic().kind)`; `BasicParseErrorKind`
+                // currently lacks `IntoStaticStr` in bun_css — falls back to Display until
+                // the derive lands.
+                return Err(global.throw(format_args!(
                     "color() failed to parse {}",
-                    <&'static str>::from(err.basic().kind)
-                ));
+                    err.basic().kind
+                )));
             }
             css::CssColorParseResult::Result(result) => {
                 let format: OutputColorFormat = if unresolved_format == OutputColorFormat::Ansi {
@@ -350,7 +349,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                 };
 
                 'formatted: {
-                    let str: BunString = 'color: {
+                    let mut str: BunString = 'color: {
                         match format {
                             // resolved above.
                             OutputColorFormat::Ansi => unreachable!(),
@@ -370,7 +369,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                             | OutputColorFormat::RgbObject
                             | OutputColorFormat::RgbaArray
                             | OutputColorFormat::RgbArray) => {
-                                let srgba: SRGB = match result {
+                                let srgba: SRGB = match &result {
                                     CssColor::Float(float) => match &**float {
                                         css::FloatColor::Rgb(rgb) => *rgb,
                                         // TODO(port): inline else over FloatColor variants → trait `IntoColor<SRGB>`
@@ -387,32 +386,32 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                                 match tag {
                                     OutputColorFormat::RgbaObject => {
                                         let object = JSValue::create_empty_object(global, 4);
-                                        object.put(global, "r", JSValue::js_number(rgba.red));
-                                        object.put(global, "g", JSValue::js_number(rgba.green));
-                                        object.put(global, "b", JSValue::js_number(rgba.blue));
-                                        object.put(global, "a", JSValue::js_number(rgba.alpha_f32()));
+                                        object.put(global, b"r", JSValue::js_number(rgba.red as f64));
+                                        object.put(global, b"g", JSValue::js_number(rgba.green as f64));
+                                        object.put(global, b"b", JSValue::js_number(rgba.blue as f64));
+                                        object.put(global, b"a", JSValue::js_number(rgba.alpha_f32() as f64));
                                         return Ok(object);
                                     }
                                     OutputColorFormat::RgbObject => {
                                         let object = JSValue::create_empty_object(global, 3);
-                                        object.put(global, "r", JSValue::js_number(rgba.red));
-                                        object.put(global, "g", JSValue::js_number(rgba.green));
-                                        object.put(global, "b", JSValue::js_number(rgba.blue));
+                                        object.put(global, b"r", JSValue::js_number(rgba.red as f64));
+                                        object.put(global, b"g", JSValue::js_number(rgba.green as f64));
+                                        object.put(global, b"b", JSValue::js_number(rgba.blue as f64));
                                         return Ok(object);
                                     }
                                     OutputColorFormat::RgbArray => {
                                         let object = JSValue::create_empty_array(global, 3)?;
-                                        object.put_index(global, 0, JSValue::js_number(rgba.red))?;
-                                        object.put_index(global, 1, JSValue::js_number(rgba.green))?;
-                                        object.put_index(global, 2, JSValue::js_number(rgba.blue))?;
+                                        object.put_index(global, 0, JSValue::js_number(rgba.red as f64))?;
+                                        object.put_index(global, 1, JSValue::js_number(rgba.green as f64))?;
+                                        object.put_index(global, 2, JSValue::js_number(rgba.blue as f64))?;
                                         return Ok(object);
                                     }
                                     OutputColorFormat::RgbaArray => {
                                         let object = JSValue::create_empty_array(global, 4)?;
-                                        object.put_index(global, 0, JSValue::js_number(rgba.red))?;
-                                        object.put_index(global, 1, JSValue::js_number(rgba.green))?;
-                                        object.put_index(global, 2, JSValue::js_number(rgba.blue))?;
-                                        object.put_index(global, 3, JSValue::js_number(rgba.alpha))?;
+                                        object.put_index(global, 0, JSValue::js_number(rgba.red as f64))?;
+                                        object.put_index(global, 1, JSValue::js_number(rgba.green as f64))?;
+                                        object.put_index(global, 2, JSValue::js_number(rgba.blue as f64))?;
+                                        object.put_index(global, 3, JSValue::js_number(rgba.alpha as f64))?;
                                         return Ok(object);
                                     }
                                     OutputColorFormat::Number => {
@@ -420,7 +419,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                                         int |= (rgba.red as u32) << 16;
                                         int |= (rgba.green as u32) << 8;
                                         int |= rgba.blue as u32;
-                                        return Ok(JSValue::js_number(int));
+                                        return Ok(JSValue::js_number(int as f64));
                                     }
                                     OutputColorFormat::Hex => {
                                         break 'color BunString::create_format(format_args!(
@@ -494,57 +493,69 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                             }
 
                             OutputColorFormat::Hsl => {
-                                let hsl: HSL = match result {
-                                    CssColor::Float(float) => 'brk: {
-                                        match &**float {
-                                            css::FloatColor::Hsl(hsl) => break 'brk *hsl,
-                                            // TODO(port): inline else over FloatColor variants → trait `IntoColor<HSL>`
-                                            other => break 'brk other.into_hsl(),
+                                #[cfg(any())]
+                                {
+                                    // TODO(b2-blocked): bun_css::values::color::{RGBA,FloatColor,LABColor}::into_hsl
+                                    let hsl: HSL = match &result {
+                                        CssColor::Float(float) => 'brk: {
+                                            match &**float {
+                                                css::FloatColor::Hsl(hsl) => break 'brk *hsl,
+                                                // TODO(port): inline else over FloatColor variants → trait `IntoColor<HSL>`
+                                                other => break 'brk other.into_hsl(),
+                                            }
                                         }
-                                    },
-                                    CssColor::Rgba(rgba) => rgba.into_hsl(),
-                                    CssColor::Lab(lab) => {
-                                        // TODO(port): inline else over LabColor variants → trait `IntoColor<HSL>`
-                                        lab.into_hsl()
-                                    }
-                                    _ => break 'formatted,
-                                };
+                                        CssColor::Rgba(rgba) => rgba.into_hsl(),
+                                        CssColor::Lab(lab) => {
+                                            // TODO(port): inline else over LabColor variants → trait `IntoColor<HSL>`
+                                            lab.into_hsl()
+                                        }
+                                        _ => break 'formatted,
+                                    };
 
-                                break 'color BunString::create_format(format_args!(
-                                    "hsl({}, {}, {})",
-                                    hsl.h, hsl.s, hsl.l
-                                ));
+                                    break 'color BunString::create_format(format_args!(
+                                        "hsl({}, {}, {})",
+                                        hsl.h, hsl.s, hsl.l
+                                    ));
+                                }
+                                let _ = &result;
+                                todo!("bun_css_jsc::color_js Hsl branch — gated on bun_css::values::color::*::into_hsl")
                             }
                             OutputColorFormat::Lab => {
-                                let lab: LAB = match result {
-                                    CssColor::Float(float) => {
-                                        // TODO(port): inline else over FloatColor variants → trait `IntoColor<LAB>`
-                                        float.into_lab()
-                                    }
-                                    CssColor::Lab(lab) => match &**lab {
-                                        css::LabColor::Lab(lab_) => *lab_,
-                                        // TODO(port): inline else over LabColor variants → trait `IntoColor<LAB>`
-                                        other => other.into_lab(),
-                                    },
-                                    CssColor::Rgba(rgba) => rgba.into_lab(),
-                                    _ => break 'formatted,
-                                };
+                                #[cfg(any())]
+                                {
+                                    // TODO(b2-blocked): bun_css::values::color::{RGBA,FloatColor,LABColor}::into_lab
+                                    let lab: LAB = match &result {
+                                        CssColor::Float(float) => {
+                                            // TODO(port): inline else over FloatColor variants → trait `IntoColor<LAB>`
+                                            float.into_lab()
+                                        }
+                                        CssColor::Lab(lab) => match &**lab {
+                                            css::LabColor::Lab(lab_) => *lab_,
+                                            // TODO(port): inline else over LabColor variants → trait `IntoColor<LAB>`
+                                            other => other.into_lab(),
+                                        },
+                                        CssColor::Rgba(rgba) => rgba.into_lab(),
+                                        _ => break 'formatted,
+                                    };
 
-                                break 'color BunString::create_format(format_args!(
-                                    "lab({}, {}, {})",
-                                    lab.l, lab.a, lab.b
-                                ));
+                                    break 'color BunString::create_format(format_args!(
+                                        "lab({}, {}, {})",
+                                        lab.l, lab.a, lab.b
+                                    ));
+                                }
+                                let _ = &result;
+                                todo!("bun_css_jsc::color_js Lab branch — gated on bun_css::values::color::*::into_lab")
                             }
                         }
                     };
 
-                    return Ok(str.transfer_to_js(global));
+                    return str.transfer_to_js(global);
                 }
 
                 // Fallback to CSS string output
                 let mut dest: Vec<u8> = Vec::new();
 
-                let symbols = SymbolMap::default();
+                let symbols = SymbolMap::init_list(Default::default());
                 // TODO(port): css::Printer::new signature — Zig passes (allocator, ArrayList, writer, opts, null, null, &symbols)
                 let mut printer = css::Printer::new(
                     &arena,
@@ -557,18 +568,12 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                 );
 
                 if let Err(err) = result.to_css(&mut printer) {
-                    return global.throw(format_args!("color() internal error: {}", err.name()));
+                    return Err(global.throw(format_args!("color() internal error: {}", err.name())));
                 }
 
-                return BunString::create_utf8_for_js(global, &dest);
+                return bun_jsc::bun_string_jsc::create_utf8_for_js(global, &dest);
             }
         }
-    }
-    #[cfg(not(any()))]
-    {
-        let _ = (global, frame);
-        todo!("bun_css_jsc::color_js::js_function_color — gated on bun_jsc/bun_css surface")
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

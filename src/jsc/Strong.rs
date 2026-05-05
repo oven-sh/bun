@@ -86,13 +86,11 @@ impl Optional {
 
     pub fn call(&mut self, global: &JSGlobalObject, args: &[JSValue]) -> JSValue {
         let Some(function) = self.try_swap() else { return JSValue::ZERO };
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_jsc::JSValue::call (JSValue.rs gated)
-            return function.call(global, args);
-        }
-        let _ = (function, global, args);
-        JSValue::ZERO
+        // PORT NOTE: Zig source (Strong.zig:71) calls `function.call(global, args)`
+        // which predates the `thisValue` param on JSValue.call; pass `.undefined`.
+        function
+            .call(global, JSValue::UNDEFINED, args)
+            .unwrap_or(JSValue::ZERO)
     }
 
     pub fn get(&self) -> Option<JSValue> {
@@ -198,8 +196,6 @@ unsafe extern "C" {
     fn Bun__StrongRef__clear(this: *mut Impl);
 }
 
-// TODO(b2-blocked): bun_jsc::deprecated_strong (DeprecatedStrong.rs still gated)
-#[cfg(any())]
 pub use crate::deprecated_strong as deprecated;
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -66,141 +66,130 @@ pub fn testing_impl(
     test_kind: TestKind,
     test_category: TestCategory,
 ) -> JsResult<JSValue> {
-    #[cfg(any())]
-    {
-        // TODO(b2-blocked): bun_css::StyleSheet::parse
-        // TODO(b2-blocked): bun_css::StyleSheet::minify
-        // TODO(b2-blocked): bun_css::StyleSheet::to_css
-        // TODO(b2-blocked): bun_css::ParserOptions::default (arena+log ctor)
-        // TODO(b2-blocked): bun_jsc::LogJsc::to_js
-        use bun_css::{
-            DefaultAtRule, ImportRecordHandler, LocalsResultsMap, MinifyOptions, ParserOptions,
-            PrinterOptions, StyleSheet,
-        };
-        use bun_options_types::ImportRecord;
+    use bun_css::{
+        DefaultAtRule, ImportRecordHandler, LocalsResultsMap, MinifyOptions, ParserOptions,
+        PrinterOptions, SrcIndex, StyleSheet,
+    };
+    use bun_jsc::{LogJsc as _, StringJsc as _};
+    use bun_options_types::ImportRecord;
 
-        let arena = Arena::new();
-        // PERF(port): was arena bulk-free — CSS parser allocates into this bump
+    let arena = Arena::new();
+    // PERF(port): was arena bulk-free — CSS parser allocates into this bump
 
-        let arguments_ = frame.arguments_old(3);
-        let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
-        let Some(source_arg) = arguments.next_eat() else {
-            return global.throw(format_args!(
-                "minifyTestWithOptions: expected 2 arguments, got 0"
-            ));
-        };
-        if !source_arg.is_string() {
-            return global.throw(format_args!(
-                "minifyTestWithOptions: expected source to be a string"
-            ));
-        }
-        let source_bunstr = source_arg.to_bun_string(global)?;
-        let source = source_bunstr.to_utf8();
+    let arguments_ = frame.arguments_old::<3>();
+    let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
+    let Some(source_arg) = arguments.next_eat() else {
+        return Err(global.throw(format_args!(
+            "minifyTestWithOptions: expected 2 arguments, got 0"
+        )));
+    };
+    if !source_arg.is_string() {
+        return Err(global.throw(format_args!(
+            "minifyTestWithOptions: expected source to be a string"
+        )));
+    }
+    let source_bunstr = source_arg.to_bun_string(global)?;
+    let source = source_bunstr.to_utf8();
 
-        let Some(expected_arg) = arguments.next_eat() else {
-            return global.throw(format_args!(
-                "minifyTestWithOptions: expected 2 arguments, got 1"
-            ));
-        };
-        if !expected_arg.is_string() {
-            return global.throw(format_args!(
-                "minifyTestWithOptions: expected `expected` arg to be a string"
-            ));
-        }
-        let expected_bunstr = expected_arg.to_bun_string(global)?;
-        let _expected = expected_bunstr.to_utf8();
+    let Some(expected_arg) = arguments.next_eat() else {
+        return Err(global.throw(format_args!(
+            "minifyTestWithOptions: expected 2 arguments, got 1"
+        )));
+    };
+    if !expected_arg.is_string() {
+        return Err(global.throw(format_args!(
+            "minifyTestWithOptions: expected `expected` arg to be a string"
+        )));
+    }
+    let expected_bunstr = expected_arg.to_bun_string(global)?;
+    let _expected = expected_bunstr.to_utf8();
 
-        let browser_options_arg = arguments.next_eat();
+    let browser_options_arg = arguments.next_eat();
 
-        let mut log = Log::init();
+    let mut log = Log::init();
 
-        let mut browsers: Option<Browsers> = None;
-        let parser_options = {
-            let mut opts = ParserOptions::default(&arena, &mut log);
-            // if (test_kind == .prefix) break :parser_options opts;
+    let mut browsers: Option<Browsers> = None;
+    let parser_options = {
+        let mut opts = ParserOptions::default(&arena, &mut log);
+        // if (test_kind == .prefix) break :parser_options opts;
 
-            match test_category {
-                TestCategory::Normal => {
-                    if let Some(optargs) = browser_options_arg {
-                        if optargs.is_object() {
-                            browsers = Some(targets_from_js(global, optargs)?);
-                        }
-                    }
-                }
-                TestCategory::ParserOptions => {
-                    if let Some(optargs) = browser_options_arg {
-                        if optargs.is_object() {
-                            parser_options_from_js(global, &arena, &mut opts, optargs)?;
-                        }
+        match test_category {
+            TestCategory::Normal => {
+                if let Some(optargs) = browser_options_arg {
+                    if optargs.is_object() {
+                        browsers = Some(targets_from_js(global, optargs)?);
                     }
                 }
             }
-
-            opts
-        };
-
-        let mut import_records = BabyList::<ImportRecord>::default();
-        match StyleSheet::<DefaultAtRule>::parse(
-            &arena,
-            source.slice(),
-            parser_options,
-            &mut import_records,
-            bun_bundler::Index::INVALID,
-        ) {
-            Ok(ret) => {
-                let (mut stylesheet, mut extra) = ret;
-                let mut minify_options = MinifyOptions::default();
-                minify_options.targets.browsers = browsers;
-                match stylesheet.minify(&arena, minify_options, &mut extra) {
-                    Ok(_) => {}
-                    Err(err) => {
-                        return global
-                            .throw_value(crate::error_jsc::to_error_instance(&err, global)?);
+            TestCategory::ParserOptions => {
+                if let Some(optargs) = browser_options_arg {
+                    if optargs.is_object() {
+                        parser_options_from_js(global, &arena, &mut opts, optargs)?;
                     }
                 }
+            }
+        }
 
-                let symbols = bun_logger::symbol::Map::default();
-                let mut local_names = LocalsResultsMap::default();
-                let result = match stylesheet.to_css(
-                    &arena,
-                    PrinterOptions {
-                        minify: match test_kind {
-                            TestKind::Minify => true,
-                            TestKind::Normal => false,
-                            TestKind::Prefix => false,
-                        },
-                        targets: Targets {
-                            browsers: minify_options.targets.browsers,
-                            ..Default::default()
-                        },
+        opts
+    };
+
+    let mut import_records = BabyList::<ImportRecord>::default();
+    match StyleSheet::<DefaultAtRule>::parse(
+        &arena,
+        source.slice(),
+        parser_options,
+        &mut import_records,
+        SrcIndex::INVALID,
+    ) {
+        Ok(ret) => {
+            let (mut stylesheet, mut extra) = ret;
+            let mut minify_options = MinifyOptions::default();
+            minify_options.targets.browsers = browsers;
+            match stylesheet.minify(&arena, minify_options, &mut extra) {
+                Ok(_) => {}
+                Err(err) => {
+                    return Err(
+                        global.throw_value(crate::error_jsc::to_error_instance(&err, global)?)
+                    );
+                }
+            }
+
+            let symbols = bun_logger::symbol::Map::init_list(Default::default());
+            let mut local_names = LocalsResultsMap::default();
+            let result = match stylesheet.to_css(
+                &arena,
+                PrinterOptions {
+                    minify: match test_kind {
+                        TestKind::Minify => true,
+                        TestKind::Normal => false,
+                        TestKind::Prefix => false,
+                    },
+                    targets: Targets {
+                        browsers,
                         ..Default::default()
                     },
-                    ImportRecordHandler::init_outside_of_bundler(&mut import_records),
-                    // TODO(port): exact type/module path for `.initOutsideOfBundler` — guessed bun_css::ImportRecordHandler
-                    &mut local_names,
-                    &symbols,
-                ) {
-                    Ok(result) => result,
-                    Err(err) => {
-                        return global
-                            .throw_value(crate::error_jsc::to_error_instance(&err, global)?);
-                    }
-                };
-
-                Ok(BunString::from_bytes(result.code).to_js(global))
-            }
-            Err(err) => {
-                if log.has_errors() {
-                    return Ok(log.to_js(global, "parsing failed:"));
+                    ..Default::default()
+                },
+                ImportRecordHandler::init_outside_of_bundler(&import_records),
+                &mut local_names,
+                &symbols,
+            ) {
+                Ok(result) => result,
+                Err(err) => {
+                    return Err(
+                        global.throw_value(crate::error_jsc::to_error_instance(&err, global)?)
+                    );
                 }
-                global.throw(format_args!("parsing failed: {}", err.kind))
-            }
+            };
+
+            BunString::from_bytes(&result.code).to_js(global)
         }
-    }
-    #[cfg(not(any()))]
-    {
-        let _ = (global, frame, test_kind, test_category);
-        todo!("bun_css_jsc::css_internals::testing_impl — gated on bun_jsc/bun_css surface")
+        Err(err) => {
+            if log.has_errors() {
+                return log.to_js(global, "parsing failed:");
+            }
+            Err(global.throw(format_args!("parsing failed: {}", err.kind)))
+        }
     }
 }
 
@@ -316,102 +305,91 @@ fn targets_from_js(global: &JSGlobalObject, jsobj: JSValue) -> JsResult<Browsers
 }
 
 pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    #[cfg(any())]
-    {
-        // TODO(b2-blocked): bun_css::StyleAttribute::parse
-        // TODO(b2-blocked): bun_css::StyleAttribute::minify
-        // TODO(b2-blocked): bun_css::StyleAttribute::to_css
-        // TODO(b2-blocked): bun_css::ParserOptions::default (arena+log ctor)
-        // TODO(b2-blocked): bun_jsc::LogJsc::to_js
-        use bun_css::{ImportRecordHandler, MinifyOptions, ParserOptions, PrinterOptions, StyleAttribute};
-        use bun_options_types::ImportRecord;
+    use bun_css::{
+        ImportRecordHandler, MinifyOptions, ParserOptions, PrinterOptions, SrcIndex, StyleAttribute,
+    };
+    use bun_jsc::{LogJsc as _, StringJsc as _};
+    use bun_options_types::ImportRecord;
 
-        let arena = Arena::new();
+    let arena = Arena::new();
 
-        let arguments_ = frame.arguments_old(4);
-        let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
-        let Some(source_arg) = arguments.next_eat() else {
-            return global.throw(format_args!("attrTest: expected 3 arguments, got 0"));
-        };
-        if !source_arg.is_string() {
-            return global.throw(format_args!("attrTest: expected source to be a string"));
-        }
-        let source_bunstr = source_arg.to_bun_string(global)?;
-        let source = source_bunstr.to_utf8();
+    let arguments_ = frame.arguments_old::<4>();
+    let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
+    let Some(source_arg) = arguments.next_eat() else {
+        return Err(global.throw(format_args!("attrTest: expected 3 arguments, got 0")));
+    };
+    if !source_arg.is_string() {
+        return Err(global.throw(format_args!("attrTest: expected source to be a string")));
+    }
+    let source_bunstr = source_arg.to_bun_string(global)?;
+    let source = source_bunstr.to_utf8();
 
-        let Some(expected_arg) = arguments.next_eat() else {
-            return global.throw(format_args!("attrTest: expected 3 arguments, got 1"));
-        };
-        if !expected_arg.is_string() {
-            return global.throw(format_args!(
-                "attrTest: expected `expected` arg to be a string"
-            ));
-        }
-        let expected_bunstr = expected_arg.to_bun_string(global)?;
-        let _expected = expected_bunstr.to_utf8();
+    let Some(expected_arg) = arguments.next_eat() else {
+        return Err(global.throw(format_args!("attrTest: expected 3 arguments, got 1")));
+    };
+    if !expected_arg.is_string() {
+        return Err(global.throw(format_args!(
+            "attrTest: expected `expected` arg to be a string"
+        )));
+    }
+    let expected_bunstr = expected_arg.to_bun_string(global)?;
+    let _expected = expected_bunstr.to_utf8();
 
-        let Some(minify_arg) = arguments.next_eat() else {
-            return global.throw(format_args!("attrTest: expected 3 arguments, got 2"));
-        };
-        let minify = minify_arg.is_boolean() && minify_arg.to_boolean();
+    let Some(minify_arg) = arguments.next_eat() else {
+        return Err(global.throw(format_args!("attrTest: expected 3 arguments, got 2")));
+    };
+    let minify = minify_arg.is_boolean() && minify_arg.to_boolean();
 
-        let mut targets = Targets::default();
-        if let Some(arg) = arguments.next_eat() {
-            if arg.is_object() {
-                targets.browsers = Some(targets_from_js(global, arg)?);
-            }
-        }
-
-        let mut log = Log::init();
-
-        let parser_options = ParserOptions::default(&arena, &mut log);
-
-        let mut import_records = BabyList::<ImportRecord>::default();
-        match StyleAttribute::parse(
-            &arena,
-            source.slice(),
-            parser_options,
-            &mut import_records,
-            bun_bundler::Index::INVALID,
-        ) {
-            Ok(stylesheet_) => {
-                let mut stylesheet = stylesheet_;
-                let mut minify_options = MinifyOptions::default();
-                minify_options.targets = targets;
-                stylesheet.minify(&arena, minify_options);
-
-                let result = match stylesheet.to_css(
-                    &arena,
-                    PrinterOptions {
-                        minify,
-                        targets,
-                        ..Default::default()
-                    },
-                    ImportRecordHandler::init_outside_of_bundler(&mut import_records),
-                    // TODO(port): exact type/module path for `.initOutsideOfBundler`
-                ) {
-                    Ok(r) => r,
-                    Err(_e) => {
-                        // Zig: bun.handleErrorReturnTrace(e, @errorReturnTrace()); return .js_undefined;
-                        // TODO(port): handleErrorReturnTrace — debug-only error trace dump; no Rust equivalent yet
-                        return Ok(JSValue::UNDEFINED);
-                    }
-                };
-
-                Ok(BunString::from_bytes(result.code).to_js(global))
-            }
-            Err(err) => {
-                if log.has_any() {
-                    return Ok(log.to_js(global, "parsing failed:"));
-                }
-                global.throw(format_args!("parsing failed: {}", err.kind))
-            }
+    let mut targets = Targets::default();
+    if let Some(arg) = arguments.next_eat() {
+        if arg.is_object() {
+            targets.browsers = Some(targets_from_js(global, arg)?);
         }
     }
-    #[cfg(not(any()))]
-    {
-        let _ = (global, frame);
-        todo!("bun_css_jsc::css_internals::attr_test — gated on bun_jsc/bun_css surface")
+
+    let mut log = Log::init();
+
+    let parser_options = ParserOptions::default(&arena, &mut log);
+
+    let mut import_records = BabyList::<ImportRecord>::default();
+    match StyleAttribute::parse(
+        &arena,
+        source.slice(),
+        parser_options,
+        &mut import_records,
+        SrcIndex::INVALID,
+    ) {
+        Ok(stylesheet_) => {
+            let mut stylesheet = stylesheet_;
+            let mut minify_options = MinifyOptions::default();
+            minify_options.targets = targets;
+            stylesheet.minify(&arena, minify_options);
+
+            let result = match stylesheet.to_css(
+                &arena,
+                PrinterOptions {
+                    minify,
+                    targets,
+                    ..Default::default()
+                },
+                ImportRecordHandler::init_outside_of_bundler(&import_records),
+            ) {
+                Ok(r) => r,
+                Err(_e) => {
+                    // Zig: bun.handleErrorReturnTrace(e, @errorReturnTrace()); return .js_undefined;
+                    // TODO(port): handleErrorReturnTrace — debug-only error trace dump; no Rust equivalent yet
+                    return Ok(JSValue::UNDEFINED);
+                }
+            };
+
+            BunString::from_bytes(&result.code).to_js(global)
+        }
+        Err(err) => {
+            if log.has_any() {
+                return log.to_js(global, "parsing failed:");
+            }
+            Err(global.throw(format_args!("parsing failed: {}", err.kind)))
+        }
     }
 }
 

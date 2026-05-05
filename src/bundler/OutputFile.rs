@@ -201,13 +201,13 @@ impl Value {
         }
     }
 
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_string::String::create_external — signature not yet
-    // exported from T1.
     pub fn to_bun_string(self) -> BunString {
         match self {
-            Value::Noop => BunString::empty(),
+            Value::Noop => BunString::EMPTY,
             Value::Buffer { bytes } => {
+                if bytes.is_empty() {
+                    return BunString::EMPTY;
+                }
                 // Use ExternalStringImpl to avoid cloning the string, at
                 // the cost of allocating space to remember the allocator.
                 //
@@ -227,19 +227,19 @@ impl Value {
                 }
                 let len = bytes.len();
                 let ptr = Box::into_raw(bytes) as *mut u8;
-                // TODO(port): exact `bun_str::String::create_external` signature
-                // (latin1 flag = true in Zig). Passing null ctx since allocator is gone.
-                BunString::create_external(
-                    core::ptr::null_mut::<c_void>(),
-                    // SAFETY: ptr/len come from a live `Box<[u8]>` leaked just above.
+                // latin1 flag = true (matches Zig).
+                BunString::create_external::<*mut c_void>(
+                    // SAFETY: ptr/len come from a live `Box<[u8]>` leaked into the
+                    // external string just above; freed by `on_free`.
                     unsafe { core::slice::from_raw_parts(ptr, len) },
                     true,
+                    core::ptr::null_mut::<c_void>(),
                     on_free,
                 )
             }
             Value::Pending(_) => unreachable!(),
-            other => bun_core::todo_panic!(
-                "handle .{}",
+            other => todo!(
+                "OutputFile.Value.toBunString: handle .{}",
                 <&'static str>::from(other.kind())
             ),
         }

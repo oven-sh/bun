@@ -9,6 +9,7 @@ use crate::{
 };
 
 bun_core::declare_scope!(HTTPInternalState, hidden);
+macro_rules! log { ($($t:tt)*) => { bun_core::scoped_log!(HTTPInternalState, $($t)*) }; }
 
 // TODO: reduce the size of this struct
 // Many of these fields can be moved to a packed struct and use less space
@@ -186,10 +187,6 @@ impl InternalState {
     }
 
     // TODO(port): narrow error set
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_libdeflate::Decompressor (no `bun_libdeflate` crate; only
-    // `bun_libdeflate_sys`); also depends on crate::http_thread().deflater() (gated)
-    // and Decompressor::update_buffers (re-gated above).
     pub fn decompress_bytes(
         &mut self,
         buffer: &[u8],
@@ -201,15 +198,21 @@ impl InternalState {
         // so each early-return below calls `self.compressed_body.reset()` explicitly.
         let mut gzip_timer: Option<std::time::Instant> = None;
 
-        if extremely_verbose() {
+        if extremely_verbose {
             gzip_timer = Some(std::time::Instant::now());
         }
 
         let mut still_needs_to_decompress = true;
 
-        if FeatureFlags::is_libdeflate_enabled() {
+        if bun_core::feature_flags::is_libdeflate_enabled() {
             // Fast-path: use libdeflate
+            // TODO(b2-blocked): bun_http::HTTPThread::deflater — `http_thread()` accessor and the
+            // `LibdeflateState { decompressor, shared_buffer }` it returns live in the gated
+            // HTTPThread cluster. Re-gated until HTTPThread un-gates (which itself blocks on
+            // bun_uws::SocketHandler method bodies).
+            #[cfg(any())]
             'libdeflate: {
+                use bun_libdeflate_sys::libdeflate as bun_libdeflate;
                 if !(is_final_chunk
                     && !self
                         .flags
@@ -222,12 +225,8 @@ impl InternalState {
                 self.flags
                     .insert(InternalStateFlags::IS_LIBDEFLATE_FAST_PATH_DISABLED);
 
-                bun_output::scoped_log!(
-                    HTTPInternalState,
-                    "Decompressing {} bytes with libdeflate\n",
-                    buffer.len()
-                );
-                let deflater = http_thread().deflater();
+                log!("Decompressing {} bytes with libdeflate\n", buffer.len());
+                let deflater = crate::http_thread().deflater();
 
                 // gzip stores the size of the uncompressed data in the last 4 bytes of the stream
                 // But it's only valid if the stream is less than 4.7 GB, since it's 4 bytes.
@@ -284,11 +283,12 @@ impl InternalState {
                     still_needs_to_decompress = false;
                 }
             }
+            let _ = is_final_chunk;
         }
 
         // Slow path, or brotli: use the .decompressor
         if still_needs_to_decompress {
-            bun_output::scoped_log!(HTTPInternalState, "Decompressing {} bytes\n", buffer.len());
+            log!("Decompressing {} bytes\n", buffer.len());
             if body_out_str.list.capacity() == 0 {
                 let min = ((buffer.len() as f64) * 1.5).ceil().min(1024.0 * 1024.0 * 2.0);
                 if let Err(err) = body_out_str.grow_by((min as usize).max(32)) {
@@ -297,6 +297,10 @@ impl InternalState {
                 }
             }
 
+            // TODO(b2-blocked): bun_zlib::ZlibReaderArrayList / bun_brotli::BrotliReaderArrayList /
+            // bun_zstd::ZstdReaderArrayList — `Decompressor::update_buffers` is re-gated until
+            // those reader types are reshaped to not carry an `'a` borrow of the output Vec.
+            #[cfg(any())]
             if let Err(err) = self
                 .decompressor
                 .update_buffers(self.encoding, buffer, body_out_str)
@@ -309,7 +313,7 @@ impl InternalState {
                 if self.is_done() || err != bun_core::err!("ShortRead") {
                     Output::pretty_errorln(format_args!(
                         "<r><red>Decompression error: {}<r>",
-                        bstr::BStr::new(err.name().as_bytes())
+                        bstr::BStr::new(err.name())
                     ));
                     Output::flush();
                     self.compressed_body.reset();
@@ -318,7 +322,7 @@ impl InternalState {
             }
         }
 
-        if extremely_verbose() {
+        if extremely_verbose {
             // TODO(port): `gzip_elapsed` is not a field on InternalState in the Zig source either —
             // this looks like dead code referencing a removed field. Preserved as a no-op read.
             let _ = gzip_timer.map(|t| t.elapsed());
@@ -329,8 +333,6 @@ impl InternalState {
     }
 
     // TODO(port): narrow error set
-    #[cfg(any())]
-    // TODO(b2-blocked): see decompress_bytes
     pub fn decompress(
         &mut self,
         buffer: &MutableString,
@@ -343,8 +345,6 @@ impl InternalState {
     }
 
     // TODO(port): narrow error set
-    #[cfg(any())]
-    // TODO(b2-blocked): see decompress_bytes
     pub fn process_body_buffer(
         &mut self,
         buffer: &MutableString,
@@ -364,9 +364,10 @@ impl InternalState {
             _ => {
                 if !body_out_str.owns(buffer.list.as_slice()) {
                     if let Err(err) = body_out_str.append(buffer.list.as_slice()) {
+                        let err: Error = err.into();
                         Output::pretty_errorln(format_args!(
                             "<r><red>Failed to append to body buffer: {}<r>",
-                            bstr::BStr::new(err.name().as_bytes())
+                            bstr::BStr::new(err.name())
                         ));
                         Output::flush();
                         return Err(err.into());

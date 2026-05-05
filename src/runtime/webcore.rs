@@ -55,10 +55,11 @@ mod _gated_submods {
 }
 
 // TODO: make this JSGlobalObject local for better security
-// TODO(port): `bun.ObjectPool` / `bun.ByteList` are not in the crate map; assuming `bun_collections`.
-// TODO(b2-blocked): bun_collections::ObjectPool generic arity mismatch — verify signature.
-#[cfg(any())]
-pub type ByteListPool = bun_collections::ObjectPool<bun_collections::ByteList, 8>;
+// Zig: `bun.ObjectPool(bun.ByteList, null, true, 8)` — `null` init goes on
+// `ObjectPoolType` (already impl'd for `ByteList` in bun_collections), `true`
+// is THREADSAFE, `8` is MAX_COUNT. Storage param defaults to `UnwiredStorage`;
+// wire with `object_pool!` at first use site.
+pub type ByteListPool = bun_collections::pool::ObjectPool<bun_collections::ByteList, true, 8>;
 
 // ─── compiling submodules ────────────────────────────────────────────────────
 // Zig: `pub const FetchHeaders = @import("../jsc/FetchHeaders.zig").FetchHeaders;` (opaque {}).

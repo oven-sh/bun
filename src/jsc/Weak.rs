@@ -91,13 +91,11 @@ impl<'a, T> Weak<'a, T> {
         let Some(function) = self.try_swap() else {
             return JSValue::ZERO;
         };
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_jsc::JSValue::call (JSValue.rs gated)
-            return function.call(self.global_this.unwrap(), args);
-        }
-        let _ = (function, args);
-        JSValue::ZERO
+        // PORT NOTE: Zig source (Weak.zig:50) calls `function.call(global, args)`
+        // which predates the `thisValue` param on JSValue.call; pass `.undefined`.
+        function
+            .call(self.global_this.unwrap(), JSValue::UNDEFINED, args)
+            .unwrap_or(JSValue::ZERO)
     }
 
     pub fn create(

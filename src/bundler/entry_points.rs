@@ -396,19 +396,17 @@ impl Default for MacroEntryPoint {
 }
 
 impl MacroEntryPoint {
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_js_parser::Macro — `Macro` lives in *_jsc and was
-    // DELETED from the base crate per PORTING.md §Idiom map; needs the
-    // `NAMESPACE_WITH_COLON`/`NAMESPACE` constants re-homed.
     pub fn generate_id(entry_path: &[u8], function_name: &[u8], buf: &mut [u8], len: &mut u32) -> i32 {
         let mut hasher = Wyhash11::init(0);
         hasher.update(js_ast::Macro::NAMESPACE_WITH_COLON);
         hasher.update(entry_path);
         hasher.update(function_name);
         let hash = hasher.final_();
-        let fmt = bun_fmt::hex_int_lower(hash);
+        let fmt = bun_fmt::hex_int_lower::<16>(hash);
 
-        let specifier: &[u8] = {
+        // PORT NOTE: reshaped for borrowck — capture cursor position, drop &mut
+        // borrow, then re-borrow `buf` immutably.
+        let n = {
             let mut cursor = std::io::Cursor::new(&mut buf[..]);
             write!(
                 &mut cursor,
@@ -417,9 +415,9 @@ impl MacroEntryPoint {
                 fmt,
             )
             .expect("unreachable");
-            let n = cursor.position() as usize;
-            &buf[..n]
+            cursor.position() as usize
         };
+        let specifier: &[u8] = &buf[..n];
         *len = specifier.len() as u32;
 
         Self::generate_id_from_specifier(specifier)

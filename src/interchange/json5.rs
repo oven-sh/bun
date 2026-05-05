@@ -15,8 +15,6 @@ use bun_core::StackCheck;
 // `is_identifier_start/_part` landed in `bun_string::lexer`; route through there.
 use bun_str::lexer as identifier;
 // MOVE_DOWN(b0): bun_js_parser::{E,Expr,G,ExprNodeList} → bun_logger::js_ast (T2)
-// TODO(b2-blocked): bun_logger::js_ast — MOVE_DOWN not yet landed in T2.
-#[cfg(any())]
 use bun_logger::js_ast::{E, Expr, G};
 use bun_logger::{self as logger, Loc, Log, Source};
 use bun_str::strings;
@@ -280,8 +278,6 @@ impl<'a> JSON5Parser<'a> {
         }
     }
 
-    // TODO(b2-blocked): bun_logger::js_ast::Expr
-    #[cfg(any())]
     pub fn parse(source: &'a Source, log: &mut Log, bump: &'a Bump) -> Result<Expr, ExternalError> {
         let mut parser = JSON5Parser {
             source: source.contents.as_ref(),
@@ -485,10 +481,6 @@ impl<'a> JSON5Parser<'a> {
 
     // ── Parser ──
 
-    // TODO(b2-blocked): bun_logger::js_ast::{Expr, E, G, ExprNodeList}
-    //   parse_root/parse_value/parse_object/parse_object_key/parse_array all
-    //   construct `Expr` AST nodes; re-gated until js_ast MOVE_DOWN lands in T2.
-    #[cfg(any())]
     fn parse_root(&mut self) -> Result<Expr, ParseError> {
         self.scan()?;
         let result = self.parse_value()?;
@@ -496,6 +488,21 @@ impl<'a> JSON5Parser<'a> {
             return Err(ParseError::TrailingData);
         }
         Ok(result)
+    }
+
+    // TODO(b2-blocked): bun_logger::js_ast::{E, G, ExprNodeList}
+    //   parse_value/parse_object/parse_object_key/parse_array all construct
+    //   `E::String { data }` / `E::Number { value }` / `G::Property { key, .. }`
+    //   AST payloads; the T2 stub shapes are field-less `(())` newtypes, so
+    //   these bodies stay gated until the real `E`/`G` namespace lands in
+    //   `bun_logger::js_ast`. The non-gated `parse_value` below keeps the call
+    //   chain (`parse` → `parse_root` → `parse_value`) compiling.
+    #[cfg(not(any()))]
+    fn parse_value(&mut self) -> Result<Expr, ParseError> {
+        if !self.stack_check.is_safe_to_recurse() {
+            return Err(ParseError::StackOverflow);
+        }
+        todo!("b2-blocked: bun_logger::js_ast::E (parse_value)")
     }
 
     #[cfg(any())]

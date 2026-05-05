@@ -78,17 +78,10 @@ impl JSBigInt {
     }
 
     pub fn to_string(&self, global: &JSGlobalObject) -> JsResult<BunString> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_jsc::from_js_host_call_generic (host_fn.rs gated)
-            return from_js_host_call_generic(global, core::panic::Location::caller(), || {
-                // SAFETY: `self` and `global` are valid for the duration of the call.
-                unsafe { JSC__JSBigInt__toString(self, global) }
-            });
-        }
-        // SAFETY: `self` and `global` are valid for the duration of the call.
-        // B-2 fallback: call raw FFI without exception-scope check until host_fn un-gates.
-        Ok(unsafe { JSC__JSBigInt__toString(self, global) })
+        crate::host_fn::from_js_host_call_generic(global, || {
+            // SAFETY: `self` and `global` are valid for the duration of the call.
+            unsafe { JSC__JSBigInt__toString(self, global) }
+        })
     }
 }
 

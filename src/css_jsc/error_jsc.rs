@@ -16,21 +16,17 @@ where
     // The Zig formats `this.kind` with `{f}`; in Rust the kind type must be `Display`.
     T: Display,
 {
-    #[cfg(any())]
-    {
-        // TODO(b2-blocked): bun_jsc::bun_string_jsc::to_error_instance
-        let str = BunString::create_format(format_args!("{}", this.kind));
-        // `defer str.deref()` — handled by `Drop for bun_str::String`.
-        return Ok(bun_jsc::bun_string_jsc::to_error_instance(&str, global_this));
-    }
-    let _ = (this, global_this);
-    todo!("bun_css_jsc::error_jsc::to_error_instance — gated on bun_jsc::bun_string_jsc::to_error_instance")
+    let str = BunString::create_format(format_args!("{}", this.kind));
+    // `defer str.deref()` — `bun_string::String` is `Copy` and has no `Drop`, so deref explicitly.
+    let js = bun_jsc::bun_string_jsc::to_error_instance(&str, global_this);
+    str.deref();
+    Ok(js)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/css_jsc/error_jsc.zig (10 lines)
-//   confidence: medium
-//   todos:      2 (b2-blocked)
-//   notes:      `anytype` mapped to `&bun_css::Err<T>`; `T: Display` bound; body gated on bun_string/bun_jsc ext-trait surface.
+//   confidence: high
+//   todos:      0
+//   notes:      `anytype` mapped to `&bun_css::Err<T>`; `T: Display` bound.
 // ──────────────────────────────────────────────────────────────────────────

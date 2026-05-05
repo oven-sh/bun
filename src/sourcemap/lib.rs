@@ -562,32 +562,32 @@ pub mod SerializedSourceMap {
             Some(&self.bytes[start..][..head.map_bytes_length as usize])
         }
 
-        pub fn source_file_names(self) -> &'static [StringPointer] {
+        /// Zig returns `[]align(1) const StringPointer` (StandaloneModuleGraph.zig)
+        /// because the blob sits at an arbitrary offset in the executable. Rust
+        /// cannot soundly form a `&[StringPointer]` here — that would require
+        /// 4-byte alignment regardless of target. Return raw `(ptr, count)` and
+        /// read each element via `ptr.add(i).read_unaligned()`.
+        pub fn source_file_names(self) -> (*const StringPointer, usize) {
             let head = self.header();
-            // SAFETY: layout per `Header` doc; `StringPointer` is `repr(C)`
-            // `{u32,u32}` so unaligned reads through the slice are fine on all
-            // targets we ship (x86_64 / aarch64).
-            unsafe {
-                core::slice::from_raw_parts(
-                    self.bytes[size_of::<Header>()..].as_ptr().cast::<StringPointer>(),
-                    head.source_files_count as usize,
-                )
-            }
+            let ptr = self.bytes[size_of::<Header>()..]
+                .as_ptr()
+                .cast::<StringPointer>();
+            (ptr, head.source_files_count as usize)
         }
 
-        fn compressed_source_files(self) -> &'static [StringPointer] {
+        fn compressed_source_files(self) -> (*const StringPointer, usize) {
             let head = self.header();
+            let count = head.source_files_count as usize;
             // SAFETY: second contiguous `StringPointer` array immediately
-            // follows the first (see `Header` layout doc).
-            unsafe {
-                core::slice::from_raw_parts(
-                    self.bytes[size_of::<Header>()..]
-                        .as_ptr()
-                        .cast::<StringPointer>()
-                        .add(head.source_files_count as usize),
-                    head.source_files_count as usize,
-                )
-            }
+            // follows the first (see `Header` layout doc); the offset stays
+            // within `bytes`. Same align(1) caveat as `source_file_names`.
+            let ptr = unsafe {
+                self.bytes[size_of::<Header>()..]
+                    .as_ptr()
+                    .cast::<StringPointer>()
+                    .add(count)
+            };
+            (ptr, count)
         }
     }
 
@@ -608,8 +608,12 @@ pub mod SerializedSourceMap {
             // wrote and re-read in the same scope. Here we populate first if
             // empty, then take a single borrow at the end.
             if self.decompressed_files[index].is_none() {
-                let compressed_codes = self.map.compressed_source_files();
-                let compressed_file = sp_slice(compressed_codes[index], self.map.bytes);
+                let (compressed_codes, _count) = self.map.compressed_source_files();
+                // SAFETY: `index < source_files_count` is upheld by caller;
+                // pointer is into the mmapped `'static` blob. Read unaligned
+                // per Zig's `[]align(1) const StringPointer`.
+                let sp = unsafe { compressed_codes.add(index).read_unaligned() };
+                let compressed_file = sp_slice(sp, self.map.bytes);
                 let size = bun_zstd::get_decompressed_size(compressed_file);
 
                 let mut bytes = vec![0u8; size];
@@ -735,14 +739,58 @@ impl SourceMapPieces {
     }
 }
 
-// ── stubbed entry points (bodies gated; un-gate in B-2) ───────────────────
+// ── parse entry points ────────────────────────────────────────────────────
 
+/// Parses an inline source map url like `data:application/json,....`
+/// Currently does not handle non-inline source maps.
+///
+/// `source` must be in UTF-8 and can be freed after this call.
+/// The mappings are owned by the global allocator.
+/// Temporary allocations are made to the `arena` allocator, which
+/// should be an arena allocator (caller is assumed to call `reset`).
 pub fn parse_url(
-    _arena: &bun_alloc::Arena,
-    _source: &[u8],
-    _hint: ParseUrlResultHint,
+    arena: &bun_alloc::Arena,
+    source: &[u8],
+    hint: ParseUrlResultHint,
 ) -> Result<ParseUrl, bun_core::Error> {
-    todo!("B-2: parse_url — see _phase_a_draft")
+    // TODO(port): narrow error set
+    let json_bytes: &[u8] = 'json_bytes: {
+        const DATA_PREFIX: &[u8] = b"data:application/json";
+
+        'try_data_url: {
+            if source.starts_with(DATA_PREFIX) && source.len() > DATA_PREFIX.len() + 1 {
+                // PORT NOTE: `scoped_log!(SourceMap, ...)` dropped — `SourceMap`
+                // names the top-level struct in this module; the debug scope
+                // lives in `mapping::SourceMap` and `scoped_log!` only takes a
+                // bare ident. Debug-only log; revisit if scopes become path-able.
+                match source[DATA_PREFIX.len()] {
+                    b';' => {
+                        let after = &source[DATA_PREFIX.len() + 1..];
+                        let encoding =
+                            &after[..after.iter().position(|&b| b == b',').unwrap_or(after.len())];
+                        if encoding != b"base64" {
+                            break 'try_data_url;
+                        }
+                        let base64_data = &source[DATA_PREFIX.len() + b";base64,".len()..];
+
+                        let len = bun_base64::decode_len(base64_data);
+                        let bytes = arena.alloc_slice_fill_default::<u8>(len);
+                        let decoded = bun_base64::decode(bytes, base64_data);
+                        if !decoded.is_successful() {
+                            return Err(bun_core::err!("InvalidBase64"));
+                        }
+                        break 'json_bytes &bytes[..decoded.count];
+                    }
+                    b',' => break 'json_bytes &source[DATA_PREFIX.len() + 1..],
+                    _ => break 'try_data_url,
+                }
+            }
+        }
+
+        return Err(bun_core::err!("UnsupportedFormat"));
+    };
+
+    parse_json(arena, json_bytes, hint)
 }
 
 pub fn parse_json(
@@ -750,8 +798,83 @@ pub fn parse_json(
     _source: &[u8],
     _hint: ParseUrlResultHint,
 ) -> Result<ParseUrl, bun_core::Error> {
-    // TODO(b1): bun_js_parser::Expr / bun_interchange::json::parse — gated.
+    // TODO(b2-blocked): bun_js_parser::Expr::data_store_reset / Data::is_e_string /
+    // Data::as_e_array — API surface not yet exposed; bun_interchange::json::parse
+    // signature differs from draft. Full body lives in `_phase_a_draft::parse_json`.
     todo!("B-2: parse_json — see _phase_a_draft")
+}
+
+// -- comment from esbuild --
+// Source map chunks are computed in parallel for speed. Each chunk is relative
+// to the zero state instead of being relative to the end state of the previous
+// chunk, since it's impossible to know the end state of the previous chunk in
+// a parallel computation.
+//
+// After all chunks are computed, they are joined together in a second pass.
+// This rewrites the first mapping in each chunk to be relative to the end
+// state of the previous chunk.
+pub fn append_source_map_chunk(
+    j: &mut bun_str::string_joiner::StringJoiner,
+    prev_end_state_: SourceMapState,
+    start_state_: SourceMapState,
+    source_map_: &[u8],
+) -> Result<(), bun_core::Error> {
+    // TODO(port): narrow error set
+    let mut prev_end_state = prev_end_state_;
+    let mut start_state = start_state_;
+    // Handle line breaks in between this mapping and the previous one
+    if start_state.generated_line != 0 {
+        j.push_owned(
+            bun_str::strings::repeating_alloc(
+                usize::try_from(start_state.generated_line).unwrap(),
+                b';',
+            )?,
+        );
+        prev_end_state.generated_column = 0;
+    }
+
+    // Skip past any leading semicolons, which indicate line breaks
+    let mut source_map = source_map_;
+    if let Some(semicolons) = bun_str::strings::index_of_not_char(source_map, b';') {
+        let semicolons = semicolons as usize;
+        if semicolons > 0 {
+            j.push_static(&source_map[..semicolons]);
+            source_map = &source_map[semicolons..];
+            prev_end_state.generated_column = 0;
+            start_state.generated_column = 0;
+        }
+    }
+
+    // Strip off the first mapping from the buffer. The first mapping should be
+    // for the start of the original file (the printer always generates one for
+    // the start of the file).
+    let mut i: usize = 0;
+    let generated_column = decode_vlq_assume_valid(source_map, i);
+    i = generated_column.start;
+    let source_index = decode_vlq_assume_valid(source_map, i);
+    i = source_index.start;
+    let original_line = decode_vlq_assume_valid(source_map, i);
+    i = original_line.start;
+    let original_column = decode_vlq_assume_valid(source_map, i);
+    i = original_column.start;
+
+    source_map = &source_map[i..];
+
+    // Rewrite the first mapping to be relative to the end state of the previous
+    // chunk. We now know what the end state is because we're in the second pass
+    // where all chunks have already been generated.
+    start_state.source_index += source_index.value;
+    start_state.generated_column += generated_column.value;
+    start_state.original_line += original_line.value;
+    start_state.original_column += original_column.value;
+
+    let mut str = bun_str::MutableString::init_empty();
+    append_mapping_to_buffer(&mut str, j.last_byte(), prev_end_state, start_state);
+    j.push_owned(str.to_owned_slice());
+
+    // Then append everything after that without modification.
+    j.push_static(source_map);
+    Ok(())
 }
 
 // TODO(port): move to bun_str::strings (these mirror std.mem.lastIndexOf)
@@ -767,15 +890,13 @@ fn last_index_of(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Phase-A draft body — preserved, gated off. Remaining bodies here
-// (parse_url/parse_json/get_source_map_impl/append_source_map_chunk/
-// append_source_mapping_url_remote) are blocked on:
-//   TODO(b2-blocked): bun_core::base64
-//   TODO(b2-blocked): bun_js_parser::Expr
+// (parse_json/get_source_map_impl/append_source_mapping_url_remote) are
+// blocked on:
+//   TODO(b2-blocked): bun_js_parser::Expr (data_store_reset / Data accessors)
 //   TODO(b2-blocked): bun_io::Write
-//   TODO(b2-blocked): bun_string::StringJoiner::push_owned
-//   TODO(b2-blocked): bun_sys::File::read_from (arena variant)
-// `SerializedSourceMap` and `SourceMapPieces::finalize` have been lifted out
-// of this block and are now live above.
+//   TODO(b2-blocked): bun_str::String find-source-mapping-url helpers
+// `SerializedSourceMap`, `SourceMapPieces::finalize`, `parse_url`, and
+// `append_source_map_chunk` have been lifted out and are now live above.
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(any())]
 mod _phase_a_draft {
@@ -938,32 +1059,32 @@ pub mod SerializedSourceMap {
             Some(&self.bytes[start..][..head.map_bytes_length as usize])
         }
 
-        pub fn source_file_names(self) -> &'static [StringPointer] {
+        /// Zig returns `[]align(1) const StringPointer` (StandaloneModuleGraph.zig)
+        /// because the blob sits at an arbitrary offset in the executable. Rust
+        /// cannot soundly form a `&[StringPointer]` here — that would require
+        /// 4-byte alignment regardless of target. Return raw `(ptr, count)` and
+        /// read each element via `ptr.add(i).read_unaligned()`.
+        pub fn source_file_names(self) -> (*const StringPointer, usize) {
             let head = self.header();
-            // SAFETY: layout per `Header` doc; `StringPointer` is `repr(C)`
-            // `{u32,u32}` so unaligned reads through the slice are fine on all
-            // targets we ship (x86_64 / aarch64).
-            unsafe {
-                core::slice::from_raw_parts(
-                    self.bytes[size_of::<Header>()..].as_ptr().cast::<StringPointer>(),
-                    head.source_files_count as usize,
-                )
-            }
+            let ptr = self.bytes[size_of::<Header>()..]
+                .as_ptr()
+                .cast::<StringPointer>();
+            (ptr, head.source_files_count as usize)
         }
 
-        fn compressed_source_files(self) -> &'static [StringPointer] {
+        fn compressed_source_files(self) -> (*const StringPointer, usize) {
             let head = self.header();
+            let count = head.source_files_count as usize;
             // SAFETY: second contiguous `StringPointer` array immediately
-            // follows the first (see `Header` layout doc).
-            unsafe {
-                core::slice::from_raw_parts(
-                    self.bytes[size_of::<Header>()..]
-                        .as_ptr()
-                        .cast::<StringPointer>()
-                        .add(head.source_files_count as usize),
-                    head.source_files_count as usize,
-                )
-            }
+            // follows the first (see `Header` layout doc); the offset stays
+            // within `bytes`. Same align(1) caveat as `source_file_names`.
+            let ptr = unsafe {
+                self.bytes[size_of::<Header>()..]
+                    .as_ptr()
+                    .cast::<StringPointer>()
+                    .add(count)
+            };
+            (ptr, count)
         }
     }
 
@@ -988,8 +1109,12 @@ pub mod SerializedSourceMap {
                 };
             }
 
-            let compressed_codes = self.map.compressed_source_files();
-            let compressed_file = compressed_codes[index].slice(self.map.bytes);
+            let (compressed_codes, _count) = self.map.compressed_source_files();
+            // SAFETY: `index < source_files_count` is upheld by caller;
+            // pointer is into the mmapped `'static` blob. Read unaligned
+            // per Zig's `[]align(1) const StringPointer`.
+            let sp = unsafe { compressed_codes.add(index).read_unaligned() };
+            let compressed_file = sp.slice(self.map.bytes);
             let size = bun_zstd::get_decompressed_size(compressed_file);
 
             let mut bytes = vec![0u8; size];

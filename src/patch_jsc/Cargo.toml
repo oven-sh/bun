@@ -18,13 +18,7 @@ enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
 bun_core.workspace = true
-# TODO(b2-blocked): bun_jsc — crate currently fails to compile (transitive deps
-# bun_css / bun_js_printer / bun_http / bun_sourcemap all error). The needed API
-# surface (CallFrame::arguments_old, ArgumentsSlice, JSGlobalObject::{throw,
-# throw_error,throw_value,bun_vm}, JSValue::{to_bun_string,TRUE,UNDEFINED},
-# StringJsc::to_js) DOES exist in bun_jsc/lib.rs — re-enable once bun_jsc is
-# green; testing.rs uses local opaque stubs meanwhile.
-# bun_jsc.workspace = true
+bun_jsc.workspace = true
 bun_patch.workspace = true
 bun_string.workspace = true
 bun_sys.workspace = true

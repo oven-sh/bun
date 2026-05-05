@@ -49,68 +49,67 @@ impl Signature {
         array_value: JSValue,
         columns: JSValue,
     ) -> Result<Signature, bun_core::Error> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): crate::shared::QueryBindingIterator::{init,next,any_failed}
-            // TODO(b2-blocked): bun_jsc::JSValue::is_empty_or_undefined_or_null
-            // TODO(b2-blocked): bun_sql::mysql::mysql_types::FieldType::from_js
-            use crate::shared::query_binding_iterator::QueryBindingIterator;
+        use crate::shared::query_binding_iterator::QueryBindingIterator;
 
-            let mut fields: Vec<Param> = Vec::new();
-            let mut name: Vec<u8> = Vec::with_capacity(query.len());
+        let mut fields: Vec<Param> = Vec::new();
+        let mut name: Vec<u8> = Vec::with_capacity(query.len());
 
-            // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
-            name.extend_from_slice(query);
+        // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
+        name.extend_from_slice(query);
 
-            // errdefer { fields.deinit(); name.deinit(); } — deleted: `Vec` drops on `?`.
+        // errdefer { fields.deinit(); name.deinit(); } — deleted: `Vec` drops on `?`.
 
-            let mut iter = QueryBindingIterator::init(array_value, columns, global_object)?;
+        let mut iter = QueryBindingIterator::init(array_value, columns, global_object)?;
 
-            while let Some(value) = iter.next()? {
-                if value.is_empty_or_undefined_or_null() {
-                    // Allow MySQL to decide the type
-                    fields.push(Param {
-                        r#type: FieldType::MYSQL_TYPE_NULL,
-                        flags: ColumnFlags::empty(),
-                    });
-                    name.extend_from_slice(b".null");
-                    continue;
-                }
-                let mut unsigned = false;
-                let tag = FieldType::from_js(global_object, value, &mut unsigned)?;
-                if unsigned {
-                    // 128 is more than enought right now
-                    // PORT NOTE: reshaped — Zig used `std.fmt.bufPrint` into a 128-byte
-                    // stack buffer with a `catch @tagName(tag)` fallback on overflow.
-                    // "U" + tag name can never exceed 128 bytes, so a direct append is
-                    // equivalent and avoids the intermediate buffer.
-                    name.push(b'U');
-                    name.extend_from_slice(<&'static str>::from(tag).as_bytes());
-                } else {
-                    name.extend_from_slice(<&'static str>::from(tag).as_bytes());
-                }
-                // TODO: add flags if necessary right now the only relevant would be unsigned but is JS and is never unsigned
+        while let Some(value) = iter.next()? {
+            if value.is_empty_or_undefined_or_null() {
+                // Allow MySQL to decide the type
                 fields.push(Param {
-                    r#type: tag,
-                    flags: if unsigned { ColumnFlags::UNSIGNED } else { ColumnFlags::empty() },
+                    r#type: FieldType::MYSQL_TYPE_NULL,
+                    flags: ColumnFlags::empty(),
                 });
+                name.extend_from_slice(b".null");
+                continue;
             }
-
-            if iter.any_failed() {
-                return Err(bun_core::err!("InvalidQueryBinding"));
+            let mut unsigned = false;
+            #[cfg(any())]
+            let tag = {
+                // TODO(b2-blocked): bun_sql::mysql::mysql_types::FieldType::from_js
+                // (jsc-side ext fn; lives in MySQLValue.rs which is still gated)
+                FieldType::from_js(global_object, value, &mut unsigned)?
+            };
+            #[cfg(not(any()))]
+            let tag: FieldType = {
+                let _ = (value, &mut unsigned);
+                unimplemented!("b2-blocked: FieldType::from_js (MySQLValue.rs gated)")
+            };
+            if unsigned {
+                // 128 is more than enought right now
+                // PORT NOTE: reshaped — Zig used `std.fmt.bufPrint` into a 128-byte
+                // stack buffer with a `catch @tagName(tag)` fallback on overflow.
+                // "U" + tag name can never exceed 128 bytes, so a direct append is
+                // equivalent and avoids the intermediate buffer.
+                name.push(b'U');
+                name.extend_from_slice(<&'static str>::from(tag).as_bytes());
+            } else {
+                name.extend_from_slice(<&'static str>::from(tag).as_bytes());
             }
-
-            return Ok(Signature {
-                name: name.into_boxed_slice(),
-                fields: fields.into_boxed_slice(),
-                query: Box::<[u8]>::from(query),
+            // TODO: add flags if necessary right now the only relevant would be unsigned but is JS and is never unsigned
+            fields.push(Param {
+                r#type: tag,
+                flags: if unsigned { ColumnFlags::UNSIGNED } else { ColumnFlags::empty() },
             });
         }
-        #[cfg(not(any()))]
-        {
-            let _ = (global_object, query, array_value, columns);
-            unimplemented!("b2-blocked: QueryBindingIterator / FieldType::from_js")
+
+        if iter.any_failed() {
+            return Err(bun_core::err!("InvalidQueryBinding"));
         }
+
+        Ok(Signature {
+            name: name.into_boxed_slice(),
+            fields: fields.into_boxed_slice(),
+            query: Box::<[u8]>::from(query),
+        })
     }
 }
 

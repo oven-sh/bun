@@ -18,9 +18,6 @@ enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
 bun_alloc.workspace = true
-# TODO(b2-blocked): bun_jsc — crate is red (concurrent B-2 un-gating in progress).
-# Re-add once `cargo check -p bun_jsc` is green, then swap local stubs below for
-# `use bun_jsc::{JSGlobalObject, JSValue, JsResult}`.
-# bun_jsc.workspace = true
+bun_jsc.workspace = true
 bun_logger.workspace = true
 bun_string.workspace = true

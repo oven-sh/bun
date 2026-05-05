@@ -99,9 +99,9 @@ impl ManifestBindings {
         todo!("npm_jsc::ManifestBindings::generate — gated on bun_jsc::host_fn proc-macro")
     }
 
-    // TODO(b2-blocked): bun_install::npm::PackageManifest (fields: name(), versions, string_buf)
-    // TODO(b2-blocked): bun_sys::Fd::cwd
-    // TODO(b2-blocked): bun_jsc::StringJsc::to_js_by_parse_json
+    // TODO(b2-blocked): bun_install::npm::PackageManifest (stub is unit struct —
+    //   needs `name()`, `versions`, `string_buf`)
+    // TODO(b2-blocked): bun_sys::File::open_at / bun_sys::Fd::cwd
     #[cfg(any())]
     pub fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         use std::io::Write as _;

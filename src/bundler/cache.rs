@@ -1,8 +1,10 @@
 use core::ffi::c_void;
 use core::mem::ManuallyDrop;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_alloc::Arena as Bump;
 use bun_core::{self, feature_flags, Global, Output};
+use bun_interchange::json_parser;
 use bun_js_parser::{self as js_parser, ast as js_ast};
 use bun_logger as logger;
 use bun_string::{strings, MutableString};
@@ -49,24 +51,27 @@ impl Default for RuntimeTranspilerCache {
     }
 }
 
+/// Mirrors the Zig `pub var is_disabled` mutable global — written by T6
+/// (src/runtime/cli/Arguments.zig:1603, src/jsc/VirtualMachine.zig:1383) and
+/// flipped lazily on cache-dir resolution failure. Module-level so those
+/// writers can reach it; `disabled()` reads it.
+pub static DISABLED: AtomicBool = AtomicBool::new(false);
+
 impl RuntimeTranspilerCache {
     /// Mirrors the Zig `pub var is_disabled` namespaced const — kept as an
     /// associated fn so call-sites read `RuntimeTranspilerCache::is_disabled()`.
     #[inline]
     pub fn disabled() -> bool {
-        #[cfg(any())]
-        {
-            // PERF(port): was a global `var`; OnceLock written by T6 init.
-            static DISABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-            return *DISABLED.get_or_init(|| {
-                bun_core::env_var::BUN_RUNTIME_TRANSPILER_CACHE_PATH
-                    .get()
-                    .map(|v| v == b"0")
-                    .unwrap_or(false)
-            });
-        }
-        // TODO(b2-blocked): bun_core::env_var::BUN_RUNTIME_TRANSPILER_CACHE_PATH
-        false
+        DISABLED.load(Ordering::Relaxed)
+            || bun_core::env_var::BUN_RUNTIME_TRANSPILER_CACHE_PATH
+                .get()
+                .map(|v| v.is_empty() || v == b"0")
+                .unwrap_or(false)
+    }
+
+    #[inline]
+    pub fn set_disabled(v: bool) {
+        DISABLED.store(v, Ordering::Relaxed);
     }
 }
 
@@ -207,14 +212,13 @@ impl Entry {
 
 impl Entry {
     pub fn close_fd(&mut self) -> Option<bun_sys::Error> {
-        #[cfg(any())]
+        use bun_sys::FdExt as _;
         if self.fd.is_valid() {
             let fd = self.fd;
             self.fd = Fd::INVALID;
-            // TODO(port): @returnAddress() has no stable Rust equivalent; pass null for now
-            return fd.close_allowing_bad_file_descriptor(core::ptr::null());
+            // TODO(port): @returnAddress() has no stable Rust equivalent; pass None for now
+            return fd.close_allowing_bad_file_descriptor(None);
         }
-        // TODO(b2-blocked): bun_sys::FdExt::close_allowing_bad_file_descriptor
         None
     }
 }
@@ -576,23 +580,26 @@ impl Json {
     }
 }
 
-#[cfg(any())]
-// TODO(b2-blocked): bun_interchange::json_parser::{parse, parse_ts_config} —
-// json_parser surface not yet exported.
+// TODO(b2-blocked): bun_interchange::json_parser::Expr — interchange stub
+// returns a local opaque `Expr(())`, not `bun_js_parser::Expr` (GENUINE T4
+// cycle per interchange/lib.rs). Bodies compile against the stub; callers
+// get the stub `Expr` until interchange is un-gated.
 impl Json {
-    fn parse<F, const FORCE_UTF8: bool>(
+    fn parse<F>(
         &mut self,
         log: &mut logger::Log,
         source: &logger::Source,
         bump: &Bump,
         func: F,
-    ) -> Result<Option<js_ast::Expr>, bun_core::Error>
+    ) -> Result<Option<json_parser::Expr>, bun_core::Error>
     where
-        F: FnOnce(&logger::Source, &mut logger::Log, &Bump, bool) -> Result<js_ast::Expr, bun_core::Error>,
+        F: FnOnce(&logger::Source, &mut logger::Log, &Bump) -> Result<json_parser::Expr, bun_core::Error>,
     {
-        let mut temp_log = logger::Log::init(bump);
+        // PORT NOTE: `comptime force_utf8` is baked into `F` via turbofish at the
+        // call site instead of forwarded as a runtime arg.
+        let mut temp_log = logger::Log::init();
         // PORT NOTE: reshaped for borrowck — Zig `defer temp_log.appendToMaybeRecycled(...)`
-        let result = match func(source, &mut temp_log, bump, FORCE_UTF8) {
+        let result = match func(source, &mut temp_log, bump) {
             Ok(expr) => Some(expr),
             Err(_) => None,
         };
@@ -606,15 +613,15 @@ impl Json {
         source: &logger::Source,
         bump: &Bump,
         mode: JsonMode,
-    ) -> Result<Option<js_ast::Expr>, bun_core::Error> {
+    ) -> Result<Option<json_parser::Expr>, bun_core::Error> {
         // tsconfig.* and jsconfig.* files are JSON files, but they are not valid JSON files.
         // They are JSON files with comments and trailing commas.
         // Sometimes tooling expects this to work.
         if mode == JsonMode::Jsonc {
-            return self.parse::<_, FORCE_UTF8>(log, source, bump, json_parser::parse_ts_config);
+            return self.parse(log, source, bump, json_parser::parse_ts_config::<FORCE_UTF8>);
         }
 
-        self.parse::<_, FORCE_UTF8>(log, source, bump, json_parser::parse)
+        self.parse(log, source, bump, json_parser::parse::<FORCE_UTF8>)
     }
 
     pub fn parse_package_json<const FORCE_UTF8: bool>(
@@ -622,8 +629,8 @@ impl Json {
         log: &mut logger::Log,
         source: &logger::Source,
         bump: &Bump,
-    ) -> Result<Option<js_ast::Expr>, bun_core::Error> {
-        self.parse::<_, FORCE_UTF8>(log, source, bump, json_parser::parse_ts_config)
+    ) -> Result<Option<json_parser::Expr>, bun_core::Error> {
+        self.parse(log, source, bump, json_parser::parse_ts_config::<FORCE_UTF8>)
     }
 
     pub fn parse_ts_config(
@@ -631,8 +638,8 @@ impl Json {
         log: &mut logger::Log,
         source: &logger::Source,
         bump: &Bump,
-    ) -> Result<Option<js_ast::Expr>, bun_core::Error> {
-        self.parse::<_, true>(log, source, bump, json_parser::parse_ts_config)
+    ) -> Result<Option<json_parser::Expr>, bun_core::Error> {
+        self.parse(log, source, bump, json_parser::parse_ts_config::<true>)
     }
 }
 

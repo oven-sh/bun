@@ -82,41 +82,34 @@ impl Array {
     }
 }
 
-#[cfg(any())]
 impl Array {
-    pub fn push_gated(&mut self, bump: &Bump, item: Expr) -> Result<(), AllocError> {
-        self.items.append(bump, item)
-    }
-
-    #[inline]
-    pub fn slice(&self) -> &[Expr] {
-        self.items.slice()
-    }
-
     pub fn inline_spread_of_array_literals(
         &mut self,
-        bump: &Bump,
+        _bump: &Bump,
         estimated_count: usize,
     ) -> Result<ExprNodeList, AllocError> {
         // This over-allocates a little but it's fine
+        // PERF(port): Zig allocated in arena; Phase-A BabyList uses global allocator.
         let mut out: BabyList<Expr> =
-            BabyList::init_capacity(bump, estimated_count + self.items.len() as usize)?;
+            BabyList::init_capacity(estimated_count + self.items.len as usize)?;
         out.expand_to_capacity();
+        // PORT NOTE: reshaped for borrowck — iterate items via index so the &mut
+        // borrow of `out` (remain) does not overlap a shared borrow of `self`.
+        let items_len = self.items.len as usize;
         let mut remain = out.slice_mut();
-        for item in self.items.slice() {
+        for idx in 0..items_len {
+            let item = self.items.slice()[idx];
             match &item.data {
                 crate::ast::expr::Data::ESpread(val) => {
                     if let crate::ast::expr::Data::EArray(inner) = &val.value.data {
                         for inner_item in inner.items.slice() {
                             if matches!(inner_item.data, crate::ast::expr::Data::EMissing(_)) {
                                 remain[0] = Expr::init(Undefined {}, inner_item.loc);
-                                remain = &mut remain[1..];
                             } else {
                                 remain[0] = *inner_item;
-                                remain = &mut remain[1..];
                             }
+                            remain = &mut remain[1..];
                         }
-
                         // skip empty arrays
                         // don't include the inlined spread.
                         continue;
@@ -126,13 +119,14 @@ impl Array {
                 _ => {}
             }
 
-            remain[0] = *item;
+            remain[0] = item;
             remain = &mut remain[1..];
         }
 
         // PORT NOTE: reshaped for borrowck — capture remain.len() before re-borrowing `out`.
         let remain_len = remain.len();
-        out.shrink_retaining_capacity(out.len() - u32::try_from(remain_len).unwrap());
+        let new_len = out.len as usize - remain_len;
+        out.shrink_retaining_capacity(new_len);
         Ok(out)
     }
 
@@ -140,6 +134,8 @@ impl Array {
     // PORTING.md (jsc extension trait lives in `js_parser_jsc` crate).
 
     /// Assumes each item in the array is a string
+    // TODO(b2-ast-round-C): depends on `EString::order` (gated EString impl).
+    #[cfg(any())]
     pub fn alphabetize_strings(&mut self) {
         if cfg!(debug_assertions) {
             for item in self.items.slice() {
@@ -149,8 +145,6 @@ impl Array {
         self.items.slice_mut().sort_by(array_sorter_is_less_than);
     }
 }
-
-// (was: array_sorter_is_less_than — moved into the gated Array impl above)
 
 pub struct Unary {
     pub op: crate::ast::OpCode,
@@ -353,17 +347,25 @@ pub struct Arrow {
     pub prefer_expr: bool,
 }
 impl Arrow {
-    // TODO(port): the Zig `pub const noop_return_undefined` was a value const.
-    // `G::Fn`/`G::FnBody` field shapes (round-A) need confirming before
-    // stamping a default; un-gate once Arrow's struct fields are settled.
-    #[cfg(any())]
+    // Zig `pub const noop_return_undefined: Arrow = .{ .body = .{ .stmts = &.{} } };`
     pub const NOOP_RETURN_UNDEFINED: Arrow = Arrow {
         args: &[],
-        body: G::FnBody { loc: logger::Loc::EMPTY, stmts: &[] },
+        body: G::FnBody { loc: logger::Loc::EMPTY, stmts: crate::empty_arena_slice_mut() },
         is_async: false,
         has_rest_arg: false,
         prefer_expr: false,
     };
+}
+impl Default for Arrow {
+    fn default() -> Self {
+        Self {
+            args: &[],
+            body: G::FnBody { loc: logger::Loc::EMPTY, stmts: crate::empty_arena_slice_mut() },
+            is_async: false,
+            has_rest_arg: false,
+            prefer_expr: false,
+        }
+    }
 }
 
 pub struct Function {
@@ -1361,6 +1363,21 @@ impl EString {
         // TODO(port): arena-owned slice lifetime — see `Str` alias note.
         let bytes_static: &'static [u8] = unsafe { core::mem::transmute(bytes) };
         Self { data: bytes_static, is_utf16: true, ..Default::default() }
+    }
+    /// E.String containing non-ascii characters may not fully work.
+    /// https://github.com/oven-sh/bun/issues/11963
+    /// More investigation is needed.
+    pub fn init_re_encode_utf8(utf8: &[u8], bump: &Bump) -> EString {
+        if strings::first_non_ascii(utf8).is_none() {
+            Self::init(utf8)
+        } else {
+            // PERF(port): Zig allocated directly in arena; here we transcode to a
+            // heap Vec then copy into the bump arena — profile in Phase B.
+            let utf16 = strings::to_utf16_alloc_for_real(utf8, false, false)
+                .expect("unreachable"); // fail_if_invalid=false → never errors
+            let arena_slice: &mut [u16] = bump.alloc_slice_copy(&utf16);
+            Self::init_utf16(arena_slice)
+        }
     }
     /// Ensure `data` is UTF-8 (transcode from UTF-16 rope if needed).
     /// `lexer.rs::to_utf8_e_string` only ever calls this on a freshly-decoded

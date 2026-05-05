@@ -44,13 +44,7 @@ impl DOMURL {
     }
 
     pub fn cast<'a>(value: JSValue) -> Option<&'a mut DOMURL> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_jsc::VirtualMachine::get (VirtualMachine.rs gated)
-            return Self::cast_(value, VirtualMachine::get().global().vm());
-        }
-        let _ = value;
-        None
+        Self::cast_(value, crate::virtual_machine::VirtualMachine::get().global().vm())
     }
 
     pub fn href_(&mut self, out: &mut ZigString) {

@@ -313,7 +313,7 @@ fn slice_as_bytes<T: Copy>(s: &[T]) -> &[u8] {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 struct StringMapKey(u32);
 
 pub struct StringContext<'a> {
@@ -321,12 +321,12 @@ pub struct StringContext<'a> {
     pub strings_lens: &'a [u32],
 }
 
-impl<'a> StringContext<'a> {
-    pub fn hash(&self, s: &[u8]) -> u32 {
+impl<'a> bun_collections::array_hash_map::ArrayHashAdapter<&[u8], StringMapKey> for StringContext<'a> {
+    fn hash(&self, s: &&[u8]) -> u32 {
         bun_wyhash::hash(s) as u32
     }
 
-    pub fn eql(&self, fetch_key: &[u8], item_key: StringMapKey, item_i: usize) -> bool {
+    fn eql(&self, fetch_key: &&[u8], item_key: &StringMapKey, item_i: usize) -> bool {
         let start = item_key.0 as usize;
         let len = self.strings_lens[item_i] as usize;
         strings::eql_long::<true>(fetch_key, &self.strings_buf[start..start + len])
@@ -552,31 +552,30 @@ impl ModuleInfo {
     pub fn str(&mut self, value: &[u8]) -> Result<StringID, bun_alloc::AllocError> {
         self.strings_buf.reserve(value.len());
         self.strings_lens.reserve(1);
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_collections::ArrayHashMap::get_or_put_adapted —
-            // adapted-context (hash by bytes, eql against stored offset+len) entry
-            // point not present on the B-1 stub (`std::collections::HashMap`).
+        // PORT NOTE: reshaped for borrowck — `gpres` borrows `self.strings_map`
+        // mutably; capture `index`/`found_existing` and write key before
+        // re-borrowing `strings_buf`/`strings_lens`.
+        let (index, found_existing) = {
             let gpres = self.strings_map.get_or_put_adapted(
                 value,
                 StringContext {
                     strings_buf: &self.strings_buf,
                     strings_lens: &self.strings_lens,
                 },
-            );
-            if gpres.found_existing {
-                return Ok(StringID(u32::try_from(gpres.index).unwrap()));
+            )?;
+            if !gpres.found_existing {
+                *gpres.key_ptr = StringMapKey(self.strings_buf.len() as u32);
+                *gpres.value_ptr = ();
             }
-
-            *gpres.key_ptr = StringMapKey(self.strings_buf.len() as u32);
-            *gpres.value_ptr = ();
-            // PERF(port): was appendSliceAssumeCapacity / appendAssumeCapacity
-            self.strings_buf.extend_from_slice(value);
-            self.strings_lens.push(value.len() as u32);
-            return Ok(StringID(u32::try_from(gpres.index).unwrap()));
+            (gpres.index, gpres.found_existing)
+        };
+        if found_existing {
+            return Ok(StringID(u32::try_from(index).unwrap()));
         }
-        let _ = value;
-        unimplemented!("b2-blocked: ArrayHashMap::get_or_put_adapted")
+        // PERF(port): was appendSliceAssumeCapacity / appendAssumeCapacity
+        self.strings_buf.extend_from_slice(value);
+        self.strings_lens.push(value.len() as u32);
+        Ok(StringID(u32::try_from(index).unwrap()))
     }
 
     pub fn request_module(
@@ -604,18 +603,10 @@ impl ModuleInfo {
             }
         }
         // Replace in requested_modules keys (preserving insertion order)
-        #[cfg(any())]
         if let Some(idx) = self.requested_modules.get_index(&old_id) {
             self.requested_modules.keys_mut()[idx] = new_id;
-            // TODO(port): ArrayHashMap::re_index() equivalent; `catch {}` discarded OOM.
+            // Zig `catch {}` discarded OOM.
             let _ = self.requested_modules.re_index();
-        }
-        // TODO(b2-blocked): bun_collections::ArrayHashMap::{get_index, keys_mut,
-        // re_index} — B-1 stub is std::HashMap (no insertion-order key slice).
-        // Fallback: remove+reinsert (loses insertion order; revisit once IndexMap
-        // backs ArrayHashMap).
-        if let Some(v) = self.requested_modules.remove(&old_id) {
-            self.requested_modules.insert(new_id, v);
         }
     }
 
@@ -691,19 +682,9 @@ impl ModuleInfo {
             }
         }
 
-        // TODO(b2-blocked): bun_collections::ArrayHashMap::{keys, values} as
-        // contiguous slices — B-1 stub is std::HashMap (no slice access). Once
-        // ArrayHashMap is backed by IndexMap/MultiArrayList, restore the direct
-        // raw-slice borrows of `requested_modules.{keys,values}()`.
-        #[cfg(any())]
         let (rm_keys, rm_values): (*const [StringID], *const [FetchParameters]) = (
             self.requested_modules.keys() as *const [StringID],
             self.requested_modules.values() as *const [FetchParameters],
-        );
-        #[cfg(not(any()))]
-        let (rm_keys, rm_values): (*const [StringID], *const [FetchParameters]) = (
-            core::ptr::slice_from_raw_parts(core::ptr::NonNull::dangling().as_ptr(), 0),
-            core::ptr::slice_from_raw_parts(core::ptr::NonNull::dangling().as_ptr(), 0),
         );
 
         self._deserialized.write(ModuleInfoDeserialized {
@@ -756,14 +737,8 @@ pub extern "C" fn zig__ModuleInfoDeserialized__deinit(info: *mut ModuleInfoDeser
 pub extern "C" fn zig_log(msg: *const c_char) {
     // SAFETY: caller passes a NUL-terminated C string.
     let bytes = unsafe { CStr::from_ptr(msg) }.to_bytes();
-    #[cfg(any())]
-    {
-        let _ = bun_core::Output::error_writer().print_bytes_ln(bytes);
-    }
-    // TODO(b2-blocked): bun_core::Output::error_writer — returns `*mut io::Writer`
-    // with no `print_bytes_ln`; needs the `with_error_writer(|w| ...)` API per the
-    // TODO in output.rs.
-    let _ = bytes;
+    // Zig: `Output.errorWriter().print("{s}\n", .{bytes}) catch {}`.
+    bun_core::Output::print_error(format_args!("{}\n", bstr::BStr::new(bytes)));
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -1,8 +1,7 @@
-use bun_jsc::{JSGlobalObject, JSValue};
+use crate::jsc::{JSGlobalObject, JSValue, StringJsc as _};
 use bun_sql::postgres::types::int_types::short;
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::shared::Data;
-use bun_str::StringJsc as _; // extension trait providing .to_js() on bun_str::String
 
 pub const TO: i32 = 25;
 pub const FROM: [short; 1] = [1002];
@@ -17,26 +16,26 @@ pub trait ToJsWithType {
 // Covers Zig arms `[:0]u8, []u8, []const u8, [:0]const u8` — all collapse to a byte slice.
 impl ToJsWithType for &[u8] {
     fn to_js_with_type(self, global: &JSGlobalObject) -> Result<JSValue, AnyPostgresError> {
-        let str = bun_str::String::borrow_utf8(self);
-        // `defer str.deinit()` → Drop on bun_str::String
-        Ok(str.to_js(global))
+        let str = bun_string::String::borrow_utf8(self);
+        // `defer str.deinit()` → Drop on bun_string::String
+        Ok(str.to_js(global)?)
     }
 }
 
-impl ToJsWithType for bun_str::String {
+impl ToJsWithType for bun_string::String {
     fn to_js_with_type(self, global: &JSGlobalObject) -> Result<JSValue, AnyPostgresError> {
-        Ok(self.to_js(global))
+        Ok(self.to_js(global)?)
     }
 }
 
 impl ToJsWithType for &mut Data {
     fn to_js_with_type(self, global: &JSGlobalObject) -> Result<JSValue, AnyPostgresError> {
-        let str = bun_str::String::borrow_utf8(self.slice());
-        // `defer str.deinit()` → Drop on bun_str::String
+        let str = bun_string::String::borrow_utf8(self.slice());
+        // `defer str.deinit()` → Drop on bun_string::String
         // TODO(port): Zig calls `value.deinit()` here (consumes the Data). In Rust, Data's
         // Drop should handle this at the caller's scope; revisit ownership if Data must be
         // freed before this fn returns.
-        Ok(str.to_js(global))
+        Ok(str.to_js(global)?)
     }
 }
 
@@ -62,6 +61,6 @@ pub fn to_js<T: ToJsWithType>(
 // PORT STATUS
 //   source:     src/sql_jsc/postgres/types/PostgresString.zig (50 lines)
 //   confidence: medium
-//   todos:      3
+//   todos:      2
 //   notes:      comptime type-switch ported as trait; Zig `toJS` body looks broken upstream (calls .deinit/.toJS on JSValue) — ported as forward
 // ──────────────────────────────────────────────────────────────────────────

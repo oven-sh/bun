@@ -2,8 +2,6 @@ use core::fmt;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
 // MOVE_DOWN(b0): bun_js_parser::js_ast → bun_logger::js_ast (remapped, T2)
-// TODO(b2-blocked): bun_logger::js_ast — only `to_string()` needs it; gated below.
-#[cfg(any())]
 use bun_logger::js_ast;
 use bun_logger as logger;
 use bun_str::strings;

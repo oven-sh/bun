@@ -42,12 +42,7 @@ impl JSCell {
     }
 
     pub fn to_js(&self) -> JSValue {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_jsc::JSValue::from_cell (JSValue.rs still gated)
-            return JSValue::from_cell(self);
-        }
-        todo!("JSCell::to_js — JSValue.rs gated")
+        JSValue::from_cell(self as *const JSCell)
     }
 
     pub fn get_getter_setter(&self) -> &GetterSetter {

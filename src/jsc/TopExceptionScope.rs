@@ -161,17 +161,12 @@ impl TopExceptionScope {
     // TODO(port): narrow error set — Zig is `bun.JSTerminated!void` (error{JSTerminated}).
     pub fn assert_no_exception_except_termination(&mut self) -> Result<(), JsError> {
         if let Some(e) = self.exception() {
-            #[cfg(any())]
-            {
-                // TODO(b2-blocked): bun_jsc::JSValue::from_cell / is_termination_exception (JSValue.rs gated)
-                if JSValue::from_cell(e).is_termination_exception() {
-                    return Err(JsError::Terminated);
-                } else {
-                    #[cfg(feature = "ci_assert")]
-                    self.assertion_failure(e);
-                    // Unconditionally panicking here is worse for our users.
-                }
+            if JSValue::from_cell(e.as_ptr()).is_termination_exception() {
+                return Err(JsError::Terminated);
             }
+            #[cfg(feature = "ci_assert")]
+            self.assertion_failure(e);
+            // Unconditionally panicking here is worse for our users.
             let _ = e;
         }
         Ok(())

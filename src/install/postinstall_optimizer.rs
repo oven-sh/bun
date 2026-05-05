@@ -44,66 +44,52 @@ impl PostinstallOptimizer {
         expr: &ast::Expr,
         value: PostinstallOptimizer,
     ) -> Result<bool, bun_alloc::AllocError> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_js_parser::ast::expr::Expr::as_array
-            // TODO(b2-blocked): bun_js_parser::ast::expr::Expr::as_string (bump-free)
-            let Some(mut array) = expr.as_array() else {
-                return Ok(false);
-            };
-            if array.array.items.len() == 0 {
-                return Ok(true);
-            }
+        // PORT NOTE: Zig `expr.asArray()` returns null for both non-array AND empty
+        // array, so the `items.len == 0` check below is dead in Zig too — preserved
+        // for diff parity.
+        let Some(mut array) = expr.as_array() else {
+            return Ok(false);
+        };
+        if array.array.items.len == 0 {
+            return Ok(true);
+        }
 
-            while let Some(entry) = array.next() {
-                if entry.is_string() {
-                    let Some(str) = entry.as_string() else {
-                        continue;
-                    };
-                    if str.is_empty() {
-                        continue;
-                    }
-                    let hash = semver::string::Builder::string_hash(str);
-                    list.dynamic.insert(hash, value);
+        while let Some(entry) = array.next() {
+            if entry.is_string() {
+                // PORT NOTE: Zig `asString(allocator)` would convert UTF-16→UTF-8; JSON
+                // string literals are always UTF-8/non-rope, so `as_utf8_string_literal`
+                // suffices and avoids threading a bump arena.
+                // TODO(port): if a UTF-16 EString ever reaches here, route a `&Bump`.
+                let Some(str) = entry.as_utf8_string_literal() else {
+                    continue;
+                };
+                if str.is_empty() {
+                    continue;
                 }
+                let hash = semver::string::Builder::string_hash(str);
+                list.dynamic.put(hash, value)?;
             }
+        }
 
-            Ok(true)
-        }
-        #[cfg(not(any()))]
-        {
-            // TODO(b2-blocked): bun_js_parser::ast::expr::Expr::as_array
-            let _ = (list, expr, value);
-            todo!("b2-blocked: bun_js_parser::ast::expr::Expr::as_array")
-        }
+        Ok(true)
     }
 
     pub fn from_package_json(list: &mut List, expr: &ast::Expr) -> Result<(), bun_alloc::AllocError> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_js_parser::ast::expr::Expr::get
-            if let Some(native_deps_expr) = expr.get(b"nativeDependencies") {
-                list.disable_default_native_binlinks = Self::from_string_array_group(
-                    list,
-                    &native_deps_expr,
-                    PostinstallOptimizer::NativeBinlink,
-                )?;
-            }
-            if let Some(ignored_scripts_expr) = expr.get(b"ignoreScripts") {
-                list.disable_default_ignore = Self::from_string_array_group(
-                    list,
-                    &ignored_scripts_expr,
-                    PostinstallOptimizer::Ignore,
-                )?;
-            }
-            Ok(())
+        if let Some(native_deps_expr) = expr.get(b"nativeDependencies") {
+            list.disable_default_native_binlinks = Self::from_string_array_group(
+                list,
+                &native_deps_expr,
+                PostinstallOptimizer::NativeBinlink,
+            )?;
         }
-        #[cfg(not(any()))]
-        {
-            // TODO(b2-blocked): bun_js_parser::ast::expr::Expr::get
-            let _ = (list, expr);
-            todo!("b2-blocked: bun_js_parser::ast::expr::Expr::get")
+        if let Some(ignored_scripts_expr) = expr.get(b"ignoreScripts") {
+            list.disable_default_ignore = Self::from_string_array_group(
+                list,
+                &ignored_scripts_expr,
+                PostinstallOptimizer::Ignore,
+            )?;
         }
+        Ok(())
     }
 
     pub fn get_native_binlink_replacement_package_id(

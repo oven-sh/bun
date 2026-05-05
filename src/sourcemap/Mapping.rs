@@ -490,7 +490,7 @@ impl<'a> Lookup<'a> {
             // const-generic `PlatformT` only. `platform::Auto` is a cfg-selected
             // type alias (Posix on unix, Windows on windows), which is what
             // `.auto` resolved to at comptime anyway.
-            let dir = bun_paths::dirname(base_filename);
+            let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
             return Some(bun_str::String::clone_utf8(
                 bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(dir, name),
             ));
@@ -499,17 +499,15 @@ impl<'a> Lookup<'a> {
         Some(bun_str::String::borrow_utf8(name))
     }
 
-    // TODO(b2-blocked): bun_paths::join_abs_string_buf_z, bun_sys::File::read_from
-    #[cfg(any())]
     /// Only valid if `lookup.source_map.is_external()`
     /// This has the possibility of invoking a call to the filesystem.
     ///
     /// This data is freed after printed on the assumption that printing
     /// errors to the console are rare (this isnt used for error.stack)
     pub fn get_source_code(self, base_filename: &[u8]) -> Option<ZigStringSlice> {
-        let bytes: Box<[u8]> = 'bytes: {
+        let bytes: Vec<u8> = 'bytes: {
             if let Some(code) = self.prefetched_source_code {
-                break 'bytes code;
+                break 'bytes code.into_vec();
             }
 
             let source_map = self.source_map?;
@@ -529,20 +527,22 @@ impl<'a> Lookup<'a> {
                     return None;
                 }
 
-                let code = serialized.source_file_contents(index);
+                // SAFETY: `standalone_module_graph_data` returns a pointer
+                // owned by the standalone module graph trailer; lifetime is
+                // process-static (mmapped). `source_file_contents` mutates the
+                // decompression cache in-place.
+                let code = unsafe { (*serialized).source_file_contents(index) };
 
                 return Some(ZigStringSlice::from_utf8_never_free(code?));
             }
 
             if let Some(parsed) = provider.get_source_map(
                 base_filename,
-                source_map.underlying_provider.load_hint,
-                // TODO(port): `.{ .source_only = @intCast(index) }` — enum/union variant from
-                // SourceProvider; exact Rust type TBD.
-                crate::SourceContentHint::SourceOnly(index),
+                source_map.underlying_provider.load_hint(),
+                crate::ParseUrlResultHint::SourceOnly(u32::try_from(index).unwrap()),
             ) {
                 if let Some(contents) = parsed.source_contents {
-                    break 'bytes contents;
+                    break 'bytes contents.into_vec();
                 }
             }
 
@@ -550,22 +550,23 @@ impl<'a> Lookup<'a> {
                 return None;
             }
 
-            let name = &source_map.external_source_names[index];
+            let name: &[u8] = &source_map.external_source_names[index];
 
-            let mut buf = PathBuffer::uninit();
-            let normalized = bun_paths::join_abs_string_buf_z(
-                bun_paths::dirname(base_filename, Platform::Auto),
-                &mut buf,
-                &[name],
-                Platform::Loose,
-            );
+            let mut buf = bun_paths::PathBuffer::uninit();
+            // PORT NOTE: Zig passed runtime `.auto` / `.loose`; bun_paths
+            // exposes const-generic `PlatformT` ZSTs. `platform::Auto` is
+            // cfg-selected (Posix on unix, Windows on windows) — same result.
+            let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
+            let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<
+                bun_paths::platform::Loose,
+            >(dir, &mut buf, &[name]);
             match bun_sys::File::read_from(bun_sys::Fd::cwd(), normalized) {
-                bun_sys::Result::Ok(r) => break 'bytes r,
-                bun_sys::Result::Err(_) => return None,
+                Ok(r) => break 'bytes r,
+                Err(_) => return None,
             }
         };
 
-        Some(ZigStringSlice::init(bytes))
+        Some(ZigStringSlice::init_owned(bytes))
     }
 }
 

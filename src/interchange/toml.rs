@@ -5,14 +5,11 @@ use bumpalo::Bump;
 use bun_core::{self, StackCheck};
 use bun_logger as logger;
 // MOVE_DOWN(b0): bun_js_parser::{ast,E,Expr} → bun_logger::js_ast (remapped, T2)
-// TODO(b2-blocked): bun_logger::js_ast — MOVE_DOWN not yet landed in T2.
-#[cfg(any())]
 use bun_logger::js_ast::{self, E, Expr};
 
 #[path = "toml/lexer.rs"]
 pub mod lexer;
 pub use self::lexer::Lexer;
-#[cfg(any())]
 use self::lexer::T;
 
 #[cfg(any())]
@@ -92,19 +89,12 @@ mod hash_map_pool {
 // ──────────────────────────────────────────────────────────────────────────
 // TOML parser
 // ──────────────────────────────────────────────────────────────────────────
-//
-// TODO(b2-blocked): bun_logger::js_ast::{Expr, E, e::object::Rope, ExprData}
-//   The parser body produces `Expr` AST nodes; every public fn returns or
-//   threads `Expr`/`E::Object`/`E::Array`/`Rope`. Re-gated until the
-//   MOVE_DOWN of js_ast into bun_logger (T2) lands.
-#[cfg(any())]
-mod parser_body {
-use super::*;
-use self::lexer::T;
 
 pub struct TOML<'a> {
-    pub lexer: Lexer,
-    pub log: &'a mut logger::Log,
+    pub lexer: Lexer<'a>,
+    // PORT NOTE: Zig also stores `log: *logger.Log` on the parser, but it is
+    // never read — all logging goes through `lexer.log`. Dropped here to avoid
+    // a second `&mut Log` borrow overlapping `lexer.log`.
     pub bump: &'a Bump,
     pub stack_check: StackCheck,
 }
@@ -120,7 +110,6 @@ impl<'a> TOML<'a> {
         Ok(TOML {
             lexer: Lexer::init(log, source_, bump, redact_logs)?,
             bump,
-            log,
             stack_check: StackCheck::init(),
         })
     }
@@ -135,11 +124,64 @@ impl<'a> TOML<'a> {
     // call sites, so this collapses to a single generic forwarding to Expr::init.
     pub fn e<D>(&self, t: D, loc: logger::Loc) -> Expr
     where
-        D: js_ast::ExprData, // TODO(port): real trait bound for Expr::init payloads
+        D: js_ast::ExprInit, // TODO(port): real trait bound for Expr::init payloads
     {
         Expr::init(t, loc)
     }
 
+    pub fn parse(
+        source_: &logger::Source,
+        log: &'a mut logger::Log,
+        bump: &'a Bump,
+        redact_logs: bool,
+    ) -> Result<Expr, bun_core::Error> {
+        // TODO(port): narrow error set
+        match source_.contents.len() {
+            // This is to be consisntent with how disabled JS files are handled
+            0 => {
+                return Ok(Expr {
+                    loc: logger::Loc { start: 0 },
+                    data: Expr::init(E::Object::default(), logger::Loc::EMPTY).data,
+                });
+            }
+            _ => {}
+        }
+
+        // PORT NOTE: Zig copies the `Source` by value (`source_.*`); the T2
+        // `logger::Source` does not yet derive `Clone`, so reconstruct field-wise.
+        // All fields are `Copy`/`Clone`.
+        // TODO(port): drop once `bun_logger::Source` derives `Clone`.
+        let source_copy = logger::Source {
+            path: source_.path.clone(),
+            contents: source_.contents,
+            contents_is_recycled: source_.contents_is_recycled,
+            identifier_name: source_.identifier_name,
+            index: source_.index,
+        };
+        let mut parser = TOML::init(bump, source_copy, log, redact_logs)?;
+
+        parser.run_parser()
+    }
+
+    pub fn parse_maybe_trailing_comma(&mut self, closer: T) -> Result<bool, bun_core::Error> {
+        // TODO(port): narrow error set
+        self.lexer.expect(T::t_comma)?;
+
+        if self.lexer.token == closer {
+            return Ok(false);
+        }
+
+        Ok(true)
+    }
+
+    // ── AST-producing methods ──────────────────────────────────────────────
+    // TODO(b2-blocked): bun_logger::js_ast::{E::*, e::object::Rope, ExprData}
+    //   Everything below constructs `E::String { data }` / `E::Number { value }`
+    //   / `E::Object` / `E::Array` payloads and threads `Rope`. The T2 stub
+    //   shapes are field-less `(())` newtypes, so these bodies stay gated until
+    //   the real `E` namespace lands in `bun_logger::js_ast`.
+
+    #[cfg(any())]
     pub fn parse_key_segment(&mut self) -> Result<Option<Expr>, bun_core::Error> {
         let loc = self.lexer.loc();
 
@@ -173,6 +215,7 @@ impl<'a> TOML<'a> {
         }
     }
 
+    #[cfg(any())]
     pub fn parse_key(&mut self, bump: &Bump) -> Result<&mut Rope, bun_core::Error> {
         // TODO(port): lifetime — Zig returns `*Rope` allocated from `allocator`
         // (a stack-fallback arena reset per-iteration). Here we allocate from the
@@ -206,30 +249,18 @@ impl<'a> TOML<'a> {
         Ok(unsafe { &mut *head })
     }
 
-    pub fn parse(
-        source_: &logger::Source,
-        log: &'a mut logger::Log,
-        bump: &'a Bump,
-        redact_logs: bool,
-    ) -> Result<Expr, bun_core::Error> {
-        // TODO(port): narrow error set
-        match source_.contents.len() {
-            // This is to be consisntent with how disabled JS files are handled
-            0 => {
-                return Ok(Expr {
-                    loc: logger::Loc { start: 0 },
-                    data: Expr::init(E::Object::default(), logger::Loc::EMPTY).data,
-                });
-            }
-            _ => {}
+    fn run_parser(&mut self) -> Result<Expr, bun_core::Error> {
+        // TODO(b2-blocked): bun_logger::js_ast::{E, ExprData, e::object::Rope}
+        #[cfg(any())]
+        return self.run_parser_impl();
+        #[allow(unreachable_code)]
+        {
+            todo!("b2-blocked: bun_logger::js_ast::E (run_parser)")
         }
-
-        let mut parser = TOML::init(bump, source_.clone(), log, redact_logs)?;
-
-        parser.run_parser()
     }
 
-    fn run_parser(&mut self) -> Result<Expr, bun_core::Error> {
+    #[cfg(any())]
+    fn run_parser_impl(&mut self) -> Result<Expr, bun_core::Error> {
         let mut root = self.e(E::Object::default(), self.lexer.loc());
         let mut head: *mut E::Object = root.data.e_object();
         // TODO(port): `head` aliases into `root.data`; using raw pointer to mirror
@@ -304,6 +335,7 @@ impl<'a> TOML<'a> {
         }
     }
 
+    #[cfg(any())]
     pub fn parse_assignment(
         &mut self,
         obj: &mut E::Object,
@@ -345,6 +377,7 @@ impl<'a> TOML<'a> {
         Ok(())
     }
 
+    #[cfg(any())]
     pub fn parse_value(&mut self) -> Result<Expr, bun_core::Error> {
         if !self.stack_check.is_safe_to_recurse() {
             bun_core::throw_stack_overflow()?;
@@ -484,22 +517,7 @@ impl<'a> TOML<'a> {
             }
         }
     }
-
-    pub fn parse_maybe_trailing_comma(&mut self, closer: T) -> Result<bool, bun_core::Error> {
-        // TODO(port): narrow error set
-        self.lexer.expect(T::TComma)?;
-
-        if self.lexer.token == closer {
-            return Ok(false);
-        }
-
-        Ok(true)
-    }
 }
-
-} // mod parser_body
-#[cfg(any())]
-pub use parser_body::TOML;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -1,8 +1,7 @@
 //! `createPostgresError` / `postgresErrorToJS` bridges.
 
-use bun_jsc::{CallFrame as _, JSGlobalObject, JSValue, JsError, JsResult};
+use crate::jsc::{bun_string_jsc, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_sql::postgres::any_postgres_error::{AnyPostgresError, PostgresErrorOptions};
-use bun_str::{String as BunString, ZigString};
 
 pub fn create_postgres_error(
     global: &JSGlobalObject,
@@ -13,26 +12,41 @@ pub fn create_postgres_error(
     opts_obj.ensure_still_alive();
     opts_obj.put(
         global,
-        ZigString::static_str(b"code"),
-        BunString::create_utf8_for_js(global, options.code)?,
+        b"code",
+        bun_string_jsc::create_utf8_for_js(global, options.code)?,
     );
-    // TODO(port): Zig used `inline for (std.meta.fields(PostgresErrorOptions))` + `@typeInfo`
+    // PORT NOTE: Zig used `inline for (std.meta.fields(PostgresErrorOptions))` + `@typeInfo`
     // to reflect over every optional field and `put` it by name when `Some`. Rust has no
-    // field reflection; `PostgresErrorOptions` must expose an explicit iterator of
-    // `(&'static str, Option<&[u8]>)` pairs covering all its optional fields.
-    for (name, value) in options.optional_fields() {
+    // field reflection; expand by hand. Property names must match the Zig struct field
+    // names verbatim (camelCase: `internalPosition`, `internalQuery`, `dataType`) since
+    // the JS consumer reads `options.internalPosition` etc.
+    let optional_fields: [(&'static [u8], Option<&[u8]>); 16] = [
+        (b"errno", options.errno),
+        (b"detail", options.detail),
+        (b"hint", options.hint),
+        (b"severity", options.severity),
+        (b"position", options.position),
+        (b"internalPosition", options.internal_position),
+        (b"internalQuery", options.internal_query),
+        (b"where", options.r#where),
+        (b"schema", options.schema),
+        (b"table", options.table),
+        (b"column", options.column),
+        (b"dataType", options.data_type),
+        (b"constraint", options.constraint),
+        (b"file", options.file),
+        (b"line", options.line),
+        (b"routine", options.routine),
+    ];
+    for (name, value) in optional_fields {
         if let Some(value) = value {
-            opts_obj.put(
-                global,
-                ZigString::static_str(name),
-                BunString::create_utf8_for_js(global, value)?,
-            );
+            opts_obj.put(global, name, bun_string_jsc::create_utf8_for_js(global, value)?);
         }
     }
     opts_obj.put(
         global,
-        ZigString::static_str(b"message"),
-        BunString::create_utf8_for_js(global, message)?,
+        b"message",
+        bun_string_jsc::create_utf8_for_js(global, message)?,
     );
 
     Ok(opts_obj)
@@ -140,6 +154,6 @@ pub fn postgres_error_to_js(
 // PORT STATUS
 //   source:     src/sql_jsc/postgres/error_jsc.zig (92 lines)
 //   confidence: medium
-//   todos:      1
-//   notes:      `inline for` over PostgresErrorOptions fields replaced with `optional_fields()` iterator that bun_sql must provide; AnyPostgresError variant names kept verbatim for @errorName compat.
+//   todos:      0
+//   notes:      `inline for` over PostgresErrorOptions fields expanded by hand; AnyPostgresError variant names kept verbatim for @errorName compat.
 // ──────────────────────────────────────────────────────────────────────────

@@ -10,11 +10,11 @@
 
 use core::ffi::c_void;
 
-use bun_jsc::VirtualMachine;
-use bun_str::{String as BunString, ZigString};
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_string::{String as BunString, ZigString};
 use bun_uws_sys::{Socket, SslCtx};
 
-use super::web_socket_deflate;
+use super::websocket_deflate;
 use super::ErrorCode;
 
 /// Opaque handle to the C++ `WebCore::WebSocket` object.
@@ -31,7 +31,7 @@ unsafe extern "C" {
         socket: *mut Socket,
         buffered_data: *mut u8,
         buffered_len: usize,
-        deflate_params: *const web_socket_deflate::Params,
+        deflate_params: *const websocket_deflate::Params,
         secure: *mut SslCtx,
     );
     fn WebSocket__didConnectWithTunnel(
@@ -39,7 +39,7 @@ unsafe extern "C" {
         tunnel: *mut c_void,
         buffered_data: *mut u8,
         buffered_len: usize,
-        deflate_params: *const web_socket_deflate::Params,
+        deflate_params: *const websocket_deflate::Params,
     );
     fn WebSocket__didAbruptClose(websocket_context: *mut CppWebSocket, reason: ErrorCode);
     fn WebSocket__didClose(websocket_context: *mut CppWebSocket, code: u16, reason: *const BunString);
@@ -51,6 +51,10 @@ unsafe extern "C" {
     fn WebSocket__setProtocol(websocket_context: *mut CppWebSocket, protocol: *mut BunString);
 }
 
+// TODO(b2-blocked): bun_jsc::event_loop::EventLoop::{enter,exit} — the stub
+// `EventLoop` in bun_jsc/lib.rs has no enter/exit; every did_* wrapper here
+// brackets the FFI call with them. Re-gated as a unit.
+#[cfg(any())]
 impl CppWebSocket {
     pub fn did_abrupt_close(&mut self, reason: ErrorCode) {
         let event_loop = VirtualMachine::get().event_loop();
@@ -98,7 +102,7 @@ impl CppWebSocket {
         socket: &mut Socket,
         buffered_data: *mut u8,
         buffered_len: usize,
-        deflate_params: Option<&web_socket_deflate::Params>,
+        deflate_params: Option<&websocket_deflate::Params>,
         secure: Option<&mut SslCtx>,
     ) {
         let event_loop = VirtualMachine::get().event_loop();
@@ -122,7 +126,7 @@ impl CppWebSocket {
         tunnel: *mut c_void,
         buffered_data: *mut u8,
         buffered_len: usize,
-        deflate_params: Option<&web_socket_deflate::Params>,
+        deflate_params: Option<&websocket_deflate::Params>,
     ) {
         let event_loop = VirtualMachine::get().event_loop();
         event_loop.enter();
@@ -138,7 +142,9 @@ impl CppWebSocket {
         };
         event_loop.exit();
     }
+}
 
+impl CppWebSocket {
     // PORT NOTE: `ref` is a Rust keyword; using raw identifier to match Zig fn name.
     pub fn r#ref(&mut self) {
         bun_jsc::mark_binding!();

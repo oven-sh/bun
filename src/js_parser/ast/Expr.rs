@@ -114,28 +114,22 @@ impl Expr {
     }
 }
 
-// TODO(b2-ast-round-C): clone/deep_clone/wrap_in_arrow forward to
-// `Data::deep_clone` (gated below) / Stmt::alloc + E::Arrow Default.
-#[cfg(any())]
 impl Expr {
-    pub fn clone(this: Expr, bump: &Bump) -> Result<Expr, bun_core::Error> {
+    // TODO(b2-ast-round-C): clone/deep_clone forward to `Data::clone`/
+    // `Data::deep_clone` (gated below). Un-gate together.
+    #[cfg(any())]
+    pub fn clone_in(this: Expr, bump: &Bump) -> Result<Expr, bun_core::Error> {
         // TODO(port): narrow error set
-        Ok(Expr {
-            loc: this.loc,
-            data: this.data.clone(bump)?,
-        })
+        Ok(Expr { loc: this.loc, data: this.data.clone(bump)? })
     }
-
+    #[cfg(any())]
     pub fn deep_clone(this: Expr, bump: &Bump) -> Result<Expr, AllocError> {
-        Ok(Expr {
-            loc: this.loc,
-            data: this.data.deep_clone(bump)?,
-        })
+        Ok(Expr { loc: this.loc, data: this.data.deep_clone(bump)? })
     }
 
     pub fn wrap_in_arrow(this: Expr, bump: &Bump) -> Result<Expr, bun_core::Error> {
         // TODO(port): narrow error set
-        let stmts = bump.alloc_slice_fill_with(1, |_| {
+        let stmts: &mut [Stmt] = bump.alloc_slice_fill_with(1, |_| {
             Stmt::alloc(S::Return { value: Some(this) }, this.loc)
         });
 
@@ -144,7 +138,7 @@ impl Expr {
                 args: &[],
                 body: G::FnBody {
                     loc: this.loc,
-                    stmts,
+                    stmts: stmts as *mut [Stmt],
                 },
                 ..Default::default()
             },
@@ -733,65 +727,25 @@ impl ArrayIterator<'_> {
 }
 
 // TODO(b2-ast-round-C): same as above (string/array accessors).
-#[cfg(any())]
+// PORT NOTE: the Phase-A draft of `as_array`/`is_string`/`as_utf8_string_literal`/
+// `as_string`/`as_string_cloned`/`as_bool`/`as_number` duplicated the live `&self`
+// implementations above (lines ~231-315) with worse signatures (`expr: &Expr`,
+// `*const [u8]`). Those drafts were dropped during un-gating; only the methods
+// without a live counterpart remain.
 impl Expr {
-    pub fn as_array<'a>(expr: &'a Expr) -> Option<ArrayIterator<'a>> {
-        let Data::EArray(array) = &expr.data else { return None };
-        if array.items.len() == 0 {
-            return None;
-        }
-        Some(ArrayIterator { array, index: 0 })
-    }
-
-    // Helper for owned-expr iteration (used by get_array above where the expr is by-value)
-    // TODO(port): lifetime — Zig returns iterator borrowing arena ptr, not &Expr
-    fn as_array_owned(self) -> Option<ArrayIterator<>> {
-        match self.data {
-            Data::EArray(array) => {
-                if array.items.len() == 0 {
-                    return None;
-                }
-                Some(ArrayIterator { array, index: 0 })
-            }
-            _ => None,
-        }
-    }
-
     #[inline]
-    pub fn as_utf8_string_literal(expr: &Expr) -> Option<*const [u8]> {
-        if let Data::EString(s) = &expr.data {
-            debug_assert!(s.next.is_none());
-            return Some(s.data);
-        }
-        None
-    }
-
-    #[inline]
-    pub fn as_string_literal(expr: &Expr, bump: &Bump) -> Option<*const [u8]> {
-        let Data::EString(s) = &expr.data else { return None };
+    pub fn as_string_literal<'b>(&self, bump: &'b Bump) -> Option<&'b [u8]> {
+        let Data::EString(s) = &self.data else { return None };
         s.string(bump).ok()
     }
 
     #[inline]
-    pub fn is_string(expr: &Expr) -> bool {
-        matches!(expr.data, Data::EString(_))
-    }
-
-    #[inline]
-    pub fn as_string(expr: &Expr, bump: &Bump) -> Option<*const [u8]> {
-        match &expr.data {
-            Data::EString(str) => Some(str.string(bump).expect("OOM")),
-            _ => None,
-        }
-    }
-
-    #[inline]
     pub fn as_string_hash(
-        expr: &Expr,
+        &self,
         bump: &Bump,
         hash_fn: fn(&[u8]) -> u64,
     ) -> Result<Option<u64>, AllocError> {
-        match &expr.data {
+        match &self.data {
             Data::EString(str) => {
                 if str.is_utf8() {
                     return Ok(Some(hash_fn(str.data)));
@@ -801,36 +755,6 @@ impl Expr {
                 Ok(Some(hash_fn(utf8_str)))
             }
             _ => Ok(None),
-        }
-    }
-
-    #[inline]
-    pub fn as_string_cloned(expr: &Expr, bump: &Bump) -> Result<Option<*const [u8]>, AllocError> {
-        match &expr.data {
-            Data::EString(str) => Ok(Some(str.string_cloned(bump)?)),
-            _ => Ok(None),
-        }
-    }
-
-    #[inline]
-    pub fn as_string_z(expr: &Expr, bump: &Bump) -> Result<Option<*const ZStr>, AllocError> {
-        match &expr.data {
-            Data::EString(str) => Ok(Some(str.string_z(bump)?)),
-            _ => Ok(None),
-        }
-    }
-
-    pub fn as_bool(expr: &Expr) -> Option<bool> {
-        match expr.data {
-            Data::EBoolean(b) | Data::EBranchBoolean(b) => Some(b.value),
-            _ => None,
-        }
-    }
-
-    pub fn as_number(expr: &Expr) -> Option<f64> {
-        match expr.data {
-            Data::ENumber(n) => Some(n.value),
-            _ => None,
         }
     }
 }

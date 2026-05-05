@@ -1368,9 +1368,7 @@ fn fetchImpl(
             // proxy and url are in the same buffer lets replace it
             const old_buffer = url_proxy_buffer;
             defer allocator.free(old_buffer);
-            var buffer = bun.handleOom(allocator.alloc(u8, result.url.len + proxy_.href.len));
-            bun.copy(u8, buffer[0..result.url.len], result.url);
-            bun.copy(u8, buffer[proxy_.href.len..], proxy_.href);
+            const buffer = bun.handleOom(std.fmt.allocPrint(allocator, "{s}{s}", .{ result.url, proxy_.href }));
             url_proxy_buffer = buffer;
 
             url = ZigURL.parse(url_proxy_buffer[0..result.url.len]);

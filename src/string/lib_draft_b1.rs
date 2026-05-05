@@ -56,7 +56,7 @@ pub mod string_joiner;
 pub mod wtf;
 pub mod zig_string;
 
-// Re-export at crate root for `bun_str::Encoding` callers (picohttp, etc.).
+// Re-export at crate root for `crate::Encoding` callers (picohttp, etc.).
 pub use crate::encoding::Encoding as NodeEncoding;
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -4,7 +4,7 @@
 use core::ptr::{self, NonNull};
 
 use bun_alloc::AllocError;
-use bun_str::strings;
+use crate::strings;
 
 // PORT NOTE: Zig's `allocator: Allocator` field dropped — global mimalloc is used for
 // node and duplicated-string allocations.

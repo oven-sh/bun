@@ -1,7 +1,7 @@
 use core::fmt;
 
 use bun_paths::MAX_PATH_BYTES;
-use bun_str::ZStr;
+use crate::ZStr;
 
 // const PathIntLen = std.math.IntFittingRange(0, bun.MAX_PATH_BYTES);
 // Compute the number of bits needed to hold 0..=MAX_PATH_BYTES.
@@ -18,11 +18,15 @@ const PATH_INT_LEN_BITS: u32 = {
 const USE_SMALL_PATH_STRING_: bool = (usize::BITS - PATH_INT_LEN_BITS) >= 53;
 
 // const PathStringBackingIntType = if (use_small_path_string_) u64 else u128;
-// TODO(port): Zig picks the backing integer type (u64 vs u128) at comptime from
-// USE_SMALL_PATH_STRING_. Stable Rust cannot select a type alias from a const
-// bool; all supported Bun targets are 64-bit so we hard-code u64 and assert the
-// invariant below. Revisit if a target needs the u128 layout.
+// Zig picks the backing integer at comptime: u64 if 53 ptr bits + len bits fit
+// (macOS, where MAX_PATH_BYTES=1024 → 11 len bits); u128 otherwise (Linux,
+// MAX_PATH_BYTES=4096 → 12 len bits, 64-12=52 < 53). Stable Rust cannot select
+// a type from a const bool, so cfg by OS.
+// PERF(port): Windows MAX_PATH_BYTES is large (UTF-16); use u128 there too.
+#[cfg(target_os = "macos")]
 type PathStringBackingInt = u64;
+#[cfg(not(target_os = "macos"))]
+type PathStringBackingInt = u128;
 
 // Bit widths of the packed fields (Zig packed-struct order: ptr in low bits, len in high bits).
 const POINTER_BITS: u32 = if USE_SMALL_PATH_STRING_ { 53 } else { usize::BITS };

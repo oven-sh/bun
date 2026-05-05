@@ -8,7 +8,7 @@ use bun_alloc::AllocError;
 use bun_collections::BoundedArray;
 use bun_core::Error;
 use bun_highway as highway;
-use bun_simdutf as simdutf;
+use bun_simdutf_sys as simdutf;
 
 use crate::immutable::unicode::{
     decode_wtf8_rune_t, to_utf16_literal, wtf8_byte_sequence_length,
@@ -1044,7 +1044,7 @@ pub fn has_prefix_comptime_utf16(self_: &[u16], alt: &'static [u8]) -> bool {
 
 pub fn has_prefix_comptime_type<T: Copy + Eq>(self_: &[T], alt: &'static [T]) -> bool {
     // TODO(port): Zig accepted heterogeneous `alt: anytype` and widened u8→u16 via `w(alt)`.
-    // Rust callers must pass the correctly-typed literal (use `bun_str::w!` for u16).
+    // Rust callers must pass the correctly-typed literal (use `crate::w!` for u16).
     self_.len() >= alt.len() && eql_comptime_check_len_with_type::<T, false>(&self_[0..alt.len()], alt)
 }
 

@@ -1,5 +1,5 @@
 use bun_alloc::AllocError;
-use bun_str::{strings, ZStr};
+use crate::{strings, ZStr};
 
 /// VTable surface for `bun.ast.E.String` (CYCLEBREAK b0: GENUINE upward dep on
 /// `bun_js_parser::E::String`). Low tier defines the interface; high tier
@@ -43,7 +43,7 @@ impl MutableString {
 
     pub fn owns(&self, items: &[u8]) -> bool {
         // Zig: bun.isSliceInBuffer(items, this.list.items.ptr[0..this.list.capacity])
-        bun_core::is_slice_in_buffer(items, self.allocated_slice())
+        bun_alloc::is_slice_in_buffer(items, self.allocated_slice())
     }
 
     #[inline]
@@ -71,7 +71,7 @@ impl MutableString {
 
     pub fn write(&mut self, bytes: impl AsRef<[u8]>) -> Result<usize, AllocError> {
         let bytes = bytes.as_ref();
-        debug_assert!(bytes.is_empty() || !bun_core::is_slice_in_buffer(bytes, self.allocated_slice()));
+        debug_assert!(bytes.is_empty() || !bun_alloc::is_slice_in_buffer(bytes, self.allocated_slice()));
         self.list.extend_from_slice(bytes);
         Ok(bytes.len())
     }

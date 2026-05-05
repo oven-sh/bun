@@ -2,10 +2,10 @@ use core::fmt;
 use core::ptr::NonNull;
 use core::slice;
 
-use bun_str::{self as strings_mod, ZStr, String as BunString, StringPointer};
+use crate::{self as strings_mod, ZStr, String as BunString, StringPointer};
 // TODO(port): verify `bun.StringPointer` lives in bun_str (it's `bun.StringPointer` in Zig)
 // TODO(port): verify `bun.simdutf` crate path
-use bun_simdutf as simdutf;
+use bun_simdutf_sys as simdutf;
 
 /// Two-phase string builder: callers first `count()` every slice they will
 /// append, then `allocate()` once, then `append()` each slice. Returned slices
@@ -52,8 +52,8 @@ impl StringBuilder {
         self.cap += result;
     }
 
-    pub fn count16_z(&mut self, slice: &bun_str::WStr) {
-        let result = bun_str::strings::element_length_utf16_into_utf8(slice);
+    pub fn count16_z(&mut self, slice: &crate::WStr) {
+        let result = crate::strings::element_length_utf16_into_utf8(slice);
         self.cap += result + 1;
     }
 
@@ -77,7 +77,7 @@ impl StringBuilder {
         } else {
             // Fallback: WTF-16 → UTF-8 via the slow path that handles lone surrogates.
             let mut list: Vec<u8> = Vec::new();
-            let out = match bun_str::strings::to_utf8_list_with_type_bun(&mut list, slice, false) {
+            let out = match crate::strings::to_utf8_list_with_type_bun(&mut list, slice, false) {
                 Ok(v) => v,
                 Err(_) => return None,
             };

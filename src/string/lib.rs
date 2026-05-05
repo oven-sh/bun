@@ -3,15 +3,41 @@
 //! Full Phase-A draft preserved in `lib_draft_b1.rs` (gated).
 //! B-2: un-gate module-by-module, replace stubs with real impls.
 
-#[cfg(any())] #[path = "lib_draft_b1.rs"] mod draft;
-#[cfg(any())] pub mod immutable;
-#[cfg(any())] #[path = "HashedString.rs"] pub mod hashed_string;
-#[cfg(any())] #[path = "MutableString.rs"] pub mod mutable_string;
-#[cfg(any())] #[path = "PathString.rs"] pub mod path_string;
-#[cfg(any())] #[path = "SmolStr.rs"] pub mod smol_str;
+// Small data-structure modules — un-gated in B-2.
+#[path = "HashedString.rs"]  pub mod hashed_string;
+#[path = "PathString.rs"]    pub mod path_string;
+#[path = "SmolStr.rs"]       pub mod smol_str;
+// TODO(b2-blocked): StringBuilder needs simdutf transcoding + String::to_utf8.
 #[cfg(any())] #[path = "StringBuilder.rs"] pub mod string_builder;
-#[cfg(any())] #[path = "StringJoiner.rs"] pub mod string_joiner;
+pub mod string_builder {
+    #[derive(Default)]
+    pub struct StringBuilder { pub buf: Vec<u8>, pub len: usize, pub cap: usize }
+}
+#[path = "StringJoiner.rs"]  pub mod string_joiner;
+#[path = "escapeRegExp.rs"]  pub mod escape_reg_exp;
+
+// TODO(b2-blocked): MutableString + wtf both need `strings::{to_utf8_alloc,
+// to_utf8_from_latin1, copy_utf16_into_utf8, CodepointIterator}` (the SIMD
+// transcoding suite from immutable.rs) + WTFStringImpl FFI. Un-gate after
+// `immutable` lands.
+#[cfg(any())] #[path = "MutableString.rs"] pub mod mutable_string;
 #[cfg(any())] pub mod wtf;
+pub mod mutable_string {
+    /// `bun.MutableString` — growable byte buffer (`Vec<u8>` newtype).
+    #[derive(Default)]
+    pub struct MutableString(pub Vec<u8>);
+}
+pub mod wtf {
+    pub use bun_alloc::WTFStringImplStruct as WTFStringImpl;
+}
+
+// TODO(b2-large): immutable.rs (2482L) = `bun.strings.*` SIMD scanners. Depends
+// on bun_highway FFI + simdutf. Many fns are thin wrappers over `extern "C"
+// highway_*` so the body is mostly FFI decls + dispatch; un-gate after T0/T1.
+#[cfg(any())] #[path = "immutable.rs"] mod immutable_draft;
+// Full Phase-A draft of string.zig (the 5-variant String impl). Real
+// `String`/`ZigString` already MOVE-IN'd to bun_alloc (T0); re-exported below.
+#[cfg(any())] #[path = "lib_draft_b1.rs"] mod draft;
 
 use core::sync::atomic::{AtomicPtr, Ordering};
 
@@ -51,10 +77,20 @@ pub type WTFString = *const WTFStringImpl;
 // bun_core re-exports these; we are the canonical home.
 pub use bun_core::{ZStr, WStr};
 
-pub struct PathString(pub Box<[u8]>);
-pub struct MutableString(pub Vec<u8>);
-pub struct HashedString { pub hash: u64, pub bytes: Box<[u8]> }
-pub struct SmolStr; // B-2
+/// `bun.schema.api.StringPointer` — `(offset, length)` into an external buffer.
+/// Widely used as a flat span descriptor (lockfile, HTTP headers, etc.).
+#[repr(C)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub struct StringPointer {
+    pub offset: u32,
+    pub length: u32,
+}
+
+pub use path_string::PathString;
+pub use mutable_string::MutableString;
+pub use hashed_string::HashedString;
+pub use smol_str::SmolStr;
+pub use string_builder::StringBuilder;
 
 // ──────────────────────────────────────────────────────────────────────────
 // `encoding` — Node.js Buffer encoding tag. Self-contained.

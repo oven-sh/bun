@@ -98,6 +98,23 @@ impl<T> BabyList<T> {
         Ok(Self::init_with_buffer_vec(v))
     }
 
+    /// Construct from raw `(ptr, len, cap)` triple.
+    ///
+    /// # Safety
+    /// Same invariants as `Vec::from_raw_parts`: `ptr` must be either dangling
+    /// (for `cap == 0`) or a global-allocator allocation of `cap` `T`s, of
+    /// which the first `len` are initialized.
+    pub unsafe fn from_raw_parts(ptr: *mut T, len: u32, cap: u32) -> Self {
+        Self {
+            // SAFETY: caller contract — ptr is non-null (dangling for cap==0).
+            ptr: unsafe { NonNull::new_unchecked(ptr) },
+            len,
+            cap,
+            #[cfg(debug_assertions)]
+            origin: Origin::Owned,
+        }
+    }
+
     pub fn init_one(value: T) -> Result<Self, AllocError> {
         let mut v: Vec<T> = Vec::new();
         v.try_reserve_exact(1).map_err(|_| AllocError)?;

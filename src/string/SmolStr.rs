@@ -111,7 +111,7 @@ impl SmolStr {
         let mut smol_str = SmolStr(0);
         smol_str.set_raw_len(len);
         smol_str.set_raw_cap(cap);
-        smol_str.set_raw_ptr_bits(p as usize);
+        smol_str.set_raw_ptr_bits(p.as_ptr() as usize);
         smol_str.mark_heap();
         smol_str
     }
@@ -167,7 +167,7 @@ impl SmolStr {
                 let p = baby_list.ptr;
                 mem::forget(baby_list);
                 self.set_raw_len(len);
-                self.set_raw_ptr_bits(p as usize);
+                self.set_raw_ptr_bits(p.as_ptr() as usize);
                 self.set_raw_cap(cap);
                 self.mark_heap();
                 return Ok(());
@@ -195,7 +195,7 @@ impl SmolStr {
         let p = baby_list.ptr;
         mem::forget(baby_list);
         self.set_raw_len(len);
-        self.set_raw_ptr_bits(p as usize);
+        self.set_raw_ptr_bits(p.as_ptr() as usize);
         self.set_raw_cap(cap);
         // (already heap-tagged)
         Ok(())

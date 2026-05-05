@@ -65,6 +65,8 @@ pub type OOM = AllocError;
 #[macro_export] macro_rules! err {
     ($name:ident) => { $crate::Error::TODO };
     ($name:literal) => { $crate::Error::TODO };
+    // `err!(from e)` — convert a strum::IntoStaticStr enum error to bun_core::Error.
+    (from $e:expr) => { $crate::Error::from_name(<&'static str>::from(&$e)) };
 }
 // `mark_binding!` and `zstr!` are defined in Global.rs / util.rs respectively.
 

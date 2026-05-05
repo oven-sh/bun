@@ -200,6 +200,20 @@ impl Wyhash11 {
     }
 }
 
+/// `bun.hash(bytes)` — std `Wyhash` with seed 0. PORTING.md: this is **not**
+/// `Wyhash11` (different algorithm).
+// TODO(b2): currently routes to Wyhash11 since std Wyhash isn't ported. Swap
+// once `std.hash.Wyhash` lands here (or use `wyhash` crate for parity).
+#[inline]
+pub fn hash(bytes: &[u8]) -> u64 {
+    Wyhash11::hash(0, bytes)
+}
+
+#[inline]
+pub fn hash32(bytes: &[u8]) -> u32 {
+    hash(bytes) as u32 // @truncate
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/wyhash/wyhash.zig (180 lines)

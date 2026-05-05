@@ -1891,6 +1891,55 @@ it.concurrent("should not send extra bytes when using sendfile", async () => {
   expect(content_length).toBe(payload.byteLength);
 });
 
+describe.concurrent("Expect: 100-continue (case-insensitive match)", () => {
+  // RFC 7231 §5.1.1: expectation-name is a token; RFC 7230 §3.2.6: tokens are
+  // case-insensitive. Apache HttpComponents httpcore 4.x sends "100-Continue"
+  // verbatim (used by JBoss/Seam, Spring RestTemplate, Hadoop, Solr, AWS SDK
+  // v1, etc.); those clients would otherwise wait WAIT_FOR_CONTINUE (2s) before
+  // sending the body. See issue #30248.
+  for (const expectValue of ["100-continue", "100-Continue", "100-CONTINUE", "100-cOnTiNuE"]) {
+    it(`responds with 100 Continue for Expect: ${expectValue}`, async () => {
+      using server = Bun.serve({
+        // Pin to 127.0.0.1 so the raw TCP client always reaches the right
+        // socket family — on darwin CI, `localhost` can resolve to `::1`
+        // only while a server defaulting to dual-stack may not accept it.
+        hostname: "127.0.0.1",
+        port: 0,
+        async fetch(req) {
+          return new Response(await req.text());
+        },
+      });
+
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      let received = "";
+      const socket = net.connect(server.port, "127.0.0.1", () => {
+        socket.write(
+          "POST /test HTTP/1.1\r\n" +
+            `Host: 127.0.0.1:${server.port}\r\n` +
+            "Content-Length: 5\r\n" +
+            `Expect: ${expectValue}\r\n` +
+            "\r\n" +
+            "hello",
+        );
+      });
+      socket.on("data", chunk => {
+        received += chunk.toString("utf8");
+        // Final response arrives after the 100 Continue; wait for it before closing.
+        if (received.includes("\r\n\r\nhello")) {
+          socket.end();
+        }
+      });
+      socket.on("error", reject);
+      socket.on("close", () => resolve(received));
+
+      const output = await promise;
+      expect(output).toContain("HTTP/1.1 100 Continue\r\n");
+      // The final 200 with the echoed body must still be there.
+      expect(output).toContain("hello");
+    });
+  }
+});
+
 it.concurrent("we should always send date", async () => {
   const payload = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   const tmpFile = join(tmpdirSync(), "test.bin");

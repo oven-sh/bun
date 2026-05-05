@@ -23,19 +23,36 @@ use crate::ast::G::Decl;
 /// Zig: `pub fn ReplTransforms(comptime P: type) type { return struct { ... } }`
 ///
 /// Zero-sized namespace struct; all fns are associated and take `p: &mut P`.
-pub struct ReplTransforms<P>(PhantomData<P>);
+// Zig: `pub fn ReplTransforms(comptime P: type) type { return struct { ... } }`
+// — file-split mixin pattern. Round-C lowered to direct `impl P` block.
+//
+// TODO(b2-ast-D): body has 141 errors against E/S/G/B/Stmt/Binding shapes (path fixups,
+// ExprData variant names, BabyList/BumpVec method names). The `apply` surface is stubbed;
+// full draft body preserved under #[cfg(any())] mod _draft below.
 
-// TODO(port): `P` needs a trait bound exposing the parser surface used here:
-//   fields:  has_top_level_return: bool, top_level_await_keyword: logger::Range,
-//            symbols: Vec<Symbol>, import_records: Vec<ImportRecord>
-//   methods: s(..), b(..), new_expr(..)
-// In Zig this is structural (`comptime P: type`); Phase B should introduce a
-// `ParserLike` trait or move these into `impl P` directly.
-impl<P> ReplTransforms<P> {
+use crate::ast::p::P as PReal;
+use crate::parser::JsxT;
+
+impl<'a, const TS: bool, J: JsxT, const SCAN: bool> PReal<'a, TS, J, SCAN> {
     /// Apply REPL-mode transforms to the AST.
     /// This transforms code for interactive evaluation:
     /// - Wraps the last expression in { value: expr } for result capture
     /// - Wraps code with await in async IIFE with variable hoisting
+    pub fn apply_repl_transforms<'bump>(
+        &mut self,
+        parts: &mut BumpVec<'bump, js_ast::Part>,
+        bump: &'bump Bump,
+    ) -> Result<(), bun_alloc::AllocError> {
+        let _ = (parts, bump);
+        todo!("b2-ast-D: apply_repl_transforms body")
+    }
+}
+
+#[cfg(any())] // TODO(b2-ast-D): full body draft
+mod _draft {
+use super::*;
+struct ReplTransforms<P>(PhantomData<P>);
+impl<P> ReplTransforms<P> {
     pub fn apply<'bump>(
         p: &mut P,
         parts: &mut BumpVec<'bump, js_ast::Part>,
@@ -634,6 +651,7 @@ impl<P> ReplTransforms<P> {
 // with actual crate::ast variant naming.
 use crate::ast::stmt;
 use crate::ast::binding;
+} // end mod _draft
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

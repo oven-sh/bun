@@ -183,33 +183,8 @@ pub use expr::Query;
 /// depend on `P`; only the data enum is hoisted here. Full file un-gates with the
 /// parser round.
 #[allow(non_snake_case)]
-pub mod TypeScript {
-    use super::base::Ref;
-
-    #[derive(Clone, Default)]
-    pub enum Metadata {
-        #[default]
-        MNone,
-        MNever,
-        MUnknown,
-        MAny,
-        MVoid,
-        MNull,
-        MUndefined,
-        MFunction,
-        MArray,
-        MBoolean,
-        MString,
-        MObject,
-        MNumber,
-        MBigint,
-        MSymbol,
-        MPromise,
-        MIdentifier(Ref),
-        // TODO(port): arena-backed `bumpalo::collections::Vec<'bump, Ref>` in Phase B.
-        MDot(Vec<Ref>),
-    }
-}
+// TypeScript module: full file un-gated in round-D (replaces former inline Metadata-only stub).
+pub use typescript_full as TypeScript;
 
 // ── round-C: P.rs / Parser.rs (parser state + entry point) ─────────────────
 // Real files; declared here so `crate::ast::p::P` / `crate::ast::p::Parser`
@@ -238,3 +213,16 @@ pub mod bundled_ast;
 pub mod parse_jsx_element;
 pub use bundled_ast::BundledAst;
 pub use server_component_boundary::ServerComponentBoundary;
+
+// ── round-D batch 2 ────────────────────────────────────────────────────────
+#[path = "KnownGlobal.rs"]
+pub mod known_global;
+#[path = "TypeScript.rs"]
+pub mod typescript_full;
+#[path = "parseImportExport.rs"]
+pub mod parse_import_export;
+#[path = "parseFn.rs"]
+pub mod parse_fn;
+#[path = "repl_transforms.rs"]
+pub mod repl_transforms;
+pub use known_global::KnownGlobal;

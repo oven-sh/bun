@@ -3,29 +3,70 @@ use bun_string::strings;
 
 use crate::ast as js_ast;
 use crate::ast::{E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, S, Scope, Stmt, Symbol};
-use crate::ast::Op::Level;
+use crate::ast::op::Level;
+use crate::ast::p::P;
 use crate::js_lexer;
 use crate::js_lexer::T;
-use crate::{
-    AwaitOrYield, FnOrArrowDataParse, JSXTransformType, NewParser, ParseStatementOptions,
-    TypeScript, ARGUMENTS_STR as arguments_str,
+use crate::parser::{
+    AwaitOrYield, FnOrArrowDataParse, JsxT, ParseStatementOptions, TypeScript,
+    ARGUMENTS_STR as arguments_str,
 };
 
 // TODO(port): narrow error set
 type Error = bun_core::Error;
 
-/// Module-level alias for the monomorphized parser type. In Zig this was
-/// `const P = js_parser.NewParser_(typescript, jsx, scan_only)` inside the
-/// returned struct; Rust lacks inherent associated type aliases, so we hoist it.
-type P<const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: bool> =
-    NewParser<TYPESCRIPT, JSX, SCAN_ONLY>;
+// Zig: `pub fn ParseFn(comptime typescript, comptime jsx, comptime scan_only) type { return struct { ... } }`
+// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// a direct `impl P` block. Bodies are gated wholesale (35 errors against E/G/Scope shapes); the
+// public method surface is stubbed below so sibling parse* files can reference them.
 
-/// Zig: `pub fn ParseFn(comptime typescript, comptime jsx, comptime scan_only) type { return struct { ... } }`
-/// — a comptime mixin returning a struct of associated fns that all take `*P`.
-/// Rust: zero-sized marker struct with const-generic params; fns are associated items.
-pub struct ParseFn<const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: bool>;
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+    /// This assumes the "function" token has already been parsed
+    pub fn parse_fn_stmt(
+        &mut self,
+        loc: logger::Loc,
+        opts: &mut ParseStatementOptions,
+        async_range: Option<logger::Range>,
+    ) -> Result<Stmt, Error> {
+        let _ = (loc, opts, async_range);
+        todo!("b2-ast-D: parse_fn_stmt body")
+    }
+    pub fn parse_fn(
+        &mut self,
+        name: Option<js_ast::LocRef>,
+        opts: FnOrArrowDataParse,
+    ) -> Result<G::Fn, Error> {
+        let _ = (name, opts);
+        todo!("b2-ast-D: parse_fn body")
+    }
+    pub fn parse_fn_expr(
+        &mut self,
+        loc: logger::Loc,
+        is_async: bool,
+        async_range: logger::Range,
+    ) -> Result<Expr, Error> {
+        let _ = (loc, is_async, async_range);
+        todo!("b2-ast-D: parse_fn_expr body")
+    }
+    pub fn parse_fn_body(&mut self, data: &mut FnOrArrowDataParse) -> Result<G::FnBody, Error> {
+        let _ = data;
+        todo!("b2-ast-D: parse_fn_body body")
+    }
+    pub fn parse_arrow_body(
+        &mut self,
+        args: js_ast::ExprNodeList,
+        data: &mut FnOrArrowDataParse,
+    ) -> Result<E::Arrow, Error> {
+        let _ = (args, data);
+        todo!("b2-ast-D: parse_arrow_body body")
+    }
+}
 
-impl<const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: bool>
+#[cfg(any())] // TODO(b2-ast-D): full bodies — see stub impl above
+mod _draft_bodies {
+use super::*;
+struct ParseFn<const T: bool, const J: u8, const S: bool>;
+impl<const TYPESCRIPT: bool, const JSX: u8, const SCAN_ONLY: bool>
     ParseFn<TYPESCRIPT, JSX, SCAN_ONLY>
 {
     // Zig: `const is_typescript_enabled = P.is_typescript_enabled;`
@@ -604,6 +645,7 @@ use crate::LexicalDecl;
 use crate::SkipTypeParameterOptions;
 use crate::FunctionKind;
 
+} // end mod _draft_bodies
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/js_parser/ast/parseFn.zig (508 lines)

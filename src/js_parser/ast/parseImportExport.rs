@@ -1,45 +1,22 @@
 use bun_core::Error;
-use crate::ast::{self as js_ast, ClauseItem, Expr, ExprData, LocRef, E};
+use crate::ast::{self as js_ast, ClauseItem, Expr, LocRef, E};
+use crate::ast::expr::Data as ExprData;
 use crate::ast::op::Level;
+use crate::ast::p::P;
 use crate::lexer::{self as js_lexer, T};
-use crate::{
-    is_eval_or_arguments, ExportClauseResult, ImportClause, JSXTransformType, NewParser_,
-};
+use crate::parser::{is_eval_or_arguments, ExportClauseResult, ImportClause, JsxT};
 use bun_logger as logger;
 
 // Zig: `fn ParseImportExport(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// This is a mixin struct whose methods take `*P`. Port as a ZST carrying the const
-// generics, with associated fns that take `&mut P`. Phase B may flatten these into
-// `impl P { ... }` directly.
-pub struct ParseImportExport<
-    const PARSER_FEATURE_TYPESCRIPT: bool,
-    const PARSER_FEATURE_JSX: JSXTransformType,
-    const PARSER_FEATURE_SCAN_ONLY: bool,
->;
+// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// a direct `impl P` block.
 
-type P<
-    const PARSER_FEATURE_TYPESCRIPT: bool,
-    const PARSER_FEATURE_JSX: JSXTransformType,
-    const PARSER_FEATURE_SCAN_ONLY: bool,
-> = NewParser_<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>;
-
-impl<
-        const PARSER_FEATURE_TYPESCRIPT: bool,
-        const PARSER_FEATURE_JSX: JSXTransformType,
-        const PARSER_FEATURE_SCAN_ONLY: bool,
-    > ParseImportExport<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>
-{
-    const IS_TYPESCRIPT_ENABLED: bool =
-        P::<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>::IS_TYPESCRIPT_ENABLED;
-    const ONLY_SCAN_IMPORTS_AND_DO_NOT_VISIT: bool =
-        P::<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>::ONLY_SCAN_IMPORTS_AND_DO_NOT_VISIT;
-
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     /// Note: The caller has already parsed the "import" keyword
-    pub fn parse_import_expr(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
-        loc: logger::Loc,
-        level: Level,
-    ) -> Result<Expr, Error> {
+    pub fn parse_import_expr(&mut self, loc: logger::Loc, level: Level) -> Result<Expr, Error> {
+        #[cfg(any())] // TODO(b2-ast-D): body
+        {
+        let p = self;
         // Parse an "import.meta" expression
         if p.lexer.token == T::TDot {
             p.esm_import_keyword = js_lexer::range_of_identifier(p.source, loc);
@@ -98,7 +75,7 @@ impl<
 
         p.allow_in = old_allow_in;
 
-        if Self::ONLY_SCAN_IMPORTS_AND_DO_NOT_VISIT {
+        if SCAN_ONLY {
             if let ExprData::EString(e_string) = &value.data {
                 if e_string.is_utf8() && e_string.is_present() {
                     // PORT NOTE: reshaped for borrowck — capture slice before calling &mut self method.
@@ -132,12 +109,16 @@ impl<
                 options: import_options,
             },
             loc,
-        ))
+        ));
+        } // end #[cfg(any())]
+        let _ = (loc, level);
+        todo!("b2-ast-D: parse_import_expr body")
     }
 
-    pub fn parse_import_clause(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
-    ) -> Result<ImportClause, Error> {
+    pub fn parse_import_clause(&mut self) -> Result<ImportClause, Error> {
+        #[cfg(any())] // TODO(b2-ast-D): body
+        {
+        let p = self;
         // TODO(port): narrow error set
         let mut items = bumpalo::collections::Vec::<ClauseItem>::new_in(p.allocator);
         p.lexer.expect(T::TOpenBrace)?;
@@ -159,7 +140,7 @@ impl<
             let mut original_name = alias;
             p.lexer.next()?;
 
-            let probably_type_only_import = if Self::IS_TYPESCRIPT_ENABLED {
+            let probably_type_only_import = if TYPESCRIPT {
                 alias == b"type"
                     && p.lexer.token != T::TComma
                     && p.lexer.token != T::TCloseBrace
@@ -307,17 +288,20 @@ impl<
         Ok(ImportClause {
             items: items.into_bump_slice(),
             is_single_line,
-            had_type_only_imports: if Self::IS_TYPESCRIPT_ENABLED {
+            had_type_only_imports: if TYPESCRIPT {
                 had_type_only_imports
             } else {
                 false
             },
-        })
+        });
+        } // end #[cfg(any())]
+        todo!("b2-ast-D: parse_import_clause body")
     }
 
-    pub fn parse_export_clause(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
-    ) -> Result<ExportClauseResult, Error> {
+    pub fn parse_export_clause(&mut self) -> Result<ExportClauseResult, Error> {
+        #[cfg(any())] // TODO(b2-ast-D): body
+        {
+        let p = self;
         // TODO(port): narrow error set
         let mut items =
             bumpalo::collections::Vec::<ClauseItem>::with_capacity_in(1, p.allocator);
@@ -351,7 +335,7 @@ impl<
             }
             p.lexer.next()?;
 
-            if Self::IS_TYPESCRIPT_ENABLED {
+            if TYPESCRIPT {
                 if alias == b"type"
                     && p.lexer.token != T::TComma
                     && p.lexer.token != T::TCloseBrace
@@ -498,11 +482,13 @@ impl<
             return Err(bun_core::err!("SyntaxError"));
         }
 
-        Ok(ExportClauseResult {
+        return Ok(ExportClauseResult {
             clauses: items.into_bump_slice(),
             is_single_line,
             had_type_only_exports,
-        })
+        });
+        } // end #[cfg(any())]
+        todo!("b2-ast-D: parse_export_clause body")
     }
 }
 

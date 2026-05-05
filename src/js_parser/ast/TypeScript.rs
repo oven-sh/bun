@@ -1,15 +1,18 @@
+use crate::ast::p::P;
 use crate::js_lexer::T;
+use crate::parser::JsxT;
 use crate::Ref;
 
-// TODO(port): `p: anytype` in the Zig source is the generic parser instance
-// (NewParser with comptime options). Phase B must either define a `ParserLike`
-// trait exposing `lexer`, `allow_in`, `fn_or_arrow_data_parse`,
-// `load_name_from_ref`, or thread the concrete parser type. For Phase A these
-// functions are written against an unbounded `<P>` and access fields directly.
+// Zig: `p: anytype` for the generic parser instance. Round-C lowered NewParser_ →
+// `P<'a, const TS, J: JsxT, const SCAN>`. The Phase-A draft used unbounded `<P>` which
+// can't access fields; convert to `impl P` methods. The `Metadata::*` methods that need
+// `p.load_name_from_ref` take a closure to avoid the impl-on-foreign-type problem.
 
 // This function is taken from the official TypeScript compiler source code:
 // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
-pub fn can_follow_type_arguments_in_expression<P>(p: &mut P) -> bool {
+impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
+pub fn can_follow_type_arguments_in_expression(&mut self) -> bool {
+    let p = self;
     match p.lexer.token {
         // These are the only tokens can legally follow a type argument list. So we
         // definitely want to treat them as type arg lists.
@@ -36,9 +39,10 @@ pub fn can_follow_type_arguments_in_expression<P>(p: &mut P) -> bool {
 
         // We favor the type argument list interpretation when it is immediately followed by
         // a line break, a binary operator, or something that can't start an expression.
-        _ => p.lexer.has_newline_before || is_binary_operator(p) || !is_start_of_expression(p),
+        _ => p.lexer.has_newline_before || p.is_binary_operator() || !p.is_start_of_expression(),
     }
 }
+} // end impl P (can_follow_type_arguments_in_expression)
 
 #[derive(Clone)]
 pub enum Metadata {
@@ -83,10 +87,11 @@ impl Metadata {
     ///
     /// If the current type is MNever, MNull, or MUndefined assign the current type
     /// to MNone and return None to ensure it's always replaced by the next type.
-    pub fn finish_union<P>(current: &mut Self, p: &P) -> Option<Self> {
+    /// `load_name`: closure form of `p.load_name_from_ref` to avoid coupling Metadata to P.
+    pub fn finish_union(current: &mut Self, load_name: impl Fn(Ref) -> &'static [u8]) -> Option<Self> {
         match current {
             Metadata::MIdentifier(r) => {
-                if p.load_name_from_ref(*r) == b"Object" {
+                if load_name(*r) == b"Object" {
                     return Some(Metadata::MObject);
                 }
                 None
@@ -131,10 +136,10 @@ impl Metadata {
     ///
     /// If the current type is MUnknown, MNull, or MUndefined assign the current type
     /// to MNone and return None to ensure it's always replaced by the next type.
-    pub fn finish_intersection<P>(current: &mut Self, p: &P) -> Option<Self> {
+    pub fn finish_intersection(current: &mut Self, load_name: impl Fn(Ref) -> &'static [u8]) -> Option<Self> {
         match current {
             Metadata::MIdentifier(r) => {
-                if p.load_name_from_ref(*r) == b"Object" {
+                if load_name(*r) == b"Object" {
                     return Some(Metadata::MObject);
                 }
                 None
@@ -186,10 +191,12 @@ impl Metadata {
     }
 }
 
+impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
 // TODO(port): narrow error set — only `lexer.next()` is fallible here.
-pub fn is_ts_arrow_fn_jsx<P>(p: &mut P) -> Result<bool, bun_core::Error> {
-    // TODO(port): Zig copied the lexer by value (`const old_lexer = p.lexer`).
-    // Assumes the Rust `Lexer` is `Clone` (snapshot pattern).
+pub fn is_ts_arrow_fn_jsx(&mut self) -> Result<bool, bun_core::Error> {
+    #[cfg(any())] // TODO(b2-ast-D): Lexer snapshot — Zig `const old = p.lexer` (value copy). Rust Lexer holds `&mut Log` so cannot Clone; needs a `LexerSnapshot` POD that `restore()` accepts.
+    {
+    let p = self;
     let old_lexer = p.lexer.clone();
 
     p.lexer.next()?;
@@ -213,12 +220,15 @@ pub fn is_ts_arrow_fn_jsx<P>(p: &mut P) -> Result<bool, bun_core::Error> {
 
     // Restore the lexer
     p.lexer.restore(&old_lexer);
-    Ok(is_ts_arrow_fn)
+    return Ok(is_ts_arrow_fn);
+    } // end #[cfg(any())]
+    todo!("b2-ast-D: is_ts_arrow_fn_jsx body — Lexer snapshot")
 }
 
 // This function is taken from the official TypeScript compiler source code:
 // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
-fn is_binary_operator<P>(p: &P) -> bool {
+fn is_binary_operator(&self) -> bool {
+    let p = self;
     match p.lexer.token {
         T::TIn => p.allow_in,
 
@@ -255,7 +265,8 @@ fn is_binary_operator<P>(p: &P) -> bool {
 
 // This function is taken from the official TypeScript compiler source code:
 // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
-fn is_start_of_left_hand_side_expression<P>(p: &mut P) -> bool {
+fn is_start_of_left_hand_side_expression(&mut self) -> bool {
+    let p = self;
     match p.lexer.token {
         T::TThis
         | T::TSuper
@@ -276,13 +287,15 @@ fn is_start_of_left_hand_side_expression<P>(p: &mut P) -> bool {
         | T::TSlash
         | T::TSlashEquals
         | T::TIdentifier => true,
-        T::TImport => look_ahead_next_token_is_open_paren_or_less_than_or_dot(p),
-        _ => is_identifier(p),
+        T::TImport => p.look_ahead_next_token_is_open_paren_or_less_than_or_dot(),
+        _ => p.ts_is_identifier(),
     }
 }
 
-fn look_ahead_next_token_is_open_paren_or_less_than_or_dot<P>(p: &mut P) -> bool {
-    // TODO(port): see note in is_ts_arrow_fn_jsx re: Lexer snapshot/Clone.
+fn look_ahead_next_token_is_open_paren_or_less_than_or_dot(&mut self) -> bool {
+    #[cfg(any())] // TODO(b2-ast-D): Lexer snapshot (see is_ts_arrow_fn_jsx)
+    {
+    let p = self;
     let old_lexer = p.lexer.clone();
     let old_log_disabled = p.lexer.is_log_disabled;
     p.lexer.is_log_disabled = true;
@@ -296,16 +309,20 @@ fn look_ahead_next_token_is_open_paren_or_less_than_or_dot<P>(p: &mut P) -> bool
     p.lexer.restore(&old_lexer);
     p.lexer.is_log_disabled = old_log_disabled;
 
-    result
+    return result;
+    } // end #[cfg(any())]
+    todo!("b2-ast-D: look_ahead body — Lexer snapshot")
 }
 
 // This function is taken from the official TypeScript compiler source code:
 // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
-fn is_identifier<P>(p: &P) -> bool {
+// PORT NOTE: renamed `ts_is_identifier` to avoid clash with lexer/P helpers of the same name.
+fn ts_is_identifier(&self) -> bool {
+    use crate::parser::AwaitOrYield::AllowIdent;
+    let p = self;
     if p.lexer.token == T::TIdentifier {
         // If we have a 'yield' keyword, and we're in the [yield] context, then 'yield' is
         // considered a keyword and is not an identifier.
-        // TODO(port): `AllowIdent` variant name must match the port of FnOrArrowDataParse.
         if p.fn_or_arrow_data_parse.allow_yield != AllowIdent && p.lexer.identifier == b"yield" {
             return false;
         }
@@ -322,8 +339,9 @@ fn is_identifier<P>(p: &P) -> bool {
     false
 }
 
-fn is_start_of_expression<P>(p: &mut P) -> bool {
-    if is_start_of_left_hand_side_expression(p) {
+fn is_start_of_expression(&mut self) -> bool {
+    let p = self;
+    if p.is_start_of_left_hand_side_expression() {
         return true;
     }
 
@@ -354,14 +372,15 @@ fn is_start_of_expression<P>(p: &mut P) -> bool {
             // that the start of an expression.  That way we'll parse out a missing identifier,
             // give a good message about an identifier being missing, and then consume the
             // rest of the binary expression.
-            if is_binary_operator(p) {
+            if p.is_binary_operator() {
                 return true;
             }
 
-            is_identifier(p)
+            p.ts_is_identifier()
         }
     }
 }
+} // end impl P (predicate fns)
 
 pub mod identifier {
     pub enum StmtIdentifier {
@@ -483,7 +502,7 @@ pub enum SkipTypeOptions {
 // (`inherent_associated_types`), so the alias and empty constant are hoisted
 // to module scope.
 pub type SkipTypeOptionsBitset = enumset::EnumSet<SkipTypeOptions>;
-pub const SKIP_TYPE_OPTIONS_EMPTY: SkipTypeOptionsBitset = enumset::EnumSet::EMPTY;
+pub const SKIP_TYPE_OPTIONS_EMPTY: SkipTypeOptionsBitset = enumset::EnumSet::empty();
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

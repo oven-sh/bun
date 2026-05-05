@@ -57,6 +57,10 @@ pub static MAP: phf::Map<&'static [u8], KnownGlobal> = phf::phf_map! {
     b"RegExp" => KnownGlobal::RegExp,
 };
 
+// TODO(b2-ast-D): bodies depend on `E::Call: Default`, `BabyList::len()` method (field?),
+// `Expr::known_primitive` (free fn `js_ast::expr::known_primitive`), `prefill::Data` path,
+// `E::String::eql` (gated). The enum + MAP above are real; method bodies gated.
+#[cfg(any())]
 impl KnownGlobal {
     #[inline(always)]
     fn call_from_new(e: &E::New, loc: logger::Loc) -> js_ast::Expr {
@@ -84,7 +88,7 @@ impl KnownGlobal {
             return None;
         };
         let symbol = &symbols[id.inner_index() as usize];
-        if symbol.kind != js_ast::SymbolKind::Unbound {
+        if symbol.kind != js_ast::symbol::Kind::Unbound {
             return None;
         }
 
@@ -165,18 +169,18 @@ impl KnownGlobal {
                         // Only convert if we know for certain it's not a number
                         // unknown could be a number at runtime, so we must preserve Array() call
                         match primitive {
-                            js_ast::PrimitiveType::Null
-                            | js_ast::PrimitiveType::Undefined
-                            | js_ast::PrimitiveType::Boolean
-                            | js_ast::PrimitiveType::String
-                            | js_ast::PrimitiveType::Bigint => {
+                            js_ast::expr::PrimitiveType::Null
+                            | js_ast::expr::PrimitiveType::Undefined
+                            | js_ast::expr::PrimitiveType::Boolean
+                            | js_ast::expr::PrimitiveType::String
+                            | js_ast::expr::PrimitiveType::Bigint => {
                                 // These are definitely not numbers, safe to convert
                                 Some(js_ast::Expr::init(
                                     E::Array { items: e.args, ..Default::default() },
                                     loc,
                                 ))
                             }
-                            js_ast::PrimitiveType::Number => {
+                            js_ast::expr::PrimitiveType::Number => {
                                 let val = match arg.data {
                                     js_ast::ExprData::ENumber(num) => num.value,
                                     _ => return Some(Self::call_from_new(e, loc)),
@@ -204,7 +208,7 @@ impl KnownGlobal {
                                     list.resize(
                                         val as usize,
                                         js_ast::Expr {
-                                            data: crate::Prefill::Data::E_MISSING,
+                                            data: crate::parser::prefill::Data::E_MISSING,
                                             loc: arg_loc,
                                         },
                                     );
@@ -218,7 +222,7 @@ impl KnownGlobal {
                                 }
                                 Some(Self::call_from_new(e, loc))
                             }
-                            js_ast::PrimitiveType::Unknown | js_ast::PrimitiveType::Mixed => {
+                            js_ast::expr::PrimitiveType::Unknown | js_ast::expr::PrimitiveType::Mixed => {
                                 // Could be a number, preserve Array() call
                                 Some(Self::call_from_new(e, loc))
                             }
@@ -292,11 +296,11 @@ impl KnownGlobal {
 
                 if n == 1 {
                     match e.args.slice()[0].known_primitive() {
-                        js_ast::PrimitiveType::Null
-                        | js_ast::PrimitiveType::Undefined
-                        | js_ast::PrimitiveType::Boolean
-                        | js_ast::PrimitiveType::Number
-                        | js_ast::PrimitiveType::String => {
+                        js_ast::expr::PrimitiveType::Null
+                        | js_ast::expr::PrimitiveType::Undefined
+                        | js_ast::expr::PrimitiveType::Boolean
+                        | js_ast::expr::PrimitiveType::Number
+                        | js_ast::expr::PrimitiveType::String => {
                             // "new Date('')" is pure
                             // "new Date(0)" is pure
                             // "new Date(null)" is pure
@@ -364,11 +368,11 @@ impl KnownGlobal {
 
                 if n == 1 {
                     match e.args.slice()[0].known_primitive() {
-                        js_ast::PrimitiveType::Null
-                        | js_ast::PrimitiveType::Undefined
-                        | js_ast::PrimitiveType::Boolean
-                        | js_ast::PrimitiveType::Number
-                        | js_ast::PrimitiveType::String => {
+                        js_ast::expr::PrimitiveType::Null
+                        | js_ast::expr::PrimitiveType::Undefined
+                        | js_ast::expr::PrimitiveType::Boolean
+                        | js_ast::expr::PrimitiveType::Number
+                        | js_ast::expr::PrimitiveType::String => {
                             // "new Response('')" is pure
                             // "new Response(0)" is pure
                             // "new Response(null)" is pure

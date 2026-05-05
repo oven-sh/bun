@@ -268,3 +268,17 @@ it.skipIf(!isPosix)("does not leak native FileSink when a pending write fails (E
   // more than that indicates a native leak.
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
 });
+
+describe("Bun.file().writer() with invalid options", () => {
+  it.each([
+    ["non-string path", { path: 123 }],
+    ["non-integer fd", { fd: "notanint" }],
+    ["arbitrary object", Bun],
+  ])("does not crash with %s", async (_, options) => {
+    const path = join(tmpdirSync(), "filesink-invalid-options.txt");
+    const writer = Bun.file(path).writer(options as any);
+    writer.write("hello");
+    await writer.end();
+    expect(await Bun.file(path).text()).toBe("hello");
+  });
+});

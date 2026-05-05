@@ -1770,7 +1770,15 @@ export function readableStreamReaderGenericRelease(reader) {
 
   var stream = $getByIdDirectPrivate(reader, "ownerReadableStream");
   if (stream.$bunNativePtr) {
-    $getByIdDirectPrivate($getByIdDirectPrivate(stream, "readableStreamController"), "underlyingSource").$resume(false);
+    const underlyingSource = $getByIdDirectPrivate(
+      $getByIdDirectPrivate(stream, "readableStreamController"),
+      "underlyingSource",
+    );
+    // Fully-buffered fast-path sources (see lazyLoadStream) have already delivered
+    // everything by the time the reader is released, so they may not expose $resume.
+    if (underlyingSource && $isCallable(underlyingSource.$resume)) {
+      underlyingSource.$resume(false);
+    }
   }
   $putByIdDirectPrivate(stream, "reader", undefined);
   $putByIdDirectPrivate(reader, "ownerReadableStream", undefined);
@@ -2203,6 +2211,9 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
         pull(controller) {
           controller.close();
         },
+        // releaseLock() on a native-backed stream calls underlyingSource.$resume(false);
+        // the data is already delivered so there is nothing to ref/unref here.
+        $resume() {},
       };
     }
 
@@ -2213,6 +2224,8 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
       pull(controller) {
         controller.close();
       },
+      // see note above
+      $resume() {},
     };
   }
 

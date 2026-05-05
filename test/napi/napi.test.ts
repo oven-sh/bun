@@ -717,11 +717,13 @@ describe.concurrent("napi", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("panic");
-    expect(stderr).not.toContain("NAPI FATAL");
-    // napi_ok == 0 -- before the fix this was 10 (napi_pending_exception).
+    // napi_ok == 0 -- before the fix this was 10 (napi_pending_exception) in
+    // release builds, or an ASAN abort in debug builds. A panic would leave
+    // stdout empty, so the positive assertion covers both crash modes without
+    // relying on stderr-contains-"panic" (which is unreliable per CLAUDE.md).
     expect(stdout.trim()).toBe("create_error_status=0");
     expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
   });
 
   it("napi_reference_unref can be called from finalizers in regular modules", async () => {

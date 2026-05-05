@@ -195,8 +195,16 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
                     // syscall tag to `listen` — libuv reports `bind2` for
                     // `uv_pipe_bind2`, but Node surfaces the listen step
                     // (which bundles bind+listen) as `listen`.
-                    const err = sys_err.withPathAndSyscall(pipe_name, .listen).toSystemError().toErrorInstance(globalObject);
-                    err.put(globalObject, ZigString.static("address"), ZigString.initUTF8(pipe_name).toJS(globalObject));
+                    //
+                    // Use `this.connection.unix` (the user's original input)
+                    // rather than `pipe_name` (rewritten to canonical
+                    // `\\.\pipe\` by `normalizePipeName`) so `.address` and
+                    // the message path round-trip the exact string passed to
+                    // `server.listen()` — same contract as Node's
+                    // `uvExceptionWithHostPort`.
+                    const user_path = this.connection.unix;
+                    const err = sys_err.withPathAndSyscall(user_path, .listen).toSystemError().toErrorInstance(globalObject);
+                    err.put(globalObject, ZigString.static("address"), ZigString.initUTF8(user_path).toJS(globalObject));
                     return globalObject.throwValue(err);
                 },
                 .invalid_ssl_options => return globalObject.throwInvalidArguments(

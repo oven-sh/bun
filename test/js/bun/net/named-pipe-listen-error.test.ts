@@ -144,4 +144,70 @@ describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
       signalCode: null,
     });
   });
+
+  // `normalizePipeName` accepts `//./pipe/`, `//?/pipe/`, `\\?\pipe\`, or any
+  // mixed-slash variant — but internally rewrites to the canonical
+  // `\\.\pipe\` form before handing off to libuv. Node's convention is that
+  // `err.address` echoes the user's input verbatim, so the two must stay
+  // decoupled: the uv bind call uses the canonical form, but the error
+  // object (and its message) use whatever the user passed.
+  test("error .address preserves the user's original pipe prefix form", async () => {
+    const src = /* js */ `
+      const forward = "//./pipe/bun-test-forward-slash-" + Math.random().toString(36).slice(2);
+
+      const first = Bun.listen({
+        unix: forward,
+        socket: { data() {}, open() {}, close() {}, error() {} },
+      });
+
+      let threw;
+      try {
+        Bun.listen({
+          unix: forward,
+          socket: { data() {}, open() {}, close() {}, error() {} },
+        });
+      } catch (e) {
+        threw = e;
+      }
+
+      first.stop(true);
+
+      if (!threw) {
+        console.error("expected second Bun.listen to throw");
+        process.exit(1);
+      }
+
+      console.log(JSON.stringify({
+        code: threw.code,
+        address: threw.address,
+        messageContainsForward: threw.message.includes(forward),
+      }));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15_000,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({
+      shape: JSON.parse(stdout.trim() || "null"),
+      stderr: stderr.trim(),
+      exitCode,
+      signalCode: proc.signalCode ?? null,
+    }).toEqual({
+      shape: {
+        code: "EADDRINUSE",
+        address: expect.stringMatching(/^\/\/\.\/pipe\/bun-test-forward-slash-/),
+        messageContainsForward: true,
+      },
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 });

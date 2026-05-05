@@ -20,7 +20,10 @@ function parseJSON(text: string): unknown {
 //     same JSValues, tripping a debug assertion)
 //   - free the heap-allocated `WindowsNamedPipeListeningContext` and close the
 //     libuv pipe handle, so the event loop can drain and the process exits
-describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
+//
+// Each test spawns an independent subprocess with a randomized pipe name and
+// no shared state, so they're safe to run concurrently.
+describe.skipIf(!isWindows).concurrent("Bun.listen named-pipe error path", () => {
   test("failed listen on in-use pipe throws, cleans up, and does not hang", async () => {
     const src = /* js */ `
       const pipe = "\\\\\\\\.\\\\pipe\\\\bun-test-named-pipe-" + Math.random().toString(36).slice(2);

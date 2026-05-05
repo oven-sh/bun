@@ -519,12 +519,21 @@ pub fn pruneSavedTree(
                 const pkg_id = resolutions[dep_id];
                 if (pkg_id == invalid_package_id or pkg_id >= num_packages) continue;
                 if (!active.isSet(pkg_id)) continue;
-                // The dep_id's *owning* package must also be active — see the
-                // `dep_owner` comment above. This both matches the behavior
-                // of `.filter` for bundled transitives and catches any other
-                // case where a dep_id survived pruning because its target
-                // happened to be reachable through some other path.
-                if (dep_id < dep_owner.len) {
+                // For non-root trees, the dep_id's *owning* package must also
+                // be active. `.resolvable` hoists the transitive edges of a
+                // bundled package up to the bundler's tree (hoist stops at
+                // `hoist_root_id`), so a saved `P → lodash` dep_id can sit in
+                // the bundler's tree even though `P` was never activated
+                // (Phase 1 filters the bundled edge). The owner gate here
+                // drops those orphan transitives without touching the
+                // root-level hoist slot — where a deduped-away sibling's edge
+                // can legitimately be owned by a filtered-out workspace
+                // (e.g. both `a-ui` and `a-widget` depend on `send@0.17.1`;
+                // only the first workspace's edge makes it into the saved
+                // tree because `hoistDependency` returns `.hoisted` for the
+                // second, and an owner check at root would drop the only
+                // saved entry for an active pkg_id).
+                if (tree_idx > 0 and dep_id < dep_owner.len) {
                     const owner = dep_owner[dep_id];
                     if (owner == invalid_package_id) continue;
                     if (!active.isSet(owner)) continue;

@@ -921,29 +921,83 @@ describe("Bun.Image", () => {
       expect(await new Bun.Image(cornersPng).webp().dataurl()).toMatch(/^data:image\/webp;base64,/);
     });
 
-    test(".placeholder() is a ThumbHash-rendered ≤32px PNG data: URL", async () => {
+    test(".placeholder() is a ThumbHash-rendered ≤32px WebP data: URL", async () => {
       // Source big enough to force the ≤100 box-downscale before the DCT;
       // colour gradient so the LPQ coefficients are non-degenerate.
       const src = makePng(80, 60, (x, y) => [(x * 3) & 255, (y * 4) & 255, ((x ^ y) * 7) & 255, 255]);
       const url = await new Bun.Image(src).placeholder();
-      expect(url).toMatch(/^data:image\/png;base64,/);
-      // Typical ThumbHash render PNG-encodes to a few hundred bytes.
-      expect(url.length).toBeLessThan(2000);
+      expect(url).toMatch(/^data:image\/webp;base64,/);
+      // Lossy WebP beats the previous PNG encode by several hundred bytes
+      // on the same ThumbHash render.
+      expect(url.length).toBeLessThan(1200);
       // The data: URL is itself a valid Bun.Image input — verify it decodes
       // to ≤32px on the long side and preserves aspect (80:60 = 4:3).
       const m = await new Bun.Image(url).metadata();
-      expect(m.format).toBe("png");
+      expect(m.format).toBe("webp");
       expect(Math.max(m.width, m.height)).toBeLessThanOrEqual(32);
       expect(m.width / m.height).toBeCloseTo(80 / 60, 0);
       // Average colour: the source's mean R≈118 G≈118 B≈something — sample
-      // the centre pixel of the placeholder; ThumbHash's DC term is exact.
+      // the centre pixel of the placeholder after re-encoding as PNG so we
+      // can read raw pixels. Wide tolerance — LPQ quantisation + 4-bit AC +
+      // 1.25× chroma boost + lossy WebP on top.
       const px = decodePngRaw(await new Bun.Image(url).png().bytes());
       const cx = (px.w >> 1) + (px.h >> 1) * px.w;
-      // Wide tolerance — LPQ quantisation + 4-bit AC + 1.25× chroma boost.
-      expect(Math.abs(px.data[cx * 4] - 119)).toBeLessThan(40);
-      // Explicit "dataurl" arg accepted, anything else throws.
+      expect(Math.abs(px.data[cx * 4] - 119)).toBeLessThan(60);
+      // Explicit "dataurl" arg accepted, unknown strings throw.
       expect(await new Bun.Image(src).placeholder("dataurl")).toBe(url);
-      expect(() => new Bun.Image(src).placeholder("hash" as any)).toThrow(/dataurl/);
+      expect(() => new Bun.Image(src).placeholder("bogus" as any)).toThrow(/dataurl.*hash|hash.*dataurl/);
+    });
+
+    test('.placeholder("hash") returns raw ThumbHash bytes', async () => {
+      const src = makePng(80, 60, (x, y) => [(x * 3) & 255, (y * 4) & 255, ((x ^ y) * 7) & 255, 255]);
+      const img = new Bun.Image(src);
+      const hash = await img.placeholder("hash");
+      // ThumbHash's custom format is 5-byte header + up to 20 nibble-packed
+      // AC bytes — never more than 25 total. Padded base64 of that is ≤36
+      // chars, which is the whole point: users ship the decoder once,
+      // per-image cost is <40 bytes of text in `blurDataURL`.
+      expect(hash).toBeInstanceOf(Uint8Array);
+      expect(hash.length).toBeLessThanOrEqual(25);
+      // Pin the exact bytes so a packing-order regression can't sneak
+      // through behind the bounds check. The fixture is deterministic
+      // gradient → deterministic DCT → deterministic hash.
+      expect(Buffer.from(hash).toString("base64")).toBe("HQgKNZiAd3dxd4eHd3eGh3GQCPiI");
+      // Deterministic across instances, too.
+      const again = await new Bun.Image(src).placeholder("hash");
+      expect(again).toEqual(hash);
+      // Header's landscape bit (bit 15 of the 2-byte h16 field at offset 3)
+      // reflects w>h — source is 80×60 so landscape.
+      expect((hash[4] & 0x80) !== 0).toBe(true);
+      // Round-trip: the matching "dataurl" output is Bun's own ThumbHash
+      // decode of THESE bytes, so constructing a new Image from it must
+      // land on a ≤32px blur with the source's 4:3 aspect ratio. If the
+      // packing order drifted, the round-trip would skew.
+      const url = await new Bun.Image(src).placeholder("dataurl");
+      const m = await new Bun.Image(url).metadata();
+      expect(Math.max(m.width, m.height)).toBeLessThanOrEqual(32);
+      expect(m.width / m.height).toBeCloseTo(80 / 60, 0);
+      // `.placeholder("hash")` reports source dims so `img.width`/`img.height`
+      // aren't stuck at -1 when it's the first awaited terminal.
+      expect(img.width).toBe(80);
+      expect(img.height).toBe(60);
+    });
+
+    test('.placeholder("hash") reports true source dims even after .resize() on a JPEG', async () => {
+      // JPEG decode uses libjpeg-turbo's M/8 IDCT scaling when the
+      // pipeline has a resize hint — `decoded.width/height` become up
+      // to 8× smaller than the source. Placeholders ignore the pipeline
+      // (a placeholder is OF the source), so the hash-result dims must
+      // still report the true source size, matching `.metadata()` on
+      // the same instance.
+      const srcPng = makePng(320, 240, (x, y) => [(x * 3) & 255, (y * 4) & 255, ((x ^ y) * 7) & 255, 255]);
+      const srcJpeg = await new Bun.Image(srcPng).jpeg({ quality: 80 }).bytes();
+      // .resize(40, 30) — at 40×30 target, libjpeg picks 1/8 scaling,
+      // yielding decoded 40×30. Without the fix, img.width would report
+      // 40 instead of 320.
+      const img = new Bun.Image(srcJpeg).resize(40, 30);
+      await img.placeholder("hash");
+      expect(img.width).toBe(320);
+      expect(img.height).toBe(240);
     });
 
     test(".jpeg({progressive: true}) emits SOF2 (multi-scan)", async () => {

@@ -3,6 +3,7 @@
 #include "root.h"
 #include <JavaScriptCore/DeferGC.h>
 #include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/VM.h>
 
 #include "headers-handwritten.h"
@@ -209,12 +210,21 @@ public:
         for (auto it = m_finalizers.rbegin(); it != m_finalizers.rend(); ++it) {
             Bun::NapiHandleScope handle_scope(m_globalObject);
             it->call(this);
+            // Each finalizer starts from a clean exception state: Node.js
+            // never propagates one finalizer's throw into the next (there
+            // is no JS frame to catch in between). Leaving a pending
+            // exception also breaks later finalizers in subtle ways --
+            // napi_is_exception_pending skips the VM check during cleanup
+            // for safety, so user code thinks there is no exception, but
+            // the next napi call with a throw scope sees it. See #30286.
+            clearExceptionsBetweenFinalizers();
         }
         m_finalizers.clear();
         m_isFinishingFinalizers = false;
 
         instanceDataFinalizer.call(this, instanceData, true);
         instanceDataFinalizer.clear();
+        clearExceptionsBetweenFinalizers();
     }
 
     void removeFinalizer(napi_finalize callback, void* hint, void* data)
@@ -501,6 +511,19 @@ private:
     Napi::HookSet m_cleanupHooks;
     JSC::Strong<JSC::Unknown> m_pendingException;
     size_t m_cleanupHookCounter = 0;
+
+    // Drop any pending exception -- VM-scope or env-scope -- between
+    // finalizers run from cleanup(). Used by cleanup() only.
+    //
+    // TopExceptionScope::clearException() wraps VM::clearException(),
+    // which also resets the EXCEPTION_SCOPE_VERIFICATION bookkeeping
+    // (m_needExceptionCheck). Leaving that unreset would trip debug
+    // asserts in the next finalizer's napi calls.
+    void clearExceptionsBetweenFinalizers()
+    {
+        DECLARE_TOP_EXCEPTION_SCOPE(m_vm).clearException();
+        m_pendingException.clear();
+    }
 
     // Returns a vector of hooks in reverse order of insertion.
     std::vector<Napi::EitherCleanupHook> getHooks() const

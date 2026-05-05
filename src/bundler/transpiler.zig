@@ -925,6 +925,7 @@ pub const Transpiler = struct {
                 opts.features.bundler_feature_flags = transpiler.options.bundler_feature_flags;
                 opts.features.repl_mode = transpiler.options.repl_mode;
                 opts.repl_mode = transpiler.options.repl_mode;
+                opts.features.react_fast_refresh = transpiler.options.react_fast_refresh and loader.isJSX();
 
                 if (transpiler.macro_context == null) {
                     transpiler.macro_context = js_ast.Macro.MacroContext.init(transpiler);

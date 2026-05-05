@@ -2489,6 +2489,18 @@ declare module "bun" {
      * @default false
      */
     replMode?: boolean;
+
+    /**
+     * Enable React Fast Refresh transform.
+     *
+     * Injects `$RefreshReg$` and `$RefreshSig$` calls so a host runtime
+     * (e.g. `react-refresh/runtime`) can register components and track
+     * hook signatures across updates. Only applies when the effective
+     * loader is `jsx` or `tsx`.
+     *
+     * @default false
+     */
+    reactFastRefresh?: boolean;
   }
 
   /**

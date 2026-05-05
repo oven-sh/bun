@@ -43,6 +43,7 @@ pub const Config = struct {
     minify_syntax: bool = false,
     no_macros: bool = false,
     repl_mode: bool = false,
+    react_fast_refresh: bool = false,
 
     pub fn fromJS(this: *Config, globalThis: *jsc.JSGlobalObject, object: jsc.JSValue, allocator: std.mem.Allocator) bun.JSError!void {
         if (object.isUndefinedOrNull()) {
@@ -252,6 +253,10 @@ pub const Config = struct {
 
         if (try object.getBooleanLoose(globalThis, "replMode")) |flag| {
             this.repl_mode = flag;
+        }
+
+        if (try object.getBooleanLoose(globalThis, "reactFastRefresh")) |flag| {
+            this.react_fast_refresh = flag;
         }
 
         if (try object.getTruthy(globalThis, "minify")) |minify| {
@@ -733,7 +738,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     transpiler.options.auto_import_jsx = config.runtime.auto_import_jsx;
     transpiler.options.inlining = config.runtime.inlining;
     transpiler.options.hot_module_reloading = config.runtime.hot_module_reloading;
-    transpiler.options.react_fast_refresh = false;
+    transpiler.options.react_fast_refresh = config.react_fast_refresh;
     transpiler.options.repl_mode = config.repl_mode;
 
     return this;

@@ -858,6 +858,43 @@ pub fn spawnMaybeSync(
         subprocess.toJS(globalThis)
     else
         JSValue.zero;
+
+    // For spawnSync no JS wrapper is created, so GC will never call
+    // finalize(). Every exit path from here on must reap the child and
+    // free the Subprocess, including pipe.start() failures below, a
+    // pending exception after the wait loop (e.g. worker termination or
+    // a bun:test timeout), and errors thrown while building the result.
+    defer if (comptime is_sync) {
+        if (!subprocess.process.hasExited()) {
+            // An error path bailed before the sync wait loop could reap
+            // the child. On POSIX, Process.kill() is a no-op while the
+            // poller is still .detached (watch() has not run yet on the
+            // sync path), so the tryKill() at the error site did not
+            // actually signal; send it directly by pid before blocking
+            // in wait4() so long-lived children do not hang us here.
+            if (comptime Environment.isPosix) {
+                _ = std.c.kill(subprocess.process.pid, @intCast(@intFromEnum(subprocess.killSignal)));
+                subprocess.process.wait(true);
+            } else {
+                // Windows: poller is already .uv from spawn so tryKill()
+                // did run, but Process.wait() is a no-op and watchOrReap()
+                // has not run yet; drive the exit handler manually to
+                // release the Process ref and close IO.
+                subprocess.process.onExit(
+                    .{ .signaled = subprocess.killSignal },
+                    &std.mem.zeroes(Rusage),
+                );
+            }
+        }
+        // finalize() → finalizeStreams() → Writable/Readable.finalize()
+        // closes any memfd that was copied out of stdio[] by
+        // Writable.init/Readable.init. Disarm the earlier-registered
+        // should_close_memfd defer so the same fd number is not closed
+        // twice on the pipe.start() error path.
+        should_close_memfd = false;
+        subprocess.finalize();
+    };
+
     if (out != .zero) {
         subprocess.this_value.setWeak(out);
         // Immediately upgrade to strong if there's pending activity to prevent premature GC
@@ -1111,7 +1148,7 @@ pub fn spawnMaybeSync(
     const exitedDueToTimeout = did_timeout;
     const exitedDueToMaxBuffer = subprocess.exited_due_to_maxbuf;
     const resultPid = jsc.JSValue.jsNumberFromInt32(subprocess.pid());
-    subprocess.finalize();
+    // subprocess.finalize() is handled by the `defer if (is_sync)` above.
 
     const sync_value = jsc.JSValue.createEmptyObject(globalThis, 0);
     sync_value.put(globalThis, jsc.ZigString.static("exitCode"), exitCode);

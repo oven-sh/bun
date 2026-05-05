@@ -2272,7 +2272,13 @@ describe("bun link integration", () => {
     expect(existsSync(join(bodyDir, "marker.js"))).toBe(false);
   });
 
-  test("isolated: --backend=symlink bypasses the bun link override", async () => {
+  // Windows dropped from this one: `symlink.isSupported()` is false on
+  // Windows (BackendSupport.windows carries only hardlink + copyfile), so
+  // `--backend=symlink` is silently discarded by CommandLineArguments and
+  // the backend stays at the Windows default (hardlink). The override fires
+  // and marker.js ends up in the store — expected platform behavior, not a
+  // regression this test can usefully assert.
+  test.skipIf(isWindows)("isolated: --backend=symlink bypasses the bun link override", async () => {
     using home = tempDir("link-home-", {});
     const env = hermeticEnv(String(home));
     using producer = await setupLinkedNoDeps(env);

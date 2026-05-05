@@ -195,6 +195,19 @@ pub const ArrayBuffer = extern struct {
         return value.asArrayBuffer(ctx).?;
     }
 
+    extern "c" fn Bun__ArrayBuffer__pinAndRefresh(out: *ArrayBuffer) bool;
+
+    /// Pin the backing store of `this.value` so `transfer()` / detach copies
+    /// instead of freeing it while a native caller holds a slice. Pinning
+    /// promotes a `FastTypedArray` to stable heap storage, which repoints
+    /// the vector — `ptr` / `len` / `byte_len` are updated here to reflect
+    /// the post-pin storage. Returns `false` if there is no backing
+    /// ArrayBuffer (e.g. already detached). Pair every `true` return with
+    /// exactly one `this.value.unpinArrayBuffer()`.
+    pub fn pinAndRefresh(this: *ArrayBuffer) bool {
+        return Bun__ArrayBuffer__pinAndRefresh(this);
+    }
+
     extern "c" fn JSArrayBuffer__fromDefaultAllocator(*jsc.JSGlobalObject, ptr: [*]u8, len: usize) jsc.JSValue;
     pub fn toJSFromDefaultAllocator(globalThis: *jsc.JSGlobalObject, bytes: []u8) jsc.JSValue {
         return JSArrayBuffer__fromDefaultAllocator(globalThis, bytes.ptr, bytes.len);

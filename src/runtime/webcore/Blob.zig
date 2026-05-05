@@ -2152,7 +2152,11 @@ pub fn findOrCreateFileFromPath(path_or_fd: *jsc.Node.PathOrFileDescriptor, glob
                     }
                 }
 
-                path_or_fd.toThreadSafe();
+                // The Store takes long-lived ownership and is released
+                // from a GC finalizer, which can't safely unpin/unprotect
+                // a borrowed `.buffer` path — so copy buffer paths into an
+                // owned `.encoded_slice` instead of pinning them.
+                path_or_fd.toOwnedThreadSafe();
                 const copy = path_or_fd.*;
                 path_or_fd.* = .{ .path = .{ .string = bun.PathString.empty } };
                 break :brk copy;

@@ -3308,9 +3308,11 @@ bool JSC__JSValue__asArrayBuffer(
 }
 
 // Pin/unpin the backing ArrayBuffer of a JSArrayBuffer or JSArrayBufferView so
-// transfer()/detach() throw while a native borrower holds a slice into it.
-// `pin` is a no-op on SharedArrayBuffer (already non-detachable). Returns
-// false if `value` has no ArrayBuffer impl.
+// a concurrent transfer()/detach copies the contents out instead of freeing
+// the backing store while a native borrower holds a slice into it
+// (ArrayBuffer::transferTo → !isDetachable() → m_contents.copyTo — the source
+// stays attached). `pin` is a no-op on SharedArrayBuffer (already
+// non-detachable). Returns false if `value` has no ArrayBuffer impl.
 static JSC::ArrayBuffer* arrayBufferImpl(JSC::JSValue value)
 {
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
@@ -3331,6 +3333,37 @@ CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
 {
     if (auto* buf = arrayBufferImpl(JSC::JSValue::decode(v)))
         buf->unpin();
+}
+
+// Pin `out->value`'s backing ArrayBuffer and refresh `out->ptr`/`byte_len`
+// from the view afterwards. Pinning promotes a FastTypedArray to stable
+// heap storage (possiblySharedBuffer() → slowDownAndWasteMemory()), which
+// repoints vector(), so any slice captured before the pin is stale. This
+// lets Zig callers that cached a Bun__ArrayBuffer (e.g. StringOrBuffer /
+// PathLike in their `.buffer` state) pin + re-read without needing a
+// JSGlobalObject on hand. Returns false if there is no backing ArrayBuffer.
+CPP_DECL bool Bun__ArrayBuffer__pinAndRefresh(Bun__ArrayBuffer* out)
+{
+    auto value = JSC::JSValue::decode(out->_value);
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
+        auto* buf = view->possiblySharedBuffer();
+        if (!buf) return false;
+        buf->pin();
+        out->ptr = static_cast<char*>(view->vector());
+        out->len = view->length();
+        out->byte_len = view->byteLength();
+        return true;
+    }
+    if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
+        auto* buf = jb->impl();
+        if (!buf) return false;
+        buf->pin();
+        out->ptr = static_cast<char*>(buf->data());
+        out->len = buf->byteLength();
+        out->byte_len = buf->byteLength();
+        return true;
+    }
+    return false;
 }
 
 // Borrow `v`'s byte storage for off-thread reading. Splits out only the

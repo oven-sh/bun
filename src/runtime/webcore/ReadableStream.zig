@@ -657,14 +657,10 @@ pub fn NewSource(
             fn processResult(this_jsvalue: jsc.JSValue, globalThis: *JSGlobalObject, flags: JSValue, result: streams.Result) bun.JSError!jsc.JSValue {
                 switch (result) {
                     .err => |err| {
-                        if (err == .Error) {
-                            return globalThis.throwValue(try err.Error.toJS(globalThis));
-                        } else {
-                            const js_err = err.JSValue;
-                            js_err.ensureStillAlive();
-                            js_err.unprotect();
-                            return globalThis.throwValue(js_err);
-                        }
+                        var err_ = err;
+                        const js_err = err_.toJS(globalThis);
+                        js_err.ensureStillAlive();
+                        return globalThis.throwValue(js_err);
                     },
                     .pending => {
                         const out = try result.toJS(globalThis);

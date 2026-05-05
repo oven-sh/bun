@@ -471,6 +471,52 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
       "y_dir/file.txt",
     ]);
   });
+
+  it("trailing slash on a literal pattern emits symlinks (Node uses lstat, treats every symlink as a potential directory)", () => {
+    // Node's `fs.glob` with trailing `/` uses `lstat` and the rule
+    // `isDirectory() || isSymbolicLink()`, so ANY symlink passes the
+    // "directories only" filter — dangling, self-referential loop,
+    // symlink-to-file, symlink-to-dir all emit. Only regular files (or
+    // other plain non-dir non-link dirents) get filtered.
+    //
+    // The walker's literal branches — absolute fast-path (`Iterator.init`)
+    // and relative literal-tail (`transitionToDirIterState`) — both need
+    // this rule: the absolute fast-path sees the dirent via the
+    // NOTDIR/ENOENT/ELOOP lstat fallbacks and checks `trailing_sep`
+    // against `ISDIR || ISLNK`; the relative literal-tail uses `statat`
+    // (follows) and falls back to a dedicated `lstatat` call when
+    // `trailing_sep` is set and `statat`'s target is non-dir, to see the
+    // dirent's own type.
+    using dir = tempDir("glob-trailing-sep-symlinks", {
+      "regular.txt": "r",
+      realdir: { ".keep": "" },
+      target: { ".keep": "" },
+    });
+    const root = String(dir);
+    fs.symlinkSync("target", path.join(root, "symlink-to-dir"), "dir");
+    fs.symlinkSync("regular.txt", path.join(root, "symlink-to-file"), "file");
+    fs.symlinkSync("nonexistent", path.join(root, "dangling"), "file");
+    fs.symlinkSync("loop", path.join(root, "loop"), "dir");
+
+    // Relative, trailing slash: regular file filtered; every other entry
+    // emits.
+    expect(fs.globSync("regular.txt/", { cwd: root })).toStrictEqual([]);
+    expect(fs.globSync("realdir/", { cwd: root })).toStrictEqual(["realdir"]);
+    expect(fs.globSync("symlink-to-dir/", { cwd: root })).toStrictEqual(["symlink-to-dir"]);
+    expect(fs.globSync("symlink-to-file/", { cwd: root })).toStrictEqual(["symlink-to-file"]);
+    expect(fs.globSync("dangling/", { cwd: root })).toStrictEqual(["dangling"]);
+    expect(fs.globSync("loop/", { cwd: root })).toStrictEqual(["loop"]);
+    // Missing path with trailing slash is still [].
+    expect(fs.globSync("does-not-exist/", { cwd: root })).toStrictEqual([]);
+
+    // Absolute, same rule.
+    expect(fs.globSync(path.join(root, "regular.txt") + "/")).toStrictEqual([]);
+    expect(fs.globSync(path.join(root, "realdir") + "/")).toStrictEqual([path.join(root, "realdir")]);
+    expect(fs.globSync(path.join(root, "symlink-to-dir") + "/")).toStrictEqual([path.join(root, "symlink-to-dir")]);
+    expect(fs.globSync(path.join(root, "symlink-to-file") + "/")).toStrictEqual([path.join(root, "symlink-to-file")]);
+    expect(fs.globSync(path.join(root, "dangling") + "/")).toStrictEqual([path.join(root, "dangling")]);
+    expect(fs.globSync(path.join(root, "loop") + "/")).toStrictEqual([path.join(root, "loop")]);
+  });
 }); // </symlink behavior>
 
 // Cross-platform edge cases — no symlink fixtures, so these run on every

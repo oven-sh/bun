@@ -497,18 +497,25 @@ pub fn GlobWalker_(
                         if (starting_component_idx >= this.walker.patternComponents.items.len) {
                             // Two paths here, on purpose:
                             //
-                            // * `path` is the *unstripped* slice. Pass it to
-                            //   `Accessor.open` and `Syscall.lstat` so the
-                            //   kernel's trailing-slash semantics still
-                            //   apply — `/abs/file.txt/` (trailing slash on
-                            //   a regular file) correctly fails ENOTDIR
-                            //   both at `open(O_DIRECTORY)` and at `lstat`,
-                            //   enforcing the "directories only" meaning of
-                            //   a trailing slash.
+                            // * `path` is the *unstripped* slice. Passed to
+                            //   `Accessor.open(path, O_DIRECTORY)` so the
+                            //   kernel follows the link (if any) and
+                            //   reports mid-path errors against the actual
+                            //   intended target.
                             //
-                            // * `emit_path` is what we put into
-                            //   `matchedPaths` / `.matched`. `buildPatternComponents`
-                            //   keeps the trailing separator in
+                            // * `emit_path` is the stripped slice — what
+                            //   goes into `matchedPaths` / `.matched` AND
+                            //   what `Syscall.lstat` receives. POSIX
+                            //   `lstat` with a trailing slash *follows*
+                            //   symlinks (`lstat('symlink-to-file/')` →
+                            //   ENOTDIR), which would hide the dirent's
+                            //   own type and make it impossible to match
+                            //   Node's "emit any symlink under trailing
+                            //   slash" rule. Stripping first keeps
+                            //   `lstat` on the raw dirent.
+                            //
+                            //   `buildPatternComponents` keeps the
+                            //   trailing separator in
                             //   `path_without_special_syntax`, but Node
                             //   normalizes (`fs.globSync('/abs/dir/')` →
                             //   `['/abs/dir']`) and the sibling relative
@@ -558,33 +565,38 @@ pub fn GlobWalker_(
                                         // (`/abs/file.txt/something`, path
                                         // doesn't exist — Node returns `[]`).
                                         // `lstat` disambiguates: succeeds for
-                                        // terminal, fails NOTDIR for mid-path.
-                                        // `lstat` on the *unstripped* path
-                                        // also honors the trailing-slash
-                                        // "must be a directory" rule on POSIX
-                                        // — so `/abs/file.txt/` (regular file +
-                                        // slash) correctly returns `[]`. On
-                                        // Windows `lstat` ignores trailing
-                                        // slashes; `trailing_sep` catches that
-                                        // case explicitly via `S.ISDIR`.
-                                        // Same shape as the ELOOP arm below.
-                                        // Use `Syscall.lstat` directly rather
-                                        // than `Accessor.lstatat(.empty, ...)`
-                                        // — the `statatWindows` implementation
-                                        // dereferences the handle before
-                                        // checking whether `path` is absolute,
-                                        // so passing `.empty` fails with EBADF
-                                        // on Windows. `path` is known absolute
-                                        // here (we're inside `is_absolute`).
-                                        switch (Syscall.lstat(path)) {
+                                        // terminal, fails NOTDIR/ENOENT for
+                                        // mid-path. Call with `emit_path`
+                                        // (trailing slash stripped) so POSIX
+                                        // `lstat`'s follow-on-trailing-slash
+                                        // semantics don't mask the dirent's
+                                        // own type. The `trailing_sep` flag
+                                        // below then applies Node's rule
+                                        // uniformly on both POSIX and
+                                        // Windows. Use `Syscall.lstat`
+                                        // directly rather than
+                                        // `Accessor.lstatat(.empty, ...)` —
+                                        // `statatWindows` dereferences the
+                                        // handle before checking whether
+                                        // `path` is absolute, so passing
+                                        // `.empty` fails with EBADF on
+                                        // Windows. `emit_path` is known
+                                        // absolute here (we're inside
+                                        // `is_absolute`).
+                                        switch (Syscall.lstat(emit_path)) {
                                             .result => |stat| {
-                                                // Trailing-slash = dirs only.
-                                                // On Windows, `lstat` succeeds
-                                                // on `file.txt\` and returns
-                                                // the file's stat — filter
-                                                // here so we still match
-                                                // POSIX's `[]` result.
-                                                if (trailing_sep and !bun.S.ISDIR(@intCast(stat.mode))) {
+                                                // Trailing slash = directories
+                                                // only, but symlinks pass —
+                                                // Node's `fs.glob` uses
+                                                // `lstat` and treats every
+                                                // symlink (dangling, self-
+                                                // ref loop, symlink-to-file,
+                                                // symlink-to-dir) as a
+                                                // potential directory. Only
+                                                // ISREG and other plain
+                                                // non-dir non-link entries
+                                                // get filtered.
+                                                if (trailing_sep and !bun.S.ISDIR(@intCast(stat.mode)) and !bun.S.ISLNK(@intCast(stat.mode))) {
                                                     this.iter_state = .get_next;
                                                     return .success;
                                                 }
@@ -613,9 +625,9 @@ pub fn GlobWalker_(
                                     // and the literal-tail branch in
                                     // `transitionToDirIterState`.
                                     if (this.walker.swallow_missing_cwd and e.getErrno() == bun.sys.E.NOENT) {
-                                        switch (Syscall.lstat(path)) {
+                                        switch (Syscall.lstat(emit_path)) {
                                             .result => |stat| {
-                                                if (trailing_sep and !bun.S.ISDIR(@intCast(stat.mode))) {
+                                                if (trailing_sep and !bun.S.ISDIR(@intCast(stat.mode)) and !bun.S.ISLNK(@intCast(stat.mode))) {
                                                     this.iter_state = .get_next;
                                                     return .success;
                                                 }
@@ -662,10 +674,12 @@ pub fn GlobWalker_(
                                     // `transitionToDirIterState`.
                                     if (this.walker.swallow_missing_cwd and e.getErrno() == bun.sys.E.LOOP) {
                                         // Use `Syscall.lstat` directly (see
-                                        // NOTDIR arm above for rationale).
-                                        switch (Syscall.lstat(path)) {
+                                        // NOTDIR arm above for rationale —
+                                        // same `emit_path` / trailing-slash
+                                        // reasoning applies).
+                                        switch (Syscall.lstat(emit_path)) {
                                             .result => |stat| {
-                                                if (trailing_sep and !bun.S.ISDIR(@intCast(stat.mode))) {
+                                                if (trailing_sep and !bun.S.ISDIR(@intCast(stat.mode)) and !bun.S.ISLNK(@intCast(stat.mode))) {
                                                     this.iter_state = .get_next;
                                                     return .success;
                                                 }
@@ -950,6 +964,30 @@ pub fn GlobWalker_(
                             },
                             .result => |stat| stat,
                         };
+                        // Trailing slash on the pattern means "directories
+                        // only". Node's `fs.glob` uses `lstat` and treats
+                        // every symlink as a potential directory, so we
+                        // only filter when the dirent is both non-dir and
+                        // non-link — regular files, block/char devices,
+                        // fifos, sockets. `statat` followed the link
+                        // already, so when `trailing_sep` is set and the
+                        // statat target isn't a directory we need a
+                        // separate `lstatat` to see the dirent's own mode
+                        // (ISLNK → emit, anything else → filter). Matches
+                        // the absolute-literal fast-path's lstat-success
+                        // arms, which see ISLNK directly because they
+                        // land here only when `open(O_DIRECTORY)` failed.
+                        const trailing_sep = this.walker.patternComponents.items[idx].trailing_sep;
+                        if (trailing_sep and !bun.S.ISDIR(@intCast(stat_result.mode))) {
+                            const dirent_is_symlink = switch (Accessor.lstatat(fd, pathz)) {
+                                .err => false,
+                                .result => |s| bun.S.ISLNK(@intCast(s.mode)),
+                            };
+                            if (!dirent_is_symlink) {
+                                this.iter_state = .get_next;
+                                return .success;
+                            }
+                        }
                         const matches = (bun.S.ISDIR(@intCast(stat_result.mode)) and !this.walker.only_files) or bun.S.ISREG(@intCast(stat_result.mode)) or !this.walker.only_files;
                         if (matches) {
                             if (try this.walker.prepareMatchedPath(pathz, dir_path)) |path| {

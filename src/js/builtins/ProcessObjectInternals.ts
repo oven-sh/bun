@@ -402,13 +402,27 @@ export function windowsEnv(
     return o;
   };
 
-  (internalEnv as any).toJSON = () => {
-    return { ...internalEnv };
-  };
+  // Note: `process.env.toJSON` is intentionally left undefined to match
+  // Node.js (Object.prototype has no toJSON). `JSON.stringify(process.env)`
+  // falls back to enumerating the Proxy via the `ownKeys` +
+  // `getOwnPropertyDescriptor` traps, which preserves the original-case
+  // names stored in `envMapList` — the keys on the backing object are
+  // uppercased on Windows (see JSEnvironmentVariableMap.cpp's
+  // `convertToASCIIUppercase`).
 
   return new Proxy(internalEnv, {
-    get(_, p) {
-      return typeof p === "string" ? internalEnv[p.toUpperCase()] : undefined;
+    get(target, p, receiver) {
+      if (typeof p === "string") {
+        // Case-insensitive env var lookup wins first (matches Windows semantics).
+        const envValue = internalEnv[p.toUpperCase()];
+        if (envValue !== undefined) return envValue;
+        // Fall back to the target's own/inherited properties so that
+        // `env.hasOwnProperty`, `env.toString`, the custom inspect symbol,
+        // etc. resolve via `Object.prototype` just like on POSIX (where
+        // process.env is a plain object, not a Proxy).
+        return Reflect.get(target, p, receiver);
+      }
+      return Reflect.get(target, p, receiver);
     },
     set(_, p, value) {
       const k = String(p).toUpperCase();
@@ -423,8 +437,14 @@ export function windowsEnv(
       }
       return true;
     },
-    has(_, p) {
-      return typeof p !== "symbol" ? String(p).toUpperCase() in internalEnv : false;
+    has(target, p) {
+      if (typeof p === "symbol") return Reflect.has(target, p);
+      // Case-insensitive env membership wins first, else fall through to the
+      // prototype chain so `'hasOwnProperty' in process.env` and similar
+      // inherited-method checks return true (matches Node.js and the `get`
+      // trap above).
+      if (String(p).toUpperCase() in internalEnv) return true;
+      return Reflect.has(target, p);
     },
     deleteProperty(_, p) {
       const k = String(p).toUpperCase();

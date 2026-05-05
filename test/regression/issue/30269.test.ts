@@ -91,7 +91,8 @@ test("#30269 bundler doesn't rename a nested local into another top-level symbol
     // `stdout` carries the "Bundled N modules" banner; assert on it before
     // the exit-code check so a build failure shows what bun actually printed.
     expect(stdout).toContain("out.js");
-    expect(exitCode, stderr).toBe(0);
+    if (exitCode !== 0) expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   }
 
   await using run = Bun.spawn({
@@ -107,5 +108,6 @@ test("#30269 bundler doesn't rename a nested local into another top-level symbol
   // Asserting on stdout + exit code is enough; stderr can hold unrelated
   // debug-build warnings (e.g. MADV_DONTNEED) that we don't want to flake on.
   expect(stdout).toBe("ok: true\n");
+  if (exitCode !== 0) expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

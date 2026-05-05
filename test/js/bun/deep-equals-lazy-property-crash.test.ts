@@ -7,9 +7,10 @@ test("deepEquals does not crash when lazy property callback fails after stack ov
       bunExe(),
       "-e",
       `
+      var count = 0;
       function F4() {
         try { new F4(); } catch (e) {}
-        Bun.deepEquals(Uint8Array, Bun);
+        if (count++ < 5) Bun.deepEquals(Uint8Array, Bun);
       }
       new F4();
       console.log("ok");

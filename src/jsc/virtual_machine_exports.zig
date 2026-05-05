@@ -17,6 +17,13 @@ pub export fn Bun__drainMicrotasks() void {
     jsc.VirtualMachine.get().eventLoop().tick();
 }
 
+/// Pump the event loop until the given promise is settled.
+/// Used from C++ when a synchronous call (e.g. `require()`) needs to wait
+/// on an async plugin result. Caller must check for termination exception.
+pub export fn Bun__VirtualMachine__waitForPromise(vm: *jsc.VirtualMachine, promise: *jsc.JSPromise) void {
+    vm.waitForPromise(.{ .normal = promise });
+}
+
 export fn Bun__readOriginTimer(vm: *jsc.VirtualMachine) u64 {
     // Check if performance.now() is overridden (for fake timers)
     if (vm.overridden_performance_now) |overridden| {

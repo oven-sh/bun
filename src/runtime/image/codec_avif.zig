@@ -72,6 +72,18 @@ pub fn decode(bytes: []const u8, max_pixels: u64) codecs.Error!codecs.Decoded {
     // `avifDecoderParse` and returns dims; phase 2 runs the AV1 decode and
     // fills the caller-provided buffer. The shim re-opens the decoder
     // between phases, which is cheap relative to the AV1 decode itself.
+    //
+    // `bytes` is a borrowed view of a JS ArrayBuffer the user can still
+    // WRITE (the pin only blocks detach), so a hostile caller can swap in
+    // a different AVIF between the two parses. Phase 1 sizes the
+    // allocation from the first ispe; phase 2 parses again on the
+    // (possibly mutated) bytes and would happily write `w₂·h₂·4` bytes
+    // into the `w₁·h₁·4` alloc if unchecked. Harden the same way
+    // codec_jpeg/codec_webp do: tell phase 2 to refuse anything larger
+    // than phase 1's pixel product (reuses the shim's existing
+    // `pixels > max_pixels` check), then post-check dims are unchanged
+    // so a SMALLER swap (which would leave tail rows uninitialised)
+    // also degrades to DecodeFailed rather than returning junk.
     var w: u32 = 0;
     var h: u32 = 0;
     var icc_ptr: ?[*]u8 = null;
@@ -84,10 +96,14 @@ pub fn decode(bytes: []const u8, max_pixels: u64) codecs.Error!codecs.Decoded {
 
     const out = try bun.default_allocator.alloc(u8, @as(usize, w) * h * 4);
     errdefer bun.default_allocator.free(out);
-    switch (bun_avif_decode(bytes.ptr, bytes.len, max_pixels, &w, &h, out.ptr, &icc_ptr, &icc_size)) {
+    var w2: u32 = 0;
+    var h2: u32 = 0;
+    const phase1_pixels = @as(u64, w) * h;
+    switch (bun_avif_decode(bytes.ptr, bytes.len, phase1_pixels, &w2, &h2, out.ptr, &icc_ptr, &icc_size)) {
         AVIF_OK => {},
         else => |rc| return mapDecodeErr(rc),
     }
+    if (w2 != w or h2 != h) return error.DecodeFailed;
     // Re-home the ICC profile out of the shim's `malloc`'d buffer into
     // `bun.default_allocator` so the pipeline can free it uniformly. If
     // the dupe OOMs we drop the profile and keep the pixels — jpeg/png do

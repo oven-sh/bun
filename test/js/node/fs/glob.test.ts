@@ -506,8 +506,17 @@ describe("fs.glob edge cases", () => {
 
     // A trailing separator on the pattern is normalized away in the
     // result — `/abs/subdir/` → `/abs/subdir` (matching Node and the
-    // sibling relative literal-tail branch).
+    // sibling relative literal-tail branch). Multiple trailing
+    // separators collapse: `/abs/subdir//` → `/abs/subdir`.
     expect(fs.globSync(path.join(root, "subdir") + sep)).toStrictEqual([path.join(root, "subdir")]);
+    expect(fs.globSync(path.join(root, "subdir") + sep + sep)).toStrictEqual([path.join(root, "subdir")]);
+
+    // But a trailing separator on a pattern that names a non-directory
+    // means "directories only" — Node returns `[]` for
+    // `fs.globSync('/abs/file.txt/')`, and so do we. The walker must
+    // run `lstat` on the *unstripped* path so the kernel's
+    // trailing-slash type-check applies.
+    expect(fs.globSync(path.join(root, "file.txt") + sep)).toStrictEqual([]);
   });
 
   it("consecutive separators in a pattern do not break matching", () => {

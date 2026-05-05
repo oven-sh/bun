@@ -495,21 +495,40 @@ pub fn GlobWalker_(
                         //
                         // In that case we don't need to do any walking and can just open up the FS entry
                         if (starting_component_idx >= this.walker.patternComponents.items.len) {
-                            // `buildPatternComponents` bumps
-                            // `end_byte_of_basename_excluding_special_syntax`
-                            // past the final separator for patterns that end
-                            // in one (`/abs/dir/`), so the raw slice includes
-                            // the trailing separator. Node normalizes these
-                            // (`fs.globSync('/abs/dir/')` → `['/abs/dir']`),
-                            // and the sibling relative literal-tail branch in
-                            // `transitionToDirIterState` already strips via
-                            // `patternSlice()`. Strip here too for parity,
-                            // but keep a bare root (`/`, `C:\`) intact.
+                            // Two paths here, on purpose:
+                            //
+                            // * `path` is the *unstripped* slice. Pass it to
+                            //   `Accessor.open` and `Syscall.lstat` so the
+                            //   kernel's trailing-slash semantics still
+                            //   apply — `/abs/file.txt/` (trailing slash on
+                            //   a regular file) correctly fails ENOTDIR
+                            //   both at `open(O_DIRECTORY)` and at `lstat`,
+                            //   enforcing the "directories only" meaning of
+                            //   a trailing slash.
+                            //
+                            // * `emit_path` is what we put into
+                            //   `matchedPaths` / `.matched`. `buildPatternComponents`
+                            //   keeps the trailing separator in
+                            //   `path_without_special_syntax`, but Node
+                            //   normalizes (`fs.globSync('/abs/dir/')` →
+                            //   `['/abs/dir']`) and the sibling relative
+                            //   literal-tail branch strips via
+                            //   `patternSlice()` too. Strip a run of
+                            //   trailing separators, guarded against bare
+                            //   roots (`/`, `C:\` on Windows). The `while`
+                            //   collapses `//` and `///` runs.
+                            const path = try this.walker.arena.allocator().dupeZ(u8, path_without_special_syntax);
                             var trimmed = path_without_special_syntax;
-                            if (trimmed.len > 1 and (trimmed[trimmed.len - 1] == '/' or (bun.Environment.isWindows and trimmed[trimmed.len - 1] == '\\'))) {
+                            while (trimmed.len > 1 and
+                                (trimmed[trimmed.len - 1] == '/' or (bun.Environment.isWindows and trimmed[trimmed.len - 1] == '\\')) and
+                                !(bun.Environment.isWindows and trimmed.len == 3 and trimmed[1] == ':'))
+                            {
                                 trimmed = trimmed[0 .. trimmed.len - 1];
                             }
-                            const path = try this.walker.arena.allocator().dupeZ(u8, trimmed);
+                            const emit_path: [:0]const u8 = if (trimmed.len == path_without_special_syntax.len)
+                                path
+                            else
+                                try this.walker.arena.allocator().dupeZ(u8, trimmed);
                             // All three success-shaped arms below set
                             // `iter_state = .matched` AND push into
                             // `matchedPaths`: the `next()` iterator yields
@@ -530,6 +549,11 @@ pub fn GlobWalker_(
                                         // doesn't exist — Node returns `[]`).
                                         // `lstat` disambiguates: succeeds for
                                         // terminal, fails NOTDIR for mid-path.
+                                        // `lstat` on the *unstripped* path
+                                        // also honors the trailing-slash
+                                        // "must be a directory" rule — so
+                                        // `/abs/file.txt/` (regular file +
+                                        // slash) correctly returns `[]`.
                                         // Same shape as the ELOOP arm below.
                                         // Use `Syscall.lstat` directly rather
                                         // than `Accessor.lstatat(.empty, ...)`
@@ -541,8 +565,8 @@ pub fn GlobWalker_(
                                         // here (we're inside `is_absolute`).
                                         switch (Syscall.lstat(path)) {
                                             .result => {
-                                                try this.walker.appendMatchedPathSymlink(path);
-                                                this.iter_state = .{ .matched = path };
+                                                try this.walker.appendMatchedPathSymlink(emit_path);
+                                                this.iter_state = .{ .matched = emit_path };
                                                 return .success;
                                             },
                                             .err => {
@@ -571,8 +595,8 @@ pub fn GlobWalker_(
                                         // NOTDIR arm above for rationale).
                                         switch (Syscall.lstat(path)) {
                                             .result => {
-                                                try this.walker.appendMatchedPathSymlink(path);
-                                                this.iter_state = .{ .matched = path };
+                                                try this.walker.appendMatchedPathSymlink(emit_path);
+                                                this.iter_state = .{ .matched = emit_path };
                                                 return .success;
                                             },
                                             .err => {
@@ -592,8 +616,8 @@ pub fn GlobWalker_(
                             // in `transitionToDirIterState` that gates on
                             // `bun.S.ISDIR(mode) and !only_files`.
                             if (!this.walker.only_files) {
-                                try this.walker.appendMatchedPathSymlink(path);
-                                this.iter_state = .{ .matched = path };
+                                try this.walker.appendMatchedPathSymlink(emit_path);
+                                this.iter_state = .{ .matched = emit_path };
                             } else {
                                 this.iter_state = .get_next;
                             }

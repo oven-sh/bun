@@ -82,19 +82,21 @@ test.skipIf(isWindows)("issue #29286: --bytecode --format=esm --outdir emits .js
   expect(runExit).toBe(0);
 });
 
-test.skipIf(isWindows)("issue #29286: Bun.build({ bytecode: true, format: 'esm' }) no longer requires compile", async () => {
-  using dir = tempDir("29286-api", {
-    "entry.ts": `
+test.skipIf(isWindows)(
+  "issue #29286: Bun.build({ bytecode: true, format: 'esm' }) no longer requires compile",
+  async () => {
+    using dir = tempDir("29286-api", {
+      "entry.ts": `
       const x = await Promise.resolve(42);
       console.log('answer:', x);
     `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
         const result = await Bun.build({
           entrypoints: ['${join(String(dir), "entry.ts").replace(/\\/g, "\\\\")}'],
           outdir: '${join(String(dir), "dist").replace(/\\/g, "\\\\")}',
@@ -110,19 +112,20 @@ test.skipIf(isWindows)("issue #29286: Bun.build({ bytecode: true, format: 'esm' 
         // uses backslashes there.
         console.log('outputs:', result.outputs.map(o => o.path.replaceAll('\\\\', '/').split('/').pop()).sort().join(','));
       `,
-    ],
-    env: bunEnv,
-    stderr: "pipe",
-    stdout: "pipe",
-  });
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).not.toContain("ESM bytecode requires");
-  // Match on comma-delimited tokens so `entry.js` isn't a false positive
-  // for the prefix of `entry.js.jsc` / `entry.js.jsm`.
-  expect(stdout).toMatch(/outputs: (entry\.js),/);
-  expect(stdout).toContain("entry.js.jsc");
-  expect(stdout).toContain("entry.js.jsm");
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).not.toContain("ESM bytecode requires");
+    // Match on comma-delimited tokens so `entry.js` isn't a false positive
+    // for the prefix of `entry.js.jsc` / `entry.js.jsm`.
+    expect(stdout).toMatch(/outputs: (entry\.js),/);
+    expect(stdout).toContain("entry.js.jsc");
+    expect(stdout).toContain("entry.js.jsm");
+    expect(exitCode).toBe(0);
+  },
+);

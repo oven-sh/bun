@@ -280,6 +280,15 @@ export const stringsInternals = {
   ) => string,
 };
 
+/**
+ * Format the HTTP client thread spawn-failure panic message (#29933).
+ * Exposes `formatSpawnFailurePanic` from `src/http/HTTPThread.zig` so the
+ * Windows-only diagnostic that surfaces the Win32 error code can be
+ * exercised from Linux CI.
+ */
+export const formatHttpThreadSpawnPanic: (errName: string, win32ErrorCode: number, isWindows: boolean) => string =
+  $newZigFunction("http/HTTPThread.zig", "TestingAPIs.formatHttpThreadSpawnPanic", 3);
+
 export const fetchH2Internals = {
   liveCounts: $newZigFunction("http/H2Client.zig", "TestingAPIs.liveCounts", 0) as () => {
     sessions: number;

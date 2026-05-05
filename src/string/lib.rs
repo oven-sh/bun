@@ -7,26 +7,22 @@
 #[path = "HashedString.rs"]  pub mod hashed_string;
 #[path = "PathString.rs"]    pub mod path_string;
 #[path = "SmolStr.rs"]       pub mod smol_str;
-// TODO(b2-blocked): StringBuilder needs simdutf transcoding + String::to_utf8.
-#[cfg(any())] #[path = "StringBuilder.rs"] pub mod string_builder;
-pub mod string_builder {
-    #[derive(Default)]
-    pub struct StringBuilder { pub buf: Vec<u8>, pub len: usize, pub cap: usize }
-}
+#[path = "StringBuilder.rs"] pub mod string_builder;
 #[path = "StringJoiner.rs"]  pub mod string_joiner;
 #[path = "escapeRegExp.rs"]  pub mod escape_reg_exp;
 
-// TODO(b2-blocked): MutableString + wtf both need `strings::{to_utf8_alloc,
-// to_utf8_from_latin1, copy_utf16_into_utf8, CodepointIterator}` (the SIMD
-// transcoding suite from immutable.rs) + WTFStringImpl FFI. Un-gate after
-// `immutable` lands.
+// TODO(b2): MutableString needs strings::{copy_utf16_into_utf8, to_utf8_from_latin1_z,
+// to_utf8_alloc_z, element_length_utf16_into_utf8} + js_lexer::is_identifier + bun_sys.
+// 10 errors; un-gate after those land in immutable.rs/js_lexer.
 #[cfg(any())] #[path = "MutableString.rs"] pub mod mutable_string;
-#[cfg(any())] pub mod wtf;
 pub mod mutable_string {
-    /// `bun.MutableString` — growable byte buffer (`Vec<u8>` newtype).
     #[derive(Default)]
     pub struct MutableString(pub Vec<u8>);
 }
+// TODO(b2-blocked): wtf.rs is the WTFStringImpl FFI surface — needs
+// bun_ptr::ExternalSharedDescriptor + crate::encoding + js_lexer::is_identifier.
+// Gate until those land.
+#[cfg(any())] pub mod wtf;
 pub mod wtf {
     pub use bun_alloc::WTFStringImplStruct as WTFStringImpl;
 }

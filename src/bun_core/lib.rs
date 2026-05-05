@@ -16,11 +16,7 @@ pub mod deprecated;
 // bun_simdutf base64/utf32, and ~7 strings:: SIMD scanners). Both need their
 // in-file `strings`/`js_*` move-in stubs completed before un-gating.
 #[cfg(any())] pub mod Progress;
-#[cfg(any())] pub mod fmt;
-/// Placeholder so `crate::fmt::*` paths resolve until the real module un-gates.
-pub mod fmt_stub {
-    pub struct QuotedFormatter<'a>(pub &'a [u8]);
-}
+pub mod fmt;
 #[path = "output.rs"]
 pub mod output;
 
@@ -75,8 +71,12 @@ pub use env as Environment;
 
 pub use output as Output;
 
+// `crate::js_lexer` / `crate::js_printer` resolve to fmt.rs's local subsets.
+pub use fmt::{js_lexer, js_printer};
+
 /// Minimal `bun.strings` subset (full SIMD impl in bun_str via highway FFI).
 pub mod strings {
+    pub use crate::fmt::strings::*; // pulls in fmt.rs's larger subset
     #[inline] pub fn includes(h: &[u8], n: &[u8]) -> bool { ::bstr::ByteSlice::find(h, n).is_some() }
     #[inline] pub fn contains(h: &[u8], n: &[u8]) -> bool { includes(h, n) }
     #[inline] pub fn index_of_char(h: &[u8], c: u8) -> Option<usize> { h.iter().position(|&b| b == c) }
@@ -108,6 +108,160 @@ pub mod strings {
     pub fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], check_len: bool) -> bool {
         if check_len && a.len() != b.len() { return false; }
         a.iter().zip(b).all(|(x, y)| x.eq_ignore_ascii_case(y))
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Transcoding (from src/string/immutable/unicode.zig). Lives in T0 so
+    // collections::BabyList<u8> can call it without depending on bun_string.
+    // Allocator params dropped per PORTING.md §Allocators.
+    // ──────────────────────────────────────────────────────────────────────
+    use bun_simdutf_sys::simdutf;
+
+    #[inline]
+    pub fn is_all_ascii(slice: &[u8]) -> bool {
+        // SAFETY: FFI reads exactly slice.len() bytes.
+        unsafe { simdutf::simdutf__validate_ascii(slice.as_ptr(), slice.len()) }
+    }
+
+    /// Index of first non-ASCII byte, or None if all-ASCII. simdutf-backed.
+    #[inline]
+    pub fn first_non_ascii(slice: &[u8]) -> Option<usize> {
+        // SAFETY: FFI reads exactly slice.len() bytes.
+        let r = unsafe { simdutf::simdutf__validate_ascii_with_errors(slice.as_ptr(), slice.len()) };
+        if r.status == simdutf::Status::SUCCESS { None } else { Some(r.count) }
+    }
+
+    /// Encode a code point as WTF-8 (UTF-8 that permits unpaired surrogates).
+    /// Returns bytes written (1..=4). Port of `encodeWTF8Rune`.
+    #[inline]
+    pub fn encode_wtf8_rune(out: &mut [u8; 4], cp: u32) -> usize {
+        if cp < 0x80 {
+            out[0] = cp as u8;
+            1
+        } else if cp < 0x800 {
+            out[0] = 0xC0 | (cp >> 6) as u8;
+            out[1] = 0x80 | (cp & 0x3F) as u8;
+            2
+        } else if cp < 0x10000 {
+            out[0] = 0xE0 | (cp >> 12) as u8;
+            out[1] = 0x80 | ((cp >> 6) & 0x3F) as u8;
+            out[2] = 0x80 | (cp & 0x3F) as u8;
+            3
+        } else {
+            out[0] = 0xF0 | (cp >> 18) as u8;
+            out[1] = 0x80 | ((cp >> 12) & 0x3F) as u8;
+            out[2] = 0x80 | ((cp >> 6) & 0x3F) as u8;
+            out[3] = 0x80 | (cp & 0x3F) as u8;
+            4
+        }
+    }
+
+    #[inline]
+    pub fn latin1_to_codepoint_bytes_assume_not_ascii(c: u8) -> [u8; 2] {
+        debug_assert!(c >= 0x80);
+        let cp = c as u32;
+        [0xC0 | (cp >> 6) as u8, 0x80 | (cp & 0x3F) as u8]
+    }
+
+    /// Port of `allocateLatin1IntoUTF8WithList`.
+    /// PERF(port): Zig hand-rolls a SWAR/@Vector ASCII-span scanner; here we use
+    /// `first_non_ascii` (simdutf SIMD) for the span scan — equivalent throughput.
+    pub fn allocate_latin1_into_utf8_with_list(
+        mut list: Vec<u8>,
+        offset_into_list: usize,
+        latin1: &[u8],
+    ) -> Vec<u8> {
+        list.truncate(offset_into_list);
+        list.reserve(latin1.len());
+        let mut rest = latin1;
+        while !rest.is_empty() {
+            match first_non_ascii(rest) {
+                None => {
+                    list.extend_from_slice(rest);
+                    break;
+                }
+                Some(i) => {
+                    list.extend_from_slice(&rest[..i]);
+                    rest = &rest[i..];
+                    while let Some(&c) = rest.first() {
+                        if c < 0x80 { break; }
+                        list.reserve(2);
+                        let [a, b] = latin1_to_codepoint_bytes_assume_not_ascii(c);
+                        list.push(a);
+                        list.push(b);
+                        rest = &rest[1..];
+                    }
+                }
+            }
+        }
+        list
+    }
+
+    /// Port of `toUTF8FromLatin1` — None if input is already ASCII.
+    pub fn to_utf8_from_latin1(latin1: &[u8]) -> Option<Vec<u8>> {
+        if is_all_ascii(latin1) {
+            return None;
+        }
+        Some(allocate_latin1_into_utf8_with_list(Vec::with_capacity(latin1.len()), 0, latin1))
+    }
+
+    /// WTF-8 fallback for unpaired surrogates (port of `toUTF8ListWithTypeBun` core loop).
+    fn append_wtf8_from_utf16(list: &mut Vec<u8>, utf16: &[u16]) {
+        let mut i = 0usize;
+        let mut buf = [0u8; 4];
+        while i < utf16.len() {
+            let unit = utf16[i] as u32;
+            let cp;
+            if (0xD800..=0xDBFF).contains(&unit) {
+                if i + 1 < utf16.len() {
+                    let lo = utf16[i + 1] as u32;
+                    if (0xDC00..=0xDFFF).contains(&lo) {
+                        cp = 0x10000 + ((unit - 0xD800) << 10) + (lo - 0xDC00);
+                        i += 2;
+                    } else { cp = unit; i += 1; }
+                } else { cp = unit; i += 1; }
+            } else { cp = unit; i += 1; }
+            let n = encode_wtf8_rune(&mut buf, cp);
+            list.extend_from_slice(&buf[..n]);
+        }
+    }
+
+    /// Port of `convertUTF16ToUTF8Append`. Caller must reserve
+    /// `simdutf::length::utf8::from::utf16::le(utf16)` spare bytes for the fast path.
+    pub fn convert_utf16_to_utf8_append(list: &mut Vec<u8>, utf16: &[u16]) {
+        let spare = list.spare_capacity_mut();
+        // SAFETY: simdutf writes only initialized bytes; we set_len by reported count.
+        let r = unsafe {
+            simdutf::simdutf__convert_utf16le_to_utf8_with_errors(
+                utf16.as_ptr(),
+                utf16.len(),
+                spare.as_mut_ptr() as *mut u8,
+            )
+        };
+        if r.status == simdutf::Status::SURROGATE {
+            append_wtf8_from_utf16(list, utf16);
+            return;
+        }
+        // SAFETY: simdutf wrote `r.count` bytes into spare capacity.
+        unsafe { list.set_len(list.len() + r.count) };
+    }
+
+    pub fn convert_utf16_to_utf8(mut list: Vec<u8>, utf16: &[u16]) -> Vec<u8> {
+        let need = simdutf::length::utf8::from::utf16::le(utf16);
+        list.reserve(need + 16);
+        convert_utf16_to_utf8_append(&mut list, utf16);
+        list
+    }
+
+    #[inline]
+    pub fn to_utf8_alloc(utf16: &[u16]) -> Vec<u8> {
+        convert_utf16_to_utf8(Vec::new(), utf16)
+    }
+
+    pub fn to_utf8_append_to_list(list: &mut Vec<u8>, utf16: &[u16]) {
+        let need = simdutf::length::utf8::from::utf16::le(utf16);
+        list.reserve(need + 16);
+        convert_utf16_to_utf8_append(list, utf16);
     }
 }
 

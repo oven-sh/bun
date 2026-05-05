@@ -772,50 +772,36 @@ impl BabyList<u8> {
         if SAFETY_CHECKS && !str.is_empty() {
             self.assert_owned();
         }
-        // TODO(b2-blocked): bun_string::strings::allocate_latin1_into_utf8_with_list
-        // (SIMD transcoding). Body preserved below; gated until bun_string un-gates.
-        #[cfg(any())]
-        {
-            let initial = self.len;
-            let old = self.list_managed();
-            let old_len = old.len();
-            let new = strings::allocate_latin1_into_utf8_with_list(
-                ManuallyDrop::into_inner(old),
-                old_len,
-                str,
-            )?;
-            self.update(ManuallyDrop::new(new));
-            return Ok(self.len - initial);
-        }
-        let _ = str;
-        todo!("write_latin1: blocked on bun_string transcoding")
+        let initial = self.len;
+        let old = self.list_managed();
+        let old_len = old.len();
+        let new = strings::allocate_latin1_into_utf8_with_list(
+            core::mem::ManuallyDrop::into_inner(old),
+            old_len,
+            str,
+        );
+        self.update(core::mem::ManuallyDrop::new(new));
+        Ok(self.len - initial)
     }
 
-    /// This method is available only for `BabyList(u8)`. Invalid characters are replaced with
-    /// replacement character
+    /// This method is available only for `BabyList(u8)`. Invalid characters are encoded as WTF-8.
     pub fn write_utf16(&mut self, str: &[u16]) -> Result<u32, AllocError> {
         if SAFETY_CHECKS && !str.is_empty() {
             self.assert_owned();
         }
-        // TODO(b2-blocked): bun_simdutf_sys::simdutf::length + bun_string::convert_utf16_to_utf8_append.
-        #[cfg(any())]
+        let initial_len = self.len;
+        let mut list_ = self.list_managed();
         {
-            let initial_len = self.len;
-            let mut list_ = self.list_managed();
-            {
-                let length_estimate = if (list_.capacity() - list_.len()) <= (str.len() * 3 + 2) {
-                    bun_simdutf_sys::simdutf::length::utf8::from::utf16::le(str)
-                } else {
-                    str.len()
-                };
-                list_.try_reserve(length_estimate).map_err(|_| AllocError)?;
-                strings::convert_utf16_to_utf8_append(&mut *list_, str)?;
-            }
-            self.update(list_);
-            return Ok(self.len - initial_len);
+            let length_estimate = if (list_.capacity() - list_.len()) <= (str.len() * 3 + 2) {
+                bun_simdutf_sys::simdutf::length::utf8::from::utf16::le(str)
+            } else {
+                str.len()
+            };
+            list_.try_reserve(length_estimate).map_err(|_| AllocError)?;
+            strings::convert_utf16_to_utf8_append(&mut list_, str);
         }
-        let _ = str;
-        todo!("write_utf16: blocked on bun_string transcoding")
+        self.update(list_);
+        Ok(self.len - initial_len)
     }
 
     /// This method is available only for `BabyList(u8)`.

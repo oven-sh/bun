@@ -3,9 +3,7 @@ use core::ptr::NonNull;
 use core::slice;
 
 use crate::{self as strings_mod, ZStr, String as BunString, StringPointer};
-// TODO(port): verify `bun.StringPointer` lives in bun_str (it's `bun.StringPointer` in Zig)
-// TODO(port): verify `bun.simdutf` crate path
-use bun_simdutf_sys as simdutf;
+use bun_simdutf_sys::simdutf;
 
 /// Two-phase string builder: callers first `count()` every slice they will
 /// append, then `allocate()` once, then `append()` each slice. Returned slices
@@ -48,39 +46,41 @@ impl StringBuilder {
     }
 
     pub fn count16(&mut self, slice: &[u16]) {
-        let result = simdutf::length::utf8::from_utf16_le(slice);
-        self.cap += result;
+        self.cap += simdutf::length::utf8::from::utf16::le(slice);
     }
 
-    pub fn count16_z(&mut self, slice: &crate::WStr) {
-        let result = crate::strings::element_length_utf16_into_utf8(slice);
-        self.cap += result + 1;
+    pub fn count16_z(&mut self, slice: &[u16]) {
+        // PORT NOTE: WStr has no len method on its DST slice yet; callers pass &[u16].
+        // Zig's `elementLengthUTF16IntoUTF8` is the same simdutf length call when input
+        // is valid; for WTF-16 with lone surrogates the slow path overestimates by 0-1
+        // bytes which is fine for a capacity reservation.
+        self.cap += simdutf::length::utf8::from::utf16::le(slice) + 1;
     }
 
     pub fn append16(&mut self, slice: &[u16]) -> Option<&mut ZStr> {
         // PORT NOTE: fallback_allocator param dropped (global mimalloc).
+        // PORT NOTE: borrowck — capture buf ptr, drop the &mut borrow before
+        // mutating self.len, then rebuild ZStr from the raw ptr.
         let buf = self.writable();
+        let buf_ptr = buf.as_mut_ptr();
         if slice.is_empty() {
             buf[0] = 0;
             self.len += 1;
-            // SAFETY: buf[0] == 0 written above; len 0 excludes the NUL.
-            return Some(unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), 0) });
+            // SAFETY: buf_ptr[0] == 0 written above; len 0 excludes the NUL.
+            return Some(unsafe { ZStr::from_raw_mut(buf_ptr, 0) });
         }
 
-        let result = simdutf::convert::utf16::to_utf8_with_errors_le(slice, buf);
-        if result.status == simdutf::Status::Success {
+        let result = simdutf::convert::utf16::to::utf8::with_errors::le(slice, buf);
+        if result.status == simdutf::Status::SUCCESS {
             let count = result.count;
-            buf[count] = 0;
+            // SAFETY: buf has at least count+1 bytes (count16 reserved them).
+            unsafe { *buf_ptr.add(count) = 0 };
             self.len += count + 1;
-            // SAFETY: buf[count] == 0 written above.
-            Some(unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), count) })
+            // SAFETY: buf_ptr[count] == 0 written above.
+            Some(unsafe { ZStr::from_raw_mut(buf_ptr, count) })
         } else {
-            // Fallback: WTF-16 → UTF-8 via the slow path that handles lone surrogates.
-            let mut list: Vec<u8> = Vec::new();
-            let out = match crate::strings::to_utf8_list_with_type_bun(&mut list, slice, false) {
-                Ok(v) => v,
-                Err(_) => return None,
-            };
+            // Fallback: WTF-16 → WTF-8 via the slow path that handles lone surrogates.
+            let mut out = crate::strings::to_utf8_alloc(slice);
             if out.try_reserve(1).is_err() {
                 return None;
             }
@@ -90,7 +90,7 @@ impl StringBuilder {
             // perspective — fallback_allocator owned it). Phase B: decide ownership.
             let len = out.len() - 1;
             let ptr = out.as_mut_ptr();
-            core::mem::forget(core::mem::take(out));
+            core::mem::forget(out);
             // SAFETY: ptr[len] == 0 pushed above; buffer leaked so it outlives the return.
             Some(unsafe { ZStr::from_raw_mut(ptr, len) })
         }
@@ -115,9 +115,15 @@ impl StringBuilder {
     }
 
     pub fn append_str(&mut self, str: &BunString) -> &[u8] {
-        let slice = str.to_utf8();
-        self.append(slice.as_bytes())
-        // `slice` (Utf8Slice) drops here — Drop frees if it owned a transcoded buffer.
+        // TODO(b2-blocked): bun_str::String::to_utf8 (WTFStringImpl FFI). Body
+        // preserved; gate just this method until the String surface lands.
+        #[cfg(any())]
+        {
+            let slice = str.to_utf8();
+            return self.append(slice.as_bytes());
+        }
+        let _ = str;
+        todo!("append_str: blocked on bun_str::String::to_utf8")
     }
 
     pub fn append(&mut self, slice: &[u8]) -> &[u8] {
@@ -138,9 +144,10 @@ impl StringBuilder {
     }
 
     pub fn add_concat(&mut self, slices: &[&[u8]]) -> StringPointer {
-        // PORT NOTE: reshaped for borrowck — capture base ptr instead of reslicing `remain`.
+        // PORT NOTE: reshaped for borrowck — capture self.len before borrowing alloc.
+        let start = self.len;
         let alloc = self.allocated_slice();
-        let mut remain = &mut alloc[self.len..];
+        let mut remain = &mut alloc[start..];
         let mut len: usize = 0;
         for slice in slices {
             remain[..slice.len()].copy_from_slice(slice);

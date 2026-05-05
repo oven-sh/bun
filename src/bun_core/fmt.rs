@@ -5,10 +5,8 @@ use core::fmt::{self, Display, Formatter, Write as _};
 use core::ptr::NonNull;
 
 use crate::output as Output;
-// MOVE_DOWN: bun_str::strings → bun_core (move-in pass).
-use crate::strings;
-// MOVE_DOWN: bun_js_parser::{js_printer, js_lexer} → bun_core (move-in pass).
-use crate::js_printer;
+// `strings`/`js_printer`/`js_lexer` are defined locally below (move-in subset);
+// lib.rs::strings re-exports them for the rest of the crate.
 
 /// SHA-512 digest length in bytes. Local constant to avoid bun_sha (T2) dependency.
 const SHA512_DIGEST: usize = 64;
@@ -154,6 +152,47 @@ pub mod strings {
             r += 1;
         }
         EncodeResult { read: r, written: w }
+    }
+
+    // ─── scanners fmt.rs needs that aren't in lib.rs::strings ─────────────
+    // Re-export the simdutf-backed ones from lib.rs::strings
+    pub use crate::strings::{is_all_ascii, trim_right, encode_wtf8_rune};
+
+    /// Port of `bun.strings.wtf8ByteSequenceLength`.
+    #[inline]
+    pub fn wtf8_byte_sequence_length(b: u8) -> u8 {
+        if b < 0x80 { 1 }
+        else if b & 0xE0 == 0xC0 { 2 }
+        else if b & 0xF0 == 0xE0 { 3 }
+        else if b & 0xF8 == 0xF0 { 4 }
+        else { 1 } // invalid lead → treat as 1 (replacement)
+    }
+
+    #[inline]
+    pub fn is_uuid(s: &[u8]) -> bool {
+        s.len() == 36 && starts_with_uuid(s)
+    }
+
+    /// Scalar port of the highway scanner of the same name.
+    /// PERF(port): bun_string overrides with the highway SIMD version.
+    pub fn index_of_newline_or_non_ascii_or_ansi(s: &[u8]) -> Option<usize> {
+        s.iter().position(|&b| b == b'\n' || b == b'\r' || b == 0x1B || b >= 0x80)
+    }
+
+    pub fn contains_newline_or_non_ascii_or_quote(s: &[u8]) -> bool {
+        s.iter().any(|&b| b == b'\n' || b == b'\r' || b == b'"' || b == b'\'' || b == b'`' || b >= 0x80)
+    }
+
+    /// Port of `bun.fmt.URLFormatter.find_url_password` — returns (start, end)
+    /// of the password segment in `s`, or None.
+    pub fn find_url_password(s: &[u8]) -> Option<(usize, usize)> {
+        // scheme://user:PASSWORD@host
+        let scheme_end = ::bstr::ByteSlice::find(s, b"://")? + 3;
+        let rest = &s[scheme_end..];
+        let at = rest.iter().position(|&b| b == b'@')?;
+        let userinfo = &rest[..at];
+        let colon = userinfo.iter().position(|&b| b == b':')?;
+        Some((scheme_end + colon + 1, scheme_end + at))
     }
 
     // ─── CodepointIterator (fmt.rs identifier formatter) ──────────────────
@@ -473,31 +512,24 @@ pub fn dependency_url(url: &[u8]) -> DependencyUrlFormatter<'_> {
 // IntegrityFormatter
 // ───────────────────────────────────────────────────────────────────────────
 
-// B-1: ConstParamTy is nightly (adt_const_params). Use as runtime value instead.
+// adt_const_params (enum const-generic) is nightly. Stable rewrite: const bool.
+pub const INTEGRITY_SHORT: bool = true;
+pub const INTEGRITY_FULL: bool = false;
+#[doc(hidden)]
 #[derive(PartialEq, Eq, Clone, Copy)]
-pub enum IntegrityFormatStyle {
-    Short,
-    Full,
-}
+pub enum IntegrityFormatStyle { Short, Full } // kept for callers that name the enum
 
-pub struct IntegrityFormatter<const STYLE: IntegrityFormatStyle> {
+pub struct IntegrityFormatter<const SHORT: bool> {
     pub bytes: [u8; SHA512_DIGEST],
 }
 
-impl<const STYLE: IntegrityFormatStyle> Display for IntegrityFormatter<STYLE> {
+impl<const SHORT: bool> Display for IntegrityFormatter<SHORT> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        // TODO(port): std.base64.standard.Encoder.calcSize — compute exact len at const time.
         const BUF_LEN: usize = (SHA512_DIGEST + 2) / 3 * 4;
         let mut buf = [0u8; BUF_LEN];
-        let count = bun_simdutf::base64::encode(
-            &self.bytes[..SHA512_DIGEST],
-            &mut buf,
-            false,
-        );
-
+        let count = bun_simdutf_sys::simdutf::base64::encode(&self.bytes[..SHA512_DIGEST], &mut buf, false);
         let encoded = &buf[..count];
-
-        if STYLE == IntegrityFormatStyle::Short {
+        if SHORT {
             write!(
                 f,
                 "sha512-{}[...]{}",
@@ -510,9 +542,7 @@ impl<const STYLE: IntegrityFormatStyle> Display for IntegrityFormatter<STYLE> {
     }
 }
 
-pub fn integrity<const STYLE: IntegrityFormatStyle>(
-    bytes: [u8; SHA512_DIGEST],
-) -> IntegrityFormatter<STYLE> {
+pub fn integrity<const SHORT: bool>(bytes: [u8; SHA512_DIGEST]) -> IntegrityFormatter<SHORT> {
     IntegrityFormatter { bytes }
 }
 
@@ -556,7 +586,6 @@ impl Display for JSONFormatterUTF8<'_> {
                 f,
                 b'"',
                 false,
-                true,
                 strings::Encoding::Utf8,
             )
         }
@@ -719,13 +748,20 @@ pub struct DebugUTF32PathFormatter<'a> {
 impl Display for DebugUTF32PathFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut path_buf = crate::PathBuffer::uninit();
-        let result = bun_simdutf::convert::utf32::to_utf8_with_errors_le(self.path, path_buf.as_mut_slice());
-        let converted: &[u8] = if result.is_successful() {
-            &path_buf.as_slice()[..result.count]
-        } else {
-            b"Invalid UTF32!"
+        // SAFETY: writing into uninit bytes, only reading back `result.count` of them.
+        let buf = unsafe {
+            core::slice::from_raw_parts_mut(path_buf.as_mut_ptr() as *mut u8, crate::MAX_PATH_BYTES)
         };
-
+        // SAFETY: FFI reads exactly path.len() u32s and writes ≤ MAX_PATH_BYTES bytes.
+        let result = unsafe {
+            bun_simdutf_sys::simdutf::simdutf__convert_utf32_to_utf8_with_errors(
+                self.path.as_ptr(),
+                self.path.len(),
+                buf.as_mut_ptr(),
+            )
+        };
+        let converted: &[u8] =
+            if result.is_successful() { &buf[..result.count] } else { b"Invalid UTF32!" };
         write_bytes(f, converted)
     }
 }
@@ -1059,8 +1095,8 @@ pub fn github_action_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::
     let mut offset: usize = 0;
     let end = self_.len() as u32;
     while (offset as u32) < end {
-        if let Some(i) = strings::index_of_newline_or_non_ascii_or_ansi(self_, offset as u32) {
-            let i = i as usize;
+        if let Some(rel) = strings::index_of_newline_or_non_ascii_or_ansi(&self_[offset..]) {
+            let i = offset + rel;
             let byte = self_[i];
             if byte > 0x7F {
                 offset += (strings::wtf8_byte_sequence_length(byte) as usize).max(1);
@@ -1699,7 +1735,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                     splat_byte_all(writer, b'*', 36)?;
                                     write!(writer, "{}{}", char_ as char, Output::RESET)?;
                                     text = &text[i..];
-                                    continue;
+                                    continue 'outer;
                                 }
 
                                 let npm_secret_len = strings::starts_with_npm_secret(inner);
@@ -1708,7 +1744,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                     splat_byte_all(writer, b'*', npm_secret_len)?;
                                     write!(writer, "{}{}", char_ as char, Output::RESET)?;
                                     text = &text[i..];
-                                    continue;
+                                    continue 'outer;
                                 }
 
                                 if let Some((offset, len)) = strings::find_url_password(inner) {
@@ -1728,7 +1764,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                         Output::RESET,
                                     )?;
                                     text = &text[i..];
-                                    continue;
+                                    continue 'outer;
                                 }
                             }
 
@@ -1835,7 +1871,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                     )?;
                                 }
                                 text = &text[i..];
-                                continue;
+                                continue 'outer;
                             }
                         }
 
@@ -1974,7 +2010,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                     Output::RESET,
                                 )?;
                                 text = &text[i..];
-                                continue;
+                                continue 'outer;
                             }
 
                             i = 1;
@@ -2016,50 +2052,37 @@ pub fn quote(self_: &[u8]) -> QuotedFormatter<'_> {
 // ───────────────────────────────────────────────────────────────────────────
 
 // B-1: ConstParamTy is nightly. Use as runtime value instead.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum EnumTagListSeparator {
-    List,
-    Dash,
-}
+// adt_const_params rewrite: SEPARATOR enum → const bool (only 2 variants).
+pub const SEP_LIST: bool = true;
+pub const SEP_DASH: bool = false;
+#[doc(hidden)]
+pub enum EnumTagListSeparator { List, Dash } // kept for callers naming the enum
 
-// TODO(port): Zig builds the output string at comptime via `std.meta.fieldNames(Enum)`.
-// Rust has no struct-field reflection. Phase B: require `Enum: strum::VariantNames` and
-// build the string in a `LazyLock<&'static str>` (or generate via `const_format` if a
-// const iterator over variant names becomes available).
-pub struct EnumTagListFormatter<E: strum::VariantNames, const SEPARATOR: EnumTagListSeparator> {
+pub struct EnumTagListFormatter<E: strum::VariantNames, const LIST: bool> {
     pub pretty: bool,
     _marker: core::marker::PhantomData<E>,
 }
 
-impl<E: strum::VariantNames, const SEPARATOR: EnumTagListSeparator> Display
-    for EnumTagListFormatter<E, SEPARATOR>
-{
+impl<E: strum::VariantNames, const LIST: bool> Display for EnumTagListFormatter<E, LIST> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         // PERF(port): Zig computed this at comptime as a single &'static str.
         let names = E::VARIANTS;
         for (i, name) in names.iter().enumerate() {
-            match SEPARATOR {
-                EnumTagListSeparator::List => {
-                    if i > 0 {
-                        if i + 1 == names.len() {
-                            f.write_str(", or ")?;
-                        } else {
-                            f.write_str(", ")?;
-                        }
-                    }
-                    write!(f, "\"{}\"", name)?;
+            if LIST {
+                if i > 0 {
+                    if i + 1 == names.len() { f.write_str(", or ")?; }
+                    else { f.write_str(", ")?; }
                 }
-                EnumTagListSeparator::Dash => {
-                    write!(f, "\n-  {}", name)?;
-                }
+                write!(f, "\"{}\"", name)?;
+            } else {
+                write!(f, "\n-  {}", name)?;
             }
         }
         Ok(())
     }
 }
 
-pub fn enum_tag_list<E: strum::VariantNames, const SEPARATOR: EnumTagListSeparator>(
-) -> EnumTagListFormatter<E, SEPARATOR> {
+pub fn enum_tag_list<E: strum::VariantNames, const LIST: bool>() -> EnumTagListFormatter<E, LIST> {
     EnumTagListFormatter { pretty: true, _marker: core::marker::PhantomData }
 }
 
@@ -2069,7 +2092,7 @@ pub fn enum_tag_list<E: strum::VariantNames, const SEPARATOR: EnumTagListSeparat
 
 // TODO(port): `std.net.Address` — bun_core stays I/O-free; Phase B should accept a
 // bun_sys/bun_net Address type here. Logic preserved against a placeholder Display.
-pub fn format_ip(address: &impl Display, into: &mut [u8]) -> Result<&mut [u8], crate::Error> {
+pub fn format_ip<'a>(address: &impl Display, into: &'a mut [u8]) -> Result<&'a mut [u8], crate::Error> {
     // std.net.Address.format includes `:<port>` and square brackets (IPv6)
     //  while Node does neither.  This uses format then strips these to bring
     //  the result into conformance with Node.

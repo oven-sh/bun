@@ -323,9 +323,9 @@ const bunHTTP2Session = Symbol.for("::bunhttp2session::");
 const bunHTTP2Headers = Symbol.for("::bunhttp2headers::");
 // Accumulator for multi-fragment header blocks (HEADERS/PUSH_PROMISE spanning
 // CONTINUATION frames). The native layer dispatches streamHeaders once per
-// fragment; we merge here and only emit the user-visible event when the
-// END_HEADERS flag is present on the current fragment.
-const bunHTTP2PartialHeaders = Symbol("::bunhttp2partialheaders::");
+// fragment; we merge the raw name/value list + sensitive-name list here and
+// only emit the user-visible event when the END_HEADERS flag is present on
+// the current fragment.
 const bunHTTP2PartialRawHeaders = Symbol("::bunhttp2partialrawheaders::");
 const bunHTTP2PartialSensitive = Symbol("::bunhttp2partialsensitive::");
 
@@ -2503,6 +2503,16 @@ class ServerHttp2Stream extends Http2Stream {
     // down the whole connection.
     if (this.destroyed || this.closed || (this[bunHTTP2StreamStatus] & StreamState.WritableClosed) !== 0) {
       throw $ERR_HTTP2_INVALID_STREAM();
+    }
+
+    // RFC 7540 Section 6.6: only a peer-initiated stream (odd id from the
+    // server's perspective) may carry a PUSH_PROMISE. An even-id stream is
+    // itself a push stream; nested pushes are forbidden. Matches Node's
+    // ERR_HTTP2_NESTED_PUSH semantics ordering — fire before header
+    // validation so e.code === 'ERR_HTTP2_NESTED_PUSH' regardless of
+    // whatever headers the caller passed.
+    if ((this.id & 1) === 0) {
+      throw $ERR_HTTP2_NESTED_PUSH();
     }
 
     const session = this[bunHTTP2Session];

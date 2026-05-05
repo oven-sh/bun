@@ -4,7 +4,6 @@ import http2 from "node:http2";
 
 test("HTTP/2 server push streams work", async () => {
   let client: ReturnType<typeof http2.connect> | undefined;
-  let pushErr: Error | null = null;
   const {
     promise: done,
     resolve,
@@ -30,7 +29,6 @@ test("HTTP/2 server push streams work", async () => {
   server.on("stream", (stream, _headers) => {
     stream.pushStream({ ":path": "/style.css" }, (err: Error | null, pushStream: any) => {
       if (err) {
-        pushErr = err;
         cleanup();
         reject(err);
         return;
@@ -115,6 +113,73 @@ test("HTTP/2 server push streams work", async () => {
       pushData: "body { background: red; }",
       pushResponseStatus: 200,
     });
+  } finally {
+    cleanup();
+  }
+});
+
+test("nested pushStream() throws ERR_HTTP2_NESTED_PUSH", async () => {
+  let client: ReturnType<typeof http2.connect> | undefined;
+  const { promise: done, resolve, reject } = Promise.withResolvers<string | undefined>();
+
+  const server = http2.createSecureServer({ key: tls.key, cert: tls.cert });
+
+  function cleanup() {
+    try {
+      client?.close();
+    } catch {}
+    try {
+      server.close();
+    } catch {}
+  }
+
+  server.on("stream", (stream: any) => {
+    stream.on("error", () => {});
+    stream.pushStream({ ":path": "/a.css" }, (err: Error | null, pushStream: any) => {
+      if (err) {
+        cleanup();
+        reject(err);
+        return;
+      }
+      pushStream.on("error", () => {});
+      let nestedCode: string | undefined;
+      try {
+        // Nested push — must throw ERR_HTTP2_NESTED_PUSH synchronously per
+        // RFC 7540 §6.6 and Node.js ServerHttp2Stream.pushStream semantics.
+        pushStream.pushStream({ ":path": "/b.css" }, () => {});
+      } catch (e: any) {
+        nestedCode = e?.code;
+      }
+      pushStream.respond({ [http2.constants.HTTP2_HEADER_STATUS]: 200 });
+      pushStream.end("a");
+      resolve(nestedCode);
+    });
+    stream.respond({ [http2.constants.HTTP2_HEADER_STATUS]: 200 });
+    stream.end("root");
+  });
+
+  server.on("error", () => {});
+  server.listen(0, () => {
+    const port = (server.address() as any).port;
+    client = http2.connect(`https://localhost:${port}`, { rejectUnauthorized: false });
+    client.on("error", (err: Error) => {
+      cleanup();
+      reject(err);
+    });
+    client.on("stream", (pushedStream: any) => {
+      pushedStream.on("error", () => {});
+      pushedStream.resume();
+    });
+    const req = client.request({ ":path": "/" });
+    req.on("error", () => {});
+    req.resume();
+    req.on("end", () => {});
+    req.end();
+  });
+
+  try {
+    const code = await done;
+    expect(code).toBe("ERR_HTTP2_NESTED_PUSH");
   } finally {
     cleanup();
   }

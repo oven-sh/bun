@@ -203,15 +203,26 @@ static inline int32_t getType(JSC::ThrowScope& scope, JSC::VM& vm, JSValue value
     if (object) [[likely]] {
         auto* structure = getStructure(globalObject);
         JSValue type;
-        if (structure->id() != object->structure()->id()) {
-            type = object->get(globalObject, Bun::builtinNames(vm).dataPrivateName());
-            RETURN_IF_EXCEPTION(scope, std::numeric_limits<int32_t>::max());
-        } else {
+        bool hasType;
+        if (structure->id() == object->structure()->id()) {
+            // Fast path: matching canonical Dirent structure — the @data slot always exists.
             type = object->getDirect(2);
+            hasType = true;
+        } else {
+            // Slow path: look up @data as an own property. A subclass instance created via
+            // constructDirent has it set via putDirect; non-Dirent receivers (e.g. the global
+            // object when the method is destructured) won't have it at all.
+            type = object->getDirect(vm, Bun::builtinNames(vm).dataPrivateName());
+            hasType = !!type;
         }
 
-        if (type.isAnyInt()) {
-            return type.toInt32(globalObject);
+        if (hasType) {
+            if (type.isAnyInt()) {
+                return type.toInt32(globalObject);
+            }
+            // Real Dirent instance, but the stored type is not an integer (e.g.
+            // `new Dirent(name)` with no type arg). Match Node.js: is*() just returns false.
+            return std::numeric_limits<int32_t>::max();
         }
     }
 

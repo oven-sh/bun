@@ -1,7 +1,12 @@
 import { expect, test } from "bun:test";
 import { tempDir } from "harness";
-import { mkdirSync, readdirSync } from "node:fs";
+import { Dirent, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+
+const invalidThisError = expect.objectContaining({
+  name: "TypeError",
+  code: "ERR_INVALID_THIS",
+});
 
 test("destructured Dirent methods throw TypeError instead of returning wrong result", () => {
   using dir = tempDir("dirent-destructure", {
@@ -21,10 +26,10 @@ test("destructured Dirent methods throw TypeError instead of returning wrong res
 
   // Destructured calls should throw TypeError with ERR_INVALID_THIS (matches Node.js behavior)
   const { isFile } = fileEntry;
-  expect(() => isFile()).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
+  expect(() => isFile()).toThrow(invalidThisError);
 
   const { isDirectory } = dirEntry;
-  expect(() => isDirectory()).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
+  expect(() => isDirectory()).toThrow(invalidThisError);
 
   // All 7 methods should throw when destructured
   const methods = [
@@ -39,7 +44,7 @@ test("destructured Dirent methods throw TypeError instead of returning wrong res
 
   for (const method of methods) {
     const { [method]: fn } = fileEntry;
-    expect(() => fn()).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
+    expect(() => fn()).toThrow(invalidThisError);
   }
 });
 
@@ -49,6 +54,36 @@ test("Dirent methods called with explicit undefined this throw TypeError", () =>
   });
 
   const [entry] = readdirSync(String(dir), { withFileTypes: true });
-  expect(() => entry.isFile.call(undefined)).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
-  expect(() => entry.isDirectory.call(undefined)).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
+  expect(() => entry.isFile.call(undefined)).toThrow(invalidThisError);
+  expect(() => entry.isDirectory.call(undefined)).toThrow(invalidThisError);
+});
+
+test("Dirent constructed with missing or non-integer type returns false (does not throw)", () => {
+  // `new Dirent(name)` with no type arg — the stored type slot is undefined.
+  // Node.js compares undefined === UV_DIRENT_DIR which is false. Must not throw.
+  // @ts-expect-error — public constructor, testing partial args
+  const noType = new Dirent("foo");
+  expect(noType).toBeInstanceOf(Dirent);
+  expect(noType.isFile()).toBe(false);
+  expect(noType.isDirectory()).toBe(false);
+  expect(noType.isBlockDevice()).toBe(false);
+  expect(noType.isCharacterDevice()).toBe(false);
+  expect(noType.isFIFO()).toBe(false);
+  expect(noType.isSocket()).toBe(false);
+  expect(noType.isSymbolicLink()).toBe(false);
+
+  // Non-integer type argument — also must not throw.
+  // @ts-expect-error — exercising wrong-type input
+  const stringType = new Dirent("bar", "not-a-number", "/path");
+  expect(stringType.isFile()).toBe(false);
+  expect(stringType.isDirectory()).toBe(false);
+
+  // Proper integer type still works.
+  const dirType = new Dirent("baz", 2 /* UV_DIRENT_DIR */, "/path");
+  expect(dirType.isDirectory()).toBe(true);
+  expect(dirType.isFile()).toBe(false);
+
+  const fileType = new Dirent("qux", 1 /* UV_DIRENT_FILE */, "/path");
+  expect(fileType.isFile()).toBe(true);
+  expect(fileType.isDirectory()).toBe(false);
 });

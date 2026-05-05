@@ -354,7 +354,8 @@ pub const All = struct {
         }
     }
 
-    /// Fast-path wrapper around `drainTimers` for the task-drain loop. Returns
+    /// Fast-path wrapper around `drainTimers` for the POSIX task-drain loop
+    /// (see the call site in `Task.zig` for why it's POSIX-only). Returns
     /// `true` if at least one timer fired, so the caller can re-drain
     /// microtasks (timer callbacks queue their own that `TimerObjectInternals.
     /// fire` doesn't drain when nested inside `tick()`).
@@ -365,21 +366,11 @@ pub const All = struct {
     /// → `next`. The unlocked root peek is safe because the heap is mutated
     /// only from the JS thread; a stale `null` just defers the drain by one
     /// loop iteration.
-    ///
-    /// On Windows, re-arms the uv_timer after firing so the next deadline
-    /// still wakes `loop.tickWithTimeout` — but only when something actually
-    /// fired. Re-arming `uv_timer_start` on every task even when nothing ran
-    /// was observed to destabilise libuv's backend-timeout bookkeeping and
-    /// time out `test-http-should-emit-close-when-connection-is-aborted` on
-    /// all three Windows shards.
     pub fn drainExpiredTimers(this: *All, vm: *VirtualMachine) bool {
         const head = this.timers.peek() orelse return false;
         const now = timespec.now(.allow_mocked_time);
         if (head.next.greater(&now)) return false;
         this.drainTimers(vm);
-        if (Environment.isWindows) {
-            this.ensureUVTimer(vm);
-        }
         return true;
     }
 

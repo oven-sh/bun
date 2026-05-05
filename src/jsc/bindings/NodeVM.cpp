@@ -1335,8 +1335,11 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
 
     fetcher->owner(vm, function);
 
-    if (!function) {
-        return throwVMError(globalObject, scope, "Failed to compile function"_s);
+    // NodeVMScriptFetcher only holds a Weak reference to the callback to avoid
+    // an uncollectable cycle; keep it alive for as long as the compiled
+    // function is reachable by storing it as a private property.
+    if (importer && importer.isCell()) {
+        function->putDirect(vm, builtinNames(vm).importerPrivateName(), importer, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     }
 
     return JSValue::encode(function);

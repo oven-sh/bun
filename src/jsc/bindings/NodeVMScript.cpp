@@ -137,6 +137,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     RETURN_IF_EXCEPTION(scope, {});
 
     fetcher->owner(vm, script);
+    script->setDynamicImportCallback(vm, importer);
 
     WTF::Vector<uint8_t>& cachedData = script->cachedData();
 
@@ -241,6 +242,7 @@ void NodeVMScript::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_cachedExecutable);
     visitor.append(thisObject->m_cachedBytecodeBuffer);
+    visitor.append(thisObject->m_dynamicImportCallback);
 }
 
 NodeVMScriptConstructor::NodeVMScriptConstructor(VM& vm, Structure* structure)

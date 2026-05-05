@@ -2974,8 +2974,12 @@ pub fn getWriter(
     };
 
     if (arguments.len > 0 and arguments.ptr[0].isObject()) {
-        stream_start = try jsc.WebCore.streams.Start.fromJSWithTag(globalThis, arguments[0], .FileSink);
-        stream_start.FileSink.input_path = input_path;
+        var parsed = try jsc.WebCore.streams.Start.fromJSWithTag(globalThis, arguments[0], .FileSink);
+        if (parsed == .FileSink) {
+            parsed.FileSink.input_path.deinit();
+            parsed.FileSink.input_path = input_path;
+            stream_start = parsed;
+        }
     }
 
     switch (sink.start(stream_start)) {

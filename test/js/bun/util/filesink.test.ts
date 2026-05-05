@@ -207,6 +207,18 @@ it("write result is not cumulative", async () => {
   await util.promisify(fs.close)(fd);
 });
 
+it("writer() does not crash when options object has a non-string 'path' property", async () => {
+  const x = tmpdirSync();
+  const dest = path.join(x, "test.txt");
+  const file = Bun.file(dest);
+  const options = {};
+  Object.defineProperty(options, "path", { enumerable: true, value: Uint32Array });
+  const writer = file.writer(options);
+  await writer.write("hello");
+  await writer.end();
+  expect(await Bun.file(dest).text()).toBe("hello");
+});
+
 if (isWindows) {
   it("ENOENT, Windows", () => {
     expect(() => Bun.file("A:\\this-does-not-exist.txt").writer()).toThrow(

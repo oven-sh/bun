@@ -18,6 +18,8 @@ describe("ReadStream.prototype.setRawMode", () => {
         bunExe(),
         "-e",
         `
+          let err;
+          process.stdin.on("error", e => (err = String(e)));
           const isTTY = process.stdin.isTTY;
           const before = process.stdin.isRaw;
           const ret = process.stdin.setRawMode(true);
@@ -32,6 +34,7 @@ describe("ReadStream.prototype.setRawMode", () => {
                 afterTrue,
                 afterFalse,
                 returnsThis: ret === process.stdin,
+                ...(err ? { err } : {}),
               }),
           );
           process.exit(0);
@@ -39,7 +42,8 @@ describe("ReadStream.prototype.setRawMode", () => {
       ],
       env: bunEnv,
       terminal: {
-        cols: 80,
+        // Wide enough that ConPTY does not hard-wrap the RESULT line.
+        cols: 200,
         rows: 24,
         data(_t, chunk: Uint8Array) {
           output += decoder.decode(chunk, { stream: true });
@@ -57,10 +61,15 @@ describe("ReadStream.prototype.setRawMode", () => {
     proc.terminal?.close();
     output += decoder.decode();
 
+    // ConPTY injects VT escape sequences and CR around the payload; strip
+    // them so the RESULT JSON can be matched regardless of where the
+    // terminal emulator decides to park the cursor.
+    const stripped = Bun.stripANSI(output).replace(/[\r\n]/g, "");
+
     // Bun.Terminal always gives the child a TTY stdin (openpty / ConPTY). If
     // RESULT is missing for any reason, surface the raw terminal output
     // rather than a bare null match.
-    const match = output.match(/RESULT (\{[^}]*\})/);
+    const match = stripped.match(/RESULT (\{[^}]*\})/);
     if (!match) {
       throw new Error("child did not emit RESULT; terminal output was: " + JSON.stringify(output));
     }

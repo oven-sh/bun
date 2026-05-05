@@ -21,13 +21,16 @@ bun_analytics.workspace = true
 bun_base64.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
-bun_bundler.workspace = true
+# TODO(b1): bun_bundler dep removed — does not compile (tier ordering); usages gated
+# bun_bundler.workspace = true
 bun_collections.workspace = true
 bun_crash_handler.workspace = true
 bun_dotenv.workspace = true
-bun_http.workspace = true
+# TODO(b1): bun_http dep removed — does not compile; usages gated
+# bun_http.workspace = true
 bun_http_types.workspace = true
-bun_install.workspace = true
+# TODO(b1): bun_install dep removed — depends on bun_http; usages gated
+# bun_install.workspace = true
 bun_js_parser.workspace = true
 bun_logger.workspace = true
 bun_options_types.workspace = true

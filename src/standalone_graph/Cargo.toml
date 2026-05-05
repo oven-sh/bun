@@ -19,7 +19,8 @@ libc.workspace = true
 bitflags.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
-bun_bundler.workspace = true
+# TODO(b1): bun_bundler dep removed — crate does not compile yet; re-add in B-2.
+# bun_bundler.workspace = true
 bun_collections.workspace = true
 bun_dotenv.workspace = true
 bun_io.workspace = true

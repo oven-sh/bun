@@ -1,5 +1,100 @@
 // Port of src/resolver/resolver.zig
 #![allow(dead_code, unused_variables, unused_imports, unused_mut, non_snake_case)]
+#![allow(non_camel_case_types, non_upper_case_globals, clippy::all)]
+
+// ──────────────────────────────────────────────────────────────────────────
+// B-1 GATE-AND-STUB HEADER
+// Phase-A draft bodies are preserved below under #[cfg(any())]. This header
+// exposes the minimal stub surface so dependents compile. Un-gating in B-2.
+// ──────────────────────────────────────────────────────────────────────────
+
+// Submodules: Phase-A drafts gated; not yet compiling.
+#[cfg(any())] pub mod data_url;
+#[cfg(any())] pub mod dir_info;
+#[cfg(any())] pub mod fs;
+#[cfg(any())] pub mod node_fallbacks;
+#[cfg(any())] pub mod package_json;
+#[cfg(any())] pub mod tsconfig_json;
+
+// ── Stub surface ──────────────────────────────────────────────────────────
+// Opaque placeholder types. TODO(b1): replace with real ports in B-2.
+
+/// Stub for `Resolver` — see gated Phase-A body below.
+pub struct Resolver(());
+/// Stub for resolve `Result`.
+pub struct Result(());
+/// Stub for `DataURL`.
+pub struct DataURL(());
+/// Stub for `PackageJSON`.
+pub struct PackageJSON(());
+/// Stub for `TSConfigJSON`.
+pub struct TSConfigJSON(());
+/// Stub for `DirInfo`.
+pub struct DirInfo(());
+/// Stub for filesystem `Path`.
+pub struct Path(());
+/// Stub for `PathPair`.
+pub struct PathPair(());
+/// Stub for `MatchResult`.
+pub struct MatchResult(());
+/// Stub for `DebugLogs`.
+pub struct DebugLogs(());
+/// Stub for `GlobalCache` (re-export target missing).
+pub type GlobalCache = ();
+/// Stub for `RootPathPair`.
+pub struct RootPathPair(());
+/// Stub for `SideEffectsData`.
+pub struct SideEffectsData(());
+/// Stub for `Bufs`.
+pub struct Bufs(());
+/// Stub for `DirEntryResolveQueueItem`.
+pub struct DirEntryResolveQueueItem(());
+
+/// Stub modules mirroring gated submodules so `bun_resolver::fs::X` paths
+/// at least resolve to *something* for downstream crates during B-1.
+pub mod fs {
+    pub type Path = super::Path;
+    pub type FileSystem = ();
+    pub type RealFS = ();
+    pub type Entry = ();
+    pub type DirEntry = ();
+}
+pub mod package_json {
+    pub type PackageJSON = super::PackageJSON;
+    pub type BrowserMap = ();
+    pub type ESModule = ();
+    pub type MainField = ();
+}
+pub mod tsconfig_json {
+    pub type TSConfigJSON = super::TSConfigJSON;
+}
+pub mod dir_info {
+    pub type DirInfo = super::DirInfo;
+}
+pub mod data_url {
+    pub type DataURL = super::DataURL;
+    pub type PercentEncoding = ();
+}
+pub mod node_fallbacks {
+    pub type FallbackModule = ();
+}
+
+pub fn is_package_path(_path: &[u8]) -> bool { todo!("b1 stub: is_package_path") }
+pub fn is_package_path_not_absolute(_p: &[u8]) -> bool { todo!("b1 stub") }
+
+// TODO(b1): missing peer-crate symbols referenced by Phase-A body:
+//   bun_bundler::{cache, options} — crate does not compile
+//   bun_http::{MimeType, HTTPThread, mime_type} — crate does not compile
+//   bun_install::{PackageManager, WakeHandler, dependency, lockfile, resolution, npm}
+//   bun_str::{strings, ZStr, ZString, String, StringBuilder} — crate name mismatch (bun_string?)
+//   bun_output::{declare_scope!, scoped_log!} — crate missing
+
+// ──────────────────────────────────────────────────────────────────────────
+// Phase-A draft body (gated; preserved verbatim for B-2 un-gating)
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(any())]
+mod __phase_a_body {
+use super::*;
 
 use core::ptr::NonNull;
 use std::cell::RefCell;
@@ -5175,3 +5270,5 @@ pub struct RootPathPair<'b> {
 //   todos:      41
 //   notes:      heavy reliance on threadlocal raw bufs + BSSMap-interned ptrs; many `defer` reshapes need scopeguard wiring; PackageManager/ESModule API surface guessed; borrowck will need significant Phase-B reshaping around &mut self + cached *DirInfo. Drop must close DirInfo FDs. ResolveWatcher needs stable-Rust reshape (const fn-ptr generic).
 // ──────────────────────────────────────────────────────────────────────────
+
+} // end #[cfg(any())] mod __phase_a_body

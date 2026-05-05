@@ -3,6 +3,78 @@
 //! `HTTPClient` struct. In Rust the struct is named explicitly and free
 //! functions become inherent methods on it.
 
+#![allow(unused, nonstandard_style, unexpected_cfgs, static_mut_refs)]
+
+// ═══════════════════════════════════════════════════════════════════════
+// B-1 GATE-AND-STUB
+// All Phase-A draft bodies are preserved below behind `#[cfg(any())]`.
+// Un-gating happens in B-2.
+// ═══════════════════════════════════════════════════════════════════════
+
+// ── gated sub-modules (preserve draft .rs files, do not compile) ──
+#[cfg(any())] #[path = "AsyncHTTP.rs"]              pub mod async_http;
+#[cfg(any())] #[path = "CertificateInfo.rs"]        pub mod certificate_info;
+#[cfg(any())] #[path = "Decompressor.rs"]           pub mod decompressor;
+#[cfg(any())] #[path = "H2Client.rs"]               pub mod h2_client;
+#[cfg(any())] #[path = "H2FrameParser.rs"]          pub mod h2_frame_parser;
+#[cfg(any())] #[path = "H3Client.rs"]               pub mod h3_client;
+#[cfg(any())] #[path = "HTTPCertError.rs"]          pub mod http_cert_error;
+#[cfg(any())] #[path = "HTTPContext.rs"]            pub mod http_context;
+#[cfg(any())] #[path = "HTTPRequestBody.rs"]        pub mod http_request_body;
+#[cfg(any())] #[path = "HTTPThread.rs"]             pub mod http_thread;
+#[cfg(any())] #[path = "HeaderBuilder.rs"]          pub mod header_builder;
+#[cfg(any())] #[path = "HeaderValueIterator.rs"]    pub mod header_value_iterator;
+#[cfg(any())] #[path = "Headers.rs"]                pub mod headers;
+#[cfg(any())] #[path = "InitError.rs"]              pub mod init_error;
+#[cfg(any())] #[path = "InternalState.rs"]          pub mod internal_state;
+#[cfg(any())] #[path = "ProxyTunnel.rs"]            pub mod proxy_tunnel;
+#[cfg(any())] #[path = "SendFile.rs"]               pub mod send_file;
+#[cfg(any())] #[path = "Signals.rs"]                pub mod signals;
+#[cfg(any())] #[path = "ThreadSafeStreamBuffer.rs"] pub mod thread_safe_stream_buffer;
+#[cfg(any())] #[path = "lshpack.rs"]                pub mod lshpack;
+#[cfg(any())] #[path = "websocket.rs"]              pub mod websocket;
+#[cfg(any())] #[path = "websocket_http_client.rs"]  pub mod websocket_http_client;
+#[cfg(any())] #[path = "zlib.rs"]                   pub mod zlib;
+
+// ── minimal stub surface (opaque types; real impls gated below) ──
+// TODO(b1): expand as downstream crates need symbols.
+pub struct HTTPClient(());
+pub struct AsyncHTTP(());
+pub struct HTTPThread(());
+pub struct Signals(());
+pub struct InternalState(());
+pub struct HTTPRequestBody(());
+pub struct CertificateInfo(());
+pub struct HTTPCertError(());
+pub struct Headers(());
+pub struct HeaderBuilder(());
+pub struct Decompressor(());
+pub struct ThreadSafeStreamBuffer(());
+pub struct SendFile(());
+pub struct ProxyTunnel(());
+pub struct SSLConfig(());
+pub struct SSLWrapper<T>(core::marker::PhantomData<T>);
+pub struct Flags(());
+
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
+pub enum HTTPVerboseLevel { #[default] None, Headers, Curl }
+
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
+pub enum Protocol { #[default] Http1_1, Http2, Http3 }
+
+pub type InitError = ();
+pub type HeaderValueIterator = ();
+// TODO(b1): bun_http_types re-exports — verify these resolve in B-2.
+pub use bun_http_types::{ETag, FetchCacheMode, FetchRequestMode, MimeType, URLPath};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase-A draft (gated)
+// ═══════════════════════════════════════════════════════════════════════
+#[cfg(any())]
+mod _phase_a_draft {
+
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::mem::offset_of;
 use core::ptr::NonNull;
@@ -5087,3 +5159,5 @@ pub mod ssl_wrapper {
 
 pub use ssl_config::{SSLConfig, SharedPtr as SSLConfigSharedPtr};
 pub use ssl_wrapper::{Handlers as SSLWrapperHandlers, SSLWrapper};
+
+} // mod _phase_a_draft

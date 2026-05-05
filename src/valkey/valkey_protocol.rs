@@ -2,7 +2,8 @@ use core::fmt;
 
 use bstr::BStr;
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
+// TODO(b1): thiserror not in deps — derive removed; add manual Display/Error impl in B-2.
+#[derive(strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RedisError {
     AuthenticationFailed,
     ConnectionClosed,

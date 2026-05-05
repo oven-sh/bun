@@ -21,7 +21,8 @@ bun_base64.workspace = true
 bun_boringssl_sys.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
-bun_http.workspace = true
+# TODO(b1): bun_http is broken at this tier; re-add when it compiles.
+# bun_http.workspace = true
 bun_picohttp.workspace = true
 bun_ptr.workspace = true
 bun_string.workspace = true

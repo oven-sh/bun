@@ -17,6 +17,7 @@ enum-map.workspace = true
 enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
-bun_bundler.workspace = true
+# TODO(b1): bun_bundler dep removed — crate does not compile yet; re-add when options::Target lands.
+# bun_bundler.workspace = true
 bun_options_types.workspace = true
 bun_string.workspace = true

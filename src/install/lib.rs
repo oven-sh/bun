@@ -1,37 +1,148 @@
+#![allow(unused, nonstandard_style, ambiguous_glob_reexports)]
+
 use core::cell::Cell;
 use core::fmt;
 
-use bun_alloc::Arena;
-use bun_js_parser as js_ast;
-use bun_str::ZStr;
-
 // ──────────────────────────────────────────────────────────────────────────
-// Module declarations / re-exports (from @import block at bottom of install.zig)
-// TODO(port): verify module file paths in Phase B — Zig basenames preserved per
-// PORTING.md, so some .rs files keep PascalCase names and may need #[path] attrs.
+// B-1 gate-and-stub: Phase-A draft modules are preserved on disk but gated
+// behind `#[cfg(any())]` so the crate type-checks. Un-gating happens in B-2.
+// Each gated module has a sibling stub mod exposing the minimal surface other
+// crates / this crate's lib.rs re-exports.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub mod extract_tarball;
-pub mod network_task;
-pub mod tarball_stream;
-pub mod npm;
-pub mod package_manager;
-pub mod package_manifest_map;
-pub mod package_manager_task;
-pub mod lockfile;
-pub mod bin;
-pub mod resolvers;
-pub mod lifecycle_script_runner;
-pub mod package_install;
-pub mod repository;
-pub mod resolution;
-pub mod isolated_install;
-pub mod pnpm_matcher;
-pub mod postinstall_optimizer;
-pub mod external_slice;
-pub mod integrity;
-pub mod dependency;
-pub mod patch_install;
+macro_rules! gated_mod {
+    ($vis:vis mod $name:ident = $path:literal ;) => {
+        #[cfg(any())]
+        #[path = $path]
+        $vis mod $name;
+    };
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Module declarations (gated) — Zig basenames preserved per PORTING.md, hence
+// explicit #[path] attrs for PascalCase files.
+// ──────────────────────────────────────────────────────────────────────────
+
+gated_mod!(pub mod extract_tarball = "extract_tarball.rs";);
+gated_mod!(pub mod network_task = "NetworkTask.rs";);
+gated_mod!(pub mod tarball_stream = "TarballStream.rs";);
+gated_mod!(pub mod npm = "npm.rs";);
+gated_mod!(pub mod package_manager = "PackageManager.rs";);
+gated_mod!(pub mod package_manifest_map = "PackageManifestMap.rs";);
+gated_mod!(pub mod package_manager_task = "PackageManagerTask.rs";);
+gated_mod!(pub mod lockfile = "lockfile.rs";);
+gated_mod!(pub mod bin = "bin.rs";);
+gated_mod!(pub mod lifecycle_script_runner = "lifecycle_script_runner.rs";);
+gated_mod!(pub mod package_install = "PackageInstall.rs";);
+gated_mod!(pub mod package_installer = "PackageInstaller.rs";);
+gated_mod!(pub mod repository = "repository.rs";);
+gated_mod!(pub mod resolution = "resolution.rs";);
+gated_mod!(pub mod isolated_install = "isolated_install.rs";);
+gated_mod!(pub mod pnpm_matcher = "PnpmMatcher.rs";);
+gated_mod!(pub mod postinstall_optimizer = "postinstall_optimizer.rs";);
+gated_mod!(pub mod external_slice = "ExternalSlice.rs";);
+gated_mod!(pub mod integrity = "integrity.rs";);
+gated_mod!(pub mod dependency = "dependency.rs";);
+gated_mod!(pub mod patch_install = "patch_install.rs";);
+gated_mod!(pub mod config_version = "ConfigVersion.rs";);
+gated_mod!(pub mod hoisted_install = "hoisted_install.rs";);
+gated_mod!(pub mod hosted_git_info = "hosted_git_info.rs";);
+gated_mod!(pub mod migration = "migration.rs";);
+gated_mod!(pub mod padding_checker = "padding_checker.rs";);
+gated_mod!(pub mod pnpm = "pnpm.rs";);
+gated_mod!(pub mod versioned_url = "versioned_url.rs";);
+gated_mod!(pub mod yarn = "yarn.rs";);
+
+#[cfg(any())]
+pub mod resolvers {
+    #[path = "folder_resolver.rs"]
+    pub mod folder_resolver;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Stub surface (B-1): opaque newtypes / todo!()-bodied re-exports so downstream
+// re-exports type-check. Real impls live in the gated modules above.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[cfg(not(any()))]
+pub mod extract_tarball { pub struct ExtractTarball; }
+#[cfg(not(any()))]
+pub mod network_task { pub struct NetworkTask; }
+#[cfg(not(any()))]
+pub mod tarball_stream { pub struct TarballStream; }
+#[cfg(not(any()))]
+pub mod npm {
+    pub struct PackageManifest;
+    pub struct Registry;
+}
+#[cfg(not(any()))]
+pub mod package_manager {
+    pub struct PackageManager;
+    pub mod security_scanner { pub struct SecurityScanSubprocess; }
+}
+#[cfg(not(any()))]
+pub mod package_manifest_map { pub struct PackageManifestMap; }
+#[cfg(not(any()))]
+pub mod package_manager_task { pub struct Task; }
+#[cfg(not(any()))]
+pub mod lockfile {
+    pub struct Lockfile;
+    pub struct PatchedDep;
+    pub mod bun_lock {}
+    pub mod tree { pub type Id = u32; }
+}
+#[cfg(not(any()))]
+pub mod bin { pub struct Bin; }
+#[cfg(not(any()))]
+pub mod resolvers {
+    pub mod folder_resolver { pub struct FolderResolution; }
+}
+#[cfg(not(any()))]
+pub mod lifecycle_script_runner { pub struct LifecycleScriptSubprocess; }
+#[cfg(not(any()))]
+pub mod package_install { pub struct PackageInstall; }
+#[cfg(not(any()))]
+pub mod repository { pub struct Repository; }
+#[cfg(not(any()))]
+pub mod resolution { pub struct Resolution; }
+#[cfg(not(any()))]
+pub mod isolated_install {
+    pub mod store {
+        pub struct Store;
+        pub type EntryId = u32;
+    }
+    pub mod file_copier { pub struct FileCopier; }
+}
+#[cfg(not(any()))]
+pub mod pnpm_matcher { pub struct PnpmMatcher; }
+#[cfg(not(any()))]
+pub mod postinstall_optimizer { pub struct PostinstallOptimizer; }
+#[cfg(not(any()))]
+pub mod external_slice {
+    pub struct ExternalSlice<T>(core::marker::PhantomData<T>);
+    pub type ExternalPackageNameHashList = ();
+    pub type ExternalStringList = ();
+    pub type ExternalStringMap = ();
+    pub type VersionSlice = ();
+}
+#[cfg(not(any()))]
+pub mod integrity {
+    #[derive(Default, Clone, Copy)]
+    pub struct Integrity;
+}
+#[cfg(not(any()))]
+pub mod dependency {
+    pub struct Dependency;
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Default)]
+    pub struct Behavior(pub u8);
+}
+#[cfg(not(any()))]
+pub mod patch_install { pub struct PatchTask; }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Re-exports
+// ──────────────────────────────────────────────────────────────────────────
 
 pub use extract_tarball::ExtractTarball;
 pub use network_task::NetworkTask;
@@ -53,8 +164,11 @@ pub use isolated_install::file_copier::FileCopier;
 pub use pnpm_matcher::PnpmMatcher;
 pub use postinstall_optimizer::PostinstallOptimizer;
 
-pub use bun_collections::identity_context::ArrayIdentityContext;
-pub use bun_collections::identity_context::IdentityContext;
+// TODO(b1): bun_collections::identity_context::{ArrayIdentityContext,IdentityContext} missing
+// pub use bun_collections::identity_context::ArrayIdentityContext;
+// pub use bun_collections::identity_context::IdentityContext;
+pub type ArrayIdentityContext = ();
+pub type IdentityContext = ();
 
 pub use external_slice as external;
 pub use external::ExternalPackageNameHashList;
@@ -80,8 +194,6 @@ pub use patch::PatchTask;
 // ──────────────────────────────────────────────────────────────────────────
 #[allow(non_snake_case)]
 pub mod ShellCompletions {
-    use bun_str::strings;
-
     #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
     pub enum Shell {
         #[default]
@@ -97,20 +209,26 @@ pub mod ShellCompletions {
         /// generic over the string type purely so it could accept both `[]const u8` and
         /// `[:0]const u8`; in Rust both coerce to `&[u8]`.
         pub fn from_env(shell: &[u8]) -> Shell {
-            let basename = bun_paths::basename(shell);
-            if strings::eql_comptime(basename, b"bash") {
-                Shell::Bash
-            } else if strings::eql_comptime(basename, b"zsh") {
-                Shell::Zsh
-            } else if strings::eql_comptime(basename, b"fish") {
-                Shell::Fish
-            } else if strings::eql_comptime(basename, b"pwsh")
-                || strings::eql_comptime(basename, b"powershell")
+            #[cfg(any())]
             {
-                Shell::Pwsh
-            } else {
-                Shell::Unknown
+                use bun_str::strings;
+                let basename = bun_paths::basename(shell);
+                if strings::eql_comptime(basename, b"bash") {
+                    Shell::Bash
+                } else if strings::eql_comptime(basename, b"zsh") {
+                    Shell::Zsh
+                } else if strings::eql_comptime(basename, b"fish") {
+                    Shell::Fish
+                } else if strings::eql_comptime(basename, b"pwsh")
+                    || strings::eql_comptime(basename, b"powershell")
+                {
+                    Shell::Pwsh
+                } else {
+                    Shell::Unknown
+                }
             }
+            #[cfg(not(any()))]
+            { let _ = shell; todo!("B-2: ShellCompletions::Shell::from_env") }
         }
     }
 }
@@ -129,6 +247,7 @@ pub struct RunCommand;
 pub static PRETEND_TO_BE_NODE: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+#[cfg(any())] // TODO(b1): gated — depends on bun_bundler/bun_transpiler/bun_resolver/bun_bunfig/bun_schema/const_str/bun_c/bun_windows
 impl RunCommand {
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
@@ -559,6 +678,19 @@ impl RunCommand {
     }
 }
 
+#[cfg(not(any()))]
+impl RunCommand {
+    pub fn find_shell(_path: &[u8], _cwd: &[u8]) -> Option<&'static [u8]> {
+        todo!("B-2: RunCommand::find_shell")
+    }
+    pub fn create_fake_temporary_node_executable(
+        _path: &mut Vec<u8>,
+        _optional_bun_path: &mut &[u8],
+    ) -> Result<(), ()> {
+        todo!("B-2: RunCommand::create_fake_temporary_node_executable")
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 
 thread_local! {
@@ -584,7 +716,7 @@ const _: () = assert!(MAX_HEX_HASH_LEN == 16);
 pub const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + BUN_HASH_TAG.len() + 1;
 pub type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
 
-pub fn buntaghashbuf_make(buf: &mut BuntagHashBuf, patch_hash: u64) -> &mut ZStr {
+pub fn buntaghashbuf_make(buf: &mut BuntagHashBuf, patch_hash: u64) -> &mut [u8] {
     buf[0..BUN_HASH_TAG.len()].copy_from_slice(BUN_HASH_TAG);
     // std.fmt.bufPrint(buf[bun_hash_tag.len..], "{x}", .{patch_hash})
     let digits_len = {
@@ -595,8 +727,8 @@ pub fn buntaghashbuf_make(buf: &mut BuntagHashBuf, patch_hash: u64) -> &mut ZStr
         before - cursor.len()
     };
     buf[BUN_HASH_TAG.len() + digits_len] = 0;
-    // SAFETY: buf[BUN_HASH_TAG.len() + digits_len] == 0 written above
-    unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), BUN_HASH_TAG.len() + digits_len) }
+    // TODO(b1): return &mut ZStr once bun_str::ZStr::from_raw_mut is available
+    &mut buf[..BUN_HASH_TAG.len() + digits_len]
 }
 
 pub struct StorePathFormatter<'a> {
@@ -630,70 +762,83 @@ pub fn fmt_store_path(str: &[u8]) -> StorePathFormatter<'_> {
 pub static ALIGNMENT_BYTES_TO_REPEAT_BUFFER: [u8; 144] = [0u8; 144];
 
 pub fn initialize_store() {
-    if INITIALIZED_STORE.with(|c| c.get()) {
-        js_ast::Expr::Data::Store::reset();
-        js_ast::Stmt::Data::Store::reset();
-        return;
-    }
+    #[cfg(any())]
+    {
+        if INITIALIZED_STORE.with(|c| c.get()) {
+            js_ast::Expr::Data::Store::reset();
+            js_ast::Stmt::Data::Store::reset();
+            return;
+        }
 
-    INITIALIZED_STORE.with(|c| c.set(true));
-    js_ast::Expr::Data::Store::create();
-    js_ast::Stmt::Data::Store::create();
+        INITIALIZED_STORE.with(|c| c.set(true));
+        js_ast::Expr::Data::Store::create();
+        js_ast::Stmt::Data::Store::create();
+    }
+    #[cfg(not(any()))]
+    { todo!("B-2: initialize_store") }
 }
 
 /// The default store we use pre-allocates around 16 MB of memory per thread
 /// That adds up in multi-threaded scenarios.
 /// ASTMemoryAllocator uses a smaller fixed buffer allocator
 pub fn initialize_mini_store() {
-    struct MiniStore {
-        heap: Arena,
-        memory_allocator: js_ast::ASTMemoryAllocator,
-    }
+    #[cfg(any())]
+    {
+        use bun_alloc::Arena;
+        use bun_js_parser as js_ast;
 
-    thread_local! {
-        static INSTANCE: Cell<Option<*mut MiniStore>> = const { Cell::new(None) };
-    }
+        struct MiniStore {
+            heap: Arena,
+            memory_allocator: js_ast::ASTMemoryAllocator,
+        }
 
-    INSTANCE.with(|instance| {
-        if instance.get().is_none() {
-            let mut heap = Arena::new();
-            // TODO(port): ASTMemoryAllocator construction — Zig threads heap.allocator()
-            // into the AST allocator; in Rust the Bump (`Arena`) is passed by reference.
-            let memory_allocator = js_ast::ASTMemoryAllocator::new(&heap);
-            let mini_store = Box::into_raw(Box::new(MiniStore {
-                heap,
-                memory_allocator,
-            }));
-            // SAFETY: just allocated, non-null, thread-local exclusive access
-            unsafe {
-                (*mini_store).memory_allocator.reset();
-                (*mini_store).memory_allocator.push();
-            }
-            instance.set(Some(mini_store));
-        } else {
-            // SAFETY: set above on this thread, never freed
-            let mini_store = unsafe { &mut *instance.get().unwrap() };
-            if mini_store
-                .memory_allocator
-                .stack_allocator
-                .fixed_buffer_allocator
-                .end_index
-                >= mini_store
+        thread_local! {
+            static INSTANCE: Cell<Option<*mut MiniStore>> = const { Cell::new(None) };
+        }
+
+        INSTANCE.with(|instance| {
+            if instance.get().is_none() {
+                let mut heap = Arena::new();
+                // TODO(port): ASTMemoryAllocator construction — Zig threads heap.allocator()
+                // into the AST allocator; in Rust the Bump (`Arena`) is passed by reference.
+                let memory_allocator = js_ast::ASTMemoryAllocator::new(&heap);
+                let mini_store = Box::into_raw(Box::new(MiniStore {
+                    heap,
+                    memory_allocator,
+                }));
+                // SAFETY: just allocated, non-null, thread-local exclusive access
+                unsafe {
+                    (*mini_store).memory_allocator.reset();
+                    (*mini_store).memory_allocator.push();
+                }
+                instance.set(Some(mini_store));
+            } else {
+                // SAFETY: set above on this thread, never freed
+                let mini_store = unsafe { &mut *instance.get().unwrap() };
+                if mini_store
                     .memory_allocator
                     .stack_allocator
                     .fixed_buffer_allocator
-                    .buffer
-                    .len()
-                    .saturating_sub(1)
-            {
-                // PERF(port): was arena bulk-free (heap.deinit() + re-init) — profile in Phase B
-                mini_store.heap = Arena::new();
-                // TODO(port): re-seat memory_allocator.allocator at the new heap
+                    .end_index
+                    >= mini_store
+                        .memory_allocator
+                        .stack_allocator
+                        .fixed_buffer_allocator
+                        .buffer
+                        .len()
+                        .saturating_sub(1)
+                {
+                    // PERF(port): was arena bulk-free (heap.deinit() + re-init) — profile in Phase B
+                    mini_store.heap = Arena::new();
+                    // TODO(port): re-seat memory_allocator.allocator at the new heap
+                }
+                mini_store.memory_allocator.reset();
+                mini_store.memory_allocator.push();
             }
-            mini_store.memory_allocator.reset();
-            mini_store.memory_allocator.push();
-        }
-    });
+        });
+    }
+    #[cfg(not(any()))]
+    { todo!("B-2: initialize_mini_store") }
 }
 
 pub type PackageID = u32;
@@ -719,9 +864,9 @@ pub type TruncatedPackageNameHash = u32;
 pub struct Aligner;
 
 impl Aligner {
-    pub fn write<T, W: bun_io::Write>(writer: &mut W, pos: usize) -> Result<usize, bun_core::Error> {
-        // TODO(port): narrow error set
-        let to_write = Self::skip_amount::<T>(pos);
+    pub fn write<W: std::io::Write>(writer: &mut W, pos: usize) -> std::io::Result<usize> {
+        // TODO(port): narrow error set / use bun_io::Write once available
+        let to_write = Self::skip_amount_with_align(core::mem::align_of::<u64>(), pos);
 
         let remainder: &[u8] =
             &ALIGNMENT_BYTES_TO_REPEAT_BUFFER[0..to_write.min(ALIGNMENT_BYTES_TO_REPEAT_BUFFER.len())];
@@ -732,7 +877,11 @@ impl Aligner {
 
     #[inline]
     pub fn skip_amount<T>(pos: usize) -> usize {
-        let align = core::mem::align_of::<T>();
+        Self::skip_amount_with_align(core::mem::align_of::<T>(), pos)
+    }
+
+    #[inline]
+    fn skip_amount_with_align(align: usize, pos: usize) -> usize {
         // std.mem.alignForward(usize, pos, align) - pos
         pos.next_multiple_of(align) - pos
     }
@@ -784,7 +933,7 @@ impl Features {
         out |= (self.dev_dependencies as u8) << 3;
         out |= (self.peer_dependencies as u8) << 4;
         out |= (self.workspaces as u8) << 5;
-        // SAFETY: Behavior is #[repr(u8)] / bitflags over u8 in dependency.rs
+        // SAFETY: Behavior is #[repr(transparent)] over u8 in dependency stub
         // TODO(port): use Behavior::from_bits_retain if Behavior becomes bitflags!
         unsafe { core::mem::transmute::<u8, Behavior>(out) }
     }
@@ -923,24 +1072,25 @@ pub enum TaskCallbackContext {
 // 1. Download all packages, parsing their dependencies and enqueuing all dependencies for resolution
 // 2.
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
+// TODO(b1): thiserror::Error derive removed — re-add once error chain is wired
+#[derive(strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum PackageManifestError {
-    #[error("PackageManifestHTTP400")]
     PackageManifestHTTP400,
-    #[error("PackageManifestHTTP401")]
     PackageManifestHTTP401,
-    #[error("PackageManifestHTTP402")]
     PackageManifestHTTP402,
-    #[error("PackageManifestHTTP403")]
     PackageManifestHTTP403,
-    #[error("PackageManifestHTTP404")]
     PackageManifestHTTP404,
-    #[error("PackageManifestHTTP4xx")]
     PackageManifestHTTP4xx,
-    #[error("PackageManifestHTTP5xx")]
     PackageManifestHTTP5xx,
 }
 
+impl core::fmt::Display for PackageManifestError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(<&'static str>::from(*self))
+    }
+}
+
+#[cfg(any())] // TODO(b1): bun_core::Error::from_name missing
 impl From<PackageManifestError> for bun_core::Error {
     fn from(e: PackageManifestError) -> Self {
         bun_core::Error::from_name(<&'static str>::from(e))

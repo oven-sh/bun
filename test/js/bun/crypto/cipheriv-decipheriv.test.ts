@@ -1,5 +1,13 @@
 import { expect, it } from "bun:test";
-import { BinaryLike, CipherGCM, createCipheriv, createDecipheriv, DecipherGCM, randomBytes } from "crypto";
+import {
+  BinaryLike,
+  CipherGCM,
+  createCipheriv,
+  createDecipheriv,
+  DecipherGCM,
+  getCiphers,
+  randomBytes,
+} from "crypto";
 
 /**
  * Perform a sample encryption and decryption
@@ -142,13 +150,13 @@ const references = {
     authTag: null,
   },
 
-  // BoringSSL does not support these modes
-  // "aes-128-cfb8": {
-  //   iv: "3021d44812302ae0312c9ef523f01bf5",
-  //   key: "20787258b5d2a166262ecc6e3e917a58",
-  //   ciphertext: "db4596b2f0d7a74bea91a1d715e1327ca149591f5bc64d19fde7138eacfa5dd0da503596dcc66bc771edcf14b6eb8f69",
-  //   authTag: null,
-  // },
+  "aes-128-cfb8": {
+    iv: "3021d44812302ae0312c9ef523f01bf5",
+    key: "20787258b5d2a166262ecc6e3e917a58",
+    ciphertext: "db4596b2f0d7a74bea91a1d715e1327ca149591f5bc64d19fde7138eacfa5dd0da503596dcc66bc771edcf14b6eb8f69",
+    authTag: null,
+  },
+  // BoringSSL does not support CFB1 mode
   // "aes-128-cfb1": {
   //   iv: "c91453a0182f1efeeb4525ed96b0aad3",
   //   key: "26bfaea72f720475528cc5b2bfd5cf2e",
@@ -221,4 +229,69 @@ it("should not accept negative authTagLength, or other coercable values", () => 
       });
     }).toThrow(`The property 'options.authTagLength' is invalid. Received `);
   }
+});
+
+// AES-CFB8 support (see issue #28521) — BoringSSL didn't expose CFB8 via EVP.
+it("aes-128-cfb8 cipher creates successfully", () => {
+  const cipher = createCipheriv("aes-128-cfb8", Buffer.alloc(16), Buffer.alloc(16));
+  expect(cipher).toBeDefined();
+});
+
+it("aes-192-cfb8 cipher creates successfully", () => {
+  const cipher = createCipheriv("aes-192-cfb8", Buffer.alloc(24), Buffer.alloc(16));
+  expect(cipher).toBeDefined();
+});
+
+it("aes-256-cfb8 cipher creates successfully", () => {
+  const cipher = createCipheriv("aes-256-cfb8", Buffer.alloc(32), Buffer.alloc(16));
+  expect(cipher).toBeDefined();
+});
+
+it("aes-128-cfb8 encrypt/decrypt roundtrip", () => {
+  const key = Buffer.from("0123456789abcdef");
+  const iv = Buffer.from("fedcba9876543210");
+  const plaintext = Buffer.from("Hello, CFB8 world!");
+
+  const cipher = createCipheriv("aes-128-cfb8", key, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+
+  const decipher = createDecipheriv("aes-128-cfb8", key, iv);
+  const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+
+  expect(decrypted).toEqual(plaintext);
+});
+
+it("aes-192-cfb8 encrypt/decrypt roundtrip", () => {
+  const key = Buffer.from("0123456789abcdef01234567"); // 24 bytes
+  const iv = Buffer.from("fedcba9876543210");
+  const plaintext = Buffer.from("Test data for AES-192-CFB8 mode");
+
+  const cipher = createCipheriv("aes-192-cfb8", key, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+
+  const decipher = createDecipheriv("aes-192-cfb8", key, iv);
+  const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+
+  expect(decrypted).toEqual(plaintext);
+});
+
+it("aes-256-cfb8 encrypt/decrypt roundtrip", () => {
+  const key = Buffer.from("0123456789abcdef0123456789abcdef");
+  const iv = Buffer.from("fedcba9876543210");
+  const plaintext = Buffer.from("Test data for AES-256-CFB8 mode");
+
+  const cipher = createCipheriv("aes-256-cfb8", key, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+
+  const decipher = createDecipheriv("aes-256-cfb8", key, iv);
+  const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+
+  expect(decrypted).toEqual(plaintext);
+});
+
+it("cfb8 variants appear in getCiphers()", () => {
+  const ciphers = getCiphers();
+  expect(ciphers).toContain("aes-128-cfb8");
+  expect(ciphers).toContain("aes-192-cfb8");
+  expect(ciphers).toContain("aes-256-cfb8");
 });

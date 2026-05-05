@@ -226,7 +226,10 @@ test("should pass", () => {
     expect(result.exitCode).toBe(1);
   });
 
-  test("bunfig - empty array is a no-op", () => {
+  test("bunfig - empty array opts out of built-in defaults", () => {
+    // An explicit empty array in bunfig is how users opt out of the
+    // default `**/dist/**` / `**/build/**` patterns. Place a test inside
+    // `build/` and confirm it still runs.
     const dir = tempDirWithFiles("path-ignore", {
       "bunfig.toml": `
 [test]
@@ -235,6 +238,12 @@ pathIgnorePatterns = []
       "test.test.ts": `
 import { test, expect } from "bun:test";
 test("should pass", () => {
+  expect(true).toBe(true);
+});
+`,
+      "build/built.test.ts": `
+import { test, expect } from "bun:test";
+test("should also pass", () => {
   expect(true).toBe(true);
 });
 `,
@@ -248,7 +257,8 @@ test("should pass", () => {
 
     const stderr = result.stderr.toString("utf-8");
     expect(stderr).toContain("test.test.ts");
-    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("built.test.ts");
+    expect(stderr).toContain("2 pass");
     expect(result.exitCode).toBe(0);
   });
 
@@ -324,5 +334,161 @@ test("deeper ignored test", () => {
     expect(stderr).not.toContain("deeper.test.ts");
     expect(stderr).toContain("1 pass");
     expect(result.exitCode).toBe(0);
+  });
+
+  describe("default patterns", () => {
+    // Without any configuration, `bun test` should skip conventional
+    // output directories so `tsc`/bundler artifacts don't duplicate the
+    // tests found in `src/`. See issue #30282.
+    test.each([
+      ["build", "build/src/duplicate.test.ts"],
+      ["dist", "dist/duplicate.test.ts"],
+      ["build nested", "packages/sub/build/src/duplicate.test.ts"],
+      ["dist nested", "packages/sub/dist/duplicate.test.ts"],
+    ])("skips %s by default", (_label, duplicatePath) => {
+      const dir = tempDirWithFiles("path-ignore-default", {
+        "src/only.test.ts": `
+import { test, expect } from "bun:test";
+test("original test", () => {
+  expect(1).toBe(1);
+});
+`,
+        [duplicatePath]: `
+import { test, expect } from "bun:test";
+test("duplicate test", () => {
+  expect(1).toBe(1);
+});
+`,
+      });
+
+      const result = Bun.spawnSync([bunExe(), "test"], {
+        cwd: dir,
+        env: bunEnv,
+        stdio: [null, null, "pipe"],
+      });
+
+      const stderr = result.stderr.toString("utf-8");
+      expect(stderr).toContain("only.test.ts");
+      expect(stderr).not.toContain("duplicate.test.ts");
+      expect(stderr).toContain("1 pass");
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("user-configured pathIgnorePatterns replaces the defaults", () => {
+      // When the user opts into a custom list, they take responsibility
+      // for the entire list — the defaults no longer apply, matching
+      // Vitest's replace semantics.
+      const dir = tempDirWithFiles("path-ignore-override", {
+        "bunfig.toml": `
+[test]
+pathIgnorePatterns = ["fixtures/**"]
+`,
+        "src/only.test.ts": `
+import { test, expect } from "bun:test";
+test("original test", () => {
+  expect(1).toBe(1);
+});
+`,
+        "build/kept.test.ts": `
+import { test, expect } from "bun:test";
+test("kept test", () => {
+  expect(1).toBe(1);
+});
+`,
+        "fixtures/skipped.test.ts": `
+import { test, expect } from "bun:test";
+test("should be ignored", () => {
+  expect(1).toBe(1);
+});
+`,
+      });
+
+      const result = Bun.spawnSync([bunExe(), "test"], {
+        cwd: dir,
+        env: bunEnv,
+        stdio: [null, null, "pipe"],
+      });
+
+      const stderr = result.stderr.toString("utf-8");
+      expect(stderr).toContain("only.test.ts");
+      expect(stderr).toContain("kept.test.ts");
+      expect(stderr).not.toContain("skipped.test.ts");
+      expect(stderr).toContain("2 pass");
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("explicit file path bypasses the defaults", () => {
+      // If the user names a file directly on the CLI, they clearly want
+      // to run it — even if it sits under `build/`. The built-in defaults
+      // must not silently filter it out.
+      const dir = tempDirWithFiles("path-ignore-explicit-file", {
+        "build/explicit.test.ts": `
+import { test, expect } from "bun:test";
+test("explicit test", () => {
+  expect(1).toBe(1);
+});
+`,
+      });
+
+      const result = Bun.spawnSync([bunExe(), "test", "./build/explicit.test.ts"], {
+        cwd: dir,
+        env: bunEnv,
+        stdio: [null, null, "pipe"],
+      });
+
+      const stderr = result.stderr.toString("utf-8");
+      expect(stderr).toContain("explicit.test.ts");
+      expect(stderr).toContain("1 pass");
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("explicit directory path bypasses the defaults", () => {
+      const dir = tempDirWithFiles("path-ignore-explicit-dir", {
+        "build/nested/explicit.test.ts": `
+import { test, expect } from "bun:test";
+test("explicit test", () => {
+  expect(1).toBe(1);
+});
+`,
+      });
+
+      const result = Bun.spawnSync([bunExe(), "test", "./build"], {
+        cwd: dir,
+        env: bunEnv,
+        stdio: [null, null, "pipe"],
+      });
+
+      const stderr = result.stderr.toString("utf-8");
+      expect(stderr).toContain("explicit.test.ts");
+      expect(stderr).toContain("1 pass");
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("explicit path still honors user-configured pathIgnorePatterns", () => {
+      // The bypass only skips built-in defaults — a user who writes
+      // `pathIgnorePatterns = ["**/build/**"]` meant it.
+      const dir = tempDirWithFiles("path-ignore-explicit-honors-user", {
+        "bunfig.toml": `
+[test]
+pathIgnorePatterns = ["**/build/**"]
+`,
+        "build/explicit.test.ts": `
+import { test, expect } from "bun:test";
+test("explicit test", () => {
+  expect(1).toBe(1);
+});
+`,
+      });
+
+      const result = Bun.spawnSync([bunExe(), "test", "./build/explicit.test.ts"], {
+        cwd: dir,
+        env: bunEnv,
+        stdio: [null, null, "pipe"],
+      });
+
+      const stderr = result.stderr.toString("utf-8");
+      expect(stderr).not.toContain("1 pass");
+      expect(result.exitCode).not.toBe(0);
+    });
   });
 });

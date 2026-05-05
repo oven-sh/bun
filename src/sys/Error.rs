@@ -397,12 +397,12 @@ impl fmt::Display for Error {
         // because we're intending to pass them to writer.print()
         // which will convert them back into UTF*.
         let mut that = self.without_path().to_shell_system_error();
-        debug_assert!(that.path.tag() != bun_string::Tag::WTF);
-        debug_assert!(that.dest.tag() != bun_string::Tag::WTF);
+        debug_assert!(that.path.tag() != bun_string::Tag::WTFStringImpl);
+        debug_assert!(that.dest.tag() != bun_string::Tag::WTFStringImpl);
         that.path = BunString::borrow_utf8(&self.path);
         that.dest = BunString::borrow_utf8(&self.dest);
-        debug_assert!(that.path.tag() != bun_string::Tag::WTF);
-        debug_assert!(that.dest.tag() != bun_string::Tag::WTF);
+        debug_assert!(that.path.tag() != bun_string::Tag::WTFStringImpl);
+        debug_assert!(that.dest.tag() != bun_string::Tag::WTFStringImpl);
 
         fmt::Display::fmt(&that, f)
     }

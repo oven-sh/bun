@@ -11,11 +11,7 @@ pub mod feature_flags;
 pub mod env_var;
 pub mod deprecated;
 // ── B-2 gate ── remaining heavy modules ────────────────────────────────────
-// TODO(b2-large): Progress (750L, depends on output::File vtable + tty ioctl);
-// fmt (2728L, 22 errors — depends on js_lexer/js_printer subset modules,
-// bun_simdutf base64/utf32, and ~7 strings:: SIMD scanners). Both need their
-// in-file `strings`/`js_*` move-in stubs completed before un-gating.
-#[cfg(any())] pub mod Progress;
+#[path = "Progress.rs"] pub mod Progress;
 pub mod fmt;
 #[path = "output.rs"]
 pub mod output;

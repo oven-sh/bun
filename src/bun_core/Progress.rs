@@ -20,71 +20,43 @@ use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use std::io::Write as _;
 use std::time::Instant;
 
-// MOVE_DOWN: bun_threading::Mutex → bun_core (move-in pass).
 use crate::Mutex;
 #[cfg(windows)]
-// MOVE_DOWN: bun_sys::windows → windows_sys (T0).
 use windows_sys as windows;
 
-// GENUINE: bun_sys::File — Progress only needs an opaque terminal handle with
-// stderr()/tty/ansi/handle()/write_fmt(). Break the cycle with a manual vtable
-// (CYCLEBREAK §Dispatch, cold path). bun_sys provides `PROGRESS_TERMINAL_VTABLE`.
-// PERF(port): was inline switch.
-#[derive(Clone, Copy)]
-pub struct File {
-    pub owner: *mut (),
-    pub vtable: &'static ProgressTerminalVTable,
-}
-pub struct ProgressTerminalVTable {
-    pub stderr: unsafe fn() -> File,
-    pub supports_ansi_escape_codes: unsafe fn(*mut ()) -> bool,
-    pub is_tty: unsafe fn(*mut ()) -> bool,
-    pub handle: unsafe fn(*mut ()) -> *mut (),
-    pub write_all: unsafe fn(*mut (), &[u8]) -> Result<(), crate::Error>,
-}
+// Progress's terminal handle is the canonical `output::File` (vtable-backed
+// stderr/File from `OutputSinkVTable`). The duplicate `ProgressTerminalVTable`
+// from B-0 round 1 is removed; tty/ansi/winsize route through the new
+// `OutputSinkVTable` slots so `bun_core` stays T0 (no `bun_sys` dep).
+pub use crate::output::File;
+use crate::output::output_sink;
+use crate::Fd;
+
 impl File {
-    #[inline]
-    pub fn stderr() -> Self {
-        // SAFETY: vtable fn-ptr has no preconditions; sink installed at startup.
-        unsafe { (crate::output::output_sink().stderr)() }
-    }
+    /// `std.io.tty.supportsAnsiEscapeCodes()` — on unix this is `isatty()`;
+    /// on Windows it requires `ENABLE_VIRTUAL_TERMINAL_PROCESSING` (set by
+    /// `Output.Source.init`). We route through the sink so the platform check
+    /// lives in `bun_sys`.
     #[inline]
     pub fn supports_ansi_escape_codes(&self) -> bool {
-        unsafe { (self.vtable.supports_ansi_escape_codes)(self.owner) }
+        // SAFETY: vtable installed at startup.
+        let tty = unsafe { (output_sink().is_terminal)(self.fd()) };
+        tty && (cfg!(unix)
+            || crate::output::ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed))
     }
     #[inline]
     pub fn is_tty(&self) -> bool {
-        unsafe { (self.vtable.is_tty)(self.owner) }
+        unsafe { (output_sink().is_terminal)(self.fd()) }
+    }
+    /// Windows console HANDLE for the legacy `SetConsoleCursorPosition` path.
+    #[cfg(windows)]
+    #[inline]
+    pub fn console_handle(&self) -> *mut core::ffi::c_void {
+        self.fd().native()
     }
     #[inline]
-    pub fn handle(&self) -> *mut () {
-        unsafe { (self.vtable.handle)(self.owner) }
-    }
-    #[inline]
-    pub fn write_all(&self, bytes: &[u8]) -> Result<(), crate::Error> {
-        unsafe { (self.vtable.write_all)(self.owner, bytes) }
-    }
-    /// Compat shim for callers that used `bun_sys::File::write`; delegates to vtable.write_all.
-    #[inline]
-    pub fn write(&self, bytes: &[u8]) -> Result<usize, crate::Error> {
-        self.write_all(bytes).map(|_| bytes.len())
-    }
-    pub fn write_fmt(&self, args: core::fmt::Arguments<'_>) -> Result<(), crate::Error> {
-        struct Adapter<'a>(&'a File, Result<(), crate::Error>);
-        impl core::fmt::Write for Adapter<'_> {
-            fn write_str(&mut self, s: &str) -> core::fmt::Result {
-                match self.0.write_all(s.as_bytes()) {
-                    Ok(()) => Ok(()),
-                    Err(e) => {
-                        self.1 = Err(e);
-                        Err(core::fmt::Error)
-                    }
-                }
-            }
-        }
-        let mut a = Adapter(self, Ok(()));
-        let _ = core::fmt::write(&mut a, args);
-        a.1
+    pub fn winsize(&self) -> Option<crate::Winsize> {
+        unsafe { (output_sink().tty_winsize)(self.fd()) }
     }
 }
 
@@ -134,7 +106,7 @@ pub struct Progress {
     /// Protects the `refresh` function, as well as `node.recently_updated_child`.
     /// Without this, callsites would call `Node.end` and then free `Node` memory
     /// while it was still being accessed by the `refresh` function.
-    pub update_mutex: Mutex,
+    pub update_mutex: Mutex<()>,
 
     /// Keeps track of how many columns in the terminal have been output, so that
     /// we can move the cursor back later.
@@ -246,22 +218,25 @@ impl Node {
         // SAFETY: parent backref is valid for the lifetime of this Node.
         if let Some(parent) = unsafe { self.parent.as_mut() } {
             {
-                context.update_mutex.lock();
-                // PORT NOTE: `defer unlock` → explicit unlock at scope end below.
+                let _g = context.update_mutex.lock();
                 let _ = parent.recently_updated_child.compare_exchange(
                     self as *mut Node,
                     ptr::null_mut(),
                     Ordering::Relaxed,
                     Ordering::Relaxed,
                 );
-                context.update_mutex.unlock();
             }
             parent.complete_one();
         } else {
-            context.update_mutex.lock();
-            context.done = true;
-            context.refresh_with_held_lock();
-            context.update_mutex.unlock();
+            // PORT NOTE: reshaped for borrowck — guard borrows context.update_mutex;
+            // we capture a raw ptr first so the &mut access goes through *mut.
+            let ctx_ptr = context as *mut Progress;
+            let _g = context.update_mutex.lock();
+            // SAFETY: ctx_ptr derived from &mut; guard only references the mutex field.
+            unsafe {
+                (*ctx_ptr).done = true;
+                (*ctx_ptr).refresh_with_held_lock();
+            }
         }
     }
 
@@ -281,7 +256,8 @@ impl Node {
     pub fn set_name(&mut self, name: &'static [u8]) {
         // SAFETY: context backref valid while Progress lives.
         let progress = unsafe { &mut *self.context };
-        progress.update_mutex.lock();
+        let ctx_ptr = progress as *mut Progress;
+        let _g = progress.update_mutex.lock();
         self.name = name;
         // SAFETY: parent backref is valid for the lifetime of this Node.
         if let Some(parent) = unsafe { self.parent.as_mut() } {
@@ -294,12 +270,11 @@ impl Node {
                     .recently_updated_child
                     .store(parent as *mut Node, Ordering::Release);
             }
-            // PORT NOTE: reshaped for borrowck — Instant is Copy, captured by value.
-            if let Some(timer) = progress.timer {
-                progress.maybe_refresh_with_held_lock(timer);
+            // SAFETY: ctx_ptr from &mut; guard borrows only the mutex field.
+            if let Some(timer) = unsafe { (*ctx_ptr).timer } {
+                unsafe { (*ctx_ptr).maybe_refresh_with_held_lock(timer) };
             }
         }
-        progress.update_mutex.unlock();
     }
 
     /// Thread-safe.
@@ -309,7 +284,8 @@ impl Node {
         // enum type to keep it well-typed; revisit if any caller appears.
         // SAFETY: context backref valid while Progress lives.
         let progress = unsafe { &mut *self.context };
-        progress.update_mutex.lock();
+        let ctx_ptr = progress as *mut Progress;
+        let _g = progress.update_mutex.lock();
         self.unit = unit;
         // SAFETY: parent backref is valid for the lifetime of this Node.
         if let Some(parent) = unsafe { self.parent.as_mut() } {
@@ -322,12 +298,11 @@ impl Node {
                     .recently_updated_child
                     .store(parent as *mut Node, Ordering::Release);
             }
-            // PORT NOTE: reshaped for borrowck — Instant is Copy, captured by value.
-            if let Some(timer) = progress.timer {
-                progress.maybe_refresh_with_held_lock(timer);
+            // SAFETY: ctx_ptr from &mut; guard borrows only the mutex field.
+            if let Some(timer) = unsafe { (*ctx_ptr).timer } {
+                unsafe { (*ctx_ptr).maybe_refresh_with_held_lock(timer) };
             }
         }
-        progress.update_mutex.unlock();
     }
 
     /// Thread-safe. 0 means unknown.
@@ -390,11 +365,12 @@ impl Progress {
     pub fn maybe_refresh(&mut self) {
         // PORT NOTE: reshaped for borrowck — Instant is Copy, captured by value.
         if let Some(timer) = self.timer {
-            if !self.update_mutex.try_lock() {
-                return;
-            }
-            self.maybe_refresh_with_held_lock(timer);
-            self.update_mutex.unlock();
+            // PORT NOTE: reshaped for borrowck — capture *mut self before the
+            // guard borrows update_mutex.
+            let ctx_ptr = self as *mut Self;
+            let Some(_g) = self.update_mutex.try_lock() else { return };
+            // SAFETY: ctx_ptr from &mut self; guard only references the mutex field.
+            unsafe { (*ctx_ptr).maybe_refresh_with_held_lock(timer) };
         }
     }
 
@@ -417,11 +393,10 @@ impl Progress {
 
     /// Updates the terminal and resets `self.next_refresh_timestamp`. Thread-safe.
     pub fn refresh(&mut self) {
-        if !self.update_mutex.try_lock() {
-            return;
-        }
-        self.refresh_with_held_lock();
-        self.update_mutex.unlock();
+        let ctx_ptr = self as *mut Self;
+        let Some(_g) = self.update_mutex.try_lock() else { return };
+        // SAFETY: ctx_ptr from &mut self; guard only references the mutex field.
+        unsafe { (*ctx_ptr).refresh_with_held_lock() };
     }
 
     fn clear_with_held_lock(&mut self, end_ptr: &mut usize) {
@@ -448,10 +423,10 @@ impl Progress {
                     let mut info: windows::CONSOLE_SCREEN_BUFFER_INFO =
                         // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (POD).
                         unsafe { core::mem::zeroed() };
-                    // SAFETY: file.handle() is a valid console HANDLE (is_windows_terminal asserted
+                    // SAFETY: file.console_handle() is a valid console HANDLE (is_windows_terminal asserted
                     // above); `info` is a live stack local out-ptr.
                     if unsafe {
-                        windows::kernel32::GetConsoleScreenBufferInfo(file.handle(), &mut info)
+                        windows::kernel32::GetConsoleScreenBufferInfo(file.console_handle(), &mut info)
                     } != windows::TRUE
                     {
                         // stop trying to write to this file
@@ -473,11 +448,11 @@ impl Progress {
                         windows::DWORD::try_from(info.dwSize.X - cursor_pos.X).unwrap();
 
                     let mut written: windows::DWORD = 0;
-                    // SAFETY: file.handle() is a valid console HANDLE (is_windows_terminal asserted
+                    // SAFETY: file.console_handle() is a valid console HANDLE (is_windows_terminal asserted
                     // above); `cursor_pos` and `written` are live stack locals.
                     if unsafe {
                         windows::kernel32::FillConsoleOutputAttribute(
-                            file.handle(),
+                            file.console_handle(),
                             info.wAttributes,
                             fill_chars,
                             cursor_pos,
@@ -489,11 +464,11 @@ impl Progress {
                         self.terminal = None;
                         break 'winapi;
                     }
-                    // SAFETY: file.handle() is a valid console HANDLE (is_windows_terminal asserted
+                    // SAFETY: file.console_handle() is a valid console HANDLE (is_windows_terminal asserted
                     // above); `cursor_pos` and `written` are live stack locals.
                     if unsafe {
                         windows::kernel32::FillConsoleOutputCharacterW(
-                            file.handle(),
+                            file.console_handle(),
                             b' ' as u16,
                             fill_chars,
                             cursor_pos,
@@ -505,10 +480,10 @@ impl Progress {
                         self.terminal = None;
                         break 'winapi;
                     }
-                    // SAFETY: file.handle() is a valid console HANDLE (is_windows_terminal asserted
+                    // SAFETY: file.console_handle() is a valid console HANDLE (is_windows_terminal asserted
                     // above); `cursor_pos` is passed by value.
                     if unsafe {
-                        windows::kernel32::SetConsoleCursorPosition(file.handle(), cursor_pos)
+                        windows::kernel32::SetConsoleCursorPosition(file.console_handle(), cursor_pos)
                     } != windows::TRUE
                     {
                         // stop trying to write to this file
@@ -632,10 +607,19 @@ impl Progress {
         self.columns_written = 0;
     }
 
-    /// Allows the caller to freely write to stderr until unlock_stderr() is called.
-    /// During the lock, the progress information is cleared from the terminal.
+    /// Allows the caller to freely write to stderr until `unlock_stderr()` is
+    /// called. During the lock, the progress information is cleared from the
+    /// terminal.
+    ///
+    /// PORT NOTE: Zig's lock/unlock are split across fn boundaries; with
+    /// parking_lot we hold the lock via the `RawMutex` API (the `Mutex<()>`
+    /// guard would otherwise have to be stored on `self`, which self-borrows).
+    /// The `lock()`/`unlock()` pair is exact and explicit — not a §Forbidden
+    /// leak: there is no payload, and `unlock_stderr` is the documented release.
     pub fn lock_stderr(&mut self) {
-        self.update_mutex.lock();
+        use parking_lot::lock_api::RawMutex as _;
+        // SAFETY: paired with `unlock_stderr` (caller contract, matches Zig).
+        unsafe { self.update_mutex.raw() }.lock();
         if let Some(file) = self.terminal {
             let mut end: usize = 0;
             self.clear_with_held_lock(&mut end);
@@ -648,8 +632,10 @@ impl Progress {
     }
 
     pub fn unlock_stderr(&mut self) {
+        use parking_lot::lock_api::RawMutex as _;
         // TODO(port): std.debug.getStderrMutex().unlock() — see lock_stderr.
-        self.update_mutex.unlock();
+        // SAFETY: caller contract — paired with `lock_stderr` above.
+        unsafe { self.update_mutex.raw().unlock() };
     }
 
     fn buf_write(&mut self, end: &mut usize, args: fmt::Arguments<'_>) {

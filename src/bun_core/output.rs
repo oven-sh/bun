@@ -59,6 +59,12 @@ pub struct OutputSinkVTable {
     pub quiet_writer_write_all: unsafe fn(qw: &mut QuietWriter, bytes: &[u8]),
     /// Read back the underlying fd from a QuietWriter (`.context.handle.handle`).
     pub quiet_writer_fd: unsafe fn(qw: &QuietWriter) -> Fd,
+    /// Query the terminal's row/col size on `fd` (TIOCGWINSZ ioctl on unix,
+    /// GetConsoleScreenBufferInfo on Windows). `None` ⇒ not a tty / unknown.
+    /// Progress.rs polls this on each refresh.
+    pub tty_winsize: unsafe fn(fd: Fd) -> Option<crate::Winsize>,
+    /// `isatty(fd)`. Progress.rs uses this to gate ANSI output.
+    pub is_terminal: unsafe fn(fd: Fd) -> bool,
 }
 
 /// Installed by `bun_sys` at startup via [`install_output_sink`]. Startup ordering
@@ -147,13 +153,41 @@ pub struct File(pub Fd);
 impl File {
     pub const ZEROED: Self = Self(Fd::INVALID);
     #[inline]
-    pub fn handle(self) -> Fd {
-        self.0
+    pub const fn fd(&self) -> Fd { self.0 }
+    #[inline]
+    pub fn handle(self) -> Fd { self.0 }
+    /// `bun_sys::File::stderr()` via the sink (T0-safe).
+    #[inline]
+    pub fn stderr() -> Self {
+        // SAFETY: vtable installed at startup.
+        unsafe { (output_sink().stderr)() }
     }
     #[inline]
     pub fn quiet_writer(self) -> QuietWriter {
-        // SAFETY: vtable installed at startup.
         unsafe { (output_sink().quiet_writer_from_fd)(self.0) }
+    }
+    /// Write all bytes (best-effort; routes through QuietWriter so errors are
+    /// swallowed per Zig `bun.Output` semantics). Progress.rs uses this.
+    #[inline]
+    pub fn write_all(&self, bytes: &[u8]) -> Result<(), crate::Error> {
+        let mut qw = self.quiet_writer();
+        unsafe { (output_sink().quiet_writer_write_all)(&mut qw, bytes) };
+        Ok(())
+    }
+    #[inline]
+    pub fn write(&self, bytes: &[u8]) -> Result<usize, crate::Error> {
+        self.write_all(bytes).map(|_| bytes.len())
+    }
+    pub fn write_fmt(&self, args: core::fmt::Arguments<'_>) -> Result<(), crate::Error> {
+        struct Adapter<'a>(&'a File);
+        impl core::fmt::Write for Adapter<'_> {
+            fn write_str(&mut self, s: &str) -> core::fmt::Result {
+                let _ = self.0.write_all(s.as_bytes());
+                Ok(())
+            }
+        }
+        let _ = core::fmt::write(&mut Adapter(self), args);
+        Ok(())
     }
 }
 impl From<Fd> for File {

@@ -172,23 +172,6 @@ pub mod path_buffer_pool;
 // Zig "valid until next call" semantics).
 pub mod resolve_path;
 pub use resolve_path::{Platform, PlatformT, platform};
-#[cfg(any())]
-mod platform_stub {
-    #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-    pub enum Platform { Loose, Windows, Posix, Nt }
-    pub trait PlatformT: Copy + 'static { const P: Platform; }
-    pub mod platform {
-        use super::*;
-        macro_rules! v { ($n:ident => $v:ident) => {
-            #[derive(Copy, Clone)] pub struct $n;
-            impl PlatformT for $n { const P: Platform = Platform::$v; }
-        }; }
-        v!(Loose => Loose); v!(Windows => Windows); v!(Posix => Posix); v!(Nt => Nt);
-        #[cfg(windows)] pub type Auto = Windows;
-        #[cfg(not(windows))] pub type Auto = Posix;
-    }
-}
-
 #[path = "Path.rs"] pub mod path;
 pub use path::{AbsPath, RelPath, Path, AutoAbsPath, AutoRelPath, options as path_options, PathUnit};
 #[path = "EnvPath.rs"] pub mod env_path;

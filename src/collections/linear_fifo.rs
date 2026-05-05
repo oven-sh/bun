@@ -128,7 +128,7 @@ impl<T> LinearFifoBuffer<T> for DynamicBuffer<T> {
 
     fn realloc(&mut self, new_size: usize) -> Result<(), AllocError> {
         // Zig: `self.allocator.realloc(self.buf, size)` preserving prefix.
-        let mut new = Box::<[MaybeUninit<T>]>::new_uninit_slice(new_size);
+        let mut new = Box::<[T]>::new_uninit_slice(new_size);
         let n = self.0.len().min(new_size);
         // SAFETY: disjoint allocations; MaybeUninit copy is always sound.
         unsafe { ptr::copy_nonoverlapping(self.0.as_ptr(), new.as_mut_ptr(), n) };
@@ -137,7 +137,7 @@ impl<T> LinearFifoBuffer<T> for DynamicBuffer<T> {
     }
 
     fn alloc_swap(&mut self, new_size: usize) -> Result<Box<[MaybeUninit<T>]>, AllocError> {
-        let new = Box::<[MaybeUninit<T>]>::new_uninit_slice(new_size);
+        let new = Box::<[T]>::new_uninit_slice(new_size);
         Ok(mem::replace(&mut self.0, new))
     }
 }

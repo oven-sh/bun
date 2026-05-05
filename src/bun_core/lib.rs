@@ -130,5 +130,6 @@ pub mod asan {
     #[inline] pub unsafe fn unpoison(_: *const u8, _: usize) {}
     #[inline] pub fn poison_slice<T>(_: &[T]) {}
     #[inline] pub fn unpoison_slice<T>(_: &[T]) {}
+    #[inline] pub fn assert_unpoisoned<T>(_: *const T) {}
     pub const ENABLED: bool = false;
 }

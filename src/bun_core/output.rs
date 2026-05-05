@@ -185,6 +185,18 @@ pub fn debug_warn(args: core::fmt::Arguments<'_>) {
     }
 }
 
+/// `bun.Output.warn` — yellow `warn:` prefix to stderr.
+#[inline]
+pub fn warn(args: core::fmt::Arguments<'_>) {
+    pretty_errorln!("<r><yellow>warn<r><d>:<r> {}", args);
+}
+
+/// `bun.Output.note` — cyan `note:` prefix to stderr.
+#[inline]
+pub fn note(msg: &str) {
+    pretty_errorln!("<r><cyan>note<r><d>:<r> {}", msg);
+}
+
 /// `bun.Output.Source.Stdio.restore` — restore terminal to cooked mode on exit.
 /// Real impl walks stdio fds and `tcsetattr`s; lives in bun_sys. Hook-registered.
 pub mod source {

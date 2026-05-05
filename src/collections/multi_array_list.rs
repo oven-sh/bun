@@ -89,10 +89,17 @@ enum SortMode {
 }
 
 /// Struct-of-arrays list. See module docs.
-pub struct MultiArrayList<T: MultiArrayElement> {
+// PORT NOTE: trait bound only on `impl` blocks, not the struct, so downstream
+// can name `MultiArrayList<Foo>` before deriving `MultiArrayElement` for `Foo`.
+// Drop must therefore not depend on `T: MultiArrayElement`, so we cache the
+// allocation Layout (otherwise computable from `T::SIZES_BYTES`/`T::ALIGN`)
+// at alloc time. Adds one `Option<Layout>` (16 bytes) vs Zig's 24-byte struct.
+pub struct MultiArrayList<T> {
     bytes: *mut u8,
     len: usize,
     capacity: usize,
+    // Layout of the `bytes` allocation, or None if `bytes` is dangling.
+    alloc_layout: Option<Layout>,
     // Zig `#allocator: bun.safety.CheckedAllocator` dropped — global mimalloc.
     _marker: PhantomData<T>,
 }
@@ -181,6 +188,7 @@ impl<T: MultiArrayElement> Slice<T> {
             bytes: aligned_ptr,
             len: self.len,
             capacity: self.capacity,
+            alloc_layout: layout_for::<T>(self.capacity),
             _marker: PhantomData,
         }
     }
@@ -194,12 +202,13 @@ impl<T: MultiArrayElement> Slice<T> {
 
 // ───────────────────────────── MultiArrayList ─────────────────────────────
 
-impl<T: MultiArrayElement> Default for MultiArrayList<T> {
+impl<T> Default for MultiArrayList<T> {
     fn default() -> Self {
         Self {
             bytes: ptr::null_mut(),
             len: 0,
             capacity: 0,
+            alloc_layout: None,
             _marker: PhantomData,
         }
     }
@@ -210,6 +219,7 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
         bytes: ptr::null_mut(),
         len: 0,
         capacity: 0,
+        alloc_layout: None,
         _marker: PhantomData,
     };
 
@@ -253,7 +263,25 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
     /// # Safety
     /// See `Slice::items`.
     pub unsafe fn items<F>(&self, field: T::Field) -> &mut [F] {
-        self.slice().items::<F>(field)
+        // PORT NOTE: Zig's `self.slice().items(field)` works because the
+        // returned slice borrows the underlying allocation, not the temporary
+        // `Slice` (which only caches pointers). Reproduce by computing the
+        // column ptr directly without the intermediate `Slice` value.
+        if self.capacity == 0 || core::mem::size_of::<F>() == 0 {
+            return &mut [];
+        }
+        let fi = T::field_index(field);
+        let mut ptr = self.bytes;
+        for &si in T::SIZES_FIELDS {
+            if si == fi {
+                break;
+            }
+            // SAFETY: column offsets within the single allocation.
+            ptr = unsafe { ptr.add(T::SIZES_BYTES[si] * self.capacity) };
+        }
+        // SAFETY: caller guarantees `F` matches field type; `ptr` points to
+        // `capacity` aligned `F`s and `len <= capacity`.
+        unsafe { core::slice::from_raw_parts_mut(ptr.cast::<F>(), self.len) }
     }
 
     /// Overwrite one array element with new data.
@@ -447,7 +475,8 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
         debug_assert!(new_len <= self.capacity);
         debug_assert!(new_len <= self.len);
 
-        let other_bytes = match aligned_alloc::<T>(Self::capacity_in_bytes(new_len)) {
+        let other_layout = layout_for::<T>(new_len);
+        let other_bytes = match aligned_alloc(other_layout) {
             Ok(p) => p,
             Err(_) => {
                 // Zig: on alloc failure, memset tail to undefined and shrink len.
@@ -460,6 +489,7 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
             bytes: other_bytes,
             capacity: new_len,
             len: new_len,
+            alloc_layout: other_layout,
             _marker: PhantomData,
         };
         self.len = new_len;
@@ -551,18 +581,21 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
     /// `new_capacity` must be greater or equal to `len`.
     pub fn set_capacity(&mut self, new_capacity: usize) -> Result<(), AllocError> {
         debug_assert!(new_capacity >= self.len);
-        let new_bytes = aligned_alloc::<T>(Self::capacity_in_bytes(new_capacity))?;
+        let new_layout = layout_for::<T>(new_capacity);
+        let new_bytes = aligned_alloc(new_layout)?;
         if self.len == 0 {
             // SAFETY: free old (possibly null/empty) buffer.
             unsafe { self.free_allocated_bytes() };
             self.bytes = new_bytes;
             self.capacity = new_capacity;
+            self.alloc_layout = new_layout;
             return Ok(());
         }
         let other = Self {
             bytes: new_bytes,
             capacity: new_capacity,
             len: self.len,
+            alloc_layout: new_layout,
             _marker: PhantomData,
         };
         let self_slice = self.slice();
@@ -585,6 +618,7 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
         self.bytes = other.bytes;
         self.capacity = other.capacity;
         self.len = other.len;
+        self.alloc_layout = other.alloc_layout;
         core::mem::forget(other);
         Ok(())
     }
@@ -615,7 +649,9 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
 
     /// `ctx` has the following method:
     /// `fn less_than(&self, a_index: usize, b_index: usize) -> bool`
-    fn sort_internal<C: SortContext, const MODE: SortMode>(&self, a: usize, b: usize, ctx: C) {
+    // PORT NOTE: `const MODE: SortMode` enum const-generic is unstable
+    // (adt_const_params); rewritten as `const STABLE: bool`.
+    fn sort_internal<C: SortContext, const STABLE: bool>(&self, a: usize, b: usize, ctx: C) {
         let slice = self.slice();
         let swap = |a_index: usize, b_index: usize| {
             for fi in 0..T::FIELD_COUNT {
@@ -640,9 +676,9 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
         // index-based in-place sorts (timsort / pdqsort) parameterized by
         // `swap` + `lessThan`. Rust std has no index-based sort; provide
         // `bun_collections::sort_context` / `sort_unstable_context` in Phase B.
-        match MODE {
-            SortMode::Stable => bun_collections_sort_context(a, b, less, swap),
-            SortMode::Unstable => bun_collections_sort_unstable_context(a, b, less, swap),
+        match STABLE {
+            true => bun_collections_sort_context(a, b, less, swap),
+            false => bun_collections_sort_unstable_context(a, b, less, swap),
         }
     }
 
@@ -652,7 +688,7 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
     /// `ctx` has the following method:
     /// `fn less_than(&self, a_index: usize, b_index: usize) -> bool`
     pub fn sort<C: SortContext>(&self, ctx: C) {
-        self.sort_internal::<C, { SortMode::Stable }>(0, self.len, ctx);
+        self.sort_internal::<C, true>(0, self.len, ctx);
     }
 
     /// Sorts only the subsection of items between indices `a` and `b` (excluding `b`).
@@ -662,7 +698,7 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
     /// `ctx` has the following method:
     /// `fn less_than(&self, a_index: usize, b_index: usize) -> bool`
     pub fn sort_span<C: SortContext>(&self, a: usize, b: usize, ctx: C) {
-        self.sort_internal::<C, { SortMode::Stable }>(a, b, ctx);
+        self.sort_internal::<C, true>(a, b, ctx);
     }
 
     /// This function does NOT guarantee a stable sort, i.e the relative order of equal elements may change during sorting.
@@ -671,7 +707,7 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
     /// `ctx` has the following method:
     /// `fn less_than(&self, a_index: usize, b_index: usize) -> bool`
     pub fn sort_unstable<C: SortContext>(&self, ctx: C) {
-        self.sort_internal::<C, { SortMode::Unstable }>(0, self.len, ctx);
+        self.sort_internal::<C, false>(0, self.len, ctx);
     }
 
     /// Sorts only the subsection of items between indices `a` and `b` (excluding `b`).
@@ -681,7 +717,7 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
     /// `ctx` has the following method:
     /// `fn less_than(&self, a_index: usize, b_index: usize) -> bool`
     pub fn sort_span_unstable<C: SortContext>(&self, a: usize, b: usize, ctx: C) {
-        self.sort_internal::<C, { SortMode::Unstable }>(a, b, ctx);
+        self.sort_internal::<C, false>(a, b, ctx);
     }
 
     pub fn capacity_in_bytes(capacity: usize) -> usize {
@@ -722,11 +758,9 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
     /// # Safety
     /// Must not be called twice without an intervening allocation.
     unsafe fn free_allocated_bytes(&mut self) {
-        let (p, n) = self.allocated_bytes();
-        if !p.is_null() && n != 0 {
-            // SAFETY: `p` was allocated with this exact layout in
-            // `aligned_alloc::<T>`.
-            alloc::dealloc(p, Layout::from_size_align_unchecked(n, T::ALIGN));
+        if let Some(layout) = self.alloc_layout.take() {
+            // SAFETY: `bytes` was allocated with exactly `layout`.
+            unsafe { alloc::dealloc(self.bytes, layout) };
         }
     }
 
@@ -741,14 +775,17 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
     }
 }
 
-impl<T: MultiArrayElement> Drop for MultiArrayList<T> {
+impl<T> Drop for MultiArrayList<T> {
     fn drop(&mut self) {
         // Zig `deinit(self, gpa)`: `gpa.free(self.allocatedBytes())`.
         // PERF(port): Zig callers sometimes pass an arena allocator and rely
         // on bulk-free; this Drop always uses the global allocator. Revisit if
         // an arena-backed variant is needed.
-        // SAFETY: called once at end of life.
-        unsafe { self.free_allocated_bytes() };
+        if let Some(layout) = self.alloc_layout {
+            // SAFETY: `bytes` was allocated with exactly `layout` (cached at
+            // alloc time) and is freed exactly once here.
+            unsafe { alloc::dealloc(self.bytes, layout) };
+        }
     }
 }
 
@@ -773,19 +810,31 @@ fn field_size_unsorted<T: MultiArrayElement>(fi: usize) -> usize {
     unreachable!()
 }
 
-/// `gpa.alignedAlloc(u8, @alignOf(Elem), n)`
-fn aligned_alloc<T: MultiArrayElement>(n: usize) -> Result<*mut u8, AllocError> {
+/// Layout for `capacity` elements: `(Σ SIZES_BYTES) * capacity` bytes at
+/// `T::ALIGN`. `None` for zero-size (no allocation needed).
+#[inline]
+fn layout_for<T: MultiArrayElement>(capacity: usize) -> Option<Layout> {
+    let mut elem_bytes: usize = 0;
+    let mut i = 0;
+    while i < T::SIZES_BYTES.len() {
+        elem_bytes += T::SIZES_BYTES[i];
+        i += 1;
+    }
+    let n = elem_bytes * capacity;
     if n == 0 {
+        return None;
+    }
+    Some(Layout::from_size_align(n, T::ALIGN).expect("MultiArrayList layout overflow"))
+}
+
+/// `gpa.alignedAlloc(u8, @alignOf(Elem), n)`
+fn aligned_alloc(layout: Option<Layout>) -> Result<*mut u8, AllocError> {
+    let Some(layout) = layout else {
         return Ok(ptr::null_mut());
-    }
-    let layout = Layout::from_size_align(n, T::ALIGN).map_err(|_| AllocError)?;
-    // SAFETY: layout is non-zero-sized.
+    };
+    // SAFETY: layout is non-zero-sized (checked in `layout_for`).
     let p = unsafe { alloc::alloc(layout) };
-    if p.is_null() {
-        Err(AllocError)
-    } else {
-        Ok(p)
-    }
+    if p.is_null() { Err(AllocError) } else { Ok(p) }
 }
 
 // TODO(port): index-based context sorts (`mem.sortContext` /

@@ -18,6 +18,7 @@ impl Error {
     }
     /// B-1: Phase-A `err!()` placeholder. Real impl: NonZeroU16 interning table.
     pub const TODO: Self = Self::from_errno(-1);
+    pub const OUT_OF_MEMORY: Self = Self::from_errno(12); // ENOMEM
     /// B-1: Phase-A `bun_core::Error::from_name("...")`. Real impl: name→code lookup.
     pub fn from_name(_name: &'static str) -> Self { Self::TODO }
     /// Error tag name (e.g. "ENOENT"). Backed by `bun_errno` once that crate's
@@ -43,6 +44,9 @@ impl Error {
 }
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Self { Self::from_errno(e.raw_os_error().unwrap_or(-1)) }
+}
+impl From<bun_alloc::AllocError> for Error {
+    fn from(_: bun_alloc::AllocError) -> Self { Self::OUT_OF_MEMORY }
 }
 // SAFETY: path_ptr is always a borrow of 'static or arena-owned bytes; matches
 // Zig's `path: []const u8` which is freely Send across threads.

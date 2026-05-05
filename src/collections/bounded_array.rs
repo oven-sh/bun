@@ -76,11 +76,11 @@ impl<T, const BUFFER_CAPACITY: usize> Default for BoundedArrayAligned<T, BUFFER_
     }
 }
 
+/// `pub const Buffer = @FieldType(Self, "buffer");` — inherent assoc types are
+/// unstable; only used for introspection in Zig, so expose as a free alias.
+pub type BoundedBuffer<T, const N: usize> = [MaybeUninit<T>; N];
+
 impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
-    /// `pub const Buffer = @FieldType(Self, "buffer");`
-    pub type Buffer = [MaybeUninit<T>; BUFFER_CAPACITY];
-    // TODO(port): inherent associated types are unstable (feature(inherent_associated_types)).
-    // Phase B may need to hoist this to a trait or drop it; only used for introspection in Zig.
 
     /// Set the actual length of the slice.
     /// Returns error.Overflow if it exceeds the length of the backing array.

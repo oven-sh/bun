@@ -80,7 +80,8 @@ impl<T> Drop for BabyList<T> {
 }
 
 impl<T> BabyList<T> {
-    pub type Elem = T;
+    // Zig's `pub const Elem = T;` — inherent assoc types unstable; callers use
+    // the generic param directly. Dropped.
 
     pub const EMPTY: Self = Self {
         ptr: NonNull::dangling(),
@@ -289,9 +290,8 @@ impl<T> BabyList<T> {
             self.assert_owned();
         }
         let mut list_ = self.list_managed();
-        list_
-            .try_reserve(new_capacity.saturating_sub(list_.len()))
-            .map_err(|_| AllocError)?;
+        let additional = new_capacity.saturating_sub(list_.len());
+        list_.try_reserve(additional).map_err(|_| AllocError)?;
         self.update(list_);
         Ok(())
     }
@@ -301,9 +301,8 @@ impl<T> BabyList<T> {
             self.assert_owned();
         }
         let mut list_ = self.list_managed();
-        list_
-            .try_reserve_exact(new_capacity.saturating_sub(list_.len()))
-            .map_err(|_| AllocError)?;
+        let additional = new_capacity.saturating_sub(list_.len());
+        list_.try_reserve_exact(additional).map_err(|_| AllocError)?;
         self.update(list_);
         Ok(())
     }
@@ -489,8 +488,8 @@ impl<T> BabyList<T> {
     where
         T: AsRef<[u8]>,
     {
-        // TODO(port): bun.strings.sortAsc — assuming it exists at bun_core::strings::sort_asc.
-        strings::sort_asc(self.slice_mut());
+        // bun.strings.sortAsc — lex byte-slice sort. Inlined here (was 1-liner in Zig).
+        self.slice_mut().sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
     }
 
     // PORT NOTE: reshaped — Zig took `comptime Context: type, context: Context` and called
@@ -644,8 +643,7 @@ impl<T> BabyList<T> {
         {
             this.origin = Origin::Borrowed {
                 trace: if TRACES_ENABLED {
-                    // TODO(b0): StoredTrace arrives in bun_core via move-in.
-                    Some(bun_core::StoredTrace::capture())
+                    Some(bun_core::StoredTrace::capture(None))
                 } else {
                     None
                 },
@@ -672,13 +670,12 @@ impl<T> BabyList<T> {
             if TRACES_ENABLED {
                 if let Origin::Borrowed { trace: Some(trace) } = &self.origin {
                     bun_core::Output::note("borrowed BabyList created here:");
-                    // TODO(b0): dump_stack_trace arrives in bun_core via move-in
-                    // (MOVE_DOWN from crash_handler).
                     bun_core::dump_stack_trace(
-                        trace.trace(),
+                        &trace.trace(),
                         bun_core::DumpStackTraceOptions {
                             frame_count: 10,
                             stop_at_jsc_llint: true,
+                            ..Default::default()
                         },
                     );
                 }
@@ -758,16 +755,23 @@ impl BabyList<u8> {
         if SAFETY_CHECKS && !str.is_empty() {
             self.assert_owned();
         }
-        let initial = self.len;
-        let old = self.list_managed();
-        let old_len = old.len();
-        let new = strings::allocate_latin1_into_utf8_with_list(
-            ManuallyDrop::into_inner(old),
-            old_len,
-            str,
-        )?;
-        self.update(ManuallyDrop::new(new));
-        Ok(self.len - initial)
+        // TODO(b2-blocked): bun_string::strings::allocate_latin1_into_utf8_with_list
+        // (SIMD transcoding). Body preserved below; gated until bun_string un-gates.
+        #[cfg(any())]
+        {
+            let initial = self.len;
+            let old = self.list_managed();
+            let old_len = old.len();
+            let new = strings::allocate_latin1_into_utf8_with_list(
+                ManuallyDrop::into_inner(old),
+                old_len,
+                str,
+            )?;
+            self.update(ManuallyDrop::new(new));
+            return Ok(self.len - initial);
+        }
+        let _ = str;
+        todo!("write_latin1: blocked on bun_string transcoding")
     }
 
     /// This method is available only for `BabyList(u8)`. Invalid characters are replaced with
@@ -776,28 +780,25 @@ impl BabyList<u8> {
         if SAFETY_CHECKS && !str.is_empty() {
             self.assert_owned();
         }
-
-        let initial_len = self.len;
-
-        let mut list_ = self.list_managed();
+        // TODO(b2-blocked): bun_simdutf_sys::simdutf::length + bun_string::convert_utf16_to_utf8_append.
+        #[cfg(any())]
         {
-            // Maximum UTF-16 length is 3 times the UTF-8 length + 2
-            let length_estimate = if (list_.capacity() - list_.len()) <= (str.len() * 3 + 2) {
-                // This length is an estimate. `str` isn't validated and might contain invalid
-                // sequences. If it does simdutf will assume they require 2 characters instead
-                // of 3.
-                bun_simdutf_sys::length::utf8::from::utf16::le(str)
-            } else {
-                str.len()
-            };
-
-            list_.try_reserve(length_estimate).map_err(|_| AllocError)?;
-
-            strings::convert_utf16_to_utf8_append(&mut *list_, str)?;
+            let initial_len = self.len;
+            let mut list_ = self.list_managed();
+            {
+                let length_estimate = if (list_.capacity() - list_.len()) <= (str.len() * 3 + 2) {
+                    bun_simdutf_sys::simdutf::length::utf8::from::utf16::le(str)
+                } else {
+                    str.len()
+                };
+                list_.try_reserve(length_estimate).map_err(|_| AllocError)?;
+                strings::convert_utf16_to_utf8_append(&mut *list_, str)?;
+            }
+            self.update(list_);
+            return Ok(self.len - initial_len);
         }
-        self.update(list_);
-
-        Ok(self.len - initial_len)
+        let _ = str;
+        todo!("write_utf16: blocked on bun_string transcoding")
     }
 
     /// This method is available only for `BabyList(u8)`.

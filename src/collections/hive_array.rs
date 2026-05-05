@@ -35,19 +35,20 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         };
         self.used.set(index);
         let ret = self.buffer[index].as_mut_ptr();
-        asan::unpoison(ret.cast(), size_of::<T>());
+        // SAFETY: `ret` points to `size_of::<T>` bytes within `buffer`.
+        unsafe { asan::unpoison(ret.cast(), size_of::<T>()) };
         Some(ret)
     }
 
     pub fn at(&mut self, index: u16) -> *mut T {
         debug_assert!((index as usize) < CAPACITY);
         let ret = self.buffer[index as usize].as_mut_ptr();
-        asan::assert_unpoisoned(ret.cast());
+        asan::assert_unpoisoned(ret.cast::<u8>());
         ret
     }
 
     pub fn index_of(&self, value: *const T) -> Option<u32> {
-        asan::assert_unpoisoned(value.cast());
+        asan::assert_unpoisoned(value.cast::<u8>());
         let start = self.buffer.as_ptr() as *const T;
         // SAFETY: one-past-the-end pointer of `buffer`.
         let end = unsafe { start.add(CAPACITY) };
@@ -63,7 +64,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     }
 
     pub fn r#in(&self, value: *const T) -> bool {
-        asan::assert_unpoisoned(value.cast());
+        asan::assert_unpoisoned(value.cast::<u8>());
         let start = self.buffer.as_ptr() as *const T;
         // SAFETY: one-past-the-end pointer of `buffer`.
         let end = unsafe { start.add(CAPACITY) };
@@ -80,7 +81,8 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
 
         // PORT NOTE: Zig wrote `value.* = undefined;`. T has no destructor in Zig;
         // the slot is simply marked logically uninitialized again.
-        asan::poison(value.cast(), size_of::<T>());
+        // SAFETY: `value` points to `size_of::<T>` bytes within `buffer`.
+        unsafe { asan::poison(value.cast(), size_of::<T>()) };
 
         self.used.unset(index as usize);
         true

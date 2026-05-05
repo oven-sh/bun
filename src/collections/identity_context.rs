@@ -50,10 +50,9 @@ impl ArrayIdentityContextU64 {
     }
 }
 
-// Mirror Zig's `ArrayIdentityContext.U64` nesting as an associated type alias.
-impl ArrayIdentityContext {
-    pub type U64 = ArrayIdentityContextU64;
-}
+// Zig's `ArrayIdentityContext.U64` nesting — inherent assoc types are unstable,
+// so expose as a free path alias instead. Callers: `identity_context::U64`.
+pub type U64 = ArrayIdentityContextU64;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

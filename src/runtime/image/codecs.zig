@@ -306,9 +306,9 @@ pub fn probe(bytes: []const u8, max_pixels: u64) Error!struct { format: Format, 
         .avif => {
             // Linux: libavif's parse() reads the ispe box without decoding
             // the AV1 stream — cheap enough to be our real probe path.
-            // mac/win: system backend would do the same; returning
-            // falling through to UnsupportedOnPlatform matches current
-            // behaviour for the probe-only path on those platforms.
+            // mac/win have no static codec here, so falling through to
+            // UnsupportedOnPlatform matches the probe-only path's current
+            // behaviour on those platforms.
             if (avif) |a| {
                 const dims = try a.probe(bytes, max_pixels);
                 w = dims.width;
@@ -420,19 +420,21 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: EncodeOptions) Er
 /// AVIF encode dispatch: OS backend first on mac/win (it reports
 /// `BackendUnavailable` when the dlopen misses), dlopen'd libavif on Linux.
 /// If neither path is available, returns `UnsupportedOnPlatform` — same
-/// contract as HEIC on Linux.
+/// contract as HEIC on Linux. `opts.icc_profile` (if any) is forwarded so
+/// a non-sRGB source preserves its colour meaning through re-encode
+/// — same contract as jpeg/png/webp. See #30197.
 fn encodeAvif(rgba: []const u8, width: u32, height: u32, opts: EncodeOptions) Error!Encoded {
     if (system_backend) |b| if (useSystem()) {
         return Encoded.fromOwned(b.encode(rgba, width, height, opts) catch |e| switch (e) {
-            error.BackendUnavailable => return encodeAvifStatic(rgba, width, height, opts.quality),
+            error.BackendUnavailable => return encodeAvifStatic(rgba, width, height, opts.quality, opts.icc_profile),
             else => |narrowed| return narrowed,
         });
     };
-    return encodeAvifStatic(rgba, width, height, opts.quality);
+    return encodeAvifStatic(rgba, width, height, opts.quality, opts.icc_profile);
 }
 
-fn encodeAvifStatic(rgba: []const u8, width: u32, height: u32, quality: u8) Error!Encoded {
-    if (avif) |a| return a.encode(rgba, width, height, quality);
+fn encodeAvifStatic(rgba: []const u8, width: u32, height: u32, quality: u8, icc_profile: ?[]const u8) Error!Encoded {
+    if (avif) |a| return a.encode(rgba, width, height, quality, icc_profile);
     return error.UnsupportedOnPlatform;
 }
 

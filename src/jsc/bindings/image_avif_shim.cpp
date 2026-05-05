@@ -1,26 +1,30 @@
-// libavif + dav1d AVIF decode for Bun.Image on Linux. Pattern mirrors
-// image_coregraphics_shim.cpp: every libavif/libdav1d call goes through
-// dlsym'd function pointers so the binary has no hard dependency on either
-// shared library. If the user hasn't `apt install libavif16` (or equivalent),
-// the first call returns `AVIF_UNAVAILABLE` and codecs.zig surfaces
+// libavif AVIF decode + encode for Bun.Image on Linux. Pattern mirrors
+// image_coregraphics_shim.cpp: every libavif call goes through dlsym'd
+// function pointers so the binary has no hard dependency on libavif or its
+// codec plugins (dav1d for decode; aom/rav1e/SvtAv1Enc for encode). If the
+// user hasn't `apt install libavif16` (or equivalent), the first call
+// returns `AVIF_UNAVAILABLE` and codecs.zig surfaces
 // `error.UnsupportedOnPlatform` — the same failure mode we'd get with no
 // static codec at all.
 //
-// Why dlopen instead of `-lavif -ldav1d`: a link-time dependency would make
-// bun refuse to start on any host without libavif installed — e.g. most
-// minimal Docker images. The feature is AVIF decode; the cost should be
-// paid by users who actually hit that path.
+// Why dlopen instead of `-lavif -ldav1d -laom -...`: link-time dependencies
+// would make bun refuse to start on any host without libavif installed
+// — e.g. most minimal Docker images — and would balloon the NEEDED list.
+// The feature is AVIF decode+encode; the cost should be paid by users who
+// actually hit that path.
 //
 // Symbol resolution stays lazy (dlsym), so the binary still has no
-// libavif/libdav1d load command. dav1d is loaded transitively: libavif.so
-// already links against it, so RTLD_NOW on libavif pulls dav1d into the
-// process's symbol space.
+// libavif/libdav1d load command. dav1d (decode) and the AV1 encoder
+// libavif was linked against (aom / rav1e / SvtAv1Enc — distro-dependent)
+// are loaded transitively: libavif.so already links against them, so
+// RTLD_NOW on libavif pulls them into the process's symbol space.
 //
-// Pinned struct layouts: we mirror the subset of `avifDecoder` and
-// `avifRGBImage` we actually touch, matching the 1.0.0 public ABI (which
-// libavif's own header explicitly marks stable via "Version 1.0.0 ends
-// here." markers). Fields we don't use are named `_reservedN` to make
-// drift visible at diff-time if someone ever bumps the pinned version.
+// Pinned struct layouts: we mirror the subset of `avifDecoder`,
+// `avifRGBImage`, `avifImage`, `avifRWData`, and `avifEncoder` we actually
+// touch, matching the 1.0.0 public ABI (which libavif's own header
+// explicitly marks stable via "Version 1.0.0 ends here." markers). Fields
+// we don't use are named `_reservedN` to make drift visible at diff-time
+// if someone ever bumps the pinned version.
 
 #if defined(__linux__) && !defined(__ANDROID__)
 
@@ -45,12 +49,39 @@ constexpr uint32_t kAvifStrictPixiRequired = 1 << 0;
 constexpr int kAvifPixelFormatYuv420 = 3;
 constexpr int kAvifSpeedDefault = -1;
 
-// Subset of `avifImage`. width/height are the very first fields of the real
-// struct; everything past them is opaque to us.
+// avifRWData — trivial pair matching avif.h:248-252. Forward-declared here
+// because `AvifImage` embeds one (for the ICC profile) and the dlsym table
+// takes a pointer to it.
+struct AvifRwData {
+    uint8_t* data;
+    size_t size;
+};
+
+// Subset of `avifImage` mirrored down through the `icc` RWData field so
+// decode() can pull the ICC profile out without going through a setter.
+// Names match the real header 1:1; the YUV/alpha pointers are opaque to us
+// but have to be laid out so the `icc` offset matches the real struct.
+// Matches the 1.0.0 stable ABI (field order frozen by libavif).
 struct AvifImage {
     uint32_t width;
     uint32_t height;
-    // ... more fields (depth, yuvFormat, planes, …) we don't touch.
+    uint32_t depth;
+    int yuvFormat; // avifPixelFormat
+    int yuvRange;
+    int yuvChromaSamplePosition;
+    uint8_t* yuvPlanes[3]; // AVIF_PLANE_COUNT_YUV = 3
+    uint32_t yuvRowBytes[3];
+    avifBool imageOwnsYUVPlanes;
+    uint8_t* alphaPlane;
+    uint32_t alphaRowBytes;
+    avifBool imageOwnsAlphaPlane;
+    avifBool alphaPremultiplied;
+    // ICC Profile — bun_avif_decode reads this post-parse and hands it to
+    // the Zig wrapper; bun_avif_encode uses the setter (avifImageSetProfileICC)
+    // instead of writing here directly so libavif copies the bytes under
+    // its own allocator.
+    AvifRwData icc;
+    // ... more fields (CICP, CLLI, transform, exif/xmp, …) we don't touch.
 };
 
 // Subset of `avifDecoder` up through the "Version 1.0.0 ends here." marker.
@@ -96,12 +127,6 @@ struct AvifRgbImage {
     uint8_t _reserved[48]; // slack for trailing 1.x fields (~8 bytes today)
 };
 
-// avifRWData — trivial pair matching avif.h:248-252.
-struct AvifRwData {
-    uint8_t* data;
-    size_t size;
-};
-
 // ── Dlsym table ────────────────────────────────────────────────────────────
 struct Syms {
     // Decode surface
@@ -116,6 +141,10 @@ struct Syms {
     AvifImage* (*avifImageCreate)(uint32_t w, uint32_t h, uint32_t depth, int yuvFormat);
     void (*avifImageDestroy)(AvifImage*);
     avifResult (*avifImageRGBToYUV)(AvifImage*, const AvifRgbImage*);
+    // Attaches an ICC profile to the image before encode. libavif copies the
+    // bytes into its own allocator, so the caller can free the source right
+    // after the call returns.
+    avifResult (*avifImageSetProfileICC)(AvifImage*, const uint8_t* icc, size_t iccSize);
     // avifEncoder is declared `void*` here because its mirror struct lives
     // further down; bun_avif_encode() reinterpret_casts the create() return
     // and writes quality/speed/etc. directly. Same ABI-pinned-mirror bucket
@@ -141,6 +170,7 @@ constexpr struct {
     SYM(avifImageCreate),
     SYM(avifImageDestroy),
     SYM(avifImageRGBToYUV),
+    SYM(avifImageSetProfileICC),
     SYM(avifEncoderCreate),
     SYM(avifEncoderDestroy),
     SYM(avifEncoderWrite),
@@ -268,11 +298,16 @@ int32_t bun_avif_probe(const uint8_t* bytes, size_t len, uint64_t max_pixels,
 }
 
 // Full decode: fill `out` (w*h*4 bytes, caller-allocated) with straight-alpha
-// RGBA8 pixels. Two-phase like the CG shim would be nicer but libavif's
-// `NextImage` owns the YUV→RGB; we do it in one pass and expose dims first
-// via `bun_avif_probe`.
+// RGBA8 pixels, and write the source's ICC profile (from the `colr` box)
+// into a freshly `malloc`'d buffer at `*out_icc_ptr` with `*out_icc_size`
+// bytes — `NULL`/`0` when the container had no profile. The Zig wrapper
+// re-homes those bytes into bun.default_allocator and then calls `free()`
+// on the libavif-malloc'd source. Two-phase like the CG shim would be
+// nicer but libavif's `NextImage` owns the YUV→RGB; we do it in one pass
+// and expose dims first via `bun_avif_probe`.
 int32_t bun_avif_decode(const uint8_t* bytes, size_t len, uint64_t max_pixels,
-    uint32_t* out_w, uint32_t* out_h, uint8_t* out)
+    uint32_t* out_w, uint32_t* out_h, uint8_t* out,
+    uint8_t** out_icc_ptr, size_t* out_icc_size)
 {
     auto s = load();
     if (!s) return kAvifUnavailable;
@@ -313,6 +348,24 @@ int32_t bun_avif_decode(const uint8_t* bytes, size_t len, uint64_t max_pixels,
     rgb.pixels = out;
     rgb.rowBytes = img->width * 4;
     if (s->avifImageYUVToRGB(img, &rgb) != kAvifResultOk) return kAvifDecodeFailed;
+
+    // Copy out the ICC profile if one was present. The decoder owns
+    // `img->icc.data` (it's freed by avifDecoderDestroy when the RAII
+    // guard above fires), so hand the caller a separate malloc'd buffer —
+    // matches the ownership contract for the RGBA buffer.
+    *out_icc_ptr = nullptr;
+    *out_icc_size = 0;
+    if (img->icc.data != nullptr && img->icc.size > 0) {
+        uint8_t* icc_copy = static_cast<uint8_t*>(std::malloc(img->icc.size));
+        if (icc_copy == nullptr) {
+            // Pixels are already filled in; treat an ICC OOM as "no profile"
+            // rather than failing the whole decode — jpeg/png do the same.
+            return 0;
+        }
+        std::memcpy(icc_copy, img->icc.data, img->icc.size);
+        *out_icc_ptr = icc_copy;
+        *out_icc_size = img->icc.size;
+    }
     return 0;
 }
 
@@ -331,7 +384,8 @@ int32_t bun_avif_decode(const uint8_t* bytes, size_t len, uint64_t max_pixels,
 // `ERR_IMAGE_ENCODE_FAILED`, which is the right contract for "the codec
 // is present but can't encode this input".
 int32_t bun_avif_encode(const uint8_t* rgba, uint32_t w, uint32_t h,
-    int quality, uint8_t** out_data, size_t* out_size)
+    int quality, const uint8_t* icc, size_t icc_size,
+    uint8_t** out_data, size_t* out_size)
 {
     auto s = load();
     if (!s) return kAvifUnavailable;
@@ -344,6 +398,16 @@ int32_t bun_avif_encode(const uint8_t* rgba, uint32_t w, uint32_t h,
         AvifImage* i;
         ~RImg() { s->avifImageDestroy(i); }
     } rimg { s, img };
+
+    // Attach the source ICC profile before encode so it lands in the
+    // output's `colr` box. libavif copies the bytes into its own allocator,
+    // so the caller can free `icc` right after this returns. A non-zero
+    // return here means the profile allocation failed inside libavif —
+    // drop it rather than fail the encode; an AVIF without a profile is
+    // still valid (implicitly sRGB via CICP). Same contract as jpeg/png.
+    if (icc != nullptr && icc_size > 0) {
+        (void)s->avifImageSetProfileICC(img, icc, icc_size);
+    }
 
     // Feed in the straight-alpha RGBA8 source. libavif allocates the YUV+A
     // planes itself during avifImageRGBToYUV.
@@ -410,8 +474,8 @@ void bun_avif_free_output(uint8_t* data)
 #include <cstddef>
 #include <cstdint>
 extern "C" int32_t bun_avif_probe(const uint8_t*, size_t, uint64_t, uint32_t*, uint32_t*) { return 1; }
-extern "C" int32_t bun_avif_decode(const uint8_t*, size_t, uint64_t, uint32_t*, uint32_t*, uint8_t*) { return 1; }
-extern "C" int32_t bun_avif_encode(const uint8_t*, uint32_t, uint32_t, int, uint8_t**, size_t*) { return 1; }
+extern "C" int32_t bun_avif_decode(const uint8_t*, size_t, uint64_t, uint32_t*, uint32_t*, uint8_t*, uint8_t**, size_t*) { return 1; }
+extern "C" int32_t bun_avif_encode(const uint8_t*, uint32_t, uint32_t, int, const uint8_t*, size_t, uint8_t**, size_t*) { return 1; }
 extern "C" void bun_avif_free_output(uint8_t*) {}
 
 #endif

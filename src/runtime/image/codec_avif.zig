@@ -29,9 +29,30 @@ const AVIF_TOO_MANY_PIXELS: i32 = 4;
 //                          TooManyPixels so callers get the same error code
 //                          jpeg/png/webp produce.
 extern fn bun_avif_probe(bytes: [*]const u8, len: usize, max_pixels: u64, out_w: *u32, out_h: *u32) i32;
-extern fn bun_avif_decode(bytes: [*]const u8, len: usize, max_pixels: u64, out_w: *u32, out_h: *u32, out: ?[*]u8) i32;
-extern fn bun_avif_encode(rgba: [*]const u8, w: u32, h: u32, quality: c_int, out_data: *?[*]u8, out_size: *usize) i32;
+extern fn bun_avif_decode(
+    bytes: [*]const u8,
+    len: usize,
+    max_pixels: u64,
+    out_w: *u32,
+    out_h: *u32,
+    out: ?[*]u8,
+    out_icc_ptr: *?[*]u8,
+    out_icc_size: *usize,
+) i32;
+extern fn bun_avif_encode(
+    rgba: [*]const u8,
+    w: u32,
+    h: u32,
+    quality: c_int,
+    icc: ?[*]const u8,
+    icc_size: usize,
+    out_data: *?[*]u8,
+    out_size: *usize,
+) i32;
 extern fn bun_avif_free_output(data: ?*anyopaque) void;
+// ICC profile buffer handed back by bun_avif_decode is plain malloc'd —
+// free() via the C runtime (same lib we dlopen'd libavif against).
+extern "c" fn free(ptr: ?*anyopaque) void;
 
 fn mapDecodeErr(rc: i32) codecs.Error {
     return switch (rc) {
@@ -56,7 +77,9 @@ pub fn decode(bytes: []const u8, max_pixels: u64) codecs.Error!codecs.Decoded {
     // between phases, which is cheap relative to the AV1 decode itself.
     var w: u32 = 0;
     var h: u32 = 0;
-    switch (bun_avif_decode(bytes.ptr, bytes.len, max_pixels, &w, &h, null)) {
+    var icc_ptr: ?[*]u8 = null;
+    var icc_size: usize = 0;
+    switch (bun_avif_decode(bytes.ptr, bytes.len, max_pixels, &w, &h, null, &icc_ptr, &icc_size)) {
         AVIF_OK => {},
         else => |rc| return mapDecodeErr(rc),
     }
@@ -64,11 +87,22 @@ pub fn decode(bytes: []const u8, max_pixels: u64) codecs.Error!codecs.Decoded {
 
     const out = try bun.default_allocator.alloc(u8, @as(usize, w) * h * 4);
     errdefer bun.default_allocator.free(out);
-    switch (bun_avif_decode(bytes.ptr, bytes.len, max_pixels, &w, &h, out.ptr)) {
+    switch (bun_avif_decode(bytes.ptr, bytes.len, max_pixels, &w, &h, out.ptr, &icc_ptr, &icc_size)) {
         AVIF_OK => {},
         else => |rc| return mapDecodeErr(rc),
     }
-    return .{ .rgba = out, .width = w, .height = h };
+    // Re-home the ICC profile out of the shim's `malloc`'d buffer into
+    // `bun.default_allocator` so the pipeline can free it uniformly. If
+    // the dupe OOMs we drop the profile and keep the pixels — jpeg/png do
+    // the same (see #30197 rationale); an AVIF without ICC is still valid
+    // (implicitly sRGB via CICP).
+    const icc: ?[]u8 = blk: {
+        if (icc_ptr == null or icc_size == 0) break :blk null;
+        defer free(icc_ptr);
+        const p = icc_ptr orelse break :blk null;
+        break :blk bun.default_allocator.dupe(u8, p[0..icc_size]) catch break :blk null;
+    };
+    return .{ .rgba = out, .width = w, .height = h, .icc_profile = icc };
 }
 
 /// Header-only dimensions probe for `.metadata()`. libavif's parse() stops
@@ -85,12 +119,17 @@ pub fn probe(bytes: []const u8, max_pixels: u64) codecs.Error!struct { width: u3
     return .{ .width = w, .height = h };
 }
 
-pub fn encode(rgba: []const u8, w: u32, h: u32, quality: u8) codecs.Error!codecs.Encoded {
+pub fn encode(rgba: []const u8, w: u32, h: u32, quality: u8, icc_profile: ?[]const u8) codecs.Error!codecs.Encoded {
     // libavif's `quality` is 0-100 (AVIF_QUALITY_WORST .. AVIF_QUALITY_BEST),
     // matching our `EncodeOptions.quality` verbatim — no remap needed.
+    // ICC bytes are attached via `avifImageSetProfileICC` inside the shim;
+    // libavif copies into its own allocator, so our caller keeps the
+    // borrow. See #30197 for why dropping the profile matters.
     var out: ?[*]u8 = null;
     var out_size: usize = 0;
-    switch (bun_avif_encode(rgba.ptr, w, h, @intCast(quality), &out, &out_size)) {
+    const icc_ptr: ?[*]const u8 = if (icc_profile) |p| if (p.len > 0) p.ptr else null else null;
+    const icc_len: usize = if (icc_profile) |p| p.len else 0;
+    switch (bun_avif_encode(rgba.ptr, w, h, @intCast(quality), icc_ptr, icc_len, &out, &out_size)) {
         AVIF_OK => {},
         else => |rc| return mapEncodeErr(rc),
     }

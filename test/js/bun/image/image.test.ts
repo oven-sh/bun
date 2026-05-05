@@ -721,6 +721,54 @@ describe("Bun.Image", () => {
       expect(String.fromCharCode(...lossless.subarray(12, 16))).toBe("VP8L");
       expect(extractWebpIccp(lossless)).toBeNull();
     });
+
+    // ── AVIF ICC carry-through — libavif stashes the profile in a `colr`
+    // box with type `prof`. Rather than hand-parse ISOBMFF here to extract
+    // it, round-trip through AVIF and back to PNG and check the iCCP
+    // chunk survives — same decode+encode path a Sharp user would hit.
+    // Gated on the machine having libavif with an AV1 encoder linked in.
+    const hasAvifIccRuntime = (() => {
+      if (!isLinux) return false;
+      // Decode probe: does the host have libavif at all?
+      const fixture =
+        "AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUEAAADybWV0YQAAAAAAAAAoaGRsc" +
+        "gAAAAAAAAAAcGljdAAAAAAAAAAAAAAAAGxpYmF2aWYAAAAADnBpdG0AAAAAAAEAAAAe" +
+        "aWxvYwAAAABEAAABAAEAAAABAAABGgAAABcAAAAoaWluZgAAAAAAAQAAABppbmZlAgA" +
+        "AAAABAABhdjAxQ29sb3IAAAAAamlwcnAAAABLaXBjbwAAABRpc3BlAAAAAAAAAAEAAA" +
+        "ABAAAAEHBpeGkAAAAAAwgICAAAAAxhdjFDgSAAAAAAABNjb2xybmNseAABAA0ABoAAA" +
+        "AAXaXBtYQAAAAAAAAABAAEEAQKDBAAAAB9tZGF0EgAKBzgABhAQ0GkyCh/wP///xAAA" +
+        "r3A=";
+      const probeScript =
+        `const b = Buffer.from(${JSON.stringify(fixture)}, "base64");` +
+        `new Bun.Image(b).metadata().then(() => process.exit(0), e => process.exit(e?.code === "ERR_IMAGE_FORMAT_UNSUPPORTED" ? 2 : 1));`;
+      try {
+        const p1 = Bun.spawnSync({ cmd: [bunExe(), "-e", probeScript], env: bunEnv, stdout: "ignore", stderr: "ignore" });
+        if (p1.exitCode === 2) return false;
+        // Encode probe: and does it have an AV1 encoder linked in?
+        const pngB64 = Buffer.from(cornersPng).toString("base64");
+        const encScript =
+          `const png = Buffer.from(${JSON.stringify(pngB64)}, "base64");` +
+          `new Bun.Image(png).avif({ quality: 50 }).bytes()` +
+          `.then(() => process.exit(0), e => process.exit((e?.code === "ERR_IMAGE_FORMAT_UNSUPPORTED" || e?.code === "ERR_IMAGE_ENCODE_FAILED") ? 2 : 1));`;
+        const p2 = Bun.spawnSync({ cmd: [bunExe(), "-e", encScript], env: bunEnv, stdout: "ignore", stderr: "ignore" });
+        return p2.exitCode !== 2;
+      } catch {
+        return false;
+      }
+    })();
+
+    test.skipIf(!hasAvifIccRuntime)("PNG iCCP → AVIF → PNG preserves the ICC profile byte-for-byte", async () => {
+      // PNG-with-iCCP → AVIF. Inside libavif the profile rides in the
+      // `colr` box. Decode that AVIF back through Bun.Image and re-encode
+      // to PNG — the iCCP chunk must reappear with identical bytes.
+      const srcPng = pngWithIccp(cornersPng, fakeProfile);
+      const avif = await new Bun.Image(srcPng).avif({ quality: 70 }).bytes();
+      expect(String.fromCharCode(...avif.subarray(4, 8))).toBe("ftyp");
+      const outPng = await new Bun.Image(avif).png().bytes();
+      const got = extractPngIccp(outPng);
+      expect(got).not.toBeNull();
+      expect(Array.from(got!)).toEqual(Array.from(fakeProfile));
+    });
   });
 
   // EXIF: build a minimal JPEG via Bun.Image, then splice in an APP1 segment

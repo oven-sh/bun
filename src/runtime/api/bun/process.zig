@@ -189,6 +189,32 @@ pub const ProcessExitHandler = struct {
 };
 pub const PidFDType = if (Environment.isLinux) fd_t else u0;
 
+/// Whether the process-exit poll should be registered one-shot.
+///
+/// On Linux we watch a pidfd via `EPOLLIN`. A pidfd becomes readable when the
+/// tracked process exits and stays readable until the fd is closed, so a
+/// plain level-triggered watch is sufficient: when the event fires we
+/// `wait4(WNOHANG)`, and on success we close the pidfd (which removes it
+/// from epoll).
+///
+/// `EPOLLONESHOT` is actively harmful here: the kernel disarms the fd the
+/// instant `epoll_wait` returns it — before user-space has dispatched it.
+/// If a poll callback then re-enters `us_loop_run_bun_tick` (e.g.
+/// `expect(p).resolves` → `waitForPromise` → `autoTick`, or any other
+/// `waitForPromise` path), the inner tick overwrites the shared
+/// `loop->ready_polls`/`num_ready_polls`/`current_ready_poll` and the outer
+/// dispatch silently skips its remaining events. A dropped one-shot pidfd
+/// event is unrecoverable: the fd is disarmed with no re-arm path, so the
+/// process's `'exit'` arrives only when the next unrelated timer wakes the
+/// loop. Level-triggered makes a dropped slot harmless — the next
+/// `epoll_wait` just returns it again. `rewatchPosix` still re-registers
+/// defensively if `wait4` returns 0, which is a harmless `CTL_MOD`.
+///
+/// macOS/FreeBSD watch the pid via `EVFILT_PROC` + `NOTE_EXIT`, which is
+/// inherently once-per-process — keep `EV_ONESHOT` there so the kernel
+/// auto-removes the filter.
+const process_poll_one_shot = !Environment.isLinux;
+
 pub const Process = struct {
     const Self = @This();
     const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
@@ -395,7 +421,7 @@ pub const Process = struct {
         switch (this.poller.fd.register(
             this.event_loop.loop(),
             .process,
-            true,
+            process_poll_one_shot,
         )) {
             .result => {
                 this.ref();
@@ -425,7 +451,7 @@ pub const Process = struct {
             const maybe = this.poller.fd.register(
                 this.event_loop.loop(),
                 .process,
-                true,
+                process_poll_one_shot,
             );
             switch (maybe) {
                 .err => {},

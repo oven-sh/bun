@@ -3047,10 +3047,11 @@ extern "C" uint32_t JSC__JSValue__findNextPopulatedIndex(JSC::EncodedJSValue jsV
         // No element storage at all — every index is a hole.
         return end;
 
+    // `indexingType()` masks the CopyOnWrite bit out (it returns
+    // `indexingTypeAndMisc() & AllWritableArrayTypes`), so the non-COW
+    // shape labels also cover their COW counterparts.
     case JSC::ArrayWithInt32:
-    case JSC::ArrayWithContiguous:
-    case JSC::CopyOnWriteArrayWithInt32:
-    case JSC::CopyOnWriteArrayWithContiguous: {
+    case JSC::ArrayWithContiguous: {
         uint32_t vectorLength = butterfly->vectorLength();
         uint32_t limit = std::min(end, vectorLength);
         auto data = butterfly->contiguous().data();
@@ -3061,8 +3062,7 @@ extern "C" uint32_t JSC__JSValue__findNextPopulatedIndex(JSC::EncodedJSValue jsV
         return end;
     }
 
-    case JSC::ArrayWithDouble:
-    case JSC::CopyOnWriteArrayWithDouble: {
+    case JSC::ArrayWithDouble: {
         // Holes and user values like `Number.NaN` are bit-identical in a
         // double butterfly, so this helper can't safely disambiguate them
         // from here. Anything inside the vector's populated range has to

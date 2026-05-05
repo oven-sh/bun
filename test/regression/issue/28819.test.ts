@@ -102,7 +102,12 @@ async function tryStartLocalPostgres(): Promise<void> {
     const version = versions[versions.length - 1];
     if (!version) return;
     await Bun.spawn({
-      cmd: ["su", "postgres", "-c", `/usr/lib/postgresql/${version}/bin/pg_ctl -D /var/lib/postgresql/data -l /tmp/pg.log start`],
+      cmd: [
+        "su",
+        "postgres",
+        "-c",
+        `/usr/lib/postgresql/${version}/bin/pg_ctl -D /var/lib/postgresql/data -l /tmp/pg.log start`,
+      ],
       stderr: "ignore",
       stdout: "ignore",
     }).exited;

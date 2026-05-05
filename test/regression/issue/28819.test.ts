@@ -78,7 +78,49 @@ function runJsonBindingTests(getUrl: () => string) {
   });
 }
 
-if (isDockerEnabled()) {
+async function canConnect(url: string): Promise<boolean> {
+  try {
+    const sql = new SQL({ url, connectionTimeout: 2, max: 1, idleTimeout: 1 });
+    try {
+      await sql`SELECT 1`;
+      return true;
+    } finally {
+      await sql.end().catch(() => {});
+    }
+  } catch {
+    return false;
+  }
+}
+
+// Try to start a local postgres (the farm container image ships with one but
+// it's not always running when `bun test` is invoked directly).
+async function tryStartLocalPostgres(): Promise<void> {
+  try {
+    const { existsSync, readdirSync } = await import("node:fs");
+    if (!existsSync("/usr/lib/postgresql")) return;
+    const versions = readdirSync("/usr/lib/postgresql").sort();
+    const version = versions[versions.length - 1];
+    if (!version) return;
+    await Bun.spawn({
+      cmd: ["su", "postgres", "-c", `/usr/lib/postgresql/${version}/bin/pg_ctl -D /var/lib/postgresql/data -l /tmp/pg.log start`],
+      stderr: "ignore",
+      stdout: "ignore",
+    }).exited;
+  } catch {}
+}
+
+const localUrl = process.env.DATABASE_URL || "postgres://postgres@localhost:5432/postgres";
+const dockerAvailable = isDockerEnabled();
+let localReachable = false;
+if (!dockerAvailable && !isCI) {
+  localReachable = await canConnect(localUrl);
+  if (!localReachable) {
+    await tryStartLocalPostgres();
+    localReachable = await canConnect(localUrl);
+  }
+}
+
+if (dockerAvailable) {
   describeWithContainer(
     "issue 28819 (docker)",
     {
@@ -96,12 +138,8 @@ if (isDockerEnabled()) {
       runJsonBindingTests(() => databaseUrl);
     },
   );
-} else if (!isCI) {
-  // Fall back to a locally running postgres (the farm/container image keeps
-  // one at localhost:5432 as the superuser `postgres`). This lets the gate
-  // and local dev runs exercise the fix without needing Docker. CI lanes
-  // without Docker (Windows) have no local postgres, so skip there.
+} else if (localReachable) {
   describe("issue 28819 (localhost)", () => {
-    runJsonBindingTests(() => process.env.DATABASE_URL || "postgres://postgres@localhost:5432/postgres");
+    runJsonBindingTests(() => localUrl);
   });
 }

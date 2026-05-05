@@ -1892,6 +1892,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
             error.NameTooLong,
             if (is_esm) .stmt else if (is_user_require_resolve) .require_resolve else .require,
         ) catch |err| bun.handleOom(err);
+        defer bun.default_allocator.free(printed);
         const msg = logger.Msg{
             .data = logger.rangeData(
                 null,
@@ -1955,6 +1956,8 @@ pub fn resolveMaybeNeedsTrailingSlash(
     }
     jsc_vm._resolve(&result, specifier_utf8.slice(), normalizeSource(source_utf8.slice()), is_esm, is_a_file_path) catch |err_| {
         var err = err_;
+        var printed: []const u8 = "";
+        defer if (printed.len > 0) jsc_vm.allocator.free(printed);
         const msg: logger.Msg = brk: {
             const msgs: []logger.Msg = log.msgs.items;
 
@@ -1972,7 +1975,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
             else
                 .require;
 
-            const printed = try bun.api.ResolveMessage.fmt(
+            printed = try bun.api.ResolveMessage.fmt(
                 jsc_vm.allocator,
                 specifier_utf8.slice(),
                 source_utf8.slice(),
@@ -1995,7 +1998,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
         };
 
         {
-            res.* = ErrorableString.err(err, (try bun.api.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice())));
+            res.* = ErrorableString.err(err, (try bun.api.ResolveMessage.create(global, jsc_vm.allocator, msg, source_utf8.slice())));
         }
 
         return;
@@ -2032,21 +2035,12 @@ pub fn drainMicrotasks(this: *VirtualMachine) void {
 pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, referrer: bun.String, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {
     switch (log.msgs.items.len) {
         0 => {
-            const msg: logger.Msg = brk: {
-                if (err == error.UnexpectedPendingResolution) {
-                    break :brk logger.Msg{
-                        .data = logger.rangeData(
-                            null,
-                            logger.Range.None,
-                            std.fmt.allocPrint(globalThis.allocator(), "Unexpected pending import in \"{f}\". To automatically install npm packages with Bun, please use an import statement instead of require() or dynamic import().\nThis error can also happen if dependencies import packages which are not referenced anywhere. Worst case, run `bun install` and opt-out of the node_modules folder until we come up with a better way to handle this error.", .{specifier}) catch unreachable,
-                        ),
-                    };
-                }
-
-                break :brk logger.Msg{
-                    .data = logger.rangeData(null, logger.Range.None, std.fmt.allocPrint(globalThis.allocator(), "{s} while building {f}", .{ @errorName(err), specifier }) catch unreachable),
-                };
-            };
+            const text = if (err == error.UnexpectedPendingResolution)
+                std.fmt.allocPrint(globalThis.allocator(), "Unexpected pending import in \"{f}\". To automatically install npm packages with Bun, please use an import statement instead of require() or dynamic import().\nThis error can also happen if dependencies import packages which are not referenced anywhere. Worst case, run `bun install` and opt-out of the node_modules folder until we come up with a better way to handle this error.", .{specifier}) catch unreachable
+            else
+                std.fmt.allocPrint(globalThis.allocator(), "{s} while building {f}", .{ @errorName(err), specifier }) catch unreachable;
+            defer globalThis.allocator().free(text);
+            const msg: logger.Msg = .{ .data = logger.rangeData(null, logger.Range.None, text) };
             {
                 ret.* = ErrorableResolvedSource.err(err, (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)));
             }

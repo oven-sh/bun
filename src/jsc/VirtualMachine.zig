@@ -736,7 +736,7 @@ pub fn reportExceptionInHotReloadedModuleIfNeeded(this: *jsc.VirtualMachine) voi
             //
             // Tail-recurse after the reload so the fresh
             // `pending_internal_promise` is re-read from the caller
-            // rather than the stale capture at line 720 above. Without
+            // rather than the stale local `promise` above. Without
             // this, a new module body that synchronously rejects
             // (top-level `throw`, transpile error) would leave the
             // fresh `.rejected` unreported until the next loop wakeup

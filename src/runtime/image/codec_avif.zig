@@ -142,5 +142,5 @@ pub fn encode(rgba: []const u8, w: u32, h: u32, quality: u8, icc_profile: ?[]con
 }
 
 const bun = @import("bun");
-const std = @import("std");
 const codecs = @import("./codecs.zig");
+const std = @import("std");

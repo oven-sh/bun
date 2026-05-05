@@ -2001,17 +2001,23 @@ describe("bun link integration", () => {
   // the directory lifetime via a `using home = tempDir(...)` declaration so
   // the harness cleans up global-link fixtures on test exit.
   //
-  // Override `BUN_INSTALL_GLOBAL_DIR` to an in-home path too — it takes
-  // precedence over `BUN_INSTALL` inside `openGlobalDir`. On CI where
-  // the agent sets it to a persistent host path (e.g. to share a
-  // cross-test warm global cache), a `bun link` in one test would leak
-  // its producer body into every subsequent test's `no-deps` override
-  // via that shared dir and the body-check assertions would flap.
+  // Override `BUN_INSTALL_GLOBAL_DIR` (precedes `BUN_INSTALL` inside
+  // `openGlobalDir`) and `BUN_INSTALL_CACHE_DIR` (precedes bunfig's
+  // `install.cache` inside `fetchCacheDirectoryPath`). On CI, the
+  // runner pre-points `BUN_INSTALL_CACHE_DIR` at a shared tmpdir to
+  // warm the per-package tarball cache across tests — under the
+  // isolated linker that cache also contains the global virtual
+  // store (`<cache>/links/<storepath>-<hash>/...`), so one linked
+  // test's producer-materialized body persists into every subsequent
+  // test's install whose `no-deps@1.0.0` lockfile closure hashes to
+  // the same entry key, and the "marker must be absent" assertions
+  // flap. Pin everything inside the per-test tempDir.
   function hermeticEnv(home: string) {
     return {
       ...bunEnv,
       BUN_INSTALL: home,
       BUN_INSTALL_GLOBAL_DIR: join(home, "install", "global"),
+      BUN_INSTALL_CACHE_DIR: join(home, "install", "cache"),
       HOME: home,
       XDG_CONFIG_HOME: home,
       USERPROFILE: home,

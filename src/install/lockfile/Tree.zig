@@ -337,6 +337,220 @@ pub fn Builder(comptime method: BuilderMethod) type {
     };
 }
 
+pub const PrunedTree = struct {
+    trees: std.ArrayListUnmanaged(Tree),
+    dep_ids: std.ArrayListUnmanaged(DependencyID),
+};
+
+/// Produce a filtered view of the already-resolved tree in `lockfile.buffers.trees` /
+/// `lockfile.buffers.hoisted_dependencies`, keeping the hoist layout intact and only
+/// removing dep_ids that are filtered out by:
+///   - workspace_filters (root workspace deps not in filter set)
+///   - install_root_dependencies (root non-workspace deps)
+///   - packages_to_install (security scanner: restricts root-level install set)
+///   - OS/CPU/libc, `--omit=dev/peer/optional`
+///   - bundleDependencies (entries baked into the publisher's tarball)
+/// and dep_ids whose package, or dep_id owner, is not reachable from the
+/// filtered root set.
+///
+/// This is how `--filter` must behave when a lockfile already exists: the installed
+/// `node_modules` layout must be a subset of the layout the lockfile describes,
+/// not a re-hoisted tree computed from the filtered subset of workspaces.
+pub fn pruneSavedTree(
+    lockfile: *const Lockfile,
+    manager: *const PackageManager,
+    install_root_dependencies: bool,
+    workspace_filters: []const WorkspaceFilter,
+    packages_to_install: ?[]const PackageID,
+    allocator: Allocator,
+) OOM!PrunedTree {
+    const saved_trees = lockfile.buffers.trees.items;
+    const saved_hoisted_deps = lockfile.buffers.hoisted_dependencies.items;
+    const resolutions = lockfile.buffers.resolutions.items;
+    const pkgs = lockfile.packages.slice();
+    const pkg_resolutions_lists = pkgs.items(.dependencies);
+    const num_packages = lockfile.packages.len;
+
+    // Phase 1: BFS from root to compute "active" packages. The root (pkg id 0) is
+    // implicitly active as a container; whether its individual deps enter the
+    // active set depends on the filter predicates.
+    var active = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(allocator, num_packages);
+    defer active.deinit(allocator);
+    // The root package is always active as a *container* — nothing resolves
+    // to it, so the BFS won't set bit 0, but the Phase 2 owner check needs
+    // it set to keep root-owned dep_ids (workspace symlinks and any direct
+    // root `dependencies` when `install_root_dependencies` is true).
+    if (num_packages > 0) active.set(0);
+
+    var queue = bun.LinearFifo(PackageID, .Dynamic).init(allocator);
+    defer queue.deinit();
+
+    // Seed from root's direct deps.
+    if (num_packages > 0) {
+        const root_deps_slice = pkg_resolutions_lists[0];
+        for (root_deps_slice.begin()..root_deps_slice.end()) |dep_id_usize| {
+            const dep_id: DependencyID = @intCast(dep_id_usize);
+            const pkg_id = resolutions[dep_id];
+            if (pkg_id == invalid_package_id or pkg_id >= num_packages) continue;
+            if (isFilteredDependencyOrWorkspace(
+                dep_id,
+                0,
+                workspace_filters,
+                install_root_dependencies,
+                manager,
+                lockfile,
+            )) continue;
+            if (packages_to_install) |allowed| {
+                var found = false;
+                for (allowed) |allowed_pkg| {
+                    if (allowed_pkg == pkg_id) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) continue;
+            }
+            if (!active.isSet(pkg_id)) {
+                active.set(pkg_id);
+                try queue.writeItem(pkg_id);
+            }
+        }
+    }
+
+    // Propagate: every dep of an active package that passes the filter predicate
+    // activates its target package. `isFilteredDependencyOrWorkspace` with
+    // `parent_pkg_id != 0` short-circuits past the workspace-filter branch, so
+    // only OS/CPU/libc/omit-type/bundled checks apply here.
+    while (queue.readItem()) |pkg_id| {
+        const deps_slice = pkg_resolutions_lists[pkg_id];
+        for (deps_slice.begin()..deps_slice.end()) |dep_id_usize| {
+            const dep_id: DependencyID = @intCast(dep_id_usize);
+            const child_pkg_id = resolutions[dep_id];
+            if (child_pkg_id == invalid_package_id or child_pkg_id >= num_packages) continue;
+            if (isFilteredDependencyOrWorkspace(
+                dep_id,
+                pkg_id,
+                workspace_filters,
+                install_root_dependencies,
+                manager,
+                lockfile,
+            )) continue;
+            if (!active.isSet(child_pkg_id)) {
+                active.set(child_pkg_id);
+                try queue.writeItem(child_pkg_id);
+            }
+        }
+    }
+
+    // Phase 2: copy the saved trees, but only keep hoisted dep_ids whose package
+    // is active. Tree structure (ids, parents, folder names) is preserved so the
+    // on-disk layout matches the lockfile. Empty trees are kept in place so tree
+    // ids stay stable for callers that index `buffers.trees` by id.
+    //
+    // A tree's *container* package (the one whose `node_modules/` this folder is)
+    // must itself be active — otherwise the whole tree is an orphan nested under
+    // a package that was filtered out. Without this check, a `foo/lodash` tree
+    // whose `lodash` happens to be reachable through some other active package
+    // (same pkg_id) would still emit `node_modules/foo/node_modules/lodash/`
+    // without `foo/` existing. `container_active` is precomputed in a single
+    // pass since a tree is valid only when every ancestor up to the root is
+    // active.
+    var container_active = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(allocator, saved_trees.len);
+    defer container_active.deinit(allocator);
+    if (saved_trees.len > 0) {
+        // Root tree (id 0) is the root package's `node_modules/` — always a
+        // valid container.
+        container_active.set(0);
+        for (saved_trees[1..], 1..) |saved, i| {
+            // `saved.parent` is always < `i` in a saved tree (parents are
+            // allocated before children), so we can rely on the parent's
+            // `container_active` bit being up to date. Bound-check anyway
+            // so a corrupted lockfile doesn't assert-out.
+            if (saved.parent == invalid_id) continue;
+            if (saved.parent >= saved_trees.len) continue;
+            if (!container_active.isSet(saved.parent)) continue;
+            const dep_id = saved.dependency_id;
+            if (dep_id == invalid_dependency_id or dep_id == root_dep_id) {
+                // Non-root trees shouldn't carry `root_dep_id` / invalid, but
+                // be defensive and keep them when the parent is active.
+                container_active.set(i);
+                continue;
+            }
+            if (dep_id >= lockfile.buffers.dependencies.items.len) continue;
+            const pkg_id = resolutions[dep_id];
+            if (pkg_id == invalid_package_id or pkg_id >= num_packages) continue;
+            if (active.isSet(pkg_id)) container_active.set(i);
+        }
+    }
+
+    var out_trees = try std.ArrayListUnmanaged(Tree).initCapacity(allocator, saved_trees.len);
+    out_trees.items.len = saved_trees.len;
+
+    var out_dep_ids = try DependencyIDList.initCapacity(allocator, saved_hoisted_deps.len);
+
+    const deps_buf = lockfile.buffers.dependencies.items;
+
+    // Reverse map: dep_id → owning pkg_id (the package whose `.dependencies`
+    // slice contains this dep_id). `.resolvable` hoists transitive edges of a
+    // bundled package up to the bundler's tree (because bundled placement
+    // stops hoisting at `hoist_root_id`), so the saved tree can contain e.g.
+    // `bundled_pkg → lodash` dep_ids at the bundler's node_modules with plain
+    // `.normal` behavior. Phase 1's BFS correctly skips the bundled edge and
+    // therefore doesn't activate `bundled_pkg`, but the isBundled check below
+    // only catches the bundled edge itself, not the transitives. Require the
+    // *owning* package to be active so those orphan transitives drop out.
+    var dep_owner = try allocator.alloc(PackageID, deps_buf.len);
+    defer allocator.free(dep_owner);
+    @memset(dep_owner, invalid_package_id);
+    for (0..num_packages) |owner_usize| {
+        const owner: PackageID = @intCast(owner_usize);
+        const range = pkg_resolutions_lists[owner];
+        for (range.begin()..range.end()) |d_usize| {
+            const d: DependencyID = @intCast(d_usize);
+            if (d < deps_buf.len) dep_owner[d] = owner;
+        }
+    }
+
+    for (saved_trees, out_trees.items, 0..) |saved, *out, tree_idx| {
+        out.* = saved;
+        const off: u32 = @intCast(out_dep_ids.items.len);
+        if (container_active.isSet(tree_idx)) {
+            for (saved.dependencies.get(saved_hoisted_deps)) |dep_id| {
+                const pkg_id = resolutions[dep_id];
+                if (pkg_id == invalid_package_id or pkg_id >= num_packages) continue;
+                if (!active.isSet(pkg_id)) continue;
+                // The dep_id's *owning* package must also be active — see the
+                // `dep_owner` comment above. This both matches the behavior
+                // of `.filter` for bundled transitives and catches any other
+                // case where a dep_id survived pruning because its target
+                // happened to be reachable through some other path.
+                if (dep_id < dep_owner.len) {
+                    const owner = dep_owner[dep_id];
+                    if (owner == invalid_package_id) continue;
+                    if (!active.isSet(owner)) continue;
+                }
+                // Bundled deps are baked into the publisher's tarball — the
+                // installer extracts the tarball and does not separately
+                // download/place the bundled entry. `.resolvable` places
+                // bundled dep_ids anyway (Tree.zig:709), but `.filter` drops
+                // them via `isFilteredDependencyOrWorkspace`. Match that so
+                // pruning doesn't accidentally schedule a registry copy on
+                // top of the bundled bytes when the same pkg_id is reachable
+                // via a non-bundled edge elsewhere in the active set.
+                if (dep_id < deps_buf.len and deps_buf[dep_id].behavior.isBundled()) continue;
+                out_dep_ids.appendAssumeCapacity(dep_id);
+            }
+        }
+        const len: u32 = @intCast(out_dep_ids.items.len - off);
+        out.dependencies = .{ .off = off, .len = len };
+    }
+
+    return .{
+        .trees = out_trees,
+        .dep_ids = out_dep_ids,
+    };
+}
+
 pub fn isFilteredDependencyOrWorkspace(
     dep_id: DependencyID,
     parent_pkg_id: PackageID,

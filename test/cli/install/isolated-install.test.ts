@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readlinkSync } from "fs";
 import { mkdir, readdir, readlink, rm, stat, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir, tmpdirSync } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
 import { dirname, join } from "path";
 
 const registry = new VerdaccioRegistry();

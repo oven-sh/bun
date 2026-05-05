@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness";
 
 describe("bun update --interactive snapshots", () => {
   it("should not crash with various package name lengths", async () => {
@@ -31,7 +31,7 @@ describe("bun update --interactive snapshots", () => {
     });
 
     // Test that the command doesn't crash with mixed package lengths
-    const result = await Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "update", "--interactive", "--dry-run"],
       cwd: dir,
       env: bunEnv,
@@ -41,26 +41,26 @@ describe("bun update --interactive snapshots", () => {
     });
 
     // Send 'n' to exit without selecting anything
-    result.stdin.write("n\n");
-    result.stdin.end();
+    proc.stdin.write("n\n");
+    proc.stdin.end();
 
-    const stdout = await new Response(result.stdout).text();
-    const stderr = await new Response(result.stderr).text();
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
 
     // Replace version numbers and paths to avoid flakiness
-    const normalizedOutput = normalizeOutput(stdout);
+    const normalizedOutput = normalizeOutput(stdout, dir);
 
     // The output should show proper column spacing and formatting
     expect(normalizedOutput).toMatchSnapshot("update-interactive-no-crash");
-
-    // Should not crash or have formatting errors
-    expect(stderr).not.toContain("panic");
-    expect(stderr).not.toContain("underflow");
-    expect(stderr).not.toContain("overflow");
+    expect(exitCode).toBe(0);
   });
 
   it("should handle extremely long package names without crashing", async () => {
-    const veryLongName = "a".repeat(80);
+    // Use Buffer.alloc instead of .repeat() for better debug build performance
+    const veryLongName = Buffer.alloc(80, "a").toString();
     const dir = tempDirWithFiles("update-interactive-long-names", {
       "package.json": JSON.stringify({
         name: "test-project",
@@ -72,7 +72,7 @@ describe("bun update --interactive snapshots", () => {
       }),
     });
 
-    const result = await Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "update", "--interactive", "--dry-run"],
       cwd: dir,
       env: bunEnv,
@@ -81,18 +81,19 @@ describe("bun update --interactive snapshots", () => {
       stderr: "pipe",
     });
 
-    result.stdin.write("n\n");
-    result.stdin.end();
+    proc.stdin.write("n\n");
+    proc.stdin.end();
 
-    const stdout = await new Response(result.stdout).text();
-    const stderr = await new Response(result.stderr).text();
+    const [stdout, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.exited,
+    ]);
 
-    const normalizedOutput = normalizeOutput(stdout);
+    const normalizedOutput = normalizeOutput(stdout, dir);
 
     // Should not crash
     expect(normalizedOutput).toMatchSnapshot("update-interactive-long-names");
-    expect(stderr).not.toContain("panic");
-    expect(stderr).not.toContain("underflow");
+    expect(exitCode).toBe(0);
   });
 
   it("should handle complex version strings without crashing", async () => {
@@ -108,7 +109,7 @@ describe("bun update --interactive snapshots", () => {
       }),
     });
 
-    const result = await Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "update", "--interactive", "--dry-run"],
       cwd: dir,
       env: bunEnv,
@@ -117,24 +118,100 @@ describe("bun update --interactive snapshots", () => {
       stderr: "pipe",
     });
 
-    result.stdin.write("n\n");
-    result.stdin.end();
+    proc.stdin.write("n\n");
+    proc.stdin.end();
 
-    const stdout = await new Response(result.stdout).text();
-    const stderr = await new Response(result.stderr).text();
+    const [stdout, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.exited,
+    ]);
 
-    const normalizedOutput = normalizeOutput(stdout);
+    const normalizedOutput = normalizeOutput(stdout, dir);
 
     // Should not crash
     expect(normalizedOutput).toMatchSnapshot("update-interactive-complex-versions");
-    expect(stderr).not.toContain("panic");
-    expect(stderr).not.toContain("underflow");
+    expect(exitCode).toBe(0);
   });
 });
 
-function normalizeOutput(output: string): string {
+describe("bun update --interactive messages", () => {
+  it("should show appropriate message for select-all operation", async () => {
+    // Test that the interactive update command shows helpful messages when
+    // packages are selected via 'A' (select all by caret-compatibility).
+    //
+    // The fix ensures that when packages are already at their target version,
+    // we show "X packages are already at target version (use 'l' to select latest)"
+    // instead of the confusing "No packages selected for update".
+
+    const dir = tempDirWithFiles("update-interactive-messages", {
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: {
+          // Use caret range to test caret-compatibility behavior
+          "is-number": "^7.0.0",
+        },
+      }),
+    });
+
+    // Run bun install to create a lockfile
+    await using installProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const installExitCode = await installProc.exited;
+    expect(installExitCode).toBe(0);
+
+    // Run update --interactive with select all
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "update", "--interactive", "--dry-run"],
+      cwd: dir,
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    // Press 'A' to select all packages by caret-compatibility, then confirm with newline
+    proc.stdin.write("A\n");
+    proc.stdin.end();
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+
+    // Strip ANSI codes so includes() checks aren't broken by colored CLI output
+    const combinedOutput = normalizeOutput(stdout + stderr, dir);
+
+    // The output should contain one of these valid responses:
+    // 1. "All packages are up to date" - no updates available at all
+    // 2. "already at target version" - packages selected but at target (new message from this PR)
+    // 3. "Would update" - dry-run showing actual updates
+    expect(combinedOutput).toMatch(
+      /All packages are up to date|already at target version|Would update/,
+    );
+
+    // If the new message appears, verify it includes the hint about using 'l'
+    if (combinedOutput.includes("already at target version")) {
+      expect(combinedOutput).toContain("use 'l'");
+    }
+
+    // Verify successful execution
+    expect(exitCode).toBe(0);
+  });
+});
+
+function normalizeOutput(output: string, dir?: string): string {
+  // First apply the standard normalization from harness
+  let normalized = normalizeBunSnapshot(output, dir);
+
   // Remove Bun version to avoid test flakiness
-  let normalized = output.replace(/bun update --interactive v\d+\.\d+\.\d+[^\n]*/g, "bun update --interactive vX.X.X");
+  normalized = normalized.replace(/bun update --interactive v\d+\.\d+\.\d+[^\n]*/g, "bun update --interactive vX.X.X");
 
   // Normalize any absolute paths
   normalized = normalized.replace(/\/tmp\/[^\/\s]+/g, "/tmp/test-dir");

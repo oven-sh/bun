@@ -18,10 +18,7 @@ describe("ReadStream.prototype.setRawMode", () => {
         bunExe(),
         "-e",
         `
-          if (!process.stdin.isTTY) {
-            process.stdout.write("SKIP:stdin is not a TTY");
-            process.exit(0);
-          }
+          const isTTY = process.stdin.isTTY;
           const before = process.stdin.isRaw;
           const ret = process.stdin.setRawMode(true);
           const afterTrue = process.stdin.isRaw;
@@ -30,6 +27,7 @@ describe("ReadStream.prototype.setRawMode", () => {
           process.stdout.write(
             "RESULT " +
               JSON.stringify({
+                isTTY,
                 before,
                 afterTrue,
                 afterFalse,
@@ -46,7 +44,6 @@ describe("ReadStream.prototype.setRawMode", () => {
         data(_t, chunk: Uint8Array) {
           output += decoder.decode(chunk, { stream: true });
           if (output.includes("RESULT ") && output.includes("}")) done.resolve();
-          if (output.includes("SKIP:")) done.resolve();
         },
         exit() {
           eof.resolve();
@@ -60,14 +57,15 @@ describe("ReadStream.prototype.setRawMode", () => {
     proc.terminal?.close();
     output += decoder.decode();
 
-    // Bun.Terminal always gives the child a TTY stdin (openpty / ConPTY), so
-    // the SKIP path should never trigger. If RESULT is missing for any
-    // reason, surface the raw terminal output rather than a bare null match.
+    // Bun.Terminal always gives the child a TTY stdin (openpty / ConPTY). If
+    // RESULT is missing for any reason, surface the raw terminal output
+    // rather than a bare null match.
     const match = output.match(/RESULT (\{[^}]*\})/);
     if (!match) {
       throw new Error("child did not emit RESULT; terminal output was: " + JSON.stringify(output));
     }
     expect(JSON.parse(match[1])).toEqual({
+      isTTY: true,
       before: false,
       afterTrue: true,
       afterFalse: false,

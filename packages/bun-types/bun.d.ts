@@ -7235,10 +7235,13 @@ declare module "bun" {
     readonly killed: boolean;
 
     /**
-     * Kill the process
-     * @param exitCode The exitCode to send to the process
+     * Send a signal to the process, or probe for its existence with `0`
+     * (POSIX-style existence check that does not terminate the child).
+     * @param signal The signal to send to the process. Defaults to `"SIGTERM"`.
+     * @returns `true` if the signal was sent (or, for `signal === 0`, the
+     * process is still alive); `false` if the process has already exited.
      */
-    kill(exitCode?: number | NodeJS.Signals): void;
+    kill(signal?: number | NodeJS.Signals): boolean;
 
     /**
      * This method will tell Bun to wait for this process to exit after you already

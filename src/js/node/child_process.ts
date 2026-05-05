@@ -1484,15 +1484,12 @@ class ChildProcess extends EventEmitter {
 
     const handle = this.#handle;
     if (handle) {
-      if (handle.killed) {
-        this.killed = true;
-        return true;
-      }
-
       try {
-        handle.kill(signal);
-        this.killed = true;
-        return true;
+        // Don't gate on handle.killed: Bun flips it on any exit, signalled or not.
+        const delivered = handle.kill(signal);
+        // kill(0) is a POSIX existence probe, not a kill — don't mark killed.
+        if (delivered && signal !== 0) this.killed = true;
+        return delivered;
       } catch (e) {
         this.emit("error", e);
       }

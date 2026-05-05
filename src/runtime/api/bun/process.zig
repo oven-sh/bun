@@ -547,7 +547,18 @@ pub const Process = struct {
         bun.destroy(this);
     }
 
-    pub fn kill(this: *Process, signal: u8) Maybe(void) {
+    /// Sends `signal` to the process.
+    ///
+    /// Returns:
+    /// - `.result = true` if the signal was delivered.
+    /// - `.result = false` if the child could not be reached — either the
+    ///   poller is already `.detached` (we observed the exit on our side)
+    ///   or the OS reported `ESRCH`. Callers that just want best-effort
+    ///   termination can ignore this, but anything JS-visible (e.g.
+    ///   `subprocess.kill()`) needs to propagate it so Node's
+    ///   `ChildProcess.kill()` can return `false`.
+    /// - `.err` for any other error.
+    pub fn kill(this: *Process, signal: u8) Maybe(bool) {
         if (comptime Environment.isPosix) {
             switch (this.poller) {
                 .waiter_thread, .fd => {
@@ -558,9 +569,17 @@ pub const Process = struct {
                         // if the process was already killed don't throw
                         if (errno_ != .SRCH)
                             return .{ .err = bun.sys.Error.fromCode(errno_, .kill) };
+
+                        return .{ .result = false };
                     }
+
+                    return .{ .result = true };
                 },
-                else => {},
+                // `.detached` means we never armed the poller or we already
+                // called `detach()` from `onExit`. Either way there is no
+                // live child to signal — report "not delivered" rather than
+                // claiming success we didn't attempt.
+                .detached => return .{ .result = false },
             }
         } else if (comptime Environment.isWindows) {
             switch (this.poller) {
@@ -570,19 +589,17 @@ pub const Process = struct {
                         if (err.errno != @intFromEnum(bun.sys.E.SRCH)) {
                             return .{ .err = err };
                         }
+
+                        return .{ .result = false };
                     }
 
-                    return .{
-                        .result = {},
-                    };
+                    return .{ .result = true };
                 },
-                else => {},
+                .detached => return .{ .result = false },
             }
         }
 
-        return .{
-            .result = {},
-        };
+        return .{ .result = false };
     }
 };
 

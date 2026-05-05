@@ -9,18 +9,31 @@
 
 use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
-use bun_js_parser::{BundledAst as JSAst, Index};
+use bun_js_parser::ast::bundled_ast as JSAst;
+use bun_js_parser::Index;
 use bun_options_types::ImportRecord;
 
 use crate::bundle_v2::BundleV2;
-use crate::parse_task::ParseTask;
 
-bun_output::declare_scope!(barrel, hidden);
+bun_core::declare_scope!(barrel, hidden);
 
 pub enum RequestedExports {
     All,
     Partial(StringArrayHashMap<()>),
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// TODO(b2-blocked): every fn below takes `&mut BundleV2` / `&mut
+// ParseTask::Result[::Success]` and dereferences fields (`transpiler`, `graph`,
+// `requested_exports`, `dev_server_handle`, `ast`, `import_records`). Those are
+// still opaque `()` stubs while `bundle_v2` / `ParseTask` remain gated.
+// Re-gated as a unit; `RequestedExports` is the only public surface needed by
+// other un-gated modules.
+// ───────────────────────────────────────────────────────────────────────────
+#[cfg(any())]
+mod gated {
+use super::*;
+use crate::ParseTask;
 
 // PORT NOTE: 'a borrows arena-backed AST alias strings (named_imports/named_exports).
 struct BarrelExportResolution<'a> {
@@ -715,6 +728,7 @@ fn persist_barrel_export(dev: &crate::dispatch::DevServerHandle, barrel_path: &[
 use bun_options_types::ImportKind;
 use crate::bundle_v2::{PatchImportRecordSourceIndicesArgs, ResolveImportRecordsArgs};
 use crate::options::SideEffects;
+} // mod gated
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -12,6 +12,11 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 // ── sub-modules (un-gated in B-2; remaining gates need higher-tier deps) ──
+// TODO(b2-blocked): bun_uws::SocketHandler — AsyncHTTP/HTTPContext/HTTPThread/
+// ProxyTunnel/h2_client/h3_client are mutually recursive and all bottom out on
+// uws socket types + ssl_config (see note above `_phase_a_draft`). They cannot
+// be un-gated piecewise; first un-gate `ssl_config` + `bun_uws_sys::socket`
+// (T4), then this whole cluster lands together.
 #[cfg(any())] #[path = "AsyncHTTP.rs"]              pub mod async_http;
 #[path = "CertificateInfo.rs"]                      pub mod certificate_info;
 #[path = "Decompressor.rs"]                         pub mod decompressor;
@@ -54,7 +59,6 @@ pub use send_file::SendFile;
 pub struct ProxyTunnel(());
 pub struct SSLConfig(());
 pub struct SSLWrapper<T>(core::marker::PhantomData<T>);
-pub struct Flags(());
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -95,7 +99,293 @@ impl Default for HTTPResponseMetadata {
 pub use bun_http_types::{ETag, FetchCacheMode, FetchRequestMode, MimeType, URLPath};
 
 // ═══════════════════════════════════════════════════════════════════════
+// B-2: extracted from `_phase_a_draft` — standalone items with no deps on
+// the still-gated HTTPClient/HTTPContext/ssl_* surfaces.
+// ═══════════════════════════════════════════════════════════════════════
+
+use core::sync::atomic::AtomicU32;
+use bun_string::MutableString;
+use bun_http_types::FetchRedirect::CommonAbortReason;
+
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
+pub enum HTTPUpgradeState {
+    #[default]
+    None = 0,
+    Pending = 1,
+    Upgraded = 2,
+}
+
+// PORT NOTE: was `packed struct(u32)` with mixed bool + 2-bit enum fields.
+// Kept as a plain struct since it never crosses FFI; restore packing in Phase B
+// if the 32-byte vs 4-byte size difference shows up in profiling.
+// PERF(port): was packed struct(u32) — profile in Phase B.
+#[derive(Clone, Copy)]
+pub struct Flags {
+    pub disable_timeout: bool,
+    pub disable_keepalive: bool,
+    pub disable_decompression: bool,
+    pub did_have_handshaking_error: bool,
+    pub force_last_modified: bool,
+    pub redirected: bool,
+    pub proxy_tunneling: bool,
+    pub reject_unauthorized: bool,
+    pub is_preconnect_only: bool,
+    pub is_streaming_request_body: bool,
+    pub defer_fail_until_connecting_is_complete: bool,
+    pub upgrade_state: HTTPUpgradeState,
+    pub protocol: Protocol,
+    /// Set by `fetch(url, { protocol: "http2" })`: ALPN advertises only h2
+    /// and the request fails if the server selects anything else.
+    pub force_http2: bool,
+    /// Set by `fetch(url, { protocol: "http1.1" })`: opt out of h2 even when
+    /// the experimental env flag would otherwise advertise it.
+    pub force_http1: bool,
+    /// Set by `fetch(url, { protocol: "http3" })`: skip TCP entirely and open
+    /// a QUIC connection. HTTPS-only; no proxy/unix-socket support.
+    pub force_http3: bool,
+    /// Set after the first H3 retry so a stale-session/GOAWAY race retries
+    /// once on a fresh connection but never loops.
+    pub h3_retried: bool,
+}
+
+impl Default for Flags {
+    fn default() -> Self {
+        Self {
+            disable_timeout: false,
+            disable_keepalive: false,
+            disable_decompression: false,
+            did_have_handshaking_error: false,
+            force_last_modified: false,
+            redirected: false,
+            proxy_tunneling: false,
+            reject_unauthorized: true,
+            is_preconnect_only: false,
+            is_streaming_request_body: false,
+            defer_fail_until_connecting_is_complete: false,
+            upgrade_state: HTTPUpgradeState::None,
+            protocol: Protocol::Http1_1,
+            force_http2: false,
+            force_http1: false,
+            force_http3: false,
+            h3_retried: false,
+        }
+    }
+}
+
+// ───────────────────────────── globals ─────────────────────────────
+
+pub static ASYNC_HTTP_ID_MONOTONIC: AtomicU32 = AtomicU32::new(0);
+
+/// Set once at startup from `--experimental-http2-fetch` (before the HTTP
+/// thread spawns) and then only read on that thread, so no atomics needed.
+pub static mut EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI: bool = false;
+/// Set once at startup from `--experimental-http3-fetch`. Same threading
+/// rules as the http2 flag.
+pub static mut EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI: bool = false;
+
+const MAX_REDIRECT_URL_LENGTH: usize = 128 * 1024;
+
+#[unsafe(export_name = "BUN_DEFAULT_MAX_HTTP_HEADER_SIZE")]
+pub static mut MAX_HTTP_HEADER_SIZE: usize = 16 * 1024;
+
+pub static mut OVERRIDDEN_DEFAULT_USER_AGENT: &'static [u8] = b"";
+
+pub const END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY: &[u8] = b"0\r\n\r\n";
+
+pub static mut TEMP_HOSTNAME: [u8; 8192] = [0; 8192];
+
+const DEFAULT_REDIRECT_COUNT: i8 = 127;
+
+const MAX_TLS_RECORD_SIZE: usize = 16 * 1024;
+
+/// REFUSED_STREAM or graceful GOAWAY past our id: the server promises it
+/// did not process the request, so re-dispatch from the top. Only reached
+/// for `.bytes` bodies (replayable).
+pub const MAX_H2_RETRIES: u8 = 5;
+
+const PREALLOCATE_MAX: usize = 1024 * 1024 * 256;
+
+#[inline]
+pub fn cleanup(_force: bool) {
+    // PERF(port): was MimallocArena bulk-free — profile in Phase B
+}
+
+/// Whether the experimental Alt-Svc-driven HTTP/3 upgrade is enabled at all
+/// (CLI flag or env var). Used on its own to gate `H3.AltSvc.record` — a
+/// response that arrived over a request shape h3 can't serve (proxy, sendfile,
+/// `force_http1`) still carries an authoritative Alt-Svc for the origin.
+pub fn h3_alt_svc_enabled() -> bool {
+    // SAFETY: set once at startup before HTTP thread spawns; only read thereafter.
+    let cli = unsafe { EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI };
+    cli || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT
+        .get()
+        .unwrap_or(false)
+}
+
+/// Strips an optional port suffix from a host string (e.g. "example.com:443" -> "example.com").
+/// Handles IPv6 bracket notation correctly (e.g. "[::1]:443" -> "[::1]").
+pub fn strip_port_from_host(host: &[u8]) -> &[u8] {
+    if host.is_empty() {
+        return host;
+    }
+    // IPv6 with brackets: "[::1]:port"
+    if host[0] == b'[' {
+        if let Some(bracket) = host.iter().rposition(|&b| b == b']') {
+            // Return everything up to and including ']'
+            return &host[0..bracket + 1];
+        }
+        return host;
+    }
+    // IPv4 or hostname: find last colon
+    if let Some(colon) = host.iter().rposition(|&b| b == b':') {
+        return &host[0..colon];
+    }
+    host
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum ShouldContinue {
+    ContinueStreaming,
+    Finished,
+}
+
+#[derive(Default, Copy, Clone)]
+pub enum BodySize {
+    TotalReceived(usize),
+    ContentLength(usize),
+    #[default]
+    Unknown,
+}
+
+#[derive(Default)]
+pub struct HTTPClientResult<'a> {
+    pub body: Option<&'a mut MutableString>,
+    pub has_more: bool,
+    pub redirected: bool,
+    pub can_stream: bool,
+    /// Set once ALPN selected h2 so the JS side writes raw bytes into the
+    /// streaming-body buffer instead of chunked-encoding them.
+    pub is_http2: bool,
+
+    pub fail: Option<bun_core::Error>,
+
+    /// Owns the response metadata aka headers, url and status code
+    pub metadata: Option<HTTPResponseMetadata>,
+
+    /// For Http Client requests
+    /// when Content-Length is provided this represents the whole size of the response body
+    /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
+    /// If is not chunked encoded and Content-Length is not provided this will be unknown
+    pub body_size: BodySize,
+    pub certificate_info: Option<CertificateInfo>,
+}
+
+impl<'a> HTTPClientResult<'a> {
+    pub fn abort_reason(&self) -> Option<CommonAbortReason> {
+        if self.is_timeout() {
+            return Some(CommonAbortReason::Timeout);
+        }
+        if self.is_abort() {
+            return Some(CommonAbortReason::UserAbort);
+        }
+        None
+    }
+
+    pub fn is_success(&self) -> bool {
+        self.fail.is_none()
+    }
+
+    pub fn is_timeout(&self) -> bool {
+        matches!(self.fail, Some(e) if e == bun_core::err!("Timeout"))
+    }
+
+    pub fn is_abort(&self) -> bool {
+        matches!(self.fail, Some(e) if e == bun_core::err!("Aborted") || e == bun_core::err!("AbortedBeforeConnecting"))
+    }
+}
+
+pub type HTTPClientResultCallbackFunction =
+    fn(*mut (), *mut AsyncHTTP, HTTPClientResult<'_>);
+
+#[derive(Copy, Clone)]
+pub struct HTTPClientResultCallback {
+    pub ctx: *mut (),
+    pub function: HTTPClientResultCallbackFunction,
+}
+
+impl HTTPClientResultCallback {
+    pub fn run(self, async_http: *mut AsyncHTTP, result: HTTPClientResult<'_>) {
+        (self.function)(self.ctx, async_http, result);
+    }
+
+    // PORT NOTE: `Callback.New(comptime Type, comptime callback)` was a
+    // type-returning fn that wrapped a typed callback in *anyopaque erasure.
+    pub fn new<T>(
+        this: *mut T,
+        callback: fn(*mut T, *mut AsyncHTTP, HTTPClientResult<'_>),
+    ) -> Self {
+        // SAFETY: fn-pointer transmute over *mut T → *mut () first arg; same
+        // calling convention, the receiver casts `ctx` back before use.
+        unsafe {
+            Self {
+                ctx: this as *mut (),
+                function: core::mem::transmute::<
+                    fn(*mut T, *mut AsyncHTTP, HTTPClientResult<'_>),
+                    HTTPClientResultCallbackFunction,
+                >(callback),
+            }
+        }
+    }
+}
+
+// Exists for heap stats reasons.
+pub struct ThreadlocalAsyncHTTP {
+    pub async_http: AsyncHTTP,
+}
+
+impl ThreadlocalAsyncHTTP {
+    pub fn new(async_http: AsyncHTTP) -> Box<Self> {
+        Box::new(Self { async_http })
+    }
+}
+
+/// `socket: anytype` in `set_timeout` — minimal trait for what the body calls.
+pub trait SocketTimeout {
+    fn timeout(&self, seconds: core::ffi::c_uint);
+    fn set_timeout_minutes(&self, minutes: core::ffi::c_uint);
+}
+
+// lowercase hash header names so that we can be sure
+pub fn hash_header_name(name: &[u8]) -> u64 {
+    use bun_wyhash::Wyhash11 as Wyhash;
+    let mut hasher = Wyhash::init(0);
+    let mut remain = name;
+    // TODO(port): @sizeOf(@TypeOf(hasher.buf)) — Wyhash internal buffer size
+    const WYHASH_BUF_LEN: usize = 48;
+    let mut buf = [0u8; WYHASH_BUF_LEN];
+
+    while !remain.is_empty() {
+        let end = WYHASH_BUF_LEN.min(remain.len());
+        hasher.update(bun_string::immutable::copy_lowercase_if_needed(&remain[0..end], &mut buf));
+        remain = &remain[end..];
+    }
+
+    hasher.final_()
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // Phase-A draft (gated)
+// TODO(b2-blocked): bun_http::ssl_config::SSLConfig (MOVE_DOWN from
+//   bun_runtime — drafted below but depends on bun_uws::us_bun_socket_context_options_t
+//   and bun_boringssl surfaces not yet exported)
+// TODO(b2-blocked): bun_http::ssl_wrapper::SSLWrapper (MOVE_DOWN from
+//   bun_runtime::socket — drafted below)
+// TODO(b2-blocked): bun_uws::SocketHandler / bun_uws::SocketGroup /
+//   bun_uws::AnySocket (re-exports from bun_uws_sys gated in T4)
+// The HTTPClient struct + impl, HTTPContext, HTTPThread, AsyncHTTP, ProxyTunnel,
+// h2_client/, h3_client/ are mutually recursive and all bottom out on the three
+// items above. Un-gating any one of them requires the full set.
 // ═══════════════════════════════════════════════════════════════════════
 #[cfg(any())]
 mod _phase_a_draft {
@@ -176,8 +466,7 @@ pub static mut EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI: bool = false;
 
 const MAX_REDIRECT_URL_LENGTH: usize = 128 * 1024;
 
-#[unsafe(no_mangle)]
-#[export_name = "BUN_DEFAULT_MAX_HTTP_HEADER_SIZE"]
+#[unsafe(export_name = "BUN_DEFAULT_MAX_HTTP_HEADER_SIZE")]
 pub static mut MAX_HTTP_HEADER_SIZE: usize = 16 * 1024;
 
 pub static mut OVERRIDDEN_DEFAULT_USER_AGENT: &'static [u8] = b"";

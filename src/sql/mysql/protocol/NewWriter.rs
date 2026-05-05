@@ -87,6 +87,25 @@ impl<C: WriterContext> NewWriterWrap<C> {
         self.write(&[value])
     }
 
+    /// Zig: `Query.zig` calls `writer.writeNullBitmap(this.params)` on the
+    /// `NewWriter` value. The Zig source never defines this on `NewWriterWrap`
+    /// (lazy compilation: the params branch is never instantiated for COM_QUERY
+    /// in practice), but Rust must have it to typecheck. Mirrors the bitmap
+    /// logic from `PreparedStatement.zig::writeNullBitmap`, keyed on
+    /// `Data::Empty` instead of `Value::Null`.
+    pub fn write_null_bitmap(self, params: &[crate::shared::Data]) -> Result<(), AnyMySQLError> {
+        let bitmap_bytes = (params.len() + 7) / 8;
+        // PERF(port): Zig sized this from `(u16::MAX / 8) + 1` on the stack;
+        // here a small Vec keeps stack usage bounded for the never-taken path.
+        let mut null_bitmap = vec![0u8; bitmap_bytes];
+        for (i, param) in params.iter().enumerate() {
+            if matches!(param, crate::shared::Data::Empty) {
+                null_bitmap[i >> 3] |= 1u8 << ((i & 7) as u8);
+            }
+        }
+        self.write(&null_bitmap)
+    }
+
     pub fn write_z(self, value: &[u8]) -> Result<(), AnyMySQLError> {
         self.write(value)?;
         if value.is_empty() || value[value.len() - 1] != 0 {

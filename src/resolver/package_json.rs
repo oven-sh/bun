@@ -35,7 +35,7 @@ pub struct StringHashMapUnownedKey(u64);
 impl StringHashMapUnownedKey {
     pub fn init(s: &[u8]) -> Self { Self(bun_wyhash::hash(s)) }
 }
-// TODO(b2-blocked): bun_glob::r#match — crate not in deps yet; gate usages.
+use bun_glob as glob;
 
 // Assume they're not going to have hundreds of main fields or browser map
 // so use an array-backed hash table instead of bucketed
@@ -144,15 +144,12 @@ impl PackageJSON {
     // TODO(port): TrivialNew/TrivialDeinit — use Box::new / Drop
 
     pub fn name_for_import(&self) -> Result<Box<[u8]>, bun_core::Error> {
-        // TODO(b2-blocked): bun_resolver::fs::FileSystem + bun_logger::fs::PathName::dir_with_trailing_slash
-        #[cfg(any())]
-        {
         // TODO(port): narrow error set
-        if strings::index_of(&self.source.path.text, NODE_MODULES_PATH.as_bytes()).is_some() {
+        if strings::index_of(self.source.path.text, NODE_MODULES_PATH.as_bytes()).is_some() {
             Ok(Box::from(&*self.name))
         } else {
             let parent = self.source.path.name.dir_with_trailing_slash();
-            let top_level_dir = fs::FileSystem::instance().top_level_dir();
+            let top_level_dir = fs::FileSystem::instance().top_level_dir.as_bytes();
             if let Some(i) = strings::index_of(parent, top_level_dir) {
                 let relative_dir = &parent[i + top_level_dir.len()..];
                 let mut out_dir = vec![0u8; relative_dir.len() + 2];
@@ -164,8 +161,6 @@ impl PackageJSON {
 
             Ok(Box::from(&*self.name))
         }
-        }
-        Ok(Box::from(&*self.name))
     }
 
     /// Normalize path separators to forward slashes for glob matching
@@ -213,9 +208,6 @@ pub struct MixedPatterns {
 
 impl SideEffects {
     pub fn has_side_effects(&self, path: &[u8]) -> bool {
-        // TODO(b2-blocked): bun_glob::r#match
-        #[cfg(any())]
-        {
         match self {
             SideEffects::Unspecified => true,
             SideEffects::False => false,
@@ -235,7 +227,7 @@ impl SideEffects {
             }
             SideEffects::Mixed(mixed) => {
                 // First check exact matches
-                if mixed.exact.contains_key(&bun_collections::StringHashMapUnownedKey::init(path)) {
+                if mixed.exact.contains_key(&StringHashMapUnownedKey::init(path)) {
                     return true;
                 }
                 // Then check glob patterns with normalized path
@@ -251,9 +243,6 @@ impl SideEffects {
                 false
             }
         }
-        }
-        let _ = path;
-        true
     }
 }
 
@@ -1597,16 +1586,14 @@ pub struct PackageExternal {
     pub subpath: Semver::String,
 }
 
-// TODO(b2-blocked): bun_semver::string::Builder API surface (count/append_utf8_without_pool generics)
-#[cfg(any())]
-impl Package<'_> {
-    pub fn count(self, builder: &mut Semver::string::Builder) {
+impl<'a> Package<'a> {
+    pub fn count(self, builder: &mut Semver::semver_string::Builder) {
         builder.count(self.name);
         builder.count(self.version);
         builder.count(self.subpath);
     }
 
-    pub fn clone(self, builder: &mut Semver::string::Builder) -> PackageExternal {
+    pub fn clone(self, builder: &mut Semver::semver_string::Builder) -> PackageExternal {
         PackageExternal {
             name: builder.append_utf8_without_pool::<Semver::String>(self.name, 0),
             version: builder.append_utf8_without_pool::<Semver::String>(self.version, 0),
@@ -1622,7 +1609,7 @@ impl Package<'_> {
         }
     }
 
-    pub fn with_auto_version(self) -> Package {
+    pub fn with_auto_version(self) -> Package<'a> {
         if self.version.is_empty() {
             return Package {
                 name: self.name,
@@ -1633,9 +1620,6 @@ impl Package<'_> {
 
         self
     }
-}
-
-impl<'a> Package<'a> {
     pub fn parse_name(specifier: &[u8]) -> Option<&[u8]> {
         let mut slash = strings::index_of_char_neg(specifier, b'/');
         if !strings::starts_with_char(specifier, b'@') {
@@ -1731,11 +1715,73 @@ impl<'a> Package<'a> {
     }
 }
 
+// PERF(port): was comptime monomorphization (`comptime kind: ReverseKind`) — demoted to
+// runtime arg per PORTING.md §Idiom map (only used in a `match` body, never in a type
+// position; stable Rust rejects enum const-generics without `adt_const_params`).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ReverseKind {
     Exact,
     Pattern,
     Prefix,
+}
+
+// ── Local string helpers (TODO(b2-blocked): bun_string::strings::{trim_right, replacement_size, replace}) ──
+// Minimal local impls so the ESModule resolution algorithm compiles; replace with the
+// canonical bun_string versions once they land. Recorded in blocked_on.
+#[inline]
+fn trim_right<'a>(slice: &'a [u8], values_to_strip: &[u8]) -> &'a [u8] {
+    let mut end = slice.len();
+    while end > 0 && values_to_strip.contains(&slice[end - 1]) {
+        end -= 1;
+    }
+    &slice[..end]
+}
+
+/// Port of `std.mem.replacementSize` — total bytes after replacing every `needle` in
+/// `input` with `replacement`.
+#[inline]
+fn replacement_size(input: &[u8], needle: &[u8], replacement: &[u8]) -> usize {
+    if needle.is_empty() {
+        return input.len();
+    }
+    let mut size = 0usize;
+    let mut i = 0usize;
+    while i < input.len() {
+        if input[i..].starts_with(needle) {
+            size += replacement.len();
+            i += needle.len();
+        } else {
+            size += 1;
+            i += 1;
+        }
+    }
+    size
+}
+
+/// Port of `std.mem.replace` — replace every `needle` in `input` with `replacement`,
+/// writing into `output`. Returns number of replacements.
+#[inline]
+fn replace(input: &[u8], needle: &[u8], replacement: &[u8], output: &mut [u8]) -> usize {
+    if needle.is_empty() {
+        output[..input.len()].copy_from_slice(input);
+        return 0;
+    }
+    let mut i = 0usize;
+    let mut o = 0usize;
+    let mut count = 0usize;
+    while i < input.len() {
+        if input[i..].starts_with(needle) {
+            output[o..o + replacement.len()].copy_from_slice(replacement);
+            o += replacement.len();
+            i += needle.len();
+            count += 1;
+        } else {
+            output[o] = input[i];
+            o += 1;
+            i += 1;
+        }
+    }
+    count
 }
 
 #[derive(Clone, Default)]
@@ -1756,9 +1802,13 @@ struct ModuleBufs {
 }
 
 thread_local! {
-    // TODO(port): bun.ThreadlocalBuffers — using RefCell<ModuleBufs>; access via .with_borrow_mut
-    static MODULE_BUFS: core::cell::RefCell<ModuleBufs> = const {
-        core::cell::RefCell::new(ModuleBufs {
+    // PORT NOTE: bun.ThreadlocalBuffers — Zig uses raw threadlocal vars with no aliasing rules.
+    // resolve_target / resolve_target_reverse are RECURSIVE (Map/Array arms call themselves), so a
+    // RefCell + escaped `&mut PathBuffer` would create aliased `&mut` at the inner call → UB.
+    // Use UnsafeCell + raw-pointer access; only form `&mut PathBuffer` inside the non-recursive
+    // `String` arms where the buffers are actually written (no overlap with a live outer `&mut`).
+    static MODULE_BUFS: core::cell::UnsafeCell<ModuleBufs> = const {
+        core::cell::UnsafeCell::new(ModuleBufs {
             resolved_path_buf_percent: PathBuffer::ZEROED,
             resolve_target_buf: PathBuffer::ZEROED,
             resolve_target_buf2: PathBuffer::ZEROED,
@@ -1768,16 +1818,21 @@ thread_local! {
     };
 }
 
-// TODO(b2-blocked): bun_resolver::DebugLogs methods + bun_paths::join_abs_string_buf +
-// bun_string::strings::{index_any, last_index_of_char_with_offset, with_prefix_if_not_relative, ...}
-// — the ESModule resolution algorithm. Gated whole until those land.
-#[cfg(any())]
+#[inline]
+fn module_bufs() -> *mut ModuleBufs {
+    MODULE_BUFS.with(core::cell::UnsafeCell::get)
+}
+
+// PORT NOTE: Zig used `r: *const ESModule` (const ptr) but mutated `r.module_type.*`
+// and `r.debug_logs.?.*` through interior pointers. In Rust those fields are `&'a mut T`,
+// so reading/writing them requires `&mut self`. All resolution methods take `&mut self`.
 impl<'a> ESModule<'a> {
-    pub fn resolve(&self, package_url: &[u8], subpath: &[u8], exports: &Entry) -> Resolution {
-        Self::finalize(self.resolve_exports(package_url, subpath, exports))
+    pub fn resolve(&mut self, package_url: &[u8], subpath: &[u8], exports: &Entry) -> Resolution {
+        let r = self.resolve_exports(package_url, subpath, exports);
+        Self::finalize(r)
     }
 
-    pub fn resolve_imports(&self, specifier: &[u8], imports: &Entry) -> Resolution {
+    pub fn resolve_imports(&mut self, specifier: &[u8], imports: &Entry) -> Resolution {
         if !matches!(imports.data, EntryData::Map(_)) {
             return Resolution {
                 status: Status::InvalidPackageConfiguration,
@@ -1809,13 +1864,12 @@ impl<'a> ESModule<'a> {
 
         // If resolved contains any percent encodings of "/" or "\" ("%2f" and "%5C"
         // respectively), then throw an Invalid Module Specifier error.
-        // TODO(port): threadlocal buffer access via with_borrow_mut wrapper; using raw ptr to keep flow
-        let resolved_path_buf_percent: &mut PathBuffer = MODULE_BUFS.with_borrow_mut(|b| {
-            // SAFETY: threadlocal buffer lives for thread lifetime; result.path borrows it
-            unsafe { &mut *(&mut b.resolved_path_buf_percent as *mut PathBuffer) }
-        });
+        // SAFETY: threadlocal UnsafeCell; finalize() does not recurse, so this is the unique
+        // live `&mut` to resolved_path_buf_percent on this thread.
+        let resolved_path_buf_percent: &mut PathBuffer =
+            unsafe { &mut (*module_bufs()).resolved_path_buf_percent };
         // TODO(port): std.io.fixedBufferStream + PercentEncoding.decode
-        let len = match bun_url::PercentEncoding::decode_into(resolved_path_buf_percent.as_mut_slice(), result.path) {
+        let len = match bun_url::PercentEncoding::decode_into(&mut resolved_path_buf_percent.0, result.path) {
             Ok(n) => n,
             Err(_) => {
                 return Resolution {
@@ -1826,7 +1880,7 @@ impl<'a> ESModule<'a> {
             }
         };
 
-        let resolved_path = &resolved_path_buf_percent.as_slice()[0..len];
+        let resolved_path = &resolved_path_buf_percent.0[0..len as usize];
 
         let mut found: &[u8] = b"";
         if strings::contains(resolved_path, INVALID_PERCENT_CHARS[0]) {
@@ -1862,9 +1916,9 @@ impl<'a> ESModule<'a> {
         result
     }
 
-    fn resolve_exports(&self, package_url: &[u8], subpath: &[u8], exports: &Entry) -> Resolution {
+    fn resolve_exports(&mut self, package_url: &[u8], subpath: &[u8], exports: &Entry) -> Resolution {
         if matches!(exports.data, EntryData::Invalid) {
-            if let Some(logs) = &self.debug_logs {
+            if let Some(logs) = self.debug_logs.as_deref_mut() {
                 logs.add_note("Invalid package configuration");
             }
 
@@ -1911,7 +1965,7 @@ impl<'a> ESModule<'a> {
             }
         }
 
-        if let Some(logs) = &self.debug_logs {
+        if let Some(logs) = self.debug_logs.as_deref_mut() {
             logs.add_note_fmt(format_args!("The path \"{}\" was not exported", bstr::BStr::new(subpath)));
         }
 
@@ -1923,20 +1977,20 @@ impl<'a> ESModule<'a> {
     }
 
     fn resolve_imports_exports(
-        &self,
+        &mut self,
         match_key: &[u8],
         match_obj: &Entry,
         is_imports: bool,
         package_url: &[u8],
     ) -> Resolution {
-        if let Some(logs) = &self.debug_logs {
+        if let Some(logs) = self.debug_logs.as_deref_mut() {
             logs.add_note_fmt(format_args!("Checking object path map for \"{}\"", bstr::BStr::new(match_key)));
         }
 
         // If matchKey is a key of matchObj and does not end in "/" or contain "*", then
         if !strings::ends_with_char(match_key, b'/') && !strings::contains_char(match_key, b'*') {
             if let Some(target) = match_obj.value_for_key(match_key) {
-                if let Some(log) = &self.debug_logs {
+                if let Some(log) = self.debug_logs.as_deref_mut() {
                     log.add_note_fmt(format_args!("Found \"{}\"", bstr::BStr::new(match_key)));
                 }
 
@@ -1967,7 +2021,7 @@ impl<'a> ESModule<'a> {
                         {
                             let target = &expansion.value;
                             let subpath = &match_key[pattern_base.len()..match_key.len() - pattern_trailer.len()];
-                            if let Some(log) = &self.debug_logs {
+                            if let Some(log) = self.debug_logs.as_deref_mut() {
                                 log.add_note_fmt(format_args!(
                                     "The key \"{}\" matched with \"{}\" left over",
                                     bstr::BStr::new(&expansion.key),
@@ -1983,7 +2037,7 @@ impl<'a> ESModule<'a> {
                     if strings::starts_with(match_key, &expansion.key) {
                         let target = &expansion.value;
                         let subpath = &match_key[expansion.key.len()..];
-                        if let Some(log) = &self.debug_logs {
+                        if let Some(log) = self.debug_logs.as_deref_mut() {
                             log.add_note_fmt(format_args!(
                                 "The key \"{}\" matched with \"{}\" left over",
                                 bstr::BStr::new(&expansion.key),
@@ -1999,13 +2053,13 @@ impl<'a> ESModule<'a> {
                     }
                 }
 
-                if let Some(log) = &self.debug_logs {
+                if let Some(log) = self.debug_logs.as_deref_mut() {
                     log.add_note_fmt(format_args!("The key \"{}\" did not match", bstr::BStr::new(&expansion.key)));
                 }
             }
         }
 
-        if let Some(log) = &self.debug_logs {
+        if let Some(log) = self.debug_logs.as_deref_mut() {
             log.add_note_fmt(format_args!("No keys matched \"{}\"", bstr::BStr::new(match_key)));
         }
 
@@ -2017,25 +2071,23 @@ impl<'a> ESModule<'a> {
     }
 
     fn resolve_target<const PATTERN: bool>(
-        &self,
+        &mut self,
         package_url: &[u8],
         target: &Entry,
         subpath: &[u8],
         internal: bool,
     ) -> Resolution {
-        // TODO(port): threadlocal buffer access — see MODULE_BUFS note in finalize()
-        let (resolve_target_buf, resolve_target_buf2): (&mut PathBuffer, &mut PathBuffer) =
-            MODULE_BUFS.with_borrow_mut(|b| unsafe {
-                // SAFETY: threadlocal buffers live for thread lifetime; results borrow them
-                (
-                    &mut *(&mut b.resolve_target_buf as *mut PathBuffer),
-                    &mut *(&mut b.resolve_target_buf2 as *mut PathBuffer),
-                )
-            });
         match &target.data {
             EntryData::String(str) => {
+                // SAFETY: threadlocal UnsafeCell; the `String` arm does NOT recurse into
+                // resolve_target, so these are the unique live `&mut`s on this thread for
+                // the duration of this arm. Map/Array arms below DO recurse and must not
+                // hold these — that's why acquisition is here, not at fn entry.
+                let mb = module_bufs();
+                let resolve_target_buf: &mut PathBuffer = unsafe { &mut (*mb).resolve_target_buf };
+                let resolve_target_buf2: &mut PathBuffer = unsafe { &mut (*mb).resolve_target_buf2 };
                 let str: &[u8] = str;
-                if let Some(log) = &self.debug_logs {
+                if let Some(log) = self.debug_logs.as_deref_mut() {
                     log.add_note_fmt(format_args!(
                         "Checking path \"{}\" against target \"{}\"",
                         bstr::BStr::new(subpath),
@@ -2043,23 +2095,29 @@ impl<'a> ESModule<'a> {
                     ));
                     log.increase_indent();
                 }
-                let _indent_guard = scopeguard::guard((), |_| {
-                    if let Some(log) = &self.debug_logs {
-                        log.decrease_indent();
-                    }
-                });
-                // TODO(port): scopeguard borrow of self.debug_logs — Phase B reshape
+                // PORT NOTE: Zig had `defer log.decrease_indent()` capturing the unwrapped
+                // `*DebugLogs`. Rust scopeguard cannot hold the &mut across the recursive
+                // `&mut self` calls below; manual decrease at each return below.
+                // TODO(port): errdefer — verify all return paths decrease_indent.
+                macro_rules! dedent {
+                    () => {
+                        if let Some(log) = self.debug_logs.as_deref_mut() {
+                            log.decrease_indent();
+                        }
+                    };
+                }
 
                 // If pattern is false, subpath has non-zero length and target
                 // does not end with "/", throw an Invalid Module Specifier error.
                 if !PATTERN {
                     if !subpath.is_empty() && !strings::ends_with_char(str, b'/') {
-                        if let Some(log) = &self.debug_logs {
+                        if let Some(log) = self.debug_logs.as_deref_mut() {
                             log.add_note_fmt(format_args!(
                                 "The target \"{}\" is invalid because it doesn't end with a \"/\"",
                                 bstr::BStr::new(str)
                             ));
                         }
+                        dedent!();
 
                         return Resolution {
                             path: tl_static(str),
@@ -2071,7 +2129,7 @@ impl<'a> ESModule<'a> {
 
                 // If target does not start with "./", then...
                 if !strings::starts_with(str, b"./") {
-                    if let Some(log) = &self.debug_logs {
+                    if let Some(log) = self.debug_logs.as_deref_mut() {
                         log.add_note_fmt(format_args!(
                             "The target \"{}\" is invalid because it doesn't start with a \"./\"",
                             bstr::BStr::new(str)
@@ -2081,10 +2139,10 @@ impl<'a> ESModule<'a> {
                     if internal && !strings::has_prefix(str, b"../") && !strings::has_prefix(str, b"/") {
                         if PATTERN {
                             // Return the URL resolution of resolvedTarget with every instance of "*" replaced with subpath.
-                            let len = strings::replacement_size(str, b"*", subpath);
-                            let _ = strings::replace(str, b"*", subpath, resolve_target_buf2.as_mut_slice());
-                            let result = &resolve_target_buf2.as_slice()[0..len];
-                            if let Some(log) = &self.debug_logs {
+                            let len = replacement_size(str, b"*", subpath);
+                            let _ = replace(str, b"*", subpath, &mut resolve_target_buf2.0);
+                            let result = &resolve_target_buf2.0[0..len];
+                            if let Some(log) = self.debug_logs.as_deref_mut() {
                                 log.add_note_fmt(format_args!(
                                     "Subsituted \"{}\" for \"*\" in \".{}\" to get \".{}\" ",
                                     bstr::BStr::new(subpath),
@@ -2092,7 +2150,7 @@ impl<'a> ESModule<'a> {
                                     bstr::BStr::new(result)
                                 ));
                             }
-
+                            dedent!();
                             return Resolution {
                                 path: tl_static(result),
                                 status: Status::PackageResolve,
@@ -2100,23 +2158,24 @@ impl<'a> ESModule<'a> {
                             };
                         } else {
                             let parts2 = [str, subpath];
-                            let result = resolve_path::join_string_buf(resolve_target_buf2.as_mut_slice(), &parts2, resolve_path::Platform::Auto);
-                            if let Some(log) = &self.debug_logs {
+                            let result = resolve_path::resolve_path::join_string_buf::<resolve_path::platform::Auto>(&mut resolve_target_buf2.0, &parts2);
+                            if let Some(log) = self.debug_logs.as_deref_mut() {
                                 log.add_note_fmt(format_args!(
                                     "Resolved \".{}\" to \".{}\"",
                                     bstr::BStr::new(str),
                                     bstr::BStr::new(result)
                                 ));
                             }
-
+                            let path = tl_static(result);
+                            dedent!();
                             return Resolution {
-                                path: tl_static(result),
+                                path,
                                 status: Status::PackageResolve,
                                 debug: ResolutionDebug { token: target.first_token, ..Default::default() },
                             };
                         }
                     }
-
+                    dedent!();
                     return Resolution {
                         path: tl_static(str),
                         status: Status::InvalidPackageTarget,
@@ -2127,14 +2186,14 @@ impl<'a> ESModule<'a> {
                 // If target split on "/" or "\" contains any ".", ".." or "node_modules"
                 // segments after the first segment, throw an Invalid Package Target error.
                 if let Some(invalid) = find_invalid_segment(str) {
-                    if let Some(log) = &self.debug_logs {
+                    if let Some(log) = self.debug_logs.as_deref_mut() {
                         log.add_note_fmt(format_args!(
                             "The target \"{}\" is invalid because it contains an invalid segment \"{}\"",
                             bstr::BStr::new(str),
                             bstr::BStr::new(invalid)
                         ));
                     }
-
+                    dedent!();
                     return Resolution {
                         path: tl_static(str),
                         status: Status::InvalidPackageTarget,
@@ -2144,19 +2203,19 @@ impl<'a> ESModule<'a> {
 
                 // Let resolvedTarget be the URL resolution of the concatenation of packageURL and target.
                 let parts = [package_url, str];
-                let resolved_target = resolve_path::join_string_buf(resolve_target_buf.as_mut_slice(), &parts, resolve_path::Platform::Auto);
+                let resolved_target = resolve_path::resolve_path::join_string_buf::<resolve_path::platform::Auto>(&mut resolve_target_buf.0, &parts);
 
                 // If target split on "/" or "\" contains any ".", ".." or "node_modules"
                 // segments after the first segment, throw an Invalid Package Target error.
                 if let Some(invalid) = find_invalid_segment(resolved_target) {
-                    if let Some(log) = &self.debug_logs {
+                    if let Some(log) = self.debug_logs.as_deref_mut() {
                         log.add_note_fmt(format_args!(
                             "The target \"{}\" is invalid because it contains an invalid segment \"{}\"",
                             bstr::BStr::new(str),
                             bstr::BStr::new(invalid)
                         ));
                     }
-
+                    dedent!();
                     return Resolution {
                         path: tl_static(str),
                         status: Status::InvalidModuleSpecifier,
@@ -2166,10 +2225,10 @@ impl<'a> ESModule<'a> {
 
                 if PATTERN {
                     // Return the URL resolution of resolvedTarget with every instance of "*" replaced with subpath.
-                    let len = strings::replacement_size(resolved_target, b"*", subpath);
-                    let _ = strings::replace(resolved_target, b"*", subpath, resolve_target_buf2.as_mut_slice());
-                    let result = &resolve_target_buf2.as_slice()[0..len];
-                    if let Some(log) = &self.debug_logs {
+                    let len = replacement_size(resolved_target, b"*", subpath);
+                    let _ = replace(resolved_target, b"*", subpath, &mut resolve_target_buf2.0);
+                    let result = &resolve_target_buf2.0[0..len];
+                    if let Some(log) = self.debug_logs.as_deref_mut() {
                         log.add_note_fmt(format_args!(
                             "Substituted \"{}\" for \"*\" in \".{}\" to get \".{}\" ",
                             bstr::BStr::new(subpath),
@@ -2185,6 +2244,7 @@ impl<'a> ESModule<'a> {
                     } else {
                         Status::Exact
                     };
+                    dedent!();
                     return Resolution {
                         path: tl_static(result),
                         status,
@@ -2192,8 +2252,8 @@ impl<'a> ESModule<'a> {
                     };
                 } else {
                     let parts2 = [package_url, str, subpath];
-                    let result = resolve_path::join_string_buf(resolve_target_buf2.as_mut_slice(), &parts2, resolve_path::Platform::Auto);
-                    if let Some(log) = &self.debug_logs {
+                    let result = resolve_path::resolve_path::join_string_buf::<resolve_path::platform::Auto>(&mut resolve_target_buf2.0, &parts2);
+                    if let Some(log) = self.debug_logs.as_deref_mut() {
                         log.add_note_fmt(format_args!(
                             "Substituted \"{}\" for \"*\" in \".{}\" to get \".{}\" ",
                             bstr::BStr::new(subpath),
@@ -2201,9 +2261,10 @@ impl<'a> ESModule<'a> {
                             bstr::BStr::new(result)
                         ));
                     }
-
+                    let path = tl_static(result);
+                    dedent!();
                     return Resolution {
-                        path: tl_static(result),
+                        path,
                         status: Status::Exact,
                         debug: ResolutionDebug { token: target.first_token, ..Default::default() },
                     };
@@ -2213,56 +2274,51 @@ impl<'a> ESModule<'a> {
                 let mut did_find_map_entry = false;
                 let mut last_map_entry_i: usize = 0;
 
-                let slice = object.list.slice();
-                let keys = slice.items_key();
-                for (i, key) in keys.iter().enumerate() {
+                // PORT NOTE: Zig used MultiArrayList column slices; Phase-A `EntryDataMapList`
+                // is `Vec<MapEntry>` so iterate AoS directly.
+                for (i, entry) in object.list.iter().enumerate() {
+                    let key: &[u8] = &entry.key;
                     if self.conditions.contains_key(key) {
-                        if let Some(log) = &self.debug_logs {
+                        if let Some(log) = self.debug_logs.as_deref_mut() {
                             log.add_note_fmt(format_args!("The key \"{}\" matched", bstr::BStr::new(key)));
                         }
 
                         let prev_module_type = *self.module_type;
-                        let result = self.resolve_target::<PATTERN>(package_url, &slice.items_value()[i], subpath, internal);
+                        let result = self.resolve_target::<PATTERN>(package_url, &entry.value, subpath, internal);
                         if result.status.is_undefined() {
                             did_find_map_entry = true;
                             last_map_entry_i = i;
                             *self.module_type = prev_module_type;
-                            // TODO(port): &self with &mut deref of module_type — needs interior mutability or &mut self
                             continue;
                         }
 
-                        if key.as_ref() == b"import" {
-                            *self.module_type = options::ModuleType::Esm;
+                        if key == b"import" {
+                            *self.module_type = ModuleType::Esm;
                         }
 
-                        if key.as_ref() == b"require" {
-                            *self.module_type = options::ModuleType::Cjs;
+                        if key == b"require" {
+                            *self.module_type = ModuleType::Cjs;
                         }
 
                         return result;
                     }
 
-                    if let Some(log) = &self.debug_logs {
+                    if let Some(log) = self.debug_logs.as_deref_mut() {
                         log.add_note_fmt(format_args!("The key \"{}\" did not match", bstr::BStr::new(key)));
                     }
                 }
 
-                if let Some(log) = &self.debug_logs {
+                if let Some(log) = self.debug_logs.as_deref_mut() {
                     log.add_note_fmt(format_args!("No keys matched"));
                 }
 
                 let mut return_target = target;
                 // ALGORITHM DEVIATION: Provide a friendly error message if no conditions matched
-                if !keys.is_empty() && !target.keys_start_with_dot() {
-                    let last_map_entry = MapEntry {
-                        key: keys[last_map_entry_i].clone(),
-                        value: slice.items_value()[last_map_entry_i].clone(),
-                        // key_range is unused, so we don't need to pull up the array for it.
-                        key_range: logger::Range::NONE,
-                    };
+                if !object.list.is_empty() && !target.keys_start_with_dot() {
+                    let last_map_entry_value = &object.list[last_map_entry_i].value;
                     if did_find_map_entry
-                        && matches!(&last_map_entry.value.data, EntryData::Map(m) if m.list.len() > 0)
-                        && !last_map_entry.value.keys_start_with_dot()
+                        && matches!(&last_map_entry_value.data, EntryData::Map(m) if !m.list.is_empty())
+                        && !last_map_entry_value.keys_start_with_dot()
                     {
                         // If a top-level condition did match but no sub-condition matched,
                         // complain about the sub-condition instead of the top-level condition.
@@ -2290,11 +2346,11 @@ impl<'a> ESModule<'a> {
                         //
                         // More information: https://github.com/evanw/esbuild/issues/1484
                         // PORT NOTE: reshaped for borrowck — return_target points into slice; clone keys below
-                        return_target = &slice.items_value()[last_map_entry_i];
+                        return_target = last_map_entry_value;
                     }
 
-                    let unmatched = match &return_target.data {
-                        EntryData::Map(m) => m.list.items_key().to_vec().into_boxed_slice(),
+                    let unmatched: Box<[Box<[u8]>]> = match &return_target.data {
+                        EntryData::Map(m) => m.list.iter().map(|e| e.key.clone()).collect::<Vec<_>>().into_boxed_slice(),
                         _ => Box::default(),
                     };
 
@@ -2316,7 +2372,7 @@ impl<'a> ESModule<'a> {
             }
             EntryData::Array(array) => {
                 if array.is_empty() {
-                    if let Some(log) = &self.debug_logs {
+                    if let Some(log) = self.debug_logs.as_deref_mut() {
                         log.add_note_fmt(format_args!("The path \"{}\" is an empty array", bstr::BStr::new(subpath)));
                     }
 
@@ -2350,7 +2406,7 @@ impl<'a> ESModule<'a> {
                 return Resolution { path: b"", status: last_exception, debug: last_debug };
             }
             EntryData::Null => {
-                if let Some(log) = &self.debug_logs {
+                if let Some(log) = self.debug_logs.as_deref_mut() {
                     log.add_note_fmt(format_args!("The path \"{}\" is null", bstr::BStr::new(subpath)));
                 }
 
@@ -2363,7 +2419,7 @@ impl<'a> ESModule<'a> {
             _ => {}
         }
 
-        if let Some(logs) = &self.debug_logs {
+        if let Some(logs) = self.debug_logs.as_deref_mut() {
             logs.add_note_fmt(format_args!("Invalid package target for path \"{}\"", bstr::BStr::new(subpath)));
         }
 
@@ -2374,7 +2430,7 @@ impl<'a> ESModule<'a> {
         }
     }
 
-    fn resolve_exports_reverse(&self, query: &[u8], root: &Entry) -> Option<ReverseResolution> {
+    fn resolve_exports_reverse(&mut self, query: &[u8], root: &Entry) -> Option<ReverseResolution> {
         if matches!(root.data, EntryData::Map(_)) && root.keys_start_with_dot() {
             if let Some(res) = self.resolve_imports_exports_reverse(query, root) {
                 return Some(res);
@@ -2384,15 +2440,13 @@ impl<'a> ESModule<'a> {
         None
     }
 
-    fn resolve_imports_exports_reverse(&self, query: &[u8], match_obj: &Entry) -> Option<ReverseResolution> {
+    fn resolve_imports_exports_reverse(&mut self, query: &[u8], match_obj: &Entry) -> Option<ReverseResolution> {
         let EntryData::Map(map) = &match_obj.data else { return None };
 
         if !strings::ends_with_char_or_is_zero_length(query, b'*') {
-            let slices = map.list.slice();
-            let keys = slices.items_key();
-            let values = slices.items_value();
-            for (i, key) in keys.iter().enumerate() {
-                if let Some(result) = self.resolve_target_reverse::<{ ReverseKind::Exact }>(query, key, &values[i]) {
+            // PORT NOTE: Zig used MultiArrayList column slices; iterate Vec<MapEntry> directly.
+            for entry in map.list.iter() {
+                if let Some(result) = self.resolve_target_reverse(query, &entry.key, &entry.value, ReverseKind::Exact) {
                     return Some(result);
                 }
             }
@@ -2401,7 +2455,7 @@ impl<'a> ESModule<'a> {
         for expansion in map.expansion_keys.iter() {
             if strings::ends_with_char_or_is_zero_length(&expansion.key, b'*') {
                 if let Some(result) =
-                    self.resolve_target_reverse::<{ ReverseKind::Pattern }>(query, &expansion.key, &expansion.value)
+                    self.resolve_target_reverse(query, &expansion.key, &expansion.value, ReverseKind::Pattern)
                 {
                     return Some(result);
                 }
@@ -2409,7 +2463,7 @@ impl<'a> ESModule<'a> {
 
             // TODO(port): Zig used `.reverse` here but ReverseKind has no `.reverse` variant — preserved as Prefix? Actually Zig defines {exact, pattern, prefix}; `.reverse` is a typo in Zig source
             if let Some(result) =
-                self.resolve_target_reverse::<{ ReverseKind::Prefix }>(query, &expansion.key, &expansion.value)
+                self.resolve_target_reverse(query, &expansion.key, &expansion.value, ReverseKind::Prefix)
             {
                 return Some(result);
             }
@@ -2419,27 +2473,25 @@ impl<'a> ESModule<'a> {
         None
     }
 
-    fn resolve_target_reverse<const KIND: ReverseKind>(
-        &self,
+    fn resolve_target_reverse(
+        &mut self,
         query: &[u8],
         key: &[u8],
         target: &Entry,
-    ) -> Option<ReverseResolution>
-    where
-        ReverseKind: core::marker::ConstParamTy, // TODO(port): derive ConstParamTy on ReverseKind
-    {
-        let (resolve_target_reverse_prefix_buf, resolve_target_reverse_prefix_buf2): (&mut PathBuffer, &mut PathBuffer) =
-            MODULE_BUFS.with_borrow_mut(|b| unsafe {
-                // SAFETY: threadlocal buffers live for thread lifetime
-                (
-                    &mut *(&mut b.resolve_target_reverse_prefix_buf as *mut PathBuffer),
-                    &mut *(&mut b.resolve_target_reverse_prefix_buf2 as *mut PathBuffer),
-                )
-            });
+        kind: ReverseKind,
+    ) -> Option<ReverseResolution> {
         match &target.data {
             EntryData::String(str) => {
+                // SAFETY: threadlocal UnsafeCell; the `String` arm does NOT recurse into
+                // resolve_target_reverse, so these are the unique live `&mut`s on this thread.
+                // Map/Array arms below recurse and must not hold these — see MODULE_BUFS note.
+                let mb = module_bufs();
+                let resolve_target_reverse_prefix_buf: &mut PathBuffer =
+                    unsafe { &mut (*mb).resolve_target_reverse_prefix_buf };
+                let resolve_target_reverse_prefix_buf2: &mut PathBuffer =
+                    unsafe { &mut (*mb).resolve_target_reverse_prefix_buf2 };
                 let str: &[u8] = str;
-                match KIND {
+                match kind {
                     ReverseKind::Exact => {
                         if strings::eql(query, str) {
                             return Some(ReverseResolution { subpath: tl_static(str), token: target.first_token });
@@ -2447,12 +2499,13 @@ impl<'a> ESModule<'a> {
                     }
                     ReverseKind::Prefix => {
                         if strings::starts_with(query, str) {
-                            let mut buf = resolve_target_reverse_prefix_buf.as_mut_slice();
+                            let buf = &mut resolve_target_reverse_prefix_buf.0;
+                            let buf_len = buf.len();
                             let n = {
                                 let mut w = &mut buf[..];
                                 let _ = w.write_all(key);
                                 let _ = w.write_all(&query[str.len()..]);
-                                buf.len() - w.len()
+                                buf_len - w.len()
                             };
                             return Some(ReverseResolution {
                                 subpath: tl_static(&buf[..n]),
@@ -2461,7 +2514,7 @@ impl<'a> ESModule<'a> {
                         }
                     }
                     ReverseKind::Pattern => {
-                        let key_without_trailing_star = strings::trim_right(key, b"*");
+                        let key_without_trailing_star = trim_right(key, b"*");
 
                         let Some(star) = strings::index_of_char(str, b'*') else {
                             // Handle the case of no "*"
@@ -2482,12 +2535,13 @@ impl<'a> ESModule<'a> {
                             let after_prefix = &query[prefix.len()..];
                             if strings::ends_with(after_prefix, suffix) {
                                 let star_data = &after_prefix[0..after_prefix.len() - suffix.len()];
-                                let mut buf = resolve_target_reverse_prefix_buf2.as_mut_slice();
+                                let buf = &mut resolve_target_reverse_prefix_buf2.0;
+                                let buf_len = buf.len();
                                 let n = {
                                     let mut w = &mut buf[..];
                                     let _ = w.write_all(key_without_trailing_star);
                                     let _ = w.write_all(star_data);
-                                    buf.len() - w.len()
+                                    buf_len - w.len()
                                 };
                                 return Some(ReverseResolution {
                                     subpath: tl_static(&buf[..n]),
@@ -2499,17 +2553,16 @@ impl<'a> ESModule<'a> {
                 }
             }
             EntryData::Map(map) => {
-                let slice = map.list.slice();
-                let keys = slice.items_key();
-                for (i, map_key) in keys.iter().enumerate() {
+                // PORT NOTE: Zig used MultiArrayList column slices; iterate Vec<MapEntry> directly.
+                for entry in map.list.iter() {
+                    let map_key: &[u8] = &entry.key;
                     if self.conditions.contains_key(map_key) {
-                        if let Some(result) = self.resolve_target_reverse::<KIND>(query, key, &slice.items_value()[i]) {
-                            if map_key.as_ref() == b"import" {
-                                *self.module_type = options::ModuleType::Esm;
-                            } else if map_key.as_ref() == b"require" {
-                                *self.module_type = options::ModuleType::Cjs;
+                        if let Some(result) = self.resolve_target_reverse(query, key, &entry.value, kind) {
+                            if map_key == b"import" {
+                                *self.module_type = ModuleType::Esm;
+                            } else if map_key == b"require" {
+                                *self.module_type = ModuleType::Cjs;
                             }
-                            // TODO(port): &self with &mut deref — needs interior mutability or &mut self
 
                             return Some(result);
                         }
@@ -2519,7 +2572,7 @@ impl<'a> ESModule<'a> {
 
             EntryData::Array(array) => {
                 for target_value in array.iter() {
-                    if let Some(result) = self.resolve_target_reverse::<KIND>(query, key, target_value) {
+                    if let Some(result) = self.resolve_target_reverse(query, key, target_value, kind) {
                         return Some(result);
                     }
                 }

@@ -22,9 +22,9 @@ impl AuthMethod {
 
         #[cfg(any())]
         {
-            // TODO(b2-blocked): crate::mysql::protocol::auth — depends on
-            // bun_boringssl::{Sha1, Sha256, Rsa} which is not yet available at
-            // this tier. Re-enable once protocol::auth is un-gated.
+            // TODO(b2-blocked): bun_boringssl_sys::RSA_public_encrypt et al. —
+            // `protocol::auth` is gated on the same lower-tier FFI symbols (see
+            // lib.rs gate on `mod auth`). Re-enable once that module is un-gated.
             use crate::mysql::protocol::auth;
             match self {
                 AuthMethod::MysqlNativePassword => {

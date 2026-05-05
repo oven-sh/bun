@@ -37,8 +37,67 @@ pub use fs::Path;
 pub struct PathPair(());
 /// Stub for `MatchResult`.
 pub struct MatchResult(());
-/// Stub for `DebugLogs`.
-pub struct DebugLogs(());
+
+/// Port of `DebugLogs` in `resolver.zig`.
+pub struct DebugLogs {
+    pub what: Vec<u8>,
+    pub indent: bun_string::MutableString,
+    // PORT NOTE: Zig stored `Vec<logger::Data>`; `logger::Data.text` is currently
+    // `&'static [u8]` (Phase-B Str ownership rework pending), so we store owned
+    // note text here and convert at flush time.
+    // TODO(b2-blocked): bun_logger::Data owned-text variant
+    pub notes: Vec<Box<[u8]>>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum FlushMode {
+    Fail,
+    Success,
+}
+
+impl DebugLogs {
+    pub fn init() -> core::result::Result<DebugLogs, bun_alloc::AllocError> {
+        let mutable = bun_string::MutableString::init(0)?;
+        Ok(DebugLogs { what: Vec::new(), indent: mutable, notes: Vec::new() })
+    }
+
+    // deinit → Drop (only frees `notes`; `indent` deinit was commented out in Zig)
+
+    #[cold]
+    pub fn increase_indent(&mut self) {
+        self.indent.append(b" ").expect("unreachable");
+    }
+
+    #[cold]
+    pub fn decrease_indent(&mut self) {
+        let new_len = self.indent.list.len().saturating_sub(1);
+        self.indent.list.truncate(new_len);
+    }
+
+    #[cold]
+    pub fn add_note(&mut self, text: &str) {
+        self.add_note_bytes(text.as_bytes());
+    }
+
+    #[cold]
+    pub fn add_note_bytes(&mut self, text: &[u8]) {
+        let len = self.indent.len();
+        let mut final_text = Vec::with_capacity(text.len() + len);
+        if len > 0 {
+            final_text.extend_from_slice(self.indent.list.as_slice());
+        }
+        final_text.extend_from_slice(text);
+        self.notes.push(final_text.into_boxed_slice());
+    }
+
+    #[cold]
+    pub fn add_note_fmt(&mut self, args: core::fmt::Arguments<'_>) {
+        use std::io::Write as _;
+        let mut buf = Vec::new();
+        write!(&mut buf, "{}", args).expect("unreachable");
+        self.add_note_bytes(&buf);
+    }
+}
 /// Re-export real `GlobalCache`.
 pub use bun_options_types::GlobalCache::GlobalCache;
 /// Stub for `RootPathPair`.
@@ -373,6 +432,25 @@ pub mod fs {
                 name: PathName::init(text),
                 is_disabled: false,
                 is_symlink: false,
+            }
+        }
+
+        /// Port of `Path.initWithNamespaceVirtual` in `fs.zig`:
+        /// `pub inline fn initWithNamespaceVirtual(comptime text, namespace, package) Path`
+        pub fn init_with_namespace_virtual(
+            text: &'static [u8],
+            namespace: &'static [u8],
+            pretty: &'static [u8],
+        ) -> Path<'static> {
+            // PORT NOTE: Zig formed `pretty = namespace ++ ":" ++ package` at comptime;
+            // Rust callers pass the precomputed `concatcp!` result.
+            Path {
+                pretty,
+                is_symlink: true,
+                text,
+                namespace,
+                name: PathName::init(text),
+                is_disabled: false,
             }
         }
 

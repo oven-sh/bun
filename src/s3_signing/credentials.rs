@@ -1,19 +1,96 @@
-use core::cell::Cell;
 use core::mem::size_of;
 use std::io::Write as _;
 
 use bstr::BStr;
 
 use bun_collections::BoundedArray;
-use bun_http::Method;
+use bun_http_types::Method::Method;
 use bun_picohttp::Header as PicoHeader;
-use bun_ptr::IntrusiveRc;
-use bun_str::strings;
+use bun_ptr::{IntrusiveRc, RefCount, RefCounted};
+use bun_string::strings;
 
 use super::acl::ACL;
 use super::storage_class::StorageClass;
 
-bun_output::declare_scope!(AWS, visible);
+bun_core::declare_scope!(AWS, visible);
+
+// ──────────────────────────────────────────────────────────────────────────
+// fmt helpers (defined before use — macro_rules! is textual-order)
+// ──────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug)]
+pub struct NoSpaceLeft;
+
+/// `std.fmt.bufPrint` equivalent: write formatted bytes into `buf`, return the written slice.
+macro_rules! buf_print {
+    ($buf:expr, $($arg:tt)*) => {{
+        let buf: &mut [u8] = &mut $buf[..];
+        let ptr = buf.as_ptr();
+        let total = buf.len();
+        let mut cursor: &mut [u8] = buf;
+        match write!(cursor, $($arg)*) {
+            Ok(()) => {
+                let written = total - cursor.len();
+                // SAFETY: cursor is a tail of buf; head is initialized.
+                Ok::<&[u8], NoSpaceLeft>(unsafe {
+                    core::slice::from_raw_parts(ptr, written)
+                })
+            }
+            Err(_) => Err(NoSpaceLeft),
+        }
+    }};
+}
+
+/// `std.fmt.allocPrint` equivalent: build into a fresh Vec<u8>.
+macro_rules! alloc_print {
+    ($($arg:tt)*) => {{
+        let mut v: Vec<u8> = Vec::new();
+        write!(&mut v, $($arg)*).expect("write to Vec<u8> never fails");
+        v
+    }};
+}
+
+// TODO(b2-blocked): bun_core::fmt::bytes_to_hex_lower — local Display shim until it lands.
+struct HexLower<'a>(&'a [u8]);
+impl core::fmt::Display for HexLower<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for b in self.0 {
+            write!(f, "{:02x}", b)?;
+        }
+        Ok(())
+    }
+}
+
+// TODO(b2-blocked): bun_picohttp::Header::EMPTY — using zeroed() until ctor lands.
+#[inline]
+fn pico_header_empty() -> PicoHeader {
+    // SAFETY: bun_picohttp::Header is #[repr(C)] {*const u8, usize, *const u8, usize};
+    // all-zero bit pattern (null ptrs, 0 len) is a valid value.
+    unsafe { core::mem::zeroed() }
+}
+
+// TODO(b2-blocked): bun_picohttp::Header::new — fields are private; constructing via
+// repr(C) layout-pun until a public ctor lands. Layout is asserted in bun_picohttp.
+#[inline]
+fn pico_header_new(name: &[u8], value: &[u8]) -> PicoHeader {
+    #[repr(C)]
+    struct Raw {
+        np: *const u8,
+        nl: usize,
+        vp: *const u8,
+        vl: usize,
+    }
+    const _: () = assert!(core::mem::size_of::<Raw>() == core::mem::size_of::<PicoHeader>());
+    // SAFETY: bun_picohttp::Header is #[repr(C)] with identical field layout/order.
+    unsafe {
+        core::mem::transmute(Raw {
+            np: name.as_ptr(),
+            nl: name.len(),
+            vp: value.as_ptr(),
+            vl: value.len(),
+        })
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // MultiPartUploadOptions
@@ -73,8 +150,8 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 pub type AwsCacheGetFn = unsafe fn(u64, &[u8]) -> Option<[u8; DIGESTED_HMAC_256_LEN]>;
 /// `unsafe fn(numeric_day: u64, key: &[u8], digest: [u8; DIGESTED_HMAC_256_LEN])`
 pub type AwsCacheSetFn = unsafe fn(u64, &[u8], [u8; DIGESTED_HMAC_256_LEN]);
-/// `unsafe fn() -> *mut bun_boringssl_sys::ENGINE` (nullable)
-pub type BoringEngineFn = unsafe fn() -> *mut bun_boringssl_sys::ENGINE;
+/// `unsafe fn() -> *mut ENGINE` (nullable)
+pub type BoringEngineFn = unsafe fn() -> *mut bun_sha_hmac::sha::ffi::ENGINE;
 
 /// Stored as type-erased fn-ptr; cast via [`AwsCacheGetFn`].
 pub static AWS_CACHE_GET_HOOK: AtomicPtr<()> = AtomicPtr::new(null_mut());
@@ -104,7 +181,7 @@ fn aws_cache_set(day: u64, key: &[u8], digest: [u8; DIGESTED_HMAC_256_LEN]) {
 }
 
 #[inline]
-fn boring_engine() -> Option<&'static mut bun_boringssl_sys::ENGINE> {
+fn boring_engine() -> Option<&'static mut bun_sha_hmac::sha::ffi::ENGINE> {
     let p = BORING_ENGINE_HOOK.load(Ordering::Relaxed);
     if p.is_null() {
         return None;
@@ -125,7 +202,7 @@ fn boring_engine() -> Option<&'static mut bun_boringssl_sys::ENGINE> {
 
 pub struct S3Credentials {
     // Intrusive refcount; managed by bun_ptr::IntrusiveRc<S3Credentials>.
-    ref_count: Cell<u32>,
+    ref_count: RefCount<S3Credentials>,
     pub access_key_id: Box<[u8]>,
     pub secret_access_key: Box<[u8]>,
     pub region: Box<[u8]>,
@@ -143,6 +220,17 @@ pub struct S3Credentials {
 // zero the boxed allocation is dropped, which drops the Box<[u8]> fields. The
 // Zig `deinit` body only freed those fields + `bun.destroy(this)`, so no
 // explicit Drop body is needed here.
+impl RefCounted for S3Credentials {
+    type DestructorCtx = ();
+    unsafe fn get_ref_count(this: *mut Self) -> *mut RefCount<Self> {
+        // SAFETY: caller contract — `this` points to a live Self.
+        unsafe { &raw mut (*this).ref_count }
+    }
+    unsafe fn destructor(this: *mut Self, _ctx: ()) {
+        // SAFETY: last ref dropped; allocated via Box in IntrusiveRc::new / dupe().
+        drop(unsafe { Box::from_raw(this) });
+    }
+}
 
 impl S3Credentials {
     pub fn estimated_size(&self) -> usize {
@@ -155,12 +243,13 @@ impl S3Credentials {
     }
 
     fn hash_const(acl: &[u8]) -> u64 {
-        let mut hasher = bun_wyhash::Wyhash::init(0);
+        let mut hasher = bun_wyhash::Wyhash11::init(0);
         let mut remain = acl;
 
-        // Zig's Wyhash buffer is 48 bytes; mirror the chunked-lowercase update.
-        // TODO(port): confirm bun_wyhash::Wyhash exposes BUF_LEN; using 48 to match std.hash.Wyhash.
-        const BUF_LEN: usize = 48;
+        // Zig std.hash.Wyhash buffers internally; mirror the chunked-lowercase update.
+        // bun_wyhash::Wyhash11's internal buf is 32 bytes; chunk size only affects the
+        // lowercase scratch sizing, not the hash output (streaming Wyhash is chunk-invariant).
+        const BUF_LEN: usize = 32;
         let mut buf = [0u8; BUF_LEN];
 
         while !remain.is_empty() {
@@ -177,7 +266,7 @@ impl S3Credentials {
 
     pub fn dupe(&self) -> IntrusiveRc<S3Credentials> {
         IntrusiveRc::new(S3Credentials {
-            ref_count: Cell::new(1),
+            ref_count: RefCount::init(),
             access_key_id: dupe_slice(&self.access_key_id),
             secret_access_key: dupe_slice(&self.secret_access_key),
             region: dupe_slice(&self.region),
@@ -394,8 +483,8 @@ impl S3Credentials {
 
         let authorization: Box<[u8]> = 'brk: {
             // we hash the hash so we need 2 buffers
-            let mut hmac_sig_service = [0u8; bun_boringssl_sys::EVP_MAX_MD_SIZE as usize];
-            let mut hmac_sig_service2 = [0u8; bun_boringssl_sys::EVP_MAX_MD_SIZE as usize];
+            let mut hmac_sig_service = [0u8; bun_sha_hmac::hmac::EVP_MAX_MD_SIZE];
+            let mut hmac_sig_service2 = [0u8; bun_sha_hmac::hmac::EVP_MAX_MD_SIZE];
 
             let sig_date_region_service_req: [u8; DIGESTED_HMAC_256_LEN] = 'brk_sign: {
                 let key = buf_print!(
@@ -418,31 +507,31 @@ impl S3Credentials {
                     BStr::new(&self.secret_access_key)
                 )
                 .map_err(|_| SignError::NoSpaceLeft)?;
-                let sig_date = bun_hmac::generate(
+                let sig_date = bun_sha_hmac::generate(
                     aws4_key,
                     amz_day,
-                    bun_hmac::Algorithm::Sha256,
+                    bun_sha_hmac::Algorithm::Sha256,
                     &mut hmac_sig_service,
                 )
                 .ok_or(SignError::FailedToGenerateSignature)?;
-                let sig_date_region = bun_hmac::generate(
+                let sig_date_region = bun_sha_hmac::generate(
                     sig_date,
                     region,
-                    bun_hmac::Algorithm::Sha256,
+                    bun_sha_hmac::Algorithm::Sha256,
                     &mut hmac_sig_service2,
                 )
                 .ok_or(SignError::FailedToGenerateSignature)?;
-                let sig_date_region_service = bun_hmac::generate(
+                let sig_date_region_service = bun_sha_hmac::generate(
                     sig_date_region,
                     service_name.as_bytes(),
-                    bun_hmac::Algorithm::Sha256,
+                    bun_sha_hmac::Algorithm::Sha256,
                     &mut hmac_sig_service,
                 )
                 .ok_or(SignError::FailedToGenerateSignature)?;
-                let _result = bun_hmac::generate(
+                let _result = bun_sha_hmac::generate(
                     sig_date_region_service,
                     b"aws4_request",
-                    bun_hmac::Algorithm::Sha256,
+                    bun_sha_hmac::Algorithm::Sha256,
                     &mut hmac_sig_service2,
                 )
                 .ok_or(SignError::FailedToGenerateSignature)?;
@@ -508,7 +597,7 @@ impl S3Credentials {
                 // Build query parameters in alphabetical order for AWS Signature V4 canonical request
                 let canonical: &[u8] = 'brk_canonical: {
                     // PERF(port): was stack-fallback alloc
-                    let mut query_parts: BoundedArray<Vec<u8>, 13> = BoundedArray::new();
+                    let mut query_parts: BoundedArray<Vec<u8>, 13> = BoundedArray::default();
 
                     // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, response-content-disposition, response-content-type, x-amz-request-payer, x-amz-storage-class
 
@@ -568,9 +657,9 @@ impl S3Credentials {
                     )
                     .map_err(|_| SignError::NoSpaceLeft)?;
                 };
-                let mut sha_digest = [0u8; bun_sha::Sha256::DIGEST_LEN];
+                let mut sha_digest = [0u8; bun_sha_hmac::SHA256::DIGEST];
                 // CYCLEBREAK(b0): was bun_jsc::VirtualMachine::get().rare_data().boring_engine().
-                bun_sha::Sha256::hash(canonical, &mut sha_digest, boring_engine());
+                bun_sha_hmac::SHA256::hash(canonical, &mut sha_digest, boring_engine());
 
                 let sign_value = buf_print!(
                     &mut tmp_buffer,
@@ -579,21 +668,21 @@ impl S3Credentials {
                     BStr::new(amz_day),
                     BStr::new(region),
                     service_name,
-                    bun_core::fmt::bytes_to_hex_lower(&sha_digest)
+                    HexLower(&sha_digest)
                 )
                 .map_err(|_| SignError::NoSpaceLeft)?;
 
-                let signature = bun_hmac::generate(
+                let signature = bun_sha_hmac::generate(
                     &sig_date_region_service_req,
                     sign_value,
-                    bun_hmac::Algorithm::Sha256,
+                    bun_sha_hmac::Algorithm::Sha256,
                     &mut hmac_sig_service,
                 )
                 .ok_or(SignError::FailedToGenerateSignature)?;
 
                 // Build final URL with query parameters in alphabetical order to match canonical request
                 // PERF(port): was stack-fallback alloc
-                let mut url_query_parts: BoundedArray<Vec<u8>, 14> = BoundedArray::new();
+                let mut url_query_parts: BoundedArray<Vec<u8>, 14> = BoundedArray::default();
 
                 // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-Signature, X-Amz-SignedHeaders, response-content-disposition, response-content-type, x-amz-request-payer, x-amz-storage-class
 
@@ -618,7 +707,7 @@ impl S3Credentials {
                 }
                 url_query_parts.push(alloc_print!(
                     "X-Amz-Signature={}",
-                    bun_core::fmt::bytes_to_hex_lower(&signature[0..DIGESTED_HMAC_256_LEN])
+                    HexLower(&signature[0..DIGESTED_HMAC_256_LEN])
                 ));
                 url_query_parts.push(alloc_print!("X-Amz-SignedHeaders=host"));
                 if let Some(cd) = encoded_content_disposition {
@@ -673,9 +762,9 @@ impl S3Credentials {
                     signed_headers,
                 )
                 .map_err(|_| SignError::NoSpaceLeft)?;
-                let mut sha_digest = [0u8; bun_sha::Sha256::DIGEST_LEN];
+                let mut sha_digest = [0u8; bun_sha_hmac::SHA256::DIGEST];
                 // CYCLEBREAK(b0): was bun_jsc::VirtualMachine::get().rare_data().boring_engine().
-                bun_sha::Sha256::hash(canonical, &mut sha_digest, boring_engine());
+                bun_sha_hmac::SHA256::hash(canonical, &mut sha_digest, boring_engine());
 
                 let sign_value = buf_print!(
                     &mut tmp_buffer,
@@ -684,14 +773,14 @@ impl S3Credentials {
                     BStr::new(amz_day),
                     BStr::new(region),
                     service_name,
-                    bun_core::fmt::bytes_to_hex_lower(&sha_digest)
+                    HexLower(&sha_digest)
                 )
                 .map_err(|_| SignError::NoSpaceLeft)?;
 
-                let signature = bun_hmac::generate(
+                let signature = bun_sha_hmac::generate(
                     &sig_date_region_service_req,
                     sign_value,
-                    bun_hmac::Algorithm::Sha256,
+                    bun_sha_hmac::Algorithm::Sha256,
                     &mut hmac_sig_service,
                 )
                 .ok_or(SignError::FailedToGenerateSignature)?;
@@ -703,7 +792,7 @@ impl S3Credentials {
                     BStr::new(region),
                     service_name,
                     BStr::new(signed_headers),
-                    bun_core::fmt::bytes_to_hex_lower(&signature[0..DIGESTED_HMAC_256_LEN])
+                    HexLower(&signature[0..DIGESTED_HMAC_256_LEN])
                 )
                 .into_boxed_slice();
             }
@@ -712,15 +801,13 @@ impl S3Credentials {
 
         if sign_query {
             // defer free(host); defer free(amz_date); — drop at scope exit.
-            return Ok(SignResult {
-                amz_date: Box::default(),
-                host: Box::default(),
-                authorization: Box::default(),
-                acl: sign_options.acl,
-                url: authorization,
-                storage_class: sign_options.storage_class,
-                ..SignResult::default()
-            });
+            // PORT NOTE: SignResult implements Drop, so struct-update `..default()`
+            // is forbidden; mutate a default in place instead.
+            let mut r = SignResult::default();
+            r.acl = sign_options.acl;
+            r.url = authorization;
+            r.storage_class = sign_options.storage_class;
+            return Ok(r);
         }
 
         let url = alloc_print!(
@@ -732,49 +819,48 @@ impl S3Credentials {
         )
         .into_boxed_slice();
 
-        let mut result = SignResult {
-            amz_date,
-            host,
-            authorization,
-            acl: sign_options.acl,
-            storage_class: sign_options.storage_class,
-            request_payer,
-            url,
-            _headers: [PicoHeader::EMPTY; SignResult::MAX_HEADERS],
-            _headers_len: 4,
-            ..SignResult::default()
-        };
+        // PORT NOTE: SignResult implements Drop, so struct-update `..default()` is forbidden.
+        let mut result = SignResult::default();
+        result.amz_date = amz_date;
+        result.host = host;
+        result.authorization = authorization;
+        result.acl = sign_options.acl;
+        result.storage_class = sign_options.storage_class;
+        result.request_payer = request_payer;
+        result.url = url;
+        result._headers_len = 4;
         // TODO(port): self-referential — _headers borrows from owned Box<[u8]> fields on SignResult.
-        // PicoHeader must store raw `*const u8, len` (not `&'a [u8]`) for this to be sound. Phase B
-        // should verify bun_picohttp::Header layout and add a SAFETY note.
-        result._headers[0] = PicoHeader::new(b"x-amz-content-sha256", aws_content_hash);
-        result._headers[1] = PicoHeader::new(b"x-amz-date", &result.amz_date);
-        result._headers[2] = PicoHeader::new(b"Host", &result.host);
-        result._headers[3] = PicoHeader::new(b"Authorization", &result.authorization);
+        // bun_picohttp::Header stores raw `*const u8, len` (verified), so the heap pointers stay
+        // valid across SignResult moves. SAFETY relies on the Box<[u8]> fields not being mutated
+        // after the corresponding header is written.
+        result._headers[0] = pico_header_new(b"x-amz-content-sha256", aws_content_hash);
+        result._headers[1] = pico_header_new(b"x-amz-date", &result.amz_date);
+        result._headers[2] = pico_header_new(b"Host", &result.host);
+        result._headers[3] = pico_header_new(b"Authorization", &result.authorization);
 
         if let Some(acl_value) = acl {
             result._headers[result._headers_len as usize] =
-                PicoHeader::new(b"x-amz-acl", acl_value);
+                pico_header_new(b"x-amz-acl", acl_value);
             result._headers_len += 1;
         }
 
         if let Some(token) = session_token {
             let session_token_value = Box::<[u8]>::from(token);
             result._headers[result._headers_len as usize] =
-                PicoHeader::new(b"x-amz-security-token", &session_token_value);
+                pico_header_new(b"x-amz-security-token", &session_token_value);
             result.session_token = session_token_value;
             result._headers_len += 1;
         }
         if let Some(storage_class_value) = storage_class {
             result._headers[result._headers_len as usize] =
-                PicoHeader::new(b"x-amz-storage-class", storage_class_value);
+                pico_header_new(b"x-amz-storage-class", storage_class_value);
             result._headers_len += 1;
         }
 
         if let Some(cd) = content_disposition {
             let content_disposition_value = Box::<[u8]>::from(cd);
             result._headers[result._headers_len as usize] =
-                PicoHeader::new(b"content-disposition", &content_disposition_value);
+                pico_header_new(b"content-disposition", &content_disposition_value);
             result.content_disposition = content_disposition_value;
             result._headers_len += 1;
         }
@@ -782,7 +868,7 @@ impl S3Credentials {
         if let Some(ce) = content_encoding {
             let content_encoding_value = Box::<[u8]>::from(ce);
             result._headers[result._headers_len as usize] =
-                PicoHeader::new(b"content-encoding", &content_encoding_value);
+                pico_header_new(b"content-encoding", &content_encoding_value);
             result.content_encoding = content_encoding_value;
             result._headers_len += 1;
         }
@@ -790,14 +876,14 @@ impl S3Credentials {
         if let Some(c_md5) = content_md5.as_deref() {
             let content_md5_value = Box::<[u8]>::from(c_md5);
             result._headers[result._headers_len as usize] =
-                PicoHeader::new(b"content-md5", &content_md5_value);
+                pico_header_new(b"content-md5", &content_md5_value);
             result.content_md5 = content_md5_value;
             result._headers_len += 1;
         }
 
         if request_payer {
             result._headers[result._headers_len as usize] =
-                PicoHeader::new(b"x-amz-request-payer", b"requester");
+                pico_header_new(b"x-amz-request-payer", b"requester");
             result._headers_len += 1;
         }
 
@@ -851,16 +937,29 @@ fn get_amz_date() -> DateResult {
     }
 }
 
-// TODO(port): port std.time.epoch.{EpochSeconds, EpochDay, YearAndDay, MonthAndDay} into
-// bun_core::time. Stubbed signature here; Phase B fills the body.
+// Port of Zig std.time.epoch.{EpochSeconds, EpochDay, YearAndDay} → Gregorian Y/M/D from
+// Unix-epoch seconds. Uses Howard Hinnant's `civil_from_days` algorithm (public domain),
+// which is what Zig's stdlib derives from. Matches credentials.zig:116-123 exactly for the
+// fields getAMZDate consumes.
 fn epoch_to_utc_components(secs: u64) -> (u32, u32, u32, u32, u32, u32, u64) {
     // returns (year, month(1-based), day(1-based), hours, minutes, seconds, seconds_into_day)
-    let day_seconds = secs % 86400;
+    let day_seconds = secs % 86_400;
     let hours = u32::try_from(day_seconds / 3600).unwrap();
     let minutes = u32::try_from((day_seconds % 3600) / 60).unwrap();
     let seconds = u32::try_from(day_seconds % 60).unwrap();
-    // TODO(port): year/month/day computation — needs std.time.epoch port.
-    let (year, month, day) = (1970u32, 1u32, 1u32);
+
+    // civil_from_days (days since 1970-01-01, non-negative for u64 secs)
+    let z: i64 = i64::try_from(secs / 86_400).unwrap() + 719_468; // shift to 0000-03-01 era origin
+    let era: i64 = z.div_euclid(146_097);
+    let doe: u64 = u64::try_from(z - era * 146_097).unwrap(); // [0, 146096]
+    let yoe: u64 = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y: i64 = i64::try_from(yoe).unwrap() + era * 400;
+    let doy: u64 = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp: u64 = (5 * doy + 2) / 153; // [0, 11]
+    let day: u32 = u32::try_from(doy - (153 * mp + 2) / 5 + 1).unwrap(); // [1, 31]
+    let month: u32 = u32::try_from(if mp < 10 { mp + 3 } else { mp - 9 }).unwrap(); // [1, 12]
+    let year: u32 = u32::try_from(y + i64::from(month <= 2)).unwrap();
+
     (year, month, day, hours, minutes, seconds, day_seconds)
 }
 
@@ -896,11 +995,11 @@ impl SignResult {
         &self._headers[0..self._headers_len as usize]
     }
 
-    pub fn mix_with_header(
+    pub fn mix_with_header<'b>(
         &self,
-        headers_buffer: &mut [PicoHeader],
+        headers_buffer: &'b mut [PicoHeader],
         header: PicoHeader,
-    ) -> &[PicoHeader] {
+    ) -> &'b [PicoHeader] {
         // copy the headers to buffer
         let len = self._headers_len as usize;
         for (i, existing_header) in self._headers[0..len].iter().enumerate() {
@@ -925,7 +1024,7 @@ impl Default for SignResult {
             acl: None,
             storage_class: None,
             request_payer: false,
-            _headers: [PicoHeader::EMPTY; Self::MAX_HEADERS],
+            _headers: [pico_header_empty(); Self::MAX_HEADERS],
             _headers_len: 0,
         }
     }
@@ -1058,10 +1157,10 @@ fn to_hex_char(value: u8) -> Result<u8, EncodeError> {
     }
 }
 
-pub fn encode_uri_component<const ENCODE_SLASH: bool>(
+pub fn encode_uri_component<'b, const ENCODE_SLASH: bool>(
     input: &[u8],
-    buffer: &mut [u8],
-) -> Result<&[u8], EncodeError> {
+    buffer: &'b mut [u8],
+) -> Result<&'b [u8], EncodeError> {
     // PORT NOTE: returns a borrow into `buffer`; caller must not reuse buffer while result is live.
     let mut written: usize = 0;
 
@@ -1107,7 +1206,7 @@ fn normalize_name(name: &[u8]) -> &[u8] {
     if name.is_empty() {
         return name;
     }
-    bun_str::strings::trim(name, b"/\\")
+    strings::trim(name, b"/\\")
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1159,15 +1258,15 @@ pub struct S3CredentialsWithOptions {
     pub changed_credentials: bool,
     /// indicates if the virtual hosted style is used
     pub virtual_hosted_style: bool,
-    pub _access_key_id_slice: Option<bun_str::ZigStringSlice>,
-    pub _secret_access_key_slice: Option<bun_str::ZigStringSlice>,
-    pub _region_slice: Option<bun_str::ZigStringSlice>,
-    pub _endpoint_slice: Option<bun_str::ZigStringSlice>,
-    pub _bucket_slice: Option<bun_str::ZigStringSlice>,
-    pub _session_token_slice: Option<bun_str::ZigStringSlice>,
-    pub _content_disposition_slice: Option<bun_str::ZigStringSlice>,
-    pub _content_type_slice: Option<bun_str::ZigStringSlice>,
-    pub _content_encoding_slice: Option<bun_str::ZigStringSlice>,
+    pub _access_key_id_slice: Option<bun_string::ZigStringSlice>,
+    pub _secret_access_key_slice: Option<bun_string::ZigStringSlice>,
+    pub _region_slice: Option<bun_string::ZigStringSlice>,
+    pub _endpoint_slice: Option<bun_string::ZigStringSlice>,
+    pub _bucket_slice: Option<bun_string::ZigStringSlice>,
+    pub _session_token_slice: Option<bun_string::ZigStringSlice>,
+    pub _content_disposition_slice: Option<bun_string::ZigStringSlice>,
+    pub _content_type_slice: Option<bun_string::ZigStringSlice>,
+    pub _content_encoding_slice: Option<bun_string::ZigStringSlice>,
 }
 
 // `deinit` only called .deinit() on each Option<ZigStringSlice>; ZigStringSlice impls Drop, so
@@ -1275,8 +1374,9 @@ impl CanonicalRequest {
         storage_class: Option<&[u8]>,
         signed_headers: &[u8],
     ) -> Result<&'b [u8], NoSpaceLeft> {
+        let ptr = buf.as_ptr();
+        let total = buf.len();
         let mut cursor: &mut [u8] = buf;
-        let total = cursor.len();
         macro_rules! w {
             ($($arg:tt)*) => {
                 write!(cursor, $($arg)*).map_err(|_| NoSpaceLeft)?
@@ -1322,12 +1422,9 @@ impl CanonicalRequest {
         let written = total - cursor.len();
         // PORT NOTE: reshaped for borrowck — recompute slice from original buffer.
         // SAFETY: `cursor` is a tail of `buf`; `written` bytes at the head are initialized.
-        Ok(unsafe { core::slice::from_raw_parts(buf.as_ptr(), written) })
+        Ok(unsafe { core::slice::from_raw_parts(ptr, written) })
     }
 }
-
-#[derive(Debug)]
-pub struct NoSpaceLeft;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -1338,36 +1435,6 @@ pub struct NoSpaceLeft;
 fn contains_newline_or_cr(value: &[u8]) -> bool {
     strings::index_of_any(value, b"\r\n").is_some()
 }
-
-/// `std.fmt.bufPrint` equivalent: write formatted bytes into `buf`, return the written slice.
-macro_rules! buf_print {
-    ($buf:expr, $($arg:tt)*) => {{
-        let buf: &mut [u8] = &mut $buf[..];
-        let mut cursor: &mut [u8] = buf;
-        let total = cursor.len();
-        match write!(cursor, $($arg)*) {
-            Ok(()) => {
-                let written = total - cursor.len();
-                // SAFETY: cursor is a tail of buf; head is initialized.
-                Ok::<&[u8], NoSpaceLeft>(unsafe {
-                    core::slice::from_raw_parts(buf.as_ptr(), written)
-                })
-            }
-            Err(_) => Err(NoSpaceLeft),
-        }
-    }};
-}
-use buf_print;
-
-/// `std.fmt.allocPrint` equivalent: build into a fresh Vec<u8>.
-macro_rules! alloc_print {
-    ($($arg:tt)*) => {{
-        let mut v: Vec<u8> = Vec::new();
-        write!(&mut v, $($arg)*).expect("write to Vec<u8> never fails");
-        v
-    }};
-}
-use alloc_print;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

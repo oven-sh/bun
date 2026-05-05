@@ -1,17 +1,14 @@
 use core::ffi::c_void;
 
-// TODO(b0): bake::Side arrives from move-in (TYPE_ONLY → bundler)
-use crate::bake_types::Side;
-use bun_bundler::options::Loader;
+use crate::options::Loader;
+// `bake::Side` / `jsc.api.BuildArtifact.OutputKind` are TYPE_ONLY move-ins;
+// the B-1 stub `options` module already defines them locally.
+use crate::options::{OutputKind, Side};
 use bun_core::Error;
-use bun_fs as fs;
+use bun_logger::fs;
 use bun_paths::{self as resolve_path, PathBuffer};
-use bun_resolver as resolver;
-use bun_str::String as BunString;
+use bun_string::String as BunString;
 use bun_sys::Fd;
-
-// TODO(b0): jsc::api arrives from move-in (TYPE_ONLY → bundler)
-use crate::api::build_artifact::OutputKind;
 
 // Instead of keeping files in-memory, we:
 // 1. Write directly to disk
@@ -46,29 +43,31 @@ pub struct OutputFile {
 }
 
 impl OutputFile {
-    pub const ZERO_VALUE: fn() -> OutputFile = || OutputFile {
-        loader: Loader::File,
-        input_loader: Loader::Js,
-        src_path: fs::Path::init(b""),
-        value: Value::Noop,
-        size: 0,
-        size_without_sourcemap: 0,
-        hash: 0,
-        is_executable: false,
-        source_map_index: u32::MAX,
-        bytecode_index: u32::MAX,
-        module_info_index: u32::MAX,
-        output_kind: OutputKind::Chunk,
-        dest_path: Box::default(),
-        side: None,
-        entry_point_index: None,
-        referenced_css_chunks: Box::default(),
-        source_index: IndexOptional::NONE,
-        bake_extra: BakeExtra::default(),
-    };
     // TODO(port): Zig `zero_value` is a const struct literal; Rust can't make this a
     // true `const` because `Box`/`fs::Path` aren't const-constructible. Exposed as a
-    // fn-pointer thunk so call sites read `OutputFile::ZERO_VALUE()`. Revisit in Phase B.
+    // plain fn so call sites read `OutputFile::zero_value()`.
+    pub fn zero_value() -> OutputFile {
+        OutputFile {
+            loader: Loader::File,
+            input_loader: Loader::Js,
+            src_path: fs::Path::init(b""),
+            value: Value::Noop,
+            size: 0,
+            size_without_sourcemap: 0,
+            hash: 0,
+            is_executable: false,
+            source_map_index: u32::MAX,
+            bytecode_index: u32::MAX,
+            module_info_index: u32::MAX,
+            output_kind: OutputKind::Chunk,
+            dest_path: Box::default(),
+            side: None,
+            entry_point_index: None,
+            referenced_css_chunks: Box::default(),
+            source_index: IndexOptional::NONE,
+            bake_extra: BakeExtra::default(),
+        }
+    }
 }
 
 #[derive(Default, Clone, Copy)]
@@ -79,9 +78,26 @@ pub struct BakeExtra {
 }
 
 // Zig: `pub const Index = bun.GenericIndex(u32, OutputFile);`
-// TODO(port): `bun.GenericIndex` provides `.Optional` with `.none`; mirror that here.
-pub type Index = bun_core::GenericIndex<u32, OutputFile>;
-pub type IndexOptional = <Index as bun_core::GenericIndexExt>::Optional;
+// TODO(b2-blocked): bun_core::GenericIndex — local newtype mirror until the
+// generic index helper lands in bun_core.
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Index(pub u32);
+
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct IndexOptional(u32);
+impl IndexOptional {
+    pub const NONE: IndexOptional = IndexOptional(u32::MAX);
+    #[inline]
+    pub fn get(self) -> Option<Index> {
+        if self.0 == u32::MAX { None } else { Some(Index(self.0)) }
+    }
+    #[inline]
+    pub fn some(i: Index) -> IndexOptional {
+        IndexOptional(i.0)
+    }
+}
 
 // Zig `deinit` only freed owned fields (value / src_path.text / dest_path /
 // referenced_css_chunks); all are now owned types that drop automatically, so no
@@ -128,17 +144,19 @@ impl FileOperation {
     }
 
     pub fn get_pathname(&self) -> &[u8] {
+        #[cfg(any())]
         if self.is_tmpdir {
             // TODO(port): `resolve_path.joinAbs` writes into a threadlocal buffer in
             // Zig; the Rust port returns a borrow into that TLS buffer. Verify lifetime.
-            resolve_path::join_abs(
+            return resolve_path::join_abs(
                 fs::FileSystem::RealFS::tmpdir_path(),
                 resolve_path::Platform::Auto,
                 &self.pathname,
-            )
-        } else {
-            &self.pathname
+            );
         }
+        // TODO(b2-blocked): bun_resolver::fs::FileSystem::RealFS::tmpdir_path
+        debug_assert!(!self.is_tmpdir, "b2-blocked: tmpdir join");
+        &self.pathname
     }
 }
 
@@ -165,7 +183,10 @@ pub enum Value {
         // global mimalloc allocator backs `Box<[u8]>`, so the field is dropped.
         bytes: Box<[u8]>,
     },
-    Pending(resolver::Result),
+    // TODO(b2-blocked): bun_resolver::Result — `bun_resolver` depends on
+    // `bun_bundler`, so storing the concrete type here is a crate cycle. Kept
+    // opaque until the type moves to a leaf crate.
+    Pending(()),
     Saved(SavedFile),
 }
 
@@ -180,6 +201,9 @@ impl Value {
         }
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_string::String::create_external — signature not yet
+    // exported from T1.
     pub fn to_bun_string(self) -> BunString {
         match self {
             Value::Noop => BunString::empty(),
@@ -233,10 +257,15 @@ impl Value {
     }
 }
 
-// TODO(b0): SavedFile arrives from move-in (TYPE_ONLY bundler_jsc → bundler).
-pub use crate::saved_file::SavedFile;
+/// `OutputFile.zig:SavedFile` (TYPE_ONLY move-in from bundler_jsc).
+#[derive(Default, Clone, Copy)]
+pub struct SavedFile {
+    pub byte_size: u64,
+}
 
 impl OutputFile {
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_resolver::Result — see `Value::Pending`.
     pub fn init_pending(loader: Loader, pending: resolver::Result) -> OutputFile {
         let src_path = pending.path_const().expect("path").clone();
         OutputFile {
@@ -244,23 +273,23 @@ impl OutputFile {
             src_path,
             size: 0,
             value: Value::Pending(pending),
-            ..OutputFile::ZERO_VALUE()
+            ..OutputFile::zero_value()
         }
     }
 
     // TODO(port): Zig took `std.fs.File`; std::fs is banned. Accepting a raw `Fd`.
-    pub fn init_file(file: Fd, pathname: &[u8], size: usize) -> OutputFile {
+    pub fn init_file(file: Fd, pathname: &'static [u8], size: usize) -> OutputFile {
         OutputFile {
             loader: Loader::File,
             src_path: fs::Path::init(pathname),
             size,
             value: Value::Copy(FileOperation::from_file(file, pathname)),
-            ..OutputFile::ZERO_VALUE()
+            ..OutputFile::zero_value()
         }
     }
 
     // TODO(port): Zig took `std.fs.Dir`; using `Fd` for the dir handle.
-    pub fn init_file_with_dir(file: Fd, pathname: &[u8], size: usize, dir: Fd) -> OutputFile {
+    pub fn init_file_with_dir(file: Fd, pathname: &'static [u8], size: usize, dir: Fd) -> OutputFile {
         let mut res = Self::init_file(file, pathname, size);
         if let Value::Copy(op) = &mut res.value {
             // PORT NOTE: Zig wrote `res.value.copy.dir_handle = .fromStdDir(dir)` but
@@ -308,6 +337,10 @@ pub struct Options {
 }
 
 impl OutputFile {
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_logger::fs::Path::init — current stub takes
+    // `&'static [u8]`; `options.input_path: Box<[u8]>` is owned. Needs
+    // `fs::Path` to own its `text` (see field comment on `src_path`).
     pub fn init(options: Options) -> OutputFile {
         let size = options.size.unwrap_or_else(|| match &options.data {
             OptionsData::Buffer { data } => data.len(),
@@ -344,6 +377,9 @@ impl OutputFile {
         }
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_sys::write_file_with_path_buffer / make_path /
+    // move_file_z / openat / copy_file — high-level fs surface not yet exported.
     // TODO(port): narrow error set
     pub fn write_to_disk(&self, root_dir: Fd, root_dir_path: &[u8]) -> Result<(), Error> {
         match &self.value {
@@ -395,6 +431,8 @@ impl OutputFile {
         Ok(())
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_sys::move_file_z / bun_string::ZStr::from_bytes
     // TODO(port): narrow error set
     pub fn move_to(&self, _: &[u8], rel_path: &[u8], dir: Fd) -> Result<(), Error> {
         let Value::Move(mv) = &self.value else {
@@ -408,6 +446,8 @@ impl OutputFile {
         Ok(())
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_sys::openat / copy_file
     // TODO(port): narrow error set
     pub fn copy_to(&self, _: &[u8], rel_path: &[u8], dir: Fd) -> Result<(), Error> {
         // TODO(port): Zig used `dir.stdDir().createFile(rel_path, .{})` and

@@ -89,6 +89,7 @@ impl<'a> AnyBlobRef<'a> {
 // (T3) because the column layout is shared with ETag matching. Re-export
 // here so callers can keep writing `headers::Entry` / `headers::EntryList`.
 pub use bun_http_types::ETag::{HeaderEntry as Entry, HeaderEntryList as EntryList};
+use bun_http_types::ETag::HeaderEntryField;
 
 #[derive(Default)]
 pub struct Headers {
@@ -204,10 +205,6 @@ impl Headers {
     }
 
     // PORT NOTE: was `!Headers`; all fallible calls were bun.handleOom-wrapped allocations.
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_collections::MultiArrayList::set_len + dual-mut column
-    // accessors (`slice_mut().items_name_value_mut()`); also needs
-    // bun_http_types::HeaderName for `fast_has`.
     pub fn from(fetch_headers_ref: Option<FetchHeadersRef<'_>>, options: Options<'_>) -> Headers {
         let mut header_count: u32 = 0;
         let mut buf_len: u32 = 0;
@@ -232,49 +229,65 @@ impl Headers {
             }
             false
         };
-        headers.entries.ensure_total_capacity(header_count as usize);
-        // TODO(port): MultiArrayList::set_len — Zig wrote `headers.entries.len = header_count`
-        headers.entries.set_len(header_count as usize);
+        if headers.entries.ensure_total_capacity(header_count as usize).is_err() {
+            bun_alloc::out_of_memory();
+        }
+        // SAFETY: capacity reserved above; columns are `StringPointer` (POD) and fully
+        // overwritten by `copy_to` / the explicit writes below before any read.
+        unsafe { headers.entries.set_len(header_count as usize) };
         headers.buf.reserve_exact(buf_len as usize);
         // SAFETY: capacity reserved above; bytes are fully initialized by copyTo / the copy below.
         unsafe { headers.buf.set_len(buf_len as usize) };
         // PORT NOTE: reshaped for borrowck — Zig took two column slices off one `sliced` view.
-        // TODO(port): MultiArrayList API for simultaneous mutable column access
-        let mut sliced = headers.entries.slice_mut();
-        let (names, values) = sliced.items_name_value_mut();
+        // The Rust `Slice::items` returns `&mut [F]` from `&self`; the two columns are
+        // disjoint allocations so simultaneous access is sound, but borrowck can't see
+        // that. Take raw column pointers up front and slice in scoped blocks.
+        let sliced = headers.entries.slice();
+        // SAFETY: `Name`/`Value` columns are both `StringPointer`; `Slice::items`
+        // contract is satisfied. Disjoint backing memory ⇒ no aliasing.
+        let names_ptr: *mut api::StringPointer =
+            unsafe { sliced.items::<api::StringPointer>(HeaderEntryField::Name) }.as_mut_ptr();
+        let values_ptr: *mut api::StringPointer =
+            unsafe { sliced.items::<api::StringPointer>(HeaderEntryField::Value) }.as_mut_ptr();
         if let Some(headers_ref) = fetch_headers_ref {
-            headers_ref.copy_to(names.as_mut_ptr(), values.as_mut_ptr(), headers.buf.as_mut_ptr());
+            headers_ref.copy_to(names_ptr, values_ptr, headers.buf.as_mut_ptr());
         }
 
         // TODO: maybe we should send Content-Type header first instead of last?
         if needs_content_type {
             let ct = b"Content-Type";
             headers.buf[buf_len_before_content_type as usize..][..ct.len()].copy_from_slice(ct);
-            names[header_count as usize - 1] = api::StringPointer {
-                offset: buf_len_before_content_type,
-                length: ct.len() as u32,
-            };
+            // SAFETY: header_count >= 1 (incremented above); names_ptr points to a
+            // live column of `header_count` slots.
+            unsafe {
+                *names_ptr.add(header_count as usize - 1) = api::StringPointer {
+                    offset: buf_len_before_content_type,
+                    length: ct.len() as u32,
+                };
+            }
 
             let body_ct = options.body.unwrap().content_type();
             headers.buf[buf_len_before_content_type as usize + ct.len()..][..body_ct.len()]
                 .copy_from_slice(body_ct);
-            values[header_count as usize - 1] = api::StringPointer {
-                offset: buf_len_before_content_type + ct.len() as u32,
-                length: options.body.unwrap().content_type().len() as u32,
-            };
+            // SAFETY: see above.
+            unsafe {
+                *values_ptr.add(header_count as usize - 1) = api::StringPointer {
+                    offset: buf_len_before_content_type + ct.len() as u32,
+                    length: options.body.unwrap().content_type().len() as u32,
+                };
+            }
         }
 
         headers
     }
 }
 
-// TODO(b2-blocked): bun_collections::MultiArrayList::clone — Zig `clone()` deep-copied
-// entries + buf; the Rust `MultiArrayList<T>` has no `Clone` yet.
-#[cfg(any())]
 impl Clone for Headers {
     fn clone(&self) -> Self {
         Headers {
-            entries: self.entries.clone(),
+            // PORT NOTE: MultiArrayList::clone is fallible (Result<_, AllocError>);
+            // Zig used `bun.handleOom(self.entries.clone(allocator))`.
+            entries: self.entries.clone().unwrap_or_else(|_| bun_alloc::out_of_memory()),
             buf: self.buf.clone(),
         }
     }

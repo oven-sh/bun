@@ -1,6 +1,8 @@
 use crate::mysql::mysql_param::Param;
+use crate::mysql::mysql_types::FieldType;
+use crate::mysql::protocol::column_definition41::ColumnFlags;
 use crate::mysql::protocol::command_type::CommandType;
-use crate::mysql::protocol::new_writer::{write_wrap, NewWriter};
+use crate::mysql::protocol::new_writer::{NewWriter, WriterContext};
 use crate::shared::data::Data;
 
 bun_core::declare_scope!(MySQLQuery, visible);
@@ -24,11 +26,11 @@ pub struct Execute<'a> {
 // TODO(port): verify caller of Execute handles Data cleanup after write.
 
 impl<'a> Execute<'a> {
-    pub fn write_internal<Context: super::new_writer::WriterContext>(
+    // TODO(port): narrow error set
+    pub fn write_internal<C: WriterContext>(
         &self,
-        writer: &mut NewWriter<Context>,
+        writer: NewWriter<C>,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         let mut packet = writer.start(0)?;
         writer.int1(CommandType::COM_QUERY as u8)?;
         writer.write(self.query)?;
@@ -42,15 +44,15 @@ impl<'a> Execute<'a> {
             let mut param_name_buf = [0u8; 22];
             // Write parameter types
             for (param_type, i) in self.param_types.iter().zip(1usize..) {
+                let unsigned = param_type.flags.contains(ColumnFlags::UNSIGNED);
                 bun_core::scoped_log!(
                     MySQLQuery,
                     "New params bind flag {} unsigned? {}",
                     <&'static str>::from(param_type.r#type),
-                    // TODO(port): packed-struct flag access (Zig: param_type.flags.UNSIGNED)
-                    param_type.flags.unsigned,
+                    unsigned,
                 );
                 writer.int1(param_type.r#type as u8)?;
-                writer.int1(if param_type.flags.unsigned { 0x80 } else { 0 })?;
+                writer.int1(if unsigned { 0x80 } else { 0 })?;
                 let param_name = {
                     use std::io::Write;
                     let mut cursor = std::io::Cursor::new(&mut param_name_buf[..]);
@@ -65,8 +67,7 @@ impl<'a> Execute<'a> {
             // Write parameter values
             debug_assert_eq!(self.params.len(), self.param_types.len());
             for (param, param_type) in self.params.iter().zip(self.param_types.iter()) {
-                // TODO(port): verify enum/variant names for Data::Empty and MYSQL_TYPE_NULL
-                if matches!(param, Data::Empty) || param_type.r#type.is_mysql_type_null() {
+                if matches!(param, Data::Empty) || param_type.r#type == FieldType::MYSQL_TYPE_NULL {
                     continue;
                 }
 
@@ -91,24 +92,20 @@ impl<'a> Execute<'a> {
     }
 
     // Zig: `pub const write = writeWrap(Execute, writeInternal).write;`
-    // TODO(port): `writeWrap` is a comptime type-returning fn in NewWriter.zig that
-    // wraps `write_internal` into a `write` entry point. Phase B should express this
-    // as a trait impl or a thin wrapper once `new_writer::write_wrap` is ported.
-    pub fn write<Context: super::new_writer::WriterContext>(
+    // PORT NOTE: Zig's `writeWrap` constructs a `NewWriter` around a raw context
+    // and calls `write_internal`. Here `writer` is already wrapped, so forward
+    // directly — `write_wrap`'s only job (the wrapping) is done by the caller.
+    pub fn write<C: WriterContext>(
         &self,
-        writer: &mut NewWriter<Context>,
+        writer: NewWriter<C>,
     ) -> Result<(), bun_core::Error> {
-        // PORT NOTE: Zig's `writeWrap` constructs a `NewWriter` around a raw
-        // context and calls `write_internal`. Here `writer` is already wrapped,
-        // so forward directly — `write_wrap`'s only job (the wrapping) is done.
         self.write_internal(writer)
     }
 }
 
-// TODO(port): bound `W` by the NewWriter protocol trait (start/int1/write) —
-// Zig `writer: anytype`; body calls .start/.int1/.write. Phase B: replace with
-// `&mut impl NewWriterProtocol` once that trait exists.
-pub fn execute<W>(query: &[u8], writer: &mut W) -> Result<(), bun_core::Error> {
+// Zig: `writer: anytype` — body calls .start/.int1/.write. Bound on the
+// concrete `NewWriter<C>` shape (the only `anytype` instantiation in-tree).
+pub fn execute<C: WriterContext>(query: &[u8], writer: NewWriter<C>) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
     let mut packet = writer.start(0)?;
     writer.int1(CommandType::COM_QUERY as u8)?;
@@ -121,6 +118,6 @@ pub fn execute<W>(query: &[u8], writer: &mut W) -> Result<(), bun_core::Error> {
 // PORT STATUS
 //   source:     src/sql/mysql/protocol/Query.zig (70 lines)
 //   confidence: medium
-//   todos:      9
-//   notes:      Execute<'a> borrows all fields (Phase-B lifetime decision pending); writeWrap metaprogramming stubbed; flag/enum names need cross-file verification
+//   todos:      4
+//   notes:      Execute<'a> borrows all fields (Phase-B lifetime decision pending); writeWrap metaprogramming flattened; write_null_bitmap added to NewWriterWrap (Zig lazy-comp gap)
 // ──────────────────────────────────────────────────────────────────────────

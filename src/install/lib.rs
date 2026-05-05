@@ -40,7 +40,7 @@ gated_mod!(pub mod resolution = "resolution.rs";);
 gated_mod!(pub mod isolated_install = "isolated_install.rs";);
 #[path = "PnpmMatcher.rs"]
 pub mod pnpm_matcher;
-gated_mod!(pub mod postinstall_optimizer = "postinstall_optimizer.rs";);
+pub mod postinstall_optimizer;
 #[path = "ExternalSlice.rs"]
 pub mod external_slice;
 pub mod integrity;
@@ -372,6 +372,17 @@ pub mod lockfile {
     pub mod bun_lock {}
     pub mod tree { pub type Id = u32; }
 
+    /// Stub for `Lockfile.Package.Meta` (src/install/lockfile.zig). Only the
+    /// fields read by `postinstall_optimizer` are exposed; full layout lives in
+    /// the gated `lockfile.rs`.
+    pub mod package {
+        #[derive(Clone, Copy, Default)]
+        pub struct Meta {
+            pub arch: crate::npm::Architecture,
+            pub os: crate::npm::OperatingSystem,
+        }
+    }
+
     impl Lockfile {
         /// Zig: `Lockfile.initEmpty(this: *Lockfile, allocator)` — out-param init.
         /// In Rust the allocator is implicit (global), so this is a value constructor.
@@ -505,8 +516,6 @@ pub mod isolated_install {
     }
     pub mod file_copier { pub struct FileCopier; }
 }
-#[cfg(not(any()))]
-pub mod postinstall_optimizer { pub struct PostinstallOptimizer; }
 #[cfg(not(any()))]
 pub mod dependency {
     use bun_semver::{SlicedString, String as SemverString};
@@ -1324,26 +1333,16 @@ pub fn fmt_store_path(str: &[u8]) -> StorePathFormatter<'_> {
 pub static ALIGNMENT_BYTES_TO_REPEAT_BUFFER: [u8; 144] = [0u8; 144];
 
 pub fn initialize_store() {
-    #[cfg(any())]
-    {
-        // TODO(b2-blocked): bun_js_parser::ast::expr::Data::Store
-        use bun_js_parser as js_ast;
-        if INITIALIZED_STORE.with(|c| c.get()) {
-            js_ast::ast::expr::Data::Store::reset();
-            js_ast::ast::stmt::Data::Store::reset();
-            return;
-        }
+    use bun_js_parser as js_ast;
+    if INITIALIZED_STORE.with(|c| c.get()) {
+        js_ast::ast::expr::data::Store::reset();
+        js_ast::ast::stmt::data::Store::reset();
+        return;
+    }
 
-        INITIALIZED_STORE.with(|c| c.set(true));
-        js_ast::ast::expr::Data::Store::create();
-        js_ast::ast::stmt::Data::Store::create();
-    }
-    #[cfg(not(any()))]
-    {
-        // TODO(b2-blocked): bun_js_parser::ast::expr::Data::Store
-        let _ = &INITIALIZED_STORE;
-        todo!("B-2: initialize_store")
-    }
+    INITIALIZED_STORE.with(|c| c.set(true));
+    js_ast::ast::expr::data::Store::create();
+    js_ast::ast::stmt::data::Store::create();
 }
 
 /// The default store we use pre-allocates around 16 MB of memory per thread

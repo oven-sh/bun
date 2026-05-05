@@ -1,14 +1,13 @@
 use core::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Once;
+use std::sync::{Once, OnceLock};
 
 use bun_sys::File;
 
 bun_core::declare_scope!(Postgres, visible);
 
-// Zig: `var file: std.fs.File = undefined;` — module-level mutable, initialized once by `load`.
-// SAFETY: written exactly once under `CHECK` (std::sync::Once) before `ENABLED` flips true;
-// callers gate on `ENABLED` before calling `write`, so no data race in practice.
-static mut FILE: Option<File> = None;
+// Zig: `var file: std.fs.File = undefined;` — module-level mutable, initialized
+// once by `load`. PORTING.md §Concurrency: OnceLock for write-once globals.
+static FILE: OnceLock<File> = OnceLock::new();
 
 pub static ENABLED: AtomicBool = AtomicBool::new(false);
 
@@ -17,30 +16,23 @@ pub static ENABLED: AtomicBool = AtomicBool::new(false);
 pub static CHECK: Once = Once::new();
 
 pub fn write(data: &[u8]) {
-    // SAFETY: see FILE above — only reached after CHECK has run and ENABLED is true.
-    unsafe {
-        if let Some(f) = (&raw mut FILE).as_mut().unwrap().as_mut() {
-            let _ = f.write_all(data);
-        }
+    if let Some(f) = FILE.get() {
+        let _ = f.write_all(data);
     }
 }
 
 pub fn load() {
     if let Some(monitor) = bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR.get() {
         ENABLED.store(true, Ordering::Relaxed);
-        // TODO(port): Zig used `std.fs.cwd().createFile(monitor, .{ .truncate = true })`.
-        // bun_sys::File API for create+truncate may differ; verify in Phase B.
-        let f = match File::create(monitor) {
-            bun_sys::Result::Ok(f) => f,
-            bun_sys::Result::Err(_) => {
+        // Zig used `std.fs.cwd().createFile(monitor, .{ .truncate = true })`.
+        let f = match File::create(bun_sys::Fd::cwd(), monitor, /* truncate = */ true) {
+            Ok(f) => f,
+            Err(_) => {
                 ENABLED.store(false, Ordering::Relaxed);
                 return;
             }
         };
-        // SAFETY: only called once via CHECK.call_once(load); no concurrent writer.
-        unsafe {
-            FILE = Some(f);
-        }
+        let _ = FILE.set(f);
         bun_core::scoped_log!(Postgres, "writing to {}", bstr::BStr::new(monitor));
     }
 }

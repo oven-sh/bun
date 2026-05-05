@@ -27,6 +27,7 @@ bun_core.workspace = true
 bun_collections.workspace = true
 bun_crash_handler.workspace = true
 bun_dotenv.workspace = true
+bun_glob.workspace = true
 # TODO(b1): bun_http dep removed — does not compile; usages gated
 # bun_http.workspace = true
 bun_http_types.workspace = true

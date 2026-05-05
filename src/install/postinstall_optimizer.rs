@@ -44,45 +44,66 @@ impl PostinstallOptimizer {
         expr: &ast::Expr,
         value: PostinstallOptimizer,
     ) -> Result<bool, bun_alloc::AllocError> {
-        let Some(mut array) = expr.as_array() else {
-            return Ok(false);
-        };
-        if array.array.items.len() == 0 {
-            return Ok(true);
-        }
-
-        while let Some(entry) = array.next() {
-            if entry.is_string() {
-                let Some(str) = entry.as_string() else {
-                    continue;
-                };
-                if str.is_empty() {
-                    continue;
-                }
-                let hash = semver::string::Builder::string_hash(str);
-                list.dynamic.insert(hash, value)?;
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_js_parser::ast::expr::Expr::as_array
+            // TODO(b2-blocked): bun_js_parser::ast::expr::Expr::as_string (bump-free)
+            let Some(mut array) = expr.as_array() else {
+                return Ok(false);
+            };
+            if array.array.items.len() == 0 {
+                return Ok(true);
             }
-        }
 
-        Ok(true)
+            while let Some(entry) = array.next() {
+                if entry.is_string() {
+                    let Some(str) = entry.as_string() else {
+                        continue;
+                    };
+                    if str.is_empty() {
+                        continue;
+                    }
+                    let hash = semver::string::Builder::string_hash(str);
+                    list.dynamic.insert(hash, value);
+                }
+            }
+
+            Ok(true)
+        }
+        #[cfg(not(any()))]
+        {
+            // TODO(b2-blocked): bun_js_parser::ast::expr::Expr::as_array
+            let _ = (list, expr, value);
+            todo!("b2-blocked: bun_js_parser::ast::expr::Expr::as_array")
+        }
     }
 
     pub fn from_package_json(list: &mut List, expr: &ast::Expr) -> Result<(), bun_alloc::AllocError> {
-        if let Some(native_deps_expr) = expr.get(b"nativeDependencies") {
-            list.disable_default_native_binlinks = Self::from_string_array_group(
-                list,
-                &native_deps_expr,
-                PostinstallOptimizer::NativeBinlink,
-            )?;
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_js_parser::ast::expr::Expr::get
+            if let Some(native_deps_expr) = expr.get(b"nativeDependencies") {
+                list.disable_default_native_binlinks = Self::from_string_array_group(
+                    list,
+                    &native_deps_expr,
+                    PostinstallOptimizer::NativeBinlink,
+                )?;
+            }
+            if let Some(ignored_scripts_expr) = expr.get(b"ignoreScripts") {
+                list.disable_default_ignore = Self::from_string_array_group(
+                    list,
+                    &ignored_scripts_expr,
+                    PostinstallOptimizer::Ignore,
+                )?;
+            }
+            Ok(())
         }
-        if let Some(ignored_scripts_expr) = expr.get(b"ignoreScripts") {
-            list.disable_default_ignore = Self::from_string_array_group(
-                list,
-                &ignored_scripts_expr,
-                PostinstallOptimizer::Ignore,
-            )?;
+        #[cfg(not(any()))]
+        {
+            // TODO(b2-blocked): bun_js_parser::ast::expr::Expr::get
+            let _ = (list, expr);
+            todo!("b2-blocked: bun_js_parser::ast::expr::Expr::get")
         }
-        Ok(())
     }
 
     pub fn get_native_binlink_replacement_package_id(
@@ -92,9 +113,9 @@ impl PostinstallOptimizer {
         target_os: npm::OperatingSystem,
     ) -> Option<PackageID> {
         // Windows needs file extensions.
-        // TODO(port): `@enumFromInt(Npm.OperatingSystem.win32)` — assumes `OperatingSystem` exposes
-        // a `WIN32` constant constructing the bitfield value; verify in Phase B.
-        if target_os.is_match(npm::OperatingSystem::WIN32) {
+        // Zig: `@enumFromInt(Npm.OperatingSystem.win32)` — wrap the raw bit in the
+        // newtype since the macro emits `win32` as the underlying repr, not `Self`.
+        if target_os.is_match(npm::OperatingSystem(npm::OperatingSystem::win32)) {
             return None;
         }
 
@@ -157,7 +178,12 @@ impl List {
             }
         }
 
-        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER.get() {
+        // Zig: feature flag has `default: false` and returns bool directly; the Rust
+        // env_var port returns `Option<bool>`. unwrap_or(false) preserves the default.
+        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER
+            .get()
+            .unwrap_or(false)
+        {
             return false;
         }
 
@@ -173,7 +199,11 @@ impl List {
         target_os: npm::OperatingSystem,
         tree_id: Option<TreeId>,
     ) -> bool {
-        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS.get() {
+        // Zig: feature flag has `default: false`; see note on the binlinker flag above.
+        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS
+            .get()
+            .unwrap_or(false)
+        {
             return false;
         }
 

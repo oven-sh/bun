@@ -80,9 +80,6 @@ pub mod mysql {
         pub mod stack_reader;
         #[path = "HandshakeV10.rs"]
         pub mod handshake_v10;
-        #[cfg(any())]
-        // TODO(b2-blocked): write_null_bitmap on NewWriter + ColumnFlags.unsigned field
-        // accessor — needs API alignment with column_definition41 / new_writer first.
         #[path = "Query.rs"]
         pub mod query;
         #[path = "HandshakeResponse41.rs"]
@@ -99,8 +96,13 @@ pub mod mysql {
         #[path = "NewReader.rs"]
         pub mod new_reader;
         #[cfg(any())]
-        // TODO(b2-blocked): bun_sha::SHA1 / bun_sha::SHA256 / bun_boringssl —
-        // crypto crates not in this tier's dep set.
+        // TODO(b2-blocked): bun_boringssl_sys::{BIO_new_mem_buf, BIO_free,
+        // PEM_read_bio_RSA_PUBKEY, RSA_public_encrypt, RSA_size, RSA_free,
+        // RSA_PKCS1_OAEP_PADDING, ERR_clear_error, ERR_get_error,
+        // ERR_error_string, ERR_load_ERR_strings, ERR_load_crypto_strings} —
+        // present in boringssl.zig but not yet ported to boringssl.rs.
+        // Also: bun_jsc::VirtualMachine (higher-tier) for the ENGINE* arg to
+        // SHA*::hash — cannot land here regardless.
         #[path = "Auth.rs"]
         pub mod auth;
     }
@@ -130,16 +132,10 @@ pub mod postgres {
     pub mod postgres_types;
     #[path = "PostgresProtocol.rs"]
     pub mod postgres_protocol;
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_core::fmt::hex — debug-only hex formatter for scoped_log
     #[path = "SocketMonitor.rs"]
     pub mod socket_monitor;
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_sys::File::create — open-for-write+truncate not in bun_sys yet
     #[path = "DebugSocketMonitorReader.rs"]
     pub mod debug_socket_monitor_reader;
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_sys::File::create — open-for-write+truncate not in bun_sys yet
     #[path = "DebugSocketMonitorWriter.rs"]
     pub mod debug_socket_monitor_writer;
 

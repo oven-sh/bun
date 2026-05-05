@@ -1,14 +1,14 @@
 use core::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Once;
+use std::sync::{Once, OnceLock};
 
 use bun_core::env_var;
 use bun_sys::File;
 
 bun_core::declare_scope!(Postgres, visible);
 
-// TODO(port): Zig used a bare module-level `var file: std.fs.File = undefined;`.
-// Rust statics cannot be left uninitialized; wrap in Option and guard with CHECK/Once.
-static mut FILE: Option<File> = None;
+// Zig used a bare module-level `var file: std.fs.File = undefined;` initialized
+// once by `load`. PORTING.md §Concurrency: OnceLock for write-once globals.
+static FILE: OnceLock<File> = OnceLock::new();
 
 pub static ENABLED: AtomicBool = AtomicBool::new(false);
 
@@ -19,8 +19,7 @@ pub static CHECK: Once = Once::new();
 pub fn load() {
     if let Some(monitor) = env_var::BUN_POSTGRES_SOCKET_MONITOR_READER.get() {
         ENABLED.store(true, Ordering::Relaxed);
-        // TODO(port): Zig called `std.fs.cwd().createFile(monitor, .{ .truncate = true })`.
-        // std::fs is banned; map to bun_sys open-for-write+truncate. Exact bun_sys API TBD in Phase B.
+        // Zig called `std.fs.cwd().createFile(monitor, .{ .truncate = true })`.
         let f = match File::create(bun_sys::Fd::cwd(), monitor, /* truncate = */ true) {
             Ok(f) => f,
             Err(_) => {
@@ -28,20 +27,14 @@ pub fn load() {
                 return;
             }
         };
-        // SAFETY: only mutated inside CHECK.call_once(load); no concurrent access.
-        unsafe {
-            FILE = Some(f);
-        }
+        let _ = FILE.set(f);
         bun_core::scoped_log!(Postgres, "duplicating reads to {}", bstr::BStr::new(monitor));
     }
 }
 
 pub fn write(data: &[u8]) {
-    // SAFETY: FILE is only written once under Once; reads happen after ENABLED is observed true.
-    unsafe {
-        if let Some(file) = FILE.as_ref() {
-            let _ = file.write_all(data);
-        }
+    if let Some(file) = FILE.get() {
+        let _ = file.write_all(data);
     }
 }
 

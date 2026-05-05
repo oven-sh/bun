@@ -17,9 +17,8 @@ pub mod ServerComponentParseTask;
 pub mod HTMLImportManifest;
 #[cfg(any())]
 pub mod HTMLScanner;
-#[cfg(any())]
-pub mod OutputFile;
-#[cfg(any())]
+#[path = "OutputFile.rs"]
+pub mod output_file;
 pub mod cache;
 #[cfg(any())]
 pub mod ThreadPool;
@@ -29,9 +28,7 @@ pub mod AstBuilder;
 pub mod analyze_transpiled_module;
 #[cfg(any())]
 pub mod linker;
-#[cfg(any())]
 pub mod defines;
-#[cfg(any())]
 pub mod barrel_imports;
 #[cfg(any())]
 pub mod LinkerGraph;
@@ -62,8 +59,7 @@ pub struct BundleV2(());
 pub struct Transpiler(());
 /// Stub: see gated `options` module.
 pub struct BundleOptions(());
-/// Stub: see gated `OutputFile` module.
-pub struct OutputFile(());
+pub use output_file::OutputFile;
 /// Stub: see gated `Chunk` module.
 pub struct Chunk(());
 /// Stub: see gated `LinkerContext` module.
@@ -75,10 +71,7 @@ pub use Graph::Graph as GraphStruct;
 pub struct ParseTask(());
 /// Stub: see gated `entry_points` module.
 pub struct EntryPoint(());
-/// Stub: see gated `defines` module.
-pub struct Define(());
-/// Stub: see gated `cache` module.
-pub struct Cache(());
+pub use defines::Define;
 /// Stub: see gated `ThreadPool` module.
 pub struct ThreadPool(());
 /// Stub: defined in gated `bundle_v2` module (`bundle_v2.zig:AdditionalFile`).
@@ -378,65 +371,4 @@ pub mod bundle_v2 {
     pub struct BundleThread(());
 }
 
-/// `OutputFile.zig` payload union — exported separately because dependents
-/// (`bundler_jsc::output_file_jsc`, `standalone_graph`) reach for the value
-/// enum directly.
-pub mod output_file {
-    pub use super::OutputFile;
-    /// Re-export under the name dependents use (`OutputFileValue`).
-    pub use self::Value as OutputFileValue;
-
-    /// `OutputFile.zig:FileOperation` — minimal field set referenced by
-    /// `Value::Move`/`Value::Copy`. `fd`/`dir` are stored as raw ints to avoid
-    /// pulling `bun_sys::FD` (still stabilising) into the type surface.
-    #[derive(Default)]
-    pub struct FileOperation {
-        pub pathname: Box<[u8]>,
-        pub fd: i32,
-        pub dir: i32,
-        pub is_tmpdir: bool,
-        pub is_outdir: bool,
-        pub close_handle_on_complete: bool,
-        pub autowatch: bool,
-    }
-
-    /// `OutputFile.zig:SavedFile`.
-    #[derive(Default)]
-    pub struct SavedFile {
-        pub byte_size: u64,
-    }
-
-    /// `OutputFile.zig` `Value = union(enum)`. `Pending(resolver::Result)` is
-    /// represented opaquely — `bun_resolver` is a *dependent* of this crate, so
-    /// the concrete type would create a cycle.
-    pub enum Value {
-        Move(FileOperation),
-        Copy(FileOperation),
-        Noop,
-        Buffer { bytes: Box<[u8]> },
-        // TODO(b2): real payload is `bun_resolver::Result`; resolver depends on
-        // bundler so this stays opaque until the type moves to a leaf crate.
-        Pending(()),
-        Saved(SavedFile),
-    }
-
-    impl Value {
-        pub fn as_slice(&self) -> &[u8] {
-            match self {
-                Value::Buffer { bytes } => bytes,
-                _ => b"",
-            }
-        }
-    }
-}
-
-/// `cache.zig` — JSON/CSS/JS parse caches. Opaque placeholders until the gated
-/// `cache` module compiles (blocked on `bun_js_parser` AST surface).
-pub mod cache {
-    /// `cache.zig:Json` — wraps `JSON.parse` with a per-source LRU.
-    #[derive(Default)]
-    pub struct Json(());
-    /// `cache.zig:Set` — bundle of `Fs`/`Json`/`JavaScript`/`Css` caches.
-    #[derive(Default)]
-    pub struct Set(());
-}
+pub use cache::Set as Cache;

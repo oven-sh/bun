@@ -583,6 +583,7 @@ impl Drop for Version {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")] // match Zig @tagName: "npm"/"dist_tag"/"github"/...
 pub enum Tag {
     Uninitialized = 0,
 

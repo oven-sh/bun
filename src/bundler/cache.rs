@@ -1,17 +1,14 @@
 use core::ffi::c_void;
+use core::mem::ManuallyDrop;
 
 use bun_alloc::Arena as Bump;
 use bun_core::{self, feature_flags, Global, Output};
 use bun_js_parser::{self as js_parser, ast as js_ast};
 use bun_logger as logger;
-use bun_fs as fs_mod;
-use bun_str::{strings, MutableString, ZStr};
+use bun_string::{strings, MutableString};
 use bun_sys::{self, Fd};
 
 use crate::defines::Define;
-
-// TODO(port): verify crate path for `bun.json` (json_parser)
-use bun_interchange::json_parser;
 
 // ══════════════════════════════════════════════════════════════════════════
 // CYCLEBREAK(b0) MOVE_DOWN: `jsc::RuntimeTranspilerCache` (src/jsc/RuntimeTranspilerCache.zig:28)
@@ -25,7 +22,6 @@ use bun_interchange::json_parser;
 /// `expected_version` in src/jsc/RuntimeTranspilerCache.zig.
 pub const RUNTIME_TRANSPILER_CACHE_VERSION: u32 = 20;
 
-#[derive(Default)]
 pub struct RuntimeTranspilerCache {
     pub input_hash: Option<u64>,
     pub input_byte_length: Option<u64>,
@@ -39,18 +35,38 @@ pub struct RuntimeTranspilerCache {
     pub is_disabled: bool,
 }
 
+impl Default for RuntimeTranspilerCache {
+    fn default() -> Self {
+        Self {
+            input_hash: None,
+            input_byte_length: None,
+            features_hash: None,
+            exports_kind: js_ast::ExportsKind::None,
+            output_code: None,
+            entry: None,
+            is_disabled: false,
+        }
+    }
+}
+
 impl RuntimeTranspilerCache {
     /// Mirrors the Zig `pub var is_disabled` namespaced const — kept as an
     /// associated fn so call-sites read `RuntimeTranspilerCache::is_disabled()`.
     #[inline]
     pub fn disabled() -> bool {
-        // PERF(port): was a global `var`; OnceLock written by T6 init.
-        static DISABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *DISABLED.get_or_init(|| {
-            bun_core::env_var::get(b"BUN_RUNTIME_TRANSPILER_CACHE_PATH")
-                .map(|v| v == b"0")
-                .unwrap_or(false)
-        })
+        #[cfg(any())]
+        {
+            // PERF(port): was a global `var`; OnceLock written by T6 init.
+            static DISABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            return *DISABLED.get_or_init(|| {
+                bun_core::env_var::BUN_RUNTIME_TRANSPILER_CACHE_PATH
+                    .get()
+                    .map(|v| v == b"0")
+                    .unwrap_or(false)
+            });
+        }
+        // TODO(b2-blocked): bun_core::env_var::BUN_RUNTIME_TRANSPILER_CACHE_PATH
+        false
     }
 }
 
@@ -106,7 +122,7 @@ impl Set {
     }
 }
 
-bun_output::declare_scope!(fs, visible);
+bun_core::declare_scope!(fs, visible);
 
 pub struct Fs {
     pub shared_buffer: MutableString,
@@ -154,10 +170,11 @@ impl Default for ExternalFreeFunction {
 }
 
 pub struct Entry {
-    // TODO(port): lifetime — `contents` is either allocator-owned (freed in deinit)
-    // OR native-plugin-owned (freed via `external_free_function`). Phase B: model as
-    // a tagged owner enum so `Drop` can dispatch correctly without an allocator param.
-    pub contents: Box<[u8]>,
+    // `contents` is either allocator-owned (freed here) OR native-plugin-owned
+    // (freed via `external_free_function`). Wrapped in `ManuallyDrop` so `Drop`
+    // can dispatch on `external_free_function` without `mem::forget`
+    // (PORTING.md §Forbidden).
+    contents: ManuallyDrop<Box<[u8]>>,
     pub fd: Fd,
     /// When `contents` comes from a native plugin, this field is populated
     /// with information on how to free it.
@@ -169,23 +186,35 @@ impl Drop for Entry {
         if let Some(func) = self.external_free_function.function {
             // SAFETY: ctx/function pair was supplied together by the native plugin
             unsafe { func(self.external_free_function.ctx) };
-            // TODO(port): in this branch `contents` aliases plugin-owned memory; Box drop
-            // below would double-free. Phase B: store contents as ManuallyDrop or raw slice.
-            core::mem::forget(core::mem::take(&mut self.contents));
+            // `contents` aliases plugin-owned memory; do NOT drop the Box.
         } else {
-            // contents (Box<[u8]>) drops automatically
+            // SAFETY: `contents` is allocator-owned in this branch and not yet dropped.
+            unsafe { ManuallyDrop::drop(&mut self.contents) };
         }
     }
 }
 
 impl Entry {
+    pub fn new(contents: Box<[u8]>, fd: Fd, external_free_function: ExternalFreeFunction) -> Entry {
+        Entry { contents: ManuallyDrop::new(contents), fd, external_free_function }
+    }
+
+    #[inline]
+    pub fn contents(&self) -> &[u8] {
+        &self.contents
+    }
+}
+
+impl Entry {
     pub fn close_fd(&mut self) -> Option<bun_sys::Error> {
+        #[cfg(any())]
         if self.fd.is_valid() {
             let fd = self.fd;
             self.fd = Fd::INVALID;
             // TODO(port): @returnAddress() has no stable Rust equivalent; pass null for now
             return fd.close_allowing_bad_file_descriptor(core::ptr::null());
         }
+        // TODO(b2-blocked): bun_sys::FdExt::close_allowing_bad_file_descriptor
         None
     }
 }
@@ -203,13 +232,19 @@ impl Fs {
     }
 
     /// When we need to suspend/resume something that has pointers into the shared buffer, we need to
-    /// switch out the shared buffer so that it is not in use
-    /// The caller must
-    pub fn reset_shared_buffer(&mut self, buffer: *const MutableString) {
+    /// switch out the shared buffer so that it is not in use.
+    ///
+    /// Ownership transfer: in Zig (cache.zig:77/79) the field is overwritten WITHOUT freeing
+    /// the old buffer, because the suspended parse keeps pointers into it (see ModuleLoader.zig:488,
+    /// "this shared buffer is about to become owned by the AsyncModule struct"). In Rust, plain
+    /// field assignment would drop+free the old buffer → use-after-free on resume. So we return
+    /// the detached buffer; the caller MUST take ownership of it and keep it alive for as long as
+    /// `parse_result.source.contents` may be read.
+    pub fn reset_shared_buffer(&mut self, buffer: *const MutableString) -> MutableString {
         if core::ptr::eq(buffer, &self.shared_buffer) {
-            self.shared_buffer = MutableString::init_empty();
+            core::mem::replace(&mut self.shared_buffer, MutableString::init_empty())
         } else if core::ptr::eq(buffer, &self.macro_shared_buffer) {
-            self.macro_shared_buffer = MutableString::init_empty();
+            core::mem::replace(&mut self.macro_shared_buffer, MutableString::init_empty())
         } else {
             unreachable!("resetSharedBuffer: invalid buffer");
         }
@@ -218,7 +253,13 @@ impl Fs {
     // TODO(port): Zig `Fs.deinit` references `c.entries` which is not a field on `Fs` —
     // dead code (Zig lazy compilation never instantiated it). No Drop impl needed beyond
     // the auto-drop of `shared_buffer` / `macro_shared_buffer`.
+}
 
+#[cfg(any())]
+// TODO(b2-blocked): bun_resolver::fs::FileSystem — `_fs: &mut fs_mod::FileSystem`
+// param + `bun_sys::File`/`openat_a`/`open_file` surface. The full `bun.fs` lives
+// in `bun_resolver` (cycle with bundler).
+impl Fs {
     pub fn read_file_shared(
         &mut self,
         _fs: &mut fs_mod::FileSystem,
@@ -448,7 +489,12 @@ impl JavaScript {
     pub fn init() -> JavaScript {
         JavaScript {}
     }
+}
 
+#[cfg(any())]
+// TODO(b2-blocked): bun_js_parser::Parser::init / parse / scan_imports /
+// ScanPassResult / lexer.range() — parser surface not yet exported from T3.
+impl JavaScript {
     // For now, we're not going to cache JavaScript ASTs.
     // It's probably only relevant when bundling for production.
     pub fn parse(
@@ -528,7 +574,12 @@ impl Json {
     pub fn init() -> Json {
         Json {}
     }
+}
 
+#[cfg(any())]
+// TODO(b2-blocked): bun_interchange::json_parser::{parse, parse_ts_config} —
+// json_parser surface not yet exported.
+impl Json {
     fn parse<F, const FORCE_UTF8: bool>(
         &mut self,
         log: &mut logger::Log,

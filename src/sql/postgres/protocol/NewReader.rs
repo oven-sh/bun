@@ -142,14 +142,14 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
         self.read(count)
     }
 
-    #[cfg(any())]
     pub fn string(&mut self) -> Result<BunString, AnyPostgresError> {
         let result = self.read_z()?;
-        // TODO(b2-blocked): bun_string::String::borrow_utf8 — Zig `borrowUTF8` borrows
-        // `result.slice()` then drops `result` via `defer result.deinit()`, which
-        // would dangle in Rust. The slice points into the connection buffer (Data is
-        // Temporary here), so the borrow outlives `result`, but `borrow_utf8`'s
-        // current signature can't express that. Re-enable once lifetime is settled.
+        // PORT NOTE: Zig `borrowUTF8` borrows `result.slice()` then drops `result`
+        // via `defer result.deinit()`. `Data` here is `Temporary` (points into the
+        // connection buffer), so the bytes outlive the `Data` wrapper itself;
+        // `borrow_utf8` stores a raw pointer (no lifetime) so this matches Zig
+        // semantics 1:1. Phase B: audit that no caller holds the returned
+        // `BunString` past the next buffer fill.
         Ok(BunString::borrow_utf8(result.slice()))
     }
 }

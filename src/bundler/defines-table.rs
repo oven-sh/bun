@@ -13,9 +13,10 @@
 //! these functions has any side effects. It only says something about
 //! referencing these function without calling them.
 
-#[cfg(any())]
 use crate::defines;
 use bun_js_parser as js_ast;
+use bun_js_parser::ExprData;
+use std::sync::OnceLock;
 
 // Zig: `string = []const u8`; each entry is a property-access chain (`&[_]string{...}`).
 pub static GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES: &[&[&[u8]]] = &[
@@ -203,47 +204,79 @@ pub static GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING: &[&[&[u8]]] 
     // Haven't seen a bundle size improvement from adding more to this list yet.
 ];
 
-// TODO(b2-blocked): bun_js_parser::ast::expr::Data — `Expr::Data` is an opaque
-// stub (no `EUndefined`/`ENumber` variants) and `E::Number` is absent from the
-// js_parser B-1 surface, so const-init of `defines::IdentifierDefine` cannot
-// type-check yet. Re-gated alongside the still-gated `crate::defines` module.
-#[cfg(any())]
-static PURE_GLOBAL_IDENTIFIER_DEFINE: defines::IdentifierDefine = defines::IdentifierDefine {
-    flags: defines::Flags {
-        valueless: true,
-        can_be_removed_if_unused: true,
-        ..defines::Flags::DEFAULT
-    },
-    value: js_ast::Expr::Data::EUndefined(js_ast::E::Undefined {}),
-    ..defines::IdentifierDefine::DEFAULT
-};
+// PORTING.md §Concurrency: `OnceLock` for lazily-initialised statics (Zig used
+// const struct literals; `DefineData` is not const-constructible in Rust).
+//
+// `DefineData` is not `Send`/`Sync` in general (it carries `ExprData`, whose
+// boxed variants hold `NonNull<_>`). The four instances stored here only ever
+// use the inline `EUndefined` / `ENumber` variants and `original_name = None`,
+// so they contain no raw pointers and are trivially shareable. Wrap in a local
+// newtype to satisfy `OnceLock<T: Sync + Send>` without globally relaxing
+// `DefineData`'s auto-traits.
+#[repr(transparent)]
+struct SyncDefineData(defines::IdentifierDefine);
+// SAFETY: only constructed below with pointer-free `ExprData` payloads
+// (`EUndefined`/`ENumber`) and `original_name = None`; never mutated after
+// `OnceLock` init. See note above.
+unsafe impl Sync for SyncDefineData {}
+// SAFETY: see `Sync` impl above.
+unsafe impl Send for SyncDefineData {}
 
-#[cfg(any())]
+fn pure_global_identifier_define() -> &'static defines::IdentifierDefine {
+    static CELL: OnceLock<SyncDefineData> = OnceLock::new();
+    &CELL
+        .get_or_init(|| {
+            SyncDefineData(defines::DefineData::init(defines::Options {
+                value: ExprData::EUndefined(js_ast::E::Undefined),
+                valueless: true,
+                can_be_removed_if_unused: true,
+                ..Default::default()
+            }))
+        })
+        .0
+}
+
 mod identifiers {
-    use super::{defines, js_ast};
+    use super::{defines, js_ast, ExprData, OnceLock, SyncDefineData};
 
     const NAN_VAL: js_ast::E::Number = js_ast::E::Number { value: f64::NAN };
-
     const INF_VAL: js_ast::E::Number = js_ast::E::Number { value: f64::INFINITY };
 
     // Step 2. Swap in certain literal values because those can be constant folded
-    pub static UNDEFINED: defines::IdentifierDefine = defines::IdentifierDefine {
-        value: js_ast::Expr::Data::EUndefined(js_ast::E::Undefined {}),
-        flags: defines::Flags {
-            valueless: false,
-            can_be_removed_if_unused: true,
-            ..defines::Flags::DEFAULT
-        },
-        ..defines::IdentifierDefine::DEFAULT
-    };
-    pub static NAN: defines::IdentifierDefine = defines::IdentifierDefine {
-        value: js_ast::Expr::Data::ENumber(NAN_VAL),
-        ..defines::IdentifierDefine::DEFAULT
-    };
-    pub static INFINITY: defines::IdentifierDefine = defines::IdentifierDefine {
-        value: js_ast::Expr::Data::ENumber(INF_VAL),
-        ..defines::IdentifierDefine::DEFAULT
-    };
+    pub fn undefined() -> &'static defines::IdentifierDefine {
+        static CELL: OnceLock<SyncDefineData> = OnceLock::new();
+        &CELL
+            .get_or_init(|| {
+                SyncDefineData(defines::DefineData::init(defines::Options {
+                    value: ExprData::EUndefined(js_ast::E::Undefined),
+                    can_be_removed_if_unused: true,
+                    ..Default::default()
+                }))
+            })
+            .0
+    }
+    pub fn nan() -> &'static defines::IdentifierDefine {
+        static CELL: OnceLock<SyncDefineData> = OnceLock::new();
+        &CELL
+            .get_or_init(|| {
+                SyncDefineData(defines::DefineData::init(defines::Options {
+                    value: ExprData::ENumber(NAN_VAL),
+                    ..Default::default()
+                }))
+            })
+            .0
+    }
+    pub fn infinity() -> &'static defines::IdentifierDefine {
+        static CELL: OnceLock<SyncDefineData> = OnceLock::new();
+        &CELL
+            .get_or_init(|| {
+                SyncDefineData(defines::DefineData::init(defines::Options {
+                    value: ExprData::ENumber(INF_VAL),
+                    ..Default::default()
+                }))
+            })
+            .0
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -256,15 +289,12 @@ pub enum PureGlobalIdentifierValue {
 }
 
 impl PureGlobalIdentifierValue {
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_js_parser::ast::expr::Data — see note on
-    // `PURE_GLOBAL_IDENTIFIER_DEFINE` above.
     pub fn value(self) -> &'static defines::IdentifierDefine {
         match self {
-            PureGlobalIdentifierValue::NaN => &identifiers::NAN,
-            PureGlobalIdentifierValue::Infinity => &identifiers::INFINITY,
-            PureGlobalIdentifierValue::StrictUndefined => &identifiers::UNDEFINED,
-            PureGlobalIdentifierValue::Other => &PURE_GLOBAL_IDENTIFIER_DEFINE,
+            PureGlobalIdentifierValue::NaN => identifiers::nan(),
+            PureGlobalIdentifierValue::Infinity => identifiers::infinity(),
+            PureGlobalIdentifierValue::StrictUndefined => identifiers::undefined(),
+            PureGlobalIdentifierValue::Other => pure_global_identifier_define(),
         }
     }
 }

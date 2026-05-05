@@ -161,9 +161,6 @@ impl TSConfigJSON {
         input: Box<[u8]>,
         source: &logger::Source,
     ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
-        // TODO(b2-blocked): bun_logger::fs::Path::source_dir
-        #[cfg(any())]
-        {
         const TEMPLATE: &[u8] = b"${configDir}";
         let mut remaining: &[u8] = &input;
         let mut string_builder = bun_string::StringBuilder { len: 0, cap: 0, ptr: None };
@@ -194,13 +191,10 @@ impl TSConfigJSON {
         // The extra null-byte here is unnecessary. But it's kind of nice in the debugger sometimes.
         let _ = string_builder.append_z(remaining);
 
-        let written = string_builder.allocated_slice();
-        let len = string_builder.len - 1;
-        Ok(Box::from(&written[..len]))
         // PERF(port): Zig returned a sub-slice into the builder's single allocation; Rust copies once.
-        }
-        let _ = source;
-        Ok(input)
+        let len = string_builder.len - 1;
+        let written = string_builder.allocated_slice();
+        Ok(Box::from(&written[..len]))
     }
 
     // TODO(b2-blocked): bun_bundler::cache::Json + bun_js_parser::Expr full API.

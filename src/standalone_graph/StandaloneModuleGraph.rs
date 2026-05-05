@@ -117,9 +117,7 @@ impl StandaloneModuleGraph {
     // TODO(port): interior mutability — Zig returns `*File` and callers mutate
     // `wtf_string` / `cached_blob`. Using `&mut self` here may force callers to
     // hold `&mut StandaloneModuleGraph`; Phase B may switch to `UnsafeCell` fields.
-    #[cfg(any())]
     pub fn entry_point(&mut self) -> &mut File {
-        // TODO(b2-blocked): bun_collections::StringArrayHashMap::values_mut (indexed)
         &mut self.files.values_mut()[self.entry_point_id as usize]
     }
 
@@ -312,9 +310,7 @@ impl File {
         strings::cmp_strings_asc(&(), lhs.name, rhs.name)
     }
 
-    #[cfg(any())]
     pub fn to_wtf_string(&mut self) -> BunString {
-        // TODO(b2-blocked): bun_string::String::create_static_external
         if self.wtf_string.is_empty() {
             match self.encoding {
                 Encoding::Binary | Encoding::Utf8 => {
@@ -343,11 +339,7 @@ pub enum LazySourceMap {
 static INIT_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
 impl LazySourceMap {
-    #[cfg(any())]
     pub fn load(&mut self) -> Option<Arc<SourceMap::ParsedSourceMap>> {
-        // TODO(b2-blocked): bun_sourcemap::ParsedSourceMap field shape
-        // (`ref_count`/`internal`/`input_line_count` ctor + UnderlyingProvider) —
-        // un-gate once ParsedSourceMap exposes a public `from_internal` builder.
         let _guard = INIT_LOCK.lock();
 
         match self {
@@ -363,22 +355,25 @@ impl LazySourceMap {
                     return None;
                 }
                 let ism = SourceMap::InternalSourceMap { data: blob.as_ptr() };
-                let mut stored = SourceMap::ParsedSourceMap {
-                    ref_count: Default::default(),
-                    internal: ism,
-                    input_line_count: ism.input_line_count(),
-                    ..Default::default()
-                };
+                // PORT NOTE: `from_internal` fills `internal = Some(ism)` +
+                // `input_line_count = ism.input_line_count()` and defaults the rest.
+                let mut stored = SourceMap::ParsedSourceMap::from_internal(ism);
 
                 let source_files_count = serialized.source_files_count();
                 // TODO(port): Zig allocated a single `[]?[]u8` of len*2 and reinterpreted
                 // the first half as `[][]const u8` for file_names. Rust splits into two
                 // separate Vecs to avoid the punning.
-                let mut file_names: Vec<&'static [u8]> = Vec::with_capacity(source_files_count);
+                // PERF(port): `external_source_names` is `Vec<Box<[u8]>>` so we
+                // copy the section bytes; Zig held a borrowed slice. Phase B may
+                // switch the field to `Vec<&'static [u8]>` for the standalone path.
+                let mut file_names: Vec<Box<[u8]>> = Vec::with_capacity(source_files_count);
                 let mut decompressed_contents_slice: Vec<Option<Vec<u8>>> =
                     vec![None; source_files_count];
                 for i in 0..source_files_count {
-                    file_names.push(serialized.source_file_name(i).slice(serialized.bytes));
+                    file_names.push(Box::from(slice_to(
+                        serialized.bytes,
+                        serialized.source_file_name(i),
+                    )));
                 }
 
                 let data = Box::new(SerializedSourceMapLoaded {
@@ -386,12 +381,13 @@ impl LazySourceMap {
                     decompressed_files: decompressed_contents_slice.into_boxed_slice(),
                 });
 
-                stored.external_source_names = file_names.into_boxed_slice();
-                stored.underlying_provider = SourceMap::UnderlyingProvider {
-                    data: (Box::into_raw(data) as usize) as u32, // @truncate(@intFromPtr(data))
-                    load_hint: SourceMap::LoadHint::None,
-                    kind: SourceMap::ProviderKind::Zig,
-                };
+                stored.external_source_names = file_names;
+                // Zig: `.underlying_provider = .{ .data = @truncate(@intFromPtr(data)) }`
+                // (kind = .zig, load_hint = .none implicit). `from_provider` packs the
+                // same triple into the `SourceContentPtr` bitfield.
+                stored.underlying_provider = SourceMap::SourceContentPtr::from_provider(
+                    Box::into_raw(data) as *mut SourceMap::SourceProviderMap,
+                );
                 stored.is_standalone_module_graph = true;
 
                 let parsed = Arc::new(stored);
@@ -428,11 +424,7 @@ bitflags::bitflags! {
 const TRAILER: &[u8] = b"\n---- Bun! ----\n";
 
 impl StandaloneModuleGraph {
-    #[cfg(any())]
     pub fn from_bytes(raw_bytes: &'static mut [u8], offsets: Offsets) -> Result<StandaloneModuleGraph, BunError> {
-        // TODO(b2-blocked): bun_collections::StringArrayHashMap::{put,reserve,lock_pointers,values_mut,get_ptr_mut}
-        // — current alias is `std::HashMap<Box<[u8]>, V>` which lacks the
-        // ordered/index API. Un-gate once collections lands the IndexMap shim.
         if raw_bytes.is_empty() {
             return Ok(StandaloneModuleGraph {
                 bytes: b"",
@@ -444,23 +436,27 @@ impl StandaloneModuleGraph {
         }
 
         let modules_list_bytes = slice_to(raw_bytes, offsets.modules_ptr);
-        // SAFETY: modules_list_bytes was written as &[CompiledModuleGraphFile]; align(1) in Zig.
-        let modules_list: &[CompiledModuleGraphFile] = unsafe {
-            core::slice::from_raw_parts(
-                modules_list_bytes.as_ptr() as *const CompiledModuleGraphFile,
-                modules_list_bytes.len() / size_of::<CompiledModuleGraphFile>(),
-            )
-        };
+        // PORT NOTE: StandaloneModuleGraph.zig:309 builds `[]align(1) const CompiledModuleGraphFile`
+        // because the modules blob sits at an arbitrary byte offset in the section. In Rust,
+        // `&[CompiledModuleGraphFile]` would require natural alignment (StringPointer's u32 fields
+        // → 4-byte). We instead iterate by index and `read_unaligned` each fixed-size record into a
+        // local (`CompiledModuleGraphFile` is `Copy`/POD), so no `&T` ever points at unaligned memory.
+        let modules_list_count = modules_list_bytes.len() / size_of::<CompiledModuleGraphFile>();
+        let modules_list_base = modules_list_bytes.as_ptr() as *const CompiledModuleGraphFile;
 
-        if offsets.entry_point_id as usize > modules_list.len() {
+        if offsets.entry_point_id as usize > modules_list_count {
             return Err(err!("Corrupted module graph: entry point ID is greater than module list count"));
         }
 
         let mut modules = StringArrayHashMap::<File>::new();
-        modules.reserve(modules_list.len());
-        for module in modules_list {
+        modules.reserve(modules_list_count);
+        for i in 0..modules_list_count {
+            // SAFETY: index < count derived from byte length above; bytes live for 'static.
+            let module: CompiledModuleGraphFile =
+                unsafe { core::ptr::read_unaligned(modules_list_base.add(i)) };
+            let module = &module;
             // PERF(port): was putAssumeCapacity
-            modules.put(
+            let _ = modules.put(
                 slice_to_z(raw_bytes, module.name).as_bytes(),
                 File {
                     name: slice_to_z(raw_bytes, module.name).as_bytes(),
@@ -1336,8 +1332,11 @@ pub fn download(
     target: &CompileTarget,
     env: &mut bun_dotenv::Loader,
 ) -> Result<bun_core::ZBox, BunError> {
-    // TODO(b2-blocked): bun_options_types::CompileTarget::{exe_path,download_to_path}
-    // signature drift + bun_core::Output::err_generic.
+    // TODO(b2-blocked): bun_options_types::CompileTarget::exe_path
+    // TODO(b2-blocked): bun_options_types::CompileTarget::download_to_path
+    // (both still cfg-gated upstream on bun_sys::fetch_cache_directory_path /
+    // bun_sys::move_file_z). `err_generic` is `bun_core::err_generic!` — switch
+    // to the macro when un-gating.
     let mut exe_path_buf = PathBuffer::uninit();
     let mut version_str_buf = [0u8; 1024];
     // TODO(port): std.fmt.bufPrintZ — write into fixed buffer with NUL.
@@ -1640,9 +1639,7 @@ pub fn to_executable(
 impl StandaloneModuleGraph {
     /// Loads the standalone module graph from the executable, allocates it on the heap,
     /// sets it globally, and returns the pointer.
-    #[cfg(any())]
     pub fn from_executable() -> Result<Option<&'static mut StandaloneModuleGraph>, BunError> {
-        // TODO(b2-blocked): bun_collections::StringArrayHashMap (see from_bytes_alloc).
         #[cfg(target_os = "macos")]
         {
             let Some(macho_bytes) = macho::get_data() else { return Ok(None); };
@@ -1760,9 +1757,7 @@ impl StandaloneModuleGraph {
 
 /// Allocates a StandaloneModuleGraph in the process-static `INSTANCE`,
 /// populates it from bytes, sets it globally, and returns the pointer.
-#[cfg(any())]
 fn from_bytes_alloc(raw_bytes: &'static mut [u8], offsets: Offsets) -> Result<&'static mut StandaloneModuleGraph, BunError> {
-    // TODO(b2-blocked): bun_collections::StringArrayHashMap (see from_bytes).
     let graph = StandaloneModuleGraph::from_bytes(raw_bytes, offsets)?;
     Ok(StandaloneModuleGraph::set(graph))
 }
@@ -1878,8 +1873,9 @@ pub fn serialize_json_source_map_for_standalone(
     string_payload: &mut Vec<u8>,
     json_source: &[u8],
 ) -> Result<(), BunError> {
-    // TODO(b2-blocked): bun_js_parser::Expr / bun_interchange::json::parse /
-    // bun_sourcemap::InternalSourceMap::from_vlq
+    // TODO(b2-blocked): bun_interchange::json::parse
+    // TODO(b2-blocked): bun_js_parser::Expr (Data::Store::reset / .get / .e_string)
+    // (`InternalSourceMap::from_vlq` is available; only the JSON+AST surface blocks.)
     // PERF(port): was arena bulk-free (arena param dropped)
     let json_src = bun_logger::Source::init_path_string(b"sourcemap.json", json_source);
     let mut log = bun_logger::Log::new();

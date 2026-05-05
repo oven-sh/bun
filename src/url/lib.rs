@@ -88,7 +88,7 @@ pub mod whatwg {
         unsafe { URL__pathFromFileURL(as_mut_ptr(str)) }
     }
     pub fn origin_from_slice(slice: &[u8]) -> Option<&[u8]> {
-        let first_non_ascii = super::strings::first_non_ascii(slice).unwrap_or(slice.len());
+        let first_non_ascii = super::strings::first_non_ascii(slice).map_or(slice.len(), |i| i as usize);
         let len = unsafe { URL__originLength(slice.as_ptr(), first_non_ascii) };
         if len == 0 {
             return None;

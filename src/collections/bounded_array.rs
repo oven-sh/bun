@@ -400,6 +400,26 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
     }
 }
 
+// Rust-idiom aliases (Vec-like surface) so callers don't need to know the
+// Zig-style names. Thin delegations; no behavior change.
+impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
+    #[inline] pub fn len(&self) -> usize { self.len }
+    #[inline] pub fn is_empty(&self) -> bool { self.len == 0 }
+    #[inline] pub fn as_slice(&self) -> &[T] { self.const_slice() }
+    #[inline] pub fn as_mut_slice(&mut self) -> &mut [T] { self.slice() }
+    #[inline] pub fn push(&mut self, item: T) -> Result<(), OverflowError> { self.append(item) }
+    #[inline] pub fn extend_from_slice(&mut self, items: &[T]) -> Result<(), OverflowError>
+    where T: Copy { self.append_slice(items) }
+}
+
+impl<T, const N: usize> core::ops::Deref for BoundedArrayAligned<T, N> {
+    type Target = [T];
+    fn deref(&self) -> &[T] { self.const_slice() }
+}
+impl<T, const N: usize> core::ops::DerefMut for BoundedArrayAligned<T, N> {
+    fn deref_mut(&mut self) -> &mut [T] { self.slice() }
+}
+
 // `pub const Writer = ... std.io.GenericWriter(*Self, error{Overflow}, appendWrite);`
 // Only defined for `T == u8` (Zig `@compileError`s otherwise).
 // TODO(port): Zig exposes a `std.io.GenericWriter`. Phase A maps to `core::fmt::Write`;

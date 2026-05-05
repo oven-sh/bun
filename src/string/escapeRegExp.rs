@@ -8,7 +8,7 @@ const SPECIAL_CHARACTERS: &[u8] = b"|\\{}()[]^$+*?.-";
 pub fn escape_reg_exp<W: std::io::Write>(input: &[u8], writer: &mut W) -> Result<(), std::io::Error> {
     let mut remain = input;
 
-    while let Some(i) = strings::index_of_any(remain, SPECIAL_CHARACTERS) {
+    while let Some(i) = strings::index_of_any(remain, SPECIAL_CHARACTERS).map(|i| i as usize) {
         writer.write_all(&remain[0..i])?;
         match remain[i] {
             c @ (b'|'
@@ -46,7 +46,7 @@ pub fn escape_reg_exp_for_package_name_matching<W: std::io::Write>(
 ) -> Result<(), std::io::Error> {
     let mut remain = input;
 
-    while let Some(i) = strings::index_of_any(remain, SPECIAL_CHARACTERS) {
+    while let Some(i) = strings::index_of_any(remain, SPECIAL_CHARACTERS).map(|i| i as usize) {
         writer.write_all(&remain[0..i])?;
         match remain[i] {
             c @ (b'|'

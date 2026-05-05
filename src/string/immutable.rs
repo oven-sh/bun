@@ -8,24 +8,181 @@ use bun_alloc::AllocError;
 use bun_collections::BoundedArray;
 use bun_core::Error;
 use bun_highway as highway;
-use bun_simdutf_sys as simdutf;
+use bun_simdutf_sys::simdutf;
 
-use crate::immutable::unicode::{
-    decode_wtf8_rune_t, to_utf16_literal, wtf8_byte_sequence_length,
-    wtf8_byte_sequence_length_with_invalid, CodepointIterator,
+pub use self::unicode::{
+    decode_wtf8_rune_t, decode_wtf8_rune_t_multibyte, wtf8_byte_sequence_length,
+    wtf8_byte_sequence_length_with_invalid, CodepointIterator, Cursor, NewCodePointIterator,
+    UnsignedCodepointIterator,
 };
 
 // Sub-modules (peer files under `src/string/immutable/`).
-pub mod exact_size_matcher;
-mod escape_html;
-mod escape_reg_exp;
-pub mod grapheme;
-mod paths;
-mod unicode;
-mod visible;
+// B-2: heavy submodules gated; minimal inline `unicode` provides the 5 fns
+// immutable.rs itself needs. Un-gate each below as their deps land.
+#[cfg(any())] #[path = "immutable/exact_size_matcher.rs"] pub mod exact_size_matcher_draft;
+#[cfg(any())] #[path = "immutable/escapeHTML.rs"]         mod escape_html_draft;
+#[cfg(any())] #[path = "immutable/grapheme.rs"]           pub mod grapheme_draft;
+#[cfg(any())] #[path = "immutable/paths.rs"]              mod paths_draft;
+#[cfg(any())] #[path = "immutable/unicode.rs"]            mod unicode_draft;
+#[cfg(any())] #[path = "immutable/visible.rs"]            mod visible_draft;
 
-/// memmem is provided by libc on posix, but implemented in zig for windows.
-pub use bun_sys::workaround_symbols::memmem;
+pub mod exact_size_matcher { pub struct ExactSizeMatcher<const N: usize>; }
+pub mod grapheme {}
+mod escape_html {}
+mod escape_reg_exp { pub use crate::escape_reg_exp::*; }
+mod paths {}
+mod visible {}
+
+/// Minimal `unicode` surface needed by `immutable.rs` itself (CodepointIterator
+/// + WTF-8 decode). Full transcoding suite (to_utf8_*, convert_utf16_*) lives
+/// in the gated `unicode_draft` module — un-gate after simdutf wiring.
+pub mod unicode {
+    use super::{CodePoint, U3Fast};
+
+    #[inline]
+    pub const fn wtf8_byte_sequence_length(first: u8) -> u8 {
+        if first < 0x80 { 1 }
+        else if (first & 0xE0) == 0xC0 { 2 }
+        else if (first & 0xF0) == 0xE0 { 3 }
+        else if (first & 0xF8) == 0xF0 { 4 }
+        else { 1 }
+    }
+    /// Same table; the Zig version distinguished only by 0-on-invalid intent
+    /// (which the body doesn't actually do — both return 1 for invalid).
+    #[inline]
+    pub const fn wtf8_byte_sequence_length_with_invalid(first: u8) -> u8 {
+        wtf8_byte_sequence_length(first)
+    }
+
+    #[inline]
+    pub fn decode_wtf8_rune_t_multibyte<T>(p: &[u8; 4], len: U3Fast, zero: T) -> T
+    where T: Copy + From<u8> + core::ops::Shl<u32, Output = T> + core::ops::BitOr<Output = T> + PartialOrd,
+    {
+        debug_assert!(len > 1);
+        let s1 = p[1];
+        if (s1 & 0xC0) != 0x80 { return zero; }
+        if len == 2 {
+            let cp = (T::from(p[0] & 0x1F) << 6) | T::from(s1 & 0x3F);
+            if cp < T::from(0x80) { return zero; }
+            return cp;
+        }
+        let s2 = p[2];
+        if (s2 & 0xC0) != 0x80 { return zero; }
+        if len == 3 {
+            let cp = (T::from(p[0] & 0x0F) << 12) | (T::from(s1 & 0x3F) << 6) | T::from(s2 & 0x3F);
+            // 0x800 doesn't fit u8; compare via known-safe construction
+            // (T is i32 or u32 in practice — see CodePointZero impls)
+            if cp < ((T::from(0x08) << 8) | T::from(0)) { return zero; }
+            return cp;
+        }
+        let s3 = p[3];
+        if (s3 & 0xC0) != 0x80 { return zero; }
+        let cp = (T::from(p[0] & 0x07) << 18)
+            | (T::from(s1 & 0x3F) << 12)
+            | (T::from(s2 & 0x3F) << 6)
+            | T::from(s3 & 0x3F);
+        // 0x10000..=0x10FFFF range check — only meaningful for i32/u32.
+        // Construct bounds via shifts to stay within From<u8>.
+        let lo = T::from(1) << 16;                    // 0x1_0000
+        let hi = (T::from(0x10) << 16) | (T::from(0xFF) << 8) | T::from(0xFF); // 0x10_FFFF
+        if cp < lo || cp > hi { return zero; }
+        cp
+    }
+
+    #[inline]
+    pub fn decode_wtf8_rune_t<T>(p: &[u8; 4], len: U3Fast, zero: T) -> T
+    where T: Copy + From<u8> + core::ops::Shl<u32, Output = T> + core::ops::BitOr<Output = T> + PartialOrd,
+    {
+        if len == 0 { return zero; }
+        if len == 1 { return T::from(p[0]); }
+        decode_wtf8_rune_t_multibyte(p, len, zero)
+    }
+
+    /// `CodepointIterator` — yields WTF-8 codepoints with byte-width.
+    pub struct NewCodePointIterator<'a> {
+        pub bytes: &'a [u8],
+        pub i: usize,
+        pub width: u8,
+        pub c: CodePoint,
+    }
+    pub type CodepointIterator<'a> = NewCodePointIterator<'a>;
+    pub type UnsignedCodepointIterator<'a> = NewCodePointIterator<'a>;
+
+    impl<'a> NewCodePointIterator<'a> {
+        pub const ZERO_VALUE: CodePoint = -1;
+        pub fn init(bytes: &'a [u8]) -> Self { Self { bytes, i: 0, width: 0, c: 0 } }
+        pub fn init_offset(bytes: &'a [u8], i: usize) -> Self { Self { bytes, i, width: 0, c: 0 } }
+        pub fn next_codepoint(&mut self) -> CodePoint {
+            if self.i >= self.bytes.len() { return -1; }
+            let len = wtf8_byte_sequence_length(self.bytes[self.i]);
+            let mut buf = [0u8; 4];
+            let avail = (self.bytes.len() - self.i).min(4);
+            buf[..avail].copy_from_slice(&self.bytes[self.i..self.i + avail]);
+            let cp = decode_wtf8_rune_t::<CodePoint>(&buf, len, -1);
+            self.width = len;
+            self.i += len as usize;
+            self.c = cp;
+            cp
+        }
+    }
+
+    #[derive(Default, Clone, Copy)]
+    pub struct Cursor { pub i: u32, pub width: u8, pub c: CodePoint }
+
+    impl<'a> NewCodePointIterator<'a> {
+        /// Zig-style cursor advance. Returns `false` at end.
+        pub fn next(&self, cursor: &mut Cursor) -> bool {
+            let pos = cursor.i as usize + cursor.width as usize;
+            if pos >= self.bytes.len() { return false; }
+            let len = wtf8_byte_sequence_length(self.bytes[pos]);
+            let mut buf = [0u8; 4];
+            let avail = (self.bytes.len() - pos).min(len as usize).min(4);
+            buf[..avail].copy_from_slice(&self.bytes[pos..pos + avail]);
+            cursor.c = decode_wtf8_rune_t::<CodePoint>(&buf, len, -1);
+            cursor.i = pos as u32;
+            cursor.width = len;
+            true
+        }
+    }
+
+    /// `toUTF16Literal` — comptime in Zig (`std.unicode.utf8ToUtf16LeStringLiteral`).
+    /// In Rust callers should use a `const` UTF-16 literal directly; this
+    /// runtime fallback leaks (call-site is rare and the Zig version was
+    /// comptime-only anyway).
+    pub fn to_utf16_literal(s: &[u8]) -> &'static [u16] {
+        // TODO(b2): const-eval via build script or const fn; runtime path leaks.
+        // ASCII fast path (covers all current call sites — comptime literals).
+        let v: Vec<u16> = s.iter().map(|&b| b as u16).collect();
+        debug_assert!(s.iter().all(|&b| b < 0x80), "to_utf16_literal: non-ASCII literal needs const-eval path");
+        Box::leak(v.into_boxed_slice())
+    }
+}
+// Placeholder: full transcoding suite re-exported once `unicode_draft` un-gates.
+pub use self::unicode::to_utf16_literal;
+
+/// memmem — libc on posix, scalar fallback on windows.
+#[cfg(not(windows))]
+pub unsafe fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() { return Some(0); }
+    let p = unsafe {
+        libc::memmem(
+            haystack.as_ptr().cast(), haystack.len(),
+            needle.as_ptr().cast(), needle.len(),
+        )
+    };
+    if p.is_null() { None } else { Some(p as usize - haystack.as_ptr() as usize) }
+}
+#[cfg(windows)]
+pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    bstr::ByteSlice::find(haystack, needle)
+}
+
+/// `bun.reinterpretSlice` — `&[T]` → `&[u8]` view (T must be u8/u16 in practice).
+#[inline]
+fn reinterpret_to_u8<T: Copy>(s: &[T]) -> &[u8] {
+    // SAFETY: u8 has align 1; reading any `T: Copy` as bytes is sound.
+    unsafe { core::slice::from_raw_parts(s.as_ptr().cast(), core::mem::size_of_val(s)) }
+}
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Encoding {
@@ -159,9 +316,14 @@ pub fn in_map_case_insensitive<V: Copy>(
     self_: &[u8],
     map: &'static phf::Map<&'static [u8], V>,
 ) -> Option<V> {
-    // TODO(port): Zig delegated to bun.String.ascii(self).inMapCaseInsensitive(map).
-    // phf does not support case-insensitive lookup natively.
-    crate::String::ascii(self_).in_map_case_insensitive(map)
+    // Zig delegated to bun.String.ascii(self).inMapCaseInsensitive(map).
+    // phf doesn't do case-insensitive natively; lowercase into a stack buffer.
+    if self_.len() > 256 { return None; }
+    let mut buf = [0u8; 256];
+    for (i, &b) in self_.iter().enumerate() { buf[i] = b.to_ascii_lowercase(); }
+    map.get(&buf[..self_.len()]).copied()
+    // TODO(b2): bun.String.inMapCaseInsensitive uses ASCII-lowered key; verify
+    // all phf maps in callers store lowercase keys.
 }
 
 #[inline]
@@ -344,7 +506,7 @@ fn starts_with_redacted_item(text: &[u8], item: &'static [u8]) -> Option<(usize,
         return None;
     }
     // TODO(b0): lexer arrives from move-in (MOVE_DOWN bun_js_parser::lexer → string)
-    let cont = crate::lexer::is_identifier_continue(text[offset] as i32);
+    let cont = crate::lexer::is_identifier_continue(text[offset] as u32);
 
     // must be another identifier
     if !whitespace && cont {
@@ -530,12 +692,9 @@ pub fn last_index_of_char(self_: &[u8], char: u8) -> Option<usize> {
     #[cfg(target_os = "linux")]
     {
         // SAFETY: memrchr scans within [self_.ptr, self_.ptr + self_.len).
-        let start = unsafe { bun_sys::c::memrchr(self_.as_ptr(), char, self_.len()) };
-        if start.is_null() {
-            return None;
-        }
-        let i = start as usize - self_.as_ptr() as usize;
-        return Some(i);
+        let start = unsafe { libc::memrchr(self_.as_ptr().cast(), char as c_int, self_.len()) };
+        if start.is_null() { return None; }
+        return Some(start as usize - self_.as_ptr() as usize);
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -566,20 +725,11 @@ pub fn index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
         return None;
     }
 
-    let self_ptr = self_.as_ptr();
-    let str_ptr = str.as_ptr();
-
     if str_len == 1 {
         return index_of_char_usize(self_, str[0]);
     }
-
     // SAFETY: lengths validated above; memmem reads within bounds.
-    let start = unsafe { memmem(self_ptr, self_len, str_ptr, str_len) };
-    if start.is_null() {
-        return None;
-    }
-
-    let i = start as usize - self_ptr as usize;
+    let i = unsafe { memmem(self_, str) }?;
     debug_assert!(i < self_len);
     Some(i)
 }
@@ -901,8 +1051,8 @@ pub fn starts_with_generic<T: Copy>(self_: &[T], str: &[T]) -> bool {
         return false;
     }
     eql_long::<false>(
-        bun_core::reinterpret_slice::<u8, T>(&self_[0..str.len()]),
-        bun_core::reinterpret_slice::<u8, T>(str),
+        reinterpret_to_u8(&self_[0..str.len()]),
+        reinterpret_to_u8(str),
     )
 }
 
@@ -1086,8 +1236,8 @@ fn eql_comptime_check_len_with_known_type<T: Copy + Eq, const CHECK_LEN: bool>(
 ) -> bool {
     if core::mem::size_of::<T>() != 1 {
         return eql_comptime_check_len_u8(
-            bun_core::reinterpret_slice::<u8, T>(a),
-            bun_core::reinterpret_slice::<u8, T>(b),
+            reinterpret_to_u8(a),
+            reinterpret_to_u8(b),
             CHECK_LEN,
         );
     }
@@ -1132,7 +1282,7 @@ pub fn eql_case_insensitive_ascii<const CHECK_LEN: bool>(a: &[u8], b: &[u8]) -> 
     debug_assert!(!a.is_empty());
 
     // SAFETY: a and b are non-empty; strncasecmp reads up to a.len() bytes from each.
-    unsafe { bun_sys::c::strncasecmp(a.as_ptr(), b.as_ptr(), a.len()) == 0 }
+    unsafe { libc::strncasecmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) == 0 }
 }
 
 pub fn eql_case_insensitive_t<T: Copy + Into<u32>>(a: &[T], b: &[u8]) -> bool {
@@ -1149,22 +1299,12 @@ pub fn eql_case_insensitive_t<T: Copy + Into<u32>>(a: &[T], b: &[u8]) -> bool {
     for (c, &d) in a.iter().zip(b) {
         let c: u32 = (*c).into();
         let d = d as u32;
-        match c {
-            b'a'..=b'z' => {
-                if c != d && c & 0b11011111 != d {
-                    return false;
-                }
-            }
-            b'A'..=b'Z' => {
-                if c != d && c | 0b00100000 != d {
-                    return false;
-                }
-            }
-            _ => {
-                if c != d {
-                    return false;
-                }
-            }
+        if (b'a' as u32..=b'z' as u32).contains(&c) {
+            if c != d && c & 0b1101_1111 != d { return false; }
+        } else if (b'A' as u32..=b'Z' as u32).contains(&c) {
+            if c != d && c | 0b0010_0000 != d { return false; }
+        } else if c != d {
+            return false;
         }
     }
 
@@ -1193,8 +1333,8 @@ pub fn eql_long_t<T: Copy, const CHECK_LEN: bool>(a_str: &[T], b_str: &[T]) -> b
         }
     }
     eql_long::<false>(
-        bun_core::reinterpret_slice::<u8, T>(a_str),
-        bun_core::reinterpret_slice::<u8, T>(b_str),
+        reinterpret_to_u8(a_str),
+        reinterpret_to_u8(b_str),
     )
 }
 
@@ -1325,7 +1465,7 @@ pub const ASCII_U16_VECTOR_SIZE: usize = 8;
 
 pub fn first_non_ascii(slice: &[u8]) -> Option<u32> {
     let result = simdutf::validate::with_errors::ascii(slice);
-    if result.status == simdutf::ErrorCode::Success {
+    if result.status == simdutf::Status::SUCCESS {
         return None;
     }
     Some(result.count as u32)
@@ -1664,7 +1804,7 @@ pub fn trim_leading_pattern2(slice_: &[u8], byte1: u8, byte2: u8) -> &[u8] {
 }
 
 /// prefix is of type &[u8] or &[u16]
-pub fn trim_prefix_comptime<T: Copy + Eq>(buffer: &[T], prefix: &'static [T]) -> &[T] {
+pub fn trim_prefix_comptime<'a, T: Copy + Eq>(buffer: &'a [T], prefix: &'static [T]) -> &'a [T] {
     if has_prefix_comptime_type(buffer, prefix) {
         &buffer[prefix.len()..]
     } else {
@@ -1672,7 +1812,7 @@ pub fn trim_prefix_comptime<T: Copy + Eq>(buffer: &[T], prefix: &'static [T]) ->
     }
 }
 
-pub fn trim_suffix_comptime(buffer: &[u8], suffix: &'static [u8]) -> &[u8] {
+pub fn trim_suffix_comptime<'a>(buffer: &'a [u8], suffix: &'static [u8]) -> &'a [u8] {
     if has_suffix_comptime(buffer, suffix) {
         &buffer[0..buffer.len() - suffix.len()]
     } else {
@@ -1711,28 +1851,25 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
 
     let mut iter = CodepointIterator::init_offset(text, 0);
     let mut cursor = unicode::Cursor { i: first_newline_or_nonascii_i, ..Default::default() };
+    const NL: i32 = b'\n' as i32;
+    const CR: i32 = b'\r' as i32;
     let first_newline_range: LineRange = 'brk: {
         while iter.next(&mut cursor) {
-            let codepoint = cursor.c;
-            match codepoint {
-                b'\n' => {
+            match cursor.c {
+                NL => {
                     current_line += 1;
                     break 'brk LineRange { start: 0, end: cursor.i };
                 }
-                b'\r' => {
-                    if iter.next(&mut cursor) {
-                        let codepoint2 = cursor.c;
-                        if codepoint2 == b'\n' as i32 {
-                            current_line += 1;
-                            break 'brk LineRange { start: 0, end: cursor.i };
-                        }
+                CR => {
+                    if iter.next(&mut cursor) && cursor.c == NL {
+                        current_line += 1;
+                        break 'brk LineRange { start: 0, end: cursor.i };
                     }
                 }
                 _ => {}
             }
         }
-
-        ranges.push(LineRange { start: 0, end: text.len() as u32 });
+        let _ = ranges.push(LineRange { start: 0, end: text.len() as u32 });
         return ranges;
     };
 
@@ -1748,28 +1885,25 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
     {
         cursor.i = current_i;
         cursor.width = 0;
-        let current_line_range: LineRange = 'brk: {
-            let advanced = iter.next(&mut cursor); // cursor points to current_i where we know there is some character
-            debug_assert!(advanced);
-            let codepoint = cursor.c;
-            match codepoint {
-                b'\n' => {
-                    let start = prev_end;
-                    prev_end = cursor.i;
-                    break 'brk LineRange { start, end: cursor.i + 1 };
-                }
-                b'\r' => {
-                    let current_end = cursor.i;
-                    if iter.next(&mut cursor) && cursor.c == b'\n' as i32 {
-                        let r = LineRange { start: prev_end, end: current_end };
-                        prev_end = cursor.i; // Zig: `defer prev_end = cursor.i;`
-                        break 'brk r;
-                    } else {
-                        break 'brk LineRange { start: prev_end, end: cursor.i + 1 };
-                    }
-                }
-                _ => continue,
+        let advanced = iter.next(&mut cursor);
+        debug_assert!(advanced);
+        let current_line_range: LineRange = match cursor.c {
+            NL => {
+                let start = prev_end;
+                prev_end = cursor.i;
+                LineRange { start, end: cursor.i + 1 }
             }
+            CR => {
+                let current_end = cursor.i;
+                if iter.next(&mut cursor) && cursor.c == NL {
+                    let r = LineRange { start: prev_end, end: current_end };
+                    prev_end = cursor.i; // Zig: `defer prev_end = cursor.i;`
+                    r
+                } else {
+                    LineRange { start: prev_end, end: cursor.i + 1 }
+                }
+            }
+            _ => continue,
         };
 
         if ranges.len() == LINE_RANGE_COUNT && current_line <= target_line {
@@ -1882,7 +2016,7 @@ pub fn join(slices: &[&[u8]], delimiter: &[u8]) -> Result<Box<[u8]>, AllocError>
 pub fn order(a: &[u8], b: &[u8]) -> Ordering {
     let len = a.len().min(b.len());
     // SAFETY: both pointers valid for `len` bytes.
-    let cmp = unsafe { bun_sys::c::memcmp(a.as_ptr(), b.as_ptr(), len) };
+    let cmp = unsafe { libc::memcmp(a.as_ptr().cast(), b.as_ptr().cast(), len) };
     match cmp.signum() {
         0 => a.len().cmp(&b.len()),
         1 => Ordering::Greater,
@@ -2031,41 +2165,36 @@ pub const UNICODE_REPLACEMENT: u32 = 0xFFFD;
 // UTF-8 encoding of U+FFFD
 pub const UNICODE_REPLACEMENT_STR: [u8; 3] = [0xEF, 0xBF, 0xBD];
 
+// inet_pton via direct libc extern (libc crate doesn't expose it on all targets).
+unsafe extern "C" {
+    fn inet_pton(af: c_int, src: *const u8, dst: *mut u8) -> c_int;
+}
+const AF_INET: c_int = 2;
+#[cfg(target_os = "linux")]  const AF_INET6: c_int = 10;
+#[cfg(target_os = "macos")]  const AF_INET6: c_int = 30;
+#[cfg(windows)]              const AF_INET6: c_int = 23;
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+const AF_INET6: c_int = 10;
+
 pub fn is_ip_address(input: &[u8]) -> bool {
-    let mut max_ip_address_buffer = [0u8; 512];
-    if input.len() >= max_ip_address_buffer.len() {
-        return false;
-    }
-
-    let mut sockaddr = [0u8; core::mem::size_of::<bun_sys::posix::sockaddr>()];
-    max_ip_address_buffer[0..input.len()].copy_from_slice(input);
-    max_ip_address_buffer[input.len()] = 0;
-
-    let ip_addr_str = max_ip_address_buffer.as_ptr();
-
-    // SAFETY: ip_addr_str is NUL-terminated; sockaddr buffer is large enough for in_addr/in6_addr.
+    let mut buf = [0u8; 512];
+    if input.len() >= buf.len() { return false; }
+    buf[..input.len()].copy_from_slice(input);
+    let mut dst = [0u8; 28];
+    // SAFETY: buf is NUL-terminated; dst ≥ sizeof(in6_addr).
     unsafe {
-        bun_cares::ares_inet_pton(bun_sys::posix::AF_INET, ip_addr_str, sockaddr.as_mut_ptr()) > 0
-            || bun_cares::ares_inet_pton(bun_sys::posix::AF_INET6, ip_addr_str, sockaddr.as_mut_ptr())
-                > 0
+        inet_pton(AF_INET, buf.as_ptr(), dst.as_mut_ptr()) > 0
+            || inet_pton(AF_INET6, buf.as_ptr(), dst.as_mut_ptr()) > 0
     }
 }
 
 pub fn is_ipv6_address(input: &[u8]) -> bool {
-    let mut max_ip_address_buffer = [0u8; 512];
-    if input.len() >= max_ip_address_buffer.len() {
-        return false;
-    }
-
-    let mut sockaddr = [0u8; core::mem::size_of::<bun_sys::posix::sockaddr>()];
-    max_ip_address_buffer[0..input.len()].copy_from_slice(input);
-    max_ip_address_buffer[input.len()] = 0;
-
-    let ip_addr_str = max_ip_address_buffer.as_ptr();
-    // SAFETY: ip_addr_str is NUL-terminated; sockaddr buffer is large enough for in6_addr.
-    unsafe {
-        bun_cares::ares_inet_pton(bun_sys::posix::AF_INET6, ip_addr_str, sockaddr.as_mut_ptr()) > 0
-    }
+    let mut buf = [0u8; 512];
+    if input.len() >= buf.len() { return false; }
+    buf[..input.len()].copy_from_slice(input);
+    let mut dst = [0u8; 28];
+    // SAFETY: buf is NUL-terminated; dst ≥ sizeof(in6_addr).
+    unsafe { inet_pton(AF_INET6, buf.as_ptr(), dst.as_mut_ptr()) > 0 }
 }
 
 pub fn left_has_any_in_right(to_check: &[&[u8]], against: &[&[u8]]) -> bool {
@@ -2102,12 +2231,8 @@ pub fn has_prefix_with_word_boundary(input: &[u8], prefix: &'static [u8]) -> boo
             if next.len() > 3 { next[3] } else { 0 },
         ];
 
-        // TODO(b0): lexer arrives from move-in (MOVE_DOWN bun_js_parser::lexer → string)
-        if !crate::lexer::is_identifier_continue(decode_wtf8_rune_t::<i32>(
-            &bytes,
-            wtf8_byte_sequence_length(next[0]),
-            -1,
-        )) {
+        let cp = decode_wtf8_rune_t::<i32>(&bytes, wtf8_byte_sequence_length(next[0]), -1);
+        if cp < 0 || !crate::lexer::is_identifier_continue(cp as u32) {
             return true;
         }
     }
@@ -2246,17 +2371,17 @@ pub struct QuoteEscapeFormat<'a> {
 }
 
 impl core::fmt::Display for QuoteEscapeFormat<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // TODO(port): bun.js_printer.writePreQuotedString takes a generic writer.
-        // TODO(b0): printer arrives from move-in (MOVE_DOWN bun_js_parser::printer → string)
-        crate::printer::write_pre_quoted_string(
-            self.data,
-            f,
-            self.flags.quote_char,
-            false,
-            self.flags.json,
-            self.flags.str_encoding,
-        )
+    fn fmt(&self, _f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        #[cfg(any())]
+        {
+            // TODO(b2-gated): bun.js_printer.writePreQuotedString — MOVE_DOWN
+            // bun_js_parser::printer → bun_string::printer (string/lib.rs has
+            // a `printer` stub mod but not write_pre_quoted_string yet).
+            return crate::printer::write_pre_quoted_string(
+                self.data, _f, self.flags.quote_char, false, self.flags.json, self.flags.str_encoding,
+            );
+        }
+        todo!("QuoteEscapeFormat::fmt: printer::write_pre_quoted_string")
     }
 }
 
@@ -2295,7 +2420,7 @@ pub fn without_prefix_comptime<'a>(input: &'a [u8], prefix: &'static [u8]) -> &'
 pub fn without_prefix_comptime_z<'a>(input: &'a crate::ZStr, prefix: &'static [u8]) -> &'a crate::ZStr {
     if has_prefix_comptime(input.as_bytes(), prefix) {
         // SAFETY: trailing NUL is preserved past the new start.
-        return unsafe { crate::ZStr::from_raw(input.as_ptr().add(prefix.len()), input.len() - prefix.len()) };
+        return unsafe { crate::ZStr::from_raw(input.as_ptr().add(prefix.len()).cast(), input.len() - prefix.len()) };
     }
     input
 }
@@ -2376,58 +2501,17 @@ pub fn percent_encode_write(
 
 // ───────────── re-exports from sibling modules ─────────────
 
-pub use unicode::{
-    allocate_latin1_into_utf8, allocate_latin1_into_utf8_with_list,
-    append_utf8_machine_word_to_utf16_machine_word, codepoint_size, contains_non_bmp_code_point,
-    contains_non_bmp_code_point_or_is_invalid_identifier, convert_utf16_to_utf8,
-    convert_utf16_to_utf8_append, convert_utf16_to_utf8_in_buffer,
-    convert_utf16_to_utf8_without_invalid_surrogate_pairs, convert_utf8_bytes_into_utf16,
-    convert_utf8_bytes_into_utf16_with_length, convert_utf8_to_utf16_in_buffer,
-    convert_utf8_to_utf16_in_buffer_z, copy_cp1252_into_utf16, copy_latin1_into_ascii,
-    copy_latin1_into_utf16, copy_latin1_into_utf8, copy_latin1_into_utf8_stop_on_non_ascii,
-    copy_u16_into_u8, copy_u8_into_u16, copy_utf16_into_utf8, copy_utf16_into_utf8_impl,
-    copy_utf16_into_utf8_with_buffer_impl, cp1252_to_codepoint_assume_not_ascii,
-    cp1252_to_codepoint_bytes_assume_not_ascii16, decode_check, decode_wtf8_rune_t,
-    decode_wtf8_rune_t_multibyte, element_length_cp1252_into_utf16,
-    element_length_latin1_into_utf8, element_length_utf16_into_utf8,
-    element_length_utf8_into_utf16, encode_utf8_comptime, encode_wtf8_rune, encode_wtf8_rune_t,
-    eql_utf16, is_all_ascii, is_valid_utf8, is_valid_utf8_without_simd, literal,
-    non_ascii_sequence_length, replace_latin1_with_utf8, to_utf16_alloc, to_utf16_alloc_for_real,
-    to_utf16_alloc_maybe_buffered, to_utf16_literal, to_utf8_alloc, to_utf8_alloc_with_type,
-    to_utf8_alloc_with_type_without_invalid_surrogate_pairs, to_utf8_alloc_z,
-    to_utf8_append_to_list, to_utf8_from_latin1, to_utf8_from_latin1_z, to_utf8_list_with_type,
-    to_utf8_list_with_type_bun, u16_get_supplementary, u16_is_lead, u16_is_trail, u16_lead,
-    u16_trail, utf16_codepoint, utf16_codepoint_with_fffd, utf16_eql_string,
-    utf8_byte_sequence_length, utf8_byte_sequence_length_unsafe, w, without_utf8_bom,
-    wtf8_byte_sequence_length, wtf8_byte_sequence_length_with_invalid, wtf8_sequence,
-    CodepointIterator, EncodeIntoResult, NewCodePointIterator, UnsignedCodepointIterator, BOM,
-};
+// B-2: unicode core re-exported at top of file. Remaining submodule re-exports
+// land when `unicode_draft`/`visible_draft`/`paths_draft`/`escape_html_draft` un-gate.
+pub use crate::escape_reg_exp::escape_reg_exp;
+// TODO(b2-gated): full transcoding suite from unicode_draft —
+//   to_utf8_alloc / to_utf16_alloc / convert_* / copy_*_into_* / EncodeIntoResult / BOM / etc.
+// TODO(b2-gated): visible::{visible, visible_codepoint_width, ...}
+// TODO(b2-gated): paths::{to_w_path, basename, add_nt_path_prefix, ...}
+// TODO(b2-gated): escape_html::{escape_html_for_latin1_input, escape_html_for_utf16_input}
 
-pub use visible::{
-    is_amgiguous_codepoint_type, is_full_width_codepoint_type, is_zero_width_codepoint_type,
-    visible, visible_codepoint_width, visible_codepoint_width_maybe_emoji,
-    visible_codepoint_width_type,
-};
-
-pub use escape_html::{escape_html_for_latin1_input, escape_html_for_utf16_input};
-
-pub use escape_reg_exp::{escape_reg_exp, escape_reg_exp_for_package_name_matching};
-
-pub use paths::{
-    add_long_path_prefix, add_nt_path_prefix, add_nt_path_prefix_if_needed, basename,
-    char_is_any_slash, clone_normalizing_separators, from_w_path,
-    is_windows_absolute_path_missing_drive_letter, normalize_slashes_only,
-    normalize_slashes_only_t, path_contains_node_modules_folder, remove_leading_dot_slash,
-    starts_with_windows_drive_letter, starts_with_windows_drive_letter_t,
-    to_extended_path_normalized, to_kernel32_path, to_nt_path, to_nt_path16, to_path,
-    to_path_maybe_dir, to_path_normalized, to_w_dir_path, to_w_path, to_w_path_maybe_dir,
-    to_w_path_normalize_auto_extend, to_w_path_normalized, to_w_path_normalized16,
-    without_leading_path_separator, without_leading_slash, without_nt_prefix,
-    without_trailing_slash, without_trailing_slash_windows_path,
-};
-
-bun_output::declare_scope!(STR, hidden);
-// `log` is `bun.Output.scoped(.STR, .hidden)` — use `bun_output::scoped_log!(STR, ...)`.
+bun_core::declare_scope!(STR, hidden);
+// `log` is `bun.Output.scoped(.STR, .hidden)` — use `bun_core::scoped_log!(STR, ...)`.
 
 pub type CodePoint = i32;
 

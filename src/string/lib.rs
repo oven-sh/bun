@@ -31,10 +31,9 @@ pub mod wtf {
     pub use bun_alloc::WTFStringImplStruct as WTFStringImpl;
 }
 
-// TODO(b2-large): immutable.rs (2482L) = `bun.strings.*` SIMD scanners. Depends
-// on bun_highway FFI + simdutf. Many fns are thin wrappers over `extern "C"
-// highway_*` so the body is mostly FFI decls + dispatch; un-gate after T0/T1.
-#[cfg(any())] #[path = "immutable.rs"] mod immutable_draft;
+// `bun.strings.*` — 132 SIMD-backed scanners over highway/simdutf FFI.
+// Submodules (unicode_draft etc.) gated inside; core scalar+highway fns real.
+#[path = "immutable.rs"] pub mod immutable;
 // Full Phase-A draft of string.zig (the 5-variant String impl). Real
 // `String`/`ZigString` already MOVE-IN'd to bun_alloc (T0); re-exported below.
 #[cfg(any())] #[path = "lib_draft_b1.rs"] mod draft;
@@ -109,30 +108,8 @@ pub mod encoding {
 }
 pub use encoding::Encoding as NodeEncoding;
 
-// ──────────────────────────────────────────────────────────────────────────
-// `strings` (= `bun.strings.*`) — highway SIMD scanners.
-// B-1 stubs route to bstr/std; PERF(port) markers for B-2 highway FFI swap.
-// ──────────────────────────────────────────────────────────────────────────
-pub mod strings {
-    use bstr::ByteSlice;
-    pub use super::encoding::Encoding;
-
-    // PERF(port): these MUST become FFI to highway_* (src/highway/) in B-2.
-    #[inline] pub fn index_of_char(s: &[u8], c: u8) -> Option<usize> { s.iter().position(|&b| b == c) }
-    #[inline] pub fn index_of(s: &[u8], n: &[u8]) -> Option<usize> { s.find(n) }
-    #[inline] pub fn index_of_any(s: &[u8], set: &[u8]) -> Option<usize> { s.iter().position(|b| set.contains(b)) }
-    #[inline] pub fn contains(s: &[u8], n: &[u8]) -> bool { s.find(n).is_some() }
-    #[inline] pub fn contains_char(s: &[u8], c: u8) -> bool { s.contains(&c) }
-    #[inline] pub fn eql(a: &[u8], b: &[u8]) -> bool { a == b }
-    #[inline] pub fn eql_case_insensitive_ascii<const CHECK_LEN: bool>(a: &[u8], b: &[u8]) -> bool {
-        if CHECK_LEN && a.len() != b.len() { return false; }
-        a.eq_ignore_ascii_case(b)
-    }
-    #[inline] pub fn first_non_ascii(s: &[u8]) -> Option<usize> { s.iter().position(|&b| b >= 0x80) }
-    #[inline] pub fn has_prefix(s: &[u8], p: &[u8]) -> bool { s.starts_with(p) }
-    #[inline] pub fn has_suffix(s: &[u8], p: &[u8]) -> bool { s.ends_with(p) }
-}
-pub use strings as immutable; // legacy alias
+// `strings` is the canonical Zig namespace name; alias to the real module.
+pub use immutable as strings;
 
 // ──────────────────────────────────────────────────────────────────────────
 // `lexer` — identifier predicates (ASCII fast path + hook for Unicode).

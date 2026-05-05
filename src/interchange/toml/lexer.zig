@@ -659,7 +659,7 @@ pub const Lexer = struct {
                                     if (lexer.code_point != '\'') continue;
                                     lexer.step();
                                     lexer.token = T.t_string_literal;
-                                    lexer.string_literal_slice = lexer.source.contents[start + 2 .. end];
+                                    lexer.string_literal_slice = lexer.source.contents[trimMultilineStart(lexer.source.contents, start + 2)..end];
                                     return;
                                 },
                                 else => {},
@@ -731,7 +731,7 @@ pub const Lexer = struct {
                                     lexer.step();
 
                                     lexer.token = T.t_string_literal;
-                                    lexer.string_literal_slice = lexer.source.contents[start + 2 .. end];
+                                    lexer.string_literal_slice = lexer.source.contents[trimMultilineStart(lexer.source.contents, start + 2)..end];
                                     if (needs_slow_pass) break;
                                     return;
                                 },
@@ -819,10 +819,10 @@ pub const Lexer = struct {
             const width = iter.width;
             switch (iter.c) {
                 '\r' => {
-
                     // Convert '\r\n' into '\n'
-                    if (iter.i < text.len and text[iter.i] == '\n') {
-                        iter.i += 1;
+                    const cr_next = iter.i + iter.width;
+                    if (cr_next < text.len and text[cr_next] == '\n') {
+                        iter.i = cr_next;
                     }
 
                     // Convert '\r' into '\n'
@@ -843,25 +843,19 @@ pub const Lexer = struct {
                             continue;
                         },
                         'f' => {
-                            buf.append(9) catch unreachable;
+                            buf.append(0x0C) catch unreachable;
                             continue;
                         },
                         'n' => {
-                            buf.append(10) catch unreachable;
+                            buf.append(0x0A) catch unreachable;
                             continue;
                         },
                         'v' => {
-                            // Vertical tab is invalid JSON
-                            // We're going to allow it.
-                            // if (comptime is_json) {
-                            //     lexer.end = start + iter.i - width2;
-                            //     try lexer.syntaxError();
-                            // }
-                            buf.append(11) catch unreachable;
+                            buf.append(0x0B) catch unreachable;
                             continue;
                         },
                         't' => {
-                            buf.append(12) catch unreachable;
+                            buf.append(0x09) catch unreachable;
                             continue;
                         },
                         'r' => {
@@ -1082,19 +1076,40 @@ pub const Lexer = struct {
                                 try lexer.addDefaultError("Unexpected end of line");
                             }
 
-                            // Ignore line continuations. A line continuation is not an escaped newline.
-                            if (iter.i < text.len and text[iter.i + 1] == '\n') {
-                                // Make sure Windows CRLF counts as a single newline
-                                iter.i += 1;
+                            // Line ending backslash: skip \r\n pair and all subsequent whitespace
+                            const next_pos = iter.i + iter.width;
+                            if (next_pos < text.len and text[next_pos] == '\n') {
+                                iter.i = next_pos + 1;
+                            } else {
+                                iter.i += iter.width;
                             }
+                            // Consume all subsequent whitespace (spaces, tabs, newlines)
+                            while (iter.i < text.len) {
+                                switch (text[iter.i]) {
+                                    ' ', '\t', '\n', '\r' => iter.i += 1,
+                                    else => break,
+                                }
+                            }
+                            // Reset width so the next iterator.next() starts at iter.i
+                            iter.width = 0;
                             continue;
                         },
                         '\n', 0x2028, 0x2029 => {
-                            // Ignore line continuations. A line continuation is not an escaped newline.
+                            // Line ending backslash: skip newline and all subsequent whitespace
                             if (comptime !allow_multiline) {
                                 lexer.end = start + iter.i - width2;
                                 try lexer.addDefaultError("Unexpected end of line");
                             }
+                            iter.i += iter.width;
+                            // Consume all subsequent whitespace (spaces, tabs, newlines)
+                            while (iter.i < text.len) {
+                                switch (text[iter.i]) {
+                                    ' ', '\t', '\n', '\r' => iter.i += 1,
+                                    else => break,
+                                }
+                            }
+                            // Reset width so the next iterator.next() starts at iter.i
+                            iter.width = 0;
                             continue;
                         },
                         else => {
@@ -1231,6 +1246,20 @@ pub fn isLatin1Identifier(comptime Buffer: type, name: Buffer) bool {
     }
 
     return true;
+}
+
+/// Per TOML spec: "A newline immediately following the opening delimiter will be trimmed."
+/// Applies to both multi-line basic strings (""") and multi-line literal strings (''').
+fn trimMultilineStart(contents: []const u8, content_start: usize) usize {
+    if (content_start < contents.len and contents[content_start] == '\n') {
+        return content_start + 1;
+    }
+    if (content_start < contents.len and contents[content_start] == '\r') {
+        if (content_start + 1 < contents.len and contents[content_start + 1] == '\n') {
+            return content_start + 2;
+        }
+    }
+    return content_start;
 }
 
 inline fn float64(num: anytype) f64 {

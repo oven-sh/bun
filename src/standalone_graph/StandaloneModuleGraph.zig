@@ -185,6 +185,9 @@ pub const StandaloneModuleGraph = struct {
         bytecode_origin_path: []const u8 = "",
         module_format: ModuleFormat = .none,
         side: FileSide = .server,
+        /// Lazy cache of this file extracted to disk, so native loaders (dlopen,
+        /// .node) can open it. See `ModuleLoader.resolveEmbeddedFile`.
+        extracted_path: ?[:0]const u8 = null,
 
         pub fn appearsInEmbeddedFilesArray(this: *const File) bool {
             return this.side == .client or !this.loader.isJavaScriptLike();

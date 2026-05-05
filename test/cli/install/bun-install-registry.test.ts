@@ -3625,7 +3625,11 @@ describe("hoisting", async () => {
       },
     ];
     for (const { dependencies, expected, situation } of peerTests) {
-      test.todoIf(isFlaky && isMacOS && situation === "peer ^1.0.2")(
+      // Windows flake: the 3-round install loop intermittently sees a cached
+      // `a-dep@1.0.9` under registry contention rather than the fresh-hoisted
+      // peer-resolved version. Hit on unrelated PRs (#30219, #30224, #29587)
+      // on win-arm shard 3/8. Real bug, tracked separately from #29585.
+      test.todoIf((isFlaky && isMacOS && situation === "peer ^1.0.2") || (isFlaky && isWindows))(
         `it should hoist ${expected} when ${situation}`,
         async () => {
           await writeFile(

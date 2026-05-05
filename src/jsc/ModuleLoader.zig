@@ -30,44 +30,204 @@ pub fn resetArena(this: *ModuleLoader, jsc_vm: *VirtualMachine) void {
     }
 }
 
+/// Serializes lazy init of `File.extracted_path` across workers. Extraction
+/// is rare and off the hot path, so one global lock is fine.
+var extracted_path_lock: bun.Mutex = .{};
+
 pub fn resolveEmbeddedFile(vm: *VirtualMachine, path_buf: *bun.PathBuffer, input_path: []const u8, extname: []const u8) ?[]const u8 {
     if (input_path.len == 0) return null;
-    var graph = vm.standalone_module_graph orelse return null;
+    const graph = vm.standalone_module_graph orelse return null;
     const file = graph.find(input_path) orelse return null;
 
     if (comptime Environment.isLinux) {
         // TODO: use /proc/fd/12346 instead! Avoid the copy!
     }
 
-    // atomically write to a tmpfile and then move it to the final destination
-    const tmpname_buf = bun.path_buffer_pool.get();
-    defer bun.path_buffer_pool.put(tmpname_buf);
-    const tmpfilename = bun.fs.FileSystem.tmpname(extname, tmpname_buf, bun.hash(file.name)) catch return null;
+    extracted_path_lock.lock();
+    defer extracted_path_lock.unlock();
 
-    const tmpdir: bun.FD = .fromStdDir(bun.fs.FileSystem.instance.tmpdir() catch return null);
+    // Fast path: already extracted (possibly by a prior Worker). Validate
+    // the cached path still points at a file we own with the expected size.
+    // Plain stat-for-existence isn't enough: if systemd-tmpfiles sweeps
+    // both the extracted `.so` and the `bun-{uid}/` subdir, another user
+    // on a shared host can recreate the subdir (as themselves, 0755) and
+    // plant a malicious .so at the predictable name. Without the
+    // owner+size check below the fast path would hand that file to
+    // dlopen, sidestepping the per-user-subdir defence of the slow path.
+    //
+    // Using lstat rejects an attacker-planted symlink too. Size covers
+    // the file being replaced in place.
+    if (file.extracted_path) |cached| {
+        const ok: bool = if (bun.sys.lstat(cached).unwrap() catch null) |st| blk: {
+            if (comptime Environment.isWindows) break :blk st.size == @as(@TypeOf(st.size), @intCast(file.contents.len));
+            break :blk st.uid == extractOwnerUid() and
+                (st.mode & bun.S.IFMT) == bun.S.IFREG and
+                st.size == @as(@TypeOf(st.size), @intCast(file.contents.len));
+        } else false;
+        if (ok) {
+            @memcpy(path_buf[0..cached.len], cached);
+            return path_buf[0..cached.len];
+        }
+        bun.default_allocator.free(cached);
+        file.extracted_path = null;
+    }
 
-    // First we open the tmpfile, to avoid any other work in the event of failure.
-    const tmpfile = bun.Tmpfile.create(tmpdir, tmpfilename).unwrap() catch return null;
+    // Per-user 0700 subdir defends CWE-377: without it, another user on a
+    // shared box could pre-create the deterministic tmpfile name and the
+    // size-only reuse check below would hand their library to dlopen.
+    const dir_abs_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(dir_abs_buf);
+    const dir = openExtractDir(dir_abs_buf) orelse return null;
+    defer dir.fd.close();
+
+    // Content-hashed filename so repeated dlopens and runs share one tmpfile
+    // instead of leaking per-call copies. See #29585.
+    const content_hash = bun.hash(file.contents);
+    var name_buf: [64]u8 = undefined;
+    const tmpfilename = std.fmt.bufPrintZ(&name_buf, ".bun-{x}.{s}", .{ content_hash, extname }) catch return null;
+
+    // Reuse any existing file with the expected size. Size + our-uid-only is
+    // enough to trust; concurrent racers converge here too.
+    if (bun.sys.fstatat(dir.fd, tmpfilename).unwrap() catch null) |st| {
+        if (st.size == @as(@TypeOf(st.size), @intCast(file.contents.len))) {
+            const result = bun.path.joinAbsStringBuf(dir.path, path_buf, &[_]string{tmpfilename}, .auto);
+            file.extracted_path = bun.default_allocator.dupeZ(u8, result) catch null;
+            return result;
+        }
+        // Wrong size — stale or corrupt. Fall through and replace via rename.
+    }
+
+    // Write to a scratch name then rename(2) — atomic on POSIX and Windows
+    // (MoveFileEx); concurrent racers' renames are semantic no-ops.
+    const scratch_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(scratch_buf);
+    const scratch_name = bun.fs.FileSystem.tmpname(extname, scratch_buf, content_hash) catch return null;
+
+    var tmpfile = bun.Tmpfile.create(dir.fd, scratch_name).unwrap() catch return null;
     defer tmpfile.fd.close();
 
     switch (bun.api.node.fs.NodeFS.writeFileWithPathBuffer(
-        tmpname_buf, // not used
-
+        scratch_buf, // not used
         .{
             .data = .{
                 .encoded_slice = ZigString.Slice.fromUTF8NeverFree(file.contents),
             },
-            .dirfd = tmpdir,
+            .dirfd = dir.fd,
             .file = .{ .fd = tmpfile.fd },
             .encoding = .buffer,
         },
     )) {
         .err => {
+            _ = bun.sys.unlinkat(dir.fd, scratch_name);
             return null;
         },
         else => {},
     }
-    return bun.path.joinAbsStringBuf(bun.fs.FileSystem.RealFS.tmpdirPath(), path_buf, &[_]string{tmpfilename}, .auto);
+
+    tmpfile.finish(tmpfilename) catch {
+        _ = bun.sys.unlinkat(dir.fd, scratch_name);
+        return null;
+    };
+
+    const result = bun.path.joinAbsStringBuf(dir.path, path_buf, &[_]string{tmpfilename}, .auto);
+    file.extracted_path = bun.default_allocator.dupeZ(u8, result) catch null;
+    return result;
+}
+
+const ExtractDir = struct { fd: bun.FD, path: []const u8 };
+
+fn extractOwnerUid() u32 {
+    // geteuid (not getuid) on POSIX because mkdir(2) sets the owner to
+    // euid — a setuid-compiled binary where euid != ruid would otherwise
+    // create a dir whose owner != getuid() and fail the ownership check.
+    return if (comptime Environment.isPosix) bun.c.geteuid() else bun.windows.userUniqueId();
+}
+
+/// Opens `{tmpdir}/bun-{uid}` (creating if needed, 0700 on POSIX) for
+/// cross-process dedup. If the canonical path is squatted (another uid owns
+/// it or it's mis-moded — DoS on shared hosts), falls back to an
+/// unpredictable `bun-{uid}-{rand}`. The absolute path is written into
+/// `abs_buf` and sliced into `.path`.
+fn openExtractDir(abs_buf: *bun.PathBuffer) ?ExtractDir {
+    const tmpdir_path = bun.fs.FileSystem.RealFS.tmpdirPath();
+    const uid: u32 = extractOwnerUid();
+
+    var name_buf: [96]u8 = undefined;
+    const canonical = std.fmt.bufPrint(&name_buf, "bun-{d}", .{uid}) catch return null;
+    if (tryOpenExtractDir(abs_buf, tmpdir_path, canonical, uid)) |d| return d;
+
+    // Fallback: unpredictable name the attacker can't pre-create.
+    for (0..8) |_| {
+        const rand_name = std.fmt.bufPrint(&name_buf, "bun-{d}-{x}", .{ uid, bun.fastRandom() }) catch return null;
+        if (tryOpenExtractDir(abs_buf, tmpdir_path, rand_name, uid)) |d| return d;
+    }
+    return null;
+}
+
+fn tryOpenExtractDir(abs_buf: *bun.PathBuffer, tmpdir_path: []const u8, subdir_name: []const u8, uid: u32) ?ExtractDir {
+    const abs_z = bun.path.joinAbsStringBufZ(tmpdir_path, abs_buf, &[_]string{subdir_name}, .auto);
+
+    const just_created = switch (bun.sys.mkdirA(abs_z, 0o700)) {
+        .result => true,
+        .err => |err| switch (err.getErrno()) {
+            .EXIST => false, // ownership/mode verified below on POSIX
+            else => return null,
+        },
+    };
+
+    // NOFOLLOW prevents symlink-race redirection between mkdir and open.
+    // Windows `bun.sys.open` strips NOFOLLOW/DIRECTORY via sys_uv, so call
+    // openDirAtWindowsA directly (maps .no_follow to FILE_OPEN_REPARSE_POINT).
+    const fd = switch (if (comptime Environment.isWindows)
+        bun.sys.openDirAtWindowsA(bun.FD.cwd(), abs_z, .{ .no_follow = true, .read_only = true })
+    else
+        bun.sys.open(abs_z, bun.O.DIRECTORY | bun.O.RDONLY | bun.O.CLOEXEC | bun.O.NOFOLLOW, 0)) {
+        .result => |f| f,
+        .err => return null,
+    };
+
+    // On POSIX verify the dir is ours and private. Windows relies on
+    // %TEMP%'s per-user ACL, which CreateDirectory inherits.
+    if (comptime Environment.isPosix) {
+        // mkdir's mode arg is masked by the caller's umask, so a restrictive
+        // umask (e.g. 0o277) could leave the dir unwritable by us. Force
+        // 0o700; on a real POSIX FS this sets the exact mode (or fails with
+        // EPERM on a dir we don't own, which the uid check below catches).
+        // On a lax-mode mount (CIFS/SMB, vfat, WSL1 DrvFs, Docker
+        // bind-mounts from Windows/macOS) fchmod is silently no-op'd and
+        // the mount's static mode stays.
+        _ = bun.sys.fchmod(fd, 0o700);
+
+        const st = switch (bun.sys.fstat(fd)) {
+            .result => |s| s,
+            .err => {
+                fd.close();
+                return null;
+            },
+        };
+        // Accept either strict (real POSIX FS, dir is 0o700 and ours) or
+        // lax (lax-mode mount where fchmod didn't take): require the dir
+        // is ours and the reported mode denies group/other write. This
+        // keeps cross-restart dedup working on CIFS/vfat/DrvFs without
+        // reopening CWE-377 on normal /tmp — an attacker-squatted dir
+        // fails `st.uid == uid`.
+        //
+        // `just_created` implies the dir is ours even on uid-pinned
+        // mounts (`uid=` mount-option) where st.uid is a fixed mount uid
+        // we may not match.
+        const dir_is_ours = just_created or st.uid == uid;
+        const mode_denies_shared_write = (st.mode & 0o022) == 0;
+        if (!bun.S.ISDIR(st.mode) or !dir_is_ours or !mode_denies_shared_write) {
+            fd.close();
+            // Clean up a dir we just mkdir'd but can't use — otherwise
+            // the 8-iteration random fallback leaks one empty dir per try
+            // on filesystems that report a group/other-writable mode.
+            if (just_created) _ = bun.sys.rmdir(abs_z);
+            return null;
+        }
+    }
+
+    return .{ .fd = fd, .path = abs_z };
 }
 
 pub export fn Bun__getDefaultLoader(global: *JSGlobalObject, str: *const bun.String) api.Loader {

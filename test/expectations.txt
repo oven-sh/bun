@@ -9,6 +9,8 @@ test/cli/run/run-crash-handler.test.ts [ FAIL ] # automatic crash reporter > seg
 
 # Tests that are flaky
 test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
+[ WINDOWS ] test/js/bun/test/parallel/test-http-should-emit-close-when-connection-is-aborted.ts [ FLAKY ] # req 'close' not emitted within 20s after controller.abort() on Windows (x64, x64-baseline, aarch64 all affected), hit ≥6 times across unrelated PRs
+[ DARWIN-AARCH64 ] test/js/bun/s3/s3-storage-class.test.ts [ FLAKY ] # S3Error UnknownError against local Bun.serve mock, recurring on darwin 14 + 26 aarch64 across unrelated PRs (hit on builds 51292, 51335, 51645)
 
 # Tests skipped due to different log/line outputs
 [ ASAN ] test/js/bun/util/reportError.test.ts [ SKIP ] # log line mismatch

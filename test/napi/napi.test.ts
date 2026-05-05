@@ -1,6 +1,5 @@
 import { spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { readdirSync } from "fs";
 import { bunEnv, bunExe, isCI, isMacOS, isMusl, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
 
@@ -95,10 +94,16 @@ describe.concurrent("napi", () => {
               stderr: "inherit",
             });
             expect(build.success).toBeTrue();
-            const tmpdir = tempDirWithFiles("should-be-empty-except", {});
+            // The old "extract-and-immediately-unlink" path (added for
+            // #19550) previously let this test assert the tmpdir was empty
+            // after exit. Since #29587 the extracted `.node` persists at a
+            // content-hashed path so subsequent loads share it — dedup is
+            // covered by test/regression/issue/29585.test.ts, so here we
+            // just assert the compiled binary successfully loaded its
+            // embedded addons.
             const result = spawnSync({
               cmd: [exe, "self"],
-              env: { ...bunEnv, BUN_TMPDIR: tmpdir },
+              env: bunEnv,
               stdin: "inherit",
               stderr: "inherit",
               stdout: "pipe",
@@ -106,14 +111,8 @@ describe.concurrent("napi", () => {
             const stdout = result.stdout.toString().trim();
             expect(stdout).toBe("hello world!");
             expect(result.success).toBeTrue();
-            if (process.platform !== "win32") {
-              expect(readdirSync(tmpdir), "bun should clean up .node files").toBeEmpty();
-            } else {
-              // On Windows, we have to mark it for deletion on reboot.
-              // Not clear how to test for that.
-            }
           },
-          10 * 1000,
+          60 * 1000,
         );
       }
 

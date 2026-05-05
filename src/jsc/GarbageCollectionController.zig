@@ -118,7 +118,6 @@ pub fn onGCRepeatingTimer(timer: *uws.Timer) callconv(.c) void {
     var vm = this.bunVM().jsc_vm;
     const current = vm.blockBytesAllocated();
     this.gc_last_heap_size_on_repeating_timer = current;
-    this.gc_last_heap_size = current;
 
     // Reduction mode: previous tick fired collectAsyncFull(); decide whether
     // to fire one more or converge. V8 MemoryReducer caps at 2 majors per idle.

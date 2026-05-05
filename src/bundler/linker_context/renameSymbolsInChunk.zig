@@ -145,6 +145,30 @@ pub fn renameSymbolsInChunk(
     var sorted = &sorted_;
     defer sorted.deinit();
 
+    // Two passes are required so that every top-level symbol is registered in
+    // `r.root` before any nested scope is visited. Without this, a local
+    // binding in file/part N could collide-rename into a name that is later
+    // claimed by a top-level symbol in file/part M (M > N), silently shadowing
+    // it in the output. See https://github.com/oven-sh/bun/issues/30269.
+    //
+    // Pass 1 adds all top-level symbols for the chunk (across every file).
+    // Pass 2 recurses into the nested scopes; by then `r.root` is fully
+    // populated so `findUnusedName` sees every potential top-level collision.
+    //
+    // `nested_scopes` stores the scopes to walk in pass 2, one entry per file
+    // in the same order as `files_in_order`. For ESM/no-wrap the entry is the
+    // concatenation of `part.scopes` for every live part. For CJS-wrapped
+    // files the entry is the single module scope (the whole module body lives
+    // inside the wrapper closure, so it's all "nested").
+    var nested_scopes: std.array_list.Managed([]const *js_ast.Scope) = try .initCapacity(r.temp_allocator, files_in_order.len);
+    defer nested_scopes.deinit();
+
+    // Scratch buffer reused across files to accumulate `part.scopes`.
+    var scopes_scratch = std.array_list.Managed(*js_ast.Scope).init(r.temp_allocator);
+    defer scopes_scratch.deinit();
+
+    // Pass 1: add all top-level symbols across the whole chunk, and stash the
+    // nested scopes that pass 2 will visit.
     for (files_in_order) |source_index| {
         const wrap = all_flags[source_index].wrap;
         const parts: []const Part = all_parts[source_index].slice();
@@ -213,7 +237,13 @@ pub fn renameSymbolsInChunk(
                         }
                     }
                 }
-                r.assignNamesRecursiveWithNumberScope(&r.root, &all_module_scopes[source_index], source_index, sorted);
+
+                // Pass 2 will walk the module scope itself (the module body is
+                // inside the CJS wrapper closure, so everything in it is nested
+                // from the renamer's point of view).
+                const one = try r.temp_allocator.alloc(*js_ast.Scope, 1);
+                one[0] = &all_module_scopes[source_index];
+                nested_scopes.appendAssumeCapacity(one);
                 continue;
             },
 
@@ -238,15 +268,29 @@ pub fn renameSymbolsInChunk(
             else => {},
         }
 
+        scopes_scratch.clearRetainingCapacity();
         for (parts) |*part| {
             if (!part.is_live) continue;
 
             r.addTopLevelDeclaredSymbols(part.declared_symbols);
-            for (part.scopes) |scope| {
-                r.assignNamesRecursiveWithNumberScope(&r.root, scope, source_index, sorted);
-            }
-            r.number_scope_pool.hive.used = @TypeOf(r.number_scope_pool.hive.used).initEmpty();
+            try scopes_scratch.appendSlice(part.scopes);
         }
+
+        const stashed = try r.temp_allocator.dupe(*js_ast.Scope, scopes_scratch.items);
+        nested_scopes.appendAssumeCapacity(stashed);
+    }
+
+    // Pass 2: now that `r.root` has every top-level symbol in the chunk,
+    // recurse into each file's nested scopes to rename collisions.
+    for (files_in_order, nested_scopes.items) |source_index, scopes| {
+        for (scopes) |scope| {
+            r.assignNamesRecursiveWithNumberScope(&r.root, scope, source_index, sorted);
+        }
+        // Bulk-release every NumberScope we borrowed from the pool while
+        // processing this file. The recursive walk has already put each scope
+        // back individually; this is just a defensive reset that matches the
+        // previous per-part behavior.
+        r.number_scope_pool.hive.used = @TypeOf(r.number_scope_pool.hive.used).initEmpty();
     }
 
     return r.toRenamer();

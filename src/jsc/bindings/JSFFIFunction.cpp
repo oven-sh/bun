@@ -104,6 +104,19 @@ extern "C" void Bun__FFIFunction_setDataPtr(JSC::EncodedJSValue jsValue, void* p
     function->dataPtr = ptr;
 }
 
+extern "C" void Bun__FFIFunction_setOwner(Zig::GlobalObject* globalObject, JSC::EncodedJSValue jsValue, JSC::EncodedJSValue owner)
+{
+    Zig::JSFFIFunction* function = dynamicDowncast<Zig::JSFFIFunction>(JSC::JSValue::decode(jsValue));
+    if (!function)
+        return;
+
+    JSC::JSObject* ownerObject = JSC::JSValue::decode(owner).getObject();
+    if (!ownerObject)
+        return;
+
+    function->m_owner.set(globalObject->vm(), function, ownerObject);
+}
+
 extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionValue(Zig::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, bool addPtrField, void* symbolFromDynamicLibrary)
 {
     if (addPtrField) {
@@ -139,6 +152,7 @@ void JSFFIFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSFFIFunction* thisObject = uncheckedDowncast<JSFFIFunction>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_owner);
 }
 
 DEFINE_VISIT_CHILDREN(JSFFIFunction);

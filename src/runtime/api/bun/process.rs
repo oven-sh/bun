@@ -11,13 +11,13 @@ use bun_sys::{self, Fd, Maybe};
 use bun_sys::windows::libuv as uv;
 
 // TODO(port): exact crate paths for these cross-crate handler types
-use bun_cli::filter_run::ProcessHandle;
-use bun_cli::multi_run::ProcessHandle as MultiRunProcessHandle;
-use bun_cli::test::parallel_runner::Worker as TestWorkerHandle;
+use crate::cli::filter_run::ProcessHandle;
+use crate::cli::multi_run::ProcessHandle as MultiRunProcessHandle;
+use crate::cli::test::parallel_runner::Worker as TestWorkerHandle;
 use bun_runtime::api::cron::{CronRegisterJob, CronRemoveJob};
 use bun_runtime::api::{ChromeProcess, WebViewHostProcess};
 use bun_install::{LifecycleScriptSubprocess, SecurityScanSubprocess};
-use bun_shell::ShellSubprocess;
+use crate::shell::ShellSubprocess;
 
 // TODO(port): `bun.spawn` (PosixSpawn) crate path
 use bun_spawn as posix_spawn;

@@ -191,10 +191,10 @@ pub use self::console_object::Formatter;
 pub mod hot_reloader;
 
 // TODO: move into bun.api
-pub use bun_test_runner::jest as Jest;
-pub use bun_test_runner::jest::TestScope;
-pub use bun_test_runner::expect as Expect;
-pub use bun_test_runner::snapshot as Snapshot;
+pub use bun_runtime::test_runner::jest as Jest;
+pub use bun_runtime::test_runner::jest::TestScope;
+pub use bun_runtime::test_runner::expect as Expect;
+pub use bun_runtime::test_runner::snapshot as Snapshot;
 
 pub mod js_property_iterator;
 pub use self::js_property_iterator::{JSPropertyIterator, JSPropertyIteratorOptions};

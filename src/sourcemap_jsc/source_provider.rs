@@ -6,7 +6,7 @@
 
 use core::marker::{PhantomData, PhantomPinned};
 
-use bun_bake::production::PerThread;
+use bun_runtime::bake::production::PerThread;
 use bun_jsc::{JSGlobalObject, VirtualMachine};
 use bun_sourcemap::{self as source_map, ParseUrl, ParseUrlResultHint, SourceMapLoadHint};
 use bun_str::String as BunString;

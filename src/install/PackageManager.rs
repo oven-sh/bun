@@ -27,13 +27,13 @@ use bun_threading::ThreadPool;
 use bun_transpiler::{self as transpiler, Transpiler};
 use bun_url::URL;
 
-// MOVE_DOWN(b0): bun_cli::Arguments → bun_bunfig::Arguments (config loading is bunfig-tier).
+// MOVE_DOWN(b0): bun_runtime::cli::Arguments → bun_bunfig::Arguments (config loading is bunfig-tier).
 use bun_bunfig::Arguments as BunArguments;
-// TODO(b0): RunCommand arrives from move-in (bun_cli::RunCommand → install).
+// TODO(b0): RunCommand arrives from move-in (bun_runtime::cli::RunCommand → install).
 use crate::RunCommand;
 
 // ──────────────────────────────────────────────────────────────────────────
-// MOVE_DOWN(b0): bun_cli::package_manager_command::PackageManagerCommand → install
+// MOVE_DOWN(b0): bun_runtime::cli::package_manager_command::PackageManagerCommand → install
 // Only the `printHelp` text is needed by `CommandLineArguments::parse`. The
 // `exec()` body remains in bun_cli (it depends on tier-6 ScanCommand /
 // PackCommand etc. and is the *consumer* of install, not a dependency).

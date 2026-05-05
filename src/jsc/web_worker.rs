@@ -578,7 +578,7 @@ impl<'a> WebWorker<'a> {
 
                 let args = match bun_clap::parse_ex(
                     bun_clap::Help,
-                    bun_cli::Command::Tag::RunCommand.params(),
+                    bun_runtime::cli::Command::Tag::RunCommand.params(),
                     &mut iter,
                     bun_clap::ParseOptions {
                         diagnostic: &mut diag,

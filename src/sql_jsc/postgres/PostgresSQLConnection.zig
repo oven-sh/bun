@@ -1951,7 +1951,7 @@ pub const fromJSDirect = js.fromJSDirect;
 pub const toJS = js.toJS;
 
 const DataCell = @import("./DataCell.zig");
-const PostgresCachedStructure = @import("../../sql_jsc/shared/CachedStructure.zig");
+const PostgresCachedStructure = @import("../shared/CachedStructure.zig");
 const PostgresRequest = @import("./PostgresRequest.zig");
 const PostgresSQLQuery = @import("./PostgresSQLQuery.zig");
 const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");

@@ -12,7 +12,7 @@ use crate::node::ErrorCode as NodeErrorCode;
 use crate::webcore::{DOMExceptionCode, ReadableStream, Response};
 
 use bun_core::{fmt as bun_fmt, perf, Output, StackCheck};
-use bun_napi::NapiEnv;
+use bun_runtime::napi::NapiEnv;
 use bun_str::{self as bstr_mod, strings, String as BunString, ZigString};
 use bun_webcore::ScriptExecutionContext;
 

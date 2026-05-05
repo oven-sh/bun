@@ -692,7 +692,7 @@ pub fn schedule_barrel_deferred_imports(
 /// barrel is re-parsed in an incremental build where the requesting file is
 /// not stale.
 fn persist_barrel_export(dev: &crate::dispatch::DevServerHandle, barrel_path: &[u8], alias: &[u8]) {
-    // CYCLEBREAK GENUINE: bun_bake::DevServer → vtable. PERF(port): was inline switch.
+    // CYCLEBREAK GENUINE: bun_runtime::bake::DevServer → vtable. PERF(port): was inline switch.
     // SAFETY: vtable.barrel_needed_exports returns &mut map tied to dev.owner lifetime.
     let barrel_needed_exports = unsafe { &mut *(dev.vtable.barrel_needed_exports)(dev.owner) };
     let Ok(outer_gop) = barrel_needed_exports.get_or_put(barrel_path) else {

@@ -64,7 +64,7 @@ pub const Scripts = struct {
         "postprepare",
     };
 
-    const RunCommand = @import("../cli/run_command.zig").RunCommand;
+    const RunCommand = @import("../runtime/cli/run_command.zig").RunCommand;
 
     preinstall: Entries = .{},
     install: Entries = .{},

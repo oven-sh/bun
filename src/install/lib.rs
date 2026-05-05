@@ -74,7 +74,7 @@ pub use patch_install as patch;
 pub use patch::PatchTask;
 
 // ──────────────────────────────────────────────────────────────────────────
-// MOVE_DOWN(b0): bun_cli::ShellCompletions → install
+// MOVE_DOWN(b0): bun_runtime::cli::ShellCompletions → install
 // Only the `Shell` enum (variant detection) is consumed here — the embedded
 // completion script bodies stay in bun_cli (they pull in @embedFile assets).
 // ──────────────────────────────────────────────────────────────────────────
@@ -116,14 +116,14 @@ pub mod ShellCompletions {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// MOVE_DOWN(b0): bun_cli::RunCommand (subset) → install
+// MOVE_DOWN(b0): bun_runtime::cli::RunCommand (subset) → install
 // Only the helpers the package manager needs: shell discovery, fake `node`
 // shim creation, and env bootstrap for lifecycle scripts. The interactive
 // `bun run` entrypoint stays in bun_cli.
 // ──────────────────────────────────────────────────────────────────────────
 pub struct RunCommand;
 
-/// Hook (GENUINE b0): mirrors `bun_cli::PRETEND_TO_BE_NODE`. Set once at
+/// Hook (GENUINE b0): mirrors `bun_runtime::cli::PRETEND_TO_BE_NODE`. Set once at
 /// startup by bun_cli when argv[0] basename == "node"; install only reads it.
 /// Lives at module scope because Rust forbids `static` inside `impl`.
 pub static PRETEND_TO_BE_NODE: core::sync::atomic::AtomicBool =

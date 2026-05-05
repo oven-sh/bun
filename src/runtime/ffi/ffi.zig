@@ -2447,7 +2447,7 @@ const TCC = if (Environment.enable_tinycc) @import("../../tcc_sys/tcc.zig") else
 };
 
 const Fs = @import("../../resolver/fs.zig");
-const napi = @import("../../napi/napi.zig");
+const napi = @import("../napi/napi.zig");
 const options = @import("../../bundler/options.zig");
 const std = @import("std");
 const Allocator = std.mem.Allocator;

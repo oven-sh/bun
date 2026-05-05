@@ -16,7 +16,7 @@ use bun_threading::WorkPool;
 use bun_shell_parser::braces as Braces;
 use bun_which::Which;
 use bun_zlib as zlib;
-use bun_cli::open::Editor;
+use crate::cli::open::Editor;
 use bun_url::URL;
 use bun_semver::SemverObject;
 use bun_gen::bun_object as gen;
@@ -30,7 +30,7 @@ use bun_runtime::crypto::Crypto;
 use bun_runtime::api::cron;
 use bun_runtime::api::csrf_jsc;
 use bun_runtime::valkey_jsc::js_valkey::SubscriptionCtx;
-use bun_test_runner::jest::Jest;
+use crate::test_runner::jest::Jest;
 use bun_bundler::api::JSBundler;
 
 /// How to add a new function or property to the Bun global
@@ -91,8 +91,8 @@ pub mod bun_object {
         build => JSBundler::build_fn,
         color => bun_css::CssColor::js_function_color,
         connect => host_fn::wrap_static_method!(api::Listener, connect, false),
-        createParsedShellScript => bun_shell::ParsedShellScript::create_parsed_shell_script,
-        createShellInterpreter => bun_shell::Interpreter::create_shell_interpreter,
+        createParsedShellScript => crate::shell::ParsedShellScript::create_parsed_shell_script,
+        createShellInterpreter => crate::shell::Interpreter::create_shell_interpreter,
         deflateSync => JSZlib::deflate_sync,
         file => WebCore::Blob::construct_bun_file,
         gunzipSync => JSZlib::gunzip_sync,
@@ -235,8 +235,8 @@ pub fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
 
     let mut outbuf: Vec<u8> = Vec::new();
 
-    if bun_shell::needs_escape_bunstr(&bunstr) {
-        let result = bun_shell::escape_bun_str(&bunstr, &mut outbuf, true)?;
+    if crate::shell::needs_escape_bunstr(&bunstr) {
+        let result = crate::shell::escape_bun_str(&bunstr, &mut outbuf, true)?;
         if !result {
             return global_this.throw(
                 "String has invalid utf-16: {s}",

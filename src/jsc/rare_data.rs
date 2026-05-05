@@ -21,7 +21,7 @@ use bun_runtime::node::node_fs_stat_watcher::{StatWatcher, StatWatcherScheduler}
 use bun_runtime::valkey_jsc::ValkeyContext;
 use bun_runtime::webcore::{Blob, blob::Store as BlobStore, S3Client};
 use bun_http_jsc::websocket_client::websocket_deflate::{self as websocket_deflate_mod, RareData as WebSocketDeflateRareData};
-use bun_cli::open::EditorContext;
+use bun_runtime::cli::open::EditorContext;
 use bun_event_loop::SpawnSyncEventLoop;
 
 use super::uuid::UUID;

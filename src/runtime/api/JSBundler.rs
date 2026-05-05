@@ -1662,7 +1662,7 @@ pub mod js_bundler {
             }
         }
 
-        pub fn bake_graph(&self) -> bun_bake::Graph {
+        pub fn bake_graph(&self) -> crate::bake::Graph {
             self.parse_task.known_target.bake_graph()
         }
 
@@ -1674,7 +1674,7 @@ pub mod js_bundler {
                     &load.namespace,
                     load as *mut _ as *mut c_void,
                     load.default_loader,
-                    load.bake_graph() != bun_bake::Graph::Client,
+                    load.bake_graph() != crate::bake::Graph::Client,
                 );
             }
         }

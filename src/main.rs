@@ -85,14 +85,14 @@ pub fn main() {
     if Environment::ENABLE_SIMD {
         // SAFETY: BUN_GITHUB_BASELINE_URL is a NUL-terminated static.
         unsafe {
-            bun_warn_avx_missing(bun_cli::UpgradeCommand::BUN_GITHUB_BASELINE_URL.as_ptr());
+            bun_warn_avx_missing(bun_runtime::cli::UpgradeCommand::BUN_GITHUB_BASELINE_URL.as_ptr());
         }
     }
 
     bun_core::StackCheck::configure_thread();
     bun_core::ParentDeathWatchdog::install();
 
-    bun_cli::Cli::start();
+    bun_runtime::cli::Cli::start();
     Global::exit(0);
 }
 

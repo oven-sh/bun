@@ -171,7 +171,7 @@ where
         }
     }
 
-    pub fn dev_server(&self) -> Option<&bun_bake::DevServer> {
+    pub fn dev_server(&self) -> Option<&crate::bake::DevServer> {
         let server = self.server?;
         // SAFETY: server is valid while RequestContext is alive (BACKREF)
         unsafe { (*server).dev_server() }
@@ -3270,7 +3270,7 @@ fn get_content_type(
 pub trait ServerLike {
     fn global_this(&self) -> &JSGlobalObject;
     fn vm(&self) -> &VirtualMachine;
-    fn dev_server(&self) -> Option<&bun_bake::DevServer>;
+    fn dev_server(&self) -> Option<&crate::bake::DevServer>;
     fn config(&self) -> &bun_runtime::server::ServerConfig;
     fn flags(&self) -> &bun_runtime::server::ServerFlags;
     fn js_value(&self) -> &jsc::JsRef;

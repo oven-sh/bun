@@ -1256,7 +1256,7 @@ impl<'a> Resolver<'a> {
         if let Some(f) = self.opts.framework.as_ref() {
             if let Some(mod_) = f.built_in_modules.get(import_path) {
                 match mod_ {
-                    // TYPE_ONLY(b0): BuiltInModule relocated bun_bake::framework → bun_options_types (T3)
+                    // TYPE_ONLY(b0): BuiltInModule relocated bun_runtime::bake::framework → bun_options_types (T3)
                     bun_options_types::BuiltInModule::Code(_) => {
                         return Ok(Result {
                             import_kind: kind,

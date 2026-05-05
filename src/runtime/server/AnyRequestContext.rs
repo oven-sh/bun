@@ -168,7 +168,7 @@ impl AnyRequestContext {
         dispatch!(self, (), |_T, ctx| ctx.set_signal_aborted(reason))
     }
 
-    pub fn dev_server(self) -> Option<&mut bun_bake::DevServer> {
+    pub fn dev_server(self) -> Option<&mut crate::bake::DevServer> {
         dispatch!(self, None, |_T, ctx| ctx.dev_server())
     }
 

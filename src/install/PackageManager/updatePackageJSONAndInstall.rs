@@ -5,10 +5,10 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 use bstr::BStr;
 
 use bun_core::{err, Error, Global, Output};
-// TODO(b0): ShellCompletions arrives from move-in (bun_cli::ShellCompletions → install).
+// TODO(b0): ShellCompletions arrives from move-in (bun_runtime::cli::ShellCompletions → install).
 use crate::ShellCompletions;
 
-/// Hook (GENUINE b0): bun_cli::BuildCommand::exec — runs the bundler's
+/// Hook (GENUINE b0): bun_runtime::cli::BuildCommand::exec — runs the bundler's
 /// dependencies-scanner pass for `bun install --analyze`. Registered by
 /// bun_runtime::init(). Signature:
 /// `unsafe fn(ctx: *mut (), fetcher: *mut ()) -> Result<(), Error>`
@@ -16,7 +16,7 @@ use crate::ShellCompletions;
 /// `*mut bun_bundler::bundle_v2::BundleV2::DependenciesScanner`.
 pub static BUILD_COMMAND_EXEC_HOOK: AtomicPtr<()> = AtomicPtr::new(null_mut());
 
-/// Hook (GENUINE b0): bun_cli::Cli::log_mut — global CLI log accessor used to
+/// Hook (GENUINE b0): bun_runtime::cli::Cli::log_mut — global CLI log accessor used to
 /// flush parser errors on InstallFailed. Registered by bun_runtime::init().
 /// Signature: `unsafe fn() -> *mut bun_logger::Log`.
 pub static CLI_LOG_HOOK: AtomicPtr<()> = AtomicPtr::new(null_mut());
@@ -707,7 +707,7 @@ pub fn update_package_json_and_install_catch_error(
     match update_package_json_and_install(ctx, subcommand) {
         Ok(()) => Ok(()),
         Err(e) if e == err!("InstallFailed") || e == err!("InvalidPackageJSON") => {
-            // PERF(port): was inline switch — bun_cli::Cli::log_mut() via hook.
+            // PERF(port): was inline switch — bun_runtime::cli::Cli::log_mut() via hook.
             let hook = CLI_LOG_HOOK.load(Ordering::Acquire);
             if !hook.is_null() {
                 // SAFETY: CLI_LOG_HOOK is set once at startup to fn() -> *mut Log.
@@ -983,7 +983,7 @@ pub fn update_package_json_and_install(
         };
 
         // This runs the bundler.
-        // PERF(port): was inline switch — bun_cli::BuildCommand::exec via hook (GENUINE b0).
+        // PERF(port): was inline switch — bun_runtime::cli::BuildCommand::exec via hook (GENUINE b0).
         let hook = BUILD_COMMAND_EXEC_HOOK.load(Ordering::Acquire);
         debug_assert!(!hook.is_null(), "BUILD_COMMAND_EXEC_HOOK unset (bun_runtime::init not called)");
         // SAFETY: hook signature documented on BUILD_COMMAND_EXEC_HOOK; set once at startup.

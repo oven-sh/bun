@@ -4,7 +4,7 @@ use core::mem::MaybeUninit;
 use std::io::Write as _;
 
 use bun_alloc::Arena; // MimallocArena
-use bun_cli::cli::Command;
+use bun_runtime::cli::cli::Command;
 use bun_core::{Global, Output};
 use bun_http::AsyncHTTP;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, VirtualMachine};
@@ -73,11 +73,11 @@ impl Run {
         // Load bunfig.toml unless disabled by compile flags
         // Note: config loading with execArgv is handled earlier in cli.zig via loadConfig
         if !ctx.debug.loaded_bunfig && !graph_ptr.flags.disable_autoload_bunfig {
-            bun_cli::Arguments::load_config_path(
+            bun_runtime::cli::Arguments::load_config_path(
                 true,
                 b"bunfig.toml",
                 &ctx,
-                bun_cli::Command::Tag::RunCommand,
+                bun_runtime::cli::Command::Tag::RunCommand,
             )?;
         }
 
@@ -213,7 +213,7 @@ impl Run {
     fn boot_bun_shell(
         ctx: &Command::Context,
         entry_path: &[u8],
-    ) -> Result<bun_shell::ExitCode, bun_core::Error> {
+    ) -> Result<bun_runtime::shell::ExitCode, bun_core::Error> {
         // this is a hack: make dummy bundler so we can use its `.runEnvLoader()`
         // function to populate environment variables probably should split out
         // the functionality
@@ -225,7 +225,7 @@ impl Run {
         bundle.run_env_loader(bundle.options.env.disable_default_env_files)?;
         let mini = jsc::MiniEventLoop::init_global(bundle.env, None);
         mini.top_level_dir = ctx.args.absolute_working_dir.unwrap_or(b"");
-        bun_shell::Interpreter::init_and_run_from_file(ctx, mini, entry_path)
+        bun_runtime::shell::Interpreter::init_and_run_from_file(ctx, mini, entry_path)
     }
 
     pub fn boot(
@@ -236,11 +236,11 @@ impl Run {
         jsc::mark_binding(core::panic::Location::caller());
 
         if !ctx.debug.loaded_bunfig {
-            bun_cli::Arguments::load_config_path(
+            bun_runtime::cli::Arguments::load_config_path(
                 true,
                 b"bunfig.toml",
                 &ctx,
-                bun_cli::Command::Tag::RunCommand,
+                bun_runtime::cli::Command::Tag::RunCommand,
             )?;
         }
 
@@ -807,9 +807,9 @@ unsafe extern "C" {
 
 // TODO(port): these enum paths are placeholders for cross-crate types referenced
 // only by variant; Phase B fixes imports.
-use bun_cli::debug::HotReload;
-use bun_cli::debug::Macros;
-use bun_cli::debug::OfflineMode;
+use bun_runtime::cli::debug::HotReload;
+use bun_runtime::cli::debug::Macros;
+use bun_runtime::cli::debug::OfflineMode;
 use bun_jsc::bun_cpu_profiler as CPUProfiler;
 use bun_jsc::bun_heap_profiler as HeapProfiler;
 

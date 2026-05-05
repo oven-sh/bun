@@ -54,8 +54,8 @@ const patterns = {
   },
   /** server-rendering runtime bundled into binary */
   bakeRuntime: {
-    paths: ["src/bake/*.ts", "src/bake/*/*.{ts,css}"],
-    exclude: ["src/bake/generated.ts"],
+    paths: ["src/runtime/bake/*.ts", "src/runtime/bake/*/*.{ts,css}"],
+    exclude: ["src/runtime/bake/generated.ts"],
   },
   /** legacy bindgen input */
   bindgen: {
@@ -89,7 +89,7 @@ const patterns = {
       "src/jsc/bindings/v8/*.cpp",
       "src/jsc/bindings/v8/shim/*.cpp",
       "src/runtime/webview/*.cpp",
-      "src/bake/*.cpp",
+      "src/runtime/bake/*.cpp",
       "src/uws_sys/*.cpp",
       "src/simdutf_sys/*.cpp",
       "src/jsc/bindings/vm/*.cpp",

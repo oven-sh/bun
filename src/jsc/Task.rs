@@ -57,7 +57,7 @@ use AsyncFS::{
 
 use bun_s3::{S3HttpDownloadStreamingTask, S3HttpSimpleTask};
 
-use bun_bake::dev_server::HotReloadEvent as BakeHotReloadEvent;
+use bun_runtime::bake::dev_server::HotReloadEvent as BakeHotReloadEvent;
 use bun_bundler::DeferredBatchTask;
 
 use bun_shell as shell;

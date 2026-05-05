@@ -26,7 +26,7 @@ use bun_str::{self as bstr, strings, String as BunString, ZStr};
 use bun_sys as sys;
 use bun_url::URL;
 use bun_uws::{self as uws, AnyResponse, AnyWebSocket, Opcode, ResponseKind, WebSocketUpgradeContext};
-use bun_bake::{self as bake, DevServer, FrameworkRouter};
+use crate::bake::{self as bake, DevServer, FrameworkRouter};
 use bun_fs::FileSystem;
 use bun_runtime::standalone_module_graph::StandaloneModuleGraph;
 use bun_uuid::UUID;
@@ -2600,7 +2600,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     fn on_timeout_for_idle_warn(_: *mut c_void, _: Option<*mut c_void>) {
         if DEBUG && !Self::did_send_idletimeout_warning_once().load(core::sync::atomic::Ordering::Relaxed) {
-            if !bun_cli::Command::get().debug.silent {
+            if !crate::cli::Command::get().debug.silent {
                 Self::did_send_idletimeout_warning_once().store(true, core::sync::atomic::Ordering::Relaxed);
                 Output::pretty_errorln(
                     "<r><yellow>[Bun.serve]<r><d>:<r> request timed out after 10 seconds. Pass <d><cyan>`idleTimeout`<r> to configure.",
@@ -2613,7 +2613,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     fn should_add_timeout_handler_for_warning(&self) -> bool {
         if DEBUG {
             if !Self::did_send_idletimeout_warning_once().load(core::sync::atomic::Ordering::Relaxed)
-                && !bun_cli::Command::get().debug.silent
+                && !crate::cli::Command::get().debug.silent
             {
                 return !self.config.has_idle_timeout;
             }

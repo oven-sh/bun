@@ -1070,7 +1070,7 @@ export function bunIncludes(cfg: Config): string[] {
     join(cwd, "src/jsc/bindings/v8"),
     join(cwd, "src/jsc/modules"),
     join(cwd, "src/js/builtins"),
-    join(cwd, "src/napi"),
+    join(cwd, "src/runtime/napi"),
     join(cwd, "src/uws_sys"),
     codegenDir,
     vendorDir,

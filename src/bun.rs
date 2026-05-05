@@ -118,9 +118,9 @@ pub use bun_ptr as ptr;
 pub use bun_collections::{TaggedPtr as TaggedPointer, TaggedPtrUnion as TaggedPointerUnion};
 
 pub use bun_cli as cli;
-pub use bun_cli::ci_info as ci;
-pub use bun_cli::bunfig::Bunfig;
-pub use bun_cli::run_command::RunCommand;
+pub use bun_runtime::cli::ci_info as ci;
+pub use bun_runtime::cli::bunfig::Bunfig;
+pub use bun_runtime::cli::run_command::RunCommand;
 
 pub use bun_install as install;
 pub use bun_install::PackageManager;
@@ -3077,7 +3077,7 @@ pub fn get_use_system_ca(
     _global: &bun_jsc::JSGlobalObject,
     _frame: &bun_jsc::CallFrame,
 ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
-    Ok(bun_jsc::JSValue::from(bun_cli::Arguments::Bun__Node__UseSystemCA()))
+    Ok(bun_jsc::JSValue::from(bun_runtime::cli::Arguments::Bun__Node__UseSystemCA()))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

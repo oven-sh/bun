@@ -73,7 +73,7 @@ pub struct Options<'a> {
 
     /// When using react fast refresh or server components, the framework is
     /// able to customize what import sources are used.
-    pub framework: Option<&'a bun_options_types::Framework>, // TYPE_ONLY: was bun_bake::Framework
+    pub framework: Option<&'a bun_options_types::Framework>, // TYPE_ONLY: was bun_runtime::bake::Framework
 
     /// REPL mode: transforms code for interactive evaluation
     /// - Wraps lone object literals `{...}` in parentheses

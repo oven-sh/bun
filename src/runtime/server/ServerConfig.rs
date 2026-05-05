@@ -63,7 +63,7 @@ pub struct ServerConfig {
     pub negative_routes: Vec<CString>,
     pub user_routes_to_build: Vec<UserRouteBuilder>,
 
-    pub bake: Option<bun_bake::UserOptions>,
+    pub bake: Option<crate::bake::UserOptions>,
 }
 
 impl Default for ServerConfig {
@@ -696,7 +696,7 @@ impl ServerConfig {
             // This list is not used in the success case
             // (dedupe_html_bundle_map drops at scope end)
 
-            let mut framework_router_list: Vec<bun_bake::framework_router::Type> = Vec::new();
+            let mut framework_router_list: Vec<crate::bake::framework_router::Type> = Vec::new();
             // errdefer framework_router_list.deinit() — Vec drops automatically
             let _ = &mut framework_router_list;
             // TODO(port): `framework_router_list` is declared but unused in Zig too (shadowed by
@@ -850,18 +850,18 @@ impl ServerConfig {
             {
                 if args.development.is_hmr_enabled() {
                     let root = bun_fs::FileSystem::instance().top_level_dir;
-                    let framework = bun_bake::Framework::auto(
+                    let framework = crate::bake::Framework::auto(
                         &init_ctx.arena,
                         &mut global.bun_vm().transpiler.resolver,
                         &init_ctx.framework_router_list,
                     )?;
-                    args.bake = Some(bun_bake::UserOptions {
+                    args.bake = Some(crate::bake::UserOptions {
                         // TODO(port): ownership transfer of arena/js_string_allocations into bake
                         arena: core::mem::take(&mut init_ctx.arena),
                         allocations: core::mem::take(&mut init_ctx.js_string_allocations),
                         root,
                         framework,
-                        bundler_options: bun_bake::SplitBundlerOptions::empty(),
+                        bundler_options: crate::bake::SplitBundlerOptions::empty(),
                     });
                     let bake = args.bake.as_mut().unwrap();
 
@@ -1052,7 +1052,7 @@ impl ServerConfig {
                         );
                     }
 
-                    args.bake = Some(bun_bake::UserOptions::from_js(bake_args_js, global)?);
+                    args.bake = Some(crate::bake::UserOptions::from_js(bake_args_js, global)?);
                 }
             }
         }

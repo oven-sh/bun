@@ -4,7 +4,7 @@
 use core::ffi::c_void;
 
 use bun_core::{Global, Output};
-use bun_test_runner::harness::recover;
+use bun_runtime::test_runner::harness::recover;
 
 // pub const panic = bun.crash_handler.panic;
 // PORT NOTE: Zig's `pub const panic` hook is replaced by Rust's `#[panic_handler]` /

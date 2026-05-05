@@ -110,7 +110,7 @@ impl Debugger {
                 "waitForDebugger: {}",
                 Output::ElapsedFormatter {
                     colors: Output::enable_ansi_colors_stderr(),
-                    duration_ns: (bun_core::time::nano_timestamp() - bun_cli::start_time()) as u64,
+                    duration_ns: (bun_core::time::nano_timestamp() - bun_runtime::cli::start_time()) as u64,
                 }
             );
         }
@@ -187,7 +187,7 @@ impl Debugger {
                         bun_output::scoped_log!(
                             debugger,
                             "waited: {}",
-                            (bun_core::time::nano_timestamp() - bun_cli::start_time()) as i64
+                            (bun_core::time::nano_timestamp() - bun_runtime::cli::start_time()) as i64
                         );
                     }
                 }
@@ -208,7 +208,7 @@ impl Debugger {
                         bun_output::scoped_log!(
                             debugger,
                             "waited: {}",
-                            (bun_core::time::nano_timestamp() - bun_cli::start_time()) as i64
+                            (bun_core::time::nano_timestamp() - bun_runtime::cli::start_time()) as i64
                         );
                     }
 

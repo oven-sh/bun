@@ -24,9 +24,9 @@ static TITLE_MUTEX: bun_threading::Mutex<()> = bun_threading::Mutex::new(());
 #[export_name = "Bun__Process__getTitle"]
 pub extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {
     let _guard = TITLE_MUTEX.lock();
-    // TODO(port): bun_cli::process_title is a mutable global Option<Box<[u8]>> guarded by TITLE_MUTEX
+    // TODO(port): crate::cli::process_title is a mutable global Option<Box<[u8]>> guarded by TITLE_MUTEX
     // SAFETY: TITLE_MUTEX held; process_title reads a static guarded by it
-    let str_ = unsafe { bun_cli::process_title() };
+    let str_ = unsafe { crate::cli::process_title() };
     // SAFETY: title is a valid out-param provided by C++ caller
     unsafe {
         *title = BunString::clone_utf8(str_.map(|s| s.as_ref()).unwrap_or(b"bun"));
@@ -52,9 +52,9 @@ pub extern "C" fn set_title(global_object: *const JSGlobalObject, newvalue: *mut
         }
     };
 
-    // TODO(port): bun_cli::set_process_title takes ownership; old value (if any) is dropped
+    // TODO(port): crate::cli::set_process_title takes ownership; old value (if any) is dropped
     // SAFETY: TITLE_MUTEX held; set_process_title mutates the static guarded by it
-    unsafe { bun_cli::set_process_title(Some(new_title)) };
+    unsafe { crate::cli::set_process_title(Some(new_title)) };
     newvalue.deref_();
 }
 
@@ -175,7 +175,7 @@ pub fn create_exec_argv(global_object: &JSGlobalObject) -> JsResult<JSValue> {
         // param with `takes_value != .none`. Rust cannot reflect over that list
         // at compile time; Phase B should generate this phf::Set from the same
         // source via build.rs or a proc-macro.
-        static MAP: phf::Set<&'static [u8]> = bun_cli::arguments::AUTO_PARAMS_TAKING_VALUE_SET;
+        static MAP: phf::Set<&'static [u8]> = crate::cli::arguments::AUTO_PARAMS_TAKING_VALUE_SET;
 
         if let Some(p) = prev {
             if MAP.contains(p) {

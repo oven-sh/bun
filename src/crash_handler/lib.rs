@@ -32,7 +32,7 @@ use bun_threading::Mutex;
 mod cpu_features;
 use cpu_features::CPUFeatures;
 
-// TODO(b0): `Cli` arrives from move-in (MOVE_DOWN bun_cli::Cli → crash_handler).
+// TODO(b0): `Cli` arrives from move-in (MOVE_DOWN bun_runtime::cli::Cli → crash_handler).
 // Only the two bits the crash handler needs — main-thread check and the
 // one-byte command tag for the trace URL — land here as plain globals that
 // `bun_runtime` populates at startup.

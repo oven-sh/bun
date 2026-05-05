@@ -127,10 +127,10 @@ impl Tag {
     // In Zig these were aliased here (`params`, `printHelp`) relying on lazy
     // decl resolution so `options_types/` did not compile-depend on `cli/`
     // unless invoked. Rust has no lazy decl resolution; re-exporting
-    // `bun_cli::Command::{tag_params, tag_print_help}` here would create a
+    // `bun_runtime::cli::Command::{tag_params, tag_print_help}` here would create a
     // crate cycle (cli → options_types → cli).
     // TODO(port): call sites of `cmd.params()` / `cmd.printHelp()` must call
-    // `bun_cli::Command::tag_params(cmd)` / `tag_print_help(cmd)` directly.
+    // `bun_runtime::cli::Command::tag_params(cmd)` / `tag_print_help(cmd)` directly.
 }
 
 // PERF(port): Zig `pub const ... std.EnumArray(...).initDefault(...)` was a

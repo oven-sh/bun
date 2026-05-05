@@ -62,11 +62,11 @@ pub const NativeZlib = @import("./node/zlib/NativeZlib.zig");
 pub const Postgres = @import("../sql_jsc/postgres.zig");
 pub const MySQL = @import("../sql_jsc/mysql.zig");
 pub const ResolveMessage = @import("../jsc/ResolveMessage.zig").ResolveMessage;
-pub const Shell = @import("../shell/shell.zig");
+pub const Shell = @import("./shell/shell.zig");
 pub const UDPSocket = @import("./socket/udp_socket.zig").UDPSocket;
 pub const Valkey = @import("./valkey_jsc/js_valkey.zig").JSValkeyClient;
 pub const BlockList = @import("./node/net/BlockList.zig");
 pub const NativeZstd = @import("./node/zlib/NativeZstd.zig");
 
-pub const napi = @import("../napi/napi.zig");
+pub const napi = @import("./napi/napi.zig");
 pub const node = @import("./node.zig");

@@ -1979,7 +1979,7 @@ pub struct BundleOptions<'a> {
     pub metafile_markdown_path: Box<[u8]>,
 
     /// Set when bake.DevServer is bundling.
-    // SAFETY: erased bun_bake::DevServer (T6). bundler never dereferences fields
+    // SAFETY: erased bun_runtime::bake::DevServer (T6). bundler never dereferences fields
     // directly — all access goes through crate::dispatch::DevServerVTable.
     pub dev_server: *const (),
     /// Set when Bake is bundling. Affects module resolution.

@@ -2,7 +2,7 @@ use core::marker::{PhantomData, PhantomPinned};
 
 use bun_str::String as BunString;
 use bun_jsc::{self as jsc, debugger::DebuggerId};
-use bun_bake::dev_server;
+use crate::bake::dev_server;
 
 /// Opaque C++ handle for the inspector frontend dev-server agent.
 #[repr(C)]
@@ -257,5 +257,5 @@ pub extern "C" fn Bun__InspectorBunFrontendDevServerAgent__setEnabled(
 //   source:     src/runtime/server/InspectorBunFrontendDevServerAgent.zig (117 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      cross-crate paths (bun_bake::dev_server::route_bundle::Index, ConsoleLogKind, jsc::VirtualMachine/debugger) need Phase-B verification; extern fns kept in local `c` mod pending *_sys crate.
+//   notes:      cross-crate paths (crate::bake::dev_server::route_bundle::Index, ConsoleLogKind, jsc::VirtualMachine/debugger) need Phase-B verification; extern fns kept in local `c` mod pending *_sys crate.
 // ──────────────────────────────────────────────────────────────────────────

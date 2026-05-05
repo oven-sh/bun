@@ -124,7 +124,7 @@ pub struct VirtualMachine {
     pub heap_profiler_config: Option<HeapProfilerConfig>,
     pub counters: Counters,
 
-    pub hot_reload: bun_cli::Command::HotReload,
+    pub hot_reload: bun_runtime::cli::Command::HotReload,
     pub jsc_vm: *mut VM,
 
     /// hide bun:wrap from stack traces
@@ -374,7 +374,7 @@ pub struct Options<'a> {
     /// --print needs the result from evaluating the main module
     pub eval: bool,
     pub graph: Option<&'a bun::StandaloneModuleGraph>,
-    pub debugger: bun_cli::Command::Debugger,
+    pub debugger: bun_runtime::cli::Command::Debugger,
     pub is_main_thread: bool,
     /// Whether this VM should be destroyed after it exits, even if it is the main thread's VM.
     pub destruct_main_thread_on_exit: bool,
@@ -1123,7 +1123,7 @@ impl VirtualMachine {
 
         Output::debug(format_args!("Reloading..."));
         let should_clear_terminal = !self.transpiler.env.has_set_no_clear_terminal_on_reload(!Output::enable_ansi_colors_stdout());
-        if self.hot_reload == bun_cli::Command::HotReload::Watch {
+        if self.hot_reload == bun_runtime::cli::Command::HotReload::Watch {
             Output::flush();
             bun_core::reload_process(should_clear_terminal, false);
         }
@@ -1324,7 +1324,7 @@ impl VirtualMachine {
     }
 
     pub fn hot_map(&mut self) -> Option<&mut RareData::HotMap> {
-        if self.hot_reload != bun_cli::Command::HotReload::Hot {
+        if self.hot_reload != bun_runtime::cli::Command::HotReload::Hot {
             return None;
         }
         Some(self.rare_data().hot_map())
@@ -1624,7 +1624,7 @@ impl VirtualMachine {
         }
     }
 
-    fn configure_debugger(&mut self, cli_flag: bun_cli::Command::Debugger) {
+    fn configure_debugger(&mut self, cli_flag: bun_runtime::cli::Command::Debugger) {
         if env_var::HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET.get().is_some() {
             return;
         }
@@ -1642,7 +1642,7 @@ impl VirtualMachine {
         };
 
         match cli_flag {
-            bun_cli::Command::Debugger::Unspecified => {
+            bun_runtime::cli::Command::Debugger::Unspecified => {
                 if !unix.is_empty() {
                     self.debugger = Some(Debugger {
                         path_or_port: None,
@@ -1662,7 +1662,7 @@ impl VirtualMachine {
                     });
                 }
             }
-            bun_cli::Command::Debugger::Enable(enable) => {
+            bun_runtime::cli::Command::Debugger::Enable(enable) => {
                 self.debugger = Some(Debugger {
                     path_or_port: enable.path_or_port,
                     from_environment_variable: unix.into(),
@@ -2606,14 +2606,14 @@ impl VirtualMachine {
     }
 
     pub fn add_listening_socket_for_watch_mode(&mut self, socket: bun_sys::Fd) {
-        if self.hot_reload != bun_cli::Command::HotReload::Watch && !self.test_isolation_enabled {
+        if self.hot_reload != bun_runtime::cli::Command::HotReload::Watch && !self.test_isolation_enabled {
             return;
         }
         self.rare_data().add_listening_socket_for_watch_mode(socket);
     }
 
     pub fn remove_listening_socket_for_watch_mode(&mut self, socket: bun_sys::Fd) {
-        if self.hot_reload != bun_cli::Command::HotReload::Watch && !self.test_isolation_enabled {
+        if self.hot_reload != bun_runtime::cli::Command::HotReload::Watch && !self.test_isolation_enabled {
             return;
         }
         self.rare_data().remove_listening_socket_for_watch_mode(socket);

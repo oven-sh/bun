@@ -17,9 +17,9 @@ use bun_jsc::{
 };
 use bun_str::{self as strings, String as BunString};
 
-use bun_cli::Command as CLI;
+use bun_runtime::cli::Command as CLI;
 use bun_js_parser::{js_lexer as JSLexer, js_printer as JSPrinter};
-use bun_test_runner::pretty_format::JestPrettyFormat;
+use bun_runtime::test_runner::pretty_format::JestPrettyFormat;
 
 // ───────────────────────────────────────────────────────────────────────────
 // ConsoleObject

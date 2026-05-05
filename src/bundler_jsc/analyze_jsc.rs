@@ -6,7 +6,7 @@ use core::ffi::c_char;
 use core::marker::{PhantomData, PhantomPinned};
 
 use bun_jsc::{JSGlobalObject, VM};
-use bun_test_runner::diff_format::DiffFormatter;
+use bun_runtime::test_runner::diff_format::DiffFormatter;
 
 use bun_bundler::analyze_transpiled_module as analyze;
 use analyze::{ModuleInfoDeserialized, StringID};

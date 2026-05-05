@@ -6,7 +6,7 @@ use core::cell::Cell;
 use core::mem;
 
 use bun_alloc::AllocError;
-use bun_bake::dev_server::route_bundle;
+use crate::bake::dev_server::route_bundle;
 use bun_bundler::bundle_v2::JSBundleCompletionTask;
 use bun_core::{self, Output, fmt as bun_fmt};
 use bun_http::Method;
@@ -347,25 +347,25 @@ impl Route {
         config.target = Target::Browser;
         let is_development = development.is_development();
 
-        if let Some(minify_identifiers) = bun_cli::Command::get().args.serve_minify_identifiers {
+        if let Some(minify_identifiers) = crate::cli::Command::get().args.serve_minify_identifiers {
             config.minify.identifiers = minify_identifiers;
         } else if !is_development {
             config.minify.identifiers = true;
         }
 
-        if let Some(minify_whitespace) = bun_cli::Command::get().args.serve_minify_whitespace {
+        if let Some(minify_whitespace) = crate::cli::Command::get().args.serve_minify_whitespace {
             config.minify.whitespace = minify_whitespace;
         } else if !is_development {
             config.minify.whitespace = true;
         }
 
-        if let Some(minify_syntax) = bun_cli::Command::get().args.serve_minify_syntax {
+        if let Some(minify_syntax) = crate::cli::Command::get().args.serve_minify_syntax {
             config.minify.syntax = minify_syntax;
         } else if !is_development {
             config.minify.syntax = true;
         }
 
-        if let Some(define) = bun_cli::Command::get().args.serve_define.as_ref() {
+        if let Some(define) = crate::cli::Command::get().args.serve_define.as_ref() {
             debug_assert!(define.keys.len() == define.values.len());
             // TODO(port): ArrayHashMap raw entries surgery — Phase B verify API
             config.define.map.ensure_unused_capacity(define.keys.len())?;

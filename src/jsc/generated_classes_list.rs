@@ -96,7 +96,7 @@ pub mod Classes {
     pub use api::NativeZlib;
     pub use api::NativeBrotli;
     pub use api::NodeHTTPResponse;
-    pub use bun_bake::FrameworkRouter::JSFrameworkRouter as FrameworkFileSystemRouter;
+    pub use bun_runtime::bake::FrameworkRouter::JSFrameworkRouter as FrameworkFileSystemRouter;
     pub use api::dns::Resolver as DNSResolver;
     pub use webcore::S3Client;
     pub use webcore::S3Stat;

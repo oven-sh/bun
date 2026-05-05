@@ -16,7 +16,7 @@ use bun_aio::Loop as AsyncLoop;
 bun_output::declare_scope!(Script, visible);
 
 // ──────────────────────────────────────────────────────────────────────────
-// MOVE_DOWN(b0): bun_cli::run_command::replacePackageManagerRun → install
+// MOVE_DOWN(b0): bun_runtime::cli::run_command::replacePackageManagerRun → install
 // Shared by `bun run` and lifecycle scripts; install must own a copy so it
 // does not depend on bun_cli (cycle).
 // ──────────────────────────────────────────────────────────────────────────
@@ -388,7 +388,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         self.has_called_process_exit = false;
 
         let mut copy_script: Vec<u8> = Vec::with_capacity(original_script.len() + 1);
-        // TODO(b0): replace_package_manager_run arrives from move-in (bun_cli::run_command → install::lifecycle_script_runner).
+        // TODO(b0): replace_package_manager_run arrives from move-in (bun_runtime::cli::run_command → install::lifecycle_script_runner).
         replace_package_manager_run(&mut copy_script, original_script)?;
         copy_script.push(0);
 

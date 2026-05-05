@@ -583,7 +583,7 @@ pub enum SideEffects {
     // NoSideEffectsPureDataFromPlugin,
 }
 
-// ─── move-in: TYPE_ONLY from bun_bake::framework ──────────────────────────
+// ─── move-in: TYPE_ONLY from bun_runtime::bake::framework ──────────────────────────
 
 /// `bake/bake.zig` `Framework.BuiltInModule` — virtual module backing for a
 /// framework-declared built-in: either an import path to redirect to, or

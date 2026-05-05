@@ -15,7 +15,7 @@ use bun_jsc::{
 use bun_jsc::c_api as C_API;
 use bun_runtime::webcore::FetchHeaders;
 use bun_str::{self, String as BunString, ZigString};
-use bun_test_runner::pretty_format::JestPrettyFormat;
+use bun_runtime::test_runner::pretty_format::JestPrettyFormat;
 
 pub use crate::js_type::JSType;
 

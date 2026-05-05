@@ -464,7 +464,7 @@ impl<R, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, F> {
 pub type AsyncCpTask = NewAsyncCpTask<false>;
 pub type ShellAsyncCpTask = NewAsyncCpTask<true>;
 
-type ShellCpTask = bun_shell::Interpreter::Builtin::Cp::ShellCpTask;
+type ShellCpTask = crate::shell::Interpreter::Builtin::Cp::ShellCpTask;
 
 pub struct NewAsyncCpTask<const IS_SHELL: bool> {
     pub promise: JSPromise::Strong,

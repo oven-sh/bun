@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { normalizeBunSnapshot, tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -314,6 +314,87 @@ it("jsx with fragment", () => {
   const output = `<>foo bar</>`;
 
   expect(input).toBe(output);
+});
+
+it("jsx with circular references does not crash", () => {
+  // Run in a subprocess: without the fix this overflows the native stack and segfaults,
+  // which would otherwise kill the test runner before it can record a failure.
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const a = { $$typeof: Symbol.for("react.element"), type: "div", props: null, key: null };
+        a.props = a;
+        console.log(Bun.inspect(a));
+
+        const b = { $$typeof: Symbol.for("react.element"), type: "div", key: null };
+        b.props = { children: b };
+        console.log(Bun.inspect(b));
+
+        const c = { $$typeof: Symbol.for("react.element"), type: "span", key: null };
+        c.props = { children: [c, c] };
+        console.log(Bun.inspect(c));
+
+        const d = { $$typeof: Symbol.for("react.element"), type: "div", props: {} };
+        d.key = d;
+        console.log(Bun.inspect(d));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const out = stdout.toString();
+  expect(out).toContain("[Circular]");
+  expect(out).toContain("<div>\n  [Circular]\n</div>");
+  expect(out).toContain("<span>\n  [Circular]\n  [Circular]\n</span>");
+  expect(out).toContain("<div key=[Circular] />");
+  expect(exitCode).toBe(0);
+});
+
+it("jsx with non-object props does not crash", () => {
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const el = { $$typeof: Symbol.for("react.element"), type: "div", props: 42, key: null };
+        console.log(Bun.inspect(el));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(stdout.toString().trim()).toBe("<div />");
+  expect(exitCode).toBe(0);
+});
+
+it("jsx with circular props in test diff formatter", () => {
+  using dir = tempDir("jsx-circular-diff", {
+    "diff.test.js": `
+      import { test, expect } from "bun:test";
+      test("circular", () => {
+        const el = { $$typeof: Symbol.for("react.element"), type: "div", props: null, key: null };
+        el.props = el;
+        expect(() => expect(el).toEqual({})).toThrow(/\\[Circular\\]/);
+      });
+      test("non-object props", () => {
+        const el = { $$typeof: Symbol.for("react.element"), type: "div", props: 42, key: null };
+        expect(() => expect(el).toEqual({})).toThrow();
+      });
+    `,
+  });
+  const { exitCode, stderr } = Bun.spawnSync({
+    cmd: [bunExe(), "test", "diff.test.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(stderr.toString()).toContain("2 pass");
+  expect(exitCode).toBe(0);
 });
 
 it("inspect", () => {

@@ -1201,9 +1201,6 @@ pub fn Visit(
                 switch (stmt.data) {
                     .s_empty => continue,
 
-                    // skip directives for now
-                    .s_directive => continue,
-
                     .s_local => |local| {
                         // Merge adjacent local statements
                         if (output.items.len > 0) {

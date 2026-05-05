@@ -548,7 +548,20 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, co
         // only fires inside `autoTick`'s `loop.tickWithTimeout`, which is
         // reached only after `tick()` returns, so the same starvation applies.
         // `drainTimersIfNeeded` handles the Windows uv_timer re-arm.
-        virtual_machine.timer.drainTimersIfNeeded(virtual_machine);
+        //
+        // Gated on `suppress_microtask_drain` because `tickQueueWithCount` is
+        // shared with `SpawnSyncEventLoop`, which sets that flag to isolate
+        // user JS from running mid-`spawnSync`. The flag's contract covers
+        // timer callbacks too (they run arbitrary user code).
+        if (!virtual_machine.suppress_microtask_drain) {
+            virtual_machine.timer.drainTimersIfNeeded(virtual_machine);
+            // Timer callbacks enter/exit the event loop with
+            // `entered_event_loop_count >= 2` (tick() already incremented
+            // it), so TimerObjectInternals.fire's own exit() skips its
+            // microtask drain — we drain again here so any microtasks the
+            // timer callback queued are flushed before the next task runs.
+            try this.drainMicrotasksWithGlobal(global, global_vm);
+        }
     }
 
     this.tasks.head = if (this.tasks.count == 0) 0 else this.tasks.head;

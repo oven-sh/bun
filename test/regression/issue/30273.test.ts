@@ -134,3 +134,37 @@ client.destroy();
 
   expect(exitCode).toBe(0);
 }, 120_000);
+
+// SpawnSyncEventLoop shares `tickQueueWithCount` with the main loop and
+// relies on `suppress_microtask_drain` to keep user JS from running while
+// `spawnSync` blocks the main thread. The per-task timer drain must honor
+// the same flag so user `setTimeout` callbacks don't fire mid-`spawnSync`.
+test("setTimeout does not fire during spawnSync", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { spawnSync } = require("node:child_process");
+      let fired = false;
+      setTimeout(() => { fired = true; }, 10);
+      // Block synchronously for longer than the timer's deadline.
+      spawnSync(process.execPath, ["-e", "Bun.sleepSync(200)"], { stdio: "ignore" });
+      console.log(JSON.stringify({ firedDuringSync: fired }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) {
+    console.log("stdout:", stdout);
+    console.log("stderr:", stderr);
+  }
+
+  const line = stdout.trim().split("\n").at(-1)!;
+  const { firedDuringSync } = JSON.parse(line) as { firedDuringSync: boolean };
+  expect(firedDuringSync).toBe(false);
+  expect(exitCode).toBe(0);
+});

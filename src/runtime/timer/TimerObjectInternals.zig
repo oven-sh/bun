@@ -450,6 +450,17 @@ pub fn reschedule(this: *TimerObjectInternals, timer: JSValue, vm: *VirtualMachi
     }
 }
 
+/// Release a queued immediate without firing its callback. Mirrors the
+/// early-out paths in `runImmediateTask` (has_cleared_timer / generation
+/// mismatch / null this_value) so refcount discipline stays consistent
+/// across every queue-drop site. Used by `tickImmediateTasks` to discard
+/// immediates already queued when `self.close()` was observed.
+pub fn discardImmediateWithoutFiring(this: *TimerObjectInternals, vm: *VirtualMachine) void {
+    this.setEnableKeepingEventLoopAlive(vm, false);
+    this.this_value.downgrade();
+    this.deref();
+}
+
 fn setEnableKeepingEventLoopAlive(this: *TimerObjectInternals, vm: *VirtualMachine, enable: bool) void {
     if (this.flags.is_keeping_event_loop_alive == enable) {
         return;

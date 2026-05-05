@@ -90,6 +90,12 @@ void WebWorker__releaseParentPollRef(void* worker);
 // Free the Zig WebWorker struct. Called from ~Worker.
 void WebWorker__destroy(void* worker);
 
+// Whether cooperative close (self.close()) has been requested for the
+// worker attached to `workerVM`. Used by in-flight dispatch loops
+// (drainInbox) to stop mid-batch when the spec says queued tasks must
+// be discarded.
+bool WebWorker__hasRequestedClose(void* workerVM);
+
 } // extern "C"
 // -------------------------------------------------------------------------------------------------
 
@@ -275,6 +281,23 @@ void Worker::enqueueToParent(MessageWithMessagePorts&& message)
 template<typename Dispatch>
 static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* globalObject, ScriptExecutionContext& context, Dispatch&& dispatch)
 {
+    // Cooperative close: if `self.close()` was called before this drain
+    // even started — e.g. fireEarlyMessages' synchronous drain of a
+    // pre-online inbox when the entry script is
+    // `self.onmessage = h; self.close();`, or a prior drain CppTask in
+    // the same `vm.tick()` that set `requested_close` — discard the
+    // entire inbox per WHATWG "close a worker" step 1. For drainToParent
+    // the check is against the parent's VM: false when the parent is the
+    // main thread (no attached worker), and correctly true when the
+    // parent is itself a worker that has called self.close() — its
+    // queued child->parent message-event tasks are also discarded by
+    // the same spec step.
+    if (WebWorker__hasRequestedClose(globalObject->bunVM())) {
+        Locker locker { inbox.lock };
+        inbox.queue.clear();
+        inbox.drainScheduled.store(false, std::memory_order_relaxed);
+        return false;
+    }
     size_t limit;
     Deque<MessageWithMessagePorts> batch;
     {
@@ -308,6 +331,14 @@ static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* gl
                 // Termination pending. Drop the rest — dispatch is a no-op
                 // once m_terminateRequested is set (drainToParent), and the
                 // worker thread is tearing down (drainToWorker).
+                return false;
+            }
+            // Cooperative close: `self.close()` in a message handler must
+            // discard the rest of the batch per the WHATWG "close a worker"
+            // algorithm. drainMicrotasks() above only trips on the JSC
+            // termination trap, which self.close() deliberately doesn't
+            // arm, so check the close flag separately.
+            if (WebWorker__hasRequestedClose(globalObject->bunVM())) {
                 return false;
             }
         }
@@ -730,6 +761,34 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     scope.assertNoException();
 
     worker->enqueueToParent(MessageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() });
+
+    return JSValue::encode(jsUndefined());
+}
+
+// DedicatedWorkerGlobalScope#close() — https://html.spec.whatwg.org/multipage/workers.html#dom-dedicatedworkerglobalscope-close
+// Inside a Worker this requests cooperative termination: the task currently
+// running (which called `close()`) finishes normally, then the worker event
+// loop exits on its next tick. On the main thread it is a no-op, matching
+// how we handle `postMessage` in that context.
+//
+// We route straight through the worker's own Zig VM and do NOT go via the
+// parent-thread-owned C++ Worker object — that would (a) be a cross-thread
+// read of the parent's `impl_` pointer and (b) share the `terminate()`
+// machinery which arms a JSC NeedTermination trap, killing any JS following
+// `self.close()` in the same task. The spec says the current task must run
+// to completion.
+extern "C" void WebWorker__requestClose(void* workerVM);
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSelfClose,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    Zig::GlobalObject* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    if (!globalObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    // On the main thread (or any VM with no attached worker) this is a no-op.
+    // `WebWorker__requestClose` checks `vm.worker` and returns early there.
+    WebWorker__requestClose(globalObject->bunVM());
 
     return JSValue::encode(jsUndefined());
 }

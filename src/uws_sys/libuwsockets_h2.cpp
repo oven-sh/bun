@@ -22,9 +22,10 @@ using uWS::Http2Request;
 using uWS::Http2Response;
 using uWS::Http2ResponseData;
 
-/* Unified-build: libuwsockets_h3.cpp defines h2sv()/h2out() at file scope
- * in the same TU. Keep ours in an anonymous namespace so they don't
- * collide. */
+/* Unified-build: libuwsockets_h3.cpp defines equivalent string-view
+ * helpers (sv()/ffi_sv()) at file scope in the same TU. The h2 prefix
+ * already disambiguates; the anonymous namespace is belt-and-suspenders
+ * for that collision class. */
 namespace {
 inline std::string_view h2sv(const char* p, size_t n) { return p ? std::string_view { p, n } : std::string_view {}; }
 inline size_t h2out(std::string_view v, const char** dest)

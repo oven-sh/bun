@@ -16,6 +16,13 @@ impl Error {
     pub const fn from_errno(errno: i32) -> Self {
         Self { errno, syscall: 0, fd: -1, path_ptr: core::ptr::null(), path_len: 0 }
     }
+    /// B-1: Phase-A `err!()` placeholder. Real impl: NonZeroU16 interning table.
+    pub const TODO: Self = Self::from_errno(-1);
+    /// B-1: Phase-A `bun_core::Error::from_name("...")`. Real impl: name→code lookup.
+    pub fn from_name(_name: &'static str) -> Self { Self::TODO }
+}
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self { Self::from_errno(e.raw_os_error().unwrap_or(-1)) }
 }
 // SAFETY: path_ptr is always a borrow of 'static or arena-owned bytes; matches
 // Zig's `path: []const u8` which is freely Send across threads.

@@ -24,3 +24,5 @@ bun_paths.workspace = true
 bun_string.workspace = true
 bun_windows_sys.workspace = true
 bun_wyhash.workspace = true
+
+thiserror.workspace = true

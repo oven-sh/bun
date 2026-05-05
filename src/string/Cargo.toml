@@ -24,3 +24,5 @@ bun_highway.workspace = true
 bun_paths.workspace = true
 bun_ptr.workspace = true
 bun_wyhash.workspace = true
+
+thiserror.workspace = true

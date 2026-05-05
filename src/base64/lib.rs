@@ -1,6 +1,18 @@
 use std::sync::LazyLock;
 
-use bun_simdutf::{self as simdutf, SIMDUTFResult};
+// B-1: simdutf_sys doesn't yet export base64/Status; SIMD path gated.
+#[cfg(any())] use bun_simdutf_sys::{self as simdutf, SIMDUTFResult};
+#[derive(Clone, Copy)]
+pub struct SIMDUTFResult { pub count: usize, pub status: u32 }
+impl SIMDUTFResult { #[inline] pub fn is_successful(&self) -> bool { self.status == 0 } }
+mod simdutf {
+    pub mod base64 {
+        pub fn decode(_: &[u8], _: &mut [u8], _: bool) -> super::super::SIMDUTFResult { todo!("b1-gate") }
+        pub fn encode(_: &[u8], _: &mut [u8], _: bool) -> usize { todo!("b1-gate") }
+        pub fn encode_len(n: usize, _: bool) -> usize { (n + 2) / 3 * 4 }
+    }
+    pub mod Status { pub const Success: u32 = 0; pub const InvalidBase64Character: u32 = 4; }
+}
 
 // ASCII control codes used in the ignore set below.
 const VT: u8 = 0x0B; // std.ascii.control_code.vt
@@ -67,14 +79,14 @@ pub fn encode(destination: &mut [u8], source: &[u8]) -> usize {
     simdutf::base64::encode(source, destination, false)
 }
 
-pub fn encode_alloc(source: &[u8]) -> bun_collections::BabyList<u8> {
+pub fn encode_alloc(source: &[u8]) -> Vec<u8> { // B-1: was BabyList<u8>
     // TODO(port): narrow error set (Zig was `!bun.ByteList`; OOM now aborts)
     let len = encode_len(source);
     let mut destination = vec![0u8; len];
     let encoded_len = encode(&mut destination, source);
     // PORT NOTE: Zig built ByteList from ptr/len/cap; here Vec already carries cap == len.
     destination.truncate(encoded_len);
-    bun_collections::BabyList::from_vec(destination)
+    destination
 }
 
 pub fn simdutf_encode_len_url_safe(source_len: usize) -> usize {
@@ -176,11 +188,11 @@ pub mod vlq {
             &self.bytes[0..self.len as usize]
         }
 
-        // TODO(port): Zig took `writer: anytype`. `bun_io::Write` is the Phase-A
+        // TODO(port): Zig took `writer: anytype`. `std::io::Write` is the Phase-A
         // byte-sink trait but is itself slated to MOVE_DOWN into bun_core
         // (CYCLEBREAK MOVE_DOWN list). Re-point this bound once that lands so
         // base64 stays a tier-0 leaf with no bun_io dep.
-        pub fn write_to(self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
+        pub fn write_to(self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
             writer.write_all(&self.bytes[0..self.len as usize])?;
             Ok(())
         }

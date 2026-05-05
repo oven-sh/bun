@@ -493,14 +493,21 @@ describe("fs.glob edge cases", () => {
     expect(fs.globSync(path.join(root, "file.txt"))).toStrictEqual([path.join(root, "file.txt")]);
     expect(fs.globSync(path.join(root, "subdir"))).toStrictEqual([path.join(root, "subdir")]);
     expect(fs.globSync(path.join(root, "does-not-exist"))).toStrictEqual([]);
-    // Mid-path traverses a file → ENOTDIR, path does not exist. Node
-    // throws; returning `[]` is strictly safer and consistent with the
-    // other missing-path shapes that go through `swallow_missing_cwd`.
+    // Mid-path traverses a file → ENOTDIR, so the path does not exist.
+    // Return `[]` — consistent with the other missing-path shapes that
+    // go through `swallow_missing_cwd`. (Node's behavior varies by
+    // version — some throw ENOTDIR, some return `[]`; either way Bun's
+    // `[]` is the safer choice and matches the non-existent-cwd case.)
     expect(fs.globSync(path.join(root, "file.txt/something"))).toStrictEqual([]);
 
     // Public Bun.Glob (default onlyFiles: true) filters the directory.
     expect([...new Bun.Glob(path.join(root, "file.txt")).scanSync()]).toStrictEqual([path.join(root, "file.txt")]);
     expect([...new Bun.Glob(path.join(root, "subdir")).scanSync()]).toStrictEqual([]);
+
+    // A trailing separator on the pattern is normalized away in the
+    // result — `/abs/subdir/` → `/abs/subdir` (matching Node and the
+    // sibling relative literal-tail branch).
+    expect(fs.globSync(path.join(root, "subdir") + sep)).toStrictEqual([path.join(root, "subdir")]);
   });
 
   it("consecutive separators in a pattern do not break matching", () => {

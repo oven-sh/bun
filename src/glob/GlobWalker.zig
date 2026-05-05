@@ -495,7 +495,21 @@ pub fn GlobWalker_(
                         //
                         // In that case we don't need to do any walking and can just open up the FS entry
                         if (starting_component_idx >= this.walker.patternComponents.items.len) {
-                            const path = try this.walker.arena.allocator().dupeZ(u8, path_without_special_syntax);
+                            // `buildPatternComponents` bumps
+                            // `end_byte_of_basename_excluding_special_syntax`
+                            // past the final separator for patterns that end
+                            // in one (`/abs/dir/`), so the raw slice includes
+                            // the trailing separator. Node normalizes these
+                            // (`fs.globSync('/abs/dir/')` → `['/abs/dir']`),
+                            // and the sibling relative literal-tail branch in
+                            // `transitionToDirIterState` already strips via
+                            // `patternSlice()`. Strip here too for parity,
+                            // but keep a bare root (`/`, `C:\`) intact.
+                            var trimmed = path_without_special_syntax;
+                            if (trimmed.len > 1 and (trimmed[trimmed.len - 1] == '/' or (bun.Environment.isWindows and trimmed[trimmed.len - 1] == '\\'))) {
+                                trimmed = trimmed[0 .. trimmed.len - 1];
+                            }
+                            const path = try this.walker.arena.allocator().dupeZ(u8, trimmed);
                             // All three success-shaped arms below set
                             // `iter_state = .matched` AND push into
                             // `matchedPaths`: the `next()` iterator yields
@@ -517,7 +531,15 @@ pub fn GlobWalker_(
                                         // `lstat` disambiguates: succeeds for
                                         // terminal, fails NOTDIR for mid-path.
                                         // Same shape as the ELOOP arm below.
-                                        switch (Accessor.lstatat(.empty, path)) {
+                                        // Use `Syscall.lstat` directly rather
+                                        // than `Accessor.lstatat(.empty, ...)`
+                                        // — the `statatWindows` implementation
+                                        // dereferences the handle before
+                                        // checking whether `path` is absolute,
+                                        // so passing `.empty` fails with EBADF
+                                        // on Windows. `path` is known absolute
+                                        // here (we're inside `is_absolute`).
+                                        switch (Syscall.lstat(path)) {
                                             .result => {
                                                 try this.walker.appendMatchedPathSymlink(path);
                                                 this.iter_state = .{ .matched = path };
@@ -545,7 +567,9 @@ pub fn GlobWalker_(
                                     // Mirrors the literal-tail branch in
                                     // `transitionToDirIterState`.
                                     if (this.walker.swallow_missing_cwd and e.getErrno() == bun.sys.E.LOOP) {
-                                        switch (Accessor.lstatat(.empty, path)) {
+                                        // Use `Syscall.lstat` directly (see
+                                        // NOTDIR arm above for rationale).
+                                        switch (Syscall.lstat(path)) {
                                             .result => {
                                                 try this.walker.appendMatchedPathSymlink(path);
                                                 this.iter_state = .{ .matched = path };

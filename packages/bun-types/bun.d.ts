@@ -8384,17 +8384,32 @@ declare module "bun" {
     dataurl(): Promise<string>;
     /**
      * A [ThumbHash](https://github.com/evanw/thumbhash)-rendered low-quality
-     * placeholder of the *source* image as a `data:image/png;base64,…` URL —
+     * placeholder of the *source* image as a `data:image/webp;base64,…` URL —
      * a ≤32px blur with the right average colour, aspect ratio and rough
-     * structure, ~400–700 bytes. Ready for `<img src>` or Next's
+     * structure, a few hundred bytes. Ready for `<img src>` or Next's
      * `blurDataURL`; no client-side decoder needed.
      *
      * ```ts
      * const lqip = await Bun.file("hero.jpg").image().placeholder();
-     * // "data:image/png;base64,iVBORw0KGgoAAAANSUhE…"
+     * // "data:image/webp;base64,UklGRoQAAABXRUJQ…"
      * ```
      */
     placeholder(as?: "dataurl"): Promise<string>;
+    /**
+     * Raw [ThumbHash](https://github.com/evanw/thumbhash) bytes — a 5–25 byte
+     * compact encoding of the *source* image's average colour, aspect ratio
+     * and rough structure. Pair with the [~800-byte ThumbHash decoder](https://github.com/evanw/thumbhash?tab=readme-ov-file#api-reference)
+     * on the client when shipping many placeholders: one decoder + ≤36 base64
+     * chars per image is smaller than embedding a WebP `data:` URL per image.
+     *
+     * ```ts
+     * const hash = await Bun.file("hero.jpg").image().placeholder("hash");
+     * // Uint8Array(21) [ 29, 8, ... ]
+     * const b64 = Buffer.from(hash).toString("base64");
+     * // "HQgKNZiAd3dxd4eHd3eGh3GQCPiI"
+     * ```
+     */
+    placeholder(as: "hash"): Promise<Uint8Array>;
     /** Run the pipeline and return a `Blob` with the matching `type`. */
     blob(): Promise<Blob>;
     /** Run the pipeline and return base64-encoded output. */

@@ -577,23 +577,40 @@ pub fn doDataUrl(this: *Image, global: *jsc.JSGlobalObject, cf: *jsc.CallFrame) 
     return this.schedule(global, cf.this(), .{ .encode = this.pipeline.output }, .dataurl);
 }
 
-/// `.placeholder()` — ThumbHash-rendered ≤32px PNG `data:` URL. ~28 chars
-/// of hash → ~400-700 bytes of `data:image/png;base64,…` ready for `<img
-/// src>` / Next's `blurDataURL`. Runs entirely on the work pool; the
-/// pipeline ops (resize/rotate/…) are skipped — a placeholder is OF the
-/// source, not of the output.
+/// `.placeholder()` — ThumbHash-rendered ≤32px WebP `data:` URL. ~28 chars
+/// of hash → a few hundred bytes of `data:image/webp;base64,…` ready for
+/// `<img src>` / Next's `blurDataURL`. Runs entirely on the work pool;
+/// the pipeline ops (resize/rotate/…) are skipped — a placeholder is OF
+/// the source, not of the output.
+///
+/// `placeholder("hash")` returns the raw 25-byte ThumbHash as a
+/// `Uint8Array` — ship the tiny decoder on the client and keep each
+/// image's blur to <40 base64 chars. See https://github.com/evanw/thumbhash.
 pub fn doPlaceholder(this: *Image, global: *jsc.JSGlobalObject, cf: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const args = cf.arguments();
-    // Single positional `"dataurl"` for now — leaves room for `"hash"` /
-    // `"color"` without growing methods. Anything else throws so the
-    // option space isn't accidentally squatted.
+    // Positional: `"dataurl"` (default) | `"hash"`. `"dataurl"` renders
+    // the hash to a tiny lossy WebP and returns a data: URL; `"hash"`
+    // hands back the raw ThumbHash bytes so users who already ship the
+    // decoder (blurhash-style) pay ~34 base64 chars per image. Anything
+    // else throws so the option space doesn't drift.
+    var placeholder_kind: PipelineTask.PlaceholderKind = .dataurl;
     if (args.len > 0 and !args[0].isUndefinedOrNull()) {
         const s = try args[0].toBunString(global);
         defer s.deref();
-        if (!s.eqlComptime("dataurl"))
-            return global.throwInvalidArguments("Image.placeholder(): only \"dataurl\" is supported", .{});
+        if (s.eqlComptime("dataurl")) {
+            placeholder_kind = .dataurl;
+        } else if (s.eqlComptime("hash")) {
+            placeholder_kind = .hash;
+        } else {
+            return global.throwInvalidArguments("Image.placeholder(): expected \"dataurl\" or \"hash\"", .{});
+        }
     }
-    return this.schedule(global, cf.this(), .placeholder, .dataurl);
+    return this.schedule(
+        global,
+        cf.this(),
+        .{ .placeholder = placeholder_kind },
+        if (placeholder_kind == .hash) .uint8array else .dataurl,
+    );
 }
 
 /// Terminal: encode and write to `path` on the work pool (no round-trip of
@@ -717,7 +734,9 @@ pub fn encodeForBody(this: *Image, global: *jsc.JSGlobalObject, this_value: jsc.
         .err => |e| global.throw("{s}", .{errorMessage(e)}),
         // Preserve errno/path/syscall instead of flattening to DecodeFailed.
         .io_err => |e| global.throwValue(try e.toJS(global)),
-        .meta => unreachable,
+        // The sync body-init path only runs for encode (Request/Response
+        // terminals); placeholder/metadata terminals take the async path.
+        .meta, .hash => unreachable,
     };
 }
 
@@ -877,16 +896,28 @@ pub const PipelineTask = struct {
         /// `null` ⇒ re-encode in the source format (resolved after decode).
         encode: ?codecs.EncodeOptions,
         metadata,
-        /// `.placeholder()` — decode → box-resize ≤100 → ThumbHash → render
-        /// → PNG → `data:` URL. The whole chain runs on the worker; the
-        /// hash itself never crosses the JS boundary unless we add an
-        /// `as: "hash"` option later.
-        placeholder,
+        /// `.placeholder(kind)` — decode → box-resize ≤100 → ThumbHash
+        /// encode, then either render+lossy-WebP → `data:` URL, or hand
+        /// the raw hash bytes back as a `Uint8Array`. Whole chain runs
+        /// on the worker.
+        placeholder: PlaceholderKind,
     };
+
+    /// `"dataurl"` → ≤32px WebP render as a data URL. `"hash"` → the raw
+    /// ThumbHash bytes (≤25) for clients that ship the decoder.
+    pub const PlaceholderKind = enum { dataurl, hash };
 
     pub const Result = union(enum) {
         encoded: struct { out: codecs.Encoded, format: codecs.Format, w: u32, h: u32 },
         meta: struct { w: u32, h: u32, format: codecs.Format },
+        /// Raw ThumbHash bytes from `.placeholder("hash")` — delivered as
+        /// a `Uint8Array`. The worker stores the hash inline since it's
+        /// always ≤ `thumbhash.max_len`; no allocation involved. `w`/`h`
+        /// are the oriented source dims so `then()` can update
+        /// `img.width` / `img.height` the same way the other terminals
+        /// do — a `"hash"` terminal that wins the race mustn't leave the
+        /// getters stuck at -1.
+        hash: struct { bytes: [thumbhash.max_len]u8, len: u8, w: u32, h: u32 },
         err: codecs.Error,
         io_err: bun.sys.Error,
     };
@@ -979,17 +1010,33 @@ pub const PipelineTask = struct {
         // can be over-shrunk and then upscaled, throwing away detail.
         // (flip/flop are pure mirrors that never change w/h, so the hint
         //  stays valid through them.)
-        const hint: codecs.DecodeHint = if (this.pipeline.resize) |r| blk: {
-            var tw = r.w;
-            // r.h==0 means "preserve aspect" — constrain on width only.
-            var th = if (r.h != 0) r.h else r.w;
-            const swap_explicit = this.pipeline.rotate == 90 or this.pipeline.rotate == 270;
-            const swap_exif = this.auto_orient and blk2: {
-                const t = exif.readJpeg(input).transform();
-                break :blk2 t.rotate == 90 or t.rotate == 270;
-            };
-            if (swap_explicit != swap_exif) std.mem.swap(u32, &tw, &th);
-            break :blk .{ .target_w = tw, .target_h = th };
+        //
+        // Only `.encode` tasks want the hint. `.placeholder` and `.metadata`
+        // both report source dims (placeholders are OF the source, metadata
+        // falls through here only for HEIC/AVIF and reports `decoded.width/
+        // height` directly); applying a chained `.resize(...)` hint to
+        // either would silently shrink the decode and make them disagree
+        // with `.metadata()` probe-path results on the same instance.
+        const hint: codecs.DecodeHint = if (this.kind == .encode) blk_hint: {
+            if (this.pipeline.resize) |r| {
+                var tw = r.w;
+                // r.h==0 means "preserve aspect". We can't derive the exact
+                // aspect-preserved target here (don't know src dims yet) so
+                // mirror `r.w` into `th` — harmless for square-ish sources
+                // where both axes clear the same M/8, conservative for
+                // wide-short / tall-narrow where the picker will fall back
+                // to full decode rather than ceil-round the unconstrained
+                // axis and drift `resolveResize`'s aspect derivation.
+                var th = if (r.h != 0) r.h else r.w;
+                const swap_explicit = this.pipeline.rotate == 90 or this.pipeline.rotate == 270;
+                const swap_exif = this.auto_orient and blk2: {
+                    const t = exif.readJpeg(input).transform();
+                    break :blk2 t.rotate == 90 or t.rotate == 270;
+                };
+                if (swap_explicit != swap_exif) std.mem.swap(u32, &tw, &th);
+                break :blk_hint .{ .target_w = tw, .target_h = th };
+            }
+            break :blk_hint .{};
         } else .{};
 
         var decoded = codecs.decode(input, this.max_pixels, hint) catch |e| {
@@ -1017,7 +1064,12 @@ pub const PipelineTask = struct {
         }
 
         if (this.kind == .placeholder) {
-            this.result = makePlaceholder(decoded.rgba, decoded.width, decoded.height) catch |e| .{ .err = e };
+            this.result = makePlaceholder(
+                decoded.rgba,
+                decoded.width,
+                decoded.height,
+                this.kind.placeholder,
+            ) catch |e| .{ .err = e };
             return;
         }
 
@@ -1052,13 +1104,19 @@ pub const PipelineTask = struct {
         this.result = .{ .encoded = .{ .out = out, .format = enc.format, .w = decoded.width, .h = decoded.height } };
     }
 
-    /// `.placeholder()` body — runs on the worker. Input is the decoded RGBA
-    /// at source size; output is a PNG of the ThumbHash render, ready for the
-    /// `.dataurl` deliver. ThumbHash needs ≤100×100, so first downscale with
-    /// `box` (the only filter that's correct for "average everything in a
-    /// cell" — Lanczos would ring into the DCT). The hash itself stays on
-    /// the worker stack; only the rendered PNG crosses back.
-    fn makePlaceholder(rgba: []const u8, sw: u32, sh: u32) codecs.Error!Result {
+    /// `.placeholder(kind)` body — runs on the worker. Input is the decoded
+    /// RGBA at source size. ThumbHash needs ≤100×100, so first downscale
+    /// with `box` (the only filter that's correct for "average everything
+    /// in a cell" — Lanczos would ring into the DCT).
+    ///
+    /// `.hash` returns the raw 25-byte-max ThumbHash. `.dataurl` continues
+    /// through `thumbhash.decode` to a ≤32px render and encodes that as
+    /// lossy WebP — at quality 50 the blur is a few hundred bytes,
+    /// comfortably smaller than the previous PNG encode (PNG's IDAT+CRC
+    /// overhead alone is ~80 bytes before any pixel data). Low quality is
+    /// cheap: ThumbHash's 4-bit-AC quantisation has already washed out
+    /// any detail the WebP encoder could lose.
+    fn makePlaceholder(rgba: []const u8, sw: u32, sh: u32, kind: PlaceholderKind) codecs.Error!Result {
         const max_in: u32 = 100;
         var w = sw;
         var h = sh;
@@ -1079,12 +1137,29 @@ pub const PipelineTask = struct {
         }
         var buf: [thumbhash.max_len]u8 = undefined;
         const hash = thumbhash.encode(&buf, w, h, pixels);
+        if (kind == .hash) {
+            // Report the *source* dims (`sw`/`sh`) rather than the ≤100
+            // DCT input — the hash represents the original image; the
+            // downscale is an internal ThumbHash detail.
+            var result: Result = .{ .hash = .{
+                .bytes = undefined,
+                .len = @intCast(hash.len),
+                .w = sw,
+                .h = sh,
+            } };
+            @memcpy(result.hash.bytes[0..hash.len], hash);
+            return result;
+        }
         const rendered = try thumbhash.decode(hash);
         defer bun.default_allocator.free(rendered.rgba);
-        // Placeholder is a synthetic ThumbHash render, not the source image —
-        // no ICC profile attaches to it.
-        const png_out = try codecs.png.encode(rendered.rgba, rendered.w, rendered.h, -1, null);
-        return .{ .encoded = .{ .out = png_out, .format = .png, .w = rendered.w, .h = rendered.h } };
+        // Lossy WebP at q=50: the render is already a low-frequency blur
+        // so VP8 spends almost nothing on AC detail, and WebP's variable-
+        // length headers (no quantisation table, no inflate preamble)
+        // beat PNG by 3-5× on a 32×32 gradient. (Placeholder is a
+        // synthetic ThumbHash render, not the source image — no ICC
+        // profile attaches to it anyway.)
+        const out = try codecs.webp.encode(rendered.rgba, rendered.w, rendered.h, 50, false, null);
+        return .{ .encoded = .{ .out = out, .format = .webp, .w = rendered.w, .h = rendered.h } };
     }
 
     /// Back on the JS thread.
@@ -1096,8 +1171,12 @@ pub const PipelineTask = struct {
         const global = this.global;
         // Stash final dims here (JS thread) — `run()` is on a WorkPool thread
         // so writing `this.image.*` there would race the synchronous getters.
+        // `.hash` carries source dims for the same reason as `.meta`: even
+        // though the hash has no render size, a caller awaiting only
+        // `.placeholder("hash")` expects `img.width/height` to reflect the
+        // source they just hashed, not stay at -1.
         switch (this.result) {
-            inline .encoded, .meta => |r| {
+            inline .encoded, .meta, .hash => |r| {
                 this.image.last_width = @intCast(r.w);
                 this.image.last_height = @intCast(r.h);
             },
@@ -1168,6 +1247,17 @@ pub const PipelineTask = struct {
                 obj.put(global, jsc.ZigString.static("height"), jsc.JSValue.jsNumber(m.h));
                 obj.put(global, jsc.ZigString.static("format"), jsc.ZigString.init(@tagName(m.format)).toJS(global));
                 try promise.resolve(global, obj);
+            },
+            // `.placeholder("hash")` — the ≤25 raw ThumbHash bytes as a
+            // `Uint8Array`. Always tiny, so copy into a fresh
+            // JSC-allocated array rather than wrapping our stack buffer.
+            .hash => |h| {
+                const arr = jsc.JSValue.createUninitializedUint8Array(global, h.len) catch
+                    return promise.reject(global, error.JSError);
+                const ab = arr.asArrayBuffer(global) orelse
+                    return promise.reject(global, global.createErrorInstance("Image.placeholder: failed to allocate result", .{}));
+                @memcpy(ab.byteSlice()[0..h.len], h.bytes[0..h.len]);
+                try promise.resolve(global, arr);
             },
             .err => |e| try promise.reject(global, rejectError(global, e)),
             .io_err => |e| try promise.reject(global, e.toJS(global)),

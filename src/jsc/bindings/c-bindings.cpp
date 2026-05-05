@@ -944,6 +944,115 @@ extern "C" void Bun__unregisterSignalsForForwarding()
 #undef UNREGISTER_SIGNAL
 }
 
+// Protect Bun's signal handlers across a dlopen() call.
+//
+// Some shared libraries install their own signal handlers at load time —
+// notably Go `-buildmode=c-shared`, which registers handlers for SIGURG
+// (goroutine preemption), SIGPIPE, SIGCHLD, SIGHUP, SIGINT, SIGTERM,
+// SIGABRT, SIGSEGV, SIGILL, SIGBUS, SIGFPE, SIGTRAP, SIGQUIT etc. as part
+// of the Go runtime's init. This clobbers Bun's own handlers:
+//  - SIGPIPE = SIG_IGN (networking stack depends on this)
+//  - SEGV/ILL/BUS/FPE = crash_handler (backtrace/report)
+//  - handlers installed via process.on("SIGTERM", ...)
+//
+// Issue #29843: loading a Go c-shared library via bun:ffi dlopen() caused
+// Prisma's MariaDB adapter to hang the event loop, because Go had taken
+// over signals whose delivery Bun was still relying on.
+//
+// Strategy: snapshot sigactions for all signals before dlopen; after
+// dlopen, for each signal whose action the loaded library changed,
+// restore Bun's handler *unless* the previous action was SIG_DFL (in
+// which case the library is free to install whatever handler it needs —
+// e.g. Go's SIGURG handler for preemption, which Bun doesn't care about).
+//
+// The snapshot buffers are process-global, so the save→dlopen→restore
+// sequence is serialised under bun_dlopen_mutex. Workers are free to
+// call bun:ffi dlopen / process.dlopen on their own threads.
+//
+// Same-thread re-entrancy is handled by a `thread_local` depth counter:
+// legacy V8-style addons (NODE_MODULE macro) run their `Init` function
+// synchronously inside dlopen() via node_module_register(), and that
+// Init is arbitrary user code that may load another .node addon —
+// re-entering process.dlopen on the same thread. Recursive saves would
+// either deadlock on a non-recursive mutex or overwrite the outer
+// snapshot; instead, nested calls are no-ops and only the outermost
+// save/restore touches the buffers.
+//
+// Known limitation: the mutex serialises save/restore against each
+// other, but NOT against Bun's other sigaction() call sites
+// (`process.on("SIG…")` in BunProcess.cpp, SigintWatcher, TTY-exit).
+// If the main thread runs `process.on("SIGTERM", …)` while a worker is
+// inside a Go-style dlopen, restore() will see SIGTERM "changed" and
+// revert the user's new forwardSignal to Bun's pre-dlopen onExitSignal
+// — the JS listener stays in the EventEmitter map but the kernel
+// disposition no longer routes to it. Window is narrow (worker-dlopen
+// overlapping a main-thread process.on for a signal Bun already
+// handles) and the correct fix touches every sigaction caller in the
+// process; leaving as a follow-up.
+#include <mutex>
+static std::mutex bun_dlopen_mutex;
+static thread_local int bun_dlopen_depth = 0;
+static struct sigaction bun_dlopen_saved_actions[NSIG];
+static bool bun_dlopen_saved_valid[NSIG];
+
+extern "C" void Bun__saveSignalHandlersForDlopen()
+{
+    // Re-entrant case (e.g. a V8-style addon's Init synchronously
+    // require()s another .node addon during its dlopen): only the
+    // outermost call snapshots, only the outermost restore reverts.
+    if (bun_dlopen_depth++ > 0) return;
+    // Held until the matching Bun__restoreSignalHandlersAfterDlopen().
+    bun_dlopen_mutex.lock();
+    for (int sig = 1; sig < NSIG; sig++) {
+        // Skip signals that can't be intercepted — SIGKILL and SIGSTOP.
+        // sigaction returns EINVAL for those on some platforms; save a sentinel.
+        bun_dlopen_saved_valid[sig] = (sigaction(sig, nullptr, &bun_dlopen_saved_actions[sig]) == 0);
+    }
+}
+
+extern "C" void Bun__restoreSignalHandlersAfterDlopen()
+{
+    if (--bun_dlopen_depth > 0) return;
+    for (int sig = 1; sig < NSIG; sig++) {
+        if (!bun_dlopen_saved_valid[sig]) continue;
+
+        // If Bun had no handler installed (SIG_DFL), let the loaded library
+        // keep whatever it installed. This preserves e.g. Go's SIGURG handler
+        // so its goroutine scheduler keeps working.
+        void (*prev_handler)(int) = bun_dlopen_saved_actions[sig].sa_handler;
+        if ((bun_dlopen_saved_actions[sig].sa_flags & SA_SIGINFO) == 0 && prev_handler == SIG_DFL) {
+            continue;
+        }
+
+        struct sigaction current;
+        if (sigaction(sig, nullptr, &current) != 0) continue;
+
+        // Compare: did the loaded library change this signal's action?
+        // Cover sa_flags, the handler pointer (sa_handler or sa_sigaction
+        // depending on SA_SIGINFO), and sa_mask — any of these differing
+        // means Bun's disposition wasn't fully preserved.
+        bool changed = memcmp(&current.sa_mask, &bun_dlopen_saved_actions[sig].sa_mask, sizeof(sigset_t)) != 0
+            || current.sa_flags != bun_dlopen_saved_actions[sig].sa_flags;
+        if (!changed) {
+            if (current.sa_flags & SA_SIGINFO) {
+                changed = current.sa_sigaction != bun_dlopen_saved_actions[sig].sa_sigaction;
+            } else {
+                changed = current.sa_handler != bun_dlopen_saved_actions[sig].sa_handler;
+            }
+        }
+
+        if (changed) {
+            // Best effort — ignore failures.
+            (void)sigaction(sig, &bun_dlopen_saved_actions[sig], nullptr);
+        }
+    }
+
+    memset(bun_dlopen_saved_actions, 0, sizeof(bun_dlopen_saved_actions));
+    memset(bun_dlopen_saved_valid, 0, sizeof(bun_dlopen_saved_valid));
+    // Pairs with the lock() in Bun__saveSignalHandlersForDlopen().
+    bun_dlopen_mutex.unlock();
+}
+
 #endif
 
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)

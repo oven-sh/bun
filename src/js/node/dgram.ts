@@ -95,6 +95,73 @@ function EINVAL(syscall) {
   });
 }
 
+// ICMP-class recv errors from Linux's IP_RECVERR error-queue drain.
+//
+// Background: on a connected UDP socket, Linux records ICMP errors
+// (port unreachable, host unreachable, …) in the socket's sk_err so the
+// next recvmsg returns errno=ECONNREFUSED. Node.js (and Bun ≤ 1.3.11)
+// surface that through dgram's `'error'` event, and apps using connected
+// UDP are expected to handle it. On an UNconnected socket, the kernel
+// silently drops those ICMP errors by default — libuv does not enable
+// IP_RECVERR (it's opt-in via UV_UDP_LINUX_RECVERR, which lib/dgram.js
+// never passes), so Node.js dgram apps never observe them.
+//
+// After #28827, Bun enables IP_RECVERR unconditionally in uSockets. That
+// causes the kernel to populate sk_err on *unconnected* sockets too, and
+// uSockets' recvmmsg drain surfaces the errno through `on_recv_error`,
+// which becomes a `'error'` event on the dgram socket — breaking any
+// program that sends a best-effort UDP packet without a defensive
+// listener (the #29116 repro).
+//
+// Match Node.js behavior by suppressing ICMP-class `recv` errors on
+// unconnected sockets while letting them through on connected ones.
+// Kernel errno mappings for every ICMP/ICMPv6 code that can reach us via
+// IP_RECVERR / IPV6_RECVERR (uSockets enables both unconditionally on Linux).
+//
+// IPv4 — net/ipv4/icmp.c `icmp_err_convert[]`:
+//   ENETUNREACH   NET_UNREACH, NET_UNKNOWN, NET_ANO, NET_UNR_TOS
+//   EHOSTUNREACH  HOST_UNREACH, HOST_ANO, HOST_UNR_TOS, PKT_FILTERED,
+//                 PREC_VIOLATION, PREC_CUTOFF
+//   ENOPROTOOPT   PROT_UNREACH
+//   ECONNREFUSED  PORT_UNREACH
+//   EMSGSIZE      FRAG_NEEDED
+//   EOPNOTSUPP    SR_FAILED
+//   EHOSTDOWN     HOST_UNKNOWN
+//   ENONET        HOST_ISOLATED
+//
+// IPv6 — net/ipv6/icmp.c `icmpv6_err_convert` + `tab_unreach[]`:
+//   ENETUNREACH   DEST_UNREACH/NOROUTE
+//   EACCES        DEST_UNREACH/ADM_PROHIBITED, POLICY_FAIL, REJECT_ROUTE
+//                 (`ip6tables -j REJECT --reject-with icmp6-adm-prohibited`,
+//                  the firewalld default on Fedora/RHEL, hits this path)
+//   EHOSTUNREACH  DEST_UNREACH/ADDR_UNREACH, TIME_EXCEED
+//   ECONNREFUSED  DEST_UNREACH/PORT_UNREACH
+//   EMSGSIZE      PKT_TOOBIG
+//   EPROTO        PARAMPROB, and the fallthrough default
+//
+// Plus ENETDOWN, which isn't in either table but is a legitimate
+// IP-stack-down errno the kernel can surface on the same async path.
+function isSuppressibleRecvError(error, connectState) {
+  if (connectState === CONNECT_STATE_CONNECTED) return false;
+  if (error?.syscall !== "recv") return false;
+  switch (error?.code) {
+    case "ECONNREFUSED":
+    case "EHOSTUNREACH":
+    case "ENETUNREACH":
+    case "EHOSTDOWN":
+    case "ENETDOWN":
+    case "ENONET":
+    case "ENOPROTOOPT":
+    case "EMSGSIZE":
+    case "EOPNOTSUPP":
+    case "EACCES":
+    case "EPROTO":
+      return true;
+    default:
+      return false;
+  }
+}
+
 let dns;
 
 function newHandle(type, lookup) {
@@ -331,6 +398,7 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
             });
           },
           error: error => {
+            if (isSuppressibleRecvError(error, state.connectState)) return;
             this.emit("error", error);
           },
         },

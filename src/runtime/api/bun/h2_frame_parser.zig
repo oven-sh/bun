@@ -4779,14 +4779,10 @@ pub const H2FrameParser = struct {
         jsc.markBinding(@src());
         log("sendPushPromise", .{});
 
-        const args_list = callframe.arguments_old(3);
-        if (args_list.len < 3) {
+        const orig_stream_id_arg, const headers_arg, const sensitive_arg = callframe.argumentsAsArray(3);
+        if (orig_stream_id_arg.isUndefined() or headers_arg.isUndefined() or sensitive_arg.isUndefined()) {
             return globalObject.throw("Expected original_stream_id, headers and sensitiveHeaders arguments", .{});
         }
-
-        const orig_stream_id_arg = args_list.ptr[0];
-        const headers_arg = args_list.ptr[1];
-        const sensitive_arg = args_list.ptr[2];
 
         if (!orig_stream_id_arg.isNumber()) {
             return globalObject.throw("Expected original_stream_id to be a number", .{});

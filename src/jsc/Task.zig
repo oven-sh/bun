@@ -543,11 +543,12 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, co
         // drags a microtask chain of SDK middleware) doesn't starve timers
         // until the entire queue drains. `drainTimersIfNeeded` bails out in
         // the common case where the timer heap is empty. See issue #30273.
-        // Windows drives timers via libuv's uv_timer, which libuv fires from
-        // its own loop phase, so leave that path alone.
-        if (comptime Environment.isPosix) {
-            virtual_machine.timer.drainTimersIfNeeded(virtual_machine);
-        }
+        //
+        // The mechanism is platform-agnostic — on Windows, `onUVTimer` also
+        // only fires inside `autoTick`'s `loop.tickWithTimeout`, which is
+        // reached only after `tick()` returns, so the same starvation applies.
+        // `drainTimersIfNeeded` handles the Windows uv_timer re-arm.
+        virtual_machine.timer.drainTimersIfNeeded(virtual_machine);
     }
 
     this.tasks.head = if (this.tasks.count == 0) 0 else this.tasks.head;

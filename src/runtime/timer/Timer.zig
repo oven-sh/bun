@@ -354,17 +354,25 @@ pub const All = struct {
         }
     }
 
-    /// Fast-path wrapper around `drainTimers` that skips the `timespec.now()`
-    /// call when the heap is empty. Safe to call frequently from within the
-    /// task drain loop to keep expired timers from being starved by a continuous
-    /// stream of concurrent tasks (e.g. HTTP responses arriving during a
-    /// `Promise.all` burst).
+    /// Fast-path wrapper around `drainTimers`. Safe to call frequently from
+    /// within the task-drain loop to keep expired timers from being starved
+    /// by a continuous stream of concurrent tasks (e.g. HTTP responses arriving
+    /// during a `Promise.all` burst).
     ///
-    /// The `peek` is a single-pointer load; a stale `null` just defers the
-    /// drain by one loop iteration, which is harmless.
+    /// On an empty heap the lock-free `peek` lets us skip the mutex round-trip
+    /// that `drainTimers` → `next` would otherwise do. The peek is a single-
+    /// pointer load and the heap is modified only from the JS thread, so a
+    /// racing stale `null` just defers the drain by one loop iteration — which
+    /// is harmless, the next task will redo the check.
+    ///
+    /// On Windows, also re-arms the libuv timer after firing so the next
+    /// deadline still wakes `loop.tickWithTimeout`. Mirrors `onUVTimer`.
     pub fn drainTimersIfNeeded(this: *All, vm: *VirtualMachine) void {
         if (this.timers.peek() == null) return;
         this.drainTimers(vm);
+        if (Environment.isWindows) {
+            this.ensureUVTimer(vm);
+        }
     }
 
     const TimeoutWarning = enum {

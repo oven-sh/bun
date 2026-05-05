@@ -85,12 +85,14 @@ pub fn finalize(self: *Self) void {
 }
 
 /// Report the native size of this timer wrapper to JSC so its heap-sizing
-/// heuristic can see pending timers. Without this, a workload that creates
-/// many short-lived setTimeout callbacks in a mostly-idle process looks to
-/// the collector like ~0 bytes of pressure and GC is delayed indefinitely.
+/// heuristic, heap snapshots, and memory-pressure accounting see pending
+/// timers rather than treating them as ~0 bytes. `@sizeOf(Self)` varies by
+/// build mode (debug/ASAN adds RefCount trace state; release collapses
+/// those fields to zero), so floor at 512 to stay above JSC's 256-byte
+/// `minExtraMemory` fast-path threshold in every configuration.
 pub fn estimatedSize(self: *Self) usize {
     _ = self;
-    return @sizeOf(Self);
+    return @max(@sizeOf(Self), 512);
 }
 
 pub fn getDestroyed(self: *Self, globalThis: *JSGlobalObject) JSValue {

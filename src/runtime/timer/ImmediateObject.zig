@@ -84,11 +84,12 @@ pub fn finalize(self: *Self) void {
 }
 
 /// Report the native size of this immediate wrapper to JSC so its
-/// heap-sizing heuristic can see pending immediates. See TimeoutObject's
-/// estimatedSize for rationale.
+/// heap-sizing heuristic, heap snapshots, and memory-pressure accounting
+/// see pending immediates. See TimeoutObject.estimatedSize for rationale
+/// on the 512-byte floor.
 pub fn estimatedSize(self: *Self) usize {
     _ = self;
-    return @sizeOf(Self);
+    return @max(@sizeOf(Self), 512);
 }
 
 pub fn getDestroyed(self: *Self, globalThis: *JSGlobalObject) JSValue {

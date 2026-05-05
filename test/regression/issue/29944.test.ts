@@ -191,8 +191,14 @@ test("#29944 --filter honors saved hoist layout across workspaces", { timeout: 3
     rootMimeExists: existsSync(rootMime),
     // nested `mime@2.5.2` stays exactly where the lockfile put it.
     nested: JSON.parse(await readFile(nestedMime, "utf8")).version,
+    // the filtered workspace itself gets its usual symlink at
+    // `node_modules/<name>`. It's a root-owned dep_id, so pruneSavedTree's
+    // owner check has to treat the root package as always-active (bit 0)
+    // or it silently drops workspace links alongside root direct deps.
+    aWidgetLinkExists: existsSync(join(root, "node_modules/a-widget")),
   }).toEqual({
     rootMimeExists: false,
     nested: "2.5.2",
+    aWidgetLinkExists: true,
   });
 });

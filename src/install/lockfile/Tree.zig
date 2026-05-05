@@ -376,6 +376,11 @@ pub fn pruneSavedTree(
     // active set depends on the filter predicates.
     var active = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(allocator, num_packages);
     defer active.deinit(allocator);
+    // The root package is always active as a *container* — nothing resolves
+    // to it, so the BFS won't set bit 0, but the Phase 2 owner check needs
+    // it set to keep root-owned dep_ids (workspace symlinks and any direct
+    // root `dependencies` when `install_root_dependencies` is true).
+    if (num_packages > 0) active.set(0);
 
     var queue = bun.LinearFifo(PackageID, .Dynamic).init(allocator);
     defer queue.deinit();

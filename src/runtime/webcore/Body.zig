@@ -1769,8 +1769,40 @@ pub const ValueBufferer = struct {
             // someone else is waiting for the stream or waiting for `onStartStreaming`
             const readable = try value.toReadableStream(sink.global);
             readable.ensureStillAlive();
-            readable.protect();
-            return try sink.bufferLockedBodyValue(value, null);
+            // `toReadableStream` may drain via `onStartStreaming` and transition
+            // `value` out of `.Locked` (to `.Null` when the drain returned
+            // `.aborted` or `.empty`). Recursing into `bufferLockedBodyValue` in
+            // that state reads stale `.Locked` union fields and loops forever,
+            // so handle the terminal states here instead of recursing.
+            switch (value.*) {
+                .Locked => {
+                    // `toReadableStream` also leaves the value `.Locked` *without*
+                    // populating `locked.readable` when a body-mixin consumer
+                    // (`.text()`/`.json()`/...) already set `promise`/`action` — it
+                    // just hands back a `ReadableStream.used()` sentinel. Recursing
+                    // in that state makes no progress and loops until the stack or
+                    // the allocator gives out, so surface the real error instead.
+                    if (value.Locked.readable.get(sink.global) == null) {
+                        return error.StreamAlreadyUsed;
+                    }
+                    readable.protect();
+                    return try sink.bufferLockedBodyValue(value, null);
+                },
+                .Null, .Empty => {
+                    return sink.onFinishedBuffering(sink.ctx, "", null, false);
+                },
+                .Error => |err| {
+                    return sink.onFinishedBuffering(sink.ctx, "", err, false);
+                },
+                .Used => {
+                    return error.StreamAlreadyUsed;
+                },
+                .WTFStringImpl, .InternalBlob, .Blob => {
+                    var input = value.useAsAnyBlobAllowNonUTF8String();
+                    defer input.detach();
+                    return sink.onFinishedBuffering(sink.ctx, input.slice(), null, false);
+                },
+            }
         }
         // is safe to wait it buffer
         locked.task = @ptrCast(sink);

@@ -110,7 +110,9 @@ pub fn enqueueTarballForDownload(
     if (try this.generateNetworkTaskForTarball(
         task_id,
         url,
-        this.lockfile.buffers.dependencies.items[dependency_id].behavior.isRequired(),
+        this.lockfile.buffers.dependencies.items[dependency_id].behavior.isRequired() and 
+            this.options.production == false or 
+            this.lockfile.buffers.dependencies.items[dependency_id].behavior.isDev(),
         dependency_id,
         this.lockfile.packages.get(package_id),
         patch_name_and_version_hash,

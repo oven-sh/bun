@@ -5,15 +5,20 @@ use bumpalo::collections::Vec as BumpVec;
 
 use bun_core::{self, StackCheck};
 use bun_logger as logger;
+// TODO(b0-genuine): bun_js_parser::js_lexer — same-tier (T4) lexer dep; not a
+// dispatch/hook case. CYCLEBREAK marks this GENUINE→`js_lexer`; left as a
+// direct import pending the js_lexer split (move-in pass).
 use bun_js_parser::js_lexer;
 use bun_js_parser::js_lexer::T;
-use bun_js_parser::js_ast;
-use bun_js_parser::js_ast::{E, G, Stmt, ExprNodeList};
-use bun_js_parser::js_printer;
-use bun_js_parser::js_printer::options::Indentation;
+// MOVE_DOWN(b0): bun_js_parser::js_ast → bun_logger::js_ast (remapped, T2)
+use bun_logger::js_ast;
+use bun_logger::js_ast::{E, G, Stmt, ExprNodeList};
+// TYPE_ONLY(b0): bun_js_parser::js_printer → bun_logger::js_printer (T2)
+use bun_logger::js_printer;
+use bun_logger::js_printer::options::Indentation;
 use bun_collections::BabyList;
 
-pub use bun_js_parser::js_ast::Expr;
+pub use bun_logger::js_ast::Expr;
 
 const LEXER_DEBUGGER_WORKAROUND: bool = false;
 

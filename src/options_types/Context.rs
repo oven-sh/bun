@@ -244,10 +244,11 @@ pub struct TestOptions {
     pub test_filter_pattern: Option<Box<[u8]>>,
     /// `?*bun.jsc.RegularExpression` — typed as opaque to keep this file free
     /// of `jsc/` references. Read via `test_filter_regex()`.
-    // PORT NOTE: LIFETIMES.tsv classifies this as OWNED → Option<Box<RegularExpression>>.
-    // That re-introduces a `bun_jsc` dep the Zig deliberately avoided; Phase B
-    // may want to restore an opaque newtype here if the layering matters.
-    pub test_filter_regex: Option<Box<bun_jsc::RegularExpression>>,
+    // FORWARD_DECL(b0): erased bun_jsc::RegularExpression to break the T3→T6
+    // back-edge. High tier owns construction/destruction; this field only
+    // stores the pointer. LIFETIMES.tsv says OWNED, so the high-tier setter is
+    // responsible for freeing any previous value.
+    pub test_filter_regex: Option<core::ptr::NonNull<()>>, // SAFETY: erased *mut bun_jsc::RegularExpression
     pub max_concurrency: u32,
     /// `bun test --isolate`: run each test file in a fresh global object on
     /// the same VM, force-closing leaked handles between files.
@@ -290,11 +291,12 @@ pub struct Reporters {
 }
 
 impl TestOptions {
+    /// Returns the erased `*mut bun_jsc::RegularExpression`. Caller (high tier)
+    /// casts back: `unsafe { &*ptr.cast::<bun_jsc::RegularExpression>() }`.
     #[inline]
-    pub fn test_filter_regex(&self) -> Option<&bun_jsc::RegularExpression> {
-        // PORT NOTE: Zig cast `?*anyopaque` → `?*RegularExpression`; field is
-        // now typed directly so this is just a deref.
-        self.test_filter_regex.as_deref()
+    pub fn test_filter_regex(&self) -> Option<core::ptr::NonNull<()>> {
+        // SAFETY: erased bun_jsc::RegularExpression — see field decl.
+        self.test_filter_regex
     }
 }
 

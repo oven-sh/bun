@@ -16,14 +16,15 @@ use bun_wyhash::Wyhash;
 pub use crate::ast::convert_esm_exports_for_hmr as ConvertESMExportsForHmr;
 pub use crate::ast::import_scanner as ImportScanner;
 pub use crate::ast::type_script as TypeScript;
-pub use bun_resolver::fs;
-pub use bun_bundler::options;
-pub use bun_js_printer::renamer;
+pub use bun_paths::fs; // TODO(b0): fs arrives from move-in (was bun_resolver::fs → paths)
+pub use bun_options_types as options; // TYPE_ONLY: was bun_bundler::options
+// TODO(b0): renamer arrives from move-in (was bun_js_printer::renamer → js_parser)
+pub use crate::renamer;
 pub use crate::ast::known_global::KnownGlobal;
 pub use crate::ast::parser::Parser;
 pub use crate::ast::side_effects::SideEffects;
 pub use crate::ast::fold_string_addition::fold_string_addition;
-pub use bun_resolver::resolver::is_package_path;
+pub use bun_paths::is_package_path; // TODO(b0): arrives from move-in (was bun_resolver::resolver::is_package_path → paths)
 
 pub use crate::ast::base::Ref;
 pub use crate::ast::base::{Index, RefCtx};
@@ -38,7 +39,8 @@ pub type RuntimeNames = Runtime::Names;
 pub use crate::ast::p::{NewParser, NewParser_};
 
 pub use bun_collections::StringHashMap as StringHashMapRe; // TODO(port): name collision with `StringHashMap` re-export
-pub use bun_js_printer as js_printer;
+// NOTE(b0): `pub use bun_js_printer as js_printer;` removed — js_printer is same-tier mutual
+// (js_printer depends on js_parser). Downstream callers import bun_js_printer directly.
 
 pub use crate::ast as js_ast;
 pub use js_ast::{
@@ -54,7 +56,8 @@ pub use js_ast::Op::Level;
 pub use crate::lexer as js_lexer;
 pub use js_lexer::T;
 
-use bun_bundler::defines::Define;
+// TODO(b0): defines arrives from move-in (was bun_bundler::defines → js_parser)
+use crate::defines::Define;
 use bun_collections::pool::ObjectPool;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -307,7 +310,7 @@ pub struct TransposeState {
     pub is_require_immediately_assigned_to_decl: bool,
     pub loc: logger::Loc,
     pub import_record_tag: Option<ImportRecord::Tag>,
-    pub import_loader: Option<bun_bundler::options::Loader>,
+    pub import_loader: Option<bun_options_types::Loader>,
     pub import_options: Expr,
 }
 
@@ -713,7 +716,7 @@ pub struct ParsedPath<'a> {
     pub text: &'a [u8],
     pub is_macro: bool,
     pub import_tag: ImportRecord::Tag,
-    pub loader: Option<bun_bundler::options::Loader>,
+    pub loader: Option<bun_options_types::Loader>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

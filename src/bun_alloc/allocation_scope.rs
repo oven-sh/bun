@@ -3,10 +3,13 @@
 
 use core::ffi::c_void;
 
+// TODO(b0-genuine): bun_collections (T1) — History needs ArrayHashMap; either hoist
+// AllocationScope's History to T≥1 or move ArrayHashMap into bun_core.
 use bun_collections::{ArrayHashMap};
 use bun_core::Output;
-use bun_crash_handler::{self as crash_handler, StoredTrace, WriteStackTraceLimits};
-use bun_threading::Guarded;
+// MOVE_DOWN: StoredTrace/WriteStackTraceLimits/dump_stack_trace → bun_core (move-in pending).
+use bun_core::{dump_stack_trace, StoredTrace, WriteStackTraceLimits};
+use bun_core::Guarded;
 
 // TODO(port): `std.mem.Allocator` is Zig's fat-pointer (ptr + vtable) dynamic allocator handle.
 // `bun_alloc` must expose an equivalent (`crate::StdAllocator` here) for the parent-allocator
@@ -134,7 +137,7 @@ impl<'a> LockedState<'a> {
     fn assert_unowned(&self, cast_ptr: *const u8) {
         if let Some(owned) = self.history.allocations.get(&cast_ptr) {
             Output::warn("Owned pointer allocated here:");
-            crash_handler::dump_stack_trace(owned.allocated_at.trace(), TRACE_LIMITS, TRACE_LIMITS);
+            dump_stack_trace(owned.allocated_at.trace(), TRACE_LIMITS, TRACE_LIMITS);
             panic!("this pointer was owned by the allocation scope when it was not supposed to be");
         }
     }
@@ -158,9 +161,9 @@ impl<'a> LockedState<'a> {
 
             if let Some(free_entry) = self.history.frees.get(&buf.as_ptr()) {
                 Output::print_errorln(format_args!("Pointer allocated here:"));
-                crash_handler::dump_stack_trace(free_entry.allocated_at.trace(), TRACE_LIMITS);
+                dump_stack_trace(free_entry.allocated_at.trace(), TRACE_LIMITS);
                 Output::print_errorln(format_args!("Pointer first freed here:"));
-                crash_handler::dump_stack_trace(free_entry.freed_at.trace(), FREE_TRACE_LIMITS);
+                dump_stack_trace(free_entry.freed_at.trace(), FREE_TRACE_LIMITS);
             }
 
             // do not panic because address sanitizer will catch this case better.
@@ -260,7 +263,7 @@ impl Drop for State {
                 break;
             }
             Output::pretty_errorln(format_args!("- {:p}, len {}, at:", *key, value.len));
-            crash_handler::dump_stack_trace(value.allocated_at.trace(), TRACE_LIMITS);
+            dump_stack_trace(value.allocated_at.trace(), TRACE_LIMITS);
             let extra = &value.extra;
             if let Some(extra_vtable) = extra.vtable {
                 // SAFETY: key is the original allocation base pointer for `value.len` bytes,

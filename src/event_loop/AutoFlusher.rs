@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 
-use bun_jsc::VirtualMachine;
+use crate::DeferredTaskQueue;
 
 /// Zig file-level struct: `src/event_loop/AutoFlusher.zig`
 #[derive(Default)]
@@ -18,45 +18,46 @@ pub trait HasAutoFlusher: Sized {
     fn on_auto_flush(this: *mut Self) -> bool;
 }
 
+// PORT NOTE (b0): Zig passed `*jsc.VirtualMachine` and reached
+// `vm.event_loop().deferred_tasks`. To break the event_loop→jsc upward edge,
+// callers now pass the `DeferredTaskQueue` directly (it lives in this crate).
+// Higher-tier call sites do `&mut vm.event_loop().deferred_tasks` themselves.
 pub fn register_deferred_microtask_with_type<T: HasAutoFlusher>(
     this: &mut T,
-    vm: &VirtualMachine,
+    deferred: &mut DeferredTaskQueue,
 ) {
     if this.auto_flusher().registered {
         return;
     }
-    register_deferred_microtask_with_type_unchecked(this, vm);
+    register_deferred_microtask_with_type_unchecked(this, deferred);
 }
 
 pub fn unregister_deferred_microtask_with_type<T: HasAutoFlusher>(
     this: &mut T,
-    vm: &VirtualMachine,
+    deferred: &mut DeferredTaskQueue,
 ) {
     if !this.auto_flusher().registered {
         return;
     }
-    unregister_deferred_microtask_with_type_unchecked(this, vm);
+    unregister_deferred_microtask_with_type_unchecked(this, deferred);
 }
 
 pub fn unregister_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
     this: &mut T,
-    vm: &VirtualMachine,
+    deferred: &mut DeferredTaskQueue,
 ) {
     debug_assert!(this.auto_flusher().registered);
-    debug_assert!(vm
-        .event_loop()
-        .deferred_tasks
-        .unregister_task(this as *mut T as *mut c_void));
+    debug_assert!(deferred.unregister_task(this as *mut T as *mut c_void));
     this.auto_flusher().registered = false;
 }
 
 pub fn register_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
     this: &mut T,
-    vm: &VirtualMachine,
+    deferred: &mut DeferredTaskQueue,
 ) {
     debug_assert!(!this.auto_flusher().registered);
     this.auto_flusher().registered = true;
-    debug_assert!(!vm.event_loop().deferred_tasks.post_task(
+    debug_assert!(!deferred.post_task(
         this as *mut T as *mut c_void,
         // SAFETY: Zig `@ptrCast(&Type.onAutoFlush)` — erases the typed fn pointer
         // to the DeferredTaskQueue callback ABI. Layout is identical (single

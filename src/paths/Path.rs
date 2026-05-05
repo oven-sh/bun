@@ -6,11 +6,13 @@ use core::marker::{ConstParamTy, PhantomData};
 use core::mem::ManuallyDrop;
 
 use bun_core::Environment;
-use bun_paths::{
+use crate::{
     self as path, PathBuffer, WPathBuffer, MAX_PATH_BYTES, PATH_MAX_WIDE, SEP, SEP_POSIX,
     SEP_WINDOWS,
 };
-use bun_str::{strings, WStr, ZStr};
+// MOVE_DOWN(CYCLEBREAK): ZStr/WStr live in bun_core; `strings` stays in bun_str (T1).
+use bun_core::{WStr, ZStr};
+use bun_str::strings;
 use bun_sys::Fd;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -143,7 +145,7 @@ pub trait PathUnit: Copy + Eq + 'static {
     /// `bun.path_buffer_pool.get()` / `bun.w_path_buffer_pool.get()`
     // LIFETIMES.tsv classifies `Buf.pooled` as OWNED → Box<PathBuffer>; the
     // underlying pool hands out heap buffers and reclaims them in `deinit`.
-    // TODO(port): swap to `bun_paths::path_buffer_pool()` RAII guard once the
+    // TODO(port): swap to `crate::path_buffer_pool()` RAII guard once the
     // guard type is generic over unit; for now model as Box and put-back in Drop.
     fn pool_get() -> Box<Self::Buffer>;
     fn pool_put(buf: Box<Self::Buffer>);
@@ -175,10 +177,10 @@ impl PathUnit for u8 {
         ZStr::from_raw(ptr, len)
     }
     fn pool_get() -> Box<PathBuffer> {
-        bun_paths::path_buffer_pool::get()
+        crate::path_buffer_pool::get()
     }
     fn pool_put(buf: Box<PathBuffer>) {
-        bun_paths::path_buffer_pool::put(buf)
+        crate::path_buffer_pool::put(buf)
     }
     #[inline]
     fn buffer_as_mut_slice(buf: &mut PathBuffer) -> &mut [u8] {
@@ -213,10 +215,10 @@ impl PathUnit for u16 {
         WStr::from_raw(ptr, len)
     }
     fn pool_get() -> Box<WPathBuffer> {
-        bun_paths::w_path_buffer_pool::get()
+        crate::w_path_buffer_pool::get()
     }
     fn pool_put(buf: Box<WPathBuffer>) {
-        bun_paths::w_path_buffer_pool::put(buf)
+        crate::w_path_buffer_pool::put(buf)
     }
     #[inline]
     fn buffer_as_mut_slice(buf: &mut WPathBuffer) -> &mut [u16] {
@@ -400,8 +402,9 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
     }
 
     pub fn init_top_level_dir() -> Self {
-        debug_assert!(bun_fs::FileSystem::instance_loaded());
-        let top_level_dir = bun_fs::FileSystem::instance().top_level_dir();
+        // MOVE_DOWN(CYCLEBREAK): bun_resolver::fs → crate::fs (move-in pass adds the module).
+        debug_assert!(crate::fs::FileSystem::instance_loaded());
+        let top_level_dir = crate::fs::FileSystem::instance().top_level_dir();
 
         let trimmed = match KIND {
             Kind::Abs => {
@@ -421,8 +424,9 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
     }
 
     pub fn init_top_level_dir_long_path() -> Self {
-        debug_assert!(bun_fs::FileSystem::instance_loaded());
-        let top_level_dir = bun_fs::FileSystem::instance().top_level_dir();
+        // MOVE_DOWN(CYCLEBREAK): bun_resolver::fs → crate::fs (move-in pass adds the module).
+        debug_assert!(crate::fs::FileSystem::instance_loaded());
+        let top_level_dir = crate::fs::FileSystem::instance().top_level_dir();
 
         let trimmed = match KIND {
             Kind::Abs => {
@@ -438,8 +442,8 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
         #[cfg(windows)]
         {
             // TODO(port): pick long_path_prefix vs long_path_prefix_u8 based on U.
-            // Both are exposed from bun_sys::windows.
-            this._buf_append_input(bun_sys::windows::long_path_prefix_for::<U>(), false);
+            // MOVE_DOWN(CYCLEBREAK): long_path_prefix_for moved from bun_sys::windows → crate::windows.
+            this._buf_append_input(crate::windows::long_path_prefix_for::<U>(), false);
         }
 
         this._buf_append_input(trimmed, false);
@@ -497,7 +501,8 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
         let mut this = Self::init();
         #[cfg(windows)]
         {
-            this._buf_append_input(bun_sys::windows::long_path_prefix_for::<U>(), false);
+            // MOVE_DOWN(CYCLEBREAK): long_path_prefix_for moved from bun_sys::windows → crate::windows.
+            this._buf_append_input(crate::windows::long_path_prefix_for::<U>(), false);
         }
 
         this._buf_append_input(trimmed, false);
@@ -560,7 +565,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
     }
 
     pub fn dirname(&self) -> Option<&[U]> {
-        bun_paths::Dirname::dirname(self.slice())
+        crate::Dirname::dirname(self.slice())
     }
 
     pub fn slice(&self) -> &[U] {
@@ -813,7 +818,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
         match (c_is_u8, u_is_u8) {
             (true, true) => {
                 // part: &[u8], unit: u8
-                let cwd_path_buf = bun_paths::path_buffer_pool::get();
+                let cwd_path_buf = crate::path_buffer_pool::get();
                 // RAII guard puts back on Drop.
                 // SAFETY: TypeId check above proves U == u8; transmute is an identity slice cast.
                 let current_slice: &[u8] = unsafe { core::mem::transmute(self.slice()) };
@@ -840,7 +845,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
             }
             (true, false) => {
                 // part: &[u8], unit: u16 → transcode then recurse
-                let path_buf = bun_paths::w_path_buffer_pool::get();
+                let path_buf = crate::w_path_buffer_pool::get();
                 // SAFETY: TypeId check above proves C == u8; identity slice cast.
                 let part_u8: &[u8] = unsafe { core::mem::transmute(part) };
                 let converted = strings::convert_utf8_to_utf16_in_buffer(&mut path_buf[..], part_u8);
@@ -851,7 +856,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
             }
             (false, false) => {
                 // part: &[u16], unit: u16
-                let cwd_path_buf = bun_paths::w_path_buffer_pool::get();
+                let cwd_path_buf = crate::w_path_buffer_pool::get();
                 // SAFETY: TypeId check above proves U == u16; identity slice cast.
                 let current_slice: &[u16] = unsafe { core::mem::transmute(self.slice()) };
                 let cwd_path = &mut cwd_path_buf[..current_slice.len()];
@@ -877,7 +882,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
             }
             (false, true) => {
                 // part: &[u16], unit: u8 → transcode then recurse
-                let path_buf = bun_paths::path_buffer_pool::get();
+                let path_buf = crate::path_buffer_pool::get();
                 // SAFETY: TypeId check above proves C == u16; identity slice cast.
                 let part_u16: &[u16] = unsafe { core::mem::transmute(part) };
                 let converted =
@@ -996,7 +1001,7 @@ impl<U: PathUnit, const KIND: Kind, const SEP_OPT: PathSeparators, const CHECK: 
         let pooled = unsafe { ManuallyDrop::take(&mut self._buf.pooled) };
         U::pool_put(pooled);
         // TODO(port): replace Box<Buffer> + manual put-back with the
-        // `bun_paths::path_buffer_pool()` RAII guard once it is generic over
+        // `crate::path_buffer_pool()` RAII guard once it is generic over
         // unit, then delete this Drop impl entirely.
     }
 }

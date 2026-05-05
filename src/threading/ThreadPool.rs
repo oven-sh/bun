@@ -34,7 +34,7 @@ use core::sync::atomic::{
 };
 
 use bun_core::Output;
-use bun_threading::{Futex, WaitGroup};
+use crate::{Futex, WaitGroup};
 
 // PORT NOTE: Zig's `packed struct(u32)` named `Sync` is kept as `Sync` here for
 // diffability with the .zig. It shadows `core::marker::Sync` within this module;
@@ -1143,8 +1143,8 @@ impl Event {
             if Futex::wait(&self.state, Self::WAITING, timeout_ns).is_err() {
                 has_shrunk_memory = true;
                 bun_core::Global::mimalloc_cleanup(false);
-                // TODO(port): jsc dependency in threading crate — move behind a hook in Phase B.
-                bun_jsc::wtf::release_fast_malloc_free_memory_for_this_thread();
+                // MOVE_DOWN(b0): wtf::release_fast_malloc_free_memory_for_this_thread moved jsc→alloc.
+                bun_alloc::wtf::release_fast_malloc_free_memory_for_this_thread();
             }
             state = self.state.load(Ordering::Relaxed);
             acquire_with = Self::WAITING;

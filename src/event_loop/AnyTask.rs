@@ -5,7 +5,13 @@ use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 
-use bun_jsc::{JsResult, Task};
+use crate::Task;
+
+// TODO(b0): `JsResult<T>` was `bun_jsc::JsResult` (== `Result<T, jsc::Error>`).
+// event_loop is tier-3 and may not name `bun_jsc`; the error payload is opaque
+// at this layer (callbacks just propagate it). Erased to `*mut ()` — Phase B
+// move-in may relocate the real alias here or to `bun_core`.
+pub type JsResult<T> = core::result::Result<T, *mut () /* SAFETY: erased jsc::Error */>;
 
 pub struct AnyTask {
     // TODO(port): lifetime — type-erased callback context; raw by design.

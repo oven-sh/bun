@@ -14,9 +14,26 @@ use bun_logger as logger;
 use bun_logger::Loc;
 use bun_str::{self as strings, ZStr};
 
-use bun_jsc::{self as jsc};
-
 use crate::ast::{self as js_ast, E, G, S, Stmt, Op, Ref, ASTMemoryAllocator, NewStore};
+
+// ───────────────────────────────────────────────────────────────────────────
+// Cycle-break: vtable for Blob (was bun_jsc::webcore::Blob — T6 upward ref).
+// `from_blob` is cold (macro-expansion path); high tier (bun_js_parser_jsc)
+// provides the static `BlobVTable` instance. PERF(port): was inline switch.
+// ───────────────────────────────────────────────────────────────────────────
+pub struct BlobVTable {
+    pub shared_view: unsafe fn(*const ()) -> &'static [u8],
+    pub content_type: unsafe fn(*const ()) -> &'static [u8],
+}
+#[derive(Clone, Copy)]
+pub struct BlobRef {
+    pub owner: *const (), // SAFETY: erased bun_jsc::webcore::Blob
+    pub vtable: &'static BlobVTable,
+}
+impl BlobRef {
+    #[inline] fn shared_view(&self) -> &[u8] { unsafe { (self.vtable.shared_view)(self.owner) } }
+    #[inline] fn content_type(&self) -> &[u8] { unsafe { (self.vtable.content_type)(self.owner) } }
+}
 
 // ───────────────────────────────────────────────────────────────────────────
 // Expr
@@ -104,7 +121,7 @@ impl<'ast> Expr<'ast> {
 
     // TODO(port): move to *_jsc — this fn touches jsc::WebCore::Blob and JSON parsing for macros
     pub fn from_blob(
-        blob: &jsc::webcore::Blob,
+        blob: BlobRef,
         bump: &'ast Bump,
         mime_type_: Option<MimeType>,
         log: &mut logger::Log,
@@ -137,7 +154,8 @@ impl<'ast> Expr<'ast> {
 
         if mime_type.category.is_text_like() {
             let mut output = bun_str::MutableString::init_empty();
-            bun_js_printer::quote_for_json(bytes, &mut output, true)?;
+            // MOVE_DOWN: was bun_js_printer::quote_for_json → bun_str (T1)
+            bun_str::quote_for_json(bytes, &mut output, true)?;
             let mut list = output.into_owned_slice();
             // remove the quotes
             if !list.is_empty() {
@@ -831,10 +849,11 @@ impl<'ast> Expr<'ast> {
             return Some([l_value, r_value]);
         }
 
-        if l_value > jsc::MAX_SAFE_INTEGER || r_value > jsc::MAX_SAFE_INTEGER {
+        // TODO(b0): math arrives from move-in (was bun_jsc::{MAX,MIN}_SAFE_INTEGER → js_parser::math)
+        if l_value > crate::math::MAX_SAFE_INTEGER || r_value > crate::math::MAX_SAFE_INTEGER {
             return None;
         }
-        if l_value < jsc::MIN_SAFE_INTEGER || r_value < jsc::MIN_SAFE_INTEGER {
+        if l_value < crate::math::MIN_SAFE_INTEGER || r_value < crate::math::MIN_SAFE_INTEGER {
             return None;
         }
 

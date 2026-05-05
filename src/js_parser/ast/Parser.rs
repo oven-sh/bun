@@ -7,8 +7,9 @@ use bun_logger as logger;
 use bun_str::strings;
 use bun_wyhash::Wyhash;
 
-use bun_bundler::options;
-use bun_bundler::defines::Define;
+use bun_options_types as options; // TYPE_ONLY: was bun_bundler::options
+// TODO(b0): defines arrives from move-in (was bun_bundler::defines → js_parser)
+use crate::defines::Define;
 use bun_options_types::import_record::ImportRecord;
 
 use bun_js_parser as js_parser;
@@ -72,7 +73,7 @@ pub struct Options<'a> {
 
     /// When using react fast refresh or server components, the framework is
     /// able to customize what import sources are used.
-    pub framework: Option<&'a bun_bake::Framework>,
+    pub framework: Option<&'a bun_options_types::Framework>, // TYPE_ONLY: was bun_bake::Framework
 
     /// REPL mode: transforms code for interactive evaluation
     /// - Wraps lone object literals `{...}` in parentheses
@@ -509,7 +510,8 @@ impl<'a> Parser<'a> {
         // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
         #[cfg(not(target_arch = "wasm32"))]
         if bun_core::FeatureFlags::RUNTIME_TRANSPILER_CACHE {
-            let runtime_transpiler_cache: Option<&mut bun_jsc::RuntimeTranspilerCache> =
+            // TODO(b0): RuntimeTranspilerCache arrives from move-in (was bun_jsc → js_parser)
+            let runtime_transpiler_cache: Option<&mut crate::RuntimeTranspilerCache> =
                 p.options.features.runtime_transpiler_cache;
             if let Some(cache) = runtime_transpiler_cache {
                 if cache.get(
@@ -1790,7 +1792,7 @@ impl<'a> Parser<'a> {
 
         #[cfg(not(target_arch = "wasm32"))]
         if bun_core::FeatureFlags::RUNTIME_TRANSPILER_CACHE {
-            let runtime_transpiler_cache: Option<&mut bun_jsc::RuntimeTranspilerCache> =
+            let runtime_transpiler_cache: Option<&mut crate::RuntimeTranspilerCache> =
                 p.options.features.runtime_transpiler_cache;
             if let Some(cache) = runtime_transpiler_cache {
                 if p.macro_call_count != 0 {

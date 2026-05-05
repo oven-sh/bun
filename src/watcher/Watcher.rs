@@ -6,8 +6,6 @@ use core::fmt;
 use bun_collections::MultiArrayList;
 use bun_core::{FeatureFlags, Output};
 use bun_fs::{FileSystem, PathName};
-use bun_resolver::package_json::PackageJSON;
-use bun_resolver::{AnyResolveWatcher, ResolveWatcher};
 use bun_str::{strings, ZStr};
 use bun_sys::{self as sys, Fd};
 use bun_threading::Mutex;
@@ -55,6 +53,36 @@ pub type WatchItemIndex = u16;
 pub const MAX_EVICTION_COUNT: usize = 8096;
 
 const NO_WATCH_ITEM: WatchItemIndex = WatchItemIndex::MAX;
+
+// ─── erased upward types (CYCLEBREAK) ─────────────────────────────────────
+
+/// Opaque forward-decl of `bun_resolver::package_json::PackageJSON` (T5).
+/// Watcher only stores `Option<&PackageJSON>` and passes it through; never
+/// dereferenced here. Real layout lives in `bun_resolver`.
+// SAFETY: erased PackageJSON — only ever held by reference / raw ptr.
+#[repr(C)]
+pub struct PackageJSON {
+    _opaque: [u8; 0],
+    _pinned: core::marker::PhantomPinned,
+}
+
+/// Manual vtable for resolver→watcher directory-watch callbacks.
+/// Was `bun_resolver::AnyResolveWatcher` (T5); defined here so the low-tier
+/// crate owns the shape and `bun_resolver` re-imports it (move-in pass).
+// PERF(port): was inline switch (Zig comptime ResolveWatcher generator).
+#[derive(Clone, Copy)]
+pub struct AnyResolveWatcher {
+    pub context: *mut (),
+    pub callback: unsafe fn(*mut (), dir_path: &[u8], dir_fd: Fd),
+}
+
+impl AnyResolveWatcher {
+    #[inline]
+    pub fn watch(self, dir_path: &[u8], dir_fd: Fd) {
+        // SAFETY: context was stored from a typed *mut T whose callback casts it back.
+        unsafe { (self.callback)(self.context, dir_path, dir_fd) }
+    }
+}
 
 // TODO: some platform-specific behavior is implemented in
 // this file instead of the platform-specific file.
@@ -422,7 +450,7 @@ impl<'a> Watcher<'a> {
         fd: Fd,
         file_path: &'a [u8],
         hash: HashType,
-        loader: bun_bundler::options::Loader,
+        loader: bun_options_types::Loader,
         parent_hash: HashType,
         package_json: Option<&'a PackageJSON>,
     ) -> sys::Result<()> {
@@ -541,7 +569,7 @@ impl<'a> Watcher<'a> {
             fd,
             hash,
             count: 0,
-            loader: bun_bundler::options::Loader::File,
+            loader: bun_options_types::Loader::File,
             parent_hash,
             kind: WatchItemKind::Directory,
             package_json: None,
@@ -632,7 +660,7 @@ impl<'a> Watcher<'a> {
         fd: Fd,
         file_path: &'a [u8],
         hash: HashType,
-        loader: bun_bundler::options::Loader,
+        loader: bun_options_types::Loader,
         dir_fd: Fd,
         package_json: Option<&'a PackageJSON>,
     ) -> sys::Result<()> {
@@ -745,7 +773,7 @@ impl<'a> Watcher<'a> {
         fd: Fd,
         file_path: &'a [u8],
         hash: HashType,
-        loader: bun_bundler::options::Loader,
+        loader: bun_options_types::Loader,
         dir_fd: Fd,
         package_json: Option<&'a PackageJSON>,
     ) -> sys::Result<()> {
@@ -794,7 +822,7 @@ impl<'a> Watcher<'a> {
     pub fn add_file_by_path_slow(
         &mut self,
         file_path: &'a [u8],
-        loader: bun_bundler::options::Loader,
+        loader: bun_options_types::Loader,
     ) -> bool {
         if file_path.is_empty() {
             return false;
@@ -874,7 +902,7 @@ impl<'a> Watcher<'a> {
         fd: Fd,
         file_path: &'a [u8],
         hash: HashType,
-        loader: bun_bundler::options::Loader,
+        loader: bun_options_types::Loader,
         dir_fd: Fd,
         package_json: Option<&'a PackageJSON>,
     ) -> sys::Result<()> {
@@ -944,7 +972,15 @@ impl<'a> Watcher<'a> {
     }
 
     pub fn get_resolve_watcher(&mut self) -> AnyResolveWatcher {
-        ResolveWatcher::<*mut Self>::init(self, Self::on_maybe_watch_directory)
+        unsafe fn wrap(ctx: *mut (), dir_path: &[u8], dir_fd: Fd) {
+            // SAFETY: ctx was stored from *mut Watcher in get_resolve_watcher()
+            let this = unsafe { &mut *(ctx as *mut Watcher) };
+            Watcher::on_maybe_watch_directory(this, dir_path, dir_fd);
+        }
+        AnyResolveWatcher {
+            context: self as *mut Self as *mut (),
+            callback: wrap,
+        }
     }
 
     pub fn on_maybe_watch_directory(watch: &mut Self, file_path: &'a [u8], dir_fd: Fd) {
@@ -1039,7 +1075,7 @@ pub struct WatchItem<'a> {
     pub file_path: &'a [u8],
     // filepath hash for quick comparison
     pub hash: u32,
-    pub loader: bun_bundler::options::Loader,
+    pub loader: bun_options_types::Loader,
     pub fd: Fd,
     pub count: u32,
     pub parent_hash: u32,

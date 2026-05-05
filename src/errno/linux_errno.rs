@@ -1,7 +1,7 @@
-// TODO(port): std.posix.{mode_t, E, S} — verify bun_sys::posix re-exports these
-pub use bun_sys::posix::mode_t as Mode;
-pub use bun_sys::posix::E;
-pub use bun_sys::posix::S;
+// CYCLEBREAK: bun_sys::posix MOVE_DOWN → errno (this crate). Move-in pass lands `crate::posix`.
+pub use crate::posix::mode_t as Mode;
+pub use crate::posix::E;
+pub use crate::posix::S;
 
 #[repr(u16)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr)]
@@ -187,7 +187,7 @@ pub mod uv_e {
     pub const BADF: i32 = SystemErrno::EBADF as i32;
     pub const BUSY: i32 = SystemErrno::EBUSY as i32;
     pub const CANCELED: i32 = SystemErrno::ECANCELED as i32;
-    pub const CHARSET: i32 = -bun_sys::windows::libuv::UV_ECHARSET;
+    pub const CHARSET: i32 = -windows_sys::libuv::UV_ECHARSET;
     pub const CONNABORTED: i32 = SystemErrno::ECONNABORTED as i32;
     pub const CONNREFUSED: i32 = SystemErrno::ECONNREFUSED as i32;
     pub const CONNRESET: i32 = SystemErrno::ECONNRESET as i32;
@@ -239,7 +239,7 @@ pub mod uv_e {
     pub const HOSTDOWN: i32 = SystemErrno::EHOSTDOWN as i32;
     pub const REMOTEIO: i32 = SystemErrno::EREMOTEIO as i32;
     pub const NOTTY: i32 = SystemErrno::ENOTTY as i32;
-    pub const FTYPE: i32 = -bun_sys::windows::libuv::UV_EFTYPE;
+    pub const FTYPE: i32 = -windows_sys::libuv::UV_EFTYPE;
     pub const ILSEQ: i32 = SystemErrno::EILSEQ as i32;
     pub const OVERFLOW: i32 = SystemErrno::EOVERFLOW as i32;
     pub const SOCKTNOSUPPORT: i32 = SystemErrno::ESOCKTNOSUPPORT as i32;
@@ -283,9 +283,9 @@ macro_rules! impl_get_errno_libc {
             #[inline]
             fn get_errno(self) -> E {
                 if self as i64 == -1 {
-                    // TODO(port): std.c._errno().* — confirm bun_sys::libc::errno() returns c_int
+                    // CYCLEBREAK: bun_sys::libc::errno MOVE_DOWN → crate::posix (move-in pass)
                     // SAFETY: errno value is a valid E discriminant on Linux
-                    unsafe { core::mem::transmute::<u16, E>(bun_sys::libc::errno() as u16) }
+                    unsafe { core::mem::transmute::<u16, E>(crate::posix::errno() as u16) }
                 } else {
                     E::SUCCESS
                 }
@@ -302,5 +302,5 @@ impl_get_errno_libc!(i32, core::ffi::c_int, u32, isize, i64);
 //   source:     src/errno/linux_errno.zig (253 lines)
 //   confidence: medium
 //   todos:      5
-//   notes:      get_errno uses a trait to emulate @TypeOf switch; c_int/i32 impl overlap needs cfg-gating; uv_e::_2BIG renamed (no leading-digit idents); Mode/E/S re-export paths assumed in bun_sys::posix
+//   notes:      get_errno uses a trait to emulate @TypeOf switch; c_int/i32 impl overlap needs cfg-gating; uv_e::_2BIG renamed (no leading-digit idents); Mode/E/S re-export paths assumed in crate::posix
 // ──────────────────────────────────────────────────────────────────────────

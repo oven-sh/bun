@@ -22,8 +22,9 @@ use crate::{
     ThreadlocalAsyncHTTP,
 };
 
-// TODO(port): SSLConfig lives under bun_runtime::api::server::ServerConfig; verify crate path in Phase B.
-use bun_runtime::api::server::server_config::ssl_config::SharedPtr as SSLConfigSharedPtr;
+// TODO(b0): SSLConfig + ssl_config::SharedPtr arrive from move-in
+// (MOVE_DOWN bun_runtime::api::server::server_config::ssl_config → bun_http)
+use crate::ssl_config::SharedPtr as SSLConfigSharedPtr;
 
 bun_output::declare_scope!(AsyncHTTP, visible);
 

@@ -2,7 +2,8 @@ use bun_str::{strings, MutableString};
 use bun_paths::PathBuffer;
 use bun_logger as logger;
 use bun_logger::{Loc, Source};
-use bun_fs::FileSystem;
+// TODO(b0): FileSystem arrives from move-in (resolver::fs → sys, remapped fs target)
+use bun_sys::FileSystem;
 use bun_js_printer as js_printer;
 use bun_alloc::AllocError;
 

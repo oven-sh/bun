@@ -21,20 +21,38 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use std::sync::Arc;
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_aio::file_poll::{FilePoll, Store as FilePollStore};
 use bun_collections::LinearFifo;
 use bun_core::Output;
 use bun_dotenv::{self as dotenv, Loader as DotEnvLoader};
-use bun_jsc::{
-    AnyTaskWithExtraContext, EventLoop, EventLoopHandle, PlatformEventLoop, VirtualMachine,
-};
 use bun_paths::PathBuffer;
-use bun_runtime::webcore::blob::Store as BlobStore;
 use bun_sys::{self as sys, Fd, Mode};
 use bun_threading::UnboundedQueue;
 use bun_uws::Loop as UwsLoop;
+
+use crate::AnyTaskWithExtraContext;
+// TODO(b0): EventLoopHandle arrives from move-in (was bun_jsc::EventLoopHandle).
+use crate::EventLoopHandle;
+
+/// The platform's native event loop type. Zig: `jsc.PlatformEventLoop`.
+#[cfg(not(windows))]
+pub type PlatformEventLoop = UwsLoop;
+#[cfg(windows)]
+pub type PlatformEventLoop = bun_sys::windows::libuv::Loop;
+
+// ─── Upward hooks (CYCLEBREAK.md §Debug-hook / vtable) ──────────────────────
+/// `unsafe fn(fd: Fd, is_atty: bool, mode: Mode) -> *mut ()`
+/// — constructs a `webcore::blob::Store` for stdout/stderr. Registered by
+/// `bun_runtime::init()`. Return value is an erased `*mut blob::Store` with
+/// intrusive refcount; this crate only stores/forwards it.
+pub static STDIO_BLOB_STORE_CTOR: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+/// `unsafe fn() -> *mut ()` — returns the thread's `*mut jsc::VirtualMachine`.
+/// Backs `JsKind::get_vm()`. Registered by `bun_runtime::init()`.
+pub static JS_VM_GET: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+// ────────────────────────────────────────────────────────────────────────────
 
 const PIPE_READ_BUFFER_SIZE: usize = 256 * 1024;
 type PipeReadBuffer = [u8; PIPE_READ_BUFFER_SIZE];
@@ -63,10 +81,12 @@ pub struct MiniEventLoop<'a> {
     pub after_event_loop_callback_ctx: Option<NonNull<c_void>>,
     pub after_event_loop_callback: Option<unsafe extern "C" fn(*mut c_void)>,
     pub pipe_read_buffer: Option<Box<PipeReadBuffer>>,
-    // TODO(port): Blob.Store uses intrusive ref_count (constructed with ref_count=2 below);
+    // SAFETY: erased `*mut webcore::blob::Store` (tier-6). Constructed via
+    // `STDIO_BLOB_STORE_CTOR` hook; intrusive-refcounted on the runtime side.
+    // TODO(port): Blob.Store uses intrusive ref_count (constructed with ref_count=2);
     // LIFETIMES.tsv classifies as Arc but IntrusiveArc<BlobStore> may be required for FFI compat.
-    pub stdout_store: Option<Arc<BlobStore>>,
-    pub stderr_store: Option<Arc<BlobStore>>,
+    pub stdout_store: Option<NonNull<()>>,
+    pub stderr_store: Option<NonNull<()>>,
 }
 
 thread_local! {
@@ -297,7 +317,8 @@ impl<'a> MiniEventLoop<'a> {
         unimplemented!("enqueue_task_concurrent_with_extra_ctx: requires macro for intrusive field init");
     }
 
-    pub fn stderr(&mut self) -> &BlobStore {
+    /// Returns an erased `*mut webcore::blob::Store`. Callers in tier-6 cast back.
+    pub fn stderr(&mut self) -> *mut () {
         if self.stderr_store.is_none() {
             let mut mode: Mode = 0;
             let fd = Fd::from_uv(2);
@@ -307,21 +328,26 @@ impl<'a> MiniEventLoop<'a> {
             }
 
             // TODO(port): Zig builds Blob.Store with intrusive `ref_count = 2` and
-            // `.data = .file{ pathlike = .{ .fd }, is_atty, mode }`. Arc<BlobStore> here per
-            // LIFETIMES.tsv, but the literal ref_count=2 has no Arc analogue. Phase B must
+            // `.data = .file{ pathlike = .{ .fd }, is_atty, mode }`. Phase B must
             // reconcile with BlobStore's actual Rust refcount strategy.
-            let store = Arc::new(BlobStore::new_file(
-                fd,
-                Output::stderr_descriptor_type() == Output::DescriptorType::Terminal,
-                mode,
-            ));
-
-            self.stderr_store = Some(store);
+            let ctor = STDIO_BLOB_STORE_CTOR.load(Ordering::Relaxed);
+            debug_assert!(!ctor.is_null(), "STDIO_BLOB_STORE_CTOR not registered");
+            // SAFETY: hook signature documented on `STDIO_BLOB_STORE_CTOR`.
+            let ctor: unsafe fn(Fd, bool, Mode) -> *mut () = unsafe { core::mem::transmute(ctor) };
+            let store = unsafe {
+                ctor(
+                    fd,
+                    Output::stderr_descriptor_type() == Output::DescriptorType::Terminal,
+                    mode,
+                )
+            };
+            self.stderr_store = NonNull::new(store);
         }
-        self.stderr_store.as_ref().unwrap()
+        self.stderr_store.unwrap().as_ptr()
     }
 
-    pub fn stdout(&mut self) -> &BlobStore {
+    /// Returns an erased `*mut webcore::blob::Store`. Callers in tier-6 cast back.
+    pub fn stdout(&mut self) -> *mut () {
         if self.stdout_store.is_none() {
             let mut mode: Mode = 0;
             let fd = Fd::stdout();
@@ -330,16 +356,20 @@ impl<'a> MiniEventLoop<'a> {
                 mode = Mode::try_from(stat.mode).unwrap();
             }
 
-            // TODO(port): see stderr() — same intrusive ref_count=2 vs Arc question.
-            let store = Arc::new(BlobStore::new_file(
-                fd,
-                Output::stdout_descriptor_type() == Output::DescriptorType::Terminal,
-                mode,
-            ));
-
-            self.stdout_store = Some(store);
+            let ctor = STDIO_BLOB_STORE_CTOR.load(Ordering::Relaxed);
+            debug_assert!(!ctor.is_null(), "STDIO_BLOB_STORE_CTOR not registered");
+            // SAFETY: hook signature documented on `STDIO_BLOB_STORE_CTOR`.
+            let ctor: unsafe fn(Fd, bool, Mode) -> *mut () = unsafe { core::mem::transmute(ctor) };
+            let store = unsafe {
+                ctor(
+                    fd,
+                    Output::stdout_descriptor_type() == Output::DescriptorType::Terminal,
+                    mode,
+                )
+            };
+            self.stdout_store = NonNull::new(store);
         }
-        self.stdout_store.as_ref().unwrap()
+        self.stdout_store.unwrap().as_ptr()
     }
 }
 
@@ -352,42 +382,59 @@ impl<'a> Drop for MiniEventLoop<'a> {
 
 // ───────────────────────────── JsVM / MiniVM ─────────────────────────────
 
-pub struct JsVM<'a> {
-    pub vm: &'a VirtualMachine,
+/// Manual vtable for the JS-VM arm of `AbstractVM` (cold dispatch — see
+/// PORTING.md §Dispatch). `bun_runtime` provides the static instance.
+// PERF(port): was inline switch
+pub struct JsVmVTable {
+    /// Returns erased `*mut jsc::EventLoop`.
+    pub event_loop: unsafe fn(*mut ()) -> *mut (),
+    pub file_polls: unsafe fn(*mut ()) -> *mut FilePollStore,
+    pub platform_event_loop: unsafe fn(*mut ()) -> *mut PlatformEventLoop,
+    pub inc_pending_unref: unsafe fn(*mut ()),
 }
 
-impl<'a> JsVM<'a> {
+pub struct JsVM {
+    // SAFETY: erased `*mut jsc::VirtualMachine`.
+    pub vm: *mut (),
+    pub vtable: &'static JsVmVTable,
+}
+
+impl JsVM {
     #[inline]
-    pub fn init(inner: &'a VirtualMachine) -> JsVM<'a> {
-        JsVM { vm: inner }
+    pub fn init(vm: *mut (), vtable: &'static JsVmVTable) -> JsVM {
+        JsVM { vm, vtable }
     }
 
+    /// Returns erased `*mut jsc::EventLoop` — tier-6 callers cast back.
     #[inline]
-    pub fn loop_(&self) -> &EventLoop {
-        self.vm.event_loop()
+    pub fn loop_(&self) -> *mut () {
+        // SAFETY: vtable contract.
+        unsafe { (self.vtable.event_loop)(self.vm) }
     }
 
     #[inline]
     pub fn alloc_file_poll(&self) -> &mut FilePoll {
-        self.vm.rare_data().file_polls(self.vm).get()
+        // SAFETY: vtable contract — returns a valid &mut FilePollStore owned by the VM.
+        unsafe { (*(self.vtable.file_polls)(self.vm)).get() }
     }
 
     #[inline]
     pub fn platform_event_loop(&self) -> &PlatformEventLoop {
-        self.vm.event_loop_handle().unwrap()
+        // SAFETY: vtable contract.
+        unsafe { &*(self.vtable.platform_event_loop)(self.vm) }
     }
 
     #[inline]
     pub fn increment_pending_unref_counter(&self) {
         // Zig: `this.vm.pending_unref_counter +|= 1;`
-        self.vm.pending_unref_counter_saturating_inc();
-        // TODO(port): if `pending_unref_counter` is a public field, use
-        // `vm.pending_unref_counter = vm.pending_unref_counter.saturating_add(1)` instead.
+        // SAFETY: vtable contract.
+        unsafe { (self.vtable.inc_pending_unref)(self.vm) };
     }
 
     #[inline]
     pub fn file_polls(&self) -> &mut FilePollStore {
-        self.vm.rare_data().file_polls(self.vm)
+        // SAFETY: vtable contract.
+        unsafe { &mut *(self.vtable.file_polls)(self.vm) }
     }
 }
 
@@ -422,8 +469,7 @@ impl<'a> MiniVM<'a> {
         }
         #[cfg(not(windows))]
         {
-            // TODO(port): on POSIX, `PlatformEventLoop` is `uws::Loop`; this transmute-by-type
-            // depends on bun_jsc defining `type PlatformEventLoop = bun_uws::Loop` on POSIX.
+            // On POSIX, `PlatformEventLoop` is `uws::Loop` (alias defined above).
             self.mini.loop_
         }
     }
@@ -460,10 +506,15 @@ pub struct JsKind;
 pub struct MiniKind;
 
 impl EventLoopKindT for JsKind {
-    type Loop = EventLoop;
-    type Ref = &'static VirtualMachine;
+    // SAFETY: erased `jsc::EventLoop` / `jsc::VirtualMachine` (tier-6).
+    type Loop = *mut ();
+    type Ref = *mut ();
     fn get_vm() -> Self::Ref {
-        VirtualMachine::get()
+        let hook = JS_VM_GET.load(Ordering::Relaxed);
+        debug_assert!(!hook.is_null(), "JS_VM_GET not registered by bun_runtime::init()");
+        // SAFETY: hook signature documented on `JS_VM_GET`.
+        let f: unsafe fn() -> *mut () = unsafe { core::mem::transmute(hook) };
+        unsafe { f() }
     }
 }
 
@@ -485,12 +536,9 @@ pub trait AbstractVM<'a> {
     fn abstract_vm(self) -> Self::Wrapped;
 }
 
-impl<'a> AbstractVM<'a> for &'a VirtualMachine {
-    type Wrapped = JsVM<'a>;
-    fn abstract_vm(self) -> JsVM<'a> {
-        JsVM::init(self)
-    }
-}
+// PORT NOTE (b0): `impl AbstractVM for &VirtualMachine` cannot live here
+// without naming the tier-6 `VirtualMachine` type. The impl moves to
+// `bun_runtime` (move-in pass), which constructs `JsVM { vm, vtable }`.
 
 impl<'a> AbstractVM<'a> for &'a mut MiniEventLoop<'a> {
     type Wrapped = MiniVM<'a>;

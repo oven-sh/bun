@@ -32,7 +32,7 @@ pub use vlq::VLQ;
 
 use vlq::{decode as decode_vlq, decode_assume_valid as decode_vlq_assume_valid};
 
-bun_output::declare_scope!(SourceMap, visible);
+bun_core::declare_scope!(SourceMap, visible);
 
 /// Coordinates in source maps are stored using relative offsets for size
 /// reasons. When joining together chunks of a source map that were emitted
@@ -105,7 +105,7 @@ pub fn parse_url(
 
         'try_data_url: {
             if source.starts_with(DATA_PREFIX) && source.len() > DATA_PREFIX.len() + 1 {
-                bun_output::scoped_log!(SourceMap, "parse (data url, {} bytes)", source.len());
+                bun_core::scoped_log!(SourceMap, "parse (data url, {} bytes)", source.len());
                 match source[DATA_PREFIX.len()] {
                     b';' => {
                         let after = &source[DATA_PREFIX.len() + 1..];
@@ -162,7 +162,7 @@ pub fn parse_json(
         bun_js_parser::Expr::data_store_reset();
         bun_js_parser::Stmt::data_store_reset();
     });
-    bun_output::scoped_log!(SourceMap, "parse (JSON, {} bytes)", source.len());
+    bun_core::scoped_log!(SourceMap, "parse (JSON, {} bytes)", source.len());
     let json = match bun_interchange::json::parse(&json_src, &mut log, arena, false) {
         Ok(j) => j,
         Err(_) => return Err(bun_core::err!("InvalidJSON")),
@@ -561,8 +561,8 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                                 err.name(),
                             ));
                             // Disable the "try using --sourcemap=external" hint
-                            // TODO(port): move to *_jsc — SavedSourceMap is in bun_jsc
-                            bun_jsc::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(
+                            // TODO(b0): SavedSourceMap arrives from move-in (jsc → sourcemap)
+                            crate::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(
                                 true,
                             );
                             return None;
@@ -592,8 +592,8 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                                     err.name(),
                                 ));
                                 // Disable the "try using --sourcemap=external" hint
-                                // TODO(port): move to *_jsc
-                                bun_jsc::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(
+                                // TODO(b0): SavedSourceMap arrives from move-in (jsc → sourcemap)
+                                crate::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(
                                     true,
                                 );
                                 return None;
@@ -630,8 +630,8 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                             err.name(),
                         ));
                         // Disable the "try using --sourcemap=external" hint
-                        // TODO(port): move to *_jsc
-                        bun_jsc::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(true);
+                        // TODO(b0): SavedSourceMap arrives from move-in (jsc → sourcemap)
+                        crate::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(true);
                         return None;
                     }
                 }
@@ -645,8 +645,8 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                 err.name(),
             ));
             // Disable the "try using --sourcemap=external" hint
-            // TODO(port): move to *_jsc
-            bun_jsc::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(true);
+            // TODO(b0): SavedSourceMap arrives from move-in (jsc → sourcemap)
+            crate::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(true);
             return None;
         }
 
@@ -1192,5 +1192,5 @@ impl fmt::Display for DebugIDFormatter {
 //   source:     src/sourcemap/sourcemap.zig (931 lines)
 //   confidence: medium
 //   todos:      23
-//   notes:      Arc<ParsedSourceMap> mutated post-construction (unsafe cast); SourceProvider trait replaces comptime type dispatch; bun_jsc::SavedSourceMap refs need *_jsc move; Expr.data variant accessors guessed
+//   notes:      Arc<ParsedSourceMap> mutated post-construction (unsafe cast); SourceProvider trait replaces comptime type dispatch; SavedSourceMap moved down to this crate (b0); Expr.data variant accessors guessed
 // ──────────────────────────────────────────────────────────────────────────

@@ -36,10 +36,10 @@ use core::ffi::c_int;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_core::{env_var, Global};
-use bun_jsc::EventLoopHandle;
 use bun_str::ZStr;
 use bun_sys::{self, Fd, File, O};
 
+use crate::posix_event_loop::{poll_tag, EventLoopCtx, Owner};
 use crate::FilePoll;
 
 /// Unit struct — `FilePoll.Owner` needs a real pointer, but we have no
@@ -269,7 +269,7 @@ pub fn enable() {
 /// Register `EVFILT_PROC`/`NOTE_EXIT` for the original parent on the main
 /// event loop's kqueue. Called from `VirtualMachine.init` once the uws loop is
 /// up. macOS-only; no-op elsewhere and on subsequent calls.
-pub fn install_on_event_loop(handle: EventLoopHandle) {
+pub fn install_on_event_loop(handle: EventLoopCtx) {
     #[cfg(not(target_os = "macos"))]
     {
         let _ = handle;
@@ -292,19 +292,15 @@ pub fn install_on_event_loop(handle: EventLoopHandle) {
             Global::exit(EXIT_CODE);
         }
 
-        // TODO(port): verify FilePoll::init signature — Zig passes a comptime
-        // owner type + *instance for the dispatch tag; Rust API likely takes a
-        // typed enum or trait object.
         // SAFETY: INSTANCE is a 'static singleton with no fields.
         let instance_ptr = unsafe { core::ptr::addr_of_mut!(INSTANCE) };
         let poll = FilePoll::init(
             handle,
             Fd::from_native(original_ppid),
             Default::default(),
-            instance_ptr,
+            Owner::new(poll_tag::PARENT_DEATH_WATCHDOG, instance_ptr.cast()),
         );
-        // TODO(port): `loop` is a Rust keyword; verify EventLoopHandle accessor name.
-        match poll.register(handle.event_loop(), crate::file_poll::Pollable::Process, true) {
+        match poll.register(handle.platform_event_loop(), crate::file_poll::Pollable::Process, true) {
             bun_sys::Result::Ok(()) => {
                 // Do not keep the event loop alive on this poll's behalf — the
                 // watchdog must never prevent Bun from exiting when there is no

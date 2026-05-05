@@ -14,8 +14,12 @@ use bstr::BStr;
 use bun_boringssl as boringssl;
 use bun_collections::{ArrayHashMap, MutableString};
 use bun_core::{self as bun, Environment, FeatureFlags, Global, Output, StringBuilder, err};
-use bun_jsc as jsc;
+// TODO(b0): CommonAbortReason arrives in bun_http_types via move-in
+// (TYPE_ONLY from bun_jsc::CommonAbortReason — enum(u8) only; toJS stays in jsc)
+use bun_http_types::CommonAbortReason;
 use bun_str::{self as strings, ZigString, ZStr};
+// TODO(b0): bun_jsc::URL::{href_from_string, join} arrive in bun_url via move-in
+// (MOVE_DOWN bun_jsc::URL → bun_url, shared with install/js_parser/bake)
 use bun_url::URL;
 use bun_uws as uws;
 use bun_wyhash::{self, Wyhash};
@@ -3255,7 +3259,7 @@ impl<'a> HTTPClient<'a> {
                                     debug_assert!(string_builder.cap == string_builder.len);
                                 }
 
-                                let normalized_url = jsc::URL::href_from_string(
+                                let normalized_url = URL::href_from_string(
                                     bun_str::String::from_bytes(string_builder.allocated_slice()),
                                 );
                                 // normalized_url drops at scope exit (was `defer .deref()`)
@@ -3313,7 +3317,7 @@ impl<'a> HTTPClient<'a> {
                                     debug_assert!(string_builder.cap == string_builder.len);
                                 }
 
-                                let normalized_url = jsc::URL::href_from_string(
+                                let normalized_url = URL::href_from_string(
                                     bun_str::String::from_bytes(string_builder.allocated_slice()),
                                 );
                                 let normalized_url_str = normalized_url.to_owned_slice()?;
@@ -3331,7 +3335,7 @@ impl<'a> HTTPClient<'a> {
                             } else {
                                 let original_url = self.url.clone();
 
-                                let new_url_ = jsc::URL::join(
+                                let new_url_ = URL::join(
                                     bun_str::String::from_bytes(original_url.href),
                                     bun_str::String::from_bytes(location),
                                 );
@@ -3648,12 +3652,12 @@ pub struct HTTPClientResult<'a> {
 }
 
 impl<'a> HTTPClientResult<'a> {
-    pub fn abort_reason(&self) -> Option<jsc::CommonAbortReason> {
+    pub fn abort_reason(&self) -> Option<CommonAbortReason> {
         if self.is_timeout() {
-            return Some(jsc::CommonAbortReason::Timeout);
+            return Some(CommonAbortReason::Timeout);
         }
         if self.is_abort() {
-            return Some(jsc::CommonAbortReason::UserAbort);
+            return Some(CommonAbortReason::UserAbort);
         }
         None
     }

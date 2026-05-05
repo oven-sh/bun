@@ -460,7 +460,8 @@ impl<'arena, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONL
                 if p.should_fold_typescript_constant_expressions {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data) {
                         return p.new_expr(
-                            E::Number { value: bun_jsc::math::pow(vals[0], vals[1]) },
+                            // TODO(b0): math arrives from move-in (was bun_jsc::math → js_parser)
+                            E::Number { value: crate::math::pow(vals[0], vals[1]) },
                             v.loc,
                         );
                     }

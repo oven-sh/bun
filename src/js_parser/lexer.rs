@@ -12,7 +12,8 @@ use bun_str::strings::CodepointIterator;
 use bun_js_parser::ast as js_ast;
 use bun_js_parser::lexer::identifier as js_identifier;
 use bun_js_parser::lexer_tables as tables;
-use bun_js_printer::Options::Indentation;
+// TODO(b0): Indentation arrives from move-in (was bun_js_printer::Options::Indentation → js_parser)
+use crate::Indentation;
 // TODO(port): arena threading — js_parser is an AST crate; many `allocator.*` calls below
 // should use `&'bump bumpalo::Bump`. For Phase A we keep a `&dyn Allocator`-ish slot and
 // route owned buffers through `Vec`/`Box`.

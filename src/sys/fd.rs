@@ -530,9 +530,10 @@ impl Fd {
                         "close({}) = EBADF. This is an indication of a file descriptor UAF",
                         bstr::BStr::new(&fd_fmt),
                     ));
-                    bun_crash_handler::dump_current_stack_trace(
+                    crate::dump_stack_trace(
                         return_address.or_else(|| bun_core::return_address()),
-                        bun_crash_handler::DumpOptions { frame_count: 4, stop_at_jsc_llint: true },
+                        4,
+                        true,
                     );
                 } else {
                     log!("close({}) = {}", bstr::BStr::new(&fd_fmt), err);

@@ -4,7 +4,8 @@ use bumpalo::Bump;
 
 use bun_core::{self, StackCheck};
 use bun_logger as logger;
-use bun_js_parser::{self as js_ast, E, Expr};
+// MOVE_DOWN(b0): bun_js_parser::{ast,E,Expr} → bun_logger::js_ast (remapped, T2)
+use bun_logger::js_ast::{self, E, Expr};
 
 pub mod lexer;
 pub use self::lexer::Lexer;

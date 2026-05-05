@@ -3,7 +3,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_collections::{StringArrayHashMap, StringSet};
 use bun_core::Output;
-use bun_jsc::RuntimeTranspilerCache;
+// TODO(b0): RuntimeTranspilerCache arrives from move-in (was bun_jsc::RuntimeTranspilerCache → js_parser)
+use crate::RuntimeTranspilerCache;
 // TODO(port): confirm crate path for `bun.schema` (likely `bun_schema` or `bun_interchange::schema`)
 use bun_schema as schema;
 use bun_schema::api;

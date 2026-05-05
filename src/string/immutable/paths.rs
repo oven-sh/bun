@@ -1,5 +1,6 @@
 use bun_str::{strings, WStr, ZStr};
-use bun_sys::windows;
+// MOVE_DOWN(b0): bun_sys::windows → bun_paths (path-prefix consts only).
+use bun_paths::windows;
 
 // Generic code-unit bound for fns that operate over both u8 and u16 paths.
 // Zig used `comptime T: type`; the only operations needed are copy + compare-to-ASCII.

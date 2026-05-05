@@ -3,9 +3,37 @@
 use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
-use bun_str::{ZStr, WStr};
-use bun_sys::{self, Fd, File, FileKind, Mode};
+use bun_core::{ZStr, WStr};
+use bun_core::{Fd, FileKind, Mode, kind_from_mode};
 use enumset::EnumSet;
+
+// ───────────────────────────────────────────────────────────────────────────
+// File-sink vtable (CYCLEBREAK §Dispatch — cold path)
+//
+// `read_data_into_fd` previously called bun_sys::{File, set_file_offset,
+// ftruncate} directly (T1). The low tier now defines an erased sink; the
+// higher tier (bun_sys / runtime) provides the static vtable instance.
+// PERF(port): was inline switch on bun_sys::Result.
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Erased file write target for [`Archive::read_data_into_fd`].
+pub struct ArchiveFileSink {
+    pub owner: *mut (),
+    pub vtable: &'static ArchiveFileSinkVTable,
+}
+
+/// VTable for [`ArchiveFileSink`]. All fns return `true` on success.
+pub struct ArchiveFileSinkVTable {
+    /// Sequential write at current position (`bun_sys::File::write_all`).
+    pub write_all: unsafe fn(*mut (), &[u8]) -> bool,
+    /// Positional write (`bun_sys::File::pwrite_all`). Unix only; pass a stub
+    /// that returns `false` on platforms without pwrite.
+    pub pwrite_all: unsafe fn(*mut (), &[u8], i64) -> bool,
+    /// Seek to absolute offset (`bun_sys::set_file_offset`).
+    pub set_offset: unsafe fn(*mut (), u64) -> bool,
+    /// Extend/truncate to length (`bun_sys::ftruncate`). Failure is ignored.
+    pub ftruncate: unsafe fn(*mut (), i64),
+}
 
 #[allow(non_camel_case_types)]
 type wchar_t = u16;
@@ -763,7 +791,7 @@ impl Archive {
         unsafe { archive_read_data(p(self), buf.as_mut_ptr().cast(), buf.len()) }
     }
 
-    pub fn write_zeros_to_file(file: File, count: usize) -> ArchiveResult {
+    pub fn write_zeros_to_file(sink: &ArchiveFileSink, count: usize) -> ArchiveResult {
         // Use uninit + memset instead of comptime zero-init to reduce binary size
         let mut zero_buf: [u8; 16 * 1024] = [0u8; 16 * 1024];
         // PERF(port): Zig used `undefined` + @memset to avoid a 16KB zeroed static — profile in Phase B
@@ -771,31 +799,33 @@ impl Archive {
         let mut remaining = count;
         while remaining > 0 {
             let to_write = &zero_buf[..remaining.min(zero_buf.len())];
-            match file.write_all(to_write) {
-                bun_sys::Result::Err(_) => return ArchiveResult::Failed,
-                bun_sys::Result::Ok(()) => {}
+            // SAFETY: sink.owner is valid for the vtable provider's lifetime.
+            if !unsafe { (sink.vtable.write_all)(sink.owner, to_write) } {
+                return ArchiveResult::Failed;
             }
             remaining -= to_write.len();
         }
         ArchiveResult::Ok
     }
 
-    /// Reads data from the archive and writes it to the given file descriptor.
+    /// Reads data from the archive and writes it to the given file sink.
     /// This is a port of libarchive's archive_read_data_into_fd with optimizations:
     /// - Uses pwrite when possible to avoid needing lseek for sparse file handling
     /// - Falls back to lseek + write if pwrite is not available
     /// - Falls back to writing zeros if lseek is not available
     /// - Truncates the file to the final size to handle trailing sparse holes
+    ///
+    /// The caller supplies an [`ArchiveFileSink`] vtable (typically backed by a
+    /// `bun_sys::File`); this crate stays tier-0 and never names `bun_sys`.
     pub fn read_data_into_fd(
         &self,
-        fd: Fd,
+        sink: &ArchiveFileSink,
         can_use_pwrite: &mut bool,
         can_use_lseek: &mut bool,
     ) -> ArchiveResult {
         let mut target_offset: i64 = 0; // Updated by archive.next() - where this block should be written
         let mut actual_offset: i64 = 0; // Where we've actually written to (for write() path)
         let mut final_offset: i64 = 0; // Track the furthest point we need the file to extend to
-        let file = File { handle: fd };
 
         while let Some(block) = self.next(&mut target_offset) {
             if block.result != ArchiveResult::Ok {
@@ -811,20 +841,18 @@ impl Archive {
             {
                 // Try pwrite first - it handles sparse files without needing lseek
                 if *can_use_pwrite {
-                    match file.pwrite_all(data, block.offset) {
-                        bun_sys::Result::Err(_) => {
-                            *can_use_pwrite = false;
-                            bun_core::Output::debug_warn(
-                                "libarchive: falling back to write() after pwrite() failure",
-                            );
-                            // Fall through to lseek+write path
-                        }
-                        bun_sys::Result::Ok(()) => {
-                            // pwrite doesn't update file position, but track logical position for fallback
-                            actual_offset = actual_offset
-                                .max(block.offset + i64::try_from(data.len()).unwrap());
-                            continue;
-                        }
+                    // SAFETY: sink.owner is valid for the vtable provider's lifetime.
+                    if unsafe { (sink.vtable.pwrite_all)(sink.owner, data, block.offset) } {
+                        // pwrite doesn't update file position, but track logical position for fallback
+                        actual_offset = actual_offset
+                            .max(block.offset + i64::try_from(data.len()).unwrap());
+                        continue;
+                    } else {
+                        *can_use_pwrite = false;
+                        bun_core::Output::debug_warn(
+                            "libarchive: falling back to write() after pwrite() failure",
+                        );
+                        // Fall through to lseek+write path
                     }
                 }
             }
@@ -833,12 +861,14 @@ impl Archive {
             if block.offset != actual_offset {
                 'seek: {
                     if *can_use_lseek {
-                        match bun_sys::set_file_offset(fd, u64::try_from(block.offset).unwrap()) {
-                            bun_sys::Result::Err(_) => *can_use_lseek = false,
-                            bun_sys::Result::Ok(_) => {
-                                actual_offset = block.offset;
-                                break 'seek;
-                            }
+                        // SAFETY: sink.owner is valid for the vtable provider's lifetime.
+                        if unsafe {
+                            (sink.vtable.set_offset)(sink.owner, u64::try_from(block.offset).unwrap())
+                        } {
+                            actual_offset = block.offset;
+                            break 'seek;
+                        } else {
+                            *can_use_lseek = false;
                         }
                     }
 
@@ -846,7 +876,7 @@ impl Archive {
                     if block.offset > actual_offset {
                         // Write zeros to fill the gap
                         let zero_count = usize::try_from(block.offset - actual_offset).unwrap();
-                        let zero_result = Self::write_zeros_to_file(file, zero_count);
+                        let zero_result = Self::write_zeros_to_file(sink, zero_count);
                         if zero_result != ArchiveResult::Ok {
                             return zero_result;
                         }
@@ -858,18 +888,18 @@ impl Archive {
                 }
             }
 
-            match file.write_all(data) {
-                bun_sys::Result::Err(_) => return ArchiveResult::Failed,
-                bun_sys::Result::Ok(()) => {
-                    actual_offset += i64::try_from(data.len()).unwrap();
-                }
+            // SAFETY: sink.owner is valid for the vtable provider's lifetime.
+            if !unsafe { (sink.vtable.write_all)(sink.owner, data) } {
+                return ArchiveResult::Failed;
             }
+            actual_offset += i64::try_from(data.len()).unwrap();
         }
 
         // Handle trailing sparse hole by truncating file to final size
         // This extends the file to include any trailing zeros without actually writing them
         if final_offset > actual_offset {
-            let _ = bun_sys::ftruncate(fd, final_offset);
+            // SAFETY: sink.owner is valid for the vtable provider's lifetime.
+            unsafe { (sink.vtable.ftruncate)(sink.owner, final_offset) };
         }
 
         ArchiveResult::Ok
@@ -1107,7 +1137,7 @@ impl ArchiveEntry {
 
 pub struct ArchiveIterator {
     pub archive: *mut Archive,
-    // TODO(port): Zig used `std.EnumSet(std.fs.File.Kind)`; mapped to bun_sys::FileKind.
+    // TODO(port): Zig used `std.EnumSet(std.fs.File.Kind)`; mapped to bun_core::FileKind.
     pub filter: EnumSet<FileKind>,
 }
 
@@ -1194,7 +1224,7 @@ impl ArchiveIterator {
                 ArchiveResult::Eof => IteratorResult::init_res(None),
                 ArchiveResult::Ok => {
                     // SAFETY: entry was set by archive_read_next_header on Ok.
-                    let kind = bun_sys::kind_from_mode(unsafe { (*entry).filetype() });
+                    let kind = kind_from_mode(unsafe { (*entry).filetype() });
 
                     if self.filter.contains(kind) {
                         continue;
@@ -1231,7 +1261,7 @@ impl ArchiveIterator {
 
 pub struct NextEntry {
     pub entry: *mut ArchiveEntry,
-    // TODO(port): Zig used `std.fs.File.Kind`; mapped to bun_sys::FileKind.
+    // TODO(port): Zig used `std.fs.File.Kind`; mapped to bun_core::FileKind.
     pub kind: FileKind,
 }
 
@@ -1753,5 +1783,5 @@ pub struct FILE {
 //   source:     src/libarchive_sys/bindings.zig (1506 lines)
 //   confidence: medium
 //   todos:      7
-//   notes:      EntryACL ported as newtype (duplicate discriminants); std.fs.File.Kind→bun_sys::FileKind; Iterator.deinit→close(self) (returns value, consumes); Block.bytes is raw *const [u8]
+//   notes:      EntryACL ported as newtype (duplicate discriminants); std.fs.File.Kind→bun_core::FileKind; Iterator.deinit→close(self) (returns value, consumes); Block.bytes is raw *const [u8]
 // ──────────────────────────────────────────────────────────────────────────

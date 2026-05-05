@@ -8,7 +8,8 @@ use bun_str::strings::{
 use bun_str::{WStr, ZStr};
 
 use bun_core::CodePoint; // i32
-use bun_js_parser::js_lexer;
+// TODO(b0): js_lexer arrives from move-in (MOVE_DOWN bun_js_parser::js_lexer → string)
+use crate::lexer as js_lexer;
 use bun_simdutf as simdutf;
 
 bun_output::declare_scope!(strings, hidden);

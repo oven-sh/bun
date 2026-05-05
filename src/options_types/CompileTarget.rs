@@ -13,6 +13,34 @@ use bun_paths::{self as path, PathBuffer};
 use bun_semver::{SlicedString, Version};
 use bun_str::{strings, ZStr};
 use bun_sys::Fd;
+use core::ptr::null_mut;
+use core::sync::atomic::{AtomicPtr, Ordering};
+
+/// Cold-path vtable for the synchronous HTTP GET used by
+/// `CompileTarget::download_to_path`. Breaks the T3→T5 `bun_http` back-edge
+/// (GENUINE per CYCLEBREAK). High tier (`bun_runtime::init`) writes a static
+/// instance into `HTTP_SYNC_DOWNLOAD_VTABLE` at startup.
+// PERF(port): was inline switch — direct bun_http::AsyncHTTP calls. Cold path
+// (cross-compile binary download); the indirect call is fine.
+pub struct HttpSyncDownloadVTable {
+    /// `bun_http::HTTPThread::init(&Default::default())` — idempotent.
+    pub init_thread: unsafe fn(),
+    /// Synchronous GET. Writes the body into `out` and returns the HTTP status
+    /// code. `progress_node` is an erased `*mut bun_core::progress::Node` (the
+    /// callee assigns it to `client.progress_node`).
+    pub get_sync: unsafe fn(
+        url: bun_url::URL,
+        http_proxy: Option<bun_url::URL>,
+        reject_unauthorized: bool,
+        progress_node: *mut (), // SAFETY: erased *mut bun_core::progress::Node
+        out: *mut bun_core::MutableString,
+    ) -> Result<u16, bun_core::Error>,
+}
+
+/// Registered by `bun_runtime::init()`. Null until then — `download_to_path`
+/// debug-asserts non-null.
+pub static HTTP_SYNC_DOWNLOAD_VTABLE: AtomicPtr<HttpSyncDownloadVTable> =
+    AtomicPtr::new(null_mut());
 
 /// Used for `bun build --compile`
 #[derive(Clone, Copy)]
@@ -241,7 +269,8 @@ impl CompileTarget {
             bun_fs::FileSystem::instance().top_level_dir,
             buf,
             &[
-                bun_install::PackageManager::fetch_cache_directory_path(env, None).path,
+                // MOVE_DOWN(b0): bun_install::PackageManager::fetch_cache_directory_path → bun_sys
+                bun_sys::fetch_cache_directory_path(env, None).path,
                 version_str.as_bytes(),
             ],
             path::Platform::Auto,
@@ -260,15 +289,23 @@ impl CompileTarget {
         dest_z: &ZStr,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
-        bun_http::HTTPThread::init(&Default::default());
+        // GENUINE(b0): bun_http::{HTTPThread, AsyncHTTP} routed through
+        // HttpSyncDownloadVTable (cold-path manual vtable). High tier supplies
+        // the impl; see HTTP_SYNC_DOWNLOAD_VTABLE.
+        let http_vt = HTTP_SYNC_DOWNLOAD_VTABLE.load(Ordering::Acquire);
+        debug_assert!(
+            !http_vt.is_null(),
+            "HTTP_SYNC_DOWNLOAD_VTABLE not registered by bun_runtime::init()"
+        );
+        // SAFETY: registered once at startup, &'static thereafter.
+        let http_vt: &HttpSyncDownloadVTable = unsafe { &*http_vt };
+        unsafe { (http_vt.init_thread)() };
         let mut refresher = bun_core::Progress::default();
 
         {
             refresher.refresh();
 
             // TODO: This is way too much code necessary to send a single HTTP request...
-            let mut async_http = Box::new(bun_http::AsyncHTTP::default());
-            // TODO(port): Box::new(uninit) — Zig allocator.create(T) leaves uninit; init below.
             let mut compressed_archive_bytes =
                 Box::new(bun_core::MutableString::init(24 * 1024 * 1024)?);
             let mut url_buffer = [0u8; 2048];
@@ -287,23 +324,17 @@ impl CompileTarget {
                 // TODO(port): errdefer — progress captured by guard above conflicts with use below; Phase B reshape
                 let http_proxy: Option<bun_url::URL> = env.get_http_proxy_for(&url);
 
-                *async_http = bun_http::AsyncHTTP::init_sync(
-                    bun_http_types::Method::GET,
-                    url,
-                    Default::default(),
-                    b"",
-                    &mut *compressed_archive_bytes,
-                    b"",
-                    http_proxy,
-                    None,
-                    bun_http_types::FetchRedirect::Follow,
-                );
-                async_http.client.progress_node = Some(progress);
-                async_http.client.flags.reject_unauthorized = env.get_tls_reject_unauthorized();
+                let status_code = unsafe {
+                    (http_vt.get_sync)(
+                        url,
+                        http_proxy,
+                        env.get_tls_reject_unauthorized(),
+                        &mut progress as *mut _ as *mut (),
+                        &mut *compressed_archive_bytes as *mut _,
+                    )
+                }?;
 
-                let response = async_http.send_sync()?;
-
-                match response.status_code {
+                match status_code {
                     404 => {
                         // Return error without printing - let caller handle the messaging
                         return Err(bun_core::err!("TargetNotFound"));

@@ -343,7 +343,8 @@ fn starts_with_redacted_item(text: &[u8], item: &'static [u8]) -> Option<(usize,
     if offset == text.len() {
         return None;
     }
-    let cont = bun_js_parser::lexer::is_identifier_continue(text[offset] as i32);
+    // TODO(b0): lexer arrives from move-in (MOVE_DOWN bun_js_parser::lexer → string)
+    let cont = crate::lexer::is_identifier_continue(text[offset] as i32);
 
     // must be another identifier
     if !whitespace && cont {
@@ -2101,7 +2102,8 @@ pub fn has_prefix_with_word_boundary(input: &[u8], prefix: &'static [u8]) -> boo
             if next.len() > 3 { next[3] } else { 0 },
         ];
 
-        if !bun_js_parser::lexer::is_identifier_continue(decode_wtf8_rune_t::<i32>(
+        // TODO(b0): lexer arrives from move-in (MOVE_DOWN bun_js_parser::lexer → string)
+        if !crate::lexer::is_identifier_continue(decode_wtf8_rune_t::<i32>(
             &bytes,
             wtf8_byte_sequence_length(next[0]),
             -1,
@@ -2246,7 +2248,8 @@ pub struct QuoteEscapeFormat<'a> {
 impl core::fmt::Display for QuoteEscapeFormat<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // TODO(port): bun.js_printer.writePreQuotedString takes a generic writer.
-        bun_js_parser::printer::write_pre_quoted_string(
+        // TODO(b0): printer arrives from move-in (MOVE_DOWN bun_js_parser::printer → string)
+        crate::printer::write_pre_quoted_string(
             self.data,
             f,
             self.flags.quote_char,

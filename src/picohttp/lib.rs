@@ -324,9 +324,9 @@ impl fmt::Display for RequestCurlFormatter<'_> {
 
         if !self.body.is_empty() && Self::is_printable_body(content_type) {
             f.write_str(" --data-raw ")?;
-            // TODO(port): bun.js_printer.writeJSONString — needs a fmt::Write
-            // adapter; encoding arg was `.utf8`.
-            bun_str::strings::Encoding::write_json_string(self.body, f, bun_str::strings::Encoding::Encoding::Utf8)?;
+            // MOVE_DOWN(b0): printer::write_json_string → bun_str (move-in pass
+            // lands `printer` module + `Encoding` type in the string crate).
+            bun_str::printer::write_json_string(self.body, f, bun_str::Encoding::Utf8)?;
         }
 
         Ok(())

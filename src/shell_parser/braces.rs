@@ -2,7 +2,8 @@ use core::ptr;
 
 use bun_alloc::{AllocError, Arena as Bump};
 use bun_collections::SmallList;
-use bun_shell::{has_eq_sign as shell_has_eq_sign, ShellCharIter, StringEncoding as Encoding};
+// TODO(b0): CharIter, ShellCharIter, has_eq_sign, StringEncoding arrive from move-in (MOVE_DOWN/TYPE_ONLY bun_shell → shell_parser)
+use crate::{has_eq_sign as shell_has_eq_sign, CharIter, ShellCharIter, StringEncoding as Encoding};
 use bun_str::{strings, SmolStr};
 use bumpalo::collections::Vec as BumpVec;
 
@@ -911,7 +912,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
     // u8 for ascii, u32 for wtf8/wtf16. Phase B: thread the associated type.
     fn append_char(
         &mut self,
-        char: <Chars<ENCODING> as bun_shell::CharIter>::CodepointType,
+        char: <Chars<ENCODING> as CharIter>::CodepointType,
     ) -> Result<(), AllocError> {
         if !self.tokens.is_empty() {
             let last_idx = self.tokens.len() - 1;
@@ -946,12 +947,12 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
         Ok(())
     }
 
-    fn eat(&mut self) -> Option<<Chars<ENCODING> as bun_shell::CharIter>::InputChar> {
+    fn eat(&mut self) -> Option<<Chars<ENCODING> as CharIter>::InputChar> {
         self.chars.eat()
     }
 
     #[allow(dead_code)]
-    fn read_char(&mut self) -> Option<<Chars<ENCODING> as bun_shell::CharIter>::InputChar> {
+    fn read_char(&mut self) -> Option<<Chars<ENCODING> as CharIter>::InputChar> {
         self.chars.read_char()
     }
 }

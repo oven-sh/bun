@@ -5,7 +5,7 @@ use core::ptr::NonNull;
 
 use crate::Loop;
 
-bun_output::declare_scope!(uws, visible);
+bun_core::declare_scope!(uws, visible);
 
 /// **DEPRECATED**
 /// **DO NOT USE IN NEW CODE!**
@@ -72,7 +72,7 @@ impl Timer {
     // destruction is an explicit C call and Drop cannot take parameters. Per PORTING.md
     // FFI-handle exception, expose `unsafe fn close(*mut Self)` instead of `deinit(&mut self)`.
     pub unsafe fn close<const FALLTHROUGH: bool>(this: *mut Self) {
-        bun_output::scoped_log!(uws, "Timer.deinit()");
+        bun_core::scoped_log!(uws, "Timer.deinit()");
         // SAFETY: `this` is a live timer handle; us_timer_close frees it (caller must not
         // use `this` afterward).
         unsafe { us_timer_close(this, FALLTHROUGH as i32) };

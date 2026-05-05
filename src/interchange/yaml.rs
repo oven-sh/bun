@@ -16,7 +16,8 @@ use core::fmt;
 use bun_alloc::AllocError;
 use bun_collections::{BabyList, StringHashMap};
 use bun_core::{self, StackCheck};
-use bun_js_parser::ast::{self, Expr, E, G};
+// MOVE_DOWN(b0): bun_js_parser::ast → bun_logger::ast (js_ast remapped into logger, T2)
+use bun_logger::ast::{self, Expr, E, G};
 use bun_logger::{self as logger, Loc, Log, Source};
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1405,7 +1406,8 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
                 break 'scalar NodeScalar::Number(unsigned as f64);
             }
             // TODO(port): bun.jsc.wtf.parseDouble over &[Enc::Unit] — Phase B.
-            let float = match bun_jsc::wtf::parse_double(parser.slice(start, end)) {
+            // MOVE_DOWN(b0): wtf::parse_double → bun_str (T1)
+            let float = match bun_str::parse_double(parser.slice(start, end)) {
                 Ok(v) => v,
                 Err(_) => return Ok(()),
             };

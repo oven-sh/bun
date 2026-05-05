@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use bun_bundler::options::Loader;
+use bun_options_types::Loader; // TYPE_ONLY: was bun_bundler::options::Loader (T5); moves to options_types (T3) per CYCLEBREAK
 use bun_collections::StringHashMap;
 use bun_str::strings;
 

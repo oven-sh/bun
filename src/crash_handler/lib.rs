@@ -25,12 +25,34 @@ use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
 use bun_core::{Environment, Global, Output, env_var, fmt as bun_fmt};
 use bun_collections::BoundedArray;
-use bun_sourcemap::VLQ;
+use bun_base64::VLQ; // MOVE_DOWN(b0): was bun_sourcemap::VLQ
 use bun_str::strings;
 use bun_threading::Mutex;
 
 mod cpu_features;
 use cpu_features::CPUFeatures;
+
+// TODO(b0): `Cli` arrives from move-in (MOVE_DOWN bun_cli::Cli → crash_handler).
+// Only the two bits the crash handler needs — main-thread check and the
+// one-byte command tag for the trace URL — land here as plain globals that
+// `bun_runtime` populates at startup.
+pub mod cli_state {
+    use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+
+    static MAIN_THREAD_ID: AtomicUsize = AtomicUsize::new(0);
+    /// 0 = unset → encoded as `_` in the trace string.
+    static CMD_CHAR: AtomicU8 = AtomicU8::new(0);
+
+    pub fn set_main_thread_id(id: usize) { MAIN_THREAD_ID.store(id, Ordering::Relaxed); }
+    pub fn set_cmd_char(c: u8) { CMD_CHAR.store(c, Ordering::Relaxed); }
+
+    pub fn is_main_thread() -> bool {
+        MAIN_THREAD_ID.load(Ordering::Relaxed) == bun_threading::current_thread_id()
+    }
+    pub fn cmd_char() -> Option<u8> {
+        match CMD_CHAR.load(Ordering::Relaxed) { 0 => None, c => Some(c) }
+    }
+}
 
 // TODO(port): std.builtin.StackTrace, std.debug.SelfInfo, std.debug.SourceLocation,
 // std.io.tty.Config have no direct Rust equivalents — these are placeholder types
@@ -129,20 +151,33 @@ impl fmt::Display for CrashReason {
 }
 
 /// bun.bundle_v2.LinkerContext.generateCompileResultForJSChunk
+///
+/// Cycle-break (b0): the bundler types (`LinkerContext` / `Chunk` / `PartRange`)
+/// live in a higher-tier crate, so this struct holds erased pointers and a
+/// vtable supplied by `bun_bundler`. The bundler constructs this with
+/// `bun_bundler::BUNDLE_GENERATE_CHUNK_VTABLE` (added by the move-in pass).
+// PERF(port): was inline switch — cold path (crash trace only).
 #[cfg(feature = "show_crash_trace")]
 #[derive(Clone, Copy)]
-pub struct BundleGenerateChunk<'a> {
-    pub context: &'a bun_bundler::LinkerContext, // unfortunate dependency loop workaround
-    pub chunk: &'a bun_bundler::Chunk,
-    pub part_range: &'a bun_bundler::PartRange,
+pub struct BundleGenerateChunk {
+    /// SAFETY: erased `&bun_bundler::LinkerContext`
+    pub context: *const (),
+    /// SAFETY: erased `&bun_bundler::Chunk`
+    pub chunk: *const (),
+    /// SAFETY: erased `&bun_bundler::PartRange`
+    pub part_range: *const (),
+    pub vtable: &'static BundleGenerateChunkVTable,
 }
 
 #[cfg(feature = "show_crash_trace")]
-impl<'a> BundleGenerateChunk<'a> {
-    pub fn linker_context(&self) -> &'a bun_bundler::LinkerContext {
-        // SAFETY: context is always a *const LinkerContext erased to anyopaque in Zig
-        self.context
-    }
+pub struct BundleGenerateChunkVTable {
+    /// Format the chunk context into `writer` (called from `Action::fmt`).
+    pub fmt: unsafe fn(
+        context: *const (),
+        chunk: *const (),
+        part_range: *const (),
+        writer: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result,
 }
 
 #[cfg(feature = "show_crash_trace")]
@@ -161,7 +196,7 @@ pub enum Action {
     // TODO(port): lifetime — these slices borrow caller-owned paths; &'static is a Phase A placeholder.
 
     #[cfg(feature = "show_crash_trace")]
-    BundleGenerateChunk(BundleGenerateChunk<'static>),
+    BundleGenerateChunk(BundleGenerateChunk),
     #[cfg(not(feature = "show_crash_trace"))]
     BundleGenerateChunk(()),
 
@@ -181,26 +216,9 @@ impl fmt::Display for Action {
             Action::Print(path) => write!(writer, "printing {}", bstr::BStr::new(path)),
             #[cfg(feature = "show_crash_trace")]
             Action::BundleGenerateChunk(data) => {
-                write!(
-                    writer,
-                    "generating bundler chunk\n  chunk entry point: {:?}\n  source: {:?}\n  part range: {}..{}",
-                    if data.part_range.source_index.is_valid() {
-                        Some(
-                            &data.linker_context().parse_graph.input_files
-                                .items_source()[data.chunk.entry_point.source_index as usize]
-                                .path.text,
-                        )
-                    } else { None },
-                    if data.part_range.source_index.is_valid() {
-                        Some(
-                            &data.linker_context().parse_graph.input_files
-                                .items_source()[data.part_range.source_index.get() as usize]
-                                .path.text,
-                        )
-                    } else { None },
-                    data.part_range.part_index_begin,
-                    data.part_range.part_index_end,
-                )
+                // SAFETY: `data` was constructed by bun_bundler with matching
+                // erased pointer types; vtable.fmt casts them back.
+                unsafe { (data.vtable.fmt)(data.context, data.chunk, data.part_range, writer) }
             }
             #[cfg(not(feature = "show_crash_trace"))]
             Action::BundleGenerateChunk(()) => Ok(()),
@@ -370,7 +388,7 @@ pub fn crash_handler(
                         if writer.write_all(Output::pretty_fmt("<r><d>", true)).is_err() { bun_sys::posix::abort(); }
                     }
 
-                    if bun_cli::Cli::is_main_thread() {
+                    if cli_state::is_main_thread() {
                         if writer.write_all(b"(main thread)").is_err() { bun_sys::posix::abort(); }
                     } else {
                         #[cfg(windows)]
@@ -1460,7 +1478,7 @@ fn encode_trace_string(opts: &TraceString<'_>, writer: &mut impl bun_io::Write) 
     writer.write_all(Environment::VERSION_STRING.as_bytes())?;
     writer.write_all(b"/")?;
     writer.write_all(&[Platform::CURRENT as u8])?;
-    writer.write_byte(if let Some(cmd) = bun_cli::Cli::cmd() { cmd.char() } else { b'_' })?;
+    writer.write_byte(cli_state::cmd_char().unwrap_or(b'_'))?;
 
     writer.write_all(VERSION_CHAR.as_bytes())?;
     writer.write_all(GIT_SHA.as_bytes())?;

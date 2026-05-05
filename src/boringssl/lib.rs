@@ -8,8 +8,16 @@ use core::ptr;
 use bun_boringssl_sys as boring;
 use bun_cares_sys as c_ares;
 use bun_str::strings;
-// TODO(port): X509 helpers live under src/runtime/api/bun/x509.zig — Phase B may relocate this
-use bun_runtime::api::bun::x509 as X509;
+
+// MOVE_DOWN: bun_runtime::api::bun::x509::is_safe_alt_name → boringssl (this crate).
+// TODO(b0): is_safe_alt_name body arrives from move-in (src/runtime/api/bun/x509.rs).
+pub mod x509 {
+    #[allow(unused_variables)]
+    pub fn is_safe_alt_name(name: &[u8], utf8: bool) -> bool {
+        unimplemented!("TODO(b0): pending move-in from bun_runtime::api::bun::x509")
+    }
+}
+use x509 as X509;
 
 /// BoringSSL's translated C API
 pub use bun_boringssl_sys as c;

@@ -6,10 +6,10 @@ use bun_boringssl_sys as boring;
 use bun_sha_hmac::hmac;
 use bun_str::strings;
 
-// TODO(port): verify crate path for EVP::Algorithm — Zig path is bun.jsc.API.Bun.Crypto.EVP.Algorithm
-use bun_jsc::api::bun::crypto::evp::Algorithm;
-// TODO(port): verify crate path for Node Encoding — Zig path is bun.jsc.Node.Encoding
-use bun_jsc::node::Encoding as NodeEncoding;
+// CYCLEBREAK: TYPE_ONLY — EVP::Algorithm moved down to bun_sha_hmac (move-in pass defines it there)
+use bun_sha_hmac::Algorithm;
+// CYCLEBREAK: TYPE_ONLY — node::Encoding moved down to bun_str (move-in pass defines it there)
+use bun_str::Encoding as NodeEncoding;
 
 /// Default expiration time for tokens (24 hours)
 pub const DEFAULT_EXPIRATION_MS: u64 = 24 * 60 * 60 * 1000;

@@ -2,10 +2,27 @@ use core::ffi::{c_ushort, c_char};
 use core::marker::{PhantomData, PhantomPinned};
 
 
-use bun_str::String as BunString;
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 // TODO(port): verify module path for H3 request opaque (h3.zig:19 — H3.Request = opaque{})
 use crate::h3::Request as H3Request;
+
+/// Hook: `fn(header_value: &[u8]) -> Option<u64>` parsing an HTTP date header
+/// into milliseconds-since-epoch. Registered by `bun_runtime::init()` (wraps
+/// `bun_str::String::parse_date` + `jsc::VirtualMachine::get().global()`).
+/// Null = unregistered → `date_for_header` returns `None`.
+pub static PARSE_DATE_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+pub type ParseDateFn = unsafe fn(&[u8]) -> Option<u64>;
+
+#[inline]
+pub(crate) fn parse_date_via_hook(value: &[u8]) -> Option<u64> {
+    let hook = PARSE_DATE_HOOK.load(Ordering::Relaxed);
+    if hook.is_null() {
+        return None;
+    }
+    // SAFETY: hook was registered as a `ParseDateFn` by runtime init.
+    unsafe { core::mem::transmute::<_, ParseDateFn>(hook)(value) }
+}
 
 /// Transport-agnostic request handle. Static/file routes (and RangeRequest)
 /// take this so the same handler body serves HTTP/1.1 and HTTP/3 without
@@ -45,11 +62,11 @@ impl AnyRequest {
             Self::H3(r) => unsafe { (&mut **r).set_yield(y) },
         }
     }
-    pub fn date_for_header(&self, name: &[u8]) -> JsResult<Option<u64>> {
+    pub fn date_for_header(&self, name: &[u8]) -> Option<u64> {
         // SAFETY: see header()
         match self {
             Self::H1(r) => unsafe { (**r).date_for_header(name) },
-            Self::H3(r) => unsafe { (**r).date_for_header(name) },
+            Self::H3(r) => unsafe { (&mut **r).date_for_header(name) },
         }
     }
 }
@@ -102,18 +119,11 @@ impl Request {
         // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime
         Some(unsafe { core::slice::from_raw_parts(ptr, len) })
     }
-    pub fn date_for_header(&self, name: &[u8]) -> JsResult<Option<u64>> {
-        let Some(value) = self.header(name) else {
-            return Ok(None);
-        };
-        // TODO(port): verify bun_str::String::init signature for borrowed-bytes construction
-        let mut string = BunString::init(value);
-        // `defer string.deref()` — handled by Drop on bun_str::String
-        let date_f64 = BunString::parse_date(&mut string, VirtualMachine::get().global())?;
-        if !date_f64.is_nan() && date_f64.is_finite() && date_f64 >= 0.0 {
-            return Ok(Some(date_f64 as u64));
-        }
-        Ok(None)
+    pub fn date_for_header(&self, name: &[u8]) -> Option<u64> {
+        // Cycle-break: parsing an HTTP date requires `bun_str::String` +
+        // `jsc::VirtualMachine` (tier > 0). Low tier calls through a hook
+        // registered at runtime init.
+        self.header(name).and_then(parse_date_via_hook)
     }
     pub fn query(&self, name: &[u8]) -> &[u8] {
         let mut ptr: *const u8 = core::ptr::null();
@@ -168,5 +178,5 @@ mod c {
 //   source:     src/uws_sys/Request.zig (97 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      H3Request import path + bun_str::String::init signature need Phase B verification; returned &[u8] lifetimes tied to &self
+//   notes:      H3Request import path + PARSE_DATE_HOOK registration need Phase B verification; returned &[u8] lifetimes tied to &self
 // ──────────────────────────────────────────────────────────────────────────

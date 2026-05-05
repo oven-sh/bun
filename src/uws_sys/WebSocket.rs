@@ -1,8 +1,8 @@
 use core::ffi::{c_int, c_uint, c_ushort, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
-use bun_uws_sys as uws;
-use bun_uws_sys::{Opcode, Request, SendStatus, Socket, WebSocketUpgradeContext, uws_res};
+use crate as uws;
+use crate::{Opcode, Request, SendStatus, Socket, WebSocketUpgradeContext, uws_res};
 use crate::app::uws_app_t;
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1650,7 +1650,7 @@ impl<'a, Impl: SelectorImpl> fmt::Display for SelectorDebugFmt<'a, Impl> {
         // `tocss_servo::to_css_selector` into a buffer, then writes the buffer.
         // Phase B should mirror once `Printer::new` is ported.
         let mut buf: Vec<u8> = Vec::new();
-        let symbols = bun_js_parser::ast::SymbolMap::default();
+        let symbols = bun_logger::symbol::Map::default();
         let mut printer = Printer::new_buffered(&mut buf, css::PrinterOptions::default(), None, None, &symbols);
         // TODO(port): `Printer::in_debug_fmt` is a thread-local/static flag in Zig.
         match css::selector::tocss_servo::to_css_selector(self.0, &mut printer) {

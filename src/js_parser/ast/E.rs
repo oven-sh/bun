@@ -1852,7 +1852,7 @@ impl Import {
         self.import_record_index == u32::MAX
     }
 
-    pub fn import_record_loader(&self) -> Option<bun_bundler::options::Loader> {
+    pub fn import_record_loader(&self) -> Option<bun_options_types::Loader> {
         // This logic is duplicated in js_printer.zig fn parsePath()
         let obj = self.options.data.as_e_object()?;
         let with = obj.get(b"with").or_else(|| obj.get(b"assert"))?;
@@ -1860,12 +1860,12 @@ impl Import {
         let str_ = with_obj.get(b"type")?.data.as_e_string()?;
 
         if !str_.is_utf16 {
-            if let Some(loader) = bun_bundler::options::Loader::from_string(str_.data) {
-                if loader == bun_bundler::options::Loader::Sqlite {
+            if let Some(loader) = bun_options_types::Loader::from_string(str_.data) {
+                if loader == bun_options_types::Loader::Sqlite {
                     let Some(embed) = with_obj.get(b"embed") else { return Some(loader) };
                     let Some(embed_str) = embed.data.as_e_string() else { return Some(loader) };
                     if embed_str.eql_comptime(b"true") {
-                        return Some(bun_bundler::options::Loader::SqliteEmbedded);
+                        return Some(bun_options_types::Loader::SqliteEmbedded);
                     }
                 }
                 return Some(loader);

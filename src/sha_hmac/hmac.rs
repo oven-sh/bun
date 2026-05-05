@@ -1,8 +1,8 @@
 use core::ffi::{c_uint, c_void};
 
 use bun_boringssl_sys as boring;
-// TODO(port): verify crate path for EVP.Algorithm — Zig path is bun.jsc.API.Bun.Crypto.EVP.Algorithm
-use bun_jsc::api::bun::crypto::evp::Algorithm;
+// TODO(b0): evp::Algorithm arrives from move-in (MOVE_DOWN bun_jsc::api::bun::crypto::evp::Algorithm → sha_hmac)
+use crate::evp::Algorithm;
 
 pub fn generate<'a>(
     key: &[u8],

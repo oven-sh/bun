@@ -375,9 +375,9 @@ impl File {
         input_path: &[u8],
     ) -> SysResult<Vec<u8>> {
         let mut buf = PathBuffer::uninit();
-        // TODO(port): bun.fs.FileSystem.instance.top_level_dir — confirm bun_fs accessor
+        // top_level_dir is provided via hook (bun_resolver::fs is T5; sys is T1).
         let normalized = bun_paths::join_abs_string_buf_z(
-            bun_fs::FileSystem::instance().top_level_dir(),
+            crate::top_level_dir(),
             &mut buf,
             &[input_path],
             bun_paths::Platform::Loose,
@@ -443,28 +443,27 @@ impl File {
         SysResult::Ok(bytes)
     }
 
-    pub fn to_source_at(
-        dir_fd: impl Into<File>,
-        path: &ZStr,
-        opts: ToSourceOptions,
-    ) -> SysResult<bun_logger::Source> {
-        let mut bytes = match Self::read_from(dir_fd, path) {
-            SysResult::Err(err) => return SysResult::Err(err),
-            SysResult::Ok(bytes) => bytes,
-        };
-
-        if opts.convert_bom {
-            if let Some(bom) = bun_str::strings::Bom::detect(&bytes) {
-                bytes = bom.remove_and_convert_to_utf8_and_free(bytes);
-            }
-        }
-
-        SysResult::Ok(bun_logger::Source::init_path_string(path.as_bytes(), bytes))
-    }
-
-    pub fn to_source(path: &ZStr, opts: ToSourceOptions) -> SysResult<bun_logger::Source> {
-        Self::to_source_at(Fd::cwd(), path, opts)
-    }
+    // TODO(b0-genuine): bun_logger::Source — `to_source_at` / `to_source` removed (T1→T2 upward).
+    // These move to `bun_logger` as extension-trait methods on `bun_sys::File` (move-in pass).
+    // Body preserved here for the move-in agent:
+    //
+    //   pub fn to_source_at(dir_fd: impl Into<File>, path: &ZStr, opts: ToSourceOptions)
+    //       -> SysResult<bun_logger::Source>
+    //   {
+    //       let mut bytes = match Self::read_from(dir_fd, path) {
+    //           SysResult::Err(err) => return SysResult::Err(err),
+    //           SysResult::Ok(bytes) => bytes,
+    //       };
+    //       if opts.convert_bom {
+    //           if let Some(bom) = bun_str::strings::Bom::detect(&bytes) {
+    //               bytes = bom.remove_and_convert_to_utf8_and_free(bytes);
+    //           }
+    //       }
+    //       SysResult::Ok(bun_logger::Source::init_path_string(path.as_bytes(), bytes))
+    //   }
+    //   pub fn to_source(path: &ZStr, opts: ToSourceOptions) -> SysResult<bun_logger::Source> {
+    //       Self::to_source_at(Fd::cwd(), path, opts)
+    //   }
 }
 
 // `from(other: anytype)` — Zig dispatched on @TypeOf at comptime. Port as From impls.

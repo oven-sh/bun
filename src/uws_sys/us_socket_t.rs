@@ -1,11 +1,11 @@
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::{self, NonNull};
 
-use bun_sys::Fd;
+use bun_core::Fd;
 
 use crate::{SocketGroup, SocketKind, SslCtx, LIBUS_SOCKET_DESCRIPTOR, us_bun_verify_error_t};
 
-bun_output::declare_scope!(uws, visible);
+bun_core::declare_scope!(uws, visible);
 
 const MAX_I32: usize = i32::MAX as usize;
 
@@ -38,7 +38,7 @@ pub enum CloseCode {
 
 impl us_socket_t {
     pub fn open(&mut self, is_client: bool, ip_addr: Option<&[u8]>) {
-        bun_output::scoped_log!(uws, "us_socket_open({:p}, is_client: {})", self, is_client);
+        bun_core::scoped_log!(uws, "us_socket_open({:p}, is_client: {})", self, is_client);
         if let Some(ip) = ip_addr {
             debug_assert!(ip.len() < MAX_I32);
             unsafe {
@@ -59,19 +59,19 @@ impl us_socket_t {
     }
 
     pub fn pause(&mut self) {
-        bun_output::scoped_log!(uws, "us_socket_pause({:p})", self);
+        bun_core::scoped_log!(uws, "us_socket_pause({:p})", self);
         // SAFETY: self is a live us_socket_t (us_socket_r is nonnull_arg)
         unsafe { c::us_socket_pause(self) };
     }
 
     pub fn resume(&mut self) {
-        bun_output::scoped_log!(uws, "us_socket_resume({:p})", self);
+        bun_core::scoped_log!(uws, "us_socket_resume({:p})", self);
         // SAFETY: self is a live us_socket_t (us_socket_r is nonnull_arg)
         unsafe { c::us_socket_resume(self) };
     }
 
     pub fn close(&mut self, code: CloseCode) {
-        bun_output::scoped_log!(uws, "us_socket_close({:p}, {})", self, <&'static str>::from(code));
+        bun_core::scoped_log!(uws, "us_socket_close({:p}, {})", self, <&'static str>::from(code));
         unsafe {
             // SAFETY: self is a live us_socket_t
             let _ = c::us_socket_close(self, code, ptr::null_mut());
@@ -79,7 +79,7 @@ impl us_socket_t {
     }
 
     pub fn shutdown(&mut self) {
-        bun_output::scoped_log!(uws, "us_socket_shutdown({:p})", self);
+        bun_core::scoped_log!(uws, "us_socket_shutdown({:p})", self);
         // SAFETY: self is a live us_socket_t (us_socket_r is nonnull_arg)
         unsafe { c::us_socket_shutdown(self) };
     }
@@ -297,7 +297,7 @@ impl us_socket_t {
             // SAFETY: data.as_ptr() valid for data.len() bytes
             c::us_socket_write(self, data.as_ptr(), i32::try_from(data.len().min(MAX_I32)).unwrap())
         };
-        bun_output::scoped_log!(uws, "us_socket_write({:p}, {}) = {}", self, data.len(), rc);
+        bun_core::scoped_log!(uws, "us_socket_write({:p}, {}) = {}", self, data.len(), rc);
         rc
     }
 
@@ -312,7 +312,7 @@ impl us_socket_t {
                 file_descriptor.native(),
             )
         };
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             uws,
             "us_socket_ipc_write_fd({:p}, {}, {}) = {}",
             self,
@@ -332,13 +332,13 @@ impl us_socket_t {
             // SAFETY: both slices valid for their respective lengths
             c::us_socket_write2(self, first.as_ptr(), first.len(), second.as_ptr(), second.len())
         };
-        bun_output::scoped_log!(uws, "us_socket_write2({:p}, {}, {}) = {}", self, first.len(), second.len(), rc);
+        bun_core::scoped_log!(uws, "us_socket_write2({:p}, {}, {}) = {}", self, first.len(), second.len(), rc);
         rc
     }
 
     /// Bypass TLS — raw bytes to the fd even if `is_tls()`.
     pub fn raw_write(&mut self, data: &[u8]) -> i32 {
-        bun_output::scoped_log!(uws, "us_socket_raw_write({:p}, {})", self, data.len());
+        bun_core::scoped_log!(uws, "us_socket_raw_write({:p}, {})", self, data.len());
         unsafe {
             // SAFETY: data.as_ptr() valid for data.len() bytes
             c::us_socket_raw_write(self, data.as_ptr(), i32::try_from(data.len().min(MAX_I32)).unwrap())
@@ -449,9 +449,17 @@ impl Default for us_socket_stream_buffer_t {
     }
 }
 
+/// Minimal structural mirror of `bun_io::StreamBuffer` for tier-0 interop.
+/// The higher-tier `bun_io::StreamBuffer` is field-identical and converts via
+/// `From`/`Into` (added in the move-in pass).
+pub struct StreamBuffer {
+    pub list: Vec<u8>,
+    pub cursor: usize,
+}
+
 impl us_socket_stream_buffer_t {
     // TODO(port): ownership — Zig does not free the previous list_ptr here; matches that.
-    pub fn update(&mut self, stream_buffer: bun_io::StreamBuffer) {
+    pub fn update(&mut self, stream_buffer: StreamBuffer) {
         // Decompose the Vec<u8> backing `stream_buffer.list` into raw parts so
         // the C side can read ptr/len/cap directly.
         let mut list = core::mem::ManuallyDrop::new(stream_buffer.list);
@@ -469,8 +477,8 @@ impl us_socket_stream_buffer_t {
         self.total_bytes_written = self.total_bytes_written.saturating_add(written);
     }
 
-    pub fn to_stream_buffer(&self) -> bun_io::StreamBuffer {
-        bun_io::StreamBuffer {
+    pub fn to_stream_buffer(&self) -> StreamBuffer {
+        StreamBuffer {
             list: if !self.list_ptr.is_null() {
                 unsafe {
                     // SAFETY: list_ptr/list_len/list_cap were produced by decomposing a
@@ -514,5 +522,5 @@ pub extern "C" fn us_socket_free_stream_buffer(buffer: *mut us_socket_stream_buf
 //   source:     src/uws_sys/us_socket_t.zig (350 lines)
 //   confidence: medium-high
 //   todos:      6
-//   notes:      adopt/adopt_tls return NonNull (self invalidated); errno_to_err mapping & bun_io::StreamBuffer shape need Phase B verification; all unsafe blocks SAFETY-annotated
+//   notes:      adopt/adopt_tls return NonNull (self invalidated); errno_to_err mapping & local StreamBuffer mirror need Phase B verification; all unsafe blocks SAFETY-annotated
 // ──────────────────────────────────────────────────────────────────────────

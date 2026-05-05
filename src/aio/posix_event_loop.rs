@@ -1,19 +1,104 @@
 use core::ffi::{c_int, c_void};
 use core::fmt;
 use core::ptr;
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_collections::{HiveArray, TaggedPtrUnion};
 use bun_core::Output;
 use bun_sys::{self as sys, Fd};
-use bun_uws::Loop as UwsLoop;
+use bun_uws_sys::Loop as UwsLoop;
 
-// TODO(port): these cross-crate type paths are best-effort; Phase B wires the real module paths.
-use bun_jsc::{self as jsc, AbstractVm, EventLoop, EventLoopHandle, MiniEventLoop, OpaqueCallback, VirtualMachine};
 use bun_threading::{WorkPool, WorkPoolTask};
 
 pub type Loop = UwsLoop;
 
 bun_output::declare_scope!(KeepAlive, visible);
+
+// ──────────────────────────────────────────────────────────────────────────
+// EventLoopCtx — manual vtable (cycle-break for bun_jsc::{AbstractVm,
+// EventLoopHandle, VirtualMachine, MiniEventLoop, EventLoop})
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Erased `jsc::OpaqueCallback` — `extern "C" fn(*mut c_void)`.
+pub type OpaqueCallback = unsafe extern "C" fn(*mut c_void);
+
+/// Manual vtable replacing the `bun_jsc` "AbstractVm"/"EventLoopHandle"
+/// abstraction so this T3 crate names no T6 types. High-tier crates
+/// (`bun_runtime`/`bun_jsc`) provide the `&'static EventLoopCtxVTable`
+/// instances. // PERF(port): was inline switch on @TypeOf.
+pub struct EventLoopCtxVTable {
+    pub platform_event_loop: unsafe fn(*mut ()) -> *mut Loop,
+    pub file_polls: unsafe fn(*mut ()) -> *mut Store,
+    pub alloc_file_poll: unsafe fn(*mut ()) -> *mut FilePoll,
+    pub is_js: unsafe fn(*mut ()) -> bool,
+    pub increment_pending_unref_counter: unsafe fn(*mut ()),
+    pub ref_concurrently: unsafe fn(*mut ()),
+    pub unref_concurrently: unsafe fn(*mut ()),
+    pub after_event_loop_callback: unsafe fn(*mut ()) -> Option<OpaqueCallback>,
+    pub set_after_event_loop_callback: unsafe fn(*mut (), Option<OpaqueCallback>, *mut c_void),
+}
+
+/// `{owner, vtable}` pair erasing the concrete VM/event-loop type.
+#[derive(Copy, Clone)]
+pub struct EventLoopCtx {
+    pub owner: *mut (),
+    pub vtable: &'static EventLoopCtxVTable,
+}
+
+impl EventLoopCtx {
+    #[inline]
+    pub fn platform_event_loop(&self) -> &mut Loop {
+        // SAFETY: vtable contract — returns the live uws loop for `owner`.
+        unsafe { &mut *(self.vtable.platform_event_loop)(self.owner) }
+    }
+    #[inline]
+    pub fn file_polls(&self) -> &mut Store {
+        // SAFETY: vtable contract.
+        unsafe { &mut *(self.vtable.file_polls)(self.owner) }
+    }
+    #[inline]
+    pub fn alloc_file_poll(&self) -> *mut FilePoll {
+        unsafe { (self.vtable.alloc_file_poll)(self.owner) }
+    }
+    #[inline]
+    pub fn is_js(&self) -> bool {
+        unsafe { (self.vtable.is_js)(self.owner) }
+    }
+    #[inline]
+    pub fn increment_pending_unref_counter(&self) {
+        unsafe { (self.vtable.increment_pending_unref_counter)(self.owner) }
+    }
+    #[inline]
+    pub fn ref_concurrently(&self) {
+        unsafe { (self.vtable.ref_concurrently)(self.owner) }
+    }
+    #[inline]
+    pub fn unref_concurrently(&self) {
+        unsafe { (self.vtable.unref_concurrently)(self.owner) }
+    }
+    #[inline]
+    pub fn after_event_loop_callback(&self) -> Option<OpaqueCallback> {
+        unsafe { (self.vtable.after_event_loop_callback)(self.owner) }
+    }
+    #[inline]
+    pub fn set_after_event_loop_callback(&self, cb: Option<OpaqueCallback>, ctx: *mut c_void) {
+        unsafe { (self.vtable.set_after_event_loop_callback)(self.owner, cb, ctx) }
+    }
+}
+
+/// Hook returning the global event-loop context for the given allocator type
+/// (replaces `VirtualMachine::get()` / `MiniEventLoop::global()`). Set by
+/// `bun_runtime::init()`. Signature: `fn(AllocatorType) -> EventLoopCtx`.
+pub static GET_VM_CTX_HOOK: AtomicPtr<()> = AtomicPtr::new(ptr::null_mut());
+
+#[inline]
+pub fn get_vm_ctx(kind: AllocatorType) -> EventLoopCtx {
+    let hook = GET_VM_CTX_HOOK.load(Ordering::Relaxed);
+    debug_assert!(!hook.is_null(), "aio::GET_VM_CTX_HOOK not registered");
+    // SAFETY: hook stores `fn(AllocatorType) -> EventLoopCtx` written once at init.
+    let f: fn(AllocatorType) -> EventLoopCtx = unsafe { core::mem::transmute(hook) };
+    f(kind)
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // KeepAlive
@@ -42,7 +127,7 @@ impl KeepAlive {
 
     /// Make calling ref() on this poll into a no-op.
     pub fn disable(&mut self) {
-        self.unref(VirtualMachine::get());
+        self.unref(get_vm_ctx(AllocatorType::Js));
         self.status = KeepAliveStatus::Done;
     }
 
@@ -69,9 +154,7 @@ impl KeepAlive {
     }
 
     /// Prevent a poll from keeping the process alive.
-    // TODO(port): `anytype` event-loop context — Zig branches on @TypeOf for EventLoopHandle vs
-    // AbstractVM. Phase B should expose a single `EventLoopCtx` trait covering both.
-    pub fn unref(&mut self, event_loop_ctx: impl AbstractVm) {
+    pub fn unref(&mut self, event_loop_ctx: EventLoopCtx) {
         if self.status != KeepAliveStatus::Active {
             return;
         }
@@ -80,16 +163,16 @@ impl KeepAlive {
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
-    pub fn unref_concurrently(&mut self, vm: &mut VirtualMachine) {
+    pub fn unref_concurrently(&mut self, vm: EventLoopCtx) {
         if self.status != KeepAliveStatus::Active {
             return;
         }
         self.status = KeepAliveStatus::Inactive;
-        vm.event_loop.unref_concurrently();
+        vm.unref_concurrently();
     }
 
     /// Prevent a poll from keeping the process alive on the next tick.
-    pub fn unref_on_next_tick(&mut self, event_loop_ctx: impl AbstractVm) {
+    pub fn unref_on_next_tick(&mut self, event_loop_ctx: EventLoopCtx) {
         if self.status != KeepAliveStatus::Active {
             return;
         }
@@ -99,19 +182,17 @@ impl KeepAlive {
     }
 
     /// From another thread, prevent a poll from keeping the process alive on the next tick.
-    pub fn unref_on_next_tick_concurrently(&mut self, vm: &mut VirtualMachine) {
+    pub fn unref_on_next_tick_concurrently(&mut self, vm: EventLoopCtx) {
         if self.status != KeepAliveStatus::Active {
             return;
         }
         self.status = KeepAliveStatus::Inactive;
         // TODO(port): vm.pending_unref_counter must be an Atomic; Zig uses @atomicRmw .Add .monotonic
-        vm.pending_unref_counter
-            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        vm.increment_pending_unref_counter();
     }
 
     /// Allow a poll to keep the process alive.
-    // TODO(port): `anytype` event-loop context (see unref).
-    pub fn ref_(&mut self, event_loop_ctx: impl AbstractVm) {
+    pub fn ref_(&mut self, event_loop_ctx: EventLoopCtx) {
         if self.status != KeepAliveStatus::Inactive {
             return;
         }
@@ -120,20 +201,20 @@ impl KeepAlive {
     }
 
     /// Allow a poll to keep the process alive.
-    pub fn ref_concurrently(&mut self, vm: &mut VirtualMachine) {
+    pub fn ref_concurrently(&mut self, vm: EventLoopCtx) {
         if self.status != KeepAliveStatus::Inactive {
             return;
         }
         self.status = KeepAliveStatus::Active;
-        vm.event_loop.ref_concurrently();
+        vm.ref_concurrently();
     }
 
-    pub fn ref_concurrently_from_event_loop(&mut self, loop_: &mut EventLoop) {
-        self.ref_concurrently(loop_.virtual_machine);
+    pub fn ref_concurrently_from_event_loop(&mut self, loop_: EventLoopCtx) {
+        self.ref_concurrently(loop_);
     }
 
-    pub fn unref_concurrently_from_event_loop(&mut self, loop_: &mut EventLoop) {
-        self.unref_concurrently(loop_.virtual_machine);
+    pub fn unref_concurrently_from_event_loop(&mut self, loop_: EventLoopCtx) {
+        self.unref_concurrently(loop_);
     }
 }
 
@@ -169,38 +250,66 @@ macro_rules! kqueue_or_epoll { () => { "kevent" } }
 #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
 macro_rules! kqueue_or_epoll { () => { "epoll" } }
 
-// Owner type aliases — cross-crate references; Phase B wires real paths.
-// TODO(port): verify each path against the crate map.
-type ShellBufferedWriter = bun_shell::Interpreter::IOWriter::Poll;
-type FileReader = bun_runtime::webcore::FileReader;
-type Process = bun_spawn::Process;
-type Subprocess = bun_jsc::Subprocess;
-type StaticPipeWriter = <Subprocess as bun_jsc::SubprocessExt>::StaticPipeWriterPoll; // TODO(port): real path
-type ShellStaticPipeWriter = bun_shell::ShellSubprocess::StaticPipeWriter::Poll;
-type SecurityScanStaticPipeWriter = bun_install::SecurityScanSubprocess::StaticPipeWriter::Poll;
-type FileSink = bun_runtime::webcore::FileSink::Poll;
-type TerminalPoll = bun_runtime::api::Terminal::Poll;
-type DNSResolver = bun_runtime::api::dns::Resolver;
-type GetAddrInfoRequest = bun_runtime::api::dns::GetAddrInfoRequest;
-type Request = bun_runtime::api::dns::internal::Request;
-type LifecycleScriptSubprocessOutputReader = bun_install::LifecycleScriptSubprocess::OutputReader;
-type BufferedReader = bun_io::BufferedReader;
-type ParentDeathWatchdog = bun_core::ParentDeathWatchdog;
+// ──────────────────────────────────────────────────────────────────────────
+// FilePoll Owner — hot-path tag+ptr (CYCLEBREAK §Hot dispatch list).
+// Low tier (here) stores `(tag: u8, ptr: *mut ())`; `bun_runtime::dispatch::on_poll`
+// owns the per-tag `match` so the variant types are never named in this crate.
+// ──────────────────────────────────────────────────────────────────────────
 
-pub type Owner = TaggedPtrUnion<(
-    FileSink,
-    StaticPipeWriter,
-    ShellStaticPipeWriter,
-    SecurityScanStaticPipeWriter,
-    BufferedReader,
-    DNSResolver,
-    GetAddrInfoRequest,
-    Request,
-    Process,
-    ShellBufferedWriter, // i do not know why, but this has to be here otherwise compiler will complain about dependency loop
-    TerminalPoll,
-    ParentDeathWatchdog,
-)>;
+/// Tag constants for `Owner`. The mapping tag→concrete type lives in
+/// `bun_runtime::dispatch` (move-in pass).
+pub mod poll_tag {
+    pub const NULL: u8 = 0;
+    pub const FILE_SINK: u8 = 1;
+    pub const STATIC_PIPE_WRITER: u8 = 2;
+    pub const SHELL_STATIC_PIPE_WRITER: u8 = 3;
+    pub const SECURITY_SCAN_STATIC_PIPE_WRITER: u8 = 4;
+    pub const BUFFERED_READER: u8 = 5;
+    pub const DNS_RESOLVER: u8 = 6;
+    pub const GET_ADDR_INFO_REQUEST: u8 = 7;
+    pub const REQUEST: u8 = 8;
+    pub const PROCESS: u8 = 9;
+    pub const SHELL_BUFFERED_WRITER: u8 = 10;
+    pub const TERMINAL_POLL: u8 = 11;
+    pub const PARENT_DEATH_WATCHDOG: u8 = 12;
+    pub const LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER: u8 = 13;
+}
+
+#[repr(transparent)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub struct PollTag(pub u8);
+
+/// Erased `(tag, *mut ())` pair replacing the Zig `TaggedPointerUnion(.{...})`.
+#[derive(Copy, Clone)]
+pub struct Owner {
+    pub tag: PollTag,
+    pub ptr: *mut (),
+}
+
+impl Owner {
+    pub const NULL: Owner = Owner { tag: PollTag(poll_tag::NULL), ptr: core::ptr::null_mut() };
+    #[inline]
+    pub const fn new(tag: u8, ptr: *mut ()) -> Owner {
+        Owner { tag: PollTag(tag), ptr }
+    }
+    #[inline]
+    pub fn is_null(&self) -> bool {
+        self.ptr.is_null()
+    }
+    #[inline]
+    pub fn clear(&mut self) {
+        *self = Self::NULL;
+    }
+    #[inline]
+    pub fn tag(&self) -> u8 {
+        self.tag.0
+    }
+}
+
+/// Hot-path dispatch hook for `FilePoll::on_update`. Set by
+/// `bun_runtime::dispatch` at init. Signature: `unsafe fn(*mut FilePoll, i64)`.
+/// Runtime owns the per-tag `match` (direct calls per arm — LLVM inlines like Zig).
+pub static ON_POLL_DISPATCH: AtomicPtr<()> = AtomicPtr::new(ptr::null_mut());
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -312,42 +421,22 @@ impl FilePoll {
     // PORT NOTE: not `impl Drop` — FilePoll is pool-allocated (HiveArray) and explicitly
     // put back via `Store::put`; Drop would be wrong here.
     pub fn deinit(&mut self) {
-        match self.allocator_type {
-            AllocatorType::Js => {
-                let vm = VirtualMachine::get();
-                let handle = jsc::abstract_vm(vm);
-                let loop_ = handle.platform_event_loop();
-                let file_polls = handle.file_polls();
-                self.deinit_possibly_defer(vm, loop_, file_polls, false);
-            }
-            AllocatorType::Mini => {
-                let vm = MiniEventLoop::global();
-                let handle = jsc::abstract_vm(vm);
-                let loop_ = handle.platform_event_loop();
-                let file_polls = handle.file_polls();
-                self.deinit_possibly_defer(vm, loop_, file_polls, false);
-            }
-        }
+        let ctx = get_vm_ctx(self.allocator_type);
+        let loop_ = ctx.platform_event_loop();
+        let file_polls = ctx.file_polls();
+        self.deinit_possibly_defer(ctx, loop_, file_polls, false);
     }
 
     pub fn deinit_force_unregister(&mut self) {
-        match self.allocator_type {
-            AllocatorType::Js => {
-                let vm = VirtualMachine::get();
-                let loop_ = vm.event_loop_handle.unwrap();
-                self.deinit_possibly_defer(vm, loop_, vm.rare_data().file_polls(vm), true);
-            }
-            AllocatorType::Mini => {
-                let vm = MiniEventLoop::global();
-                let loop_ = vm.loop_;
-                self.deinit_possibly_defer(vm, loop_, vm.file_polls(), true);
-            }
-        }
+        let ctx = get_vm_ctx(self.allocator_type);
+        let loop_ = ctx.platform_event_loop();
+        let file_polls = ctx.file_polls();
+        self.deinit_possibly_defer(ctx, loop_, file_polls, true);
     }
 
     fn deinit_possibly_defer(
         &mut self,
-        vm: impl AbstractVm,
+        vm: EventLoopCtx,
         loop_: &mut Loop,
         polls: &mut Store,
         force_unregister: bool,
@@ -361,10 +450,10 @@ impl FilePoll {
         polls.put(self, vm, was_ever_registered);
     }
 
-    pub fn deinit_with_vm(&mut self, vm_: impl AbstractVm) {
-        let vm = jsc::abstract_vm(&vm_);
+    pub fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
         let loop_ = vm.platform_event_loop();
-        self.deinit_possibly_defer(vm_, loop_, vm.file_polls(), false);
+        let file_polls = vm.file_polls();
+        self.deinit_possibly_defer(vm, loop_, file_polls, false);
     }
 
     pub fn is_registered(&self) -> bool {
@@ -379,112 +468,23 @@ impl FilePoll {
             self.flags.insert(Flags::NeedsRearm);
         }
 
-        let ptr = self.owner;
-        debug_assert!(!ptr.is_null());
+        debug_assert!(!self.owner.is_null());
 
-        // TODO(port): TaggedPtrUnion tag dispatch — Phase B should generate this match via the
-        // union's type list. Here we hand-expand the Zig `switch (ptr.tag())`.
-        match ptr.tag() {
-            t if t == Owner::tag_of::<ShellBufferedWriter>() => {
-                let handler: &mut ShellBufferedWriter = ptr.as_mut::<ShellBufferedWriter>();
-                handler.on_poll(size_or_offset, self.flags.contains(Flags::Hup));
-            }
-            t if t == Owner::tag_of::<ShellStaticPipeWriter>() => {
-                let handler: &mut ShellStaticPipeWriter = ptr.as_mut::<ShellStaticPipeWriter>();
-                handler.on_poll(size_or_offset, self.flags.contains(Flags::Hup));
-            }
-            t if t == Owner::tag_of::<StaticPipeWriter>() => {
-                let handler: &mut StaticPipeWriter = ptr.as_mut::<StaticPipeWriter>();
-                handler.on_poll(size_or_offset, self.flags.contains(Flags::Hup));
-            }
-            t if t == Owner::tag_of::<SecurityScanStaticPipeWriter>() => {
-                let handler: &mut SecurityScanStaticPipeWriter =
-                    ptr.as_mut::<SecurityScanStaticPipeWriter>();
-                handler.on_poll(size_or_offset, self.flags.contains(Flags::Hup));
-            }
-            t if t == Owner::tag_of::<FileSink>() => {
-                let handler: &mut FileSink = ptr.as_mut::<FileSink>();
-                handler.on_poll(size_or_offset, self.flags.contains(Flags::Hup));
-            }
-            t if t == Owner::tag_of::<BufferedReader>() => {
-                sys::syslog!(
-                    concat!("onUpdate ", kqueue_or_epoll!(), " (fd: {}) Reader"),
-                    self.fd
-                );
-                let handler: &mut BufferedReader = ptr.as_mut::<BufferedReader>();
-                handler.on_poll(size_or_offset, self.flags.contains(Flags::Hup));
-            }
-            t if t == Owner::tag_of::<Process>() => {
-                sys::syslog!(
-                    concat!("onUpdate ", kqueue_or_epoll!(), " (fd: {}) Process"),
-                    self.fd
-                );
-                let loader = ptr.as_mut::<Process>();
-                loader.on_wait_pid_from_event_loop_task();
-            }
-            t if t == Owner::tag_of::<DNSResolver>() => {
-                sys::syslog!(
-                    concat!("onUpdate ", kqueue_or_epoll!(), " (fd: {}) DNSResolver"),
-                    self.fd
-                );
-                let loader: &mut DNSResolver = ptr.as_mut::<DNSResolver>();
-                loader.on_dns_poll(self);
-            }
-            t if t == Owner::tag_of::<GetAddrInfoRequest>() => {
-                #[cfg(not(target_os = "macos"))]
-                unreachable!();
-                #[cfg(target_os = "macos")]
-                {
-                    sys::syslog!(
-                        concat!("onUpdate ", kqueue_or_epoll!(), " (fd: {}) GetAddrInfoRequest"),
-                        self.fd
-                    );
-                    let loader: &mut GetAddrInfoRequest = ptr.as_mut::<GetAddrInfoRequest>();
-                    loader.on_machport_change();
-                }
-            }
-            t if t == Owner::tag_of::<Request>() => {
-                #[cfg(not(target_os = "macos"))]
-                unreachable!();
-                #[cfg(target_os = "macos")]
-                {
-                    sys::syslog!(
-                        concat!("onUpdate ", kqueue_or_epoll!(), " (fd: {}) InternalDNSRequest"),
-                        self.fd
-                    );
-                    let loader: &mut Request = ptr.as_mut::<Request>();
-                    Request::MacAsyncDNS::on_machport_change(loader);
-                }
-            }
-            t if t == Owner::tag_of::<TerminalPoll>() => {
-                sys::syslog!(
-                    concat!("onUpdate ", kqueue_or_epoll!(), " (fd: {}) Terminal"),
-                    self.fd
-                );
-                let handler: &mut TerminalPoll = ptr.as_mut::<TerminalPoll>();
-                handler.on_poll(size_or_offset, self.flags.contains(Flags::Hup));
-            }
-            t if t == Owner::tag_of::<ParentDeathWatchdog>() => {
-                #[cfg(not(target_os = "macos"))]
-                unreachable!();
-                #[cfg(target_os = "macos")]
-                {
-                    sys::syslog!(
-                        concat!("onUpdate ", kqueue_or_epoll!(), " (fd: {}) ParentDeathWatchdog"),
-                        self.fd
-                    );
-                    ptr.as_mut::<ParentDeathWatchdog>().on_parent_exit();
-                }
-            }
-            _ => {
-                let possible_name = Owner::type_name_from_tag(ptr.tag() as u16);
-                sys::syslog!(
-                    concat!("onUpdate ", kqueue_or_epoll!(), " (fd: {}) disconnected? (maybe: {})"),
-                    self.fd,
-                    bstr::BStr::new(possible_name.unwrap_or(b"<unknown>"))
-                );
-            }
+        // Hot-path hoisted-match: the per-tag `switch` lives in
+        // `bun_runtime::dispatch::on_poll` (move-in pass) so this T3 crate
+        // names no variant types. // PERF(port): was inline switch.
+        let hook = ON_POLL_DISPATCH.load(Ordering::Relaxed);
+        if hook.is_null() {
+            sys::syslog!(
+                concat!("onUpdate ", kqueue_or_epoll!(), " (fd: {}) disconnected? (tag={})"),
+                self.fd,
+                self.owner.tag()
+            );
+            return;
         }
+        // SAFETY: hook stores `unsafe fn(*mut FilePoll, i64)` written once at init.
+        let f: unsafe fn(*mut FilePoll, i64) = unsafe { core::mem::transmute(hook) };
+        unsafe { f(self, size_or_offset) };
     }
 
     #[inline]
@@ -502,9 +502,7 @@ impl FilePoll {
 
     /// This decrements the active counter if it was previously incremented
     /// "active" controls whether or not the event loop should potentially idle
-    // TODO(port): Zig dispatches on @TypeOf(event_loop_ctx_) for *EventLoop vs EventLoopHandle vs
-    // AbstractVM. Phase B: collapse to a single EventLoopCtx trait method `loop_()`.
-    pub fn disable_keeping_process_alive(&mut self, event_loop_ctx: impl AbstractVm) {
+    pub fn disable_keeping_process_alive(&mut self, event_loop_ctx: EventLoopCtx) {
         event_loop_ctx
             .platform_event_loop()
             .sub_active(self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
@@ -519,7 +517,7 @@ impl FilePoll {
             && self.flags.contains(Flags::HasIncrementedPollCount)
     }
 
-    pub fn set_keeping_process_alive(&mut self, event_loop_ctx: impl AbstractVm, value: bool) {
+    pub fn set_keeping_process_alive(&mut self, event_loop_ctx: EventLoopCtx, value: bool) {
         if value {
             self.enable_keeping_process_alive(event_loop_ctx);
         } else {
@@ -527,8 +525,7 @@ impl FilePoll {
         }
     }
 
-    // TODO(port): see disable_keeping_process_alive note re: anytype dispatch.
-    pub fn enable_keeping_process_alive(&mut self, event_loop_ctx: impl AbstractVm) {
+    pub fn enable_keeping_process_alive(&mut self, event_loop_ctx: EventLoopCtx) {
         if self.flags.contains(Flags::Closed) {
             return;
         }
@@ -569,17 +566,14 @@ impl FilePoll {
     }
 
     // TODO(port): Zig branches on @TypeOf(vm) for *PackageManager, EventLoopHandle, else.
-    // Phase B: callers normalize to EventLoopHandle before calling.
-    pub fn init<T>(vm: EventLoopHandle, fd: Fd, flags: FlagsSet, owner: &mut T) -> *mut FilePoll
-    where
-        Owner: From<*mut T>,
-    {
+    // Phase B: callers normalize to EventLoopCtx before calling.
+    pub fn init(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
         let poll = vm.file_polls().get();
         // SAFETY: Store::get returns a valid uninitialized slot from the hive.
         let poll = unsafe { &mut *poll };
         poll.fd = fd;
         poll.flags = flags;
-        poll.owner = Owner::init(owner);
+        poll.owner = owner;
         poll.next_to_free = ptr::null_mut();
         poll.allocator_type = if vm.is_js() {
             AllocatorType::Js
@@ -604,7 +598,7 @@ impl FilePoll {
         poll
     }
 
-    pub fn init_with_owner(vm: impl AbstractVm, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
+    pub fn init_with_owner(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
         let poll = vm.alloc_file_poll();
         // SAFETY: alloc_file_poll returns a valid pool slot.
         let poll_ref = unsafe { &mut *poll };
@@ -612,8 +606,7 @@ impl FilePoll {
         poll_ref.flags = flags;
         poll_ref.owner = owner;
         poll_ref.next_to_free = ptr::null_mut();
-        // TODO(port): Zig sets `.js` iff @TypeOf(vm_) == *VirtualMachine; needs trait method.
-        poll_ref.allocator_type = if vm.is_js_vm() {
+        poll_ref.allocator_type = if vm.is_js() {
             AllocatorType::Js
         } else {
             AllocatorType::Mini
@@ -650,13 +643,13 @@ impl FilePoll {
     }
 
     /// Prevent a poll from keeping the process alive.
-    pub fn unref(&mut self, event_loop_ctx: impl AbstractVm) {
+    pub fn unref(&mut self, event_loop_ctx: EventLoopCtx) {
         sys::syslog!("unref");
         self.disable_keeping_process_alive(event_loop_ctx);
     }
 
     /// Allow a poll to keep the process alive.
-    pub fn ref_(&mut self, event_loop_ctx: impl AbstractVm) {
+    pub fn ref_(&mut self, event_loop_ctx: EventLoopCtx) {
         if self.flags.contains(Flags::Closed) {
             return;
         }
@@ -664,7 +657,7 @@ impl FilePoll {
         self.enable_keeping_process_alive(event_loop_ctx);
     }
 
-    pub fn on_ended(&mut self, event_loop_ctx: impl AbstractVm) {
+    pub fn on_ended(&mut self, event_loop_ctx: EventLoopCtx) {
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.insert(Flags::Closed);
         self.deactivate(event_loop_ctx.platform_event_loop());
@@ -1413,7 +1406,7 @@ impl Store {
         self.pending_free_tail = ptr::null_mut();
     }
 
-    pub fn put(&mut self, poll: &mut FilePoll, vm: impl AbstractVm, ever_registered: bool) {
+    pub fn put(&mut self, poll: &mut FilePoll, vm: EventLoopCtx, ever_registered: bool) {
         if !ever_registered {
             self.hive.put(poll);
             return;
@@ -1437,14 +1430,19 @@ impl Store {
         poll.flags.insert(Flags::IgnoreUpdates);
         self.pending_free_tail = poll;
 
-        let callback: OpaqueCallback = jsc::opaque_wrap::<Store, { Store::process_deferred_frees }>();
+        let callback: OpaqueCallback = Self::process_deferred_frees_thunk;
         // TODO(port): Zig asserts the callback slot is empty or already this fn.
         debug_assert!(
             vm.after_event_loop_callback().is_none()
                 || vm.after_event_loop_callback() == Some(callback)
         );
-        vm.set_after_event_loop_callback(callback);
-        vm.set_after_event_loop_callback_ctx(self as *mut Store as *mut c_void);
+        vm.set_after_event_loop_callback(Some(callback), self as *mut Store as *mut c_void);
+    }
+
+    unsafe extern "C" fn process_deferred_frees_thunk(ctx: *mut c_void) {
+        // SAFETY: ctx was set to `self as *mut Store` in `put` above.
+        let this = unsafe { &mut *(ctx as *mut Store) };
+        this.process_deferred_frees();
     }
 }
 
@@ -1562,7 +1560,7 @@ impl KEventWaker {
     const ZEROED: [Self::Kevent64; 16] = unsafe { core::mem::zeroed() };
 
     pub fn wake(&mut self) {
-        bun_jsc::mark_binding!();
+        bun_core::mark_binding!();
         // SAFETY: FFI call to io_darwin_schedule_wakeup with a valid mach_port.
         if unsafe { io_darwin_schedule_wakeup(self.machport) } {
             self.has_pending_wake = false;
@@ -1579,7 +1577,7 @@ impl KEventWaker {
         if !Fd::from_native(self.kq).is_valid() {
             return;
         }
-        bun_jsc::mark_binding!();
+        bun_core::mark_binding!();
         let mut events = Self::ZEROED;
         // SAFETY: FFI syscall; pointers reference stack-local events array valid for the call.
         unsafe {
@@ -1602,7 +1600,7 @@ impl KEventWaker {
     }
 
     pub fn init_with_file_descriptor(kq: i32) -> Result<Self, bun_core::Error> {
-        bun_jsc::mark_binding!();
+        bun_core::mark_binding!();
         debug_assert!(kq > -1);
         let mut machport_buf = vec![0u8; 1024].into_boxed_slice();
         // SAFETY: FFI call; buf outlives the machport.

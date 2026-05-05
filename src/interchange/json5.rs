@@ -11,8 +11,9 @@
 
 use bun_alloc::Arena as Bump;
 use bun_core::StackCheck;
-use bun_js_parser::lexer::identifier;
-use bun_js_parser::{E, Expr, G};
+// MOVE_DOWN(b0): bun_js_parser::lexer / {E,Expr,G} → bun_logger (js_ast remapped, T2)
+use bun_logger::lexer::identifier;
+use bun_logger::js_ast::{E, Expr, G};
 use bun_logger::{self as logger, Loc, Log, Source};
 use bun_str::strings;
 use bumpalo::collections::Vec as BumpVec;
@@ -607,8 +608,9 @@ impl<'a> JSON5Parser<'a> {
         self.scan()?; // advance past ']'
         Ok(Expr::init(
             E::Array {
-                // TODO(port): ExprNodeList.moveFromList — verify exact API on bun_js_parser side
-                items: bun_js_parser::ExprNodeList::move_from_list(&mut items),
+                // TODO(port): ExprNodeList.moveFromList — verify exact API on js_ast side
+                // MOVE_DOWN(b0): bun_js_parser::ExprNodeList → bun_logger (T2)
+                items: bun_logger::ExprNodeList::move_from_list(&mut items),
                 ..Default::default()
             },
             loc,

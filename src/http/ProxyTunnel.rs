@@ -9,10 +9,12 @@ use bun_uws as uws;
 use crate::http_cert_error::HTTPCertError;
 use crate::new_http_context::NewHTTPContext;
 use crate::HTTPClient;
-// TODO(port): SSLWrapper lives at src/runtime/socket/ssl_wrapper.zig → bun_runtime::socket::ssl_wrapper
-use bun_runtime::socket::ssl_wrapper::SSLWrapper;
-// TODO(port): jsc.API.ServerConfig.SSLConfig — actual crate path may be bun_runtime::api::server_config
-use bun_jsc::api::server_config::SSLConfig;
+// TODO(b0): SSLWrapper arrives from move-in
+// (MOVE_DOWN bun_runtime::socket::ssl_wrapper::SSLWrapper → bun_http)
+use crate::ssl_wrapper::SSLWrapper;
+// TODO(b0): SSLConfig arrives from move-in
+// (MOVE_DOWN bun_runtime::api::server::server_config::SSLConfig → bun_http)
+use crate::ssl_config::SSLConfig;
 
 bun_output::declare_scope!(http_proxy_tunnel, visible);
 
@@ -553,7 +555,8 @@ impl ProxyTunnel {
 // SSLWrapperHandlers) live in sibling http-crate modules; Phase B wires imports.
 use crate::state::{ResponseStage, Stage};
 use crate::picohttp::ChunkedState;
-use bun_runtime::socket::ssl_wrapper::Handlers as SSLWrapperHandlers;
+// TODO(b0): ssl_wrapper::Handlers arrives from move-in (MOVE_DOWN → bun_http)
+use crate::ssl_wrapper::Handlers as SSLWrapperHandlers;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

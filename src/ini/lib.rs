@@ -6,8 +6,9 @@ use bun_alloc::{AllocError, Arena}; // Arena = bumpalo::Bump
 use bun_collections::ArrayHashMap;
 use bun_core::{Global, Output};
 use bun_dot_env::Loader as DotEnvLoader;
-use bun_js_parser::e::object::Rope;
-use bun_js_parser::{self as js_ast, E, Expr};
+// TODO(b0): E/Expr/ExprData/e::object::Rope arrive from move-in (was bun_js_parser → logger)
+use bun_logger::e::object::Rope;
+use bun_logger::{self as js_ast, E, Expr};
 use bun_logger::{self as logger, Loc, Log, Source};
 use bun_schema::api::{BunInstall, NpmRegistry, NpmRegistryMap};
 use bun_str::{strings, ZStr};
@@ -1386,7 +1387,8 @@ pub fn load_npmrc(
     }
 
     if let Some(public_hoist_pattern_expr) = out.get(b"public-hoist-pattern") {
-        install.public_hoist_pattern = match bun_install::PnpmMatcher::from_expr(
+        // TODO(b0): PnpmMatcher arrives from move-in (was bun_install → install_types)
+        install.public_hoist_pattern = match bun_install_types::PnpmMatcher::from_expr(
             public_hoist_pattern_expr,
             log,
             source,
@@ -1402,7 +1404,8 @@ pub fn load_npmrc(
     }
 
     if let Some(hoist_pattern_expr) = out.get(b"hoist-pattern") {
-        install.hoist_pattern = match bun_install::PnpmMatcher::from_expr(
+        // TODO(b0): PnpmMatcher arrives from move-in (was bun_install → install_types)
+        install.hoist_pattern = match bun_install_types::PnpmMatcher::from_expr(
             hoist_pattern_expr,
             log,
             source,
@@ -1483,7 +1486,8 @@ pub fn load_npmrc(
             if let Some(dr) = &install.default_registry {
                 break 'brk URL::parse(&dr.url);
             }
-            URL::parse(bun_install::npm::Registry::DEFAULT_URL)
+            // TODO(b0): DEFAULT_URL arrives from move-in (was bun_install::npm::Registry → install_types)
+            URL::parse(bun_install_types::npm::Registry::DEFAULT_URL)
         };
 
         // I don't like having to do this but we'll need a mapping of scope -> bun.URL
@@ -1573,7 +1577,8 @@ pub fn load_npmrc(
                         password: Box::default(),
                         token: Box::default(),
                         username: Box::default(),
-                        url: Box::<[u8]>::from(bun_install::npm::Registry::DEFAULT_URL),
+                        // TODO(b0): DEFAULT_URL arrives from move-in (was bun_install::npm::Registry → install_types)
+                        url: Box::<[u8]>::from(bun_install_types::npm::Registry::DEFAULT_URL),
                         email: Box::default(),
                     });
                     install.default_registry.as_mut().unwrap()

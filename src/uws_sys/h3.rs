@@ -92,19 +92,11 @@ impl Request {
             Some(unsafe { core::slice::from_raw_parts(p, n) })
         }
     }
-    pub fn date_for_header(&mut self, name: &[u8]) -> bun_jsc::JsResult<Option<u64>> {
-        // TODO(port): layering — uws_sys calling into bun_jsc/bun_str. Phase B may
-        // want to hoist this helper into the runtime crate.
-        let Some(value) = self.header(name) else {
-            return Ok(None);
-        };
-        let s = bun_str::String::init(value);
-        // `s.deref()` happens in Drop
-        let ms = s.parse_date(bun_jsc::VirtualMachine::get().global())?;
-        if !ms.is_nan() && ms.is_finite() && ms >= 0.0 {
-            return Ok(Some(ms as u64));
-        }
-        Ok(None)
+    pub fn date_for_header(&mut self, name: &[u8]) -> Option<u64> {
+        // Cycle-break: parsing an HTTP date requires `bun_str::String` +
+        // `jsc::VirtualMachine` (tier > 0). Low tier calls through a hook
+        // registered at runtime init — see `crate::request::PARSE_DATE_HOOK`.
+        self.header(name).and_then(crate::request::parse_date_via_hook)
     }
     pub fn query(&mut self, name: &[u8]) -> &[u8] {
         let mut p: *const u8 = ptr::null();
@@ -407,7 +399,7 @@ impl App {
     }
     pub fn add_server_name_with_options(
         &mut self,
-        hostname: &bun_str::ZStr,
+        hostname: &bun_core::ZStr,
         opts: BunSocketContextOptions,
     ) -> Result<(), AddServerNameError> {
         // SAFETY: self is a live FFI handle; hostname is NUL-terminated; opts passed by value
@@ -487,12 +479,12 @@ impl App {
     }
     pub fn method<UD>(
         &mut self,
-        m: bun_http::Method,
+        m: bun_http_types::Method,
         p: &[u8],
         ud: *mut UD,
         h: fn(&mut UD, &mut Request, &mut Response),
     ) {
-        use bun_http::Method as M;
+        use bun_http_types::Method as M;
         match m {
             M::GET => self.get(p, ud, h),
             M::POST => self.post(p, ud, h),

@@ -66,7 +66,7 @@ pub struct BundledAst<'arena> {
     /// Only populated when bundling. When --server-components is passed, this
     /// will be .browser when it is a client component, and the server's target
     /// on the server.
-    pub target: bun_bundler::options::Target,
+    pub target: bun_options_types::Target,
 
     // const_values: ConstValuesMap,
     pub ts_enums: ast::TsEnumsMap,

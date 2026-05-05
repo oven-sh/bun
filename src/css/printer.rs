@@ -167,7 +167,7 @@ thread_local! {
 }
 
 impl<'a> Printer<'a> {
-    pub fn lookup_symbol(&self, ref_: bun_bundler::Ref) -> &[u8] {
+    pub fn lookup_symbol(&self, ref_: bun_js_parser::Ref) -> &[u8] {
         let symbols = self.symbols;
 
         let final_ref = symbols.follow(ref_);
@@ -326,7 +326,7 @@ impl<'a> Printer<'a> {
     pub fn print_import_record(&mut self, import_record_idx: u32) -> PrintResult<()> {
         if let Some(info) = &self.import_info {
             let import_record = info.import_records.at(import_record_idx);
-            let (a, b) = bun_bundler::cheap_prefix_normalizer(self.public_path, &import_record.path.text);
+            let (a, b) = bun_str::cheap_prefix_normalizer(self.public_path, &import_record.path.text);
             // PORT NOTE: reshaped for borrowck — copied (a, b) out before re-borrowing &mut self
             let a = a.to_vec();
             let b = b.to_vec();
@@ -706,8 +706,8 @@ impl<'a> Printer<'a> {
 const INDENTS_LEVELS: usize = 32;
 static INDENT_SPACES: [u8; INDENTS_LEVELS * 2] = [b' '; INDENTS_LEVELS * 2];
 
-// TODO(port): narrow — bun.ast.Symbol.Map. Exact path in bun_js_parser TBD.
-type SymbolMap = bun_js_parser::symbol::Map;
+// TODO(port): narrow — bun.ast.Symbol.Map. Moved down to bun_logger per CYCLEBREAK B-0.
+type SymbolMap = bun_logger::symbol::Map;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

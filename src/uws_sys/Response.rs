@@ -13,9 +13,39 @@
 use core::ffi::{c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
-use bun_sys::Fd;
-use bun_uws::{Socket, SocketAddress, SocketData, WebSocketUpgradeContext};
-use bun_uws_sys::us_socket_t;
+use bun_core::Fd;
+use crate::us_socket_t;
+
+// ─── Forward-declared opaques (cycle-break: were `bun_uws::*`, tier > 0) ───
+// TODO(b0): SocketAddress arrives from move-in (TYPE_ONLY bun_uws::SocketAddress → uws_sys).
+/// Remote socket address as returned by uWS. `ip` borrows uWS-owned memory
+/// valid for the lifetime of the response.
+pub struct SocketAddress<'a> {
+    pub ip: &'a [u8],
+    pub port: i32,
+    pub is_ipv6: bool,
+}
+
+/// Opaque uWS WebSocket socket handle (forward-decl; concrete type lives in `bun_uws`).
+#[repr(C)]
+pub struct Socket {
+    _p: [u8; 0],
+    _m: PhantomData<(*mut u8, PhantomPinned)>,
+}
+
+/// Opaque per-socket userdata blob (forward-decl; concrete type lives in `bun_uws`).
+#[repr(C)]
+pub struct SocketData {
+    _p: [u8; 0],
+    _m: PhantomData<(*mut u8, PhantomPinned)>,
+}
+
+/// Opaque uWS WebSocket upgrade context (forward-decl; concrete type lives in `bun_uws`).
+#[repr(C)]
+pub struct WebSocketUpgradeContext {
+    _p: [u8; 0],
+    _m: PhantomData<(*mut u8, PhantomPinned)>,
+}
 
 /// Opaque handle for `uws::Response<SSL>`.
 ///
@@ -300,9 +330,8 @@ impl<const SSL: bool> Response<SSL> {
             c::uws_res_get_remote_address_info(self.downcast(), &mut ip_ptr, &mut port, &mut is_ipv6)
         };
         if ip_len > 0 {
-            // TODO(port): SocketAddress field layout — Zig stores `ip: []const u8`
-            // (ptr+len into uws-owned memory), `port: i32`, `is_ipv6: bool`. Adjust
-            // to whatever bun_uws::SocketAddress exposes in Rust.
+            // SocketAddress is defined locally (moved down from bun_uws); `ip`
+            // borrows uWS-owned memory valid while the response lives.
             Some(SocketAddress {
                 // SAFETY: uws populated ip_ptr/ip_len with bytes valid while the response lives.
                 ip: unsafe { core::slice::from_raw_parts(ip_ptr, ip_len) },
@@ -756,7 +785,7 @@ impl AnyResponse {
         match self {
             AnyResponse::SSL(ptr) => unsafe {
                 // SAFETY: live FFI socket handle.
-                // TODO(port): bun_uws_sys::us_socket_t::close signature / CloseCode::Failure
+                // TODO(port): crate::us_socket_t::close signature / CloseCode::Failure
                 (&mut *(&mut *ptr).downcast_socket()).close(crate::us_socket_t::CloseCode::Failure);
             },
             AnyResponse::TCP(ptr) => unsafe {
@@ -772,7 +801,7 @@ impl AnyResponse {
 
     pub fn get_native_handle(self) -> Fd {
         match self {
-            AnyResponse::H3(_) => bun_sys::Fd::invalid(),
+            AnyResponse::H3(_) => bun_core::Fd::invalid(),
             AnyResponse::SSL(ptr) => {
                 // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
                 unsafe { (&mut *ptr).get_native_handle() }

@@ -92,7 +92,7 @@ impl Targets {
         Some(lhs << rhs)
     }
 
-    pub fn for_bundler_target(target: bun_bundler::options::Target) -> Targets {
+    pub fn for_bundler_target(target: bun_options_types::Target) -> Targets {
         #[cfg(debug_assertions)]
         {
             let mut browsers = Browsers::default();
@@ -123,7 +123,7 @@ impl Targets {
                 };
             }
         }
-        use bun_bundler::options::Target as T;
+        use bun_options_types::Target as T;
         match target {
             T::Node | T::Bun => Self::runtime_default(),
             T::Browser | T::BunMacro | T::BakeServerComponentsSsr => Self::browser_default(),

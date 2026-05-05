@@ -1,7 +1,7 @@
 use core::ffi::{c_char, c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
-use bun_sys::Fd;
+use bun_core::Fd;
 
 use crate::{us_socket_t, SocketGroup, SslCtx, LIBUS_SOCKET_DESCRIPTOR};
 
@@ -34,9 +34,7 @@ impl ListenSocket {
     }
 
     pub fn socket<const IS_SSL: bool>(&mut self) -> crate::socket::NewSocketHandler<IS_SSL> {
-        // TODO(port): bun_uws::NewSocketHandler lives in the wrapper crate; verify
-        // this dependency direction (uws_sys -> uws) is acceptable in Phase B or
-        // move this method to bun_uws as an extension.
+        // NewSocketHandler is local (crate::socket); no upward dep.
         crate::socket::NewSocketHandler::<IS_SSL>::from(self.get_socket())
     }
 
@@ -133,5 +131,5 @@ unsafe extern "C" {
 //   source:     src/uws_sys/ListenSocket.zig (69 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      socket() references bun_uws::NewSocketHandler (wrapper crate) — possible layering inversion; add_server_name's anytype→Option<&U> may need adjustment per call sites.
+//   notes:      socket() uses crate::socket::NewSocketHandler (no upward dep); add_server_name's anytype→Option<&U> may need adjustment per call sites.
 // ──────────────────────────────────────────────────────────────────────────

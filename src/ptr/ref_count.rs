@@ -11,12 +11,36 @@ use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::mem::size_of;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
 
 use bun_alloc::allocation_scope::{self, AllocationScope};
-use bun_collections::{ArrayHashMap, HashMap};
-use bun_crash_handler::StoredTrace;
+// MOVE_DOWN(b0): was bun_crash_handler::StoredTrace — type moves to bun_core.
+use bun_core::StoredTrace;
 use bun_safety::ThreadLock;
+// PORT NOTE(b0): was `bun_collections::{ArrayHashMap, HashMap}` (T1 → upward).
+// Debug-only diagnostic storage; std HashMap drops insertion order for `frees`
+// which is acceptable for leak reports.
+use std::collections::HashMap;
+type ArrayHashMap<K, V> = HashMap<K, V>;
+
+// ──────────────────────────────────────────────────────────────────────────
+// Debug-hook (CYCLEBREAK §Debug-hook registration): set by
+// `bun_runtime::init()` → `crash_handler::dump_stack_trace`. Null = no-op.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// fn-ptr signature: `unsafe fn(trace: *const StoredTrace /* null = current */, ret_addr: usize)`
+pub static DUMP_STACK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+#[inline]
+fn dump_stack_hook(trace: *const StoredTrace, ret_addr: usize) {
+    let p = DUMP_STACK.load(Ordering::Relaxed);
+    if p.is_null() {
+        return;
+    }
+    // SAFETY: `bun_runtime::init()` stores a fn-ptr matching this signature.
+    let f: unsafe fn(*const StoredTrace, usize) = unsafe { core::mem::transmute(p) };
+    unsafe { f(trace, ret_addr) };
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Options
@@ -167,7 +191,7 @@ impl<T: RefCounted> RefCount<T> {
             raw_count: Cell::new(count),
             thread: ThreadLock::init_locked_if_non_comptime(),
             #[cfg(debug_assertions)]
-            debug: DebugData::EMPTY,
+            debug: DebugData::empty(),
             _phantom: PhantomData,
         }
     }
@@ -186,8 +210,8 @@ impl<T: RefCounted> RefCount<T> {
         }
         // TODO(port): per-type scoped logging — Zig used
         // `bun.Output.Scoped(debug_name, .hidden)` keyed on T's name. The
-        // `bun_output::scoped_log!` macro expects a static scope ident.
-        bun_output::scoped_log!(
+        // `bun_core::scoped_log!` macro expects a static scope ident.
+        bun_core::scoped_log!(
             ref_count,
             "0x{:x}   ref {} -> {}:",
             self_ as usize,
@@ -195,13 +219,8 @@ impl<T: RefCounted> RefCount<T> {
             count.raw_count.get() + 1,
         );
         if DEBUG_STACK_TRACE {
-            bun_crash_handler::dump_current_stack_trace(
-                return_address(),
-                bun_crash_handler::DumpOptions {
-                    frame_count: 2,
-                    skip_file_patterns: &[b"ptr/ref_count.zig"],
-                },
-            );
+            // TODO(b0-genuine): was dump_current_stack_trace(ret, {frame_count:2, skip:[ref_count.zig]})
+            dump_stack_hook(core::ptr::null(), return_address());
         }
         count.assert_single_threaded();
         count.raw_count.set(count.raw_count.get() + 1);
@@ -226,7 +245,7 @@ impl<T: RefCounted> RefCount<T> {
         {
             count.debug.assert_valid(); // Likely double deref.
         }
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             ref_count,
             "0x{:x} deref {} -> {}:",
             self_ as usize,
@@ -234,13 +253,8 @@ impl<T: RefCounted> RefCount<T> {
             count.raw_count.get() - 1,
         );
         if DEBUG_STACK_TRACE {
-            bun_crash_handler::dump_current_stack_trace(
-                return_address(),
-                bun_crash_handler::DumpOptions {
-                    frame_count: 2,
-                    skip_file_patterns: &[b"ptr/ref_count.zig"],
-                },
-            );
+            // TODO(b0-genuine): was dump_current_stack_trace(ret, {frame_count:2, skip:[ref_count.zig]})
+            dump_stack_hook(core::ptr::null(), return_address());
         }
         count.assert_single_threaded();
         count.raw_count.set(count.raw_count.get() - 1);
@@ -393,7 +407,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
         Self {
             raw_count: AtomicU32::new(count),
             #[cfg(debug_assertions)]
-            debug: DebugData::EMPTY,
+            debug: DebugData::empty(),
             _phantom: PhantomData,
         }
     }
@@ -408,7 +422,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
         #[cfg(debug_assertions)]
         count.debug.assert_valid();
         let old_count = count.raw_count.fetch_add(1, Ordering::SeqCst);
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             ref_count,
             "0x{:x}   ref {} -> {}",
             self_ as usize,
@@ -426,7 +440,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
         #[cfg(debug_assertions)]
         count.debug.assert_valid();
         let old_count = count.raw_count.fetch_sub(1, Ordering::SeqCst);
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             ref_count,
             "0x{:x} deref {} -> {}",
             self_ as usize,
@@ -760,7 +774,7 @@ pub struct DebugData<Count> {
     // 4. Rust cannot under-align a field; consider `[u32; 4]` if layout matters.
     magic: u128,
     // TODO(port): Zig used `if (thread_safe) std.debug.SafetyLock else bun.Mutex`.
-    lock: bun_threading::Mutex,
+    lock: bun_core::Mutex,
     next_id: AtomicU32,
     map: HashMap<TrackedRefId, TrackedRef>,
     frees: ArrayHashMap<TrackedRefId, TrackedDeref>,
@@ -774,15 +788,18 @@ pub struct DebugData<Count> {
 
 #[cfg(debug_assertions)]
 impl<Count: CountLoad> DebugData<Count> {
-    pub const EMPTY: Self = Self {
-        magic: MAGIC_VALID,
-        lock: bun_threading::Mutex::new(),
-        next_id: AtomicU32::new(0),
-        map: HashMap::new(),
-        frees: ArrayHashMap::new(),
-        allocation_scope: None,
-        count_pointer: None,
-    };
+    // PORT NOTE(b0): was `pub const EMPTY` — std HashMap::new() is non-const.
+    pub fn empty() -> Self {
+        Self {
+            magic: MAGIC_VALID,
+            lock: bun_core::Mutex::new(),
+            next_id: AtomicU32::new(0),
+            map: HashMap::new(),
+            frees: ArrayHashMap::new(),
+            allocation_scope: None,
+            count_pointer: None,
+        }
+    }
 
     fn assert_valid(&self) {
         debug_assert!(self.magic == MAGIC_VALID);
@@ -995,7 +1012,8 @@ fn generic_dump(
     let mut i: usize = 0;
     for (_, entry) in map.iter() {
         bun_core::Output::pretty_error(format_args!("<b>RefPtr acquired at:<r>\n"));
-        bun_crash_handler::dump_stack_trace(entry.acquired_at.trace(), AllocationScope::TRACE_LIMITS);
+        // TODO(b0-genuine): was dump_stack_trace(trace, AllocationScope::TRACE_LIMITS)
+        dump_stack_hook(&entry.acquired_at, 0);
         i += 1;
         if i >= 3 {
             bun_core::Output::pretty_error(format_args!("  {} omitted ...\n", map.len() - i));
@@ -1050,7 +1068,7 @@ fn offset_of_ref_count_ts<T: ThreadSafeRefCounted, Rc>() -> usize {
 // PORT NOTE: `const unique_symbol = opaque {};` — type-identity marker for
 // comptime assertion in `RefPtr`. Replaced by `AnyRefCounted` trait bound.
 
-bun_output::declare_scope!(ref_count, hidden);
+bun_core::declare_scope!(ref_count, hidden);
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

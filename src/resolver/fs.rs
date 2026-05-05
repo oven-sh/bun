@@ -1323,7 +1323,7 @@ impl RealFS {
     ) -> Result<&'static mut EntriesOption, bun_core::Error> {
         let mut dir = strings::without_trailing_slash_windows_path(dir_maybe_trail_slash);
 
-        bun_resolver::Resolver::assert_valid_cache_key(dir);
+        crate::Resolver::assert_valid_cache_key(dir);
         let mut cache_result: Option<allocators::Result> = None;
         if FeatureFlags::ENABLE_ENTRY_CACHE {
             self.entries_mutex.lock();

@@ -92,10 +92,12 @@ pub fn is_enabled() -> bool {
 pub mod features {
     use super::*;
 
-    // TODO(port): `bun_jsc::module_loader::HardcodedModule` must derive
+    // TODO(port): `bun_options_types::HardcodedModule` must derive
     // `enumset::EnumSetType` for this to type-check.
+    // TYPE_ONLY(b0): moved from `bun_jsc::module_loader` → `bun_options_types`
+    // (move-in pass adds the enum def there).
     pub static BUILTIN_MODULES: parking_lot::Mutex<
-        EnumSet<bun_jsc::module_loader::HardcodedModule>,
+        EnumSet<bun_options_types::HardcodedModule>,
     > = parking_lot::const_mutex(EnumSet::empty());
     // PORT NOTE: Zig used a plain mutable global; wrapped in a Mutex here
     // because `EnumSet` is not a single atomic word for large enums.

@@ -1,9 +1,11 @@
 use core::cell::RefCell;
 
-use bun_paths::{PathBuffer, MAX_PATH_BYTES, SEP, SEP_POSIX, SEP_WINDOWS};
-use bun_str::{strings, ZStr, WStr};
-// TODO(port): move to *_jsc — Fs.FileSystem.instance is a global resolver singleton
-use bun_resolver::fs as Fs;
+use crate::{PathBuffer, MAX_PATH_BYTES, SEP, SEP_POSIX, SEP_WINDOWS};
+// MOVE_DOWN(CYCLEBREAK): ZStr/WStr live in bun_core; `strings` stays in bun_str (T1).
+use bun_core::{ZStr, WStr};
+use bun_str::strings;
+// MOVE_DOWN(CYCLEBREAK): bun_resolver::fs → crate::fs (move-in pass adds the module).
+use crate::fs as Fs;
 
 thread_local! {
     static PARSER_JOIN_INPUT_BUFFER: RefCell<[u8; 4096]> = const { RefCell::new([0u8; 4096]) };
@@ -458,7 +460,7 @@ pub fn relative_to_common_path<const ALWAYS_COPY: bool, const PLATFORM: Platform
 
     let common_path = if PLATFORM == Platform::Windows {
         &common_path_[win_root_len.unwrap()..]
-    } else if bun_paths::is_absolute_posix(common_path_) {
+    } else if crate::is_absolute_posix(common_path_) {
         &common_path_[1..]
     } else {
         common_path_
@@ -633,7 +635,7 @@ pub fn dirname<const PLATFORM: Platform>(str: &[u8]) -> &[u8] {
         Platform::Windows => {
             let Some(separator) = last_index_of_separator_windows(str) else {
                 // TODO(port): std.fs.path.diskDesignatorWindows
-                return bun_paths::disk_designator_windows(str);
+                return crate::disk_designator_windows(str);
             };
             &str[..separator]
         }
@@ -1205,7 +1207,7 @@ impl Platform {
             Platform::Posix => !path.is_empty() && path[0] == T::from_u8(b'/'),
             Platform::Nt | Platform::Windows | Platform::Loose => {
                 // TODO(port): std.fs.path.isAbsoluteWindows / isAbsoluteWindowsWTF16
-                bun_paths::is_absolute_windows_t::<T>(path)
+                crate::is_absolute_windows_t::<T>(path)
             }
         }
     }
@@ -1823,7 +1825,7 @@ fn _join_abs_string_buf_windows<const IS_SENTINEL: bool>(
     buf: &mut [u8],
     parts: &[&[u8]],
 ) -> &[u8] {
-    debug_assert!(bun_paths::is_absolute_windows(cwd));
+    debug_assert!(crate::is_absolute_windows(cwd));
 
     if parts.is_empty() {
         if IS_SENTINEL {
@@ -1863,7 +1865,7 @@ fn _join_abs_string_buf_windows<const IS_SENTINEL: bool>(
         let mut n = parts.len();
         while n > 0 {
             n -= 1;
-            if bun_paths::is_absolute_windows(parts[n]) {
+            if crate::is_absolute_windows(parts[n]) {
                 let root_of_part = &parts[n][0..windows_volume_name_len(parts[n]).0];
                 if root_of_part.is_empty() || root_of_part == root {
                     break 'base (root, &parts[n][root_of_part.len()..], n + 1);
@@ -2299,7 +2301,7 @@ impl PosixToWinNormalizer {
         source_dir: &[u8],
         maybe_posix_path: &'a [u8],
     ) -> &'a [u8] {
-        debug_assert!(bun_paths::is_absolute_windows(maybe_posix_path));
+        debug_assert!(crate::is_absolute_windows(maybe_posix_path));
         #[cfg(windows)]
         {
             let root = windows_filesystem_root(maybe_posix_path);
@@ -2312,7 +2314,7 @@ impl PosixToWinNormalizer {
                         .copy_from_slice(&maybe_posix_path[1..]);
                     let res = &buf[0..source_root.len() + maybe_posix_path.len() - 1];
                     debug_assert!(!strings::is_windows_absolute_path_missing_drive_letter::<u8>(res));
-                    debug_assert!(bun_paths::is_absolute_windows(res));
+                    debug_assert!(crate::is_absolute_windows(res));
                     return res;
                 }
             }
@@ -2329,7 +2331,7 @@ impl PosixToWinNormalizer {
         source_dir: &[u8],
         maybe_posix_path: &'a ZStr,
     ) -> &'a ZStr {
-        debug_assert!(bun_paths::is_absolute_windows(maybe_posix_path.as_bytes()));
+        debug_assert!(crate::is_absolute_windows(maybe_posix_path.as_bytes()));
         #[cfg(windows)]
         {
             let mp = maybe_posix_path.as_bytes();
@@ -2348,7 +2350,7 @@ impl PosixToWinNormalizer {
                     debug_assert!(!strings::is_windows_absolute_path_missing_drive_letter::<u8>(
                         res.as_bytes()
                     ));
-                    debug_assert!(bun_paths::is_absolute_windows(res.as_bytes()));
+                    debug_assert!(crate::is_absolute_windows(res.as_bytes()));
                     return res;
                 }
             }
@@ -2362,7 +2364,7 @@ impl PosixToWinNormalizer {
         buf: &'a mut PosixToWinBuf,
         maybe_posix_path: &'a [u8],
     ) -> Result<&'a [u8], bun_core::Error> {
-        debug_assert!(bun_paths::is_absolute_windows(maybe_posix_path));
+        debug_assert!(crate::is_absolute_windows(maybe_posix_path));
 
         #[cfg(windows)]
         {
@@ -2380,7 +2382,7 @@ impl PosixToWinNormalizer {
                         .copy_from_slice(&maybe_posix_path[1..]);
                     let res = &buf[0..sr_len + maybe_posix_path.len() - 1];
                     debug_assert!(!strings::is_windows_absolute_path_missing_drive_letter::<u8>(res));
-                    debug_assert!(bun_paths::is_absolute_windows(res));
+                    debug_assert!(crate::is_absolute_windows(res));
                     return Ok(res);
                 }
             }
@@ -2397,7 +2399,7 @@ impl PosixToWinNormalizer {
         buf: &'a mut PathBuffer,
         maybe_posix_path: &[u8],
     ) -> Result<&'a mut ZStr, bun_core::Error> {
-        debug_assert!(bun_paths::is_absolute_windows(maybe_posix_path));
+        debug_assert!(crate::is_absolute_windows(maybe_posix_path));
 
         #[cfg(windows)]
         {
@@ -2419,7 +2421,7 @@ impl PosixToWinNormalizer {
                     debug_assert!(!strings::is_windows_absolute_path_missing_drive_letter::<u8>(
                         res.as_bytes()
                     ));
-                    debug_assert!(bun_paths::is_absolute_windows(res.as_bytes()));
+                    debug_assert!(crate::is_absolute_windows(res.as_bytes()));
                     return Ok(res);
                 }
             }

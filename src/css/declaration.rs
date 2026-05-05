@@ -39,7 +39,7 @@ pub struct DebugFmt<'a, 'bump>(&'a DeclarationBlock<'bump>);
 impl<'a, 'bump> core::fmt::Display for DebugFmt<'a, 'bump> {
     fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut arraylist: Vec<u8> = Vec::new();
-        let mut symbols = bun_js_parser::Symbol::Map::default();
+        let mut symbols = bun_logger::symbol::Map::default();
         // TODO(port): Printer::new signature — Zig passes allocator + Managed(u8) + writer + options + null + null + &symbols
         let mut printer = css::Printer::new(
             Vec::<u8>::new(),

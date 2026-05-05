@@ -1,7 +1,8 @@
 use bun_sys::{Stat, Timespec, S};
 // TODO(port): confirm XxHash64 source crate (Zig used std.hash.XxHash64; likely twox-hash or a bun_hash port)
 use bun_hash::XxHash64;
-use bun_jsc::wtf;
+// MOVE_DOWN(b0): wtf::write_http_date relocated from bun_jsc → bun_http_types (T3)
+use bun_http_types::wtf;
 
 pub struct StatHash {
     pub value: u64,

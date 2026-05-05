@@ -1,6 +1,16 @@
 use bun_alloc::AllocError;
 use bun_str::{strings, ZStr};
 
+/// VTable surface for `bun.ast.E.String` (CYCLEBREAK b0: GENUINE upward dep on
+/// `bun_js_parser::E::String`). Low tier defines the interface; high tier
+/// (`bun_js_parser`) provides `impl EStringRef for E::String`.
+/// PERF(port): was inline concrete type — cold path (formatter/writer).
+pub trait EStringRef {
+    fn is_utf8(&self) -> bool;
+    fn slice(&mut self) -> &[u8];
+    fn slice16(&mut self) -> &[u16];
+}
+
 /// A growable byte buffer. In Zig this paired an `Allocator` with an
 /// `ArrayListUnmanaged(u8)`; in Rust the global mimalloc allocator is implicit,
 /// so this is a thin wrapper over `Vec<u8>`.
@@ -124,8 +134,9 @@ impl MutableString {
             return Ok(Box::<[u8]>::from(b"_".as_slice()));
         }
 
-        use bun_js_parser::lexer_tables as js_lexer_tables;
-        use bun_js_parser::lexer as js_lexer;
+        // TODO(b0): lexer / lexer_tables arrive from move-in (MOVE_DOWN bun_js_parser::{lexer,lexer_tables} → string)
+        use crate::lexer_tables as js_lexer_tables;
+        use crate::lexer as js_lexer;
 
         // Common case: no gap necessary. No allocation necessary.
         needs_gap = !js_lexer::is_identifier_start(cursor.c);
@@ -484,9 +495,9 @@ impl<'a> BufferedWriter<'a> {
     /// the same code path as TextEncoder
     pub fn write_string(
         &mut self,
-        bytes: &mut bun_js_parser::E::String,
+        bytes: &mut dyn EStringRef,
     ) -> Result<usize, AllocError> {
-        // TODO(port): `bun.ast.E.String` path — verify `bun_js_parser::E::String` is correct.
+        // CYCLEBREAK(b0): was `&mut bun_js_parser::E::String`; now vtable dispatch.
         if bytes.is_utf8() {
             return self.write_all(bytes.slice());
         }
@@ -538,8 +549,9 @@ impl<'a> BufferedWriter<'a> {
 
     pub fn write_html_attribute_value_string(
         &mut self,
-        str: &mut bun_js_parser::E::String,
+        str: &mut dyn EStringRef,
     ) -> Result<(), AllocError> {
+        // CYCLEBREAK(b0): was `&mut bun_js_parser::E::String`; now vtable dispatch.
         if str.is_utf8() {
             self.write_html_attribute_value(str.slice())?;
             return Ok(());

@@ -3,10 +3,10 @@
 
 use core::ffi::{c_char, c_int, c_void};
 
-// TODO(port): these basic Win32 typedefs come from Zig's `std.os.windows`; in Rust they
-// live in `bun_sys::windows` (see crate map). Phase B may relocate them into this crate
-// to avoid a sys→windows_sys→sys dep cycle.
-use bun_sys::windows::{
+// Basic Win32 typedefs are owned by this crate (tier-0 leaf). `bun_sys::windows`
+// re-exports them FROM here, not the other way around — see CYCLEBREAK.md.
+// TODO(b0): BY_HANDLE_FILE_INFORMATION, DWORD_PTR, HRESULT, SECURITY_ATTRIBUTES arrive from move-in
+use crate::{
     BOOL, BOOLEAN, BY_HANDLE_FILE_INFORMATION, COORD, DWORD, DWORD_PTR, FILETIME,
     FILE_INFO_BY_HANDLE_CLASS, HANDLE, HMODULE, HRESULT, LPCSTR, LPCWSTR, LPVOID, LPWSTR, PWSTR,
     SECURITY_ATTRIBUTES, UINT,
@@ -216,5 +216,5 @@ unsafe extern "C" {
 //   source:     src/windows_sys/externs.zig (194 lines)
 //   confidence: high
 //   todos:      1
-//   notes:      callconv(.winapi) → extern "system"; Win32 typedefs imported from bun_sys::windows (Phase B: verify no dep cycle)
+//   notes:      callconv(.winapi) → extern "system"; Win32 typedefs owned locally (crate root) — no upward dep on bun_sys
 // ──────────────────────────────────────────────────────────────────────────

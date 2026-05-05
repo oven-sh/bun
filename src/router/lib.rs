@@ -11,16 +11,53 @@ use bun_collections::{ArrayHashMap, MultiArrayList, StringHashMap};
 use bun_core::Output;
 use bun_logger as logger;
 use bun_paths::{self, PathBuffer, SEP, SEP_STR};
-use bun_resolver::dir_info::DirInfo;
-use bun_resolver::fs::{self as Fs, FileSystem};
+// MOVE_DOWN(b0): bun_resolver::fs → bun_sys::fs (move-in pass adds the module to bun_sys)
+use bun_sys::fs::{self as Fs, FileSystem};
 use bun_str::{strings, HashedString, PathString};
 use bun_sys::Fd;
 use bun_url::PathnameScanner;
 use bun_wyhash::hash as wyhash;
 
-use bun_bundler::options as Options;
 use bun_http_types::URLPath;
 use bun_schema::api;
+
+// ──────────────────────────────────────────────────────────────────────────
+// CYCLEBREAK Phase B-0 — cross-tier decoupling
+// ──────────────────────────────────────────────────────────────────────────
+
+// TODO(b0): RouteConfig arrives from move-in (was bun_bundler::options::RouteConfig).
+// Minimal placeholder so this crate is self-contained at T4; the move-in pass
+// replaces this with the full definition extracted from src/bundler/options.zig.
+#[derive(Clone, Default)]
+pub struct RouteConfig {
+    pub dir: Vec<u8>,
+    pub extensions: Vec<Box<[u8]>>,
+}
+
+// GENUINE(b0): bun_resolver::dir_info::DirInfo — erased via manual vtable (cold path).
+// PERF(port): was inline `&DirInfo`; route loading runs once at startup so the
+// indirect call is acceptable. bun_resolver provides the static `DirInfoVTable`
+// instance (move-in pass adds `bun_resolver::DIR_INFO_VTABLE`).
+pub struct DirInfoVTable {
+    /// Returns the cached directory listing for this DirInfo, if loaded.
+    pub get_entries_const: unsafe fn(*const ()) -> Option<*const Fs::DirEntry>,
+}
+
+#[derive(Copy, Clone)]
+pub struct DirInfoRef {
+    // SAFETY: erased *const bun_resolver::dir_info::DirInfo
+    pub owner: *const (),
+    pub vtable: &'static DirInfoVTable,
+}
+
+impl DirInfoRef {
+    #[inline]
+    pub fn get_entries_const(&self) -> Option<&Fs::DirEntry> {
+        // SAFETY: vtable upholds that the returned pointer (if Some) is valid for
+        // the lifetime of the erased DirInfo behind `owner`.
+        unsafe { (self.vtable.get_entries_const)(self.owner).map(|p| &*p) }
+    }
+}
 
 // const index_route_hash = @truncate(bun.hash("$$/index-route$$-!(@*@#&*%-901823098123"))
 // TODO(port): make this a true const once bun_wyhash::hash is const fn
@@ -45,13 +82,13 @@ pub struct Router<'a> {
     pub loaded_routes: bool,
     // allocator: dropped — global mimalloc
     pub fs: &'a FileSystem,
-    pub config: Options::RouteConfig,
+    pub config: RouteConfig,
 }
 
 impl<'a> Router<'a> {
     pub fn init(
         fs: &'a FileSystem,
-        config: Options::RouteConfig,
+        config: RouteConfig,
     ) -> Result<Router<'a>, bun_core::Error> {
         Ok(Router {
             dir: Fd::INVALID,
@@ -95,7 +132,7 @@ impl<'a> Router<'a> {
     pub fn load_routes<R: ResolverLike>(
         &mut self,
         log: &mut logger::Log,
-        root_dir_info: &DirInfo,
+        root_dir_info: DirInfoRef,
         resolver: &mut R,
         base_dir: &[u8],
     ) -> Result<(), bun_core::Error> {
@@ -200,7 +237,7 @@ pub struct Routes<'a> {
     pub index_id: Option<usize>,
 
     // allocator: dropped — global mimalloc
-    pub config: Options::RouteConfig,
+    pub config: RouteConfig,
 
     // This is passed here and propagated through Match
     // We put this here to avoid loading the FrameworkConfig for the client, on the server.
@@ -217,7 +254,7 @@ impl<'a> Default for Routes<'a> {
             static_: StringHashMap::new(),
             index: None,
             index_id: Some(0),
-            config: Options::RouteConfig::default(),
+            config: RouteConfig::default(),
             client_framework_enabled: false,
         }
     }
@@ -360,7 +397,7 @@ impl<'a> Routes<'a> {
 struct RouteLoader<'a> {
     // allocator: dropped — global mimalloc
     fs: &'a FileSystem,
-    config: Options::RouteConfig,
+    config: RouteConfig,
     route_dirname_len: u16,
 
     dedupe_dynamic: ArrayHashMap<u32, &'static [u8]>,
@@ -479,10 +516,10 @@ impl<'a> RouteLoader<'a> {
     }
 
     pub fn load_all<R: ResolverLike>(
-        config: Options::RouteConfig,
+        config: RouteConfig,
         log: &'a mut logger::Log,
         resolver: &mut R,
-        root_dir_info: &DirInfo,
+        root_dir_info: DirInfoRef,
         base_dir: &[u8],
     ) -> Routes<'a> {
         let mut route_dirname_len: u16 = 0;
@@ -593,7 +630,7 @@ impl<'a> RouteLoader<'a> {
     pub fn load<R: ResolverLike>(
         &mut self,
         resolver: &mut R,
-        root_dir_info: &DirInfo,
+        root_dir_info: DirInfoRef,
         base_dir: &[u8],
     ) {
         let fs = self.fs;
@@ -618,7 +655,7 @@ impl<'a> RouteLoader<'a> {
                         if let Some(_dir_info) =
                             resolver.read_dir_info_ignore_error(fs.abs(&abs_parts))
                         {
-                            let dir_info: &DirInfo = _dir_info;
+                            let dir_info: DirInfoRef = _dir_info;
 
                             self.load(resolver, dir_info, base_dir);
                         }
@@ -1178,7 +1215,7 @@ impl<'a> Match<'a> {
 
 pub trait ResolverLike {
     fn fs(&self) -> &FileSystem;
-    fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<&DirInfo>;
+    fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef>;
 }
 
 pub trait WatcherLike {

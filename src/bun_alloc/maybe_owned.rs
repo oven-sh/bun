@@ -39,9 +39,7 @@ impl<A> MaybeOwned<A> {
     /// Allocations are forwarded to a default-initialized `A`.
     pub fn init() -> Self {
         // Zig: `bun.memory.initDefault(Allocator)`
-        // TODO(port): confirm crate path for `bun.memory` (likely `bun_memory::init_default::<A>()`
-        // or simply `A::default()`).
-        Self::init_owned(bun_memory::init_default::<A>())
+        Self::init_owned(crate::memory::init_default::<A>())
     }
 
     /// Creates a `MaybeOwned` allocator that owns memory, and forwards to a specific

@@ -2,7 +2,8 @@
 //! so `options_types/Context.zig` (and `cli/cli.zig` `TestOptions`) can hold
 //! it without depending on `cli/`.
 
-use bun_sourcemap::coverage::Fraction;
+// TODO(b0): Fraction arrives from move-in (TYPE_ONLY bun_sourcemap::coverage::Fraction → options_types)
+use crate::Fraction;
 
 pub struct CodeCoverageOptions {
     pub skip_test_files: bool,

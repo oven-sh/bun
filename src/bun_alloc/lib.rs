@@ -6,7 +6,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU16, Ordering};
 
 
-use bun_threading::Mutex;
+use bun_core::Mutex;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports (thin — match Zig `pub const X = @import(...)` lines)
@@ -437,7 +437,7 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
     {
         self.mutex.lock();
         let _guard = scopeguard::guard(&mut self.mutex, |m| m.unlock());
-        // TODO(port): bun_threading::Mutex needs an RAII guard that does not borrow `&mut self`
+        // TODO(port): bun_core::Mutex needs an RAII guard that does not borrow `&mut self`
         // so the lock stays held across append_overflow (Zig: `defer self.mutex.unlock()`).
         // Do NOT release early — append_overflow mutates head/used and must run under the lock.
         // Phase A accepts the borrowck conflict here; correctness > compilation.
@@ -584,7 +584,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         self.mutex.lock();
         let _guard = scopeguard::guard((), |_| self.mutex.unlock());
         // PORT NOTE: reshaped for borrowck — guard captures self.mutex; Phase B should make
-        // bun_threading::Mutex return an RAII guard so this is `let _g = self.mutex.lock();`.
+        // bun_core::Mutex return an RAII guard so this is `let _g = self.mutex.lock();`.
         // TODO(port): borrowck conflict between guard closure and self.do_append; fix with RAII Mutex.
         self.do_append(value)
     }
@@ -597,8 +597,8 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         // TODO(port): RAII mutex guard (see `append`).
 
         thread_local! {
-            static LOWERCASE_BUF: core::cell::RefCell<bun_paths::PathBuffer> =
-                const { core::cell::RefCell::new(bun_paths::PathBuffer::ZEROED) };
+            static LOWERCASE_BUF: core::cell::RefCell<bun_core::PathBuffer> =
+                const { core::cell::RefCell::new(bun_core::PathBuffer::ZEROED) };
         }
         // TODO(port): can't return a borrow of thread_local across `with_borrow_mut`; copy into
         // backing_buf inside the closure then return that. Phase B reshape.
@@ -712,7 +712,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         denormalized_key: &[u8],
     ) -> core::result::Result<Result, AllocError> {
         let key = if REMOVE_TRAILING_SLASHES {
-            bun_str::strings::trim_right(denormalized_key, bun_paths::SEP_STR.as_bytes())
+            bun_core::strings::trim_right(denormalized_key, bun_core::SEP_STR.as_bytes())
         } else {
             denormalized_key
         };
@@ -721,6 +721,8 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         self.mutex.lock();
         // TODO(port): RAII mutex guard.
         // TODO(port): narrow error set — IndexMap::get_or_put can only OOM.
+        // TODO(b0-genuine): bun_collections (T1) — BSSMap needs HashMap; either hoist BSSMap to T≥1
+        // or move a minimal HashMap into bun_core.
         match self.index.entry(_key) {
             bun_collections::hash_map::Entry::Occupied(e) => {
                 let v = *e.get();
@@ -749,7 +751,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
 
     pub fn get(&mut self, denormalized_key: &[u8]) -> Option<&mut ValueType> {
         let key = if REMOVE_TRAILING_SLASHES {
-            bun_str::strings::trim_right(denormalized_key, bun_paths::SEP_STR.as_bytes())
+            bun_core::strings::trim_right(denormalized_key, bun_core::SEP_STR.as_bytes())
         } else {
             denormalized_key
         };
@@ -827,7 +829,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     pub fn remove(&mut self, denormalized_key: &[u8]) -> bool {
         self.mutex.lock();
         let key = if REMOVE_TRAILING_SLASHES {
-            bun_str::strings::trim_right(denormalized_key, bun_paths::SEP_STR.as_bytes())
+            bun_core::strings::trim_right(denormalized_key, bun_core::SEP_STR.as_bytes())
         } else {
             denormalized_key
         };
@@ -952,7 +954,7 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
         }
 
         let slice = if REMOVE_TRAILING_SLASHES {
-            bun_str::strings::trim_right(slice, b"/")
+            bun_core::strings::trim_right(slice, b"/")
         } else {
             slice
         };
@@ -1118,5 +1120,5 @@ pub mod fallback;  // ./fallback.zig
 //   source:     src/bun_alloc/bun_alloc.zig (937 lines)
 //   confidence: low
 //   todos:      32
-//   notes:      generic_const_exprs + per-monomorphization statics blocked on stable Rust; BSSMap key_list_overflow calls non-existent OverflowList API in upstream Zig (likely dead code); bun_threading::Mutex needs RAII guard (BSSList::append intentionally won't borrowck until then); BSSList.head dual-semantics (sibling-ref vs heap) needs enum split.
+//   notes:      generic_const_exprs + per-monomorphization statics blocked on stable Rust; BSSMap key_list_overflow calls non-existent OverflowList API in upstream Zig (likely dead code); bun_core::Mutex needs RAII guard (BSSList::append intentionally won't borrowck until then); BSSList.head dual-semantics (sibling-ref vs heap) needs enum split.
 // ──────────────────────────────────────────────────────────────────────────

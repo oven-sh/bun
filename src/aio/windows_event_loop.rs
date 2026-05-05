@@ -3,12 +3,12 @@ use core::ptr;
 
 use bun_collections::HiveArray;
 use bun_core::Output;
-use bun_jsc::{self as jsc, AbstractVM, EventLoop, VirtualMachine};
 use bun_sys::Fd;
 use bun_sys::windows::libuv as uv;
-use bun_uws::WindowsLoop;
+use bun_uws_sys::WindowsLoop;
 
 use crate::posix_event_loop as posix;
+use crate::posix_event_loop::{get_vm_ctx, AllocatorType, EventLoopCtx, OpaqueCallback};
 
 bun_output::declare_scope!(KeepAlive, visible);
 bun_output::declare_scope!(FilePoll, visible);
@@ -37,7 +37,7 @@ impl KeepAlive {
     /// Make calling ref() on this poll into a no-op.
     pub fn disable(&mut self) {
         if self.status == Status::Active {
-            self.unref(VirtualMachine::get());
+            self.unref(get_vm_ctx(AllocatorType::Js));
         }
 
         self.status = Status::Done;
@@ -68,9 +68,7 @@ impl KeepAlive {
     }
 
     /// Prevent a poll from keeping the process alive.
-    // TODO(port): Zig branches on `comptime @TypeOf == EventLoopHandle` vs AbstractVM wrap;
-    // in Rust both impl AbstractVM so the branch collapses.
-    pub fn unref(&mut self, event_loop_ctx: impl AbstractVM) {
+    pub fn unref(&mut self, event_loop_ctx: EventLoopCtx) {
         if self.status != Status::Active {
             return;
         }
@@ -79,38 +77,35 @@ impl KeepAlive {
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
-    pub fn unref_concurrently(&mut self, vm: &mut VirtualMachine) {
-        // _ = vm;
+    pub fn unref_concurrently(&mut self, vm: EventLoopCtx) {
         if self.status != Status::Active {
             return;
         }
         self.status = Status::Inactive;
-        vm.event_loop.unref_concurrently();
+        vm.unref_concurrently();
     }
 
     /// Prevent a poll from keeping the process alive on the next tick.
-    pub fn unref_on_next_tick(&mut self, vm: &mut VirtualMachine) {
+    pub fn unref_on_next_tick(&mut self, vm: EventLoopCtx) {
         if self.status != Status::Active {
             return;
         }
         self.status = Status::Inactive;
-        vm.event_loop_handle.as_mut().unwrap().dec();
+        vm.platform_event_loop().dec();
     }
 
     /// From another thread, prevent a poll from keeping the process alive on the next tick.
-    pub fn unref_on_next_tick_concurrently(&mut self, vm: &mut VirtualMachine) {
+    pub fn unref_on_next_tick_concurrently(&mut self, vm: EventLoopCtx) {
         if self.status != Status::Active {
             return;
         }
         self.status = Status::Inactive;
         // TODO: https://github.com/oven-sh/bun/pull/4410#discussion_r1317326194
-        vm.event_loop_handle.as_mut().unwrap().dec();
+        vm.platform_event_loop().dec();
     }
 
     /// Allow a poll to keep the process alive.
-    // TODO(port): Zig branches on `comptime @TypeOf == EventLoopHandle` vs AbstractVM wrap;
-    // in Rust both impl AbstractVM so the branch collapses.
-    pub fn ref_(&mut self, event_loop_ctx: impl AbstractVM) {
+    pub fn ref_(&mut self, event_loop_ctx: EventLoopCtx) {
         if self.status != Status::Inactive {
             return;
         }
@@ -119,20 +114,20 @@ impl KeepAlive {
     }
 
     /// Allow a poll to keep the process alive.
-    pub fn ref_concurrently(&mut self, vm: &mut VirtualMachine) {
+    pub fn ref_concurrently(&mut self, vm: EventLoopCtx) {
         if self.status != Status::Inactive {
             return;
         }
         self.status = Status::Active;
-        vm.event_loop.ref_concurrently();
+        vm.ref_concurrently();
     }
 
-    pub fn ref_concurrently_from_event_loop(&mut self, loop_: &mut EventLoop) {
-        self.ref_concurrently(loop_.virtual_machine);
+    pub fn ref_concurrently_from_event_loop(&mut self, loop_: EventLoopCtx) {
+        self.ref_concurrently(loop_);
     }
 
-    pub fn unref_concurrently_from_event_loop(&mut self, loop_: &mut EventLoop) {
-        self.unref_concurrently(loop_.virtual_machine);
+    pub fn unref_concurrently_from_event_loop(&mut self, loop_: EventLoopCtx) {
+        self.unref_concurrently(loop_);
     }
 }
 
@@ -176,8 +171,7 @@ impl FilePoll {
 
     /// Make calling ref() on this poll into a no-op.
     // pub fn disableKeepingProcessAlive(this: *FilePoll, vm: *jsc.VirtualMachine) void {
-    pub fn disable_keeping_process_alive(&mut self, abstract_vm: impl AbstractVM) {
-        let vm = abstract_vm;
+    pub fn disable_keeping_process_alive(&mut self, vm: EventLoopCtx) {
         if self.flags.contains(Flags::Closed) {
             return;
         }
@@ -188,22 +182,22 @@ impl FilePoll {
         // vm.event_loop_handle.?.active_handles -= @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
     }
 
-    pub fn init<T>(
-        vm: &mut VirtualMachine,
-        fd: Fd,
-        flags: FlagsStruct,
-        owner: &mut T,
-    ) -> *mut FilePoll {
-        Self::init_with_owner(vm, fd, flags, Owner::init(owner))
-    }
-
-    pub fn init_with_owner(
-        vm: &mut VirtualMachine,
+    pub fn init(
+        vm: EventLoopCtx,
         fd: Fd,
         flags: FlagsStruct,
         owner: Owner,
     ) -> *mut FilePoll {
-        let poll = vm.rare_data().file_polls(vm).get();
+        Self::init_with_owner(vm, fd, flags, owner)
+    }
+
+    pub fn init_with_owner(
+        vm: EventLoopCtx,
+        fd: Fd,
+        flags: FlagsStruct,
+        owner: Owner,
+    ) -> *mut FilePoll {
+        let poll = vm.file_polls().get();
         // SAFETY: `get()` returns a valid uninitialized slot from the HiveArray pool.
         let poll = unsafe { &mut *poll };
         poll.fd = fd;
@@ -217,8 +211,7 @@ impl FilePoll {
     // PORT NOTE: not `impl Drop` — FilePoll lives in a HiveArray pool slot, not a Box;
     // teardown returns the slot to the pool via `Store::put`.
     pub fn deinit(&mut self) {
-        let vm = VirtualMachine::get();
-        self.deinit_with_vm(vm);
+        self.deinit_with_vm(get_vm_ctx(AllocatorType::Js));
     }
 
     #[inline]
@@ -245,7 +238,7 @@ impl FilePoll {
 
     fn deinit_possibly_defer(
         &mut self,
-        vm: &mut VirtualMachine,
+        vm: EventLoopCtx,
         loop_: &mut Loop,
         polls: &mut Store,
     ) {
@@ -287,16 +280,13 @@ impl FilePoll {
         readable
     }
 
-    pub fn deinit_with_vm(&mut self, vm: &mut VirtualMachine) {
-        // PORT NOTE: reshaped for borrowck — capture both mut borrows from vm before call.
-        // TODO(port): vm.rare_data().file_polls(vm) re-borrows vm; may need raw-ptr split.
-        let loop_ = vm.event_loop_handle.as_mut().unwrap();
-        let polls = vm.rare_data().file_polls(vm);
+    pub fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
+        let loop_ = vm.platform_event_loop();
+        let polls = vm.file_polls();
         self.deinit_possibly_defer(vm, loop_, polls);
     }
 
-    pub fn enable_keeping_process_alive(&mut self, abstract_vm: impl AbstractVM) {
-        let vm = abstract_vm;
+    pub fn enable_keeping_process_alive(&mut self, vm: EventLoopCtx) {
         if !self.flags.contains(Flags::Closed) {
             return;
         }
@@ -343,7 +333,7 @@ impl FilePoll {
         self.flags.contains(Flags::HasIncrementedPollCount)
     }
 
-    pub fn on_ended(&mut self, event_loop_ctx: impl AbstractVM) {
+    pub fn on_ended(&mut self, event_loop_ctx: EventLoopCtx) {
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.insert(Flags::Closed);
         // this.deactivate(vm.event_loop_handle.?);
@@ -351,8 +341,7 @@ impl FilePoll {
     }
 
     /// Prevent a poll from keeping the process alive.
-    pub fn unref(&mut self, abstract_vm: impl AbstractVM) {
-        let vm = abstract_vm;
+    pub fn unref(&mut self, vm: EventLoopCtx) {
         if !self.can_unref() {
             return;
         }
@@ -363,7 +352,7 @@ impl FilePoll {
 
     /// Allow a poll to keep the process alive.
     // pub fn ref(this: *FilePoll, vm: *jsc.VirtualMachine) void {
-    pub fn ref_(&mut self, event_loop_ctx: impl AbstractVM) {
+    pub fn ref_(&mut self, event_loop_ctx: EventLoopCtx) {
         if self.can_ref() {
             return;
         }
@@ -406,7 +395,7 @@ impl Store {
         self.pending_free_tail = ptr::null_mut();
     }
 
-    pub fn put(&mut self, poll: *mut FilePoll, vm: &mut VirtualMachine, ever_registered: bool) {
+    pub fn put(&mut self, poll: *mut FilePoll, vm: EventLoopCtx, ever_registered: bool) {
         if !ever_registered {
             self.hive.put(poll);
             return;
@@ -431,17 +420,15 @@ impl Store {
         poll_ref.flags.insert(Flags::IgnoreUpdates);
         self.pending_free_tail = poll;
 
-        // TODO(port): jsc.OpaqueWrap(Store, processDeferredFrees) — generate extern "C" thunk.
-        let callback: jsc::OpaqueCallback = Self::process_deferred_frees_thunk;
+        let callback: OpaqueCallback = Self::process_deferred_frees_thunk;
         debug_assert!(
-            vm.after_event_loop_callback.is_none()
-                || vm.after_event_loop_callback == Some(callback)
+            vm.after_event_loop_callback().is_none()
+                || vm.after_event_loop_callback() == Some(callback)
         );
-        vm.after_event_loop_callback = Some(callback);
-        vm.after_event_loop_callback_ctx = self as *mut Store as *mut c_void;
+        vm.set_after_event_loop_callback(Some(callback), self as *mut Store as *mut c_void);
     }
 
-    extern "C" fn process_deferred_frees_thunk(ctx: *mut c_void) {
+    unsafe extern "C" fn process_deferred_frees_thunk(ctx: *mut c_void) {
         // SAFETY: ctx was set to `self as *mut Store` in `put` above.
         let this = unsafe { &mut *(ctx as *mut Store) };
         this.process_deferred_frees();

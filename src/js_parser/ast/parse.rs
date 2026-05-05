@@ -1465,13 +1465,13 @@ impl<
                             if type_attr == b"macro" {
                                 path.is_macro = true;
                             } else if let Some(loader) =
-                                bun_bundler::options::Loader::from_string(type_attr)
+                                bun_options_types::Loader::from_string(type_attr)
                             {
                                 path.loader = Some(loader);
-                                if loader == bun_bundler::options::Loader::Sqlite
+                                if loader == bun_options_types::Loader::Sqlite
                                     && has_seen_embed_true
                                 {
-                                    path.loader = Some(bun_bundler::options::Loader::SqliteEmbedded);
+                                    path.loader = Some(bun_options_types::Loader::SqliteEmbedded);
                                 }
                             } else {
                                 // unknown loader; consider erroring
@@ -1481,10 +1481,10 @@ impl<
                             if string_literal_text == b"true" {
                                 has_seen_embed_true = true;
                                 if path.loader.is_some()
-                                    && path.loader == Some(bun_bundler::options::Loader::Sqlite)
+                                    && path.loader == Some(bun_options_types::Loader::Sqlite)
                                 {
                                     path.loader =
-                                        Some(bun_bundler::options::Loader::SqliteEmbedded);
+                                        Some(bun_options_types::Loader::SqliteEmbedded);
                                 }
                             }
                         }

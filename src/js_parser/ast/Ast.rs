@@ -82,7 +82,7 @@ pub struct Ast {
     pub redirect_import_record_index: Option<u32>,
 
     /// Only populated when bundling
-    pub target: bun_bundler::options::Target,
+    pub target: bun_options_types::Target,
     // const_values: ConstValuesMap,
     pub ts_enums: TsEnumsMap,
 
@@ -133,7 +133,7 @@ impl Default for Ast {
             top_level_symbols_to_parts: Default::default(),
             commonjs_named_exports: Default::default(),
             redirect_import_record_index: None,
-            target: bun_bundler::options::Target::Browser,
+            target: bun_options_types::Target::Browser,
             ts_enums: Default::default(),
             has_commonjs_export_names: false,
             has_import_meta: false,

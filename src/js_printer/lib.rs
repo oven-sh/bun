@@ -9,8 +9,30 @@ use bun_str::strings::{CodepointIterator, Encoding};
 use bun_logger as logger;
 use bun_sourcemap as SourceMap;
 use bun_options_types::{ImportRecord, ImportKind};
-use bun_bundler::options;
-use bun_bundler::analyze_transpiled_module;
+// TYPE_ONLY: bun_bundler::options::{Target, ModuleType, Format} → bun_options_types
+use bun_options_types as options;
+// TODO(b0): `analyze_transpiled_module` module arrives from move-in (was bun_bundler::analyze_transpiled_module).
+// Once landed, `pub mod analyze_transpiled_module;` here resolves all `analyze_transpiled_module::*` paths below.
+// TODO(b0): `MangledProps` type arrives from move-in (was bun_bundler::MangledProps).
+
+/// Erased handle to the high-tier `RuntimeTranspilerCache` (lives in `bun_jsc`, T6).
+/// Cold path — called at most once per print to persist output. The high tier provides
+/// a `&'static RuntimeTranspilerCacheVTable` instance; see CYCLEBREAK.md §Dispatch.
+// PERF(port): was direct `&mut bun_jsc::RuntimeTranspilerCache` method call.
+pub struct RuntimeTranspilerCacheVTable {
+    pub put: unsafe fn(owner: *mut (), output: &[u8], source_map: &[u8], module_info: &[u8]),
+}
+pub struct RuntimeTranspilerCacheRef {
+    pub owner: *mut (),
+    pub vtable: &'static RuntimeTranspilerCacheVTable,
+}
+impl RuntimeTranspilerCacheRef {
+    #[inline]
+    pub fn put(&self, output: &[u8], source_map: &[u8], module_info: &[u8]) {
+        // SAFETY: erased bun_jsc::RuntimeTranspilerCache; vtable provided by bun_runtime/bun_jsc.
+        unsafe { (self.vtable.put)(self.owner, output, source_map, module_info) }
+    }
+}
 
 use bun_js_parser as js_ast;
 use bun_js_parser::{Ast, B, Binding, E, Expr, G, Ref, S, Stmt, Symbol, Op};
@@ -412,7 +434,7 @@ pub struct Options<'a> {
     pub css_import_behavior: api::CssInJsBehavior,
     pub target: options::Target,
 
-    pub runtime_transpiler_cache: Option<&'a mut bun_jsc::RuntimeTranspilerCache>,
+    pub runtime_transpiler_cache: Option<RuntimeTranspilerCacheRef>,
     pub module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
     pub input_files_for_dev_server: Option<&'a [logger::Source]>,
 
@@ -446,7 +468,7 @@ pub struct Options<'a> {
     // us do binary search on to figure out what line a given AST node came from
     pub line_offset_tables: Option<SourceMap::LineOffsetTable::List>,
 
-    pub mangled_props: Option<&'a bun_bundler::MangledProps>,
+    pub mangled_props: Option<&'a crate::MangledProps>,
 }
 
 // Default indentation is 2 spaces

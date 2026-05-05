@@ -1,7 +1,7 @@
-// TODO(port): std.posix.{mode_t, E, S} — mapping to bun_sys::posix re-exports; verify exact path in Phase B
-pub use bun_sys::posix::mode_t as Mode;
-pub use bun_sys::posix::E;
-pub use bun_sys::posix::S;
+// CYCLEBREAK: bun_sys::posix MOVE_DOWN → errno (this crate). Move-in pass lands `crate::posix`.
+pub use crate::posix::mode_t as Mode;
+pub use crate::posix::E;
+pub use crate::posix::S;
 
 #[repr(u16)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr)]
@@ -137,7 +137,7 @@ impl SystemErrno {
 #[allow(non_upper_case_globals)]
 pub mod uv_e {
     use super::SystemErrno;
-    use bun_sys::windows::libuv;
+    use windows_sys::libuv;
 
     // PORT NOTE: Zig `@"2BIG"` (raw ident starting with digit) — Rust idents
     // cannot start with a digit; prefixed with underscore.
@@ -227,9 +227,9 @@ pub use uv_e as UV_E;
 pub fn get_errno(rc: isize) -> E {
     let is_neg1 = rc == -1;
     if is_neg1 {
-        // TODO(port): std.c._errno().* — verify bun_sys exposes thread-local errno read
+        // CYCLEBREAK: bun_sys::c::_errno MOVE_DOWN → crate::posix (move-in pass)
         // SAFETY: reading libc thread-local errno; always valid on the current thread
-        return E::from_raw(unsafe { *bun_sys::c::_errno() });
+        return E::from_raw(unsafe { crate::posix::errno() });
     }
     E::SUCCESS
 }

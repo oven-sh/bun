@@ -908,7 +908,8 @@ impl<'a> Resolver<'a> {
         let _crash_guard = bun_crash_handler::set_current_action_resolver(source_dir, import_path, kind);
 
         #[cfg(debug_assertions)]
-        if bun_cli::debug_flags::has_resolve_breakpoint(import_path) {
+        // MOVE_DOWN(b0): debug_flags relocated bun_cli → bun_core
+        if bun_core::debug_flags::has_resolve_breakpoint(import_path) {
             bun_core::Output::debug(format_args!(
                 "Resolving <green>{}<r> from <blue>{}<r>",
                 bstr::BStr::new(import_path),
@@ -958,10 +959,11 @@ impl<'a> Resolver<'a> {
         if self.opts.mark_builtins_as_external {
             if import_path.starts_with(b"node:")
                 || import_path.starts_with(b"bun:")
-                || bun_jsc::module_loader::HardcodedModule::Alias::has(
+                // TYPE_ONLY(b0): HardcodedModule/AliasOptions relocated bun_jsc::module_loader → bun_options_types (T3)
+                || bun_options_types::module_loader::HardcodedModule::Alias::has(
                     import_path,
                     self.opts.target,
-                    bun_jsc::module_loader::AliasOptions {
+                    bun_options_types::module_loader::AliasOptions {
                         rewrite_jest_for_tests: self.opts.rewrite_jest_for_tests,
                     },
                 )
@@ -1254,7 +1256,8 @@ impl<'a> Resolver<'a> {
         if let Some(f) = self.opts.framework.as_ref() {
             if let Some(mod_) = f.built_in_modules.get(import_path) {
                 match mod_ {
-                    bun_bake::framework::BuiltInModule::Code(_) => {
+                    // TYPE_ONLY(b0): BuiltInModule relocated bun_bake::framework → bun_options_types (T3)
+                    bun_options_types::BuiltInModule::Code(_) => {
                         return Ok(Result {
                             import_kind: kind,
                             path_pair: PathPair { primary: Fs::Path::init_with_namespace(import_path, b"node"), secondary: None },
@@ -1264,7 +1267,7 @@ impl<'a> Resolver<'a> {
                             ..Default::default()
                         });
                     }
-                    bun_bake::framework::BuiltInModule::Import(path) => {
+                    bun_options_types::BuiltInModule::Import(path) => {
                         let top = self.fs.top_level_dir;
                         return self.resolve(top, path, ast::ImportKind::EntryPointBuild);
                     }
@@ -1618,7 +1621,7 @@ impl<'a> Resolver<'a> {
 
                 if had_node_prefix {
                     // Module resolution fails automatically for unknown node builtins
-                    if !bun_jsc::module_loader::HardcodedModule::Alias::has(
+                    if !bun_options_types::module_loader::HardcodedModule::Alias::has(
                         import_path_without_node_prefix,
                         options::Target::Node,
                         Default::default(),
@@ -3861,7 +3864,7 @@ impl<'a> Resolver<'a> {
             //     }
             //
             if self.opts.mark_builtins_as_external || self.opts.target.is_bun() {
-                if let Some(alias) = bun_jsc::module_loader::HardcodedModule::Alias::get(esm_resolution.path, self.opts.target, Default::default()) {
+                if let Some(alias) = bun_options_types::module_loader::HardcodedModule::Alias::get(esm_resolution.path, self.opts.target, Default::default()) {
                     return MatchResultUnion::Success(MatchResult {
                         path_pair: PathPair { primary: Fs::Path::init(alias.path), secondary: None },
                         is_external: true,

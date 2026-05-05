@@ -9,8 +9,30 @@ use bun_schema::api;
 use bun_str::{self as bun_string, strings};
 use bun_wyhash::hash as wyhash;
 
-// TODO(port): ParamsList = router::Param::List — confirm exact path in bun_router
-use bun_router::param::List as ParamsList;
+// TYPE_ONLY(b0): router::Param::List moved down into url (CYCLEBREAK.md).
+// bun_router (T4) now re-imports this; move-in pass reconciles the canonical def.
+pub mod route_param {
+    use super::MultiArrayList;
+
+    // TODO(port): lifetime — name/value borrow from route name + request path
+    #[derive(Clone, Copy)]
+    pub struct Param {
+        pub name: &'static [u8],
+        pub value: &'static [u8],
+    }
+
+    pub type List = MultiArrayList<Param>;
+}
+use route_param::List as ParamsList;
+
+// MOVE_DOWN(b0): bun_jsc::URL (WHATWG/WTF::URL FFI shim) moves into this crate.
+// TODO(b0): `whatwg` module body arrives from move-in pass.
+pub mod whatwg {
+    extern "C" {
+        // placeholder — real signature lands with move-in of bun_jsc::URL
+        pub fn href_from_string(input: &super::bun_string::String) -> super::bun_string::String;
+    }
+}
 
 bun_output::declare_scope!(URL, visible);
 
@@ -102,7 +124,9 @@ impl<'a> URL<'a> {
     // owned slice (`href.toOwnedSlice`). Caller is responsible for freeing href.
     // Returning URL<'static> here leaks; Phase B should decide on an owning wrapper.
     pub fn from_string(input: &bun_string::String) -> Result<URL<'static>, bun_core::Error> {
-        let href = bun_jsc::URL::href_from_string(input);
+        // MOVE_DOWN(b0): bun_jsc::URL::href_from_string moves into bun_url (CYCLEBREAK.md).
+        // TODO(b0): `whatwg::href_from_string` arrives from move-in (extern "C" WTF::URL shim).
+        let href = whatwg::href_from_string(input);
         if href.tag() == bun_string::Tag::Dead {
             return Err(bun_core::err!("InvalidURL"));
         }
@@ -1101,7 +1125,10 @@ impl PercentEncoding {
     }
 }
 
-pub use bun_runtime::webcore::form_data::FormData;
+// TODO(b0): FormData re-export removed — bun_runtime (T6) is upward.
+// Not listed in CYCLEBREAK §url; callers should import from bun_runtime::webcore::form_data
+// directly (or move-in pass relocates FormData here if it belongs at T2).
+// pub use bun_runtime::webcore::form_data::FormData;
 
 pub struct CombinedScanner<'a> {
     pub query: Scanner<'a>,

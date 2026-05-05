@@ -2,8 +2,8 @@ use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr;
 
-use bun_str::ZStr;
-use bun_http::Method;
+use bun_core::ZStr;
+use bun_http_types::Method;
 
 use crate::{
     us_socket_t, uws_res, ListenSocket as UwsListenSocket, Opcode, Request, SocketHandler,

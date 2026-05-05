@@ -40,7 +40,8 @@ use crate::{
     is_eval_or_arguments, loc_module_scope, options, renamer, statement_cares_about_scope,
 };
 use crate::repl_transforms;
-use bun_bundler::defines::{Define, DefineData};
+// TODO(b0): defines arrives from move-in (was bun_bundler::defines → js_parser)
+use crate::defines::{Define, DefineData};
 
 // Type aliases matching the Zig `const List = std.ArrayListUnmanaged;` etc.
 // In this AST crate, lists are arena-backed.

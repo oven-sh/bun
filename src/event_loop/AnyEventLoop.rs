@@ -1,15 +1,33 @@
 use bun_aio::FilePoll;
-use bun_jsc::{AnyTaskWithExtraContext, EventLoop, MiniEventLoop};
 use bun_uws::Loop as UwsLoop;
+
+use crate::{AnyTaskWithExtraContext, MiniEventLoop};
+
+/// Manual vtable for the JS-event-loop arm of `AnyEventLoop` (cold dispatch —
+/// see PORTING.md §Dispatch). `bun_runtime` provides the static instance that
+/// casts `owner` back to `*mut jsc::EventLoop` and forwards to the real methods.
+// PERF(port): was inline switch
+pub struct JsEventLoopVTable {
+    pub iteration_number: unsafe fn(*mut ()) -> u64,
+    pub file_polls: unsafe fn(*mut ()) -> *mut bun_aio::file_poll::Store,
+    pub put_file_poll: unsafe fn(*mut (), *mut FilePoll, was_ever_registered: bool),
+    pub uws_loop: unsafe fn(*mut ()) -> *mut UwsLoop,
+    pub pipe_read_buffer: unsafe fn(*mut ()) -> *mut [u8],
+    pub tick: unsafe fn(*mut ()),
+    pub auto_tick: unsafe fn(*mut ()),
+    pub auto_tick_active: unsafe fn(*mut ()),
+}
 
 /// Useful for code that may need an event loop and could be used from either JavaScript or directly without JavaScript.
 /// Unlike jsc.EventLoopHandle, this owns the event loop when it's not a JavaScript event loop.
-// PORT NOTE: Zig `union(EventLoopKind)` — variant order/discriminant must match `bun_jsc::EventLoopKind`.
+// PORT NOTE: Zig `union(EventLoopKind)` — variant order/discriminant must match `crate::EventLoopKind`.
 pub enum AnyEventLoop<'a> {
-    // TODO(port): LIFETIMES.tsv classifies as `&'a EventLoop` (BORROW_PARAM); several methods
-    // (tick/auto_tick) mutate the loop — Phase B may need `&'a mut EventLoop` or interior mutability.
-    Js(&'a EventLoop),
-    Mini(MiniEventLoop),
+    Js {
+        // SAFETY: erased `*mut jsc::EventLoop` — runtime constructs this variant.
+        owner: *mut (),
+        vtable: &'static JsEventLoopVTable,
+    },
+    Mini(MiniEventLoop<'a>),
 }
 
 // PORT NOTE: Zig had `pub const Task = AnyTaskWithExtraContext;` as an associated decl.
@@ -19,9 +37,10 @@ pub type Task = AnyTaskWithExtraContext;
 impl<'a> AnyEventLoop<'a> {
     pub fn iteration_number(&self) -> u64 {
         match self {
-            AnyEventLoop::Js(js) => js.usockets_loop().iteration_number(),
-            // TODO(port): `loop` is a Rust keyword; assumes MiniEventLoop port names the field `r#loop`.
-            AnyEventLoop::Mini(mini) => mini.r#loop.iteration_number(),
+            // SAFETY: vtable populated by runtime; owner is the erased EventLoop ptr.
+            AnyEventLoop::Js { owner, vtable } => unsafe { (vtable.iteration_number)(*owner) },
+            // TODO(port): `loop` is a Rust keyword; assumes MiniEventLoop port names the field `loop_`.
+            AnyEventLoop::Mini(mini) => mini.loop_.iteration_number(),
         }
     }
 
@@ -31,7 +50,8 @@ impl<'a> AnyEventLoop<'a> {
 
     pub fn file_polls(&mut self) -> &mut bun_aio::file_poll::Store {
         match self {
-            AnyEventLoop::Js(js) => js.virtual_machine.rare_data().file_polls(js.virtual_machine),
+            // SAFETY: vtable contract — returns a valid &mut Store owned by the VM.
+            AnyEventLoop::Js { owner, vtable } => unsafe { &mut *(vtable.file_polls)(*owner) },
             AnyEventLoop::Mini(mini) => mini.file_polls(),
         }
     }
@@ -40,11 +60,9 @@ impl<'a> AnyEventLoop<'a> {
         // TODO(port): `poll.flags.contains(.was_ever_registered)` — exact flag-set type/path TBD in bun_aio.
         let was_ever_registered = poll.flags.contains(bun_aio::file_poll::Flag::WasEverRegistered);
         match self {
-            AnyEventLoop::Js(js) => js
-                .virtual_machine
-                .rare_data()
-                .file_polls(js.virtual_machine)
-                .put(poll, js.virtual_machine, was_ever_registered),
+            AnyEventLoop::Js { owner, vtable } => unsafe {
+                (vtable.put_file_poll)(*owner, poll, was_ever_registered)
+            },
             AnyEventLoop::Mini(mini) => {
                 // PORT NOTE: reshaped for borrowck — Zig passed `&this.mini` while also holding
                 // `this.mini.filePolls()` mutably; Phase B may need to split the borrow.
@@ -57,14 +75,16 @@ impl<'a> AnyEventLoop<'a> {
     // PORT NOTE: renamed via raw identifier — `loop` is a Rust keyword.
     pub fn r#loop(&mut self) -> &mut UwsLoop {
         match self {
-            AnyEventLoop::Js(js) => js.virtual_machine.uws_loop(),
-            AnyEventLoop::Mini(mini) => mini.r#loop,
+            // SAFETY: vtable contract — returns a valid &mut UwsLoop owned by the VM.
+            AnyEventLoop::Js { owner, vtable } => unsafe { &mut *(vtable.uws_loop)(*owner) },
+            AnyEventLoop::Mini(mini) => mini.loop_,
         }
     }
 
     pub fn pipe_read_buffer(&mut self) -> &mut [u8] {
         match self {
-            AnyEventLoop::Js(js) => js.pipe_read_buffer(),
+            // SAFETY: vtable contract — returns a valid &mut [u8] owned by the VM.
+            AnyEventLoop::Js { owner, vtable } => unsafe { &mut *(vtable.pipe_read_buffer)(*owner) },
             AnyEventLoop::Mini(mini) => mini.pipe_read_buffer(),
         }
     }
@@ -76,10 +96,13 @@ impl<'a> AnyEventLoop<'a> {
 
     pub fn tick<C: Copy>(&mut self, context: C, is_done: fn(C) -> bool) {
         match self {
-            AnyEventLoop::Js(js) => {
+            AnyEventLoop::Js { owner, vtable } => {
                 while !is_done(context) {
-                    js.tick();
-                    js.auto_tick();
+                    // SAFETY: vtable contract.
+                    unsafe {
+                        (vtable.tick)(*owner);
+                        (vtable.auto_tick)(*owner);
+                    }
                 }
             }
             AnyEventLoop::Mini(mini) => {
@@ -93,10 +116,13 @@ impl<'a> AnyEventLoop<'a> {
 
     pub fn tick_once<C>(&mut self, context: C) {
         match self {
-            AnyEventLoop::Js(js) => {
+            AnyEventLoop::Js { owner, vtable } => {
                 let _ = context;
-                js.tick();
-                js.auto_tick_active();
+                // SAFETY: vtable contract.
+                unsafe {
+                    (vtable.tick)(*owner);
+                    (vtable.auto_tick_active)(*owner);
+                }
             }
             AnyEventLoop::Mini(mini) => {
                 mini.tick_without_idle(context);
@@ -113,7 +139,7 @@ impl<'a> AnyEventLoop<'a> {
         // the caller passes `&mut ctx.<field>` directly. See MiniEventLoop port.
     ) {
         match self {
-            AnyEventLoop::Js(_js) => {
+            AnyEventLoop::Js { .. } => {
                 bun_core::todo_panic!("AnyEventLoop.enqueueTaskConcurrent");
                 // const TaskType = AnyTask.New(Context, Callback);
                 // @field(ctx, field) = TaskType.init(ctx);

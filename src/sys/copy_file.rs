@@ -445,8 +445,8 @@ pub fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> crate::Res
     }
 }
 
-// TODO(port): `bun.analytics.GenerateHeader.GeneratePlatform` crate path
-use bun_analytics::generate_header::GeneratePlatform as Platform;
+// TODO(b0): GeneratePlatform arrives from move-in (CYCLEBREAK MOVE_DOWN generate_header → sys).
+use crate::generate_header::GeneratePlatform as Platform;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

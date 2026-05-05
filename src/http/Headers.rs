@@ -3,10 +3,81 @@ use bun_picohttp as picohttp;
 use bun_schema::api;
 use bun_str::strings;
 
-use bun_runtime::webcore::blob;
-use bun_runtime::webcore::FetchHeaders;
-// TODO(port): verify module path for the FetchHeaders fast-has header-name enum
-use bun_runtime::webcore::fetch_headers::HeaderName;
+// TODO(b0): HeaderName arrives in bun_http_types via move-in (TYPE_ONLY from
+// bun_runtime::webcore::fetch_headers::HeaderName)
+use bun_http_types::HeaderName;
+
+// ──────────────────────── cycle-break vtables ────────────────────────
+// `FetchHeaders` and `blob::Any` live in bun_runtime (T6); http is T5. The
+// only consumer here is `Headers::from()`, called by higher-tier code that
+// owns the concrete types. Per CYCLEBREAK §Dispatch (cold path), expose a
+// manual vtable; bun_runtime provides the static instances.
+// PERF(port): was inline switch / direct call.
+
+pub struct FetchHeadersVTable {
+    pub count: unsafe fn(owner: *const (), header_count: &mut u32, buf_len: &mut u32),
+    pub fast_has: unsafe fn(owner: *const (), name: HeaderName) -> bool,
+    pub copy_to: unsafe fn(
+        owner: *const (),
+        names: *mut api::StringPointer,
+        values: *mut api::StringPointer,
+        buf: *mut u8,
+    ),
+}
+
+#[derive(Clone, Copy)]
+pub struct FetchHeadersRef<'a> {
+    pub owner: *const (),
+    pub vtable: &'static FetchHeadersVTable,
+    pub _phantom: core::marker::PhantomData<&'a ()>,
+}
+
+impl<'a> FetchHeadersRef<'a> {
+    #[inline]
+    pub fn count(&self, header_count: &mut u32, buf_len: &mut u32) {
+        unsafe { (self.vtable.count)(self.owner, header_count, buf_len) }
+    }
+    #[inline]
+    pub fn fast_has(&self, name: HeaderName) -> bool {
+        unsafe { (self.vtable.fast_has)(self.owner, name) }
+    }
+    #[inline]
+    pub fn copy_to(
+        &self,
+        names: *mut api::StringPointer,
+        values: *mut api::StringPointer,
+        buf: *mut u8,
+    ) {
+        unsafe { (self.vtable.copy_to)(self.owner, names, values, buf) }
+    }
+}
+
+pub struct AnyBlobVTable {
+    pub has_content_type_from_user: unsafe fn(owner: *const ()) -> bool,
+    /// Returns a borrow valid for the lifetime of `owner`.
+    pub content_type: unsafe fn(owner: *const ()) -> (*const u8, usize),
+}
+
+#[derive(Clone, Copy)]
+pub struct AnyBlobRef<'a> {
+    pub owner: *const (),
+    pub vtable: &'static AnyBlobVTable,
+    pub _phantom: core::marker::PhantomData<&'a ()>,
+}
+
+impl<'a> AnyBlobRef<'a> {
+    #[inline]
+    pub fn has_content_type_from_user(&self) -> bool {
+        unsafe { (self.vtable.has_content_type_from_user)(self.owner) }
+    }
+    #[inline]
+    pub fn content_type(&self) -> &'a [u8] {
+        unsafe {
+            let (ptr, len) = (self.vtable.content_type)(self.owner);
+            core::slice::from_raw_parts(ptr, len)
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 pub struct Entry {
@@ -128,7 +199,7 @@ impl Headers {
     }
 
     // PORT NOTE: was `!Headers`; all fallible calls were bun.handleOom-wrapped allocations.
-    pub fn from(fetch_headers_ref: Option<&FetchHeaders>, options: Options<'_>) -> Headers {
+    pub fn from(fetch_headers_ref: Option<FetchHeadersRef<'_>>, options: Options<'_>) -> Headers {
         let mut header_count: u32 = 0;
         let mut buf_len: u32 = 0;
         if let Some(headers_ref) = fetch_headers_ref {
@@ -143,7 +214,7 @@ impl Headers {
             if let Some(body) = options.body {
                 if body.has_content_type_from_user()
                     && (fetch_headers_ref.is_none()
-                        || !fetch_headers_ref.unwrap().fast_has(HeaderName::ContentType))
+                        || !fetch_headers_ref.as_ref().unwrap().fast_has(HeaderName::ContentType))
                 {
                     header_count += 1;
                     buf_len += (body.content_type().len() + b"Content-Type".len()) as u32;
@@ -200,7 +271,7 @@ impl Clone for Headers {
 // PORT NOTE: `pub fn deinit` only freed `entries` and `buf`; both are Drop types now — no explicit Drop impl needed.
 
 pub struct Options<'a> {
-    pub body: Option<&'a blob::Any>,
+    pub body: Option<AnyBlobRef<'a>>,
 }
 
 impl<'a> Default for Options<'a> {

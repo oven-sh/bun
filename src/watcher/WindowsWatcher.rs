@@ -8,7 +8,7 @@ use bun_str::strings;
 use bun_sys::windows as w;
 use bun_sys::windows::HANDLE;
 use bun_threading::Mutex;
-use bun_watcher::{WatchEvent, WatchItemIndex, Watcher};
+use crate::{WatchEvent, WatchItemIndex, Watcher};
 
 bun_output::declare_scope!(watcher, visible);
 
@@ -155,7 +155,7 @@ impl<'a> EventIterator<'a> {
 
 impl WindowsWatcher {
     // TODO(port): in-place init — `self` is the pre-allocated `platform` slot inside
-    // bun_watcher::Watcher (64KB+ buffers; avoid moving). Zig sig: `fn init(this, root) !void`.
+    // crate::Watcher (64KB+ buffers; avoid moving). Zig sig: `fn init(this, root) !void`.
     pub fn init(&mut self, root: &[u8]) -> Result<(), bun_core::Error> {
         let mut pathbuf = WPathBuffer::uninit();
         let wpath = strings::to_nt_path(&mut pathbuf, root);
@@ -473,7 +473,7 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
 
 pub fn create_watch_event(event: &FileEvent, index: WatchItemIndex) -> WatchEvent {
     WatchEvent {
-        op: bun_watcher::WatchEventOp {
+        op: crate::WatchEventOp {
             delete: event.action == Action::Removed,
             rename: event.action == Action::RenamedOld,
             write: event.action == Action::Modified,

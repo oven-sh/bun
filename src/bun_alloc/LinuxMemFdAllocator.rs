@@ -18,8 +18,15 @@
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
-use bun_sys::{self as sys, Fd};
-// TODO(port): exact module path for Blob.Store.Bytes — nested Zig decls; Phase B confirms.
+use bun_core::Fd;
+// TODO(b0-genuine): bun_sys (T1) — mmap/munmap/pwrite/ftruncate/memfd_create/posix/Result/Error/
+// Errno/Tag/can_use_memfd. LinuxMemFdAllocator is syscall-heavy and constructs a runtime Blob
+// payload; this module likely belongs in T≥1. Neither vtable nor hook fits a syscall surface.
+use bun_sys as sys;
+// TODO(b0-genuine): bun_runtime::webcore::blob::store::Bytes — return-value struct constructed
+// inline (cap/ptr/len/allocator). Not dispatch; not a hook. Candidate fix: define a local
+// `MemFdBytes { cap: u32, ptr: *mut u8, len: u32, allocator: ... }` here and have runtime convert,
+// or hoist `alloc()`/`create()` into bun_runtime via the move-in pass.
 use bun_runtime::webcore::blob::store::Bytes as BlobStoreBytes;
 
 /// Intrusive thread-safe ref-counted memfd allocator.
@@ -115,8 +122,8 @@ impl LinuxMemFdAllocator {
         let mut size = len;
 
         // size rounded up to nearest page
-        // TODO(port): `std.heap.pageSize()` — use bun_sys::page_size() once available.
-        let page = sys::page_size();
+        // TODO(b0): `page_size` arrives from move-in (bun_sys → bun_alloc).
+        let page = crate::page_size();
         size = (size + page - 1) & !(page - 1);
 
         let mut flags_mut = flags;
@@ -153,8 +160,8 @@ impl LinuxMemFdAllocator {
                 return false;
             }
 
-            // TODO(port): `bun.jsc.VirtualMachine.is_smol_mode` is a process-global flag.
-            if bun_jsc::VirtualMachine::is_smol_mode() {
+            // MOVE_DOWN: VirtualMachine::is_smol_mode → bun_core (process-global flag; move-in pending).
+            if bun_core::is_smol_mode() {
                 return bytes.len() >= 1024 * 1024 * 1;
             }
 
@@ -174,19 +181,19 @@ impl LinuxMemFdAllocator {
         #[cfg(target_os = "linux")]
         {
             let mut label_buf = [0u8; 128];
-            let label: &bun_str::ZStr = {
+            let label: &bun_core::ZStr = {
                 use core::fmt::Write as _;
                 let n = MEMFD_COUNTER.fetch_add(1, Ordering::Relaxed);
                 // Zig: `std.fmt.bufPrintZ(&label_buf, "memfd-num-{d}", .{n}) catch ""`
-                let mut cursor = bun_str::BufWriter::new(&mut label_buf[..label_buf.len() - 1]);
+                let mut cursor = bun_core::BufWriter::new(&mut label_buf[..label_buf.len() - 1]);
                 match write!(cursor, "memfd-num-{}", n) {
                     Ok(()) => {
                         let written = cursor.written();
                         label_buf[written] = 0;
                         // SAFETY: we wrote `written` bytes and a NUL at `label_buf[written]`.
-                        unsafe { bun_str::ZStr::from_raw(label_buf.as_ptr(), written) }
+                        unsafe { bun_core::ZStr::from_raw(label_buf.as_ptr(), written) }
                     }
-                    Err(_) => bun_str::ZStr::EMPTY,
+                    Err(_) => bun_core::ZStr::EMPTY,
                 }
             };
 

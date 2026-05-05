@@ -74,10 +74,11 @@ pub type OSPathChar = u16;
 pub type OSPathChar = u8;
 
 // Zig: `[:0]const OSPathChar`. Callers borrow as `&OSPathSliceZ`.
+// MOVE_DOWN(CYCLEBREAK): ZStr/WStr live in bun_core (T0).
 #[cfg(windows)]
-pub type OSPathSliceZ = bun_str::WStr;
+pub type OSPathSliceZ = bun_core::WStr;
 #[cfg(not(windows))]
-pub type OSPathSliceZ = bun_str::ZStr;
+pub type OSPathSliceZ = bun_core::ZStr;
 
 pub type OSPathSlice = [OSPathChar];
 

@@ -3091,7 +3091,7 @@ pub fn translate_nt_status_to_errno(err: NTSTATUS) -> E {
             #[cfg(debug_assertions)]
             {
                 bun_core::Output::debug_warn("Received OBJECT_NAME_INVALID, indicates a file path conversion issue.", &[]);
-                bun_crash_handler::dump_current_stack_trace(None, bun_crash_handler::DumpOptions { frame_count: 10 });
+                crate::dump_stack_trace(None, 10, false);
             }
             E::INVAL
         }
@@ -3099,7 +3099,7 @@ pub fn translate_nt_status_to_errno(err: NTSTATUS) -> E {
             #[cfg(debug_assertions)]
             {
                 bun_core::Output::warn!("Called translateNTStatusToErrno with {} which does not have a mapping to errno.", <&'static str>::from(t));
-                bun_crash_handler::dump_current_stack_trace(None, bun_crash_handler::DumpOptions { frame_count: 10 });
+                crate::dump_stack_trace(None, 10, false);
             }
             let _ = t;
             E::UNKNOWN
@@ -3845,7 +3845,8 @@ const WATCHER_CHILD_ENV: &[u16] = bun_str::w!("_BUN_WATCHER_CHILD");
 // this was randomly generated - we need to avoid using a common exit code that might be used by the script itself
 pub const WATCHER_RELOAD_EXIT: DWORD = 3224497970;
 
-pub use bun_runtime::api::bun::spawn::PosixSpawn as spawn;
+// TODO(b0-genuine): re-export of bun_runtime::api::bun::spawn::PosixSpawn removed (T1→T6 upward).
+// Callers should import `bun_runtime::api::bun::spawn::PosixSpawn` directly.
 
 pub fn is_watcher_child() -> bool {
     let mut buf: [u16; 1] = [0];

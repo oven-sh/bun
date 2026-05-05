@@ -62,6 +62,44 @@ macro_rules! log {
 }
 pub use log as syslog;
 
+// ──────────────────────────────────────────────────────────────────────────
+// Debug-hook registration (CYCLEBREAK.md §Debug-hook). Low-tier `sys` cannot
+// depend on `bun_crash_handler` (T3) / `bun_resolver::fs` (T5). High tier
+// (`bun_runtime::init()`) writes the fn-ptr at startup; null = no-op.
+// ──────────────────────────────────────────────────────------────────────────
+
+/// Set by `bun_runtime::init()` to `bun_crash_handler::dump_current_stack_trace`.
+/// Signature: `unsafe fn(return_address: Option<usize>, frame_count: u32, stop_at_jsc_llint: bool)`.
+pub static DUMP_STACK: core::sync::atomic::AtomicPtr<()> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+#[inline]
+pub fn dump_stack_trace(return_address: Option<usize>, frame_count: u32, stop_at_jsc_llint: bool) {
+    let hook = DUMP_STACK.load(core::sync::atomic::Ordering::Relaxed);
+    if !hook.is_null() {
+        // SAFETY: registered by bun_runtime::init() with the signature documented on DUMP_STACK.
+        let f: unsafe fn(Option<usize>, u32, bool) = unsafe { core::mem::transmute(hook) };
+        unsafe { f(return_address, frame_count, stop_at_jsc_llint) };
+    }
+}
+
+/// Set by `bun_runtime::init()` to `bun_resolver::fs::FileSystem::instance().top_level_dir`.
+/// Signature: `fn() -> &'static [u8]`.
+pub static TOP_LEVEL_DIR_HOOK: core::sync::atomic::AtomicPtr<()> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+#[inline]
+pub fn top_level_dir() -> &'static [u8] {
+    let hook = TOP_LEVEL_DIR_HOOK.load(core::sync::atomic::Ordering::Relaxed);
+    if hook.is_null() {
+        b"."
+    } else {
+        // SAFETY: registered by bun_runtime::init() with the signature documented on TOP_LEVEL_DIR_HOOK.
+        let f: fn() -> &'static [u8] = unsafe { core::mem::transmute(hook) };
+        f()
+    }
+}
+
 // `syscall` namespace: on Linux this is direct syscalls, on macOS/FreeBSD it's libc.
 // In Rust we route through the `libc` crate / direct syscall wrappers in `bun_sys::raw`.
 // TODO(port): map `std.os.linux` vs `std.c` syscall namespace to a `raw` module per-platform.
@@ -368,8 +406,8 @@ pub use crate::posix_stat::PosixStat;
 
 /// `Maybe(T)` — tagged union of `Ok(T)` or `Err(Error)`.
 /// Aliased as the crate's `Result<T>`.
-pub type Result<T> = bun_runtime::node::Maybe<T, Error>;
-// TODO(port): `bun.api.node.Maybe(T, Error)` — confirm crate path for `Maybe` generic.
+pub type Result<T> = crate::node::Maybe<T, Error>;
+// TODO(b0): `node::Maybe` arrives from move-in (CYCLEBREAK MOVE_DOWN bun_runtime::node → sys).
 // In Phase A we use a type alias; the helpers `errno_sys*` are associated fns on it.
 
 // Convenience: in the Zig, `Maybe(T).errnoSys*()` are static helpers that return
@@ -4691,7 +4729,9 @@ pub use crate::file as File;
 // Imports / type aliases (Zig had these at the bottom)
 // ──────────────────────────────────────────────────────────────────────────
 pub use crate::fd::Fd;
-use bun_runtime::node;
+// TODO(b0): `node` module (uid_t/gid_t/TimeLike/FileSystemFlags/Maybe) arrives from move-in
+// (CYCLEBREAK MOVE_DOWN bun_runtime::node → sys).
+use crate::node;
 #[cfg(target_os = "macos")]
 use bun_sys::darwin::nocancel as darwin_nocancel;
 use bun_sys::c; // translated c headers (bun.c)

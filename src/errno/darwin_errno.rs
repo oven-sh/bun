@@ -1,7 +1,7 @@
-// TODO(port): std.posix.{mode_t,E,S} — exact Rust home TBD; using bun_sys::posix placeholder
-pub use bun_sys::posix::mode_t as Mode;
-pub use bun_sys::posix::E;
-pub use bun_sys::posix::S;
+// CYCLEBREAK: bun_sys::posix MOVE_DOWN → errno (this crate). Move-in pass lands `crate::posix`.
+pub use crate::posix::mode_t as Mode;
+pub use crate::posix::E;
+pub use crate::posix::S;
 
 #[repr(u16)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr)]
@@ -150,7 +150,7 @@ pub mod uv_e {
     pub const BADF: i32 = SystemErrno::EBADF as i32;
     pub const BUSY: i32 = SystemErrno::EBUSY as i32;
     pub const CANCELED: i32 = SystemErrno::ECANCELED as i32;
-    pub const CHARSET: i32 = -bun_sys::windows::libuv::UV__ECHARSET;
+    pub const CHARSET: i32 = -windows_sys::libuv::UV__ECHARSET;
     pub const CONNABORTED: i32 = SystemErrno::ECONNABORTED as i32;
     pub const CONNREFUSED: i32 = SystemErrno::ECONNREFUSED as i32;
     pub const CONNRESET: i32 = SystemErrno::ECONNRESET as i32;
@@ -174,7 +174,7 @@ pub mod uv_e {
     pub const NODEV: i32 = SystemErrno::ENODEV as i32;
     pub const NOENT: i32 = SystemErrno::ENOENT as i32;
     pub const NOMEM: i32 = SystemErrno::ENOMEM as i32;
-    pub const NONET: i32 = -bun_sys::windows::libuv::UV_ENONET;
+    pub const NONET: i32 = -windows_sys::libuv::UV_ENONET;
     pub const NOSPC: i32 = SystemErrno::ENOSPC as i32;
     pub const NOSYS: i32 = SystemErrno::ENOSYS as i32;
     pub const NOTCONN: i32 = SystemErrno::ENOTCONN as i32;
@@ -200,14 +200,14 @@ pub mod uv_e {
     pub const NXIO: i32 = SystemErrno::ENXIO as i32;
     pub const MLINK: i32 = SystemErrno::EMLINK as i32;
     pub const HOSTDOWN: i32 = SystemErrno::EHOSTDOWN as i32;
-    pub const REMOTEIO: i32 = -bun_sys::windows::libuv::UV_EREMOTEIO;
+    pub const REMOTEIO: i32 = -windows_sys::libuv::UV_EREMOTEIO;
     pub const NOTTY: i32 = SystemErrno::ENOTTY as i32;
     pub const FTYPE: i32 = SystemErrno::EFTYPE as i32;
     pub const ILSEQ: i32 = SystemErrno::EILSEQ as i32;
     pub const OVERFLOW: i32 = SystemErrno::EOVERFLOW as i32;
     pub const SOCKTNOSUPPORT: i32 = SystemErrno::ESOCKTNOSUPPORT as i32;
     pub const NODATA: i32 = SystemErrno::ENODATA as i32;
-    pub const UNATCH: i32 = -bun_sys::windows::libuv::UV_EUNATCH;
+    pub const UNATCH: i32 = -windows_sys::libuv::UV_EUNATCH;
     pub const NOEXEC: i32 = SystemErrno::ENOEXEC as i32;
 }
 
@@ -215,9 +215,9 @@ pub mod uv_e {
 // i8/i16/i32/i64/isize/c_int (Into<i64> would not cover isize — no From<isize> for i64)
 pub fn get_errno<T: Copy + PartialEq + From<i8>>(rc: T) -> E {
     if rc == T::from(-1) {
-        // TODO(port): std.c._errno().* — verify bun_sys::c::errno() returns the thread-local errno
+        // CYCLEBREAK: bun_sys::c::errno MOVE_DOWN → crate::posix (move-in pass)
         // SAFETY: errno is always a valid E discriminant on Darwin
-        unsafe { core::mem::transmute::<u16, E>(bun_sys::c::errno() as u16) }
+        unsafe { core::mem::transmute::<u16, E>(crate::posix::errno() as u16) }
     } else {
         E::SUCCESS
     }

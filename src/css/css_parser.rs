@@ -13,8 +13,8 @@ use bun_str::strings;
 
 // ───────────────────────────── re-exports ─────────────────────────────
 
-pub use bun_bundler::v2::Index as SrcIndex;
-pub use bun_js_parser::ast::symbol::List as SymbolList;
+pub use bun_js_parser::Index as SrcIndex;
+pub use bun_logger::symbol::List as SymbolList;
 pub use bun_options_types::{ImportKind, ImportRecord};
 
 pub use crate::prefixes;
@@ -977,7 +977,7 @@ pub struct TopLevelRuleParser<'a, AtRuleParserT: CustomAtRuleParser> {
     // TODO: think about memory management
     pub rules: &'a mut CssRuleList<AtRuleParserT::AtRule>,
     pub composes: &'a mut ComposesMap,
-    pub composes_refs: SmallList<bun_bundler::v2::Ref, 2>,
+    pub composes_refs: SmallList<bun_js_parser::Ref, 2>,
     pub local_properties: &'a mut LocalPropertyUsage,
 }
 
@@ -1245,7 +1245,7 @@ pub struct NestedRuleParser<'a, T: CustomAtRuleParser> {
     pub allow_declarations: bool,
 
     pub composes_state: ComposesState,
-    pub composes_refs: &'a mut SmallList<bun_bundler::v2::Ref, 2>,
+    pub composes_refs: &'a mut SmallList<bun_js_parser::Ref, 2>,
     pub composes: &'a mut ComposesMap,
     pub local_properties: &'a mut LocalPropertyUsage,
 }
@@ -2055,7 +2055,7 @@ pub type BundlerPrintResult = css_printer::PrintResult<BundlerAtRule>;
 
 pub struct BundlerTailwindState {
     pub source: Box<[u8]>,
-    pub index: bun_bundler::v2::Index,
+    pub index: bun_js_parser::Index,
     pub output_from_tailwind: Option<Box<[u8]>>,
 }
 
@@ -2124,11 +2124,11 @@ impl CssRef {
         source_index
     }
 
-    pub fn to_real_ref(self, source_index: u32) -> bun_bundler::v2::Ref {
-        bun_bundler::v2::Ref {
+    pub fn to_real_ref(self, source_index: u32) -> bun_js_parser::Ref {
+        bun_js_parser::Ref {
             inner_index: self.inner_index(),
             source_index: u32::try_from(source_index).unwrap(),
-            tag: bun_bundler::v2::RefTag::Symbol,
+            tag: bun_js_parser::RefTag::Symbol,
         }
     }
 }
@@ -2144,11 +2144,11 @@ pub struct LocalEntry {
 /// until print time.
 pub type LocalScope = ArrayHashMap<Box<[u8]>, LocalEntry>;
 /// Local symbol renaming results go here
-pub type LocalsResultsMap = bun_bundler::v2::MangledProps;
+pub type LocalsResultsMap = bun_js_parser::MangledProps;
 /// Using `compose` and having conflicting properties is undefined behavior
 /// according to the css modules spec. We should warn the user about this.
-pub type LocalPropertyUsage = ArrayHashMap<bun_bundler::v2::Ref, PropertyUsage>;
-pub type ComposesMap = ArrayHashMap<bun_bundler::v2::Ref, ComposesEntry>;
+pub type LocalPropertyUsage = ArrayHashMap<bun_js_parser::Ref, PropertyUsage>;
+pub type ComposesMap = ArrayHashMap<bun_js_parser::Ref, ComposesEntry>;
 
 #[derive(Default)]
 pub struct ComposesEntry {
@@ -2301,7 +2301,7 @@ impl<AtRule> StyleSheet<AtRule> {
         options: PrinterOptions,
         import_info: Option<ImportInfo>,
         local_names: Option<&LocalsResultsMap>,
-        symbols: &bun_js_parser::ast::symbol::Map,
+        symbols: &bun_logger::symbol::Map,
     ) -> PrintResult<ToCssResultInternal> {
         let mut printer = Printer::new(Vec::new(), writer, options, import_info, local_names, symbols);
         match self.to_css_with_writer_impl(&mut printer, options) {
@@ -2363,7 +2363,7 @@ impl<AtRule> StyleSheet<AtRule> {
         options: PrinterOptions,
         import_info: Option<ImportInfo>,
         local_names: Option<&LocalsResultsMap>,
-        symbols: &bun_js_parser::ast::symbol::Map,
+        symbols: &bun_logger::symbol::Map,
     ) -> PrintResult<ToCssResult> {
         // TODO: this is not necessary
         // Make sure we always have capacity > 0: https://github.com/napi-rs/napi-rs/issues/1124.
@@ -2673,7 +2673,7 @@ impl StyleAttribute {
     ) -> Result<ToCssResult, PrintErr> {
         // #[cfg(feature = "sourcemap")] assert!(options.source_map.is_none(), ...);
 
-        let symbols = bun_js_parser::ast::symbol::Map::default();
+        let symbols = bun_logger::symbol::Map::default();
         let mut dest: Vec<u8> = Vec::new();
         // TODO(port): writer adapter
         let mut printer = Printer::new(Vec::new(), &mut dest, options, import_info, None, &symbols);
@@ -2944,7 +2944,7 @@ impl<'a> Parser<'a> {
         name: &[u8],
         tag: CssRefTag,
         loc: logger::Loc,
-    ) -> bun_bundler::v2::Ref {
+    ) -> bun_js_parser::Ref {
         // don't call this if css modules is not enabled!
         debug_assert!(self.flags.css_modules());
         debug_assert!(self.extra.is_some());
@@ -2959,8 +2959,8 @@ impl<'a> Parser<'a> {
         let entry = extra.local_scope.entry(name.into());
         let entry = entry.or_insert_with(|| {
             let inner_index = u32::try_from(extra.symbols.len()).unwrap();
-            extra.symbols.push(bun_js_parser::ast::Symbol {
-                kind: bun_js_parser::ast::SymbolKind::LocalCss,
+            extra.symbols.push(bun_logger::Symbol {
+                kind: bun_logger::SymbolKind::LocalCss,
                 original_name: name.into(),
                 ..Default::default()
             });
@@ -5956,7 +5956,7 @@ pub mod to_css {
         options: PrinterOptions,
         import_info: Option<ImportInfo>,
         local_names: Option<&LocalsResultsMap>,
-        symbols: &bun_js_parser::ast::symbol::Map,
+        symbols: &bun_logger::symbol::Map,
     ) -> Result<Vec<u8>, PrintErr> {
         let mut s: Vec<u8> = Vec::new();
         // PERF: think about how cheap this is to create

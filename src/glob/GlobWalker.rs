@@ -30,7 +30,8 @@ use bun_fs::FileSystem as FS;
 use bun_fs::file_system::DirEntry;
 use bun_output::{declare_scope, scoped_log};
 use bun_paths::{self as resolve_path, PathBuffer, MAX_PATH_BYTES};
-use bun_runtime::node::dir_iterator as DirIterator;
+// MOVE_DOWN(b0): dir_iterator relocated from runtime/node → bun_sys (move-in pass adds it there).
+use bun_sys::dir_iterator as DirIterator;
 use bun_str::strings::{self, UnsignedCodepointIterator as CodepointIterator};
 use bun_str::{String as BunString, ZStr};
 use bun_sys::{self as Syscall, Fd, Result as Maybe, Stat, SysError, E, O, S};
@@ -2487,7 +2488,7 @@ fn bun_join<const SENTINEL: bool>(parts: &[&[u8]], platform: bun_paths::Platform
     }
 }
 
-// TODO(port): AccessorDirEntry impl for DirIterator::IteratorResult lives in bun_runtime.
+// MOVE_DOWN(b0): DirIterator::IteratorResult now lives in bun_sys::dir_iterator.
 impl AccessorDirEntry for DirIterator::IteratorResult {
     fn name_slice(&self) -> &[u8] {
         self.name.slice()

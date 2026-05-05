@@ -8,11 +8,27 @@ use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use std::sync::Arc;
 
+use core::sync::atomic::{AtomicPtr, Ordering};
+
 use bun_alloc::AllocError;
 use bun_core::DebugOnly;
-use bun_jsc::node::Encoding;
-use bun_jsc::webcore::encoding as webcore_encoding;
-use bun_jsc::{self as jsc, VirtualMachine, VM};
+// TODO(b0): Encoding arrives from move-in (TYPE_ONLY bun_jsc::node::Encoding → string)
+use crate::encoding::Encoding;
+// TODO(b0): webcore_encoding arrives from move-in (MOVE_DOWN bun_jsc::webcore::encoding → string)
+use crate::webcore_encoding;
+
+/// Opaque handle to a JSC VM. Low tier never dereferences it; only passes it
+/// through to FFI / higher-tier callbacks.
+/// SAFETY: erased `bun_jsc::VM` (forward-decl, CYCLEBREAK b0).
+#[repr(C)]
+pub struct OpaqueJSVM {
+    _priv: [u8; 0],
+}
+
+/// Hook: max WTFStringImpl length (in characters). Set by `bun_runtime::init()`
+/// to `VirtualMachine::string_allocation_limit`. Null → falls back to
+/// `i32::MAX` (WTF::String hard limit).
+pub static STRING_ALLOCATION_LIMIT_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 
 // Re-exports (thin — do NOT inline target bodies).
 pub mod immutable;
@@ -261,7 +277,7 @@ impl String {
     }
 
     pub fn clone_latin1(bytes: &[u8]) -> String {
-        jsc::mark_binding();
+        bun_core::mark_binding();
         if bytes.is_empty() {
             return String::EMPTY;
         }
@@ -499,7 +515,7 @@ impl String {
     {
         const _: () = assert!(core::mem::size_of::<Ctx>() == core::mem::size_of::<*mut c_void>());
         debug_assert!(!bytes.is_empty());
-        jsc::mark_binding();
+        bun_core::mark_binding();
         if bytes.len() >= Self::max_length() {
             if let Some(cb) = callback {
                 cb(ctx, bytes.as_ptr() as *mut c_void, bytes.len() as u32);
@@ -522,7 +538,7 @@ impl String {
     /// So this really only makes sense when you need to dynamically allocate a
     /// string that will never be freed.
     pub fn create_static_external(bytes: &[u8], is_latin1: bool) -> String {
-        jsc::mark_binding();
+        bun_core::mark_binding();
         debug_assert!(!bytes.is_empty());
         // SAFETY: FFI call with valid slice
         unsafe { BunString__createStaticExternal(bytes.as_ptr(), bytes.len(), is_latin1) }
@@ -532,12 +548,21 @@ impl String {
     /// **Not** in bytes. In characters.
     #[inline]
     pub fn max_length() -> usize {
-        VirtualMachine::string_allocation_limit()
+        // CYCLEBREAK(b0): hook-registration replaces direct
+        // `bun_jsc::VirtualMachine::string_allocation_limit()` upcall.
+        let p = STRING_ALLOCATION_LIMIT_HOOK.load(Ordering::Relaxed);
+        if p.is_null() {
+            i32::MAX as usize
+        } else {
+            // SAFETY: runtime stores a `fn() -> usize` here during init.
+            let f: fn() -> usize = unsafe { core::mem::transmute(p) };
+            f()
+        }
     }
 
     /// If the allocation fails, this will free the bytes and return a dead string.
     pub fn create_external_globally_allocated<E: WTFEncoding>(bytes: Box<[E::Byte]>) -> String {
-        jsc::mark_binding();
+        bun_core::mark_binding();
         debug_assert!(!bytes.is_empty());
 
         if bytes.len() >= Self::max_length() {
@@ -609,7 +634,7 @@ impl String {
     }
 
     pub fn to_wtf(&mut self) {
-        jsc::mark_binding();
+        bun_core::mark_binding();
         bun_cpp::BunString__toWTFString(self);
     }
 
@@ -1195,7 +1220,7 @@ impl String {
     /// String held on the previous StringImpl is released, and the String now
     /// holds exactly one reference to the new (or unchanged) StringImpl.
     pub fn to_thread_safe(&mut self) {
-        jsc::mark_binding();
+        bun_core::mark_binding();
 
         if self.tag == Tag::WTFStringImpl {
             bun_cpp::BunString__toThreadSafe(self);
@@ -1205,7 +1230,7 @@ impl String {
     /// Like `to_thread_safe`, but leaves the result with one extra ref compared
     /// to before the call (i.e. the caller wants `to_thread_safe` + `ref`).
     pub fn to_thread_safe_ensure_ref(&mut self) {
-        jsc::mark_binding();
+        bun_core::mark_binding();
 
         if self.tag == Tag::WTFStringImpl {
             bun_cpp::BunString__toThreadSafe(self);
@@ -1412,7 +1437,7 @@ impl Default for SliceWithUnderlyingString {
 
 impl SliceWithUnderlyingString {
     #[inline]
-    pub fn report_extra_memory(&mut self, vm: &VM) {
+    pub fn report_extra_memory(&mut self, vm: &OpaqueJSVM) {
         #[cfg(debug_assertions)]
         {
             debug_assert!(!self.did_report_extra_memory_debug);

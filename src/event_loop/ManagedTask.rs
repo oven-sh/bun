@@ -4,7 +4,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_jsc::{JsResult, Task};
+use crate::{JsResult, Task};
 
 pub struct ManagedTask {
     // TODO(port): lifetime — opaque userdata pointer round-tripped through `new`/`run`
@@ -67,5 +67,5 @@ impl ManagedTask {
 //   source:     src/event_loop/ManagedTask.zig (47 lines)
 //   confidence: medium
 //   todos:      1
-//   notes:      `New(comptime Type, comptime Callback) type` collapsed to generic `new<T>(ctx, cb)`; fn-pointer transmute replaces the `wrap` trampoline. `Task::init(*mut ManagedTask)` assumed on bun_jsc::Task.
+//   notes:      `New(comptime Type, comptime Callback) type` collapsed to generic `new<T>(ctx, cb)`; fn-pointer transmute replaces the `wrap` trampoline. `Task::init(*mut ManagedTask)` assumed on crate::Task.
 // ──────────────────────────────────────────────────────────────────────────

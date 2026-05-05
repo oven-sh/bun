@@ -12,10 +12,69 @@ use bun_str::strings;
 
 use super::acl::ACL;
 use super::storage_class::StorageClass;
-// TODO(port): MultiPartUploadOptions lives under runtime/webcore/s3; verify crate path in Phase B
-use bun_runtime::webcore::s3::multipart_options::MultiPartUploadOptions;
+// TODO(b0): MultiPartUploadOptions arrives from move-in (MOVE_DOWN from
+// bun_runtime::webcore::s3::multipart_options → s3_signing). Referenced bare
+// below; the move-in pass adds the struct def to this crate.
 
 bun_output::declare_scope!(AWS, visible);
+
+// ──────────────────────────────────────────────────────────────────────────
+// CYCLEBREAK(b0) hooks — break upward dep on bun_jsc::VirtualMachine.
+// bun_runtime::init() registers these; they are no-ops while null.
+// ──────────────────────────────────────────────────────────────────────────
+
+use core::ptr::null_mut;
+use core::sync::atomic::{AtomicPtr, Ordering};
+
+/// `unsafe fn(numeric_day: u64, key: &[u8]) -> Option<[u8; DIGESTED_HMAC_256_LEN]>`
+pub type AwsCacheGetFn = unsafe fn(u64, &[u8]) -> Option<[u8; DIGESTED_HMAC_256_LEN]>;
+/// `unsafe fn(numeric_day: u64, key: &[u8], digest: [u8; DIGESTED_HMAC_256_LEN])`
+pub type AwsCacheSetFn = unsafe fn(u64, &[u8], [u8; DIGESTED_HMAC_256_LEN]);
+/// `unsafe fn() -> *mut bun_boringssl_sys::ENGINE` (nullable)
+pub type BoringEngineFn = unsafe fn() -> *mut bun_boringssl_sys::ENGINE;
+
+/// Stored as type-erased fn-ptr; cast via [`AwsCacheGetFn`].
+pub static AWS_CACHE_GET_HOOK: AtomicPtr<()> = AtomicPtr::new(null_mut());
+/// Stored as type-erased fn-ptr; cast via [`AwsCacheSetFn`].
+pub static AWS_CACHE_SET_HOOK: AtomicPtr<()> = AtomicPtr::new(null_mut());
+/// Stored as type-erased fn-ptr; cast via [`BoringEngineFn`].
+pub static BORING_ENGINE_HOOK: AtomicPtr<()> = AtomicPtr::new(null_mut());
+
+#[inline]
+fn aws_cache_get(day: u64, key: &[u8]) -> Option<[u8; DIGESTED_HMAC_256_LEN]> {
+    let p = AWS_CACHE_GET_HOOK.load(Ordering::Relaxed);
+    if p.is_null() {
+        return None;
+    }
+    // SAFETY: hook registered by bun_runtime::init() with matching signature.
+    unsafe { core::mem::transmute::<*mut (), AwsCacheGetFn>(p)(day, key) }
+}
+
+#[inline]
+fn aws_cache_set(day: u64, key: &[u8], digest: [u8; DIGESTED_HMAC_256_LEN]) {
+    let p = AWS_CACHE_SET_HOOK.load(Ordering::Relaxed);
+    if p.is_null() {
+        return;
+    }
+    // SAFETY: hook registered by bun_runtime::init() with matching signature.
+    unsafe { core::mem::transmute::<*mut (), AwsCacheSetFn>(p)(day, key, digest) }
+}
+
+#[inline]
+fn boring_engine() -> Option<&'static mut bun_boringssl_sys::ENGINE> {
+    let p = BORING_ENGINE_HOOK.load(Ordering::Relaxed);
+    if p.is_null() {
+        return None;
+    }
+    // SAFETY: hook registered by bun_runtime::init() with matching signature.
+    let eng = unsafe { core::mem::transmute::<*mut (), BoringEngineFn>(p)() };
+    if eng.is_null() {
+        None
+    } else {
+        // SAFETY: ENGINE lives for process lifetime once initialized.
+        Some(unsafe { &mut *eng })
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // S3Credentials
@@ -304,13 +363,9 @@ impl S3Credentials {
                     BStr::new(&self.secret_access_key)
                 )
                 .map_err(|_| SignError::NoSpaceLeft)?;
-                // TODO(port): jsc::VirtualMachine access from a non-*_jsc crate. Phase B should
-                // thread the cache in via a context param or move sign_request into runtime_jsc.
-                let cache = bun_jsc::VirtualMachine::get_main_thread_vm()
-                    .unwrap_or_else(bun_jsc::VirtualMachine::get)
-                    .rare_data()
-                    .aws_cache();
-                if let Some(cached) = cache.get(date_result.numeric_day, key) {
+                // CYCLEBREAK(b0): was bun_jsc::VirtualMachine::get*().rare_data().aws_cache().
+                // Runtime registers AWS_CACHE_{GET,SET}_HOOK; null hook = cache miss.
+                if let Some(cached) = aws_cache_get(date_result.numeric_day, key) {
                     break 'brk_sign cached;
                 }
                 // not cached yet lets generate a new one
@@ -364,7 +419,7 @@ impl S3Credentials {
                     BStr::new(&self.secret_access_key)
                 )
                 .map_err(|_| SignError::NoSpaceLeft)?;
-                cache.set(date_result.numeric_day, key, digest);
+                aws_cache_set(date_result.numeric_day, key, digest);
                 break 'brk_sign digest;
             };
 
@@ -471,12 +526,8 @@ impl S3Credentials {
                     .map_err(|_| SignError::NoSpaceLeft)?;
                 };
                 let mut sha_digest = [0u8; bun_sha::Sha256::DIGEST_LEN];
-                // TODO(port): jsc::VirtualMachine access for boringEngine — thread engine in via param.
-                bun_sha::Sha256::hash(
-                    canonical,
-                    &mut sha_digest,
-                    bun_jsc::VirtualMachine::get().rare_data().boring_engine(),
-                );
+                // CYCLEBREAK(b0): was bun_jsc::VirtualMachine::get().rare_data().boring_engine().
+                bun_sha::Sha256::hash(canonical, &mut sha_digest, boring_engine());
 
                 let sign_value = buf_print!(
                     &mut tmp_buffer,
@@ -580,12 +631,8 @@ impl S3Credentials {
                 )
                 .map_err(|_| SignError::NoSpaceLeft)?;
                 let mut sha_digest = [0u8; bun_sha::Sha256::DIGEST_LEN];
-                // TODO(port): jsc::VirtualMachine access for boringEngine — thread engine in via param.
-                bun_sha::Sha256::hash(
-                    canonical,
-                    &mut sha_digest,
-                    bun_jsc::VirtualMachine::get().rare_data().boring_engine(),
-                );
+                // CYCLEBREAK(b0): was bun_jsc::VirtualMachine::get().rare_data().boring_engine().
+                bun_sha::Sha256::hash(canonical, &mut sha_digest, boring_engine());
 
                 let sign_value = buf_print!(
                     &mut tmp_buffer,
@@ -774,7 +821,7 @@ fn epoch_to_utc_components(secs: u64) -> (u32, u32, u32, u32, u32, u32, u64) {
     (year, month, day, hours, minutes, seconds, day_seconds)
 }
 
-const DIGESTED_HMAC_256_LEN: usize = 32;
+pub const DIGESTED_HMAC_256_LEN: usize = 32;
 
 // ──────────────────────────────────────────────────────────────────────────
 // SignResult

@@ -53,7 +53,8 @@ impl NullableAllocator {
     #[inline]
     pub fn is_wtf_allocator(&self) -> bool {
         let Some(a) = self.get() else { return false };
-        bun_str::String::is_wtf_allocator(a)
+        // TODO(b0): `String::is_wtf_allocator` arrives from move-in (bun_str::String → bun_alloc).
+        crate::String::is_wtf_allocator(a)
     }
 
     #[inline]
@@ -70,7 +71,7 @@ impl NullableAllocator {
 
     pub fn free(&self, bytes: &[u8]) {
         if let Some(allocator) = self.get() {
-            if bun_str::String::is_wtf_allocator(allocator) {
+            if crate::String::is_wtf_allocator(allocator) {
                 // avoid calling `std.mem.Allocator.free` as it sets the memory to undefined
                 // TODO(port): `.@"1"` is `std.mem.Alignment.@"1"` (log2-align = 0, i.e. byte-aligned).
                 allocator.raw_free(bytes.as_ptr() as *mut u8, bytes.len(), /* align */ 1, /* ret_addr */ 0);

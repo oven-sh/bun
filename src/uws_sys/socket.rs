@@ -11,8 +11,8 @@ use core::ffi::{c_int, c_uint, c_void};
 use core::mem::size_of;
 
 use bun_boringssl_sys::SSL;
-use bun_str::ZStr;
-use bun_sys::Fd;
+use bun_core::ZStr;
+use bun_core::Fd;
 
 use crate::{
     us_bun_verify_error_t, us_socket_t, ConnectingSocket, SocketGroup, SocketKind, SslCtx,
@@ -21,7 +21,7 @@ use crate::{
 #[cfg(windows)]
 use crate::WindowsNamedPipe;
 
-bun_output::declare_scope!(uws, visible);
+bun_core::declare_scope!(uws, visible);
 
 // ──────────────────────────────────────────────────────────────────────────
 // NewSocketHandler<IS_SSL>
@@ -308,7 +308,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         match &mut self.socket {
             InternalSocket::Connected(socket) => us_socket_t::shutdown(*socket),
             InternalSocket::Connecting(socket) => {
-                bun_output::scoped_log!(uws, "us_connecting_socket_shutdown({})", *socket as usize);
+                bun_core::scoped_log!(uws, "us_connecting_socket_shutdown({})", *socket as usize);
                 ConnectingSocket::shutdown(*socket);
             }
             InternalSocket::Detached => {}
@@ -324,7 +324,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         match &mut self.socket {
             InternalSocket::Connected(socket) => us_socket_t::shutdown_read(*socket),
             InternalSocket::Connecting(socket) => {
-                bun_output::scoped_log!(uws, "us_connecting_socket_shutdown_read({})", *socket as usize);
+                bun_core::scoped_log!(uws, "us_connecting_socket_shutdown_read({})", *socket as usize);
                 ConnectingSocket::shutdown_read(*socket);
             }
             InternalSocket::UpgradedDuplex(socket) => socket.shutdown_read(),
@@ -340,7 +340,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         match &self.socket {
             InternalSocket::Connected(socket) => us_socket_t::is_shutdown(*socket),
             InternalSocket::Connecting(socket) => {
-                bun_output::scoped_log!(uws, "us_connecting_socket_is_shut_down({})", *socket as usize);
+                bun_core::scoped_log!(uws, "us_connecting_socket_is_shut_down({})", *socket as usize);
                 ConnectingSocket::is_shutdown(*socket)
             }
             InternalSocket::UpgradedDuplex(socket) => socket.is_shutdown(),
@@ -362,11 +362,11 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
     pub fn get_error(&self) -> i32 {
         match &self.socket {
             InternalSocket::Connected(socket) => {
-                bun_output::scoped_log!(uws, "us_socket_get_error({})", *socket as usize);
+                bun_core::scoped_log!(uws, "us_socket_get_error({})", *socket as usize);
                 us_socket_t::get_error(*socket)
             }
             InternalSocket::Connecting(socket) => {
-                bun_output::scoped_log!(uws, "us_connecting_socket_get_error({})", *socket as usize);
+                bun_core::scoped_log!(uws, "us_connecting_socket_get_error({})", *socket as usize);
                 ConnectingSocket::get_error(*socket)
             }
             InternalSocket::Detached => 0,

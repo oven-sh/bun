@@ -7,7 +7,10 @@ use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::{self, Output};
 use bun_logger as logger;
 use bun_paths::{self, PathBuffer, MAX_PATH_BYTES};
-use bun_resolver::fs as Fs;
+// MOVE_DOWN(b0): bun_resolver::fs → bun_sys::fs (CYCLEBREAK dotenv)
+use bun_sys::fs as Fs;
+// TODO(b0-genuine): S3Credentials lives in bun_s3_signing (T5). Not in CYCLEBREAK's
+// dotenv task list — needs TYPE_ONLY move-down to a ≤T2 crate (move-in pass).
 use bun_s3 as s3;
 use bun_schema::api;
 use bun_str::{strings, ZStr};
@@ -16,8 +19,8 @@ use bun_url::URL;
 use bun_which::which;
 use bun_wyhash;
 
-// TODO(port): `bun.analytics` crate path
-use bun_analytics as analytics;
+// MOVE_DOWN(b0): bun_analytics::features → bun_core (CYCLEBREAK). Re-import at lower tier.
+use bun_core::analytics;
 
 #[derive(Copy, Clone, PartialEq, Eq, core::marker::ConstParamTy)]
 pub enum DotEnvFileSuffix {
@@ -495,23 +498,19 @@ impl<'a> Loader<'a> {
     /// defines, environment variables are loaded as JavaScript string literals.
     ///
     /// Empty environment variables become empty strings.
-    // TODO(port): JSONStore/StringStore are generic map-like types with getOrPutValue/contains.
-    // Phase B: define a trait or use the concrete bun_bundler::defines store types.
-    pub fn copy_for_define<JSONStore, StringStore>(
+    // CYCLEBREAK(b0): GENUINE upward dep on bun_bundler::defines::{DefineData, DefineDataInit}
+    // and bun_js_parser::{E::String, Expr::Data}. Converted to manual vtable (cold-path
+    // §Dispatch, PORTING.md): dotenv passes (key, raw_value) bytes; the high-tier vtable
+    // impl (bun_bundler / bun_runtime) constructs E::String + DefineData and inserts.
+    // PERF(port): was inline switch — Zig built E.String slab + DefineData inline here.
+    pub fn copy_for_define(
         &mut self,
-        to_json: &mut JSONStore,
-        to_string: &mut StringStore,
+        to_json: DefineStoreRef<'_>,
+        to_string: DefineStoreRef<'_>,
         framework_defaults: &api::StringMap,
         behavior: api::DotEnvBehavior,
         prefix: &[u8],
-    ) -> Result<(), bun_core::Error>
-    where
-        // TODO(port): exact trait bounds for store types
-        JSONStore: DefineStore,
-        StringStore: DefineStore,
-    {
-        use bun_js_parser as js_ast;
-
+    ) -> Result<(), bun_core::Error> {
         let mut iter = self.map.iterator();
         let mut key_count: usize = 0;
         let mut string_map_hashes: Vec<u64> = vec![0u64; framework_defaults.keys.len()];
@@ -563,12 +562,7 @@ impl<'a> Loader<'a> {
                 key_buf = vec![0u8; key_buf_len + key_count * b"process.env.".len()];
                 // TODO(port): std.Io.Writer.fixed equivalent — write into key_buf via cursor
                 let mut key_cursor: usize = 0;
-
-                // PERF(port): Zig allocated a fixed E.String slab and sliced it; using Vec for draft.
-                let mut e_strings: Vec<js_ast::E::String> =
-                    Vec::with_capacity(e_strings_to_allocate * 2);
-                let mut e_strings_idx = 0usize;
-                e_strings.resize_with(e_strings_to_allocate * 2, Default::default);
+                let _ = e_strings_to_allocate; // PERF(port): slab sizing hint now unused; vtable impl owns alloc
 
                 if behavior == api::DotEnvBehavior::Prefix {
                     while let Some(entry) = iter.next() {
@@ -586,28 +580,8 @@ impl<'a> Loader<'a> {
                             key_cursor = key_start + b"process.env.".len() + entry.key_ptr.len();
                             let key_str = &key_buf[key_start..key_cursor];
 
-                            e_strings[e_strings_idx] = js_ast::E::String {
-                                data: if !value.is_empty() {
-                                    // SAFETY: re-slicing the same bytes; Zig did @ptrFromInt round-trip
-                                    unsafe {
-                                        core::slice::from_raw_parts(value.as_ptr(), value.len())
-                                    }
-                                } else {
-                                    &[]
-                                },
-                            };
-                            let expr_data =
-                                js_ast::Expr::Data::EString(&mut e_strings[e_strings_idx]);
-
-                            let _ = to_string.get_or_put_value(
-                                key_str,
-                                DefineData::init(DefineDataInit {
-                                    can_be_removed_if_unused: true,
-                                    call_can_be_unwrapped_if_unused: CallUnwrap::IfUnused,
-                                    value: expr_data,
-                                }),
-                            )?;
-                            e_strings_idx += 1;
+                            // CYCLEBREAK(b0): vtable builds E::String + DefineData{can_be_removed_if_unused, IfUnused}
+                            to_string.put_string_define(key_str, value)?;
                         } else {
                             let hash = bun_wyhash::hash(entry.key_ptr);
 
@@ -616,32 +590,8 @@ impl<'a> Loader<'a> {
                             if let Some(key_i) =
                                 string_map_hashes.iter().position(|&h| h == hash)
                             {
-                                e_strings[e_strings_idx] = js_ast::E::String {
-                                    data: if !value.is_empty() {
-                                        // SAFETY: see above
-                                        unsafe {
-                                            core::slice::from_raw_parts(
-                                                value.as_ptr(),
-                                                value.len(),
-                                            )
-                                        }
-                                    } else {
-                                        &[]
-                                    },
-                                };
-
-                                let expr_data =
-                                    js_ast::Expr::Data::EString(&mut e_strings[e_strings_idx]);
-
-                                let _ = to_string.get_or_put_value(
-                                    &framework_defaults.keys[key_i],
-                                    DefineData::init(DefineDataInit {
-                                        can_be_removed_if_unused: true,
-                                        call_can_be_unwrapped_if_unused: CallUnwrap::IfUnused,
-                                        value: expr_data,
-                                    }),
-                                )?;
-                                e_strings_idx += 1;
+                                // CYCLEBREAK(b0): vtable builds E::String + DefineData{can_be_removed_if_unused, IfUnused}
+                                to_string.put_string_define(&framework_defaults.keys[key_i], value)?;
                             }
                         }
                     }
@@ -659,37 +609,13 @@ impl<'a> Loader<'a> {
                         key_cursor = key_start + b"process.env.".len() + entry.key_ptr.len();
                         let key_str = &key_buf[key_start..key_cursor];
 
-                        e_strings[e_strings_idx] = js_ast::E::String {
-                            data: if !entry.value_ptr.value.is_empty() {
-                                // SAFETY: see above
-                                unsafe {
-                                    core::slice::from_raw_parts(
-                                        entry.value_ptr.value.as_ptr(),
-                                        value.len(),
-                                    )
-                                }
-                            } else {
-                                &[]
-                            },
-                        };
-
-                        let expr_data = js_ast::Expr::Data::EString(&mut e_strings[e_strings_idx]);
-
-                        let _ = to_string.get_or_put_value(
-                            key_str,
-                            DefineData::init(DefineDataInit {
-                                can_be_removed_if_unused: true,
-                                call_can_be_unwrapped_if_unused: CallUnwrap::IfUnused,
-                                value: expr_data,
-                            }),
-                        )?;
-                        e_strings_idx += 1;
+                        // CYCLEBREAK(b0): vtable builds E::String + DefineData{can_be_removed_if_unused, IfUnused}
+                        to_string.put_string_define(key_str, value)?;
                     }
                 }
-                // PERF(port): key_buf and e_strings were allocator-owned in Zig and intentionally
-                // leaked into the define store. Phase B must ensure these outlive `to_string`.
+                // PERF(port): key_buf was allocator-owned in Zig and intentionally leaked into the
+                // define store. Phase B must ensure this outlives `to_string`.
                 core::mem::forget(key_buf);
-                core::mem::forget(e_strings);
             }
         }
 
@@ -697,7 +623,7 @@ impl<'a> Loader<'a> {
             let value = &framework_defaults.values[i];
 
             if !to_string.contains(key) && !to_json.contains(key) {
-                let _ = to_json.get_or_put_value(key, value.clone())?;
+                to_json.put_raw(key, value)?;
             }
         }
         Ok(())
@@ -1167,15 +1093,51 @@ impl<'a> Loader<'a> {
     }
 }
 
-// TODO(port): placeholder trait for copy_for_define generic stores; Phase B replaces with concrete
-// bun_bundler::defines store types or a real trait.
-pub trait DefineStore {
-    type Value;
-    fn contains(&self, key: &[u8]) -> bool;
-    fn get_or_put_value(&mut self, key: &[u8], value: Self::Value) -> Result<(), bun_core::Error>;
+// CYCLEBREAK(b0): manual vtable (cold-path §Dispatch, PORTING.md) for the
+// GENUINE upward dep on bun_bundler::defines::{DefineData, DefineDataInit, CallUnwrap}
+// + bun_js_parser::{E::String, Expr::Data}. dotenv (T2) names no high-tier types;
+// the bundler/runtime move-in pass provides `pub static ENV_DEFINE_STORE_VTABLE`
+// instances that construct `E::String` + `DefineData::init(DefineDataInit {
+// can_be_removed_if_unused: true, call_can_be_unwrapped_if_unused: CallUnwrap::IfUnused, .. })`
+// and insert into the concrete StringStore / JSONStore maps.
+// PERF(port): was inline switch.
+pub struct DefineStoreVTable {
+    pub contains: unsafe fn(owner: *mut (), key: &[u8]) -> bool,
+    /// Insert `key` → JS string-literal define wrapping `value` (E::String + DefineData).
+    /// Implementor copies/owns `value` bytes as needed.
+    pub put_string_define:
+        unsafe fn(owner: *mut (), key: &[u8], value: &[u8]) -> Result<(), bun_core::Error>,
+    /// Insert `key` → raw `value` (JSON-store fallback for framework defaults).
+    pub put_raw: unsafe fn(owner: *mut (), key: &[u8], value: &[u8]) -> Result<(), bun_core::Error>,
 }
-// TODO(port): DefineData / DefineDataInit / CallUnwrap come from bun_bundler::defines
-use bun_options_types::defines::{DefineData, DefineDataInit, CallUnwrap};
+
+pub struct DefineStoreRef<'a> {
+    pub owner: *mut (),
+    pub vtable: &'static DefineStoreVTable,
+    _marker: core::marker::PhantomData<&'a mut ()>,
+}
+
+impl<'a> DefineStoreRef<'a> {
+    #[inline]
+    pub fn new(owner: *mut (), vtable: &'static DefineStoreVTable) -> Self {
+        Self { owner, vtable, _marker: core::marker::PhantomData }
+    }
+    #[inline]
+    pub fn contains(&self, key: &[u8]) -> bool {
+        // SAFETY: vtable contract — owner is the erased store the vtable was built for.
+        unsafe { (self.vtable.contains)(self.owner, key) }
+    }
+    #[inline]
+    pub fn put_string_define(&self, key: &[u8], value: &[u8]) -> Result<(), bun_core::Error> {
+        // SAFETY: vtable contract.
+        unsafe { (self.vtable.put_string_define)(self.owner, key, value) }
+    }
+    #[inline]
+    pub fn put_raw(&self, key: &[u8], value: &[u8]) -> Result<(), bun_core::Error> {
+        // SAFETY: vtable contract.
+        unsafe { (self.vtable.put_raw)(self.owner, key, value) }
+    }
+}
 
 struct Parser<'a> {
     pos: usize,

@@ -7,7 +7,9 @@ use bun_boringssl_sys::SSL_CTX;
 use bun_collections::{HiveArray, TaggedPtrUnion};
 use bun_core::{self, Error, FeatureFlags};
 use bun_http::{self as http, h2, HTTPCertError, HTTPClient, HTTPThread, InitError, ProxyTunnel};
-use bun_runtime::api::server::server_config::SSLConfig;
+// TODO(b0): SSLConfig arrives from move-in
+// (MOVE_DOWN bun_runtime::api::server::server_config::SSLConfig → bun_http)
+use crate::ssl_config::SSLConfig;
 use bun_str::strings;
 use bun_uws as uws;
 

@@ -6,11 +6,18 @@
 use core::ffi::{c_char, c_long};
 use core::ptr;
 
+use core::sync::atomic::{AtomicPtr, Ordering};
+
 use bun_boringssl_sys::SSL_CTX;
-use bun_sha::hashers::Sha256;
-use bun_sys;
+// Forward ref: Sha256 wrapper to be provided by bun_boringssl_sys (move-in pass).
+use bun_boringssl_sys::Sha256;
 
 use crate::create_bun_socket_error_t;
+
+/// Hook: `fn(path: &ZStr) -> Option<[mtime_sec, mtime_nsec, size]>`. Registered
+/// by `bun_runtime::init()`; null = stat unavailable (digest feeds zeros).
+pub static STAT_FILE_HOOK: AtomicPtr<()> = AtomicPtr::new(ptr::null_mut());
+pub type StatFileFn = unsafe fn(&bun_core::ZStr) -> Option<[i64; 3]>;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -124,20 +131,16 @@ impl BunSocketContextOptions {
             hp.update(&[(!s.is_null()) as u8]);
             if !s.is_null() {
                 // SAFETY: NUL-terminated C string.
-                let path = unsafe { bun_str::ZStr::from_ptr(s.cast::<u8>()) };
+                let path = unsafe { bun_core::ZStr::from_ptr(s.cast::<u8>()) };
                 hp.update(path.as_bytes());
                 let mut meta: [i64; 3] = [0; 3];
                 if !path.as_bytes().is_empty() {
-                    match bun_sys::stat(path) {
-                        bun_sys::Result::Ok(st) => {
-                            let mt = st.mtime();
-                            meta = [
-                                i64::try_from(mt.sec).unwrap(),
-                                i64::try_from(mt.nsec).unwrap(),
-                                i64::try_from(st.size).unwrap(),
-                            ];
+                    let hook = STAT_FILE_HOOK.load(Ordering::Relaxed);
+                    if !hook.is_null() {
+                        // SAFETY: hook was registered as a `StatFileFn` by runtime init.
+                        if let Some(m) = unsafe { core::mem::transmute::<_, StatFileFn>(hook)(path) } {
+                            meta = m;
                         }
-                        bun_sys::Result::Err(_) => {}
                     }
                 }
                 hp.update(as_bytes(&meta));
@@ -212,5 +215,5 @@ pub mod c {
 //   source:     src/uws_sys/SocketContext.zig (139 lines)
 //   confidence: medium
 //   todos:      0
-//   notes:      bun_sha::hashers::Sha256 / bun_sys::stat / ZStr API names assumed; verify in Phase B
+//   notes:      bun_boringssl_sys::Sha256 (forward-ref) / STAT_FILE_HOOK / ZStr API names assumed; verify in Phase B
 // ──────────────────────────────────────────────────────────────────────────

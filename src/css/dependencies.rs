@@ -70,7 +70,7 @@ impl ImportDependency {
         rule: &css::css_rules::import::ImportRule,
         filename: &[u8],
         local_names: Option<&css::LocalsResultsMap>,
-        symbols: &bun_js_parser::symbol::Map,
+        symbols: &bun_logger::symbol::Map,
     ) -> ImportDependency {
         let supports: Option<*const [u8]> = if let Some(supports) = &rule.supports {
             let s = css::to_css::string(

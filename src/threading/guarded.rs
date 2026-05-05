@@ -1,6 +1,6 @@
 //! A wrapper around a mutex, and a value protected by the mutex.
 
-use bun_threading::Mutex;
+use crate::Mutex;
 use bun_safety::ThreadLock;
 
 /// A wrapper around a mutex, and a value protected by the mutex.

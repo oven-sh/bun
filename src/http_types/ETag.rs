@@ -35,7 +35,8 @@ fn weak_match(tag1: &[u8], is_weak1: bool, tag2: &[u8], is_weak2: bool) -> bool 
     tag1 == tag2
 }
 
-pub fn append_to_headers(bytes: &[u8], headers: &mut bun_http::Headers) -> Result<(), bun_core::Error> {
+// TODO(b0): Headers arrives from move-in (MOVE_DOWN bun_http::Headers → http_types)
+pub fn append_to_headers(bytes: &[u8], headers: &mut crate::Headers) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
     // TODO(port): std.hash.XxHash64 — pick xxhash crate (e.g. xxhash-rust) or bun_core wrapper in Phase B
     let hash: u64 = xxhash64(0, bytes);

@@ -516,8 +516,8 @@ impl ExportsKind {
         writer.write(<&'static str>::from(self))
     }
 
-    pub fn to_module_type(self) -> bun_bundler::options::ModuleType {
-        use bun_bundler::options::ModuleType;
+    pub fn to_module_type(self) -> bun_options_types::ModuleType {
+        use bun_options_types::ModuleType;
         match self {
             Self::None => ModuleType::Unknown,
             Self::Cjs => ModuleType::Cjs,

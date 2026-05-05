@@ -5,8 +5,8 @@ use crate::css_properties::css_modules::Specifier;
 use bun_alloc::Arena as Bump;
 use bun_str::strings;
 use bun_wyhash::Wyhash;
-use bun_bundler::Ref;
-use bun_js_parser::Symbol;
+use bun_js_parser::Ref;
+use bun_logger::Symbol;
 
 /// A CSS [`<dashed-ident>`](https://www.w3.org/TR/css-values-4/#dashed-idents) reference.
 ///

@@ -1,7 +1,8 @@
 use core::cmp::Ordering;
 use std::io::Write as _;
 
-use bun_bundler::options::Format;
+// TYPE_ONLY: bun_bundler::options::Format → bun_options_types::Format
+use bun_options_types::Format;
 use bun_collections::{BabyList, HashMap, HiveArray, StringHashMap};
 use bun_core::Output;
 use bun_js_parser as js_ast;

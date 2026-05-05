@@ -17,7 +17,7 @@ use crate::HTTPClient;
 use crate::NewHTTPContext;
 use crate::SSLConfig;
 use crate::{self as h2, H2Client as H2};
-// TODO(port): `bun.api.server.ServerConfig.SSLConfig` lives in bun_runtime; re-export path may differ.
+// TODO(b0): SSLConfig arrives from move-in (MOVE_DOWN → bun_http::ssl_config)
 
 pub type Socket = <NewHTTPContext<true> as crate::HttpContext>::HTTPSocket;
 // TODO(port): NewHTTPContext(true).HTTPSocket — exact Rust spelling depends on how the

@@ -4,9 +4,8 @@ use core::ffi::c_int;
 use core::fmt;
 
 use bun_str::String as BunString;
-// TODO(port): SystemError lives in bun_jsc; bun_sys depending on bun_jsc may be a layering
-// violation — consider moving to_shell_system_error/to_system_error into bun_sys_jsc.
-use bun_jsc::SystemError;
+// TODO(b0): SystemError arrives from move-in (CYCLEBREAK TYPE_ONLY bun_jsc::SystemError → sys).
+use crate::SystemError;
 
 use crate::{coreutils_error_map, libuv_error_map, Fd, SystemErrno, Tag, E};
 

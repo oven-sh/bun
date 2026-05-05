@@ -215,11 +215,11 @@ impl ParsedSourceMap {
 
     pub fn standalone_module_graph_data(
         &self,
-    ) -> *mut bun_standalone_graph::SerializedSourceMap::Loaded {
-        // TODO(port): verify item path for bun.StandaloneModuleGraph.SerializedSourceMap.Loaded
+    ) -> *mut crate::SerializedSourceMap::Loaded {
+        // TODO(b0): SerializedSourceMap::Loaded arrives from move-in (standalone_graph → sourcemap)
         debug_assert!(self.is_standalone_module_graph);
         self.underlying_provider.data() as usize
-            as *mut bun_standalone_graph::SerializedSourceMap::Loaded
+            as *mut crate::SerializedSourceMap::Loaded
     }
 
     pub fn memory_cost(&self) -> usize {

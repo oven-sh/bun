@@ -3,9 +3,9 @@ use core::ffi::{c_int, c_longlong, c_uint, c_void};
 use crate::InternalLoopData;
 
 #[cfg(windows)]
-use bun_sys::windows::libuv as uv;
+use bun_windows_sys::libuv as uv;
 
-bun_output::declare_scope!(Loop, visible);
+bun_core::declare_scope!(Loop, visible);
 
 // ───────────────────────────── PosixLoop ─────────────────────────────
 
@@ -78,17 +78,17 @@ impl PosixLoop {
     }
 
     pub fn inc(&mut self) {
-        bun_output::scoped_log!(Loop, "inc {} + 1 = {}", self.num_polls, self.num_polls + 1);
+        bun_core::scoped_log!(Loop, "inc {} + 1 = {}", self.num_polls, self.num_polls + 1);
         self.num_polls += 1;
     }
 
     pub fn dec(&mut self) {
-        bun_output::scoped_log!(Loop, "dec {} - 1 = {}", self.num_polls, self.num_polls - 1);
+        bun_core::scoped_log!(Loop, "dec {} - 1 = {}", self.num_polls, self.num_polls - 1);
         self.num_polls -= 1;
     }
 
     pub fn ref_(&mut self) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             Loop,
             "ref {} + 1 = {} | {} + 1 = {}",
             self.num_polls,
@@ -101,7 +101,7 @@ impl PosixLoop {
     }
 
     pub fn unref(&mut self) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             Loop,
             "unref {} - 1 = {} | {} - 1 = {}",
             self.num_polls,
@@ -119,7 +119,7 @@ impl PosixLoop {
 
     // This exists as a method so that we can stick a debugger in here
     pub fn add_active(&mut self, value: u32) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             Loop,
             "add {} + {} = {}",
             self.active,
@@ -131,7 +131,7 @@ impl PosixLoop {
 
     // This exists as a method so that we can stick a debugger in here
     pub fn sub_active(&mut self, value: u32) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             Loop,
             "sub {} - {} = {}",
             self.active,
@@ -142,7 +142,7 @@ impl PosixLoop {
     }
 
     pub fn unref_count(&mut self, count: i32) {
-        bun_output::scoped_log!(Loop, "unref x {}", count);
+        bun_core::scoped_log!(Loop, "unref x {}", count);
         self.num_polls -= count;
         self.active = self.active.saturating_sub(u32::try_from(count).unwrap());
     }

@@ -13,8 +13,8 @@ use bun_js_parser::{
     self as js_parser, IdentifierOpts, JSXTransformType, NewParser_, RelocateVars, SideEffects,
 };
 
-// TODO(port): move to *_jsc — jsc::URL used for file:// URL formatting
-use bun_jsc::URL as JscURL;
+// MOVE_DOWN: was bun_jsc::URL → bun_url (T2)
+use bun_url::URL as JscURL;
 
 /// Type alias mirroring `const P = js_parser.NewParser_(ts, jsx, scan_only);`
 type P<const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: bool> =

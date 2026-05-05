@@ -1,7 +1,6 @@
 use core::ffi::{c_char, c_int, c_void};
 
 use crate::{udp, us_socket_t, ConnectingSocket, Loop, SocketGroup, Timer};
-use bun_jsc::{self as jsc, EventLoopHandle, VM};
 
 /// Opaque C handle from `us_internal_create_async`.
 #[repr(C)]
@@ -31,14 +30,15 @@ pub struct InternalLoopData {
     pub low_prio_budget: i32,
     pub dns_ready_head: *mut ConnectingSocket,
     pub closed_connecting_head: *mut ConnectingSocket,
-    // TODO(port): verify bun_threading::Mutex matches `bun.Mutex.ReleaseImpl.Type` C layout
-    pub mutex: bun_threading::Mutex,
+    // FORWARD_DECL(b0): was `bun_threading::Mutex` (tier 2). `bun.Mutex.ReleaseImpl.Type`
+    // C layout must match; verify size/align with static assert in Phase B.
+    pub mutex: bun_core::Mutex,
     pub parent_ptr: *mut c_void,
     pub parent_tag: c_char,
     pub iteration_nr: usize,
-    // TODO(port): lifetime — LIFETIMES.tsv says JSC_BORROW `Option<&VM>`; using 'static to avoid
-    // a struct lifetime param on this #[repr(C)] mirror of C `struct us_internal_loop_data_t`.
-    pub jsc_vm: Option<&'static VM>,
+    // SAFETY: erased `Option<&'static jsc::VM>` — tier-0 crate cannot name jsc types.
+    // Higher tier (`bun_runtime`) casts this back when reading.
+    pub jsc_vm: *const c_void,
     pub tick_depth: c_int,
 }
 
@@ -55,35 +55,25 @@ impl InternalLoopData {
         self.sweep_timer_count > 0
     }
 
-    pub fn set_parent_event_loop(&mut self, parent: EventLoopHandle) {
-        match parent {
-            EventLoopHandle::Js(ptr) => {
-                self.parent_tag = 1;
-                self.parent_ptr = ptr as *mut jsc::EventLoop as *mut c_void;
-            }
-            EventLoopHandle::Mini(ptr) => {
-                self.parent_tag = 2;
-                self.parent_ptr = ptr as *mut jsc::MiniEventLoop as *mut c_void;
-            }
-        }
+    /// Tag values for `parent_tag`: 1 = `jsc::EventLoop`, 2 = `jsc::MiniEventLoop`.
+    /// Low tier stores tag+ptr only; the typed `EventLoopHandle` wrappers
+    /// (`set_parent_event_loop` / `get_parent`) live in the higher-tier crate
+    /// that can name `bun_jsc` — see `bun_runtime::dispatch` (move-in pass).
+    #[inline]
+    pub fn set_parent_raw(&mut self, tag: c_char, ptr: *mut c_void) {
+        self.parent_tag = tag;
+        self.parent_ptr = ptr;
     }
 
-    pub fn get_parent(&self) -> EventLoopHandle {
-        let parent = if self.parent_ptr.is_null() {
+    #[inline]
+    pub fn get_parent_raw(&self) -> (c_char, *mut c_void) {
+        if self.parent_ptr.is_null() {
             panic!("Parent loop not set - pointer is null");
-        } else {
-            self.parent_ptr
-        };
-        match self.parent_tag {
-            0 => panic!("Parent loop not set - tag is zero"),
-            // SAFETY: tag 1 was set alongside a *mut jsc::EventLoop in set_parent_event_loop;
-            // pointer is non-null (checked above) and outlives this loop data.
-            1 => EventLoopHandle::Js(unsafe { &mut *parent.cast::<jsc::EventLoop>() }),
-            // SAFETY: tag 2 was set alongside a *mut jsc::MiniEventLoop in set_parent_event_loop;
-            // pointer is non-null (checked above) and outlives this loop data.
-            2 => EventLoopHandle::Mini(unsafe { &mut *parent.cast::<jsc::MiniEventLoop>() }),
-            _ => panic!("Parent loop data corrupted - tag is invalid"),
         }
+        if self.parent_tag == 0 {
+            panic!("Parent loop not set - tag is zero");
+        }
+        (self.parent_tag, self.parent_ptr)
     }
 }
 

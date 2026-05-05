@@ -2,8 +2,9 @@
 
 use core::ffi::c_int;
 
-use bun_sys::windows::libuv as uv;
-use bun_sys::windows::{self, Win32Error, NTSTATUS};
+// CYCLEBREAK: bun_sys::windows MOVE_DOWN → windows_sys (T0)
+use windows_sys::libuv as uv;
+use windows_sys::{self as windows, Win32Error, NTSTATUS};
 
 // ──────────────────────────────────────────────────────────────────────────
 // E

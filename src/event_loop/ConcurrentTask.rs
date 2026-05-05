@@ -10,9 +10,41 @@
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use bun_jsc::{ManagedTask, Task};
+use crate::ManagedTask;
 // TODO(port): confirm crate for UnboundedQueue (bun.UnboundedQueue) — assuming bun_threading
 use bun_threading::UnboundedQueue;
+
+// ─── Task (hot-dispatch tag+ptr, see CYCLEBREAK.md §Hot dispatch list) ──────
+// Low tier (event_loop) stores `(tag, ptr)`; `bun_runtime::dispatch::run_task`
+// owns the `match` over ~70 variants. Tag constants live in
+// `crate::task_tag::*` (populated by the move-in pass).
+#[repr(transparent)]
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub struct TaskTag(pub u8);
+
+#[derive(Copy, Clone)]
+pub struct Task {
+    pub tag: TaskTag,
+    pub ptr: *mut (),
+}
+
+impl Task {
+    #[inline]
+    pub const fn new(tag: TaskTag, ptr: *mut ()) -> Task {
+        Task { tag, ptr }
+    }
+
+    // TODO(b0): Zig `Task.init(anytype)` mapped variant type → tag at comptime.
+    // The tag table now lives in `bun_runtime::dispatch`; callers that know their
+    // tag should use `Task::new(task_tag::X, ptr)` instead. This stub keeps Phase-A
+    // call sites parsing until the move-in pass rewrites them.
+    #[inline]
+    pub fn init<T>(of: T) -> Task {
+        let _ = of;
+        unimplemented!("TODO(b0): Task::init — tag mapping owned by bun_runtime::dispatch::run_task")
+    }
+}
+// ────────────────────────────────────────────────────────────────────────────
 
 #[repr(C)]
 pub struct ConcurrentTask {
@@ -104,9 +136,13 @@ impl PackedNextPtr {
     }
 }
 
+// TODO(b0): Zig packed Task (tag+ptr) into one word via TaggedPointerUnion, so
+// ConcurrentTask was 16 bytes. Phase-B0 `Task` is two words; restore packing in
+// Phase B (e.g. `#[repr(transparent)] struct Task(usize)` with low-bits tag).
 const _: () = assert!(
-    core::mem::size_of::<ConcurrentTask>() == 16,
-    "ConcurrentTask should be 16 bytes"
+    core::mem::size_of::<ConcurrentTask>()
+        == core::mem::size_of::<Task>() + core::mem::size_of::<usize>(),
+    "ConcurrentTask = Task + packed next ptr"
 );
 // PackedNextPtr stores a pointer in the upper bits and auto_delete in bit 0.
 // This requires ConcurrentTask to be at least 2-byte aligned.
@@ -151,7 +187,7 @@ impl ConcurrentTask {
     }
 
     pub fn create_from<T>(task: T) -> *mut ConcurrentTask {
-        bun_jsc::mark_binding!();
+        bun_core::mark_binding!();
         Self::create(Task::init(task))
     }
 
@@ -159,12 +195,12 @@ impl ConcurrentTask {
     // reflection. Modeled here as a generic over the pointee type `T` with a plain fn-pointer
     // callback. ManagedTask::New(T, callback).init(ptr) likely becomes ManagedTask::new::<T>.
     pub fn from_callback<T>(ptr: *mut T, callback: fn(*mut T)) -> *mut ConcurrentTask {
-        bun_jsc::mark_binding!();
+        bun_core::mark_binding!();
         Self::create(ManagedTask::new::<T>(callback).init(ptr))
     }
 
     pub fn from<T>(&mut self, of: T, auto_deinit: AutoDeinit) -> &mut ConcurrentTask {
-        bun_jsc::mark_binding!();
+        bun_core::mark_binding!();
         *self = ConcurrentTask {
             task: Task::init(of),
             next: if auto_deinit == AutoDeinit::AutoDeinit {

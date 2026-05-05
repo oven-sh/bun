@@ -1,53 +1,32 @@
 use core::ffi::c_void;
-use core::mem::offset_of;
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_core::Timespec as timespec; // TODO(port): confirm crate for `bun.timespec`
 use bun_io::heap::IntrusiveField;
-use bun_jsc::VirtualMachine;
-use bun_uws as uws;
-
-use bun_runtime::api::dns::Resolver as DNSResolver;
-use bun_runtime::api::timer::{
-    DateHeaderTimer, EventLoopDelayMonitor, ImmediateObject, TimeoutObject, TimerObjectInternals,
-    WTFTimer,
-};
-use bun_runtime::node::node_fs_stat_watcher::StatWatcherScheduler;
-
-// TODO(port): these live under src/runtime/ — confirm exact module paths in Phase B
-use bun_bake::DevServer;
-use bun_runtime::api::cron::CronJob;
-use bun_runtime::api::mysql::MySQLConnection;
-use bun_runtime::api::postgres::PostgresSQLConnection;
-use bun_runtime::api::subprocess::Subprocess;
-use bun_runtime::api::valkey::Valkey;
-use bun_runtime::jest::bun_test::{BunTest, BunTestPtr};
-use bun_runtime::webcore::abort_signal::Timeout as AbortSignalTimeout;
 
 const NS_PER_MS: i64 = 1_000_000;
 
-/// Recover `&Parent` from a pointer to its `field` of type `EventLoopTimer`.
-/// Mirrors Zig `@fieldParentPtr("field", self)`.
-macro_rules! container_of {
-    ($ptr:expr, $Parent:ty, $field:ident) => {{
-        // SAFETY: $ptr points to the `$field` field of a live `$Parent`; tag guarantees layout.
-        unsafe {
-            &mut *(($ptr as *const _ as *mut u8)
-                .sub(core::mem::offset_of!($Parent, $field))
-                .cast::<$Parent>())
-        }
-    }};
-}
-macro_rules! container_of_const {
-    ($ptr:expr, $Parent:ty, $field:ident) => {{
-        // SAFETY: $ptr points to the `$field` field of a live `$Parent`; tag guarantees layout.
-        unsafe {
-            &*(($ptr as *const _ as *const u8)
-                .sub(core::mem::offset_of!($Parent, $field))
-                .cast::<$Parent>())
-        }
-    }};
-}
+// ─── Hot-dispatch hooks (CYCLEBREAK.md §Hot dispatch list) ──────────────────
+// `EventLoopTimer` is per-tick hot. Low tier (this crate) keeps `Tag` + the
+// intrusive heap node; the `match tag { … container_of … }` dispatch moves to
+// `bun_runtime::dispatch::fire_timer`. Because the heap comparator (`less`)
+// and `fire()` are invoked from tier-≤3 code, they call through fn-ptr hooks
+// that `bun_runtime::init()` registers at startup.
+//
+// PERF(port): was inline switch — `JS_TIMER_EPOCH` sits on the heap-compare
+// path. Phase B should denormalize `epoch` into `EventLoopTimer` to drop the
+// indirect call if profiling shows it matters.
+
+/// `unsafe fn(*mut EventLoopTimer, *const timespec, vm: *mut ())`
+/// — runtime owns the tag→variant `match`; `vm` is an erased `*mut VirtualMachine`.
+pub static FIRE_TIMER: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+/// `unsafe fn(tag: Tag, *const EventLoopTimer) -> Option<u32>`
+/// — returns the JS-timer epoch (TimerObjectInternals.flags.epoch) for
+/// TimeoutObject/ImmediateObject/AbortSignalTimeout, else `None`.
+pub static JS_TIMER_EPOCH: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+// ────────────────────────────────────────────────────────────────────────────
 
 pub struct EventLoopTimer {
     /// The absolute time to fire this timer next.
@@ -85,21 +64,21 @@ impl EventLoopTimer {
         }
 
         // collapse sub-millisecond precision for JavaScript timers
-        let maybe_a_flags = a.js_timer_internals_flags();
-        let maybe_b_flags = b.js_timer_internals_flags();
+        let maybe_a_epoch = a.js_timer_epoch();
+        let maybe_b_epoch = b.js_timer_epoch();
         let mut a_ns = a.next.nsec;
         let mut b_ns = b.next.nsec;
-        if maybe_a_flags.is_some() {
+        if maybe_a_epoch.is_some() {
             a_ns = NS_PER_MS * (a_ns / NS_PER_MS);
         }
-        if maybe_b_flags.is_some() {
+        if maybe_b_epoch.is_some() {
             b_ns = NS_PER_MS * (b_ns / NS_PER_MS);
         }
 
         let order = a_ns.cmp(&b_ns);
         if order == core::cmp::Ordering::Equal {
-            if let Some(a_flags) = maybe_a_flags {
-                if let Some(b_flags) = maybe_b_flags {
+            if let Some(a_epoch) = maybe_a_epoch {
+                if let Some(b_epoch) = maybe_b_epoch {
                     // We expect that the epoch will overflow sometimes.
                     // If it does, we would ideally like timers with an epoch from before the
                     // overflow to be sorted *before* timers with an epoch from after the overflow
@@ -115,154 +94,54 @@ impl EventLoopTimer {
                     // so we mask the wrapping_sub result to 25 bits to preserve that semantics.
                     // TODO(port): confirm Rust `epoch` field is masked to 25 bits on write too.
                     const U25_MAX: u32 = (1 << 25) - 1;
-                    return (b_flags.epoch.wrapping_sub(a_flags.epoch) & U25_MAX) < U25_MAX / 2;
+                    return (b_epoch.wrapping_sub(a_epoch) & U25_MAX) < U25_MAX / 2;
                 }
             }
         }
         order == core::cmp::Ordering::Less
     }
 
-    /// If self was created by set{Immediate,Timeout,Interval}, get a pointer to the common data
-    /// for all those kinds of timers
-    // PORT NOTE: Zig used `anytype` to overload `*Self`/`*const Self`. Rust splits into
-    // `js_timer_internals_flags` (const) and `js_timer_internals_flags_mut`.
-    pub fn js_timer_internals_flags(&self) -> Option<&TimerObjectInternals::Flags> {
-        match self.tag {
-            Tag::TimeoutObject => {
-                let parent = container_of_const!(self, TimeoutObject, event_loop_timer);
-                Some(&parent.internals.flags)
-            }
-            Tag::ImmediateObject => {
-                let parent = container_of_const!(self, ImmediateObject, event_loop_timer);
-                Some(&parent.internals.flags)
-            }
-            Tag::AbortSignalTimeout => {
-                let parent = container_of_const!(self, AbortSignalTimeout, event_loop_timer);
-                Some(&parent.flags)
-            }
-            _ => None,
+    /// If self was created by set{Immediate,Timeout,Interval}, return its
+    /// JS-timer epoch (used for stable ordering of equal-deadline timers).
+    ///
+    /// PORT NOTE (b0): Zig `jsTimerInternalsFlags` did `@fieldParentPtr` into
+    /// `TimeoutObject`/`ImmediateObject`/`AbortSignalTimeout` (all tier-6
+    /// runtime types). The container_of dispatch now lives in
+    /// `bun_runtime::dispatch::js_timer_epoch`; this crate calls it through
+    /// the `JS_TIMER_EPOCH` hook. Returns `None` if the hook is unset (no JS
+    /// runtime — e.g. MiniEventLoop) or for non-JS timer tags.
+    #[inline]
+    pub fn js_timer_epoch(&self) -> Option<u32> {
+        let hook = JS_TIMER_EPOCH.load(Ordering::Relaxed);
+        if hook.is_null() {
+            return None;
         }
-    }
-
-    pub fn js_timer_internals_flags_mut(&mut self) -> Option<&mut TimerObjectInternals::Flags> {
-        match self.tag {
-            Tag::TimeoutObject => {
-                let parent = container_of!(self, TimeoutObject, event_loop_timer);
-                Some(&mut parent.internals.flags)
-            }
-            Tag::ImmediateObject => {
-                let parent = container_of!(self, ImmediateObject, event_loop_timer);
-                Some(&mut parent.internals.flags)
-            }
-            Tag::AbortSignalTimeout => {
-                let parent = container_of!(self, AbortSignalTimeout, event_loop_timer);
-                Some(&mut parent.flags)
-            }
-            _ => None,
-        }
+        // SAFETY: hook was registered by `bun_runtime::init()` with the
+        // documented signature; `self` is a live timer.
+        let f: unsafe fn(Tag, *const EventLoopTimer) -> Option<u32> =
+            unsafe { core::mem::transmute(hook) };
+        unsafe { f(self.tag, self) }
     }
 
     fn ns(&self) -> u64 {
         self.next.ns()
     }
 
-    pub fn fire(&mut self, now: &timespec, vm: &mut VirtualMachine) {
-        match self.tag {
-            Tag::PostgresSQLConnectionTimeout => {
-                container_of!(self, PostgresSQLConnection, timer).on_connection_timeout()
-            }
-            Tag::PostgresSQLConnectionMaxLifetime => {
-                container_of!(self, PostgresSQLConnection, max_lifetime_timer)
-                    .on_max_lifetime_timeout()
-            }
-            Tag::MySQLConnectionTimeout => {
-                container_of!(self, MySQLConnection, timer).on_connection_timeout()
-            }
-            Tag::MySQLConnectionMaxLifetime => {
-                container_of!(self, MySQLConnection, max_lifetime_timer).on_max_lifetime_timeout()
-            }
-            Tag::ValkeyConnectionTimeout => {
-                container_of!(self, Valkey, timer).on_connection_timeout()
-            }
-            Tag::ValkeyConnectionReconnect => {
-                container_of!(self, Valkey, reconnect_timer).on_reconnect_timer()
-            }
-            Tag::DevServerMemoryVisualizerTick => {
-                DevServer::emit_memory_visualizer_message_timer(self, now)
-            }
-            Tag::DevServerSweepSourceMaps => {
-                bun_bake::dev_server::SourceMapStore::sweep_weak_refs(self, now)
-            }
-            Tag::AbortSignalTimeout => {
-                let timeout = container_of!(self, AbortSignalTimeout, event_loop_timer);
-                timeout.run(vm);
-            }
-            Tag::DateHeaderTimer => {
-                let date_header_timer = container_of!(self, DateHeaderTimer, event_loop_timer);
-                date_header_timer.run(vm);
-            }
-            Tag::BunTest => {
-                // SAFETY: tag guarantees `self` is the `timer` field of a `BunTest`.
-                let mut container_strong =
-                    unsafe { BunTestPtr::clone_from_raw_unsafe(container_of!(self, BunTest, timer)) };
-                // `defer container_strong.deinit()` → Drop on BunTestPtr handles this.
-                BunTest::bun_test_timeout_callback(&mut container_strong, now, vm);
-            }
-            Tag::EventLoopDelayMonitor => {
-                let monitor = container_of!(self, EventLoopDelayMonitor, event_loop_timer);
-                monitor.on_fire(vm, now);
-            }
-            Tag::CronJob => {
-                let job = container_of!(self, CronJob, event_loop_timer);
-                job.on_timer_fire(vm);
-            }
-            // PORT NOTE: Zig `inline else` comptime-expanded these; Rust expands by hand.
-            // The Zig `@FieldType(t.Type(), "event_loop_timer") != Self` compile-check has no
-            // direct Rust equivalent — Phase B should `const _: () = assert!(...)` per parent type.
-            Tag::TimeoutObject => {
-                let container = container_of!(self, TimeoutObject, event_loop_timer);
-                container.internals.fire(now, vm);
-            }
-            Tag::ImmediateObject => {
-                let container = container_of!(self, ImmediateObject, event_loop_timer);
-                container.internals.fire(now, vm);
-            }
-            Tag::WTFTimer => {
-                let container = container_of!(self, WTFTimer, event_loop_timer);
-                container.fire(now, vm);
-            }
-            Tag::StatWatcherScheduler => {
-                let container = container_of!(self, StatWatcherScheduler, event_loop_timer);
-                container.timer_callback();
-            }
-            Tag::UpgradedDuplex => {
-                let container = container_of!(self, uws::UpgradedDuplex, event_loop_timer);
-                container.on_timeout();
-            }
-            #[cfg(windows)]
-            Tag::WindowsNamedPipe => {
-                let container = container_of!(self, uws::WindowsNamedPipe, event_loop_timer);
-                container.on_timeout();
-            }
-            #[cfg(not(windows))]
-            Tag::WindowsNamedPipe => {
-                // UnreachableTimer::callback
-                #[cfg(feature = "ci_assert")]
-                debug_assert!(false);
-            }
-            Tag::DNSResolver => {
-                let container = container_of!(self, DNSResolver, event_loop_timer);
-                container.check_timeouts(now, vm);
-            }
-            Tag::SubprocessTimeout => {
-                let container = container_of!(self, Subprocess, event_loop_timer);
-                container.timeout_callback();
-            }
-            Tag::TimerCallback => {
-                let container = container_of!(self, TimerCallback, event_loop_timer);
-                (container.callback)(container);
-            }
-        }
+    /// Fire the timer's callback.
+    ///
+    /// PORT NOTE (b0): the `match self.tag { … container_of … }` body was
+    /// hot-dispatch over ~20 tier-6 variant types (Subprocess, DevServer,
+    /// PostgresSQLConnection, …). Per CYCLEBREAK §Hot-dispatch, that match
+    /// moves to `bun_runtime::dispatch::fire_timer`; this crate calls it
+    /// through the `FIRE_TIMER` hook. `vm` is the erased `*mut VirtualMachine`.
+    pub fn fire(&mut self, now: &timespec, vm: *mut () /* SAFETY: erased *mut VirtualMachine */) {
+        let hook = FIRE_TIMER.load(Ordering::Relaxed);
+        debug_assert!(!hook.is_null(), "FIRE_TIMER not registered by bun_runtime::init()");
+        // SAFETY: hook signature documented on `FIRE_TIMER`; runtime registers it
+        // before any timer can be armed.
+        let f: unsafe fn(*mut EventLoopTimer, *const timespec, *mut ()) =
+            unsafe { core::mem::transmute(hook) };
+        unsafe { f(self, now, vm) };
     }
 }
 

@@ -78,6 +78,62 @@ function cornerPattern(x: number, y: number): [number, number, number, number] {
 }
 const cornersPng = makePng(4, 3, cornerPattern);
 
+// 1×1 white pixel AVIF, 305 bytes (libavif tests/data/white_1x1.avif). Used
+// both as a probe payload (cheap — libavif parses it in sub-ms) and as the
+// fixture for the decode tests in the HEIC/AVIF describe block. Hoisted to
+// module scope so the three probes below (`hasAvifRuntime` for decode,
+// `hasAvifEncoderLibrary` for encode, `hasAvifIccRuntime` for the ICC
+// round-trip) share the same bytes.
+const white1x1Avif = Buffer.from(
+  "AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUEAAADybWV0YQAAAAAAAAAoaGRsc" +
+    "gAAAAAAAAAAcGljdAAAAAAAAAAAAAAAAGxpYmF2aWYAAAAADnBpdG0AAAAAAAEAAAAe" +
+    "aWxvYwAAAABEAAABAAEAAAABAAABGgAAABcAAAAoaWluZgAAAAAAAQAAABppbmZlAgA" +
+    "AAAABAABhdjAxQ29sb3IAAAAAamlwcnAAAABLaXBjbwAAABRpc3BlAAAAAAAAAAEAAA" +
+    "ABAAAAEHBpeGkAAAAAAwgICAAAAAxhdjFDgSAAAAAAABNjb2xybmNseAABAA0ABoAAA" +
+    "AAXaXBtYQAAAAAAAAABAAEEAQKDBAAAAB9tZGF0EgAKBzgABhAQ0GkyCh/wP///xAAA" +
+    "r3A=",
+  "base64",
+);
+
+// Subprocess gate used by the three AVIF test groups. Runs a tiny
+// `Bun.Image` operation in a child process and inspects its exit code:
+//   0 → feature available, run the test strictly
+//   2 → explicit ERR_IMAGE_FORMAT_UNSUPPORTED / ERR_IMAGE_ENCODE_FAILED →
+//       the relevant lib/encoder isn't installed, skip cleanly
+//   anything else (crash, unexpected error, signal) → let the real test
+//       run so the regression surfaces instead of being hidden as a skip
+// The subprocess matches exactly what the shim's `dlopen("libavif.so.16")`
+// does, so it works on glibc and musl alike — unlike `ldconfig -p`, which
+// is a no-op stub on Alpine.
+function avifProbeAvailable(scriptBody: string): boolean {
+  if (!isLinux) return false;
+  try {
+    const proc = Bun.spawnSync({
+      cmd: [bunExe(), "-e", scriptBody],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    return proc.exitCode !== 2;
+  } catch {
+    return false;
+  }
+}
+
+// Script body: "can libavif decode a valid 1×1 AVIF header?" — exits 0 on
+// success, 2 on UnsupportedOnPlatform, 1 on any other error.
+const avifDecodeProbeScript =
+  `const b = Buffer.from(${JSON.stringify(white1x1Avif.toString("base64"))}, "base64");` +
+  `new Bun.Image(b).metadata().then(() => process.exit(0), e => process.exit(e?.code === "ERR_IMAGE_FORMAT_UNSUPPORTED" ? 2 : 1));`;
+
+// Script body: "can libavif encode cornersPng to AVIF?" — exits 0 on
+// success, 2 on {UNSUPPORTED, ENCODE_FAILED} (missing library or no AV1
+// encoder plugin linked in), 1 on any other error.
+const avifEncodeProbeScript =
+  `const png = Buffer.from(${JSON.stringify(Buffer.from(cornersPng).toString("base64"))}, "base64");` +
+  `new Bun.Image(png).avif({ quality: 50 }).bytes()` +
+  `.then(() => process.exit(0), e => process.exit((e?.code === "ERR_IMAGE_FORMAT_UNSUPPORTED" || e?.code === "ERR_IMAGE_ENCODE_FAILED") ? 2 : 1));`;
+
 // 16×16 grey gradient — large enough that the lanczos window has real support.
 const gradientPng = makePng(16, 16, (x, y) => {
   const v = Math.round(((x + y) / 30) * 255);
@@ -727,40 +783,7 @@ describe("Bun.Image", () => {
     // it, round-trip through AVIF and back to PNG and check the iCCP
     // chunk survives — same decode+encode path a Sharp user would hit.
     // Gated on the machine having libavif with an AV1 encoder linked in.
-    const hasAvifIccRuntime = (() => {
-      if (!isLinux) return false;
-      // Decode probe: does the host have libavif at all?
-      const fixture =
-        "AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUEAAADybWV0YQAAAAAAAAAoaGRsc" +
-        "gAAAAAAAAAAcGljdAAAAAAAAAAAAAAAAGxpYmF2aWYAAAAADnBpdG0AAAAAAAEAAAAe" +
-        "aWxvYwAAAABEAAABAAEAAAABAAABGgAAABcAAAAoaWluZgAAAAAAAQAAABppbmZlAgA" +
-        "AAAABAABhdjAxQ29sb3IAAAAAamlwcnAAAABLaXBjbwAAABRpc3BlAAAAAAAAAAEAAA" +
-        "ABAAAAEHBpeGkAAAAAAwgICAAAAAxhdjFDgSAAAAAAABNjb2xybmNseAABAA0ABoAAA" +
-        "AAXaXBtYQAAAAAAAAABAAEEAQKDBAAAAB9tZGF0EgAKBzgABhAQ0GkyCh/wP///xAAA" +
-        "r3A=";
-      const probeScript =
-        `const b = Buffer.from(${JSON.stringify(fixture)}, "base64");` +
-        `new Bun.Image(b).metadata().then(() => process.exit(0), e => process.exit(e?.code === "ERR_IMAGE_FORMAT_UNSUPPORTED" ? 2 : 1));`;
-      try {
-        const p1 = Bun.spawnSync({
-          cmd: [bunExe(), "-e", probeScript],
-          env: bunEnv,
-          stdout: "ignore",
-          stderr: "ignore",
-        });
-        if (p1.exitCode === 2) return false;
-        // Encode probe: and does it have an AV1 encoder linked in?
-        const pngB64 = Buffer.from(cornersPng).toString("base64");
-        const encScript =
-          `const png = Buffer.from(${JSON.stringify(pngB64)}, "base64");` +
-          `new Bun.Image(png).avif({ quality: 50 }).bytes()` +
-          `.then(() => process.exit(0), e => process.exit((e?.code === "ERR_IMAGE_FORMAT_UNSUPPORTED" || e?.code === "ERR_IMAGE_ENCODE_FAILED") ? 2 : 1));`;
-        const p2 = Bun.spawnSync({ cmd: [bunExe(), "-e", encScript], env: bunEnv, stdout: "ignore", stderr: "ignore" });
-        return p2.exitCode !== 2;
-      } catch {
-        return false;
-      }
-    })();
+    const hasAvifIccRuntime = avifProbeAvailable(avifDecodeProbeScript) && avifProbeAvailable(avifEncodeProbeScript);
 
     test.skipIf(!hasAvifIccRuntime)("PNG iCCP → AVIF → PNG preserves the ICC profile byte-for-byte", async () => {
       // PNG-with-iCCP → AVIF. Inside libavif the profile rides in the
@@ -873,51 +896,8 @@ describe("Bun.Image", () => {
     // `ldconfig -p` matches exactly what the shim's
     // `dlopen("libavif.so.16")` does — works on glibc and musl alike,
     // whereas `ldconfig -p` is a no-op stub on Alpine/musl.
-    const hasAvifRuntime = (() => {
-      if (!isLinux) return false;
-      // Fixture is duplicated below (white1x1Avif) — kept inline here
-      // because the describe-body callback is sync, so we can't await a
-      // real Bun.Image call. The subprocess handles the dlopen.
-      const fixture =
-        "AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUEAAADybWV0YQAAAAAAAAAoaGRsc" +
-        "gAAAAAAAAAAcGljdAAAAAAAAAAAAAAAAGxpYmF2aWYAAAAADnBpdG0AAAAAAAEAAAAe" +
-        "aWxvYwAAAABEAAABAAEAAAABAAABGgAAABcAAAAoaWluZgAAAAAAAQAAABppbmZlAgA" +
-        "AAAABAABhdjAxQ29sb3IAAAAAamlwcnAAAABLaXBjbwAAABRpc3BlAAAAAAAAAAEAAA" +
-        "ABAAAAEHBpeGkAAAAAAwgICAAAAAxhdjFDgSAAAAAAABNjb2xybmNseAABAA0ABoAAA" +
-        "AAXaXBtYQAAAAAAAAABAAEEAQKDBAAAAB9tZGF0EgAKBzgABhAQ0GkyCh/wP///xAAA" +
-        "r3A=";
-      const script =
-        `const b = Buffer.from(${JSON.stringify(fixture)}, "base64");` +
-        `new Bun.Image(b).metadata().then(() => process.exit(0), e => process.exit(e?.code === "ERR_IMAGE_FORMAT_UNSUPPORTED" ? 2 : 1));`;
-      try {
-        const proc = Bun.spawnSync({
-          cmd: [bunExe(), "-e", script],
-          env: bunEnv,
-          stdout: "ignore",
-          stderr: "ignore",
-        });
-        // Only exit 2 ("library unavailable") counts as skip. Anything else
-        // — success, crash, unexpected error — should let the real test run
-        // so failures surface instead of being silently hidden. A probe
-        // that crashes under ASAN would otherwise downgrade a real
-        // regression into a green skip.
-        return proc.exitCode !== 2;
-      } catch {
-        return false;
-      }
-    })();
+    const hasAvifRuntime = avifProbeAvailable(avifDecodeProbeScript);
     if (isLinux) {
-      // 1×1 white pixel AVIF, 305 bytes (libavif tests/data/white_1x1.avif).
-      const white1x1Avif = Buffer.from(
-        "AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUEAAADybWV0YQAAAAAAAAAoaGRsc" +
-          "gAAAAAAAAAAcGljdAAAAAAAAAAAAAAAAGxpYmF2aWYAAAAADnBpdG0AAAAAAAEAAAAe" +
-          "aWxvYwAAAABEAAABAAEAAAABAAABGgAAABcAAAAoaWluZgAAAAAAAQAAABppbmZlAgA" +
-          "AAAABAABhdjAxQ29sb3IAAAAAamlwcnAAAABLaXBjbwAAABRpc3BlAAAAAAAAAAEAAA" +
-          "ABAAAAEHBpeGkAAAAAAwgICAAAAAxhdjFDgSAAAAAAABNjb2xybmNseAABAA0ABoAAA" +
-          "AAXaXBtYQAAAAAAAAABAAEEAQKDBAAAAB9tZGF0EgAKBzgABhAQ0GkyCh/wP///xAAA" +
-          "r3A=",
-        "base64",
-      );
       // 4×4 AVIF, 330 bytes (libavif tests/data/extended_pixi.avif). Used
       // for the maxPixels guard test — 16 pixels is comfortably over a
       // small limit without inflating the fixture size.
@@ -994,30 +974,7 @@ describe("Bun.Image", () => {
       // aom/rav1e/SvtAv1Enc linked we always take the strict branch,
       // and a broken encode dispatch makes `.avif()` throw loudly.
       // Decode-only libavif builds (rare — Alpine minimal) skip cleanly.
-      const hasAvifEncoderLibrary = (() => {
-        if (!hasAvifRuntime) return false;
-        // Feed the probe subprocess the same cornersPng (base64'd) the
-        // test uses. Inline the bytes — the describe-body callback is
-        // sync so we can't await.
-        const pngB64 = Buffer.from(cornersPng).toString("base64");
-        const script =
-          `const png = Buffer.from(${JSON.stringify(pngB64)}, "base64");` +
-          `new Bun.Image(png).avif({ quality: 50 }).bytes()` +
-          `.then(() => process.exit(0), e => process.exit((e?.code === "ERR_IMAGE_FORMAT_UNSUPPORTED" || e?.code === "ERR_IMAGE_ENCODE_FAILED") ? 2 : 1));`;
-        try {
-          const proc = Bun.spawnSync({
-            cmd: [bunExe(), "-e", script],
-            env: bunEnv,
-            stdout: "ignore",
-            stderr: "ignore",
-          });
-          // Same "only exit 2 skips" rule as hasAvifRuntime: a crashing
-          // probe must not mask a real encode regression as a skip.
-          return proc.exitCode !== 2;
-        } catch {
-          return false;
-        }
-      })();
+      const hasAvifEncoderLibrary = hasAvifRuntime && avifProbeAvailable(avifEncodeProbeScript);
 
       test.skipIf(!hasAvifEncoderLibrary)("encode .avif() round-trips on Linux", async () => {
         // The machine has an AV1 encoder plugin in libavif's NEEDED — the

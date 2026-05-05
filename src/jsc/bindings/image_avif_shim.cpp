@@ -205,11 +205,10 @@ struct AvifEncoder {
     // Trailing fields (ioStats, diag, data, csOptions, …) — unused.
 };
 
-// Try each candidate SONAME in turn. Debian/Ubuntu/Fedora/Alpine all ship
-// libavif.so.16 (1.0+); libavif.so.15 (0.11), libavif.so.14 (0.10.x),
-// libavif.so.13 (0.9) were in older LTS releases. Our pinned struct layout
-// matches 1.0+, so we only claim 16; if a user is on 0.x the decoder just
-// stays unavailable.
+// Debian/Ubuntu/Fedora/Alpine all ship libavif.so.16 (1.0+); libavif.so.15
+// (0.11), libavif.so.14 (0.10.x), libavif.so.13 (0.9) were in older LTS
+// releases. Our pinned struct layout matches 1.0+, so we only claim 16; if
+// a user is on 0.x the decoder just stays unavailable.
 const Syms* load()
 {
     static const Syms* table = []() -> const Syms* {

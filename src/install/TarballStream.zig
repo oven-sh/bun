@@ -495,10 +495,15 @@ fn archiveReadCallback(
 /// output file (or creates the directory/symlink) and transitions to
 /// `.want_data` so the next `step()` iteration starts pulling its body.
 fn beginEntry(this: *TarballStream, entry: *lib.Archive.Entry) !void {
-    var pathname: bun.OSPathSliceZ = if (comptime Environment.isWindows)
+    var pathname: bun.OSPathSliceZ = (if (comptime Environment.isWindows)
         entry.pathnameW()
     else
-        entry.pathname();
+        entry.pathname()) orelse {
+        // libarchive can return null here when the header name cannot be
+        // represented in the requested encoding. Skip the entry and move on.
+        this.phase = .want_data;
+        return;
+    };
 
     if (this.want_first_dirname) {
         this.want_first_dirname = false;
@@ -680,7 +685,7 @@ fn makeSymlink(
     path: [:0]bun.OSPathChar,
     path_slice: bun.OSPathSlice,
 ) void {
-    const target = entry.symlink();
+    const target = entry.symlink() orelse return;
     // Same safety rule as `isSymlinkTargetSafe` in the buffered path:
     // reject absolute targets and anything that escapes via `..`.
     if (target.len == 0 or target[0] == '/') return;

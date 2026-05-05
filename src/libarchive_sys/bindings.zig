@@ -908,16 +908,18 @@ pub const Archive = opaque {
             return archive_entry_clear(entry);
         }
 
-        extern fn archive_entry_pathname(*Entry) [*c]const u8;
-        pub fn pathname(entry: *Entry) [:0]const u8 {
+        // libarchive returns NULL from these accessors when charset conversion
+        // fails or when the field is unset, so callers must handle the optional.
+        extern fn archive_entry_pathname(*Entry) ?[*:0]const u8;
+        pub fn pathname(entry: *Entry) ?[:0]const u8 {
             return bun.sliceTo(archive_entry_pathname(entry), 0);
         }
-        extern fn archive_entry_pathname_utf8(*Entry) [*c]const u8;
-        pub fn pathnameUtf8(entry: *Entry) [:0]const u8 {
+        extern fn archive_entry_pathname_utf8(*Entry) ?[*:0]const u8;
+        pub fn pathnameUtf8(entry: *Entry) ?[:0]const u8 {
             return bun.sliceTo(archive_entry_pathname_utf8(entry), 0);
         }
-        extern fn archive_entry_pathname_w(*Entry) [*c]const u16;
-        pub fn pathnameW(entry: *Entry) [:0]const u16 {
+        extern fn archive_entry_pathname_w(*Entry) ?[*:0]const u16;
+        pub fn pathnameW(entry: *Entry) ?[:0]const u16 {
             return bun.sliceTo(archive_entry_pathname_w(entry), 0);
         }
         extern fn archive_entry_filetype(*Entry) bun.Mode;
@@ -935,20 +937,20 @@ pub const Archive = opaque {
         pub fn mtime(entry: *Entry) i64 {
             return @intCast(archive_entry_mtime(@ptrCast(entry)));
         }
-        extern fn archive_entry_symlink(*Entry) [*c]const u8;
-        pub fn symlink(entry: *Entry) [:0]const u8 {
+        extern fn archive_entry_symlink(*Entry) ?[*:0]const u8;
+        pub fn symlink(entry: *Entry) ?[:0]const u8 {
             return bun.sliceTo(archive_entry_symlink(entry), 0);
         }
-        pub extern fn archive_entry_symlink_utf8(*Entry) [*c]const u8;
-        pub fn symlinkUtf8(entry: *Entry) [:0]const u8 {
+        pub extern fn archive_entry_symlink_utf8(*Entry) ?[*:0]const u8;
+        pub fn symlinkUtf8(entry: *Entry) ?[:0]const u8 {
             return bun.sliceTo(archive_entry_symlink_utf8(entry), 0);
         }
         pub extern fn archive_entry_symlink_type(*Entry) SymlinkType;
         pub fn symlinkType(entry: *Entry) SymlinkType {
             return archive_entry_symlink_type(entry);
         }
-        pub extern fn archive_entry_symlink_w(*Entry) [*c]const u16;
-        pub fn symlinkW(entry: *Entry) [:0]const u16 {
+        pub extern fn archive_entry_symlink_w(*Entry) ?[*:0]const u16;
+        pub fn symlinkW(entry: *Entry) ?[:0]const u16 {
             return bun.sliceTo(archive_entry_symlink_w(entry), 0);
         }
     };

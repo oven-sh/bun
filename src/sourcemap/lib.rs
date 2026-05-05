@@ -1,3 +1,267 @@
+#![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
+//! `bun_sourcemap` — B-1 minimal compiling surface.
+//!
+//! Phase-A draft bodies are preserved verbatim below inside the
+//! `#[cfg(any())] mod _phase_a_draft { ... }` block, and the sibling `.rs`
+//! files (`Chunk.rs`, `Mapping.rs`, …) are gated via `#[cfg(any())] mod` decls
+//! so the original port work is kept on disk for B-2 un-gating.
+//!
+//! B-2: un-gate module-by-module, replace `todo!()` stubs with real impls,
+//! re-add `bun_js_parser` to Cargo.toml once it compiles.
+
+// ── crate aliases ─────────────────────────────────────────────────────────
+// TODO(b1): Phase-A draft used `bun_str`; the workspace crate is `bun_string`.
+extern crate bun_string as bun_str;
+use bun_logger as logger;
+
+// ── gated Phase-A sibling modules (preserve drafts; un-gate in B-2) ───────
+#[cfg(any())] #[path = "Chunk.rs"]             mod chunk;
+#[cfg(any())] #[path = "InternalSourceMap.rs"] mod internal_source_map;
+#[cfg(any())] #[path = "LineOffsetTable.rs"]   mod line_offset_table;
+#[cfg(any())] #[path = "Mapping.rs"]           mod mapping_draft;
+#[cfg(any())] #[path = "ParsedSourceMap.rs"]   mod parsed_source_map_draft;
+
+#[path = "VLQ.rs"]
+pub mod vlq;
+pub use vlq::{VLQ, encode as encode_vlq};
+use vlq::{decode as decode_vlq, decode_assume_valid as decode_vlq_assume_valid};
+
+// ── B-1 stub surface ──────────────────────────────────────────────────────
+
+/// Opaque B-1 stand-in for the parsed-mapping table. B-2: un-gate `Mapping.rs`.
+#[derive(Default, Clone, Copy)]
+pub struct Mapping {
+    pub generated_line: i32,
+    pub generated_column: i32,
+    pub source_index: i32,
+    pub original_line: i32,
+    pub original_column: i32,
+}
+
+pub mod mapping {
+    #[derive(Default)]
+    pub struct List;
+    #[derive(Default, Clone, Copy)]
+    pub struct ParseOptions {
+        pub allow_names: bool,
+        pub sort: bool,
+    }
+    pub use super::Mapping;
+}
+
+/// Opaque B-1 stand-in. B-2: un-gate `ParsedSourceMap.rs`.
+#[derive(Default)]
+pub struct ParsedSourceMap;
+
+pub mod parsed_source_map {
+    #[derive(Default, Clone, Copy)]
+    pub struct SourceContentPtr {
+        pub load_hint: super::SourceMapLoadHint,
+    }
+    pub use super::ParsedSourceMap;
+}
+
+/// Opaque B-1 stand-in. B-2: un-gate `Chunk.rs`.
+pub struct Chunk;
+/// Opaque B-1 stand-in. B-2: un-gate `InternalSourceMap.rs`.
+pub struct InternalSourceMap;
+/// Opaque B-1 stand-in. B-2: un-gate `LineOffsetTable.rs`.
+#[derive(Default)]
+pub struct LineOffsetTable;
+
+// ── leaf types that compile cleanly today ─────────────────────────────────
+
+/// Coordinates in source maps are stored using relative offsets for size
+/// reasons. When joining together chunks of a source map that were emitted
+/// in parallel for different parts of a file, we need to fix up the first
+/// segment of each chunk to be relative to the end of the previous chunk.
+#[derive(Default, Clone, Copy)]
+pub struct SourceMapState {
+    /// This isn't stored in the source map. It's only used by the bundler to join
+    /// source map chunks together correctly.
+    pub generated_line: i32,
+    /// These are stored in the source map in VLQ format.
+    pub generated_column: i32,
+    pub source_index: i32,
+    pub original_line: i32,
+    pub original_column: i32,
+}
+
+/// Top-level `SourceMap` struct (was `@This()` in Zig).
+#[derive(Default)]
+pub struct SourceMap {
+    pub sources: Vec<Box<[u8]>>,
+    pub sources_content: Vec<Box<[u8]>>,
+    pub mapping: mapping::List,
+}
+
+/// For some sourcemap loading code, this enum is used as a hint if it should
+/// bother loading source code into memory.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SourceContentHandling {
+    NoSourceContents,
+    SourceContents,
+}
+
+/// For some sourcemap loading code, this enum is used as a hint if we already
+/// know if the sourcemap is located on disk or inline in the source code.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum SourceMapLoadHint {
+    #[default]
+    None,
+    IsInlineMap,
+    IsExternalMap,
+}
+
+/// Dictates what parse_url/parse_json return.
+#[derive(Clone, Copy)]
+pub enum ParseUrlResultHint {
+    MappingsOnly,
+    SourceOnly(u32),
+    All { line: i32, column: i32, include_names: bool },
+}
+
+#[derive(Default)]
+pub struct ParseUrl {
+    pub map: Option<std::sync::Arc<ParsedSourceMap>>,
+    pub mapping: Option<Mapping>,
+    pub source_contents: Option<Box<[u8]>>,
+}
+
+pub enum ParseResult {
+    Fail(ParseResultFail),
+    Success(ParsedSourceMap),
+}
+
+pub struct ParseResultFail {
+    pub loc: logger::Loc,
+    pub err: bun_core::Error,
+    pub value: i32,
+    pub msg: &'static [u8],
+}
+
+#[derive(Default)]
+pub struct SourceContent {
+    pub value: Box<[u16]>,
+    pub quoted: Box<[u8]>,
+}
+
+/// The sourcemap spec says line and column offsets are zero-based.
+#[derive(Clone, Copy, Default)]
+pub struct LineColumnOffset {
+    pub lines: i32,
+    pub columns: i32,
+}
+
+#[derive(Clone, Copy)]
+pub enum LineColumnOffsetOptional {
+    Null,
+    Value(LineColumnOffset),
+}
+
+#[derive(Clone, Copy)]
+pub struct SourceMapShifts {
+    pub before: LineColumnOffset,
+    pub after: LineColumnOffset,
+}
+
+#[derive(Default)]
+pub struct SourceMapPieces {
+    pub prefix: Vec<u8>,
+    pub mappings: Vec<u8>,
+    pub suffix: Vec<u8>,
+}
+
+/// https://github.com/getsentry/rfcs/blob/main/text/0081-sourcemap-debugid.md
+#[derive(Default, Clone, Copy)]
+pub struct DebugIDFormatter {
+    pub id: u64,
+}
+
+impl core::fmt::Display for DebugIDFormatter {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // The RFC asks for a UUID (128 bits / 32 hex chars). Our hashes are 64
+        // bits; the tail is "bun!bun!" hex-encoded.
+        write!(f, "{:016X}64756E2164756E21", self.id)
+    }
+}
+
+/// Opaque FFI handle to a `ZigSourceProvider`.
+#[repr(C)]
+pub struct SourceProviderMap {
+    _p: [u8; 0],
+    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+}
+
+#[repr(C)]
+pub struct DevServerSourceProvider {
+    _p: [u8; 0],
+    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+}
+
+// ── SavedSourceMap leaf state (compiles today; see Phase-A note) ──────────
+#[allow(non_snake_case)]
+pub mod SavedSourceMap {
+    pub mod MissingSourceMapNoteInfo {
+        use core::sync::atomic::{AtomicBool, Ordering};
+
+        static SEEN_INVALID: AtomicBool = AtomicBool::new(false);
+        static PATH: parking_lot::Mutex<Option<Box<[u8]>>> = parking_lot::Mutex::new(None);
+
+        #[inline]
+        pub fn set_seen_invalid(v: bool) { SEEN_INVALID.store(v, Ordering::Relaxed); }
+        #[inline]
+        pub fn seen_invalid() -> bool { SEEN_INVALID.load(Ordering::Relaxed) }
+
+        pub fn set_path(path: &[u8]) {
+            *PATH.lock() = Some(path.to_vec().into_boxed_slice());
+        }
+
+        pub fn print() {
+            // TODO(b1): bun_core::Output::note missing from stub surface.
+            todo!("B-2: MissingSourceMapNoteInfo::print")
+        }
+    }
+}
+
+// ── stubbed entry points (bodies gated; un-gate in B-2) ───────────────────
+
+pub fn parse_url(
+    _arena: &bun_alloc::Arena,
+    _source: &[u8],
+    _hint: ParseUrlResultHint,
+) -> Result<ParseUrl, bun_core::Error> {
+    todo!("B-2: parse_url — see _phase_a_draft")
+}
+
+pub fn parse_json(
+    _arena: &bun_alloc::Arena,
+    _source: &[u8],
+    _hint: ParseUrlResultHint,
+) -> Result<ParseUrl, bun_core::Error> {
+    // TODO(b1): bun_js_parser::Expr / bun_interchange::json::parse — gated.
+    todo!("B-2: parse_json — see _phase_a_draft")
+}
+
+// TODO(port): move to bun_str::strings (these mirror std.mem.lastIndexOf)
+fn last_index_of(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.len() > haystack.len() { return None; }
+    let mut i = haystack.len() - needle.len();
+    loop {
+        if &haystack[i..i + needle.len()] == needle { return Some(i); }
+        if i == 0 { return None; }
+        i -= 1;
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Phase-A draft body — preserved verbatim, gated off. Do NOT delete; B-2
+// un-gates this incrementally as lower-tier stub surfaces fill in.
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(any())]
+mod _phase_a_draft {
 //! SourceMap — port of src/sourcemap/sourcemap.zig
 //!
 //! In Zig this file is a top-level struct (`pub const SourceMap = @This();`).
@@ -1389,3 +1653,4 @@ impl fmt::Display for DebugIDFormatter {
 //   todos:      23
 //   notes:      Arc<ParsedSourceMap> mutated post-construction (unsafe cast); SourceProvider trait replaces comptime type dispatch; SavedSourceMap moved down to this crate (b0); Expr.data variant accessors guessed
 // ──────────────────────────────────────────────────────────────────────────
+} // mod _phase_a_draft

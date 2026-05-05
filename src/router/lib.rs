@@ -1,3 +1,4 @@
+#![allow(unused, dead_code, non_snake_case, private_interfaces)] // B-1 gate-and-stub
 // This is a Next.js-compatible file-system router.
 // It uses the filesystem to infer entry points.
 // Despite being Next.js-compatible, it's not tied to Next.js.
@@ -9,17 +10,175 @@ use std::cell::RefCell;
 
 use bun_collections::{ArrayHashMap, MultiArrayList, StringHashMap};
 use bun_core::Output;
-use bun_logger as logger;
 use bun_paths::{self, PathBuffer, SEP, SEP_STR};
-// MOVE_DOWN(b0): bun_resolver::fs → bun_sys::fs (move-in pass adds the module to bun_sys)
-use bun_sys::fs::{self as Fs, FileSystem};
-use bun_str::{strings, HashedString, PathString};
+use bun_string::strings;
 use bun_sys::Fd;
 use bun_url::PathnameScanner;
-use bun_wyhash::hash as wyhash;
 
-use bun_http_types::URLPath;
-use bun_schema::api;
+use bun_http_types::URLPath::URLPath;
+
+// ──────────────────────────────────────────────────────────────────────────
+// B-1 gate-and-stub: local shims for cross-tier symbols not yet exposed by
+// lower-tier crates. Do NOT edit other crates; un-gating happens in B-2.
+// ──────────────────────────────────────────────────────────────────────────
+#[allow(dead_code, non_snake_case)]
+mod b1_stubs {
+    // TODO(b1): bun_wyhash::hash missing — local stub
+    #[inline]
+    pub fn wyhash(input: &[u8]) -> u64 {
+        bun_wyhash::Wyhash11::hash(0, input)
+    }
+
+    // TODO(b1): bun_logger crate missing from deps
+    pub mod logger {
+        pub struct Log;
+        impl Log {
+            pub fn add_error_fmt(
+                &mut self,
+                _source: Option<&Source>,
+                _loc: Loc,
+                _args: core::fmt::Arguments<'_>,
+            ) -> Result<(), ()> {
+                todo!("b1-stub: bun_logger::Log::add_error_fmt")
+            }
+        }
+        pub struct Source;
+        impl Source {
+            pub fn init_empty_file(_path: &[u8]) -> Source {
+                todo!("b1-stub: bun_logger::Source::init_empty_file")
+            }
+        }
+        pub struct Loc;
+        impl Loc {
+            pub const EMPTY: Loc = Loc;
+        }
+    }
+
+    // TODO(b1): bun_sys::fs missing (MOVE_DOWN pending)
+    pub mod Fs {
+        pub struct FileSystem;
+        pub struct DirEntry;
+        pub struct Entry;
+    }
+    pub use Fs::FileSystem;
+
+    // TODO(b1): bun_schema::api missing
+    pub mod api {
+        #[derive(Default, Clone)]
+        pub struct LoadedRouteConfig {
+            pub asset_prefix: Box<[u8]>,
+            pub dir: Box<[u8]>,
+            pub extensions: Box<[Box<[u8]>]>,
+            pub static_dir: Box<[u8]>,
+        }
+        pub struct RouteConfig;
+        pub struct StringPointer {
+            pub offset: u32,
+            pub length: u32,
+        }
+    }
+
+    // TODO(b1): bun_core::Error missing
+    pub type CoreError = ();
+
+    // TODO(b1): bun_string::HashedString stub lacks init/eql/EMPTY/Copy; local
+    // shim with the surface this crate needs.
+    #[derive(Clone, Copy)]
+    pub struct HashedString {
+        pub hash: u32,
+        pub ptr: *const u8,
+        pub len: usize,
+    }
+    // SAFETY: HashedString is a view into 'static-ish DirnameStore buffers (Phase A).
+    unsafe impl Send for HashedString {}
+    unsafe impl Sync for HashedString {}
+    impl HashedString {
+        pub const EMPTY: HashedString = HashedString { hash: 0, ptr: b"".as_ptr(), len: 0 };
+        #[inline]
+        pub fn init(s: &[u8]) -> HashedString {
+            HashedString { hash: super::wyhash(s) as u32, ptr: s.as_ptr(), len: s.len() }
+        }
+        #[inline]
+        pub fn init_no_hash(s: &[u8]) -> HashedString {
+            HashedString { hash: 0, ptr: s.as_ptr(), len: s.len() }
+        }
+        #[inline]
+        pub fn slice(&self) -> &[u8] {
+            // SAFETY: ptr+len always come from a valid &[u8] in init/init_no_hash.
+            unsafe { core::slice::from_raw_parts(self.ptr, self.len) }
+        }
+        #[inline]
+        pub fn eql(self, other: &[u8]) -> bool {
+            self.slice() == other
+        }
+        #[inline]
+        pub fn eql_hashed(a: HashedString, b: HashedString) -> bool {
+            a.hash == b.hash && a.slice() == b.slice()
+        }
+    }
+
+    // TODO(b1): bun_string::PathString stub lacks init/slice; local shim.
+    #[derive(Clone, Copy, Default)]
+    pub struct PathString {
+        pub ptr: *const u8,
+        pub len: usize,
+    }
+    unsafe impl Send for PathString {}
+    unsafe impl Sync for PathString {}
+    impl PathString {
+        #[inline]
+        pub fn init(s: &[u8]) -> PathString {
+            PathString { ptr: s.as_ptr(), len: s.len() }
+        }
+        #[inline]
+        pub fn slice(&self) -> &[u8] {
+            // SAFETY: ptr+len always come from a valid &[u8] in init.
+            unsafe { core::slice::from_raw_parts(self.ptr, self.len) }
+        }
+        #[inline]
+        pub fn is_empty(&self) -> bool {
+            self.len == 0
+        }
+    }
+
+    // TODO(b1): bun_string::strings::CodepointIterator missing
+    pub struct CodepointIterator;
+    impl CodepointIterator {
+        #[inline]
+        pub fn needs_utf8_decoding(s: &[u8]) -> bool {
+            s.iter().any(|&b| b >= 0x80)
+        }
+    }
+
+    // TODO(b1): bun_string::strings::{trim, trim_left, trim_right} missing
+    pub mod strings_ext {
+        #[inline]
+        pub fn trim<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
+            trim_left(trim_right(s, chars), chars)
+        }
+        #[inline]
+        pub fn trim_left<'a>(mut s: &'a [u8], chars: &[u8]) -> &'a [u8] {
+            while let Some(&b) = s.first() {
+                if !chars.contains(&b) {
+                    break;
+                }
+                s = &s[1..];
+            }
+            s
+        }
+        #[inline]
+        pub fn trim_right<'a>(mut s: &'a [u8], chars: &[u8]) -> &'a [u8] {
+            while let Some(&b) = s.last() {
+                if !chars.contains(&b) {
+                    break;
+                }
+                s = &s[..s.len() - 1];
+            }
+            s
+        }
+    }
+}
+use b1_stubs::{api, logger, wyhash, CoreError, FileSystem, Fs, HashedString, PathString};
 
 // ──────────────────────────────────────────────────────────────────────────
 // CYCLEBREAK Phase B-0 — cross-tier decoupling
@@ -95,7 +254,8 @@ impl RouteConfig {
         }
     }
 
-    pub fn from_api(router_: &api::RouteConfig) -> Result<RouteConfig, bun_core::Error> {
+    #[cfg(any())] // TODO(b1): bun_schema::api::RouteConfig + bun_string::strings::trim_* missing
+    pub fn from_api(router_: &api::RouteConfig) -> Result<RouteConfig, CoreError> {
         let mut router = Self::zero();
 
         let static_dir: &[u8] =
@@ -204,11 +364,12 @@ pub struct Router<'a> {
     pub config: RouteConfig,
 }
 
+#[cfg(any())] // TODO(b1): Fd::INVALID, Routes default, RouteLoader, URLPath fields, watcher — gate whole impl
 impl<'a> Router<'a> {
     pub fn init(
         fs: &'a FileSystem,
         config: RouteConfig,
-    ) -> Result<Router<'a>, bun_core::Error> {
+    ) -> Result<Router<'a>, CoreError> {
         Ok(Router {
             dir: Fd::INVALID,
             routes: Routes {
@@ -254,7 +415,7 @@ impl<'a> Router<'a> {
         root_dir_info: DirInfoRef,
         resolver: &mut R,
         base_dir: &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), CoreError> {
         if self.loaded_routes {
             return Ok(());
         }
@@ -268,7 +429,7 @@ impl<'a> Router<'a> {
         app: &mut Self,
         server: &mut S,
         ctx: &mut C,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), CoreError> {
         ctx.set_matched_route(None);
 
         // If there's an extname assume it's an asset and not a page
@@ -287,7 +448,7 @@ impl<'a> Router<'a> {
             }
         }
 
-        PARAMS_LIST.with_borrow_mut(|params_list| -> Result<(), bun_core::Error> {
+        PARAMS_LIST.with_borrow_mut(|params_list| -> Result<(), CoreError> {
             params_list.shrink_retaining_capacity(0);
             if let Some(route) = app
                 .routes
@@ -333,12 +494,11 @@ struct RouteIndex {
     hash: u32,
 }
 
-impl RouteIndex {
-    pub type List = MultiArrayList<RouteIndex>;
-}
+// TODO(b1): inherent assoc types unstable; module-level alias instead.
+type RouteIndexList = MultiArrayList<RouteIndex>;
 
 pub struct Routes<'a> {
-    pub list: RouteIndex::List,
+    pub list: RouteIndexList,
     // TODO(port): self-referential — these slice into self.list columns; revisit in Phase B
     pub dynamic: &'static [Box<Route>],
     pub dynamic_names: &'static [&'static [u8]],
@@ -363,10 +523,11 @@ pub struct Routes<'a> {
     pub client_framework_enabled: bool,
 }
 
+#[cfg(any())] // TODO(b1): MultiArrayList::default() not on stub
 impl<'a> Default for Routes<'a> {
     fn default() -> Self {
         Self {
-            list: RouteIndex::List::default(),
+            list: RouteIndexList::default(),
             dynamic: &[],
             dynamic_names: &[],
             dynamic_match_names: &[],
@@ -379,6 +540,7 @@ impl<'a> Default for Routes<'a> {
     }
 }
 
+#[cfg(any())] // TODO(b1): URLPath fields, AbsPath::slice, strings::trim_left, route_param::List::shrink_retaining_capacity
 impl<'a> Routes<'a> {
     pub fn match_page_with_allocator<'p>(
         &mut self,
@@ -526,6 +688,7 @@ struct RouteLoader<'a> {
     all_routes: Vec<Box<Route>>,
 }
 
+#[cfg(any())] // TODO(b1): logger::Log methods, Fs::Entry, bun_paths::extension/is_sep_any, StringHashMap::get_or_put
 impl<'a> RouteLoader<'a> {
     pub fn append_route(&mut self, route: Route) {
         // /index.js
@@ -938,11 +1101,13 @@ pub struct Route {
     pub has_uppercase: bool,
 }
 
-impl Route {
-    pub type Ptr = TinyPtr;
+// TODO(b1): inherent assoc types unstable; module-level alias instead.
+pub type RoutePtr = TinyPtr;
 
+impl Route {
     pub const INDEX_ROUTE_NAME: &'static [u8] = b"/";
 
+    #[cfg(any())] // TODO(b1): Fs::Entry fields, FileSystem::dirname_store, bun_sys::open_file_absolute_z, bun_str::ZStr
     pub fn parse(
         base_: &[u8],
         extname: &[u8],
@@ -1253,13 +1418,9 @@ pub mod Sorter {
     }
 }
 
-// Re-export so `Route::Sorter::*` paths used elsewhere resolve.
-impl Route {
-    #[allow(non_snake_case)]
-    pub use super::Sorter;
-}
-// TODO(port): the above `impl Route { pub use ... }` is not valid Rust; Phase B should make
+// TODO(port): `impl Route { pub use Sorter }` is not valid Rust; Phase B should make
 // `Sorter` an inherent module on `Route` via a wrapper type or move callers to `crate::Sorter`.
+// B-1: callers use `crate::Sorter` directly.
 
 struct RouteBufs {
     route_file_buf: PathBuffer,
@@ -1312,6 +1473,7 @@ impl<'a> Match<'a> {
         PathnameScanner::init(self.pathname, self.name, self.params)
     }
 
+    #[cfg(any())] // TODO(b1): bun_paths::extension missing
     pub fn name_with_basename<'s>(file_path: &'s [u8], dir: &[u8]) -> &'s [u8] {
         let mut name = file_path;
         if let Some(i) = strings::index_of(name, dir) {
@@ -1322,7 +1484,7 @@ impl<'a> Match<'a> {
     }
 
     pub fn pathname_without_leading_slash(&self) -> &[u8] {
-        strings::trim_left(self.pathname, b"/")
+        b1_stubs::strings_ext::trim_left(self.pathname, b"/")
     }
 }
 
@@ -1339,7 +1501,7 @@ pub trait ResolverLike {
 
 pub trait WatcherLike {
     fn watchloop_handle(&self) -> Option<Fd>;
-    fn start(&mut self) -> Result<(), bun_core::Error>;
+    fn start(&mut self) -> Result<(), CoreError>;
 }
 
 pub trait ServerLike {
@@ -1353,8 +1515,8 @@ pub trait RequestContextLike {
     fn controlled(&self) -> bool;
     fn has_called_done(&self) -> bool;
     fn set_matched_route(&mut self, m: Option<Match<'_>>);
-    fn handle_request(&mut self) -> Result<(), bun_core::Error>;
-    fn handle_redirect(&mut self, redirect: &[u8]) -> Result<(), bun_core::Error>;
+    fn handle_request(&mut self) -> Result<(), CoreError>;
+    fn handle_redirect(&mut self, redirect: &[u8]) -> Result<(), CoreError>;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1377,9 +1539,9 @@ pub mod pattern {
         pub fn match_<const ALLOW_OPTIONAL_CATCH_ALL: bool>(
             // `path` must be lowercased and have no leading slash
             path: &[u8],
-            /// case-sensitive, must not have a leading slash
+            // case-sensitive, must not have a leading slash
             name: &[u8],
-            /// case-insensitive, must not have a leading slash
+            // case-insensitive, must not have a leading slash
             match_name: &[u8],
             params: &mut route_param::List,
         ) -> bool {
@@ -1396,7 +1558,7 @@ pub mod pattern {
                             .position(|&b| b == b'/')
                             .unwrap_or(path_.len())];
                         if !str_.eql(segment) {
-                            params.shrink_retaining_capacity(0);
+                            params.truncate(0); // TODO(b1): was shrink_retaining_capacity (MultiArrayList API)
                             return false;
                         }
 
@@ -1425,7 +1587,7 @@ pub mod pattern {
                             path_ = &path_[i + 1..];
 
                             if pattern.is_end(name) {
-                                params.shrink_retaining_capacity(0);
+                                params.truncate(0); // TODO(b1): was shrink_retaining_capacity (MultiArrayList API)
                                 return false;
                             }
 
@@ -1507,7 +1669,7 @@ pub mod pattern {
         /// `None` means invalid. Error messages are logged.
         /// That way, we can provide a list of all invalid routes rather than failing the first time.
         pub fn validate(input: &[u8], log: &mut logger::Log) -> Option<ValidationResult> {
-            if strings::CodepointIterator::needs_utf8_decoding(input) {
+            if b1_stubs::CodepointIterator::needs_utf8_decoding(input) {
                 let source = logger::Source::init_empty_file(input);
                 log.add_error_fmt(
                     Some(&source),
@@ -1788,21 +1950,22 @@ pub mod pattern {
         pub kind: Tag,
     }
 
-    #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy)]
+    // TODO(b1): thiserror not in deps; manual Display/Error impl.
+    #[derive(strum::IntoStaticStr, Debug, Clone, Copy)]
     pub enum PatternParseError {
-        #[error("CatchAllMustBeAtTheEnd")]
         CatchAllMustBeAtTheEnd,
-        #[error("InvalidCatchAllRoute")]
         InvalidCatchAllRoute,
-        #[error("InvalidOptionalCatchAllRoute")]
         InvalidOptionalCatchAllRoute,
-        #[error("InvalidRoutePattern")]
         InvalidRoutePattern,
-        #[error("MissingParamName")]
         MissingParamName,
-        #[error("PatternMissingClosingBracket")]
         PatternMissingClosingBracket,
     }
+    impl core::fmt::Display for PatternParseError {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            f.write_str(<&'static str>::from(*self))
+        }
+    }
+    impl std::error::Error for PatternParseError {}
 
     #[repr(u8)]
     #[derive(Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
@@ -1835,7 +1998,7 @@ pub mod pattern {
         pub fn eql(a: &Value, b: &Value) -> bool {
             a.tag() == b.tag()
                 && match (a, b) {
-                    (Value::Static(a), Value::Static(b)) => HashedString::eql(*a, *b),
+                    (Value::Static(a), Value::Static(b)) => HashedString::eql_hashed(*a, *b),
                     (Value::Dynamic(a), Value::Dynamic(b)) => TinyPtr::eql(*a, *b),
                     (Value::CatchAll(a), Value::CatchAll(b)) => TinyPtr::eql(*a, *b),
                     (Value::OptionalCatchAll(a), Value::OptionalCatchAll(b)) => {
@@ -1853,6 +2016,7 @@ pub use pattern::Pattern;
 // Tests + test helpers
 // ──────────────────────────────────────────────────────────────────────────
 
+#[cfg(any())] // TODO(b1): tests depend on gated impls
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,4 +1,10 @@
-use bun_str::strings;
+// TODO(b1): bun_str crate missing — local stubs for the four fns we call.
+mod strings {
+    pub fn codepoint_size<T>(_b0: u8) -> u8 { todo!("b1: bun_str::strings stub") }
+    pub fn decode_wtf8_rune_t<T>(_buf: &[u8], _len: u8, _replacement: u32) -> u32 { todo!("b1: bun_str::strings stub") }
+    pub fn encode_wtf8_rune_t<T>(_buf: &mut [u8], _cp: u32) -> u32 { todo!("b1: bun_str::strings stub") }
+    pub fn eql_case_insensitive_asciii_check_length(_a: &[u8], _b: &[u8]) -> bool { todo!("b1: bun_str::strings stub") }
+}
 
 use super::entity as entity_mod;
 use super::types::{TextType, OFF};

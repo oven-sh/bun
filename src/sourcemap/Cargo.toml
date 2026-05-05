@@ -24,7 +24,8 @@ bun_core.workspace = true
 bun_collections.workspace = true
 bun_interchange.workspace = true
 bun_io.workspace = true
-bun_js_parser.workspace = true
+# TODO(b1): bun_js_parser does not compile yet (1302 errors via bun_css); re-add in B-2.
+# bun_js_parser.workspace = true
 bun_logger.workspace = true
 bun_paths.workspace = true
 bun_ptr.workspace = true

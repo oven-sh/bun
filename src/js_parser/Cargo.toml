@@ -24,7 +24,8 @@ bun_alloc.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
 bun_crash_handler.workspace = true
-bun_css.workspace = true
+# TODO(b1): bun_css does not compile yet (1467 errors); re-add when green.
+# bun_css.workspace = true
 bun_highway.workspace = true
 bun_interchange.workspace = true
 bun_io.workspace = true

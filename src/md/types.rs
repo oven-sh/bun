@@ -1,6 +1,7 @@
 use core::ffi::c_void;
 
-
+// TODO(b1): bun_jsc::JsResult missing from lower-tier stub surface — local alias.
+pub type JsResult<T> = Result<T, crate::parser::ParserError>;
 
 /// Offset into the input document.
 pub type OFF = u32;

@@ -17,8 +17,110 @@ use bun_logger as logger;
 // Zig file-structs `@import("./ast/Foo.zig")` become `pub use` of the module's
 // primary type. Module path segments are snake_cased per PORTING.md.
 // TODO(port): verify module names once ast/*.rs land in Phase B.
+//
+// TODO(b1): the real `ast/` and `parser` modules are gated behind `#[cfg(any())]`
+// until B-2 un-gating. The Phase-A draft bodies are preserved on disk in
+// `src/js_parser/ast/*.rs` and `src/js_parser/parser.rs`; an inline stub
+// `pub mod ast { … }` below exposes the minimal opaque type surface needed
+// for the rest of this file to type-check.
+#[cfg(any())]
 pub mod ast;
+#[cfg(any())]
 pub mod parser;
+#[cfg(any())]
+#[path = "lexer.rs"]
+pub mod lexer;
+#[cfg(any())]
+#[path = "lexer_tables.rs"]
+pub mod lexer_tables;
+#[cfg(any())]
+#[path = "runtime.rs"]
+pub mod runtime;
+
+/// B-1 stub surface for `ast/*`. Every type is opaque; methods `todo!()`.
+/// Real Phase-A drafts live in `src/js_parser/ast/*.rs` (gated above).
+#[cfg(not(any()))]
+#[allow(non_snake_case, dead_code)]
+pub mod ast {
+    pub mod base {
+        #[derive(Copy, Clone, Hash, PartialEq, Eq, Default, Debug)]
+        pub struct Ref(pub u64);
+        impl Ref {
+            pub const NONE: Ref = Ref(u64::MAX);
+            pub fn inner_index(self) -> u32 { todo!("b1-stub") }
+        }
+        #[derive(Copy, Clone, Default, Debug)]
+        pub struct RefCtx;
+        #[derive(Copy, Clone, Default, Debug)]
+        pub struct RefFields;
+        #[derive(Copy, Clone, Default, Debug)]
+        pub struct RefHashCtx;
+        #[derive(Copy, Clone, Default, Debug)]
+        pub struct RefTag;
+
+        #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+        pub struct Index(pub u32);
+        impl Index {
+            pub const INVALID: Index = Index(u32::MAX);
+            pub fn get(self) -> u32 { self.0 }
+        }
+        pub trait IndexExt { type Int; }
+        impl IndexExt for Index { type Int = u32; }
+    }
+    pub mod ast_memory_allocator { #[derive(Default)] pub struct ASTMemoryAllocator; }
+    pub mod ast { #[derive(Default)] pub struct Ast; }
+    pub mod binding { #[derive(Copy, Clone, Default)] pub struct Binding; }
+    pub mod bundled_ast { #[derive(Default)] pub struct BundledAst; }
+    pub mod expr {
+        #[derive(Copy, Clone, Default)]
+        pub struct Expr;
+        #[derive(Copy, Clone)]
+        pub struct Data; // opaque tag — real variant set lives in ast/Expr.rs
+    }
+    pub mod stmt {
+        #[derive(Copy, Clone, Default)]
+        pub struct Stmt;
+        #[derive(Copy, Clone)]
+        pub struct Data; // opaque tag — real variant set lives in ast/Stmt.rs
+    }
+    pub mod scope { #[derive(Default)] pub struct Scope; }
+    pub mod server_component_boundary { #[derive(Default)] pub struct ServerComponentBoundary; }
+    pub mod symbol {
+        #[derive(Copy, Clone, Default)]
+        pub struct Symbol;
+        #[derive(Copy, Clone, Default)]
+        pub struct Use;
+        #[derive(Copy, Clone, Default)]
+        pub struct SlotNamespace;
+        pub const INVALID_NESTED_SCOPE_SLOT: u32 = u32::MAX;
+        /// Stub for `std.EnumArray(SlotNamespace, u32)`.
+        #[derive(Clone, Default)]
+        pub struct SlotNamespaceCountsArray(pub [u32; 4]);
+        impl SlotNamespaceCountsArray {
+            pub fn init_fill(v: u32) -> Self { Self([v; 4]) }
+            pub fn values(&self) -> core::slice::Iter<'_, u32> { self.0.iter() }
+            pub fn values_mut(&mut self) -> core::slice::IterMut<'_, u32> { self.0.iter_mut() }
+        }
+    }
+    pub mod b { #[derive(Copy, Clone, Default)] pub struct B; }
+    pub mod new_store { #[derive(Default)] pub struct NewStore; }
+    pub mod use_directive { #[derive(Copy, Clone, Default)] pub struct UseDirective; }
+    pub mod char_freq { pub const CHAR_FREQ_COUNT: usize = 64; }
+    pub mod ts {
+        #[derive(Default)] pub struct TSNamespaceMember;
+        #[derive(Default)] pub struct TSNamespaceMemberMap;
+        #[derive(Default)] pub struct TSNamespaceScope;
+    }
+    pub mod e {
+        #[derive(Copy, Clone, Default)] pub struct String;
+        #[derive(Copy, Clone, Default)] pub struct Undefined;
+        #[derive(Copy, Clone, Default)] pub struct Identifier;
+        #[derive(Copy, Clone, Default)] pub struct Function;
+    }
+    pub mod g {}
+    pub mod op {}
+    pub mod s {}
+}
 
 pub use crate::ast::ast_memory_allocator::ASTMemoryAllocator;
 pub use crate::ast::ast::Ast;
@@ -346,9 +448,17 @@ pub struct EnumValue {
 
 impl EnumValue {
     pub fn name_as_e_string(&self, bump: &bun_alloc::Arena) -> E::String {
-        // SAFETY: `name` is a valid arena slice for the lifetime of the parse.
-        let name = unsafe { &*self.name };
-        E::String::init_re_encode_utf8(name, bump)
+        #[cfg(any())]
+        {
+            // SAFETY: `name` is a valid arena slice for the lifetime of the parse.
+            let name = unsafe { &*self.name };
+            E::String::init_re_encode_utf8(name, bump)
+        }
+        #[cfg(not(any()))]
+        {
+            let _ = bump;
+            todo!("b1-stub: EnumValue::name_as_e_string")
+        }
     }
 }
 
@@ -516,15 +626,21 @@ impl ExportsKind {
         writer.write(<&'static str>::from(self))
     }
 
-    pub fn to_module_type(self) -> bun_options_types::ModuleType {
-        use bun_options_types::ModuleType;
-        match self {
-            Self::None => ModuleType::Unknown,
-            Self::Cjs => ModuleType::Cjs,
-            Self::EsmWithDynamicFallback
-            | Self::EsmWithDynamicFallbackFromCjs
-            | Self::Esm => ModuleType::Esm,
+    pub fn to_module_type(self) -> bun_options_types::BundleEnums::ModuleType {
+        use bun_options_types::BundleEnums::ModuleType;
+        #[cfg(any())]
+        {
+            match self {
+                Self::None => ModuleType::Unknown,
+                Self::Cjs => ModuleType::Cjs,
+                Self::EsmWithDynamicFallback
+                | Self::EsmWithDynamicFallbackFromCjs
+                | Self::Esm => ModuleType::Esm,
+            }
         }
+        // TODO(b1): bun_options_types::BundleEnums::ModuleType variants missing.
+        #[cfg(not(any()))]
+        { let _ = self; let _: ModuleType; todo!("b1-stub: ExportsKind::to_module_type") }
     }
 }
 
@@ -534,11 +650,20 @@ pub struct DeclaredSymbol {
     pub is_top_level: bool,
 }
 
-#[derive(Default)]
 pub struct DeclaredSymbolList {
     pub entries: MultiArrayList<DeclaredSymbol>,
 }
 
+impl Default for DeclaredSymbolList {
+    fn default() -> Self {
+        // TODO(b1): bun_collections::MultiArrayList missing Default impl.
+        todo!("b1-stub: DeclaredSymbolList::default")
+    }
+}
+
+// TODO(b1): bun_collections::MultiArrayList stub surface lacks
+// items_ref/clone/len/append_*/ensure_*/clear_*/slice. Preserve draft body.
+#[cfg(any())]
 impl DeclaredSymbolList {
     pub fn refs(&self) -> &[Ref] {
         // TODO(port): MultiArrayList column accessor name (`items(.ref)` in Zig).
@@ -620,18 +745,23 @@ impl DeclaredSymbol {
         ctx: &mut C,
         f: impl Fn(&mut C, Ref),
     ) {
-        let entries = decls.entries.slice();
-        let is_top_level = entries.items_is_top_level();
-        let refs = entries.items_ref();
+        #[cfg(any())]
+        {
+            let entries = decls.entries.slice();
+            let is_top_level = entries.items_is_top_level();
+            let refs = entries.items_ref();
 
-        // TODO: SIMD
-        debug_assert_eq!(is_top_level.len(), refs.len());
-        for (top, ref_) in is_top_level.iter().zip(refs.iter()) {
-            if *top {
-                // PERF(port): was @call(bun.callmod_inline, ...) — relies on inlining.
-                f(ctx, *ref_);
+            // TODO: SIMD
+            debug_assert_eq!(is_top_level.len(), refs.len());
+            for (top, ref_) in is_top_level.iter().zip(refs.iter()) {
+                if *top {
+                    // PERF(port): was @call(bun.callmod_inline, ...) — relies on inlining.
+                    f(ctx, *ref_);
+                }
             }
         }
+        #[cfg(not(any()))]
+        { let _ = (decls, ctx, f); todo!("b1-stub") }
     }
 
     pub fn for_each_top_level_symbol<C>(
@@ -736,19 +866,25 @@ pub type PartSymbolPropertyUseMap = ArrayHashMap<Ref, StringHashMap<symbol::Use>
 
 impl Default for Part {
     fn default() -> Self {
-        Self {
-            stmts: empty_arena_slice_mut::<Stmt>(),
-            scopes: empty_arena_slice_mut::<*mut Scope>(),
-            import_record_indices: PartImportRecordIndices::default(),
-            declared_symbols: DeclaredSymbolList::default(),
-            symbol_uses: PartSymbolUseMap::default(),
-            import_symbol_property_uses: PartSymbolPropertyUseMap::default(),
-            dependencies: DependencyList::default(),
-            can_be_removed_if_unused: false,
-            force_tree_shaking: false,
-            is_live: false,
-            tag: PartTag::None,
+        #[cfg(any())]
+        {
+            Self {
+                stmts: empty_arena_slice_mut::<Stmt>(),
+                scopes: empty_arena_slice_mut::<*mut Scope>(),
+                import_record_indices: PartImportRecordIndices::default(),
+                declared_symbols: DeclaredSymbolList::default(),
+                symbol_uses: PartSymbolUseMap::default(),
+                import_symbol_property_uses: PartSymbolPropertyUseMap::default(),
+                dependencies: DependencyList::default(),
+                can_be_removed_if_unused: false,
+                force_tree_shaking: false,
+                is_live: false,
+                tag: PartTag::None,
+            }
         }
+        // TODO(b1): bun_collections::BabyList missing Default impl.
+        #[cfg(not(any()))]
+        todo!("b1-stub: Part::default")
     }
 }
 
@@ -783,20 +919,28 @@ pub enum StmtOrExpr {
 
 impl StmtOrExpr {
     pub fn to_expr(self) -> Expr {
-        match self {
-            StmtOrExpr::Expr(expr) => expr,
-            StmtOrExpr::Stmt(stmt) => match stmt.data {
-                crate::ast::stmt::Data::SFunction(s) => {
-                    Expr::init(E::Function { func: s.func }, stmt.loc)
-                }
-                crate::ast::stmt::Data::SClass(s) => Expr::init_class(s.class, stmt.loc),
-                // TODO(port): Expr::init signature — Zig is `Expr.init(E.Function, .{...}, loc)`
-                // (comptime type + payload). Rust likely uses per-variant constructors.
-                other => Output::panic(format_args!(
-                    "Unexpected statement type in default export: .{}",
-                    <&'static str>::from(&other)
-                )),
-            },
+        #[cfg(any())]
+        {
+            match self {
+                StmtOrExpr::Expr(expr) => expr,
+                StmtOrExpr::Stmt(stmt) => match stmt.data {
+                    crate::ast::stmt::Data::SFunction(s) => {
+                        Expr::init(E::Function { func: s.func }, stmt.loc)
+                    }
+                    crate::ast::stmt::Data::SClass(s) => Expr::init_class(s.class, stmt.loc),
+                    // TODO(port): Expr::init signature — Zig is `Expr.init(E.Function, .{...}, loc)`
+                    // (comptime type + payload). Rust likely uses per-variant constructors.
+                    other => Output::panic(format_args!(
+                        "Unexpected statement type in default export: .{}",
+                        <&'static str>::from(&other)
+                    )),
+                },
+            }
+        }
+        #[cfg(not(any()))]
+        {
+            let _ = self;
+            todo!("b1-stub: StmtOrExpr::to_expr")
         }
     }
 }
@@ -855,28 +999,32 @@ impl StrictModeKind {
 
 pub fn printmem(args: fmt::Arguments<'_>) {
     // `defer Output.flush()` → executes after print; emulate ordering explicitly.
-    Output::init_test();
-    Output::print(args);
-    Output::flush();
+    #[cfg(any())]
+    {
+        Output::init_test();
+        Output::print(args);
+        Output::flush();
+    }
+    // TODO(b1): bun_core::Output::{init_test,print,flush} missing from stub surface.
+    let _ = args;
 }
 
-#[derive(thiserror::Error, Debug, Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
+// TODO(b1): `thiserror` not in this crate's deps; hand-roll Display/Error.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ToJSError {
     #[strum(serialize = "Cannot convert argument type to JS")]
-    #[error("Cannot convert argument type to JS")]
     CannotConvertArgumentTypeToJS,
     #[strum(serialize = "Cannot convert identifier to JS. Try a statically-known value")]
-    #[error("Cannot convert identifier to JS. Try a statically-known value")]
     CannotConvertIdentifierToJS,
-    #[error("MacroError")]
     MacroError,
-    #[error("OutOfMemory")]
     OutOfMemory,
-    #[error("JSError")]
     JSError,
-    #[error("JSTerminated")]
     JSTerminated,
 }
+impl fmt::Display for ToJSError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.write_str(<&'static str>::from(*self)) }
+}
+impl core::error::Error for ToJSError {}
 
 impl From<ToJSError> for bun_core::Error {
     fn from(e: ToJSError) -> Self {
@@ -898,13 +1046,18 @@ pub struct Batcher<T> {
 impl<T> Batcher<T> {
     pub fn init(bump: &bun_alloc::Arena, count: usize) -> core::result::Result<Self, bun_alloc::AllocError> {
         // TODO(port): bumpalo alloc_slice for uninit T — Zig `allocator.alloc(Type, count)`.
-        let all = bump.alloc_slice_fill_default(count);
-        Ok(Self { head: all as *mut [T] })
+        #[cfg(any())]
+        {
+            let all = bump.alloc_slice_fill_default(count);
+            Ok(Self { head: all as *mut [T] })
+        }
+        #[cfg(not(any()))]
+        { let _ = (bump, count); todo!("b1-stub: Batcher::init") }
     }
 
     pub fn done(&mut self) {
         // SAFETY: `head` is always a valid (possibly empty) arena slice.
-        debug_assert!(unsafe { (*self.head).is_empty() }); // count to init() was too large, overallocation
+        debug_assert!(unsafe { (&*self.head).is_empty() }); // count to init() was too large, overallocation
     }
 
     pub fn eat(&mut self, value: T) -> *mut T {
@@ -963,7 +1116,7 @@ pub mod math {
     /// `Number.MIN_SAFE_INTEGER` (-(2^53 - 1))
     pub const MIN_SAFE_INTEGER: f64 = -9007199254740991.0;
 
-    extern "C" {
+    unsafe extern "C" {
         // Zig: `extern "c" fn Bun__JSC__operationMathPow(f64, f64) f64;`
         fn Bun__JSC__operationMathPow(x: f64, y: f64) -> f64;
     }
@@ -1021,7 +1174,7 @@ pub struct RuntimeTranspilerCache {
     pub exports_kind: ExportsKind,
     /// Set by `get()` when a cache hit returns transpiled output. Owned by
     /// `output_code_allocator` on the jsc side; parser only inspects presence.
-    pub output_code: Option<bun_str::String>,
+    pub output_code: Option<bun_string::String>,
     /// Opaque storage for `bun_jsc::RuntimeTranspilerCache::Entry` — the
     /// concrete type lives in tier-6 and is round-tripped via the vtable.
     pub entry: Option<*mut ()>,
@@ -1070,6 +1223,9 @@ impl RuntimeTranspilerCache {
 }
 
 // ─── from bun_bundler::defines (src/bundler/defines.zig) ────────────────────
+// TODO(b1): gated — depends on un-stubbed `ast::expr::Data` variants,
+// `bun_interchange::json::parse_env_json`, `crate::lexer`, and `bun_str`.
+#[cfg(any())]
 pub mod defines {
     use bun_collections::{ArrayHashMap, StringHashMap};
     use bun_logger as logger;
@@ -1413,6 +1569,8 @@ pub mod defines {
 // Only the slot-assignment helpers the parser calls (`P.rs:6658`) live here;
 // the full `NumberRenamer`/`MinifyRenamer` machinery stays in `bun_js_printer`
 // (it depends on the printer's name-buffer and reserved-names tables).
+// TODO(b1): gated — depends on un-stubbed `Scope.members`, `Symbol.nested_scope_slot`.
+#[cfg(any())]
 pub mod renamer {
     use crate::ast::base::Ref;
     use crate::ast::scope::Scope;

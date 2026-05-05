@@ -2,8 +2,20 @@
 
 use core::ffi::c_void as _; // (no FFI here; placeholder to mirror import block shape)
 
-use bun_collections::StaticBitSet;
-use bun_core::StackCheck; // TODO(port): confirm crate for `bun.StackCheck`
+// TODO(b1): bun_collections::StaticBitSet missing from lower-tier stub surface
+#[derive(Copy, Clone, Default)]
+pub struct StaticBitSet<const N: usize>(());
+impl<const N: usize> StaticBitSet<N> {
+    pub fn init_empty() -> Self { Self(()) }
+    pub fn set(&mut self, _i: usize) {}
+    pub fn is_set(&self, _i: usize) -> bool { false }
+}
+// TODO(b1): bun_core::StackCheck — confirm crate; local stub for now
+#[derive(Default)]
+pub struct StackCheck(());
+impl StackCheck {
+    pub fn init() -> Self { Self(()) }
+}
 
 use super::blocks as blocks_mod;
 use super::containers as containers_mod;
@@ -36,7 +48,7 @@ pub struct Parser<'a> {
     pub flags: Flags,
 
     // Output
-    pub renderer: Renderer,
+    pub renderer: Renderer<'a>,
     pub image_nesting_level: u32,
     pub link_nesting_level: u32,
 
@@ -81,7 +93,7 @@ pub struct Parser<'a> {
 
     // Table column alignments
     pub table_col_count: u32,
-    pub table_alignments: [Align; TABLE_MAXCOLCOUNT],
+    pub table_alignments: [Align; TABLE_MAXCOLCOUNT as usize],
 
     // Ref defs
     pub ref_defs: Vec<RefDef>,
@@ -106,7 +118,7 @@ pub struct BlockHeader {
 
 impl Default for BlockHeader {
     fn default() -> Self {
-        Self { block_type: BlockType::default(), _pad: [0, 0, 0], flags: 0, data: 0, n_lines: 0 }
+        Self { block_type: BlockType::Doc, _pad: [0, 0, 0], flags: 0, data: 0, n_lines: 0 }
     }
 }
 
@@ -114,15 +126,12 @@ impl Default for BlockHeader {
 /// of `{ OutOfMemory, JSError, JSTerminated }` with `{ StackOverflow }`.
 // TODO(port): narrow error set — `bun_jsc::JsError` already covers the first
 // three; Phase B may want `enum { Js(JsError), StackOverflow }` instead.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
+// TODO(b1): thiserror/strum not in workspace deps — derive dropped, hand-roll if needed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParserError {
-    #[error("OutOfMemory")]
     OutOfMemory,
-    #[error("JSError")]
     JSError,
-    #[error("JSTerminated")]
     JSTerminated,
-    #[error("StackOverflow")]
     StackOverflow,
 }
 
@@ -133,13 +142,19 @@ impl From<bun_alloc::AllocError> for ParserError {
 }
 
 impl From<ParserError> for bun_core::Error {
-    fn from(e: ParserError) -> Self {
-        bun_core::err!(e.into()) // TODO(port): wire IntoStaticStr → interned tag
+    fn from(_e: ParserError) -> Self {
+        // TODO(b1): wire IntoStaticStr → interned tag; bun_core::err! only accepts ident
+        bun_core::err!(ParserError)
     }
 }
 
 impl<'a> Parser<'a> {
-    fn init(text: &'a [u8], flags: Flags, rend: Renderer) -> Parser<'a> {
+    /// TODO(b1): stub — `process_doc` lives in gated `blocks.rs`.
+    pub fn process_doc(&mut self) -> Result<(), ParserError> {
+        todo!("b1: gated in blocks.rs")
+    }
+
+    fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Parser<'a> {
         let size: OFF = OFF::try_from(text.len()).unwrap();
         let mut p = Parser {
             text,
@@ -167,7 +182,7 @@ impl<'a> Parser<'a> {
             html_block_type: 0,
             fence_indent: 0,
             table_col_count: 0,
-            table_alignments: [Align::Default; TABLE_MAXCOLCOUNT],
+            table_alignments: [Align::Default; TABLE_MAXCOLCOUNT as usize],
             ref_defs: Vec::new(),
             last_line_has_list_loosening_effect: false,
             last_list_item_starts_with_two_blank_lines: false,
@@ -293,24 +308,32 @@ pub fn render_to_html(
     flags: Flags,
     render_opts: RenderOptions,
 ) -> Result<Box<[u8]>, ParserError> {
-    // Skip UTF-8 BOM
-    let input = helpers::skip_utf8_bom(text);
+    #[cfg(any())]
+    {
+        // Skip UTF-8 BOM
+        let input = helpers::skip_utf8_bom(text);
 
-    let mut html_renderer = HtmlRenderer::init(input, render_opts);
-    // Zig `errdefer html_renderer.deinit()` — Drop handles cleanup on `?`.
+        let mut html_renderer = HtmlRenderer::init(input, render_opts);
+        // Zig `errdefer html_renderer.deinit()` — Drop handles cleanup on `?`.
 
-    let mut parser = Parser::init(input, flags, html_renderer.renderer());
-    // Zig `defer parser.deinit()` — Drop handles cleanup at scope exit.
+        let mut parser = Parser::init(input, flags, html_renderer.renderer());
+        // Zig `defer parser.deinit()` — Drop handles cleanup at scope exit.
 
-    // HtmlRenderer never returns JSError/JSTerminated, so OutOfMemory is the only possible error.
-    match parser.process_doc() {
-        Ok(()) => {}
-        Err(ParserError::OutOfMemory) => return Err(ParserError::OutOfMemory),
-        Err(ParserError::JSError) | Err(ParserError::JSTerminated) => unreachable!(),
-        Err(ParserError::StackOverflow) => return Err(ParserError::StackOverflow),
+        // HtmlRenderer never returns JSError/JSTerminated, so OutOfMemory is the only possible error.
+        match parser.process_doc() {
+            Ok(()) => {}
+            Err(ParserError::OutOfMemory) => return Err(ParserError::OutOfMemory),
+            Err(ParserError::JSError) | Err(ParserError::JSTerminated) => unreachable!(),
+            Err(ParserError::StackOverflow) => return Err(ParserError::StackOverflow),
+        }
+
+        Ok(html_renderer.to_owned_slice())
     }
-
-    Ok(html_renderer.to_owned_slice())
+    #[cfg(not(any()))]
+    {
+        let _ = (text, flags, render_opts);
+        todo!("b1: HtmlRenderer gated")
+    }
 }
 
 /// Parse and render using a custom renderer. The caller provides its own
@@ -323,13 +346,23 @@ pub fn render_with_renderer(
     render_options: RenderOptions,
     rend: Renderer,
 ) -> Result<(), ParserError> {
-    let _ = render_options; // Available for renderer implementations; parse layer does not use these.
-    let input = helpers::skip_utf8_bom(text);
+    #[cfg(any())]
+    {
+        let _ = render_options; // Available for renderer implementations; parse layer does not use these.
+        let input = helpers::skip_utf8_bom(text);
 
-    let mut p = Parser::init(input, flags, rend);
-    // Zig `defer p.deinit()` — Drop.
+        let mut p = Parser::init(input, flags, rend);
+        // Zig `defer p.deinit()` — Drop.
 
-    p.process_doc()
+        p.process_doc()
+    }
+    #[cfg(not(any()))]
+    {
+        // TODO(b1): lifetime — `rend` borrows for `'_` but `Parser::init` wants
+        // `'a` tied to `input`; needs explicit lifetime param. Gated until B-2.
+        let _ = (text, flags, render_options, rend);
+        todo!("b1: lifetime threading")
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

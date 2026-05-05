@@ -24,7 +24,8 @@ bun_core.workspace = true
 bun_collections.workspace = true
 bun_crash_handler.workspace = true
 bun_io.workspace = true
-bun_js_parser.workspace = true
+# TODO(b1): bun_js_parser gated — its dep bun_css does not compile yet; restore in B-2.
+# bun_js_parser.workspace = true
 bun_options_types.workspace = true
 bun_string.workspace = true
 bun_sys.workspace = true

@@ -1,5 +1,94 @@
 //! JavaScript printer — translates the AST back to source text.
 //! Port of src/js_printer/js_printer.zig.
+//!
+//! B-1 gate-and-stub: Phase-A draft body preserved below in `#[cfg(any())] mod __phase_a_draft`.
+//! Minimal stub surface exposed here; un-gating happens in B-2.
+
+#![allow(unused, nonstandard_style, clippy::all)]
+
+// ──────────────────────────────────────────────────────────────────────────
+// STUB SURFACE (B-1)
+// TODO(b1): bun_js_parser dep gated (transitive bun_css broken). Local opaque
+// stand-ins for the few cross-crate types referenced by downstream consumers.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Opaque stand-in for `bun_js_parser::Ref` until B-2 un-gates the dep.
+pub type Ref = u64;
+
+/// Map of mangled property `Ref` → final mangled name bytes.
+pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Encoding { #[default] Utf8, Latin1, Utf16, Ascii }
+
+pub mod options {
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct Indentation { pub scalar: u8, pub character: u8, pub count: u32 }
+}
+pub use options::Indentation;
+
+#[derive(Default)]
+pub struct Options(());
+
+#[derive(Default)]
+pub struct BufferWriter(());
+impl BufferWriter {
+    pub fn init() -> Self { Self(()) }
+}
+
+#[derive(Default)]
+pub struct BufferPrinter(());
+impl BufferPrinter {
+    pub fn init(_w: BufferWriter) -> Self { Self(()) }
+}
+
+#[derive(Default)]
+pub struct PrintJsonOptions { pub indent: Indentation, pub mangled_props: () }
+
+pub enum PrintResult {
+    Err(()),
+    Result { code: &'static [u8], source_map: Option<()> },
+}
+
+pub fn write_json_string<W>(_input: &[u8], _w: &mut W, _enc: Encoding) -> core::fmt::Result {
+    todo!("b1 stub: write_json_string")
+}
+pub fn write_pre_quoted_string<W>(
+    _input: &[u8], _w: &mut W, _allow_backtick: bool, _quote: u8, _ascii_only: bool, _enc: Encoding,
+) -> core::fmt::Result {
+    todo!("b1 stub: write_pre_quoted_string")
+}
+pub fn print_json<P, A>(_printer: &mut P, _expr: A, _opts: PrintJsonOptions) -> Result<usize, ()> {
+    todo!("b1 stub: print_json")
+}
+pub fn quote_for_json(_input: &[u8], _ascii_only: bool) -> Vec<u8> {
+    todo!("b1 stub: quote_for_json")
+}
+
+pub mod analyze_transpiled_module {
+    //! Stub — full draft gated below.
+    #[derive(Default)]
+    pub struct ModuleInfo(());
+    #[derive(Default)]
+    pub struct Flags { pub contains_import_meta: bool, pub is_typescript: bool, pub has_tla: bool }
+}
+
+/// Renamer module stub. Full Phase-A draft lives in `renamer.rs` (gated below).
+pub mod renamer {
+    pub struct NoOpRenamer(());
+    pub struct NumberRenamer(());
+    pub struct MinifyRenamer(());
+    pub enum Renamer { NoOp, Number, Minify }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// PHASE-A DRAFT (gated — does not compile yet)
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(any())]
+mod __phase_a_draft {
+#[path = "renamer.rs"]
+pub mod renamer_draft;
+
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -503,7 +592,7 @@ use bun_core::schema::api;
 use bun_core::MutableString;
 use bun_sys::Fd;
 
-pub mod renamer;
+// (gated) pub mod renamer; — see renamer_draft above
 use renamer as rename;
 
 const HEX_CHARS: &[u8; 16] = b"0123456789ABCDEF";
@@ -6590,3 +6679,5 @@ pub fn serialize_module_info(module_info: Option<&mut analyze_transpiled_module:
 //   todos:      38
 //   notes:      Huge comptime-generic printer; ws() needs const-eval macro, NewWriter→trait reshape, several arena-mutation sites & callback thunks stubbed; defer-if-wrap reshaped manually in printRequireOrImportExpr; print_stmt's `defer prev_stmt_tag = ...` expanded to per-return assignments for borrowck.
 // ──────────────────────────────────────────────────────────────────────────
+
+} // mod __phase_a_draft

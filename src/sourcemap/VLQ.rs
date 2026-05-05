@@ -23,6 +23,8 @@ impl VLQ {
         &self.bytes[0..self.len as usize]
     }
 
+    // TODO(b1): bun_io::Write missing from lower-tier stub surface — gated.
+    #[cfg(any())]
     pub fn write_to(self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         writer.write_all(&self.bytes[0..self.len as usize])?;

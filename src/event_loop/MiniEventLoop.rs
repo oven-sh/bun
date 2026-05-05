@@ -420,72 +420,155 @@ impl<'a> MiniEventLoop<'a> {
 
     /// Returns an erased `*mut webcore::blob::Store`. Callers in tier-6 cast back.
     pub fn stderr(&mut self) -> *mut () {
-        #[cfg(any())]
-        {
-            if self.stderr_store.is_none() {
-                let mut mode: Mode = 0;
-                let fd = Fd::from_uv(2);
+        if self.stderr_store.is_none() {
+            let mut mode: Mode = 0;
+            let fd = Fd::from_uv(2);
 
-                if let Ok(stat) = sys::fstat(fd) {
-                    mode = Mode::try_from(stat.st_mode).unwrap();
-                }
-
-                // TODO(port): Zig builds Blob.Store with intrusive `ref_count = 2` and
-                // `.data = .file{ pathlike = .{ .fd }, is_atty, mode }`. Phase B must
-                // reconcile with BlobStore's actual Rust refcount strategy.
-                let ctor = STDIO_BLOB_STORE_CTOR.load(Ordering::Relaxed);
-                debug_assert!(!ctor.is_null(), "STDIO_BLOB_STORE_CTOR not registered");
-                // SAFETY: hook signature documented on `STDIO_BLOB_STORE_CTOR`.
-                let ctor: unsafe fn(Fd, bool, Mode) -> *mut () =
-                    unsafe { core::mem::transmute(ctor) };
-                let store = unsafe {
-                    ctor(
-                        fd,
-                        // TODO(b2-blocked): bun_core::Output::stderr_descriptor_type
-                        // TODO(b2-blocked): bun_core::Output::DescriptorType
-                        Output::stderr_descriptor_type() == Output::DescriptorType::Terminal,
-                        mode,
-                    )
-                };
-                self.stderr_store = NonNull::new(store);
+            if let Ok(stat) = sys::fstat(fd) {
+                mode = stat.st_mode as Mode;
             }
-            return self.stderr_store.unwrap().as_ptr();
+
+            // TODO(port): Zig builds Blob.Store with intrusive `ref_count = 2` and
+            // `.data = .file{ pathlike = .{ .fd }, is_atty, mode }`. Phase B must
+            // reconcile with BlobStore's actual Rust refcount strategy.
+            let ctor = STDIO_BLOB_STORE_CTOR.load(Ordering::Relaxed);
+            debug_assert!(!ctor.is_null(), "STDIO_BLOB_STORE_CTOR not registered");
+            // SAFETY: hook signature documented on `STDIO_BLOB_STORE_CTOR`.
+            let ctor: unsafe fn(Fd, bool, Mode) -> *mut () =
+                unsafe { core::mem::transmute(ctor) };
+            // SAFETY: STDERR_DESCRIPTOR_TYPE is plain data written once at
+            // startup (Output::Source::set) before the event loop runs.
+            let is_atty =
+                unsafe { Output::STDERR_DESCRIPTOR_TYPE == Output::OutputStreamDescriptor::Terminal };
+            // SAFETY: hook contract documented on `STDIO_BLOB_STORE_CTOR`.
+            let store = unsafe { ctor(fd, is_atty, mode) };
+            self.stderr_store = NonNull::new(store);
         }
-        // TODO(b2-blocked): bun_core::Output::stderr_descriptor_type
-        todo!("MiniEventLoop::stderr — blocked on bun_core::Output::DescriptorType")
+        self.stderr_store.unwrap().as_ptr()
     }
 
     /// Returns an erased `*mut webcore::blob::Store`. Callers in tier-6 cast back.
     pub fn stdout(&mut self) -> *mut () {
+        if self.stdout_store.is_none() {
+            let mut mode: Mode = 0;
+            let fd = Fd::stdout();
+
+            if let Ok(stat) = sys::fstat(fd) {
+                mode = stat.st_mode as Mode;
+            }
+
+            let ctor = STDIO_BLOB_STORE_CTOR.load(Ordering::Relaxed);
+            debug_assert!(!ctor.is_null(), "STDIO_BLOB_STORE_CTOR not registered");
+            // SAFETY: hook signature documented on `STDIO_BLOB_STORE_CTOR`.
+            let ctor: unsafe fn(Fd, bool, Mode) -> *mut () =
+                unsafe { core::mem::transmute(ctor) };
+            // SAFETY: STDOUT_DESCRIPTOR_TYPE is plain data written once at
+            // startup (Output::Source::set) before the event loop runs.
+            let is_atty =
+                unsafe { Output::STDOUT_DESCRIPTOR_TYPE == Output::OutputStreamDescriptor::Terminal };
+            // SAFETY: hook contract documented on `STDIO_BLOB_STORE_CTOR`.
+            let store = unsafe { ctor(fd, is_atty, mode) };
+            self.stdout_store = NonNull::new(store);
+        }
+        self.stdout_store.unwrap().as_ptr()
+    }
+}
+
+// ───────────── EventLoopCtx adapter (bun_aio cycle-break) ─────────────────
+// `bun_aio::file_poll::Store::put` and friends take an erased `EventLoopCtx`
+// instead of naming `MiniEventLoop`/`VirtualMachine` directly. This crate owns
+// `MiniEventLoop`, so the Mini-side vtable lives here. The Js-side vtable lives
+// in `bun_runtime` (it must name `jsc::VirtualMachine`).
+
+mod mini_ctx {
+    use super::*;
+    use bun_aio::{EventLoopCtxVTable, OpaqueCallback};
+
+    // SAFETY (all slots): `owner` is `self as *mut MiniEventLoop<'_> as *mut ()`,
+    // set by `MiniEventLoop::as_event_loop_ctx`. The MiniEventLoop outlives every
+    // `EventLoopCtx` derived from it (Zig invariant: callers hold the loop).
+    #[inline]
+    unsafe fn cast<'a>(owner: *mut ()) -> *mut MiniEventLoop<'a> {
+        owner.cast()
+    }
+
+    unsafe fn platform_event_loop(owner: *mut ()) -> *mut UwsLoop {
+        unsafe { (*cast(owner)).loop_ }
+    }
+    unsafe fn file_polls(owner: *mut ()) -> *mut FilePollStore {
+        unsafe { (*cast(owner)).file_polls() as *mut _ }
+    }
+    unsafe fn alloc_file_poll(owner: *mut ()) -> *mut FilePoll {
+        unsafe { (*cast(owner)).file_polls().get() }
+    }
+    unsafe fn is_js(_: *mut ()) -> bool {
+        false
+    }
+    unsafe fn increment_pending_unref_counter(_: *mut ()) {
+        // Zig MiniVM.incrementPendingUnrefCounter: `@panic("FIXME TODO")`.
+        unimplemented!("FIXME TODO");
+    }
+    unsafe fn ref_concurrently(owner: *mut ()) {
         #[cfg(any())]
         {
-            if self.stdout_store.is_none() {
-                let mut mode: Mode = 0;
-                let fd = Fd::stdout();
-
-                if let Ok(stat) = sys::fstat(fd) {
-                    mode = Mode::try_from(stat.st_mode).unwrap();
-                }
-
-                let ctor = STDIO_BLOB_STORE_CTOR.load(Ordering::Relaxed);
-                debug_assert!(!ctor.is_null(), "STDIO_BLOB_STORE_CTOR not registered");
-                // SAFETY: hook signature documented on `STDIO_BLOB_STORE_CTOR`.
-                let ctor: unsafe fn(Fd, bool, Mode) -> *mut () =
-                    unsafe { core::mem::transmute(ctor) };
-                let store = unsafe {
-                    ctor(
-                        fd,
-                        // TODO(b2-blocked): bun_core::Output::stdout_descriptor_type
-                        Output::stdout_descriptor_type() == Output::DescriptorType::Terminal,
-                        mode,
-                    )
-                };
-                self.stdout_store = NonNull::new(store);
-            }
-            return self.stdout_store.unwrap().as_ptr();
+            // TODO(b2-blocked): bun_uws::Loop::ref_
+            unsafe { (*(*cast(owner)).loop_).ref_() };
+            return;
         }
-        // TODO(b2-blocked): bun_core::Output::stdout_descriptor_type
-        todo!("MiniEventLoop::stdout — blocked on bun_core::Output::DescriptorType")
+        let _ = owner;
+        // TODO(b2-blocked): bun_uws::Loop::ref_
+        todo!("MiniEventLoop EventLoopCtx::ref_concurrently — blocked on bun_uws::Loop::ref_")
+    }
+    unsafe fn unref_concurrently(owner: *mut ()) {
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_uws::Loop::unref
+            unsafe { (*(*cast(owner)).loop_).unref() };
+            return;
+        }
+        let _ = owner;
+        // TODO(b2-blocked): bun_uws::Loop::unref
+        todo!("MiniEventLoop EventLoopCtx::unref_concurrently — blocked on bun_uws::Loop::unref")
+    }
+    unsafe fn after_event_loop_callback(owner: *mut ()) -> Option<OpaqueCallback> {
+        unsafe { (*cast(owner)).after_event_loop_callback }
+    }
+    unsafe fn set_after_event_loop_callback(
+        owner: *mut (),
+        cb: Option<OpaqueCallback>,
+        ctx: *mut c_void,
+    ) {
+        unsafe {
+            (*cast(owner)).after_event_loop_callback = cb;
+            (*cast(owner)).after_event_loop_callback_ctx = NonNull::new(ctx);
+        }
+    }
+
+    pub static VTABLE: EventLoopCtxVTable = EventLoopCtxVTable {
+        platform_event_loop,
+        file_polls,
+        alloc_file_poll,
+        is_js,
+        increment_pending_unref_counter,
+        ref_concurrently,
+        unref_concurrently,
+        after_event_loop_callback,
+        set_after_event_loop_callback,
+    };
+}
+
+/// `&'static EventLoopCtxVTable` for the `MiniEventLoop` arm. Exposed so
+/// `bun_runtime` can register it in `bun_aio::GET_VM_CTX_HOOK`.
+pub static MINI_EVENT_LOOP_CTX_VTABLE: &bun_aio::EventLoopCtxVTable = &mini_ctx::VTABLE;
+
+impl<'a> MiniEventLoop<'a> {
+    /// Erase `&mut self` to a `bun_aio::EventLoopCtx` for passing into
+    /// `FilePoll`/`KeepAlive`/`Store` APIs (cycle-break — bun_aio cannot name
+    /// this type). The returned ctx is `Copy` and borrows nothing in the Rust
+    /// sense; caller must keep `self` alive for its use.
+    #[inline]
+    pub fn as_event_loop_ctx(this: *mut MiniEventLoop<'a>) -> bun_aio::EventLoopCtx {
+        bun_aio::EventLoopCtx { owner: this.cast(), vtable: MINI_EVENT_LOOP_CTX_VTABLE }
     }
 }
 

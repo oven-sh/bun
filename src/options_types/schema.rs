@@ -41,4 +41,63 @@ pub mod api {
         External,
         Linked,
     }
+
+    /// schema.zig:732 — `enum(u8)` (open). Kept closed; `BundleEnums::Target::from`
+    /// guards the open tail with a `_ => Browser` arm.
+    #[repr(u8)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+    pub enum Target {
+        #[default]
+        _none = 0,
+        browser = 1,
+        node = 2,
+        bun = 3,
+        bun_macro = 4,
+    }
+
+    /// schema.zig:325 — `enum(u8)` (open), `_none = 254`. Kept closed;
+    /// `BundleEnums::Loader::from_api` guards the open tail with `_ => File`.
+    #[repr(u8)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+    pub enum Loader {
+        #[default]
+        _none = 254,
+        jsx = 1,
+        js = 2,
+        ts = 3,
+        tsx = 4,
+        css = 5,
+        file = 6,
+        json = 7,
+        jsonc = 8,
+        toml = 9,
+        wasm = 10,
+        napi = 11,
+        base64 = 12,
+        dataurl = 13,
+        text = 14,
+        bunsh = 15,
+        sqlite = 16,
+        sqlite_embedded = 17,
+        html = 18,
+        yaml = 19,
+        json5 = 20,
+        md = 21,
+    }
+
+    /// schema.zig:2200 — `enum(u8)` (open). Kept closed.
+    #[repr(u8)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+    pub enum ImportKind {
+        #[default]
+        _none = 0,
+        entry_point = 1,
+        stmt = 2,
+        require = 3,
+        dynamic = 4,
+        require_resolve = 5,
+        at = 6,
+        url = 7,
+        internal = 8,
+    }
 }

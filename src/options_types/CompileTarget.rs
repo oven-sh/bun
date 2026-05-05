@@ -242,9 +242,7 @@ impl CompileTarget {
     }
 
     #[cfg(any())]
-    // TODO(b2-blocked): bun_core::self_exe_path
     // TODO(b2-blocked): bun_sys::fetch_cache_directory_path
-    // TODO(b2-blocked): bun_paths::join_abs_string_buf_z
     pub fn exe_path<'a>(
         &self,
         buf: &'a mut PathBuffer,
@@ -291,9 +289,9 @@ impl CompileTarget {
     #[cfg(any())]
     // TODO(b2-blocked): bun_sys::move_file_z
     // TODO(b2-blocked): bun_sys::Dir::make_open_path
+    // TODO(b2-blocked): bun_sys::Dir::delete_tree
     // TODO(b2-blocked): bun_core::fast_random
     // TODO(b2-blocked): bun_paths::fs::FileSystem::tmpname
-    // TODO(b2-blocked): bun_dotenv::Loader::get_http_proxy_for
     pub fn download_to_path(
         &self,
         env: &mut bun_dotenv::Loader,

@@ -1,3 +1,4 @@
+use crate::schema::api;
 use bun_collections::BabyList;
 use bun_logger::Range;
 use bun_paths::fs::Path;
@@ -114,7 +115,6 @@ impl ImportKind {
         self == Self::AtConditional || self == Self::At || self == Self::Url || self == Self::Composes
     }
 
-    #[cfg(any())] // TODO(b2-blocked): bun_api::ImportKind
     pub fn to_api(self) -> api::ImportKind {
         // TODO(port): source Zig references `ImportKind.entry_point` which is not a declared variant
         // (only entry_point_run / entry_point_build exist). This compiles in Zig only because the

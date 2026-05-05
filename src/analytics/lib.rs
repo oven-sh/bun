@@ -114,9 +114,11 @@ pub mod features {
 
     // TODO(b2-blocked): bun_resolve_builtins::HardcodedModule
     // The real `HardcodedModule` enum (Zig: `bun.jsc.ModuleLoader.HardcodedModule`)
-    // lives in `bun_resolve_builtins` and must derive `enumset::EnumSetType`;
-    // that crate's enum is still a Phase-A stub struct. Re-gate just this
-    // static and the formatter's builtins iterator below.
+    // lives in `bun_resolve_builtins` (per CYCLEBREAK.md, TYPE_ONLY move target
+    // is `options_types`). It must derive `enumset::EnumSetType` for use in
+    // `EnumSet<HardcodedModule>` here; that derive is not yet present, and the
+    // crate is not yet a dep of `bun_analytics`. Re-gate just this static and
+    // the formatter's builtins iterator below.
     #[cfg(any())]
     pub static BUILTIN_MODULES: parking_lot::Mutex<
         enumset::EnumSet<bun_resolve_builtins::HardcodedModule::HardcodedModule>,
@@ -357,13 +359,9 @@ pub enum EventName {
 }
 
 // Zig: `var random: std.rand.DefaultPrng = undefined;`
-// TODO(port): unused in this file; keep a placeholder for parity.
-// PERF(port): Zig left this uninitialized; Rust requires init.
-// TODO(b2-blocked): bun_core::rand::DefaultPrng
-#[cfg(any())]
-#[allow(dead_code)]
-static RANDOM: parking_lot::Mutex<Option<bun_core::rand::DefaultPrng>> =
-    parking_lot::const_mutex(None);
+// PORT NOTE: declared but never read in analytics.zig — dead code. Dropped
+// rather than gated; if a future schema-encode path needs a PRNG, seed one
+// locally (PORTING.md §Concurrency: OnceLock<...>, no `static mut`).
 
 const PLATFORM_ARCH: analytics::Architecture = {
     #[cfg(target_arch = "aarch64")]

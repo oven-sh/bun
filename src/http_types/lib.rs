@@ -9,9 +9,9 @@ pub mod URLPath;
 pub mod Method;
 pub mod ETag;
 
-// B-2: module un-gated. Items depending on the not-yet-generated
-// `mime_type_list_enum::MimeTypeList` (`Table`, `Compact`, `EXTENSIONS`,
-// `sniff`, `by_loader`, `from_table`, `create_hash_table`, `ALL`) remain
-// individually `#[cfg(any())]`-gated inside MimeType.rs. Everything else
-// (struct, Category, init, by_name, constants) compiles for real.
+// B-2: module un-gated. `mime_type_list_enum::MimeTypeList` is now a
+// hand-generated `&'static str` newtype (PERF(port) stand-in for the Zig
+// packed-u14 table), so `Table`/`Compact`/`EXTENSIONS`/`sniff`/`from_table`/
+// `create_hash_table`/`ALL` all compile. Only `by_loader` remains gated
+// (same-tier `bun_options_types::Loader`, intra-tier edge avoided).
 pub mod MimeType;

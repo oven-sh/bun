@@ -197,10 +197,13 @@ impl From<FromExprError> for bun_core::Error {
 }
 
 impl PnpmMatcher {
-    // TODO(b2-blocked): bun_logger::ast — Expr/ExprData (EString/EArray/
-    // .as_string_cloned/.slice/.loc) have not yet moved down from
-    // bun_js_parser into bun_logger per CYCLEBREAK §→logger. Re-gate just
-    // this fn body until that lower-tier surface lands.
+    // TODO(b2-blocked): bun_logger::ast::Expr / bun_logger::ast::ExprData —
+    // EString/EArray/.as_string_cloned/.slice/.loc have not yet moved down
+    // from bun_js_parser into bun_logger per CYCLEBREAK §→logger. The fn
+    // signature itself names `ast::Expr`, so the whole fn (not just the body)
+    // stays gated until that lower-tier surface lands. Body is otherwise
+    // reconciled against the live `bun_logger::{Log, Source, AddErrorOptions}`
+    // API so un-gating only needs the `ast` import.
     #[cfg(any())]
     pub fn from_expr(
         expr: &ast::Expr,
@@ -227,7 +230,7 @@ impl PnpmMatcher {
                     Err(CreateMatcherError::InvalidRegExp) => {
                         log.add_error_fmt_opts(
                             format_args!("Invalid regex: {}", bstr::BStr::new(pattern)),
-                            logger::ErrorOpts {
+                            logger::AddErrorOptions {
                                 loc: expr.loc,
                                 redact_sensitive_information: true,
                                 source: Some(source),
@@ -244,7 +247,8 @@ impl PnpmMatcher {
             ast::ExprData::EArray(patterns) => {
                 for pattern_expr in patterns.slice() {
                     if let Some(pattern) = pattern_expr.as_string_cloned()? {
-                        let matcher = match create_matcher(&pattern, &mut buf) {
+                        let pattern: &[u8] = pattern.as_ref();
+                        let matcher = match create_matcher(pattern, &mut buf) {
                             Ok(m) => m,
                             Err(CreateMatcherError::OutOfMemory) => {
                                 return Err(FromExprError::OutOfMemory)
@@ -253,9 +257,9 @@ impl PnpmMatcher {
                                 log.add_error_fmt_opts(
                                     format_args!(
                                         "Invalid regex: {}",
-                                        bstr::BStr::new(&pattern)
+                                        bstr::BStr::new(pattern)
                                     ),
-                                    logger::ErrorOpts {
+                                    logger::AddErrorOptions {
                                         loc: pattern_expr.loc,
                                         redact_sensitive_information: true,
                                         source: Some(source),
@@ -270,8 +274,8 @@ impl PnpmMatcher {
                         matchers.push(matcher);
                     } else {
                         log.add_error_opts(
-                            "Expected a string",
-                            logger::ErrorOpts {
+                            b"Expected a string",
+                            logger::AddErrorOptions {
                                 loc: pattern_expr.loc,
                                 redact_sensitive_information: true,
                                 source: Some(source),
@@ -284,8 +288,8 @@ impl PnpmMatcher {
             }
             _ => {
                 log.add_error_opts(
-                    "Expected a string or an array of strings",
-                    logger::ErrorOpts {
+                    b"Expected a string or an array of strings",
+                    logger::AddErrorOptions {
                         loc: expr.loc,
                         redact_sensitive_information: true,
                         source: Some(source),

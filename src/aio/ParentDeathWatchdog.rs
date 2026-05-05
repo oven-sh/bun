@@ -648,52 +648,42 @@ fn list_child_pids(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option<usize
 /// Requires CONFIG_PROC_CHILDREN (enabled on every distro kernel that matters).
 #[cfg(target_os = "linux")]
 fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option<usize> {
-    #[cfg(not(any()))]
-    {
-        // TODO(b2-blocked): bun_sys::open_dir_for_iteration + bun_sys::iterate_dir
-        let _ = (parent, out);
-        return None;
-    }
-    #[cfg(any())]
-    {
     use std::io::Write;
 
     let mut path_buf = [0u8; 64];
     let task_path = {
         let mut w = &mut path_buf[..];
         write!(w, "/proc/{}/task", parent).ok()?;
-        let n = path_buf.len() - w.len();
+        let n = 64 - w.len();
         // PORT NOTE: reshaped for borrowck — recompute slice after write.
         &path_buf[..n]
     };
 
-    let task_fd = match bun_sys::open_dir_for_iteration(Fd::cwd(), task_path) {
-        bun_sys::Result::Ok(fd) => fd,
-        bun_sys::Result::Err(_) => return None,
+    let task_fd = match bun_sys::open_dir_for_iteration_os_path(Fd::cwd(), task_path) {
+        Ok(fd) => fd,
+        Err(_) => return None,
     };
-    // PORT NOTE: Zig `defer task_fd.close()`; assume Fd impls Drop. If not,
-    // Phase B should add an explicit close.
-    let _task_fd_guard = scopeguard::guard((), |_| {
-        task_fd.close();
+    // PORT NOTE: Zig `defer task_fd.close()`; `Fd` is Copy and does not impl Drop.
+    let _task_fd_guard = scopeguard::guard(task_fd, |fd| {
+        let _ = bun_sys::close(fd);
     });
-    // TODO(port): if bun_sys::Fd implements Drop, remove the scopeguard above.
 
     let mut written: usize = 0;
     // Sized so a single read can saturate the 4096-pid `out` buffer
     // (~8 bytes per "1234567 " entry × 4096).
     let mut read_buf = [0u8; 32 * 1024];
-    let mut it = bun_sys::iterate_dir(task_fd);
+    let mut it = bun_sys::dir_iterator::iterate(task_fd);
     loop {
         // `it.next()` → `Maybe(?Entry)`; `.unwrap() catch null` → error/None both stop.
         let entry = match it.next() {
-            bun_sys::Result::Ok(Some(e)) => e,
+            Ok(Some(e)) => e,
             _ => break,
         };
         if written >= out.len() {
             break;
         }
         // Each entry is a tid (numeric directory).
-        let Some(tid) = parse_pid(entry.name.as_bytes()) else {
+        let Some(tid) = parse_pid(entry.name.slice()) else {
             continue;
         };
         let Some(children_path) = buf_print_z(
@@ -720,7 +710,6 @@ fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option
         }
     }
     Some(written)
-    } // end #[cfg(any())]
 }
 
 /// Single-shot open+read+close into `buf`. Exit-handler helper — avoids
@@ -728,28 +717,26 @@ fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option
 /// we don't need.
 #[cfg(unix)]
 fn read_file_once<'a>(path: &ZStr, buf: &'a mut [u8]) -> Option<&'a [u8]> {
-    #[cfg(not(any()))]
-    {
-        // TODO(b2-blocked): bun_sys::File::open / read_all
-        let _ = (path, buf);
-        return None;
-    }
-    #[cfg(any())]
-    {
-    let file = match File::open(path, O::RDONLY, 0) {
-        bun_sys::Result::Ok(f) => f,
-        bun_sys::Result::Err(_) => return None,
+    let fd = match bun_sys::open(path, O::RDONLY, 0) {
+        Ok(fd) => fd,
+        Err(_) => return None,
     };
-    // PORT NOTE: Zig `defer file.close()` — File should impl Drop in bun_sys.
-    let _guard = scopeguard::guard((), |_| {
-        file.close();
+    // PORT NOTE: Zig `defer file.close()`. `bun_sys::File` does not impl Drop;
+    // close explicitly on every exit path.
+    let _guard = scopeguard::guard(fd, |fd| {
+        let _ = bun_sys::close(fd);
     });
-    // TODO(port): if bun_sys::File implements Drop, remove the scopeguard above.
-    match file.read_all(buf) {
-        bun_sys::Result::Ok(n) => Some(&buf[..n]),
-        bun_sys::Result::Err(_) => None,
+    // Zig `file.readAll(buf)` — fixed-buffer read-until-EOF-or-full. The Rust
+    // `File::read_all` grows a `Vec`, which would allocate; do the loop here.
+    let mut written = 0usize;
+    while written < buf.len() {
+        match bun_sys::read(fd, &mut buf[written..]) {
+            Ok(0) => break,
+            Ok(n) => written += n,
+            Err(_) => return None,
+        }
     }
-    } // end #[cfg(any())]
+    Some(&buf[..written])
 }
 
 // ─── port-local helpers ──────────────────────────────────────────────────────

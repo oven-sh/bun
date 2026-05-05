@@ -71,7 +71,6 @@ impl ApplyState {
         Self { pathbuf: PathBuffer::uninit(), patch_dir_abs_path: None }
     }
 
-    #[cfg(any())]
     fn patch_dir_abs_path(&mut self, fd: Fd) -> sys::Result<&ZStr> {
         if let Some(len) = self.patch_dir_abs_path {
             // SAFETY: pathbuf[len] == 0 was written below on a previous call.
@@ -79,19 +78,19 @@ impl ApplyState {
         }
         match sys::get_fd_path(fd, &mut self.pathbuf) {
             sys::Result::Ok(p) => {
+                // PORT NOTE: reshaped for borrowck — capture len, drop `p`,
+                // then re-borrow `self.pathbuf` to write the sentinel.
                 let len = p.len();
+                // Zig `state.pathbuf[0..p.len :0]` asserts a NUL sentinel; on
+                // Linux `readlink(2)` does not NUL-terminate, so write it
+                // explicitly (the buffer is zero-initialized but be defensive).
+                self.pathbuf.0[len] = 0;
                 self.patch_dir_abs_path = Some(len);
-                // SAFETY: get_fd_path NUL-terminates pathbuf at index `len`.
+                // SAFETY: pathbuf[len] == 0 written above; buffer lives for `self`.
                 sys::Result::Ok(unsafe { ZStr::from_raw(self.pathbuf.as_ptr(), len) })
             }
             sys::Result::Err(e) => sys::Result::Err(e.with_fd(fd)),
         }
-    }
-    // TODO(b2-blocked): bun_sys::get_fd_path
-    #[cfg(not(any()))]
-    fn patch_dir_abs_path(&mut self, fd: Fd) -> sys::Result<&ZStr> {
-        let _ = fd;
-        sys::Result::Err(sys::Error::todo())
     }
 }
 
@@ -449,15 +448,11 @@ fn apply_patch(
     sys::Result::Ok(())
 }
 
-#[cfg(any())]
-fn read_file_alloc(dir: Fd, path: &ZStr, max: usize) -> sys::Result<Vec<u8>> {
-    sys::File::read_from(dir, path, max)
-}
-// TODO(b2-blocked): bun_sys::File::read_from
-#[cfg(not(any()))]
-fn read_file_alloc(dir: Fd, path: &ZStr, max: usize) -> sys::Result<Vec<u8>> {
-    let _ = (dir, path, max);
-    sys::Result::Err(sys::Error::todo())
+fn read_file_alloc(dir: Fd, path: &ZStr, _max: usize) -> sys::Result<Vec<u8>> {
+    // PORT NOTE: Zig used `dir.stdDir().readFileAlloc(alloc, path, max)`. The
+    // `max` cap (4 GiB at the only call site) is not exposed by
+    // `bun_sys::File::read_from`; Phase B can add a capped variant if needed.
+    sys::File::read_from(dir, path)
 }
 
 /// Port of `std.mem.join` for byte slices.

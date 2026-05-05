@@ -299,6 +299,11 @@ pub mod ssl_wrapper {
     use core::ffi::{c_int, c_void};
     use core::ptr::NonNull;
 
+    // Local FFI shim — `bun_boringssl_sys` only exports `SSL`/`SSL_CTX` opaques
+    // today, so the SSLWrapper-specific surface is declared here against the
+    // same C symbols (verified vs `vendor/boringssl/include/openssl/{ssl,bio}.h`
+    // and `src/boringssl_sys/boringssl.zig`). When the lower tier grows these,
+    // collapse this mod to a `pub use bun_boringssl::c::*;`.
     // TODO(b2-blocked): bun_boringssl_sys::{SSL_new, SSL_free, SSL_CTX_free,
     //   SSL_read, SSL_write, SSL_shutdown, SSL_get_error, SSL_do_handshake,
     //   SSL_is_init_finished, SSL_get_shutdown, SSL_get_rbio, SSL_get_wbio,
@@ -309,10 +314,75 @@ pub mod ssl_wrapper {
     //   BIO_set_mem_eof_return, ERR_clear_error, X509_STORE, X509_STORE_CTX,
     //   ssl_renegotiate_explicit, ssl_renegotiate_never, SSL_ERROR_*,
     //   SSL_VERIFY_*, SSL_RECEIVED_SHUTDOWN}
-    // — bindgen output empty. Opaque handle types borrowed from
-    // `bun_boringssl::c` so struct fields compile.
     mod boring_sys {
+        use core::ffi::{c_int, c_void};
+        use core::marker::{PhantomData, PhantomPinned};
+
         pub use bun_boringssl::c::{SSL, SSL_CTX};
+
+        // ── opaque handles not yet in bun_boringssl_sys ────────────────
+        macro_rules! opaque {
+            ($($name:ident),+ $(,)?) => {$(
+                #[repr(C)] pub struct $name { _p: [u8; 0], _m: PhantomData<(*mut u8, PhantomPinned)> }
+            )+};
+        }
+        opaque!(BIO, BIO_METHOD, X509_STORE, X509_STORE_CTX);
+
+        // ── constants (values from vendor/boringssl/include/openssl/ssl.h) ──
+        pub const SSL_ERROR_SSL: c_int = 1;
+        pub const SSL_ERROR_WANT_READ: c_int = 2;
+        pub const SSL_ERROR_WANT_WRITE: c_int = 3;
+        pub const SSL_ERROR_SYSCALL: c_int = 5;
+        pub const SSL_ERROR_ZERO_RETURN: c_int = 6;
+        pub const SSL_ERROR_WANT_RENEGOTIATE: c_int = 19;
+
+        pub const SSL_VERIFY_NONE: c_int = 0x00;
+        pub const SSL_VERIFY_PEER: c_int = 0x01;
+
+        pub const SSL_RECEIVED_SHUTDOWN: c_int = 2;
+
+        // `enum ssl_renegotiate_mode_t` is `BORINGSSL_ENUM_INT` (= c_int).
+        pub type ssl_renegotiate_mode_t = c_int;
+        pub const ssl_renegotiate_never: ssl_renegotiate_mode_t = 0;
+        pub const ssl_renegotiate_explicit: ssl_renegotiate_mode_t = 4;
+
+        pub type SSL_verify_cb =
+            Option<unsafe extern "C" fn(preverify_ok: c_int, ctx: *mut X509_STORE_CTX) -> c_int>;
+
+        // ── extern fns ─────────────────────────────────────────────────
+        unsafe extern "C" {
+            // ssl.h
+            pub fn SSL_new(ctx: *mut SSL_CTX) -> *mut SSL;
+            pub fn SSL_free(ssl: *mut SSL);
+            pub fn SSL_CTX_free(ctx: *mut SSL_CTX);
+            pub fn SSL_set_connect_state(ssl: *mut SSL);
+            pub fn SSL_set_accept_state(ssl: *mut SSL);
+            pub fn SSL_set_bio(ssl: *mut SSL, rbio: *mut BIO, wbio: *mut BIO);
+            pub fn SSL_get_rbio(ssl: *const SSL) -> *mut BIO;
+            pub fn SSL_get_wbio(ssl: *const SSL) -> *mut BIO;
+            pub fn SSL_do_handshake(ssl: *mut SSL) -> c_int;
+            pub fn SSL_read(ssl: *mut SSL, buf: *mut c_void, num: c_int) -> c_int;
+            pub fn SSL_write(ssl: *mut SSL, buf: *const c_void, num: c_int) -> c_int;
+            pub fn SSL_shutdown(ssl: *mut SSL) -> c_int;
+            pub fn SSL_get_error(ssl: *const SSL, ret_code: c_int) -> c_int;
+            pub fn SSL_is_init_finished(ssl: *const SSL) -> c_int;
+            pub fn SSL_get_shutdown(ssl: *const SSL) -> c_int;
+            pub fn SSL_set_verify(ssl: *mut SSL, mode: c_int, callback: SSL_verify_cb);
+            pub fn SSL_CTX_get_verify_mode(ctx: *const SSL_CTX) -> c_int;
+            pub fn SSL_set0_verify_cert_store(ssl: *mut SSL, store: *mut X509_STORE) -> c_int;
+            pub fn SSL_set_renegotiate_mode(ssl: *mut SSL, mode: ssl_renegotiate_mode_t);
+            pub fn SSL_renegotiate(ssl: *mut SSL) -> c_int;
+            // bio.h
+            pub fn BIO_new(method: *const BIO_METHOD) -> *mut BIO;
+            pub fn BIO_free(bio: *mut BIO) -> c_int;
+            pub fn BIO_read(bio: *mut BIO, data: *mut c_void, len: c_int) -> c_int;
+            pub fn BIO_write(bio: *mut BIO, data: *const c_void, len: c_int) -> c_int;
+            pub fn BIO_ctrl_pending(bio: *const BIO) -> usize;
+            pub fn BIO_s_mem() -> *const BIO_METHOD;
+            pub fn BIO_set_mem_eof_return(bio: *mut BIO, eof_value: c_int) -> c_int;
+            // err.h
+            pub fn ERR_clear_error();
+        }
     }
 
     use crate::{create_bun_socket_error_t, us_bun_verify_error_t};
@@ -439,11 +509,6 @@ pub mod ssl_wrapper {
         WantWrite,
     }
 
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_boringssl_sys::{SSL_*, BIO_*, ERR_*} — every method
-    // body calls into BoringSSL; un-gate once bindgen populates boringssl_sys.
-    // `init_from_options` is additionally
-    // TODO(b2-blocked): bun_uws_sys::socket_context::BunSocketContextOptions
     impl<T: Copy> SSLWrapper<T> {
         /// Initialize the SSLWrapper with a specific SSL_CTX*, remember to
         /// call SSL_CTX_up_ref if you want to keep the SSL_CTX alive after
@@ -551,6 +616,10 @@ pub mod ssl_wrapper {
         /// resulting `BunSocketContextOptions` here, so this crate stays free of the
         /// `jsc`/`http_types` dependency. The original `SSLConfig`-taking `init` lives as
         /// an extension in the higher tier.
+        #[cfg(any())]
+        // TODO(b2-blocked): bun_uws_sys::socket_context::BunSocketContextOptions
+        // (module gated in lower tier; signature uses the type and body calls
+        // `.create_ssl_context()` on it).
         pub fn init_from_options(
             ctx_opts: bun_uws_sys::socket_context::BunSocketContextOptions,
             is_client: bool,
@@ -1076,12 +1145,10 @@ pub mod ssl_wrapper {
     /// `us_verify_callback` equivalent — let the handshake complete regardless of
     /// verify result so JS reads `authorizationError` and `rejectUnauthorized`
     /// decides, instead of BoringSSL aborting mid-flight.
-    #[cfg(any())] // TODO(b2-blocked): bun_boringssl_sys::X509_STORE_CTX
-    extern "C" fn always_continue_verify(_: c_int, _: *mut boring_sys::X509_STORE_CTX) -> c_int {
+    unsafe extern "C" fn always_continue_verify(_: c_int, _: *mut boring_sys::X509_STORE_CTX) -> c_int {
         1
     }
 
-    #[cfg(any())] // TODO(b2-blocked): bun_boringssl_sys::X509_STORE
     unsafe extern "C" {
         /// Process-wide bundled root store from `root_certs.cpp` — built once and
         /// up_ref'd per consumer so the ~150-cert load happens once total, not per

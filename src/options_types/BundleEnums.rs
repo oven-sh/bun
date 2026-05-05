@@ -2,6 +2,7 @@
 //! `cli/` and other tiers can reference them without depending on `bundler/`.
 //! Aliased back at original locations — call sites unchanged.
 
+use crate::schema::api;
 use bun_collections;
 use bun_string::strings;
 use enum_map::{Enum, EnumMap};
@@ -136,7 +137,6 @@ impl Target {
 
     // `from_js` lives in bundler_jsc as an extension trait — see PORTING.md.
 
-    #[cfg(any())] // TODO(b2-blocked): bun_api::Target
     pub fn to_api(self) -> api::Target {
         match self {
             Target::Node => api::Target::node,
@@ -175,7 +175,6 @@ impl Target {
     // `bake_graph()` stays in bun_bake (would back-edge into tier-6).
     // `out_extensions()` stays in bun_bundler (allocator-heavy, only used there).
 
-    #[cfg(any())] // TODO(b2-blocked): bun_api::Target
     pub fn from(plat: Option<api::Target>) -> Target {
         match plat.unwrap_or(api::Target::_none) {
             api::Target::node => Target::Node,
@@ -278,7 +277,6 @@ impl LoaderOptional {
         }
     }
 
-    #[cfg(any())] // TODO(b2-blocked): bun_api::Loader
     pub fn from_api(loader: api::Loader) -> LoaderOptional {
         if loader == api::Loader::_none {
             LoaderOptional::NONE
@@ -406,7 +404,6 @@ impl Loader {
         b"markdown" => Loader::Md,
     };
 
-    #[cfg(any())] // TODO(b2-blocked): bun_api::Loader
     pub const API_NAMES: phf::Map<&'static [u8], api::Loader> = phf::phf_map! {
         b"js" => api::Loader::js,
         b"mjs" => api::Loader::js,
@@ -457,7 +454,6 @@ impl Loader {
         matches!(self, Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx)
     }
 
-    #[cfg(any())] // TODO(b2-blocked): bun_api::Loader
     pub fn to_api(self) -> api::Loader {
         match self {
             Loader::Jsx => api::Loader::jsx,
@@ -482,7 +478,6 @@ impl Loader {
         }
     }
 
-    #[cfg(any())] // TODO(b2-blocked): bun_api::Loader
     pub fn from_api(loader: api::Loader) -> Loader {
         match loader {
             api::Loader::_none => Loader::File,

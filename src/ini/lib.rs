@@ -243,34 +243,27 @@ pub enum ScopeError {
 // TODO(b2-blocked): bun_install_types::NodeLinker::PnpmMatcher::from_expr
 // TODO(b2-blocked): bun_interchange::json::parse_utf8_impl
 
-pub struct Parser<'a>(core::marker::PhantomData<&'a ()>);
-pub struct ToStringFormatter<'a>(core::marker::PhantomData<&'a ()>);
-pub struct ConfigIterator<'a>(core::marker::PhantomData<&'a ()>);
-pub struct ScopeIterator<'a>(core::marker::PhantomData<&'a ()>);
-pub struct ScopeItem;
+pub use draft::{
+    ConfigIterator, Parser, ScopeItem, ScopeIterator, ToStringFormatter,
+    load_npmrc, load_npmrc_config,
+};
 pub mod config_iterator {
     pub use super::{ConfigItem as Item, ConfigIterator as Iter, ConfigOpt as Opt};
 }
 
-pub fn load_npmrc_config() { todo!("b2-blocked: bun_api::BunInstall") }
-pub fn load_npmrc() { todo!("b2-blocked: bun_api::BunInstall / bun_js_parser::Expr") }
-
-#[cfg(any())]
 mod draft {
 
 use core::fmt;
+use core::ptr;
 use std::io::Write as _;
 
 use bun_alloc::{AllocError, Arena, ArenaVec};
 use bun_collections::ArrayHashMap;
 use bun_core::{Global, Output};
 use bun_dotenv::Loader as DotEnvLoader;
-// TODO(b2-blocked): bun_js_parser::{Expr, ExprData, E, e::object::Rope}
-use bun_js_parser::e::object::Rope;
+use bun_js_parser::E::Rope;
 use bun_js_parser::{self as js_ast, E, Expr, ExprData};
 use bun_logger::{self as logger, Loc, Log, Source};
-// TODO(b2-blocked): bun_api::{BunInstall, NpmRegistry, NpmRegistryMap}
-use bun_api::{BunInstall, NpmRegistry, NpmRegistryMap};
 use bun_string::{strings, ZStr};
 use bun_url::URL;
 
@@ -343,12 +336,18 @@ impl<'bump> PrepareResult<'bump> {
 
 impl<'a> Parser<'a> {
     pub fn init(path: &[u8], src: &'a [u8], env: &'a mut DotEnvLoader<'a>) -> Parser<'a> {
+        // SAFETY: Phase-A `Str = &'static [u8]` lifetime erasure (see PORTING.md
+        // §Allocators / E.rs `Str` note). `path`/`src` outlive the `Parser` and
+        // its `Source`/`Expr` tree (arena-freed in lockstep). Phase B threads
+        // `'bump` through `bun_logger::Source` instead.
+        let path_s: &'static [u8] = unsafe { core::mem::transmute::<&[u8], &'static [u8]>(path) };
+        let src_s: &'static [u8] = unsafe { core::mem::transmute::<&[u8], &'static [u8]>(src) };
         Parser {
             opts: Options::default(),
             logger: Log::init(),
             src,
-            out: Expr::init(E::Object(E::Object::default()), Loc::EMPTY),
-            source: Source::init_path_string(path, src),
+            out: Expr::init(E::Object::default(), Loc::EMPTY),
+            source: Source::init_path_string(path_s, src_s),
             arena: Arena::new(),
             env,
         }
@@ -357,6 +356,14 @@ impl<'a> Parser<'a> {
     // deinit -> Drop: `logger` and `arena` are owned and drop automatically.
 
     pub fn parse(&mut self, bump: &'a Arena) -> OOM<()> {
+        #[cfg(any())]
+        // TODO(b2-blocked): bun_js_parser::E::Object::get_or_put_object
+        // TODO(b2-blocked): bun_js_parser::E::Object::get
+        // TODO(b2-blocked): bun_js_parser::E::Object::put
+        // TODO(b2-blocked): bun_js_parser::E::Array::push
+        // TODO(b2-blocked): bun_js_parser::ExprData::e_object_mut
+        // TODO(b2-blocked): bun_js_parser::ExprData::e_array_mut
+        {
         // TODO(port): borrowck — in Zig, `arena_allocator` is `self.arena.allocator()`;
         // here it is passed separately to avoid overlapping &mut self borrows.
         let src = self.src;
@@ -585,6 +592,8 @@ impl<'a> Parser<'a> {
                 head_ref.put(bump, key, value)?;
             }
         }
+        } // end #[cfg(any())]
+        let _ = bump;
         Ok(())
     }
 
@@ -596,6 +605,11 @@ impl<'a> Parser<'a> {
         val_: &[u8],
         offset_: i32,
     ) -> OOM<PrepareResult<'a>> {
+        #![allow(unreachable_code)]
+        #[cfg(any())]
+        // TODO(b2-blocked): bun_interchange::json::parse_utf8_impl
+        // TODO(b2-blocked): bun_js_parser::Expr::as_string
+        {
         let mut offset = offset_;
         let mut val = strings::trim(val_, b" \n\r\t");
 
@@ -873,6 +887,9 @@ impl<'a> Parser<'a> {
             // Zig returns it directly. Phase B may need bump.alloc_slice_copy here.
         }
         Ok(PrepareResult::Section(Self::str_to_rope(ropealloc, val)?))
+        } // end #[cfg(any())]
+        let _ = (usage, bump, ropealloc, val_, offset_);
+        todo!("b2-blocked: bun_interchange::json::parse_utf8_impl / bun_js_parser::Expr::as_string")
     }
 
     /// Expands ${VAR} and ${VAR?} environment variable substitutions in a string.
@@ -1008,10 +1025,10 @@ impl<'a> Parser<'a> {
         Ok(None)
     }
 
-    fn single_str_rope(ropealloc: &'a Arena, str_: &'a [u8]) -> OOM<&'a mut Rope> {
+    fn single_str_rope(ropealloc: &'a Arena, str_: &[u8]) -> OOM<&'a mut Rope> {
         let rope = ropealloc.alloc(Rope {
-            head: Expr::init(E::String(E::String::init(str_)), Loc::EMPTY),
-            next: None,
+            head: Expr::init(E::EString::init(str_), Loc::EMPTY),
+            next: ptr::null_mut(),
         });
         Ok(rope)
     }
@@ -1025,56 +1042,60 @@ impl<'a> Parser<'a> {
     ) -> OOM<()> {
         let _ = self; // autofix
         let slice = bump.alloc_slice_copy(&unesc[..]);
-        let expr = Expr::init(E::String(E::String { data: slice }), Loc::EMPTY);
+        let expr = Expr::init(E::EString::init(slice), Loc::EMPTY);
         if let Some(r) = existing_rope.as_deref_mut() {
             let _ = r.append(expr, ropealloc)?;
         } else {
             *existing_rope = Some(ropealloc.alloc(Rope {
                 head: expr,
-                next: None,
+                next: ptr::null_mut(),
             }));
         }
         unesc.clear();
         Ok(())
     }
 
-    fn str_to_rope(ropealloc: &'a Arena, key: &'a [u8]) -> OOM<&'a mut Rope> {
+    fn str_to_rope(ropealloc: &'a Arena, key: &[u8]) -> OOM<&'a mut Rope> {
         let Some(mut dot_idx) = next_dot(key) else {
             let rope = ropealloc.alloc(Rope {
-                head: Expr::init(E::String(E::String::init(key)), Loc::EMPTY),
-                next: None,
+                head: Expr::init(E::EString::init(key), Loc::EMPTY),
+                next: ptr::null_mut(),
             });
             return Ok(rope);
         };
-        let mut rope: &mut Rope = ropealloc.alloc(Rope {
-            head: Expr::init(E::String(E::String::init(&key[..dot_idx])), Loc::EMPTY),
-            next: None,
+        let rope_head: &'a mut Rope = ropealloc.alloc(Rope {
+            head: Expr::init(E::EString::init(&key[..dot_idx]), Loc::EMPTY),
+            next: ptr::null_mut(),
         });
         // SAFETY: `head` is the same allocation as `rope`'s initial value;
         // we walk `rope` forward via `append` while keeping `head` to return.
         // PORT NOTE: reshaped for borrowck — Zig holds two *Rope simultaneously.
-        let head: *mut Rope = rope as *mut Rope;
+        let head: *mut Rope = rope_head as *mut Rope;
+        let mut rope: *mut Rope = head;
 
         while dot_idx + 1 < key.len() {
             let next_dot_idx = match next_dot(&key[dot_idx + 1..]) {
                 Some(n) => dot_idx + 1 + n,
                 None => {
                     let rest = &key[dot_idx + 1..];
-                    rope = rope.append(
-                        Expr::init(E::String(E::String::init(rest)), Loc::EMPTY),
+                    // SAFETY: `rope` points into a live bump allocation; no aliasing borrow.
+                    rope = unsafe { &mut *rope }.append(
+                        Expr::init(E::EString::init(rest), Loc::EMPTY),
                         ropealloc,
                     )?;
                     break;
                 }
             };
             let part = &key[dot_idx + 1..next_dot_idx];
-            rope = rope.append(
-                Expr::init(E::String(E::String::init(part)), Loc::EMPTY),
+            // SAFETY: `rope` points into a live bump allocation; no aliasing borrow.
+            rope = unsafe { &mut *rope }.append(
+                Expr::init(E::EString::init(part), Loc::EMPTY),
                 ropealloc,
             )?;
             dot_idx = next_dot_idx;
         }
 
+        let _ = rope;
         // SAFETY: head was created by ropealloc.alloc above and is still live in the bump.
         Ok(unsafe { &mut *head })
     }
@@ -1094,8 +1115,9 @@ impl fmt::Display for ToStringFormatter<'_> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.d {
             ExprData::EArray(arr) => {
-                let last = arr.items.len().saturating_sub(1);
-                for (i, e) in arr.items.slice().iter().enumerate() {
+                let items = arr.items.slice();
+                let last = items.len().saturating_sub(1);
+                for (i, e) in items.iter().enumerate() {
                     let is_last = i == last;
                     write!(
                         writer,
@@ -1116,11 +1138,11 @@ impl fmt::Display for ToStringFormatter<'_> {
             }
             ExprData::ENull(_) => write!(writer, "null"),
 
-            tag => {
+            other => {
                 if cfg!(debug_assertions) {
                     Output::panic(format_args!(
                         "Unexpected AST node: {}",
-                        <&'static str>::from(tag)
+                        <&'static str>::from(other.tag())
                     ));
                 }
                 Ok(())
@@ -1143,6 +1165,9 @@ pub struct ConfigIterator<'a> {
 
 impl<'a> ConfigIterator<'a> {
     pub fn next(&mut self) -> Option<IniOption<ConfigItem>> {
+        #[cfg(any())]
+        // TODO(b2-blocked): bun_js_parser::Expr::as_utf8_string_literal
+        {
         if self.prop_idx >= self.config.properties.len() {
             return None;
         }
@@ -1194,6 +1219,8 @@ impl<'a> ConfigIterator<'a> {
         }
 
         Some(IniOption::None)
+        } // end #[cfg(any())]
+        todo!("b2-blocked: bun_js_parser::Expr::as_utf8_string_literal")
     }
 }
 
@@ -1212,11 +1239,18 @@ pub struct ScopeIterator<'a> {
 
 pub struct ScopeItem {
     pub scope: Box<[u8]>,
+    // TODO(b2-blocked): bun_api::NpmRegistry
+    #[cfg(any())]
     pub registry: NpmRegistry,
 }
 
 impl<'a> ScopeIterator<'a> {
     pub fn next(&mut self) -> OOM<Option<IniOption<ScopeItem>>> {
+        #[cfg(any())]
+        // TODO(b2-blocked): bun_js_parser::Expr::as_utf8_string_literal
+        // TODO(b2-blocked): bun_api::npm_registry::Parser
+        // TODO(b2-blocked): bun_api::NpmRegistry
+        {
         if self.prop_idx >= self.config.properties.len() {
             return Ok(None);
         }
@@ -1252,6 +1286,8 @@ impl<'a> ScopeIterator<'a> {
         }
 
         Ok(Some(IniOption::None))
+        } // end #[cfg(any())]
+        todo!("b2-blocked: bun_api::npm_registry / bun_js_parser::Expr::as_utf8_string_literal")
     }
 }
 
@@ -1259,6 +1295,33 @@ impl<'a> ScopeIterator<'a> {
 // loadNpmrcConfig / loadNpmrc
 // ──────────────────────────────────────────────────────────────────────────
 
+// TODO(b2-blocked): bun_api::BunInstall
+// TODO(b2-blocked): bun_api::NpmRegistry
+// TODO(b2-blocked): bun_api::NpmRegistryMap
+// TODO(b2-blocked): bun_api::npm_registry::Parser
+// TODO(b2-blocked): bun_api::Ca
+// TODO(b2-blocked): bun_logger::source_from_file
+// TODO(b2-blocked): bun_interchange::json::parse_utf8_impl
+// TODO(b2-blocked): bun_install_types::NodeLinker::PnpmMatcher::from_expr
+// TODO(b2-blocked): bun_js_parser::Expr::as_property
+// TODO(b2-blocked): bun_js_parser::Expr::as_utf8_string_literal
+// TODO(b2-blocked): bun_js_parser::Expr::as_string
+// TODO(b2-blocked): bun_js_parser::Expr::as_string_cloned
+// TODO(b2-blocked): bun_js_parser::Expr::as_bool
+// TODO(b2-blocked): bun_js_parser::Expr::get
+// TODO(b2-blocked): bun_js_parser::E::EString::eql_comptime
+//
+// `load_npmrc_config` / `load_npmrc` / `handle_auth` are blocked wholesale on
+// the schema types (`BunInstall`/`NpmRegistry`/`NpmRegistryMap`/`Ca` —
+// `bun_api` is currently an empty crate root) and on the gated `Expr`
+// accessor surface in `bun_js_parser`. Signatures name the missing types, so
+// the fns themselves stay gated (not just bodies); shadow stubs preserve the
+// public symbol names so dependents type-check.
+
+pub fn load_npmrc_config() { todo!("b2-blocked: bun_api::BunInstall") }
+pub fn load_npmrc() { todo!("b2-blocked: bun_api::BunInstall / bun_js_parser::Expr accessors") }
+
+#[cfg(any())]
 pub fn load_npmrc_config(
     install: &mut BunInstall,
     env: &mut DotEnvLoader<'_>,
@@ -1314,6 +1377,7 @@ pub fn load_npmrc_config(
     }
 }
 
+#[cfg(any())]
 pub fn load_npmrc(
     install: &mut BunInstall,
     env: &mut DotEnvLoader<'_>,
@@ -1769,6 +1833,7 @@ pub fn load_npmrc(
     Ok(())
 }
 
+#[cfg(any())]
 fn handle_auth(
     v: &mut NpmRegistry,
     conf_item: &ConfigItem,
@@ -1841,5 +1906,5 @@ fn handle_auth(
 //   source:     src/ini/ini.zig (1357 lines)
 //   confidence: medium
 //   todos:      6
-//   notes:      B-2: Options/IniOption/ConfigOpt/ConfigItem/ScopeError/NODE_LINKER_MAP/byte-helpers compile; Parser+iterators+load_npmrc re-gated on bun_js_parser AST surface and bun_api schema types
+//   notes:      B-2: Parser/PrepareResult/ToStringFormatter/ConfigIterator/ScopeIterator structs + Rope helpers + env-var expansion compile; parse()/prepare_str()/iterator next()/load_npmrc bodies re-gated on bun_js_parser gated accessor impls (Object::get/put/get_or_put_object, Array::push, Expr::as_*) and empty bun_api crate
 // ──────────────────────────────────────────────────────────────────────────

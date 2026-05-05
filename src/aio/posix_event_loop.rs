@@ -401,7 +401,7 @@ impl FilePoll {
         self.on_update(kqueue_event.data);
     }
 
-    #[cfg(any())] // TODO(b2-blocked): bun_sys::linux::epoll_event
+    #[cfg(any())] // TODO(b2-blocked): bun_sys::linux::EPOLL (via from_epoll_event)
     #[cfg(target_os = "linux")]
     pub fn on_epoll_event(&mut self, _loop: &mut Loop, epoll_event: &bun_sys::linux::epoll_event) {
         self.update_flags(Flags::from_epoll_event(epoll_event));
@@ -1595,25 +1595,17 @@ impl LinuxWaker {
     }
 
     pub fn wait(&self) {
-        #[cfg(any())]
-        {
-            let mut bytes: usize = 0;
-            // SAFETY: usize is 8 bytes on supported targets; reinterpret as [u8; 8].
-            let buf = unsafe { &mut *(&mut bytes as *mut usize as *mut [u8; 8]) };
-            let _ = bun_sys::posix::read(self.fd.cast(), buf);
-        }
-        // TODO(b2-blocked): bun_sys::posix::read
+        let mut bytes: usize = 0;
+        // SAFETY: usize is 8 bytes on supported targets; reinterpret as [u8; 8].
+        let buf = unsafe { &mut *(&mut bytes as *mut usize as *mut [u8; 8]) };
+        let _ = bun_sys::read(self.fd, buf);
     }
 
     pub fn wake(&self) {
-        #[cfg(any())]
-        {
-            let mut bytes: usize = 1;
-            // SAFETY: usize is 8 bytes; reinterpret as [u8; 8].
-            let buf = unsafe { &*(&mut bytes as *mut usize as *mut [u8; 8]) };
-            let _ = bun_sys::posix::write(self.fd.cast(), buf);
-        }
-        // TODO(b2-blocked): bun_sys::posix::write
+        let bytes: usize = 1;
+        // SAFETY: usize is 8 bytes; reinterpret as [u8; 8].
+        let buf = unsafe { &*(&bytes as *const usize as *const [u8; 8]) };
+        let _ = bun_sys::write(self.fd, buf);
     }
 }
 

@@ -10,10 +10,13 @@ pub mod EventLoopTimer;
 
 // ────────────────────────────────────────────────────────────────────────────
 // B-2 un-gated: AnyEventLoop / SpawnSyncEventLoop / MiniEventLoop compile.
-// Function bodies that touch still-gated lower-tier surface (bun_uws::Loop
-// methods, bun_core::Timespec, bun_core::Output::DescriptorType,
-// bun_dotenv::Map::create_null_delimited_env_map, bun_aio EventLoopCtx
-// adapter) are individually re-gated with `// TODO(b2-blocked):` markers.
+// Un-gated this pass: DeferredTaskQueue::run, MiniEventLoop::{stdout,stderr},
+// EventLoopHandle::create_null_delimited_env_map, both put_file_poll (via new
+// MINI_EVENT_LOOP_CTX_VTABLE adapter), AnyEventLoop::{tick,tick_once}.
+// Function bodies that touch still-gated lower-tier surface — bun_uws::Loop
+// methods/fields (the bun_uws_sys::Loop module is itself `#[cfg(any())]`-gated,
+// so Loop is opaque) and bun_core::Timespec — remain individually re-gated
+// with `// TODO(b2-blocked):` markers.
 // ────────────────────────────────────────────────────────────────────────────
 
 #[path = "MiniEventLoop.rs"]
@@ -29,4 +32,4 @@ pub use AnyTask::JsResult;
 pub use ConcurrentTask::{Task, TaskTag, task_tag};
 
 pub use AnyEventLoop::{EventLoopHandle, EventLoopTask, EventLoopTaskPtr, JsEventLoopVTable};
-pub use MiniEventLoop::{EventLoopKind, PlatformEventLoop};
+pub use MiniEventLoop::{EventLoopKind, PlatformEventLoop, MINI_EVENT_LOOP_CTX_VTABLE};

@@ -60,35 +60,32 @@ impl DeferredTaskQueue {
     }
 
     pub fn run(&mut self) {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_collections::ArrayHashMap::swap_remove_at
-            // TODO(b2-blocked): bun_collections::ArrayHashMap::keys (indexable slice)
-            // TODO(b2-blocked): bun_collections::ArrayHashMap::values (indexable slice)
-            // The std-HashMap stub cannot express indexed iterate-while-mutating;
-            // un-gate once the real IndexMap-backed ArrayHashMap lands.
-            let mut i: usize = 0;
-            let mut last = self.map.len();
-            while i < last {
-                let Some(key) = self.map.keys()[i] else {
-                    self.map.swap_remove_at(i);
-                    last = self.map.len();
-                    continue;
-                };
+        // PORT NOTE: Zig used `swapRemoveAt(i)` (O(1) by index). The current
+        // `ArrayHashMap` exposes `keys()/values()` slices and `swap_remove(&K)`
+        // (O(n) hash lookup) but not `swap_remove_at`. Keys here are `Copy`
+        // pointers, so copy the key out and remove by key — semantically
+        // identical (keys are unique), just an extra hash per removal.
+        // PERF(port): swap_remove(&K) re-hashes; restore swap_remove_at when
+        // bun_collections::ArrayHashMap grows it — profile in Phase B.
+        let mut i: usize = 0;
+        let mut last = self.map.len();
+        while i < last {
+            let key = self.map.keys()[i];
+            let Some(nn) = key else {
+                self.map.swap_remove(&key);
+                last = self.map.len();
+                continue;
+            };
 
-                // PORT NOTE: reshaped for borrowck — copy fn ptr out before calling
-                let task = self.map.values()[i];
-                if !task(key.as_ptr()) {
-                    self.map.swap_remove_at(i);
-                    last = self.map.len();
-                } else {
-                    i += 1;
-                }
+            // PORT NOTE: reshaped for borrowck — copy fn ptr out before calling
+            let task = self.map.values()[i];
+            if !task(nn.as_ptr()) {
+                self.map.swap_remove(&key);
+                last = self.map.len();
+            } else {
+                i += 1;
             }
-            return;
         }
-        // TODO(b2-blocked): bun_collections::ArrayHashMap::swap_remove_at
-        todo!("DeferredTaskQueue::run — needs ArrayHashMap indexable iteration")
     }
 }
 

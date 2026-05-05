@@ -9,22 +9,18 @@ use bun_string::strings;
 use bun_options_types::Loader; // TYPE_ONLY: was bun_bundler::options::Loader (T5); moves to options_types (T3) per CYCLEBREAK
 
 // ───────────────────────────────────────────────────────────────────────────
-// `Table` (= generated `mime_type_list_enum::MimeTypeList`) is not yet emitted
-// by codegen for Rust — `mime_type_list_enum.rs` is a stub. Every item below
-// that names `Table`/`t!` is individually `#[cfg(any())]`-gated so the rest of
-// the module (struct, Category, init, constants, by_name) compiles for real.
-// Track-A blocker: src/codegen/generate-compact-string-table.ts must emit Rust.
+// `Table` (= generated `mime_type_list_enum::MimeTypeList`). The Rust side is a
+// hand-rolled stand-in (`&'static str` newtype) until
+// `src/codegen/generate-compact-string-table.ts` emits `.rs`. See PERF(port)
+// note at the top of `mime_type_list_enum.rs`.
 // ───────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
 pub use super::mime_type_list_enum::MimeTypeList as Table;
-#[cfg(any())]
 use bun_collections::StringHashMap;
 
-// TODO(port): `Table` variant names in Zig are raw MIME-type strings (e.g. `@"application/json"`),
-// which are not valid Rust identifiers. The generated `mime_type_list_enum.rs` must expose either
-// mangled variant names or a `const fn from_mime_literal(&'static str) -> Table`. Until then,
-// `t!("...")` is a placeholder that resolves to the corresponding `Table` value.
-#[cfg(any())]
+// PORT NOTE: `Table` variant names in Zig are raw MIME-type strings
+// (e.g. `@"application/json"`), which are not valid Rust identifiers.
+// `mime_type_list_enum.rs` exposes `const fn from_mime_literal(&'static str)`;
+// `t!("...")` resolves to the corresponding `Table` value at compile time.
 macro_rules! t {
     ($s:literal) => {
         Table::from_mime_literal($s)
@@ -39,16 +35,13 @@ pub struct MimeType {
     pub category: Category,
 }
 
-#[cfg(any())]
 pub type Map = StringHashMap<Table>;
 
-#[cfg(any())]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Compact {
     pub value: Table,
 }
 
-#[cfg(any())]
 impl Compact {
     pub fn from(value: Table) -> Compact {
         Compact { value }
@@ -108,12 +101,12 @@ impl Compact {
     }
 }
 
-#[cfg(any())]
 #[cold]
 pub fn create_hash_table() -> Result<Map, bun_alloc::AllocError> {
     let mut map = Map::default();
     map.reserve(Table::ALL.len() as u32 as usize);
-    // PERF(port): was put_assume_capacity_no_clobber — profile in Phase B
+    // PERF(port): was put_assume_capacity_no_clobber + borrowed-key map — Rust
+    // `StringHashMap` boxes the key. Profile in Phase B.
     for entry in Table::ALL {
         #[cfg(feature = "ci_assert")]
         {
@@ -125,7 +118,7 @@ pub fn create_hash_table() -> Result<Map, bun_alloc::AllocError> {
                 ));
             }
         }
-        map.insert(entry.slice(), *entry);
+        map.put(entry.slice(), *entry)?;
     }
 
     Ok(map)
@@ -171,7 +164,6 @@ pub enum Category {
     Multipart,
 }
 
-#[cfg(any())]
 impl Category {
     pub fn from_table(entry: Table) -> Category {
         // TODO(port): see top-of-file note re: Table variant idents.
@@ -523,21 +515,14 @@ pub fn by_extension(ext_without_leading_dot: &[u8]) -> MimeType {
 }
 
 pub fn by_extension_no_default(ext_without_leading_dot: &[u8]) -> Option<MimeType> {
-    #[cfg(any())]
-    {
-        if let Some(entry) = EXTENSIONS.get(ext_without_leading_dot) {
-            return Some(Compact::from(*entry).to_mime_type());
-        }
-        return None;
+    if let Some(entry) = EXTENSIONS.get(ext_without_leading_dot) {
+        return Some(Compact::from(*entry).to_mime_type());
     }
-    // TODO(b2-blocked): bun_http_types::mime_type_list_enum::MimeTypeList (codegen)
-    let _ = ext_without_leading_dot;
-    todo!("b2-blocked: EXTENSIONS table needs mime_type_list_enum codegen")
+    None
 }
 
 // this is partially auto-generated
-#[cfg(any())]
-pub use super::mime_type_list_enum::MimeTypeList::ALL as ALL;
+pub use super::mime_type_list_enum::ALL;
 
 // TODO: do a comptime static hash map for this
 // its too many branches to use ComptimeStringMap
@@ -545,10 +530,9 @@ pub fn by_name(name: &[u8]) -> MimeType {
     MimeType::init(name, false, None)
 }
 
-// TODO(port): phf_map! rejects duplicate keys at compile time. The Zig source contains
-// duplicate entries for "tsx", "yaml", "yml" (Zig ComptimeStringMap silently kept first).
-// Phase B must dedupe.
-#[cfg(any())]
+// PORT NOTE: phf_map! rejects duplicate keys at compile time. The Zig source
+// contained duplicate entries for "tsx", "yaml", "yml" (Zig ComptimeStringMap
+// silently kept the first occurrence) — later duplicates dropped below.
 pub static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
     b"123" => t!("application/vnd.lotus-1-2-3"),
     b"1km" => t!("application/vnd.1000minds.decision-model+xml"),
@@ -1519,7 +1503,7 @@ pub static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
     b"tsx" => t!("application/javascript"),
     b"tsd" => t!("application/timestamped-data"),
     b"tsv" => t!("text/tab-separated-values"),
-    b"tsx" => t!("application/javascript"),
+    // (dup "tsx" dropped — phf rejects, Zig kept first occurrence above)
     b"ttc" => t!("font/collection"),
     b"ttf" => t!("font/ttf"),
     b"ttl" => t!("text/turtle"),
@@ -1719,10 +1703,10 @@ pub static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
     b"xwd" => t!("image/x-xwindowdump"),
     b"xyz" => t!("chemical/x-xyz"),
     b"xz" => t!("application/x-xz"),
-    b"yaml" => t!("text/yaml"),
+    // (dup "yaml" dropped — phf rejects, Zig kept first occurrence above)
     b"yang" => t!("application/yang"),
     b"yin" => t!("application/yin+xml"),
-    b"yml" => t!("text/yaml"),
+    // (dup "yml" dropped — phf rejects, Zig kept first occurrence above)
     b"ymp" => t!("text/x-suse-ymp"),
     b"z1" => t!("application/x-zmachine"),
     b"z2" => t!("application/x-zmachine"),
@@ -1739,7 +1723,6 @@ pub static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
     b"zmm" => t!("application/vnd.handheld-entertainment+xml"),
 };
 
-#[cfg(any())]
 const IMAGES_HEADERS: &[(&[u8], Table)] = &[
     (&[0x42, 0x4d], t!("image/bmp")),
     (&[0xff, 0xd8, 0xff], t!("image/jpeg")),
@@ -1754,27 +1737,19 @@ pub fn sniff(bytes: &[u8]) -> Option<MimeType> {
         return None;
     }
 
-    #[cfg(any())]
-    {
-        // PERF(port): was `inline for` over heterogeneous-length tuples — profile in Phase B
-        for (header, table) in IMAGES_HEADERS {
-            if bytes.len() >= header.len() {
-                if &bytes[0..header.len()] == *header {
-                    return Some(Compact::from(*table).to_mime_type());
-                }
-            }
+    // PERF(port): was `inline for` over heterogeneous-length tuples — profile in Phase B
+    for (header, table) in IMAGES_HEADERS {
+        if bytes.len() >= header.len() && &bytes[0..header.len()] == *header {
+            return Some(Compact::from(*table).to_mime_type());
         }
-        return None;
     }
-    // TODO(b2-blocked): bun_http_types::mime_type_list_enum::MimeTypeList (codegen)
-    let _ = bytes;
-    todo!("b2-blocked: IMAGES_HEADERS needs mime_type_list_enum codegen")
+    None
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/http_types/MimeType.zig (1635 lines)
 //   confidence: medium
-//   todos:      5
-//   notes:      Table variant idents need codegen scheme (`t!` placeholder); `value` is Cow<'static,[u8]> — non-'static borrow path in init() copies (see maybe_dupe TODO); phf_map has 3 dup keys (tsx/yaml/yml) to dedupe.
+//   todos:      2
+//   notes:      `Table` is a `&'static str` newtype stand-in (PERF(port) vs Zig packed-u14); `value` is Cow<'static,[u8]> — non-'static borrow path in init() copies (see maybe_dupe TODO); `by_loader` gated on same-tier `bun_options_types::Loader`.
 // ──────────────────────────────────────────────────────────────────────────

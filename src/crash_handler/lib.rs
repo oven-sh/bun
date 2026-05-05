@@ -76,7 +76,41 @@ pub mod debug {
     pub const STRIP_DEBUG_INFO: bool = !cfg!(debug_assertions);
 
     // ── stub types: no debug-info backend yet ─────────────────────────────
+    // TODO(b2-blocked): bun_debug::SelfInfo — these stubs always answer
+    // `MissingDebugInfo`; the real DWARF/PDB reader lands with the bun_debug
+    // crate. Shape mirrors `std.debug.SelfInfo` so callers compile unchanged.
     pub struct SelfInfo;
+    impl SelfInfo {
+        pub fn get_module_for_address(&mut self, _address: usize) -> Result<Module, bun_core::Error> {
+            Err(bun_core::err!("MissingDebugInfo"))
+        }
+        pub fn get_module_name_for_address(&mut self, _address: usize) -> Option<Box<[u8]>> {
+            None
+        }
+    }
+    pub struct Module;
+    impl Module {
+        pub fn get_symbol_at_address(&self, _address: usize) -> Result<SymbolInfo, bun_core::Error> {
+            Err(bun_core::err!("MissingDebugInfo"))
+        }
+    }
+    pub struct SymbolInfo {
+        pub source_location: Option<SourceLocation>,
+        pub name: Box<[u8]>,
+        pub compile_unit_name: Box<[u8]>,
+    }
+    /// Zig: `debug.getSelfDebugInfo()`. No backend yet — always errors.
+    pub fn get_self_debug_info() -> Result<&'static mut SelfInfo, bun_core::Error> {
+        Err(bun_core::err!("MissingDebugInfo"))
+    }
+    /// Zig: `std.io.tty.detectConfig(std.io.getStdErr())`.
+    pub fn detect_tty_config_stderr() -> TtyConfig {
+        if bun_core::Output::ENABLE_ANSI_COLORS_STDERR.load(core::sync::atomic::Ordering::Relaxed) {
+            TtyConfig::EscapeCodes
+        } else {
+            TtyConfig::NoColor
+        }
+    }
     #[derive(Clone)]
     pub struct SourceLocation {
         pub file_name: Box<[u8]>,
@@ -160,6 +194,13 @@ use bun_base64::VLQ; // MOVE_DOWN(b0): was bun_sourcemap::VLQ
 use bun_core::strings;
 
 use super::{debug, Write, FmtAdapter, stderr_writer};
+
+/// Map a `core::fmt::Error` (from `write!` on a `fmt::Write`) into the
+/// `bun_core::Error` domain. The crash-path writers never actually fail —
+/// `StderrWriter::write_str` always returns `Ok` — so the value is irrelevant,
+/// but the type must line up for `?`.
+#[inline(always)]
+fn fmt_err(_: core::fmt::Error) -> bun_core::Error { bun_core::err!("WriteZero") }
 use super::debug::{SelfInfo, SourceLocation, TtyConfig};
 use super::cpu_features::CPUFeatures;
 
@@ -423,7 +464,14 @@ pub fn crash_handler(
     error_return_trace: Option<&StackTrace>,
     begin_addr: Option<usize>,
 ) -> ! {
-    #[cfg(any())] // TODO(b2-blocked): bun_core::Output::pretty_fmt / bun_sys::stderr_writer / bun_analytics::Features::unsupported_uv_function / bun_core::maybe_handle_panic_during_process_reload
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_analytics::Features::unsupported_uv_function
+    // TODO(b2-blocked): bun_core::maybe_handle_panic_during_process_reload
+    // TODO(b2-blocked): bun_core::auto_reload_on_crash
+    // TODO(b2-blocked): bun_core::is_process_reload_in_progress_on_another_thread
+    // TODO(b2-blocked): bun_core::set_auto_reload_on_crash
+    // TODO(b2-blocked): bun_core::reload_process
+    // TODO(b2-blocked): bun_core::Output::pretty_fmt_args  (runtime <tag> formatter)
     {
     if cfg!(debug_assertions) {
         Output::disable_scoped_debug_writer();
@@ -732,13 +780,23 @@ pub fn crash_handler(
 /// This is called when `main` returns a Zig error.
 /// We don't want to treat it as a crash under certain error codes.
 pub fn handle_root_error(err: bun_core::Error, error_return_trace: Option<&StackTrace>) -> ! {
-    #[cfg(any())] // TODO(b2-blocked): bun_sys::posix::getrlimit / bun_core::env_var::USER (Output macros need :literal)
-    {
+    use bun_core::{err_generic, note, pretty_error, pretty_errorln};
+
+    /// Zig: `std.posix.getrlimit(.NOFILE)`. bun_sys::posix has no rlimit yet —
+    /// thin libc wrapper (POD out-param, never fails on supported targets).
+    #[cfg(unix)]
+    fn getrlimit_nofile() -> Option<libc::rlimit> {
+        // SAFETY: zeroed rlimit is valid POD; getrlimit only writes to it.
+        let mut lim: libc::rlimit = unsafe { core::mem::zeroed() };
+        // SAFETY: &mut lim is a valid out-pointer.
+        if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) } == 0 { Some(lim) } else { None }
+    }
+
     let mut show_trace = Environment::SHOW_CRASH_TRACE;
 
     // Match against interned error consts (see PORTING.md §Idiom map: catch |e| switch (e))
     if err == bun_core::err!("OutOfMemory") {
-        bun_core::out_of_memory();
+        super::out_of_memory();
     } else if err == bun_core::err!("InvalidArgument")
         || err == bun_core::err!("Invalid Bunfig")
         || err == bun_core::err!("InstallFailed")
@@ -747,43 +805,42 @@ pub fn handle_root_error(err: bun_core::Error, error_return_trace: Option<&Stack
             Global::exit(1);
         }
     } else if err == bun_core::err!("SyntaxError") {
-        Output::err("SyntaxError", "An error occurred while parsing code", format_args!(""));
+        Output::err("SyntaxError", format_args!("An error occurred while parsing code"));
     } else if err == bun_core::err!("CurrentWorkingDirectoryUnlinked") {
-        Output::err_generic(
+        err_generic!(
             "The current working directory was deleted, so that command didn't work. Please cd into a different directory and try again.",
-            format_args!(""),
         );
     } else if err == bun_core::err!("SystemFdQuotaExceeded") {
         #[cfg(unix)]
         {
-            let limit = bun_sys::posix::getrlimit(bun_sys::posix::RLIMIT_NOFILE).ok().map(|l| l.cur);
+            let limit = getrlimit_nofile().map(|l| l.rlim_cur);
             #[cfg(target_os = "macos")]
             {
-                Output::pretty_error(
+                pretty_error!(
                     "<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>\n\n<d>Current limit: {}<r>\n\nTo fix this, try running:\n\n  <cyan>sudo launchctl limit maxfiles 2147483646<r>\n  <cyan>ulimit -n 2147483646<r>\n\nThat will only work until you reboot.\n",
-                    format_args!("{}", bun_fmt::nullable_fallback(limit, "<unknown>")),
+                    bun_fmt::nullable_fallback(limit, b"<unknown>"),
                 );
             }
             #[cfg(target_os = "freebsd")]
             {
-                Output::pretty_error(
+                pretty_error!(
                     "\n<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>\n\n<d>Current limit: {}<r>\n\nTo fix this, try running:\n\n  <cyan>sudo sysctl kern.maxfiles=2147483646 kern.maxfilesperproc=2147483646<r>\n  <cyan>ulimit -n 2147483646<r>\n\nTo persist across reboots, add to /etc/sysctl.conf and edit /etc/login.conf.\n",
-                    format_args!("{}", bun_fmt::nullable_fallback(limit, "<unknown>")),
+                    bun_fmt::nullable_fallback(limit, b"<unknown>"),
                 );
             }
             #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
             {
-                Output::pretty_error(
+                pretty_error!(
                     "\n<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>\n\n<d>Current limit: {}<r>\n\nTo fix this, try running:\n\n  <cyan>sudo echo -e \"\\nfs.file-max=2147483646\\n\" >> /etc/sysctl.conf<r>\n  <cyan>sudo sysctl -p<r>\n  <cyan>ulimit -n 2147483646<r>\n",
-                    format_args!("{}", bun_fmt::nullable_fallback(limit, "<unknown>")),
+                    bun_fmt::nullable_fallback(limit, b"<unknown>"),
                 );
 
                 if let Some(user) = env_var::USER::get() {
                     if !user.is_empty() {
-                        Output::pretty_error(
+                        let user = bstr::BStr::new(user);
+                        pretty_error!(
                             "\nIf that still doesn't work, you may need to add these lines to /etc/security/limits.conf:\n\n <cyan>{} soft nofile 2147483646<r>\n <cyan>{} hard nofile 2147483646<r>\n",
-                            format_args!("{0} {0}", bstr::BStr::new(user)),
-                            // TODO(port): Zig prints `user` twice with separate {s} substitutions
+                            user, user,
                         );
                     }
                 }
@@ -791,41 +848,41 @@ pub fn handle_root_error(err: bun_core::Error, error_return_trace: Option<&Stack
         }
         #[cfg(not(unix))]
         {
-            Output::pretty_error(
+            pretty_error!(
                 "<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>",
-                format_args!(""),
             );
         }
     } else if err == bun_core::err!("ProcessFdQuotaExceeded") {
         #[cfg(unix)]
         {
-            let limit = bun_sys::posix::getrlimit(bun_sys::posix::RLIMIT_NOFILE).ok().map(|l| l.cur);
+            let limit = getrlimit_nofile().map(|l| l.rlim_cur);
             #[cfg(target_os = "macos")]
             {
-                Output::pretty_error(
+                pretty_error!(
                     "\n<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>\n\n<d>Current limit: {}<r>\n\nTo fix this, try running:\n\n  <cyan>ulimit -n 2147483646<r>\n\nYou may also need to run:\n\n  <cyan>sudo launchctl limit maxfiles 2147483646<r>\n",
-                    format_args!("{}", bun_fmt::nullable_fallback(limit, "<unknown>")),
+                    bun_fmt::nullable_fallback(limit, b"<unknown>"),
                 );
             }
             #[cfg(target_os = "freebsd")]
             {
-                Output::pretty_error(
+                pretty_error!(
                     "\n<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>\n\n<d>Current limit: {}<r>\n\nTo fix this, try running:\n\n  <cyan>ulimit -n 2147483646<r>\n  <cyan>sudo sysctl kern.maxfilesperproc=2147483646<r>\n",
-                    format_args!("{}", bun_fmt::nullable_fallback(limit, "<unknown>")),
+                    bun_fmt::nullable_fallback(limit, b"<unknown>"),
                 );
             }
             #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
             {
-                Output::pretty_error(
+                pretty_error!(
                     "\n<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>\n\n<d>Current limit: {}<r>\n\nTo fix this, try running:\n\n  <cyan>ulimit -n 2147483646<r>\n\nThat will only work for the current shell. To fix this for the entire system, run:\n\n  <cyan>sudo echo -e \"\\nfs.file-max=2147483646\\n\" >> /etc/sysctl.conf<r>\n  <cyan>sudo sysctl -p<r>\n",
-                    format_args!("{}", bun_fmt::nullable_fallback(limit, "<unknown>")),
+                    bun_fmt::nullable_fallback(limit, b"<unknown>"),
                 );
 
                 if let Some(user) = env_var::USER::get() {
                     if !user.is_empty() {
-                        Output::pretty_error(
+                        let user = bstr::BStr::new(user);
+                        pretty_error!(
                             "\nIf that still doesn't work, you may need to add these lines to /etc/security/limits.conf:\n\n <cyan>{} soft nofile 2147483646<r>\n <cyan>{} hard nofile 2147483646<r>\n",
-                            format_args!("{0} {0}", bstr::BStr::new(user)),
+                            user, user,
                         );
                     }
                 }
@@ -833,80 +890,73 @@ pub fn handle_root_error(err: bun_core::Error, error_return_trace: Option<&Stack
         }
         #[cfg(not(unix))]
         {
-            Output::pretty_errorln(
+            pretty_errorln!(
                 "<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>",
-                format_args!(""),
             );
         }
     } else if err == bun_core::err!("NotOpenForReading") || err == bun_core::err!("Unexpected") {
         // The usage of `unreachable` in Zig's std.posix may cause the file descriptor problem to show up as other errors
         #[cfg(unix)]
         {
-            let limit = bun_sys::posix::getrlimit(bun_sys::posix::RLIMIT_NOFILE)
-                .unwrap_or(unsafe { core::mem::zeroed() });
-            // SAFETY: all-zero is a valid rlimit (POD struct of integers)
+            // SAFETY: zeroed rlimit is valid POD (integers).
+            let limit = getrlimit_nofile().unwrap_or(unsafe { core::mem::zeroed() });
 
-            if limit.cur > 0 && limit.cur < (8192 * 2) {
-                Output::pretty_error(
+            if limit.rlim_cur > 0 && limit.rlim_cur < (8192 * 2) {
+                pretty_error!(
                     "\n<r><red>error<r>: An unknown error occurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>\n\n<d>Current limit: {}<r>\n\nTo fix this, try running:\n\n  <cyan>ulimit -n 2147483646<r>\n",
-                    format_args!("{}", limit.cur),
+                    limit.rlim_cur,
                 );
 
                 #[cfg(target_os = "linux")]
                 {
                     if let Some(user) = env_var::USER::get() {
                         if !user.is_empty() {
-                            Output::pretty_error(
+                            let user = bstr::BStr::new(user);
+                            pretty_error!(
                                 "\nIf that still doesn't work, you may need to add these lines to /etc/security/limits.conf:\n\n <cyan>{} soft nofile 2147483646<r>\n <cyan>{} hard nofile 2147483646<r>\n",
-                                format_args!("{0} {0}", bstr::BStr::new(user)),
+                                user, user,
                             );
                         }
                     }
                 }
                 #[cfg(target_os = "macos")]
                 {
-                    Output::pretty_error(
+                    pretty_error!(
                         "\nIf that still doesn't work, you may need to run:\n\n  <cyan>sudo launchctl limit maxfiles 2147483646<r>\n",
-                        format_args!(""),
                     );
                 }
             } else {
-                Output::err_generic(
+                err_generic!(
                     "An unknown error occurred <d>(<red>{}<r><d>)<r>",
-                    format_args!("{}", err.name()),
+                    bstr::BStr::new(err.name()),
                 );
                 show_trace = true;
             }
         }
         #[cfg(not(unix))]
         {
-            Output::err_generic(
+            err_generic!(
                 "An unknown error occurred <d>(<red>{}<r><d>)<r>",
-                format_args!("{}", err.name()),
+                bstr::BStr::new(err.name()),
             );
             show_trace = true;
         }
     } else if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") {
         Output::err(
             "ENOENT",
-            "Bun could not find a file, and the code that produces this error is missing a better error.",
-            format_args!(""),
+            format_args!("Bun could not find a file, and the code that produces this error is missing a better error."),
         );
     } else if err == bun_core::err!("MissingPackageJSON") {
-        Output::err_generic(
-            "Bun could not find a package.json file to install from",
-            format_args!(""),
-        );
-        Output::note("Run \"bun init\" to initialize a project", format_args!(""));
+        err_generic!("Bun could not find a package.json file to install from");
+        Output::note("Run \"bun init\" to initialize a project");
     } else {
-        Output::err_generic(
-            if Environment::SHOW_CRASH_TRACE {
-                "'main' returned <red>error.{}<r>"
-            } else {
-                "An internal error occurred (<red>{}<r>)"
-            },
-            format_args!("{}", err.name()),
-        );
+        // PORT NOTE: Zig picked the format string at comptime; the macros need
+        // `:literal`, so branch on the const and call separately.
+        if Environment::SHOW_CRASH_TRACE {
+            err_generic!("'main' returned <red>error.{}<r>", bstr::BStr::new(err.name()));
+        } else {
+            err_generic!("An internal error occurred (<red>{}<r>)", bstr::BStr::new(err.name()));
+        }
         show_trace = true;
     }
 
@@ -915,8 +965,6 @@ pub fn handle_root_error(err: bun_core::Error, error_return_trace: Option<&Stack
         unsafe { VERBOSE_ERROR_TRACE = show_trace; }
         handle_error_return_trace_extra::<true>(err, error_return_trace);
     }
-    } // end #[cfg(any())]
-    let _ = (err, error_return_trace);
 
     Global::exit(1);
 }
@@ -970,28 +1018,23 @@ const METADATA_VERSION_LINE: &str = const_format::formatcp!(
     if Environment::BASELINE { " (baseline)" } else { "" },
 );
 
-#[cfg(any())] // TODO(b2-blocked): bun_sys::posix::siginfo_t
 #[cfg(unix)]
-extern "C" fn handle_segfault_posix(sig: i32, info: *const bun_sys::posix::siginfo_t, _: *const c_void) {
-    // SAFETY: kernel provides a valid siginfo_t
-    let addr: usize = unsafe {
-        #[cfg(target_os = "linux")]
-        { (*info).fields.sigfault.addr as usize }
-        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        { (*info).addr as usize }
-    };
+extern "C" fn handle_segfault_posix(sig: c_int, info: *mut libc::siginfo_t, _: *mut c_void) {
+    // SAFETY: kernel provides a valid siginfo_t; `si_addr` reads the per-platform
+    // sigfault address field (Zig: `info.fields.sigfault.addr` / `info.addr`).
+    let addr: usize = unsafe { (*info).si_addr() as usize };
 
     crash_handler(
         match sig {
-            bun_sys::posix::SIGSEGV => CrashReason::SegmentationFault(addr),
-            bun_sys::posix::SIGILL => CrashReason::IllegalInstruction(addr),
-            bun_sys::posix::SIGBUS => CrashReason::BusError(addr),
-            bun_sys::posix::SIGFPE => CrashReason::FloatingPointError(addr),
+            libc::SIGSEGV => CrashReason::SegmentationFault(addr),
+            libc::SIGILL => CrashReason::IllegalInstruction(addr),
+            libc::SIGBUS => CrashReason::BusError(addr),
+            libc::SIGFPE => CrashReason::FloatingPointError(addr),
             // we do not register this handler for other signals
             _ => unreachable!(),
         },
         None,
-        Some(bun_debug::return_address()),
+        Some(debug::return_address()),
     );
 }
 
@@ -1000,35 +1043,35 @@ static mut DID_REGISTER_SIGALTSTACK: bool = false;
 #[cfg(unix)]
 static mut SIGALTSTACK: [u8; 512 * 1024] = [0; 512 * 1024];
 
-#[cfg(any())] // TODO(b2-blocked): bun_sys::posix::Sigaction
 #[cfg(unix)]
-fn update_posix_segfault_handler(act: Option<&mut bun_sys::posix::Sigaction>) -> Result<(), bun_core::Error> {
+fn update_posix_segfault_handler(mut act: Option<&mut libc::sigaction>) -> Result<(), bun_core::Error> {
     if let Some(act_) = act.as_deref_mut() {
         // SAFETY: single global; only mutated during signal-handler setup
         if unsafe { !DID_REGISTER_SIGALTSTACK } {
-            let stack = bun_sys::c::stack_t {
-                flags: 0,
+            let stack = libc::stack_t {
+                ss_flags: 0,
                 // SAFETY: SIGALTSTACK is a process-lifetime static byte buffer; taking its len requires only a shared ref to a `static mut`
-                size: unsafe { SIGALTSTACK.len() },
+                ss_size: unsafe { SIGALTSTACK.len() },
                 // SAFETY: SIGALTSTACK is a process-lifetime static byte buffer; the kernel only writes to it during signal delivery (no Rust aliasing)
-                sp: unsafe { SIGALTSTACK.as_mut_ptr().cast() },
+                ss_sp: unsafe { SIGALTSTACK.as_mut_ptr().cast() },
             };
 
             // SAFETY: stack points to a valid static buffer
-            if unsafe { bun_sys::c::sigaltstack(&stack, core::ptr::null_mut()) } == 0 {
-                act_.flags |= bun_sys::posix::SA_ONSTACK;
+            if unsafe { libc::sigaltstack(&stack, core::ptr::null_mut()) } == 0 {
+                act_.sa_flags |= libc::SA_ONSTACK;
+                // SAFETY: single global; only mutated during signal-handler setup
                 unsafe { DID_REGISTER_SIGALTSTACK = true; }
             }
         }
     }
 
-    let act_ptr = act.map(|a| a as *const _).unwrap_or(core::ptr::null());
-    // SAFETY: valid Sigaction pointer or null
+    let act_ptr: *const libc::sigaction = act.map(|a| a as *const _).unwrap_or(core::ptr::null());
+    // SAFETY: valid sigaction pointer or null; null oldact is permitted.
     unsafe {
-        bun_sys::posix::sigaction(bun_sys::posix::SIGSEGV, act_ptr, core::ptr::null_mut());
-        bun_sys::posix::sigaction(bun_sys::posix::SIGILL, act_ptr, core::ptr::null_mut());
-        bun_sys::posix::sigaction(bun_sys::posix::SIGBUS, act_ptr, core::ptr::null_mut());
-        bun_sys::posix::sigaction(bun_sys::posix::SIGFPE, act_ptr, core::ptr::null_mut());
+        libc::sigaction(libc::SIGSEGV, act_ptr, core::ptr::null_mut());
+        libc::sigaction(libc::SIGILL, act_ptr, core::ptr::null_mut());
+        libc::sigaction(libc::SIGBUS, act_ptr, core::ptr::null_mut());
+        libc::sigaction(libc::SIGFPE, act_ptr, core::ptr::null_mut());
     }
     Ok(())
 }
@@ -1041,15 +1084,14 @@ pub fn reset_on_posix() {
     if Environment::ENABLE_ASAN {
         return;
     }
-    #[cfg(any())] // TODO(b2-blocked): bun_sys::posix::Sigaction
-    {
-    let mut act = bun_sys::posix::Sigaction {
-        handler: bun_sys::posix::SigactionHandler::Sigaction(handle_segfault_posix),
-        mask: bun_sys::posix::sigemptyset(),
-        flags: bun_sys::posix::SA_SIGINFO | bun_sys::posix::SA_RESTART | bun_sys::posix::SA_RESETHAND,
-    };
+    // Zig: std.posix.Sigaction{ .handler = .{ .sigaction = handleSegfaultPosix }, ... }.
+    // SAFETY: zeroed sigaction is valid POD; we overwrite the fields we need.
+    let mut act: libc::sigaction = unsafe { core::mem::zeroed() };
+    act.sa_sigaction = handle_segfault_posix as usize;
+    act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND;
+    // SAFETY: sa_mask is a valid out-pointer.
+    unsafe { libc::sigemptyset(&mut act.sa_mask); }
     let _ = update_posix_segfault_handler(Some(&mut act));
-    }
 }
 
 pub fn init() {
@@ -1108,13 +1150,12 @@ pub fn reset_segfault_handler() {
     }
 
     #[cfg(unix)]
-    #[cfg(any())] // TODO(b2-blocked): bun_sys::posix::Sigaction
     {
-        let mut act = bun_sys::posix::Sigaction {
-            handler: bun_sys::posix::SigactionHandler::Handler(bun_sys::posix::SIG_DFL),
-            mask: bun_sys::posix::sigemptyset(),
-            flags: 0,
-        };
+        // SAFETY: zeroed sigaction is valid POD; handler = SIG_DFL (= 0), flags = 0.
+        let mut act: libc::sigaction = unsafe { core::mem::zeroed() };
+        act.sa_sigaction = libc::SIG_DFL;
+        // SAFETY: sa_mask is a valid out-pointer.
+        unsafe { libc::sigemptyset(&mut act.sa_mask); }
         // To avoid a double-panic, do nothing if an error happens here.
         let _ = update_posix_segfault_handler(Some(&mut act));
     }
@@ -1159,7 +1200,10 @@ unsafe extern "C" {
 pub static mut Bun__reported_memory_size: usize = 0;
 
 pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
-    #[cfg(any())] // TODO(b2-blocked): bun_analytics::GenerateHeader / bun_analytics::Features::formatter / bun_core::fmt::bytes
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_analytics::GenerateHeader::GeneratePlatform
+    // TODO(b2-blocked): bun_analytics::Features::formatter
+    // TODO(b2-blocked): bun_core::fmt::bytes  (have fmt::size, but call sites want short name)
     {
     #[cfg(debug_assertions)]
     {
@@ -1521,8 +1565,6 @@ impl StackLine {
         }
         #[cfg(not(any(windows, target_os = "macos")))]
         {
-            #[cfg(any())] // TODO(b2-blocked): bun_sys::posix::dl_iterate_phdr / bun_sys::elf::PT_LOAD
-            {
             // This code is slightly modified from std.debug.DebugInfo.lookupModuleDl
             // https://github.com/ziglang/zig/blob/215de3ee67f75e2405c177b262cb5c1cd8c8e343/lib/std/debug.zig#L2024
             struct Ctx {
@@ -1534,27 +1576,30 @@ impl StackLine {
             }
             let mut ctx = Ctx { address: addr.saturating_sub(1), i: 0, result: None };
 
-            extern "C" fn callback(info: *const bun_sys::posix::dl_phdr_info, _size: usize, context: *mut c_void) -> c_int {
+            unsafe extern "C" fn callback(info: *mut libc::dl_phdr_info, _size: libc::size_t, context: *mut c_void) -> c_int {
                 // SAFETY: dl_iterate_phdr passes a valid info pointer; context is &mut Ctx
                 let context = unsafe { &mut *(context as *mut Ctx) };
+                // SAFETY: dl_iterate_phdr passes a valid info pointer.
                 let info = unsafe { &*info };
-                let _guard = scopeguard::guard((), |_| context.i += 1);
-                // PORT NOTE: reshaped for borrowck — defer context.i += 1
+                // PORT NOTE: Zig `defer context.i += 1` reshaped — bump on every return.
+                let i = context.i;
+                context.i += 1;
 
-                if context.address < info.addr as usize { return 0; }
-                // SAFETY: phdr points to phnum entries
-                let phdrs = unsafe { core::slice::from_raw_parts(info.phdr, info.phnum as usize) };
+                if context.address < info.dlpi_addr as usize { return 0; }
+                // SAFETY: dlpi_phdr points to dlpi_phnum entries.
+                let phdrs = unsafe { core::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize) };
                 for phdr in phdrs {
-                    if phdr.p_type != bun_sys::elf::PT_LOAD { continue; }
+                    if phdr.p_type != libc::PT_LOAD { continue; }
 
                     // Overflowing addition is used to handle the case of VSDOs
                     // having a p_vaddr = 0xffffffffff700000
-                    let seg_start = (info.addr as usize).wrapping_add(phdr.p_vaddr as usize);
+                    let seg_start = (info.dlpi_addr as usize).wrapping_add(phdr.p_vaddr as usize);
                     let seg_end = seg_start + phdr.p_memsz as usize;
                     if context.address >= seg_start && context.address < seg_end {
                         // const name = bun.sliceTo(info.name, 0) orelse "";
+                        let _ = i;
                         context.result = Some(StackLine {
-                            address: i32::try_from(context.address - info.addr as usize).unwrap(),
+                            address: i32::try_from(context.address - info.dlpi_addr as usize).unwrap(),
                             object: None,
                         });
                         return 1; // error.Found → stop iteration
@@ -1563,16 +1608,13 @@ impl StackLine {
                 0
             }
 
-            // SAFETY: ctx outlives the dl_iterate_phdr call
+            // SAFETY: ctx outlives the dl_iterate_phdr call; callback signature matches libc's contract.
             unsafe {
-                bun_sys::posix::dl_iterate_phdr(callback, &mut ctx as *mut Ctx as *mut c_void);
+                libc::dl_iterate_phdr(Some(callback), &mut ctx as *mut Ctx as *mut c_void);
             }
 
             let _ = name_bytes;
             return ctx.result;
-            } // end #[cfg(any())]
-            let _ = (addr, name_bytes);
-            return None;
         }
     }
 
@@ -1798,7 +1840,9 @@ fn report(url: &[u8]) {
     if !is_reporting_enabled() {
         return;
     }
-    #[cfg(any())] // TODO(b2-blocked): bun_core::env_var::PATH / bun_core::getcwd / bun_core::which / bun_sys::c::fork
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_core::getcwd
+    // TODO(b2-blocked): bun_core::which
     {
     #[cfg(windows)]
     {
@@ -1903,25 +1947,26 @@ fn report(url: &[u8]) {
 /// This causes a segfault on posix systems to try to get a core dump.
 fn crash() -> ! {
     #[cfg(not(windows))]
-    #[cfg(any())] // TODO(b2-blocked): bun_sys::posix::Sigaction / bun_sys::posix::sigaction
     {
         // Install default handler so that the tkill below will terminate.
-        let sigact = bun_sys::posix::Sigaction {
-            handler: bun_sys::posix::SigactionHandler::Handler(bun_sys::posix::SIG_DFL),
-            mask: bun_sys::posix::sigemptyset(),
-            flags: 0,
-        };
+        // Zig: std.posix.Sigaction{ .handler = SIG.DFL, .mask = sigemptyset(), .flags = 0 }.
+        // bun_sys::posix has no Sigaction yet — use libc directly (async-signal-safe).
+        // SAFETY: all-zero is a valid sigaction (handler = SIG_DFL = 0, flags = 0).
+        let mut sigact: libc::sigaction = unsafe { core::mem::zeroed() };
+        sigact.sa_sigaction = libc::SIG_DFL;
+        // SAFETY: sa_mask is a valid out-pointer into a zeroed struct.
+        unsafe { libc::sigemptyset(&mut sigact.sa_mask); }
         for sig in [
-            bun_sys::posix::SIGSEGV,
-            bun_sys::posix::SIGILL,
-            bun_sys::posix::SIGBUS,
-            bun_sys::posix::SIGABRT,
-            bun_sys::posix::SIGFPE,
-            bun_sys::posix::SIGHUP,
-            bun_sys::posix::SIGTERM,
+            libc::SIGSEGV,
+            libc::SIGILL,
+            libc::SIGBUS,
+            libc::SIGABRT,
+            libc::SIGFPE,
+            libc::SIGHUP,
+            libc::SIGTERM,
         ] {
-            // SAFETY: valid Sigaction
-            unsafe { bun_sys::posix::sigaction(sig, &sigact, core::ptr::null_mut()); }
+            // SAFETY: &sigact is a valid sigaction; null oldact is permitted.
+            unsafe { libc::sigaction(sig, &sigact, core::ptr::null_mut()); }
         }
     }
     // @trap() — Node.js exits with code 134 (128 + SIGABRT) instead. We use abort()
@@ -2024,9 +2069,7 @@ unsafe extern "C" {
 /// cases where such logic fails to run.
 pub fn dump_stack_trace(trace: &StackTrace, limits: WriteStackTraceLimits) {
     Output::flush();
-    #[cfg(any())] // TODO(b2-blocked): bun_debug::get_self_debug_info / bun_debug::detect_tty_config_stderr
-    {
-    let stderr = &mut bun_sys::stderr_writer();
+    let stderr = &mut stderr_writer();
     if !Environment::SHOW_CRASH_TRACE {
         // debug symbols aren't available, lets print a tracestring
         let _ = write!(stderr, "View Debug Trace: {}\n", TraceString {
@@ -2043,14 +2086,14 @@ pub fn dump_stack_trace(trace: &StackTrace, limits: WriteStackTraceLimits) {
         let debug_info = match debug::get_self_debug_info() {
             Ok(d) => d,
             Err(err) => {
-                let _ = write!(stderr, "Unable to dump stack trace: Unable to open debug info: {}\nFallback trace:\n", err.name());
+                let _ = write!(stderr, "Unable to dump stack trace: Unable to open debug info: {}\nFallback trace:\n", bstr::BStr::new(err.name()));
                 break 'attempt_dump;
             }
         };
         match write_stack_trace(trace, stderr, debug_info, debug::detect_tty_config_stderr(), &limits) {
             Ok(()) => return,
             Err(err) => {
-                let _ = write!(stderr, "Unable to dump stack trace: {}\nFallback trace:\n", err.name());
+                let _ = write!(stderr, "Unable to dump stack trace: {}\nFallback trace:\n", bstr::BStr::new(err.name()));
                 break 'attempt_dump;
             }
         }
@@ -2060,7 +2103,7 @@ pub fn dump_stack_trace(trace: &StackTrace, limits: WriteStackTraceLimits) {
         // In non-debug builds, use WTF's stack trace printer and return early
         if !cfg!(debug_assertions) {
             // SAFETY: trace.instruction_addresses is a valid slice of `index` entries
-            unsafe { WTF__DumpStackTrace(trace.instruction_addresses().as_ptr(), trace.index); }
+            unsafe { WTF__DumpStackTrace(trace.instruction_addresses.as_ptr(), trace.index); }
             return;
         }
         // Otherwise fall through to llvm-symbolizer for debug builds
@@ -2071,24 +2114,24 @@ pub fn dump_stack_trace(trace: &StackTrace, limits: WriteStackTraceLimits) {
         let debug_info = match debug::get_self_debug_info() {
             Ok(d) => d,
             Err(err) => {
-                let _ = write!(stderr, "Unable to dump stack trace: Unable to open debug info: {}\n", err.name());
+                let _ = write!(stderr, "Unable to dump stack trace: Unable to open debug info: {}\n", bstr::BStr::new(err.name()));
                 return;
             }
         };
         match write_stack_trace(trace, stderr, debug_info, debug::detect_tty_config_stderr(), &limits) {
             Ok(()) => return,
             Err(err) => {
-                let _ = write!(stderr, "Unable to dump stack trace: {}", err.name());
+                let _ = write!(stderr, "Unable to dump stack trace: {}", bstr::BStr::new(err.name()));
                 return;
             }
         }
     }
 
-    let programs: &[&bun_str::ZStr] = if cfg!(windows) {
-        &[bun_str::zstr!("pdb-addr2line")]
+    let programs: &[&bun_core::ZStr] = if cfg!(windows) {
+        &[bun_core::zstr!("pdb-addr2line")]
     } else {
         // if `llvm-symbolizer` doesn't work, also try `llvm-symbolizer-21`
-        &[bun_str::zstr!("llvm-symbolizer"), bun_str::zstr!("llvm-symbolizer-21")]
+        &[bun_core::zstr!("llvm-symbolizer"), bun_core::zstr!("llvm-symbolizer-21")]
     };
     for &program in programs {
         // PERF(port): was arena bulk-free + StackFallbackAllocator — using global allocator in Phase A
@@ -2100,15 +2143,15 @@ pub fn dump_stack_trace(trace: &StackTrace, limits: WriteStackTraceLimits) {
         }
         return;
     }
-    } // end #[cfg(any())]
-    let _ = (trace, limits);
+    let _ = limits;
     // Fallback: hand the raw addresses to WTF (always linked).
     // SAFETY: trace.instruction_addresses is a valid slice of `index` entries
     unsafe { WTF__DumpStackTrace(trace.instruction_addresses.as_ptr(), trace.index); }
 }
 
 fn spawn_symbolizer(program: &bun_core::ZStr, trace: &StackTrace) -> Result<(), bun_core::Error> {
-    #[cfg(any())] // TODO(b2-blocked): bun_core::self_exe_path / bun_core::spawn_sync_inherit / bun_core::fmt::fmt_slice
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_core::spawn_sync_inherit  (no std::process per PORTING.md)
     {
     // TODO(port): narrow error set
     let mut argv: Vec<Vec<u8>> = Vec::new();
@@ -2222,12 +2265,19 @@ pub unsafe fn dump_stack_hook_for_ptr(stored: *const bun_core::StoredTrace, ret_
 /// with core dumps.
 pub fn suppress_core_dumps_if_necessary() {
     #[cfg(unix)]
-    #[cfg(any())] // TODO(b2-blocked): bun_sys::posix::getrlimit / bun_sys::posix::setrlimit
     {
-        let Ok(mut existing_limit) = bun_sys::posix::getrlimit(bun_sys::posix::RLIMIT_CORE) else { return; };
-        if existing_limit.cur > 0 || existing_limit.cur == bun_sys::posix::RLIM_INFINITY {
-            existing_limit.cur = 0;
-            let _ = bun_sys::posix::setrlimit(bun_sys::posix::RLIMIT_CORE, existing_limit);
+        // Zig: std.posix.getrlimit / setrlimit. bun_sys::posix has no rlimit
+        // surface yet — go straight to libc (already a dep, async-signal-safe).
+        // SAFETY: all-zero rlimit is valid POD; getrlimit/setrlimit only read/write the struct.
+        let mut existing_limit: libc::rlimit = unsafe { core::mem::zeroed() };
+        // SAFETY: &mut existing_limit is a valid out-pointer.
+        if unsafe { libc::getrlimit(libc::RLIMIT_CORE, &mut existing_limit) } != 0 {
+            return;
+        }
+        if existing_limit.rlim_cur > 0 || existing_limit.rlim_cur == libc::RLIM_INFINITY {
+            existing_limit.rlim_cur = 0;
+            // SAFETY: &existing_limit is a valid in-pointer.
+            unsafe { libc::setrlimit(libc::RLIMIT_CORE, &existing_limit); }
         }
     }
 }
@@ -2381,10 +2431,8 @@ pub fn write_stack_trace(
     if debug::STRIP_DEBUG_INFO {
         return Err(bun_core::err!("MissingDebugInfo"));
     }
-    #[cfg(any())] // TODO(b2-blocked): bun_debug::SelfInfo::get_module_for_address (no debug-info backend)
-    {
     let mut frame_index: usize = 0;
-    let mut frames_left: usize = stack_trace.index.min(stack_trace.instruction_addresses().len());
+    let mut frames_left: usize = stack_trace.index.min(stack_trace.instruction_addresses.len());
 
     // PORT NOTE: Zig's `while (...) : ({ frames_left -= 1; frame_index = ... })` continue-expression
     // is inlined at every `continue` site and at end-of-loop below.
@@ -2392,7 +2440,7 @@ pub fn write_stack_trace(
         if frame_index >= limits.frame_count {
             break;
         }
-        let return_address = stack_trace.instruction_addresses()[frame_index];
+        let return_address = stack_trace.instruction_addresses[frame_index];
         let source = match get_source_at_address(debug_info, return_address - 1)? {
             Some(s) => s,
             None => {
@@ -2406,7 +2454,7 @@ pub fn write_stack_trace(
                     tty_config,
                 )?;
                 frames_left -= 1;
-                frame_index = (frame_index + 1) % stack_trace.instruction_addresses().len();
+                frame_index = (frame_index + 1) % stack_trace.instruction_addresses.len();
                 continue;
             }
         };
@@ -2433,7 +2481,7 @@ pub fn write_stack_trace(
         }
         if should_continue {
             frames_left -= 1;
-            frame_index = (frame_index + 1) % stack_trace.instruction_addresses().len();
+            frame_index = (frame_index + 1) % stack_trace.instruction_addresses.len();
             continue;
         }
         if limits.stop_at_jsc_llint && strings::includes(&source.symbol_name, b"_llint_") {
@@ -2450,30 +2498,26 @@ pub fn write_stack_trace(
         )?;
 
         frames_left -= 1;
-        frame_index = (frame_index + 1) % stack_trace.instruction_addresses().len();
+        frame_index = (frame_index + 1) % stack_trace.instruction_addresses.len();
     }
 
-    if stack_trace.index > stack_trace.instruction_addresses().len() {
-        let dropped_frames = stack_trace.index - stack_trace.instruction_addresses().len();
+    if stack_trace.index > stack_trace.instruction_addresses.len() {
+        let dropped_frames = stack_trace.index - stack_trace.instruction_addresses.len();
 
         let _ = tty_config.set_color(out_stream, TtyConfig::BOLD);
-        write!(out_stream, "({} additional stack frames not recorded...)\n", dropped_frames)?;
+        write!(out_stream, "({} additional stack frames not recorded...)\n", dropped_frames).map_err(fmt_err)?;
         let _ = tty_config.set_color(out_stream, TtyConfig::RESET);
     } else if frames_left != 0 {
         let _ = tty_config.set_color(out_stream, TtyConfig::BOLD);
-        write!(out_stream, "({} additional stack frames skipped...)\n", frames_left)?;
+        write!(out_stream, "({} additional stack frames skipped...)\n", frames_left).map_err(fmt_err)?;
         let _ = tty_config.set_color(out_stream, TtyConfig::RESET);
     }
     let _ = out_stream.write_all(b"\n");
-    } // end #[cfg(any())]
-    let _ = (stack_trace, out_stream, debug_info, tty_config, limits);
     Ok(())
 }
 
 /// Clone of `debug.printSourceAtAddress` but it returns the metadata as well.
 pub fn get_source_at_address(debug_info: &mut SelfInfo, address: usize) -> Result<Option<SourceAtAddress>, bun_core::Error> {
-    #[cfg(any())] // TODO(b2-blocked): bun_debug::SelfInfo::get_module_for_address
-    {
     let module = match debug_info.get_module_for_address(address) {
         Ok(m) => m,
         Err(e) if e == bun_core::err!("MissingDebugInfo") || e == bun_core::err!("InvalidDebugInfo") => return Ok(None),
@@ -2491,9 +2535,6 @@ pub fn get_source_at_address(debug_info: &mut SelfInfo, address: usize) -> Resul
         symbol_name: symbol_info.name,
         compile_unit_name: symbol_info.compile_unit_name,
     }))
-    } // end #[cfg(any())]
-    let _ = (debug_info, address);
-    Ok(None)
 }
 
 /// Clone of `debug.printLineInfo` as it is private.
@@ -2505,22 +2546,27 @@ fn print_line_info(
     compile_unit_name: &[u8],
     tty_config: TtyConfig,
 ) -> Result<(), bun_core::Error> {
-    #[cfg(any())] // TODO(b2-blocked): bun_core::Environment::BASE_PATH (is &[u8], const_format::concatcp! needs &str)
-    {
-    let base_path = const_format::concatcp!(Environment::BASE_PATH, bun_paths::SEP_STR);
+    // Zig: `Environment.base_path ++ std.fs.path.sep_str` (comptime concat).
+    // `Environment::BASE_PATH` is `&[u8]`, which `const_format::concatcp!` cannot
+    // ingest. The constant is tiny and this path is debug-only — build it once
+    // at runtime in a stack BoundedArray (no heap, async-signal-safe).
+    let mut base_path_buf = BoundedArray::<u8, { bun_paths::MAX_PATH_BYTES }>::default();
+    let _ = base_path_buf.append_slice(Environment::BASE_PATH);
+    let _ = base_path_buf.append_slice(bun_paths::SEP_STR.as_bytes());
+    let base_path: &[u8] = base_path_buf.const_slice();
     {
         if let Some(sl) = source_location {
-            if sl.file_name.starts_with(base_path.as_bytes()) {
+            if sl.file_name.starts_with(base_path) {
                 tty_config.set_color(out_stream, TtyConfig::DIM)?;
-                write!(out_stream, "{}", base_path)?;
+                out_stream.write_all(base_path)?;
                 tty_config.set_color(out_stream, TtyConfig::RESET)?;
                 tty_config.set_color(out_stream, TtyConfig::BOLD)?;
-                write!(out_stream, "{}", bstr::BStr::new(&sl.file_name[base_path.len()..]))?;
+                write!(out_stream, "{}", bstr::BStr::new(&sl.file_name[base_path.len()..])).map_err(fmt_err)?;
             } else {
                 tty_config.set_color(out_stream, TtyConfig::BOLD)?;
-                write!(out_stream, "{}", bstr::BStr::new(&sl.file_name))?;
+                write!(out_stream, "{}", bstr::BStr::new(&sl.file_name)).map_err(fmt_err)?;
             }
-            write!(out_stream, ":{}:{}", sl.line, sl.column)?;
+            write!(out_stream, ":{}:{}", sl.line, sl.column).map_err(fmt_err)?;
         } else {
             tty_config.set_color(out_stream, TtyConfig::BOLD)?;
             out_stream.write_all(b"???:?:?")?;
@@ -2529,13 +2575,13 @@ fn print_line_info(
         tty_config.set_color(out_stream, TtyConfig::RESET)?;
         out_stream.write_all(b": ")?;
         tty_config.set_color(out_stream, TtyConfig::DIM)?;
-        write!(out_stream, "0x{:x} in", address)?;
+        write!(out_stream, "0x{:x} in", address).map_err(fmt_err)?;
         tty_config.set_color(out_stream, TtyConfig::RESET)?;
         tty_config.set_color(out_stream, TtyConfig::YELLOW)?;
-        write!(out_stream, " {}", bstr::BStr::new(symbol_name))?;
+        write!(out_stream, " {}", bstr::BStr::new(symbol_name)).map_err(fmt_err)?;
         tty_config.set_color(out_stream, TtyConfig::RESET)?;
         tty_config.set_color(out_stream, TtyConfig::DIM)?;
-        write!(out_stream, " ({})", bstr::BStr::new(compile_unit_name))?;
+        write!(out_stream, " ({})", bstr::BStr::new(compile_unit_name)).map_err(fmt_err)?;
         tty_config.set_color(out_stream, TtyConfig::RESET)?;
         out_stream.write_all(b"\n")?;
 
@@ -2558,8 +2604,6 @@ fn print_line_info(
             }
         }
     }
-    } // end #[cfg(any())]
-    let _ = (out_stream, source_location, address, symbol_name, compile_unit_name, tty_config);
     Ok(())
 }
 
@@ -2572,7 +2616,8 @@ fn print_line_from_file_any_os(
     tty_config: TtyConfig,
     source_location: &SourceLocation,
 ) -> Result<(), bun_core::Error> {
-    #[cfg(any())] // TODO(b2-blocked): bun_sys::File::open_at / bun_sys::File::read (signature mismatch)
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_sys::File  (file mod is itself cfg(any())-gated in bun_sys)
     {
     // Need this to always block even in async I/O mode, because this could potentially
     // be called from e.g. the event loop code crashing.

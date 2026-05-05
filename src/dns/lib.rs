@@ -42,11 +42,13 @@ impl GetAddrInfo {
         }
     }
 
-    // TODO(b2-blocked): bun_c_ares::AddrInfoHints
+    // TODO(b2-blocked): bun_cares_sys::c_ares::AddrInfo_hints
+    // (bun_cares_sys exists at tier-0 but its `c_ares` module is itself
+    // `#[cfg(any())]`-gated; return type cannot be named until that lands.)
     #[cfg(any())]
-    pub fn to_cares(&self) -> bun_c_ares::AddrInfoHints {
-        // SAFETY: all-zero is a valid AddrInfoHints (C POD struct)
-        let mut hints: bun_c_ares::AddrInfoHints = unsafe { core::mem::zeroed() };
+    pub fn to_cares(&self) -> bun_cares_sys::c_ares::AddrInfo_hints {
+        // SAFETY: all-zero is a valid AddrInfo_hints (C POD struct)
+        let mut hints: bun_cares_sys::c_ares::AddrInfo_hints = unsafe { core::mem::zeroed() };
 
         hints.ai_family = self.options.family.to_libc();
         hints.ai_socktype = self.options.socktype.to_libc();
@@ -389,46 +391,54 @@ impl GetAddrInfoResult {
     }
 }
 
-// TODO(b2-blocked): bun_sys::net::Address
-// TODO(b2-blocked): bun_string::String::create_format
-#[cfg(any())]
 pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
-    match address.any().family() {
-        f if f == libc::AF_INET => {
-            let self_ = address.in_();
-            let bytes: [u8; 4] = self_.sa_addr_bytes();
-            BunString::create_format(format_args!(
-                "{}.{}.{}.{}",
-                bytes[0], bytes[1], bytes[2], bytes[3]
-            ))
-        }
-        f if f == libc::AF_INET6 => {
-            // PERF(port): was stack-fallback alloc — profile in Phase B
-            let mut out: Vec<u8> = Vec::new();
-            // TODO(port): std.net.Address Display impl — need bun_sys::net::Address Display
-            write!(&mut out, "{}", address).map_err(|_| AllocError)?;
-            // TODO: this is a hack, fix it
-            // This removes [.*]:port
-            //              ^  ^^^^^^
-            let port = address.in6().get_port();
-            let port_digits = {
-                let mut buf: Vec<u8> = Vec::new();
-                write!(&mut buf, "{}", port).expect("unreachable");
-                buf.len()
-            };
-            Ok(BunString::clone_latin1(
-                &out[1..out.len() - 1 - port_digits - 1],
-            ))
-        }
-        f if f == libc::AF_UNIX => {
-            #[cfg(unix)]
-            {
-                return Ok(BunString::clone_latin1(address.un().path()));
+    // TODO(b2-blocked): bun_sys::net::Address
+    // Body requires .any()/.in_()/.in6()/.un() views on Address; the stub
+    // `Address(())` exposes none. Signature is un-gated so tier-6 callers link.
+    #[cfg(any())]
+    {
+        return match address.any().family() {
+            f if f == libc::AF_INET => {
+                let self_ = address.in_();
+                let bytes: [u8; 4] = self_.sa_addr_bytes();
+                Ok(BunString::create_format(format_args!(
+                    "{}.{}.{}.{}",
+                    bytes[0], bytes[1], bytes[2], bytes[3]
+                )))
             }
-            #[allow(unreachable_code)]
-            Ok(BunString::empty())
-        }
-        _ => Ok(BunString::empty()),
+            f if f == libc::AF_INET6 => {
+                // PERF(port): was stack-fallback alloc — profile in Phase B
+                let mut out: Vec<u8> = Vec::new();
+                // TODO(port): std.net.Address Display impl — need bun_sys::net::Address Display
+                write!(&mut out, "{}", address).map_err(|_| AllocError)?;
+                // TODO: this is a hack, fix it
+                // This removes [.*]:port
+                //              ^  ^^^^^^
+                let port = address.in6().get_port();
+                let port_digits = {
+                    let mut buf: Vec<u8> = Vec::new();
+                    write!(&mut buf, "{}", port).expect("unreachable");
+                    buf.len()
+                };
+                Ok(BunString::clone_latin1(
+                    &out[1..out.len() - 1 - port_digits - 1],
+                ))
+            }
+            f if f == libc::AF_UNIX => {
+                #[cfg(unix)]
+                {
+                    return Ok(BunString::clone_latin1(address.un().path()));
+                }
+                #[allow(unreachable_code)]
+                Ok(BunString::EMPTY)
+            }
+            _ => Ok(BunString::EMPTY),
+        };
+    }
+    #[cfg(not(any()))]
+    {
+        let _ = address;
+        todo!("b2-blocked: bun_sys::net::Address")
     }
 }
 

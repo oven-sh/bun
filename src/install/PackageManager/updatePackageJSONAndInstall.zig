@@ -615,18 +615,22 @@ fn updatePackageJSONAndInstallAndCLI(
                                     try writer.print(
                                         "{f}",
                                         .{bun.fmt.fmtPath(u8, remaining[0..space], .{
-                                            .escape_backslashes = true,
+                                            // On Windows, backslashes are native path separators and
+                                            // should not be escaped/doubled in display output.
+                                            .escape_backslashes = !Environment.isWindows,
                                             .path_sep = if (Environment.isWindows) .windows else .posix,
                                         })},
                                     );
-                                    try writer.writeAll("\\ ");
+                                    // On POSIX shells, spaces must be escaped with backslash.
+                                    // On Windows, spaces inside quoted strings are literal.
+                                    try writer.writeAll(if (Environment.isWindows) " " else "\\ ");
                                     remaining = remaining[@min(space + 1, remaining.len)..];
                                 }
 
                                 try writer.print(
                                     "{f}",
                                     .{bun.fmt.fmtPath(u8, remaining, .{
-                                        .escape_backslashes = true,
+                                        .escape_backslashes = !Environment.isWindows,
                                         .path_sep = if (Environment.isWindows) .windows else .posix,
                                     })},
                                 );

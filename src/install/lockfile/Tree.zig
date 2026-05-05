@@ -482,6 +482,28 @@ pub fn pruneSavedTree(
     var out_dep_ids = try DependencyIDList.initCapacity(allocator, saved_hoisted_deps.len);
 
     const deps_buf = lockfile.buffers.dependencies.items;
+
+    // Reverse map: dep_id → owning pkg_id (the package whose `.dependencies`
+    // slice contains this dep_id). `.resolvable` hoists transitive edges of a
+    // bundled package up to the bundler's tree (because bundled placement
+    // stops hoisting at `hoist_root_id`), so the saved tree can contain e.g.
+    // `bundled_pkg → lodash` dep_ids at the bundler's node_modules with plain
+    // `.normal` behavior. Phase 1's BFS correctly skips the bundled edge and
+    // therefore doesn't activate `bundled_pkg`, but the isBundled check below
+    // only catches the bundled edge itself, not the transitives. Require the
+    // *owning* package to be active so those orphan transitives drop out.
+    var dep_owner = try allocator.alloc(PackageID, deps_buf.len);
+    defer allocator.free(dep_owner);
+    @memset(dep_owner, invalid_package_id);
+    for (0..num_packages) |owner_usize| {
+        const owner: PackageID = @intCast(owner_usize);
+        const range = pkg_resolutions_lists[owner];
+        for (range.begin()..range.end()) |d_usize| {
+            const d: DependencyID = @intCast(d_usize);
+            if (d < deps_buf.len) dep_owner[d] = owner;
+        }
+    }
+
     for (saved_trees, out_trees.items, 0..) |saved, *out, tree_idx| {
         out.* = saved;
         const off: u32 = @intCast(out_dep_ids.items.len);
@@ -490,6 +512,16 @@ pub fn pruneSavedTree(
                 const pkg_id = resolutions[dep_id];
                 if (pkg_id == invalid_package_id or pkg_id >= num_packages) continue;
                 if (!active.isSet(pkg_id)) continue;
+                // The dep_id's *owning* package must also be active — see the
+                // `dep_owner` comment above. This both matches the behavior
+                // of `.filter` for bundled transitives and catches any other
+                // case where a dep_id survived pruning because its target
+                // happened to be reachable through some other path.
+                if (dep_id < dep_owner.len) {
+                    const owner = dep_owner[dep_id];
+                    if (owner == invalid_package_id) continue;
+                    if (!active.isSet(owner)) continue;
+                }
                 // Bundled deps are baked into the publisher's tarball — the
                 // installer extracts the tarball and does not separately
                 // download/place the bundled entry. `.resolvable` places

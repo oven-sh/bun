@@ -44,30 +44,24 @@ pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
     }
 
     // init() runs from ensureWaker() before Transpiler.runEnvLoader() has
-    // copied the process environment into vm.transpiler.env, so read these
-    // directly from the OS environment.
-    var gc_timer_interval: i32 = 1000;
-    if (bun.getenvZ("BUN_GC_TIMER_INTERVAL")) |timer| {
-        if (std.fmt.parseInt(i32, timer, 10)) |parsed| {
-            if (parsed > 0) {
-                gc_timer_interval = parsed;
-            }
-        } else |_| {}
-    }
-    this.gc_timer_interval = gc_timer_interval;
+    // copied the process environment into vm.transpiler.env, so these go
+    // through bun.env_var (process-environment backed), not vm.transpiler.env.
+    this.gc_timer_interval = if (bun.env_var.BUN_GC_TIMER_INTERVAL.get()) |interval|
+        std.math.cast(i32, interval) orelse 1000
+    else
+        1000;
+    if (this.gc_timer_interval <= 0) this.gc_timer_interval = 1000;
 
-    if (bun.getenvZ("BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS")) |val| {
-        if (std.fmt.parseInt(c_int, val, 10)) |parsed| {
-            if (parsed >= 0) {
-                VirtualMachine.Bun__defaultRemainingRunsUntilSkipReleaseAccess = parsed;
-            }
-        } else |_| {}
+    if (bun.env_var.BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS.get()) |runs| {
+        if (std.math.cast(c_int, runs)) |val| {
+            VirtualMachine.Bun__defaultRemainingRunsUntilSkipReleaseAccess = val;
+        }
     }
 
-    this.disabled = bun.getenvZ("BUN_GC_TIMER_DISABLE") != null;
+    this.disabled = bun.env_var.BUN_GC_TIMER_DISABLE.get();
 
     if (!this.disabled)
-        this.gc_repeating_timer.set(this, onGCRepeatingTimer, gc_timer_interval, gc_timer_interval);
+        this.gc_repeating_timer.set(this, onGCRepeatingTimer, this.gc_timer_interval, this.gc_timer_interval);
 }
 
 pub fn deinit(this: *GarbageCollectionController) void {
@@ -169,12 +163,19 @@ pub fn processGCTimer(this: *GarbageCollectionController) void {
 fn processGCTimerWithHeapSize(this: *GarbageCollectionController, vm: *jsc.VM, this_heap_size: usize) void {
     const prev = this.gc_last_heap_size;
 
+    // Growth here means allocation resumed. updateGCRepeatTimer(.fast) only
+    // clears #idle_full_gcs_fired on a genuine slow->fast transition; while
+    // the 30-tick window is running we're still in fast mode, so clear it
+    // directly. The stable-tick counter is left alone — resetting it from
+    // this high-frequency path would starve the idle Full GC entirely.
+    if (this_heap_size > prev) this.#idle_full_gcs_fired = 0;
+
     switch (this.gc_timer_state) {
         .run_on_next_tick => {
-            // Only growth signals activity. A decrease is the async GC we just
-            // requested freeing memory; treating it as activity would cancel
-            // reduction mode via updateGCRepeatTimer(.fast) and prevent the
-            // slow-interval transition from ever being reached.
+            // Only growth signals activity. A decrease is the async GC we
+            // just requested freeing memory; treating it as activity would
+            // cancel reduction mode and prevent the slow-interval transition
+            // from ever being reached.
             if (this_heap_size > prev) {
                 this.scheduleGCTimer();
                 this.updateGCRepeatTimer(.fast);

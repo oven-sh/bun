@@ -57,6 +57,16 @@ pub const BUN_ENABLE_CRASH_REPORTING = New(kind.boolean, "BUN_ENABLE_CRASH_REPOR
 /// so nothing it spawned outlives it. See `src/ParentDeathWatchdog.zig`.
 pub const BUN_FEATURE_FLAG_NO_ORPHANS = New(kind.boolean, "BUN_FEATURE_FLAG_NO_ORPHANS", .{ .default = false });
 pub const BUN_FEATURE_FLAG_DUMP_CODE = New(kind.string, "BUN_FEATURE_FLAG_DUMP_CODE", .{});
+/// How many GarbageCollectionController.onGCTimer passes occur before the
+/// event loop skips releasing JSC access while idle. See
+/// `Bun__defaultRemainingRunsUntilSkipReleaseAccess`.
+pub const BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS = New(kind.unsigned, "BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS", .{});
+/// Disables the GarbageCollectionController's repeating GC timer.
+pub const BUN_GC_TIMER_DISABLE = New(kind.boolean, "BUN_GC_TIMER_DISABLE", .{ .default = false });
+/// GarbageCollectionController fast-mode repeating timer interval in
+/// milliseconds. After 30 non-growing ticks the controller fires a Full GC
+/// and drops to a fixed 30s slow interval.
+pub const BUN_GC_TIMER_INTERVAL = New(kind.unsigned, "BUN_GC_TIMER_INTERVAL", .{});
 /// TODO(markovejnovic): It's unclear why the default here is 100_000, but this was legacy behavior
 /// so we'll keep it for now.
 pub const BUN_INOTIFY_COALESCE_INTERVAL = New(kind.unsigned, "BUN_INOTIFY_COALESCE_INTERVAL", .{ .default = 100_000 });

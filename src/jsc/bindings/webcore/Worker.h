@@ -181,6 +181,10 @@ private:
     // postTaskTo() so the worker thread never dereferences the parent context
     // pointer (which could be freed concurrently).
     const ScriptExecutionContextIdentifier m_parentContextId;
+    // Cached parent VM pointer for atomic refEventLoop/unrefEventLoop from
+    // the worker thread. Same rationale as m_parentContextId — can't touch
+    // the parent's ScriptExecutionContext pointer from the worker thread.
+    void* const m_parentBunVM;
     // This worker's own context identifier (allocated at construction, bound
     // once the worker VM is up).
     const ScriptExecutionContextIdentifier m_clientIdentifier;

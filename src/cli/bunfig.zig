@@ -119,25 +119,67 @@ pub const Bunfig = struct {
             allocator: std.mem.Allocator,
             expr: js_ast.Expr,
         ) !void {
+            // Merge rather than replace so a secondary loadConfig call (e.g.
+            // the RunCommand fallback in run_command.zig) doesn't clobber
+            // preloads from CLI flags or an earlier bunfig lookup. Bunfig
+            // entries go first so the ordering is [bunfig, cli] no matter
+            // which pass fires first — matching what users get when the
+            // initial parse loads the bunfig.
+            const existing = this.ctx.preloads;
             if (expr.asArray()) |array_| {
                 var array = array_;
-                var preloads = try std.array_list.Managed(string).initCapacity(allocator, array.array.items.len);
+                var preloads = try std.array_list.Managed(string).initCapacity(allocator, array.array.items.len + existing.len);
                 errdefer preloads.deinit();
                 while (array.next()) |item| {
                     try this.expectString(item);
                     if (item.data.e_string.len() > 0)
-                        preloads.appendAssumeCapacity(try item.data.e_string.string(allocator));
+                        preloads.appendAssumeCapacity(try this.resolvePreloadPath(allocator, try item.data.e_string.string(allocator)));
                 }
+                preloads.appendSliceAssumeCapacity(existing);
                 this.ctx.preloads = preloads.items;
             } else if (expr.data == .e_string) {
                 if (expr.data.e_string.len() > 0) {
-                    var preloads = try allocator.alloc(string, 1);
-                    preloads[0] = try expr.data.e_string.string(allocator);
+                    var preloads = try allocator.alloc(string, 1 + existing.len);
+                    preloads[0] = try this.resolvePreloadPath(allocator, try expr.data.e_string.string(allocator));
+                    @memcpy(preloads[1..], existing);
                     this.ctx.preloads = preloads;
                 }
             } else if (expr.data != .e_null) {
                 try this.addError(expr.loc, "Expected preload to be an array");
             }
+        }
+
+        /// Resolve a preload entry so it works regardless of the command's
+        /// current working directory. Relative paths are resolved against the
+        /// directory containing the bunfig.toml; package specifiers and
+        /// already-absolute paths are passed through unchanged.
+        fn resolvePreloadPath(this: *Parser, allocator: std.mem.Allocator, entry: string) !string {
+            if (entry.len == 0) return entry;
+            if (resolve_path.Platform.auto.isAbsolute(entry)) return entry;
+            if (resolver.isPackagePath(entry)) return entry;
+            return this.resolveBunfigRelative(allocator, entry);
+        }
+
+        /// Resolve a filesystem path from the bunfig to an absolute path using
+        /// the directory containing the bunfig.toml. Unlike resolvePreloadPath,
+        /// bare names (e.g. "coverage") are treated as relative directories
+        /// rather than package specifiers. Absolute paths pass through.
+        fn resolveBunfigPath(this: *Parser, allocator: std.mem.Allocator, entry: string) !string {
+            if (entry.len == 0) return entry;
+            if (resolve_path.Platform.auto.isAbsolute(entry)) return entry;
+            return this.resolveBunfigRelative(allocator, entry);
+        }
+
+        fn resolveBunfigRelative(this: *Parser, allocator: std.mem.Allocator, entry: string) !string {
+            const bunfig_dir = resolve_path.dirname(this.source.path.text, .auto);
+            // Skip the join when the dirname isn't itself an absolute path
+            // (e.g. Windows `dirname("C:\\bunfig.toml") == "C:"`, which would
+            // trip the `isAbsoluteWindows` assert in joinAbsStringBuf).
+            if (bunfig_dir.len == 0 or !resolve_path.Platform.auto.isAbsolute(bunfig_dir)) return entry;
+            var buf: bun.PathBuffer = undefined;
+            const parts = [_]string{ bunfig_dir, entry };
+            const joined = resolve_path.joinAbsStringBuf(bunfig_dir, &buf, &parts, .auto);
+            return try allocator.dupe(u8, joined);
         }
 
         fn loadEnvConfig(this: *Parser, expr: js_ast.Expr) !void {
@@ -255,7 +297,9 @@ pub const Bunfig = struct {
             if (comptime cmd == .TestCommand) {
                 if (json.get("test")) |test_| {
                     if (test_.get("root")) |root| {
-                        this.ctx.debug.test_directory = root.asString(this.allocator) orelse "";
+                        try this.expectString(root);
+                        const raw = try root.data.e_string.string(this.allocator);
+                        this.ctx.debug.test_directory = try this.resolveBunfigPath(this.allocator, raw);
                     }
 
                     if (test_.get("preload")) |expr| {
@@ -283,7 +327,8 @@ pub const Bunfig = struct {
                             try this.expectString(junit_expr);
                             if (junit_expr.data.e_string.len() > 0) {
                                 this.ctx.test_options.reporters.junit = true;
-                                this.ctx.test_options.reporter_outfile = try junit_expr.data.e_string.string(allocator);
+                                const raw = try junit_expr.data.e_string.string(allocator);
+                                this.ctx.test_options.reporter_outfile = try this.resolveBunfigPath(allocator, raw);
                             }
                         }
                         if (expr.get("dots") orelse expr.get("dot")) |dots_expr| {
@@ -324,7 +369,8 @@ pub const Bunfig = struct {
 
                     if (test_.get("coverageDir")) |expr| {
                         try this.expectString(expr);
-                        this.ctx.test_options.coverage.reports_directory = try expr.data.e_string.string(allocator);
+                        const raw = try expr.data.e_string.string(allocator);
+                        this.ctx.test_options.coverage.reports_directory = try this.resolveBunfigPath(allocator, raw);
                     }
 
                     if (test_.get("coverageThreshold")) |expr| outer: {
@@ -1024,7 +1070,8 @@ pub const Bunfig = struct {
                 if (comptime cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand or cmd == .BuildCommand) {
                     if (_bun.get("outdir")) |dir| {
                         try this.expectString(dir);
-                        this.bunfig.output_dir = try dir.data.e_string.string(allocator);
+                        const raw = try dir.data.e_string.string(allocator);
+                        this.bunfig.output_dir = try this.resolveBunfigPath(allocator, raw);
                     }
                 }
 
@@ -1299,6 +1346,7 @@ const JSONParser = bun.json;
 const default_allocator = bun.default_allocator;
 const js_ast = bun.ast;
 const logger = bun.logger;
+const resolve_path = bun.path;
 const strings = bun.strings;
 const PackageManager = bun.install.PackageManager;
 const api = bun.schema.api;

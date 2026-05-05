@@ -12,8 +12,8 @@ use bun_str::{strings, MutableString, StringJoiner};
 use bun_sourcemap::{self as SourceMap, LineOffsetTable, SourceMapState, SourceMapPieces, SourceMapShifts, DebugIDFormatter};
 use bun_threading::{self as sync, ThreadPool as ThreadPoolLib, WaitGroup};
 use bun_options_types::{ImportRecord, ImportKind};
-use bun_bake as bake;
-use bun_jsc::{self as jsc};
+// TODO(b0): bake_types arrives from move-in (TYPE_ONLY → bundler)
+use crate::bake_types as bake;
 use bun_css as css;
 
 use bun_js_parser::{self as js_ast, Ref, Index, Expr, Stmt, Part, Symbol, Binding, Dependency, NamedImport, TlaCheck, DeclaredSymbol, ExportsKind, BundledAst as JSAst};
@@ -22,9 +22,10 @@ use bun_js_parser::printer as js_printer;
 use bun_js_parser::lexer as lex;
 use bun_js_parser::renamer;
 
-use bun_resolver::{self as _resolver, Resolver, SideEffects};
-use bun_resolver::fs as Fs;
-use bun_resolver::node_fallbacks as NodeFallbackModules;
+use bun_resolver::{self as _resolver, Resolver};
+use bun_options_types::SideEffects;
+use bun_fs as Fs;
+use bun_node_fallbacks as NodeFallbackModules;
 
 use crate::options::{self, Loader, Format, Target, SourceMapOption};
 use crate::{
@@ -112,8 +113,9 @@ pub struct LinkerContext<'a> {
     ///
     pub has_any_css_locals: AtomicU32,
 
-    /// Used by Bake to extract []CompileResult before it is joined
-    pub dev_server: Option<&'a mut bake::DevServer>,
+    /// Used by Bake to extract []CompileResult before it is joined.
+    /// CYCLEBREAK GENUINE: erased bake::DevServer (see bundle_v2::dispatch).
+    pub dev_server: Option<crate::dispatch::DevServerHandle>,
     pub framework: Option<*const bake::Framework>,
 
     pub mangled_props: MangledProps,
@@ -2213,7 +2215,7 @@ impl<'a> LinkerContext<'a> {
                         // SAFETY: resolver backref
                         let resolver = unsafe { &*self.resolver };
                         if resolver.opts.target == Target::Browser
-                            && jsc::ModuleLoader::HardcodedModule::Alias::has(&next_source.path.pretty, jsc::Runtime::Bun, Default::default())
+                            && bun_resolve_builtins::HardcodedModule::Alias::has(&next_source.path.pretty, bun_resolve_builtins::RuntimeTarget::Bun, Default::default())
                         {
                             self.log.add_range_warning_fmt_with_note(
                                 source, r, self.allocator(),

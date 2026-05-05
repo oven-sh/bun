@@ -140,8 +140,11 @@ fn apply_barrel_optimization_impl(
     // handles the case where file A imports Alpha from the barrel (previous
     // build) and file B adds Beta (current build). Without this, Alpha would
     // be re-deferred because only B's requests are in requested_exports.
-    if let Some(dev) = &this.transpiler.options.dev_server {
-        if let Some(persisted) = dev.barrel_needed_exports.get(result.source.path.text) {
+    if let Some(dev) = this.dev_server_handle() {
+        // SAFETY: barrel_needed_exports is owned by DevServer; bundler runs on the bundle
+        // thread which holds the DevServer lock during this callback.
+        let needed = unsafe { &*(dev.vtable.barrel_needed_exports)(dev.owner) };
+        if let Some(persisted) = needed.get(result.source.path.text) {
             for alias in persisted.keys() {
                 if let Some(resolution) = resolve_barrel_export(alias, named_exports, named_imports) {
                     needed_records.put(resolution.import_record_index, ())?;
@@ -157,7 +160,7 @@ fn apply_barrel_optimization_impl(
     // (whose exports ARE needed) gets marked unused by HMR dedup. To prevent
     // both records from ending up unused, promote needed_records to cover ALL
     // import records that share a path with any needed record.
-    if this.transpiler.options.dev_server.is_some() {
+    if this.dev_server_handle().is_some() {
         // Collect paths of needed records.
         // PERF(port): was stack-fallback (4096) — profile in Phase B
         let mut needed_paths: StringArrayHashMap<()> = StringArrayHashMap::default();
@@ -221,14 +224,10 @@ fn apply_barrel_optimization_impl(
         // Register with DevServer so isFileCached returns null for this barrel,
         // ensuring it gets re-parsed on every incremental build. This is needed
         // because the set of needed exports can change when importing files change.
-        if let Some(dev) = &mut this.transpiler.options.dev_server {
-            let barrel_gop = dev
-                .barrel_files_with_deferrals
-                .get_or_put(result.source.path.text)?;
-            if !barrel_gop.found_existing {
-                // TODO(port): dev.allocator().dupe — Box<[u8]> owned by DevServer's map key
-                *barrel_gop.key_ptr = Box::<[u8]>::from(result.source.path.text);
-            }
+        if let Some(dev) = this.dev_server_handle() {
+            // CYCLEBREAK: barrel_files_with_deferrals get_or_put + key dupe encapsulated
+            // in DevServerVTable. PERF(port): was direct hashmap access.
+            unsafe { (dev.vtable.register_barrel_with_deferrals)(dev.owner, result.source.path.text) }?;
         }
     }
 
@@ -317,7 +316,7 @@ pub fn schedule_barrel_deferred_imports(
     // on import records (the dev server uses path-based identifiers instead). But
     // barrel optimization requires source_indices to seed requested_exports and to
     // BFS un-defer records. Resolve paths → source_indices here as a fallback.
-    let path_to_source_index_map = if this.transpiler.options.dev_server.is_some() {
+    let path_to_source_index_map = if this.dev_server_handle().is_some() {
         Some(this.path_to_source_index_map(result.ast.target))
     } else {
         None
@@ -334,7 +333,7 @@ pub fn schedule_barrel_deferred_imports(
     // text, using non-unused records in this file. See #28886.
     // TODO(port): lifetime — keys/values borrow from file_import_records for fn duration
     let mut dedup_fallback: StringArrayHashMap<&[u8]> = StringArrayHashMap::default();
-    if this.transpiler.options.dev_server.is_some() {
+    if this.dev_server_handle().is_some() {
         for ir_probe in file_import_records.slice() {
             if ir_probe.flags.is_unused || ir_probe.flags.is_internal {
                 continue;
@@ -394,7 +393,7 @@ pub fn schedule_barrel_deferred_imports(
                 }
             }
             // Persist the export request on DevServer so it survives across builds.
-            if let Some(dev) = &mut this.transpiler.options.dev_server {
+            if let Some(dev) = this.dev_server_handle() {
                 persist_barrel_export(dev, resolved_path_text, alias);
             }
         } else if !gop.found_existing {
@@ -692,8 +691,11 @@ pub fn schedule_barrel_deferred_imports(
 /// seeding so that exports requested in previous builds are not lost when the
 /// barrel is re-parsed in an incremental build where the requesting file is
 /// not stale.
-fn persist_barrel_export(dev: &mut bun_bake::DevServer, barrel_path: &[u8], alias: &[u8]) {
-    let Ok(outer_gop) = dev.barrel_needed_exports.get_or_put(barrel_path) else {
+fn persist_barrel_export(dev: &crate::dispatch::DevServerHandle, barrel_path: &[u8], alias: &[u8]) {
+    // CYCLEBREAK GENUINE: bun_bake::DevServer → vtable. PERF(port): was inline switch.
+    // SAFETY: vtable.barrel_needed_exports returns &mut map tied to dev.owner lifetime.
+    let barrel_needed_exports = unsafe { &mut *(dev.vtable.barrel_needed_exports)(dev.owner) };
+    let Ok(outer_gop) = barrel_needed_exports.get_or_put(barrel_path) else {
         return;
     };
     if !outer_gop.found_existing {

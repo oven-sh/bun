@@ -2,9 +2,13 @@ use core::ffi::c_void;
 use core::mem;
 use std::sync::Arc;
 
-use bun_aio::{self as aio, FilePoll, Loop};
-use bun_jsc::EventLoopHandle;
 use bun_sys::{self as sys, Fd};
+
+// CYCLEBREAK: FilePoll/EventLoopHandle are opaque vtable-backed handles in io
+// (T2); concrete types live in bun_aio (T3) / bun_jsc (T6). The uws Loop type
+// moves to bun_uws_sys (T0).
+use crate::{EventLoopHandle, FilePoll, FilePollFlag, FilePollKind};
+type Loop = bun_uws_sys::Loop;
 
 use crate::max_buf::MaxBuf;
 use crate::pipes::{FileType, PollOrFd, ReadState};
@@ -106,7 +110,7 @@ impl BufferedReaderVTableFn {
         }
         fn event_loop<T: BufferedReaderParent>(this: *mut c_void) -> EventLoopHandle {
             // SAFETY: parent was set via set_parent with a *mut T.
-            EventLoopHandle::init(unsafe { &mut *(this as *mut T) }.event_loop())
+            unsafe { &mut *(this as *mut T) }.event_loop()
         }
         fn loop_<T: BufferedReaderParent>(this: *mut c_void) -> *mut Loop {
             // SAFETY: parent was set via set_parent with a *mut T.
@@ -275,7 +279,7 @@ impl PosixBufferedReader {
         // Unregister the FilePoll if it's registered
         if let PollOrFd::Poll(poll) = &mut self.handle {
             if poll.is_registered() {
-                let _ = poll.unregister(self.vtable.loop_(), false);
+                let _ = poll.unregister(self.vtable.loop_().cast(), false);
             }
         }
     }
@@ -379,24 +383,18 @@ impl PosixBufferedReader {
             if !self.flags.contains(PosixFlags::POLLABLE) {
                 return;
             }
-            self.handle = PollOrFd::Poll(FilePoll::init(
-                ev,
-                fd,
-                Default::default(),
-                // TODO(port): FilePoll::init type-erased owner (@This(), this).
-                owner_ptr,
-            ));
+            self.handle = PollOrFd::Poll(FilePoll::init(ev, fd, (), owner_ptr));
         }
         let Some(poll) = self.handle.get_poll_mut() else {
             return;
         };
-        poll.owner.set(owner_ptr);
+        poll.set_owner(owner_ptr);
 
-        if !poll.flags.contains(aio::FilePollFlags::WAS_EVER_REGISTERED) {
+        if !poll.has_flag(FilePollFlag::WasEverRegistered) {
             poll.enable_keeping_process_alive(ev);
         }
 
-        match poll.register_with_fd(lp, aio::PollKind::Readable, aio::PollMode::Dispatch, poll.fd) {
+        match poll.register_with_fd(lp.cast(), FilePollKind::Readable, poll.fd()) {
             sys::Result::Err(err) => {
                 self.vtable.on_reader_error(err);
             }
@@ -472,14 +470,14 @@ impl PosixBufferedReader {
             FileType::Socket => {
                 Self::read_socket(self, fd, 0, false);
             }
-            FileType::Pipe => match aio::is_readable(fd) {
-                aio::Readable::Ready => {
+            FileType::Pipe => match bun_core::is_readable(fd) {
+                bun_core::Pollable::Ready => {
                     Self::read_from_blocking_pipe_without_blocking(self, fd, 0, false);
                 }
-                aio::Readable::Hup => {
+                bun_core::Pollable::Hup => {
                     Self::read_from_blocking_pipe_without_blocking(self, fd, 0, true);
                 }
-                aio::Readable::NotReady => {
+                bun_core::Pollable::NotReady => {
                     self.register_poll();
                 }
             },
@@ -700,17 +698,17 @@ impl PosixBufferedReader {
             // whether HUP still holds before committing to another blocking
             // read. This is one extra poll() per chunk only on the HUP path
             // (i.e. while draining the final buffered bytes), not per read.
-            match aio::is_readable(fd) {
-                aio::Readable::Hup => {
+            match bun_core::is_readable(fd) {
+                bun_core::Pollable::Hup => {
                     // Still hung up; keep draining towards EOF.
                 }
-                aio::Readable::Ready => {
+                bun_core::Pollable::Ready => {
                     // Data is available but HUP cleared — a writer came back.
                     // Drop the stale HUP so the next iteration takes the
                     // normal registerPoll() exit once the data is drained.
                     received_hup = false;
                 }
-                aio::Readable::NotReady => {
+                bun_core::Pollable::NotReady => {
                     // No data and no HUP: a writer exists. Go back to the
                     // event loop instead of blocking in read().
                     parent.register_poll();

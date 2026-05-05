@@ -15,12 +15,95 @@ use core::ffi::c_int;
 use core::fmt;
 use core::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
 
-use bun_core::env_var;
-use bun_core::Global;
-use bun_str::strings;
-use bun_sys::File;
-use bun_sys::Fd;
-use bun_threading::Mutex;
+use crate::env_var;
+use crate::Global;
+// MOVE_DOWN: bun_str::strings → bun_core (move-in pass).
+use crate::strings;
+// MOVE_DOWN: bun_sys::Fd / bun_sys::fd → bun_core (move-in pass).
+use crate::Fd;
+// MOVE_DOWN: bun_threading::Mutex → bun_core (move-in pass).
+use crate::Mutex;
+// MOVE_DOWN: io::Writer → bun_core (move-in pass) — re-exported as crate::io::Writer.
+use crate::io;
+
+// ──────────────────────────────────────────────────────────────────────────
+// Output sink vtable (CYCLEBREAK §Debug-hook / §Dispatch cold path)
+//
+// GENUINE: bun_sys::{File, QuietWrite, file::QuietWriter, make_path, create_file,
+// deprecated::BufferedReader} are all higher-tier I/O primitives that bun_core
+// cannot name. The Source/QuietWriter machinery is reduced to an opaque sink
+// vtable installed by bun_sys at startup. bun_core only knows how to *write
+// bytes* and *flush*; the concrete file/adapter types live in bun_sys.
+// PERF(port): was inline switch over concrete File methods.
+// ──────────────────────────────────────────────────────────────────────────
+
+pub struct OutputSinkVTable {
+    /// Returns a Progress::File wrapping stderr (used by Progress.rs).
+    pub stderr: unsafe fn() -> crate::Progress::File,
+    /// mkdir -p `dir` relative to cwd. Debug-log file setup only.
+    pub make_path: unsafe fn(cwd: Fd, dir: &[u8]) -> Result<(), crate::Error>,
+    /// open/create `path` for writing (truncating). Debug-log file setup only.
+    pub create_file: unsafe fn(cwd: Fd, path: &[u8]) -> Result<Fd, crate::Error>,
+    /// Build a QuietWriter (opaque) from an fd.
+    pub quiet_writer_from_fd: unsafe fn(fd: Fd) -> QuietWriter,
+}
+
+/// Installed by `bun_sys` at startup via [`install_output_sink`]. Startup ordering
+/// guarantees it is set before any Output write. Load via [`output_sink()`].
+pub static OUTPUT_SINK_VTABLE: core::sync::atomic::AtomicPtr<OutputSinkVTable> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+/// Called once by `bun_sys` at startup with a `&'static OutputSinkVTable`.
+#[inline]
+pub fn install_output_sink(vtable: &'static OutputSinkVTable) {
+    OUTPUT_SINK_VTABLE.store(
+        vtable as *const _ as *mut _,
+        core::sync::atomic::Ordering::Release,
+    );
+}
+
+/// Load the installed sink. Panics with an actionable message if `bun_sys` has not
+/// yet called [`install_output_sink`] (startup ordering bug).
+#[inline]
+pub fn output_sink() -> &'static OutputSinkVTable {
+    let p = OUTPUT_SINK_VTABLE.load(core::sync::atomic::Ordering::Acquire);
+    debug_assert!(!p.is_null(), "OUTPUT_SINK_VTABLE not installed (bun_sys::init must run first)");
+    // SAFETY: install_output_sink stores a &'static; never freed.
+    unsafe { &*p }
+}
+
+/// Opaque handle to a `bun_sys::file::QuietWriter`. bun_core treats it as a
+/// POD blob; bun_sys casts back to the concrete type.
+/// TODO(b0-genuine): bun_sys::file::QuietWriter — size/align must match.
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub struct QuietWriter {
+    _opaque: [*mut (); 4],
+}
+impl QuietWriter {
+    pub const ZEROED: Self = Self { _opaque: [core::ptr::null_mut(); 4] };
+}
+
+/// Opaque adapter wrapping a QuietWriter and exposing `crate::io::Writer`.
+/// TODO(b0-genuine): bun_sys::QuietWrite::Adapter — size/align must match.
+#[repr(C)]
+pub struct QuietWriterAdapter {
+    _opaque: [u8; 64],
+}
+impl QuietWriterAdapter {
+    #[inline]
+    pub fn new_interface(&mut self) -> &mut io::Writer {
+        // SAFETY: erased <bun_sys::QuietWrite>::Adapter; bun_sys guarantees
+        // the io::Writer is the first field (repr(C)).
+        unsafe { &mut *(self as *mut Self as *mut io::Writer) }
+    }
+}
+
+/// Opaque file handle. Replaces `bun_sys::File` in this crate.
+/// TODO(b0-genuine): bun_sys::File — repr must match (it wraps a single Fd).
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+pub struct File(pub Fd);
 
 use crate::env as Environment;
 
@@ -44,8 +127,8 @@ static STDOUT_STREAM_SET: AtomicBool = AtomicBool::new(false);
 #[unsafe(no_mangle)]
 pub static mut bun_stdio_tty: [i32; 3] = [0, 0, 0];
 
-// TODO(port): bun_sys::Winsize repr(C) matching std.posix.winsize
-pub static mut TERMINAL_SIZE: bun_sys::Winsize = bun_sys::Winsize {
+// TYPE_ONLY: bun_sys::Winsize → bun_core (move-in pass).
+pub static mut TERMINAL_SIZE: crate::Winsize = crate::Winsize {
     row: 0,
     col: 0,
     xpixel: 0,
@@ -60,12 +143,7 @@ pub static mut TERMINAL_SIZE: bun_sys::Winsize = bun_sys::Winsize {
 #[cfg(not(target_arch = "wasm32"))]
 pub type StreamType = File;
 #[cfg(target_arch = "wasm32")]
-pub type StreamType = bun_io::FixedBufferStream; // TODO(port): wasm fixed buffer stream
-
-/// `@TypeOf(StreamType.quietWriter(undefined)).Adapter` — the buffered-writer adapter
-/// wrapping a `File::QuietWriter` and exposing a `std.Io.Writer` (`bun_io::Writer`) interface.
-// TODO(port): exact type lives in bun_sys::File; named here for clarity.
-pub type QuietWriterAdapter = <File as bun_sys::QuietWrite>::Adapter;
+pub type StreamType = io::FixedBufferStream; // TODO(b0): FixedBufferStream arrives via bun_io→core move-in.
 
 pub struct Source {
     pub stdout_buffer: [u8; 4096],
@@ -75,14 +153,14 @@ pub struct Source {
     // Self-referential: point into `*_backing.new_interface`. Replaced with accessor
     // methods in Rust; raw fields kept to mirror Zig field order.
     // (LIFETIMES.tsv: BORROW_FIELD — self-ref into buffered_*_backing)
-    buffered_stream: *mut bun_io::Writer,
-    buffered_error_stream: *mut bun_io::Writer,
+    buffered_stream: *mut io::Writer,
+    buffered_error_stream: *mut io::Writer,
 
     pub stream_backing: QuietWriterAdapter,
     pub error_stream_backing: QuietWriterAdapter,
     // Self-referential (BORROW_FIELD)
-    stream: *mut bun_io::Writer,
-    error_stream: *mut bun_io::Writer,
+    stream: *mut io::Writer,
+    error_stream: *mut io::Writer,
 
     pub raw_stream: StreamType,
     pub raw_error_stream: StreamType,
@@ -104,19 +182,19 @@ impl Source {
 
     /// Accessors replacing the self-referential `*std.Io.Writer` fields.
     #[inline]
-    pub fn buffered_stream(&mut self) -> &mut bun_io::Writer {
+    pub fn buffered_stream(&mut self) -> &mut io::Writer {
         self.buffered_stream_backing.new_interface()
     }
     #[inline]
-    pub fn buffered_error_stream(&mut self) -> &mut bun_io::Writer {
+    pub fn buffered_error_stream(&mut self) -> &mut io::Writer {
         self.buffered_error_stream_backing.new_interface()
     }
     #[inline]
-    pub fn stream(&mut self) -> &mut bun_io::Writer {
+    pub fn stream(&mut self) -> &mut io::Writer {
         self.stream_backing.new_interface()
     }
     #[inline]
-    pub fn error_stream(&mut self) -> &mut bun_io::Writer {
+    pub fn error_stream(&mut self) -> &mut io::Writer {
         self.error_stream_backing.new_interface()
     }
 
@@ -159,10 +237,10 @@ impl Source {
         debug_assert!(STDOUT_STREAM_SET.load(Ordering::Relaxed));
         // SAFETY: STDOUT_STREAM/STDERR_STREAM are write-once before any thread calls this.
         SOURCE.with_borrow_mut(|s| unsafe { Source::init(s, STDOUT_STREAM, STDERR_STREAM) });
-        bun_core::StackCheck::configure_thread();
+        crate::StackCheck::configure_thread();
     }
 
-    pub fn configure_named_thread(name: &bun_str::ZStr) {
+    pub fn configure_named_thread(name: &crate::ZStr) {
         Global::set_thread_name(name);
         Self::configure_thread();
     }
@@ -261,7 +339,8 @@ impl Source {
 #[cfg(windows)]
 pub mod windows_stdio {
     use super::*;
-    use bun_sys::windows as w;
+    // MOVE_DOWN: bun_sys::windows → windows_sys (T0).
+    use windows_sys as w;
 
 
     /// At program start, we snapshot the console modes of standard in, out, and err
@@ -312,7 +391,8 @@ pub mod windows_stdio {
         let stdout = w::GetStdHandle(w::STD_OUTPUT_HANDLE).unwrap_or(w::INVALID_HANDLE_VALUE);
         let stderr = w::GetStdHandle(w::STD_ERROR_HANDLE).unwrap_or(w::INVALID_HANDLE_VALUE);
 
-        use bun_sys::fd as fd_internals;
+        // MOVE_DOWN: bun_sys::fd → bun_core (move-in pass).
+        use crate::fd as fd_internals;
         let invalid = w::INVALID_HANDLE_VALUE;
         // SAFETY: single-threaded startup; these statics are write-once caches.
         unsafe {
@@ -331,7 +411,7 @@ pub mod windows_stdio {
 
         // SAFETY: BUFFERED_STDIN is a static initialized at startup before use.
         unsafe {
-            BUFFERED_STDIN.unbuffered_reader.context.handle = Fd::stdin();
+            BUFFERED_STDIN.fd = Fd::stdin();
         }
 
         // https://learn.microsoft.com/en-us/windows/console/setconsoleoutputcp
@@ -703,7 +783,7 @@ pub fn panic(args: fmt::Arguments<'_>) -> ! {
     // TODO(port): callers must wrap fmt in `pretty_fmt!(.., enable_ansi_colors_stderr)`
 }
 
-pub type WriterType = bun_sys::file::QuietWriter;
+pub type WriterType = QuietWriter;
 
 pub fn raw_error_writer() -> StreamType {
     debug_assert!(SOURCE_SET.get());
@@ -711,20 +791,20 @@ pub fn raw_error_writer() -> StreamType {
 }
 
 // TODO: investigate migrating this to the buffered one.
-pub fn error_writer() -> *mut bun_io::Writer {
+pub fn error_writer() -> *mut io::Writer {
     debug_assert!(SOURCE_SET.get());
     SOURCE.with_borrow_mut(|s| s.error_stream() as *mut _)
     // TODO(port): self-ref pointer escape — callers should use a `with_error_writer(|w| ...)` API
 }
 
-pub fn error_writer_buffered() -> *mut bun_io::Writer {
+pub fn error_writer_buffered() -> *mut io::Writer {
     debug_assert!(SOURCE_SET.get());
     SOURCE.with_borrow_mut(|s| s.buffered_error_stream() as *mut _)
     // TODO(port): self-ref pointer escape — see error_writer()
 }
 
 // TODO: investigate returning the buffered_error_stream
-pub fn error_stream() -> *mut bun_io::Writer {
+pub fn error_stream() -> *mut io::Writer {
     debug_assert!(SOURCE_SET.get());
     SOURCE.with_borrow_mut(|s| s.error_stream() as *mut _)
     // TODO(port): self-ref pointer escape
@@ -735,13 +815,13 @@ pub fn raw_writer() -> StreamType {
     SOURCE.with_borrow(|s| s.raw_stream)
 }
 
-pub fn writer() -> *mut bun_io::Writer {
+pub fn writer() -> *mut io::Writer {
     debug_assert!(SOURCE_SET.get());
     SOURCE.with_borrow_mut(|s| s.stream() as *mut _)
     // TODO(port): self-ref pointer escape
 }
 
-pub fn writer_buffered() -> *mut bun_io::Writer {
+pub fn writer_buffered() -> *mut io::Writer {
     debug_assert!(SOURCE_SET.get());
     SOURCE.with_borrow_mut(|s| s.buffered_stream() as *mut _)
     // TODO(port): self-ref pointer escape
@@ -899,7 +979,13 @@ pub fn print_start_end_stdout(start: i128, end: i128) {
     print_elapsed_stdout(elapsed as f64);
 }
 
-pub fn print_timer(timer: &mut bun_perf::SystemTimer) {
+/// Minimal timer abstraction so bun_core doesn't depend on bun_perf.
+/// bun_perf::SystemTimer impls this (move-in pass).
+pub trait ReadTimer {
+    fn read(&mut self) -> u64;
+}
+
+pub fn print_timer(timer: &mut impl ReadTimer) {
     #[cfg(target_arch = "wasm32")]
     {
         return;
@@ -928,7 +1014,7 @@ pub fn print_timer(timer: &mut bun_perf::SystemTimer) {
 /// Pick the active writer for `dest`, honoring `enable_buffering`. Non-generic
 /// so the buffering branch isn't duplicated into every call site.
 #[inline(never)]
-fn with_dest_writer<R>(dest: Destination, f: impl FnOnce(&mut bun_io::Writer) -> R) -> R {
+fn with_dest_writer<R>(dest: Destination, f: impl FnOnce(&mut io::Writer) -> R) -> R {
     debug_assert!(SOURCE_SET.get());
     let buffering = ENABLE_BUFFERING.load(Ordering::Relaxed);
     SOURCE.with_borrow_mut(|s| match dest {
@@ -968,7 +1054,7 @@ pub fn print_to(dest: Destination, args: fmt::Arguments<'_>) {
 }
 
 #[inline]
-pub fn print_errorable(args: fmt::Arguments<'_>) -> Result<(), bun_core::Error> {
+pub fn print_errorable(args: fmt::Arguments<'_>) -> Result<(), crate::Error> {
     print_to(Destination::Stdout, args);
     Ok(())
 }
@@ -1067,7 +1153,7 @@ impl ScopedLogger {
         env_key[prefix.len()..prefix.len() + tag.len()].copy_from_slice(tag);
         let key = &env_key[..prefix.len() + tag.len()];
 
-        if let Some(val) = bun_core::getenv_z_any_case(key) {
+        if let Some(val) = crate::getenv_z_any_case(key) {
             self.really_disable.store(val == b"0", Ordering::Relaxed);
         } else if let Some(val) = env_var::BUN_DEBUG_ALL.get() {
             self.really_disable.store(!val, Ordering::Relaxed);
@@ -1081,7 +1167,7 @@ impl ScopedLogger {
             flag[..pfx.len()].copy_from_slice(pfx);
             flag[pfx.len()..pfx.len() + tag.len()].copy_from_slice(tag);
             let flag_slice = &flag[..pfx.len() + tag.len()];
-            for arg in bun_core::argv() {
+            for arg in crate::argv() {
                 if strings::eql_case_insensitive_ascii(arg, flag_slice, true)
                     || strings::eql_case_insensitive_ascii(arg, b"--debug-all", true)
                 {
@@ -1117,7 +1203,8 @@ impl ScopedLogger {
         if scoped_debug_writer::DISABLE_INSIDE_LOG.get() > 0 {
             return;
         }
-        if bun_crash_handler::is_panicking() {
+        // MOVE_DOWN: bun_crash_handler::is_panicking → bun_core (move-in pass).
+        if crate::is_panicking() {
             return;
         }
 
@@ -1555,24 +1642,22 @@ macro_rules! debug_warn {
 // TODO(port): the comptime-literal fast path (is_comptime_name) is dropped — Phase B can
 // recover it with a proc-macro overload that detects string literals.
 pub fn err(error_name: impl ErrName, args: fmt::Arguments<'_>) {
-    if let Some(e) = error_name.as_sys_error() {
-        let Some((tag_name, sys_errno)) = e.get_error_code_tag_name() else {
-            return err("unknown error", args);
-        };
-        if let Some(label) = bun_sys::coreutils_error_map::get(sys_errno) {
+    if let Some(e) = error_name.as_sys_err_info() {
+        // MOVE_DOWN: bun_sys::coreutils_error_map → bun_core (move-in pass).
+        if let Some(label) = crate::coreutils_error_map::get(e.errno) {
             pretty_errorln!(
                 "<r><red>{}<r><d>:<r> {}: {} <d>({})<r>",
-                bstr::BStr::new(tag_name),
+                bstr::BStr::new(e.tag_name),
                 bstr::BStr::new(label),
                 args,
-                <&'static str>::from(e.syscall),
+                e.syscall,
             );
         } else {
             pretty_errorln!(
                 "<r><red>{}<r><d>:<r> {} <d>({})<r>",
-                bstr::BStr::new(tag_name),
+                bstr::BStr::new(e.tag_name),
                 args,
-                <&'static str>::from(e.syscall),
+                e.syscall,
             );
         }
         return;
@@ -1582,10 +1667,23 @@ pub fn err(error_name: impl ErrName, args: fmt::Arguments<'_>) {
     pretty_errorln!("<red>{}<r><d>:<r> {}", bstr::BStr::new(display_name), args);
 }
 
+/// What `err()` needs from a `bun_sys::Error` without naming the type.
+/// Populated by bun_sys's `ErrName` impl (move-in pass).
+#[derive(Clone, Copy)]
+pub struct SysErrInfo {
+    pub tag_name: &'static [u8],
+    pub errno: i32,
+    pub syscall: &'static str,
+}
+
 /// Trait abstracting the `@typeInfo` switch in Zig `err()`.
+///
+/// `as_sys_err_info()` replaces the former `as_sys_error() -> Option<&bun_sys::Error>`:
+/// bun_core (T0) can't name `bun_sys::Error` (T1). bun_sys impls `ErrName` for
+/// its own error type (move-in pass) and returns the projected info here.
 pub trait ErrName {
     fn name(&self) -> &[u8];
-    fn as_sys_error(&self) -> Option<&bun_sys::Error> {
+    fn as_sys_err_info(&self) -> Option<SysErrInfo> {
         None
     }
 }
@@ -1599,39 +1697,21 @@ impl ErrName for &[u8] {
         self
     }
 }
-impl ErrName for bun_core::Error {
+impl ErrName for crate::Error {
     fn name(&self) -> &[u8] {
         self.name().as_bytes()
     }
 }
-impl ErrName for bun_sys::Error {
-    fn name(&self) -> &[u8] {
-        // Unused — as_sys_error() short-circuits.
-        b""
-    }
-    fn as_sys_error(&self) -> Option<&bun_sys::Error> {
-        Some(self)
-    }
-}
-impl ErrName for &bun_sys::Error {
-    fn name(&self) -> &[u8] {
-        b""
-    }
-    fn as_sys_error(&self) -> Option<&bun_sys::Error> {
-        Some(*self)
-    }
-}
-// TODO(port): blanket impl for `T: Into<&'static str>` (strum enums) once coherence allows,
-// and for `bun_sys::SystemErrno` (the `.@"enum"` arm in Zig).
+// TODO(b0): `impl ErrName for bun_sys::Error` and `bun_sys::SystemErrno` arrive
+// via move-in pass in bun_sys (orphan rule allows higher tier to impl this trait).
+// TODO(port): blanket impl for `T: Into<&'static str>` (strum enums) once coherence allows.
 
 // ── ScopedDebugWriter ─────────────────────────────────────────────────────
 
 pub mod scoped_debug_writer {
     use super::*;
 
-    pub static mut SCOPED_FILE_WRITER: bun_sys::file::QuietWriter =
-        // SAFETY: initialized in init_scoped_debug_writer_at_startup before first use.
-        unsafe { core::mem::zeroed() };
+    pub static mut SCOPED_FILE_WRITER: QuietWriter = QuietWriter::ZEROED;
 
     thread_local! {
         pub static DISABLE_INSIDE_LOG: Cell<isize> = const { Cell::new(0) };
@@ -1658,9 +1738,11 @@ pub fn init_scoped_debug_writer_at_startup() {
 
     if let Some(path) = env_var::BUN_DEBUG.get() {
         if !path.is_empty() && path != b"0" && path != b"false" {
-            if let Some(dir) = bun_paths::dirname(path) {
-                // TODO(port): bun_sys::make_path equivalent of std.fs.cwd().makePath
-                let _ = bun_sys::make_path(Fd::cwd(), dir);
+            // MOVE_DOWN: bun_paths::dirname → bun_core (bundled with SEP/PathBuffer move-in).
+            if let Some(dir) = crate::dirname(path) {
+                // GENUINE: bun_sys::make_path — via output_sink() vtable (cold path).
+                // SAFETY: vtable fn-ptr has no preconditions.
+                let _ = unsafe { (output_sink().make_path)(Fd::cwd(), dir) };
             }
 
             // do not use libuv through this code path, since it might not be initialized yet.
@@ -1671,14 +1753,9 @@ pub fn init_scoped_debug_writer_at_startup() {
 
             let path_fmt = strings::replace_owned(path, b"{pid}", &pid);
 
-            let fd: Fd = match bun_sys::create_file(
-                Fd::cwd(),
-                &path_fmt,
-                bun_sys::CreateFileOptions {
-                    mode: if cfg!(unix) { 0o644 } else { 0 },
-                    ..Default::default()
-                },
-            ) {
+            // GENUINE: bun_sys::create_file — via output_sink() vtable (cold path).
+            // SAFETY: vtable fn-ptr has no preconditions.
+            let fd: Fd = match unsafe { (output_sink().create_file)(Fd::cwd(), &path_fmt) } {
                 Ok(fd) => fd,
                 Err(open_err) => {
                     super::panic(format_args!(
@@ -1691,7 +1768,8 @@ pub fn init_scoped_debug_writer_at_startup() {
             let _ = fd.truncate(0); // windows
             // SAFETY: single-threaded startup.
             unsafe {
-                scoped_debug_writer::SCOPED_FILE_WRITER = fd.quiet_writer();
+                scoped_debug_writer::SCOPED_FILE_WRITER =
+                    (output_sink().quiet_writer_from_fd)(fd);
             }
             return;
         }
@@ -1700,11 +1778,11 @@ pub fn init_scoped_debug_writer_at_startup() {
     // SAFETY: single-threaded startup.
     unsafe {
         scoped_debug_writer::SCOPED_FILE_WRITER =
-            SOURCE.with_borrow(|s| s.raw_stream).quiet_writer();
+            (output_sink().quiet_writer_from_fd)(SOURCE.with_borrow(|s| s.raw_stream).0);
     }
 }
 
-fn scoped_writer() -> bun_sys::file::QuietWriter {
+fn scoped_writer() -> QuietWriter {
     #[cfg(not(any(debug_assertions, feature = "enable_logs")))]
     {
         compile_error!("scopedWriter() should only be called in debug mode");
@@ -1727,19 +1805,31 @@ pub fn err_fmt(formatter: impl fmt::Display) {
     err_generic!("{}", formatter);
 }
 
-// TODO(port): bun.deprecated.BufferedReader(4096, File.Reader) — exact type lives in bun_sys
-pub static mut BUFFERED_STDIN: bun_sys::deprecated::BufferedReader<4096, bun_sys::file::Reader> =
-    bun_sys::deprecated::BufferedReader {
-        unbuffered_reader: bun_sys::file::Reader {
-            context: bun_sys::file::ReaderContext {
-                #[cfg(windows)]
-                handle: Fd::INVALID, // set in WindowsStdio.init
-                #[cfg(not(windows))]
-                handle: Fd::stdin(),
-            },
-        },
-        buf: [0; 4096],
-    };
+// TODO(b0-genuine): bun_sys::deprecated::BufferedReader<4096, bun_sys::file::Reader>
+// is a higher-tier concrete type. The static moves to bun_sys (move-in pass) and
+// is re-exported back here via a `pub use`. bun_core only needs the `Fd::stdin()`
+// constant which already lives here.
+pub static mut BUFFERED_STDIN: BufferedStdin = BufferedStdin {
+    fd: {
+        #[cfg(windows)]
+        {
+            Fd::INVALID // set in WindowsStdio.init
+        }
+        #[cfg(not(windows))]
+        {
+            Fd::stdin()
+        }
+    },
+    buf: [0; 4096],
+};
+
+/// Opaque stand-in for `bun_sys::deprecated::BufferedReader<4096, file::Reader>`.
+/// SAFETY: erased; bun_sys casts back via `#[repr(C)]` layout match.
+#[repr(C)]
+pub struct BufferedStdin {
+    pub fd: Fd,
+    pub buf: [u8; 4096],
+}
 
 /// https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036
 pub const SYNCHRONIZED_START: &str = "\x1b[?2026h";

@@ -13,7 +13,9 @@
 use core::hash::Hash;
 
 use bun_alloc::AllocError;
-use bun_collections::{BabyList, HashMap, MultiArrayList};
+// TODO(b0): impls for bun_collections::{BabyList, HashMap, MultiArrayList} move to
+// bun_collections (move-in pass) — orphan rule lets the higher-tier crate impl
+// MapLike/ArrayLike for its own types.
 
 // ─── Key / Value ──────────────────────────────────────────────────────────────
 // Zig: `pub fn Key(comptime Map: type) type { return FieldType(Map.KV, "key").?; }`
@@ -190,26 +192,8 @@ const fn needs_allocator() -> bool {
 
 // ─── trait impls for concrete collections ─────────────────────────────────────
 // PORT NOTE: these did not exist in the Zig — they are the Rust replacement for
-// the `@hasField` / `@hasDecl` probes. Phase B may move them next to the
-// collection definitions in `bun_collections`.
-
-impl<K: Eq + Hash, V> MapLike for HashMap<K, V> {
-    type Key = K;
-    type Value = V;
-
-    fn ensure_unused_capacity(&mut self, additional: usize) -> Result<(), AllocError> {
-        self.reserve(additional);
-        Ok(())
-    }
-    fn put_assume_capacity(&mut self, key: K, value: V) {
-        // PERF(port): was assume_capacity
-        self.insert(key, value);
-    }
-    fn put_assume_capacity_no_clobber(&mut self, key: K, value: V) {
-        debug_assert!(!self.contains_key(&key));
-        self.insert(key, value);
-    }
-}
+// the `@hasField` / `@hasDecl` probes. Impls for HashMap/BabyList/MultiArrayList
+// live in `bun_collections` (move-in pass) to respect crate tiering.
 
 impl<T> ArrayLike for Vec<T> {
     type Elem = T;
@@ -232,44 +216,8 @@ impl<T> ArrayLike for Vec<T> {
     }
 }
 
-impl<T> ArrayLike for BabyList<T> {
-    type Elem = T;
-
-    fn ensure_unused_capacity(&mut self, additional: usize) -> Result<(), AllocError> {
-        // TODO(port): BabyList::reserve signature
-        self.reserve(additional);
-        Ok(())
-    }
-    fn append_assume_capacity(&mut self, elem: T) {
-        self.push(elem);
-    }
-    fn set_len_and_slice(&mut self, n: usize) -> &mut [T] {
-        // Zig: `map.len = @intCast(default.len); slice = map.slice();`
-        // SAFETY: capacity reserved above; caller immediately memcpy-fills.
-        unsafe { self.set_len(u32::try_from(n).unwrap()) };
-        self.slice_mut()
-    }
-}
-
-impl<T> ArrayLike for MultiArrayList<T> {
-    type Elem = T;
-
-    fn ensure_unused_capacity(&mut self, additional: usize) -> Result<(), AllocError> {
-        self.reserve(additional);
-        Ok(())
-    }
-    fn append_assume_capacity(&mut self, elem: T) {
-        // PERF(port): was appendAssumeCapacity
-        self.push(elem);
-    }
-    fn set_len_and_slice(&mut self, _n: usize) -> &mut [T] {
-        // SoA storage: there is no contiguous `&mut [T]`. The Zig took the
-        // per-element append path for this case (`@hasField "bytes"` arm).
-        // TODO(port): from_slice must special-case MultiArrayList and loop
-        // append_assume_capacity instead of calling this.
-        unreachable!("MultiArrayList has no contiguous element slice; use append loop")
-    }
-}
+// TODO(b0): ArrayLike impls for BabyList<T> and MultiArrayList<T> arrive via
+// move-in pass in bun_collections.
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

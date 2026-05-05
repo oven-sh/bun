@@ -593,12 +593,12 @@ impl RapidHash {
 // TODO(port): `std.Io.Writer.Error` has no Rust port yet. Using `bun_core::Error`
 // (interned tag) so callers can compare against `err!("WriteFailed")`. Revisit once
 // the writer error type lands.
-pub fn js_error_to_write_error(e: JsError) -> bun_core::Error {
+pub fn js_error_to_write_error(e: JsError) -> crate::Error {
     match e {
         // TODO: this might lose a JSTerminated, causing m_terminationException problems
-        JsError::Terminated => bun_core::err!("WriteFailed"),
+        JsError::Terminated => crate::err!("WriteFailed"),
         // TODO: this might lose a JSError, causing exception check problems
-        JsError::Thrown => bun_core::err!("WriteFailed"),
+        JsError::Thrown => crate::err!("WriteFailed"),
         // `bun.handleOom(error.OutOfMemory)` — panic-on-OOM wrapper fed a literal OOM,
         // i.e. unconditionally abort.
         JsError::OutOfMemory => bun_alloc::abort_on_oom(),

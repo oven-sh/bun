@@ -5,7 +5,7 @@ use bstr::BStr;
 use bun_core::fmt as bun_fmt;
 use bun_logger as logger;
 use bun_paths::{self, PathBuffer, MAX_PATH_BYTES};
-use bun_resolver::fs as Fs;
+use bun_fs as Fs;
 use bun_str::strings;
 use bun_wyhash::{self, Wyhash11};
 

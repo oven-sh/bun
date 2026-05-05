@@ -6,14 +6,13 @@
 use core::ffi::{c_int, c_void};
 use core::mem::offset_of;
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicPtr, Ordering};
 
-use bun_aio::Waker;
+// CYCLEBREAK(MOVE_DOWN): `Waker` moves from bun_aio (T3) into io (T2). The
+// `crate::waker` module is added by the move-in pass.
+use crate::waker::Waker;
 use bun_collections::TaggedPtr;
 use bun_sys::{self as sys, Fd};
-// TODO(port): `ReadFile`/`WriteFile` live under `src/runtime/webcore/blob/{read,write}_file.zig`;
-// confirm exact module path in Phase B.
-use bun_runtime::webcore::blob::read_file::ReadFile;
-use bun_runtime::webcore::blob::write_file::WriteFile;
 
 pub use crate::heap;
 pub use crate::open_for_writing::{open_for_writing, open_for_writing_impl};
@@ -626,6 +625,28 @@ impl Default for Poll {
 
 pub type Tag = PollableTag;
 
+/// CYCLEBREAK(vtable): dispatch for `Pollable` owners. The concrete owners
+/// (`ReadFile` / `WriteFile`) live in `bun_runtime::webcore::blob` (T6); io (T2)
+/// only knows the embedded `*mut Poll` and the tag. `bun_runtime` registers a
+/// static `PollOwnerVTable` per `PollableTag` into `POLLABLE_DISPATCH` at init.
+/// PERF(port): was inline switch (cold path — Bun.write / Bun.file().text() only).
+pub struct PollOwnerVTable {
+    /// `poll` points to the embedded `io_poll: Poll` field of the owning struct.
+    pub on_ready: unsafe fn(poll: *mut Poll),
+    pub on_io_error: unsafe fn(poll: *mut Poll, err: sys::Error),
+}
+
+/// Indexed by `PollableTag as usize`. Slot 0 (`Empty`) stays null.
+pub static POLLABLE_DISPATCH: [AtomicPtr<PollOwnerVTable>; 3] =
+    [const { AtomicPtr::new(core::ptr::null_mut()) }; 3];
+
+#[inline]
+fn pollable_vtable(tag: PollableTag) -> Option<&'static PollOwnerVTable> {
+    let p = POLLABLE_DISPATCH[tag as usize].load(Ordering::Relaxed);
+    // SAFETY: entries are &'static once written by bun_runtime::init().
+    if p.is_null() { None } else { Some(unsafe { &*p }) }
+}
+
 #[derive(enumset::EnumSetType)]
 pub enum Flags {
     // What are we asking the event loop about?
@@ -843,92 +864,62 @@ impl Poll {
 
         let pollable = Pollable::from(event.udata as u64);
         let tag = pollable.tag();
-        match tag {
-            // The waker is registered with udata=0 → tag=.empty. The wakeup
-            // exists only to unblock kevent() so the pending queue drains.
-            PollableTag::Empty => {}
-
-            PollableTag::ReadFile => {
-                let poll = pollable.poll();
-                // SAFETY: poll points to the `io_poll` field of a live `ReadFile`.
-                let this: &mut ReadFile = unsafe {
-                    &mut *(poll as *mut u8)
-                        .sub(offset_of!(ReadFile, io_poll))
-                        .cast::<ReadFile>()
-                };
-                if event.flags == libc::EV_ERROR {
-                    log!("error({}) = {}", event.ident, event.data);
-                    this.on_io_error(sys::Error::from_code(
-                        // SAFETY: kernel-provided errno value.
-                        unsafe { core::mem::transmute::<i32, sys::Errno>(event.data as i32) },
+        // The waker is registered with udata=0 → tag=.empty. The wakeup exists
+        // only to unblock kevent() so the pending queue drains.
+        if tag == PollableTag::Empty {
+            return;
+        }
+        let poll = pollable.poll();
+        // CYCLEBREAK(vtable): owner (ReadFile/WriteFile) is T6; dispatch via
+        // POLLABLE_DISPATCH. The container_of(io_poll) recovery moves to the
+        // vtable impl in bun_runtime.
+        let Some(vt) = pollable_vtable(tag) else {
+            debug_assert!(false, "POLLABLE_DISPATCH[{}] unregistered", tag as usize);
+            return;
+        };
+        if event.flags == libc::EV_ERROR {
+            log!("error({}) = {}", event.ident, event.data);
+            // SAFETY: poll is the `io_poll` field of a live owner; vtable was
+            // registered by bun_runtime for this tag.
+            unsafe {
+                (vt.on_io_error)(
+                    poll,
+                    sys::Error::from_code(
+                        core::mem::transmute::<i32, sys::Errno>(event.data as i32),
                         sys::Tag::Kevent,
-                    ));
-                } else {
-                    log!("ready({}) = {}", event.ident, event.data);
-                    this.on_ready();
-                }
-            }
-            PollableTag::WriteFile => {
-                let poll = pollable.poll();
-                // SAFETY: poll points to the `io_poll` field of a live `WriteFile`.
-                let this: &mut WriteFile = unsafe {
-                    &mut *(poll as *mut u8)
-                        .sub(offset_of!(WriteFile, io_poll))
-                        .cast::<WriteFile>()
-                };
-                if event.flags == libc::EV_ERROR {
-                    log!("error({}) = {}", event.ident, event.data);
-                    this.on_io_error(sys::Error::from_code(
-                        // SAFETY: kernel-provided errno value.
-                        unsafe { core::mem::transmute::<i32, sys::Errno>(event.data as i32) },
-                        sys::Tag::Kevent,
-                    ));
-                } else {
-                    log!("ready({}) = {}", event.ident, event.data);
-                    this.on_ready();
-                }
-            }
+                    ),
+                )
+            };
+        } else {
+            log!("ready({}) = {}", event.ident, event.data);
+            // SAFETY: as above.
+            unsafe { (vt.on_ready)(poll) };
         }
     }
 
     #[cfg(target_os = "linux")]
     pub fn on_update_epoll(poll: *mut Poll, tag: PollableTag, event: linux::epoll_event) {
-        match tag {
-            // ignore empty tags. This case should be unreachable in practice
-            PollableTag::Empty => {}
-
-            PollableTag::ReadFile => {
-                // SAFETY: poll points to the `io_poll` field of a live `ReadFile`.
-                let this: &mut ReadFile = unsafe {
-                    &mut *(poll as *mut u8)
-                        .sub(offset_of!(ReadFile, io_poll))
-                        .cast::<ReadFile>()
-                };
-                if event.events & linux::EPOLL_ERR != 0 {
-                    let errno = sys::get_errno(event.events as isize);
-                    log!("error() = {}", <&'static str>::from(errno));
-                    this.on_io_error(sys::Error::from_code(errno, sys::Tag::EpollCtl));
-                } else {
-                    log!("ready()");
-                    this.on_ready();
-                }
-            }
-            PollableTag::WriteFile => {
-                // SAFETY: poll points to the `io_poll` field of a live `WriteFile`.
-                let this: &mut WriteFile = unsafe {
-                    &mut *(poll as *mut u8)
-                        .sub(offset_of!(WriteFile, io_poll))
-                        .cast::<WriteFile>()
-                };
-                if event.events & linux::EPOLL_ERR != 0 {
-                    let errno = sys::get_errno(event.events as isize);
-                    log!("error() = {}", <&'static str>::from(errno));
-                    this.on_io_error(sys::Error::from_code(errno, sys::Tag::EpollCtl));
-                } else {
-                    log!("ready()");
-                    this.on_ready();
-                }
-            }
+        // ignore empty tags. This case should be unreachable in practice
+        if tag == PollableTag::Empty {
+            return;
+        }
+        // CYCLEBREAK(vtable): owner (ReadFile/WriteFile) is T6; dispatch via
+        // POLLABLE_DISPATCH. The container_of(io_poll) recovery moves to the
+        // vtable impl in bun_runtime.
+        let Some(vt) = pollable_vtable(tag) else {
+            debug_assert!(false, "POLLABLE_DISPATCH[{}] unregistered", tag as usize);
+            return;
+        };
+        if event.events & linux::EPOLL_ERR != 0 {
+            let errno = sys::get_errno(event.events as isize);
+            log!("error() = {}", <&'static str>::from(errno));
+            // SAFETY: poll is the `io_poll` field of a live owner; vtable was
+            // registered by bun_runtime for this tag.
+            unsafe { (vt.on_io_error)(poll, sys::Error::from_code(errno, sys::Tag::EpollCtl)) };
+        } else {
+            log!("ready()");
+            // SAFETY: as above.
+            unsafe { (vt.on_ready)(poll) };
         }
     }
 
@@ -1018,6 +1009,175 @@ impl Poll {
 }
 
 pub const RETRY: sys::Errno = sys::Errno::AGAIN;
+
+// ─── Cycle-break: opaque upward types (CYCLEBREAK.md §io) ─────────────────────
+// io (T2) must not name bun_aio (T3) / bun_jsc (T6) / bun_runtime (T6) / bun_uws
+// types directly. These vtable + opaque-handle definitions let higher tiers
+// register concrete impls at init; io calls through them.
+
+/// Opaque event-loop handle. Concrete repr is `bun_jsc::EventLoopHandle` (T6);
+/// io only stores it and passes it through `FilePollVTable` calls.
+/// CYCLEBREAK(forward-decl): pointer-sized opaque newtype.
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+pub struct EventLoopHandle(pub *mut c_void);
+
+impl EventLoopHandle {
+    /// Identity; kept so existing `EventLoopHandle::init(x)` call sites compile.
+    #[inline]
+    pub fn init(h: EventLoopHandle) -> EventLoopHandle {
+        h
+    }
+    /// Extract the underlying uws/uv loop pointer. Routes through the FilePoll
+    /// vtable since only T3+ knows the EventLoopHandle layout.
+    #[inline]
+    pub fn loop_(self) -> *mut c_void {
+        // SAFETY: FILE_POLL_VTABLE is set by bun_runtime::init() before any io path runs.
+        unsafe { (file_poll_vtable().event_loop_to_loop)(self) }
+    }
+}
+
+/// Opaque pointer to a `bun_aio::FilePoll` (T3). Stored in `PollOrFd::Poll`.
+pub type FilePollPtr = *mut c_void;
+
+/// Subset of `bun_aio::FilePoll::Flags` that io inspects.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum FilePollFlag {
+    PollWritable,
+    Nonblocking,
+    Hup,
+    WasEverRegistered,
+}
+
+/// Which edge to register on (mirrors `bun_aio::Pollable::{Readable,Writable}`
+/// with `bun_aio::PollMode::Dispatch`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum FilePollKind {
+    Readable,
+    Writable,
+}
+
+/// CYCLEBREAK(vtable): manual vtable for `bun_aio::FilePoll`. The static
+/// instance is provided by `bun_aio` (move-in pass) and written into
+/// `FILE_POLL_VTABLE` at init. PERF(port): was direct field access / inline
+/// calls — cold path (per-register, not per-tick).
+pub struct FilePollVTable {
+    /// Allocate + init a FilePoll. `owner` is the type-erased `*mut Self` of the
+    /// PipeReader/PipeWriter; the concrete owner-tag mapping is aio's concern.
+    pub init: unsafe fn(ev: EventLoopHandle, fd: Fd, owner: *mut c_void) -> FilePollPtr,
+    pub fd: unsafe fn(FilePollPtr) -> Fd,
+    pub set_owner: unsafe fn(FilePollPtr, owner: *mut c_void),
+    pub deinit_force_unregister: unsafe fn(FilePollPtr),
+    /// Register for `kind` with `PollMode::Dispatch` on `loop_` (opaque uws/uv loop).
+    pub register: unsafe fn(FilePollPtr, loop_: *mut c_void, kind: FilePollKind, fd: Fd) -> sys::Result<()>,
+    pub unregister: unsafe fn(FilePollPtr, loop_: *mut c_void, force_unregister: bool) -> sys::Result<()>,
+    pub has_flag: unsafe fn(FilePollPtr, FilePollFlag) -> bool,
+    pub file_type: unsafe fn(FilePollPtr) -> crate::pipes::FileType,
+    pub is_registered: unsafe fn(FilePollPtr) -> bool,
+    pub is_active: unsafe fn(FilePollPtr) -> bool,
+    pub can_enable_keeping_process_alive: unsafe fn(FilePollPtr) -> bool,
+    pub enable_keeping_process_alive: unsafe fn(FilePollPtr, ev: EventLoopHandle),
+    pub disable_keeping_process_alive: unsafe fn(FilePollPtr, ev: EventLoopHandle),
+    /// Extract the uws/uv `*mut Loop` from an `EventLoopHandle`.
+    pub event_loop_to_loop: unsafe fn(EventLoopHandle) -> *mut c_void,
+}
+
+/// Written once by `bun_runtime::init()` (or `bun_aio` ctor). Never null at use.
+pub static FILE_POLL_VTABLE: AtomicPtr<FilePollVTable> = AtomicPtr::new(core::ptr::null_mut());
+
+#[inline]
+pub fn file_poll_vtable() -> &'static FilePollVTable {
+    // SAFETY: bun_runtime::init() sets this before any io path runs.
+    unsafe { &*FILE_POLL_VTABLE.load(Ordering::Relaxed) }
+}
+
+/// Thin method-style wrapper over `FilePollPtr` so PipeReader/PipeWriter call
+/// sites read like the original `bun_aio::FilePoll` API.
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+pub struct FilePoll(pub FilePollPtr);
+
+impl FilePoll {
+    #[inline]
+    pub fn init<T>(ev: EventLoopHandle, fd: Fd, _flags: T, owner: *mut c_void) -> FilePoll {
+        // SAFETY: vtable registered at init; args forwarded opaquely.
+        FilePoll(unsafe { (file_poll_vtable().init)(ev, fd, owner) })
+    }
+    #[inline]
+    pub fn as_ptr(self) -> FilePollPtr {
+        self.0
+    }
+    #[inline]
+    pub fn fd(self) -> Fd {
+        unsafe { (file_poll_vtable().fd)(self.0) }
+    }
+    #[inline]
+    pub fn set_owner(self, owner: *mut c_void) {
+        unsafe { (file_poll_vtable().set_owner)(self.0, owner) }
+    }
+    #[inline]
+    pub fn deinit_force_unregister(self) {
+        unsafe { (file_poll_vtable().deinit_force_unregister)(self.0) }
+    }
+    #[inline]
+    pub fn unregister(self, loop_: *mut c_void, force: bool) -> sys::Result<()> {
+        unsafe { (file_poll_vtable().unregister)(self.0, loop_, force) }
+    }
+    #[inline]
+    pub fn register_with_fd(self, loop_: *mut c_void, kind: FilePollKind, fd: Fd) -> sys::Result<()> {
+        unsafe { (file_poll_vtable().register)(self.0, loop_, kind, fd) }
+    }
+    #[inline]
+    pub fn has_flag(self, f: FilePollFlag) -> bool {
+        unsafe { (file_poll_vtable().has_flag)(self.0, f) }
+    }
+    #[inline]
+    pub fn file_type(self) -> crate::pipes::FileType {
+        unsafe { (file_poll_vtable().file_type)(self.0) }
+    }
+    #[inline]
+    pub fn is_registered(self) -> bool {
+        unsafe { (file_poll_vtable().is_registered)(self.0) }
+    }
+    #[inline]
+    pub fn is_active(self) -> bool {
+        unsafe { (file_poll_vtable().is_active)(self.0) }
+    }
+    #[inline]
+    pub fn can_enable_keeping_process_alive(self) -> bool {
+        unsafe { (file_poll_vtable().can_enable_keeping_process_alive)(self.0) }
+    }
+    #[inline]
+    pub fn enable_keeping_process_alive(self, ev: EventLoopHandle) {
+        unsafe { (file_poll_vtable().enable_keeping_process_alive)(self.0, ev) }
+    }
+    #[inline]
+    pub fn disable_keeping_process_alive(self, ev: EventLoopHandle) {
+        unsafe { (file_poll_vtable().disable_keeping_process_alive)(self.0, ev) }
+    }
+    #[inline]
+    pub fn set_keeping_process_alive(self, ev: EventLoopHandle, value: bool) {
+        if value {
+            self.enable_keeping_process_alive(ev)
+        } else {
+            self.disable_keeping_process_alive(ev)
+        }
+    }
+}
+
+/// CYCLEBREAK(hook): `bun_jsc::VirtualMachine::get().uv_loop()` for the
+/// Windows-only `Source__setRawModeStdin` C export. `bun_runtime` writes the
+/// fn-ptr at init; null on POSIX (never called there).
+pub static UV_LOOP_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+/// CYCLEBREAK(TYPE_ONLY): moved from `bun_runtime::webcore::PathOrFileDescriptor`.
+/// Owned here so `open_for_writing` has no upward dep; runtime re-exports it.
+pub enum PathOrFileDescriptor {
+    Path(bun_str::PathString),
+    Fd(Fd),
+}
 
 // ─── re-exports ───────────────────────────────────────────────────────────────
 

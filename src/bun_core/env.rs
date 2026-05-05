@@ -93,7 +93,8 @@ pub const ENABLE_TINYCC: bool = build_options::ENABLE_TINYCC;
 pub const CODEGEN_PATH: &[u8] = build_options::CODEGEN_PATH;
 pub const CODEGEN_EMBED: bool = build_options::CODEGEN_EMBED;
 
-pub const VERSION: bun_semver::Version = build_options::VERSION;
+// TYPE_ONLY: bun_semver::Version moves to bun_core (move-in pass).
+pub const VERSION: crate::Version = build_options::VERSION;
 pub const VERSION_STRING: &str = const_format::formatcp!(
     "{}.{}.{}",
     VERSION.major,

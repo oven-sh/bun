@@ -12,7 +12,6 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export
 use bun_collections::BabyList;
 use bun_core::{self, err, Error as AnyError, FeatureFlags};
-use bun_jsc::{self as jsc};
 use bun_logger::{self as logger, Loc, Location, Log, Msg, Source};
 use bun_options_types::ImportRecord;
 use bun_output::{declare_scope, scoped_log};
@@ -31,8 +30,10 @@ use crate::bundle_v2::{
 use crate::cache::fs::Entry as CacheEntry;
 use crate::html_scanner::HTMLScanner;
 use crate::options::{self, Loader};
-use bun_resolver::{self as _resolver, fs as Fs, node_fallbacks as NodeFallbackModules, Resolver};
-use bun_transpiler::Transpiler;
+use bun_fs as Fs;
+use bun_node_fallbacks as NodeFallbackModules;
+use bun_resolver::{self as _resolver, Resolver};
+use crate::transpiler::Transpiler;
 
 declare_scope!(ParseTask, hidden);
 
@@ -887,7 +888,7 @@ fn get_ast(
                 write!(
                     &mut buf,
                     "{}/{}{}",
-                    bun_bake::DevServer::ASSET_PREFIX,
+                    crate::bake_types::ASSET_PREFIX,
                     bun_core::fmt::bytes_to_hex_lower(&content_hash.to_ne_bytes()),
                     bstr::BStr::new(bun_paths::extension(source.path.text)),
                 )?;
@@ -955,14 +956,14 @@ fn get_code_for_parse_task_without_plugins(
                     if let Some(f) = &ctx.framework {
                         if let Some(file) = f.built_in_modules.get(file_path.text) {
                             match file {
-                                bun_bake::BuiltInModule::Code(code) => {
+                                crate::bake_types::BuiltInModule::Code(code) => {
                                     break 'brk Ok(CacheEntry {
                                         contents: code,
                                         fd: Fd::INVALID,
                                         ..Default::default()
                                     });
                                 }
-                                bun_bake::BuiltInModule::Import(path) => {
+                                crate::bake_types::BuiltInModule::Import(path) => {
                                     *file_path = Fs::Path::init(path);
                                     break 'lookup_builtin;
                                 }
@@ -1385,7 +1386,8 @@ pub extern "C" fn OnBeforeParsePlugin__isDone(this: *mut OnBeforeParsePlugin<'_>
 impl<'a> OnBeforeParsePlugin<'a> {
     pub fn run(
         &mut self,
-        plugin: &jsc::api::JSBundler::Plugin,
+        // TODO(b0): jsc::api arrives from move-in (TYPE_ONLY → bundler)
+        plugin: &crate::api::JSBundler::Plugin,
         from_plugin: &mut bool,
     ) -> core::result::Result<CacheEntry, AnyError> {
         let mut args = OnBeforeParseArguments {
@@ -1986,7 +1988,7 @@ pub fn run_from_thread_pool(this: &mut ParseTask) {
     match unsafe { &*worker.ctx }.loop_() {
         EventLoop::Js(jsc_event_loop) => {
             jsc_event_loop
-                .enqueue_task_concurrent(jsc::ConcurrentTask::from_callback(result, on_complete));
+                .enqueue_task_concurrent(bun_event_loop::ConcurrentTask::from_callback(result, on_complete));
         }
         EventLoop::Mini(mini) => {
             mini.enqueue_task_concurrent_with_extra_ctx::<Result, BundleV2>(

@@ -464,10 +464,11 @@ pub fn post_process_js_chunk(
 
     match c.options.output_format {
         options::OutputFormat::InternalBakeDev => {
-            let start = bun_bake::get_hmr_runtime(if c.options.target.is_server_side() {
-                bun_bake::HmrRuntimeSide::Server
+            // TODO(b0): get_hmr_runtime / HmrRuntimeSide arrive from move-in (MOVE_DOWN bake → bundler)
+            let start = crate::get_hmr_runtime(if c.options.target.is_server_side() {
+                crate::HmrRuntimeSide::Server
             } else {
-                bun_bake::HmrRuntimeSide::Client
+                crate::HmrRuntimeSide::Client
             });
             j.push_static(start.code);
             line_offset.advance(start.code);

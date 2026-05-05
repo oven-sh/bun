@@ -571,7 +571,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     source_map_index: None,
                     bytecode_index: None,
                     module_info_index: None,
-                    side: Some(bun_bake::Side::Client),
+                    side: Some(crate::bake_types::Side::Client),
                     entry_point_index: None,
                     referenced_css_chunks: Box::default(),
                     bake_extra: OutputFile::BakeExtra::default(),
@@ -706,13 +706,13 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             }
 
             // Compute side early so it can be used for bytecode, module_info, and main chunk output files
-            let side: bun_bake::Side =
+            let side: crate::bake_types::Side =
                 if matches!(chunk.content, Chunk::Content::Css(_)) || chunk.flags.is_browser_chunk_from_server_build {
-                    bun_bake::Side::Client
+                    crate::bake_types::Side::Client
                 } else {
                     match c.graph.ast.items_target()[chunk.entry_point.source_index as usize] {
-                        options::Target::Browser => bun_bake::Side::Client,
-                        _ => bun_bake::Side::Server,
+                        options::Target::Browser => crate::bake_types::Side::Client,
+                        _ => crate::bake_types::Side::Server,
                     }
                 };
 
@@ -724,9 +724,18 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         Loader::Js
                     };
 
-                    if matches!(chunk.content, Chunk::Content::Javascript(_)) && loader.is_javascript_like() {
-                        bun_jsc::VirtualMachine::set_is_bundler_thread_for_bytecode_cache(true);
-                        bun_jsc::initialize(false);
+                    // CYCLEBREAK GENUINE: jsc::{VirtualMachine, initialize, CachedBytecode}
+                    // → AtomicPtr hook (BYTECODE_HOOK). Null = bytecode disabled.
+                    let bytecode_vt = crate::dispatch::BYTECODE_HOOK
+                        .load(core::sync::atomic::Ordering::Acquire);
+                    if matches!(chunk.content, Chunk::Content::Javascript(_))
+                        && loader.is_javascript_like()
+                        && !bytecode_vt.is_null()
+                    {
+                        // SAFETY: hook registered once at runtime init, never freed.
+                        let bytecode_vt = unsafe { &*bytecode_vt };
+                        unsafe { (bytecode_vt.set_bundler_thread)(true) };
+                        unsafe { (bytecode_vt.initialize_jsc)(false) };
                         let mut fdpath = bun_paths::PathBuffer::uninit();
                         // For --compile builds, the bytecode URL must match the module name
                         // that will be used at runtime. The module name is:
@@ -753,11 +762,13 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         source_provider_url.ref_();
                         let _spu_guard = scopeguard::guard((), |_| source_provider_url.deref());
 
-                        if let Some(result) = bun_jsc::CachedBytecode::generate(
-                            c.options.output_format,
-                            &code_result.buffer,
-                            &source_provider_url,
-                        ) {
+                        if let Some(result) = unsafe {
+                            (bytecode_vt.generate)(
+                                c.options.output_format,
+                                &code_result.buffer,
+                                source_provider_url.as_bytes(),
+                            )
+                        } {
                             let (bytecode, cached_bytecode) = result;
                             let source_provider_url_str = source_provider_url.to_utf8();
                             debug!(
@@ -939,7 +950,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     let mut extra = OutputFile::BakeExtra::default();
                     extra.bake_is_runtime =
                         chunk.files_with_parts_in_chunk.contains(Index::runtime().get());
-                    if output_kind == options::OutputKind::EntryPoint && side == bun_bake::Side::Server {
+                    if output_kind == options::OutputKind::EntryPoint && side == crate::bake_types::Side::Server {
                         extra.is_route = true;
                         extra.fully_static =
                             !static_route_visitor.has_transitive_use_client(chunk.entry_point.source_index);

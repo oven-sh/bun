@@ -14,9 +14,67 @@ use core::fmt;
 use bun_alloc::AllocError;
 use bun_core::Output;
 use bun_core::StringBuilder;
-use bun_js_parser::Index; // bun.ast.Index
-use bun_options_types::ImportKind;
-use bun_resolver::fs;
+use bun_paths as fs; // MOVE_DOWN: fs::Path (bun_resolver::fs → bun_paths, T1)
+
+// TYPE_ONLY (CYCLEBREAK §logger): moved-in locally so the import drop doesn't dangle.
+// Canonical definition is here now; bun_js_parser re-exports `bun_logger::Index`.
+#[repr(transparent)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Index(pub u32);
+impl Index {
+    pub const fn source(i: u32) -> Self {
+        Index(i)
+    }
+    pub const fn invalid() -> Self {
+        Index(u32::MAX)
+    }
+    pub const fn is_valid(self) -> bool {
+        self.0 != u32::MAX
+    }
+}
+
+// TYPE_ONLY moved down from bun_options_types (T3→T2). Canonical definition lives here;
+// move-in: bun_options_types re-exports `pub use bun_logger::ImportKind`.
+// Variants mirror src/options_types/import_record.zig:1-25 exactly (discriminants matter
+// for serialization). Label tables stay in options_types (they pull in EnumArray).
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub enum ImportKind {
+    /// An entry point provided to `bun run` or `bun`
+    EntryPointRun = 0,
+    /// An entry point provided to `bun build` or `Bun.build`
+    EntryPointBuild = 1,
+    /// An ES6 import or re-export statement
+    #[default]
+    Stmt = 2,
+    /// A call to "require()"
+    Require = 3,
+    /// An "import()" expression with a string argument
+    Dynamic = 4,
+    /// A call to "require.resolve()"
+    RequireResolve = 5,
+    /// A CSS "@import" rule
+    At = 6,
+    /// A CSS "@import" rule with import conditions
+    AtConditional = 7,
+    /// A CSS "url(...)" token
+    Url = 8,
+    /// A CSS "composes" property
+    Composes = 9,
+    HtmlManifest = 10,
+    Internal = 11,
+}
+
+// TODO(b0-move-in): bun_paths must define `PathContentsPair` (TYPE_ONLY from bun_resolver::fs).
+// Local mirror so init_file / init_recycled_file resolve until paths' move-in lands.
+#[allow(dead_code)]
+mod fs_ext {
+    pub struct PathContentsPair {
+        pub path: super::fs::Path,
+        pub contents: &'static [u8],
+    }
+}
+use fs_ext::PathContentsPair;
 use bun_schema::api;
 use bun_str::strings;
 
@@ -837,6 +895,31 @@ impl Default for Range {
     fn default() -> Self {
         Range { loc: Loc::EMPTY, len: 0 }
     }
+}
+
+/// CYCLEBREAK(b0) MOVE_DOWN: was `bun_js_parser::lexer::rangeOfIdentifier`.
+/// Moved into logger to break logger→js_parser. Mirrors lexer.zig:3113-3148.
+/// TODO(b0-move-in): full Unicode `isIdentifierStart/Continue` tables — currently
+/// ASCII + `#`/`\` only; non-ASCII identifiers get a Range with len up to the
+/// first non-ASCII byte (only affects error-highlight width, not correctness).
+pub fn range_of_identifier(contents: &[u8], loc: Loc) -> Range {
+    if loc.start < 0 || (loc.start as usize) >= contents.len() {
+        return Range::NONE;
+    }
+    let text = &contents[loc.start as usize..];
+    let mut i = 0usize;
+    if text.first() == Some(&b'#') {
+        i = 1;
+    }
+    let is_start = |c: u8| c.is_ascii_alphabetic() || c == b'_' || c == b'$' || c == b'\\';
+    let is_cont = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'$' || c == b'\\';
+    if i < text.len() && is_start(text[i]) {
+        i += 1;
+        while i < text.len() && is_cont(text[i]) {
+            i += 1;
+        }
+    }
+    Range { loc, len: i32::try_from(i).unwrap() }
 }
 
 impl Range {
@@ -1908,7 +1991,10 @@ impl Source {
     }
 
     pub fn range_of_identifier(&self, loc: Loc) -> Range {
-        bun_js_parser::lexer::range_of_identifier(self, loc)
+        // CYCLEBREAK(b0): MOVE_DOWN bun_js_parser::lexer::range_of_identifier → logger.
+        // Local impl mirrors src/js_parser/lexer.zig:range_of_identifier — scan from `loc`
+        // while bytes are JS identifier-part.
+        range_of_identifier(self.contents, loc)
     }
 
     pub fn is_web_assembly(&self) -> bool {
@@ -1925,7 +2011,7 @@ impl Source {
         Source { path, contents: b"", ..Default::default() }
     }
 
-    pub fn init_file(file: fs::PathContentsPair) -> Result<Source, bun_core::Error> {
+    pub fn init_file(file: PathContentsPair) -> Result<Source, bun_core::Error> {
         let mut source = Source {
             path: file.path,
             contents: file.contents,
@@ -1935,7 +2021,7 @@ impl Source {
         Ok(source)
     }
 
-    pub fn init_recycled_file(file: fs::PathContentsPair) -> Result<Source, bun_core::Error> {
+    pub fn init_recycled_file(file: PathContentsPair) -> Result<Source, bun_core::Error> {
         let mut source = Source {
             path: file.path,
             contents: file.contents,

@@ -17,7 +17,8 @@ pub trait OpenForWritingInput {
     ) -> bun_sys::Result<Fd>;
 }
 
-impl OpenForWritingInput for bun_runtime::webcore::PathOrFileDescriptor {
+// CYCLEBREAK(TYPE_ONLY): `PathOrFileDescriptor` moved into io (see crate root).
+impl OpenForWritingInput for crate::PathOrFileDescriptor {
     fn open_for_writing_result(
         &self,
         dir: Fd,
@@ -26,7 +27,7 @@ impl OpenForWritingInput for bun_runtime::webcore::PathOrFileDescriptor {
         is_nonblocking: &mut bool,
         _openat: &dyn Fn(Fd, &ZStr, i32, Mode) -> bun_sys::Result<Fd>,
     ) -> bun_sys::Result<Fd> {
-        use bun_runtime::webcore::PathOrFileDescriptor::*;
+        use crate::PathOrFileDescriptor::*;
         match self {
             Path(path) => {
                 *is_nonblocking = true;

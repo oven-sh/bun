@@ -4,7 +4,7 @@ use bun_alloc::Arena as Bump;
 use bun_core::{self, feature_flags, Global, Output};
 use bun_js_parser::{self as js_parser, ast as js_ast};
 use bun_logger as logger;
-use bun_resolver::fs as fs_mod;
+use bun_fs as fs_mod;
 use bun_str::{strings, MutableString, ZStr};
 use bun_sys::{self, Fd};
 

@@ -20,10 +20,73 @@ use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use std::io::Write as _;
 use std::time::Instant;
 
-use bun_sys::File;
-use bun_threading::Mutex;
+// MOVE_DOWN: bun_threading::Mutex → bun_core (move-in pass).
+use crate::Mutex;
 #[cfg(windows)]
-use bun_sys::windows;
+// MOVE_DOWN: bun_sys::windows → windows_sys (T0).
+use windows_sys as windows;
+
+// GENUINE: bun_sys::File — Progress only needs an opaque terminal handle with
+// stderr()/tty/ansi/handle()/write_fmt(). Break the cycle with a manual vtable
+// (CYCLEBREAK §Dispatch, cold path). bun_sys provides `PROGRESS_TERMINAL_VTABLE`.
+// PERF(port): was inline switch.
+#[derive(Clone, Copy)]
+pub struct File {
+    pub owner: *mut (),
+    pub vtable: &'static ProgressTerminalVTable,
+}
+pub struct ProgressTerminalVTable {
+    pub stderr: unsafe fn() -> File,
+    pub supports_ansi_escape_codes: unsafe fn(*mut ()) -> bool,
+    pub is_tty: unsafe fn(*mut ()) -> bool,
+    pub handle: unsafe fn(*mut ()) -> *mut (),
+    pub write_all: unsafe fn(*mut (), &[u8]) -> Result<(), crate::Error>,
+}
+impl File {
+    #[inline]
+    pub fn stderr() -> Self {
+        // SAFETY: vtable fn-ptr has no preconditions; sink installed at startup.
+        unsafe { (crate::output::output_sink().stderr)() }
+    }
+    #[inline]
+    pub fn supports_ansi_escape_codes(&self) -> bool {
+        unsafe { (self.vtable.supports_ansi_escape_codes)(self.owner) }
+    }
+    #[inline]
+    pub fn is_tty(&self) -> bool {
+        unsafe { (self.vtable.is_tty)(self.owner) }
+    }
+    #[inline]
+    pub fn handle(&self) -> *mut () {
+        unsafe { (self.vtable.handle)(self.owner) }
+    }
+    #[inline]
+    pub fn write_all(&self, bytes: &[u8]) -> Result<(), crate::Error> {
+        unsafe { (self.vtable.write_all)(self.owner, bytes) }
+    }
+    /// Compat shim for callers that used `bun_sys::File::write`; delegates to vtable.write_all.
+    #[inline]
+    pub fn write(&self, bytes: &[u8]) -> Result<usize, crate::Error> {
+        self.write_all(bytes).map(|_| bytes.len())
+    }
+    pub fn write_fmt(&self, args: core::fmt::Arguments<'_>) -> Result<(), crate::Error> {
+        struct Adapter<'a>(&'a File, Result<(), crate::Error>);
+        impl core::fmt::Write for Adapter<'_> {
+            fn write_str(&mut self, s: &str) -> core::fmt::Result {
+                match self.0.write_all(s.as_bytes()) {
+                    Ok(()) => Ok(()),
+                    Err(e) => {
+                        self.1 = Err(e);
+                        Err(core::fmt::Error)
+                    }
+                }
+            }
+        }
+        let mut a = Adapter(self, Ok(()));
+        let _ = core::fmt::write(&mut a, args);
+        a.1
+    }
+}
 
 const NS_PER_MS: u64 = 1_000_000;
 

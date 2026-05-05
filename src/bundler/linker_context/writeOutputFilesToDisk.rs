@@ -13,10 +13,10 @@ use crate::options::{self, Loader, OutputFile};
 use crate::{cheap_prefix_normalizer, BundleV2, Chunk};
 use crate::linker_context::{debug, LinkerContext, OutputFileListBuilder};
 
-// TODO(port): these live in bun_runtime::node in the Rust crate layout; the Zig
-// referenced them via `bun.jsc.Node.*` / `bun.api.node.*`.
-use bun_runtime::node::fs::NodeFS;
-use bun_runtime::node::{Buffer as NodeBuffer, PathLike, StringOrBuffer};
+// CYCLEBREAK MOVE_DOWN: write_file_with_path_buffer → bun_sys.
+// TODO(b0): bun_sys::{write_file_with_path_buffer, WriteFileArgs, ...} arrive from move-in.
+use bun_sys::{write_file_with_path_buffer, WriteFileArgs, WriteFileData, WriteFileEncoding, PathOrFileDescriptor};
+use crate::dispatch::BYTECODE_HOOK;
 
 pub fn write_output_files_to_disk(
     c: &mut LinkerContext,
@@ -234,22 +234,13 @@ pub fn write_output_files_to_disk(
                     code_result.buffer = buf.into();
                 }
 
-                match NodeFS::write_file_with_path_buffer(
+                match write_file_with_path_buffer(
                     &mut pathbuf,
-                    bun_runtime::node::fs::WriteFileArgs {
-                        data: StringOrBuffer::Buffer(NodeBuffer {
-                            buffer: bun_runtime::node::ArrayBuffer {
-                                ptr: output_source_map.as_ptr() as *mut u8,
-                                // TODO: handle > 4 GB files
-                                len: output_source_map.len() as u32,
-                                byte_len: output_source_map.len() as u32,
-                            },
-                        }),
-                        encoding: bun_runtime::node::Encoding::Buffer,
+                    WriteFileArgs {
+                        data: WriteFileData::Buffer { buffer: &output_source_map },
+                        encoding: WriteFileEncoding::Buffer,
                         dirfd: bun_sys::Fd::from_std_dir(&root_dir),
-                        file: bun_runtime::node::FileArg::Path(PathLike {
-                            string: PathString::init(&source_map_final_rel_path),
-                        }),
+                        file: PathOrFileDescriptor::Path(PathString::init(&source_map_final_rel_path)),
                         ..Default::default()
                     },
                 ) {
@@ -317,10 +308,14 @@ pub fn write_output_files_to_disk(
                     Loader::Js
                 };
 
-                if loader.is_javascript_like() {
-                    // TODO(port): thread-local/global flag on VirtualMachine
-                    bun_jsc::VirtualMachine::set_is_bundler_thread_for_bytecode_cache(true);
-                    bun_jsc::initialize(false);
+                // CYCLEBREAK GENUINE: jsc::{VirtualMachine, initialize, CachedBytecode}
+                // → AtomicPtr hook (BYTECODE_HOOK). Null = bytecode disabled.
+                let bytecode_vt = BYTECODE_HOOK.load(core::sync::atomic::Ordering::Acquire);
+                if loader.is_javascript_like() && !bytecode_vt.is_null() {
+                    // SAFETY: hook is registered once at runtime init and never freed.
+                    let bytecode_vt = unsafe { &*bytecode_vt };
+                    unsafe { (bytecode_vt.set_bundler_thread)(true) };
+                    unsafe { (bytecode_vt.initialize_jsc)(false) };
                     let mut fdpath = PathBuffer::uninit();
                     let mut source_provider_url = BunString::create_format(format_args!(
                         "{}{}",
@@ -330,11 +325,13 @@ pub fn write_output_files_to_disk(
                     source_provider_url.ref_();
                     // `defer source_provider_url.deref()` handled by Drop on BunString.
 
-                    if let Some(result) = bun_jsc::CachedBytecode::generate(
-                        c.options.output_format,
-                        &code_result.buffer,
-                        &mut source_provider_url,
-                    ) {
+                    if let Some(result) = unsafe {
+                        (bytecode_vt.generate)(
+                            c.options.output_format,
+                            &code_result.buffer,
+                            source_provider_url.as_bytes(),
+                        )
+                    } {
                         let source_provider_url_str = source_provider_url.to_utf8();
                         let (bytecode, cached_bytecode) = result;
                         debug!(
@@ -350,24 +347,16 @@ pub fn write_output_files_to_disk(
                             .copy_from_slice(bun_core::BYTECODE_EXTENSION.as_bytes());
                         // `defer cached_bytecode.deref()` — handled by Drop.
                         let _cached_bytecode = cached_bytecode;
-                        match NodeFS::write_file_with_path_buffer(
+                        match write_file_with_path_buffer(
                             &mut pathbuf,
-                            bun_runtime::node::fs::WriteFileArgs {
-                                data: StringOrBuffer::Buffer(NodeBuffer {
-                                    buffer: bun_runtime::node::ArrayBuffer {
-                                        ptr: bytecode.as_ptr() as *mut u8,
-                                        len: bytecode.len() as u32,
-                                        byte_len: bytecode.len() as u32,
-                                    },
-                                }),
-                                encoding: bun_runtime::node::Encoding::Buffer,
+                            WriteFileArgs {
+                                data: WriteFileData::Buffer { buffer: &bytecode },
+                                encoding: WriteFileEncoding::Buffer,
                                 mode: if chunk.flags.is_executable { 0o755 } else { 0o644 },
                                 dirfd: bun_sys::Fd::from_std_dir(&root_dir),
-                                file: bun_runtime::node::FileArg::Path(PathLike {
-                                    string: PathString::init(
-                                        &fdpath[..frp.len() + bun_core::BYTECODE_EXTENSION.len()],
-                                    ),
-                                }),
+                                file: PathOrFileDescriptor::Path(PathString::init(
+                                    &fdpath[..frp.len() + bun_core::BYTECODE_EXTENSION.len()],
+                                )),
                                 ..Default::default()
                             },
                         ) {
@@ -423,23 +412,14 @@ pub fn write_output_files_to_disk(
             break 'brk None;
         };
 
-        match NodeFS::write_file_with_path_buffer(
+        match write_file_with_path_buffer(
             &mut pathbuf,
-            bun_runtime::node::fs::WriteFileArgs {
-                data: StringOrBuffer::Buffer(NodeBuffer {
-                    buffer: bun_runtime::node::ArrayBuffer {
-                        ptr: code_result.buffer.as_ptr() as *mut u8,
-                        // TODO: handle > 4 GB files
-                        len: code_result.buffer.len() as u32,
-                        byte_len: code_result.buffer.len() as u32,
-                    },
-                }),
-                encoding: bun_runtime::node::Encoding::Buffer,
+            WriteFileArgs {
+                data: WriteFileData::Buffer { buffer: &code_result.buffer },
+                encoding: WriteFileEncoding::Buffer,
                 mode: if chunk.flags.is_executable { 0o755 } else { 0o644 },
                 dirfd: bun_sys::Fd::from_std_dir(&root_dir),
-                file: bun_runtime::node::FileArg::Path(PathLike {
-                    string: PathString::init(rel_path),
-                }),
+                file: PathOrFileDescriptor::Path(PathString::init(rel_path)),
                 ..Default::default()
             },
         ) {
@@ -578,21 +558,13 @@ pub fn write_output_files_to_disk(
                 }
             }
 
-            match NodeFS::write_file_with_path_buffer(
+            match write_file_with_path_buffer(
                 &mut pathbuf,
-                bun_runtime::node::fs::WriteFileArgs {
-                    data: StringOrBuffer::Buffer(NodeBuffer {
-                        buffer: bun_runtime::node::ArrayBuffer {
-                            ptr: bytes.as_ptr() as *mut u8,
-                            len: bytes.len() as u32,
-                            byte_len: bytes.len() as u32,
-                        },
-                    }),
-                    encoding: bun_runtime::node::Encoding::Buffer,
+                WriteFileArgs {
+                    data: WriteFileData::Buffer { buffer: bytes },
+                    encoding: WriteFileEncoding::Buffer,
                     dirfd: bun_sys::Fd::from_std_dir(&root_dir),
-                    file: bun_runtime::node::FileArg::Path(PathLike {
-                        string: PathString::init(&src.dest_path),
-                    }),
+                    file: PathOrFileDescriptor::Path(PathString::init(&src.dest_path)),
                     ..Default::default()
                 },
             ) {

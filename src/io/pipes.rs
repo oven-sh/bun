@@ -1,11 +1,14 @@
 use core::ffi::c_void;
 
-use bun_aio::FilePoll;
 use bun_sys::Fd;
 
+// CYCLEBREAK: FilePoll is opaque here (concrete type lives in bun_aio, T3).
+use crate::{FilePoll, FilePollFlag};
+
 pub enum PollOrFd {
-    /// When it's a pipe/fifo
-    Poll(Box<FilePoll>),
+    /// When it's a pipe/fifo. Opaque `bun_aio::FilePoll` handle; ownership is
+    /// released via `FilePoll::deinit_force_unregister` (vtable), not `Drop`.
+    Poll(FilePoll),
 
     Fd(Fd),
     Closed,
@@ -13,10 +16,10 @@ pub enum PollOrFd {
 
 impl PollOrFd {
     // PORT NOTE: reshaped for borrowck — Zig took `*const PollOrFd` and mutated
-    // through the `*FilePoll` pointer; with `Box<FilePoll>` we need `&mut self`.
-    pub fn set_owner<T>(&mut self, owner: T) {
+    // through the `*FilePoll` pointer.
+    pub fn set_owner(&mut self, owner: *mut c_void) {
         if let PollOrFd::Poll(poll) = self {
-            poll.owner.set(owner);
+            poll.set_owner(owner);
         }
     }
 
@@ -24,15 +27,22 @@ impl PollOrFd {
         match self {
             PollOrFd::Closed => Fd::INVALID,
             PollOrFd::Fd(fd) => *fd,
-            PollOrFd::Poll(poll) => poll.fd,
+            PollOrFd::Poll(poll) => poll.fd(),
         }
     }
 
-    pub fn get_poll(&self) -> Option<&FilePoll> {
+    pub fn get_poll(&self) -> Option<FilePoll> {
         match self {
             PollOrFd::Closed => None,
             PollOrFd::Fd(_) => None,
-            PollOrFd::Poll(poll) => Some(poll),
+            PollOrFd::Poll(poll) => Some(*poll),
+        }
+    }
+
+    pub fn get_poll_mut(&mut self) -> Option<FilePoll> {
+        match self {
+            PollOrFd::Poll(poll) => Some(*poll),
+            _ => None,
         }
     }
 
@@ -67,14 +77,13 @@ impl PollOrFd {
             if let PollOrFd::Poll(poll) = old {
                 #[cfg(target_os = "macos")]
                 {
-                    // TODO(port): exact flag idents on FilePoll::flags (Zig: .poll_writable / .nonblocking)
-                    if poll.flags.contains(bun_aio::FilePollFlags::POLL_WRITABLE)
-                        && poll.flags.contains(bun_aio::FilePollFlags::NONBLOCKING)
+                    if poll.has_flag(FilePollFlag::PollWritable)
+                        && poll.has_flag(FilePollFlag::Nonblocking)
                     {
                         close_async = false;
                     }
                 }
-                // TODO(port): deinit_force_unregister consumes the Box (Zig: poll.deinitForceUnregister())
+                // Consumes the underlying allocation (Zig: poll.deinitForceUnregister()).
                 poll.deinit_force_unregister();
             }
         }
@@ -83,14 +92,16 @@ impl PollOrFd {
             *self = PollOrFd::Closed;
 
             // TODO: We should make this call compatible using bun.FD
+            // CYCLEBREAK(MOVE_DOWN): `Closer` moves from bun_aio (T3) into io;
+            // `crate::closer` is added by the move-in pass.
             #[cfg(windows)]
             {
-                bun_aio::Closer::close(fd, bun_sys::windows::libuv::Loop::get());
+                crate::closer::Closer::close(fd, bun_sys::windows::libuv::Loop::get());
             }
             #[cfg(not(windows))]
             {
                 if close_async && close_fd {
-                    bun_aio::Closer::close(fd, ());
+                    crate::closer::Closer::close(fd, ());
                 } else {
                     if close_fd {
                         let _ = fd.close_allowing_bad_file_descriptor(None);

@@ -7,7 +7,9 @@
 use core::mem::offset_of;
 
 use crate::BundleV2;
-use bun_jsc::{Task};
+// CYCLEBREAK hot-dispatch: Task is `(tag: u8, ptr: *mut ())` owned by bun_event_loop;
+// runtime owns the match-loop. See PORTING.md §Dispatch.
+use bun_event_loop::{ConcurrentTask, Task};
 
 pub use bun_js_parser::Ref;
 pub use bun_js_parser::Index;

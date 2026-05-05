@@ -5,7 +5,13 @@ use core::fmt::{self, Display, Formatter, Write as _};
 use core::ptr::NonNull;
 
 use crate::output as Output;
-use bun_str::strings;
+// MOVE_DOWN: bun_str::strings → bun_core (move-in pass).
+use crate::strings;
+// MOVE_DOWN: bun_js_parser::{js_printer, js_lexer} → bun_core (move-in pass).
+use crate::js_printer;
+
+/// SHA-512 digest length in bytes. Local constant to avoid bun_sha (T2) dependency.
+const SHA512_DIGEST: usize = 64;
 use strum::IntoStaticStr;
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -263,16 +269,16 @@ pub enum IntegrityFormatStyle {
 }
 
 pub struct IntegrityFormatter<const STYLE: IntegrityFormatStyle> {
-    pub bytes: [u8; bun_sha::SHA512::DIGEST],
+    pub bytes: [u8; SHA512_DIGEST],
 }
 
 impl<const STYLE: IntegrityFormatStyle> Display for IntegrityFormatter<STYLE> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         // TODO(port): std.base64.standard.Encoder.calcSize — compute exact len at const time.
-        const BUF_LEN: usize = (bun_sha::SHA512::DIGEST + 2) / 3 * 4;
+        const BUF_LEN: usize = (SHA512_DIGEST + 2) / 3 * 4;
         let mut buf = [0u8; BUF_LEN];
         let count = bun_simdutf::base64::encode(
-            &self.bytes[..bun_sha::SHA512::DIGEST],
+            &self.bytes[..SHA512_DIGEST],
             &mut buf,
             false,
         );
@@ -293,7 +299,7 @@ impl<const STYLE: IntegrityFormatStyle> Display for IntegrityFormatter<STYLE> {
 }
 
 pub fn integrity<const STYLE: IntegrityFormatStyle>(
-    bytes: [u8; bun_sha::SHA512::DIGEST],
+    bytes: [u8; SHA512_DIGEST],
 ) -> IntegrityFormatter<STYLE> {
     IntegrityFormatter { bytes }
 }
@@ -308,7 +314,7 @@ struct JSONFormatter<'a> {
 
 impl Display for JSONFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        bun_js_parser::js_printer::write_json_string(self.input, f, strings::Encoding::Latin1)
+        js_printer::write_json_string(self.input, f, strings::Encoding::Latin1)
     }
 }
 
@@ -331,9 +337,9 @@ impl Default for JSONFormatterUTF8Options {
 impl Display for JSONFormatterUTF8<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if self.opts.quote {
-            bun_js_parser::js_printer::write_json_string(self.input, f, strings::Encoding::Utf8)
+            js_printer::write_json_string(self.input, f, strings::Encoding::Utf8)
         } else {
-            bun_js_parser::js_printer::write_pre_quoted_string(
+            js_printer::write_pre_quoted_string(
                 self.input,
                 f,
                 b'"',
@@ -465,7 +471,7 @@ pub fn format_utf16_type_with_path_options(
                 let sep = match opts.path_sep {
                     PathSep::Windows => b'\\',
                     PathSep::Posix => b'/',
-                    PathSep::Auto => bun_paths::SEP,
+                    PathSep::Auto => crate::SEP,
                     PathSep::Any => ptr[i],
                 };
                 write_bytes(writer, &ptr[..i])?;
@@ -500,7 +506,7 @@ pub struct DebugUTF32PathFormatter<'a> {
 
 impl Display for DebugUTF32PathFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let mut path_buf = bun_paths::PathBuffer::uninit();
+        let mut path_buf = crate::PathBuffer::uninit();
         let result = bun_simdutf::convert::utf32::to_utf8_with_errors_le(self.path, path_buf.as_mut_slice());
         let converted: &[u8] = if result.is_successful() {
             &path_buf.as_slice()[..result.count]
@@ -544,7 +550,7 @@ impl Display for FormatUTF8<'_> {
                 let sep = match opts.path_sep {
                     PathSep::Windows => b'\\',
                     PathSep::Posix => b'/',
-                    PathSep::Auto => bun_paths::SEP,
+                    PathSep::Auto => crate::SEP,
                     PathSep::Any => ptr[i],
                 };
                 write_bytes(f, &ptr[..i])?;
@@ -593,7 +599,8 @@ pub type FormatOSPath<'a> = FormatUTF16<'a>;
 #[cfg(not(windows))]
 pub type FormatOSPath<'a> = FormatUTF8<'a>;
 
-pub fn fmt_os_path(buf: bun_paths::OSPathSlice<'_>, options: PathFormatOptions) -> FormatOSPath<'_> {
+// TYPE_ONLY: bun_paths::OSPathSlice → bun_core (move-in pass).
+pub fn fmt_os_path(buf: crate::OSPathSlice<'_>, options: PathFormatOptions) -> FormatOSPath<'_> {
     FormatOSPath { buf, path_fmt_opts: Some(options) }
 }
 
@@ -760,7 +767,7 @@ pub struct FormatValidIdentifier<'a> {
 
 impl Display for FormatValidIdentifier<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        use bun_js_parser::js_lexer;
+        use crate::js_lexer;
 
         let mut iterator = strings::CodepointIterator::init(self.name);
         let mut cursor = strings::CodepointIteratorCursor::default();
@@ -899,7 +906,7 @@ pub fn github_action(self_: &[u8]) -> GithubActionFormatter<'_> {
 pub fn quoted_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::Result {
     let remain = self_;
     if strings::contains_newline_or_non_ascii_or_quote(remain) {
-        bun_js_parser::js_printer::write_json_string(self_, writer, strings::Encoding::Utf8)
+        js_printer::write_json_string(self_, writer, strings::Encoding::Utf8)
     } else {
         writer.write_str("\"")?;
         write_bytes(writer, self_)?;
@@ -1202,7 +1209,7 @@ impl RedactedKeywords {
 
 impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
     fn fmt(&self, writer: &mut Formatter<'_>) -> fmt::Result {
-        use bun_js_parser::js_lexer;
+        use crate::js_lexer;
 
         let mut text = self.text;
         if self.opts.check_for_unhighlighted_write {
@@ -1849,13 +1856,13 @@ pub fn enum_tag_list<E: strum::VariantNames, const SEPARATOR: EnumTagListSeparat
 
 // TODO(port): `std.net.Address` — bun_core stays I/O-free; Phase B should accept a
 // bun_sys/bun_net Address type here. Logic preserved against a placeholder Display.
-pub fn format_ip(address: &impl Display, into: &mut [u8]) -> Result<&mut [u8], bun_core::Error> {
+pub fn format_ip(address: &impl Display, into: &mut [u8]) -> Result<&mut [u8], crate::Error> {
     // std.net.Address.format includes `:<port>` and square brackets (IPv6)
     //  while Node does neither.  This uses format then strips these to bring
     //  the result into conformance with Node.
     use std::io::Write;
     let mut cursor = std::io::Cursor::new(&mut into[..]);
-    write!(cursor, "{}", address).map_err(|_| bun_core::err!("NoSpaceLeft"))?;
+    write!(cursor, "{}", address).map_err(|_| crate::err!("NoSpaceLeft"))?;
     let written = cursor.position() as usize;
     let mut result = &mut into[..written];
 
@@ -2079,7 +2086,7 @@ impl<const PRECISION: usize> Display for TrimmedPrecisionFormatter<PRECISION> {
             write!(cursor, "{:.1$}", rem, PRECISION).expect("unreachable");
             let written = cursor.position() as usize;
             let formatted = &buf[2..written];
-            let trimmed = bun_str::strings::trim_right(formatted, b"0");
+            let trimmed = strings::trim_right(formatted, b"0");
             write!(f, ".{}", bstr::BStr::new(trimmed))?;
         }
         Ok(())
@@ -2358,7 +2365,8 @@ impl<'a> OutOfRangeValue for &'a [u8] {
     }
     fn type_name() -> &'static str { "[]const u8" }
 }
-impl OutOfRangeValue for bun_str::String {
+// MOVE_DOWN: bun_str::String → bun_alloc (T0). Re-import from there.
+impl OutOfRangeValue for bun_alloc::String {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, " Received {}", self)
     }
@@ -2412,7 +2420,7 @@ impl<T: OutOfRangeValue> Display for NewOutOfRangeFormatter<'_, T> {
 pub type DoubleOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, f64>;
 pub type IntOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, i64>;
 pub type StringOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, &'a [u8]>;
-pub type BunStringOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, bun_str::String>;
+pub type BunStringOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, bun_alloc::String>;
 
 pub struct OutOfRangeOptions<'a> {
     pub min: i64,

@@ -82,14 +82,17 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolLib::Task) {
         watcher_data: ParseTask::result::WatcherData::NONE,
     }));
 
+    // CYCLEBREAK GENUINE: jsc::EventLoopHandle → vtable. PERF(port): was inline switch.
+    // worker.ctx.event_loop() now returns crate::EventLoop (local enum over vtable handles);
+    // both arms enqueue via opaque handle.
     match worker.ctx.event_loop() {
-        bun_jsc::EventLoopHandle::Js(jsc_event_loop) => {
-            jsc_event_loop.enqueue_task_concurrent(ConcurrentTask::from_callback(
+        crate::EventLoop::Js(jsc_event_loop) => {
+            jsc_event_loop.enqueue_task_concurrent(bun_event_loop::ConcurrentTask::from_callback(
                 result,
                 ParseTask::on_complete,
             ));
         }
-        bun_jsc::EventLoopHandle::Mini(mini) => {
+        crate::EventLoop::Mini(mini) => {
             mini.enqueue_task_concurrent_with_extra_ctx::<ParseTask::Result, BundleV2>(
                 result,
                 BundleV2::on_parse_task_complete,

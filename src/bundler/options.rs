@@ -5,12 +5,13 @@ use bun_logger as logger;
 use bun_str::strings;
 use bun_core::{Output, Global};
 use bun_collections::{StringHashMap, StringArrayHashMap, ArrayHashMap, MultiArrayList};
-use bun_resolver::{self as resolver, fs as Fs, package_json::{MacroMap as MacroRemap, PackageJSON, ESModule::ConditionsMap}};
+use bun_fs as Fs;
+// TODO(b0-genuine): bun_resolver::package_json — same-tier (T5) mutual; revisit if resolver→bundler edge appears
+use bun_resolver::{self as resolver, package_json::{MacroMap as MacroRemap, PackageJSON, ESModule::ConditionsMap}};
 use bun_dotenv as DotEnv;
 use bun_url::URL;
 use bun_js_parser::runtime::Runtime;
 use bun_schema::api;
-use bun_jsc as jsc;
 use bun_analytics as analytics;
 use enum_map::{EnumMap, Enum};
 
@@ -474,11 +475,12 @@ impl Target {
         }
     }
 
-    pub fn bake_graph(self) -> bun_bake::Graph {
+    pub fn bake_graph(self) -> crate::bake_types::Graph {
+        // TODO(b0): bake::Graph arrives from move-in (TYPE_ONLY → bundler)
         match self {
-            Target::Browser => bun_bake::Graph::Client,
-            Target::BakeServerComponentsSsr => bun_bake::Graph::Ssr,
-            Target::BunMacro | Target::Bun | Target::Node => bun_bake::Graph::Server,
+            Target::Browser => crate::bake_types::Graph::Client,
+            Target::BakeServerComponentsSsr => crate::bake_types::Graph::Ssr,
+            Target::BunMacro | Target::Bun | Target::Node => crate::bake_types::Graph::Server,
         }
     }
 
@@ -927,7 +929,7 @@ impl Loader {
         obj.get(ext)
     }
 
-    pub fn side_effects(self) -> bun_resolver::SideEffects {
+    pub fn side_effects(self) -> bun_options_types::SideEffects {
         match self {
             Loader::Text
             | Loader::Json
@@ -936,8 +938,8 @@ impl Loader {
             | Loader::Yaml
             | Loader::Json5
             | Loader::File
-            | Loader::Md => bun_resolver::SideEffects::NoSideEffectsPureData,
-            _ => bun_resolver::SideEffects::HasSideEffects,
+            | Loader::Md => bun_options_types::SideEffects::NoSideEffectsPureData,
+            _ => bun_options_types::SideEffects::HasSideEffects,
         }
     }
 
@@ -965,8 +967,44 @@ impl Loader {
     }
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// CYCLEBREAK: jsc::VirtualMachine / jsc::WebCore::Blob are T6 GENUINE deps.
+// `normalize_specifier` and `get_loader_and_virtual_source` reach into VM
+// internals (origin, module_loader, ObjectURLRegistry) and are only called
+// from the runtime side. They take an opaque vtable now; runtime supplies the
+// static VmLoaderVTable instance (move-in pass).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Opaque erased blob handle. SAFETY: erased jsc::WebCore::Blob; bundler only
+/// stores/drops via vtable, never dereferences.
+pub type OpaqueBlob = *mut ();
+
+// PERF(port): was inline field access on jsc::VirtualMachine
+pub struct VmLoaderVTable {
+    pub origin_host: unsafe fn(*const ()) -> &'static [u8],
+    pub origin_path: unsafe fn(*const ()) -> &'static [u8],
+    pub loaders: unsafe fn(*const ()) -> *const StringArrayHashMap<Loader>,
+    pub eval_source: unsafe fn(*const ()) -> Option<*const logger::Source>,
+    pub main: unsafe fn(*const ()) -> &'static [u8],
+    pub read_dir_info_package_json: unsafe fn(*const (), &[u8]) -> Option<*const PackageJSON>,
+    pub is_blob_url: unsafe fn(&[u8]) -> bool,
+    pub resolve_blob: unsafe fn(&[u8]) -> Option<OpaqueBlob>,
+    pub blob_loader: unsafe fn(OpaqueBlob, *const ()) -> Option<Loader>,
+    pub blob_file_name: unsafe fn(OpaqueBlob) -> Option<&'static [u8]>,
+    pub blob_needs_read_file: unsafe fn(OpaqueBlob) -> bool,
+    pub blob_shared_view: unsafe fn(OpaqueBlob) -> &'static [u8],
+    pub blob_deinit: unsafe fn(OpaqueBlob),
+}
+
+pub struct VmLoaderCtx {
+    pub vm: *const (), // SAFETY: erased jsc::VirtualMachine
+    pub vtable: &'static VmLoaderVTable,
+}
+
+// TODO(b0-genuine): bun_jsc::VirtualMachine — body still references VM fields
+// directly; rewrite to go through `VmLoaderCtx` once runtime registers vtable.
 pub fn normalize_specifier<'a>(
-    jsc_vm: &jsc::VirtualMachine,
+    jsc_vm: &VmLoaderCtx,
     slice_: &'a [u8],
 ) -> (&'a [u8], &'a [u8], &'a [u8]) {
     let mut slice = slice_;
@@ -974,13 +1012,16 @@ pub fn normalize_specifier<'a>(
         return (slice, slice, b"");
     }
 
-    if slice.starts_with(jsc_vm.origin.host.as_ref()) {
-        slice = &slice[jsc_vm.origin.host.len()..];
+    // SAFETY: vtable returns borrows tied to jsc_vm.vm lifetime
+    let host = unsafe { (jsc_vm.vtable.origin_host)(jsc_vm.vm) };
+    let opath = unsafe { (jsc_vm.vtable.origin_path)(jsc_vm.vm) };
+    if slice.starts_with(host) {
+        slice = &slice[host.len()..];
     }
 
-    if jsc_vm.origin.path.len() > 1 {
-        if slice.starts_with(jsc_vm.origin.path.as_ref()) {
-            slice = &slice[jsc_vm.origin.path.len()..];
+    if opath.len() > 1 {
+        if slice.starts_with(opath) {
+            slice = &slice[opath.len()..];
         }
     }
 
@@ -1015,19 +1056,23 @@ pub struct LoaderResult<'a> {
 
 pub fn get_loader_and_virtual_source<'a>(
     specifier_str: &'a [u8],
-    jsc_vm: &'a jsc::VirtualMachine,
+    jsc_vm: &'a VmLoaderCtx,
     virtual_source_to_use: &'a mut Option<logger::Source>,
-    blob_to_deinit: &mut Option<jsc::WebCore::Blob>,
+    blob_to_deinit: &mut Option<OpaqueBlob>,
     type_attribute_str: Option<&[u8]>,
 ) -> Result<LoaderResult<'a>, GetLoaderAndVirtualSourceErr> {
+    let vt = jsc_vm.vtable;
     let (normalized_file_path_from_specifier, specifier, query) =
         normalize_specifier(jsc_vm, specifier_str);
     let mut path = Fs::Path::init(normalized_file_path_from_specifier);
 
-    let mut loader: Option<Loader> = path.loader(&jsc_vm.transpiler.options.loaders);
+    // SAFETY: vt.loaders returns a borrow tied to jsc_vm.vm
+    let mut loader: Option<Loader> = path.loader(unsafe { &*(vt.loaders)(jsc_vm.vm) });
     let mut virtual_source: Option<&'a logger::Source> = None;
 
-    if let Some(eval_source) = jsc_vm.module_loader.eval_source.as_ref() {
+    if let Some(eval_source) = unsafe { (vt.eval_source)(jsc_vm.vm) } {
+        // SAFETY: eval_source outlives jsc_vm
+        let eval_source: &'a logger::Source = unsafe { &*eval_source };
         if strings::ends_with(specifier, bun_paths::path_literal!("/[eval]")) {
             virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
@@ -1038,29 +1083,26 @@ pub fn get_loader_and_virtual_source<'a>(
         }
     }
 
-    if jsc::WebCore::ObjectURLRegistry::is_blob_url(specifier) {
-        if let Some(blob) =
-            jsc::WebCore::ObjectURLRegistry::singleton().resolve_and_dupe(&specifier[b"blob:".len()..])
-        {
+    if unsafe { (vt.is_blob_url)(specifier) } {
+        if let Some(blob) = unsafe { (vt.resolve_blob)(&specifier[b"blob:".len()..]) } {
             *blob_to_deinit = Some(blob);
-            let blob = blob_to_deinit.as_ref().unwrap();
-            loader = blob.get_loader(jsc_vm);
+            loader = unsafe { (vt.blob_loader)(blob, jsc_vm.vm) };
 
             // "file:" loader makes no sense for blobs
             // so let's default to tsx.
-            if let Some(filename) = blob.get_file_name() {
+            if let Some(filename) = unsafe { (vt.blob_file_name)(blob) } {
                 let current_path = Fs::Path::init(filename);
 
                 // Only treat it as a file if is a Bun.file()
-                if blob.needs_to_read_file() {
+                if unsafe { (vt.blob_needs_read_file)(blob) } {
                     path = current_path;
                 }
             }
 
-            if !blob.needs_to_read_file() {
+            if !unsafe { (vt.blob_needs_read_file)(blob) } {
                 *virtual_source_to_use = Some(logger::Source {
                     path: path.clone(),
-                    contents: blob.shared_view(),
+                    contents: unsafe { (vt.blob_shared_view)(blob) },
                     ..Default::default()
                 });
                 virtual_source = virtual_source_to_use.as_ref();
@@ -1079,17 +1121,14 @@ pub fn get_loader_and_virtual_source<'a>(
         }
     }
 
-    let is_main = strings::eql_long(specifier, &jsc_vm.main, true);
+    let is_main = strings::eql_long(specifier, unsafe { (vt.main)(jsc_vm.vm) }, true);
 
     let dir = path.name.dir.as_ref();
     // NOTE: we cannot trust `path.isFile()` since it's not always correct
     // NOTE: assume we may need a package.json when no loader is specified
     let is_js_like = loader.map(|l| l.is_js_like()).unwrap_or(true);
     let package_json: Option<&PackageJSON> = if is_js_like && bun_paths::is_absolute(dir) {
-        match jsc_vm.transpiler.resolver.read_dir_info(dir) {
-            Ok(Some(dir_info)) => dir_info.package_json.or(dir_info.enclosing_package_json),
-            _ => None,
-        }
+        unsafe { (vt.read_dir_info_package_json)(jsc_vm.vm, dir).map(|p| &*p) }
     } else {
         None
     };
@@ -1940,9 +1979,12 @@ pub struct BundleOptions<'a> {
     pub metafile_markdown_path: Box<[u8]>,
 
     /// Set when bake.DevServer is bundling.
-    pub dev_server: *const bun_bake::DevServer,
+    // SAFETY: erased bun_bake::DevServer (T6). bundler never dereferences fields
+    // directly — all access goes through crate::dispatch::DevServerVTable.
+    pub dev_server: *const (),
     /// Set when Bake is bundling. Affects module resolution.
-    pub framework: Option<&'a bun_bake::Framework>,
+    // TODO(b0): bake::Framework arrives from move-in (TYPE_ONLY → bundler)
+    pub framework: Option<&'a crate::bake_types::Framework>,
 
     pub serve_plugins: Option<Box<[Box<[u8]>]>>,
     pub bunfig_path: Box<[u8]>,

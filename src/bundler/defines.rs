@@ -5,7 +5,7 @@ use bun_js_parser as js_ast;
 use bun_js_parser::js_lexer;
 use bun_js_parser::Ref;
 use bun_logger as logger;
-use bun_resolver::fs;
+use bun_fs as fs;
 use bun_str::strings;
 
 use crate::defines_table as table;

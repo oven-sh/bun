@@ -1,13 +1,24 @@
 use core::ptr::NonNull;
 
-use bun_jsc::Subprocess;
+/// CYCLEBREAK(vtable): the owning subprocess lives in `bun_jsc::Subprocess`
+/// (T6); io (T2) stores it opaquely and calls back through this vtable when
+/// the byte budget overflows. `bun_runtime` provides the static instance.
+/// PERF(port): was inline switch (cold — fires once per maxBuffer overflow).
+pub struct MaxBufOwnerVTable {
+    /// Called when `remaining_bytes` drops below 0. `owner` is the erased
+    /// `*mut Subprocess`; `this` is the overflowing MaxBuf. Implementor must
+    /// determine which slot (`stderr_maxbuf` / `stdout_maxbuf`) `this` occupies,
+    /// call `MaxBuf::remove_from_subprocess` on it, then invoke
+    /// `Subprocess::on_max_buffer(kind)`.
+    pub on_overflow: unsafe fn(owner: NonNull<()>, this: NonNull<MaxBuf>),
+}
 
 /// Tracks remaining byte budget for a subprocess stdout/stderr pipe.
 /// Dual-owned by the `Subprocess` and the pipe reader; freed when both disown it.
 pub struct MaxBuf {
     /// `None` after subprocess finalize.
     // TODO(port): lifetime — raw backref to the owning Subprocess (BACKREF); not in LIFETIMES.tsv
-    pub owned_by_subprocess: Option<NonNull<Subprocess>>,
+    pub owned_by_subprocess: Option<(NonNull<()>, &'static MaxBufOwnerVTable)>,
     /// `false` after pipereader finalize.
     pub owned_by_reader: bool,
     /// If this goes negative, `on_max_buffer` is called on the subprocess.
@@ -23,7 +34,8 @@ pub struct MaxBuf {
 // ownership flags) and dropping destroy()/disowned().
 impl MaxBuf {
     pub fn create_for_subprocess(
-        owner: &mut Subprocess,
+        owner: NonNull<()>,
+        vtable: &'static MaxBufOwnerVTable,
         ptr: &mut Option<NonNull<MaxBuf>>,
         initial: Option<i64>,
     ) {
@@ -33,9 +45,8 @@ impl MaxBuf {
         };
         // SAFETY: `owner` outlives this MaxBuf's `owned_by_subprocess` slot — the Subprocess
         // clears it via `remove_from_subprocess` in its finalize path before being dropped.
-        let owner_nn = NonNull::from(&mut *owner);
         let maxbuf = Box::into_raw(Box::new(MaxBuf {
-            owned_by_subprocess: Some(owner_nn),
+            owned_by_subprocess: Some((owner, vtable)),
             owned_by_reader: false,
             remaining_bytes: initial,
         }));
@@ -107,21 +118,13 @@ impl MaxBuf {
         let delta = i64::try_from(bytes).unwrap_or(0);
         self.remaining_bytes = self.remaining_bytes.checked_sub(delta).unwrap_or(-1);
         if self.remaining_bytes < 0 {
-            if let Some(owner_nn) = self.owned_by_subprocess {
+            if let Some((owner_nn, vtable)) = self.owned_by_subprocess {
+                let this_nn = NonNull::from(&mut *self);
                 // SAFETY: `owned_by_subprocess` is cleared by the Subprocess before it is dropped
                 // (see `remove_from_subprocess`), so the pointer is valid while Some.
-                let owned_by = unsafe { &mut *owner_nn.as_ptr() };
-                let this_nn = NonNull::from(&mut *self);
-                // TODO(port): `Subprocess.{stderr_maxbuf, stdout_maxbuf}` field access + `on_max_buffer` method
-                if owned_by.stderr_maxbuf == Some(this_nn) {
-                    MaxBuf::remove_from_subprocess(&mut owned_by.stderr_maxbuf);
-                    owned_by.on_max_buffer(Kind::Stderr);
-                } else if owned_by.stdout_maxbuf == Some(this_nn) {
-                    MaxBuf::remove_from_subprocess(&mut owned_by.stdout_maxbuf);
-                    owned_by.on_max_buffer(Kind::Stdout);
-                } else {
-                    debug_assert!(false);
-                }
+                // CYCLEBREAK(vtable): the stderr/stdout slot lookup + on_max_buffer
+                // call moves to bun_runtime's `MaxBufOwnerVTable` impl.
+                unsafe { (vtable.on_overflow)(owner_nn, this_nn) };
             }
         }
     }
@@ -138,5 +141,5 @@ pub enum Kind {
 //   source:     src/io/MaxBuf.zig (86 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      manual dual-ownership via raw NonNull (BACKREF to Subprocess); LIFETIMES.tsv says caller fields are Option<Arc<MaxBuf>> — reconcile in Phase B; depends on bun_jsc::Subprocess fields stderr_maxbuf/stdout_maxbuf and on_max_buffer()
+//   notes:      manual dual-ownership via raw NonNull (BACKREF to Subprocess); LIFETIMES.tsv says caller fields are Option<Arc<MaxBuf>> — reconcile in Phase B; Subprocess access now via MaxBufOwnerVTable (CYCLEBREAK)
 // ──────────────────────────────────────────────────────────────────────────

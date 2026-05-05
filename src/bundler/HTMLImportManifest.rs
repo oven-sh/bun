@@ -42,8 +42,8 @@ use bun_str::strings;
 use crate::options::{self, Loader};
 use crate::{BundleV2, Chunk, Graph, LinkerGraph};
 
-// TODO(port): `bun.jsc.API.BuildArtifact.OutputKind` — exact crate path TBD in Phase B.
-use bun_jsc::api::build_artifact::OutputKind;
+// TODO(b0): jsc::api arrives from move-in (TYPE_ONLY → bundler)
+use crate::api::build_artifact::OutputKind;
 
 // TODO(port): lifetime — LIFETIMES.tsv has no rows for this file; classified as
 // BORROW_PARAM (transient formatter struct passed by value).

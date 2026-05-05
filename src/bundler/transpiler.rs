@@ -11,9 +11,9 @@ use bun_json as JSON;
 use bun_logger as logger;
 use bun_paths::{self, PathBuffer};
 use bun_perf::system_timer::Timer as SystemTimer;
-use bun_resolver::data_url::DataURL;
-use bun_resolver::fs as Fs;
-use bun_resolver::node_fallbacks as NodeFallbackModules;
+use bun_data_url::DataURL;
+use bun_fs as Fs;
+use bun_node_fallbacks as NodeFallbackModules;
 use bun_resolver::package_json::MacroMap as MacroRemap;
 use bun_resolver::{self as resolver, DebugLogs, Resolver};
 use bun_router::Router;
@@ -26,10 +26,14 @@ use crate::entry_points as EntryPoints;
 use crate::linker::Linker;
 pub use crate::options;
 
-// TODO(port): move to *_jsc — `MacroJSCtx`/`default_macro_js_value` are jsc-crate types
-// used as a field type/value in `ParseOptions`. Base crate should not depend on bundler_jsc;
-// Phase B should invert this (extension trait or generic ctx param). Not re-exported.
-use bun_bundler_jsc::plugin_runner::{default_macro_js_value, MacroJSCtx};
+// CYCLEBREAK FORWARD_DECL: bundler_jsc::plugin_runner::{MacroJSCtx, default_macro_js_value}.
+// SAFETY: erased MacroJSCtx — bundler stores/passes through but never dereferences;
+// the parser receives it and casts back on the runtime side.
+pub type MacroJSCtx = *mut ();
+#[inline]
+pub fn default_macro_js_value() -> MacroJSCtx {
+    core::ptr::null_mut()
+}
 
 pub use crate::entry_points;
 
@@ -42,7 +46,7 @@ pub struct ParseResult<'a> {
     pub empty: bool,
     pub pending_imports: resolver::PendingResolution::List,
 
-    pub runtime_transpiler_cache: Option<&'a mut bun_jsc::RuntimeTranspilerCache>,
+    pub runtime_transpiler_cache: Option<&'a mut crate::RuntimeTranspilerCache>,
 }
 
 pub enum AlreadyBundled {
@@ -733,7 +737,7 @@ impl<'a> Transpiler<'a> {
         source: &logger::Source,
         writer: W,
         source_map_context: Option<js_printer::SourceMapHandler>,
-        runtime_transpiler_cache: Option<&mut bun_jsc::RuntimeTranspilerCache>,
+        runtime_transpiler_cache: Option<&mut crate::RuntimeTranspilerCache>,
         module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
     ) -> Result<usize, Error> {
         // TODO(port): narrow error set
@@ -833,7 +837,7 @@ impl<'a> Transpiler<'a> {
         symbols: js_ast::Symbol::NestedList,
         source: &logger::Source,
         source_map_context: Option<js_printer::SourceMapHandler>,
-        runtime_transpiler_cache: Option<&mut bun_jsc::RuntimeTranspilerCache>,
+        runtime_transpiler_cache: Option<&mut crate::RuntimeTranspilerCache>,
         module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
     ) -> Result<usize, Error> {
         js_printer::print_ast::<W, ENABLE_SOURCE_MAP>(
@@ -948,7 +952,7 @@ pub struct ParseOptions<'a> {
     /// See: https://nodejs.org/api/packages.html#type
     pub module_type: options::ModuleType,
 
-    pub runtime_transpiler_cache: Option<&'a mut bun_jsc::RuntimeTranspilerCache>,
+    pub runtime_transpiler_cache: Option<&'a mut crate::RuntimeTranspilerCache>,
 
     pub keep_json_and_toml_as_one_statement: bool,
     pub allow_bytecode_cache: bool,

@@ -10,7 +10,21 @@ use crate::env::version_string;
 use crate::output as Output; // @import("./output.zig")
 
 use bun_alloc::{self as alloc, USE_MIMALLOC};
-use bun_str::ZStr;
+// MOVE_DOWN: bun_str::ZStr → bun_core (move-in pass).
+use crate::ZStr;
+
+// ──────────────────────────────────────────────────────────────────────────
+// Debug-hook registration (CYCLEBREAK §Debug-hook)
+// Low tier defines the hook; bun_runtime::init() writes the fn-ptr.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Set by `bun_crash_handler` at startup. No-op if null.
+pub static RESET_SEGV: core::sync::atomic::AtomicPtr<()> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+/// Set by `bun_runtime` (→ jsc::node::fs_events::close_and_wait). No-op if null.
+pub static FS_EVENTS_CLOSE_HOOK: core::sync::atomic::AtomicPtr<()> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
 // ──────────────────────────────────────────────────────────────────────────
 // Version strings
@@ -124,12 +138,12 @@ pub fn get_start_time() -> i128 {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(windows)]
-// TODO(port): move to bun_sys::windows
+// MOVE_DOWN: bun_sys::windows → windows_sys (T0).
 unsafe extern "system" {
     fn SetThreadDescription(
-        thread: bun_sys::windows::HANDLE,
+        thread: windows_sys::HANDLE,
         name: *const u16,
-    ) -> bun_sys::windows::HRESULT;
+    ) -> windows_sys::HRESULT;
 }
 
 pub fn set_thread_name(name: &ZStr) {
@@ -215,11 +229,12 @@ pub fn is_exiting() -> bool {
 pub fn exit(code: u32) -> ! {
     IS_EXITING.store(true, Ordering::Relaxed);
     // _ = @atomicRmw(usize, &bun.analytics.Features.exited, .Add, 1, .monotonic);
-    bun_analytics::features::EXITED.fetch_add(1, Ordering::Relaxed);
-    // TODO(port): verify `bun_analytics::features::EXITED: AtomicUsize` exists.
+    // MOVE_DOWN: bun_analytics::features → bun_core (move-in pass).
+    crate::features::EXITED.fetch_add(1, Ordering::Relaxed);
 
     // If we are crashing, allow the crash handler to finish it's work.
-    bun_crash_handler::sleep_forever_if_another_thread_is_crashing();
+    // MOVE_DOWN: bun_crash_handler::sleep_forever_if_another_thread_is_crashing → bun_core.
+    crate::sleep_forever_if_another_thread_is_crashing();
 
     #[cfg(debug_assertions)]
     {
@@ -240,7 +255,7 @@ pub fn exit(code: u32) -> ! {
     {
         Bun__onExit();
         // SAFETY: ExitProcess never returns.
-        unsafe { bun_sys::windows::kernel32::ExitProcess(code) }
+        unsafe { windows_sys::kernel32::ExitProcess(code) }
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     {
@@ -254,7 +269,10 @@ pub fn exit(code: u32) -> ! {
             };
         }
         // SAFETY: quick_exit is noreturn.
-        unsafe { bun_sys::c::quick_exit(code as i32) };
+        unsafe extern "C" {
+            fn quick_exit(code: c_int) -> !;
+        }
+        unsafe { quick_exit(code as c_int) };
         // SAFETY: abort is noreturn; unreachable fallback if quick_exit returns.
         #[allow(unreachable_code)]
         unsafe {
@@ -267,8 +285,12 @@ pub fn raise_ignoring_panic_handler(sig: crate::SignalCode) -> ! {
     Output::flush();
     Output::source::stdio::restore();
 
-    // clear segfault handler
-    bun_crash_handler::reset_segfault_handler();
+    // clear segfault handler — via debug-hook (CYCLEBREAK pattern 3).
+    // SAFETY: hook is either null (no-op) or a valid `fn()` written by crash_handler init.
+    let hook = RESET_SEGV.load(Ordering::Relaxed);
+    if !hook.is_null() {
+        unsafe { core::mem::transmute::<*mut (), fn()>(hook)() };
+    }
 
     // clear signal handler
     #[cfg(not(windows))]
@@ -326,23 +348,23 @@ pub fn crash() -> ! {
     exit(1);
 }
 
+// TODO(b0-genuine): BunInfo::generate depends on bun_analytics::generate_header::Platform,
+// bun_js_parser::Expr, and bun_json::to_ast — all higher-tier. The struct + generate()
+// move to bun_runtime (move-in pass); only the version constant is needed here.
 pub struct BunInfo {
     pub bun_version: &'static [u8],
-    pub platform: bun_analytics::generate_header::generate_platform::Platform,
+    // SAFETY: erased bun_analytics::generate_header::generate_platform::Platform
+    pub platform: *const (),
 }
 
 impl BunInfo {
-    pub fn generate<Bundler>(_: Bundler) -> Result<bun_js_parser::Expr, crate::Error> {
-        // TODO(port): narrow error set
-        let info = BunInfo {
-            bun_version: package_json_version.as_bytes(),
-            platform: bun_analytics::generate_header::generate_platform::for_os(),
-        };
-
-        // TODO(port): `bun.json.toAST(allocator, BunInfo, info)` relies on
-        // comptime field reflection. Phase B: implement a `ToAst` trait and
-        // derive it for `BunInfo`, or hand-write the two-field object.
-        bun_json::to_ast(info)
+    /// Stub: real impl moves to `bun_runtime` (depends on analytics + json + js_parser::Expr).
+    /// Kept so the sole caller (src/runtime/server/mod.rs:2393) fails loudly with the
+    /// move-in instruction instead of an unresolved-symbol error.
+    /// TODO(b0-genuine): bun_runtime move-in adds `BunInfo::generate` and re-exports it here.
+    #[allow(unused_variables)]
+    pub fn generate<B>(transpiler: B) -> ! {
+        todo!("BunInfo::generate moved to bun_runtime — see CYCLEBREAK.md §bun_core GENUINE")
     }
 }
 
@@ -357,10 +379,13 @@ pub static Bun__userAgent: *const c_char =
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__onExit() {
-    // TODO(port): `bun.jsc.Node.FSEvents.closeAndWait()` — bun_core must not
-    // depend on bun_jsc (cycle). Phase B: register this via `add_exit_callback`
-    // from the runtime crate instead of calling it directly here.
-    bun_jsc::node::fs_events::close_and_wait();
+    // `bun.jsc.Node.FSEvents.closeAndWait()` — called via hook (CYCLEBREAK pattern 3);
+    // bun_runtime registers the fn-ptr at init. No-op if null.
+    // SAFETY: hook is either null or a valid `fn()` written by runtime init.
+    let hook = FS_EVENTS_CLOSE_HOOK.load(Ordering::Relaxed);
+    if !hook.is_null() {
+        unsafe { core::mem::transmute::<*mut (), fn()>(hook)() };
+    }
 
     run_exit_callbacks();
     Output::flush();

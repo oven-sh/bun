@@ -37,7 +37,8 @@
 
 use core::sync::atomic::{AtomicPtr, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 
-use bun_str::ZStr;
+// MOVE_DOWN: bun_str::ZStr → bun_core (move-in pass).
+use crate::ZStr;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Declarations
@@ -692,9 +693,9 @@ macro_rules! platform_specific_new {
 
             // Zig: `const comptime_key: []const u8 = posix_key orelse windows_key orelse "<unknown>"`
             // (Compile-error when both null is enforced by having no matching macro arm.)
-            const POSIX_KEY: Option<&'static $crate::bun_str::ZStr> =
+            const POSIX_KEY: Option<&'static $crate::ZStr> =
                 $crate::env_var::__key_opt!($posix);
-            const WINDOWS_KEY: Option<&'static $crate::bun_str::ZStr> =
+            const WINDOWS_KEY: Option<&'static $crate::ZStr> =
                 $crate::env_var::__key_opt!($windows);
             const COMPTIME_KEY: &'static [u8] = $crate::env_var::__first_key!($posix, $windows);
 
@@ -875,7 +876,7 @@ macro_rules! __key_opt {
     (None) => { None };
     ($lit:literal) => {
         // TODO(port): need a `zstr!` const constructor for &'static ZStr from a string literal.
-        Some($crate::bun_str::zstr!($lit))
+        Some($crate::zstr!($lit))
     };
 }
 pub(crate) use __key_opt;

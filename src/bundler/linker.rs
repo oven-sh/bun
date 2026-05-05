@@ -6,7 +6,7 @@ use bun_collections::HashMap;
 use bun_logger::Log;
 use bun_options_types::ImportRecord;
 use bun_paths::{self, SEP};
-use bun_resolver::fs as Fs;
+use bun_fs as Fs;
 use bun_resolver::{self as resolver, Resolver};
 use bun_str::strings;
 use bun_sys::Fd;

@@ -1,12 +1,14 @@
 use core::ffi::c_void;
 use core::mem;
 
-use bun_aio::FilePoll;
 use bun_collections::BabyList;
 use bun_core::OOM;
-use bun_jsc::EventLoopHandle;
 use bun_sys::windows::libuv as uv;
 use bun_sys::{self as sys, Fd};
+
+// CYCLEBREAK: FilePoll/EventLoopHandle are opaque vtable-backed handles in io
+// (T2); concrete types live in bun_aio (T3) / bun_jsc (T6).
+use crate::{EventLoopHandle, FilePoll, FilePollFlag, FilePollKind};
 
 use crate::pipes::{FileType, PollOrFd};
 use crate::source::Source;
@@ -321,11 +323,16 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         mem::size_of::<Self>()
     }
 
-    pub fn create_poll(&mut self, fd: Fd) -> *mut FilePoll {
-        FilePoll::init(self.parent().event_loop(), fd, Default::default(), self)
+    pub fn create_poll(&mut self, fd: Fd) -> FilePoll {
+        FilePoll::init(
+            self.parent().event_loop(),
+            fd,
+            (),
+            self as *mut _ as *mut c_void,
+        )
     }
 
-    pub fn get_poll(&self) -> Option<&mut FilePoll> {
+    pub fn get_poll(&self) -> Option<FilePoll> {
         self.handle.get_poll()
     }
 
@@ -379,7 +386,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         let Some(poll) = self.get_poll() else { return };
         // Use the event loop from the parent, not the global one
         let loop_ = self.parent().event_loop().loop_();
-        match poll.register_with_fd(loop_, bun_aio::Pollable::Writable, bun_aio::PollMode::Dispatch, poll.fd) {
+        match poll.register_with_fd(loop_, FilePollKind::Writable, poll.fd()) {
             sys::Result::Err(err) => {
                 self.parent().on_error(err);
             }
@@ -396,11 +403,11 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         poll.can_enable_keeping_process_alive()
     }
 
-    pub fn enable_keeping_process_alive<E>(&self, event_loop: E) {
+    pub fn enable_keeping_process_alive(&self, event_loop: EventLoopHandle) {
         self.update_ref(event_loop, true);
     }
 
-    pub fn disable_keeping_process_alive<E>(&self, event_loop: E) {
+    pub fn disable_keeping_process_alive(&self, event_loop: EventLoopHandle) {
         self.update_ref(event_loop, false);
     }
 
@@ -438,14 +445,14 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         }
     }
 
-    pub fn update_ref<E>(&self, event_loop: E, value: bool) {
+    pub fn update_ref(&self, event_loop: EventLoopHandle, value: bool) {
         let Some(poll) = self.get_poll() else { return };
         poll.set_keeping_process_alive(event_loop, value);
     }
 
     pub fn set_parent(&mut self, parent: *mut Parent) {
         self.parent = parent;
-        self.handle.set_owner(self);
+        self.handle.set_owner(self as *mut _ as *mut c_void);
     }
 
     pub fn write(&mut self) {
@@ -478,16 +485,12 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
             None => {
                 let p = self.create_poll(fd);
                 self.handle = PollOrFd::Poll(p);
-                match &self.handle {
-                    PollOrFd::Poll(p) => *p,
-                    _ => unreachable!(),
-                }
+                p
             }
         };
         let loop_ = self.parent().event_loop().loop_();
 
-        // SAFETY: poll is a *mut FilePoll just stored in self.handle (PollOrFd::Poll); valid until handle is closed.
-        match unsafe { (*poll).register_with_fd(loop_, bun_aio::Pollable::Writable, bun_aio::PollMode::Dispatch, fd) } {
+        match poll.register_with_fd(loop_, FilePollKind::Writable, fd) {
             sys::Result::Err(err) => {
                 return sys::Result::Err(err);
             }
@@ -512,7 +515,8 @@ pub trait PosixStreamingWriterParent {
     fn on_ready(&mut self) {}
     fn on_close(&mut self);
     fn event_loop(&self) -> EventLoopHandle;
-    fn loop_(&self) -> *mut bun_uws::Loop;
+    // CYCLEBREAK(TYPE_ONLY): bun_uws::Loop → bun_uws_sys::Loop (T0).
+    fn loop_(&self) -> *mut bun_uws_sys::Loop;
 }
 
 pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {
@@ -583,7 +587,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         mem::size_of::<Self>() + self.outgoing.memory_cost()
     }
 
-    pub fn get_poll(&self) -> Option<&mut FilePoll> {
+    pub fn get_poll(&self) -> Option<FilePoll> {
         self.handle.get_poll()
     }
 
@@ -639,7 +643,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
 
     pub fn set_parent(&mut self, parent: *mut Parent) {
         self.parent = parent;
-        self.handle.set_owner(self);
+        self.handle.set_owner(self as *mut _ as *mut c_void);
     }
 
     fn _on_writable(&mut self) {
@@ -664,7 +668,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
 
     fn register_poll(&mut self) {
         let Some(poll) = self.get_poll() else { return };
-        match poll.register_with_fd(self.parent().loop_(), bun_aio::Pollable::Writable, bun_aio::PollMode::Dispatch, poll.fd) {
+        match poll.register_with_fd(self.parent().loop_().cast(), FilePollKind::Writable, poll.fd()) {
             sys::Result::Err(err) => {
                 self.parent().on_error(err);
                 self.close();
@@ -848,7 +852,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
 
         let received_hup = 'brk: {
             if let Some(poll) = self.get_poll() {
-                break 'brk poll.flags.contains(bun_aio::PollFlag::Hup);
+                break 'brk poll.has_flag(FilePollFlag::Hup);
             }
             false
         };
@@ -933,16 +937,13 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         let poll = match self.get_poll() {
             Some(p) => p,
             None => {
-                self.handle = PollOrFd::Poll(FilePoll::init(loop_, fd, Default::default(), self));
-                match &self.handle {
-                    PollOrFd::Poll(p) => *p,
-                    _ => unreachable!(),
-                }
+                let p = FilePoll::init(loop_, fd, (), self as *mut _ as *mut c_void);
+                self.handle = PollOrFd::Poll(p);
+                p
             }
         };
 
-        // SAFETY: poll is a *mut FilePoll just stored in self.handle (PollOrFd::Poll); valid until handle is closed.
-        match unsafe { (*poll).register_with_fd(loop_.loop_(), bun_aio::Pollable::Writable, bun_aio::PollMode::Dispatch, fd) } {
+        match poll.register_with_fd(loop_.loop_(), FilePollKind::Writable, fd) {
             sys::Result::Err(err) => {
                 return sys::Result::Err(err);
             }
@@ -1003,11 +1004,11 @@ pub trait BaseWindowsPipeWriter {
         false
     }
 
-    fn enable_keeping_process_alive<E>(&mut self, event_loop: E) {
+    fn enable_keeping_process_alive(&mut self, event_loop: EventLoopHandle) {
         self.update_ref(event_loop, true);
     }
 
-    fn disable_keeping_process_alive<E>(&mut self, event_loop: E) {
+    fn disable_keeping_process_alive(&mut self, event_loop: EventLoopHandle) {
         self.update_ref(event_loop, false);
     }
 
@@ -1061,7 +1062,7 @@ pub trait BaseWindowsPipeWriter {
         }
     }
 
-    fn update_ref<E>(&mut self, _event_loop: E, value: bool) {
+    fn update_ref(&mut self, _event_loop: EventLoopHandle, value: bool) {
         if let Some(pipe) = self.source() {
             if value {
                 pipe.ref_();

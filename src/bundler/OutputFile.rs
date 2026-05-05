@@ -1,6 +1,7 @@
 use core::ffi::c_void;
 
-use bun_bake::Side;
+// TODO(b0): bake::Side arrives from move-in (TYPE_ONLY → bundler)
+use crate::bake_types::Side;
 use bun_bundler::options::Loader;
 use bun_core::Error;
 use bun_fs as fs;
@@ -9,9 +10,8 @@ use bun_resolver as resolver;
 use bun_str::String as BunString;
 use bun_sys::Fd;
 
-// TODO(port): `OutputKind` lives under `bun.jsc.API.BuildArtifact` in Zig; this is a
-// jsc-crate type referenced from a base crate. Phase B may relocate the enum.
-use bun_jsc::api::build_artifact::OutputKind;
+// TODO(b0): jsc::api arrives from move-in (TYPE_ONLY → bundler)
+use crate::api::build_artifact::OutputKind;
 
 // Instead of keeping files in-memory, we:
 // 1. Write directly to disk
@@ -233,11 +233,8 @@ impl Value {
     }
 }
 
-// TODO(port): Zig re-exports `SavedFile` from `../bundler_jsc/output_file_jsc.zig`.
-// It is a payload type (used in `Value::Saved`), not a `to_js` method, so the alias
-// cannot simply be deleted. Phase B should decide whether `SavedFile` belongs in the
-// base crate to break the bundler→bundler_jsc edge.
-pub use bun_bundler_jsc::output_file_jsc::SavedFile;
+// TODO(b0): SavedFile arrives from move-in (TYPE_ONLY bundler_jsc → bundler).
+pub use crate::saved_file::SavedFile;
 
 impl OutputFile {
     pub fn init_pending(loader: Loader, pending: resolver::Result) -> OutputFile {
@@ -367,21 +364,20 @@ impl OutputFile {
                 }
 
                 let mut path_buf = PathBuffer::uninit();
-                // TODO(port): `jsc.Node.fs.NodeFS.writeFileWithPathBuffer` lives in
-                // `bun_runtime::node::fs`. This is a jsc/runtime dep from a base crate;
-                // Phase B may want a thin `bun_sys` helper instead.
-                bun_runtime::node::fs::NodeFS::write_file_with_path_buffer(
+                // CYCLEBREAK MOVE_DOWN: NodeFS::write_file_with_path_buffer → bun_sys.
+                // TODO(b0): bun_sys::write_file_with_path_buffer arrives from move-in.
+                bun_sys::write_file_with_path_buffer(
                     &mut path_buf,
-                    bun_runtime::node::fs::WriteFileArgs {
-                        data: bun_runtime::node::fs::WriteFileData::Buffer {
+                    bun_sys::WriteFileArgs {
+                        data: bun_sys::WriteFileData::Buffer {
                             // Zig built a JSC ArrayBuffer view over `bytes` via
                             // `@constCast`; the Rust side just borrows the slice.
                             buffer: bytes,
                         },
-                        encoding: bun_runtime::node::Encoding::Buffer,
+                        encoding: bun_sys::WriteFileEncoding::Buffer,
                         mode: if self.is_executable { 0o755 } else { 0o644 },
                         dirfd: root_dir,
-                        file: bun_runtime::node::fs::PathOrFileDescriptor::Path(
+                        file: bun_sys::PathOrFileDescriptor::Path(
                             bun_str::PathString::init(rel_path),
                         ),
                     },

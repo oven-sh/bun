@@ -55,10 +55,85 @@ use bun_js_parser::{self as js_ast, Ref, Index, Symbol, Stmt, Expr, E, S, G, B, 
 use bun_js_parser::ast::BundledAst as JSAst;
 use bun_js_parser::ast::{UseDirective, ServerComponentBoundary};
 use bun_options_types::{ImportRecord, ImportKind};
-use bun_resolver::{self as _resolver, fs as Fs, Resolver, DataURL, is_package_path, NodeFallbackModules};
-use bun_jsc::{self as jsc};
+use bun_fs as Fs;
+use bun_data_url::DataURL;
+use bun_node_fallbacks as NodeFallbackModules;
+use bun_resolver::{self as _resolver, Resolver, is_package_path};
 use bun_threading::ThreadPool as ThreadPoolLib;
-use bun_bake as bake;
+// TODO(b0): bake_types arrives from move-in (TYPE_ONLY Side/Graph/BuiltInModule/Framework → bundler)
+use crate::bake_types as bake;
+
+/// CYCLEBREAK(b0) TYPE_ONLY: pure value types from bake that bundler needs without
+/// depending on the full DevServer. Move-in pass keeps these as the canonical defs;
+/// bun_bake (post tier-6 collapse: bun_runtime::bake) re-exports from here.
+pub mod bake_types {
+    /// Mirrors src/bake/lib.zig `Side`.
+    #[repr(u8)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
+    pub enum Side { Client = 0, Server = 1 }
+    /// Mirrors src/bake/lib.zig `Graph`.
+    #[repr(u8)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
+    pub enum Graph { Client = 0, Server = 1, Ssr = 2 }
+    impl Side {
+        pub fn graph(self) -> Graph {
+            match self { Side::Client => Graph::Client, Side::Server => Graph::Server }
+        }
+    }
+    /// Mirrors src/bake/DevServer.zig `FileKind` (the type of `CacheEntry.kind`).
+    #[repr(u8)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
+    pub enum CacheKind { Unknown = 0, Js = 1, Asset = 2, Css = 3 }
+    #[derive(Copy, Clone)]
+    pub struct CacheEntry { pub kind: CacheKind }
+    /// Mirrors src/bake/DevServer.zig `ASSET_PREFIX` (= INTERNAL_PREFIX ++ "/asset" = "/_bun/asset").
+    pub const ASSET_PREFIX: &str = "/_bun/asset";
+
+    /// Mirrors src/bake/bake.zig:355 `BuiltInModule = union(enum)`. TYPE_ONLY moved
+    /// down to bundler (T5); bake (in runtime, T6) constructs values of this type.
+    pub enum BuiltInModule {
+        Import(Box<[u8]>),
+        Code(Box<[u8]>),
+    }
+
+    /// Mirrors src/bake/DevServer.zig `EntryPointList.Flags` (`packed struct(u8)`).
+    #[repr(transparent)]
+    #[derive(Copy, Clone, Default, Eq, PartialEq)]
+    pub struct EntryPointFlags(pub u8);
+    impl EntryPointFlags {
+        pub const CLIENT: u8 = 1 << 0;
+        pub const SERVER: u8 = 1 << 1;
+        pub const SSR: u8 = 1 << 2;
+        /// When set, `.CLIENT` is also set.
+        pub const CSS: u8 = 1 << 3;
+        #[inline] pub fn client(self) -> bool { self.0 & Self::CLIENT != 0 }
+        #[inline] pub fn server(self) -> bool { self.0 & Self::SERVER != 0 }
+        #[inline] pub fn ssr(self) -> bool { self.0 & Self::SSR != 0 }
+        #[inline] pub fn css(self) -> bool { self.0 & Self::CSS != 0 }
+    }
+
+    /// Mirrors src/bake/DevServer.zig `EntryPointList`. TYPE_ONLY moved down; bundler
+    /// reads `.set` (count/keys/values) in `enqueue_entry_points_dev_server`.
+    #[derive(Default)]
+    pub struct EntryPointList {
+        pub set: bun_collections::StringArrayHashMap<EntryPointFlags>,
+    }
+    impl EntryPointList {
+        pub const fn empty() -> Self { Self { set: bun_collections::StringArrayHashMap::new() } }
+    }
+
+    /// Mirrors src/bake/bake.zig `Framework`. Only the field bundler reads
+    /// (ParseTask.rs:958 `f.built_in_modules.get(...)`); remaining fields stay opaque
+    /// until tier-6 collapse lands the full struct in bun_runtime.
+    pub struct Framework {
+        pub built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
+        // TODO(b0-genuine): remaining Framework fields (server_components, react_fast_refresh,
+        // file_system_router_types, ...) — bundler does not read them; bake constructs.
+        _opaque_tail: (),
+    }
+}
+// TODO(b0): jsc::api arrives from move-in (TYPE_ONLY → bundler)
+use crate::api as jsc_api;
 use bun_sourcemap as SourceMap;
 use bun_paths as resolve_path;
 
@@ -88,7 +163,141 @@ bun_output::declare_scope!(ContentHasher, hidden);
 
 pub type MangledProps = ArrayHashMap<Ref, Box<[u8]>>;
 
-pub type Watcher = bun_jsc::hot_reloader::NewHotReloader<BundleV2, EventLoop, true>;
+// ══════════════════════════════════════════════════════════════════════════
+// CYCLEBREAK §Dispatch — vtables/hooks for T6 GENUINE deps (jsc/bake/runtime).
+// Low tier (bundler) names no high-tier types. High tier (runtime) provides
+// static instances and registers hooks at init. See PORTING.md §Dispatch.
+// ══════════════════════════════════════════════════════════════════════════
+pub mod dispatch {
+    use core::sync::atomic::AtomicPtr;
+    use core::ptr::null_mut;
+
+    /// Erased handle to bake::DevServer. PERF(port): was direct struct access.
+    #[derive(Copy, Clone)]
+    pub struct DevServerHandle {
+        pub owner: *mut (),
+        pub vtable: &'static DevServerVTable,
+    }
+    pub struct DevServerVTable {
+        pub barrel_needed_exports:
+            unsafe fn(*mut ()) -> *mut bun_collections::StringHashMap<bun_collections::StringHashMap<()>>,
+        pub log_for_resolution_failures:
+            unsafe fn(*mut (), &[u8], crate::bake_types::Graph) -> *mut bun_logger::Log,
+        /// `dev.finalizeBundle(bv2, result)` — DevServer.zig:2239.
+        pub finalize_bundle:
+            unsafe fn(*mut (), *mut super::BundleV2, *const super::DevServerOutput<'_>) -> Result<(), bun_core::Error>,
+        // ── slots below cover every remaining direct DevServer access in bundler ──
+        /// `dev.handleParseTaskFailure(err, graph, abs_path, log, bv2)` — DevServer.zig:3063.
+        pub handle_parse_task_failure:
+            unsafe fn(*mut (), err: bun_core::Error, graph: crate::bake_types::Graph, abs_path: &[u8], log: *const bun_logger::Log, bv2: *mut super::BundleV2) -> Result<(), bun_core::Error>,
+        /// `dev.putOrOverwriteAsset(path, contents, hash)` — DevServer.zig:4398.
+        /// `path` is `&fs::Path` erased; `contents` is the raw bytes (runtime impl
+        /// wraps into `AnyBlob`). Ownership of contents transfers to the callee.
+        pub put_or_overwrite_asset:
+            unsafe fn(*mut (), path: *const (), contents: &[u8], content_hash: u64) -> Result<(), bun_core::Error>,
+        /// `dev.track_resolution_failure(...)`
+        pub track_resolution_failure:
+            unsafe fn(*mut (), import_source: &[u8], specifier: &[u8], renderer: crate::bake_types::Graph, loader: bun_options_types::Loader) -> Result<(), bun_core::Error>,
+        /// `dev.is_file_cached(abs_path, side)` — None if not cached.
+        pub is_file_cached:
+            unsafe fn(*mut (), abs_path: &[u8], side: crate::bake_types::Graph) -> Option<crate::bake_types::CacheEntry>,
+        /// `dev.assets.get_hash(abs_path)`
+        pub asset_hash: unsafe fn(*mut (), abs_path: &[u8]) -> Option<u64>,
+        /// `dev.current_bundle.?.start_data` accessor for finish_from_bake_dev_server.
+        pub current_bundle_start_data: unsafe fn(*mut ()) -> *const (),
+        /// `dev.barrel_files_with_deferrals.get_or_put(path)` + key dupe.
+        pub register_barrel_with_deferrals: unsafe fn(*mut (), path: &[u8]) -> Result<(), bun_core::Error>,
+    }
+    impl DevServerHandle {
+        #[inline]
+        pub fn handle_parse_task_failure(
+            &self,
+            err: bun_core::Error,
+            graph: crate::bake_types::Graph,
+            abs_path: &[u8],
+            log: *const bun_logger::Log,
+            bv2: *mut super::BundleV2,
+        ) -> Result<(), bun_core::Error> {
+            // SAFETY: owner is a live *mut DevServer per handle invariant.
+            unsafe { (self.vtable.handle_parse_task_failure)(self.owner, err, graph, abs_path, log, bv2) }
+        }
+        #[inline]
+        pub fn finalize_bundle(
+            &self,
+            bv2: &mut super::BundleV2,
+            result: &super::DevServerOutput<'_>,
+        ) -> Result<(), bun_core::Error> {
+            // SAFETY: owner is a live *mut DevServer; bv2/result are valid for the call.
+            unsafe { (self.vtable.finalize_bundle)(self.owner, bv2, result) }
+        }
+        #[inline]
+        pub fn put_or_overwrite_asset<P>(
+            &self,
+            path: &P,
+            contents: &[u8],
+            content_hash: u64,
+        ) -> Result<(), bun_core::Error> {
+            // SAFETY: erases &P to *const () for the vtable boundary; runtime impl
+            // casts back to &fs::Path. Ownership of `contents` transfers per Zig contract.
+            unsafe {
+                (self.vtable.put_or_overwrite_asset)(
+                    self.owner,
+                    path as *const P as *const (),
+                    contents,
+                    content_hash,
+                )
+            }
+        }
+        #[inline] pub fn track_resolution_failure(&self, src: &[u8], spec: &[u8], r: crate::bake_types::Graph, l: bun_options_types::Loader) -> Result<(), bun_core::Error> {
+            unsafe { (self.vtable.track_resolution_failure)(self.owner, src, spec, r, l) }
+        }
+        #[inline] pub fn is_file_cached(&self, path: &[u8], side: crate::bake_types::Graph) -> Option<crate::bake_types::CacheEntry> {
+            unsafe { (self.vtable.is_file_cached)(self.owner, path, side) }
+        }
+        #[inline] pub fn asset_hash(&self, path: &[u8]) -> Option<u64> {
+            unsafe { (self.vtable.asset_hash)(self.owner, path) }
+        }
+    }
+
+    /// Erased handle to the JS-thread event loop (jsc::EventLoop). Cold path
+    /// (per plugin callback). PERF(port): was inline switch.
+    pub struct JsEventLoopHandle {
+        pub owner: *mut (),
+        pub vtable: &'static JsEventLoopVTable,
+    }
+    pub struct JsEventLoopVTable {
+        pub enqueue_task_concurrent: unsafe fn(*mut (), bun_event_loop::ConcurrentTask),
+    }
+    impl JsEventLoopHandle {
+        #[inline]
+        pub fn enqueue_task_concurrent(&self, task: bun_event_loop::ConcurrentTask) {
+            unsafe { (self.vtable.enqueue_task_concurrent)(self.owner, task) }
+        }
+    }
+
+    /// Bytecode generation hook (jsc::CachedBytecode + jsc::initialize +
+    /// VirtualMachine::set_is_bundler_thread_for_bytecode_cache). Registered
+    /// by runtime at init; null = bytecode disabled.
+    pub static BYTECODE_HOOK: AtomicPtr<BytecodeVTable> = AtomicPtr::new(null_mut());
+    pub struct BytecodeVTable {
+        pub set_bundler_thread: unsafe fn(bool),
+        pub initialize_jsc: unsafe fn(bool),
+        /// Returns (bytes, source_provider_url_dupe) on success.
+        pub generate: unsafe fn(
+            format: crate::options::OutputFormat,
+            source: &[u8],
+            source_url: &[u8],
+        ) -> Option<(Box<[u8]>, Box<[u8]>)>,
+    }
+
+    /// Debug hook: bundler state dump for crash handler.
+    pub static DUMP_BUNDLER: AtomicPtr<()> = AtomicPtr::new(null_mut());
+}
+
+// CYCLEBREAK GENUINE: jsc::hot_reloader::NewHotReloader<BundleV2, EventLoop, true>
+// is a T6 generic type instantiated over a T5 type. bundler stores it opaquely;
+// runtime constructs/drives it. SAFETY: erased — never dereferenced in bundler.
+pub type Watcher = *mut (); // TODO(b0-genuine): hot_reloader — opaque until runtime owns lifecycle
 
 type IndexInt = u32; // Index.Int
 
@@ -193,11 +402,15 @@ pub struct BundleV2<'a> {
     pub graph: Graph,
     pub linker: LinkerContext,
     pub bun_watcher: Option<NonNull<bun_core::Watcher>>, // TODO(port): lifetime
-    pub plugins: Option<&'a mut jsc::api::JSBundler::Plugin>,
+    pub plugins: Option<&'a mut jsc_api::JSBundler::Plugin>,
     pub completion: Option<*mut JSBundleCompletionTask>,
+    /// CYCLEBREAK GENUINE: erased bake::DevServer. Populated from
+    /// `transpiler.options.dev_server` (now `*const ()`) + the runtime-registered
+    /// vtable at construction. All ~15 DevServer call sites go through this.
+    pub dev_server: Option<dispatch::DevServerHandle>,
     /// In-memory files that can be used as entrypoints or imported.
     /// This is a pointer to the FileMap in the completion config.
-    pub file_map: Option<&'a jsc::api::JSBundler::FileMap>,
+    pub file_map: Option<&'a jsc_api::JSBundler::FileMap>,
     pub source_code_length: usize,
 
     /// There is a race condition where an onResolve plugin may schedule a task on the bundle thread before its parsing task completes
@@ -239,7 +452,7 @@ pub struct BakeOptions<'a> {
     pub framework: bake::Framework,
     pub client_transpiler: &'a mut Transpiler,
     pub ssr_transpiler: &'a mut Transpiler,
-    pub plugins: Option<&'a mut jsc::api::JSBundler::Plugin>,
+    pub plugins: Option<&'a mut jsc_api::JSBundler::Plugin>,
 }
 
 impl<'a> BundleV2<'a> {
@@ -249,12 +462,13 @@ impl<'a> BundleV2<'a> {
     }
 
     /// Returns the jsc.EventLoop where plugin callbacks can be queued up on
-    pub fn js_loop_for_plugins(&mut self) -> &mut jsc::EventLoop {
+    pub fn js_loop_for_plugins(&mut self) -> &dispatch::JsEventLoopHandle {
+        // CYCLEBREAK GENUINE: jsc::EventLoop → vtable handle. PERF(port): was inline switch.
         debug_assert!(self.plugins.is_some());
         if let Some(completion) = self.completion {
             // From Bun.build
             // SAFETY: completion is a valid backref while bundle is running
-            unsafe { &mut *(*completion).jsc_event_loop }
+            unsafe { &(*completion).jsc_event_loop }
         } else {
             match self.r#loop() {
                 // From bake where the loop running the bundle is also the loop
@@ -348,10 +562,16 @@ impl<'a> BundleV2<'a> {
     /// written to. For DevServer, this allocates a per-file log for the sources
     /// it is called on. Function must be called on the bundle thread.
     pub fn log_for_resolution_failures(&mut self, abs_path: &[u8], bake_graph: bake::Graph) -> &mut Logger::Log {
-        if let Some(dev) = self.transpiler.options.dev_server {
-            return dev.get_log_for_resolution_failures(abs_path, bake_graph);
+        if let Some(dev) = self.dev_server_handle() {
+            // CYCLEBREAK GENUINE: DevServer → vtable. PERF(port): was inline switch.
+            return unsafe { &mut *(dev.vtable.log_for_resolution_failures)(dev.owner, abs_path, bake_graph) };
         }
         self.transpiler.log
+    }
+
+    #[inline]
+    pub fn dev_server_handle(&self) -> Option<&dispatch::DevServerHandle> {
+        self.dev_server.as_ref()
     }
 
     #[inline]
@@ -639,7 +859,7 @@ impl<'a> BundleV2<'a> {
     /// This runs on the Bundle Thread.
     pub fn run_resolver(
         &mut self,
-        import_record: jsc::api::JSBundler::Resolve::MiniImportRecord,
+        import_record: jsc_api::JSBundler::Resolve::MiniImportRecord,
         target: options::Target,
     ) {
         let transpiler = self.transpiler_for_target(target);
@@ -689,7 +909,7 @@ impl<'a> BundleV2<'a> {
                 Err(err) => {
                     // Only perform directory busting when hot-reloading is enabled
                     if err == bun_core::err!("ModuleNotFound") {
-                        if let Some(dev) = self.transpiler.options.dev_server {
+                        if let Some(dev) = self.dev_server {
                             if !had_busted_dir_cache {
                                 // Only re-query if we previously had something cached.
                                 if transpiler.resolver.bust_dir_cache_from_specifier(import_record.source_file, import_record.specifier) {
@@ -699,7 +919,7 @@ impl<'a> BundleV2<'a> {
                             }
 
                             // Tell Bake's Dev Server to wait for the file to be imported.
-                            dev.directory_watchers.track_resolution_failure(
+                            dev.track_resolution_failure(
                                 import_record.source_file,
                                 import_record.specifier,
                                 target.bake_graph(),
@@ -1089,7 +1309,7 @@ impl<'a> BundleV2<'a> {
         this.linker.options.metafile_json_path = this.transpiler.options.metafile_json_path.clone();
         this.linker.options.metafile_markdown_path = this.transpiler.options.metafile_markdown_path.clone();
 
-        this.linker.dev_server = this.transpiler.options.dev_server;
+        this.linker.dev_server = this.dev_server;
 
         let pool = this.allocator().alloc(ThreadPool::default()); // TODO(port): allocator.create
         if cli_watch_flag {
@@ -1123,7 +1343,7 @@ impl<'a> BundleV2<'a> {
 
     pub fn on_after_decrement_scan_counter(&mut self) {
         if self.asynchronous && self.is_done() {
-            let dev = self.transpiler.options.dev_server
+            let dev = self.dev_server
                 .unwrap_or_else(|| panic!("No dev server attached in asynchronous bundle job"));
             self.finish_from_bake_dev_server(dev).expect("oom");
         }
@@ -1181,11 +1401,11 @@ impl<'a> BundleV2<'a> {
 
     pub fn enqueue_entry_points_dev_server(
         &mut self,
-        files: bake::DevServer::EntryPointList,
+        files: bake_types::EntryPointList,
         css_data: &mut ArrayHashMap<Index, CssEntryPointMeta>,
     ) -> Result<(), Error> {
         self.enqueue_entry_points_common()?;
-        debug_assert!(self.transpiler.options.dev_server.is_some());
+        debug_assert!(self.dev_server.is_some());
 
         let num_entry_points = files.set.count();
         self.graph.entry_points.reserve(num_entry_points);
@@ -1224,7 +1444,7 @@ impl<'a> BundleV2<'a> {
             let resolved = match transpiler.resolve_entry_point(abs_path) {
                 Ok(r) => r,
                 Err(err) => {
-                    let dev = self.transpiler.options.dev_server.expect("unreachable");
+                    let dev = self.dev_server.expect("unreachable");
                     dev.handle_parse_task_failure(
                         err,
                         if flags.client { bake::Graph::Client } else { bake::Graph::Server },
@@ -1629,7 +1849,7 @@ impl<'a> BundleV2<'a> {
                     if !path.is_empty()
                         // Check for either node or bun builtins
                         // We don't use the list from .bun because that includes third-party packages in some cases.
-                        && !jsc::ModuleLoader::HardcodedModule::Alias::has(path, Target::Node, Default::default())
+                        && !bun_resolve_builtins::HardcodedModule::Alias::has(path, Target::Node, Default::default())
                         && !path.starts_with(b"bun:")
                         && path != b"bun"
                     {
@@ -1946,7 +2166,7 @@ impl<'a> BundleV2<'a> {
                         output_path,
                         input_path: Box::<[u8]>::from(source.path.text.as_ref()),
                         input_loader: Loader::File,
-                        output_kind: jsc::api::BuildArtifact::OutputKind::Asset,
+                        output_kind: jsc_api::build_artifact::OutputKind::Asset,
                         loader,
                         hash: Some(content_hashes_for_additional_files[index]),
                         side: Some(bake::Side::Client),
@@ -1963,13 +2183,13 @@ impl<'a> BundleV2<'a> {
         Ok(())
     }
 
-    pub fn on_load_async(&mut self, load: &mut jsc::api::JSBundler::Load) {
+    pub fn on_load_async(&mut self, load: &mut jsc_api::JSBundler::Load) {
         match self.r#loop() {
             EventLoop::Js(jsc_event_loop) => {
-                jsc_event_loop.enqueue_task_concurrent(jsc::ConcurrentTask::from_callback(load, on_load_from_js_loop));
+                jsc_event_loop.enqueue_task_concurrent(bun_event_loop::ConcurrentTask::from_callback(load, on_load_from_js_loop));
             }
             EventLoop::Mini(mini) => {
-                mini.enqueue_task_concurrent_with_extra_ctx::<jsc::api::JSBundler::Load, BundleV2>(
+                mini.enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Load, BundleV2>(
                     load,
                     Self::on_load,
                     // TODO(port): .task field selector
@@ -1978,13 +2198,13 @@ impl<'a> BundleV2<'a> {
         }
     }
 
-    pub fn on_resolve_async(&mut self, resolve: &mut jsc::api::JSBundler::Resolve) {
+    pub fn on_resolve_async(&mut self, resolve: &mut jsc_api::JSBundler::Resolve) {
         match self.r#loop() {
             EventLoop::Js(jsc_event_loop) => {
-                jsc_event_loop.enqueue_task_concurrent(jsc::ConcurrentTask::from_callback(resolve, on_resolve_from_js_loop));
+                jsc_event_loop.enqueue_task_concurrent(bun_event_loop::ConcurrentTask::from_callback(resolve, on_resolve_from_js_loop));
             }
             EventLoop::Mini(mini) => {
-                mini.enqueue_task_concurrent_with_extra_ctx::<jsc::api::JSBundler::Resolve, BundleV2>(
+                mini.enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Resolve, BundleV2>(
                     resolve,
                     Self::on_resolve,
                     // TODO(port): .task field selector
@@ -1994,12 +2214,12 @@ impl<'a> BundleV2<'a> {
     }
 }
 
-pub fn on_load_from_js_loop(load: &mut jsc::api::JSBundler::Load) {
+pub fn on_load_from_js_loop(load: &mut jsc_api::JSBundler::Load) {
     BundleV2::on_load(load, load.bv2);
 }
 
 impl<'a> BundleV2<'a> {
-    pub fn on_load(load: &mut jsc::api::JSBundler::Load, this: &mut BundleV2) {
+    pub fn on_load(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
         bun_output::scoped_log!(Bundle, "onLoad: ({}, {})", load.source_index.get(), <&'static str>::from(&load.value));
         let _guard = scopeguard::guard((), |_| {
             if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
@@ -2011,7 +2231,7 @@ impl<'a> BundleV2<'a> {
         // TODO: watcher
 
         match load.value.consume() {
-            jsc::api::JSBundler::LoadValue::NoMatch => {
+            jsc_api::JSBundler::LoadValue::NoMatch => {
                 let source = &this.graph.input_files.items_source()[load.source_index.get() as usize];
                 // If it's a file namespace, we should run it through the parser like normal.
                 // The file could be on disk.
@@ -2031,7 +2251,7 @@ impl<'a> BundleV2<'a> {
                 // An error occurred, prevent spinning the event loop forever
                 this.decrement_scan_counter();
             }
-            jsc::api::JSBundler::LoadValue::Success(code) => {
+            jsc_api::JSBundler::LoadValue::Success(code) => {
                 // When a plugin returns a file loader, we always need to populate additional_files
                 let should_copy_for_bundling = code.loader.should_copy_for_bundling();
                 if should_copy_for_bundling {
@@ -2085,8 +2305,8 @@ impl<'a> BundleV2<'a> {
                     }
                 }
             }
-            jsc::api::JSBundler::LoadValue::Err(msg) => {
-                if let Some(dev) = this.transpiler.options.dev_server {
+            jsc_api::JSBundler::LoadValue::Err(msg) => {
+                if let Some(dev) = this.dev_server {
                     let source = &this.graph.input_files.items_source()[load.source_index.get() as usize];
                     // A stack-allocated Log object containing the singular message
                     let mut msg_mut = msg;
@@ -2113,18 +2333,18 @@ impl<'a> BundleV2<'a> {
                 // An error occurred, prevent spinning the event loop forever
                 this.decrement_scan_counter();
             }
-            jsc::api::JSBundler::LoadValue::Pending | jsc::api::JSBundler::LoadValue::Consumed => unreachable!(),
+            jsc_api::JSBundler::LoadValue::Pending | jsc_api::JSBundler::LoadValue::Consumed => unreachable!(),
         }
         // load is dropped here (defer load.deinit())
     }
 }
 
-pub fn on_resolve_from_js_loop(resolve: &mut jsc::api::JSBundler::Resolve) {
+pub fn on_resolve_from_js_loop(resolve: &mut jsc_api::JSBundler::Resolve) {
     BundleV2::on_resolve(resolve, resolve.bv2);
 }
 
 impl<'a> BundleV2<'a> {
-    pub fn on_resolve(resolve: &mut jsc::api::JSBundler::Resolve, this: &mut BundleV2) {
+    pub fn on_resolve(resolve: &mut jsc_api::JSBundler::Resolve, this: &mut BundleV2) {
         let _dec_guard = scopeguard::guard((), |_| this.decrement_scan_counter());
         bun_output::scoped_log!(Bundle, "onResolve: ({}:{}, {})",
             bstr::BStr::new(&resolve.import_record.namespace),
@@ -2138,7 +2358,7 @@ impl<'a> BundleV2<'a> {
         });
 
         match resolve.value.consume() {
-            jsc::api::JSBundler::ResolveValue::NoMatch => {
+            jsc_api::JSBundler::ResolveValue::NoMatch => {
                 // If it's a file namespace, we should run it through the resolver like normal.
                 //
                 // The file could be on disk.
@@ -2187,7 +2407,7 @@ impl<'a> BundleV2<'a> {
                     );
                 }
             }
-            jsc::api::JSBundler::ResolveValue::Success(result) => {
+            jsc_api::JSBundler::ResolveValue::Success(result) => {
                 let mut out_source_index: Option<Index> = None;
                 if !result.external {
                     let mut path = Fs::Path::init(result.path.clone());
@@ -2291,13 +2511,13 @@ impl<'a> BundleV2<'a> {
                     }
                 }
             }
-            jsc::api::JSBundler::ResolveValue::Err(err) => {
+            jsc_api::JSBundler::ResolveValue::Err(err) => {
                 let log = this.log_for_resolution_failures(&resolve.import_record.source_file, resolve.import_record.original_target.bake_graph());
                 log.msgs.push(err.clone());
                 log.errors += (err.kind == Logger::MsgKind::Err) as u32;
                 log.warnings += (err.kind == Logger::MsgKind::Warn) as u32;
             }
-            jsc::api::JSBundler::ResolveValue::Pending | jsc::api::JSBundler::ResolveValue::Consumed => unreachable!(),
+            jsc_api::JSBundler::ResolveValue::Pending | jsc_api::JSBundler::ResolveValue::Consumed => unreachable!(),
         }
         // resolve is dropped here (defer resolve.deinit())
     }
@@ -2417,12 +2637,12 @@ impl<'a> BundleV2<'a> {
         let outdir = &self.linker.resolver.opts.output_dir;
         if !self.linker.options.metafile_json_path.is_empty() {
             if let Some(mf) = &metafile {
-                write_metafile_output(&mut output_files, outdir, &self.linker.options.metafile_json_path, mf, jsc::api::BuildArtifact::OutputKind::MetafileJson)?;
+                write_metafile_output(&mut output_files, outdir, &self.linker.options.metafile_json_path, mf, jsc_api::build_artifact::OutputKind::MetafileJson)?;
             }
         }
         if !self.linker.options.metafile_markdown_path.is_empty() {
             if let Some(md) = &metafile_markdown {
-                write_metafile_output(&mut output_files, outdir, &self.linker.options.metafile_markdown_path, md, jsc::api::BuildArtifact::OutputKind::MetafileMarkdown)?;
+                write_metafile_output(&mut output_files, outdir, &self.linker.options.metafile_markdown_path, md, jsc_api::build_artifact::OutputKind::MetafileMarkdown)?;
             }
         }
 
@@ -2441,7 +2661,7 @@ fn write_metafile_output(
     outdir: &[u8],
     file_path: &[u8],
     content: &[u8],
-    output_kind: jsc::api::BuildArtifact::OutputKind,
+    output_kind: jsc_api::build_artifact::OutputKind,
 ) -> Result<(), Error> {
     if !outdir.is_empty() {
         // Open the output directory
@@ -2462,28 +2682,26 @@ fn write_metafile_output(
         }
 
         // Write to disk relative to outdir
+        // CYCLEBREAK MOVE_DOWN: NodeFS::write_file_with_path_buffer → bun_sys.
+        // TODO(b0): bun_sys::write_file_with_path_buffer arrives from move-in.
         let mut path_buf = bun_paths::PathBuffer::uninit();
-        let _ = jsc::node::fs::NodeFS::write_file_with_path_buffer(&mut path_buf, jsc::node::fs::WriteFileArgs {
-            data: jsc::node::fs::WriteFileData::Buffer {
-                buffer: jsc::node::Buffer {
-                    ptr: content.as_ptr() as *mut u8,
-                    len: content.len() as u32,
-                    byte_len: content.len() as u32,
-                },
+        let _ = bun_sys::write_file_with_path_buffer(&mut path_buf, bun_sys::WriteFileArgs {
+            data: bun_sys::WriteFileData::Buffer {
+                buffer: content,
             },
-            encoding: jsc::node::Encoding::Buffer,
+            encoding: bun_sys::WriteFileEncoding::Buffer,
             mode: 0o644,
             dirfd: bun_sys::Fd::from_std_dir(&root_dir),
-            file: jsc::node::fs::FileArg::Path {
-                string: bun_core::PathString::init(file_path),
-            },
+            file: bun_sys::PathOrFileDescriptor::Path(
+                bun_core::PathString::init(file_path),
+            ),
         }).unwrap_or_else(|err| {
             Output::warn(format_args!("Failed to write metafile to '{}': {}", bstr::BStr::new(file_path), err.name()));
         });
     }
 
     // Add as OutputFile so it appears in result.outputs
-    let is_json = output_kind == jsc::api::BuildArtifact::OutputKind::MetafileJson;
+    let is_json = output_kind == jsc_api::build_artifact::OutputKind::MetafileJson;
     output_files.push(options::OutputFile::init(options::OutputFileInit {
         loader: if is_json { Loader::Json } else { Loader::File },
         input_loader: if is_json { Loader::Json } else { Loader::File },
@@ -2507,7 +2725,7 @@ impl<'a> BundleV2<'a> {
     }
 
     fn should_add_watcher(&self, path: &[u8]) -> bool {
-        if self.transpiler.options.dev_server.is_some() {
+        if self.dev_server.is_some() {
             strings::index_of(path, b"/node_modules/").is_none()
                 && (if cfg!(windows) { strings::index_of(path, b"\\node_modules\\").is_none() } else { true })
         } else {
@@ -2516,7 +2734,7 @@ impl<'a> BundleV2<'a> {
     }
 
     /// Dev Server uses this instead to run a subset of the transpiler, and to run it asynchronously.
-    pub fn start_from_bake_dev_server(&mut self, bake_entry_points: bake::DevServer::EntryPointList) -> Result<DevServerInput, Error> {
+    pub fn start_from_bake_dev_server(&mut self, bake_entry_points: bake_types::EntryPointList) -> Result<DevServerInput, Error> {
         self.unique_key = generate_unique_key();
 
         self.graph.heap.help_catch_memory_issues();
@@ -2531,8 +2749,13 @@ impl<'a> BundleV2<'a> {
         Ok(ctx)
     }
 
-    pub fn finish_from_bake_dev_server(&mut self, dev_server: &mut bake::DevServer) -> Result<(), AllocError> {
-        let start = &mut dev_server.current_bundle.as_mut().unwrap().start_data;
+    // TODO(b0-genuine): body has deep DevServer field access (current_bundle.start_data,
+    // css_entry_points, etc.). After tier-6 collapse this fn should be HOISTED into
+    // bun_runtime::bake (which can name DevServer concretely) and call back into BundleV2
+    // helpers. Until then the entry-point fields are reached through the vtable.
+    pub fn finish_from_bake_dev_server(&mut self, dev_server: &dispatch::DevServerHandle) -> Result<(), AllocError> {
+        // SAFETY: DevServer guarantees current_bundle is Some during finish (DevServer.zig:2237).
+        let start = unsafe { &mut *(dev_server.vtable.current_bundle_start_data)(dev_server.owner).cast::<DevServerInput>() };
 
         self.graph.heap.help_catch_memory_issues();
 
@@ -2775,14 +2998,14 @@ impl<'a> BundleV2<'a> {
         if let Some(plugins) = self.plugins.as_deref_mut() {
             if plugins.has_any_matches(&import_record.path, false) {
                 // This is where onResolve plugins are enqueued
-                let resolve = Box::new(jsc::api::JSBundler::Resolve::default());
+                let resolve = Box::new(jsc_api::JSBundler::Resolve::default());
                 bun_output::scoped_log!(Bundle, "enqueue onResolve: {}:{}",
                     bstr::BStr::new(&import_record.path.namespace),
                     bstr::BStr::new(&import_record.path.text));
                 self.increment_scan_counter();
 
                 let resolve = Box::leak(resolve); // TODO(port): owned by dispatch chain
-                *resolve = jsc::api::JSBundler::Resolve::init(self, jsc::api::JSBundler::Resolve::MiniImportRecord {
+                *resolve = jsc_api::JSBundler::Resolve::init(self, jsc_api::JSBundler::Resolve::MiniImportRecord {
                     kind: import_record.kind,
                     source_file: source_file.into(),
                     namespace: import_record.path.namespace.clone(),
@@ -2812,10 +3035,10 @@ impl<'a> BundleV2<'a> {
             if plugins.has_any_matches(&temp_path, false) {
                 bun_output::scoped_log!(Bundle, "Entry point '{}' plugin match", bstr::BStr::new(entry_point));
 
-                let resolve = Box::leak(Box::new(jsc::api::JSBundler::Resolve::default()));
+                let resolve = Box::leak(Box::new(jsc_api::JSBundler::Resolve::default()));
                 self.increment_scan_counter();
 
-                *resolve = jsc::api::JSBundler::Resolve::init(self, jsc::api::JSBundler::Resolve::MiniImportRecord {
+                *resolve = jsc_api::JSBundler::Resolve::init(self, jsc_api::JSBundler::Resolve::MiniImportRecord {
                     kind: ImportKind::EntryPointBuild,
                     source_file: b"".into(), // No importer for entry points
                     namespace: b"file".into(),
@@ -2863,7 +3086,7 @@ impl<'a> BundleV2<'a> {
                 bun_output::scoped_log!(Bundle, "enqueue onLoad: {}:{}",
                     bstr::BStr::new(&parse.path.namespace),
                     bstr::BStr::new(&parse.path.text));
-                let load = Box::leak(Box::new(jsc::api::JSBundler::Load::init(self, parse)));
+                let load = Box::leak(Box::new(jsc_api::JSBundler::Load::init(self, parse)));
                 load.dispatch();
                 return true;
             }
@@ -3007,7 +3230,7 @@ impl<'a> BundleV2<'a> {
             // skip this — is_unused is also set by ConvertESMExportsForHmr
             // deduplication, and clearing those source_indices breaks module
             // identity (e.g., __esModule on ESM namespace objects).
-            if import_record.flags.is_unused && self.transpiler.options.dev_server.is_none() {
+            if import_record.flags.is_unused && self.dev_server.is_none() {
                 import_record.source_index = Index::INVALID;
             }
 
@@ -3041,7 +3264,7 @@ impl<'a> BundleV2<'a> {
                     let is_server = ctx.target.is_server_side();
                     let src = if is_server { &bake::SERVER_VIRTUAL_SOURCE } else { &bake::CLIENT_VIRTUAL_SOURCE };
                     if import_record.path.text == src.path.pretty {
-                        if self.transpiler.options.dev_server.is_some() {
+                        if self.dev_server.is_some() {
                             import_record.flags.is_external_without_side_effects = true;
                             import_record.source_index = Index::INVALID;
                         } else {
@@ -3067,10 +3290,10 @@ impl<'a> BundleV2<'a> {
             }
 
             if ctx.target.is_bun() {
-                if let Some(replacement) = jsc::ModuleLoader::HardcodedModule::Alias::get(
+                if let Some(replacement) = bun_resolve_builtins::HardcodedModule::Alias::get(
                     &import_record.path.text,
                     Target::Bun,
-                    jsc::ModuleLoader::HardcodedModule::AliasOptions { rewrite_jest_for_tests: self.transpiler.options.rewrite_jest_for_tests },
+                    bun_resolve_builtins::HardcodedModule::AliasOptions { rewrite_jest_for_tests: self.transpiler.options.rewrite_jest_for_tests },
                 ) {
                     // When bundling node builtins, remove the "node:" prefix.
                     // This supports special use cases where the bundle is put
@@ -3210,9 +3433,9 @@ impl<'a> BundleV2<'a> {
                                         continue 'inner;
                                     }
                                 }
-                                if let Some(dev) = self.transpiler.options.dev_server {
+                                if let Some(dev) = self.dev_server {
                                     // Tell DevServer about the resolution failure.
-                                    dev.directory_watchers.track_resolution_failure(
+                                    dev.track_resolution_failure(
                                         &source.path.text,
                                         &import_record.path.text,
                                         ctx.target.bake_graph(), // use the source file target not the altered one
@@ -3240,7 +3463,7 @@ impl<'a> BundleV2<'a> {
                                             format_args!("Browser build cannot {} Node.js builtin: \"{}\"{}",
                                                 import_record.kind.error_label(),
                                                 bstr::BStr::new(&import_record.path.text),
-                                                if self.transpiler.options.dev_server.is_none() {
+                                                if self.dev_server.is_none() {
                                                     ". To use Node.js builtins, set target to 'node' or 'bun'"
                                                 } else { "" },
                                             ),
@@ -3252,7 +3475,7 @@ impl<'a> BundleV2<'a> {
                                             format_args!("Browser build cannot {} Bun builtin: \"{}\"{}",
                                                 import_record.kind.error_label(),
                                                 bstr::BStr::new(&import_record.path.text),
-                                                if self.transpiler.options.dev_server.is_none() {
+                                                if self.dev_server.is_none() {
                                                     ". When bundling for Bun, set target to 'bun'"
                                                 } else { "" },
                                             ),
@@ -3264,7 +3487,7 @@ impl<'a> BundleV2<'a> {
                                             format_args!("Browser build cannot {} Bun builtin: \"{}\"{}",
                                                 import_record.kind.error_label(),
                                                 bstr::BStr::new(&import_record.path.text),
-                                                if self.transpiler.options.dev_server.is_none() {
+                                                if self.dev_server.is_none() {
                                                     ". When bundling for Bun, set target to 'bun'"
                                                 } else { "" },
                                             ),
@@ -3335,7 +3558,7 @@ impl<'a> BundleV2<'a> {
                 continue;
             }
 
-            if let Some(dev_server) = self.transpiler.options.dev_server {
+            if let Some(dev_server) = self.dev_server_handle() {
                 'brk: {
                     if path.loader(&self.transpiler.options.loaders) == Some(Loader::Html)
                         && (import_record.loader.is_none() || import_record.loader.unwrap() == Loader::Html)
@@ -3362,14 +3585,15 @@ impl<'a> BundleV2<'a> {
 
                     if let Some(entry) = dev_server.is_file_cached(&path.text, bake_graph) {
                         let rel = bun_paths::relative_platform(&self.transpiler.fs.top_level_dir, &path.text, bun_paths::Platform::Loose, false);
-                        if loader == Loader::Html && entry.kind == bake::DevServer::CacheKind::Asset {
+                        if loader == Loader::Html && entry.kind == bake_types::CacheKind::Asset {
                             // Overload `path.text` to point to the final URL
                             // This information cannot be queried while printing because a lock wouldn't get held.
-                            let hash = dev_server.assets.get_hash(&path.text).expect("cached asset not found");
+                            let hash = dev_server.asset_hash(&path.text).expect("cached asset not found");
                             import_record.path.text = path.text.clone();
                             import_record.path.namespace = b"file";
                             import_record.path.pretty = self.allocator().alloc_fmt(format_args!(
-                                concat!(bake::DevServer::ASSET_PREFIX, "/{}{}"),
+                                "{}/{}{}",
+                                bake_types::ASSET_PREFIX,
                                 bun_core::fmt::hex_bytes_lower(bytemuck::bytes_of(&hash)),
                                 bstr::BStr::new(bun_paths::extension(&path.text)),
                             ));
@@ -3378,7 +3602,7 @@ impl<'a> BundleV2<'a> {
                             import_record.path.text = path.text.clone();
                             import_record.path.pretty = rel.into();
                             import_record.path = self.path_with_pretty_initialized(path.clone(), target).expect("oom");
-                            if loader == Loader::Html || entry.kind == bake::DevServer::CacheKind::Css {
+                            if loader == Loader::Html || entry.kind == bake_types::CacheKind::Css {
                                 import_record.path.is_disabled = true;
                             }
                         }
@@ -3408,10 +3632,10 @@ impl<'a> BundleV2<'a> {
 
             let is_html_entrypoint = import_record_loader == Loader::Html
                 && target.is_server_side()
-                && self.transpiler.options.dev_server.is_none();
+                && self.dev_server.is_none();
 
             if let Some(id) = self.path_to_source_index_map(target).get(&path.text) {
-                if self.transpiler.options.dev_server.is_some() && loader != Loader::Html {
+                if self.dev_server.is_some() && loader != Loader::Html {
                     import_record.path = self.graph.input_files.items_source()[id as usize].path.clone();
                 } else {
                     import_record.source_index = Index::init(id);
@@ -3481,7 +3705,7 @@ impl<'a> BundleV2<'a> {
             // SAFETY: ParseTask was Box::leak'd in resolve_import_records
             let value = unsafe { &mut *value };
             let loader = value.loader.unwrap_or_else(|| value.path.loader(&self.transpiler.options.loaders).unwrap_or(Loader::File));
-            let is_html_entrypoint = loader == Loader::Html && target.is_server_side() && self.transpiler.options.dev_server.is_none();
+            let is_html_entrypoint = loader == Loader::Html && target.is_server_side() && self.dev_server.is_none();
             let map: &mut PathToSourceIndexMap = if is_html_entrypoint { self.path_to_source_index_map(Target::Browser) } else { path_to_source_index_map };
             let existing = map.get_or_put(key.clone());
 
@@ -3577,7 +3801,7 @@ impl<'a> BundleV2<'a> {
         let graph = &self.graph;
         let input_file_loaders = graph.input_files.items_loader();
         let save_import_record_source_index = ctx.force_save
-            || self.transpiler.options.dev_server.is_none()
+            || self.dev_server.is_none()
             || ctx.loader == Loader::Html
             || ctx.loader.is_css();
 
@@ -3668,7 +3892,7 @@ impl<'a> BundleV2<'a> {
         self.decrement_scan_counter();
     }
 
-    pub fn on_notify_defer_mini(_: &mut jsc::api::JSBundler::Load, this: &mut BundleV2) {
+    pub fn on_notify_defer_mini(_: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
         this.on_notify_defer();
     }
 
@@ -3766,7 +3990,7 @@ impl<'a> BundleV2<'a> {
                 graph.input_files.items_unique_key_for_additional_file_mut()[result.source.index.get() as usize] = result.unique_key_for_additional_file.clone();
                 graph.input_files.items_content_hash_for_additional_file_mut()[result.source.index.get() as usize] = result.content_hash_for_additional_file;
                 if !result.unique_key_for_additional_file.is_empty() && result.loader.should_copy_for_bundling() {
-                    if let Some(dev) = this.transpiler.options.dev_server {
+                    if let Some(dev) = this.dev_server {
                         dev.put_or_overwrite_asset(
                             &result.source.path,
                             // SAFETY: when shouldCopyForBundling is true, the
@@ -3895,7 +4119,7 @@ impl<'a> BundleV2<'a> {
                 }
 
                 if process_log {
-                    if let Some(dev_server) = this.transpiler.options.dev_server {
+                    if let Some(dev_server) = this.dev_server {
                         dev_server.handle_parse_task_failure(
                             err.err,
                             err.target.bake_graph(),
@@ -3914,7 +4138,7 @@ impl<'a> BundleV2<'a> {
                     }
                 }
 
-                if cfg!(debug_assertions) && this.transpiler.options.dev_server.is_some() {
+                if cfg!(debug_assertions) && this.dev_server.is_some() {
                     debug_assert!(graph.ast.items_parts()[err.source_index.get() as usize].len() == 0);
                 }
             }
@@ -4161,10 +4385,10 @@ pub enum EntryPointKind {
 }
 
 impl EntryPointKind {
-    pub fn output_kind(self) -> jsc::api::BuildArtifact::OutputKind {
+    pub fn output_kind(self) -> jsc_api::build_artifact::OutputKind {
         match self {
-            Self::UserSpecified => jsc::api::BuildArtifact::OutputKind::EntryPoint,
-            _ => jsc::api::BuildArtifact::OutputKind::Chunk,
+            Self::UserSpecified => jsc_api::build_artifact::OutputKind::EntryPoint,
+            _ => jsc_api::build_artifact::OutputKind::Chunk,
         }
     }
 

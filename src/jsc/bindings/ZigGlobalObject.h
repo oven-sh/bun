@@ -278,8 +278,6 @@ public:
     // moduleLoader()->registryEntry(key) / moduleMap() / removeEntry(key) /
     // clearAll() instead.
 
-    JSC::Structure* callSiteStructure() const { return m_callSiteStructure.getInitializedOnMainThread(this); }
-
     JSC::JSObject* performanceObject() const { return m_performanceObject.getInitializedOnMainThread(this); }
 
     JSC::JSFunction* performMicrotaskVariadicFunction() const { return m_performMicrotaskVariadicFunction.getInitializedOnMainThread(this); }
@@ -566,7 +564,6 @@ public:
                                                                                                              \
     V(private, LazyClassStructure, m_JSStringDecoderClassStructure)                                          \
     V(private, LazyClassStructure, m_NapiClassStructure)                                                     \
-    V(private, LazyClassStructure, m_callSiteStructure)                                                      \
     V(public, LazyClassStructure, m_JSBufferClassStructure)                                                  \
     V(public, LazyClassStructure, m_NodeVMScriptClassStructure)                                              \
     V(public, LazyClassStructure, m_NodeVMSourceTextModuleClassStructure)                                    \

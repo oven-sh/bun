@@ -1949,7 +1949,12 @@ pub const H2FrameParser = struct {
             offset += header.next;
             log("header {s} {s}", .{ header.name, header.value });
             if ((this.isServer or is_push_promise) and strings.eqlComptime(header.name, ":status")) {
-                this.sendGoAway(stream_id, ErrorCode.PROTOCOL_ERROR, "Server received :status header", this.lastStreamID, true);
+                // Direction-neutral debug string: this branch fires both on
+                // the server (request header block with :status) and on the
+                // client (PUSH_PROMISE header block with :status). The old
+                // "Server received ..." wording was backwards for the
+                // client path.
+                this.sendGoAway(stream_id, ErrorCode.PROTOCOL_ERROR, ":status pseudo-header in request header block", this.lastStreamID, true);
 
                 return this.streams.get(stream_id);
             }

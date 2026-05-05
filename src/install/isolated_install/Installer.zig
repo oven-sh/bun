@@ -792,9 +792,14 @@ pub const Installer = struct {
                                     // default exact-name excludes only.
                                     backend: switch (linked_initial_method) {
                                         .hardlink => {
-                                            var src: bun.AbsPath(.{ .unit = .os, .sep = .auto }) = .initTopLevelDirLongPath();
+                                            // `producer_path` is already absolute
+                                            // (linkedPackagePath returns
+                                            // `<globalLinkDir>/<pkg>`), so use
+                                            // `fromLongPath` — initTopLevelDirLongPath
+                                            // would prepend the project root and yield
+                                            // `<project>/<absolute producer path>`.
+                                            var src: bun.AbsPath(.{ .unit = .os, .sep = .auto }) = .fromLongPath(@as([]const u8, producer_path));
                                             defer src.deinit();
-                                            src.appendJoin(@as([]const u8, producer_path));
 
                                             var dest: bun.Path(.{ .unit = .os, .sep = .auto }) = .init();
                                             defer dest.deinit();

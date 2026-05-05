@@ -2257,6 +2257,10 @@ describe("bun link integration", () => {
     // tarball (no marker.js).
     const bodyDir = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
     expect(existsSync(join(bodyDir, "marker.js"))).toBe(false);
+    // Top-level symlink still points at the isolated store entry — a regression
+    // from --backend=symlink to a flat hoisted layout would break here even
+    // though the body-check above would still pass.
+    expect(lstatSync(join(packageDir, "node_modules", "no-deps")).isSymbolicLink()).toBe(true);
     void producer;
   });
 

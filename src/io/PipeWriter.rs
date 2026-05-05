@@ -3,6 +3,7 @@ use core::mem;
 
 use bun_collections::BabyList;
 use bun_core::OOM;
+#[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 use bun_sys::{self as sys, Fd};
 
@@ -11,15 +12,26 @@ use bun_sys::{self as sys, Fd};
 use crate::{EventLoopHandle, FilePoll, FilePollFlag, FilePollKind};
 
 use crate::pipes::{FileType, PollOrFd};
+#[cfg(windows)]
 use crate::source::Source;
 
-bun_output::declare_scope!(PipeWriter, hidden);
+bun_core::declare_scope!(PipeWriter, hidden);
+macro_rules! log {
+    ($($args:tt)*) => { bun_core::scoped_log!(PipeWriter, $($args)*) };
+}
+
+// TODO(b2-blocked): bun_sys::Error::oom — `oom()` is a private free fn in
+// `bun_sys::error`; promote to assoc fn or re-export, then drop this shim.
+#[inline]
+fn oom_err() -> sys::Error {
+    sys::Error::from_code(sys::E::ENOMEM, sys::Tag::write)
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // WriteResult / WriteStatus
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub enum WriteResult {
     Done(usize),
     Wrote(usize),
@@ -110,19 +122,18 @@ pub trait PosixPipeWriter {
     fn on_poll(&mut self, size_hint: isize, received_hup: bool) {
         // PORT NOTE: reshaped for borrowck — capture buffer.len() before further &mut self calls.
         let buffer_len = self.get_buffer().len();
-        bun_output::scoped_log!(PipeWriter, "onPoll({})", buffer_len);
+        log!("onPoll({})", buffer_len);
         if buffer_len == 0 && !received_hup {
-            bun_output::scoped_log!(
-                PipeWriter,
+            let self_addr = self as *const _ as *const () as usize;
+            log!(
                 "PosixPipeWriter(0x{:x}) handle={}",
-                self as *const _ as usize,
-                <&'static str>::from(self.handle())
+                self_addr,
+                self.handle().tag_name()
             );
             if let PollOrFd::Poll(poll) = self.handle() {
-                bun_output::scoped_log!(
-                    PipeWriter,
+                log!(
                     "PosixPipeWriter(0x{:x}) got 0, registered state = {}",
-                    self as *const _ as usize,
+                    self_addr,
                     poll.is_registered()
                 );
             }
@@ -238,9 +249,9 @@ fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
         }
     }
 
-    match bun_sys::is_writable(fd) {
-        bun_sys::Writable::Ready | bun_sys::Writable::Hup => sys::write(fd, buf),
-        bun_sys::Writable::NotReady => sys::Result::Err(sys::Error::retry()),
+    match bun_core::is_writable(fd) {
+        bun_core::Pollable::Ready | bun_core::Pollable::Hup => sys::write(fd, buf),
+        bun_core::Pollable::NotReady => sys::Result::Err(sys::Error::retry()),
     }
 }
 
@@ -425,11 +436,11 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     }
 
     fn close_without_reporting(&mut self) {
-        if self.get_fd() != Fd::invalid() {
+        if self.get_fd() != Fd::INVALID {
             debug_assert!(!self.closed_without_reporting);
             self.closed_without_reporting = true;
             if self.close_fd {
-                self.handle.close(None::<fn()>, ());
+                self.handle.close(None, None::<fn(*mut c_void)>);
             }
         }
     }
@@ -440,7 +451,13 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
                 self.closed_without_reporting = false;
                 self.parent().on_close();
             } else {
-                self.handle.close_impl(self.parent, Parent::on_close, self.close_fd);
+                let parent = self.parent;
+                self.handle.close_impl(
+                    Some(parent.cast()),
+                    // SAFETY: parent was set via set_parent with a *mut Parent.
+                    Some(|ctx: *mut c_void| unsafe { (*ctx.cast::<Parent>()).on_close() }),
+                    self.close_fd,
+                );
             }
         }
     }
@@ -452,7 +469,9 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
 
     pub fn set_parent(&mut self, parent: *mut Parent) {
         self.parent = parent;
-        self.handle.set_owner(self as *mut _ as *mut c_void);
+        // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
+        let owner = self as *mut _ as *mut c_void;
+        self.handle.set_owner(owner);
     }
 
     pub fn write(&mut self) {
@@ -643,7 +662,9 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
 
     pub fn set_parent(&mut self, parent: *mut Parent) {
         self.parent = parent;
-        self.handle.set_owner(self as *mut _ as *mut c_void);
+        // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
+        let owner = self as *mut _ as *mut c_void;
+        self.handle.set_owner(owner);
     }
 
     fn _on_writable(&mut self) {
@@ -659,10 +680,10 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     }
 
     fn close_without_reporting(&mut self) {
-        if self.get_fd() != Fd::invalid() {
+        if self.get_fd() != Fd::INVALID {
             debug_assert!(!self.closed_without_reporting);
             self.closed_without_reporting = true;
-            self.handle.close(None::<fn()>, ());
+            self.handle.close(None, None::<fn(*mut c_void)>);
         }
     }
 
@@ -685,7 +706,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         let before_len = self.outgoing.size();
 
         if self.outgoing.write_utf16(buf).is_err() {
-            return WriteResult::Err(sys::Error::oom());
+            return WriteResult::Err(oom_err());
         }
 
         let buf_len = self.outgoing.size() - before_len;
@@ -698,7 +719,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             return WriteResult::Done(0);
         }
 
-        if bun_str::strings::is_all_ascii(buf) {
+        if bun_core::strings::is_all_ascii(buf) {
             return self.write(buf);
         }
 
@@ -706,7 +727,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
 
         const CHECK_ASCII: bool = false;
         if self.outgoing.write_latin1::<CHECK_ASCII>(buf).is_err() {
-            return WriteResult::Err(sys::Error::oom());
+            return WriteResult::Err(oom_err());
         }
 
         let buf_len = self.outgoing.size() - before_len;
@@ -761,8 +782,8 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                 Self::register_poll(self);
             }
 
-            ref r => return WriteResult::Err(match r { WriteResult::Err(e) => *e, _ => unreachable!() }),
-            // TODO(port): Zig `else => |r| return r` — only Err remains; cleaner once WriteResult derives Clone.
+            // Zig `else => |r| return r` — only Err remains.
+            WriteResult::Err(e) => return WriteResult::Err(e),
         }
 
         rc
@@ -777,7 +798,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             // this is streaming, but we buffer the data below `chunk_size` to
             // reduce the number of writes
             if self.outgoing.write(buf).is_err() {
-                return WriteResult::Err(sys::Error::oom());
+                return WriteResult::Err(oom_err());
             }
 
             // noop, but need this to have a chance
@@ -793,7 +814,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         if self.outgoing.size() > 0 {
             // make sure write is in-order
             if self.outgoing.write(buf).is_err() {
-                return WriteResult::Err(sys::Error::oom());
+                return WriteResult::Err(oom_err());
             }
 
             // PORT NOTE: reshaped for borrowck
@@ -811,7 +832,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         match rc {
             WriteResult::Pending(amt) => {
                 if self.outgoing.write(&buf[amt..]).is_err() {
-                    return WriteResult::Err(sys::Error::oom());
+                    return WriteResult::Err(oom_err());
                 }
                 self.parent().on_write(amt, WriteStatus::Pending);
                 Self::register_poll(self);
@@ -819,7 +840,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             WriteResult::Wrote(amt) => {
                 if amt < buf.len() {
                     if self.outgoing.write(&buf[amt..]).is_err() {
-                        return WriteResult::Err(sys::Error::oom());
+                        return WriteResult::Err(oom_err());
                     }
                     self.parent().on_write(amt, WriteStatus::Pending);
                     Self::register_poll(self);
@@ -918,12 +939,17 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     pub fn close(&mut self) {
         if self.closed_without_reporting {
             self.closed_without_reporting = false;
-            debug_assert!(self.get_fd() == Fd::invalid());
+            debug_assert!(self.get_fd() == Fd::INVALID);
             self.parent().on_close();
             return;
         }
 
-        self.handle.close(Some(self.parent), Parent::on_close);
+        let parent = self.parent;
+        self.handle.close(
+            Some(parent.cast()),
+            // SAFETY: parent was set via set_parent with a *mut Parent.
+            Some(|ctx: *mut c_void| unsafe { (*ctx.cast::<Parent>()).on_close() }),
+        );
     }
 
     pub fn start(&mut self, fd: Fd, is_pollable: bool) -> sys::Result<()> {
@@ -973,6 +999,7 @@ impl<Parent: PosixStreamingWriterParent> Drop for PosixStreamingWriter<Parent> {
 ///   owns_fd: bool,
 ///   fn start_with_current_pipe(&mut self) -> sys::Result<()>,
 ///   fn on_close_source(&mut self),
+#[cfg(windows)]
 pub trait BaseWindowsPipeWriter {
     type Parent: WindowsWriterParent;
 
@@ -990,7 +1017,7 @@ pub trait BaseWindowsPipeWriter {
     fn on_close_source(&mut self);
 
     fn get_fd(&self) -> Fd {
-        let Some(pipe) = self.source() else { return Fd::invalid() };
+        let Some(pipe) = self.source() else { return Fd::INVALID };
         pipe.get_fd()
     }
 
@@ -1047,10 +1074,12 @@ pub trait BaseWindowsPipeWriter {
                 unsafe { (*pipe).close(on_pipe_close) };
             }
             Source::Tty(tty) => {
-                // SAFETY: tty is heap-allocated by Source::open; freed in on_tty_close.
-                unsafe { (*tty).data = tty as *mut c_void };
+                let p = tty.as_ptr();
+                // SAFETY: tty is heap-allocated (via open_tty Box::into_raw) or the
+                // process-static stdin tty; freed in on_tty_close (gated on is_stdin_tty).
+                unsafe { (*p).data = p as *mut c_void };
                 // SAFETY: tty is a live uv handle; libuv calls on_tty_close after close completes.
-                unsafe { (*tty).close(on_tty_close) };
+                unsafe { (*p).close(on_tty_close) };
             }
         }
         *self.source_mut() = None;
@@ -1154,19 +1183,26 @@ pub trait BaseWindowsPipeWriter {
     }
 }
 
+#[cfg(windows)]
 extern "C" fn on_pipe_close(handle: *mut uv::Pipe) {
     // SAFETY: handle.data was set to the boxed Pipe ptr in close().
     let this = unsafe { (*handle).data as *mut uv::Pipe };
     drop(unsafe { Box::from_raw(this) });
 }
 
+#[cfg(windows)]
 extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
-    // SAFETY: handle.data was set to the boxed tty ptr in close().
+    // SAFETY: handle.data was set to the tty ptr in close().
     let this = unsafe { (*handle).data as *mut uv::uv_tty_t };
-    drop(unsafe { Box::from_raw(this) });
+    // The stdin tty (fd 0) lives in static storage; never free it. Mirrors
+    // Zig PipeWriter onTtyClose's `is_stdin_tty()` gate.
+    if !crate::source::stdin_tty::is_stdin_tty(this) {
+        drop(unsafe { Box::from_raw(this) });
+    }
 }
 
 /// Common parent requirements for Windows writers (event loop access + ref counting).
+#[cfg(windows)]
 pub trait WindowsWriterParent {
     fn loop_(&self) -> *mut uv::Loop;
     fn ref_(&self);
@@ -1178,6 +1214,7 @@ pub trait WindowsWriterParent {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Function table for `WindowsBufferedWriter`.
+#[cfg(windows)]
 pub trait WindowsBufferedWriterParent: WindowsWriterParent {
     fn on_write(&mut self, amount: usize, status: WriteStatus);
     fn on_error(&mut self, err: sys::Error);
@@ -1188,6 +1225,7 @@ pub trait WindowsBufferedWriterParent: WindowsWriterParent {
     fn on_writable(&mut self) {}
 }
 
+#[cfg(windows)]
 pub struct WindowsBufferedWriter<Parent: WindowsBufferedWriterParent> {
     pub source: Option<Source>,
     pub owns_fd: bool,
@@ -1199,6 +1237,7 @@ pub struct WindowsBufferedWriter<Parent: WindowsBufferedWriterParent> {
     pub pending_payload_size: usize,
 }
 
+#[cfg(windows)]
 impl<Parent: WindowsBufferedWriterParent> Default for WindowsBufferedWriter<Parent> {
     fn default() -> Self {
         Self {
@@ -1214,6 +1253,7 @@ impl<Parent: WindowsBufferedWriterParent> Default for WindowsBufferedWriter<Pare
     }
 }
 
+#[cfg(windows)]
 impl<Parent: WindowsBufferedWriterParent> BaseWindowsPipeWriter for WindowsBufferedWriter<Parent> {
     type Parent = Parent;
     const HAS_CURRENT_PAYLOAD: bool = false;
@@ -1241,6 +1281,7 @@ impl<Parent: WindowsBufferedWriterParent> BaseWindowsPipeWriter for WindowsBuffe
     }
 }
 
+#[cfg(windows)]
 impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
     #[inline]
     fn parent(&self) -> &mut Parent {
@@ -1412,8 +1453,10 @@ impl StreamBuffer {
         // TODO(port): std.heap.pageSize() — using 4096; Phase B: query actual page size.
         let page = 4096usize;
         if self.list.capacity() > page {
-            // workaround insane zig decision to make it undefined behavior to resize .len < .capacity
-            // PORT NOTE: Rust shrink_to handles len<cap correctly; expandToCapacity() unneeded.
+            // Zig: expandToCapacity() then shrinkAndFree(page) — i.e. truncate the
+            // buffer's content to `page` bytes AND release the excess capacity.
+            // Vec::shrink_to never goes below current len, so truncate first.
+            self.list.truncate(page);
             self.list.shrink_to(page);
         }
     }
@@ -1483,24 +1526,15 @@ impl StreamBuffer {
         match kind {
             WriteKind::Latin1 => {
                 let buffer = buffer_u8.unwrap();
-                if bun_str::strings::is_all_ascii(buffer) {
+                if bun_core::strings::is_all_ascii(buffer) {
                     return Ok(buffer);
                 }
-                {
-                    let mut byte_list = BabyList::<u8>::move_from_vec(&mut self.list);
-                    let _g = scopeguard::guard((), |_| self.list = byte_list.move_to_vec());
-                    byte_list.write_latin1(buffer)?;
-                    // TODO(port): scopeguard borrow — Phase B reshape (Zig defer pattern).
-                }
+                self.write_latin1::<false>(buffer)?;
                 Ok(&self.list[self.cursor..])
             }
             WriteKind::Utf16 => {
                 let buffer = buffer_u16.unwrap();
-                {
-                    let mut byte_list = BabyList::<u8>::move_from_vec(&mut self.list);
-                    let _g = scopeguard::guard((), |_| self.list = byte_list.move_to_vec());
-                    byte_list.write_utf16(buffer)?;
-                }
+                self.write_utf16(buffer)?;
                 Ok(&self.list[self.cursor..])
             }
             WriteKind::Bytes => Ok(buffer_u8.unwrap()),
@@ -1509,22 +1543,25 @@ impl StreamBuffer {
 
     pub fn write_latin1<const CHECK_ASCII: bool>(&mut self, buffer: &[u8]) -> Result<(), OOM> {
         if CHECK_ASCII {
-            if bun_str::strings::is_all_ascii(buffer) {
+            if bun_core::strings::is_all_ascii(buffer) {
                 return self.write(buffer);
             }
         }
 
-        let mut byte_list = BabyList::<u8>::move_from_vec(&mut self.list);
-        let r = byte_list.write_latin1(buffer);
-        self.list = byte_list.move_to_vec();
-        r.map(|_| ())
+        // PORT NOTE: Zig round-trips through `ByteList::moveFromList` to call
+        // `writeLatin1`; the underlying op is `allocateLatin1IntoUTF8WithList`,
+        // which we call on the `Vec<u8>` directly.
+        let len = self.list.len();
+        let list = mem::take(&mut self.list);
+        self.list = bun_core::strings::allocate_latin1_into_utf8_with_list(list, len, buffer);
+        Ok(())
     }
 
     pub fn write_utf16(&mut self, buffer: &[u16]) -> Result<(), OOM> {
-        let mut byte_list = BabyList::<u8>::move_from_vec(&mut self.list);
-        let r = byte_list.write_utf16(buffer);
-        self.list = byte_list.move_to_vec();
-        r.map(|_| ())
+        // PORT NOTE: see `write_latin1` — call the underlying append on `Vec<u8>`
+        // directly instead of round-tripping through `ByteList`.
+        bun_core::strings::convert_utf16_to_utf8_append(&mut self.list, buffer);
+        Ok(())
     }
 
     pub fn slice(&self) -> &[u8] {
@@ -1544,6 +1581,7 @@ pub enum WriteKind {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Function table for `WindowsStreamingWriter`.
+#[cfg(windows)]
 pub trait WindowsStreamingWriterParent: WindowsWriterParent {
     /// reports the amount written and done means that we dont have any
     /// other pending data to send (but we may send more data)
@@ -1554,6 +1592,7 @@ pub trait WindowsStreamingWriterParent: WindowsWriterParent {
     fn on_close(&mut self);
 }
 
+#[cfg(windows)]
 pub struct WindowsStreamingWriter<Parent: WindowsStreamingWriterParent> {
     pub source: Option<Source>,
     /// if the source of this writer is a file descriptor, calling end() will not close it.
@@ -1575,6 +1614,7 @@ pub struct WindowsStreamingWriter<Parent: WindowsStreamingWriterParent> {
     pub closed_without_reporting: bool,
 }
 
+#[cfg(windows)]
 impl<Parent: WindowsStreamingWriterParent> Default for WindowsStreamingWriter<Parent> {
     fn default() -> Self {
         Self {
@@ -1593,6 +1633,7 @@ impl<Parent: WindowsStreamingWriterParent> Default for WindowsStreamingWriter<Pa
     }
 }
 
+#[cfg(windows)]
 impl<Parent: WindowsStreamingWriterParent> BaseWindowsPipeWriter for WindowsStreamingWriter<Parent> {
     type Parent = Parent;
     const HAS_CURRENT_PAYLOAD: bool = true;
@@ -1622,6 +1663,7 @@ impl<Parent: WindowsStreamingWriterParent> BaseWindowsPipeWriter for WindowsStre
     }
 }
 
+#[cfg(windows)]
 impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     #[inline]
     fn parent(&self) -> &mut Parent {
@@ -1650,7 +1692,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
 
         if let Some(err) = status.to_error(uv::SyscallTag::Write) {
             self.last_write_result = WriteResult::Err(err);
-            bun_output::scoped_log!(PipeWriter, "onWrite() = {}", err.name());
+            log!("onWrite() = {}", err.name());
 
             self.parent().on_error(err);
             self.close_without_reporting();
@@ -1665,7 +1707,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         let done = self.outgoing.is_empty();
         let was_done = self.is_done;
 
-        bun_output::scoped_log!(PipeWriter, "onWrite({}) ({} left)", written, self.outgoing.size());
+        log!("onWrite({}) ({} left)", written, self.outgoing.size());
 
         if was_done && done {
             // we already call .end lets close the connection
@@ -1732,7 +1774,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
 
     /// this tries to send more data returning if we are writable or not after this
     fn process_send(&mut self) {
-        bun_output::scoped_log!(PipeWriter, "processSend");
+        log!("processSend");
         if self.current_payload.is_not_empty() {
             // we have some pending async request, the next outgoing data will be processed after this finish
             self.last_write_result = WriteResult::Pending(0);
@@ -1817,7 +1859,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     }
 
     fn close_without_reporting(&mut self) {
-        if self.get_fd() != Fd::invalid() {
+        if self.get_fd() != Fd::INVALID {
             debug_assert!(!self.closed_without_reporting);
             self.closed_without_reporting = true;
             self.close();
@@ -1835,7 +1877,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             let result = (|| {
                 let remain = match self.outgoing.write_or_fallback(Some(buffer), None, kind) {
                     Ok(r) => r,
-                    Err(_) => return WriteResult::Err(sys::Error::oom()),
+                    Err(_) => return WriteResult::Err(oom_err()),
                 };
                 let initial_len = remain.len();
                 let mut remain = remain;
@@ -1873,7 +1915,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             WriteKind::Utf16 => unreachable!(),
         };
         if r.is_err() {
-            return WriteResult::Err(sys::Error::oom());
+            return WriteResult::Err(oom_err());
         }
         if had_buffered_data {
             return WriteResult::Pending(0);
@@ -1891,7 +1933,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             let result = (|| {
                 let remain = match self.outgoing.write_or_fallback(None, Some(buffer), WriteKind::Utf16) {
                     Ok(r) => r,
-                    Err(_) => return WriteResult::Err(sys::Error::oom()),
+                    Err(_) => return WriteResult::Err(oom_err()),
                 };
                 let initial_len = remain.len();
                 let mut remain = remain;
@@ -1924,7 +1966,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
 
         let had_buffered_data = self.outgoing.is_not_empty();
         if self.outgoing.write_utf16(buffer).is_err() {
-            return WriteResult::Err(sys::Error::oom());
+            return WriteResult::Err(oom_err());
         }
         if had_buffered_data {
             return WriteResult::Pending(0);
@@ -1974,6 +2016,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     }
 }
 
+#[cfg(windows)]
 impl<Parent: WindowsStreamingWriterParent> Drop for WindowsStreamingWriter<Parent> {
     fn drop(&mut self) {
         // Close the pipe first to cancel any in-flight writes before

@@ -795,17 +795,7 @@ const CS_EXECSEG_MAIN_BINARY: u64 = 0x1;
 /// `bun.sha.SHA256.hash(bytes, out, null)`.
 #[inline]
 fn sha256_hash(bytes: &[u8], out: &mut [u8; 32]) {
-    // TODO(b2-blocked): bun_sha_hmac::SHA256::hash
-    // (gated upstream on bun_boringssl_sys; see src/sha_hmac/sha.rs)
-    #[cfg(any())]
-    {
-        bun_sha_hmac::sha::SHA256::hash(bytes, out, None);
-    }
-    #[cfg(not(any()))]
-    {
-        let _ = (bytes, out);
-        todo!("b2-blocked: bun_sha_hmac::SHA256::hash (bun_boringssl_sys)");
-    }
+    bun_sha_hmac::sha::SHA256::hash(bytes, out, None);
 }
 
 /// Reinterpret a `#[repr(C)]` POD value as bytes (port of `std.mem.asBytes`).

@@ -219,18 +219,16 @@ fn cpuid(leaf: u32, subleaf: u32) -> CpuidResult {
 /// per-call path when `mult == 0`.
 fn os_monotonic_ns() -> u64 {
     #[cfg(windows)]
-    #[cfg(any())]
     {
-        // TODO(b2-blocked): bun_sys::windows::QueryPerformanceCounter
-        // TODO(b2-blocked): bun_sys::windows::QueryPerformanceFrequency
         // QPF is a constant read from KUSER_SHARED_DATA; no need to cache.
-        let counter = bun_sys::windows::QueryPerformanceCounter();
-        let freq = bun_sys::windows::QueryPerformanceFrequency();
+        let mut counter: i64 = 0;
+        let mut freq: i64 = 0;
+        // SAFETY: out-params are valid stack locals; QPC/QPF never fail on XP+.
+        unsafe {
+            bun_sys::windows::QueryPerformanceCounter(&mut counter);
+            bun_sys::windows::QueryPerformanceFrequency(&mut freq);
+        }
         return u64::try_from((counter as u128) * (NS_PER_S as u128) / (freq as u128)).unwrap();
-    }
-    #[cfg(windows)]
-    {
-        todo!("b2-blocked: bun_sys::windows::QueryPerformanceCounter / QueryPerformanceFrequency");
     }
     #[cfg(not(windows))]
     {

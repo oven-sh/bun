@@ -5,8 +5,10 @@
 
 // ════════════════════════════════════════════════════════════════════════════
 // B-2 UN-GATED. Loop / Poll / Waker / Closer / FilePoll-vtable / heap / pipes /
-// MaxBuf / openForWriting compile. PipeReader / PipeWriter / source remain
-// `#[cfg(any())]`-gated on missing T0/T1 surface (see TODO(b2-blocked) notes).
+// MaxBuf / openForWriting / PipeReader / PipeWriter compile on POSIX. `source`
+// and the Windows*Reader/Writer impls are `#[cfg(windows)]`-gated (libuv-only;
+// not B-2-verifiable on this host). See TODO(b2-blocked) notes for remaining
+// T0/T1 shims (`bun_sys::syslog`, `bun_sys::Error::oom`, `bun_core::debug_warn`).
 // ════════════════════════════════════════════════════════════════════════════
 
 #![allow(dead_code, unused_variables, unused_imports, unused_mut, clippy::all)]
@@ -15,24 +17,16 @@
 // ── submodules ──────────────────────────────────────────────────────────────
 #[path = "heap.rs"]
 pub mod heap;
-// TODO(b2-blocked): bun_sys::windows::libuv — `source.rs` is Windows-only
-// (libuv pipe/tty/file). Un-gate once `bun_sys::windows` compiles.
-#[cfg(any())]
+// `source.rs` is Windows-only (libuv pipe/tty/file wrappers). On POSIX the
+// `Source` type is never constructed; callers are themselves `#[cfg(windows)]`.
+// TODO(b2-blocked): bun_sys::windows::libuv — verify compiles on Windows in CI.
+#[cfg(windows)]
 #[path = "source.rs"]
 pub mod source;
 #[path = "pipes.rs"]
 pub mod pipes;
-// TODO(b2-blocked): bun_sys::read_nonblocking, bun_sys::SizeHint,
-// bun_sys::syslog, bun_core::is_readable, bun_core::Pollable,
-// bun_core::is_slice_in_buffer, crate::source (→ bun_sys::windows::libuv).
-// 60+ unresolved-symbol errors; un-gate after T0/T1 surface lands.
-#[cfg(any())]
 #[path = "PipeReader.rs"]
 pub mod pipe_reader;
-// TODO(b2-blocked): bun_sys::send_non_block, bun_sys::write_nonblocking,
-// bun_collections::BabyList, bun_core::OOM, bun_sys::windows::libuv,
-// crate::source. Same class of T0/T1 blockers as PipeReader.
-#[cfg(any())]
 #[path = "PipeWriter.rs"]
 pub mod pipe_writer;
 #[path = "openForWriting.rs"]
@@ -44,17 +38,19 @@ pub mod max_buf;
 pub use pipes::{FileType, ReadState};
 #[allow(non_snake_case)]
 pub use max_buf as MaxBuf;
+pub use pipe_writer::{BufferedWriter, StreamBuffer, StreamingWriter, WriteResult, WriteStatus};
+#[cfg(windows)]
+pub use source::Source;
 
-// B-2: still-gated submodules surface as opaque stubs here.
-pub struct Source;
-pub struct BufferedReader;
-pub struct PipeReader;
-pub struct BufferedWriter;
-pub struct StreamBuffer;
-pub struct StreamingWriter;
-pub struct WriteResult;
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum WriteStatus { Pending, Done, EndOfFile, Drained }
+// B-2: stub for never-constructed-on-POSIX `Source` so cross-platform sigs
+// (`Option<Source>`) typecheck.
+#[cfg(not(windows))]
+pub enum Source {}
+
+pub use pipe_reader::BufferedReader;
+/// Downstream alias (Zig: `bun.io.BufferedReader` is sometimes referenced as
+/// `PipeReader`).
+pub type PipeReader = BufferedReader;
 
 pub use open_for_writing_mod::{open_for_writing, open_for_writing_impl};
 
@@ -1149,6 +1145,16 @@ impl EventLoopHandle {
         // SAFETY: FILE_POLL_VTABLE is set by bun_runtime::init() before any io path runs.
         unsafe { (file_poll_vtable().event_loop_to_loop)(self) }
     }
+    /// `bun.jsc.EventLoopHandle.pipeReadBuffer()` — per-loop scratch buffer for
+    /// streaming pipe reads. Routed through the vtable since T2 cannot name
+    /// `bun_jsc::EventLoopHandle`'s layout.
+    #[inline]
+    pub fn pipe_read_buffer(self) -> &'static mut [u8] {
+        // SAFETY: FILE_POLL_VTABLE is set by bun_runtime::init() before any io path runs.
+        // The buffer is owned by the (single-threaded) event loop and outlives the
+        // caller's read tick; `'static` matches the Zig `*[256 * 1024]u8` borrow.
+        unsafe { (file_poll_vtable().pipe_read_buffer)(self) }
+    }
 }
 
 /// Opaque pointer to a `bun_aio::FilePoll` (T3). Stored in `PollOrFd::Poll`.
@@ -1196,6 +1202,9 @@ pub struct FilePollVTable {
     pub disable_keeping_process_alive: unsafe fn(FilePollPtr, ev: EventLoopHandle),
     /// Extract the uws/uv `*mut Loop` from an `EventLoopHandle`.
     pub event_loop_to_loop: unsafe fn(EventLoopHandle) -> *mut c_void,
+    /// `bun.jsc.EventLoopHandle.pipeReadBuffer()` — returns the per-loop
+    /// 256 KiB scratch buffer for streaming pipe reads.
+    pub pipe_read_buffer: unsafe fn(EventLoopHandle) -> &'static mut [u8],
 }
 
 /// Written once by `bun_runtime::init()` (or `bun_aio` ctor). Never null at use.
@@ -1498,34 +1507,43 @@ pub mod closer {
     // ── POSIX ────────────────────────────────────────────────────────────────
 
     #[cfg(not(windows))]
+    use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
+
+    #[cfg(not(windows))]
     #[repr(C)]
     pub struct Closer {
         pub fd: Fd,
+        task: WorkPoolTask,
     }
 
     #[cfg(not(windows))]
     impl Closer {
         /// `_compat`: for signature compatibility with the Windows version.
         pub fn close(fd: Fd, _compat: ()) {
-            #[cfg(any())]
-            {
-                // TODO(b2-blocked): bun_threading::work_pool::WorkPool — bun_threading
-                // fails to compile (see RequestQueue note). Re-enable the
-                // Box::into_raw + WorkPool::schedule path once it builds.
-                use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
-                debug_assert!(fd.is_valid());
-                let closer = Box::into_raw(Box::new(Closer {
-                    fd,
-                    task: WorkPoolTask { callback: Self::on_close, ..Default::default() },
-                }));
-                // SAFETY: closer is a valid heap allocation; task is its embedded field.
-                WorkPool::schedule(unsafe { &raw mut (*closer).task });
-                return;
-            }
-            // Fallback: synchronous close until WorkPool is available.
             debug_assert!(fd.is_valid());
+            let closer = Box::into_raw(Box::new(Closer {
+                fd,
+                task: WorkPoolTask {
+                    node: Default::default(),
+                    callback: Self::on_close,
+                },
+            }));
+            // SAFETY: closer is a valid heap allocation; task is its embedded field.
+            WorkPool::schedule(unsafe { &raw mut (*closer).task });
+        }
+
+        unsafe fn on_close(task: *mut WorkPoolTask) {
             use bun_sys::FdExt;
-            fd.close();
+            // SAFETY: `task` is the `task` field of a `Closer` allocated above
+            // via Box::into_raw; recover the parent pointer with offset_of.
+            let closer = unsafe {
+                Box::from_raw(
+                    (task as *mut u8)
+                        .sub(core::mem::offset_of!(Closer, task))
+                        .cast::<Closer>(),
+                )
+            };
+            closer.fd.close();
         }
     }
 

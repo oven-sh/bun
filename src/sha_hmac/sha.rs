@@ -141,18 +141,12 @@ macro_rules! new_hasher {
     ) => {
         #[repr(C)]
         pub struct $name {
-            #[cfg(any())]
             hasher: $ctx,
-            // TODO(b2-blocked): bun_boringssl_sys::SHA_CTX / SHA256_CTX / SHA512_CTX / RIPEMD160_CTX
-            #[cfg(not(any()))]
-            _hasher: (),
         }
 
         impl $name {
             pub const DIGEST: usize = $digest_size;
 
-            #[cfg(any())]
-            // TODO(b2-blocked): bun_boringssl_sys::SHA*_Init
             pub fn init() -> Self {
                 boringssl::load();
                 // SAFETY: BoringSSL *_Init fully initialises the context; we never
@@ -163,8 +157,6 @@ macro_rules! new_hasher {
                 this
             }
 
-            #[cfg(any())]
-            // TODO(b2-blocked): bun_boringssl_sys::SHA* (one-shot)
             pub fn hash(bytes: &[u8], out: &mut [u8; $digest_size]) {
                 // SAFETY: `out` is exactly DIGEST bytes; BoringSSL one-shot hashers
                 // accept (ptr, len, out) and never read past `len`.
@@ -173,8 +165,6 @@ macro_rules! new_hasher {
                 }
             }
 
-            #[cfg(any())]
-            // TODO(b2-blocked): bun_boringssl_sys::SHA*_Update
             pub fn update(&mut self, data: &[u8]) {
                 // SAFETY: `self.hasher` was initialised in `init()`; BoringSSL
                 // *_Update reads exactly `len` bytes from `data`.
@@ -183,8 +173,6 @@ macro_rules! new_hasher {
                 debug_assert!(rc == 1);
             }
 
-            #[cfg(any())]
-            // TODO(b2-blocked): bun_boringssl_sys::SHA*_Final
             pub fn r#final(&mut self, out: &mut [u8; $digest_size]) {
                 // SAFETY: `out` is exactly DIGEST bytes; *_Final writes that many.
                 let rc: c_int = unsafe { $final_(out.as_mut_ptr(), &mut self.hasher) };
@@ -447,8 +435,7 @@ pub mod hashers {
 
     new_hasher!(
         RIPEMD160,
-        // TODO(b2-blocked): bun_boringssl_sys::RIPEMD160_DIGEST_LENGTH — literal inlined
-        20,
+        boringssl_sys::RIPEMD160_DIGEST_LENGTH as usize,
         boringssl_sys::RIPEMD160_CTX,
         boringssl_sys::RIPEMD160,
         boringssl_sys::RIPEMD160_Init,

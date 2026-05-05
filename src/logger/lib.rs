@@ -107,6 +107,24 @@ pub mod fs {
             PathName { dir, base, ext, filename }
         }
 
+        /// Port of `src/resolver/fs.zig` PathName.nonUniqueNameStringBase.
+        /// `/bar/foo/index.js` → `foo`; `/bar/foo.js` → `foo`.
+        pub fn non_unique_name_string_base(&self) -> &'static [u8] {
+            // /bar/foo/index.js -> foo
+            if !self.dir.is_empty() && self.base == b"index" {
+                // "/index" -> "index"
+                return PathName::init(self.dir).base;
+            }
+            debug_assert!(!self.base.contains(&b'/'));
+            // /bar/foo.js -> foo
+            self.base
+        }
+
+        /// Port of `src/resolver/fs.zig` PathName.fmtIdentifier.
+        pub fn fmt_identifier(&self) -> bun_core::fmt::FormatValidIdentifier<'static> {
+            bun_core::fmt::fmt_identifier(self.non_unique_name_string_base())
+        }
+
         #[inline]
         pub fn dir_with_trailing_slash(&self) -> &[u8] {
             // The three strings basically always point to the same underlying ptr
@@ -963,8 +981,6 @@ impl Location {
     }
 
     pub fn init_or_null(_source: Option<&Source>, r: Range) -> Option<Location> {
-        // TODO(b2-blocked): bun_string::strings::trim_left
-        #[cfg(any())]
         if let Some(source) = _source {
             if r.is_empty() {
                 return Some(Location {
@@ -999,7 +1015,6 @@ impl Location {
                 offset: usize::try_from(r.loc.start.max(0)).unwrap(),
             });
         }
-        let _ = r;
         None
     }
 }
@@ -1101,8 +1116,9 @@ impl Data {
         redact_sensitive_information: bool,
     ) -> fmt::Result {
         // TODO(b2-blocked): bun_core::fmt::fmt_javascript
-        // TODO(b2-blocked): bun_core::Output::pretty_fmt (runtime fn taking fmt::Arguments)
-        // TODO(b2-blocked): bun_string::strings::trim_left
+        // TODO(b2-blocked): bun_core::output::color_map
+        // TODO(b2-blocked): bun_core::Output::pretty_fmt (runtime fn taking fmt::Arguments —
+        //                   only `pretty_fmt!` macro on string-literals exists today)
         #[cfg(any())]
         {
         if self.text.is_empty() {
@@ -2208,7 +2224,7 @@ impl Log {
     #[cold]
     pub fn add_warning_fmt_line_col(
         &mut self,
-        filepath: &[u8],
+        filepath: Str,
         line: u32,
         col: u32,
         args: fmt::Arguments<'_>,
@@ -2219,7 +2235,7 @@ impl Log {
     #[cold]
     pub fn add_warning_fmt_line_col_with_notes(
         &mut self,
-        filepath: &[u8],
+        filepath: Str,
         line: u32,
         col: u32,
         args: fmt::Arguments<'_>,
@@ -2232,14 +2248,11 @@ impl Log {
 
         // TODO: do this properly
 
-        // TODO(b1): lifetime — `Location.file: &'static [u8]` vs borrowed `filepath`.
-        // Gate draft body until Phase-B ownership rework.
-        #[cfg(any())]
-        {
         let data = Data {
             text: alloc_print(args)?,
             location: Some(Location {
-                // TODO(port): lifetime — `filepath` is borrowed.
+                // TODO(port): lifetime — Phase A keeps `Location.file` as `&'static [u8]`
+                // matching `Str`; Phase B threads real ownership (see module doc).
                 file: filepath,
                 line: i32::try_from(line).unwrap(),
                 column: i32::try_from(col).unwrap(),
@@ -2254,9 +2267,6 @@ impl Log {
             notes,
             ..Default::default()
         })
-        } // end #[cfg(any())]
-        let _ = (filepath, line, col, args, notes);
-        todo!("add_warning_fmt_line_col_with_notes — gated on Location ownership")
     }
 
     // (Zig has a large commented-out `addWarningFmtLineColWithNote` here — omitted.)
@@ -2662,7 +2672,6 @@ pub struct ErrorPosition {
 }
 
 impl Source {
-    #[cfg(any())] // TODO(b2-blocked): bun_paths::fs::PathName::fmt_identifier
     pub fn fmt_identifier(&self) -> bun_core::fmt::FormatValidIdentifier<'_> {
         self.path.name.fmt_identifier()
     }
@@ -2674,14 +2683,19 @@ impl Source {
         }
 
         debug_assert!(!self.path.text.is_empty());
-        // TODO(b2-blocked): bun_paths::fs::PathName::non_unique_name_string
+        // TODO(port): lifetime — `MutableString::ensure_valid_identifier` returns
+        // `Box<[u8]>`, but `self.identifier_name: Str` is `&'static [u8]`. Un-gating
+        // requires the Phase-B `Str` ownership rework (PORTING.md §Forbidden bans
+        // Box::leak here). Not a lower-tier symbol blocker.
         #[cfg(any())]
         {
-        let name = self.path.name.non_unique_name_string()?;
+        let name = bun_string::MutableString::ensure_valid_identifier(
+            self.path.name.non_unique_name_string_base(),
+        )?;
         self.identifier_name = name;
         Ok(name)
         }
-        todo!("Source::identifier_name — fs::PathName stub")
+        todo!("Source::identifier_name — gated on Str ownership rework")
     }
 
     pub fn range_of_identifier(&self, loc: Loc) -> Range {

@@ -152,9 +152,12 @@ fn search_bin(
     path_size: usize,
     check_windows_extensions: bool,
 ) -> Option<&mut [u16]> {
-    #[cfg(any())]
+    // PORT NOTE: Zig `existsOSPath` takes `bun.OSPathSliceZ`, which is `[:0]const u16`
+    // on Windows and `[:0]const u8` on POSIX. `searchBin` only ever runs on Windows
+    // (whichWin is dead-by-lazy-eval elsewhere); the POSIX arm here is just to keep
+    // the public `which_win` symbol type-checking on all targets.
+    #[cfg(windows)]
     {
-        // TODO(b2-blocked): bun_sys::exists_os_path
         if !check_windows_extensions {
             // On Windows, files without extensions are not executable
             // Therefore, we should only care about this check when the file already has an extension.
@@ -180,8 +183,11 @@ fn search_bin(
         }
         None
     }
-    let _ = (buf, path_size, check_windows_extensions);
-    todo!("b2-blocked: bun_sys::exists_os_path")
+    #[cfg(not(windows))]
+    {
+        let _ = (buf, path_size, check_windows_extensions);
+        None
+    }
 }
 
 /// Check if bin file exists in this path (internally used by which_win)
@@ -306,7 +312,7 @@ pub fn which_win<'a>(
 //   notes:      search_bin/search_bin_in_path/which_win return &[u16] instead of
 //               &WStr (WStr::from_raw_mut not yet available). NUL is still
 //               written at buf[len]; callers reconstruct WStr from buf.as_ptr().
-//   b2-status:  is_valid/which/ends_with_extension/WIN_EXTENSIONS_W/
-//               search_bin_in_path/which_win un-gated.
-//               search_bin body still gated — blocked on bun_sys::exists_os_path.
+//   b2-status:  fully un-gated. search_bin body cfg(windows)-only — exists_os_path
+//               takes OSPathSliceZ (=ZStr on POSIX, =WStr on Windows); the W-path
+//               check is unreachable on POSIX (which() never calls which_win there).
 // ──────────────────────────────────────────────────────────────────────────

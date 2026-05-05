@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 use bun_alloc::AllocError;
-use bun_collections::StringArrayHashMap;
+use bun_collections::{ArrayHashMapExt, Entry, GetOrPutResult, StringArrayHashMap};
 use bun_core::{self, Output};
 use bun_logger as logger;
 use bun_paths::{self, PathBuffer, MAX_PATH_BYTES};
@@ -52,18 +52,18 @@ pub struct Loader<'a> {
 
 // Module-level mutable statics from the Zig (`var` decls inside `Loader`).
 static DID_LOAD_CCACHE_PATH: AtomicBool = AtomicBool::new(false);
-// Zig: `var node_path_to_use_set_once: []const u8 = ""` — single-threaded CLI startup.
-// PORTING.md §Concurrency: OnceLock for set-once globals (NEVER static mut).
-static NODE_PATH_TO_USE_SET_ONCE: OnceLock<Box<[u8]>> = OnceLock::new();
+// Zig: `var node_path_to_use_set_once: []const u8 = ""` — overwritten on every
+// `loadNodeJSConfig` call (env_loader.zig:344). NOT set-once despite the name,
+// so RwLock<Option> (not OnceLock) — a 2nd call with an override must update the cache.
+static NODE_PATH_TO_USE_SET_ONCE: parking_lot::RwLock<Option<Box<[u8]>>> =
+    parking_lot::const_rwlock(None);
 
 // Zig: `pub var has_no_clear_screen_cli_flag: ?bool = null;`
 // PORTING.md §Concurrency: OnceLock — set once from CLI flag, read many.
 pub static HAS_NO_CLEAR_SCREEN_CLI_FLAG: OnceLock<bool> = OnceLock::new();
 
 impl<'a> Loader<'a> {
-    #[cfg(any())]
-    pub fn iterator(&self) -> () {
-        // TODO(b2-blocked): bun_collections::ArrayHashMapExt::Iterator
+    pub fn iterator(&mut self) -> <HashTable as ArrayHashMapExt>::Iterator<'_> {
         self.map.iterator()
     }
 
@@ -90,13 +90,11 @@ impl<'a> Loader<'a> {
         env == b"test"
     }
 
-    #[cfg(any())]
     pub fn get_node_path<'b>(
         &mut self,
-        fs: &(), // TODO(b2-blocked): bun_sys::fs::FileSystem
+        fs: &bun_paths::fs::FileSystem,
         buf: &'b mut PathBuffer,
     ) -> Option<&'b ZStr> {
-        // TODO(b2-blocked): bun_sys::fs::FileSystem (MOVE_DOWN bun_resolver::fs → sys not yet landed)
         // Check NODE or npm_node_execpath env var, but only use it if the file actually exists
         if let Some(node) = self.get(b"NODE").or_else(|| self.get(b"npm_node_execpath")) {
             if !node.is_empty() && node.len() < MAX_PATH_BYTES {
@@ -310,9 +308,7 @@ impl<'a> Loader<'a> {
         false
     }
 
-    #[cfg(any())]
-    pub fn load_ccache_path(&mut self, fs: &()) {
-        // TODO(b2-blocked): bun_sys::fs::FileSystem
+    pub fn load_ccache_path(&mut self, fs: &bun_paths::fs::FileSystem) {
         if DID_LOAD_CCACHE_PATH.load(Ordering::Relaxed) {
             return;
         }
@@ -320,10 +316,7 @@ impl<'a> Loader<'a> {
         let _ = self.load_ccache_path_impl(fs);
     }
 
-    #[cfg(any())]
-    fn load_ccache_path_impl(&mut self, fs: &()) -> Result<(), AllocError> {
-        // TODO(b2-blocked): bun_sys::fs::FileSystem
-        // TODO(b2-blocked): bun_collections::StringArrayHashMap::get_or_put
+    fn load_ccache_path_impl(&mut self, fs: &bun_paths::fs::FileSystem) -> Result<(), AllocError> {
         // if they have ccache installed, put it in env variable `CMAKE_CXX_COMPILER_LAUNCHER` so
         // cmake can use it to hopefully speed things up
         let mut buf = PathBuffer::uninit();
@@ -331,16 +324,18 @@ impl<'a> Loader<'a> {
             Some(p) => p,
             None => return Ok(()),
         };
-        let ccache_path: &[u8] = which(&mut buf, path, fs.top_level_dir(), b"ccache")
-            .map(|z| z.as_bytes())
-            .unwrap_or(b"");
+        // PORT NOTE: borrowck — `path` borrows `self.map`; `which` writes into `buf` and
+        // returns a borrow of `buf`. Copy the result before mutating `self.map`.
+        let ccache_path: Box<[u8]> = which(&mut buf, path, fs.top_level_dir(), b"ccache")
+            .map(|z| Box::<[u8]>::from(z.as_bytes()))
+            .unwrap_or_default();
 
         if !ccache_path.is_empty() {
             let cxx_gop = self.map.get_or_put_without_value(b"CMAKE_CXX_COMPILER_LAUNCHER")?;
             if !cxx_gop.found_existing {
                 *cxx_gop.key_ptr = Box::<[u8]>::from(&**cxx_gop.key_ptr);
                 *cxx_gop.value_ptr = HashTableValue {
-                    value: Box::<[u8]>::from(ccache_path),
+                    value: ccache_path.clone(),
                     conditional: false,
                 };
             }
@@ -348,7 +343,7 @@ impl<'a> Loader<'a> {
             if !c_gop.found_existing {
                 *c_gop.key_ptr = Box::<[u8]>::from(&**c_gop.key_ptr);
                 *c_gop.value_ptr = HashTableValue {
-                    value: Box::<[u8]>::from(ccache_path),
+                    value: ccache_path,
                     conditional: false,
                 };
             }
@@ -356,32 +351,34 @@ impl<'a> Loader<'a> {
         Ok(())
     }
 
-    #[cfg(any())]
     pub fn load_node_js_config(
         &mut self,
-        fs: &(), // TODO(b2-blocked): bun_sys::fs::FileSystem
+        fs: &bun_paths::fs::FileSystem,
         override_node: &[u8],
     ) -> Result<bool, bun_core::Error> {
-        // TODO(b2-blocked): bun_sys::fs::FileSystem (MOVE_DOWN bun_resolver::fs → sys)
         let mut buf = PathBuffer::uninit();
 
-        let mut node_path_to_use: &[u8] = override_node;
-        if node_path_to_use.is_empty() {
-            let cached: &[u8] =
-                NODE_PATH_TO_USE_SET_ONCE.get().map(|b| &**b).unwrap_or(b"");
-            if !cached.is_empty() {
-                node_path_to_use = cached;
+        let node_path_to_use: Box<[u8]> = if !override_node.is_empty() {
+            Box::from(override_node)
+        } else {
+            let cached: Option<Box<[u8]>> =
+                NODE_PATH_TO_USE_SET_ONCE.read().as_ref().filter(|b| !b.is_empty()).cloned();
+            if let Some(c) = cached {
+                c
             } else {
                 let Some(node) = self.get_node_path(fs, &mut buf) else {
                     return Ok(false);
                 };
-                // fs.dirname_store.append returns a 'static-lifetime slice owned by FileSystem
-                node_path_to_use = fs.dirname_store().append(node.as_bytes())?;
+                // PORT NOTE: Zig used `fs.dirname_store.append` (interning arena
+                // returning 'static slice). RwLock owns a Box; just box here.
+                Box::from(node.as_bytes())
             }
-        }
-        let _ = NODE_PATH_TO_USE_SET_ONCE.set(Box::from(node_path_to_use));
-        self.map.put(b"NODE", node_path_to_use)?;
-        self.map.put(b"npm_node_execpath", node_path_to_use)?;
+        };
+        // map.put copies the value (Box::from), so write the *current* path
+        // before caching — this is what Zig does (env_loader.zig:344-346).
+        self.map.put(b"NODE", &node_path_to_use)?;
+        self.map.put(b"npm_node_execpath", &node_path_to_use)?;
+        *NODE_PATH_TO_USE_SET_ONCE.write() = Some(node_path_to_use);
         Ok(true)
     }
 
@@ -483,10 +480,7 @@ impl<'a> Loader<'a> {
         }
     }
 
-    #[cfg(any())]
     pub fn load_process(&mut self) -> Result<(), AllocError> {
-        // TODO(b2-blocked): bun_sys::environ
-        // TODO(b2-blocked): bun_collections::StringArrayHashMap::ensure_total_capacity
         if self.did_load_process {
             return Ok(());
         }
@@ -524,28 +518,47 @@ impl<'a> Loader<'a> {
         Ok(())
     }
 
-    #[cfg(any())]
     pub fn load(
         &mut self,
         suffix: DotEnvFileSuffix,
-        dir: &mut (), // TODO(b2-blocked): bun_sys::fs::DirEntry
+        dir: &mut bun_sys::fs::DirEntry,
         env_files: &[&[u8]],
         skip_default_env: bool,
     ) -> Result<(), bun_core::Error> {
-        // TODO(b2-blocked): bun_sys::fs::DirEntry (MOVE_DOWN bun_resolver::fs → sys)
-        // TODO(b2-blocked): bun_core::time::nano_timestamp
         // PERF(port): SUFFIX was `comptime DotEnvFileSuffix` — demoted to runtime arg
         // (avoids unstable adt_const_params; cold path).
+        let start = bun_core::time::nano_timestamp();
+
+        // Create a reusable buffer for parsing multiple files.
+        // PERF(port): Zig used a 4 KiB stack-fallback allocator; plain Vec here.
+        let mut value_buffer: Vec<u8> = Vec::new();
+
+        if !env_files.is_empty() {
+            self.load_explicit_files(env_files, &mut value_buffer)?;
+        } else {
+            // Do not automatically load .env files in `bun run <script>`
+            // Instead, it is the responsibility of the script's instance of `bun` to load .env,
+            // so that if the script runner is NODE_ENV=development, but the script is
+            // "NODE_ENV=production bun ...", there should be no development env loaded.
+            //
+            // See https://github.com/oven-sh/bun/issues/9635#issuecomment-2021350123
+            // for more details on how this edge case works.
+            if !skip_default_env {
+                self.load_default_files(suffix, dir, &mut value_buffer)?;
+            }
+        }
+
+        if !self.quiet {
+            self.print_loaded(start);
+        }
         Ok(())
     }
 
-    #[cfg(any())]
     fn load_explicit_files(
         &mut self,
         env_files: &[&[u8]],
         value_buffer: &mut Vec<u8>,
     ) -> Result<(), bun_core::Error> {
-        // TODO(b2-blocked): bun_sys::open_file_read_only (via load_env_file_dynamic)
         // iterate backwards, so the latest entry in the latest arg instance assumes the highest priority
         let mut i: usize = env_files.len();
         while i > 0 {
@@ -568,23 +581,76 @@ impl<'a> Loader<'a> {
     // Load .env.development if development
     // Load .env.production if !development
     // .env goes last
-    #[cfg(any())]
     fn load_default_files(
         &mut self,
         suffix: DotEnvFileSuffix,
-        dir: &mut (), // TODO(b2-blocked): bun_sys::fs::DirEntry
+        dir: &mut bun_sys::fs::DirEntry,
         value_buffer: &mut Vec<u8>,
     ) -> Result<(), bun_core::Error> {
-        // TODO(b2-blocked): bun_sys::fs::DirEntry::has_comptime_query
-        // TODO(b2-blocked): bun_sys::Fd::cwd (signature mismatch — see Phase-A draft)
+        let dir_handle = bun_sys::Fd::cwd();
+
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_sys::fs::DirEntry::has_comptime_query
+            match suffix {
+                DotEnvFileSuffix::Development => {
+                    if dir.has_comptime_query(b".env.development.local") {
+                        self.load_env_file::<false>(dir_handle, b".env.development.local", value_buffer)?;
+                        analytics::Features::dotenv_inc();
+                    }
+                }
+                DotEnvFileSuffix::Production => {
+                    if dir.has_comptime_query(b".env.production.local") {
+                        self.load_env_file::<false>(dir_handle, b".env.production.local", value_buffer)?;
+                        analytics::Features::dotenv_inc();
+                    }
+                }
+                DotEnvFileSuffix::Test => {
+                    if dir.has_comptime_query(b".env.test.local") {
+                        self.load_env_file::<false>(dir_handle, b".env.test.local", value_buffer)?;
+                        analytics::Features::dotenv_inc();
+                    }
+                }
+            }
+
+            if suffix != DotEnvFileSuffix::Test {
+                if dir.has_comptime_query(b".env.local") {
+                    self.load_env_file::<false>(dir_handle, b".env.local", value_buffer)?;
+                    analytics::Features::dotenv_inc();
+                }
+            }
+
+            match suffix {
+                DotEnvFileSuffix::Development => {
+                    if dir.has_comptime_query(b".env.development") {
+                        self.load_env_file::<false>(dir_handle, b".env.development", value_buffer)?;
+                        analytics::Features::dotenv_inc();
+                    }
+                }
+                DotEnvFileSuffix::Production => {
+                    if dir.has_comptime_query(b".env.production") {
+                        self.load_env_file::<false>(dir_handle, b".env.production", value_buffer)?;
+                        analytics::Features::dotenv_inc();
+                    }
+                }
+                DotEnvFileSuffix::Test => {
+                    if dir.has_comptime_query(b".env.test") {
+                        self.load_env_file::<false>(dir_handle, b".env.test", value_buffer)?;
+                        analytics::Features::dotenv_inc();
+                    }
+                }
+            }
+
+            if dir.has_comptime_query(b".env") {
+                self.load_env_file::<false>(dir_handle, b".env", value_buffer)?;
+                analytics::Features::dotenv_inc();
+            }
+        }
+        let _ = (suffix, dir, value_buffer, dir_handle);
         Ok(())
     }
 
-    #[cfg(any())]
     pub fn print_loaded(&self, start: i128) {
-        // TODO(b2-blocked): bun_core::time::nano_timestamp
-        // TODO(b2-blocked): bun_collections::StringArrayHashMap::count
-        // TODO(b2-blocked): bun_collections::StringArrayHashMap::iterator
         let count: usize = (self.env_development_local.is_some() as usize)
             + (self.env_production_local.is_some() as usize)
             + (self.env_test_local.is_some() as usize)
@@ -636,12 +702,13 @@ impl<'a> Loader<'a> {
             }
         }
 
-        for e in self.custom_files_loaded.iterator() {
+        // PORT NOTE: `iterator()` requires `&mut self`; iterate `keys()` slice instead.
+        for k in self.custom_files_loaded.keys() {
             loaded_i += 1;
             if count == 1 || (loaded_i >= count && count > 1) {
-                bun_core::pretty_error!("\"{}\"", bstr::BStr::new(e.key_ptr));
+                bun_core::pretty_error!("\"{}\"", bstr::BStr::new(k));
             } else {
-                bun_core::pretty_error!("\"{}\", ", bstr::BStr::new(e.key_ptr));
+                bun_core::pretty_error!("\"{}\", ", bstr::BStr::new(k));
             }
         }
 
@@ -665,30 +732,32 @@ impl<'a> Loader<'a> {
         }
     }
 
-    #[cfg(any())]
     pub fn load_env_file<const OVERRIDE: bool>(
         &mut self,
         dir: bun_sys::Fd,
         base: &'static [u8],
         value_buffer: &mut Vec<u8>,
     ) -> Result<(), bun_core::Error> {
-        // TODO(b2-blocked): bun_sys::openat_read_only
-        // TODO(b2-blocked): bun_sys::File::stat / read_all (gated module)
-        // TODO(b2-blocked): bun_logger::Source owning its contents (PORTING.md §Forbidden:
-        //   Phase-A draft used mem::forget to leak the file buffer; correct fix is making
-        //   logger::Source own a Box<[u8]>, which lives in bun_logger).
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_logger::Source owning its contents (PORTING.md §Forbidden:
+            //   Phase-A draft used mem::forget to leak the file buffer; correct fix is making
+            //   logger::Source own a Box<[u8]>, which lives in bun_logger).
+        }
+        let _ = (dir, base, value_buffer);
         Ok(())
     }
 
-    #[cfg(any())]
     pub fn load_env_file_dynamic<const OVERRIDE: bool>(
         &mut self,
         file_path: &[u8],
         value_buffer: &mut Vec<u8>,
     ) -> Result<(), bun_core::Error> {
-        // TODO(b2-blocked): bun_sys::open_file_read_only
-        // TODO(b2-blocked): bun_collections::StringArrayHashMap::contains / put (Zig API)
-        // TODO(b2-blocked): bun_logger::Source owning its contents (see load_env_file).
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_logger::Source owning its contents (see load_env_file).
+        }
+        let _ = (file_path, value_buffer);
         Ok(())
     }
 }
@@ -989,53 +1058,51 @@ impl<'a> Parser<'a> {
         &mut self,
         map: &mut Map,
     ) -> Result<(), AllocError> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_collections::StringArrayHashMap::get_or_put
-            // TODO(b2-blocked): bun_collections::StringArrayHashMap::count
-            // TODO(b2-blocked): bun_collections::GetOrPutResult
-            let mut count = map.map.count();
-            while self.pos < self.src.len() {
-                let Some(key) = self.parse_key::<true>() else {
-                    self.skip_line();
-                    continue;
-                };
-                let value = self.parse_value::<IS_PROCESS>()?;
-                // PORT NOTE: reshaped for borrowck — value borrows self.value_buffer; copy before map mut.
-                let value_owned: Box<[u8]> = Box::from(value);
-                let entry = map.map.get_or_put(key)?;
-                if entry.found_existing {
-                    if entry.index < count {
-                        // Allow keys defined later in the same file to override keys defined earlier
-                        // https://github.com/oven-sh/bun/issues/1262
-                        if !OVERRIDE {
-                            continue;
-                        }
-                    }
-                    // else: previous value freed by Drop on assignment below
-                }
-                *entry.value_ptr = HashTableValue {
-                    value: value_owned,
-                    conditional: false,
-                };
-            }
-            if !IS_PROCESS && EXPAND {
-                // TODO(port): borrowck — Zig iterates `map` while calling `map.get` inside expandValue.
-                // Phase B: use index-based iteration over map.map.values_mut() with raw key access.
-                let mut it = map.iterator();
-                while let Some(entry) = it.next() {
-                    if count > 0 {
-                        count -= 1;
-                    } else if let Some(value) = self.expand_value(map, &entry.value_ptr.value)? {
-                        *entry.value_ptr = HashTableValue {
-                            value: Box::from(value),
-                            conditional: false,
-                        };
+        let mut count = map.map.count();
+        while self.pos < self.src.len() {
+            let Some(key) = self.parse_key::<true>() else {
+                self.skip_line();
+                continue;
+            };
+            let value = self.parse_value::<IS_PROCESS>()?;
+            // PORT NOTE: reshaped for borrowck — value borrows self.value_buffer; copy before map mut.
+            let value_owned: Box<[u8]> = Box::from(value);
+            let entry = map.map.get_or_put(key)?;
+            if entry.found_existing {
+                if entry.index < count {
+                    // Allow keys defined later in the same file to override keys defined earlier
+                    // https://github.com/oven-sh/bun/issues/1262
+                    if !OVERRIDE {
+                        continue;
                     }
                 }
+                // else: previous value freed by Drop on assignment below
             }
+            *entry.value_ptr = HashTableValue {
+                value: value_owned,
+                conditional: false,
+            };
         }
-        let _ = map;
+        if !IS_PROCESS && EXPAND {
+            // PORT NOTE: borrowck — Zig iterates `map` while calling `map.get` inside expandValue.
+            // Reshaped to index-based iteration: clone the value bytes, run expansion against an
+            // immutable `&Map`, then write back via `values_mut()`. The clone matches the Zig:
+            // values are dupe'd by `_parse` above, so length is bounded by file size.
+            let total = map.map.count();
+            let mut idx = count;
+            while idx < total {
+                let current: Box<[u8]> = Box::from(&*map.map.values()[idx].value);
+                if let Some(expanded) = self.expand_value(map, &current)? {
+                    map.map.values_mut()[idx] = HashTableValue {
+                        value: Box::from(expanded),
+                        conditional: false,
+                    };
+                }
+                idx += 1;
+            }
+            count = 0;
+        }
+        let _ = count;
         Ok(())
     }
 
@@ -1055,6 +1122,7 @@ impl<'a> Parser<'a> {
     }
 }
 
+#[derive(Default, Clone)]
 pub struct HashTableValue {
     // TODO(port): Zig stored borrowed `[]const u8`; values are sometimes allocator.dupe'd, sometimes
     // borrowed from environ. Using Box<[u8]> here for owned-by-default; Phase B may need Cow.
@@ -1080,43 +1148,89 @@ impl Default for Map {
 }
 
 impl Map {
-    #[cfg(any())]
-    pub fn create_null_delimited_env_map(
-        &mut self,
-    ) -> Result<Box<[Option<*const c_char>]>, AllocError> {
-        // TODO(b2-blocked): bun_collections::StringArrayHashMap::count
-        // TODO(b2-blocked): bun_collections::StringArrayHashMap::iterator
-        // PORTING.md §Forbidden: Phase-A draft used Box::leak per-entry; correct shape is
-        // returning an owning struct { strings: Vec<ZBox>, envp: Box<[*const c_char]> } so
-        // dropping it frees the joined "K=V\0" buffers. Re-gated until that type lands.
-        Ok(Box::default())
+    /// Builds a NULL-terminated `K=V\0` envp array. Returns an owning struct so
+    /// dropping it frees the joined buffers (PORTING.md §Forbidden: no Box::leak).
+    /// Zig used an arena; here the struct *is* the arena.
+    pub fn create_null_delimited_env_map(&mut self) -> Result<NullDelimitedEnvMap, AllocError> {
+        let envp_count = self.map.count();
+        let mut storage: Vec<Box<[u8]>> = Vec::with_capacity(envp_count);
+        let mut envp_buf: Vec<Option<*const c_char>> = Vec::with_capacity(envp_count + 1);
+        {
+            let mut it = self.map.iterator();
+            let mut i: usize = 0;
+            while let Some(pair) = it.next() {
+                let klen = pair.key_ptr.len();
+                let vlen = pair.value_ptr.value.len();
+                let mut env_buf = vec![0u8; klen + vlen + 2].into_boxed_slice();
+                env_buf[..klen].copy_from_slice(pair.key_ptr);
+                env_buf[klen] = b'=';
+                env_buf[klen + 1..klen + 1 + vlen].copy_from_slice(&pair.value_ptr.value);
+                // env_buf[klen + 1 + vlen] = 0; (already zero-initialized)
+                envp_buf.push(Some(env_buf.as_ptr() as *const c_char));
+                storage.push(env_buf);
+                i += 1;
+            }
+            #[cfg(debug_assertions)]
+            debug_assert!(i == envp_count);
+        }
+        envp_buf.push(None); // sentinel
+        Ok(NullDelimitedEnvMap { storage, envp: envp_buf.into_boxed_slice() })
     }
 
     /// Returns a wrapper around the std.process.EnvMap that does not duplicate the memory of
     /// the keys and values, but instead points into the memory of the bun env map.
-    #[cfg(any())]
+    // TODO(port): `bun_sys::EnvMap` is `HashMap<String, String>`, which copies and is
+    // UTF-8-lossy. Zig's `std.process.EnvMap` stored `[]const u8` borrows. Phase C: replace
+    // `bun_sys::EnvMap` with a `&[u8]`-keyed map and drop the lossy round-trip here.
     pub fn std_env_map(&mut self) -> Result<StdEnvMapWrapper, AllocError> {
-        // TODO(b2-blocked): bun_collections::StringArrayHashMap::iterator
-        // TODO(b2-blocked): bun_sys::EnvMap
-        Ok(StdEnvMapWrapper { unsafe_map: StdEnvMapInner::new() })
+        let mut env_map = bun_sys::EnvMap::default();
+        let mut it = self.map.iterator();
+        while let Some(entry) = it.next() {
+            env_map.insert(
+                String::from_utf8_lossy(entry.key_ptr).into_owned(),
+                String::from_utf8_lossy(&entry.value_ptr.value).into_owned(),
+            );
+        }
+        Ok(StdEnvMapWrapper { unsafe_map: env_map })
     }
 
     /// Write the Windows environment block into a buffer
     /// This can be passed to CreateProcessW's lpEnvironment parameter
-    #[cfg(any())]
     pub fn write_windows_env_block(
         &mut self,
         result: &mut [u16; 32767],
     ) -> Result<*const u16, bun_core::Error> {
-        // TODO(b2-blocked): bun_collections::StringArrayHashMap::iterator
-        // TODO(b2-blocked): bun_string::strings::convert_utf8_to_utf16_in_buffer
+        let mut i: usize = 0;
+        let mut it = self.map.iterator();
+        while let Some(pair) = it.next() {
+            i += strings::convert_utf8_to_utf16_in_buffer(&mut result[i..], pair.key_ptr).len();
+            if i + 7 >= result.len() {
+                return Err(bun_core::Error::from_name("TooManyEnvironmentVariables"));
+            }
+            result[i] = b'=' as u16;
+            i += 1;
+            i += strings::convert_utf8_to_utf16_in_buffer(&mut result[i..], &pair.value_ptr.value)
+                .len();
+            if i + 5 >= result.len() {
+                return Err(bun_core::Error::from_name("TooManyEnvironmentVariables"));
+            }
+            result[i] = 0;
+            i += 1;
+        }
+        result[i] = 0;
+        i += 1;
+        result[i] = 0;
+        i += 1;
+        result[i] = 0;
+        i += 1;
+        result[i] = 0;
+        i += 1;
+
         Ok(result.as_ptr())
     }
 
-    #[cfg(any())]
-    pub fn iterator(&self) -> () {
-        // TODO(b2-blocked): bun_collections::Entry
-        // TODO(b2-blocked): bun_collections::StringArrayHashMap::iterator
+    pub fn iterator(&mut self) -> <HashTable as ArrayHashMapExt>::Iterator<'_> {
+        self.map.iterator()
     }
 
     #[inline]
@@ -1126,110 +1240,86 @@ impl Map {
 
     #[inline]
     pub fn put(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        #[cfg(any())]
+        #[cfg(all(windows, debug_assertions))]
         {
-            // TODO(b2-blocked): bun_collections::StringArrayHashMap::put (Zig fallible-insert API)
-            #[cfg(all(windows, debug_assertions))]
-            {
-                debug_assert!(strings::index_of_char(key, b'\x00').is_none());
-            }
-            self.map.put(
-                key,
-                HashTableValue { value: Box::from(value), conditional: false },
-            )
+            debug_assert!(strings::index_of_char(key, b'\x00').is_none());
         }
-        let _ = (key, value);
-        Ok(())
+        self.map.put(
+            key,
+            HashTableValue { value: Box::from(value), conditional: false },
+        )
     }
 
     pub fn ensure_unused_capacity(&mut self, additional_count: usize) -> Result<(), AllocError> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_collections::StringArrayHashMap::ensure_unused_capacity
-            self.map.ensure_unused_capacity(additional_count)
-        }
-        let _ = additional_count;
-        Ok(())
+        self.map.ensure_unused_capacity(additional_count)
     }
 
     pub fn put_assume_capacity(&mut self, key: &[u8], value: &[u8]) {
-        #[cfg(any())]
+        #[cfg(all(windows, debug_assertions))]
         {
-            // TODO(b2-blocked): bun_collections::StringArrayHashMap::put_assume_capacity
-            #[cfg(all(windows, debug_assertions))]
-            {
-                debug_assert!(strings::index_of_char(key, b'\x00').is_none());
-            }
-            // PERF(port): was assume_capacity
-            self.map.put_assume_capacity(
-                key,
-                HashTableValue { value: Box::from(value), conditional: false },
-            );
+            debug_assert!(strings::index_of_char(key, b'\x00').is_none());
         }
-        let _ = (key, value);
+        // PERF(port): was assume_capacity
+        self.map.put_assume_capacity(
+            key,
+            HashTableValue { value: Box::from(value), conditional: false },
+        );
     }
 
     #[inline]
     pub fn put_alloc_key_and_value(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_collections::StringArrayHashMap::get_or_put
-            let gop = self.map.get_or_put(key)?;
-            *gop.value_ptr = HashTableValue { value: Box::from(value), conditional: false };
-            if !gop.found_existing {
-                *gop.key_ptr = Box::from(key);
-            }
+        let gop = self.map.get_or_put(key)?;
+        *gop.value_ptr = HashTableValue { value: Box::from(value), conditional: false };
+        if !gop.found_existing {
+            *gop.key_ptr = Box::from(key);
         }
-        let _ = (key, value);
         Ok(())
     }
 
     #[inline]
     pub fn put_alloc_key(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_collections::StringArrayHashMap::get_or_put
-            let gop = self.map.get_or_put(key)?;
-            *gop.value_ptr = HashTableValue {
-                // TODO(port): Zig stored borrowed `value` here without dupe; Box<[u8]> forces a copy
-                value: Box::from(value),
-                conditional: false,
-            };
-            if !gop.found_existing {
-                *gop.key_ptr = Box::from(key);
-            }
+        let gop = self.map.get_or_put(key)?;
+        *gop.value_ptr = HashTableValue {
+            // TODO(port): Zig stored borrowed `value` here without dupe; Box<[u8]> forces a copy
+            value: Box::from(value),
+            conditional: false,
+        };
+        if !gop.found_existing {
+            *gop.key_ptr = Box::from(key);
         }
-        let _ = (key, value);
         Ok(())
     }
 
     #[inline]
     pub fn put_alloc_value(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_collections::StringArrayHashMap::put (Zig fallible-insert API)
-            self.map.put(
-                key,
-                HashTableValue { value: Box::from(value), conditional: false },
-            )
-        }
-        let _ = (key, value);
-        Ok(())
+        self.map.put(
+            key,
+            HashTableValue { value: Box::from(value), conditional: false },
+        )
     }
 
-    #[cfg(any())]
     #[inline]
-    pub fn get_or_put_without_value(&mut self, key: &[u8]) -> Result<(), AllocError> {
-        // TODO(b2-blocked): bun_collections::GetOrPutResult
-        // TODO(b2-blocked): bun_collections::StringArrayHashMap::get_or_put
+    pub fn get_or_put_without_value(
+        &mut self,
+        key: &[u8],
+    ) -> Result<GetOrPutResult<'_, Box<[u8]>, HashTableValue>, AllocError> {
         self.map.get_or_put(key)
     }
 
-    #[cfg(any())]
     pub fn json_stringify(&self, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
-        // TODO(b2-blocked): bun_collections::StringArrayHashMap::count
-        // TODO(b2-blocked): bun_collections::StringArrayHashMap::iterator
-        Ok(())
+        // PORT NOTE: `iterator()` requires `&mut self`; iterate parallel slices instead.
+        let count = self.map.count();
+        writer.write_str("{")?;
+        for (i, (k, v)) in self.map.keys().iter().zip(self.map.values().iter()).enumerate() {
+            writer.write_str("\n    ")?;
+            writer.write_str(&String::from_utf8_lossy(k))?;
+            writer.write_str(": ")?;
+            writer.write_str(&String::from_utf8_lossy(&v.value))?;
+            if i + 1 <= count - 1 {
+                writer.write_str(", ")?;
+            }
+        }
+        writer.write_str("\n}")
     }
 
     #[inline]
@@ -1239,75 +1329,64 @@ impl Map {
 
     #[inline]
     pub fn put_default(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_collections::StringArrayHashMap::get_or_put_value
-            let _ = self.map.get_or_put_value(
-                key,
-                HashTableValue { value: Box::from(value), conditional: false },
-            )?;
-        }
-        let _ = (key, value);
+        let _ = self.map.get_or_put_value(
+            key,
+            HashTableValue { value: Box::from(value), conditional: false },
+        )?;
         Ok(())
     }
 
     #[inline]
     pub fn get_or_put(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_collections::StringArrayHashMap::get_or_put_value
-            let _ = self.map.get_or_put_value(
-                key,
-                HashTableValue { value: Box::from(value), conditional: false },
-            )?;
-        }
-        let _ = (key, value);
+        let _ = self.map.get_or_put_value(
+            key,
+            HashTableValue { value: Box::from(value), conditional: false },
+        )?;
         Ok(())
     }
 
     pub fn remove(&mut self, key: &[u8]) {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_collections::StringArrayHashMap::swap_remove
-            let _ = self.map.swap_remove(key);
-        }
-        let _ = key;
+        let _ = self.map.swap_remove(key);
     }
 
-    #[cfg(any())]
     pub fn clone_with_allocator(&self) -> Result<Map, AllocError> {
-        // TODO(b2-blocked): bun_collections::StringArrayHashMap::clone (fallible)
         // allocator param dropped — global mimalloc
         Ok(Map { map: self.map.clone()? })
     }
 }
 
+/// Owns the `K=V\0` strings backing a `[*:null]?[*:0]const u8` envp array.
+/// Replaces the Zig arena passed to `createNullDelimitedEnvMap`; dropping this
+/// frees every entry (PORTING.md §Forbidden: no Box::leak).
+pub struct NullDelimitedEnvMap {
+    storage: Vec<Box<[u8]>>,
+    envp: Box<[Option<*const c_char>]>,
+}
+
+impl NullDelimitedEnvMap {
+    /// `[:null]?[*:0]const u8` — last element is `None`.
+    #[inline]
+    pub fn as_slice(&self) -> &[Option<*const c_char>] {
+        &self.envp
+    }
+    /// Raw `*const ?[*:0]const u8` for FFI (`envp`-style).
+    #[inline]
+    pub fn as_ptr(&self) -> *const Option<*const c_char> {
+        self.envp.as_ptr()
+    }
+}
+
 pub struct StdEnvMapWrapper {
-    // TODO(port): std.process.EnvMap replacement
-    pub unsafe_map: StdEnvMapInner,
+    pub unsafe_map: bun_sys::EnvMap,
 }
 
 impl StdEnvMapWrapper {
-    pub fn get(&self) -> &StdEnvMapInner {
+    pub fn get(&self) -> &bun_sys::EnvMap {
         &self.unsafe_map
     }
 }
 
 // Drop replaces deinit (only frees hash_map storage; Rust does this automatically)
-
-// TODO(b2-blocked): bun_sys::EnvMap — placeholder for std.process.EnvMap
-pub struct StdEnvMapInner {
-    // intentionally opaque in Phase A
-}
-impl StdEnvMapInner {
-    fn new() -> Self {
-        StdEnvMapInner {}
-    }
-    fn put(&mut self, _key: &[u8], _value: &[u8]) -> Result<(), AllocError> {
-        // TODO(port)
-        Ok(())
-    }
-}
 
 // Zig: `pub var instance: ?*Loader = null;` — global mutable singleton, set once at CLI init.
 // PORTING.md §Concurrency: OnceLock for set-once globals.
@@ -1318,11 +1397,13 @@ pub static INSTANCE: OnceLock<usize /* *mut Loader<'static> */> = OnceLock::new(
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/dotenv/env_loader.zig (1433 lines)
-//   confidence: low (heavily blocked on bun_collections Zig-style ArrayHashMap API)
-//   notes:      @field(this, base) → match helper; HashTableValue.value owned vs borrowed needs
-//               Cow; Map/Parser bodies re-gated on bun_collections; load* re-gated on
-//               bun_sys::fs (MOVE_DOWN resolver→sys not landed); copy_for_define re-gated on
-//               bun_api; S3 re-gated on bun_s3_signing move-down. Forbidden Box::leak/mem::forget
-//               removed — correct fix lives in bun_logger (Source ownership) and a new envp
-//               owning struct (see create_null_delimited_env_map).
+//   confidence: medium (Map/Parser/loadProcess/ccache/node-path/envp all live; file-loading
+//               gated only on bun_logger Source ownership + DirEntry query)
+//   notes:      @field(this, base) → match helper; HashTableValue.value owned (Box<[u8]>),
+//               Phase B may need Cow. NullDelimitedEnvMap owns its strings (no Box::leak).
+//               load_default_files body re-gated on bun_sys::fs::DirEntry::has_comptime_query
+//               (MOVE_DOWN resolver→sys not landed); load_env_file{,_dynamic} bodies re-gated
+//               on bun_logger::Source owning contents. copy_for_define re-gated on bun_api
+//               (higher tier — vtable-dispatch path); get_s3_credentials re-gated on
+//               bun_s3_signing TYPE_ONLY move-down (higher tier).
 // ──────────────────────────────────────────────────────────────────────────

@@ -378,10 +378,6 @@ struct ZlibAllocator;
 
 impl ZlibAllocator {
     pub unsafe extern "C" fn alloc(_: *mut c_void, items: uInt, len: uInt) -> *mut c_void {
-        // TODO(b2-blocked): bun_alloc::heap_breakdown
-        // tier-0 module is cfg(any())-gated ("DEBUG-ONLY macOS malloc_zone_*; keep gated").
-        // Draft body preserved:
-        #[cfg(any())]
         if bun_alloc::heap_breakdown::ENABLED {
             let zone = bun_alloc::get_zone!("zlib");
             // SAFETY: zone is a valid malloc zone; calloc returns null on OOM.
@@ -401,10 +397,6 @@ impl ZlibAllocator {
     }
 
     pub unsafe extern "C" fn free(_: *mut c_void, data: *mut c_void) {
-        // TODO(b2-blocked): bun_alloc::heap_breakdown
-        // tier-0 module is cfg(any())-gated ("DEBUG-ONLY macOS malloc_zone_*; keep gated").
-        // Draft body preserved:
-        #[cfg(any())]
         if bun_alloc::heap_breakdown::ENABLED {
             let zone = bun_alloc::get_zone!("zlib");
             // SAFETY: data was allocated by malloc_zone_calloc above.

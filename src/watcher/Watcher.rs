@@ -235,30 +235,24 @@ impl Watcher {
     // TODO(port): ownership model — Zig allocator.destroy(this); Rust needs
     // Box::from_raw or an Arc to make this sound.
     pub fn shutdown(this: *mut Self, close_descriptors: bool) {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_collections::MultiArrayElement (derive) —
-            // `watchlist.items().fd` typed-column accessors not yet generated.
-            // SAFETY: caller passes the unique heap pointer returned from init()
-            let me = unsafe { &mut *this };
-            if me.watchloop_handle.is_some() {
-                me.mutex.lock();
-                me.close_descriptors = close_descriptors;
-                me.running = false;
-                me.mutex.unlock();
-            } else {
-                if close_descriptors && me.running {
-                    let fds = me.watchlist.items().fd;
-                    for fd in fds {
-                        let _ = bun_sys::close(fd);
-                    }
+        // SAFETY: caller passes the unique heap pointer returned from init()
+        let me = unsafe { &mut *this };
+        if me.watchloop_handle.is_some() {
+            me.mutex.lock();
+            me.close_descriptors = close_descriptors;
+            me.running = false;
+            me.mutex.unlock();
+        } else {
+            if close_descriptors && me.running {
+                let fds = me.watchlist.items_fd();
+                for &fd in fds {
+                    let _ = bun_sys::close(fd);
                 }
-                // watchlist freed by Drop on Box
-                // SAFETY: this was Box::into_raw'd by caller of init()
-                drop(unsafe { Box::from_raw(this) });
             }
+            // watchlist freed by Drop on Box
+            // SAFETY: this was Box::into_raw'd by caller of init()
+            drop(unsafe { Box::from_raw(this) });
         }
-        todo!("Watcher::shutdown — bun_collections::MultiArrayElement derive")
     }
 
     pub fn get_hash(filepath: &[u8]) -> HashType {
@@ -285,11 +279,9 @@ impl Watcher {
         }
 
         // deinit and close descriptors if needed
-        #[cfg(any())]
         if self.close_descriptors {
-            // TODO(b2-blocked): bun_collections::MultiArrayElement (derive)
-            let fds = self.watchlist.items().fd;
-            for fd in fds {
+            let fds = self.watchlist.items_fd();
+            for &fd in fds {
                 let _ = bun_sys::close(fd);
             }
         }
@@ -307,81 +299,71 @@ impl Watcher {
     }
 
     pub fn flush_evictions(&mut self) {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_collections::MultiArrayElement (derive) —
-            // `watchlist.slice().items().fd`, `.len()`, `.swap_remove()` need
-            // the typed trait impl for `WatchItem`.
-            if self.evict_list_i == 0 {
-                return;
-            }
-            let evict_list_i = self.evict_list_i as usize;
-            // defer this.evict_list_i = 0 — set at end of fn
-
-            // swapRemove messes up the order
-            // But, it only messes up the order if any elements in the list appear after the item being removed
-            // So if we just sort the list by the biggest index first, that should be fine
-            self.evict_list[0..evict_list_i].sort_by(|a, b| b.cmp(a));
-
-            // PORT NOTE: reshaped for borrowck — capture fds.len() before loop
-            let slice = self.watchlist.slice();
-            let fds = slice.items().fd;
-            let fds_len = fds.len();
-            let mut last_item = NO_WATCH_ITEM;
-
-            for &item in &self.evict_list[0..evict_list_i] {
-                // catch duplicates, since the list is sorted, duplicates will appear right after each other
-                if item == last_item {
-                    continue;
-                }
-                // Stale udata from a kevent can point past the compacted watchlist; match the second pass's guard.
-                if item as usize >= fds_len {
-                    continue;
-                }
-
-                #[cfg(not(windows))]
-                {
-                    // on mac and linux we can just close the file descriptor
-                    // we don't need to call inotify_rm_watch on linux because it gets removed when the file descriptor is closed
-                    if fds[item as usize].is_valid() {
-                        let _ = bun_sys::close(fds[item as usize]);
-                    }
-                }
-                last_item = item;
-            }
-
-            last_item = NO_WATCH_ITEM;
-            // This is split into two passes because reading the slice while modified is potentially unsafe.
-            for i in 0..evict_list_i {
-                let item = self.evict_list[i];
-                if item == last_item || self.watchlist.len() <= item as usize {
-                    continue;
-                }
-                self.watchlist.swap_remove(item as usize);
-
-                // swapRemove put a different entry at `item`, but its kqueue registration still
-                // carries its old `udata` (= pre-swap index). Rewrite it so subsequent kevents
-                // route to the right module; EV_ADD on an existing (ident, filter) replaces in
-                // place. See #29524.
-                #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-                {
-                    if (item as usize) < self.watchlist.len() {
-                        let moved_fd = self.watchlist.items().fd[item as usize];
-                        if moved_fd.is_valid() {
-                            self.add_file_descriptor_to_kqueue_without_checks(
-                                moved_fd,
-                                item as usize,
-                            );
-                        }
-                    }
-                }
-
-                last_item = item;
-            }
-
-            self.evict_list_i = 0;
+        if self.evict_list_i == 0 {
+            return;
         }
-        todo!("Watcher::flush_evictions — bun_collections::MultiArrayElement derive")
+        let evict_list_i = self.evict_list_i as usize;
+        // defer this.evict_list_i = 0 — set at end of fn
+
+        // swapRemove messes up the order
+        // But, it only messes up the order if any elements in the list appear after the item being removed
+        // So if we just sort the list by the biggest index first, that should be fine
+        self.evict_list[0..evict_list_i].sort_by(|a, b| b.cmp(a));
+
+        // PORT NOTE: reshaped for borrowck — capture fds.len() before loop
+        let slice = self.watchlist.slice();
+        let fds = slice.items_fd();
+        let fds_len = fds.len();
+        let mut last_item = NO_WATCH_ITEM;
+
+        for &item in &self.evict_list[0..evict_list_i] {
+            // catch duplicates, since the list is sorted, duplicates will appear right after each other
+            if item == last_item {
+                continue;
+            }
+            // Stale udata from a kevent can point past the compacted watchlist; match the second pass's guard.
+            if item as usize >= fds_len {
+                continue;
+            }
+
+            #[cfg(not(windows))]
+            {
+                // on mac and linux we can just close the file descriptor
+                // we don't need to call inotify_rm_watch on linux because it gets removed when the file descriptor is closed
+                if fds[item as usize].is_valid() {
+                    let _ = bun_sys::close(fds[item as usize]);
+                }
+            }
+            last_item = item;
+        }
+
+        last_item = NO_WATCH_ITEM;
+        // This is split into two passes because reading the slice while modified is potentially unsafe.
+        for i in 0..evict_list_i {
+            let item = self.evict_list[i];
+            if item == last_item || self.watchlist.len() <= item as usize {
+                continue;
+            }
+            self.watchlist.swap_remove(item as usize);
+
+            // swapRemove put a different entry at `item`, but its kqueue registration still
+            // carries its old `udata` (= pre-swap index). Rewrite it so subsequent kevents
+            // route to the right module; EV_ADD on an existing (ident, filter) replaces in
+            // place. See #29524.
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+            {
+                if (item as usize) < self.watchlist.len() {
+                    let moved_fd = self.watchlist.items_fd()[item as usize];
+                    if moved_fd.is_valid() {
+                        self.add_file_descriptor_to_kqueue_without_checks(moved_fd, item as usize);
+                    }
+                }
+            }
+
+            last_item = item;
+        }
+
+        self.evict_list_i = 0;
     }
 
     fn watch_loop(&mut self) -> sys::Result<()> {
@@ -456,69 +438,60 @@ impl Watcher {
         parent_hash: HashType,
         package_json: Option<&'static PackageJSON>,
     ) -> sys::Result<()> {
-        #[cfg(any())]
+        #[cfg(windows)]
         {
-            // TODO(b2-blocked): bun_collections::MultiArrayElement (derive) —
-            // `watchlist.len()` / `watchlist.append_assume_capacity()` need the
-            // trait impl. Also CLONE_FILE_PATH path-dup ownership: PORTING.md
-            // §Forbidden bans Box::leak; needs WatchItem to own a Box<[u8]> /
-            // Cow once the MultiArrayList column types are decided.
-            #[cfg(windows)]
-            {
-                // on windows we can only watch items that are in the directory tree of the top level dir
-                let rel = bun_paths::is_parent_or_equal(self.top_level_dir(), file_path);
-                if rel == bun_paths::ParentEqual::Unrelated {
-                    Output::warn(format_args!(
-                        "File {} is not in the project directory and will not be watched\n",
-                        bstr::BStr::new(file_path)
-                    ));
-                    return Ok(());
-                }
+            // on windows we can only watch items that are in the directory tree of the top level dir
+            let rel = bun_paths::is_parent_or_equal(self.top_level_dir(), file_path);
+            if rel == bun_paths::ParentEqual::Unrelated {
+                Output::warn(format_args!(
+                    "File {} is not in the project directory and will not be watched\n",
+                    bstr::BStr::new(file_path)
+                ));
+                return Ok(());
             }
-
-            let watchlist_id = self.watchlist.len();
-
-            let file_path_: &[u8] = if CLONE_FILE_PATH {
-                // TODO(b2-blocked): bun_collections::MultiArrayElement —
-                // owned-path column. Phase-A draft used Box::leak which is
-                // forbidden by PORTING.md §Forbidden; defer until WatchItem
-                // gains an owning column.
-                file_path
-            } else {
-                file_path
-            };
-
-            let mut item = WatchItem {
-                file_path: file_path_,
-                fd,
-                hash,
-                count: 0,
-                loader,
-                parent_hash,
-                package_json,
-                kind: WatchItemKind::File,
-                #[cfg(target_os = "linux")]
-                eventlist_index: 0,
-            };
-
-            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-            {
-                self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
-            }
-            #[cfg(target_os = "linux")]
-            {
-                let buf = file_path_.as_ptr();
-                // SAFETY: file_path_[file_path_.len()] == 0 — Zig assumed sentinel here
-                let slice = unsafe { ZStr::from_raw(buf, file_path_.len()) };
-                item.eventlist_index = self.platform.watch_path(slice)?;
-            }
-
-            // PERF(port): was assume_capacity
-            self.watchlist.append_assume_capacity(item);
-            return Ok(());
         }
-        let _ = (fd, file_path, hash, loader, parent_hash, package_json);
-        todo!("append_file_assume_capacity — bun_collections::MultiArrayElement derive")
+
+        let watchlist_id = self.watchlist.len();
+
+        // TODO(port): CLONE_FILE_PATH path-dup ownership — PORTING.md §Forbidden
+        // bans Box::leak; the Zig duped into the global allocator and stored a
+        // static-lifetime slice. Defer until `WatchItem.file_path` gains an
+        // owning column (`Box<[u8]>` / `Cow`). For now both arms borrow.
+        // SAFETY: matches Zig semantics — caller guarantees `file_path` outlives
+        // the Watcher (it's a `bun.fs.FileSystem` interned path). Lifetime erased
+        // because `WatchItem.file_path` is currently `&'static [u8]`.
+        let file_path_: &'static [u8] =
+            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(file_path) };
+        let _ = CLONE_FILE_PATH;
+
+        let mut item = WatchItem {
+            file_path: file_path_,
+            fd,
+            hash,
+            count: 0,
+            loader,
+            parent_hash,
+            package_json,
+            kind: WatchItemKind::File,
+            #[cfg(target_os = "linux")]
+            eventlist_index: 0,
+        };
+
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        {
+            self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let buf = file_path_.as_ptr();
+            // SAFETY: file_path_[file_path_.len()] == 0 — Zig assumed sentinel here
+            let slice = unsafe { ZStr::from_raw(buf, file_path_.len()) };
+            item.eventlist_index = self.platform.watch_path(slice)?;
+        }
+
+        // PERF(port): was assume_capacity
+        self.watchlist.append_assume_capacity(item);
+        Ok(())
     }
 
     fn append_directory_assume_capacity<const CLONE_FILE_PATH: bool>(
@@ -529,9 +502,8 @@ impl Watcher {
     ) -> sys::Result<WatchItemIndex> {
         #[cfg(any())]
         {
-            // TODO(b2-blocked): bun_collections::MultiArrayElement (derive)
-            // TODO(b2-blocked): bun_sys::open_a (non-sentinel open)
-            // TODO(b2-blocked): bun_fs::PathName
+            // TODO(b2-blocked): bun_fs::PathName — `init()` / `dir_with_trailing_slash()`
+            // (upward T5 dep; CYCLEBREAK once bun_paths::fs::PathName grows the impl).
             #[cfg(windows)]
             {
                 let rel = bun_paths::is_parent_or_equal(self.top_level_dir(), file_path);
@@ -600,7 +572,10 @@ impl Watcher {
                     unsafe { ZStr::from_raw(buf.as_ptr(), trailing_slash.len()) }
                 };
 
-                item.eventlist_index = self.platform.watch_dir(path).map_err(|e| e.with_path(file_path))?;
+                item.eventlist_index = self
+                    .platform
+                    .watch_dir(path)
+                    .map_err(|e| e.with_path(file_path))?;
             }
 
             // PERF(port): was assume_capacity
@@ -608,7 +583,7 @@ impl Watcher {
             return Ok((self.watchlist.len() - 1) as WatchItemIndex);
         }
         let _ = (stored_fd, file_path, hash);
-        todo!("append_directory_assume_capacity — bun_collections::MultiArrayElement derive")
+        todo!("append_directory_assume_capacity — bun_fs::PathName")
     }
 
     // Below is platform-independent
@@ -624,8 +599,8 @@ impl Watcher {
     ) -> sys::Result<()> {
         #[cfg(any())]
         {
-            // TODO(b2-blocked): bun_collections::MultiArrayElement (derive)
-            // TODO(b2-blocked): bun_fs::PathName
+            // TODO(b2-blocked): bun_fs::PathName — `init()` / `dir_with_trailing_slash()`
+            // (upward T5 dep; CYCLEBREAK once bun_paths::fs::PathName grows the impl).
             if LOCK {
                 self.mutex.lock();
             }
@@ -724,7 +699,7 @@ impl Watcher {
             return Ok(());
         }
         let _ = (fd, file_path, hash, loader, dir_fd, package_json);
-        todo!("append_file_maybe_lock — bun_collections::MultiArrayElement derive")
+        todo!("append_file_maybe_lock — bun_fs::PathName")
     }
 
     #[inline]
@@ -764,23 +739,17 @@ impl Watcher {
         file_path: &[u8],
         hash: HashType,
     ) -> sys::Result<WatchItemIndex> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_collections::MultiArrayElement (derive)
-            self.mutex.lock();
-            // TODO(port): use RAII guard for mutex
-            let result = (|| {
-                if let Some(idx) = self.index_of(hash) {
-                    return Ok(idx as WatchItemIndex);
-                }
-                let _ = self.watchlist.ensure_unused_capacity(1);
-                self.append_directory_assume_capacity::<CLONE_FILE_PATH>(fd, file_path, hash)
-            })();
-            self.mutex.unlock();
-            return result;
-        }
-        let _ = (fd, file_path, hash);
-        todo!("add_directory — bun_collections::MultiArrayElement derive")
+        self.mutex.lock();
+        // TODO(port): use RAII guard for mutex
+        let result = (|| {
+            if let Some(idx) = self.index_of(hash) {
+                return Ok(idx as WatchItemIndex);
+            }
+            let _ = self.watchlist.ensure_unused_capacity(1);
+            self.append_directory_assume_capacity::<CLONE_FILE_PATH>(fd, file_path, hash)
+        })();
+        self.mutex.unlock();
+        result
     }
 
     /// Lazily watch a file by path (slow path).
@@ -795,72 +764,66 @@ impl Watcher {
     /// - true if the file is successfully added to the watchlist or already watched
     /// - false if the file cannot be opened or added to the watchlist
     pub fn add_file_by_path_slow(&mut self, file_path: &[u8], loader: Loader) -> bool {
-        #[cfg(any())]
+        if file_path.is_empty() {
+            return false;
+        }
+        let hash = Self::get_hash(file_path);
+
+        // Check if already watched (with lock to avoid race with removal)
         {
-            // TODO(b2-blocked): bun_collections::MultiArrayElement (derive)
-            if file_path.is_empty() {
+            self.mutex.lock();
+            let already_watched = self.index_of(hash).is_some();
+            self.mutex.unlock();
+
+            if already_watched {
+                return true;
+            }
+        }
+
+        // Only open fd if we might need it
+        let mut fd: Fd = Fd::INVALID;
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        {
+            let mut path_z = bun_paths::PathBuffer::uninit();
+            if file_path.len() >= path_z.len() {
                 return false;
             }
-            let hash = Self::get_hash(file_path);
-
-            // Check if already watched (with lock to avoid race with removal)
-            {
-                self.mutex.lock();
-                let already_watched = self.index_of(hash).is_some();
-                self.mutex.unlock();
-
-                if already_watched {
-                    return true;
-                }
+            path_z[..file_path.len()].copy_from_slice(file_path);
+            path_z[file_path.len()] = 0;
+            // SAFETY: path_z[file_path.len()] == 0 written above
+            let z = unsafe { ZStr::from_raw(path_z.as_ptr(), file_path.len()) };
+            match bun_sys::open(z, WATCH_OPEN_FLAGS, 0) {
+                Ok(opened) => fd = opened,
+                Err(_) => return false,
             }
+        }
 
-            // Only open fd if we might need it
-            let mut fd: Fd = Fd::INVALID;
-            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-            {
-                let mut path_z = bun_paths::PathBuffer::uninit();
-                if file_path.len() >= path_z.len() {
-                    return false;
-                }
-                path_z[..file_path.len()].copy_from_slice(file_path);
-                path_z[file_path.len()] = 0;
-                // SAFETY: path_z[file_path.len()] == 0 written above
-                let z = unsafe { ZStr::from_raw(path_z.as_ptr(), file_path.len()) };
-                match bun_sys::open(z, WATCH_OPEN_FLAGS, 0) {
-                    Ok(opened) => fd = opened,
-                    Err(_) => return false,
-                }
-            }
-
-            let res = self.add_file::<true>(fd, file_path, hash, loader, Fd::INVALID, None);
-            return match res {
-                Ok(()) => {
-                    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-                    if fd.is_valid() {
-                        self.mutex.lock();
-                        let maybe_idx = self.index_of(hash);
-                        let stored_fd = if let Some(idx) = maybe_idx {
-                            self.watchlist.items().fd[idx as usize]
-                        } else {
-                            Fd::INVALID
-                        };
-                        self.mutex.unlock();
-                        if maybe_idx.is_some() && stored_fd.native() != fd.native() {
-                            let _ = bun_sys::close(fd);
-                        }
-                    }
-                    true
-                }
-                Err(_) => {
-                    if fd.is_valid() {
+        let res = self.add_file::<true>(fd, file_path, hash, loader, Fd::INVALID, None);
+        match res {
+            Ok(()) => {
+                #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+                if fd.is_valid() {
+                    self.mutex.lock();
+                    let maybe_idx = self.index_of(hash);
+                    let stored_fd = if let Some(idx) = maybe_idx {
+                        self.watchlist.items_fd()[idx as usize]
+                    } else {
+                        Fd::INVALID
+                    };
+                    self.mutex.unlock();
+                    if maybe_idx.is_some() && stored_fd.native() != fd.native() {
                         let _ = bun_sys::close(fd);
                     }
-                    false
                 }
-            };
+                true
+            }
+            Err(_) => {
+                if fd.is_valid() {
+                    let _ = bun_sys::close(fd);
+                }
+                false
+            }
         }
-        let _ = (file_path, loader);
-        todo!("add_file_by_path_slow — bun_collections::MultiArrayElement derive")
     }
 
     pub fn add_file<const CLONE_FILE_PATH: bool>(
@@ -872,52 +835,40 @@ impl Watcher {
         dir_fd: Fd,
         package_json: Option<&'static PackageJSON>,
     ) -> sys::Result<()> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_collections::MultiArrayElement (derive)
-            // This must lock due to concurrent transpiler
-            self.mutex.lock();
+        // This must lock due to concurrent transpiler
+        self.mutex.lock();
 
-            if let Some(index) = self.index_of(hash) {
-                if feature_flags::ATOMIC_FILE_WATCHER {
-                    // On Linux, the file descriptor might be out of date.
-                    if fd.is_valid() {
-                        let fds = self.watchlist.items_mut().fd;
-                        fds[index as usize] = fd;
-                    }
+        if let Some(index) = self.index_of(hash) {
+            if feature_flags::ATOMIC_FILE_WATCHER {
+                // On Linux, the file descriptor might be out of date.
+                if fd.is_valid() {
+                    let fds = self.watchlist.items_fd_mut();
+                    fds[index as usize] = fd;
                 }
-                self.mutex.unlock();
-                return Ok(());
             }
-
-            let r = self.append_file_maybe_lock::<CLONE_FILE_PATH, false>(
-                fd,
-                file_path,
-                hash,
-                loader,
-                dir_fd,
-                package_json,
-            );
             self.mutex.unlock();
-            return r;
+            return Ok(());
         }
-        let _ = (fd, file_path, hash, loader, dir_fd, package_json);
-        todo!("add_file — bun_collections::MultiArrayElement derive")
+
+        let r = self.append_file_maybe_lock::<CLONE_FILE_PATH, false>(
+            fd,
+            file_path,
+            hash,
+            loader,
+            dir_fd,
+            package_json,
+        );
+        self.mutex.unlock();
+        r
     }
 
     pub fn index_of(&self, hash: HashType) -> Option<u32> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_collections::MultiArrayElement (derive)
-            for (i, other) in self.watchlist.items().hash.iter().enumerate() {
-                if hash == *other {
-                    return Some(i as u32);
-                }
+        for (i, other) in self.watchlist.items_hash().iter().enumerate() {
+            if hash == *other {
+                return Some(i as u32);
             }
-            return None;
         }
-        let _ = hash;
-        todo!("index_of — bun_collections::MultiArrayElement derive")
+        None
     }
 
     pub fn remove(&mut self, hash: HashType) {
@@ -1026,19 +977,21 @@ impl Op {
     }
 }
 
+/// Lowercase Zig-field-name mapping for `Op` (matches `std.meta.fields(Op)` output).
+pub const OP_NAMES: &[(Op, &str)] = &[
+    (Op::DELETE, "delete"),
+    (Op::METADATA, "metadata"),
+    (Op::RENAME, "rename"),
+    (Op::WRITE, "write"),
+    (Op::MOVE_TO, "move_to"),
+    (Op::CREATE, "create"),
+];
+
 impl fmt::Display for Op {
     fn fmt(&self, w: &mut fmt::Formatter<'_>) -> fmt::Result {
         w.write_str("{")?;
         let mut first = true;
-        const NAMES: &[(Op, &str)] = &[
-            (Op::DELETE, "delete"),
-            (Op::METADATA, "metadata"),
-            (Op::RENAME, "rename"),
-            (Op::WRITE, "write"),
-            (Op::MOVE_TO, "move_to"),
-            (Op::CREATE, "create"),
-        ];
-        for &(flag, name) in NAMES {
+        for &(flag, name) in OP_NAMES {
             if self.contains(flag) {
                 if !first {
                     w.write_str(",")?;
@@ -1071,6 +1024,204 @@ pub struct WatchItem {
 pub enum WatchItemKind {
     File,
     Directory,
+}
+
+// ─── MultiArrayElement impl for WatchItem ─────────────────────────────────
+//
+// Manual `MultiArrayElement` impl — `#[derive(MultiArrayElement)]` proc-macro
+// does not exist yet (see bun_collections TODO). Field index order matches
+// declaration order; SIZES_BYTES/SIZES_FIELDS are sorted by alignment
+// descending so the single backing allocation packs without padding.
+
+#[repr(usize)]
+#[derive(Copy, Clone)]
+pub enum WatchItemField {
+    FilePath = 0,
+    Hash = 1,
+    Loader = 2,
+    Fd = 3,
+    Count = 4,
+    ParentHash = 5,
+    Kind = 6,
+    PackageJson = 7,
+    #[cfg(target_os = "linux")]
+    EventlistIndex = 8,
+}
+
+#[cfg(target_os = "linux")]
+const WATCH_ITEM_FIELD_COUNT: usize = 9;
+#[cfg(not(target_os = "linux"))]
+const WATCH_ITEM_FIELD_COUNT: usize = 8;
+
+impl bun_collections::MultiArrayElement for WatchItem {
+    type Field = WatchItemField;
+    const FIELD_COUNT: usize = WATCH_ITEM_FIELD_COUNT;
+    const ALIGN: usize = core::mem::align_of::<&'static [u8]>();
+
+    // Sorted by alignment descending: pointer-sized (file_path, package_json)
+    // first; then 4-byte (hash, fd, count, parent_hash, eventlist_index);
+    // then 1-byte (loader, kind).
+    #[cfg(target_os = "linux")]
+    const SIZES_BYTES: &'static [usize] = &[
+        core::mem::size_of::<&'static [u8]>(), // FilePath
+        core::mem::size_of::<Option<&'static PackageJSON>>(), // PackageJson
+        core::mem::size_of::<u32>(),           // Hash
+        core::mem::size_of::<Fd>(),            // Fd
+        core::mem::size_of::<u32>(),           // Count
+        core::mem::size_of::<u32>(),           // ParentHash
+        core::mem::size_of::<platform::EventListIndex>(), // EventlistIndex
+        core::mem::size_of::<Loader>(),        // Loader
+        core::mem::size_of::<WatchItemKind>(), // Kind
+    ];
+    #[cfg(target_os = "linux")]
+    const SIZES_FIELDS: &'static [usize] = &[0, 7, 1, 3, 4, 5, 8, 2, 6];
+
+    #[cfg(not(target_os = "linux"))]
+    const SIZES_BYTES: &'static [usize] = &[
+        core::mem::size_of::<&'static [u8]>(),
+        core::mem::size_of::<Option<&'static PackageJSON>>(),
+        core::mem::size_of::<u32>(),
+        core::mem::size_of::<Fd>(),
+        core::mem::size_of::<u32>(),
+        core::mem::size_of::<u32>(),
+        core::mem::size_of::<Loader>(),
+        core::mem::size_of::<WatchItemKind>(),
+    ];
+    #[cfg(not(target_os = "linux"))]
+    const SIZES_FIELDS: &'static [usize] = &[0, 7, 1, 3, 4, 5, 2, 6];
+
+    #[inline]
+    fn field_index(field: Self::Field) -> usize {
+        field as usize
+    }
+
+    #[inline]
+    unsafe fn scatter(self, ptrs: &[*mut u8], i: usize) {
+        // SAFETY: caller guarantees `ptrs[0..FIELD_COUNT]` are valid columns
+        // with capacity > `i` for their respective field types.
+        unsafe {
+            ptrs[0].cast::<&'static [u8]>().add(i).write(self.file_path);
+            ptrs[1].cast::<u32>().add(i).write(self.hash);
+            ptrs[2].cast::<Loader>().add(i).write(self.loader);
+            ptrs[3].cast::<Fd>().add(i).write(self.fd);
+            ptrs[4].cast::<u32>().add(i).write(self.count);
+            ptrs[5].cast::<u32>().add(i).write(self.parent_hash);
+            ptrs[6].cast::<WatchItemKind>().add(i).write(self.kind);
+            ptrs[7]
+                .cast::<Option<&'static PackageJSON>>()
+                .add(i)
+                .write(self.package_json);
+            #[cfg(target_os = "linux")]
+            ptrs[8]
+                .cast::<platform::EventListIndex>()
+                .add(i)
+                .write(self.eventlist_index);
+        }
+    }
+
+    #[inline]
+    unsafe fn gather(ptrs: &[*mut u8], i: usize) -> Self {
+        // SAFETY: caller guarantees `ptrs[0..FIELD_COUNT]` are valid columns
+        // with len > `i`.
+        unsafe {
+            WatchItem {
+                file_path: ptrs[0].cast::<&'static [u8]>().add(i).read(),
+                hash: ptrs[1].cast::<u32>().add(i).read(),
+                loader: ptrs[2].cast::<Loader>().add(i).read(),
+                fd: ptrs[3].cast::<Fd>().add(i).read(),
+                count: ptrs[4].cast::<u32>().add(i).read(),
+                parent_hash: ptrs[5].cast::<u32>().add(i).read(),
+                kind: ptrs[6].cast::<WatchItemKind>().add(i).read(),
+                package_json: ptrs[7].cast::<Option<&'static PackageJSON>>().add(i).read(),
+                #[cfg(target_os = "linux")]
+                eventlist_index: ptrs[8].cast::<platform::EventListIndex>().add(i).read(),
+            }
+        }
+    }
+}
+
+/// Typed SoA column accessors — what `#[derive(MultiArrayElement)]` would emit.
+/// Implemented locally so callers can write `watchlist.items_fd()` instead of
+/// the unsafe generic `Slice::items::<F>(field)`.
+pub trait WatchItemColumns {
+    fn items_file_path(&self) -> &[&'static [u8]];
+    fn items_hash(&self) -> &[u32];
+    fn items_fd(&self) -> &[Fd];
+    fn items_fd_mut(&mut self) -> &mut [Fd];
+    fn items_parent_hash(&self) -> &[u32];
+    fn items_kind(&self) -> &[WatchItemKind];
+    #[cfg(target_os = "linux")]
+    fn items_eventlist_index(&self) -> &[platform::EventListIndex];
+}
+
+impl WatchItemColumns for WatchList {
+    fn items_file_path(&self) -> &[&'static [u8]] {
+        // SAFETY: column 0 is `&'static [u8]` per MultiArrayElement impl above.
+        unsafe { &*(self.items::<&'static [u8]>(WatchItemField::FilePath) as *const [_]) }
+    }
+    fn items_hash(&self) -> &[u32] {
+        // SAFETY: column 1 is `u32`.
+        unsafe { &*(self.items::<u32>(WatchItemField::Hash) as *const [_]) }
+    }
+    fn items_fd(&self) -> &[Fd] {
+        // SAFETY: column 3 is `Fd`.
+        unsafe { &*(self.items::<Fd>(WatchItemField::Fd) as *const [_]) }
+    }
+    fn items_fd_mut(&mut self) -> &mut [Fd] {
+        // SAFETY: column 3 is `Fd`; &mut self ensures unique access.
+        unsafe { self.items::<Fd>(WatchItemField::Fd) }
+    }
+    fn items_parent_hash(&self) -> &[u32] {
+        // SAFETY: column 5 is `u32`.
+        unsafe { &*(self.items::<u32>(WatchItemField::ParentHash) as *const [_]) }
+    }
+    fn items_kind(&self) -> &[WatchItemKind] {
+        // SAFETY: column 6 is `WatchItemKind`.
+        unsafe { &*(self.items::<WatchItemKind>(WatchItemField::Kind) as *const [_]) }
+    }
+    #[cfg(target_os = "linux")]
+    fn items_eventlist_index(&self) -> &[platform::EventListIndex] {
+        // SAFETY: column 8 is `EventListIndex`.
+        unsafe {
+            &*(self.items::<platform::EventListIndex>(WatchItemField::EventlistIndex)
+                as *const [_])
+        }
+    }
+}
+
+impl WatchItemColumns for bun_collections::multi_array_list::Slice<WatchItem> {
+    fn items_file_path(&self) -> &[&'static [u8]] {
+        // SAFETY: column 0 is `&'static [u8]`.
+        unsafe { &*(self.items::<&'static [u8]>(WatchItemField::FilePath) as *const [_]) }
+    }
+    fn items_hash(&self) -> &[u32] {
+        // SAFETY: column 1 is `u32`.
+        unsafe { &*(self.items::<u32>(WatchItemField::Hash) as *const [_]) }
+    }
+    fn items_fd(&self) -> &[Fd] {
+        // SAFETY: column 3 is `Fd`.
+        unsafe { &*(self.items::<Fd>(WatchItemField::Fd) as *const [_]) }
+    }
+    fn items_fd_mut(&mut self) -> &mut [Fd] {
+        // SAFETY: column 3 is `Fd`.
+        unsafe { self.items::<Fd>(WatchItemField::Fd) }
+    }
+    fn items_parent_hash(&self) -> &[u32] {
+        // SAFETY: column 5 is `u32`.
+        unsafe { &*(self.items::<u32>(WatchItemField::ParentHash) as *const [_]) }
+    }
+    fn items_kind(&self) -> &[WatchItemKind] {
+        // SAFETY: column 6 is `WatchItemKind`.
+        unsafe { &*(self.items::<WatchItemKind>(WatchItemField::Kind) as *const [_]) }
+    }
+    #[cfg(target_os = "linux")]
+    fn items_eventlist_index(&self) -> &[platform::EventListIndex] {
+        // SAFETY: column 8 is `EventListIndex`.
+        unsafe {
+            &*(self.items::<platform::EventListIndex>(WatchItemField::EventlistIndex)
+                as *const [_])
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

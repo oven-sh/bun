@@ -591,8 +591,6 @@ fn host_uses_nix_store_interpreter() -> bool {
                 return true;
             }
             // Guix equivalent.
-            // TODO(b2-blocked): bun_sys::directory_exists_at
-            #[cfg(any())]
             if bun_sys::directory_exists_at(bun_sys::Fd::cwd(), bun_core::zstr!("/gnu/store"))
                 .unwrap_or(false)
             {

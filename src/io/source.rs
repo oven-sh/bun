@@ -5,14 +5,17 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_sys::windows::libuv as uv;
 use bun_sys::Fd;
 
-bun_output::declare_scope!(PipeSource, hidden);
+bun_core::declare_scope!(PipeSource, hidden);
 
 pub type Pipe = uv::Pipe;
 pub type Tty = uv::uv_tty_t;
 
 pub enum Source {
     Pipe(Box<Pipe>),
-    Tty(Box<Tty>),
+    /// `NonNull` not `Box`: the stdin tty (fd 0) lives in static storage
+    /// (`stdin_tty::value()`), and Box-from-static is UB. Heap-allocated ttys
+    /// use `Box::into_raw`; destroy paths gate `Box::from_raw` on `!is_stdin_tty()`.
+    Tty(core::ptr::NonNull<Tty>),
     File(Box<File>),
     SyncFile(Box<File>),
 }
@@ -180,10 +183,14 @@ impl File {
 }
 
 impl Source {
+    // SAFETY helper: Tty arm holds NonNull; ptr is live for the Source's lifetime.
+    #[inline] fn tty_ref(tty: &core::ptr::NonNull<Tty>) -> &Tty { unsafe { tty.as_ref() } }
+    #[inline] fn tty_mut(tty: &mut core::ptr::NonNull<Tty>) -> &mut Tty { unsafe { tty.as_mut() } }
+
     pub fn is_closed(&self) -> bool {
         match self {
             Source::Pipe(pipe) => pipe.is_closed(),
-            Source::Tty(tty) => tty.is_closed(),
+            Source::Tty(tty) => Self::tty_ref(tty).is_closed(),
             Source::SyncFile(file) | Source::File(file) => file.file == -1,
         }
     }
@@ -191,7 +198,7 @@ impl Source {
     pub fn is_active(&self) -> bool {
         match self {
             Source::Pipe(pipe) => pipe.is_active(),
-            Source::Tty(tty) => tty.is_active(),
+            Source::Tty(tty) => Self::tty_ref(tty).is_active(),
             Source::SyncFile(_) | Source::File(_) => true,
         }
     }
@@ -200,7 +207,7 @@ impl Source {
         match self {
             // SAFETY: uv::Pipe / uv::uv_tty_t embed uv_handle_t as their first member.
             Source::Pipe(pipe) => (pipe.as_ref() as *const Pipe as *mut Pipe).cast(),
-            Source::Tty(tty) => (tty.as_ref() as *const Tty as *mut Tty).cast(),
+            Source::Tty(tty) => tty.as_ptr().cast(),
             Source::SyncFile(_) | Source::File(_) => unreachable!(),
         }
     }
@@ -209,7 +216,7 @@ impl Source {
         match self {
             Source::Pipe(pipe) => pipe.as_stream(),
             // SAFETY: uv_tty_t embeds uv_stream_t as its first member.
-            Source::Tty(tty) => (tty.as_ref() as *const Tty as *mut Tty).cast(),
+            Source::Tty(tty) => tty.as_ptr().cast(),
             Source::SyncFile(_) | Source::File(_) => unreachable!(),
         }
     }
@@ -217,7 +224,7 @@ impl Source {
     pub fn get_fd(&self) -> Fd {
         match self {
             Source::Pipe(pipe) => pipe.fd(),
-            Source::Tty(tty) => tty.fd(),
+            Source::Tty(tty) => Self::tty_ref(tty).fd(),
             Source::SyncFile(file) | Source::File(file) => Fd::from_uv(file.file),
         }
     }
@@ -225,7 +232,7 @@ impl Source {
     pub fn set_data(&mut self, data: *mut c_void) {
         match self {
             Source::Pipe(pipe) => pipe.data = data,
-            Source::Tty(tty) => tty.data = data,
+            Source::Tty(tty) => Self::tty_mut(tty).data = data,
             Source::SyncFile(file) | Source::File(file) => file.fs.data = data,
         }
     }
@@ -233,7 +240,7 @@ impl Source {
     pub fn get_data(&self) -> *mut c_void {
         match self {
             Source::Pipe(pipe) => pipe.data,
-            Source::Tty(tty) => tty.data,
+            Source::Tty(tty) => Self::tty_ref(tty).data,
             Source::SyncFile(file) | Source::File(file) => file.fs.data,
         }
     }
@@ -241,7 +248,7 @@ impl Source {
     pub fn ref_(&self) {
         match self {
             Source::Pipe(pipe) => pipe.ref_(),
-            Source::Tty(tty) => tty.ref_(),
+            Source::Tty(tty) => Self::tty_ref(tty).ref_(),
             Source::SyncFile(_) | Source::File(_) => {}
         }
     }
@@ -249,7 +256,7 @@ impl Source {
     pub fn unref(&self) {
         match self {
             Source::Pipe(pipe) => pipe.unref(),
-            Source::Tty(tty) => tty.unref(),
+            Source::Tty(tty) => Self::tty_ref(tty).unref(),
             Source::SyncFile(_) | Source::File(_) => {}
         }
     }
@@ -257,13 +264,13 @@ impl Source {
     pub fn has_ref(&self) -> bool {
         match self {
             Source::Pipe(pipe) => pipe.has_ref(),
-            Source::Tty(tty) => tty.has_ref(),
+            Source::Tty(tty) => Self::tty_ref(tty).has_ref(),
             Source::SyncFile(_) | Source::File(_) => false,
         }
     }
 
     pub fn open_pipe(loop_: *mut uv::Loop, fd: Fd) -> bun_sys::Result<Box<Pipe>> {
-        bun_output::scoped_log!(PipeSource, "openPipe (fd = {})", fd);
+        bun_core::scoped_log!(PipeSource,"openPipe (fd = {})", fd);
         // SAFETY: uv::Pipe is a #[repr(C)] libuv struct; all-zero is a valid pre-init state.
         let mut pipe: Box<Pipe> = Box::new(unsafe { core::mem::zeroed::<Pipe>() });
         // we should never init using IPC here see ipc.zig
@@ -290,8 +297,8 @@ impl Source {
         bun_sys::Result::Ok(pipe)
     }
 
-    pub fn open_tty(loop_: *mut uv::Loop, fd: Fd) -> bun_sys::Result<Box<Tty>> {
-        bun_output::scoped_log!(PipeSource, "openTTY (fd = {})", fd);
+    pub fn open_tty(loop_: *mut uv::Loop, fd: Fd) -> bun_sys::Result<core::ptr::NonNull<Tty>> {
+        bun_core::scoped_log!(PipeSource,"openTTY (fd = {})", fd);
 
         let uv_fd = fd.uv();
 
@@ -309,12 +316,13 @@ impl Source {
             bun_sys::Result::Ok(()) => {}
         }
 
-        bun_sys::Result::Ok(tty)
+        // SAFETY: Box::into_raw never returns null.
+        bun_sys::Result::Ok(unsafe { core::ptr::NonNull::new_unchecked(Box::into_raw(tty)) })
     }
 
     pub fn open_file(fd: Fd) -> Box<File> {
         debug_assert!(fd.is_valid() && fd.uv() != -1);
-        bun_output::scoped_log!(PipeSource, "openFile (fd = {})", fd);
+        bun_core::scoped_log!(PipeSource,"openFile (fd = {})", fd);
         let mut file: Box<File> = Box::new(File::default());
         file.file = fd.uv();
         file
@@ -354,7 +362,7 @@ impl Source {
     pub fn set_raw_mode(&self, value: bool) -> bun_sys::Result<()> {
         match self {
             Source::Tty(tty) => {
-                if let Some(err) = tty
+                if let Some(err) = Self::tty_ref(tty)
                     .set_mode(if value { uv::TtyMode::Raw } else { uv::TtyMode::Normal })
                     .to_error(bun_sys::Syscall::UvTtySetMode)
                 {
@@ -391,7 +399,7 @@ pub mod stdin_tty {
         core::ptr::eq(tty, value())
     }
 
-    pub(super) fn get_stdin_tty(loop_: *mut uv::Loop) -> bun_sys::Result<Box<Tty>> {
+    pub(super) fn get_stdin_tty(loop_: *mut uv::Loop) -> bun_sys::Result<core::ptr::NonNull<Tty>> {
         let _guard = LOCK.lock();
 
         if !INITIALIZED.swap(true, Ordering::Relaxed) {
@@ -403,11 +411,9 @@ pub mod stdin_tty {
             }
         }
 
-        // TODO(port): UNSOUND under Box<Tty> ownership — value() is a process-global static,
-        // not a heap allocation. The Zig destroy path (PipeWriter.zig onTtyClose) checks
-        // is_stdin_tty() and skips freeing. Phase B must either (a) keep Source::Tty as a
-        // raw *mut Tty, or (b) wrap in ManuallyDrop and gate Drop on is_stdin_tty().
-        bun_sys::Result::Ok(unsafe { Box::from_raw(value()) })
+        // SAFETY: value() is a process-global static, never null.
+        // Destroy path must gate `Box::from_raw` on `!is_stdin_tty(ptr)`.
+        bun_sys::Result::Ok(unsafe { core::ptr::NonNull::new_unchecked(value()) })
     }
 }
 
@@ -430,15 +436,14 @@ pub extern "C" fn Source__setRawModeStdin(raw: bool) -> c_int {
     // closely with POSIX platforms. This is also required to support some
     // control sequences at all on Windows, such as bracketed paste mode. The
     // Node.js readline implementation handles differences between these modes.
-    if let Some(err) = tty
+    // SAFETY: tty points to the static stdin tty (fd 0 → get_stdin_tty path);
+    // live for process lifetime. NonNull means no drop concern.
+    if let Some(err) = unsafe { tty.as_ref() }
         .set_mode(if raw { uv::TtyMode::Vt } else { uv::TtyMode::Normal })
         .to_error(bun_sys::Syscall::UvTtySetMode)
     {
         return err.errno as c_int;
     }
-    // TODO(port): tty is the static stdin_tty Box (see get_stdin_tty TODO); leak to avoid
-    // dropping the static. Remove once Source::Tty ownership is resolved.
-    core::mem::forget(tty);
     0
 }
 

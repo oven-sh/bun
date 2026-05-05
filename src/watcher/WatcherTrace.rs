@@ -23,17 +23,12 @@ pub fn init() {
 
     if let Some(trace_path) = env_var::BUN_WATCHER_TRACE.get() {
         if !trace_path.is_empty() {
-            #[cfg(any())]
-            {
-                // TODO(b2-blocked): bun_sys::open_a (non-sentinel open)
-                let flags = O::WRONLY | O::CREAT | O::APPEND;
-                let mode = 0o644;
-                if let Ok(fd) = bun_sys::open_a(trace_path, flags, mode) {
-                    *slot = Some(File::from_fd(fd));
-                }
-                // Silently ignore errors opening trace file
+            let flags = O::WRONLY | O::CREAT | O::APPEND;
+            let mode = 0o644;
+            if let Ok(fd) = bun_sys::open_a(trace_path, flags, mode) {
+                *slot = Some(File::from_fd(fd));
             }
-            let _ = trace_path;
+            // Silently ignore errors opening trace file
         }
     }
 }
@@ -42,147 +37,156 @@ pub fn init() {
 /// This is called from the watcher thread, so no locking is needed.
 /// Events are assumed to be already deduped by path.
 pub fn write_events(watcher: &Watcher, events: &[WatchEvent], changed_files: &[ChangedFilePath]) {
-    #[cfg(any())]
-    {
-        // TODO(b2-blocked): bun_sys::File::buffered_writer
-        // TODO(b2-blocked): bun_collections::MultiArrayElement (derive) —
-        // `watcher.watchlist.slice().file_path()` typed-column accessor.
-        let guard = TRACE_FILE.lock();
-        let Some(file) = guard.as_ref() else {
-            return;
-        };
+    use crate::watcher_impl::WatchItemColumns;
+    let guard = TRACE_FILE.lock();
+    let Some(file) = guard.as_ref() else {
+        return;
+    };
 
-        let mut buffer = [0u8; 4096];
-        let buffered = file.buffered_writer(&mut buffer);
-        // `defer buffered.flush() catch |err| { Output.err(...) }`
-        let mut writer = scopeguard::guard(buffered, |mut w| {
-            if let Err(err) = w.flush() {
-                output::err(&err, format_args!("Failed to flush watcher trace file"));
-            }
-        });
-
-        // Get current timestamp
-        // PORT NOTE: std.time.milliTimestamp() — std::time is not in the banned
-        // I/O set; revisit if a `bun_core::time` helper exists.
-        let timestamp: i64 = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| i64::try_from(d.as_millis()).unwrap())
-            .unwrap_or(0);
-
-        // Write: { "timestamp": number, "files": { ... } }
-        if writer.write_all(b"{\"timestamp\":").is_err() {
-            return;
-        }
-        if write!(writer, "{}", timestamp).is_err() {
-            return;
-        }
-        if writer.write_all(b",\"files\":{").is_err() {
-            return;
-        }
-
-        let watchlist_slice = watcher.watchlist.slice();
-        // TODO(port): MultiArrayList column accessor — `.items(.file_path)`
-        let file_paths = watchlist_slice.file_path();
-
-        let mut first_file = true;
-        for event in events {
-            let file_path: &[u8] = if (event.index as usize) < file_paths.len() {
-                file_paths[event.index as usize]
-            } else {
-                b"(unknown)"
+    // PORT NOTE: Zig passed a stack `[4096]u8` to `bufferedWriter(&buffer)`;
+    // `bun_sys::File::buffered_writer()` wraps `std::io::BufWriter` which
+    // owns its own heap buffer. Same observable behaviour.
+    let buffered = file.buffered_writer();
+    // `defer buffered.flush() catch |err| { Output.err(...) }`
+    let mut writer = scopeguard::guard(buffered, |mut w| {
+        if let Err(err) = w.flush() {
+            // PORT NOTE: Zig passed the error-union tag (`@errorName`). The
+            // BufWriter wrapper surfaces a `std::io::Error`; print its display
+            // as the tag — same observable text minus the `error.` prefix.
+            // TODO(port): map io::Error → bun_sys::Error once a helper exists.
+            let mut name_buf = [0u8; 64];
+            let name = {
+                use std::io::Write as _;
+                let mut c = std::io::Cursor::new(&mut name_buf[..]);
+                let _ = write!(c, "{}", err.kind());
+                let n = c.position() as usize;
+                core::str::from_utf8(&name_buf[..n]).unwrap_or("WriteFailed")
             };
-            let names = event.names(changed_files);
+            output::err(name, format_args!("Failed to flush watcher trace file"));
+        }
+    });
 
-            if !first_file {
+    // Get current timestamp
+    // PORT NOTE: std.time.milliTimestamp() — std::time is not in the banned
+    // I/O set; revisit if a `bun_core::time` helper exists.
+    let timestamp: i64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_millis()).unwrap())
+        .unwrap_or(0);
+
+    // Write: { "timestamp": number, "files": { ... } }
+    if writer.write_all(b"{\"timestamp\":").is_err() {
+        return;
+    }
+    if write!(writer, "{}", timestamp).is_err() {
+        return;
+    }
+    if writer.write_all(b",\"files\":{").is_err() {
+        return;
+    }
+
+    let watchlist_slice = watcher.watchlist.slice();
+    let file_paths = watchlist_slice.items_file_path();
+
+    let mut first_file = true;
+    for event in events {
+        let file_path: &[u8] = if (event.index as usize) < file_paths.len() {
+            file_paths[event.index as usize]
+        } else {
+            b"(unknown)"
+        };
+        let names = event.names(changed_files);
+
+        if !first_file {
+            if writer.write_all(b",").is_err() {
+                return;
+            }
+        }
+        first_file = false;
+
+        // Write path as key
+        if write!(
+            writer,
+            "{}",
+            bun_fmt::format_json_string_utf8(file_path, Default::default())
+        )
+        .is_err()
+        {
+            return;
+        }
+        if writer.write_all(b":{\"events\":[").is_err() {
+            return;
+        }
+
+        // Write array of event types.
+        // PORT NOTE: Zig walks `std.meta.fields(Op)` (lowercase field names).
+        // bitflags `iter_names()` yields SCREAMING_CASE const names; use the
+        // shared lowercase OP_NAMES table so trace JSON matches Zig exactly.
+        let mut first = true;
+        for &(flag, name) in crate::watcher_impl::OP_NAMES {
+            if !event.op.contains(flag) {
+                continue;
+            }
+            if !first {
                 if writer.write_all(b",").is_err() {
                     return;
                 }
             }
-            first_file = false;
-
-            // Write path as key
-            if write!(
-                writer,
-                "{}",
-                bun_fmt::format_json_string_utf8(file_path, Default::default())
-            )
-            .is_err()
-            {
+            if write!(writer, "\"{}\"", name).is_err() {
                 return;
             }
-            if writer.write_all(b":{\"events\":[").is_err() {
+            first = false;
+        }
+        if writer.write_all(b"]").is_err() {
+            return;
+        }
+
+        // Only write "changed" field if there are changed files
+        let mut has_changed = false;
+        for name_opt in names {
+            if name_opt.is_some() {
+                has_changed = true;
+                break;
+            }
+        }
+
+        if has_changed {
+            if writer.write_all(b",\"changed\":[").is_err() {
                 return;
             }
-
-            // Write array of event types.
-            // PORT NOTE: Zig used `std.meta.fields(@TypeOf(event.op))` + `inline for`
-            // to walk every `bool` field of the packed-struct `Op`. In Rust `Op` is
-            // a `bitflags!` type (per PORTING.md), so `iter_names()` yields exactly
-            // the set bool flags by name — same observable output.
-            let mut first = true;
-            for (name, _flag) in event.op.iter_names() {
-                if !first {
-                    if writer.write_all(b",").is_err() {
+            first = true;
+            for name_opt in names {
+                if let Some(name) = name_opt {
+                    if !first {
+                        if writer.write_all(b",").is_err() {
+                            return;
+                        }
+                    }
+                    first = false;
+                    if write!(
+                        writer,
+                        "{}",
+                        bun_fmt::format_json_string_utf8(name.as_bytes(), Default::default())
+                    )
+                    .is_err()
+                    {
                         return;
                     }
                 }
-                if write!(writer, "\"{}\"", name).is_err() {
-                    return;
-                }
-                first = false;
             }
             if writer.write_all(b"]").is_err() {
                 return;
             }
-
-            // Only write "changed" field if there are changed files
-            let mut has_changed = false;
-            for name_opt in names {
-                if name_opt.is_some() {
-                    has_changed = true;
-                    break;
-                }
-            }
-
-            if has_changed {
-                if writer.write_all(b",\"changed\":[").is_err() {
-                    return;
-                }
-                first = true;
-                for name_opt in names {
-                    if let Some(name) = name_opt {
-                        if !first {
-                            if writer.write_all(b",").is_err() {
-                                return;
-                            }
-                        }
-                        first = false;
-                        if write!(
-                            writer,
-                            "{}",
-                            bun_fmt::format_json_string_utf8(name.as_bytes(), Default::default())
-                        )
-                        .is_err()
-                        {
-                            return;
-                        }
-                    }
-                }
-                if writer.write_all(b"]").is_err() {
-                    return;
-                }
-            }
-
-            if writer.write_all(b"}").is_err() {
-                return;
-            }
         }
 
-        if writer.write_all(b"}}\n").is_err() {
+        if writer.write_all(b"}").is_err() {
             return;
         }
     }
-    let _ = (watcher, events, changed_files);
+
+    if writer.write_all(b"}}\n").is_err() {
+        return;
+    }
 }
 
 /// Close the trace file if open
@@ -198,6 +202,6 @@ pub fn deinit() {
 // PORT STATUS
 //   source:     src/watcher/WatcherTrace.zig (112 lines)
 //   confidence: medium
-//   todos:      3
-//   notes:      static-mut global → parking_lot::Mutex (PORTING.md §Concurrency); bun_sys buffered-writer API + MultiArrayList column accessor need Phase B wiring; bitflags iter_names() replaces comptime field reflection over Op
+//   todos:      1
+//   notes:      static-mut global → parking_lot::Mutex (PORTING.md §Concurrency); bitflags iter_names() replaces comptime field reflection over Op; flush-error name uses io::ErrorKind Display until io::Error→bun_sys::Error helper lands
 // ──────────────────────────────────────────────────────────────────────────

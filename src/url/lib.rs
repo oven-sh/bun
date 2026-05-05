@@ -243,6 +243,37 @@ impl<'a> Default for URL<'a> {
     }
 }
 
+/// An owning URL — holds the normalized `href` buffer that the borrowed
+/// `URL<'_>` view slices into. Port of `URL.fromString`'s ownership model:
+/// Zig returned a `URL` borrowing from a fresh allocation the caller had to
+/// `allocator.free(url.href)`; in Rust, `OwnedURL` owns that buffer and
+/// `Drop` frees it.
+pub struct OwnedURL {
+    href: Box<[u8]>,
+}
+
+impl OwnedURL {
+    /// Borrow as a parsed `URL` view. All slices in the returned `URL` borrow
+    /// `self.href`.
+    // PERF(port): re-parses on each call. Zig parsed once into a borrowing
+    // struct the caller held alongside the buffer; Rust cannot express that
+    // self-reference without unsafe lifetime extension (PORTING.md §Forbidden).
+    // Callers in practice call this once and hold the borrow — profile in
+    // Phase B; if hot, store component `(u32, u32)` offsets here instead.
+    #[inline]
+    pub fn url(&self) -> URL<'_> {
+        URL::parse(&self.href)
+    }
+    #[inline]
+    pub fn href(&self) -> &[u8] {
+        &self.href
+    }
+    #[inline]
+    pub fn into_href(self) -> Box<[u8]> {
+        self.href
+    }
+}
+
 impl<'a> URL<'a> {
     pub fn is_file(&self) -> bool {
         self.protocol == b"file"
@@ -279,27 +310,24 @@ impl<'a> URL<'a> {
     // PORT NOTE: `fromJS` alias to url_jsc deleted per PORTING.md — JSC interop lives
     // in bun_url_jsc as an extension trait.
 
-    // TODO(port): ownership — Zig returns a URL borrowing from a freshly-allocated
-    // owned slice (`href.toOwnedSlice`). Caller is responsible for freeing href.
-    // Per PORTING.md §Forbidden, `Box::leak`/`mem::forget` are not allowed; this
-    // needs an owning `OwnedURL` wrapper (or `(Vec<u8>, URL<'_>)` pair) that the
-    // caller can drop. Body re-gated until that wrapper lands.
-    #[cfg(any())]
-    pub fn from_string(input: &BunString) -> Result<URL<'static>, bun_core::Error> {
+    // PORT NOTE: ownership — Zig returns a `URL` borrowing from a freshly-allocated
+    // owned slice (`href.toOwnedSlice`); caller frees `url.href` later. Per
+    // PORTING.md §Forbidden (no Box::leak / mem::forget / unsafe lifetime
+    // extension), Rust returns an `OwnedURL` that owns the buffer; callers borrow
+    // via `.url()` and Drop frees it.
+    pub fn from_string(input: &BunString) -> Result<OwnedURL, bun_core::Error> {
         let href = whatwg::href_from_string(input);
         if href.tag() == BunStringTag::Dead {
             return Err(bun_core::err!("InvalidURL"));
         }
-        let owned = href.to_owned_slice();
-        // (cannot leak `owned` — PORTING.md §Forbidden)
-        unreachable!()
-    }
-    pub fn from_string(_input: &BunString) -> Result<URL<'static>, bun_core::Error> {
-        // TODO(port): see gated body above — needs owning wrapper, Box::leak forbidden.
-        todo!("URL::from_string — owning-href wrapper")
+        // Zig: `defer href.deref()` — `to_owned_slice` is infallible so explicit
+        // ordering suffices (no error path between alloc and deref).
+        let owned = href.to_owned_slice().into_boxed_slice();
+        href.deref();
+        Ok(OwnedURL { href: owned })
     }
 
-    pub fn from_utf8(input: &[u8]) -> Result<URL<'static>, bun_core::Error> {
+    pub fn from_utf8(input: &[u8]) -> Result<OwnedURL, bun_core::Error> {
         Self::from_string(&BunString::borrow_utf8(input))
     }
 

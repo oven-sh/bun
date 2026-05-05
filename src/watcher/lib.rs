@@ -10,10 +10,11 @@
 
 // ─── platform impls ───────────────────────────────────────────────────────
 //
-// Each platform watcher is compiled only for its target. The non-Linux
-// backends remain `#[cfg(any())]`-gated *inside their target cfg* because
-// their lower-tier deps (`bun_sys::c` kqueue bindings, `bun_sys::windows`)
-// are themselves still gated; a host build never sees them anyway.
+// Each platform watcher is compiled only for its target. The Linux backend
+// is fully un-gated; macOS/Windows backends keep small `#[cfg(any())]`
+// re-gates *inside their target cfg* where their lower-tier deps
+// (`bun_sys::c` kqueue bindings, `bun_sys::windows`) are themselves still
+// gated — a host build never sees them anyway.
 
 #[cfg(target_os = "linux")]
 #[path = "INotifyWatcher.rs"]
@@ -37,8 +38,8 @@ pub mod watcher_impl;
 
 pub use watcher_impl::{
     AnyResolveWatcher, ChangedFilePath, Event, HashType, Item, ItemList, Op, PackageJSON,
-    WatchEvent, WatchItem, WatchItemIndex, WatchItemKind, WatchList, Watcher, WatcherContext,
-    MAX_COUNT, MAX_EVICTION_COUNT, REQUIRES_FILE_DESCRIPTORS,
+    WatchEvent, WatchItem, WatchItemColumns, WatchItemField, WatchItemIndex, WatchItemKind,
+    WatchList, Watcher, WatcherContext, MAX_COUNT, MAX_EVICTION_COUNT, REQUIRES_FILE_DESCRIPTORS,
 };
 pub use WatchItemKind as Kind;
 

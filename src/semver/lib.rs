@@ -101,14 +101,13 @@ pub mod sliced_string {
                     let start_i = input.as_ptr() as usize;
                     let end_i = (input.as_ptr() as usize) + input.len();
 
-                    // TODO(b1): bun_core::output::panic stub takes (&str, Arguments); use std panic for now
-                    panic!(
+                    bun_core::Output::panic(format_args!(
                         concat!(
                             "SlicedString.sub input [{}, {}) is not a substring of the ",
                             "slice [{}, {})"
                         ),
                         start_i, end_i, start_buf, end_buf
-                    );
+                    ));
                 }
             }
             SlicedString { buf: self.buf, slice: input }
@@ -198,19 +197,8 @@ pub mod semver_string {
     use core::fmt;
 
     use bun_alloc::AllocError;
-    // TODO(b1): bun_collections::IdentityContext missing from lower-tier stub surface
-    #[allow(unused_imports)]
     use bun_collections::HashMap;
-
-    // TODO(b1): bun_string::strings missing `order` / `is_all_ascii`; local shim wraps it.
-    mod strings {
-        #[allow(unused_imports)]
-        pub use bun_string::strings::*;
-        #[inline]
-        pub fn order(a: &[u8], b: &[u8]) -> core::cmp::Ordering { a.cmp(b) }
-        #[inline]
-        pub fn is_all_ascii(s: &[u8]) -> bool { s.iter().all(|&b| b < 0x80) }
-    }
+    use bun_string::strings;
 
     use super::external_string::ExternalString;
     use super::sliced_string::SlicedString;
@@ -640,9 +628,9 @@ pub mod semver_string {
     }
 
     // ── Sorter(comptime direction) ────────────────────────────────────────
-    // TODO(b1): was `const DIRECTION: SortDirection` const-generic param; requires nightly
-    // `adt_const_params`. Rewritten as a runtime field for stable. Revisit in B-2 if
-    // monomorphization is load-bearing for perf.
+    // PORT NOTE: was `const DIRECTION: SortDirection` const-generic param; requires nightly
+    // `adt_const_params`. Rewritten as a runtime field for stable — branch is trivially
+    // predictable, monomorphization not load-bearing.
     #[derive(PartialEq, Eq, Clone, Copy)]
     pub enum SortDirection {
         Asc,
@@ -744,26 +732,34 @@ pub mod semver_string {
         }
     }
 
-    // TODO(port): std.HashMap(u64, String, IdentityContext(u64), 80) — 80% max load factor not
-    // expressible in bun_collections::HashMap signature; verify default load factor matches.
-    // TODO(b1): bun_collections::HashMap stub is 2-param std alias and lacks `get_or_put`;
-    // local opaque stub keeps Buf/Builder signatures intact. Un-stub in B-2.
+    // Zig: `std.HashMap(u64, String, IdentityContext(u64), 80)`.
+    // TODO(port): 80% max load factor + identity hasher not expressible on
+    // bun_collections::HashMap (std alias) yet — semantically equivalent for now.
     #[derive(Default)]
     pub struct StringPool {
-        _p: (),
+        map: HashMap<u64, String>,
     }
     pub struct StringPoolEntry<'a> {
         pub found_existing: bool,
         pub value_ptr: &'a mut String,
     }
     impl StringPool {
-        #[allow(unused_variables)]
         pub fn get_or_put(&mut self, hash: u64) -> Result<StringPoolEntry<'_>, AllocError> {
-            todo!("b1: StringPool::get_or_put")
+            use std::collections::hash_map::Entry;
+            match self.map.entry(hash) {
+                Entry::Occupied(o) => Ok(StringPoolEntry {
+                    found_existing: true,
+                    value_ptr: o.into_mut(),
+                }),
+                Entry::Vacant(v) => Ok(StringPoolEntry {
+                    found_existing: false,
+                    value_ptr: v.insert(String::EMPTY),
+                }),
+            }
         }
-        #[allow(unused_variables)]
+        #[inline]
         pub fn contains(&self, hash: &u64) -> bool {
-            todo!("b1: StringPool::contains")
+            self.map.contains_key(hash)
         }
     }
 

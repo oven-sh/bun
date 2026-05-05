@@ -124,9 +124,19 @@ fn dummy_filter_false(_val: &[u8]) -> bool {
 
 #[cfg(windows)]
 pub fn statat_windows(fd: Fd, path: &ZStr) -> Maybe<Stat> {
-    // TODO(b2-blocked): bun_sys::get_fd_path
-    let _ = (fd, path);
-    todo!("b2-blocked: bun_sys::get_fd_path (windows)")
+    use bun_paths::resolve_path::{self, platform};
+    // Zig used a single buf for both `getFdPath` and `joinZBuf`; Rust borrowck
+    // forbids overlapping &mut, so split into two buffers.
+    let mut dir_buf = PathBuffer::uninit();
+    let dir = match Syscall::get_fd_path(fd, &mut dir_buf) {
+        Maybe::Err(e) => return Maybe::Err(e),
+        Maybe::Ok(s) => s,
+    };
+    let parts: &[&[u8]] = &[&dir[..], path.as_bytes()];
+    let mut join_buf = PathBuffer::uninit();
+    let statpath = resolve_path::join_z_buf::<platform::Auto>(&mut join_buf[..], parts);
+    // TODO(port): verify on windows — `bun_sys::get_fd_path` / `stat` shapes unchecked off-target.
+    Syscall::stat(statpath)
 }
 
 #[cfg(not(windows))]
@@ -219,8 +229,7 @@ impl AccessorDirIter for SyscallDirIter {
 
     #[inline]
     fn set_name_filter(&mut self, filter: Option<&[u16]>) {
-        // TODO(b2-blocked): bun_sys::dir_iterator::WrappedIterator::set_name_filter
-        let _ = filter;
+        self.value.set_name_filter(filter);
     }
 }
 
@@ -283,9 +292,14 @@ impl Accessor for SyscallAccessor {
 // ─────────────────────────────────────────────────────────────────────────────
 // DirEntryAccessor
 // ─────────────────────────────────────────────────────────────────────────────
-// TODO(b2-blocked): bun_fs::FileSystem — `bun_fs` is a higher-tier crate (not in
-// T0/T1 deps). DirEntryAccessor walks the resolver's in-memory FS cache; gate
-// the whole impl until `bun_fs` is available as a dependency.
+// TODO(b2-blocked): bun_resolver::fs::FileSystem — the full DirEntry cache
+// (`DirEntry`, `EntryMap`, `read_directory`, `ReadDirResult`) lives in
+// `bun_resolver` (higher-tier; only `top_level_dir` was sunk into `bun_paths`).
+// Per PORTING.md §Dispatch this is the cold-path "low-tier owns the trait,
+// high-tier owns the impl" case: `Accessor` is exported here, and
+// `DirEntryAccessor` should be re-homed under `bun_resolver` as
+// `impl bun_glob::Accessor for DirEntryAccessor`. Gated until that crate
+// picks it up; cannot un-gate in `bun_glob` without an upward edge.
 #[cfg(any())]
 mod dir_entry_accessor {
 use super::*;
@@ -561,11 +575,15 @@ pub type Result_ = Maybe<()>;
 /// `foo/**/*`
 ///
 /// Use `.keys()` to get the matched paths
-// TODO(b2-blocked): bun_collections::ArrayHashMap — Zig's `ArrayHashMap(K, V, Context, store_hash)`
-// has a 4-param shape with custom hash context; the T1 stub is a 2-param `HashMap`. The
-// `BunString` key + `MatchedMapContext` (custom hash on byte_slice) and `get_or_put` API are
-// blocked. Using `ArrayHashMap<Box<[u8]>, ()>` as a stand-in so the field type compiles;
-// `prepare_matched_path*` bodies are gated below.
+// PORT NOTE: Zig keys this on `BunString` so `.keys()` can hand a slice
+// straight to `BunString.toJSArray`. `to_js_array` lives in a `*_jsc` crate
+// (per PORTING.md §Strings, `.toJS` is only callable there), so the JS-array
+// fast path moves up-tier anyway and there's no win keeping `BunString` keys
+// here. Use `StringArrayHashMap<()>` (boxed `[u8]` keys); the JSC consumer
+// rebuilds `BunString`s from `.keys()`.
+// TODO(port): Phase B — wire `MatchedMapContext` as a `StringArrayHashMap`
+// custom context once SENTINEL-aware hashing matters (currently the trailing
+// NUL is part of the key so dedupe is still exact).
 pub type MatchedMap = bun_collections::StringArrayHashMap<()>;
 
 pub struct MatchedMapContext;
@@ -576,14 +594,13 @@ impl MatchedMapContext {
         let slice = this.byte_slice();
         // For SENTINEL the slice includes trailing NUL; hash excludes it.
         // TODO(port): const-generic SENTINEL not reachable here; Zig branched at comptime.
-        // TODO(b2-blocked): bun_collections::array_hash_map::hash_string
-        let _ = slice;
-        todo!("b2-blocked: bun_collections::array_hash_map::hash_string")
+        // Phase B: thread `SENTINEL` through `MatchedMapContext` (or strip the NUL at
+        // insert time so the key never carries it).
+        bun_collections::array_hash_map::hash_string(slice)
     }
 
     pub fn eql(&self, this: &BunString, other: &BunString, _idx: usize) -> bool {
-        // TODO(b2-blocked): bun_string::String::eql
-        this.byte_slice() == other.byte_slice()
+        this.eql(other)
     }
 }
 
@@ -1630,9 +1647,19 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         only_files: bool,
         ignore_filter_fn: Option<IgnoreFilterFn>,
     ) -> Result<Maybe<Self>, Error> {
-        // TODO(b2-blocked): bun_fs::FileSystem::instance().top_level_dir()
-        let _ = (pattern, dot, absolute, follow_symlinks, error_on_broken_symlinks, only_files, ignore_filter_fn);
-        todo!("b2-blocked: bun_fs::FileSystem (higher-tier)")
+        // MOVE_DOWN(b0): `bun.fs.FileSystem.instance.top_level_dir` was sunk into
+        // `bun_paths::fs::FileSystem` (singleton holds only the cwd string; the
+        // DirEntry cache stays in `bun_resolver`).
+        Self::init_with_cwd(
+            pattern,
+            bun_paths::fs::FileSystem::instance().top_level_dir(),
+            dot,
+            absolute,
+            follow_symlinks,
+            error_on_broken_symlinks,
+            only_files,
+            ignore_filter_fn,
+        )
     }
 
     pub fn debug_pattern_components(&self) {
@@ -2132,16 +2159,14 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         // this fn re-slices `[0..len+1]` to include it. In the port, MatchedPath is
         // `Box<[u8]>` and join()/dupe_z() already include the trailing NUL when
         // SENTINEL is true, so callers pass the full slice and no `+1` is needed.
-        // TODO(b2-blocked): bun_string::String::from_bytes
-        let _ = matched_path;
-        todo!("b2-blocked: bun_string::String::from_bytes")
+        BunString::from_bytes(matched_path)
     }
 
     fn prepare_matched_path_symlink(
         &mut self,
         symlink_full_path: &[u8],
     ) -> Result<Option<MatchedPath>, AllocError> {
-        // TODO(b2-blocked): bun_collections::ArrayHashMap::get_or_put
+        // PERF(port): was getOrPut single-probe — two lookups here; profile in Phase B
         if self.matched_paths.contains_key(symlink_full_path) {
             log!("(dupe) prepared match: {}", bstr::BStr::new(symlink_full_path));
             return Ok(None);
@@ -2163,7 +2188,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     ) -> Result<Option<MatchedPath>, AllocError> {
         let subdir_parts: &[&[u8]] = &[&dir_name[0..dir_name.len()], entry_name];
         let name_matched_path = self.join(subdir_parts)?;
-        // TODO(b2-blocked): bun_collections::ArrayHashMap::get_or_put_value
+        // PERF(port): was getOrPutValue single-probe — two lookups here; profile in Phase B
         if self.matched_paths.contains_key(&name_matched_path) {
             log!("(dupe) prepared match: {}", bstr::BStr::new(&name_matched_path));
             return Ok(None);
@@ -2181,7 +2206,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     ) -> Result<(), AllocError> {
         let subdir_parts: &[&[u8]] = &[dir_name.as_bytes(), entry_name];
         let name_matched_path = self.join(subdir_parts)?;
-        // TODO(b2-blocked): bun_collections::ArrayHashMap::get_or_put
+        // PERF(port): was getOrPut single-probe — two lookups here; profile in Phase B
         if self.matched_paths.contains_key(&name_matched_path) {
             log!("(dupe) prepared match: {}", bstr::BStr::new(&name_matched_path));
             return Ok(());

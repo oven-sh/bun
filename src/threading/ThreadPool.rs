@@ -857,7 +857,10 @@ impl ThreadPool {
 
         // If there are threads, start off the chain sending it the shutdown signal.
         // The thread receives the shutdown signal and sends it to the next thread, and the next..
-        let thread = self.threads.load(Ordering::Acquire);
+        // Use swap (not load) so join() is idempotent: a second call (e.g., from
+        // wait_and_deinit() followed by Drop) sees null and returns instead of
+        // touching freed worker stack memory.
+        let thread = self.threads.swap(ptr::null_mut(), Ordering::Acquire);
         if thread.is_null() {
             return;
         }
@@ -906,11 +909,9 @@ impl Thread {
 
     /// Thread entry point which runs a worker for the ThreadPool
     unsafe fn run(thread_pool: *const ThreadPool) {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_alloc::mimalloc
-            bun_alloc::mimalloc::mi_thread_set_in_threadpool();
-        }
+        // SAFETY: FFI call with no preconditions; marks this OS thread as a
+        // mimalloc threadpool worker so deferred frees are processed eagerly.
+        unsafe { bun_alloc::mimalloc::mi_thread_set_in_threadpool() };
 
         {
             let mut counter_buf = [0u8; 100];

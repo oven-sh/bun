@@ -693,6 +693,14 @@ fn handle_getter() -> Option<*mut c_void> {
     }
 }
 
+/// `&'static CStr` → `&'static ZStr` (both are NUL-terminated, len excludes NUL).
+#[inline(always)]
+fn cstr_as_zstr(s: &'static core::ffi::CStr) -> &'static bun_core::ZStr {
+    // SAFETY: CStr guarantees `bytes[len] == 0` and 'static validity — exactly
+    // the ZStr invariant.
+    unsafe { bun_core::ZStr::from_raw(s.as_ptr() as *const u8, s.to_bytes().len()) }
+}
+
 fn dlsym<T: Copy>(symbol: &'static core::ffi::CStr) -> Option<T> {
     #[cfg(target_family = "wasm")]
     {
@@ -700,94 +708,90 @@ fn dlsym<T: Copy>(symbol: &'static core::ffi::CStr) -> Option<T> {
         return None;
     }
 
-    #[cfg(any())]
+    #[cfg(not(target_family = "wasm"))]
     {
-    // TODO(b2-blocked): bun_sys::c::dlsym
-    // TODO(b2-blocked): bun_sys::dlopen
-    // TODO(b2-blocked): bun_sys::c::dlsym_with_handle
-    use bun_sys as sys;
+        debug_assert_eq!(core::mem::size_of::<T>(), core::mem::size_of::<*mut c_void>());
 
-    #[cfg(target_os = "linux")]
-    {
-        // use LD_PRELOAD on linux
-        if let Some(val) = sys::c::dlsym::<T>(symbol) {
-            return Some(val);
+        let sym_z = cstr_as_zstr(symbol);
+
+        #[cfg(target_os = "linux")]
+        {
+            // use LD_PRELOAD on linux (RTLD_DEFAULT lookup)
+            if let Some(p) = bun_sys::dlsym_impl(None, sym_z) {
+                // SAFETY: caller asserts `T` is fn-pointer-shaped matching the symbol's ABI.
+                return Some(unsafe { core::mem::transmute_copy::<*mut c_void, T>(&p) });
+            }
         }
-    }
 
-    'get: {
-        if HANDLE.load(Ordering::Acquire).is_null() {
-            #[cfg(target_os = "macos")]
-            const PATHS_TO_TRY: &[&core::ffi::CStr] = &[
-                c"/usr/local/opt/tracy/lib/libtracy.dylib",
-                c"/usr/local/lib/libtracy.dylib",
-                c"/opt/homebrew/lib/libtracy.so",
-                c"/opt/homebrew/lib/libtracy.dylib",
-                c"/usr/lib/libtracy.dylib",
-                c"libtracy.dylib",
-                c"libtracy.so",
-                c"libTracyClient.dylib",
-                c"libTracyClient.so",
-            ];
-            #[cfg(target_os = "linux")]
-            const PATHS_TO_TRY: &[&core::ffi::CStr] = &[
-                c"/usr/local/lib/libtracy.so",
-                c"/usr/local/opt/tracy/lib/libtracy.so",
-                c"/opt/tracy/lib/libtracy.so",
-                c"/usr/lib/libtracy.so",
-                c"/usr/local/lib/libTracyClient.so",
-                c"/usr/local/opt/tracy/lib/libTracyClient.so",
-                c"/opt/tracy/lib/libTracyClient.so",
-                c"/usr/lib/libTracyClient.so",
-                c"libtracy.so",
-                c"libTracyClient.so",
-            ];
-            #[cfg(windows)]
-            const PATHS_TO_TRY: &[&core::ffi::CStr] = &[c"tracy.dll"];
-            #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
-            const PATHS_TO_TRY: &[&core::ffi::CStr] = &[];
-
-            // TODO(port): RTLD flags — Zig used `@bitCast(@as(i32, -2))` on
-            // macOS (RTLD_DEFAULT semantics for dlopen?) and default `.{}` on
-            // Linux. Map to bun_sys::dlopen flag type once defined.
-            #[cfg(target_os = "macos")]
-            let rtld: c_int = -2;
-            #[cfg(not(target_os = "macos"))]
-            let rtld: c_int = 0;
-
-            if let Some(path) = env_var::BUN_TRACY_PATH.get() {
-                // TODO(port): std.posix.toPosixPath — copy into a NUL-terminated
-                // PathBuffer. Phase B: use bun_paths helper.
-                let mut buf = bun_paths::PathBuffer::uninit();
-                let zpath = bun_paths::resolve_path::z(path, &mut buf);
-                let handle = sys::dlopen(zpath, rtld);
-                if !handle.is_null() {
-                    HANDLE.store(handle, Ordering::Release);
-                    break 'get;
-                }
-            }
-            for path in PATHS_TO_TRY {
-                let handle = sys::dlopen(*path, rtld);
-                if !handle.is_null() {
-                    HANDLE.store(handle, Ordering::Release);
-                    break;
-                }
-            }
-
+        'get: {
             if HANDLE.load(Ordering::Acquire).is_null() {
-                return None;
+                #[cfg(target_os = "macos")]
+                const PATHS_TO_TRY: &[&core::ffi::CStr] = &[
+                    c"/usr/local/opt/tracy/lib/libtracy.dylib",
+                    c"/usr/local/lib/libtracy.dylib",
+                    c"/opt/homebrew/lib/libtracy.so",
+                    c"/opt/homebrew/lib/libtracy.dylib",
+                    c"/usr/lib/libtracy.dylib",
+                    c"libtracy.dylib",
+                    c"libtracy.so",
+                    c"libTracyClient.dylib",
+                    c"libTracyClient.so",
+                ];
+                #[cfg(target_os = "linux")]
+                const PATHS_TO_TRY: &[&core::ffi::CStr] = &[
+                    c"/usr/local/lib/libtracy.so",
+                    c"/usr/local/opt/tracy/lib/libtracy.so",
+                    c"/opt/tracy/lib/libtracy.so",
+                    c"/usr/lib/libtracy.so",
+                    c"/usr/local/lib/libTracyClient.so",
+                    c"/usr/local/opt/tracy/lib/libTracyClient.so",
+                    c"/opt/tracy/lib/libTracyClient.so",
+                    c"/usr/lib/libTracyClient.so",
+                    c"libtracy.so",
+                    c"libTracyClient.so",
+                ];
+                #[cfg(windows)]
+                const PATHS_TO_TRY: &[&core::ffi::CStr] = &[c"tracy.dll"];
+                #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+                const PATHS_TO_TRY: &[&core::ffi::CStr] = &[];
+
+                // TODO(port): RTLD flags — Zig used `@bitCast(@as(i32, -2))` on
+                // macOS (RTLD_DEFAULT semantics for dlopen?) and default `.{}` on
+                // Linux. Map to bun_sys::dlopen flag type once defined.
+                #[cfg(target_os = "macos")]
+                let rtld: i32 = -2;
+                #[cfg(not(target_os = "macos"))]
+                let rtld: i32 = 0;
+
+                if let Some(path) = env_var::BUN_TRACY_PATH.get() {
+                    // std.posix.toPosixPath — copy into a NUL-terminated PathBuffer.
+                    let mut buf = bun_paths::PathBuffer::uninit();
+                    let zpath = bun_paths::resolve_path::z(path, &mut buf);
+                    if let Some(handle) = bun_sys::dlopen(zpath, rtld) {
+                        HANDLE.store(handle, Ordering::Release);
+                        break 'get;
+                    }
+                }
+                for path in PATHS_TO_TRY {
+                    if let Some(handle) = bun_sys::dlopen(cstr_as_zstr(path), rtld) {
+                        HANDLE.store(handle, Ordering::Release);
+                        break;
+                    }
+                }
+
+                if HANDLE.load(Ordering::Acquire).is_null() {
+                    return None;
+                }
             }
         }
-    }
 
-    sys::c::dlsym_with_handle::<T>(symbol, handle_getter)
-    }
-    #[cfg(not(any()))]
-    {
-        let _ = symbol;
-        let _ = handle_getter;
-        let _ = &HANDLE;
-        todo!("b2-blocked: bun_sys::dlopen / bun_sys::c::dlsym / bun_sys::c::dlsym_with_handle")
+        // PORT NOTE: Zig `bun.C.dlsymWithHandle` cached per-(Type,symbol) via a comptime
+        // local static. Rust has no const-generic-string statics; do an uncached lookup
+        // through the shared handle. PERF(port): per-symbol OnceLock cache — profile in Phase B.
+        let p = bun_sys::dlsym_impl(handle_getter(), sym_z)?;
+        // SAFETY: caller asserts `T` is fn-pointer-shaped matching the symbol's ABI
+        // (same contract as Zig `bun.cast(Type, ptr)`).
+        Some(unsafe { core::mem::transmute_copy::<*mut c_void, T>(&p) })
     }
 }
 

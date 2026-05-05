@@ -98,16 +98,6 @@ pub fn generate<'a>(
     options: GenerateOptions<'_>,
     out_buffer: &'a mut [u8; 512],
 ) -> Result<&'a mut [u8], Error> {
-    #[cfg(all())]
-    {
-        // TODO(b2-blocked): bun_core::csprng
-        // TODO(b2-blocked): bun_core::time::milli_timestamp
-        // TODO(b2-blocked): bun_boringssl_sys::EVP_MAX_MD_SIZE
-        let _ = (options, out_buffer);
-        return todo!("b2-blocked: csrf::generate — bun_core::csprng / bun_core::time / bun_boringssl_sys");
-    }
-    #[cfg(any())]
-    {
     // Generate nonce from entropy
     let mut nonce = [0u8; 16];
     bun_core::csprng(&mut nonce);
@@ -143,7 +133,6 @@ pub fn generate<'a>(
     // Return slice of the output buffer with the final token
     let len = 32 + digest.len();
     Ok(&mut out_buffer[0..len])
-    } // end #[cfg(any())]
 }
 
 /// Validate a CSRF token
@@ -153,16 +142,6 @@ pub fn generate<'a>(
 ///
 /// Returns: true if valid, false if invalid
 pub fn verify(options: VerifyOptions<'_>) -> bool {
-    #[cfg(all())]
-    {
-        // TODO(b2-blocked): bun_core::time::milli_timestamp
-        // TODO(b2-blocked): bun_boringssl_sys::EVP_MAX_MD_SIZE
-        // TODO(b2-blocked): bun_boringssl_sys::CRYPTO_memcmp
-        let _ = options;
-        return todo!("b2-blocked: csrf::verify — bun_core::time / bun_boringssl_sys");
-    }
-    #[cfg(any())]
-    {
     // Detect the encoding format
     let encoding: TokenFormat = options.encoding;
 
@@ -276,7 +255,6 @@ pub fn verify(options: VerifyOptions<'_>) -> bool {
             signature.len(),
         ) == 0
     }
-    } // end #[cfg(any())]
 }
 
 // NOTE: the Zig file re-exports csrf__generate / csrf__verify from
@@ -286,7 +264,7 @@ pub fn verify(options: VerifyOptions<'_>) -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/csrf/csrf.zig (220 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      generate()/verify() bodies remain gated on bun_core::{csprng,time} and bun_boringssl_sys::{EVP_MAX_MD_SIZE,CRYPTO_memcmp}
+//   confidence: high
+//   todos:      0
+//   notes:      generate()/verify() fully un-gated; all T0/T1 deps (bun_core::{csprng,time}, bun_boringssl_sys::{EVP_MAX_MD_SIZE,CRYPTO_memcmp}, bun_sha_hmac::hmac, bun_base64, bun_string::strings) resolved
 // ──────────────────────────────────────────────────────────────────────────

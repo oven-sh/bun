@@ -49,7 +49,7 @@ impl Default for ThreadSafeStreamBuffer {
             };
         }
         Self {
-            buffer: StreamBuffer,
+            buffer: StreamBuffer::default(),
             mutex: Mutex::default(),
             ref_count: AtomicU32::new(2),
             callback: None,

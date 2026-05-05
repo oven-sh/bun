@@ -524,9 +524,8 @@ impl<'a> Response<'a> {
 
         match rc {
             -1 => {
-                // TODO(b2-blocked): bun_core::debug — macro currently passes
-                // `concat!(...)` into `pretty_errorln!` which only accepts
-                // `$fmt:literal`; fix lands in bun_core.
+                // TODO(b2-blocked): bun_core::debug — macro passes `concat!(...)`
+                // into `pretty_errorln!` which only accepts `$fmt:literal`.
                 #[cfg(any())]
                 bun_core::debug!("Malformed HTTP response:\n{}", BStr::new(buf));
                 Err(ParseResponseError::Malformed_HTTP_Response)

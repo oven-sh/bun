@@ -15,6 +15,15 @@ pub enum PollOrFd {
 }
 
 impl PollOrFd {
+    /// `@tagName(this.handle)` — for debug logging.
+    pub fn tag_name(&self) -> &'static str {
+        match self {
+            PollOrFd::Poll(_) => "poll",
+            PollOrFd::Fd(_) => "fd",
+            PollOrFd::Closed => "closed",
+        }
+    }
+
     // PORT NOTE: reshaped for borrowck — Zig took `*const PollOrFd` and mutated
     // through the `*FilePoll` pointer.
     pub fn set_owner(&mut self, owner: *mut c_void) {

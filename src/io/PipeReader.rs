@@ -1,5 +1,7 @@
 use core::ffi::c_void;
 use core::mem;
+use core::ptr::NonNull;
+#[cfg(windows)]
 use std::sync::Arc;
 
 use bun_sys::{self as sys, Fd};
@@ -12,10 +14,16 @@ type Loop = bun_uws_sys::Loop;
 
 use crate::max_buf::MaxBuf;
 use crate::pipes::{FileType, PollOrFd, ReadState};
+#[cfg(windows)]
 use crate::source::Source;
 
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
+
+bun_core::declare_scope!(PipeReader, hidden);
+macro_rules! log {
+    ($($args:tt)*) => { bun_core::scoped_log!(PipeReader, $($args)*) };
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // BufferedReaderVTable
@@ -90,48 +98,55 @@ pub struct BufferedReaderVTableFn {
     pub event_loop: fn(*mut c_void) -> EventLoopHandle,
 }
 
+// SAFETY-thunk wrappers for the vtable. Module-level so they can be named in
+// `const` context (closures/fn items inside a const initializer can't be
+// coerced to fn pointers there).
+fn vt_on_read_chunk<T: BufferedReaderParent>(
+    this: *mut c_void,
+    chunk: &[u8],
+    has_more: ReadState,
+) -> bool {
+    // SAFETY: parent was set via set_parent with a *mut T.
+    unsafe { &mut *(this as *mut T) }.on_read_chunk(chunk, has_more)
+}
+fn vt_on_reader_done<T: BufferedReaderParent>(this: *mut c_void) {
+    // SAFETY: parent was set via set_parent with a *mut T.
+    unsafe { &mut *(this as *mut T) }.on_reader_done()
+}
+fn vt_on_reader_error<T: BufferedReaderParent>(this: *mut c_void, err: sys::Error) {
+    // SAFETY: parent was set via set_parent with a *mut T.
+    unsafe { &mut *(this as *mut T) }.on_reader_error(err)
+}
+fn vt_event_loop<T: BufferedReaderParent>(this: *mut c_void) -> EventLoopHandle {
+    // SAFETY: parent was set via set_parent with a *mut T.
+    unsafe { &mut *(this as *mut T) }.event_loop()
+}
+fn vt_loop<T: BufferedReaderParent>(this: *mut c_void) -> *mut Loop {
+    // SAFETY: parent was set via set_parent with a *mut T.
+    unsafe { &mut *(this as *mut T) }.loop_()
+}
+
+/// Per-`T` vtable instance in rodata, mirroring Zig's `comptime &Fn{...}`.
+/// Associated-const-on-generic-impl gives one `'static` per monomorphization
+/// without `Box::leak` (PORTING.md §Forbidden).
+struct VTableFor<T>(core::marker::PhantomData<T>);
+impl<T: BufferedReaderParent> VTableFor<T> {
+    const FNS: BufferedReaderVTableFn = BufferedReaderVTableFn {
+        on_read_chunk: if T::HAS_ON_READ_CHUNK {
+            Some(vt_on_read_chunk::<T>)
+        } else {
+            None
+        },
+        on_reader_done: vt_on_reader_done::<T>,
+        on_reader_error: vt_on_reader_error::<T>,
+        event_loop: vt_event_loop::<T>,
+        loop_: vt_loop::<T>,
+    };
+}
+
 impl BufferedReaderVTableFn {
     pub fn init<T: BufferedReaderParent>() -> &'static BufferedReaderVTableFn {
-        fn on_read_chunk<T: BufferedReaderParent>(
-            this: *mut c_void,
-            chunk: &[u8],
-            has_more: ReadState,
-        ) -> bool {
-            // SAFETY: parent was set via set_parent with a *mut T.
-            unsafe { &mut *(this as *mut T) }.on_read_chunk(chunk, has_more)
-        }
-        fn on_reader_done<T: BufferedReaderParent>(this: *mut c_void) {
-            // SAFETY: parent was set via set_parent with a *mut T.
-            unsafe { &mut *(this as *mut T) }.on_reader_done()
-        }
-        fn on_reader_error<T: BufferedReaderParent>(this: *mut c_void, err: sys::Error) {
-            // SAFETY: parent was set via set_parent with a *mut T.
-            unsafe { &mut *(this as *mut T) }.on_reader_error(err)
-        }
-        fn event_loop<T: BufferedReaderParent>(this: *mut c_void) -> EventLoopHandle {
-            // SAFETY: parent was set via set_parent with a *mut T.
-            unsafe { &mut *(this as *mut T) }.event_loop()
-        }
-        fn loop_<T: BufferedReaderParent>(this: *mut c_void) -> *mut Loop {
-            // SAFETY: parent was set via set_parent with a *mut T.
-            unsafe { &mut *(this as *mut T) }.loop_()
-        }
-
-        // TODO(port): Zig used `comptime &BufferedReaderVTable.Fn{...}` (static rodata).
-        // In Rust we need a `static` per monomorphization; `Box::leak` is a Phase-A
-        // placeholder — Phase B should use a `static` in a generic helper or `OnceLock`.
-        // PERF(port): was comptime static; profile in Phase B.
-        Box::leak(Box::new(BufferedReaderVTableFn {
-            on_read_chunk: if T::HAS_ON_READ_CHUNK {
-                Some(on_read_chunk::<T>)
-            } else {
-                None
-            },
-            on_reader_done: on_reader_done::<T>,
-            on_reader_error: on_reader_error::<T>,
-            event_loop: event_loop::<T>,
-            loop_: loop_::<T>,
-        }))
+        &VTableFor::<T>::FNS
     }
 }
 
@@ -146,7 +161,9 @@ pub struct PosixBufferedReader {
     pub vtable: BufferedReaderVTable,
     pub flags: PosixFlags,
     pub count: usize,
-    pub maxbuf: Option<Arc<MaxBuf>>,
+    // PORT NOTE: MaxBuf uses hand-rolled dual-ownership (Subprocess + reader) via
+    // `add_to_pipereader`/`remove_from_pipereader`, not Arc — see MaxBuf.rs.
+    pub maxbuf: Option<NonNull<MaxBuf>>,
 }
 
 bitflags::bitflags! {
@@ -219,7 +236,9 @@ impl PosixBufferedReader {
         other.flags.insert(PosixFlags::IS_DONE);
         other._offset = 0;
         MaxBuf::transfer_to_pipereader(&mut other.maxbuf, &mut self.maxbuf);
-        self.handle.set_owner(self as *mut _ as *mut c_void);
+        // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
+        let owner = self as *mut _ as *mut c_void;
+        self.handle.set_owner(owner);
 
         // note: the caller is supposed to drain the buffer themselves
         // doing it here automatically makes it very easy to end up reading from the same buffer multiple times.
@@ -227,7 +246,9 @@ impl PosixBufferedReader {
 
     pub fn set_parent(&mut self, parent: *mut c_void) {
         self.vtable.parent = parent;
-        self.handle.set_owner(self as *mut _ as *mut c_void);
+        // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
+        let owner = self as *mut _ as *mut c_void;
+        self.handle.set_owner(owner);
     }
 
     pub fn start_memfd(&mut self, fd: Fd) {
@@ -261,7 +282,8 @@ impl PosixBufferedReader {
             debug_assert!(!self.flags.contains(PosixFlags::CLOSED_WITHOUT_REPORTING));
             self.flags.insert(PosixFlags::CLOSED_WITHOUT_REPORTING);
             if self.flags.contains(PosixFlags::CLOSE_HANDLE) {
-                self.handle.close(Some(self as *mut _ as *mut c_void), ());
+                let owner = self as *mut _ as *mut c_void;
+                self.handle.close(Some(owner), None::<fn(*mut c_void)>);
             }
         }
     }
@@ -303,13 +325,17 @@ impl PosixBufferedReader {
     pub fn final_buffer(&mut self) -> &mut Vec<u8> {
         if self.flags.contains(PosixFlags::MEMFD) {
             if let PollOrFd::Fd(fd) = self.handle {
-                // PORT NOTE: defer self.handle.close(null, {}) — runs after the read.
+                // PORT NOTE: Zig `defer this.handle.close(null, {})` — close after
+                // the read regardless of result.
                 let result = sys::File { handle: fd }
-                    .read_to_end_with_array_list(&mut self._buffer, sys::SizeHint::UnknownSize)
-                    .unwrap();
-                self.handle.close(None, ());
+                    .read_to_end_with_array_list(&mut self._buffer, sys::SizeHint::UnknownSize);
+                self.handle.close(None, None::<fn(*mut c_void)>);
                 if let Err(err) = result {
-                    bun_core::Output::debug_warn!("error reading from memfd\n{}", err);
+                    // TODO(b2-blocked): bun_core::debug_warn — macro form is
+                    // broken (concat! into $fmt:literal); use the fn for now.
+                    bun_core::output::debug_warn(format_args!(
+                        "error reading from memfd\n{}", err
+                    ));
                     return self.buffer();
                 }
             }
@@ -349,9 +375,14 @@ impl PosixBufferedReader {
         }
 
         if self.flags.contains(PosixFlags::CLOSE_HANDLE) {
-            // TODO(port): PollOrFd::close takes (owner_ptr, on_close_fn) — verify signature in Phase B.
-            self.handle
-                .close(Some(self as *mut _ as *mut c_void), Self::done);
+            let owner = self as *mut _ as *mut c_void;
+            self.handle.close(
+                Some(owner),
+                // SAFETY: ctx == &mut PosixBufferedReader (this fn's `self`).
+                Some(|ctx: *mut c_void| unsafe {
+                    (*ctx.cast::<PosixBufferedReader>()).done()
+                }),
+            );
         }
     }
 
@@ -406,7 +437,7 @@ impl PosixBufferedReader {
         if !is_pollable {
             self.buffer().clear();
             self.flags.remove(PosixFlags::IS_DONE);
-            self.handle.close(None, ());
+            self.handle.close(None, None::<fn(*mut c_void)>);
             self.handle = PollOrFd::Fd(fd);
             return sys::Result::Ok(());
         }
@@ -486,7 +517,9 @@ impl PosixBufferedReader {
 
     pub fn on_poll(parent: &mut PosixBufferedReader, size_hint: isize, received_hup: bool) {
         let fd = parent.get_fd();
-        bun_sys::syslog!("onPoll({}) = {}", fd, size_hint);
+        // TODO(b2-blocked): bun_sys::syslog — macro calls Scope::log with one arg
+        // (needs two); route through this module's scope until fixed.
+        log!("onPoll({}) = {}", fd, size_hint);
 
         match parent.get_file_type() {
             FileType::NonblockingPipe => {
@@ -528,10 +561,11 @@ impl PosixBufferedReader {
             sys::pread(fd1, buf, i64::try_from(offset).unwrap())
         }
         if parent.flags.contains(PosixFlags::USE_PREAD) {
-            Self::read_with_fn::<{ FileType::File }>(parent, fd, size_hint, received_hup, pread_fn);
+            Self::read_with_fn(parent, FileType::File, fd, size_hint, received_hup, pread_fn);
         } else {
-            Self::read_with_fn::<{ FileType::File }>(
+            Self::read_with_fn(
                 parent,
+                FileType::File,
                 fd,
                 size_hint,
                 received_hup,
@@ -541,14 +575,15 @@ impl PosixBufferedReader {
     }
 
     fn read_socket(parent: &mut PosixBufferedReader, fd: Fd, size_hint: isize, received_hup: bool) {
-        Self::read_with_fn::<{ FileType::Socket }>(parent, fd, size_hint, received_hup, |fd, buf, _| {
+        Self::read_with_fn(parent, FileType::Socket, fd, size_hint, received_hup, |fd, buf, _| {
             sys::recv_non_block(fd, buf)
         });
     }
 
     fn read_pipe(parent: &mut PosixBufferedReader, fd: Fd, size_hint: isize, received_hup: bool) {
-        Self::read_with_fn::<{ FileType::NonblockingPipe }>(
+        Self::read_with_fn(
             parent,
+            FileType::NonblockingPipe,
             fd,
             size_hint,
             received_hup,
@@ -576,8 +611,9 @@ impl PosixBufferedReader {
 
                 match sys::read_nonblocking(fd, stack_buffer) {
                     sys::Result::Ok(bytes_read) => {
-                        if let Some(l) = &parent.maxbuf {
-                            l.on_read_bytes(bytes_read);
+                        if let Some(l) = parent.maxbuf {
+                            // SAFETY: live until `remove_from_pipereader`.
+                            unsafe { (*l.as_ptr()).on_read_bytes(bytes_read as u64) };
                         }
 
                         if bytes_read == 0 {
@@ -621,8 +657,9 @@ impl PosixBufferedReader {
                     let buf_len = buf.len();
                     match sys::read_nonblocking(fd, buf) {
                         sys::Result::Ok(bytes_read) => {
-                            if let Some(l) = &parent.maxbuf {
-                                l.on_read_bytes(bytes_read);
+                            if let Some(l) = parent.maxbuf {
+                                // SAFETY: live until `remove_from_pipereader`.
+                                unsafe { (*l.as_ptr()).on_read_bytes(bytes_read as u64) };
                             }
                             parent._offset += bytes_read;
                             // SAFETY: bytes_read bytes were just initialized by the syscall.
@@ -719,9 +756,11 @@ impl PosixBufferedReader {
     }
 
     // PERF(port): `file_type` and `sys_fn` were comptime in Zig (monomorphization).
-    // `FILE_TYPE` is a const generic; `sys_fn` is passed as a closure — profile in Phase B.
-    fn read_with_fn<const FILE_TYPE: FileType>(
+    // adt_const_params is unstable, so `file_type` is a runtime arg; `sys_fn` is
+    // generic so it still monomorphizes — profile in Phase B.
+    fn read_with_fn(
         parent: &mut PosixBufferedReader,
+        file_type: FileType,
         fd: Fd,
         _size_hint: isize,
         received_hup: bool,
@@ -740,8 +779,9 @@ impl PosixBufferedReader {
 
                     match sys_fn(fd, buf, parent._offset) {
                         sys::Result::Ok(bytes_read) => {
-                            if let Some(l) = &parent.maxbuf {
-                                l.on_read_bytes(bytes_read);
+                            if let Some(l) = parent.maxbuf {
+                                // SAFETY: live until `remove_from_pipereader`.
+                                unsafe { (*l.as_ptr()).on_read_bytes(bytes_read as u64) };
                             }
                             parent._offset += bytes_read;
                             head_start += bytes_read;
@@ -776,10 +816,10 @@ impl PosixBufferedReader {
                         }
                         sys::Result::Err(err) => {
                             if err.is_retry() {
-                                if FILE_TYPE == FileType::File {
-                                    bun_core::Output::debug_warn!(
+                                if file_type == FileType::File {
+                                    bun_core::output::debug_warn(format_args!(
                                         "Received EAGAIN while reading from a file. This is a bug."
-                                    );
+                                    ));
                                 } else {
                                     parent.register_poll();
                                 }
@@ -835,8 +875,9 @@ impl PosixBufferedReader {
                     if bytes_read > 0 {
                         parent._buffer.extend_from_slice(&stack_buffer[..bytes_read]);
                     }
-                    if let Some(l) = &parent.maxbuf {
-                        l.on_read_bytes(bytes_read);
+                    if let Some(l) = parent.maxbuf {
+                        // SAFETY: live until `remove_from_pipereader`; see MaxBuf ownership note.
+                        unsafe { (*l.as_ptr()).on_read_bytes(bytes_read as u64) };
                     }
                     parent._offset += bytes_read;
 
@@ -851,10 +892,10 @@ impl PosixBufferedReader {
                 }
                 sys::Result::Err(err) => {
                     if err.is_retry() {
-                        if FILE_TYPE == FileType::File {
-                            bun_core::Output::debug_warn!(
+                        if file_type == FileType::File {
+                            bun_core::output::debug_warn(format_args!(
                                 "Received EAGAIN while reading from a file. This is a bug."
-                            );
+                            ));
                         } else {
                             parent.register_poll();
                         }
@@ -875,8 +916,9 @@ impl PosixBufferedReader {
 
             match sys_fn(fd, buf, parent._offset) {
                 sys::Result::Ok(bytes_read) => {
-                    if let Some(l) = &parent.maxbuf {
-                        l.on_read_bytes(bytes_read);
+                    if let Some(l) = parent.maxbuf {
+                        // SAFETY: live until `remove_from_pipereader`; see MaxBuf ownership note.
+                        unsafe { (*l.as_ptr()).on_read_bytes(bytes_read as u64) };
                     }
                     parent._offset += bytes_read;
                     // SAFETY: bytes_read bytes initialized by sys_fn.
@@ -918,10 +960,10 @@ impl PosixBufferedReader {
                     }
 
                     if err.is_retry() {
-                        if FILE_TYPE == FileType::File {
-                            bun_core::Output::debug_warn!(
+                        if file_type == FileType::File {
+                            bun_core::output::debug_warn(format_args!(
                                 "Received EAGAIN while reading from a file. This is a bug."
-                            );
+                            ));
                         } else {
                             parent.register_poll();
                         }
@@ -972,6 +1014,7 @@ unsafe fn spare_capacity_as_slice(v: &mut Vec<u8>) -> &mut [u8] {
 // WindowsBufferedReader
 // ──────────────────────────────────────────────────────────────────────────
 
+#[cfg(windows)]
 pub struct WindowsBufferedReaderVTable {
     pub on_reader_done: fn(*mut c_void),
     pub on_reader_error: fn(*mut c_void, sys::Error),
@@ -979,6 +1022,7 @@ pub struct WindowsBufferedReaderVTable {
     pub loop_: fn(*mut c_void) -> *mut Loop,
 }
 
+#[cfg(windows)]
 pub struct WindowsBufferedReader {
     /// The pointer to this pipe must be stable.
     /// It cannot change because we don't know what libuv will do with it.
@@ -987,7 +1031,7 @@ pub struct WindowsBufferedReader {
     pub _buffer: Vec<u8>,
     // for compatibility with Linux
     pub flags: WindowsFlags,
-    pub maxbuf: Option<Arc<MaxBuf>>,
+    pub maxbuf: Option<NonNull<MaxBuf>>,
 
     pub parent: *mut c_void,
     pub vtable: WindowsBufferedReaderVTable,
@@ -1018,6 +1062,7 @@ impl WindowsFlags {
     }
 }
 
+#[cfg(windows)]
 impl WindowsBufferedReader {
     pub fn memory_cost(&self) -> usize {
         mem::size_of::<Self>() + self._buffer.capacity()
@@ -1160,8 +1205,9 @@ impl WindowsBufferedReader {
     }
 
     fn _on_read_chunk(&mut self, buf: &[u8], has_more: ReadState) -> bool {
-        if let Some(m) = &self.maxbuf {
-            m.on_read_bytes(buf.len());
+        if let Some(m) = self.maxbuf {
+            // SAFETY: MaxBuf intrusive ownership; ptr live while in pipereader.
+            unsafe { m.as_ptr().as_mut().unwrap().on_read_bytes(buf.len() as u64) };
         }
 
         if has_more == ReadState::Eof {
@@ -1564,13 +1610,14 @@ impl WindowsBufferedReader {
                 }
                 #[cfg(windows)]
                 Source::Tty(tty) => {
-                    if crate::source::StdinTTY::is_stdin_tty(tty) {
+                    let p = tty.as_ptr();
+                    if crate::source::stdin_tty::is_stdin_tty(p) {
                         // Node only ever closes stdin on process exit.
                     } else {
-                        // SAFETY: tty is a live uv_tty_t*.
+                        // SAFETY: tty is a live heap-allocated uv_tty_t*.
                         unsafe {
-                            (*tty).data = tty as *mut c_void;
-                            (*tty).close(Self::on_tty_close);
+                            (*p).data = p as *mut c_void;
+                            (*p).close(Self::on_tty_close);
                         }
                     }
 
@@ -1623,7 +1670,9 @@ impl WindowsBufferedReader {
     extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
         // SAFETY: handle.data was set to the tty itself before close.
         let this = unsafe { (*handle).data as *mut uv::uv_tty_t };
-        // SAFETY: tty was Box-allocated; reclaim and drop.
+        // Caller already gates on `!is_stdin_tty` before scheduling close, so
+        // `this` is heap-allocated (open_tty Box::into_raw). Reclaim and drop.
+        debug_assert!(!crate::source::stdin_tty::is_stdin_tty(this));
         drop(unsafe { Box::from_raw(this) });
     }
 
@@ -1676,6 +1725,7 @@ impl WindowsBufferedReader {
     // bitflags! ensures bools are packed.
 }
 
+#[cfg(windows)]
 impl Drop for WindowsBufferedReader {
     fn drop(&mut self) {
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
@@ -1708,5 +1758,5 @@ compile_error!("Unsupported platform");
 //   source:     src/io/PipeReader.zig (1313 lines)
 //   confidence: medium
 //   todos:      6
-//   notes:      vtable init uses Box::leak (Phase B: per-T static); read fns reshaped for borrowck (resizable_buffer folded into &mut self, drain_chunk takes &vtable); register_poll hoists vtable scalars to avoid raw-ptr escape; FileType const-generic needs ConstParamTy in pipes.rs; PollOrFd::close/FilePoll::init signatures guessed; on_file_read defer-block inlined after body; Windows Drop mirrors Zig's source=null-before-closeImpl no-op (verify intent); Windows Source variants need #[cfg] alignment with source.rs.
+//   notes:      vtable init via per-T associated const (rodata); read fns reshaped for borrowck (resizable_buffer folded into &mut self, drain_chunk takes &vtable); register_poll hoists vtable scalars to avoid raw-ptr escape; FileType passed as runtime arg (adt_const_params unstable); on_file_read defer-block inlined after body; Windows Drop mirrors Zig's source=null-before-closeImpl no-op (verify intent); Windows Source variants need #[cfg] alignment with source.rs.
 // ──────────────────────────────────────────────────────────────────────────

@@ -193,17 +193,16 @@ impl Linux {
     pub fn init(event: PerfEvent) -> Self {
         #[cfg(any())]
         {
-            // TODO(b2-blocked): bun_timespec::Timespec
+            // TODO(b2-blocked): bun_core::timespec
             return Self {
-                // TODO(port): verify crate path for `bun.timespec` (.now(.force_real_time).ns())
-                start_time: bun_timespec::Timespec::now(bun_timespec::Clock::ForceRealTime).ns(),
+                start_time: bun_core::timespec::now(bun_core::timespec::MockMode::ForceRealTime).ns(),
                 event,
             };
         }
         #[cfg(not(any()))]
         {
             let _ = event;
-            todo!("b2-blocked: bun_timespec::Timespec")
+            todo!("b2-blocked: bun_core::timespec")
         }
     }
 
@@ -214,8 +213,8 @@ impl Linux {
 
         #[cfg(any())]
         {
-        // TODO(b2-blocked): bun_timespec::Timespec
-        let duration = bun_timespec::Timespec::now(bun_timespec::Clock::ForceRealTime)
+        // TODO(b2-blocked): bun_core::timespec
+        let duration = bun_core::timespec::now(bun_core::timespec::MockMode::ForceRealTime)
             .ns()
             .saturating_sub(self.start_time);
 
@@ -233,7 +232,7 @@ impl Linux {
         #[cfg(not(any()))]
         {
             let _ = (&self.start_time, &self.event);
-            todo!("b2-blocked: bun_timespec::Timespec")
+            todo!("b2-blocked: bun_core::timespec")
         }
     }
 }

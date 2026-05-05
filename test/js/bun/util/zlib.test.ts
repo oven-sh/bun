@@ -138,9 +138,7 @@ describe("Bun.deflateSync memLevel & strategy", () => {
   test("strategy: Z_HUFFMAN_ONLY reaches zlib (byte-match against node:zlib)", () => {
     const compressed = Bun.deflateSync(payload, { level: 9, windowBits: 15, strategy: 2 });
     expect(Buffer.from(compressed)).toEqual(
-      Buffer.from(
-        zlib.deflateSync(payload, { level: 9, windowBits: 15, strategy: zlib.constants.Z_HUFFMAN_ONLY }),
-      ),
+      Buffer.from(zlib.deflateSync(payload, { level: 9, windowBits: 15, strategy: zlib.constants.Z_HUFFMAN_ONLY })),
     );
     expect(Buffer.from(Bun.inflateSync(compressed, { windowBits: 15 }))).toEqual(payload);
   });
@@ -156,18 +154,14 @@ describe("Bun.gzipSync windowBits quirks", () => {
     expect(compressed[0]).toBe(GZIP_MAGIC_0);
     expect(compressed[1]).toBe(GZIP_MAGIC_1);
     // Byte-for-byte equality with node:zlib.gzipSync, which does the same.
-    expect(Buffer.from(compressed)).toEqual(
-      Buffer.from(zlib.gzipSync(payload, { level: 9, windowBits: 15 })),
-    );
+    expect(Buffer.from(compressed)).toEqual(Buffer.from(zlib.gzipSync(payload, { level: 9, windowBits: 15 })));
   });
 
   test("windowBits: 9 produces gzip with a smaller window", () => {
     const compressed = Bun.gzipSync(payload, { level: 9, windowBits: 9 });
     expect(compressed[0]).toBe(GZIP_MAGIC_0);
     expect(compressed[1]).toBe(GZIP_MAGIC_1);
-    expect(Buffer.from(compressed)).toEqual(
-      Buffer.from(zlib.gzipSync(payload, { level: 9, windowBits: 9 })),
-    );
+    expect(Buffer.from(compressed)).toEqual(Buffer.from(zlib.gzipSync(payload, { level: 9, windowBits: 9 })));
   });
 
   // Issue #6280 regression guard: `Bun.gzipSync(buf, {windowBits: -15})` used

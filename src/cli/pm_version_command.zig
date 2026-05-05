@@ -100,6 +100,16 @@ pub const PmVersionCommand = struct {
             break :brk_version null;
         };
 
+        const pkg_name: ?[]const u8 = brk_name: {
+            if (json.asProperty("name")) |n| {
+                switch (n.expr.data) {
+                    .e_string => |s| break :brk_name s.data,
+                    else => {},
+                }
+            }
+            break :brk_name null;
+        };
+
         const new_version_str = try calculateNewVersion(ctx.allocator, current_version orelse "0.0.0", version_type, new_version, pm.options.preid, package_json_dir);
         defer ctx.allocator.free(new_version_str);
 
@@ -140,6 +150,16 @@ pub const PmVersionCommand = struct {
             };
         }
 
+        // Propagate the new version into bun.lock so that workspace consumers
+        // (e.g. `bun pm pack` in sibling workspaces that depend on this one via
+        // `workspace:*`) see the updated version. Returns the absolute path of
+        // the saved lockfile so that the git commit below can stage it too.
+        const saved_lockfile_path: ?[:0]const u8 = if (pkg_name) |name|
+            updateLockfileWorkspaceVersion(ctx, pm, name, new_version_str)
+        else
+            null;
+        defer if (saved_lockfile_path) |p| ctx.allocator.free(p);
+
         if (scripts_obj) |s| {
             if (s.get("version")) |script| {
                 if (script.asString(ctx.allocator)) |script_command| {
@@ -159,7 +179,25 @@ pub const PmVersionCommand = struct {
         }
 
         if (pm.options.git_tag_version) {
-            try gitCommitAndTag(ctx.allocator, new_version_str, pm.options.message, package_json_dir);
+            // Only stage the lockfile when it lives inside the repository
+            // that git will actually discover from `package_json_dir`. If
+            // the package has its own nested `.git` (git submodule or a
+            // standalone repo vendored inside the workspace), git will
+            // resolve to that repo and reject the absolute workspace-root
+            // lockfile path with `fatal: ... is outside repository`, which
+            // would fail the entire version bump. Drop the arg in that case
+            // so the nested repo just gets `package.json` (same as before
+            // this PR).
+            const stage_lockfile_path: ?[:0]const u8 = blk: {
+                const lp = saved_lockfile_path orelse break :blk null;
+                var root_buf: bun.PathBuffer = undefined;
+                const git_root = findGitRoot(package_json_dir, &root_buf) orelse break :blk null;
+                break :blk switch (bun.path.isParentOrEqual(git_root, lp)) {
+                    .parent, .equal => lp,
+                    .unrelated => null,
+                };
+            };
+            try gitCommitAndTag(ctx.allocator, new_version_str, pm.options.message, package_json_dir, stage_lockfile_path);
         }
 
         if (scripts_obj) |s| {
@@ -207,9 +245,14 @@ pub const PmVersionCommand = struct {
     fn verifyGit(cwd: []const u8, pm: *PackageManager) !void {
         if (!pm.options.git_tag_version) return;
 
-        var path_buf: bun.PathBuffer = undefined;
-        const git_dir_path = bun.path.joinAbsStringBuf(cwd, &path_buf, &.{".git"}, .auto);
-        if (!bun.FD.cwd().directoryExistsAt(git_dir_path).isTrue()) {
+        // Walk up from `cwd` looking for a `.git` marker. Workspaces
+        // typically only have `.git` at the repo root, not in each package
+        // subdirectory — mirror git's own upward-search behavior so
+        // `bun pm version` called from `packages/foo` still picks up the
+        // surrounding repo. `.git` can be a file (git submodules / worktrees)
+        // as well as a directory, so check for "exists" not "is directory".
+        var root_buf: bun.PathBuffer = undefined;
+        if (findGitRoot(cwd, &root_buf) == null) {
             pm.options.git_tag_version = false;
             return;
         }
@@ -217,6 +260,38 @@ pub const PmVersionCommand = struct {
         if (!pm.options.force and !try isGitClean(cwd)) {
             Output.errGeneric("Git working directory not clean.", .{});
             Global.exit(1);
+        }
+    }
+
+    /// Walk up from `start_dir` looking for a `.git` file or directory.
+    /// On success returns a slice of `out_buf` containing the absolute path
+    /// of the directory that holds `.git` (i.e. the git repository root).
+    /// Returns `null` when no `.git` is found up to the filesystem root.
+    fn findGitRoot(start_dir: []const u8, out_buf: *bun.PathBuffer) ?[]const u8 {
+        var probe_buf: bun.PathBuffer = undefined;
+        var current_dir = start_dir;
+
+        while (true) {
+            const git_path_z = bun.path.joinAbsStringBufZ(current_dir, &probe_buf, &.{".git"}, .auto);
+            // `.git` can be a directory (normal repo) or a file (submodule /
+            // worktree pointer). Check both. On Windows `existsAt` only
+            // matches files, so pair it with `directoryExistsAt` rather
+            // than use `existsAtType`, which has platform-specific quirks
+            // that caused `bun pm version` to exit non-zero for plain
+            // no-git directories on Windows CI.
+            const exists = bun.FD.cwd().existsAt(git_path_z) or
+                bun.FD.cwd().directoryExistsAt(git_path_z).isTrue();
+            if (exists) {
+                const len = current_dir.len;
+                @memcpy(out_buf[0..len], current_dir);
+                return out_buf[0..len];
+            }
+
+            const parent = bun.path.dirname(current_dir, .auto);
+            if (strings.eql(parent, current_dir)) {
+                return null;
+            }
+            current_dir = parent;
         }
     }
 
@@ -526,15 +601,103 @@ pub const PmVersionCommand = struct {
         }
     }
 
-    fn gitCommitAndTag(allocator: std.mem.Allocator, version: []const u8, custom_message: ?[]const u8, cwd: []const u8) bun.OOM!void {
+    /// After writing the bumped `package.json` to disk, mirror the new version
+    /// into the lockfile so that `workspace:*` resolvers (pack, install, etc.)
+    /// pick up the bump. Silently no-ops when there's no lockfile yet or when
+    /// the package isn't tracked as a workspace (e.g. the root package, or a
+    /// non-workspace project). On success returns the absolute path of the
+    /// saved lockfile so the caller can include it in the version commit.
+    fn updateLockfileWorkspaceVersion(
+        ctx: Command.Context,
+        pm: *PackageManager,
+        pkg_name: []const u8,
+        new_version_str: []const u8,
+    ) ?[:0]const u8 {
+        // Pass `false` for `attempt_loading_from_other_lockfile`: if the
+        // project has no `bun.lock`/`bun.lockb` we want a clean no-op, not
+        // a silent migration from `package-lock.json` / `yarn.lock` /
+        // `pnpm-lock.yaml`. The `saveToDisk` call below would otherwise
+        // materialize a fresh `bun.lock` and effectively convert the
+        // project's lockfile format as a side effect of a version bump.
+        const load_result = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, false);
+        switch (load_result) {
+            .not_found => return null,
+            .err => |err| {
+                // Don't fail the version bump just because we couldn't update
+                // the lockfile — the `package.json` has already been written.
+                Output.warn("failed to update {s} after version bump: {s}", .{
+                    err.format.filename(),
+                    @errorName(err.value),
+                });
+                return null;
+            },
+            .ok => {},
+        }
+
+        const name_hash = Semver.String.Builder.stringHash(pkg_name);
+        const entry = pm.lockfile.workspace_versions.getPtr(name_hash) orelse {
+            // Root workspace or a package not tracked in `workspace_versions`.
+            // The root's version isn't currently serialized in bun.lock, so
+            // bumping it needs no lockfile update.
+            return null;
+        };
+
+        const sliced = Semver.SlicedString.init(new_version_str, new_version_str);
+        const parsed = Semver.Version.parse(sliced);
+        if (!parsed.valid) return null;
+        const parsed_version = parsed.version.min();
+
+        // Pre/build identifiers longer than 8 chars live in the lockfile's
+        // string pool; count+allocate into it before appending. The only
+        // error either of these paths can return is `error.OutOfMemory` —
+        // escalate via `bun.handleOom` instead of swallowing it, otherwise
+        // we'd leave the caller in an inconsistent state (package.json
+        // bumped, bun.lock silently skipped).
+        var string_builder = pm.lockfile.stringBuilder();
+        parsed_version.count(new_version_str, *Lockfile.StringBuilder, &string_builder);
+        bun.handleOom(string_builder.allocate());
+        entry.* = parsed_version.append(new_version_str, *Lockfile.StringBuilder, &string_builder);
+        string_builder.clamp();
+
+        pm.lockfile.saveToDisk(&load_result, &pm.options);
+
+        // Build the absolute path of the saved lockfile so callers (the
+        // git commit step below) can stage it regardless of which
+        // subdirectory we were invoked from. `saveToDisk` writes the file
+        // next to the root `package.json` via `PackageManager`'s
+        // top-level dir, so mirror that exact location here rather than
+        // relying on whatever the process cwd happens to be.
+        const save_format = load_result.saveFormat(&pm.options);
+        const filename = save_format.filename();
+        const root_dir = bun.fs.FileSystem.instance.top_level_dir;
+
+        var join_buf: bun.PathBuffer = undefined;
+        const abs = bun.path.joinAbsStringBufZ(root_dir, &join_buf, &.{filename}, .auto);
+        return bun.handleOom(ctx.allocator.dupeZ(u8, abs));
+    }
+
+    fn gitCommitAndTag(allocator: std.mem.Allocator, version: []const u8, custom_message: ?[]const u8, cwd: []const u8, lockfile_path: ?[:0]const u8) bun.OOM!void {
         var path_buf: bun.PathBuffer = undefined;
         const git_path = bun.which(&path_buf, bun.env_var.PATH.get() orelse "", cwd, "git") orelse {
             Output.errGeneric("git must be installed to use `bun pm version --git-tag-version`", .{});
             Global.exit(1);
         };
 
+        // Stage package.json and, when we also updated the lockfile, the
+        // lockfile. Passing an absolute path lets git stage the lockfile even
+        // when the workspace package directory is a subdirectory of the repo
+        // root where the lockfile lives.
+        var stage_argv_buf: [4][]const u8 = undefined;
+        stage_argv_buf[0] = git_path;
+        stage_argv_buf[1] = "add";
+        stage_argv_buf[2] = "package.json";
+        const stage_argv: []const []const u8 = if (lockfile_path) |lp| blk: {
+            stage_argv_buf[3] = lp;
+            break :blk stage_argv_buf[0..4];
+        } else stage_argv_buf[0..3];
+
         const stage_proc = bun.spawnSync(&.{
-            .argv = &.{ git_path, "add", "package.json" },
+            .argv = stage_argv,
             .cwd = cwd,
             .stdout = .buffer,
             .stderr = .buffer,
@@ -555,7 +718,12 @@ pub const PmVersionCommand = struct {
             },
             .result => |result| {
                 if (!result.isOK()) {
-                    Output.errGeneric("Git add failed with exit code {d}", .{result.status.exited.code});
+                    // Match the `commit_proc` / `tag_proc` handlers below:
+                    // `result.status` is a tagged union and `isOK()` returns
+                    // false for `.signaled` / `.err` as well as non-zero
+                    // `.exited`, so unconditionally reading `.exited.code`
+                    // is a safety-checked UB in signaled / errored cases.
+                    Output.errGeneric("Git add failed", .{});
                     Global.exit(1);
                 }
             },
@@ -643,4 +811,6 @@ const Semver = bun.Semver;
 const logger = bun.logger;
 const strings = bun.strings;
 const Command = bun.cli.Command;
+
+const Lockfile = bun.install.Lockfile;
 const PackageManager = bun.install.PackageManager;

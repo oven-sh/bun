@@ -3,8 +3,9 @@
  * tested elsewhere. These tests check API compatibility with Node.js.
  */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { isWindows, tempDirWithFiles } from "harness";
+import { isWindows, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
+import path, { sep } from "node:path";
 
 let tmp: string;
 beforeAll(() => {
@@ -232,3 +233,343 @@ describe("fs.promises.glob", () => {
     expect(Array.fromAsync(fs.promises.glob(["a/bar.txt", "a/baz.js"], { cwd: tmp }))).resolves.toStrictEqual(expected);
   });
 }); // </fs.promises.glob>
+
+// https://github.com/oven-sh/bun/issues/29699
+describe.skipIf(isWindows)("does not descend into directory symlinks (matches Node)", () => {
+  let dir: ReturnType<typeof tempDir>;
+  let root: string;
+
+  beforeAll(() => {
+    // pnpm-style symlink cycle: a/node_modules/b -> b, b/node_modules/c -> c,
+    //                           c/node_modules/a -> a. If glob followed directory
+    // symlinks, a `**/*.test.ts` search rooted at `a/` would loop indefinitely.
+    dir = tempDir("fs-glob-symlink", {
+      a: { src: { "foo.test.ts": "export {}" }, node_modules: {} },
+      b: { src: { "bar.test.ts": "export {}" }, node_modules: {} },
+      c: { node_modules: {} },
+      // Plus a flat symlink pointing at a sibling directory (exercises the
+      // non-cycle case where Node still does not descend).
+      flat: { dir: { "inside.txt": "x" } },
+      // A symlink pointing directly at a file (Node does match these).
+      "target.txt": "t",
+    });
+    root = String(dir);
+    fs.symlinkSync("../../b", path.join(root, "a/node_modules/b"), "dir");
+    fs.symlinkSync("../../c", path.join(root, "b/node_modules/c"), "dir");
+    fs.symlinkSync("../../a", path.join(root, "c/node_modules/a"), "dir");
+    fs.symlinkSync("dir", path.join(root, "flat/link"), "dir");
+    fs.symlinkSync("target.txt", path.join(root, "alias.txt"), "file");
+  });
+
+  afterAll(() => {
+    dir[Symbol.dispose]();
+  });
+
+  it("fs.promises.glob does not loop on a pnpm-style symlink cycle", async () => {
+    const matches: string[] = [];
+    for await (const file of fs.promises.glob("**/*.test.ts", { cwd: path.join(root, "a") })) {
+      matches.push(file);
+      if (matches.length > 2) break; // guard: the bug emitted infinite matches
+    }
+    expect(matches).toStrictEqual(["src/foo.test.ts"]);
+  });
+
+  it("fs.globSync does not descend into a directory symlink", () => {
+    expect(fs.globSync("*/*.txt", { cwd: path.join(root, "flat") }).sort()).toStrictEqual(["dir/inside.txt"]);
+  });
+
+  it("fs.globSync still matches symlinks that point at files", () => {
+    expect(fs.globSync("*.txt", { cwd: root }).sort()).toStrictEqual(["alias.txt", "target.txt"]);
+  });
+
+  it("literal path segments still traverse symlinks", () => {
+    // Node's nuance: *wildcard* segments don't descend into symlinks, but
+    // *literal* path segments do. Dropping that distinction regresses common
+    // patterns like `src/*.ts` where `src` could itself be a symlink.
+    const cwd = path.join(root, "flat");
+    expect(fs.globSync("link/*.txt", { cwd }).sort()).toStrictEqual(["link/inside.txt"]);
+    expect(fs.globSync("link/inside.txt", { cwd }).sort()).toStrictEqual(["link/inside.txt"]);
+    // But a wildcard segment that happens to match the symlink name still
+    // does not descend.
+    expect(fs.globSync("l*/*.txt", { cwd })).toStrictEqual([]);
+  });
+
+  it("absolute patterns with a literal prefix through a symlink", () => {
+    const cwd = path.join(root, "flat");
+    expect(fs.globSync(path.join(cwd, "link/*.txt"))).toStrictEqual([path.join(cwd, "link/inside.txt")]);
+  });
+
+  it("literal segments after a wildcard still traverse symlinks", () => {
+    // `*/link/*.txt`: `*` matches `flat` (a real dir), then the literal
+    // `link` names a symlink. Literal segments cross symlinks, so this
+    // descends — matching Node.
+    expect(fs.globSync("*/link/*.txt", { cwd: root })).toStrictEqual(["flat/link/inside.txt"]);
+    // `**/link/*.txt` is different: once `**` is active, the walker is
+    // in wildcard mode even when the next segment is a literal, so the
+    // symlink boundary blocks descent. Node returns `[]` here too.
+    expect(fs.globSync("**/link/*.txt", { cwd: root })).toStrictEqual([]);
+  });
+
+  it("**/literal through a self-referential symlink does not loop", () => {
+    // `**/node_modules/a/*.txt` against `a/node_modules/a -> ../..`: when the
+    // literal 'a' crosses the symlink the globstar must *not* re-activate on
+    // the far side — otherwise the walk revisits `a/node_modules/a/...`
+    // forever until ENAMETOOLONG. Node returns exactly one match.
+    using dir = tempDir("glob-cycle-literal", {
+      "x.txt": "root-x",
+      a: { node_modules: {} },
+    });
+    fs.symlinkSync("../..", path.join(String(dir), "a/node_modules/a"), "dir");
+    expect(fs.globSync("**/node_modules/a/*.txt", { cwd: String(dir) })).toStrictEqual(["a/node_modules/a/x.txt"]);
+  });
+
+  it("symlink is emitted as a leaf match alongside the descent it enables", () => {
+    // `**/a/a/*` against `a/a/a -> target`: the matching `a` literal in the
+    // active set narrows descent, but the terminal `*` in the full active
+    // set also matches the symlink name directly. Both `a/a/a` (the symlink
+    // itself) and `a/a/a/leaf.txt` (from the descent) should be returned —
+    // matching Node.
+    using dir = tempDir("glob-leaf-and-descent", {
+      a: { a: {} },
+      target: { "leaf.txt": "x" },
+    });
+    fs.symlinkSync("../../target", path.join(String(dir), "a/a/a"), "dir");
+    expect(fs.globSync("**/a/a/*", { cwd: String(dir) }).sort()).toStrictEqual([
+      path.join("a", "a", "a"),
+      path.join("a", "a", "a", "leaf.txt"),
+    ]);
+  });
+
+  it("trailing slashes match the named directory", () => {
+    // `a/` is Node-idiomatic for "match directory `a`". `Bun.Glob`
+    // handles the trailing separator natively via `Component.trailing_sep`.
+    expect(fs.globSync("a/", { cwd: root })).toStrictEqual(["a"]);
+    expect(fs.globSync("a/src/", { cwd: root })).toStrictEqual(["a/src"]);
+  });
+
+  it("literal prefix naming a regular file returns []", () => {
+    // Opening `target.txt/` as a directory would throw ENOTDIR; Node returns
+    // `[]` silently and so do we.
+    expect(fs.globSync("target.txt/*.js", { cwd: root })).toStrictEqual([]);
+  });
+
+  it("self-referential symlink reached from readdir returns [] (not ELOOP)", () => {
+    // `loop -> loop` in a directory we readdir: the walker encounters `loop`
+    // as a `.sym_link` entry, then `openat(cwd_fd, 'loop')` fails with ELOOP
+    // in the `.symlink` work-item handler. `error_on_broken_symlinks=false`
+    // treats it as a broken symlink and skips — Node returns `[]`, so do we.
+    using dir = tempDir("glob-loop", {});
+    fs.symlinkSync("loop", path.join(String(dir), "loop"), "dir");
+    expect(fs.globSync("loop/*.txt", { cwd: String(dir) })).toStrictEqual([]);
+    expect(fs.globSync("loop/inside.txt", { cwd: String(dir) })).toStrictEqual([]);
+  });
+
+  it("self-referential symlink as cwd / absolute literal target returns [] (not ELOOP)", () => {
+    // These two shapes hit ELOOP at the *walker's own* cwd open — not via
+    // readdir — so they exercise the `swallow_missing_cwd` branches in
+    // `Iterator.init()`. Without those, the error surfaces as a thrown ELOOP.
+    //   * cwd IS the loop       — `fs.globSync('*.txt', {cwd: '/abs/loop'})`
+    //     (main cwd-open branch in `Iterator.init`)
+    //   * absolute all-literal  — `fs.globSync('/abs/loop/inside.txt')`
+    //     (absolute-literal fast-path branch in `Iterator.init`)
+    using dir = tempDir("glob-loop-cwd", {});
+    fs.symlinkSync("loop", path.join(String(dir), "loop"), "dir");
+    const loopPath = path.join(String(dir), "loop");
+    expect(fs.globSync("*.txt", { cwd: loopPath })).toStrictEqual([]);
+    expect(fs.globSync(path.join(String(dir), "loop/inside.txt"))).toStrictEqual([]);
+  });
+
+  it("literal-tail self-referential symlink reports the symlink itself", () => {
+    // All three shapes target a self-referential symlink as the terminal
+    // segment. Node returns the dirent name (the entry exists; `lstat`
+    // succeeds). The walker hits ELOOP either at `statat` in the
+    // literal-tail optimization (relative) or at `Accessor.open` in the
+    // absolute-literal fast path; both fall back to `lstatat` so the
+    // symlink's own mode drives the match decision.
+    //   * relative terminal    — `fs.globSync('loop', {cwd})`
+    //   * relative mid-walk    — `fs.globSync('*/loop', {cwd})` where
+    //                             `*` matches a real dir with `loop` inside
+    //   * absolute terminal    — `fs.globSync('/abs/loop')`
+    using dir = tempDir("glob-loop-literal-tail", {
+      sub: {},
+    });
+    fs.symlinkSync("loop", path.join(String(dir), "loop"), "dir");
+    fs.symlinkSync("loop", path.join(String(dir), "sub", "loop"), "dir");
+    expect(fs.globSync("loop", { cwd: String(dir) })).toStrictEqual(["loop"]);
+    expect(fs.globSync("*/loop", { cwd: String(dir) })).toStrictEqual([path.join("sub", "loop")]);
+    expect(fs.globSync(path.join(String(dir), "loop"))).toStrictEqual([path.join(String(dir), "loop")]);
+  });
+
+  it("brace alternative that names a symlink still descends", () => {
+    // `{link,dir}/*.txt` should yield matches for both branches; `link` is
+    // a symlink. The walker's per-branch literal check sees `link` as a
+    // literal alternative of the brace, so descent is allowed.
+    const cwd = path.join(root, "flat");
+    expect(fs.globSync("{link,dir}/*.txt", { cwd }).sort()).toStrictEqual(["dir/inside.txt", "link/inside.txt"]);
+  });
+
+  it("mixed-wildcard brace alternative preserves the literal branch's symlink descent", () => {
+    // `{link,d*}/*.txt`: `link` is a literal alt (descends through the
+    // symlink), `d*` is a wildcard alt (matches `dir` but would not re-cross
+    // a symlink it hit). The walker's `hasLiteralMatch` inspects each brace
+    // branch separately, so entry `link` is classified as a literal match
+    // regardless of the presence of `*` in the other alt.
+    const cwd = path.join(root, "flat");
+    expect(fs.globSync("{link,d*}/*.txt", { cwd }).sort()).toStrictEqual(["dir/inside.txt", "link/inside.txt"]);
+  });
+
+  it("nested brace alternative containing a leaf-local brace still expands it for symlink descent", () => {
+    // `{{x,y}_{link,d*},other}/file.txt`: the first directory segment is a
+    // compound brace whose literal alternatives include `x_link` (matching
+    // the `x_link` symlink via the literal branch of `{link,d*}`). The
+    // walker's per-segment literal check must recognize that a brace with
+    // mixed-wildcard alternatives still has a *literal branch* the entry
+    // matched — otherwise descent through `x_link` gets blocked because
+    // the raw component slice contains `*`.
+    using inner = tempDir("fs-glob-nested-brace", {
+      x_dir: { "file.txt": "d" },
+      y_dir: { "file.txt": "y" },
+      other: { "file.txt": "o" },
+      // target for the `x_link` symlink below
+      target: { "file.txt": "l" },
+    });
+    const cwd = String(inner);
+    fs.symlinkSync("target", path.join(cwd, "x_link"), "dir");
+    expect(fs.globSync("{{x,y}_{link,d*},other}/file.txt", { cwd }).sort()).toStrictEqual([
+      "other/file.txt",
+      "x_dir/file.txt",
+      "x_link/file.txt",
+      "y_dir/file.txt",
+    ]);
+  });
+}); // </symlink behavior>
+
+// Cross-platform edge cases — no symlink fixtures, so these run on every
+// OS. Covers patterns the walker needs to handle: trailing slashes,
+// consecutive separators, bare-root patterns, brace alternatives, and
+// user-exclude error propagation. (ENOTDIR/ENOENT/ELOOP-on-cwd tests
+// live in the symlink describe above since they need symlink fixtures.)
+describe("fs.glob edge cases", () => {
+  function seg(...parts: string[]) {
+    return parts.join(sep);
+  }
+
+  it("trailing slash on a wildcard pattern filters to directories", () => {
+    using dir = tempDir("glob-trail", {
+      a: {
+        sub1: { ".keep": "" },
+        sub2: { ".keep": "" },
+        "file.txt": "f",
+      },
+    });
+    expect(fs.globSync("a/*/", { cwd: String(dir) }).sort()).toStrictEqual([seg("a", "sub1"), seg("a", "sub2")]);
+    expect(fs.globSync("a/*", { cwd: String(dir) }).sort()).toStrictEqual([
+      seg("a", "file.txt"),
+      seg("a", "sub1"),
+      seg("a", "sub2"),
+    ]);
+  });
+
+  it("absolute all-literal patterns return the matched entry", () => {
+    // The absolute-literal fast-path in `Iterator.init()` handles these
+    // shapes via `open(path, O_DIRECTORY)`:
+    //   * open succeeds                — path is a directory (emit unless
+    //                                    `only_files`)
+    //   * ENOTDIR, `lstat` succeeds    — terminal segment is a non-dir
+    //                                    (file, symlink-to-file) → emit
+    //   * ENOTDIR, `lstat` fails       — mid-path segment is a non-dir
+    //                                    (`/abs/file.txt/something`) → `[]`
+    //   * ENOENT                       — missing → `[]`
+    // Each emitting arm must push into `matchedPaths`; the directory arm
+    // gates on `!only_files` so the public `Bun.Glob` default
+    // (`onlyFiles: true`) still filters directories out.
+    using dir = tempDir("glob-abs-literal", {
+      "file.txt": "x",
+      subdir: { ".keep": "" },
+    });
+    const root = String(dir);
+
+    // fs.glob sets onlyFiles: false, so directories and files both match.
+    expect(fs.globSync(path.join(root, "file.txt"))).toStrictEqual([path.join(root, "file.txt")]);
+    expect(fs.globSync(path.join(root, "subdir"))).toStrictEqual([path.join(root, "subdir")]);
+    expect(fs.globSync(path.join(root, "does-not-exist"))).toStrictEqual([]);
+    // Mid-path traverses a file → ENOTDIR, so the path does not exist.
+    // Return `[]` — consistent with the other missing-path shapes that
+    // go through `swallow_missing_cwd`. (Node's behavior varies by
+    // version — some throw ENOTDIR, some return `[]`; either way Bun's
+    // `[]` is the safer choice and matches the non-existent-cwd case.)
+    expect(fs.globSync(path.join(root, "file.txt/something"))).toStrictEqual([]);
+
+    // Public Bun.Glob (default onlyFiles: true) filters the directory.
+    expect([...new Bun.Glob(path.join(root, "file.txt")).scanSync()]).toStrictEqual([path.join(root, "file.txt")]);
+    expect([...new Bun.Glob(path.join(root, "subdir")).scanSync()]).toStrictEqual([]);
+
+    // A trailing separator on the pattern is normalized away in the
+    // result — `/abs/subdir/` → `/abs/subdir` (matching Node and the
+    // sibling relative literal-tail branch). Multiple trailing
+    // separators collapse: `/abs/subdir//` → `/abs/subdir`.
+    expect(fs.globSync(path.join(root, "subdir") + sep)).toStrictEqual([path.join(root, "subdir")]);
+    expect(fs.globSync(path.join(root, "subdir") + sep + sep)).toStrictEqual([path.join(root, "subdir")]);
+
+    // But a trailing separator on a pattern that names a non-directory
+    // means "directories only" — Node returns `[]` for
+    // `fs.globSync('/abs/file.txt/')`, and so do we. The walker must
+    // run `lstat` on the *unstripped* path so the kernel's
+    // trailing-slash type-check applies.
+    expect(fs.globSync(path.join(root, "file.txt") + sep)).toStrictEqual([]);
+  });
+
+  it("consecutive separators in a pattern do not break matching", () => {
+    // Node normalizes `a//b/*.txt` to `a/b/*.txt` in output; the walker
+    // should accept the input pattern either way and yield the normalized
+    // path.
+    using dir = tempDir("glob-dbl", {
+      a: { b: { "x.txt": "x" } },
+    });
+    expect(fs.globSync("a//b/*.txt", { cwd: String(dir) })).toStrictEqual([seg("a", "b", "x.txt")]);
+    expect(fs.globSync("a///b/*.txt", { cwd: String(dir) })).toStrictEqual([seg("a", "b", "x.txt")]);
+  });
+
+  it("exclude callback errors propagate (not swallowed by ENOENT/ENOTDIR handling)", async () => {
+    using dir = tempDir("glob-exclude", { "a.txt": "a", "b.txt": "b" });
+    const boom = Object.assign(new Error("exclude blew up"), { code: "ENOENT" });
+    const exclude = () => {
+      throw boom;
+    };
+    expect(() => fs.globSync("*.txt", { cwd: String(dir), exclude })).toThrow(boom);
+    expect(async () => {
+      for await (const _ of fs.promises.glob("*.txt", { cwd: String(dir), exclude })) break;
+    }).toThrow(boom);
+  });
+
+  it("pattern that is entirely separators returns the root (POSIX)", () => {
+    // `fs.globSync('/')` on POSIX — the absolute-literal fast-path opens
+    // `/` with `O_DIRECTORY`, succeeds, and emits the root via
+    // `matchedPaths`. Node returns the same. On Windows a bare `\`
+    // exercises a different codepath; don't lock its shape here.
+    if (isWindows) {
+      expect(Array.isArray(fs.globSync(sep))).toBe(true);
+    } else {
+      expect(fs.globSync(sep)).toStrictEqual([sep]);
+    }
+  });
+
+  it("brace alternatives in a pattern yield every matching path", () => {
+    using dir = tempDir("glob-braces", {
+      a: { "x.txt": "x" },
+      b: { "y.txt": "y" },
+      c: { "z.txt": "z" },
+    });
+    // Simple flat brace.
+    expect(fs.globSync("{a,b}/*.txt", { cwd: String(dir) }).sort()).toStrictEqual([
+      seg("a", "x.txt"),
+      seg("b", "y.txt"),
+    ]);
+    // Nested braces.
+    expect(fs.globSync("{a,{b,c}}/*.txt", { cwd: String(dir) }).sort()).toStrictEqual([
+      seg("a", "x.txt"),
+      seg("b", "y.txt"),
+      seg("c", "z.txt"),
+    ]);
+  });
+});

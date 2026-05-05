@@ -114,9 +114,13 @@ pub fn isBunFile(this: *const Blob) bool {
 pub fn doReadFromS3(this: *Blob, comptime Function: anytype, global: *JSGlobalObject) bun.JSTerminated!JSValue {
     debug("doReadFromS3", .{});
 
+    // The downloaded body is a transient buffer owned by onS3DownloadResolved,
+    // not by any Blob.Store, so we pass it with `.temporary` — the handler
+    // transfers ownership to JSC (ArrayBuffer/string external) or frees it
+    // after synchronous consumption (JSON.parse, FormData). See #29083.
     const WrappedFn = struct {
         pub fn wrapped(b: *Blob, g: *JSGlobalObject, by: []u8) jsc.JSValue {
-            return jsc.toJSHostCall(g, @src(), Function, .{ b, g, by, .clone });
+            return jsc.toJSHostCall(g, @src(), Function, .{ b, g, by, .temporary });
         }
     };
     return S3BlobDownloadTask.init(global, this, WrappedFn.wrapped);
@@ -223,9 +227,23 @@ pub fn readBytesToHandler(this: *Blob, comptime Handler: type, ctx: *Handler, gl
             fn cb(result: S3.S3DownloadResult, opaque_self: *anyopaque) bun.JSTerminated!void {
                 const t: *@This() = @ptrCast(@alignCast(opaque_self));
                 switch (result) {
-                    // `body` is owned by us (simple_request.zig:20); take the
-                    // ArrayList's items as-is.
-                    .success => |response| t.done(.{ .ok = response.body.list.items }),
+                    // `body` is owned by us (simple_request.zig:20). Convert
+                    // to a plain `bun.default_allocator` slice so the
+                    // downstream `free()` handles both len and capacity
+                    // correctly. Empty bodies need the explicit `deinit`
+                    // path because `toOwnedSlice()` on a 0-length-but-16
+                    // -capacity buffer leaves a live 16-byte allocation
+                    // behind a `{ptr, len=0}` slice — and Zig's
+                    // `Allocator.free` short-circuits on `len==0` before
+                    // calling `mi_free`. See #29083.
+                    .success => |response| {
+                        var body = response.body;
+                        const owned: []u8 = if (body.list.items.len == 0) blk: {
+                            body.deinit();
+                            break :blk &.{};
+                        } else body.toOwnedSlice();
+                        t.done(.{ .ok = owned });
+                    },
                     // S3Error has its own JS-error builder; flatten to a
                     // SystemError so the callback has one shape to handle.
                     inline .not_found, .failure => |e| t.done(.{ .err = .{
@@ -2399,11 +2417,39 @@ const S3BlobDownloadTask = struct {
         defer this.deinit();
         switch (result) {
             .success => |response| {
-                const bytes = response.body.list.items;
+                // Take ownership of the response MutableString's buffer as a
+                // plain `bun.default_allocator` slice (`toOwnedSlice` shrinks
+                // capacity to length so `default_allocator.free` works) and
+                // hand it to the handler with `.temporary` lifetime. Each
+                // handler then transfers ownership to JSC via a mimalloc-
+                // backed external string / ArrayBuffer (zero-copy) or frees
+                // the slice after synchronous consumption (JSON.parse,
+                // FormData). See #29083.
+                //
+                // The buffer MUST be backed by `bun.default_allocator`
+                // (plain mimalloc) and NOT by `bun.http.default_allocator`
+                // (the per-HTTP-thread `MimallocArena`), because its
+                // `ThreadLock` panics on main-thread realloc/free under
+                // `ci_assert`. `S3SimpleRequestOptions` pre-allocates the
+                // response buffer with the right allocator so that
+                // `AsyncHTTP` does not clobber it later.
+                var body = response.body;
+                // Empty body: deinit the MutableString directly (which
+                // internally `expandToCapacity` + `clearAndFree`s the
+                // 16-byte pre-allocation) and hand the handler an empty
+                // slice. Avoids creating a stray 0-byte mimalloc
+                // allocation via `toOwnedSlice()` that
+                // `default_allocator.free` would silently no-op on,
+                // since Zig's `Allocator.free` early-returns for
+                // `bytes.len == 0`. See #29083.
+                const owned: []u8 = if (body.list.items.len == 0) blk: {
+                    body.deinit();
+                    break :blk &.{};
+                } else body.toOwnedSlice();
                 if (this.blob.size == Blob.max_size) {
-                    this.blob.size = @truncate(bytes.len);
+                    this.blob.size = @truncate(owned.len);
                 }
-                try jsc.AnyPromise.wrap(.{ .normal = this.promise.get() }, this.globalThis, S3BlobDownloadTask.callHandler, .{ this, bytes });
+                try jsc.AnyPromise.wrap(.{ .normal = this.promise.get() }, this.globalThis, S3BlobDownloadTask.callHandler, .{ this, owned });
             },
             inline .not_found, .failure => |err| {
                 try this.promise.reject(this.globalThis, err.toJSWithAsyncStack(this.globalThis, this.blob.store.?.getPath(), this.promise.get()));
@@ -3786,7 +3832,13 @@ pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []cons
     if (could_be_all_ascii == null or !could_be_all_ascii.?) {
         // if toUTF16Alloc returns null, it means there are no non-ASCII characters
         // instead of erroring, invalid characters will become a U+FFFD replacement character
-        if (strings.toUTF16Alloc(bun.default_allocator, buf, false, false) catch return global.throwOutOfMemory()) |external| {
+        const maybe_external = strings.toUTF16Alloc(bun.default_allocator, buf, false, false) catch {
+            // Free the owned S3/ReadFile buffer on the OOM path too —
+            // otherwise the leak we are fixing just moves here (see #29083).
+            if (comptime lifetime == .temporary) bun.default_allocator.free(raw_bytes);
+            return global.throwOutOfMemory();
+        };
+        if (maybe_external) |external| {
             if (lifetime != .temporary)
                 this.setIsASCIIFlag(false);
 
@@ -3879,16 +3931,20 @@ pub fn toJSON(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime)
 }
 
 pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const u8, comptime lifetime: Lifetime) bun.JSError!JSValue {
+    // Free the ORIGINAL `raw_bytes` allocation on `.temporary`. The
+    // defer must run on EVERY return path — including the empty-body
+    // syntax error below — otherwise an empty or BOM-only body leaks
+    // the owned buffer (pre-existing bug surfaced by #29083).
+    // Also: free `raw_bytes`, not the post-BOM `buf` slice, because
+    // a UTF-8 BOM would make `buf.ptr == raw_bytes.ptr + 3` and
+    // passing a mid-allocation pointer to mimalloc is UB.
+    defer if (comptime lifetime == .temporary) bun.default_allocator.free(@constCast(raw_bytes));
+
     const bom, const buf = strings.BOM.detectAndSplit(raw_bytes);
-    if (buf.len == 0) {
-        // If all it contained was the bom, we still need to free the bytes
-        if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
-        return global.createSyntaxErrorInstance("Unexpected end of JSON input", .{});
-    }
+    if (buf.len == 0) return global.createSyntaxErrorInstance("Unexpected end of JSON input", .{});
 
     if (bom == .utf16_le) {
         var out = bun.String.cloneUTF16(bun.reinterpretSlice(u16, buf));
-        defer if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
         defer if (lifetime == .transfer) this.detach();
         defer out.deref();
         return out.toJSByParseJSON(global);
@@ -3896,9 +3952,6 @@ pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const 
     // null == unknown
     // false == can't be
     const could_be_all_ascii = this.isAllASCII() orelse this.store.?.is_all_ascii;
-    // When a BOM is present `buf` is an interior slice of `raw_bytes`; we must
-    // free the original allocation, not the offset pointer.
-    defer if (comptime lifetime == .temporary) bun.default_allocator.free(raw_bytes);
 
     if (could_be_all_ascii == null or !could_be_all_ascii.?) {
         var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
@@ -3917,7 +3970,11 @@ pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const 
     return ZigString.init(buf).toJSONObject(global);
 }
 
-pub fn toFormDataWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime _: Lifetime) JSValue {
+pub fn toFormDataWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime lifetime: Lifetime) JSValue {
+    // `.temporary` means we own `buf` and must free it before returning;
+    // `bun.FormData.toJS` parses the bytes synchronously so we can safely
+    // drop them on the way out. See #29083.
+    defer if (comptime lifetime == .temporary) bun.default_allocator.free(buf);
     var encoder = this.getFormDataEncoding() orelse return {
         return ZigString.init("Invalid encoding").toErrorInstance(global);
     };
@@ -4012,6 +4069,18 @@ pub fn toArrayBufferViewWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u
                 return global.throwOutOfMemory();
             }
 
+            // Zero-length buffers: `ArrayBuffer.fromBytes(buf).toJS()`
+            // takes an early return via `ArrayBuffer.create(global, "", ...)`
+            // which allocates a fresh empty view and does NOT register a
+            // deallocator for `buf.ptr`. Free the owned zero-length
+            // allocation explicitly — e.g. `toOwnedSlice()` on an empty
+            // `MutableString` with non-zero capacity returns a valid
+            // `{ptr, len: 0}` slice (see #29083).
+            if (buf.len == 0) {
+                bun.default_allocator.free(buf);
+                return jsc.ArrayBuffer.create(global, "", TypedArrayView);
+            }
+
             return jsc.ArrayBuffer.fromBytes(buf, TypedArrayView).toJS(global);
         },
     }
@@ -4060,7 +4129,13 @@ pub fn toFormData(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifet
     if (view_.len == 0)
         return jsc.DOMFormData.create(global);
 
-    return toFormDataWithBytes(this, global, @constCast(view_), lifetime);
+    // `sharedView()` returns memory owned by `this.store`, not a fresh
+    // allocation. Always hand it to `toFormDataWithBytes` as `.share`
+    // so its `.temporary` defer-free (added in #29083 for the
+    // ReadFile / S3 paths) does not free store-backed bytes — even
+    // though `getFormData` invokes `toFormData` with `.temporary`.
+    _ = lifetime;
+    return toFormDataWithBytes(this, global, @constCast(view_), .share);
 }
 
 pub inline fn get(

@@ -349,7 +349,9 @@ pub const PrunedTree = struct {
 ///   - install_root_dependencies (root non-workspace deps)
 ///   - packages_to_install (security scanner: restricts root-level install set)
 ///   - OS/CPU/libc, `--omit=dev/peer/optional`
-/// and dep_ids whose package is not reachable from the filtered root set.
+///   - bundleDependencies (entries baked into the publisher's tarball)
+/// and dep_ids whose package, or dep_id owner, is not reachable from the
+/// filtered root set.
 ///
 /// This is how `--filter` must behave when a lockfile already exists: the installed
 /// `node_modules` layout must be a subset of the layout the lockfile describes,

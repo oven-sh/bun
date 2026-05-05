@@ -587,6 +587,13 @@ pub const Loader = enum(u8) {
     yaml = 18,
     json5 = 19,
     md = 20,
+    /// Emit as a physical file, but if the asset is referenced from a CSS
+    /// `url(...)` and its size is below `asset_inline_limit`, inline it as a
+    /// `data:` URI instead. This is the default fallback loader when the user
+    /// has not explicitly configured one for the extension and the file was
+    /// reached via a CSS `url()` reference. Explicit `loader: { '.ext': 'file' }`
+    /// continues to always emit a file.
+    url = 21,
 
     pub const Optional = enum(u8) {
         none = 254,
@@ -632,6 +639,7 @@ pub const Loader = enum(u8) {
     pub fn shouldCopyForBundling(this: Loader) bool {
         return switch (this) {
             .file,
+            .url,
             .napi,
             .sqlite,
             .sqlite_embedded,
@@ -646,7 +654,7 @@ pub const Loader = enum(u8) {
 
     pub fn handlesEmptyFile(this: Loader) bool {
         return switch (this) {
-            .wasm, .file, .text => true,
+            .wasm, .file, .url, .text => true,
             else => false,
         };
     }
@@ -731,6 +739,7 @@ pub const Loader = enum(u8) {
         .{ "tsx", .tsx },
         .{ "css", .css },
         .{ "file", .file },
+        .{ "url", .url },
         .{ "json", .json },
         .{ "jsonc", .jsonc },
         .{ "toml", .toml },
@@ -762,6 +771,7 @@ pub const Loader = enum(u8) {
         .{ "tsx", .tsx },
         .{ "css", .css },
         .{ "file", .file },
+        .{ "url", .url },
         .{ "json", .json },
         .{ "jsonc", .json },
         .{ "toml", .toml },
@@ -805,6 +815,7 @@ pub const Loader = enum(u8) {
             .css => .css,
             .html => .html,
             .file, .bunsh => .file,
+            .url => .url,
             .json => .json,
             .jsonc => .json,
             .toml => .toml,
@@ -829,6 +840,7 @@ pub const Loader = enum(u8) {
             .tsx => .tsx,
             .css => .css,
             .file => .file,
+            .url => .url,
             .json => .json,
             .jsonc => .jsonc,
             .toml => .toml,
@@ -883,7 +895,7 @@ pub const Loader = enum(u8) {
 
     pub fn sideEffects(this: Loader) bun.resolver.SideEffects {
         return switch (this) {
-            .text, .json, .jsonc, .toml, .yaml, .json5, .file, .md => bun.resolver.SideEffects.no_side_effects__pure_data,
+            .text, .json, .jsonc, .toml, .yaml, .json5, .file, .url, .md => bun.resolver.SideEffects.no_side_effects__pure_data,
             else => bun.resolver.SideEffects.has_side_effects,
         };
     }
@@ -1719,6 +1731,12 @@ pub const BundleOptions = struct {
     asset_naming: []const u8 = "",
     chunk_naming: []const u8 = "",
     public_path: []const u8 = "",
+    /// When an asset is referenced from a CSS `url(...)` and its loader is
+    /// the implicit `.url` fallback, files at or above this size are emitted
+    /// as physical assets and files below are inlined as `data:` URIs.
+    /// Defaults to 128 KB. Explicit `loader: { '.ext': 'file' }` always emits
+    /// a file regardless of this value.
+    asset_inline_limit: u32 = 128 * 1024,
     extension_order: ResolveFileExtensions = .{},
     main_field_extension_order: []const string = &Defaults.MainFieldExtensionOrder,
     /// This list applies to all extension resolution cases. The runtime uses

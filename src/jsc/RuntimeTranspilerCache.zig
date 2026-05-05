@@ -298,7 +298,7 @@ pub const RuntimeTranspilerCache = struct {
             output_code_allocator: std.mem.Allocator,
             esm_record_allocator: std.mem.Allocator,
         ) !void {
-            const stat_size = try file.getEndPos();
+            const stat_size = try bun.getEndPosFile(file);
             if (stat_size < Metadata.size + this.metadata.output_byte_length + this.metadata.sourcemap_byte_length) {
                 return error.MissingData;
             }

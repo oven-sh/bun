@@ -700,7 +700,7 @@ pub fn init(
                         continue;
                     };
                     defer if (!found) json_file.close();
-                    const json_stat_size = try json_file.getEndPos();
+                    const json_stat_size = try bun.getEndPosFile(json_file);
                     const json_buf = try ctx.allocator.alloc(u8, json_stat_size + 64);
                     defer ctx.allocator.free(json_buf);
                     const json_len = try json_file.preadAll(json_buf, 0);

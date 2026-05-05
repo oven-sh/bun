@@ -6,6 +6,7 @@ type WebWorker = InstanceType<typeof globalThis.Worker>;
 const EventEmitter = require("node:events");
 const Readable = require("internal/streams/readable");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
+const { validateNumber } = require("internal/validators");
 
 const {
   MessageChannel,
@@ -47,67 +48,231 @@ function injectFakeEmitter(Class) {
     return event.error;
   }
 
-  const wrappedListener = Symbol("wrappedListener");
-
-  function wrapped(run, listener) {
-    const callback = function (event) {
-      return listener(run(event));
-    };
-    listener[wrappedListener] = callback;
-    return callback;
+  function unwrapFor(event) {
+    return event === "error" || event === "messageerror" ? errorEventHandler : messageEventHandler;
   }
 
-  function functionForEventType(event, listener) {
-    switch (event) {
-      case "error":
-      case "messageerror": {
-        return wrapped(errorEventHandler, listener);
-      }
+  // Per-instance listener tracking: Map<event, Array<{ original, wrapped }>>.
+  // Stored via a non-enumerable symbol on the instance so that listenerCount,
+  // eventNames, and removeAllListeners work correctly. Matches Node's
+  // MessagePort dedup semantics: adding the same (event, listener) pair more
+  // than once is a no-op — first registration wins and keeps its once-ness.
+  const kListeners = Symbol("bun:worker_threads:listeners");
+  // Share the same storage slot that `events.setMaxListeners(n, target)`
+  // writes to when `target` is an EventTarget, so cross-API round-trips
+  // (e.g. `events.setMaxListeners(99, port); port.getMaxListeners()`) stay
+  // consistent with Node's MessagePort behavior.
+  const kMaxListeners = EventEmitter.kMaxEventTargetListeners;
 
-      default: {
-        return wrapped(messageEventHandler, listener);
+  function getListeners(target) {
+    let map = target[kListeners];
+    if (!map) {
+      map = new Map();
+      Object.defineProperty(target, kListeners, {
+        value: map,
+        writable: true,
+        configurable: true,
+        enumerable: false,
+      });
+    }
+    return map;
+  }
+
+  function hasListener(target, event, original) {
+    const map = target[kListeners];
+    if (!map) return false;
+    const arr = map.$get(event);
+    if (!arr) return false;
+    for (let i = 0; i < arr.length; i++) {
+      if (arr[i].original === original) return true;
+    }
+    return false;
+  }
+
+  function trackListener(target, event, original, wrapped) {
+    const map = getListeners(target);
+    let arr = map.$get(event);
+    if (!arr) {
+      arr = [];
+      map.$set(event, arr);
+    }
+    arr.push({ original, wrapped });
+  }
+
+  function untrackListener(target, event, original) {
+    const map = target[kListeners];
+    if (!map) return null;
+    const arr = map.$get(event);
+    if (!arr) return null;
+    for (let i = 0; i < arr.length; i++) {
+      if (arr[i].original === original) {
+        const [entry] = arr.splice(i, 1);
+        if (arr.length === 0) map.$delete(event);
+        return entry.wrapped;
       }
+    }
+    return null;
+  }
+
+  // Node's MessagePort (which is an EventTarget underneath) throws
+  // ERR_INVALID_ARG_TYPE for listener arguments that are primitives other
+  // than `undefined` / `null`. Functions and EventListener objects (with a
+  // `handleEvent` method) pass through.
+  function validateListener(listener) {
+    const t = typeof listener;
+    if (t !== "function" && t !== "object" && t !== "undefined") {
+      throw $ERR_INVALID_ARG_TYPE("listener", "function", listener);
     }
   }
 
-  Class.prototype.on = function (event, listener) {
-    this.addEventListener(event, functionForEventType(event, listener));
+  // Build a wrapper that dispatches through either a bare function or the
+  // DOM EventListener `handleEvent` method. Matches Node's MessagePort
+  // behavior where `port.on('message', { handleEvent(m) { ... } })` is
+  // accepted and forwards the unwrapped payload.
+  function makeWrapped(listener, unwrap) {
+    return function (e) {
+      if (typeof listener === "function") {
+        return listener.$call(this, unwrap(e));
+      }
+      if (listener != null && typeof listener.handleEvent === "function") {
+        return listener.handleEvent(unwrap(e));
+      }
+      // Non-function, non-EventListener objects: silently drop (matches
+      // EventTarget's behavior of ignoring the dispatch).
+    };
+  }
 
+  Class.prototype.on = function (event, listener) {
+    validateListener(listener);
+    // Node's MessagePort (and the EventTarget spec) silently ignores
+    // null/undefined listeners — they don't get tracked, don't count toward
+    // listenerCount, and don't show up in eventNames.
+    if (listener == null) return this;
+    // Node's MessagePort dedupes same (event, listener) pairs (see #20169).
+    if (hasListener(this, event, listener)) return this;
+    const wrapped = makeWrapped(listener, unwrapFor(event));
+    this.addEventListener(event, wrapped);
+    trackListener(this, event, listener, wrapped);
     return this;
   };
 
   Class.prototype.off = function (event, listener) {
-    if (listener) {
-      this.removeEventListener(event, listener[wrappedListener] || listener);
-    } else {
-      this.removeEventListener(event);
-    }
-
+    validateListener(listener);
+    if (listener == null) return this;
+    const wrapped = untrackListener(this, event, listener);
+    // If the listener was tracked, remove the wrapped version; otherwise
+    // fall back to removing whatever matches directly (covers raw
+    // addEventListener registrations).
+    this.removeEventListener(event, wrapped || listener);
     return this;
   };
 
   Class.prototype.once = function (event, listener) {
-    this.addEventListener(event, functionForEventType(event, listener), { once: true });
-
+    validateListener(listener);
+    if (listener == null) return this;
+    // Node's MessagePort dedupes here too — first registration wins.
+    if (hasListener(this, event, listener)) return this;
+    const unwrap = unwrapFor(event);
+    const self = this;
+    const wrapped = function (e) {
+      // Untrack before invoking so listenerCount inside the handler is accurate.
+      untrackListener(self, event, listener);
+      if (typeof listener === "function") {
+        return listener.$call(this, unwrap(e));
+      }
+      if (typeof listener.handleEvent === "function") {
+        return listener.handleEvent(unwrap(e));
+      }
+    };
+    this.addEventListener(event, wrapped, { once: true });
+    trackListener(this, event, listener, wrapped);
     return this;
   };
-
-  function EventClass(eventName) {
-    if (eventName === "error" || eventName === "messageerror") {
-      return ErrorEvent;
-    }
-
-    return MessageEvent;
-  }
 
   Class.prototype.emit = function (event, ...args) {
-    this.dispatchEvent(new (EventClass(event))(event, ...args));
+    // Node's EventEmitter.emit returns whether any listeners fired. Use the
+    // tracking map so callers can rely on the standard
+    // `if (!emitter.emit('error', err)) throw err;` idiom.
+    const hadListeners = Class.prototype.listenerCount.$call(this, event) > 0;
+    let ev;
+    if (event === "error" || event === "messageerror") {
+      ev = new ErrorEvent(event, { error: args[0] });
+    } else {
+      // MessageEvent's init dict takes the payload under `data`, which
+      // `messageEventHandler` unwraps for on()/once() callbacks.
+      ev = new MessageEvent(event, { data: args[0] });
+    }
+    this.dispatchEvent(ev);
+    return hadListeners;
+  };
 
+  Class.prototype.addListener = Class.prototype.on;
+  Class.prototype.removeListener = Class.prototype.off;
+  // Node's MessagePort does not expose prependListener / prependOnceListener,
+  // but earlier Bun versions did — keep them as aliases for compatibility.
+  Class.prototype.prependListener = Class.prototype.on;
+  Class.prototype.prependOnceListener = Class.prototype.once;
+
+  Class.prototype.removeAllListeners = function (event) {
+    const map = this[kListeners];
+    if (!map) return this;
+    if (event === undefined) {
+      // Snapshot keys first so we're not iterating a Map we're about to clear.
+      const keys = [...map.$keys()];
+      for (let i = 0; i < keys.length; i++) {
+        const name = keys[i];
+        const arr = map.$get(name);
+        if (arr) {
+          for (let j = 0; j < arr.length; j++) {
+            this.removeEventListener(name, arr[j].wrapped);
+          }
+        }
+      }
+      map.$clear();
+    } else {
+      const arr = map.$get(event);
+      if (arr) {
+        for (let i = 0; i < arr.length; i++) {
+          this.removeEventListener(event, arr[i].wrapped);
+        }
+        map.$delete(event);
+      }
+    }
     return this;
   };
 
-  Class.prototype.prependListener = Class.prototype.on;
-  Class.prototype.prependOnceListener = Class.prototype.once;
+  Class.prototype.listenerCount = function (event) {
+    const map = this[kListeners];
+    if (!map) return 0;
+    const arr = map.$get(event);
+    return arr ? arr.length : 0;
+  };
+
+  // Note: Node's MessagePort does NOT expose `listeners` or `rawListeners`,
+  // so we don't install them here either — matching the `in`-check surface
+  // exactly avoids library code that branches on their presence getting the
+  // wrong Node path.
+
+  Class.prototype.eventNames = function () {
+    const map = this[kListeners];
+    if (!map) return [];
+    return [...map.$keys()];
+  };
+
+  Class.prototype.setMaxListeners = function (n) {
+    validateNumber(n, "setMaxListeners", 0);
+    Object.defineProperty(this, kMaxListeners, {
+      value: n,
+      writable: true,
+      configurable: true,
+      enumerable: false,
+    });
+    return this;
+  };
+
+  Class.prototype.getMaxListeners = function () {
+    return this[kMaxListeners] ?? EventEmitter.defaultMaxListeners;
+  };
 }
 
 const _MessagePort = globalThis.MessagePort;
@@ -189,15 +354,22 @@ function fakeParentPort() {
     value: self.removeEventListener.bind(self),
   });
 
-  Object.defineProperty(fake, "removeListener", {
-    value: self.removeEventListener.bind(self),
-    enumerable: false,
+  // `fake` is `Object.create(MessagePort.prototype)` and has no native
+  // internal slots, so the native `MessagePort.prototype.dispatchEvent`
+  // throws "illegal invocation" when called with `fake` as `this`.
+  // `emit()` (added by injectFakeEmitter on the prototype) calls
+  // `this.dispatchEvent(...)`, which would otherwise crash in worker
+  // threads. Route it to the worker's global `self` EventTarget, the same
+  // target where `addEventListener` registers the tracked listeners.
+  Object.defineProperty(fake, "dispatchEvent", {
+    value: self.dispatchEvent.bind(self),
   });
 
-  Object.defineProperty(fake, "addListener", {
-    value: self.addEventListener.bind(self),
-    enumerable: false,
-  });
+  // NOTE: addListener / removeListener deliberately left off the instance —
+  // they're installed on MessagePort.prototype by injectFakeEmitter with
+  // per-instance tracking, and go through the own addEventListener /
+  // removeEventListener above. Shadowing them with raw bindings would skip
+  // tracking and leak wrapped closures on removeListener.
 
   return fake;
 }

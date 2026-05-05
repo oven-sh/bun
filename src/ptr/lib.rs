@@ -1,61 +1,52 @@
+#![allow(unused, non_snake_case, non_camel_case_types, deprecated, clippy::all)]
 //! The `ptr` module contains smart pointer types that are used throughout Bun.
 //!
 //! Per PORTING.md §Pointers, most consumers of `bun.ptr.*` map directly to std
 //! types (`Box`, `Rc`, `Arc`, `Cow`) and `bun_collections` (`TaggedPtr`,
-//! `TaggedPtrUnion`). This crate hosts the intrusive/FFI-crossing variants
-//! (`IntrusiveRc`, `IntrusiveArc`) and the remaining Bun-specific wrappers.
+//! `TaggedPtrUnion`). This crate hosts the intrusive/FFI-crossing variants.
 
-pub mod cow;
-pub use cow::Cow;
+// B-1: gate Phase-A draft bodies (E0658 nightly features, missing imports);
+// expose stable-surface stubs. Full bodies preserved on disk for B-2.
 
-pub mod cow_slice;
-pub use cow_slice::CowSlice;
-pub use cow_slice::CowSliceZ;
-pub type CowString = CowSlice<u8>;
+// Cow/CowSlice → std (PORTING.md says these ARE std::borrow::Cow)
+pub use std::borrow::Cow;
+pub type CowSlice<'a, T> = Cow<'a, [T]>;
+pub type CowSliceZ<'a> = Cow<'a, core::ffi::CStr>;
+pub type CowString<'a> = Cow<'a, [u8]>;
 
-pub mod owned;
-/// Owned pointer allocated with the default allocator.
-pub use owned::Owned;
-/// Owned pointer allocated with a specific type of allocator.
-pub use owned::OwnedIn;
-/// Owned pointer allocated with any `std.mem.Allocator`.
-pub use owned::Dynamic as DynamicOwned;
+#[cfg(any())] pub mod owned;
+pub type Owned<T> = Box<T>;
+pub type OwnedIn<T> = Box<T>; // B-2: arena-aware
+pub type DynamicOwned<T> = Box<T>;
 
-pub mod shared;
-pub use shared::Shared;
-pub use shared::AtomicShared;
-pub mod external_shared;
-pub use external_shared::ExternalShared;
+#[cfg(any())] pub mod shared;
+pub type Shared<T> = std::rc::Rc<T>;
+pub type AtomicShared<T> = std::sync::Arc<T>;
+#[cfg(any())] pub mod external_shared;
+pub struct ExternalShared<T>(*mut T); // B-2: FFI-crossing Arc
 
-pub mod ref_count;
-/// Deprecated; use `Shared(*T)` (i.e. `Rc<T>`).
-#[deprecated]
-pub use ref_count::RefCount;
-/// Deprecated; use `AtomicShared(*T)` (i.e. `Arc<T>`).
-#[deprecated]
-pub use ref_count::ThreadSafeRefCount;
-/// Deprecated; use `Shared(*T)` (i.e. `Rc<T>`).
-#[deprecated]
-pub use ref_count::RefPtr;
-// TODO(port): PORTING.md §Pointers references `bun_ptr::IntrusiveRc<T>` /
-// `bun_ptr::IntrusiveArc<T>` as the Rust mapping for the intrusive `RefCount` /
-// `ThreadSafeRefCount` mixins. Phase B: re-export those names here once
-// `ref_count.rs` defines them.
+#[cfg(any())] pub mod ref_count;
+#[cfg(any())] pub mod raw_ref_count;
+// Intrusive ref-count mixins — B-2 implements; B-1 stubs as marker traits.
+pub trait RefCount { fn ref_(&self); fn deref_(&self); }
+pub trait ThreadSafeRefCount: Send + Sync { fn ref_(&self); fn deref_(&self); }
+pub type RefPtr<T> = *mut T;
+pub type IntrusiveRc<T> = *mut T;
+pub type IntrusiveArc<T> = *mut T;
+#[repr(transparent)] pub struct RawRefCount(core::sync::atomic::AtomicU32);
 
-pub mod raw_ref_count;
-pub use raw_ref_count::RawRefCount;
+#[cfg(any())] pub mod tagged_pointer;
+// 49 addr bits + 15 tag bits packed into u64 (PORTING.md §Type map).
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+pub struct TaggedPointer(pub u64);
+#[repr(transparent)]
+pub struct TaggedPointerUnion<T>(pub TaggedPointer, core::marker::PhantomData<T>); // B-2: tag enum T
 
-pub mod tagged_pointer;
-pub use tagged_pointer::TaggedPointer;
-pub use tagged_pointer::TaggedPointerUnion;
-// TODO(port): PORTING.md maps `bun.ptr.TaggedPointer{,Union}` to
-// `bun_collections::TaggedPtr{,Union}`. Phase B: decide whether the canonical
-// home is here (re-exported by bun_collections) or vice versa.
+#[cfg(any())] pub mod weak_ptr;
+pub type WeakPtr<T> = *mut T; // B-2: intrusive 2-arg weak
 
-pub mod weak_ptr;
-/// Deprecated; use `Shared(*T).Weak` (i.e. `std::rc::Weak`).
-#[deprecated]
-pub use weak_ptr::WeakPtr;
+pub mod meta; // small, used by other crates
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

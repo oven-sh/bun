@@ -1,13 +1,21 @@
-pub mod alloc;
-pub use alloc::CheckedAllocator;
+#![allow(unused, non_snake_case, clippy::all)]
 
-#[path = "CriticalSection.rs"]
-mod critical_section;
-pub use critical_section::CriticalSection;
+// B-1: alloc.rs / CriticalSection.rs reference gated bun_alloc symbols + Output::err.
+// Gate; expose stub types. Bodies preserved for B-2.
+#[cfg(any())] pub mod alloc;
+pub struct CheckedAllocator; // B-2: wraps allocator with debug bookkeeping
 
-#[path = "ThreadLock.rs"]
-mod thread_lock;
-pub use thread_lock::ThreadLock;
+#[cfg(any())] #[path = "CriticalSection.rs"] mod critical_section;
+pub struct CriticalSection; // B-2: re-entrancy guard
+
+#[cfg(any())] #[path = "ThreadLock.rs"] mod thread_lock;
+#[derive(Clone, Copy, Default)] pub struct ThreadLock; // B-2: debug-only owner-thread assert
+impl ThreadLock {
+    pub const fn new() -> Self { Self }
+    pub fn lock(&self) {}
+    pub fn unlock(&self) {}
+    pub fn assert_locked(&self) {}
+}
 
 pub mod thread_id;
 

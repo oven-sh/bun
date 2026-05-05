@@ -95,6 +95,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP2_CONNECT_SCHEME", Error],
   ["ERR_HTTP2_CONNECT_PATH", Error],
   ["ERR_HTTP2_ERROR", Error],
+  ["ERR_HTTP2_FRAME_ERROR", Error],
   ["ERR_HTTP2_HEADER_SINGLE_VALUE", TypeError],
   ["ERR_HTTP2_HEADERS_AFTER_RESPOND", Error],
   ["ERR_HTTP2_HEADERS_SENT", Error],

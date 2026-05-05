@@ -2472,6 +2472,8 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_PUSH_DISABLED, "HTTP/2 client has disabled push streams"_s));
     case ErrorCode::ERR_HTTP2_NESTED_PUSH:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_NESTED_PUSH, "A push stream cannot itself initiate a new push stream."_s));
+    case ErrorCode::ERR_HTTP2_FRAME_ERROR:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_FRAME_ERROR, "Error sending frame"_s));
     case ErrorCode::ERR_HTTP2_HEADERS_AFTER_RESPOND:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_HEADERS_AFTER_RESPOND, "Cannot specify additional headers after response initiated"_s));
     case ErrorCode::ERR_HTTP2_STATUS_101:

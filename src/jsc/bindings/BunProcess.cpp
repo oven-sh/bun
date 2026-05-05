@@ -1560,6 +1560,49 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
     }
 }
 
+// Called from Global.exit() once the process has committed to exiting and the
+// JS event loop will not run again. Any `process.on('SIG...')` handlers we
+// installed (forwardSignal) can no longer deliver events to JS — they just
+// queue into a ring buffer that is never drained and return. For synchronous
+// fatal signals that expect the handler not to return (notably SIGABRT on
+// macOS, where __abort re-raises in a loop), a returning handler livelocks the
+// process at 100% CPU instead of terminating. Reset every signal we installed
+// back to SIG_DFL so faults during teardown (FSEvents thread join, native
+// addon destructors, etc.) terminate the process instead of spinning.
+extern "C" void Bun__resetProcessSignalHandlers()
+{
+#if !OS(WINDOWS)
+    if (!signalToContextIdsMap) {
+        return;
+    }
+    for (auto& entry : *signalToContextIdsMap) {
+        int signalNumber = entry.key;
+        // Probe without modifying so a native addon that replaced our
+        // handler after we installed it keeps its full sigaction (flags,
+        // mask) intact.
+        struct sigaction current;
+        if (sigaction(signalNumber, nullptr, &current) != 0) {
+            continue;
+        }
+        if ((current.sa_flags & SA_SIGINFO) || current.sa_handler != forwardSignal) {
+            continue;
+        }
+        struct sigaction dfl;
+        memset(&dfl, 0, sizeof(dfl));
+        // Bun ignores SIGPIPE at startup (bun_ignore_sigpipe) so writes to a
+        // closed pipe surface as EPIPE; restore that disposition rather than
+        // SIG_DFL, or Output.flush()/atexit stdio flushes after us could kill
+        // the process with signal 13 instead of the requested exit code.
+        dfl.sa_handler = signalNumber == SIGPIPE ? SIG_IGN : SIG_DFL;
+        sigemptyset(&dfl.sa_mask);
+        sigaction(signalNumber, &dfl, nullptr);
+    }
+    // No ->clear(): the map is only otherwise touched from the JS thread,
+    // and Bun__onExit can run this from whichever thread called libc exit();
+    // the sigaction probe above already makes repeat calls a no-op.
+#endif
+}
+
 Process::~Process()
 {
 }

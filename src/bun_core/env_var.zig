@@ -42,6 +42,13 @@ pub const BUN_DEBUG = New(kind.string, "BUN_DEBUG", .{});
 pub const BUN_DEBUG_ALL = New(kind.boolean, "BUN_DEBUG_ALL", .{});
 pub const BUN_DEBUG_CSS_ORDER = New(kind.boolean, "BUN_DEBUG_CSS_ORDER", .{ .default = false });
 pub const BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE = New(kind.boolean, "BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE", .{ .default = false });
+/// Testing hook for `os.cpus()` on Linux: if set, `cpusImplLinux` reads from
+/// `<root>/proc/stat`, `<root>/proc/cpuinfo`, and
+/// `<root>/sys/devices/system/cpu/...` instead of the real kernel paths. Used
+/// by `test/js/node/os/os.test.js` to cover systems with non-contiguous CPU
+/// numbering (e.g. dual-socket EPYC where the `processor:` field jumps from
+/// 63 to 128) without needing that hardware. See #29689.
+pub const BUN_DEBUG_CPUS_PROCFS_ROOT = New(kind.string, "BUN_DEBUG_CPUS_PROCFS_ROOT", .{});
 /// Testing hook for `bun build --compile`: force `hostUsesNixStoreInterpreter()`
 /// to return true without mutating `/etc/NIXOS` on the shared rootfs. Used by
 /// `test/regression/issue/29290.test.ts` to exercise the Nix-host branch.

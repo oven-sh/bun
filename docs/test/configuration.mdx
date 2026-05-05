@@ -112,6 +112,22 @@ bun test --path-ignore-patterns 'vendor/**' --path-ignore-patterns 'fixtures/**'
 
 Bun prunes directories matching a pattern during scanning and never traverses their contents, so ignoring a large directory tree is cheap.
 
+#### Default Patterns
+
+If `pathIgnorePatterns` is not configured, Bun uses these defaults:
+
+```toml title="implicit defaults"
+pathIgnorePatterns = ["**/dist/**", "**/build/**"]
+```
+
+This prevents compiled copies of test files (for example, from `tsc` writing to `build/`) from being picked up alongside the originals in `src/`. Providing any explicit value -- including an empty array -- replaces the default list:
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+# Run tests from `dist/` and `build/` as well as everywhere else.
+pathIgnorePatterns = []
+```
+
 #### Common Use Cases
 
 ```toml title="bunfig.toml" icon="settings"

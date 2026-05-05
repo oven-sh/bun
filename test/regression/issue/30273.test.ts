@@ -109,8 +109,9 @@ client.destroy();
     console.log("run stdout:", stdout);
     console.log("run stderr:", stderr);
   }
-  expect(exitCode).toBe(0);
 
+  // Parse the fixture's JSON output before asserting on exitCode so that a
+  // starvation-induced timeout produces a more useful diff than "exit 1".
   const line = stdout.trim().split("\n").at(-1)!;
   const { TIMER_MS, burstEnd, firedAt } = JSON.parse(line) as {
     TIMER_MS: number;
@@ -130,4 +131,6 @@ client.destroy();
   // Asserting that firedAt is below 25% of burstEnd cleanly separates the
   // two regimes in both debug and release builds.
   expect(firedAt).toBeLessThan(burstEnd * 0.25);
+
+  expect(exitCode).toBe(0);
 }, 120_000);

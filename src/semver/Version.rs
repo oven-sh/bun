@@ -1,8 +1,7 @@
 use core::cmp::Ordering;
 use core::fmt;
 
-use bun_core::Output;
-use bun_str::strings;
+use bun_string::strings;
 
 use crate::ExternalString;
 use crate::SlicedString;
@@ -113,7 +112,7 @@ impl<T: VersionInt> VersionType<T> {
 
     #[inline]
     pub fn len(&self) -> u32 {
-        self.tag.build.len() + self.tag.pre.len()
+        (self.tag.build.len() + self.tag.pre.len()) as u32
     }
 
     pub fn fmt<'a>(self, input: &'a [u8]) -> Formatter<'a, T> {
@@ -203,11 +202,11 @@ impl<T: VersionInt> VersionType<T> {
         that
     }
 
-    pub fn eql(lhs: Self, rhs: Self) -> bool {
-        lhs.major == rhs.major
-            && lhs.minor == rhs.minor
-            && lhs.patch == rhs.patch
-            && rhs.tag.eql(lhs.tag)
+    pub fn eql(self, rhs: Self) -> bool {
+        self.major == rhs.major
+            && self.minor == rhs.minor
+            && self.patch == rhs.patch
+            && rhs.tag.eql(self.tag)
     }
 
     /// Modified version of pnpm's `whichVersionIsPinned`
@@ -220,8 +219,9 @@ impl<T: VersionInt> VersionType<T> {
     ///    from package.json)
     ///
     /// The goal of this function is to avoid a complete parse of semver that's unused
+    #[allow(unused_assignments)]
     pub fn which_version_is_pinned(input: &[u8]) -> PinnedVersion {
-        let version = strings::trim(input, strings::WHITESPACE_CHARS);
+        let version = strings::trim(input, &strings::WHITESPACE_CHARS);
 
         let mut i: usize = 0;
 
@@ -381,7 +381,7 @@ impl<T: VersionInt> VersionType<T> {
     }
 
     pub fn is_tagged_version_only(input: &[u8]) -> bool {
-        let version = strings::trim(input, strings::WHITESPACE_CHARS);
+        let version = strings::trim(input, &strings::WHITESPACE_CHARS);
 
         // first needs to be a-z
         if version.is_empty() || !version[0].is_ascii_alphabetic() {
@@ -448,6 +448,7 @@ impl<T: VersionInt> VersionType<T> {
         self.tag.order_without_build(rhs.tag, lhs_buf, rhs_buf)
     }
 
+    #[allow(unused_assignments)]
     pub fn parse(sliced_string: SlicedString) -> ParseResult<T> {
         let input = sliced_string.slice;
         let mut result = ParseResult::<T>::default();
@@ -685,12 +686,10 @@ impl<T: VersionInt> VersionType<T> {
                 None => {
                     // TODO(port): Output.prettyErrorln with @errorName — Rust parse
                     // error doesn't carry a Zig-style tag name.
-                    Output::pretty_errorln(
-                        format_args!(
-                            "ERROR parsing version: \"{}\", bytes: {}",
-                            bstr::BStr::new(input),
-                            bstr::BStr::new(&bytes[0..byte_i as usize]),
-                        ),
+                    bun_core::pretty_errorln!(
+                        "ERROR parsing version: \"{}\", bytes: {}",
+                        bstr::BStr::new(input),
+                        bstr::BStr::new(&bytes[0..byte_i as usize]),
                     );
                     Some(T::ZERO)
                 }
@@ -746,7 +745,10 @@ pub struct DiffFormatter<'a, T: VersionInt> {
 
 impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if !Output::enable_ansi_colors_stdout() {
+        use core::fmt::Write as _;
+        use core::sync::atomic::Ordering as AtomicOrdering;
+
+        if !bun_core::output::ENABLE_ANSI_COLORS_STDOUT.load(AtomicOrdering::Relaxed) {
             // print normally if no colors
             let formatter = Formatter { version: self.version, input: self.buf };
             return fmt::Display::fmt(&formatter, writer);
@@ -760,12 +762,12 @@ impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
         )
         .unwrap_or(ChangedVersion::None);
 
-        // TODO(port): Output.prettyFmt is a comptime ANSI-tag expander. Phase B
-        // should provide a `bun_core::pretty_fmt!` macro yielding `&'static str`.
+        // TODO(port): Output.prettyFmt is a comptime ANSI-tag expander. `pretty_fmt!`
+        // currently passes the literal through; the proc-macro substitution lands later.
         match diff {
             ChangedVersion::Major => write!(
                 writer,
-                concat!(bun_core::pretty_fmt!("<r><b><red>"), "{}.{}.{}"),
+                concat!(bun_core::pretty_fmt!("<r><b><red>", true), "{}.{}.{}"),
                 self.version.major, self.version.minor, self.version.patch,
             )?,
             ChangedVersion::Minor => {
@@ -773,9 +775,9 @@ impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
                     write!(
                         writer,
                         concat!(
-                            bun_core::pretty_fmt!("<d>"),
+                            bun_core::pretty_fmt!("<d>", true),
                             "{}.",
-                            bun_core::pretty_fmt!("<r><b><red>"),
+                            bun_core::pretty_fmt!("<r><b><red>", true),
                             "{}.{}"
                         ),
                         self.version.major, self.version.minor, self.version.patch,
@@ -784,9 +786,9 @@ impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
                     write!(
                         writer,
                         concat!(
-                            bun_core::pretty_fmt!("<d>"),
+                            bun_core::pretty_fmt!("<d>", true),
                             "{}.",
-                            bun_core::pretty_fmt!("<r><b><yellow>"),
+                            bun_core::pretty_fmt!("<r><b><yellow>", true),
                             "{}.{}"
                         ),
                         self.version.major, self.version.minor, self.version.patch,
@@ -798,9 +800,9 @@ impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
                     write!(
                         writer,
                         concat!(
-                            bun_core::pretty_fmt!("<d>"),
+                            bun_core::pretty_fmt!("<d>", true),
                             "{}.{}.",
-                            bun_core::pretty_fmt!("<r><b><red>"),
+                            bun_core::pretty_fmt!("<r><b><red>", true),
                             "{}"
                         ),
                         self.version.major, self.version.minor, self.version.patch,
@@ -809,9 +811,9 @@ impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
                     write!(
                         writer,
                         concat!(
-                            bun_core::pretty_fmt!("<d>"),
+                            bun_core::pretty_fmt!("<d>", true),
                             "{}.{}.",
-                            bun_core::pretty_fmt!("<r><b><green>"),
+                            bun_core::pretty_fmt!("<r><b><green>", true),
                             "{}"
                         ),
                         self.version.major, self.version.minor, self.version.patch,
@@ -820,7 +822,7 @@ impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
             }
             ChangedVersion::None | ChangedVersion::Pre | ChangedVersion::Build => write!(
                 writer,
-                concat!(bun_core::pretty_fmt!("<d>"), "{}.{}.{}"),
+                concat!(bun_core::pretty_fmt!("<d>", true), "{}.{}.{}"),
                 self.version.major, self.version.minor, self.version.patch,
             )?,
         }
@@ -838,7 +840,7 @@ impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
                 for (i, &c) in pre.iter().enumerate() {
                     if !set_color && i < other_pre.len() && c != other_pre[i] {
                         set_color = true;
-                        writer.write_str(bun_core::pretty_fmt!("<r><b><red>"))?;
+                        writer.write_str(bun_core::pretty_fmt!("<r><b><red>", true))?;
                     }
                     if first {
                         first = false;
@@ -849,7 +851,7 @@ impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
             } else {
                 write!(
                     writer,
-                    concat!(bun_core::pretty_fmt!("<r><b><red>"), "-{}"),
+                    concat!(bun_core::pretty_fmt!("<r><b><red>", true), "-{}"),
                     self.version.tag.pre.fmt(self.buf),
                 )?;
                 set_color = true;
@@ -865,7 +867,7 @@ impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
                 for (i, &c) in build.iter().enumerate() {
                     if !set_color && i < other_build.len() && c != other_build[i] {
                         set_color = true;
-                        writer.write_str(bun_core::pretty_fmt!("<r><b><red>"))?;
+                        writer.write_str(bun_core::pretty_fmt!("<r><b><red>", true))?;
                     }
                     if first {
                         first = false;
@@ -877,7 +879,7 @@ impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
                 if !set_color {
                     write!(
                         writer,
-                        concat!(bun_core::pretty_fmt!("<r><b><red>"), "+{}"),
+                        concat!(bun_core::pretty_fmt!("<r><b><red>", true), "+{}"),
                         self.version.tag.build.fmt(self.buf),
                     )?;
                 } else {
@@ -886,7 +888,7 @@ impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
             }
         }
 
-        writer.write_str(bun_core::pretty_fmt!("<r>"))?;
+        writer.write_str(bun_core::pretty_fmt!("<r>", true))?;
         Ok(())
     }
 }

@@ -469,7 +469,10 @@ impl ThreadPool {
         if self.is_running.load(Ordering::Relaxed) {
             self.wait_group.add(batch.len);
         } else {
-            self.wait_group.add_unsynchronized(batch.len);
+            // PERF(port): Zig used `add_unsynchronized` (non-atomic `+=`) when the
+            // pool isn't running yet. `&self` precludes `&mut WaitGroup` here, so
+            // fall back to the relaxed atomic add — semantically identical.
+            self.wait_group.add(batch.len);
         }
 
         let current: *mut Thread = 'blk: {
@@ -517,11 +520,15 @@ impl ThreadPool {
     }
 
     /// Wait for all tasks to complete, then shut down and deinit the thread pool.
-    pub fn wait_and_deinit(self) {
-        // PORT NOTE: Zig took `*ThreadPool` and called deinit() in-place. In Rust,
-        // consuming `self` runs `Drop` (shutdown + join) at end of scope.
+    ///
+    /// Takes `&mut self` (NOT by-value): worker threads hold `*const ThreadPool`
+    /// pointing at this struct's address; consuming `self` would move it to a new
+    /// stack slot and leave workers with dangling pointers (UAF + deadlock).
+    /// Zig `waitAndDeinit(self: *ThreadPool)` operates in place — match that.
+    pub fn wait_and_deinit(&mut self) {
         self.wait_for_all();
-        // Drop runs shutdown() + join().
+        self.shutdown();
+        self.join();
     }
 
     fn force_spawn(&self) {
@@ -899,7 +906,11 @@ impl Thread {
 
     /// Thread entry point which runs a worker for the ThreadPool
     unsafe fn run(thread_pool: *const ThreadPool) {
-        bun_alloc::mimalloc::mi_thread_set_in_threadpool();
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_alloc::mimalloc
+            bun_alloc::mimalloc::mi_thread_set_in_threadpool();
+        }
 
         {
             let mut counter_buf = [0u8; 100];
@@ -915,11 +926,15 @@ impl Thread {
                     Err(_) => 0,
                 }
             };
-            let named: &[u8] = if len > 0 {
-                counter_buf[len] = 0;
-                &counter_buf[..len]
-            } else {
-                b"Bun Pool"
+            // SAFETY: `counter_buf[len] == 0` (set just below for len>0; the literal
+            // for the fallback is NUL-terminated), and the buffer outlives the call.
+            let named: &bun_core::ZStr = unsafe {
+                if len > 0 {
+                    counter_buf[len] = 0;
+                    bun_core::ZStr::from_raw(counter_buf.as_ptr(), len)
+                } else {
+                    bun_core::ZStr::from_raw(b"Bun Pool\0".as_ptr(), 8)
+                }
             };
             Output::Source::configure_named_thread(named);
         }
@@ -1203,7 +1218,10 @@ pub mod node {
     /// An unbounded multi-producer-(non blocking)-multi-consumer queue of Node pointers.
     pub struct Queue {
         stack: AtomicUsize,
-        cache: *mut Node,
+        // PORT NOTE: Zig's plain `?*Node` is mutated through `&self` while
+        // `IS_CONSUMING` is held. UnsafeCell gives interior mutability without
+        // an atomic — the `stack` Acquire/Release barriers order accesses.
+        cache: core::cell::UnsafeCell<*mut Node>,
     }
 
     // SAFETY: Queue is a lock-free MPMC queue; raw `cache` is guarded by the
@@ -1215,7 +1233,7 @@ pub mod node {
         fn default() -> Self {
             Queue {
                 stack: AtomicUsize::new(0),
-                cache: ptr::null_mut(),
+                cache: core::cell::UnsafeCell::new(ptr::null_mut()),
             }
         }
     }
@@ -1284,7 +1302,7 @@ pub mod node {
                 ) {
                     Ok(_) => {
                         // SAFETY: we now hold IS_CONSUMING; cache is exclusively ours.
-                        let cache = unsafe { ptr::read(&self.cache) };
+                        let cache = unsafe { *self.cache.get() };
                         return Ok(if !cache.is_null() {
                             cache
                         } else {
@@ -1307,7 +1325,7 @@ pub mod node {
             // Release the consumer with a release barrier to ensure cache/node accesses
             // happen before the consumer was released and before the next consumer starts using the cache.
             // SAFETY: we hold IS_CONSUMING; cache is exclusively ours until fetch_sub releases it.
-            unsafe { ptr::write(&self.cache as *const *mut Node as *mut *mut Node, consumer) };
+            unsafe { *self.cache.get() = consumer };
             let stack = self.stack.fetch_sub(remove, Ordering::Release);
             debug_assert!(stack & remove != 0);
         }

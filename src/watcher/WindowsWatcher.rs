@@ -4,13 +4,46 @@ use core::mem::size_of;
 use core::ptr;
 
 use bun_paths::{self as path, PathBuffer, WPathBuffer};
-use bun_str::strings;
-use bun_sys::windows as w;
-use bun_sys::windows::HANDLE;
+use bun_core::strings;
 use bun_threading::Mutex;
-use crate::{WatchEvent, WatchItemIndex, Watcher};
+use crate::watcher_impl::{WatchEvent, WatchItemIndex, Watcher};
 
-bun_output::declare_scope!(watcher, visible);
+bun_core::declare_scope!(watcher, visible);
+
+pub type Platform = WindowsWatcher;
+
+// TODO(b2-blocked): bun_sys::windows — entire module body below depends on the
+// gated `bun_sys::windows` surface (HANDLE, OVERLAPPED, FILE_ACTION_*, kernel32
+// extern fns). Re-gated wholesale; Phase-A draft preserved.
+#[cfg(any())]
+use bun_sys::windows as w;
+#[cfg(any())]
+use bun_sys::windows::HANDLE;
+
+#[cfg(not(any()))]
+#[derive(Default)]
+pub struct WindowsWatcher(());
+#[cfg(not(any()))]
+impl WindowsWatcher {
+    pub fn init(&mut self, _root: &[u8]) -> Result<(), bun_core::Error> {
+        todo!("WindowsWatcher::init — bun_sys::windows")
+    }
+    pub fn stop(&mut self) {}
+}
+#[cfg(not(any()))]
+pub fn watch_loop_cycle(_this: &mut Watcher) -> bun_sys::Result<()> {
+    todo!("watch_loop_cycle — bun_sys::windows")
+}
+
+pub type EventListIndex = core::ffi::c_int;
+
+// ─── Phase-A draft (re-gated) ─────────────────────────────────────────────
+// Everything below depends on `bun_sys::windows`; preserved verbatim inside
+// a never-compiled module so B-2 un-gating on Windows can pick it up once
+// the lower-tier surface lands.
+#[cfg(any())]
+mod draft {
+use super::*;
 
 pub struct WindowsWatcher {
     pub mutex: Mutex,
@@ -483,6 +516,8 @@ pub fn create_watch_event(event: &FileEvent, index: WatchItemIndex) -> WatchEven
         ..Default::default()
     }
 }
+
+} // mod draft
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

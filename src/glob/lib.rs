@@ -1,60 +1,20 @@
 // Port of src/glob/glob.zig
+#![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
 
-// ──────────────────────────────────────────────────────────────────────────
-// B-1 GATE: Phase-A draft modules preserved behind #[cfg(any())].
-// Stub surface exposed below. Un-gate in B-2.
-// ──────────────────────────────────────────────────────────────────────────
-
-#[cfg(any())]
 pub mod matcher;
-#[cfg(any())]
 #[path = "GlobWalker.rs"]
 pub mod glob_walker;
-
-// ─── stub: matcher ────────────────────────────────────────────────────────
-#[cfg(not(any()))]
-pub mod matcher {
-    // TODO(b1): bun_str::strings missing; bun_collections::BoundedArray lacks new/push/pop/len/as_slice
-    #[derive(Copy, Clone, Eq, PartialEq)]
-    pub enum MatchResult {
-        NoMatch,
-        Match,
-        NegateNoMatch,
-        NegateMatch,
-    }
-    impl MatchResult {
-        pub fn matches(self) -> bool {
-            matches!(self, MatchResult::Match | MatchResult::NegateMatch)
-        }
-    }
-    pub fn r#match(_glob: &[u8], _path: &[u8]) -> MatchResult {
-        todo!("b1-stub: matcher::match")
-    }
-}
-
-// ─── stub: glob_walker ────────────────────────────────────────────────────
-#[cfg(not(any()))]
-pub mod glob_walker {
-    use core::marker::PhantomData;
-    pub struct SyscallAccessor;
-    pub struct GlobWalker_<A, const SENTINEL: bool>(PhantomData<A>);
-    impl<A, const SENTINEL: bool> GlobWalker_<A, SENTINEL> {
-        pub fn new() -> Self {
-            todo!("b1-stub: GlobWalker_::new")
-        }
-    }
-}
 
 // `match` is a Rust keyword; re-export with raw identifier.
 pub use crate::matcher::r#match;
 pub use crate::glob_walker as walk;
-pub use walk::GlobWalker_ as GlobWalker;
+pub use walk::GlobWalker;
 
-// TODO(port): Zig passes `null` as the first comptime arg to `GlobWalker_(null, Accessor, sentinel)`.
-// The Rust generic struct shape for that param is unknown here (likely an optional ignore-filter);
-// dropped for now — verify against glob_walker.rs in Phase B.
-pub type BunGlobWalker = walk::GlobWalker_<walk::SyscallAccessor, false>;
-pub type BunGlobWalkerZ = walk::GlobWalker_<walk::SyscallAccessor, true>;
+// PORT NOTE: Zig passes `null` as the first comptime arg to `GlobWalker_(null, Accessor, sentinel)`.
+// In the port, `ignore_filter_fn` is a runtime fn-pointer field (const-generic fn ptrs are
+// unstable), so the first param is dropped from the type and supplied at `init()`.
+pub type BunGlobWalker = walk::GlobWalker<walk::SyscallAccessor, false>;
+pub type BunGlobWalkerZ = walk::GlobWalker<walk::SyscallAccessor, true>;
 
 /// Returns true if the given string contains glob syntax,
 /// excluding those escaped with backslashes

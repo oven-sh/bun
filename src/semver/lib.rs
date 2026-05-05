@@ -10,32 +10,10 @@ pub use crate::semver_query::Query;
 // PORT NOTE: `SemverObject` re-export from `../semver_jsc/` deleted — *_jsc
 // extension traits live in the `bun_semver_jsc` crate, not here.
 
-// TODO(b1): Phase-A draft bodies preserved behind cfg(any()); un-gate in B-2.
-#[cfg(any())] #[path = "Version.rs"] pub mod version;
-#[cfg(any())] #[path = "SemverRange.rs"] pub mod semver_range;
-#[cfg(any())] #[path = "SemverQuery.rs"] pub mod semver_query;
+#[path = "Version.rs"] pub mod version;
+#[path = "SemverRange.rs"] pub mod semver_range;
+#[path = "SemverQuery.rs"] pub mod semver_query;
 
-// ── B-1 stub surface for gated modules ────────────────────────────────────
-#[cfg(not(any()))]
-pub mod version {
-    #[repr(C)] #[derive(Copy, Clone, Default)]
-    pub struct VersionType<T> { _p: core::marker::PhantomData<T> }
-    pub type Version = VersionType<u64>;
-}
-#[cfg(not(any()))]
-pub mod semver_range {
-    #[derive(Copy, Clone, Default)]
-    pub struct Range;
-}
-#[cfg(not(any()))]
-pub mod semver_query {
-    #[derive(Default)]
-    pub struct Query;
-    pub mod token {
-        #[derive(Copy, Clone, Default)]
-        pub struct Wildcard;
-    }
-}
 pub use crate::semver_range as range;
 pub use crate::semver_query as query;
 
@@ -625,20 +603,14 @@ pub mod semver_string {
 
     impl<'a> fmt::Display for JsonFormatter<'a> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            // TODO(b1): bun_core::fmt gated out in lower tier; preserve draft behind cfg(any())
-            #[cfg(any())]
-            {
-                return write!(
-                    f,
-                    "{}",
-                    bun_core::fmt::format_json_string_utf8(
-                        self.str.slice(self.buf),
-                        bun_core::fmt::JsonStringOptions { quote: self.opts.quote },
-                    ),
-                );
-            }
-            #[cfg(not(any()))]
-            { let _ = f; todo!("b1: JsonFormatter Display") }
+            write!(
+                f,
+                "{}",
+                bun_core::fmt::format_json_string_utf8(
+                    self.str.slice(self.buf),
+                    bun_core::fmt::JSONFormatterUTF8Options { quote: self.opts.quote },
+                ),
+            )
         }
     }
 

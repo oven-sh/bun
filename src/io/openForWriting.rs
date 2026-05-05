@@ -1,5 +1,5 @@
-use bun_str::ZStr;
-use bun_sys::{self, Fd, Mode};
+use bun_core::ZStr;
+use bun_sys::{self, Fd, FdExt, Mode};
 
 // PORT NOTE: Zig's `input_path: anytype` type-switches on `@TypeOf(input_path)` between
 // `bun.webcore.PathOrFileDescriptor` and `[:0]const u8` / `[:0]u8`. Rust has no type-switch,
@@ -27,17 +27,23 @@ impl OpenForWritingInput for crate::PathOrFileDescriptor {
         is_nonblocking: &mut bool,
         _openat: &dyn Fn(Fd, &ZStr, i32, Mode) -> bun_sys::Result<Fd>,
     ) -> bun_sys::Result<Fd> {
-        use crate::PathOrFileDescriptor::*;
-        match self {
-            Path(path) => {
-                *is_nonblocking = true;
-                bun_sys::openat_a(dir, path.slice(), input_flags, mode)
-            }
-            Fd(fd_) => {
-                let duped = bun_sys::dup_with_flags(*fd_, 0);
-                duped
+        #[cfg(any())]
+        {
+            use crate::PathOrFileDescriptor::*;
+            match self {
+                Path(path) => {
+                    *is_nonblocking = true;
+                    // TODO(b2-blocked): bun_sys::openat_a
+                    bun_sys::openat_a(dir, path.slice(), input_flags, mode)
+                }
+                Fd(fd_) => {
+                    // TODO(b2-blocked): bun_sys::dup_with_flags
+                    bun_sys::dup_with_flags(*fd_, 0)
+                }
             }
         }
+        #[cfg(not(any()))]
+        { let _ = (dir, input_flags, mode, is_nonblocking); todo!("b2-blocked: bun_sys::openat_a / bun_sys::dup_with_flags") }
     }
 }
 
@@ -134,30 +140,32 @@ where
             }
             Ok(stat) => {
                 // pollable.* = bun.sys.isPollable(stat.mode);
-                *pollable = is_pollable(stat.mode);
+                *pollable = is_pollable(stat.st_mode as Mode);
                 if !*pollable {
-                    // TODO(port): std.posix.isatty — route through bun_sys
-                    isatty = bun_sys::posix::isatty(fd.native());
+                    isatty = bun_sys::isatty(fd);
                 }
 
                 if isatty {
                     *pollable = true;
                 }
 
-                *is_socket = bun_sys::S::is_sock(stat.mode);
+                *is_socket = (stat.st_mode as u32 & bun_sys::S::IFMT) == bun_sys::S::IFSOCK;
 
+                #[cfg(any())]
                 if force_sync || isatty {
                     // Prevents interleaved or dropped stdout/stderr output for terminals.
                     // As noted in the following reference, local TTYs tend to be quite fast and
                     // this behavior has become expected due historical functionality on OS X,
                     // even though it was originally intended to change in v1.0.2 (Libuv 1.2.1).
                     // Ref: https://github.com/nodejs/node/pull/1771#issuecomment-119351671
+                    // TODO(b2-blocked): bun_sys::update_nonblocking
                     let _ = bun_sys::update_nonblocking(fd, false);
                     is_nonblocking = false;
                     // this.force_sync = true;
                     // this.writer.force_sync = true;
                     on_force_sync_or_isa_tty(ctx);
                 } else if !is_nonblocking {
+                    // TODO(b2-blocked): bun_sys::get_fcntl_flags
                     let flags = match bun_sys::get_fcntl_flags(fd) {
                         Ok(flags) => flags,
                         Err(err) => {
@@ -168,10 +176,16 @@ where
                     is_nonblocking = (flags & bun_sys::O::NONBLOCK) != 0;
 
                     if !is_nonblocking {
+                        // TODO(b2-blocked): bun_sys::set_nonblocking
                         if bun_sys::set_nonblocking(fd).is_ok() {
                             is_nonblocking = true;
                         }
                     }
+                }
+                #[cfg(not(any()))]
+                {
+                    // TODO(b2-blocked): bun_sys::update_nonblocking / get_fcntl_flags / set_nonblocking
+                    let _ = (force_sync, ctx, on_force_sync_or_isa_tty);
                 }
 
                 *out_nonblocking = is_nonblocking && *pollable;
@@ -183,6 +197,7 @@ where
 
     #[cfg(windows)]
     {
+        // TODO(b2-blocked): bun_sys::windows::GetFileType
         *pollable = (bun_sys::windows::GetFileType(fd.cast()) & bun_sys::windows::FILE_TYPE_PIPE) != 0 && !force_sync;
         return Ok(fd);
     }

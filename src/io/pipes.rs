@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 
-use bun_sys::Fd;
+use bun_sys::{Fd, FdExt};
 
 // CYCLEBREAK: FilePoll is opaque here (concrete type lives in bun_aio, T3).
 use crate::{FilePoll, FilePollFlag};

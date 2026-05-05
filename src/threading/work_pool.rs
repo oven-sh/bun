@@ -1,5 +1,4 @@
-use core::mem::MaybeUninit;
-use std::sync::Once;
+use std::sync::OnceLock;
 
 use crate::ThreadPool;
 
@@ -8,28 +7,35 @@ pub use crate::thread_pool::Task;
 
 pub struct WorkPool;
 
-static mut POOL: MaybeUninit<ThreadPool> = MaybeUninit::uninit();
-static CREATE_ONCE: Once = Once::new();
+// PORT NOTE: Zig used `bun.once` (a `Lock`+bool+data lazy-init pattern). Per
+// PORTING.md §Concurrency, that maps to `std::sync::OnceLock<T>` — std handles
+// the double-checked locking and gives a `&'static ThreadPool` directly.
+static POOL: OnceLock<ThreadPool> = OnceLock::new();
 
 #[cold]
-fn create() {
-    // SAFETY: called exactly once via CREATE_ONCE; no other reference to POOL exists yet.
-    unsafe {
-        POOL.write(ThreadPool::init(crate::thread_pool::Options {
+fn create() -> ThreadPool {
+    #[cfg(any())]
+    {
+        // TODO(b2-blocked): bun_core::get_thread_count
+        return ThreadPool::init(crate::thread_pool::Config {
             max_threads: bun_core::get_thread_count(),
-            stack_size: ThreadPool::DEFAULT_THREAD_STACK_SIZE,
-        }));
+            stack_size: crate::thread_pool::DEFAULT_THREAD_STACK_SIZE,
+        });
     }
+    // TODO(b2-blocked): bun_core::get_thread_count — fallback to available_parallelism.
+    let max_threads = std::thread::available_parallelism()
+        .map(|n| n.get() as u32)
+        .unwrap_or(1);
+    ThreadPool::init(crate::thread_pool::Config {
+        max_threads,
+        stack_size: crate::thread_pool::DEFAULT_THREAD_STACK_SIZE,
+    })
 }
 
 impl WorkPool {
     #[inline]
     pub fn get() -> &'static ThreadPool {
-        CREATE_ONCE.call_once(create);
-        // SAFETY: CREATE_ONCE guarantees POOL is initialized; ThreadPool is internally
-        // synchronized so a shared reference is sound for concurrent schedule() calls.
-        // TODO(port): if ThreadPool::schedule needs &mut self, change to *mut ThreadPool.
-        unsafe { (*&raw const POOL).assume_init_ref() }
+        POOL.get_or_init(create)
     }
 
     pub fn schedule_batch(batch: Batch) {
@@ -53,7 +59,7 @@ impl WorkPool {
             function: fn(C),
         }
 
-        fn callback<C>(task: *mut Task) {
+        unsafe fn callback<C>(task: *mut Task) {
             // SAFETY: `task` points to the `task` field of a `TaskType<C>` allocated below
             // via Box::into_raw; recover the parent pointer, run the user fn, then free.
             unsafe {
@@ -67,8 +73,8 @@ impl WorkPool {
 
         let task_ = Box::into_raw(Box::new(TaskType::<C> {
             task: Task {
+                node: crate::thread_pool::Node::default(),
                 callback: callback::<C>,
-                ..Default::default()
             },
             context,
             function,
@@ -84,5 +90,5 @@ impl WorkPool {
 //   source:     src/threading/work_pool.zig (58 lines)
 //   confidence: medium
 //   todos:      1
-//   notes:      bun.once → std::sync::Once + static MaybeUninit; ThreadPool::Options/init/schedule signatures assumed; comptime fn param stored as runtime field
+//   notes:      bun.once → std::sync::OnceLock (§Concurrency); comptime fn param stored as runtime field
 // ──────────────────────────────────────────────────────────────────────────

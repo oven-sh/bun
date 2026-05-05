@@ -4,35 +4,14 @@
 
 #![allow(unused, nonstandard_style)]
 
-// TODO(b1): bun_boringssl_sys missing — gated; un-gate in B-2
-#[cfg(any())]
 use bun_boringssl_sys as boring;
-// TODO(b1): bun_sha_hmac missing — gated; un-gate in B-2
-#[cfg(any())]
 use bun_sha_hmac::hmac;
-// TODO(b1): bun_str missing — gated; un-gate in B-2
-#[cfg(any())]
-use bun_str::strings;
+use bun_string::strings;
 
 // CYCLEBREAK: TYPE_ONLY — EVP::Algorithm moved down to bun_sha_hmac (move-in pass defines it there)
-#[cfg(any())]
-use bun_sha_hmac::Algorithm;
-// CYCLEBREAK: TYPE_ONLY — node::Encoding moved down to bun_str (move-in pass defines it there)
-#[cfg(any())]
-use bun_str::Encoding as NodeEncoding;
-
-// ──────────────────────────────────────────────────────────────────────────
-// B-1 stub surface (opaque local stand-ins for gated deps; remove in B-2)
-// ──────────────────────────────────────────────────────────────────────────
-/// TODO(b1): stub for `bun_sha_hmac::Algorithm`
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Algorithm(());
-impl Algorithm {
-    pub const Sha256: Self = Self(());
-}
-/// TODO(b1): stub for `bun_str::Encoding`
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct NodeEncoding(());
+use bun_sha_hmac::evp::Algorithm;
+// CYCLEBREAK: TYPE_ONLY — node::Encoding moved down to bun_string (move-in pass defines it there)
+use bun_string::NodeEncoding;
 
 /// Default expiration time for tokens (24 hours)
 pub const DEFAULT_EXPIRATION_MS: u64 = 24 * 60 * 60 * 1000;
@@ -100,17 +79,10 @@ pub enum TokenFormat {
 
 impl TokenFormat {
     pub fn to_node_encoding(self) -> NodeEncoding {
-        #[cfg(any())]
-        {
-            match self {
-                TokenFormat::Base64 => NodeEncoding::Base64,
-                TokenFormat::Base64Url => NodeEncoding::Base64Url,
-                TokenFormat::Hex => NodeEncoding::Hex,
-            }
-        }
-        #[cfg(all())]
-        {
-            todo!("b1-stub: TokenFormat::to_node_encoding")
+        match self {
+            TokenFormat::Base64 => NodeEncoding::Base64,
+            TokenFormat::Base64Url => NodeEncoding::Base64url,
+            TokenFormat::Hex => NodeEncoding::Hex,
         }
     }
 }
@@ -128,8 +100,11 @@ pub fn generate<'a>(
 ) -> Result<&'a mut [u8], Error> {
     #[cfg(all())]
     {
+        // TODO(b2-blocked): bun_core::csprng
+        // TODO(b2-blocked): bun_core::time::milli_timestamp
+        // TODO(b2-blocked): bun_boringssl_sys::EVP_MAX_MD_SIZE
         let _ = (options, out_buffer);
-        return todo!("b1-stub: csrf::generate — gated on bun_sha_hmac/bun_boringssl_sys");
+        return todo!("b2-blocked: csrf::generate — bun_core::csprng / bun_core::time / bun_boringssl_sys");
     }
     #[cfg(any())]
     {
@@ -138,7 +113,6 @@ pub fn generate<'a>(
     bun_core::csprng(&mut nonce);
 
     // Current timestamp in milliseconds
-    // TODO(port): verify bun_core::time::milli_timestamp() exists (Zig: std.time.milliTimestamp())
     let timestamp: i64 = bun_core::time::milli_timestamp();
     let timestamp_u64: u64 = timestamp as u64; // @bitCast i64 -> u64
 
@@ -181,8 +155,11 @@ pub fn generate<'a>(
 pub fn verify(options: VerifyOptions<'_>) -> bool {
     #[cfg(all())]
     {
+        // TODO(b2-blocked): bun_core::time::milli_timestamp
+        // TODO(b2-blocked): bun_boringssl_sys::EVP_MAX_MD_SIZE
+        // TODO(b2-blocked): bun_boringssl_sys::CRYPTO_memcmp
         let _ = options;
-        return todo!("b1-stub: csrf::verify — gated on bun_sha_hmac/bun_boringssl_sys/bun_str");
+        return todo!("b2-blocked: csrf::verify — bun_core::time / bun_boringssl_sys");
     }
     #[cfg(any())]
     {
@@ -246,7 +223,6 @@ pub fn verify(options: VerifyOptions<'_>) -> bool {
     let timestamp = u64::from_be_bytes(decoded[0..8].try_into().unwrap());
 
     // Check if token has expired
-    // TODO(port): verify bun_core::time::milli_timestamp() exists (Zig: std.time.milliTimestamp())
     let current_time: u64 = bun_core::time::milli_timestamp() as u64; // @bitCast i64 -> u64
     // Extract expires_in (last 8 bytes)
     let expires_in = u64::from_be_bytes(decoded[24..32].try_into().unwrap());
@@ -312,5 +288,5 @@ pub fn verify(options: VerifyOptions<'_>) -> bool {
 //   source:     src/csrf/csrf.zig (220 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      EVP::Algorithm / Node::Encoding crate paths and milli_timestamp() helper need Phase B verification; option-struct field defaults dropped
+//   notes:      generate()/verify() bodies remain gated on bun_core::{csprng,time} and bun_boringssl_sys::{EVP_MAX_MD_SIZE,CRYPTO_memcmp}
 // ──────────────────────────────────────────────────────────────────────────

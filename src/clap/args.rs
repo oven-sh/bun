@@ -1,14 +1,20 @@
 use core::convert::Infallible;
 use std::borrow::Cow;
+use std::sync::OnceLock;
 
-use bun_str::ZStr;
+/// Duck-typed arg-iterator surface (Zig used `anytype`). Implemented by
+/// `OsIterator` and `SliceIterator`; `ShellIterator` does not fit (fallible,
+/// owned results) and is used standalone.
+pub trait ArgIter<'a> {
+    fn next(&mut self) -> Option<&'a [u8]>;
+    /// Remaining unconsumed args as a slice (for `stop_after_positional_at`).
+    fn remain(&self) -> &[&'a [u8]];
+}
 
 /// An example of what methods should be implemented on an arg iterator.
 pub struct ExampleArgIterator;
 
 impl ExampleArgIterator {
-    pub type Error = Infallible;
-
     pub fn next(&mut self) -> Result<Option<&'static [u8]>, Infallible> {
         Ok(Some(b"2"))
     }
@@ -21,8 +27,6 @@ pub struct SliceIterator<'a> {
 }
 
 impl<'a> SliceIterator<'a> {
-    pub type Error = Infallible;
-
     pub fn init(args: &'a [&'a [u8]]) -> SliceIterator<'a> {
         SliceIterator { remain: args }
     }
@@ -37,28 +41,37 @@ impl<'a> SliceIterator<'a> {
     }
 }
 
+impl<'a> ArgIter<'a> for SliceIterator<'a> {
+    #[inline]
+    fn next(&mut self) -> Option<&'a [u8]> {
+        SliceIterator::next(self)
+    }
+    #[inline]
+    fn remain(&self) -> &[&'a [u8]] {
+        self.remain
+    }
+}
+
 /// An argument iterator which wraps the ArgIterator in ::std.
 /// On windows, this iterator allocates.
 pub struct OsIterator {
     // PORT NOTE: the Zig `arena: bun.ArenaAllocator` field was dropped — non-AST crate,
-    // and `remain` borrows the process-global `bun.argv` so nothing is allocated here.
-    pub remain: &'static [&'static ZStr],
+    // and `remain` borrows the process-global argv so nothing is allocated per-call.
+    pub remain: &'static [&'static [u8]],
 
     /// The executable path (this is the first argument passed to the program)
     /// TODO: Is it the right choice for this to be null? Maybe `init` should
     ///       return an error when we have no exe.
-    pub exe_arg: Option<&'static ZStr>,
+    pub exe_arg: Option<&'static [u8]>,
 }
 
 impl OsIterator {
     // TODO(port): Zig aliased `process.ArgIterator.InitError`; no std::process here.
-    pub type Error = bun_core::Error;
 
     pub fn init() -> OsIterator {
         let mut res = OsIterator {
             exe_arg: None,
-            // TODO(port): exact signature of `bun_core::argv()` (was `bun.argv: [][:0]const u8`)
-            remain: bun_core::argv(),
+            remain: os_argv(),
         };
         res.exe_arg = res.next();
         res
@@ -66,7 +79,7 @@ impl OsIterator {
 
     // PORT NOTE: `deinit` dropped — it only freed the arena, which no longer exists.
 
-    pub fn next(&mut self) -> Option<&'static ZStr> {
+    pub fn next(&mut self) -> Option<&'static [u8]> {
         if !self.remain.is_empty() {
             let res = self.remain[0];
             self.remain = &self.remain[1..];
@@ -75,6 +88,27 @@ impl OsIterator {
 
         None
     }
+}
+
+impl ArgIter<'static> for OsIterator {
+    #[inline]
+    fn next(&mut self) -> Option<&'static [u8]> {
+        OsIterator::next(self)
+    }
+    #[inline]
+    fn remain(&self) -> &[&'static [u8]] {
+        self.remain
+    }
+}
+
+/// Process argv as a `&'static` slice of `&'static [u8]`.
+///
+/// Zig: `bun.argv: [][:0]const u8` (process-lifetime). `bun_core::Output::argv()`
+/// only exposes an iterator, so we materialize it once into a `OnceLock` (per
+/// PORTING.md §Concurrency: OnceLock for `&'static`, never `Box::leak`).
+fn os_argv() -> &'static [&'static [u8]] {
+    static ARGV: OnceLock<Vec<&'static [u8]>> = OnceLock::new();
+    ARGV.get_or_init(|| bun_core::Output::argv().collect()).as_slice()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
@@ -113,8 +147,6 @@ enum State {
 }
 
 impl<'a> ShellIterator<'a> {
-    pub type Error = ShellIteratorError;
-
     pub fn init(str: &'a [u8]) -> ShellIterator<'a> {
         ShellIterator { str }
     }
@@ -299,7 +331,7 @@ mod tests {
         let mut iter = SliceIterator { remain: args };
 
         for a in args {
-            let b = iter.next();
+            let b = SliceIterator::next(&mut iter);
             debug_assert!(*a == b.unwrap());
         }
     }
@@ -400,6 +432,6 @@ mod tests {
 // PORT STATUS
 //   source:     src/clap/args.zig (348 lines)
 //   confidence: medium
-//   todos:      4
-//   notes:      arena fields dropped (non-AST); ShellIterator returns Cow<'a,[u8]>; bun_core::argv() signature assumed; inherent assoc `type` aliases need Phase-B reshape (not stable Rust)
+//   todos:      3
+//   notes:      arena fields dropped (non-AST); ShellIterator returns Cow<'a,[u8]>; argv materialized via OnceLock (bun_core exposes iterator only); inherent assoc-type aliases removed
 // ──────────────────────────────────────────────────────────────────────────

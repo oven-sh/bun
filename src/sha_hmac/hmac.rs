@@ -4,6 +4,9 @@ use bun_boringssl_sys as boring;
 // CYCLEBREAK MOVE_DOWN: evp::Algorithm now lives in this crate (sha.rs `pub mod evp`).
 use crate::evp::Algorithm;
 
+#[cfg(any())]
+// TODO(b2-blocked): bun_boringssl_sys::EVP_MAX_MD_SIZE
+// TODO(b2-blocked): bun_boringssl_sys::HMAC
 pub fn generate<'a>(
     key: &[u8],
     data: &[u8],
@@ -32,6 +35,18 @@ pub fn generate<'a>(
     }
 
     Some(&out[..outlen as usize])
+}
+
+// TODO(b2-blocked): bun_boringssl_sys::EVP_MAX_MD_SIZE — stub mirrors B-1 surface
+// (`out: &mut [u8]`) so dependents compile until the bindgen output lands.
+#[cfg(not(any()))]
+pub fn generate<'a>(
+    _key: &[u8],
+    _data: &[u8],
+    _algorithm: Algorithm,
+    _out: &'a mut [u8],
+) -> Option<&'a [u8]> {
+    todo!("gated: bun_boringssl_sys::HMAC / EVP_MAX_MD_SIZE missing")
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -1,115 +1,115 @@
 // @link "../deps/libarchive.a"
-#![allow(unused, dead_code)]
+#![allow(unused, dead_code, clippy::all)]
 
 // ──────────────────────────────────────────────────────────────────────────
-// Phase B-1 stub surface. The Phase-A draft port is preserved below inside
-// `#[cfg(any())] mod phase_a_draft { ... }` and will be un-gated in B-2 once
-// the dependent crate surfaces (bun_sys / bun_paths / bun_core::fmt /
-// bun_libarchive_sys / bun_str / bun_wyhash) are filled in.
+// Phase B-2: un-gated. Phase-A draft is now compiled directly. Function
+// bodies that depend on still-gated lower-tier surfaces (bun_libarchive_sys
+// bindings, bun_sys directory ops) are individually re-gated with
+// `// TODO(b2-blocked): ...` markers and a `todo!()` fallback.
 // ──────────────────────────────────────────────────────────────────────────
-
-// TODO(b1): bun_libarchive_sys crate missing — local placeholder.
-mod lib {
-    pub enum Archive {}
-    pub enum Entry {}
-    pub type la_ssize_t = isize;
-    pub type la_int64_t = i64;
-    #[repr(C)]
-    pub enum Result { Ok, Eof, Retry, Warn, Failed, Fatal }
-}
-
-#[repr(i32)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Seek { Set = 0, Current = 1, End = 2 }
-
-pub struct BufferReadStream(());
-impl BufferReadStream {
-    pub fn init(_buf: &[u8]) -> Self { todo!("phase-b2") }
-    pub fn open_read(&mut self) -> lib::Result { todo!("phase-b2") }
-}
-
-pub struct Archiver;
-
-pub mod archiver {
-    pub struct Context(());
-    pub struct Plucker(());
-    pub struct U64Context;
-    pub type EntryMap = ();
-    #[derive(Clone, Copy)]
-    pub struct ExtractOptions {
-        pub depth_to_skip: usize,
-        pub close_handles: bool,
-        pub log: bool,
-        pub npm: bool,
-    }
-    impl Default for ExtractOptions {
-        fn default() -> Self {
-            Self { depth_to_skip: 0, close_handles: true, log: false, npm: false }
-        }
-    }
-}
-pub use archiver::{Context, ExtractOptions, Plucker};
-
-pub trait ArchiveAppender {
-    const HAS_ON_FIRST_DIRECTORY_NAME: bool = false;
-    const HAS_APPEND_MUTABLE: bool = false;
-    fn needs_first_dirname(&self) -> bool { false }
-    fn on_first_directory_name(&mut self, _name: &[u8]) {}
-}
-impl ArchiveAppender for () {}
-
-impl Archiver {
-    pub fn get_overwriting_file_list<A: ArchiveAppender, const DEPTH_TO_SKIP: usize>(
-        _file_buffer: &[u8],
-        _root: &[u8],
-        _ctx: &mut Context,
-        _appender: &mut A,
-    ) -> Result<(), bun_core::Error> {
-        todo!("phase-b2")
-    }
-    pub fn extract_to_dir<A: ArchiveAppender>(
-        _file_buffer: &[u8],
-        _dir: bun_sys::Fd,
-        _ctx: Option<&mut Context>,
-        _appender: &mut A,
-        _options: ExtractOptions,
-    ) -> Result<u32, bun_core::Error> {
-        todo!("phase-b2")
-    }
-    pub fn extract_to_disk<A: ArchiveAppender>(
-        _file_buffer: &[u8],
-        _root: &[u8],
-        _ctx: Option<&mut Context>,
-        _appender: &mut A,
-        _options: ExtractOptions,
-    ) -> Result<u32, bun_core::Error> {
-        todo!("phase-b2")
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Phase-A draft (gated; does not compile yet — see B-1 notes above)
-// ──────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
-mod phase_a_draft {
 
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
-use bun_libarchive_sys as lib;
-use lib::Archive;
-
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
-use bun_core::Output;
-use bun_paths::{self as path, OSPathChar, PathBuffer, SEP, SEP_STR};
-use bun_str::{strings, MutableString, ZStr};
-use bun_sys::{self, Fd};
+use bun_core::{Output, ZStr};
+use bun_paths::{self as path, OSPathBuffer, OSPathChar, PathBuffer, SEP, SEP_STR};
+use bun_string::{self as bun_str, strings, MutableString};
+use bun_sys::{self, Fd, FdExt};
 use bun_wyhash::hash;
+
+// ──────────────────────────────────────────────────────────────────────────
+// Local libarchive C-API surface. The real bindings live in
+// `bun_libarchive_sys::bindings`, which is still `#[cfg(any())]`-gated at
+// tier 0. This module provides the *type-level* surface needed for
+// `bun_libarchive` to compile; every method body is a `todo!()` so a real
+// build that reaches FFI will panic loudly until the sys crate un-gates.
+// TODO(b2-blocked): bun_libarchive_sys::bindings
+// ──────────────────────────────────────────────────────────────────────────
+#[allow(non_camel_case_types)]
+pub mod lib {
+    use super::*;
+
+    pub type la_ssize_t = isize;
+    pub type la_int64_t = i64;
+
+    /// Opaque libarchive `struct archive`. Always used behind `*mut Archive`.
+    #[repr(C)]
+    pub struct Archive {
+        _p: [u8; 0],
+        _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+    }
+
+    /// Opaque libarchive `struct archive_entry`. Always used behind `*mut Entry`.
+    #[repr(C)]
+    pub struct Entry {
+        _p: [u8; 0],
+        _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+    }
+
+    #[repr(i32)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
+    pub enum Result {
+        Eof = 1,
+        Ok = 0,
+        Retry = -10,
+        Warn = -20,
+        Failed = -25,
+        Fatal = -30,
+    }
+
+    impl Archive {
+        pub fn read_new() -> *mut Archive {
+            // TODO(b2-blocked): bun_libarchive_sys::archive_read_new
+            todo!("bun_libarchive_sys::bindings gated")
+        }
+        pub fn read_close(&self) -> Result { todo!("bun_libarchive_sys gated") }
+        pub fn read_free(&self) -> Result { todo!("bun_libarchive_sys gated") }
+        pub fn read_support_format_tar(&self) -> Result { todo!("bun_libarchive_sys gated") }
+        pub fn read_support_format_gnutar(&self) -> Result { todo!("bun_libarchive_sys gated") }
+        pub fn read_support_filter_gzip(&self) -> Result { todo!("bun_libarchive_sys gated") }
+        pub fn read_set_options(&self, _opts: &core::ffi::CStr) -> Result {
+            todo!("bun_libarchive_sys gated")
+        }
+        pub fn read_open_memory(&self, _buf: &[u8]) -> Result {
+            todo!("bun_libarchive_sys gated")
+        }
+        pub fn read_next_header(&self, _entry: &mut *mut Entry) -> Result {
+            todo!("bun_libarchive_sys gated")
+        }
+        pub fn read_data(&self, _buf: &mut [u8]) -> isize {
+            todo!("bun_libarchive_sys gated")
+        }
+        pub fn read_data_into_fd(
+            &self,
+            _fd: Fd,
+            _use_pwrite: &mut bool,
+            _use_lseek: &mut bool,
+        ) -> Result {
+            todo!("bun_libarchive_sys gated")
+        }
+        pub fn error_string(_this: *mut Archive) -> &'static [u8] {
+            todo!("bun_libarchive_sys gated")
+        }
+    }
+
+    impl Entry {
+        pub fn pathname(&self) -> &ZStr { todo!("bun_libarchive_sys gated") }
+        #[cfg(windows)]
+        pub fn pathname_w(&self) -> &bun_core::WStr { todo!("bun_libarchive_sys gated") }
+        pub fn symlink(&self) -> &ZStr { todo!("bun_libarchive_sys gated") }
+        pub fn perm(&self) -> u32 { todo!("bun_libarchive_sys gated") }
+        pub fn size(&self) -> i64 { todo!("bun_libarchive_sys gated") }
+        pub fn filetype(&self) -> u32 { todo!("bun_libarchive_sys gated") }
+    }
+}
+
+use lib::Archive;
 
 #[repr(i32)] // c_int
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Seek {
-    // TODO(port): values were std.posix.SEEK_SET/CUR/END — these are the POSIX constants
+    // values are POSIX SEEK_SET/CUR/END constants
     Set = 0,
     Current = 1,
     End = 2,
@@ -177,7 +177,7 @@ impl BufferReadStream {
     #[inline]
     pub fn buf_left(&self) -> &[u8] {
         // SAFETY: buf outlives self (see field comment)
-        unsafe { &(*self.buf)[self.pos..] }
+        unsafe { &(&*self.buf)[self.pos..] }
     }
 
     #[inline]
@@ -312,7 +312,7 @@ impl Drop for BufferReadStream {
 fn is_symlink_target_safe(
     symlink_path: &[u8],
     link_target: &ZStr,
-    symlink_join_buf: &mut Option<bun_paths::PathBufferGuard>,
+    symlink_join_buf: &mut Option<bun_paths::path_buffer_pool::Guard>,
 ) -> bool {
     // Absolute symlink targets are never safe - they could point anywhere
     let link_target_bytes = link_target.as_bytes();
@@ -321,19 +321,18 @@ fn is_symlink_target_safe(
     }
 
     // Get the directory containing the symlink
-    let symlink_dir = bun_paths::dirname(symlink_path).unwrap_or(b"");
+    let symlink_dir = bun_paths::dirname(symlink_path);
 
     // Use a fake root to resolve the path and check if it escapes
     let fake_root: &[u8] = b"/packages/";
 
-    let join_buf: &mut PathBuffer = symlink_join_buf
-        .get_or_insert_with(|| bun_paths::path_buffer_pool().get());
+    let join_buf: &mut PathBuffer =
+        symlink_join_buf.get_or_insert_with(bun_paths::path_buffer_pool::get);
 
-    let resolved = bun_paths::join_abs_string_buf(
+    let resolved = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Posix>(
         fake_root,
-        join_buf,
+        &mut join_buf[..],
         &[symlink_dir, link_target_bytes],
-        bun_paths::Platform::Posix,
     );
 
     // If the resolved path doesn't start with our fake root, it escaped
@@ -451,6 +450,9 @@ impl Archiver {
 
         // TODO(port): std.fs.Dir / openDirAbsolute / cwd().openDir — replaced with
         // bun_sys directory fd ops. Phase B: verify exact API.
+        // TODO(b2-blocked): bun_sys::open_dir_absolute
+        // TODO(b2-blocked): bun_sys::open_dir_at
+        #[cfg(any())]
         let dir: Fd = 'brk: {
             let cwd = Fd::cwd();
 
@@ -462,6 +464,11 @@ impl Archiver {
                 let Ok(d) = bun_sys::open_dir_at(cwd, root) else { return Ok(()) };
                 break 'brk d;
             }
+        };
+        #[cfg(not(any()))]
+        let dir: Fd = {
+            let _ = root;
+            todo!("blocked on bun_sys::open_dir_absolute / open_dir_at")
         };
 
         'loop_: loop {
@@ -507,58 +514,64 @@ impl Archiver {
                     }
 
                     // pathname = sliceTo(remaining[..len :0], 0)
-                    let pathname = bun_str::slice_to_nul(remaining);
-                    let dirname = strings::trim(
-                        bun_paths::dirname(pathname).unwrap_or(b""),
-                        SEP_STR.as_bytes(),
-                    );
+                    let pathname = slice_to_nul(remaining);
+                    let dirname =
+                        strings::trim(bun_paths::dirname(pathname), SEP_STR.as_bytes());
 
                     // SAFETY: entry valid
                     let size: usize =
                         usize::try_from(unsafe { (*entry).size() }.max(0)).unwrap();
                     if size > 0 {
-                        // TODO(port): dir.openFileZ(.write_only) → bun_sys equivalent
-                        let Ok(mut opened) =
-                            bun_sys::openat(dir, pathname, bun_sys::O::WRONLY, 0).into_result()
-                        else {
-                            continue 'loop_;
-                        };
-                        // RAII close on scope exit
-                        let stat_size = bun_sys::File::from(opened).get_end_pos()?;
-                        // TODO(port): defer opened.close() — handled by Fd Drop / explicit close
-                        let _ = &mut opened;
+                        // TODO(b2-blocked): bun_sys::openat with non-ZStr path /
+                        // bun_sys::File::from(Fd) / get_end_pos chain — bun_sys
+                        // surface for opening at a `&[u8]` (not `&ZStr`) path is
+                        // not yet exposed.
+                        #[cfg(any())]
+                        {
+                            let Ok(mut opened) =
+                                bun_sys::openat(dir, pathname, bun_sys::O::WRONLY, 0)
+                            else {
+                                continue 'loop_;
+                            };
+                            // RAII close on scope exit
+                            let stat_size = bun_sys::File::from(opened).get_end_pos()?;
+                            // TODO(port): defer opened.close() — handled by Fd Drop / explicit close
+                            let _ = &mut opened;
 
-                        if stat_size > 0 {
-                            let is_already_top_level = dirname.is_empty();
-                            let path_to_use_: &[u8] = 'brk: {
-                                let __pathname: &[u8] = pathname;
+                            if stat_size > 0 {
+                                let is_already_top_level = dirname.is_empty();
+                                let path_to_use_: &[u8] = 'brk: {
+                                    let __pathname: &[u8] = pathname;
 
-                                if is_already_top_level {
-                                    break 'brk __pathname;
+                                    if is_already_top_level {
+                                        break 'brk __pathname;
+                                    }
+
+                                    let index =
+                                        __pathname.iter().position(|&b| b == SEP).unwrap();
+                                    break 'brk &__pathname[..index];
+                                };
+                                let mut temp_buf = [0u8; 1024];
+                                temp_buf[..path_to_use_.len()].copy_from_slice(path_to_use_);
+                                let path_to_use: &[u8] = if !is_already_top_level {
+                                    temp_buf[path_to_use_.len()] = SEP;
+                                    &temp_buf[..path_to_use_.len() + 1]
+                                } else {
+                                    &temp_buf[..path_to_use_.len()]
+                                };
+
+                                let overwrite_entry =
+                                    ctx.overwrite_list.get_or_put(path_to_use)?;
+                                if !overwrite_entry.found_existing {
+                                    *overwrite_entry.key_ptr = appender.append(path_to_use)?;
+                                    // TODO(port): key ownership semantics — Zig stored the
+                                    // appender-owned slice as the map key.
                                 }
-
-                                let index = __pathname
-                                    .iter()
-                                    .position(|&b| b == SEP)
-                                    .unwrap();
-                                break 'brk &__pathname[..index];
-                            };
-                            let mut temp_buf = [0u8; 1024];
-                            temp_buf[..path_to_use_.len()].copy_from_slice(path_to_use_);
-                            let path_to_use: &[u8] = if !is_already_top_level {
-                                temp_buf[path_to_use_.len()] = SEP;
-                                &temp_buf[..path_to_use_.len() + 1]
-                            } else {
-                                &temp_buf[..path_to_use_.len()]
-                            };
-
-                            let overwrite_entry =
-                                ctx.overwrite_list.get_or_put(path_to_use)?;
-                            if !overwrite_entry.found_existing {
-                                *overwrite_entry.key_ptr = appender.append(path_to_use)?;
-                                // TODO(port): key ownership semantics — Zig stored the
-                                // appender-owned slice as the map key.
                             }
+                        }
+                        #[cfg(not(any()))]
+                        {
+                            let _ = (dir, dirname, pathname, &mut *ctx, &mut *appender);
                         }
                     }
                 }
@@ -587,10 +600,10 @@ impl Archiver {
         // PORT NOTE: reshaped for borrowck — ctx is Option<&mut>, rebound as needed
         let mut ctx = ctx;
 
-        let mut symlink_join_buf: Option<bun_paths::PathBufferGuard> = None;
+        let mut symlink_join_buf: Option<bun_paths::path_buffer_pool::Guard> = None;
         // (guard Drop puts the buffer back to the pool)
 
-        let mut normalized_buf = bun_paths::OSPathBuffer::uninit();
+        let mut normalized_buf = OSPathBuffer::uninit();
         let mut use_pwrite = cfg!(unix);
         let mut use_lseek = true;
 
@@ -624,19 +637,31 @@ impl Archiver {
                         if appender.needs_first_dirname() {
                             #[cfg(windows)]
                             {
-                                let result = strings::to_utf8_list_with_type(
-                                    pathname_z.as_slice(),
-                                )?;
-                                // onFirstDirectoryName copies the contents of pathname to another buffer, safe to free
-                                appender.on_first_directory_name(
-                                    strings::without_trailing_slash(&result),
-                                );
+                                // TODO(b2-blocked): bun_string::strings::to_utf8_list_with_type
+                                // TODO(b2-blocked): bun_string::strings::without_trailing_slash
+                                #[cfg(any())]
+                                {
+                                    let result =
+                                        strings::to_utf8_list_with_type(pathname_z.as_slice())?;
+                                    // onFirstDirectoryName copies the contents of pathname to another buffer, safe to free
+                                    appender.on_first_directory_name(
+                                        strings::without_trailing_slash(&result),
+                                    );
+                                }
                             }
                             #[cfg(not(windows))]
                             {
-                                appender.on_first_directory_name(
-                                    strings::without_trailing_slash(pathname_z.as_bytes()),
-                                );
+                                // TODO(b2-blocked): bun_string::strings::without_trailing_slash
+                                // (immutable/paths.rs is gated). Inlined trivial impl below.
+                                let bytes = pathname_z.as_bytes();
+                                let trimmed = {
+                                    let mut s = bytes;
+                                    while s.len() > 1 && s[s.len() - 1] == b'/' {
+                                        s = &s[..s.len() - 1];
+                                    }
+                                    s
+                                };
+                                appender.on_first_directory_name(trimmed);
                             }
                         }
                     }
@@ -657,7 +682,7 @@ impl Archiver {
 
                     // strip and normalize the path
                     // TODO(port): std.mem.tokenizeScalar(OSPathChar, pathname, '/') + .rest()
-                    let pathname_slice: &[OSPathChar] = pathname_z.as_slice();
+                    let pathname_slice: &[OSPathChar] = pathname_z.as_bytes();
                     let mut remaining: &[OSPathChar] = pathname_slice;
                     {
                         let sep: OSPathChar = b'/' as OSPathChar;
@@ -684,11 +709,10 @@ impl Archiver {
                     // at its original `.len()`; therefore `remaining[remaining.len()] == 0`.
                     let pathname: &[OSPathChar] = remaining;
 
-                    let normalized = bun_paths::normalize_buf_t::<OSPathChar>(
-                        pathname,
-                        &mut normalized_buf,
-                        bun_paths::Platform::Auto,
-                    );
+                    let normalized = bun_paths::resolve_path::normalize_buf_t::<
+                        OSPathChar,
+                        bun_paths::platform::Auto,
+                    >(pathname, &mut normalized_buf[..]);
                     let normalized_len = normalized.len();
                     normalized_buf[normalized_len] = 0;
                     // SAFETY: we just wrote a NUL at normalized_buf[normalized_len]
@@ -706,7 +730,7 @@ impl Archiver {
                     // so `normalizeBufT` cannot produce an absolute output.
                     #[cfg(windows)]
                     {
-                        if bun_paths::is_absolute_windows_wtf16(path) {
+                        if bun_paths::is_absolute_windows_t::<u16>(path) {
                             continue 'loop_;
                         }
                     }
@@ -717,6 +741,8 @@ impl Archiver {
                         // 0xf000 higher-encoded versions.
                         // https://github.com/isaacs/node-tar/blob/0510c9ea6d000c40446d56674a7efeec8e72f052/lib/winchars.js
                         let mut remain: &mut [OSPathChar] = path;
+                        // TODO(b2-blocked): bun_string::strings::starts_with_windows_drive_letter_t
+                        #[cfg(any())]
                         if strings::starts_with_windows_drive_letter_t::<OSPathChar>(remain) {
                             // don't encode `:` from the drive letter
                             // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/tar/lib/unpack.js#L327
@@ -741,10 +767,10 @@ impl Archiver {
                     let path_slice: &[OSPathChar] = &path[..];
 
                     if options.log {
-                        Output::prettyln(format_args!(
+                        bun_core::prettyln!(
                             " {}",
                             bun_core::fmt::fmt_os_path(path_slice, Default::default())
-                        ));
+                        );
                     }
 
                     count += 1;
@@ -768,19 +794,23 @@ impl Archiver {
 
                             #[cfg(windows)]
                             {
-                                // TODO(port): bun.MakePath.makePath(u16, dir, path)
-                                bun_sys::make_path_w(dir, path_slice)?;
+                                // TODO(b2-blocked): bun_sys::make_path_w
+                                #[cfg(any())]
+                                {
+                                    bun_sys::make_path_w(dir, path_slice)?;
+                                }
+                                let _ = (dir, path_slice, mode);
                             }
                             #[cfg(not(windows))]
                             {
-                                // TODO(port): std.posix.mkdiratZ → bun_sys::mkdirat
+                                // TODO(b2-blocked): bun_sys::mkdirat_z (mkdirat over &[u8] with
+                                // posix error → bun_core::Error mapping for PathAlreadyExists/NotDir)
+                                #[cfg(any())]
                                 match bun_sys::mkdirat_z(
                                     dir_fd,
                                     path_slice,
                                     u32::try_from(mode).unwrap(),
-                                )
-                                .into_result()
-                                {
+                                ) {
                                     Ok(()) => {}
                                     Err(err) => {
                                         // It's possible for some tarballs to return a directory twice, with and
@@ -791,14 +821,15 @@ impl Archiver {
                                         {
                                             continue;
                                         }
-                                        let Some(dirname) = bun_paths::dirname(path_slice)
-                                        else {
+                                        let dirname = bun_paths::dirname(path_slice);
+                                        if dirname.is_empty() {
                                             return Err(err);
-                                        };
-                                        let _ = bun_sys::make_path(dir, dirname);
+                                        }
+                                        let _ = dir.make_path_u8(dirname);
                                         let _ = bun_sys::mkdirat_z(dir_fd, path_slice, 0o777);
                                     }
                                 }
+                                let _ = (dir, dir_fd, path_slice, mode);
                             }
                         }
                         bun_sys::FileKind::SymLink => {
@@ -827,30 +858,28 @@ impl Archiver {
                                     }
                                     continue;
                                 }
-                                match bun_sys::symlinkat(link_target, dir_fd, path_slice)
-                                    .unwrap_result()
-                                {
+                                // TODO(b2-blocked): bun_sys::symlinkat over &[u8] dest path
+                                // (current API requires &ZStr; path_slice is non-NUL-terminated
+                                // borrow of normalized_buf which already has NUL at len, but
+                                // ZStr::from_raw is unsafe & lifetime-awkward here).
+                                #[cfg(any())]
+                                match bun_sys::symlinkat(link_target, dir_fd, path_slice) {
                                     Ok(()) => {}
                                     Err(err) => match err {
                                         e if e == bun_core::err!("EPERM")
                                             || e == bun_core::err!("ENOENT") =>
                                         {
-                                            let Some(dirname) =
-                                                bun_paths::dirname(path_slice)
-                                            else {
+                                            let dirname = bun_paths::dirname(path_slice);
+                                            if dirname.is_empty() {
                                                 return Err(err);
-                                            };
-                                            let _ = bun_sys::make_path(dir, dirname);
-                                            bun_sys::symlinkat(
-                                                link_target,
-                                                dir_fd,
-                                                path_slice,
-                                            )
-                                            .unwrap_result()?;
+                                            }
+                                            let _ = dir.make_path_u8(dirname);
+                                            bun_sys::symlinkat(link_target, dir_fd, path_slice)?;
                                         }
                                         _ => return Err(err),
                                     },
                                 }
+                                let _ = (dir_fd, link_target);
                             }
                             #[cfg(not(unix))]
                             {
@@ -876,207 +905,213 @@ impl Archiver {
                             let flags =
                                 bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
 
-                            #[cfg(windows)]
-                            let file_handle_native: Fd = match bun_sys::openat_windows(
-                                dir_fd, path_slice, flags, 0,
-                            ) {
-                                bun_sys::Result::Ok(fd) => fd,
-                                bun_sys::Result::Err(e) => match e.errno {
-                                    n if n == bun_sys::E::PERM as _
-                                        || n == bun_sys::E::NOENT as _ =>
-                                    {
-                                        let Some(dirname) =
-                                            bun_paths::dirname_t::<u16>(path_slice)
-                                        else {
-                                            return Err(bun_sys::errno_to_error(e.errno));
-                                        };
-                                        let _ = bun_sys::make_path_w(dir, dirname);
-                                        bun_sys::openat_windows(
-                                            dir_fd, path_slice, flags, 0,
-                                        )
-                                        .unwrap_result()?
-                                    }
-                                    _ => return Err(bun_sys::errno_to_error(e.errno)),
-                                },
-                            };
-
-                            #[cfg(not(windows))]
-                            let file_handle_native: Fd = {
-                                // TODO(port): dir.createFileZ(.{truncate, mode}) → bun_sys::openat
-                                match bun_sys::openat(dir_fd, path_slice, flags, mode)
-                                    .into_result()
-                                {
+                            // TODO(b2-blocked): bun_sys::openat_windows / bun_sys::openat over
+                            // &[OSPathChar] (current API requires &ZStr); also blocked on
+                            // bun_sys::preallocate_file and the ArchiveFileSink-based
+                            // read_data_into_fd from bun_libarchive_sys.
+                            #[cfg(any())]
+                            {
+                                #[cfg(windows)]
+                                let file_handle_native: Fd = match bun_sys::openat_windows(
+                                    dir_fd, path_slice, flags, 0,
+                                ) {
                                     Ok(fd) => fd,
-                                    Err(err) => match err {
-                                        e if e == bun_core::err!("AccessDenied")
-                                            || e == bun_core::err!("FileNotFound") =>
+                                    Err(e) => match e.errno {
+                                        n if n == bun_sys::E::PERM as _
+                                            || n == bun_sys::E::NOENT as _ =>
                                         {
-                                            let Some(dirname) =
-                                                bun_paths::dirname(path_slice)
-                                            else {
-                                                return Err(err);
-                                            };
-                                            let _ = bun_sys::make_path(dir, dirname);
-                                            bun_sys::openat(
-                                                dir_fd, path_slice, flags, mode,
-                                            )
-                                            .into_result()?
+                                            let dirname = bun_paths::dirname(slice_as_bytes(path_slice));
+                                            if dirname.is_empty() {
+                                                return Err(e.into());
+                                            }
+                                            let _ = bun_sys::make_path_w(dir, dirname);
+                                            bun_sys::openat_windows(dir_fd, path_slice, flags, 0)?
                                         }
-                                        _ => return Err(err),
+                                        _ => return Err(e.into()),
                                     },
-                                }
-                            };
+                                };
 
-                            let file_handle = 'brk: {
-                                // errdefer file_handle_native.close()
-                                let guard = scopeguard::guard(file_handle_native, |fd| {
-                                    let _ = fd.close();
-                                });
-                                let owned = (*guard).make_libuv_owned()?;
-                                let _ = scopeguard::ScopeGuard::into_inner(guard);
-                                break 'brk owned;
-                            };
-
-                            let mut plucked_file = false;
-                            let close_guard =
-                                scopeguard::guard((file_handle, &mut plucked_file), |(fh, plucked)| {
-                                    if options.close_handles && !*plucked {
-                                        // On windows, AV hangs these closes really badly.
-                                        // 'bun i @mui/icons-material' takes like 20 seconds to extract
-                                        // mostly spend on waiting for things to close closing
-                                        //
-                                        // Using Async.Closer defers closing the file to a different thread,
-                                        // which can make the NtSetInformationFile call fail.
-                                        //
-                                        // Using async closing doesnt actually improve end user performance
-                                        // probably because our process is still waiting on AV to do it's thing.
-                                        //
-                                        // But this approach does not actually solve the problem, it just
-                                        // defers the close to a different thread. And since we are already
-                                        // on a worker thread, that doesn't help us.
-                                        fh.close();
+                                #[cfg(not(windows))]
+                                let file_handle_native: Fd = {
+                                    // TODO(port): dir.createFileZ(.{truncate, mode}) → bun_sys::openat
+                                    match bun_sys::openat(dir_fd, path_slice, flags, mode) {
+                                        Ok(fd) => fd,
+                                        Err(err) => match err {
+                                            e if e == bun_core::err!("AccessDenied")
+                                                || e == bun_core::err!("FileNotFound") =>
+                                            {
+                                                let dirname = bun_paths::dirname(path_slice);
+                                                if dirname.is_empty() {
+                                                    return Err(err);
+                                                }
+                                                let _ = dir.make_path_u8(dirname);
+                                                bun_sys::openat(dir_fd, path_slice, flags, mode)?
+                                            }
+                                            _ => return Err(err),
+                                        },
                                     }
-                                });
-                            // PORT NOTE: reshaped for borrowck — `plucked_file` is captured
-                            // by the guard; mutate via guard.1
-                            // TODO(port): scopeguard captures &mut plucked_file; verify this
-                            // doesn't conflict with the `continue 'loop_` below (it shouldn't —
-                            // guard runs on continue).
-                            let (file_handle, plucked_file) = &mut *scopeguard::guard_mut(close_guard);
-                            // TODO(port): the above guard juggling is awkward; Phase B should
-                            // restructure to a small RAII wrapper.
+                                };
 
-                            // SAFETY: entry valid
-                            let size: usize =
-                                usize::try_from(unsafe { (*entry).size() }.max(0)).unwrap();
+                                let file_handle = 'brk: {
+                                    // errdefer file_handle_native.close()
+                                    let guard = scopeguard::guard(file_handle_native, |fd| {
+                                        fd.close();
+                                    });
+                                    let owned = (*guard).make_lib_uv_owned()?;
+                                    let _ = scopeguard::ScopeGuard::into_inner(guard);
+                                    break 'brk owned;
+                                };
 
-                            if size > 0 {
-                                if let Some(ctx_) = ctx.as_deref_mut() {
-                                    let h: u64 = if !ctx_.pluckers.is_empty() {
-                                        hash(slice_as_bytes(path_slice))
-                                    } else {
-                                        0u64
-                                    };
-
-                                    if A::HAS_APPEND_MUTABLE {
-                                        let result = ctx_
-                                            .all_files
-                                            .get_or_put_adapted(h, archiver::U64Context)
-                                            .expect("unreachable");
-                                        if !result.found_existing {
-                                            *result.value_ptr = appender
-                                                .append_mutable(path_slice)?
-                                                .as_mut_ptr();
+                                let mut plucked_file = false;
+                                let mut close_guard = scopeguard::guard(
+                                    (file_handle, plucked_file),
+                                    |(fh, plucked)| {
+                                        if options.close_handles && !plucked {
+                                            // On windows, AV hangs these closes really badly.
+                                            // 'bun i @mui/icons-material' takes like 20 seconds to extract
+                                            // mostly spend on waiting for things to close closing
+                                            //
+                                            // Using Async.Closer defers closing the file to a different thread,
+                                            // which can make the NtSetInformationFile call fail.
+                                            //
+                                            // Using async closing doesnt actually improve end user performance
+                                            // probably because our process is still waiting on AV to do it's thing.
+                                            //
+                                            // But this approach does not actually solve the problem, it just
+                                            // defers the close to a different thread. And since we are already
+                                            // on a worker thread, that doesn't help us.
+                                            fh.close();
                                         }
-                                    }
+                                    },
+                                );
+                                // PORT NOTE: reshaped for borrowck — `plucked_file` is captured
+                                // by the guard; mutate via close_guard.1.
+                                let (file_handle, plucked_file) = &mut *close_guard;
 
-                                    for plucker_ in ctx_.pluckers.iter_mut() {
-                                        if plucker_.filename_hash == h {
-                                            plucker_.contents.inflate(size)?;
-                                            plucker_.contents.list.expand_to_capacity();
-                                            // SAFETY: archive valid
-                                            let read = unsafe {
-                                                (*archive).read_data(
-                                                    plucker_.contents.list.as_mut_slice(),
-                                                )
-                                            };
-                                            plucker_
-                                                .contents
-                                                .inflate(usize::try_from(read).unwrap())?;
-                                            plucker_.found = read > 0;
-                                            plucker_.fd = *file_handle;
-                                            **plucked_file = true;
-                                            continue 'loop_;
-                                        }
-                                    }
-                                }
-                                // archive_read_data_into_fd reads in chunks of 1 MB
-                                // #define    MAX_WRITE    (1024 * 1024)
-                                #[cfg(target_os = "linux")]
-                                {
-                                    if size > 1_000_000 {
-                                        let _ = bun_sys::preallocate_file(
-                                            file_handle.cast(),
-                                            0,
-                                            i64::try_from(size).unwrap(),
-                                        );
-                                    }
-                                }
+                                // SAFETY: entry valid
+                                let size: usize =
+                                    usize::try_from(unsafe { (*entry).size() }.max(0)).unwrap();
 
-                                let mut retries_remaining: u8 = 5;
+                                if size > 0 {
+                                    if let Some(ctx_) = ctx.as_deref_mut() {
+                                        let h: u64 = if !ctx_.pluckers.is_empty() {
+                                            hash(slice_as_bytes(path_slice))
+                                        } else {
+                                            0u64
+                                        };
 
-                                'possibly_retry: while retries_remaining != 0 {
-                                    // SAFETY: archive valid
-                                    match unsafe {
-                                        (*archive).read_data_into_fd(
-                                            *file_handle,
-                                            &mut use_pwrite,
-                                            &mut use_lseek,
-                                        )
-                                    } {
-                                        lib::Result::Eof => break 'loop_,
-                                        lib::Result::Ok => break 'possibly_retry,
-                                        lib::Result::Retry => {
-                                            if options.log {
-                                                Output::err(
-                                                    "libarchive error",
-                                                    format_args!(
-                                                        "extracting {}, retry {} / {}",
-                                                        bun_core::fmt::fmt_os_path(
-                                                            path_slice,
-                                                            Default::default()
-                                                        ),
-                                                        retries_remaining,
-                                                        5,
-                                                    ),
-                                                );
+                                        if A::HAS_APPEND_MUTABLE {
+                                            // TODO(b2-blocked): bun_collections::ArrayHashMap::get_or_put_adapted
+                                            let result = ctx_
+                                                .all_files
+                                                .get_or_put_adapted(h, archiver::U64Context)
+                                                .expect("unreachable");
+                                            if !result.found_existing {
+                                                *result.value_ptr = appender
+                                                    .append_mutable(path_slice)?
+                                                    .as_mut_ptr();
                                             }
                                         }
-                                        _ => {
-                                            if options.log {
+
+                                        for plucker_ in ctx_.pluckers.iter_mut() {
+                                            if plucker_.filename_hash == h {
+                                                plucker_.contents.inflate(size)?;
                                                 // SAFETY: archive valid
-                                                let archive_error = bun_str::slice_to_nul(
-                                                    unsafe {
-                                                        Archive::error_string(archive)
-                                                    },
-                                                );
-                                                Output::err(
-                                                    "libarchive error",
-                                                    format_args!(
-                                                        "extracting {}: {}",
-                                                        bun_core::fmt::fmt_os_path(
-                                                            path_slice,
-                                                            Default::default()
-                                                        ),
-                                                        bstr::BStr::new(archive_error),
-                                                    ),
-                                                );
+                                                let read = unsafe {
+                                                    (*archive).read_data(
+                                                        plucker_.contents.list.as_mut_slice(),
+                                                    )
+                                                };
+                                                plucker_
+                                                    .contents
+                                                    .inflate(usize::try_from(read).unwrap())?;
+                                                plucker_.found = read > 0;
+                                                plucker_.fd = *file_handle;
+                                                *plucked_file = true;
+                                                continue 'loop_;
                                             }
-                                            return Err(bun_core::err!("Fail"));
                                         }
                                     }
-                                    retries_remaining -= 1;
+                                    // archive_read_data_into_fd reads in chunks of 1 MB
+                                    // #define    MAX_WRITE    (1024 * 1024)
+                                    #[cfg(target_os = "linux")]
+                                    {
+                                        if size > 1_000_000 {
+                                            // TODO(b2-blocked): bun_sys::preallocate_file
+                                            let _ = bun_sys::preallocate_file(
+                                                file_handle.native(),
+                                                0,
+                                                i64::try_from(size).unwrap(),
+                                            );
+                                        }
+                                    }
+
+                                    let mut retries_remaining: u8 = 5;
+
+                                    'possibly_retry: while retries_remaining != 0 {
+                                        // SAFETY: archive valid
+                                        match unsafe {
+                                            (*archive).read_data_into_fd(
+                                                *file_handle,
+                                                &mut use_pwrite,
+                                                &mut use_lseek,
+                                            )
+                                        } {
+                                            lib::Result::Eof => break 'loop_,
+                                            lib::Result::Ok => break 'possibly_retry,
+                                            lib::Result::Retry => {
+                                                if options.log {
+                                                    Output::err(
+                                                        "libarchive error",
+                                                        format_args!(
+                                                            "extracting {}, retry {} / {}",
+                                                            bun_core::fmt::fmt_os_path(
+                                                                path_slice,
+                                                                Default::default()
+                                                            ),
+                                                            retries_remaining,
+                                                            5,
+                                                        ),
+                                                    );
+                                                }
+                                            }
+                                            _ => {
+                                                if options.log {
+                                                    let archive_error = slice_to_nul(
+                                                        Archive::error_string(archive),
+                                                    );
+                                                    Output::err(
+                                                        "libarchive error",
+                                                        format_args!(
+                                                            "extracting {}: {}",
+                                                            bun_core::fmt::fmt_os_path(
+                                                                path_slice,
+                                                                Default::default()
+                                                            ),
+                                                            bstr::BStr::new(archive_error),
+                                                        ),
+                                                    );
+                                                }
+                                                return Err(bun_core::err!("Fail"));
+                                            }
+                                        }
+                                        retries_remaining -= 1;
+                                    }
                                 }
+                            }
+                            #[cfg(not(any()))]
+                            {
+                                let _ = (
+                                    dir_fd,
+                                    path_slice,
+                                    flags,
+                                    mode,
+                                    &mut ctx,
+                                    &mut *appender,
+                                    &mut use_pwrite,
+                                    &mut use_lseek,
+                                    archive,
+                                );
                             }
                         }
                         _ => {}
@@ -1098,15 +1133,23 @@ impl Archiver {
         // TODO(port): `options` was `comptime` in Zig — not used in a type position,
         // so demoted to runtime. // PERF(port): was comptime monomorphization — profile in Phase B
         // TODO(port): narrow error set
+        // TODO(b2-blocked): bun_sys::open_dir_absolute
+        // TODO(b2-blocked): bun_sys::open_dir_at
+        #[cfg(any())]
         let dir: Fd = 'brk: {
             let cwd = Fd::cwd();
-            let _ = bun_sys::make_path(cwd, root);
+            let _ = cwd.make_path_u8(root);
 
             if bun_paths::is_absolute(root) {
                 break 'brk bun_sys::open_dir_absolute(root)?;
             } else {
                 break 'brk bun_sys::open_dir_at(cwd, root)?;
             }
+        };
+        #[cfg(not(any()))]
+        let dir: Fd = {
+            let _ = root;
+            todo!("blocked on bun_sys::open_dir_absolute / open_dir_at")
         };
 
         let _close_guard = scopeguard::guard(dir, |d| {
@@ -1124,10 +1167,17 @@ impl Archiver {
 fn slice_as_bytes(s: &[OSPathChar]) -> &[u8] {
     // SAFETY: OSPathChar is u8 on posix / u16 on windows; both are POD with no padding.
     unsafe {
-        core::slice::from_raw_parts(
-            s.as_ptr().cast::<u8>(),
-            core::mem::size_of_val(s),
-        )
+        core::slice::from_raw_parts(s.as_ptr().cast::<u8>(), core::mem::size_of_val(s))
+    }
+}
+
+// Helper: std.mem.sliceTo(slice, 0) — return prefix up to (excluding) the
+// first NUL, or the whole slice if no NUL is present.
+#[inline]
+fn slice_to_nul(s: &[u8]) -> &[u8] {
+    match s.iter().position(|&b| b == 0) {
+        Some(i) => &s[..i],
+        None => s,
     }
 }
 
@@ -1135,8 +1185,9 @@ fn slice_as_bytes(s: &[OSPathChar]) -> &[u8] {
 // PORT STATUS
 //   source:     src/libarchive/libarchive.zig (688 lines)
 //   confidence: medium
-//   todos:      21
-//   notes:      std.fs.Dir ops mapped to bun_sys placeholders; @hasDecl duck-typing → ArchiveAppender trait; tokenizer.rest() hand-rolled; defer-close of file_handle uses awkward scopeguard — restructure in Phase B.
+//   todos:      see TODO(b2-blocked) markers above
+//   notes:      std.fs.Dir ops mapped to bun_sys placeholders; @hasDecl
+//               duck-typing → ArchiveAppender trait; tokenizer.rest()
+//               hand-rolled; defer-close of file_handle uses awkward
+//               scopeguard — restructure in Phase B.
 // ──────────────────────────────────────────────────────────────────────────
-
-} // mod phase_a_draft

@@ -487,9 +487,6 @@ pub mod symbol {
         pub symbols_for_source: NestedList,
     }
 
-    // TODO(b1): bun_collections::BabyList stub lacks Default/at/mut_/append — gate
-    // impl until B-2 un-gates the real BabyList.
-    #[cfg(any())]
     impl Map {
         pub fn init_list(list: NestedList) -> Map {
             Map { symbols_for_source: list }
@@ -592,13 +589,14 @@ pub mod symbol {
 
         pub fn follow_all(&self) {
             // PERF(port): was `bun.perf.trace("Symbols.followAll")`.
+            // SAFETY: see `get` — single-owner table, never aliased across threads.
+            // The Zig original mutates through `*const Map`; we mirror that by going
+            // through a raw pointer to the nested list (avoids the &T→&mut T cast lint).
+            let nested = core::ptr::addr_of!(self.symbols_for_source) as *mut NestedList;
             for i in 0..self.symbols_for_source.len {
-                let list = self.symbols_for_source.at(i as usize);
+                let list = unsafe { (*nested).mut_(i as usize) };
                 for j in 0..list.len {
-                    // SAFETY: see `get` — single-owner table.
-                    let sym = unsafe {
-                        &mut *(list.at(j as usize) as *const Symbol as *mut Symbol)
-                    };
+                    let sym = list.mut_(j as usize);
                     if !sym.has_link() {
                         continue;
                     }
@@ -623,9 +621,7 @@ mod fs_ext {
     }
 }
 use fs_ext::PathContentsPair;
-// TODO(b1): bun_schema::api missing — `to_api` methods gated behind #[cfg(any())].
-// TODO(b1): bun_str::strings missing — callers gated; local re-export of the
-// minimal subset bun_core already stubs so non-gated code paths still resolve.
+// TODO(b2-blocked): bun_schema::api — `to_api` methods gated behind #[cfg(any())].
 #[allow(unused_imports)]
 use bun_core::strings;
 
@@ -670,7 +666,7 @@ impl Kind {
         }
     }
 
-    #[cfg(any())] // TODO(b1): bun_schema::api missing
+    #[cfg(any())] // TODO(b2-blocked): bun_schema::api
     #[inline]
     pub fn to_api(self) -> api::MessageLevel {
         match self {
@@ -831,7 +827,7 @@ impl Location {
         }
     }
 
-    #[cfg(any())] // TODO(b1): bun_schema::api missing
+    #[cfg(any())] // TODO(b2-blocked): bun_schema::api
     pub fn to_api(&self) -> api::Location {
         api::Location {
             file: self.file,
@@ -867,7 +863,8 @@ impl Location {
     }
 
     pub fn init_or_null(_source: Option<&Source>, r: Range) -> Option<Location> {
-        #[cfg(any())] // TODO(b1): bun_str::strings::trim_left + Source::init_error_position gated
+        // TODO(b2-blocked): bun_string::strings::trim_left
+        #[cfg(any())]
         if let Some(source) = _source {
             if r.is_empty() {
                 return Some(Location {
@@ -897,7 +894,7 @@ impl Location {
                 } else {
                     1
                 },
-                line_text: Some(bun_str::strings::trim_left(full_line, b"\n\r")),
+                line_text: Some(bun_string::strings::trim_left(full_line, b"\n\r")),
                 // TODO(port): lifetime — `line_text` here borrows from `source.contents`
                 offset: usize::try_from(r.loc.start.max(0)).unwrap(),
             });
@@ -988,7 +985,7 @@ impl Data {
         }
     }
 
-    #[cfg(any())] // TODO(b1): bun_schema::api missing
+    #[cfg(any())] // TODO(b2-blocked): bun_schema::api
     pub fn to_api(&self) -> api::MessageData {
         api::MessageData {
             text: self.text,
@@ -1003,8 +1000,9 @@ impl Data {
         kind: Kind,
         redact_sensitive_information: bool,
     ) -> fmt::Result {
-        // TODO(b1): Output::{color_map,pretty_fmt,enable_ansi_colors_stderr} +
-        // bun_core::fmt + bun_str::strings missing — gate draft body.
+        // TODO(b2-blocked): bun_core::fmt::fmt_javascript
+        // TODO(b2-blocked): bun_core::Output::pretty_fmt (runtime fn taking fmt::Arguments)
+        // TODO(b2-blocked): bun_string::strings::trim_left
         #[cfg(any())]
         {
         if self.text.is_empty() {
@@ -1321,7 +1319,7 @@ impl Msg {
         }
     }
 
-    #[cfg(any())] // TODO(b1): bun_schema::api missing
+    #[cfg(any())] // TODO(b2-blocked): bun_schema::api
     pub fn to_api(&self) -> Result<api::Message, AllocError> {
         let mut notes = vec![api::MessageData::default(); self.notes.len()].into_boxed_slice();
         let msg = api::Message {
@@ -1346,7 +1344,7 @@ impl Msg {
         Ok(api::Message { notes, ..msg })
     }
 
-    #[cfg(any())] // TODO(b1): bun_schema::api missing
+    #[cfg(any())] // TODO(b2-blocked): bun_schema::api
     pub fn to_api_from_list(list: &[Msg]) -> Result<Box<[api::Message]>, AllocError> {
         // PORT NOTE: Zig took `comptime ListType: type, list: ListType` and read
         // `list.items`; collapsed to `&[Msg]`.
@@ -1623,7 +1621,7 @@ impl Log {
         (self.warnings + self.errors) > 0
     }
 
-    #[cfg(any())] // TODO(b1): bun_schema::api missing
+    #[cfg(any())] // TODO(b2-blocked): bun_schema::api
     pub fn to_api(&self) -> Result<api::Log, AllocError> {
         let mut warnings: u32 = 0;
         let mut errors: u32 = 0;
@@ -2018,29 +2016,27 @@ impl Log {
     }
 
     /// Use a bun.sys.Error's message in addition to some extra context.
-    #[allow(unused_variables)]
     pub fn add_sys_error(
         &mut self,
         e: &bun_sys::Error,
         args: fmt::Arguments<'_>,
     ) -> Result<(), AllocError> {
-        // TODO(b1): bun_sys::Error::get_error_code_tag_name + coreutils_error_map gated.
-        #[cfg(any())]
-        {
         let Some((tag_name, sys_errno)) = e.get_error_code_tag_name() else {
             return self.add_error_fmt(None, Loc::EMPTY, args);
         };
         // TODO(port): Zig does comptime fmt-string concat `"{s}: " ++ fmt` and
         // tuple concat `.{x} ++ args`. With `fmt::Arguments` we compose at the
         // value level instead.
-        let prefix = bun_sys::coreutils_error_map::get(sys_errno).unwrap_or(tag_name);
+        // PORT NOTE: Zig `coreutils_error_map.get(sys_errno)` returns an Option;
+        // the Rust EnumMap is total (default "unknown error"), so emulate the
+        // None case by treating the default as missing.
+        let label = bun_sys::coreutils_error_map::COREUTILS_ERROR_MAP[sys_errno];
+        let prefix = if label == "unknown error" { tag_name } else { label };
         self.add_error_fmt(
             None,
             Loc::EMPTY,
-            format_args!("{}: {}", bstr::BStr::new(prefix), args),
+            format_args!("{}: {}", prefix, args),
         )
-        } // end #[cfg(any())]
-        self.add_error_fmt(None, Loc::EMPTY, args)
     }
 
     #[cold]
@@ -2054,18 +2050,12 @@ impl Log {
         let notes: Box<[Data]> =
             Box::new([range_data(None, Range::NONE, alloc_print(note_args)?)]);
 
-        // TODO(b1): bun_core::Error::name() missing — gate draft body.
-        #[cfg(any())]
-        {
         self.add_msg(Msg {
             kind: Kind::Err,
-            data: range_data(None, Range::NONE, err.name().as_bytes()),
+            data: range_data(None, Range::NONE, err.name()),
             notes,
             ..Default::default()
         })
-        }
-        let _ = err;
-        self.add_msg(Msg { kind: Kind::Err, notes, ..Default::default() })
     }
 
     #[cold]
@@ -2431,14 +2421,11 @@ impl Log {
     }
 
     pub fn print(&self, to: &mut impl fmt::Write) -> fmt::Result {
-        // TODO(b1): Output::enable_ansi_colors_stderr missing.
-        #[cfg(any())]
-        if Output::enable_ansi_colors_stderr() {
+        if Output::ENABLE_ANSI_COLORS_STDERR.load(core::sync::atomic::Ordering::Relaxed) {
             self.print_with_enable_ansi_colors::<true>(to)
         } else {
             self.print_with_enable_ansi_colors::<false>(to)
         }
-        self.print_with_enable_ansi_colors::<false>(to)
     }
 
     pub fn print_with_enable_ansi_colors<const ENABLE_ANSI_COLORS: bool>(
@@ -2511,9 +2498,9 @@ pub fn alloc_print(args: fmt::Arguments<'_>) -> Result<Str, AllocError> {
     // For now, render args verbatim and pass through `Output::pretty_runtime`.
     use std::io::Write;
     let mut v = Vec::new();
-    // TODO(b1): Output::{enable_ansi_colors_stderr,pretty_fmt} missing — render verbatim.
+    // TODO(b2-blocked): bun_core::Output::pretty_fmt (runtime fn taking fmt::Arguments)
     #[cfg(any())]
-    if Output::enable_ansi_colors_stderr() {
+    if Output::ENABLE_ANSI_COLORS_STDERR.load(core::sync::atomic::Ordering::Relaxed) {
         let _ = write!(&mut v, "{}", Output::pretty_fmt::<true>(args));
     } else {
         let _ = write!(&mut v, "{}", Output::pretty_fmt::<false>(args));
@@ -2568,7 +2555,7 @@ pub struct ErrorPosition {
 }
 
 impl Source {
-    #[cfg(any())] // TODO(b1): bun_core::fmt::FormatValidIdentifier + fs::PathName::fmt_identifier missing
+    #[cfg(any())] // TODO(b2-blocked): bun_paths::fs::PathName::fmt_identifier
     pub fn fmt_identifier(&self) -> bun_core::fmt::FormatValidIdentifier<'_> {
         self.path.name.fmt_identifier()
     }
@@ -2580,7 +2567,7 @@ impl Source {
         }
 
         debug_assert!(!self.path.text.is_empty());
-        // TODO(b1): fs::PathName::non_unique_name_string missing — gate.
+        // TODO(b2-blocked): bun_paths::fs::PathName::non_unique_name_string
         #[cfg(any())]
         {
         let name = self.path.name.non_unique_name_string()?;
@@ -2641,13 +2628,9 @@ impl Source {
         &self.contents[r.loc.i()..r.end_i()]
     }
 
-    #[allow(unused_variables)]
     pub fn range_of_operator_before(&self, loc: Loc, op: &[u8]) -> Range {
-        // TODO(b1): bun_str::strings::index missing — gate draft body.
-        #[cfg(any())]
-        {
         let text = &self.contents[0..loc.i()];
-        let index = strings::index(text, op);
+        let index = bun_string::strings::index(text, op);
         if index >= 0 {
             return Range {
                 loc: Loc { start: loc.start + index },
@@ -2655,8 +2638,6 @@ impl Source {
             };
         }
 
-        Range { loc, ..Default::default() }
-        } // end #[cfg(any())]
         Range { loc, ..Default::default() }
     }
 
@@ -2691,13 +2672,9 @@ impl Source {
         Range { loc, len: 0 }
     }
 
-    #[allow(unused_variables)]
     pub fn range_of_operator_after(&self, loc: Loc, op: &[u8]) -> Range {
-        // TODO(b1): bun_str::strings::index missing — gate draft body.
-        #[cfg(any())]
-        {
         let text = &self.contents[loc.i()..];
-        let index = strings::index(text, op);
+        let index = bun_string::strings::index(text, op);
         if index >= 0 {
             return Range {
                 loc: Loc { start: loc.start + index },
@@ -2706,15 +2683,10 @@ impl Source {
         }
 
         Range { loc, ..Default::default() }
-        } // end #[cfg(any())]
-        Range { loc, ..Default::default() }
     }
 
-    #[allow(unused_variables)]
     pub fn init_error_position(&self, offset_loc: Loc) -> ErrorPosition {
-        // TODO(b1): bun_str::strings::CodepointIterator missing — gate draft body.
-        #[cfg(any())]
-        {
+        use bun_string::strings::{CodepointIterator, Cursor};
         debug_assert!(!offset_loc.is_empty());
         let mut prev_code_point: i32 = 0;
         let offset: usize =
@@ -2722,11 +2694,8 @@ impl Source {
 
         let contents = self.contents;
 
-        let mut iter_ = strings::CodepointIterator {
-            bytes: &self.contents[0..offset],
-            i: 0,
-        };
-        let mut iter = strings::codepoint_iterator::Cursor::default();
+        let mut iter_ = CodepointIterator::init(&self.contents[0..offset]);
+        let mut iter = Cursor::default();
 
         let mut line_start: usize = 0;
         let mut line_count: usize = 1;
@@ -2761,12 +2730,9 @@ impl Source {
             prev_code_point = iter.c;
         }
 
-        iter_ = strings::CodepointIterator {
-            bytes: &self.contents[offset..],
-            i: 0,
-        };
+        iter_ = CodepointIterator::init(&self.contents[offset..]);
 
-        iter = strings::codepoint_iterator::Cursor::default();
+        iter = Cursor::default();
         // Scan to the end of the line (or end of file if this is the last line)
         let mut line_end: usize = contents.len();
 
@@ -2786,11 +2752,8 @@ impl Source {
             line_count,
             column_count: column_number,
         }
-        } // end #[cfg(any())]
-        todo!("Source::init_error_position — gated on bun_str::strings::CodepointIterator")
     }
 
-    #[allow(unused_variables)]
     pub fn line_col_to_byte_offset(
         source_contents: &[u8],
         start_line: usize,
@@ -2798,14 +2761,9 @@ impl Source {
         line: usize,
         col: usize,
     ) -> Option<usize> {
-        // TODO(b1): bun_str::strings::CodepointIterator missing — gate draft body.
-        #[cfg(any())]
-        {
-        let mut iter_ = strings::CodepointIterator {
-            bytes: source_contents,
-            i: 0,
-        };
-        let mut iter = strings::codepoint_iterator::Cursor::default();
+        use bun_string::strings::{CodepointIterator, Cursor};
+        let iter_ = CodepointIterator::init(source_contents);
+        let mut iter = Cursor::default();
 
         let mut line_count: usize = start_line;
         let mut column_number: usize = start_col;
@@ -2847,8 +2805,6 @@ impl Source {
             }
         }
         None
-        } // end #[cfg(any())]
-        None
     }
 }
 
@@ -2864,8 +2820,9 @@ pub fn range_data(source: Option<&Source>, r: Range, text: Str) -> Data {
 // code via `use bun_logger::FileSourceExt`.
 // ───────────────────────────────────────────────────────────────────────────
 
-// TODO(b1): bun_sys::file gated, bun_str crate missing — provide local stub type
-// and gate the bodies/trait. Un-gate in B-2 once bun_sys::file lands.
+// TODO(b2-blocked): bun_sys::file::File (full module gated in bun_sys::lib.rs).
+// Draft body also uses Box::leak (forbidden — PORTING.md §Forbidden); un-gating
+// requires the Source.contents ownership rework (Str → Vec<u8>/Cow).
 #[derive(Default, Clone, Copy)]
 pub struct ToSourceOptions {
     pub convert_bom: bool,

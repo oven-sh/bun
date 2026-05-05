@@ -23,7 +23,7 @@
 // THE SOFTWARE.
 
 use bun_collections::BoundedArray;
-use bun_str::strings;
+use bun_string::strings;
 
 /// used in matchBrace to determine the size of the stack buffer used in the stack fallback allocator
 /// that is created for handling braces
@@ -140,7 +140,7 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
     }
 
     // PORT NOTE: `BraceStack.init(0) catch unreachable` — zero-length init cannot fail.
-    let mut brace_stack = BraceStack::new();
+    let mut brace_stack = BraceStack::default();
     let matched = glob_match_impl(&mut state, glob, 0, path, &mut brace_stack);
 
     // TODO: consider just returning a bool

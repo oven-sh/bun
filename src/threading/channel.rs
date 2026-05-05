@@ -4,7 +4,8 @@
 use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
 
-use bun_collections::{LinearFifo, LinearFifoBufferType};
+use bun_collections::LinearFifo;
+use bun_collections::linear_fifo::{DynamicBuffer, LinearFifoBuffer, SliceBuffer, StaticBuffer};
 
 use crate::Condition;
 use crate::Mutex;
@@ -33,50 +34,57 @@ impl From<ChannelError> for bun_core::Error {
 // `*Self` and the mutex guards `buffer`/`is_closed`. In Rust we need `&self`
 // (Channel is shared across threads), so the mutex-protected fields are
 // wrapped in `UnsafeCell` and accessed only while `mutex` is held.
-pub struct Channel<T, const BUFFER_TYPE: LinearFifoBufferType> {
+//
+// PORT NOTE: Zig's `comptime buffer_type: LinearFifoBufferType` const-enum
+// param is unstable in Rust (`adt_const_params`). `bun_collections::LinearFifo`
+// already lowers it to a `LinearFifoBuffer<T>` trait param, so `Channel`
+// follows the same shape: `Channel<T, B: LinearFifoBuffer<T>>`. The original
+// `init` switch becomes per-buffer inherent constructors below.
+pub struct Channel<T, B: LinearFifoBuffer<T> = DynamicBuffer<T>> {
     mutex: Mutex,
     putters: Condition,
     getters: Condition,
-    buffer: UnsafeCell<LinearFifo<T, BUFFER_TYPE>>,
+    buffer: UnsafeCell<LinearFifo<T, B>>,
     is_closed: UnsafeCell<bool>,
 }
 
 // SAFETY: all interior-mutable state is guarded by `mutex`.
-unsafe impl<T: Send, const B: LinearFifoBufferType> Send for Channel<T, B> {}
+unsafe impl<T: Send, B: LinearFifoBuffer<T>> Send for Channel<T, B> {}
 // SAFETY: all interior-mutable state is guarded by `mutex`.
-unsafe impl<T: Send, const B: LinearFifoBufferType> Sync for Channel<T, B> {}
+unsafe impl<T: Send, B: LinearFifoBuffer<T>> Sync for Channel<T, B> {}
 
-type Buffer<T, const B: LinearFifoBufferType> = LinearFifo<T, B>;
+// Zig: `pub const init = switch (buffer_type) { .Static => initStatic, ... }`
+// Rust cannot dispatch a single `init` ident to different signatures based on
+// a type-level discriminant. Callers pick the matching constructor directly.
 
-impl<T, const BUFFER_TYPE: LinearFifoBufferType> Channel<T, BUFFER_TYPE> {
-    // Zig: `pub const init = switch (buffer_type) { .Static => initStatic, ... }`
-    // TODO(port): Rust cannot dispatch a single `init` ident to different
-    // signatures based on a const-generic. Callers must pick the matching
-    // `init_static` / `init_slice` / `init_dynamic` directly.
-
+impl<T: Copy, const N: usize> Channel<T, StaticBuffer<T, N>> {
     #[inline]
-    pub fn init_static() -> Self
-    where
-        [(); 0]:, // TODO(port): const-generic where-bound for BUFFER_TYPE == Static
-    {
-        Self::with_buffer(Buffer::<T, BUFFER_TYPE>::init())
+    pub fn init_static() -> Self {
+        Self::with_buffer(LinearFifo::<T, StaticBuffer<T, N>>::init())
     }
+}
 
+impl<'a, T: Copy> Channel<T, SliceBuffer<'a, T>> {
     #[inline]
-    pub fn init_slice(buf: &mut [T]) -> Self {
-        // TODO(port): Slice variant borrows `buf` for the lifetime of the
-        // channel; LinearFifo<_, Slice> will need a lifetime param in Phase B.
-        Self::with_buffer(Buffer::<T, BUFFER_TYPE>::init_slice(buf))
+    pub fn init_slice(buf: &'a mut [T]) -> Self {
+        Self::with_buffer(LinearFifo::<T, SliceBuffer<'a, T>>::init(buf))
     }
+}
 
+impl<T: Copy> Channel<T, DynamicBuffer<T>> {
     #[inline]
     pub fn init_dynamic() -> Self {
         // PORT NOTE: Zig took `allocator: std.mem.Allocator`; dropped per
         // §Allocators (non-AST crate uses global mimalloc).
-        Self::with_buffer(Buffer::<T, BUFFER_TYPE>::init_dynamic())
+        Self::with_buffer(LinearFifo::<T, DynamicBuffer<T>>::init())
     }
+}
 
-    fn with_buffer(buffer: Buffer<T, BUFFER_TYPE>) -> Self {
+// PORT NOTE: `T: Copy` because `LinearFifo::write`/`read` are slice-copy
+// based (mirrors Zig's `[]const T` semantics for POD payloads). All in-tree
+// channel payloads are POD; revisit if a non-`Copy` T appears.
+impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
+    fn with_buffer(buffer: LinearFifo<T, B>) -> Self {
         Self {
             mutex: Mutex::default(),
             putters: Condition::default(),
@@ -90,14 +98,14 @@ impl<T, const BUFFER_TYPE: LinearFifoBufferType> Channel<T, BUFFER_TYPE> {
     // fields automatically, so no explicit `Drop` impl is needed.
 
     pub fn close(&self) {
-        let _guard = self.mutex.lock();
-        // SAFETY: mutex is held; we are the only accessor of `is_closed`.
+        // crate::Mutex::lock() returns () (no RAII guard); pair with scopeguard.
+        self.mutex.lock();
+        let _unlock = scopeguard::guard((), |()| self.mutex.unlock());
+        // SAFETY: mutex is held; we are the only accessor of `is_closed` for this region.
         let is_closed = unsafe { &mut *self.is_closed.get() };
-
         if *is_closed {
             return;
         }
-
         *is_closed = true;
         self.putters.broadcast();
         self.getters.broadcast();
@@ -163,29 +171,32 @@ impl<T, const BUFFER_TYPE: LinearFifoBufferType> Channel<T, BUFFER_TYPE> {
 
     // TODO(port): narrow error set
     fn write_items(&self, items: &[T], should_block: bool) -> Result<usize, ChannelError> {
-        let _guard = self.mutex.lock();
-        // SAFETY: mutex is held for the duration of this fn.
-        let buffer = unsafe { &mut *self.buffer.get() };
-        // SAFETY: mutex is held.
-        let is_closed = unsafe { &*self.is_closed.get() };
+        // crate::Mutex::lock() returns () (no RAII guard); pair with scopeguard.
+        self.mutex.lock();
+        let _unlock = scopeguard::guard((), |()| self.mutex.unlock());
 
         let mut pushed: usize = 0;
         while pushed < items.len() {
+            // Re-derive UnsafeCell refs each iteration: `Condition::wait` below
+            // releases the mutex, so a long-lived `&mut buffer` / `&is_closed`
+            // held across wait() would alias another thread's `&mut` (UB) and
+            // let the compiler hoist `*is_closed` to a single pre-loop load.
+            // SAFETY: mutex is held at this point in the loop body.
             let did_push = 'blk: {
-                if *is_closed {
+                if unsafe { *self.is_closed.get() } {
                     return Err(ChannelError::Closed);
                 }
-
+                // SAFETY: mutex is held; this &mut does not live across wait().
+                let buffer = unsafe { &mut *self.buffer.get() };
                 match buffer.write(items) {
                     Ok(()) => {}
                     Err(err) => {
-                        if BUFFER_TYPE == LinearFifoBufferType::Dynamic {
+                        if B::DYNAMIC {
                             return Err(err.into());
                         }
                         break 'blk false;
                     }
                 }
-
                 self.getters.signal();
                 break 'blk true;
             };
@@ -193,8 +204,8 @@ impl<T, const BUFFER_TYPE: LinearFifoBufferType> Channel<T, BUFFER_TYPE> {
             if did_push {
                 pushed += 1;
             } else if should_block {
-                // TODO(port): verify bun_threading::Condition::wait signature
-                // (guard vs &Mutex). Mirroring Zig: `putters.wait(&self.mutex)`.
+                // wait() releases the mutex while parked, reacquires before
+                // returning. No long-lived UnsafeCell borrows are live here.
                 self.putters.wait(&self.mutex);
             } else {
                 break;
@@ -206,24 +217,24 @@ impl<T, const BUFFER_TYPE: LinearFifoBufferType> Channel<T, BUFFER_TYPE> {
 
     // TODO(port): narrow error set
     fn read_items(&self, items: &mut [T], should_block: bool) -> Result<usize, ChannelError> {
-        let _guard = self.mutex.lock();
-        // SAFETY: mutex is held for the duration of this fn.
-        let buffer = unsafe { &mut *self.buffer.get() };
-        // SAFETY: mutex is held.
-        let is_closed = unsafe { &*self.is_closed.get() };
+        self.mutex.lock();
+        let _unlock = scopeguard::guard((), |()| self.mutex.unlock());
 
         let mut popped: usize = 0;
         while popped < items.len() {
+            // See write_items: re-derive UnsafeCell refs each iteration so no
+            // borrow lives across `getters.wait()` (which releases the mutex).
             let new_item: Option<T> = 'blk: {
+                // SAFETY: mutex is held; this &mut does not live across wait().
+                let buffer = unsafe { &mut *self.buffer.get() };
                 // Buffer can contain null items but readItem will return null if the buffer is empty.
                 // we need to check if the buffer is empty before trying to read an item.
-                if buffer.count() == 0 {
-                    if *is_closed {
+                if buffer.readable_length() == 0 {
+                    if unsafe { *self.is_closed.get() } {
                         return Err(ChannelError::Closed);
                     }
                     break 'blk None;
                 }
-
                 let item = buffer.read_item();
                 self.putters.signal();
                 break 'blk item;

@@ -2,7 +2,9 @@
 
 use core::marker::PhantomData;
 
-use crate::{Param, ParseOptions, StreamingClap, Values};
+use crate::args::ArgIter;
+use crate::streaming::{self, StreamingClap};
+use crate::{Param, ParseOptions, Values};
 
 // TODO(port): The Zig `ComptimeClap` is a type-generator
 //   `fn ComptimeClap(comptime Id: type, comptime params: []const Param(Id)) type`.
@@ -11,68 +13,89 @@ use crate::{Param, ParseOptions, StreamingClap, Values};
 // then emits a struct with array fields sized by those counts.
 //
 // Stable Rust const generics cannot carry a `&[Param<Id>]`, and array field lengths
-// cannot be associated-const expressions (`generic_const_exprs` is nightly). Phase A
-// therefore models the result as a struct generic over the three counts, with
-// `converted_params` supplied as a `&'static` slice. A `comptime_clap!` proc-macro
-// (Phase B) must perform the comptime loop (comptime.zig lines 6–32) to instantiate
-// `ComptimeClap<Id, FLAGS, SINGLE, MULTI>` and produce the matching
-// `CONVERTED_PARAMS` static for each call site.
+// cannot be associated-const expressions (`generic_const_exprs` is nightly). B-2
+// therefore reshapes the result as a struct with `Vec`-backed storage sized at
+// runtime from `params`. A `comptime_clap!` proc-macro (Phase B) can later restore
+// the fixed-size arrays and compile-time name lookup.
+
+/// Per-category counts derived from a param table (Zig: comptime loop lines 6–32).
+struct Counts {
+    flags: usize,
+    single: usize,
+    multi: usize,
+}
+
+/// Runtime equivalent of the Zig comptime conversion loop: re-indexes each param's
+/// `id` to its slot within its category (flag/single/multi) and returns the counts.
+pub fn convert_params<Id>(params: &[Param<Id>]) -> (Vec<Param<usize>>, usize, usize, usize) {
+    let mut flags = 0usize;
+    let mut single = 0usize;
+    let mut multi = 0usize;
+    let mut converted: Vec<Param<usize>> = Vec::with_capacity(params.len());
+    for param in params {
+        let mut index = 0usize;
+        if param.names.long.is_some() || param.names.short.is_some() {
+            let ptr = match param.takes_value {
+                Values::None => &mut flags,
+                Values::OneOptional | Values::One => &mut single,
+                Values::Many => &mut multi,
+            };
+            index = *ptr;
+            *ptr += 1;
+        }
+        converted.push(Param { id: index, names: param.names, takes_value: param.takes_value });
+    }
+    (converted, flags, single, multi)
+}
 
 /// Deprecated: Use `parse_ex` instead
-pub struct ComptimeClap<Id, const FLAGS: usize, const SINGLE: usize, const MULTI: usize> {
+pub struct ComptimeClap<Id> {
     // Field order matches comptime.zig.
     // Inner `&'static [u8]` slices borrow argv (process-lifetime); never freed in Zig `deinit`.
-    pub single_options: [Option<&'static [u8]>; SINGLE],
-    pub multi_options: [Box<[&'static [u8]]>; MULTI],
-    pub flags: [bool; FLAGS],
+    pub single_options: Vec<Option<&'static [u8]>>,
+    pub multi_options: Vec<Box<[&'static [u8]]>>,
+    pub flags: Vec<bool>,
     pub pos: Box<[&'static [u8]]>,
     pub passthrough_positionals: Box<[&'static [u8]]>,
     // `allocator: mem.Allocator` field deleted — global mimalloc (see PORTING.md §Allocators).
 
     // Zig captures `converted_params` as a comptime const on the returned type; Rust
     // carries it as data so `flag`/`option`/`options`/`has_flag` can resolve names.
-    converted_params: &'static [Param<usize>],
+    converted_params: Vec<Param<usize>>,
     _id: PhantomData<Id>,
 }
 
-impl<Id, const FLAGS: usize, const SINGLE: usize, const MULTI: usize>
-    ComptimeClap<Id, FLAGS, SINGLE, MULTI>
-{
+impl<Id> ComptimeClap<Id> {
+    /// `iter` must yield `&'static [u8]` (process-lifetime args, e.g. `OsIterator`)
+    /// because parsed values are stored by reference.
     pub fn parse<I>(
-        converted_params: &'static [Param<usize>],
+        params: &[Param<Id>],
         iter: &mut I,
-        opt: ParseOptions,
+        opt: ParseOptions<'_>,
     ) -> Result<Self, bun_core::Error>
+    where
+        I: ArgIter<'static>,
     // TODO(port): narrow error set
     {
+        let (converted_params, n_flags, n_single, n_multi) = convert_params(params);
+
         // `opt.allocator` dropped — global mimalloc.
-        // TODO(port): `[MULTI]` array of Vec requires `Vec<..>: Copy` for `[v; N]` init on
-        // stable; Phase B may need `core::array::from_fn`.
-        let mut multis: [Vec<&'static [u8]>; MULTI] = core::array::from_fn(|_| Vec::new());
+        let mut multis: Vec<Vec<&'static [u8]>> = (0..n_multi).map(|_| Vec::new()).collect();
 
         let mut pos: Vec<&'static [u8]> = Vec::new();
         let mut passthrough_positionals: Vec<&'static [u8]> = Vec::new();
 
-        let mut res = Self {
-            single_options: [None; SINGLE],
-            // PORT NOTE: Zig left these `undefined` and filled them post-loop; Rust needs a
-            // valid value. `Box::default()` is an empty slice.
-            multi_options: core::array::from_fn(|_| Box::default()),
-            flags: [false; FLAGS],
-            pos: Box::default(),
-            passthrough_positionals: Box::default(),
-            converted_params,
-            _id: PhantomData,
-        };
+        let mut single_options: Vec<Option<&'static [u8]>> = vec![None; n_single];
+        let mut flags: Vec<bool> = vec![false; n_flags];
 
         // Zig: `StreamingClap(usize, @typeInfo(@TypeOf(iter)).pointer.child)` — the second
         // type arg is the pointee of `iter`; in Rust that is just `I`.
         let mut stream = StreamingClap::<usize, I> {
-            params: converted_params,
+            params: &converted_params,
             iter,
             diagnostic: opt.diagnostic,
-            // TODO(port): remaining StreamingClap fields (state) default-initialized in Zig.
-            ..Default::default()
+            state: streaming::State::Normal,
+            positional: None,
         };
 
         while let Some(arg) = stream.next()? {
@@ -83,28 +106,25 @@ impl<Id, const FLAGS: usize, const SINGLE: usize, const MULTI: usize>
                     && pos.len() >= opt.stop_after_positional_at
                 {
                     let mut remaining_ = stream.iter.remain();
-                    let first: &[u8] = if !remaining_.is_empty() {
-                        // use bun.span due to the optimization for long strings
-                        bun_core::span(remaining_[0])
-                    } else {
-                        b""
-                    };
+                    // PORT NOTE: Zig called `bun.span` (NUL-scan) on `[:0]const u8` argv
+                    // entries. Our `ArgIter` already yields sized `&[u8]`, so `span` is a
+                    // no-op and is dropped.
+                    let first: &[u8] = if !remaining_.is_empty() { remaining_[0] } else { b"" };
                     if !first.is_empty() && first == b"--" {
                         remaining_ = &remaining_[1..];
                     }
 
                     passthrough_positionals.reserve_exact(remaining_.len());
                     for arg_ in remaining_ {
-                        // use bun.span due to the optimization for long strings
-                        passthrough_positionals.push(bun_core::span(*arg_));
+                        passthrough_positionals.push(*arg_);
                         // PERF(port): was appendAssumeCapacity — profile in Phase B
                     }
                     break;
                 }
             } else if param.takes_value == Values::One || param.takes_value == Values::OneOptional {
-                debug_assert!(res.single_options.len() != 0);
-                if res.single_options.len() != 0 {
-                    res.single_options[param.id] = Some(arg.value.unwrap_or(b""));
+                debug_assert!(single_options.len() != 0);
+                if single_options.len() != 0 {
+                    single_options[param.id] = Some(arg.value.unwrap_or(b""));
                 }
             } else if param.takes_value == Values::Many {
                 debug_assert!(multis.len() != 0);
@@ -112,23 +132,27 @@ impl<Id, const FLAGS: usize, const SINGLE: usize, const MULTI: usize>
                     multis[param.id].push(arg.value.unwrap());
                 }
             } else {
-                debug_assert!(res.flags.len() != 0);
-                if res.flags.len() != 0 {
-                    res.flags[param.id] = true;
+                debug_assert!(flags.len() != 0);
+                if flags.len() != 0 {
+                    flags[param.id] = true;
                 }
             }
         }
 
-        for (i, multi) in multis.into_iter().enumerate() {
-            res.multi_options[i] = multi.into_boxed_slice();
-        }
-        res.pos = pos.into_boxed_slice();
-        res.passthrough_positionals = passthrough_positionals.into_boxed_slice();
-        Ok(res)
+        Ok(Self {
+            single_options,
+            // PORT NOTE: Zig left these `undefined` and filled them post-loop.
+            multi_options: multis.into_iter().map(Vec::into_boxed_slice).collect(),
+            flags,
+            pos: pos.into_boxed_slice(),
+            passthrough_positionals: passthrough_positionals.into_boxed_slice(),
+            converted_params,
+            _id: PhantomData,
+        })
     }
 
     // Zig `deinit` only freed `multi_options[*]` and `pos` (not `passthrough_positionals` —
-    // likely a leak in the deprecated Zig). All are `Box<[..]>` here, so `Drop` handles it;
+    // likely a leak in the deprecated Zig). All are owned here, so `Drop` handles it;
     // body deleted per PORTING.md §Idiom map (`pub fn deinit` → `impl Drop`, empty body
     // when it only frees owned fields).
 
@@ -186,10 +210,10 @@ impl<Id, const FLAGS: usize, const SINGLE: usize, const MULTI: usize>
     }
 
     // TODO(port): Zig `hasFlag` is a comptime-only fn (no `self`) over the captured
-    // `converted_params` const. Rust takes `&self` to reach the slice; a Phase-B
-    // proc-macro can restore the const-eval form.
-    pub fn has_flag(&self, name: &[u8]) -> bool {
-        for param in self.converted_params {
+    // `converted_params` const. Rust takes the slice explicitly so it can be called
+    // without a parsed instance; a Phase-B proc-macro can restore the const-eval form.
+    pub fn has_flag(params: &[Param<Id>], name: &[u8]) -> bool {
+        for param in params {
             if let Some(s) = param.names.short {
                 // Zig: mem.eql(u8, name, "-" ++ [_]u8{s})
                 if name.len() == 2 && name[0] == b'-' && name[1] == s {
@@ -198,13 +222,13 @@ impl<Id, const FLAGS: usize, const SINGLE: usize, const MULTI: usize>
             }
             if let Some(l) = param.names.long {
                 // Zig: mem.eql(u8, name, "--" ++ l)
-                if name.strip_prefix(b"--") == Some(l) {
+                if name.len() >= 2 && &name[..2] == b"--" && &name[2..] == l {
                     return true;
                 }
             }
             // Check aliases
             for alias in param.names.long_aliases {
-                if name.strip_prefix(b"--") == Some(alias) {
+                if name.len() >= 2 && &name[..2] == b"--" && &name[2..] == *alias {
                     return true;
                 }
             }
@@ -217,20 +241,20 @@ impl<Id, const FLAGS: usize, const SINGLE: usize, const MULTI: usize>
     // Phase A does a runtime scan and panics on miss; the Phase-B proc-macro should
     // resolve names at compile time.
     fn find_param(&self, name: &[u8]) -> &Param<usize> {
-        for param in self.converted_params {
+        for param in &self.converted_params {
             if let Some(s) = param.names.short {
                 if name.len() == 2 && name[0] == b'-' && name[1] == s {
                     return param;
                 }
             }
             if let Some(l) = param.names.long {
-                if name.strip_prefix(b"--") == Some(l) {
+                if name.len() >= 2 && &name[..2] == b"--" && &name[2..] == l {
                     return param;
                 }
             }
             // Check aliases
             for alias in param.names.long_aliases {
-                if name.strip_prefix(b"--") == Some(alias) {
+                if name.len() >= 2 && &name[..2] == b"--" && &name[2..] == *alias {
                     return param;
                 }
             }
@@ -244,6 +268,6 @@ impl<Id, const FLAGS: usize, const SINGLE: usize, const MULTI: usize>
 // PORT STATUS
 //   source:     src/clap/comptime.zig (199 lines)
 //   confidence: medium
-//   todos:      9
-//   notes:      type-generator over comptime param slice; Phase B needs a proc-macro to derive FLAGS/SINGLE/MULTI + converted_params and restore compile-time name lookup
+//   todos:      7
+//   notes:      type-generator over comptime param slice → Vec-backed runtime struct; Phase-B proc-macro can restore fixed arrays + compile-time name lookup
 // ──────────────────────────────────────────────────────────────────────────

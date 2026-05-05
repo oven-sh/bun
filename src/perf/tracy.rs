@@ -5,12 +5,14 @@
 //! This file is based on the code from Zig's transpiler source.
 //! Thank you to the Zig team
 
+#![allow(dead_code)]
+
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
+#[allow(unused_imports)]
 use bun_core::env_var;
-use bun_sys as sys;
 
 pub const ENABLE_ALLOCATION: bool = false;
 pub const ENABLE_CALLSTACK: bool = false;
@@ -204,12 +206,12 @@ pub fn message_copy(msg: &[u8]) {
 }
 
 #[inline]
-pub fn message_color_copy(msg: &bun_str::ZStr, color: u32) {
+pub fn message_color_copy(msg: &bun_core::ZStr, color: u32) {
     if !enable() {
         return;
     }
     ___tracy_emit_message_c(
-        msg.as_ptr(),
+        msg.as_bytes().as_ptr(),
         msg.as_bytes().len(),
         color,
         if ENABLE_CALLSTACK { CALLSTACK_DEPTH } else { 0 },
@@ -694,8 +696,16 @@ fn handle_getter() -> Option<*mut c_void> {
 fn dlsym<T: Copy>(symbol: &'static core::ffi::CStr) -> Option<T> {
     #[cfg(target_family = "wasm")]
     {
+        let _ = symbol;
         return None;
     }
+
+    #[cfg(any())]
+    {
+    // TODO(b2-blocked): bun_sys::c::dlsym
+    // TODO(b2-blocked): bun_sys::dlopen
+    // TODO(b2-blocked): bun_sys::c::dlsym_with_handle
+    use bun_sys as sys;
 
     #[cfg(target_os = "linux")]
     {
@@ -749,7 +759,7 @@ fn dlsym<T: Copy>(symbol: &'static core::ffi::CStr) -> Option<T> {
                 // TODO(port): std.posix.toPosixPath — copy into a NUL-terminated
                 // PathBuffer. Phase B: use bun_paths helper.
                 let mut buf = bun_paths::PathBuffer::uninit();
-                let zpath = bun_paths::z(path, &mut buf);
+                let zpath = bun_paths::resolve_path::z(path, &mut buf);
                 let handle = sys::dlopen(zpath, rtld);
                 if !handle.is_null() {
                     HANDLE.store(handle, Ordering::Release);
@@ -771,6 +781,14 @@ fn dlsym<T: Copy>(symbol: &'static core::ffi::CStr) -> Option<T> {
     }
 
     sys::c::dlsym_with_handle::<T>(symbol, handle_getter)
+    }
+    #[cfg(not(any()))]
+    {
+        let _ = symbol;
+        let _ = handle_getter;
+        let _ = &HANDLE;
+        todo!("b2-blocked: bun_sys::dlopen / bun_sys::c::dlsym / bun_sys::c::dlsym_with_handle")
+    }
 }
 
 // TODO(port): Zig pulls this from `@import("build_options").tracy_callstack_depth`.

@@ -6,6 +6,13 @@ use core::fmt;
 use bstr::BStr;
 
 use bun_core::output as Output;
+use bun_core::pretty_fmt;
+
+#[inline]
+fn enable_ansi_colors_stderr() -> bool {
+    Output::ENABLE_ANSI_COLORS_STDERR.load(core::sync::atomic::Ordering::Relaxed)
+}
+
 // TODO(b1): bun_core::StringBuilder missing — local opaque stub
 pub struct StringBuilder(());
 impl StringBuilder {
@@ -126,35 +133,32 @@ impl Header {
 
 impl fmt::Display for Header {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // TODO(port): Output::pretty_fmt! is the comptime ANSI-tag expander
-        // (`<r><cyan>` → escape codes). Phase B must provide this macro.
-        #[cfg(any())]
-        {
-        if Output::enable_ansi_colors_stderr() {
+        // NOTE: pretty_fmt! is the comptime ANSI-tag expander (`<r><cyan>` → escape
+        // codes). bun_core's current impl is a passthrough TODO(port) until the
+        // proc-macro lands; output will contain literal `<r>` tags until then.
+        if enable_ansi_colors_stderr() {
             if self.is_multiline() {
-                write!(f, Output::pretty_fmt!("<r><cyan>{}", true), BStr::new(self.value()))
+                write!(f, pretty_fmt!("<r><cyan>{}", true), BStr::new(self.value()))
             } else {
                 write!(
                     f,
-                    Output::pretty_fmt!("<r><cyan>{}<r><d>: <r>{}", true),
+                    pretty_fmt!("<r><cyan>{}<r><d>: <r>{}", true),
                     BStr::new(self.name()),
                     BStr::new(self.value()),
                 )
             }
         } else {
             if self.is_multiline() {
-                write!(f, Output::pretty_fmt!("<r><cyan>{}", false), BStr::new(self.value()))
+                write!(f, pretty_fmt!("<r><cyan>{}", false), BStr::new(self.value()))
             } else {
                 write!(
                     f,
-                    Output::pretty_fmt!("<r><cyan>{}<r><d>: <r>{}", false),
+                    pretty_fmt!("<r><cyan>{}<r><d>: <r>{}", false),
                     BStr::new(self.name()),
                     BStr::new(self.value()),
                 )
             }
         }
-        }
-        todo!("B-2: Header Display (needs Output::pretty_fmt!)")
     }
 }
 
@@ -317,22 +321,18 @@ impl<'a> Request<'a> {
 
 impl fmt::Display for Request<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        #[cfg(any())]
-        {
-        if Output::enable_ansi_colors_stderr() {
-            f.write_str(Output::pretty_fmt!("<r><d>[fetch]<r> ", true))?;
+        if enable_ansi_colors_stderr() {
+            f.write_str(pretty_fmt!("<r><d>[fetch]<r> ", true))?;
         }
         write!(f, "> HTTP/1.1 {} {}\n", BStr::new(self.method), BStr::new(self.path))?;
         for header in self.headers {
-            if Output::enable_ansi_colors_stderr() {
-                f.write_str(Output::pretty_fmt!("<r><d>[fetch]<r> ", true))?;
+            if enable_ansi_colors_stderr() {
+                f.write_str(pretty_fmt!("<r><d>[fetch]<r> ", true))?;
             }
             f.write_str("> ")?;
             write!(f, "{}\n", header)?;
         }
         Ok(())
-        }
-        todo!("B-2: Request Display (needs Output::pretty_fmt!)")
     }
 }
 
@@ -357,15 +357,13 @@ impl<'a> RequestCurlFormatter<'a> {
 
 impl fmt::Display for RequestCurlFormatter<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        #[cfg(any())]
-        {
         let request = self.request;
-        if Output::enable_ansi_colors_stderr() {
-            f.write_str(Output::pretty_fmt!("<r><d>[fetch] $<r> ", true))?;
+        if enable_ansi_colors_stderr() {
+            f.write_str(pretty_fmt!("<r><d>[fetch] $<r> ", true))?;
 
             write!(
                 f,
-                Output::pretty_fmt!("<b><cyan>curl<r> <d>--http1.1<r> <b>\"{}\"<r>", true),
+                pretty_fmt!("<b><cyan>curl<r> <d>--http1.1<r> <b>\"{}\"<r>", true),
                 BStr::new(request.path),
             )?;
         } else {
@@ -399,14 +397,13 @@ impl fmt::Display for RequestCurlFormatter<'_> {
 
         if !self.body.is_empty() && Self::is_printable_body(content_type) {
             f.write_str(" --data-raw ")?;
-            // MOVE_DOWN(b0): printer::write_json_string → bun_str (move-in pass
-            // lands `printer` module + `Encoding` type in the string crate).
-            bun_str::printer::write_json_string(self.body, f, bun_str::Encoding::Utf8)?;
+            // Zig: bun.js_printer.writeJSONString — bun_core re-exports the
+            // tier-0 minimal impl as `js_printer::write_json_string`; the full
+            // encoding-aware printer in bun_js_printer overrides at link time.
+            bun_core::js_printer::write_json_string(self.body, f, bun_core::strings::Encoding::Utf8)?;
         }
 
         Ok(())
-        }
-        todo!("B-2: RequestCurlFormatter Display (needs Output::pretty_fmt! + bun_str::printer)")
     }
 }
 
@@ -420,19 +417,15 @@ struct StatusCodeFormatter {
 
 impl fmt::Display for StatusCodeFormatter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        #[cfg(any())]
-        {
-        if Output::enable_ansi_colors_stderr() {
+        if enable_ansi_colors_stderr() {
             match self.code {
-                101 | 200..=299 => write!(f, Output::pretty_fmt!("<r><green>{}<r>", true), self.code),
-                300..=399 => write!(f, Output::pretty_fmt!("<r><yellow>{}<r>", true), self.code),
-                _ => write!(f, Output::pretty_fmt!("<r><red>{}<r>", true), self.code),
+                101 | 200..=299 => write!(f, pretty_fmt!("<r><green>{}<r>", true), self.code),
+                300..=399 => write!(f, pretty_fmt!("<r><yellow>{}<r>", true), self.code),
+                _ => write!(f, pretty_fmt!("<r><red>{}<r>", true), self.code),
             }
         } else {
             write!(f, "{}", self.code)
         }
-        }
-        todo!("B-2: StatusCodeFormatter Display (needs Output::pretty_fmt!)")
     }
 }
 
@@ -531,10 +524,11 @@ impl<'a> Response<'a> {
 
         match rc {
             -1 => {
+                // TODO(b2-blocked): bun_core::debug — macro currently passes
+                // `concat!(...)` into `pretty_errorln!` which only accepts
+                // `$fmt:literal`; fix lands in bun_core.
                 #[cfg(any())]
-                {
-                    Output::debug!("Malformed HTTP response:\n{}", BStr::new(buf));
-                }
+                bun_core::debug!("Malformed HTTP response:\n{}", BStr::new(buf));
                 Err(ParseResponseError::Malformed_HTTP_Response)
             }
             -2 => {
@@ -561,10 +555,8 @@ impl<'a> Response<'a> {
 
 impl fmt::Display for Response<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        #[cfg(any())]
-        {
-        if Output::enable_ansi_colors_stderr() {
-            f.write_str(Output::pretty_fmt!("<r><d>[fetch]<r> ", true))?;
+        if enable_ansi_colors_stderr() {
+            f.write_str(pretty_fmt!("<r><d>[fetch]<r> ", true))?;
         }
 
         write!(
@@ -574,16 +566,14 @@ impl fmt::Display for Response<'_> {
             BStr::new(self.status),
         )?;
         for header in self.headers.list {
-            if Output::enable_ansi_colors_stderr() {
-                f.write_str(Output::pretty_fmt!("<r><d>[fetch]<r> ", true))?;
+            if enable_ansi_colors_stderr() {
+                f.write_str(pretty_fmt!("<r><d>[fetch]<r> ", true))?;
             }
 
             f.write_str("< ")?;
             write!(f, "{}\n", header)?;
         }
         Ok(())
-        }
-        todo!("B-2: Response Display (needs Output::pretty_fmt!)")
     }
 }
 
@@ -662,6 +652,6 @@ pub use c::phr_decode_chunked_is_in_data;
 // PORT STATUS
 //   source:     src/picohttp/picohttp.zig (386 lines)
 //   confidence: medium
-//   todos:      3
-//   notes:      Header is #[repr(C)] ptr+len (must match phr_header); Request/Response/Headers carry <'a> borrowing the input buffer; Output::pretty_fmt! macro and write_json_string adapter needed in Phase B.
+//   todos:      1
+//   notes:      Header is #[repr(C)] ptr+len (must match phr_header); Request/Response/Headers carry <'a> borrowing the input buffer; pretty_fmt! is bun_core's passthrough stub until proc-macro lands; one debug! call re-gated on bun_core macro fix.
 // ──────────────────────────────────────────────────────────────────────────

@@ -24,6 +24,8 @@
 //! }
 //! ```
 
+#![allow(dead_code)]
+
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use crate::Futex;
@@ -153,8 +155,6 @@ impl WindowsImpl {
         // SAFETY: caller acquired the lock on this thread; pointer is valid.
         unsafe { bun_sys::windows::kernel32::ReleaseSRWLockExclusive(self.srwlock.get()) }
     }
-
-    pub type Type = bun_sys::windows::SRWLOCK;
 }
 
 /// os_unfair_lock on darwin supports priority inheritance and is generally faster than Futex solutions.
@@ -200,8 +200,6 @@ impl DarwinImpl {
         // SAFETY: caller acquired the lock on this thread; pointer is valid.
         unsafe { os_unfair_lock_unlock(self.oul.get()) }
     }
-
-    pub type Type = OsUnfairLock;
 }
 
 #[derive(Default)]
@@ -227,10 +225,10 @@ impl FutexImpl {
         // - `lock bts` is smaller instruction-wise which makes it better for inlining
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         {
-            const LOCKED_BIT: u32 = Self::LOCKED.trailing_zeros();
+            let locked_bit: u32 = Self::LOCKED.trailing_zeros();
             // PERF(port): Zig emits `lock bts` via atomic bitSet; fetch_or is the closest stable
             // Rust atomic — profile in Phase B and consider inline asm if needed.
-            return (self.state.fetch_or(1 << LOCKED_BIT, Ordering::Acquire) & (1 << LOCKED_BIT))
+            return (self.state.fetch_or(1 << locked_bit, Ordering::Acquire) & (1 << locked_bit))
                 == 0;
         }
 
@@ -286,9 +284,11 @@ impl FutexImpl {
             Futex::wake(&self.state, 1);
         }
     }
-
-    pub type Type = u32;
 }
+
+// PORT NOTE: Zig had `pub const Type` inside each impl as an associated alias.
+// Inherent associated types are unstable in Rust; the per-platform alias is
+// already exposed as the module-level `ExternImpl` type above.
 
 pub fn spin_cycle() {}
 

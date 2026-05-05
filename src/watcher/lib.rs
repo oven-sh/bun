@@ -1,92 +1,64 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
-// AUTOGEN: mod declarations only — real exports added in B-1.
+#![allow(unexpected_cfgs)]
+//! Bun's cross-platform filesystem watcher.
+//!
+//! B-2 un-gate: the Phase-A draft modules now compile against the real T0/T1
+//! crate surface where it exists. Function bodies that still depend on
+//! lower-tier surface that hasn't landed yet (e.g. `bun_sys::linux` raw
+//! inotify syscalls, `bun_collections::MultiArrayElement` derive, `bun_fs`)
+//! are individually re-gated with `// TODO(b2-blocked): bun_X::Y` markers.
+
+// ─── platform impls ───────────────────────────────────────────────────────
 //
-// B-1 gate-and-stub: all Phase-A draft modules are gated behind `#[cfg(any())]`
-// because they depend on lower-tier crate surface that is itself still gated
-// (bun_sys::c, bun_sys::linux, bun_sys::windows, bun_core::env_var, bun_core::fmt,
-// bun_str, bun_fs, bun_output, bun_options_types, etc.). The draft bodies are
-// preserved on disk for B-2 un-gating.
-//
-// A minimal stub surface is exposed below so downstream crates can name the
-// public types. All behavior is `todo!()`.
+// Each platform watcher is compiled only for its target. The non-Linux
+// backends remain `#[cfg(any())]`-gated *inside their target cfg* because
+// their lower-tier deps (`bun_sys::c` kqueue bindings, `bun_sys::windows`)
+// are themselves still gated; a host build never sees them anyway.
 
-#[cfg(any())] pub mod KEventWatcher;
-#[cfg(any())] pub mod WatcherTrace;
-#[cfg(any())] pub mod WindowsWatcher;
-#[cfg(any())] pub mod INotifyWatcher;
-#[cfg(any())] #[path = "Watcher.rs"] pub mod watcher_impl;
+#[cfg(target_os = "linux")]
+#[path = "INotifyWatcher.rs"]
+pub mod inotify_watcher;
 
-// ---------------------------------------------------------------------------
-// Stub surface
-// ---------------------------------------------------------------------------
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+#[path = "KEventWatcher.rs"]
+pub mod kevent_watcher;
 
-pub type HashType = u32;
-pub type WatchItemIndex = u16;
+#[cfg(windows)]
+#[path = "WindowsWatcher.rs"]
+pub mod windows_watcher;
 
-pub const MAX_COUNT: usize = 128;
-pub const MAX_EVICTION_COUNT: usize = 8096;
-pub const REQUIRES_FILE_DESCRIPTORS: bool = false;
+#[path = "WatcherTrace.rs"]
+pub mod watcher_trace;
 
-/// Opaque stub for the file watcher. Real impl lives in `Watcher.rs` (gated).
-#[derive(Default)]
-pub struct Watcher(());
+#[path = "Watcher.rs"]
+pub mod watcher_impl;
 
-impl Watcher {
-    pub fn get_hash(_path: &str) -> HashType {
-        // TODO(b1): real impl in Watcher.rs (wyhash of path)
-        todo!("bun_watcher::Watcher::get_hash stub")
-    }
-}
+// ─── public re-exports ────────────────────────────────────────────────────
 
-/// Stub for a single watch event.
-#[derive(Default, Clone, Copy)]
-pub struct WatchEvent {
-    pub index: WatchItemIndex,
-    pub op: Op,
-    pub name_off: u32,
-    pub name_len: u32,
-}
-pub type Event = WatchEvent;
-
-bitflags::bitflags! {
-    #[derive(Default, Clone, Copy, PartialEq, Eq)]
-    pub struct Op: u8 {
-        const delete = 1 << 0;
-        const rename = 1 << 1;
-        const write = 1 << 2;
-        const move_to = 1 << 3;
-    }
-}
-
-/// Stub for a watched item (file or directory).
-#[derive(Default)]
-pub struct WatchItem(());
-pub type Item = WatchItem;
-
-/// Kind of watched item.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum WatchItemKind {
-    File,
-    Directory,
-}
+pub use watcher_impl::{
+    AnyResolveWatcher, ChangedFilePath, Event, HashType, Item, ItemList, Op, PackageJSON,
+    WatchEvent, WatchItem, WatchItemIndex, WatchItemKind, WatchList, Watcher, WatcherContext,
+    MAX_COUNT, MAX_EVICTION_COUNT, REQUIRES_FILE_DESCRIPTORS,
+};
 pub use WatchItemKind as Kind;
 
-// TODO(b1): real WatchList is `bun_collections::MultiArrayList<WatchItem>`, but
-// MultiArrayList's stub surface lacks Default/len/items. Use an opaque newtype.
-#[derive(Default)]
-pub struct WatchList(());
-pub type ItemList = WatchList;
+// ─── upward-crate placeholders (CYCLEBREAK) ───────────────────────────────
+//
+// These belong to higher-tier crates that don't yet expose a usable surface
+// to depend on. Watcher only stores/passes them through; never dereferenced.
 
-pub type ChangedFilePath = Option<Box<core::ffi::CStr>>;
+// TODO(b2-blocked): bun_fs::FileSystem
+/// Opaque forward-decl of `bun_fs::FileSystem`. Watcher only reads
+/// `top_level_dir`; full type lives upstream.
+pub struct FileSystem {
+    pub top_level_dir: &'static [u8],
+}
 
-// TODO(b1): bun_options_types::PackageJSON missing — local placeholder.
-pub struct PackageJSON(());
-
-pub struct AnyResolveWatcher(());
-
-pub trait WatcherContext {}
-
-/// Stub re-export namespace so `bun_watcher::inotify_watcher::Event` resolves.
-pub mod inotify_watcher {
-    pub type Event = super::WatchEvent;
+// TODO(b2-blocked): bun_options_types::Loader
+/// Opaque forward-decl of `bun_options_types::Loader`. Watcher only stores
+/// the value in `WatchItem.loader` and passes it through.
+#[derive(Clone, Copy, Default)]
+pub struct Loader(pub u8);
+impl Loader {
+    pub const File: Loader = Loader(0);
 }

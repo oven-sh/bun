@@ -2,27 +2,36 @@ use core::ffi::c_void;
 #[allow(unused_imports)]
 use core::ptr;
 
-// TODO(b1): bun_brotli_sys crate missing — Phase-A draft gated, local stub
-// surface below so struct fields / signatures still typecheck.
+// TODO(b2-blocked): bun_brotli_sys::brotli_c — the sys crate's module is still
+// `#[cfg(any())]`-gated; until it lands the local stub below mirrors its public
+// type surface so struct fields / signatures typecheck against the real names.
 #[cfg(any())]
-use bun_brotli_sys as c;
+use bun_brotli_sys::brotli_c as c;
 #[cfg(any())]
 use c::{BrotliDecoder, BrotliEncoder};
 
 #[cfg(not(any()))]
 #[allow(dead_code, non_camel_case_types, unused_variables)]
 mod c {
-    pub enum BrotliDecoderState {}
-    pub enum BrotliEncoderState {}
-    #[derive(Clone, Copy)]
-    pub enum BrotliEncoderOperation {
-        Process,
-        Finish,
-        Flush,
-        EmitMetadata,
+    // Opaque FFI handles — match `bun_brotli_sys::brotli_c::{BrotliDecoder,BrotliEncoder}`.
+    #[repr(C)]
+    pub struct BrotliDecoder {
+        _p: [u8; 0],
+        _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
     }
-    pub enum BrotliDecoder {}
-    pub enum BrotliEncoder {}
+    #[repr(C)]
+    pub struct BrotliEncoder {
+        _p: [u8; 0],
+        _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+    }
+    #[repr(u32)]
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum BrotliEncoderOperation {
+        process = 0,
+        flush = 1,
+        finish = 2,
+        emit_metadata = 3,
+    }
 }
 #[cfg(not(any()))]
 #[allow(unused_imports)]
@@ -123,7 +132,7 @@ pub struct BrotliReaderArrayList<'a> {
     // `readAll` (defer). `Vec<u8>` is not `Copy`, so we operate on `list_ptr`
     // directly and drop the redundant `list` + `list_allocator` fields.
     pub list_ptr: &'a mut Vec<u8>,
-    pub brotli: *mut c::BrotliDecoderState,
+    pub brotli: *mut c::BrotliDecoder,
     pub state: ReaderState,
     pub total_out: usize,
     pub total_in: usize,
@@ -157,9 +166,9 @@ impl<'a> BrotliReaderArrayList<'a> {
             input,
             list,
             options,
-            c::BrotliEncoderOperation::Process,
-            c::BrotliEncoderOperation::Finish,
-            c::BrotliEncoderOperation::Flush,
+            c::BrotliEncoderOperation::process,
+            c::BrotliEncoderOperation::finish,
+            c::BrotliEncoderOperation::flush,
         )?))
     }
 
@@ -171,59 +180,58 @@ impl<'a> BrotliReaderArrayList<'a> {
         finish_flush_op: c::BrotliEncoderOperation,
         full_flush_op: c::BrotliEncoderOperation,
     ) -> Result<Self, Error> {
+        // TODO(b2-blocked): bun_brotli_sys::brotli_c
         #[cfg(any())]
         {
-        // TODO(port): narrow error set
-        if !BrotliDecoder::initialize_brotli() {
-            return Err(err!("BrotliFailedToLoad"));
-        }
+            // TODO(port): narrow error set
+            if !BrotliDecoder::initialize_brotli() {
+                return Err(err!("BrotliFailedToLoad"));
+            }
 
-        let brotli = BrotliDecoder::create_instance(
-            Some(BrotliAllocator::alloc),
-            Some(BrotliAllocator::free),
-            ptr::null_mut(),
-        )
-        .ok_or(err!("BrotliFailedToCreateInstance"))?;
+            // SAFETY: brotli FFI constructor; alloc/free are valid extern "C"
+            // fns and opaque is null (unused by our allocator).
+            let brotli = BrotliDecoder::create_instance(
+                Some(BrotliAllocator::alloc),
+                Some(BrotliAllocator::free),
+                ptr::null_mut(),
+            )
+            .ok_or(err!("BrotliFailedToCreateInstance"))?;
 
-        if options.params.large_window {
-            // SAFETY: brotli is a freshly created non-null decoder instance.
-            unsafe {
+            if options.params.large_window {
+                // SAFETY: brotli is a freshly created non-null decoder instance.
                 let _ = BrotliDecoder::set_parameter(
                     brotli,
                     c::BrotliDecoderParameter::LARGE_WINDOW,
                     1,
                 );
             }
-        }
-        if options.params.disable_ring_buffer_reallocation {
-            // SAFETY: brotli is a freshly created non-null decoder instance.
-            unsafe {
+            if options.params.disable_ring_buffer_reallocation {
+                // SAFETY: brotli is a freshly created non-null decoder instance.
                 let _ = BrotliDecoder::set_parameter(
                     brotli,
                     c::BrotliDecoderParameter::DISABLE_RING_BUFFER_REALLOCATION,
                     1,
                 );
             }
-        }
 
-        debug_assert!(list.as_ptr() != input.as_ptr());
+            debug_assert!(list.as_ptr() != input.as_ptr());
 
-        Ok(Self {
-            input,
-            list_ptr: list,
-            brotli,
-            state: ReaderState::Uninitialized,
-            total_out: 0,
-            total_in: 0,
-            flush_op,
-            finish_flush_op,
-            full_flush_op,
-        })
+            Ok(Self {
+                input,
+                list_ptr: list,
+                brotli,
+                state: ReaderState::Uninitialized,
+                total_out: 0,
+                total_in: 0,
+                flush_op,
+                finish_flush_op,
+                full_flush_op,
+            })
         }
         #[cfg(not(any()))]
         {
             let _ = (input, list, options, flush_op, finish_flush_op, full_flush_op);
-            todo!("bun_brotli: init_with_options gated on bun_brotli_sys")
+            todo!("bun_brotli: init_with_options blocked on bun_brotli_sys::brotli_c")
         }
     }
 
@@ -232,124 +240,121 @@ impl<'a> BrotliReaderArrayList<'a> {
     }
 
     pub fn read_all(&mut self, is_done: bool) -> Result<(), Error> {
+        // TODO(b2-blocked): bun_brotli_sys::brotli_c
         #[cfg(any())]
         {
-        // TODO(port): narrow error set
-        // PORT NOTE: Zig's `defer this.list_ptr.* = this.list;` is gone — we
-        // mutate through `list_ptr` directly (see field note above).
+            // TODO(port): narrow error set
+            // PORT NOTE: Zig's `defer this.list_ptr.* = this.list;` is gone — we
+            // mutate through `list_ptr` directly (see field note above).
 
-        if self.state == ReaderState::End || self.state == ReaderState::Error {
-            return Ok(());
-        }
-
-        debug_assert!(self.list_ptr.as_ptr() != self.input.as_ptr());
-
-        while self.state == ReaderState::Uninitialized || self.state == ReaderState::Inflating {
-            let mut unused_capacity = self.list_ptr.spare_capacity_mut();
-
-            if unused_capacity.len() < 4096 {
-                self.list_ptr.reserve(4096);
-                unused_capacity = self.list_ptr.spare_capacity_mut();
+            if self.state == ReaderState::End || self.state == ReaderState::Error {
+                return Ok(());
             }
 
-            debug_assert!(unused_capacity.len() > 0);
+            debug_assert!(self.list_ptr.as_ptr() != self.input.as_ptr());
 
-            let next_in = &self.input[self.total_in..];
+            while self.state == ReaderState::Uninitialized || self.state == ReaderState::Inflating {
+                let mut unused_capacity = self.list_ptr.spare_capacity_mut();
 
-            let mut in_remaining = next_in.len();
-            let mut out_remaining = unused_capacity.len();
+                if unused_capacity.len() < 4096 {
+                    self.list_ptr.reserve(4096);
+                    unused_capacity = self.list_ptr.spare_capacity_mut();
+                }
 
-            let mut next_in_ptr: *const u8 = next_in.as_ptr();
-            let mut next_out_ptr: *mut u8 = unused_capacity.as_mut_ptr().cast::<u8>();
+                debug_assert!(!unused_capacity.is_empty());
 
-            // https://github.com/google/brotli/blob/fef82ea10435abb1500b615b1b2c6175d429ec6c/go/cbrotli/reader.go#L15-L27
-            // SAFETY: self.brotli is a live decoder instance; the in/out
-            // pointers reference valid buffers of the given lengths.
-            let result = unsafe {
-                BrotliDecoder::decompress_stream(
-                    self.brotli,
+                let next_in = &self.input[self.total_in..];
+
+                let mut in_remaining = next_in.len();
+                let mut out_remaining = unused_capacity.len();
+
+                let mut next_in_ptr: *const u8 = next_in.as_ptr();
+                let mut next_out_ptr: *mut u8 = unused_capacity.as_mut_ptr().cast::<u8>();
+
+                // https://github.com/google/brotli/blob/fef82ea10435abb1500b615b1b2c6175d429ec6c/go/cbrotli/reader.go#L15-L27
+                // SAFETY: self.brotli is a live decoder instance; the in/out
+                // pointers reference valid buffers of the given lengths.
+                let result = BrotliDecoder::decompress_stream(
+                    unsafe { &mut *self.brotli },
                     &mut in_remaining,
                     &mut next_in_ptr,
                     &mut out_remaining,
                     &mut next_out_ptr,
-                    ptr::null_mut(),
-                )
-            };
+                    None,
+                );
 
-            let bytes_written = unused_capacity.len().saturating_sub(out_remaining);
-            let bytes_read = next_in.len().saturating_sub(in_remaining);
+                let bytes_written = unused_capacity.len().saturating_sub(out_remaining);
+                let bytes_read = next_in.len().saturating_sub(in_remaining);
 
-            // SAFETY: brotli wrote `bytes_written` initialized bytes into the
-            // spare-capacity region starting at the previous `len()`.
-            unsafe {
-                let new_len = self.list_ptr.len() + bytes_written;
-                self.list_ptr.set_len(new_len);
-            }
-            self.total_in += bytes_read;
-
-            match result {
-                c::BrotliDecoderResult::Success => {
-                    if cfg!(debug_assertions) {
-                        // SAFETY: self.brotli is a live decoder instance.
-                        debug_assert!(unsafe { BrotliDecoder::is_finished(self.brotli) });
-                    }
-                    self.end();
-                    return Ok(());
+                // SAFETY: brotli wrote `bytes_written` initialized bytes into the
+                // spare-capacity region starting at the previous `len()`.
+                unsafe {
+                    let new_len = self.list_ptr.len() + bytes_written;
+                    self.list_ptr.set_len(new_len);
                 }
-                c::BrotliDecoderResult::Error => {
-                    self.state = ReaderState::Error;
-                    if cfg!(debug_assertions) {
+                self.total_in += bytes_read;
+
+                match result {
+                    c::BrotliDecoderResult::success => {
                         // SAFETY: self.brotli is a live decoder instance.
-                        let code = unsafe { BrotliDecoder::get_error_code(self.brotli) };
-                        bun_core::Output::debug_warn(format_args!(
-                            "Brotli error: {} ({})",
-                            <&'static str>::from(code),
-                            code as i32,
-                        ));
+                        debug_assert!(BrotliDecoder::is_finished(unsafe { &*self.brotli }));
+                        self.end();
+                        return Ok(());
                     }
-
-                    return Err(err!("BrotliDecompressionError"));
-                }
-
-                c::BrotliDecoderResult::NeedsMoreInput => {
-                    if in_remaining > 0 {
-                        panic!("Brotli wants more data");
-                    }
-                    self.state = ReaderState::Inflating;
-                    if is_done {
-                        // Stream is truncated - we're at EOF but decoder needs more data
+                    c::BrotliDecoderResult::err => {
                         self.state = ReaderState::Error;
+                        if cfg!(debug_assertions) {
+                            // SAFETY: self.brotli is a live decoder instance.
+                            let code = BrotliDecoder::get_error_code(unsafe { &*self.brotli });
+                            bun_core::Output::debug_warn(format_args!(
+                                "Brotli error: {:?} ({})",
+                                code, code as i32,
+                            ));
+                        }
+
                         return Err(err!("BrotliDecompressionError"));
                     }
-                    // Not at EOF - we can retry with more data
-                    return Err(err!("ShortRead"));
-                }
-                c::BrotliDecoderResult::NeedsMoreOutput => {
-                    let target = self.list_ptr.capacity() + 4096;
-                    self.list_ptr
-                        .reserve(target.saturating_sub(self.list_ptr.len()));
-                    self.state = ReaderState::Inflating;
+
+                    c::BrotliDecoderResult::needs_more_input => {
+                        if in_remaining > 0 {
+                            panic!("Brotli wants more data");
+                        }
+                        self.state = ReaderState::Inflating;
+                        if is_done {
+                            // Stream is truncated - we're at EOF but decoder needs more data
+                            self.state = ReaderState::Error;
+                            return Err(err!("BrotliDecompressionError"));
+                        }
+                        // Not at EOF - we can retry with more data
+                        return Err(err!("ShortRead"));
+                    }
+                    c::BrotliDecoderResult::needs_more_output => {
+                        let target = self.list_ptr.capacity() + 4096;
+                        self.list_ptr
+                            .reserve(target.saturating_sub(self.list_ptr.len()));
+                        self.state = ReaderState::Inflating;
+                    }
                 }
             }
-        }
 
-        Ok(())
+            Ok(())
         }
         #[cfg(not(any()))]
         {
             let _ = is_done;
-            todo!("bun_brotli: read_all gated on bun_brotli_sys")
+            todo!("bun_brotli: read_all blocked on bun_brotli_sys::brotli_c")
         }
     }
 }
 
 impl<'a> Drop for BrotliReaderArrayList<'a> {
     fn drop(&mut self) {
+        // TODO(b2-blocked): bun_brotli_sys::brotli_c
         #[cfg(any())]
-        // SAFETY: self.brotli was created by BrotliDecoder::create_instance and
-        // is destroyed exactly once here.
-        unsafe {
-            BrotliDecoder::destroy_instance(self.brotli);
+        if !self.brotli.is_null() {
+            // SAFETY: self.brotli was created by BrotliDecoder::create_instance
+            // and is destroyed exactly once here.
+            BrotliDecoder::destroy_instance(unsafe { &mut *self.brotli });
         }
         // PORT NOTE: Zig's `bun.destroy(this)` is implicit — callers hold a
         // `Box<Self>` and dropping it frees the allocation.
@@ -361,7 +366,7 @@ impl<'a> Drop for BrotliReaderArrayList<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct BrotliCompressionStream {
-    pub brotli: *mut c::BrotliEncoderState,
+    pub brotli: *mut c::BrotliEncoder,
     pub state: CompressionState,
     pub total_out: usize,
     pub total_in: usize,
@@ -383,66 +388,67 @@ impl BrotliCompressionStream {
         finish_flush_op: c::BrotliEncoderOperation,
         full_flush_op: c::BrotliEncoderOperation,
     ) -> Result<Self, Error> {
+        // TODO(b2-blocked): bun_brotli_sys::brotli_c
         #[cfg(any())]
         {
-        // TODO(port): narrow error set
-        let instance = BrotliEncoder::create_instance(
-            Some(BrotliAllocator::alloc),
-            Some(BrotliAllocator::free),
-            ptr::null_mut(),
-        )
-        .ok_or(err!("BrotliFailedToCreateInstance"))?;
+            // TODO(port): narrow error set
+            let instance = BrotliEncoder::create_instance(
+                Some(BrotliAllocator::alloc),
+                Some(BrotliAllocator::free),
+                ptr::null_mut(),
+            )
+            .ok_or(err!("BrotliFailedToCreateInstance"))?;
 
-        Ok(Self {
-            brotli: instance,
-            state: CompressionState::Inflating,
-            total_out: 0,
-            total_in: 0,
-            flush_op,
-            finish_flush_op,
-            full_flush_op,
-        })
+            Ok(Self {
+                brotli: instance,
+                state: CompressionState::Inflating,
+                total_out: 0,
+                total_in: 0,
+                flush_op,
+                finish_flush_op,
+                full_flush_op,
+            })
         }
         #[cfg(not(any()))]
         {
             let _ = (flush_op, finish_flush_op, full_flush_op);
-            todo!("bun_brotli: BrotliCompressionStream::init gated on bun_brotli_sys")
+            todo!("bun_brotli: BrotliCompressionStream::init blocked on bun_brotli_sys::brotli_c")
         }
     }
 
-    pub fn write_chunk(&mut self, input: &[u8], last: bool) -> Result<&[u8], Error> {
+    // TODO(port): lifetime — `result.output` borrows brotli's internal buffer,
+    // valid until the next compress_stream/destroy call. brotli_sys currently
+    // types it as `&'static [u8]` (Phase-A placeholder) so we mirror that here;
+    // Phase B may swap to a borrow tied to `&mut self` once the sys crate does.
+    pub fn write_chunk(&mut self, input: &[u8], last: bool) -> Result<&'static [u8], Error> {
+        // TODO(b2-blocked): bun_brotli_sys::brotli_c
         #[cfg(any())]
         {
-        // TODO(port): narrow error set
-        self.total_in += input.len();
-        // SAFETY: self.brotli is a live encoder instance; `input` is valid for
-        // the duration of the call.
-        let result = unsafe {
-            BrotliEncoder::compress_stream(
-                self.brotli,
+            // TODO(port): narrow error set
+            self.total_in += input.len();
+            // SAFETY: self.brotli is a live encoder instance; `input` is valid for
+            // the duration of the call.
+            let result = BrotliEncoder::compress_stream(
+                unsafe { &mut *self.brotli },
                 if last { self.finish_flush_op } else { self.flush_op },
                 input,
-            )
-        };
+            );
 
-        if !result.success {
-            self.state = CompressionState::Error;
-            return Err(err!("BrotliCompressionError"));
-        }
+            if !result.success {
+                self.state = CompressionState::Error;
+                return Err(err!("BrotliCompressionError"));
+            }
 
-        // TODO(port): lifetime — `result.output` borrows brotli's internal
-        // buffer, valid until the next compress_stream/destroy call. Zig
-        // returned `[]const u8`; we return `&[u8]` tied to `&mut self` here.
-        Ok(result.output)
+            Ok(result.output)
         }
         #[cfg(not(any()))]
         {
             let _ = (input, last);
-            todo!("bun_brotli: write_chunk gated on bun_brotli_sys")
+            todo!("bun_brotli: write_chunk blocked on bun_brotli_sys::brotli_c")
         }
     }
 
-    pub fn write(&mut self, input: &[u8], last: bool) -> Result<&[u8], Error> {
+    pub fn write(&mut self, input: &[u8], last: bool) -> Result<&'static [u8], Error> {
         // TODO(port): narrow error set
         if self.state == CompressionState::End || self.state == CompressionState::Error {
             return Ok(b"");
@@ -451,24 +457,17 @@ impl BrotliCompressionStream {
         self.write_chunk(input, last)
     }
 
-    pub fn end(&mut self) -> Result<&[u8], Error> {
+    pub fn end(&mut self) -> Result<&'static [u8], Error> {
         // TODO(port): narrow error set
-        // Zig's `defer this.state = .End` runs on BOTH ok and error paths, so
-        // assign unconditionally after computing the result.
-        // TODO(port): borrowck — returned slice borrows encoder buffer via
-        // &mut self; Phase B resolve (scopeguard on disjoint field or change
-        // return type).
-        #[cfg(any())]
-        {
-            let result = self.write(b"", true);
-            self.state = CompressionState::End;
-            result
-        }
-        #[cfg(not(any()))]
-        todo!("bun_brotli: end() gated on borrowck redesign")
+        // Zig: `defer this.state = .End` — runs on BOTH ok and error paths.
+        // PORT NOTE: returning `&'static [u8]` (mirrors brotli_sys) lets us
+        // assign `state` after computing `result` without borrowck conflict.
+        let result = self.write(b"", true);
+        self.state = CompressionState::End;
+        result
     }
 
-    // TODO(b1): bun_io::Write missing — gated.
+    // TODO(b2-blocked): bun_io::Write
     #[cfg(any())]
     pub fn writer_context<W: bun_io::Write>(&mut self, writable: W) -> BrotliWriter<'_, W> {
         BrotliWriter::init(self, writable)
@@ -476,6 +475,7 @@ impl BrotliCompressionStream {
 
     // TODO(port): Zig's `writer()` returned a `std.Io.GenericWriter` adapter.
     // Rust callers should use `writer_context()` directly (it impls Write).
+    // TODO(b2-blocked): bun_io::Write
     #[cfg(any())]
     pub fn writer<W: bun_io::Write>(&mut self, writable: W) -> BrotliWriter<'_, W> {
         self.writer_context(writable)
@@ -484,11 +484,12 @@ impl BrotliCompressionStream {
 
 impl Drop for BrotliCompressionStream {
     fn drop(&mut self) {
+        // TODO(b2-blocked): bun_brotli_sys::brotli_c
         #[cfg(any())]
-        // SAFETY: self.brotli was created by BrotliEncoder::create_instance and
-        // is destroyed exactly once here.
-        unsafe {
-            BrotliEncoder::destroy_instance(self.brotli);
+        if !self.brotli.is_null() {
+            // SAFETY: self.brotli was created by BrotliEncoder::create_instance
+            // and is destroyed exactly once here.
+            BrotliEncoder::destroy_instance(unsafe { &mut *self.brotli });
         }
     }
 }
@@ -499,7 +500,7 @@ pub struct BrotliWriter<'a, W> {
     pub input_writer: W,
 }
 
-// TODO(b1): bun_io::Write missing — whole impl gated.
+// TODO(b2-blocked): bun_io::Write
 #[cfg(any())]
 impl<'a, W: bun_io::Write> BrotliWriter<'a, W> {
     // Zig: `WriteError = error{BrotliCompressionError} || InputWriter.Error`

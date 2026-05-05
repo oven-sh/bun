@@ -35,12 +35,18 @@ macro_rules! new_hasher {
     ) => {
         #[repr(C)]
         pub struct $name {
+            #[cfg(any())]
             hasher: $ctx,
+            // TODO(b2-blocked): bun_boringssl_sys::SHA_CTX / SHA256_CTX / SHA512_CTX / RIPEMD160_CTX
+            #[cfg(not(any()))]
+            _hasher: (),
         }
 
         impl $name {
             pub const DIGEST: usize = $digest_size;
 
+            #[cfg(any())]
+            // TODO(b2-blocked): bun_boringssl_sys::SHA*_Init
             pub fn init() -> Self {
                 boringssl::load();
                 // SAFETY: BoringSSL *_Init fully initialises the context; we never
@@ -51,6 +57,8 @@ macro_rules! new_hasher {
                 this
             }
 
+            #[cfg(any())]
+            // TODO(b2-blocked): bun_boringssl_sys::SHA* (one-shot)
             pub fn hash(bytes: &[u8], out: &mut [u8; $digest_size]) {
                 // SAFETY: `out` is exactly DIGEST bytes; BoringSSL one-shot hashers
                 // accept (ptr, len, out) and never read past `len`.
@@ -59,6 +67,8 @@ macro_rules! new_hasher {
                 }
             }
 
+            #[cfg(any())]
+            // TODO(b2-blocked): bun_boringssl_sys::SHA*_Update
             pub fn update(&mut self, data: &[u8]) {
                 // SAFETY: `self.hasher` was initialised in `init()`; BoringSSL
                 // *_Update reads exactly `len` bytes from `data`.
@@ -67,6 +77,8 @@ macro_rules! new_hasher {
                 debug_assert!(rc == 1);
             }
 
+            #[cfg(any())]
+            // TODO(b2-blocked): bun_boringssl_sys::SHA*_Final
             pub fn r#final(&mut self, out: &mut [u8; $digest_size]) {
                 // SAFETY: `out` is exactly DIGEST bytes; *_Final writes that many.
                 let rc: c_int = unsafe { $final_(out.as_mut_ptr(), &mut self.hasher) };
@@ -85,12 +97,18 @@ macro_rules! new_evp {
     ($name:ident, $digest_size:expr, $md_fn:ident) => {
         #[repr(C)]
         pub struct $name {
+            #[cfg(any())]
             ctx: boringssl_sys::EVP_MD_CTX,
+            // TODO(b2-blocked): bun_boringssl_sys::EVP_MD_CTX
+            #[cfg(not(any()))]
+            _ctx: (),
         }
 
         impl $name {
             pub const DIGEST: usize = $digest_size;
 
+            #[cfg(any())]
+            // TODO(b2-blocked): bun_boringssl_sys::EVP_MD_CTX_init / EVP_DigestInit / $md_fn
             pub fn init() -> Self {
                 boringssl::load();
 
@@ -109,6 +127,8 @@ macro_rules! new_evp {
                 this
             }
 
+            #[cfg(any())]
+            // TODO(b2-blocked): bun_boringssl_sys::ENGINE / EVP_Digest / $md_fn
             pub fn hash(
                 bytes: &[u8],
                 out: &mut [u8; $digest_size],
@@ -136,6 +156,8 @@ macro_rules! new_evp {
                 debug_assert!(rc == 1);
             }
 
+            #[cfg(any())]
+            // TODO(b2-blocked): bun_boringssl_sys::EVP_DigestUpdate
             pub fn update(&mut self, data: &[u8]) {
                 // SAFETY: ctx initialised in `init()`; EVP_DigestUpdate reads `len` bytes.
                 let rc: c_int = unsafe {
@@ -148,6 +170,8 @@ macro_rules! new_evp {
                 debug_assert!(rc == 1);
             }
 
+            #[cfg(any())]
+            // TODO(b2-blocked): bun_boringssl_sys::EVP_DigestFinal
             pub fn r#final(&mut self, out: &mut [u8; $digest_size]) {
                 // SAFETY: `out` is DIGEST bytes; `out_size` is nullable.
                 let rc: c_int = unsafe {
@@ -157,6 +181,8 @@ macro_rules! new_evp {
             }
         }
 
+        #[cfg(any())]
+        // TODO(b2-blocked): bun_boringssl_sys::EVP_MD_CTX_cleanup
         impl Drop for $name {
             fn drop(&mut self) {
                 // SAFETY: ctx was EVP_MD_CTX_init'd; cleanup is idempotent on a
@@ -234,6 +260,8 @@ pub mod evp {
     }
 
     impl Algorithm {
+        #[cfg(any())]
+        // TODO(b2-blocked): bun_boringssl_sys::EVP_MD
         pub fn md(self) -> Option<*const boringssl_sys::EVP_MD> {
             // SAFETY: BoringSSL EVP_* md getters take no arguments and return a
             // static const singleton (never NULL for the ones listed here).
@@ -258,6 +286,13 @@ pub mod evp {
                     _ => None,
                 }
             }
+        }
+
+        // TODO(b2-blocked): bun_boringssl_sys::EVP_MD — stub mirrors B-1 surface
+        // so dependents (csrf, hmac) can call `.md()` and get an opaque pointer.
+        #[cfg(not(any()))]
+        pub fn md(self) -> Option<*const core::ffi::c_void> {
+            todo!("gated: bun_boringssl_sys::EVP_MD missing")
         }
     }
 }
@@ -329,7 +364,8 @@ pub mod hashers {
 
     new_hasher!(
         RIPEMD160,
-        boringssl_sys::RIPEMD160_DIGEST_LENGTH as usize,
+        // TODO(b2-blocked): bun_boringssl_sys::RIPEMD160_DIGEST_LENGTH — literal inlined
+        20,
         boringssl_sys::RIPEMD160_CTX,
         boringssl_sys::RIPEMD160,
         boringssl_sys::RIPEMD160_Init,

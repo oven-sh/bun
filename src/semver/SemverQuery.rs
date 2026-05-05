@@ -3,10 +3,16 @@ use core::ptr::NonNull;
 
 use bun_alloc::AllocError;
 use bun_collections::IntegerBitSet;
-use bun_str::strings;
+use bun_string::strings;
 
-use crate::range::{self, Comparator, Op as RangeOp};
+use crate::range::{Comparator, Op as RangeOp};
 use crate::{version, Range, SlicedString, Version};
+
+// Re-export sub-namespace mirroring Zig's `Query.Token.Wildcard` path so
+// `crate::query::token::Wildcard` resolves for sibling modules.
+pub mod token {
+    pub use super::{Token, TokenTag, Wildcard};
+}
 
 /// Linked-list of AND ranges
 /// "^1 ^2"
@@ -57,7 +63,7 @@ impl Query {
     }
 
     pub fn eql(&self, rhs: &Query) -> bool {
-        if !self.range.eql(&rhs.range) {
+        if !self.range.eql(rhs.range) {
             return false;
         }
 
@@ -217,17 +223,19 @@ impl Flags {
     pub const BUILD: usize = 0;
 }
 
-pub struct Group {
+pub struct Group<'a> {
     pub head: List,
     // BACKREF: alias into self.head.next chain
     pub tail: Option<NonNull<List>>,
-    // TODO(port): lifetime — `input` borrows the caller's buffer; Zig stored a slice into it.
-    pub input: &'static [u8],
+    /// Borrows the caller's source buffer for the lifetime of the parse result
+    /// (Zig stored a borrowed slice). Never `'static` — see PORTING.md
+    /// §Forbidden patterns re: lifetime-extend.
+    pub input: &'a [u8],
 
     pub flags: FlagsBitSet,
 }
 
-impl Default for Group {
+impl Default for Group<'static> {
     fn default() -> Self {
         Self {
             head: List::default(),
@@ -239,7 +247,7 @@ impl Default for Group {
 }
 
 pub struct GroupFormatter<'a> {
-    group: &'a Group,
+    group: &'a Group<'a>,
     buf: &'a [u8],
 }
 
@@ -265,8 +273,11 @@ impl<'a> fmt::Display for GroupFormatter<'a> {
     }
 }
 
-impl Group {
-    pub fn fmt<'a>(&'a self, buf: &'a [u8]) -> GroupFormatter<'a> {
+impl<'a> Group<'a> {
+    pub fn fmt<'b>(&'b self, buf: &'b [u8]) -> GroupFormatter<'b>
+    where
+        'a: 'b,
+    {
         GroupFormatter { group: self, buf }
     }
 
@@ -305,7 +316,7 @@ impl Group {
         None
     }
 
-    pub fn from(version: Version) -> Group {
+    pub fn from(version: Version) -> Group<'static> {
         Group {
             head: List {
                 head: Query {
@@ -343,7 +354,7 @@ impl Group {
     }
 
     #[inline]
-    pub fn eql(&self, rhs: &Group) -> bool {
+    pub fn eql(&self, rhs: &Group<'_>) -> bool {
         self.head.eql(&rhs.head)
     }
 
@@ -444,7 +455,7 @@ pub enum Wildcard {
 }
 
 impl Token {
-    pub fn to_range(self, version: version::Partial) -> Range {
+    pub fn to_range(self, version: version::Partial<u64>) -> Range {
         match self.tag {
             // Allows changes that do not modify the left-most non-zero element in the [major, minor, patch] tuple
             TokenTag::Caret => {
@@ -667,14 +678,14 @@ impl Token {
     }
 }
 
-pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
+#[allow(unused_variables, unused_assignments)] // prev_token is dead in upstream Zig too
+pub fn parse<'a>(input: &'a [u8], sliced: SlicedString) -> Result<Group<'a>, AllocError> {
     let mut i: usize = 0;
     let mut list = Group {
-        // TODO(port): lifetime — see Group.input field note above.
-        // SAFETY: Group.input borrows `input` for the lifetime of the returned Group; faked as
-        // 'static pending Phase B lifetime threading (see TODO above). Callers must not outlive `input`.
-        input: unsafe { core::mem::transmute::<&[u8], &'static [u8]>(input) },
-        ..Default::default()
+        input,
+        head: List::default(),
+        tail: None,
+        flags: FlagsBitSet::init_empty(),
     };
 
     let mut token = Token::default();
@@ -797,7 +808,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
 
             token.wildcard = parse_result.wildcard;
 
-            i += parse_result.len;
+            i += parse_result.len as usize;
             let rollback = i;
 
             let maybe_hyphenate = i < input.len() && (input[i] == b' ' || input[i] == b'-');
@@ -909,7 +920,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                     list.and_range(range)?;
                 }
 
-                i += second_parsed.len + 1;
+                i += second_parsed.len as usize + 1;
             } else if count == 0 && token.tag == TokenTag::Version {
                 match parse_result.wildcard {
                     Wildcard::None => {

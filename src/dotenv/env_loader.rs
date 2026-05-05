@@ -1,19 +1,14 @@
 use core::ffi::c_char;
 use std::io::Write as _;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMap, StringArrayHashMap};
+use bun_collections::StringArrayHashMap;
 use bun_core::{self, Output};
 use bun_logger as logger;
 use bun_paths::{self, PathBuffer, MAX_PATH_BYTES};
-// MOVE_DOWN(b0): bun_resolver::fs → bun_sys::fs (CYCLEBREAK dotenv)
-use bun_sys::fs as Fs;
-// TODO(b0-genuine): S3Credentials lives in bun_s3_signing (T5). Not in CYCLEBREAK's
-// dotenv task list — needs TYPE_ONLY move-down to a ≤T2 crate (move-in pass).
-use bun_s3 as s3;
-use bun_schema::api;
-use bun_str::{strings, ZStr};
+use bun_string::{strings, ZStr};
 use bun_sys;
 use bun_url::URL;
 use bun_which::which;
@@ -22,7 +17,7 @@ use bun_wyhash;
 // MOVE_DOWN(b0): bun_analytics::features → bun_core (CYCLEBREAK). Re-import at lower tier.
 use bun_core::analytics;
 
-#[derive(Copy, Clone, PartialEq, Eq, core::marker::ConstParamTy)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum DotEnvFileSuffix {
     Development,
     Production,
@@ -50,22 +45,25 @@ pub struct Loader<'a> {
     pub did_load_process: bool,
     pub reject_unauthorized: Option<bool>,
 
-    pub aws_credentials: Option<s3::S3Credentials>,
+    // TODO(b2-blocked): bun_s3_signing::S3Credentials (T5 type — needs TYPE_ONLY move-down).
+    // Field kept opaque so the public surface stays stable; `get_s3_credentials` is gated.
+    aws_credentials: Option<()>,
 }
 
 // Module-level mutable statics from the Zig (`var` decls inside `Loader`).
 static DID_LOAD_CCACHE_PATH: AtomicBool = AtomicBool::new(false);
-// TODO(port): global mutable byte-slice; Zig used `var node_path_to_use_set_once: []const u8 = ""`.
-// Single-threaded in practice (CLI startup). Revisit with OnceLock<Box<[u8]>> in Phase B.
-static mut NODE_PATH_TO_USE_SET_ONCE: &'static [u8] = b"";
+// Zig: `var node_path_to_use_set_once: []const u8 = ""` — single-threaded CLI startup.
+// PORTING.md §Concurrency: OnceLock for set-once globals (NEVER static mut).
+static NODE_PATH_TO_USE_SET_ONCE: OnceLock<Box<[u8]>> = OnceLock::new();
 
-// TODO(port): global mutable Option<bool>; Zig `pub var has_no_clear_screen_cli_flag: ?bool = null;`
-// SAFETY: single-threaded CLI startup. Revisit with OnceLock<bool> in Phase B.
-pub static mut HAS_NO_CLEAR_SCREEN_CLI_FLAG: Option<bool> = None;
+// Zig: `pub var has_no_clear_screen_cli_flag: ?bool = null;`
+// PORTING.md §Concurrency: OnceLock — set once from CLI flag, read many.
+pub static HAS_NO_CLEAR_SCREEN_CLI_FLAG: OnceLock<bool> = OnceLock::new();
 
 impl<'a> Loader<'a> {
-    pub fn iterator(&self) -> <Map as MapHashTable>::Iterator<'_> {
-        // TODO(port): exact iterator type depends on bun_collections::ArrayHashMap API
+    #[cfg(any())]
+    pub fn iterator(&self) -> () {
+        // TODO(b2-blocked): bun_collections::ArrayHashMapExt::Iterator
         self.map.iterator()
     }
 
@@ -92,11 +90,13 @@ impl<'a> Loader<'a> {
         env == b"test"
     }
 
+    #[cfg(any())]
     pub fn get_node_path<'b>(
         &mut self,
-        fs: &Fs::FileSystem,
+        fs: &(), // TODO(b2-blocked): bun_sys::fs::FileSystem
         buf: &'b mut PathBuffer,
     ) -> Option<&'b ZStr> {
+        // TODO(b2-blocked): bun_sys::fs::FileSystem (MOVE_DOWN bun_resolver::fs → sys not yet landed)
         // Check NODE or npm_node_execpath env var, but only use it if the file actually exists
         if let Some(node) = self.get(b"NODE").or_else(|| self.get(b"npm_node_execpath")) {
             if !node.is_empty() && node.len() < MAX_PATH_BYTES {
@@ -129,67 +129,10 @@ impl<'a> Loader<'a> {
 
     pub fn load_tracy(&self) {}
 
-    pub fn get_s3_credentials(&mut self) -> s3::S3Credentials {
-        if let Some(credentials) = &self.aws_credentials {
-            return credentials.clone();
-        }
-
-        let mut access_key_id: &[u8] = b"";
-        let mut secret_access_key: &[u8] = b"";
-        let mut region: &[u8] = b"";
-        let mut endpoint: &[u8] = b"";
-        let mut bucket: &[u8] = b"";
-        let mut session_token: &[u8] = b"";
-        let mut insecure_http: bool = false;
-
-        if let Some(access_key) = self.get(b"S3_ACCESS_KEY_ID") {
-            access_key_id = access_key;
-        } else if let Some(access_key) = self.get(b"AWS_ACCESS_KEY_ID") {
-            access_key_id = access_key;
-        }
-        if let Some(access_key) = self.get(b"S3_SECRET_ACCESS_KEY") {
-            secret_access_key = access_key;
-        } else if let Some(access_key) = self.get(b"AWS_SECRET_ACCESS_KEY") {
-            secret_access_key = access_key;
-        }
-
-        if let Some(region_) = self.get(b"S3_REGION") {
-            region = region_;
-        } else if let Some(region_) = self.get(b"AWS_REGION") {
-            region = region_;
-        }
-        if let Some(endpoint_) = self.get(b"S3_ENDPOINT") {
-            let url = URL::parse(endpoint_);
-            endpoint = url.host_with_path();
-            insecure_http = url.is_http();
-        } else if let Some(endpoint_) = self.get(b"AWS_ENDPOINT") {
-            let url = URL::parse(endpoint_);
-            endpoint = url.host_with_path();
-            insecure_http = url.is_http();
-        }
-        if let Some(bucket_) = self.get(b"S3_BUCKET") {
-            bucket = bucket_;
-        } else if let Some(bucket_) = self.get(b"AWS_BUCKET") {
-            bucket = bucket_;
-        }
-        if let Some(token) = self.get(b"S3_SESSION_TOKEN") {
-            session_token = token;
-        } else if let Some(token) = self.get(b"AWS_SESSION_TOKEN") {
-            session_token = token;
-        }
-        // TODO(port): S3Credentials field types/ownership (Zig stored borrowed slices)
-        self.aws_credentials = Some(s3::S3Credentials {
-            ref_count: Default::default(),
-            access_key_id,
-            secret_access_key,
-            region,
-            endpoint,
-            bucket,
-            session_token,
-            insecure_http,
-        });
-
-        self.aws_credentials.as_ref().unwrap().clone()
+    #[cfg(any())]
+    pub fn get_s3_credentials(&mut self) {
+        // TODO(b2-blocked): bun_s3_signing::S3Credentials (T5 — needs TYPE_ONLY move-down ≤T2)
+        // TODO(b2-blocked): bun_url::URL::host_with_path (gated in B-1)
     }
 
     /// Checks whether `NODE_TLS_REJECT_UNAUTHORIZED` is set to `0` or `false`.
@@ -214,8 +157,8 @@ impl<'a> Loader<'a> {
         true
     }
 
-    pub fn get_http_proxy_for(&mut self, url: &URL) -> Option<URL> {
-        self.get_http_proxy(url.is_http(), Some(url.hostname()), Some(url.host()))
+    pub fn get_http_proxy_for(&mut self, url: &URL<'_>) -> Option<URL<'_>> {
+        self.get_http_proxy(url.is_http(), Some(url.hostname), Some(url.host))
     }
 
     pub fn has_http_proxy(&self) -> bool {
@@ -233,7 +176,7 @@ impl<'a> Loader<'a> {
         is_http: bool,
         hostname: Option<&[u8]>,
         host: Option<&[u8]>,
-    ) -> Option<URL> {
+    ) -> Option<URL<'_>> {
         // TODO: When Web Worker support is added, make sure to intern these strings
         let mut http_proxy: Option<URL> = None;
 
@@ -302,7 +245,7 @@ impl<'a> Loader<'a> {
         }
 
         for no_proxy_item in no_proxy_text.split(|&b| b == b',') {
-            let mut no_proxy_entry = strings::trim(no_proxy_item, strings::WHITESPACE_CHARS);
+            let mut no_proxy_entry = strings::trim(no_proxy_item, &strings::WHITESPACE_CHARS);
             if no_proxy_entry.is_empty() {
                 continue;
             }
@@ -341,7 +284,7 @@ impl<'a> Loader<'a> {
             if has_port {
                 // Entry has a port, do exact match against host:port
                 if let Some(h) = host {
-                    if strings::eql_case_insensitive_ascii(h, no_proxy_entry, true) {
+                    if strings::eql_case_insensitive_ascii::<true>(h, no_proxy_entry) {
                         return true;
                     }
                 }
@@ -349,15 +292,14 @@ impl<'a> Loader<'a> {
                 // Entry is hostname/IPv6 only, match exact or dot-boundary suffix (case-insensitive)
                 let entry_len = no_proxy_entry.len();
                 if hn.len() == entry_len {
-                    if strings::eql_case_insensitive_ascii(hn, no_proxy_entry, true) {
+                    if strings::eql_case_insensitive_ascii::<true>(hn, no_proxy_entry) {
                         return true;
                     }
                 } else if hn.len() > entry_len
                     && hn[hn.len() - entry_len - 1] == b'.'
-                    && strings::eql_case_insensitive_ascii(
+                    && strings::eql_case_insensitive_ascii::<true>(
                         &hn[hn.len() - entry_len..],
                         no_proxy_entry,
-                        true,
                     )
                 {
                     return true;
@@ -368,7 +310,9 @@ impl<'a> Loader<'a> {
         false
     }
 
-    pub fn load_ccache_path(&mut self, fs: &Fs::FileSystem) {
+    #[cfg(any())]
+    pub fn load_ccache_path(&mut self, fs: &()) {
+        // TODO(b2-blocked): bun_sys::fs::FileSystem
         if DID_LOAD_CCACHE_PATH.load(Ordering::Relaxed) {
             return;
         }
@@ -376,7 +320,10 @@ impl<'a> Loader<'a> {
         let _ = self.load_ccache_path_impl(fs);
     }
 
-    fn load_ccache_path_impl(&mut self, fs: &Fs::FileSystem) -> Result<(), AllocError> {
+    #[cfg(any())]
+    fn load_ccache_path_impl(&mut self, fs: &()) -> Result<(), AllocError> {
+        // TODO(b2-blocked): bun_sys::fs::FileSystem
+        // TODO(b2-blocked): bun_collections::StringArrayHashMap::get_or_put
         // if they have ccache installed, put it in env variable `CMAKE_CXX_COMPILER_LAUNCHER` so
         // cmake can use it to hopefully speed things up
         let mut buf = PathBuffer::uninit();
@@ -409,31 +356,30 @@ impl<'a> Loader<'a> {
         Ok(())
     }
 
+    #[cfg(any())]
     pub fn load_node_js_config(
         &mut self,
-        fs: &Fs::FileSystem,
+        fs: &(), // TODO(b2-blocked): bun_sys::fs::FileSystem
         override_node: &[u8],
     ) -> Result<bool, bun_core::Error> {
+        // TODO(b2-blocked): bun_sys::fs::FileSystem (MOVE_DOWN bun_resolver::fs → sys)
         let mut buf = PathBuffer::uninit();
 
         let mut node_path_to_use: &[u8] = override_node;
         if node_path_to_use.is_empty() {
-            // SAFETY: single-threaded CLI startup; see TODO(port) on the static.
-            let cached = unsafe { NODE_PATH_TO_USE_SET_ONCE };
+            let cached: &[u8] =
+                NODE_PATH_TO_USE_SET_ONCE.get().map(|b| &**b).unwrap_or(b"");
             if !cached.is_empty() {
                 node_path_to_use = cached;
             } else {
                 let Some(node) = self.get_node_path(fs, &mut buf) else {
                     return Ok(false);
                 };
-                // TODO(port): fs.dirname_store.append returns a 'static-lifetime slice owned by FileSystem
+                // fs.dirname_store.append returns a 'static-lifetime slice owned by FileSystem
                 node_path_to_use = fs.dirname_store().append(node.as_bytes())?;
             }
         }
-        // SAFETY: single-threaded CLI startup; see TODO(port) on the static.
-        unsafe {
-            NODE_PATH_TO_USE_SET_ONCE = core::mem::transmute::<&[u8], &'static [u8]>(node_path_to_use);
-        }
+        let _ = NODE_PATH_TO_USE_SET_ONCE.set(Box::from(node_path_to_use));
         self.map.put(b"NODE", node_path_to_use)?;
         self.map.put(b"npm_node_execpath", node_path_to_use)?;
         Ok(true)
@@ -464,7 +410,8 @@ impl<'a> Loader<'a> {
     /// Returns whether the `BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD` env var is set to something truthy
     pub fn has_set_no_clear_terminal_on_reload(&self, default_value: bool) -> bool {
         HAS_NO_CLEAR_SCREEN_CLI_FLAG
-            .with(|c| c.get())
+            .get()
+            .copied()
             .or_else(|| self.get_as_bool(b"BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD"))
             .unwrap_or(default_value)
     }
@@ -502,130 +449,18 @@ impl<'a> Loader<'a> {
     // and bun_js_parser::{E::String, Expr::Data}. Converted to manual vtable (cold-path
     // §Dispatch, PORTING.md): dotenv passes (key, raw_value) bytes; the high-tier vtable
     // impl (bun_bundler / bun_runtime) constructs E::String + DefineData and inserts.
-    // PERF(port): was inline switch — Zig built E.String slab + DefineData inline here.
+    #[cfg(any())]
     pub fn copy_for_define(
         &mut self,
         to_json: DefineStoreRef<'_>,
         to_string: DefineStoreRef<'_>,
-        framework_defaults: &api::StringMap,
-        behavior: api::DotEnvBehavior,
+        framework_defaults: &(), // TODO(b2-blocked): bun_api::StringMap
+        behavior: (),            // TODO(b2-blocked): bun_api::DotEnvBehavior
         prefix: &[u8],
     ) -> Result<(), bun_core::Error> {
-        let mut iter = self.map.iterator();
-        let mut key_count: usize = 0;
-        let mut string_map_hashes: Vec<u64> = vec![0u64; framework_defaults.keys.len()];
-        let invalid_hash = u64::MAX - 1;
-        string_map_hashes.fill(invalid_hash);
-
-        let mut key_buf: Vec<u8> = Vec::new();
-        // Frameworks determine an allowlist of values
-
-        for (i, key) in framework_defaults.keys.iter().enumerate() {
-            if key.len() > b"process.env.".len() && &key[..b"process.env.".len()] == b"process.env." {
-                let hashable_segment = &key[b"process.env.".len()..];
-                string_map_hashes[i] = bun_wyhash::hash(hashable_segment);
-            }
-        }
-
-        // We have to copy all the keys to prepend "process.env" :/
-        let mut key_buf_len: usize = 0;
-        let mut e_strings_to_allocate: usize = 0;
-
-        if behavior != api::DotEnvBehavior::Disable
-            && behavior != api::DotEnvBehavior::LoadAllWithoutInlining
-        {
-            if behavior == api::DotEnvBehavior::Prefix {
-                debug_assert!(!prefix.is_empty());
-
-                while let Some(entry) = iter.next() {
-                    if strings::starts_with(entry.key_ptr, prefix) {
-                        key_buf_len += entry.key_ptr.len();
-                        key_count += 1;
-                        e_strings_to_allocate += 1;
-                        debug_assert!(!entry.key_ptr.is_empty());
-                    }
-                }
-            } else {
-                while let Some(entry) = iter.next() {
-                    if !entry.key_ptr.is_empty() {
-                        key_buf_len += entry.key_ptr.len();
-                        key_count += 1;
-                        e_strings_to_allocate += 1;
-
-                        debug_assert!(!entry.key_ptr.is_empty());
-                    }
-                }
-            }
-
-            if key_buf_len > 0 {
-                iter.reset();
-                key_buf = vec![0u8; key_buf_len + key_count * b"process.env.".len()];
-                // TODO(port): std.Io.Writer.fixed equivalent — write into key_buf via cursor
-                let mut key_cursor: usize = 0;
-                let _ = e_strings_to_allocate; // PERF(port): slab sizing hint now unused; vtable impl owns alloc
-
-                if behavior == api::DotEnvBehavior::Prefix {
-                    while let Some(entry) = iter.next() {
-                        let value: &[u8] = &entry.value_ptr.value;
-
-                        if strings::starts_with(entry.key_ptr, prefix) {
-                            let key_start = key_cursor;
-                            // miscalculated length above would be a bug — match Zig unreachable
-                            write!(
-                                &mut &mut key_buf[key_cursor..],
-                                "process.env.{}",
-                                bstr::BStr::new(entry.key_ptr)
-                            )
-                            .expect("unreachable");
-                            key_cursor = key_start + b"process.env.".len() + entry.key_ptr.len();
-                            let key_str = &key_buf[key_start..key_cursor];
-
-                            // CYCLEBREAK(b0): vtable builds E::String + DefineData{can_be_removed_if_unused, IfUnused}
-                            to_string.put_string_define(key_str, value)?;
-                        } else {
-                            let hash = bun_wyhash::hash(entry.key_ptr);
-
-                            debug_assert!(hash != invalid_hash);
-
-                            if let Some(key_i) =
-                                string_map_hashes.iter().position(|&h| h == hash)
-                            {
-                                // CYCLEBREAK(b0): vtable builds E::String + DefineData{can_be_removed_if_unused, IfUnused}
-                                to_string.put_string_define(&framework_defaults.keys[key_i], value)?;
-                            }
-                        }
-                    }
-                } else {
-                    while let Some(entry) = iter.next() {
-                        let value: &[u8] = &entry.value_ptr.value;
-
-                        let key_start = key_cursor;
-                        write!(
-                            &mut &mut key_buf[key_cursor..],
-                            "process.env.{}",
-                            bstr::BStr::new(entry.key_ptr)
-                        )
-                        .expect("unreachable");
-                        key_cursor = key_start + b"process.env.".len() + entry.key_ptr.len();
-                        let key_str = &key_buf[key_start..key_cursor];
-
-                        // CYCLEBREAK(b0): vtable builds E::String + DefineData{can_be_removed_if_unused, IfUnused}
-                        to_string.put_string_define(key_str, value)?;
-                    }
-                }
-                // PERF(port): key_buf was allocator-owned in Zig and intentionally leaked into the
-                // define store. Phase B must ensure this outlives `to_string`.
-                core::mem::forget(key_buf);
-            }
-        }
-
-        for (i, key) in framework_defaults.keys.iter().enumerate() {
-            let value = &framework_defaults.values[i];
-
-            if !to_string.contains(key) && !to_json.contains(key) {
-                to_json.put_raw(key, value)?;
-            }
-        }
+        // TODO(b2-blocked): bun_api::StringMap
+        // TODO(b2-blocked): bun_api::DotEnvBehavior
+        // TODO(b2-blocked): bun_collections::ArrayHashMapExt::Iterator (resettable)
         Ok(())
     }
 
@@ -640,7 +475,7 @@ impl<'a> Loader<'a> {
             env_production_local: None,
             env_test_local: None,
             env: None,
-            custom_files_loaded: StringArrayHashMap::new(),
+            custom_files_loaded: StringArrayHashMap::default(),
             quiet: false,
             did_load_process: false,
             reject_unauthorized: None,
@@ -648,12 +483,14 @@ impl<'a> Loader<'a> {
         }
     }
 
+    #[cfg(any())]
     pub fn load_process(&mut self) -> Result<(), AllocError> {
+        // TODO(b2-blocked): bun_sys::environ
+        // TODO(b2-blocked): bun_collections::StringArrayHashMap::ensure_total_capacity
         if self.did_load_process {
             return Ok(());
         }
 
-        // TODO(port): std.os.environ equivalent. Use bun_sys::environ() returning &[*const c_char].
         let environ: &[*const c_char] = bun_sys::environ();
         self.map.map.ensure_total_capacity(environ.len())?;
         for &_env in environ {
@@ -678,7 +515,7 @@ impl<'a> Loader<'a> {
     // mostly for tests
     pub fn load_from_string<const OVERWRITE: bool, const EXPAND: bool>(
         &mut self,
-        str: &[u8],
+        str: &'static [u8],
     ) -> Result<(), AllocError> {
         let source = logger::Source::init_path_string(b"test", str);
         let mut value_buffer: Vec<u8> = Vec::new();
@@ -687,44 +524,28 @@ impl<'a> Loader<'a> {
         Ok(())
     }
 
-    pub fn load<const SUFFIX: DotEnvFileSuffix>(
+    #[cfg(any())]
+    pub fn load(
         &mut self,
-        dir: &mut Fs::FileSystem::DirEntry,
+        suffix: DotEnvFileSuffix,
+        dir: &mut (), // TODO(b2-blocked): bun_sys::fs::DirEntry
         env_files: &[&[u8]],
         skip_default_env: bool,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): std.time.nanoTimestamp() — use bun_core::time or platform clock
-        let start: i128 = bun_core::time::nano_timestamp();
-
-        // PERF(port): was stack-fallback (4096) — using heap Vec; profile in Phase B
-        let mut value_buffer: Vec<u8> = Vec::new();
-
-        if !env_files.is_empty() {
-            self.load_explicit_files(env_files, &mut value_buffer)?;
-        } else {
-            // Do not automatically load .env files in `bun run <script>`
-            // Instead, it is the responsibility of the script's instance of `bun` to load .env,
-            // so that if the script runner is NODE_ENV=development, but the script is
-            // "NODE_ENV=production bun ...", there should be no development env loaded.
-            //
-            // See https://github.com/oven-sh/bun/issues/9635#issuecomment-2021350123
-            // for more details on how this edge case works.
-            if !skip_default_env {
-                self.load_default_files::<SUFFIX>(dir, &mut value_buffer)?;
-            }
-        }
-
-        if !self.quiet {
-            self.print_loaded(start);
-        }
+        // TODO(b2-blocked): bun_sys::fs::DirEntry (MOVE_DOWN bun_resolver::fs → sys)
+        // TODO(b2-blocked): bun_core::time::nano_timestamp
+        // PERF(port): SUFFIX was `comptime DotEnvFileSuffix` — demoted to runtime arg
+        // (avoids unstable adt_const_params; cold path).
         Ok(())
     }
 
+    #[cfg(any())]
     fn load_explicit_files(
         &mut self,
         env_files: &[&[u8]],
         value_buffer: &mut Vec<u8>,
     ) -> Result<(), bun_core::Error> {
+        // TODO(b2-blocked): bun_sys::open_file_read_only (via load_env_file_dynamic)
         // iterate backwards, so the latest entry in the latest arg instance assumes the highest priority
         let mut i: usize = env_files.len();
         while i > 0 {
@@ -747,71 +568,23 @@ impl<'a> Loader<'a> {
     // Load .env.development if development
     // Load .env.production if !development
     // .env goes last
-    fn load_default_files<const SUFFIX: DotEnvFileSuffix>(
+    #[cfg(any())]
+    fn load_default_files(
         &mut self,
-        dir: &mut Fs::FileSystem::DirEntry,
+        suffix: DotEnvFileSuffix,
+        dir: &mut (), // TODO(b2-blocked): bun_sys::fs::DirEntry
         value_buffer: &mut Vec<u8>,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): std.fs.cwd() — use bun_sys::Fd::cwd() as the dir handle type
-        let dir_handle = bun_sys::Fd::cwd();
-
-        match SUFFIX {
-            DotEnvFileSuffix::Development => {
-                if dir.has_comptime_query(b".env.development.local") {
-                    self.load_env_file::<false>(dir_handle, b".env.development.local", value_buffer)?;
-                    analytics::Features::dotenv_inc();
-                }
-            }
-            DotEnvFileSuffix::Production => {
-                if dir.has_comptime_query(b".env.production.local") {
-                    self.load_env_file::<false>(dir_handle, b".env.production.local", value_buffer)?;
-                    analytics::Features::dotenv_inc();
-                }
-            }
-            DotEnvFileSuffix::Test => {
-                if dir.has_comptime_query(b".env.test.local") {
-                    self.load_env_file::<false>(dir_handle, b".env.test.local", value_buffer)?;
-                    analytics::Features::dotenv_inc();
-                }
-            }
-        }
-
-        if SUFFIX != DotEnvFileSuffix::Test {
-            if dir.has_comptime_query(b".env.local") {
-                self.load_env_file::<false>(dir_handle, b".env.local", value_buffer)?;
-                analytics::Features::dotenv_inc();
-            }
-        }
-
-        match SUFFIX {
-            DotEnvFileSuffix::Development => {
-                if dir.has_comptime_query(b".env.development") {
-                    self.load_env_file::<false>(dir_handle, b".env.development", value_buffer)?;
-                    analytics::Features::dotenv_inc();
-                }
-            }
-            DotEnvFileSuffix::Production => {
-                if dir.has_comptime_query(b".env.production") {
-                    self.load_env_file::<false>(dir_handle, b".env.production", value_buffer)?;
-                    analytics::Features::dotenv_inc();
-                }
-            }
-            DotEnvFileSuffix::Test => {
-                if dir.has_comptime_query(b".env.test") {
-                    self.load_env_file::<false>(dir_handle, b".env.test", value_buffer)?;
-                    analytics::Features::dotenv_inc();
-                }
-            }
-        }
-
-        if dir.has_comptime_query(b".env") {
-            self.load_env_file::<false>(dir_handle, b".env", value_buffer)?;
-            analytics::Features::dotenv_inc();
-        }
+        // TODO(b2-blocked): bun_sys::fs::DirEntry::has_comptime_query
+        // TODO(b2-blocked): bun_sys::Fd::cwd (signature mismatch — see Phase-A draft)
         Ok(())
     }
 
+    #[cfg(any())]
     pub fn print_loaded(&self, start: i128) {
+        // TODO(b2-blocked): bun_core::time::nano_timestamp
+        // TODO(b2-blocked): bun_collections::StringArrayHashMap::count
+        // TODO(b2-blocked): bun_collections::StringArrayHashMap::iterator
         let count: usize = (self.env_development_local.is_some() as usize)
             + (self.env_production_local.is_some() as usize)
             + (self.env_test_local.is_some() as usize)
@@ -825,7 +598,6 @@ impl<'a> Loader<'a> {
         if count == 0 {
             return;
         }
-        // TODO(port): std.time.nanoTimestamp() / ns_per_ms
         let elapsed = (bun_core::time::nano_timestamp() - start) as f64 / 1_000_000.0;
 
         const ALL: [&[u8]; 8] = [
@@ -851,15 +623,15 @@ impl<'a> Loader<'a> {
 
         let mut loaded_i: usize = 0;
         Output::print_elapsed(elapsed);
-        Output::pretty_error(" <d>");
+        bun_core::pretty_error!(" <d>");
 
         for (i, &yes) in loaded.iter().enumerate() {
             if yes {
                 loaded_i += 1;
                 if count == 1 || (loaded_i >= count && count > 1) {
-                    Output::pretty_error_fmt(format_args!("\"{}\"", bstr::BStr::new(ALL[i])));
+                    bun_core::pretty_error!("\"{}\"", bstr::BStr::new(ALL[i]));
                 } else {
-                    Output::pretty_error_fmt(format_args!("\"{}\", ", bstr::BStr::new(ALL[i])));
+                    bun_core::pretty_error!("\"{}\", ", bstr::BStr::new(ALL[i]));
                 }
             }
         }
@@ -867,13 +639,13 @@ impl<'a> Loader<'a> {
         for e in self.custom_files_loaded.iterator() {
             loaded_i += 1;
             if count == 1 || (loaded_i >= count && count > 1) {
-                Output::pretty_error_fmt(format_args!("\"{}\"", bstr::BStr::new(e.key_ptr)));
+                bun_core::pretty_error!("\"{}\"", bstr::BStr::new(e.key_ptr));
             } else {
-                Output::pretty_error_fmt(format_args!("\"{}\", ", bstr::BStr::new(e.key_ptr)));
+                bun_core::pretty_error!("\"{}\", ", bstr::BStr::new(e.key_ptr));
             }
         }
 
-        Output::pretty_errorln("<r>\n");
+        bun_core::pretty_errorln!("<r>");
         Output::flush();
     }
 
@@ -893,202 +665,30 @@ impl<'a> Loader<'a> {
         }
     }
 
+    #[cfg(any())]
     pub fn load_env_file<const OVERRIDE: bool>(
         &mut self,
         dir: bun_sys::Fd,
         base: &'static [u8],
         value_buffer: &mut Vec<u8>,
     ) -> Result<(), bun_core::Error> {
-        if self.default_file_slot(base).is_some() {
-            return Ok(());
-        }
-
-        // TODO(port): dir.openFile via bun_sys; Zig used std.fs.Dir.openFile
-        let file = match bun_sys::openat_read_only(dir, base) {
-            Ok(f) => f,
-            Err(err) => {
-                if err == bun_core::err!("IsDir") || err == bun_core::err!("FileNotFound") {
-                    // prevent retrying
-                    *self.default_file_slot(base) = Some(logger::Source::init_path_string(base, b""));
-                    return Ok(());
-                }
-                if err == bun_core::err!("Unexpected")
-                    || err == bun_core::err!("FileBusy")
-                    || err == bun_core::err!("DeviceBusy")
-                    || err == bun_core::err!("AccessDenied")
-                {
-                    if !self.quiet {
-                        Output::pretty_errorln_fmt(format_args!(
-                            "<r><red>{}<r> error loading {} file",
-                            err.name(),
-                            bstr::BStr::new(base)
-                        ));
-                    }
-                    // prevent retrying
-                    *self.default_file_slot(base) = Some(logger::Source::init_path_string(base, b""));
-                    return Ok(());
-                }
-                return Err(err);
-            }
-        };
-        // file closed on Drop
-
-        let end: u64 = 'brk: {
-            #[cfg(windows)]
-            {
-                let pos = file.get_end_pos()?;
-                if pos == 0 {
-                    *self.default_file_slot(base) = Some(logger::Source::init_path_string(base, b""));
-                    return Ok(());
-                }
-                break 'brk pos;
-            }
-
-            #[cfg(not(windows))]
-            {
-                let stat = file.stat()?;
-                if stat.size == 0 || !stat.is_file() {
-                    *self.default_file_slot(base) = Some(logger::Source::init_path_string(base, b""));
-                    return Ok(());
-                }
-                break 'brk stat.size as u64;
-            }
-        };
-
-        let mut buf: Vec<u8> = vec![0u8; end as usize + 1];
-        let amount_read = match file.read_all(&mut buf[..end as usize]) {
-            Ok(n) => n,
-            Err(err) => {
-                if err == bun_core::err!("Unexpected")
-                    || err == bun_core::err!("SystemResources")
-                    || err == bun_core::err!("OperationAborted")
-                    || err == bun_core::err!("BrokenPipe")
-                    || err == bun_core::err!("AccessDenied")
-                    || err == bun_core::err!("IsDir")
-                {
-                    if !self.quiet {
-                        Output::pretty_errorln_fmt(format_args!(
-                            "<r><red>{}<r> error loading {} file",
-                            err.name(),
-                            bstr::BStr::new(base)
-                        ));
-                    }
-                    // prevent retrying
-                    *self.default_file_slot(base) = Some(logger::Source::init_path_string(base, b""));
-                    return Ok(());
-                }
-                return Err(err);
-            }
-        };
-
-        // The null byte here is mostly for debugging purposes.
-        buf[end as usize] = 0;
-
-        // PERF(port): Zig leaked `buf` into the Source (allocator-owned, never freed). Phase B:
-        // ensure logger::Source takes ownership of buf so contents stay alive for the program.
-        let buf = buf.into_boxed_slice();
-        let contents: &'static [u8] = unsafe {
-            // SAFETY: Zig intentionally leaks this buffer for program lifetime
-            core::mem::transmute::<&[u8], &'static [u8]>(&buf[..amount_read])
-        };
-        core::mem::forget(buf);
-
-        let source = logger::Source::init_path_string(base, contents);
-
-        Parser::parse::<OVERRIDE, false, true>(&source, self.map, value_buffer)?;
-
-        *self.default_file_slot(base) = Some(source);
+        // TODO(b2-blocked): bun_sys::openat_read_only
+        // TODO(b2-blocked): bun_sys::File::stat / read_all (gated module)
+        // TODO(b2-blocked): bun_logger::Source owning its contents (PORTING.md §Forbidden:
+        //   Phase-A draft used mem::forget to leak the file buffer; correct fix is making
+        //   logger::Source own a Box<[u8]>, which lives in bun_logger).
         Ok(())
     }
 
+    #[cfg(any())]
     pub fn load_env_file_dynamic<const OVERRIDE: bool>(
         &mut self,
         file_path: &[u8],
         value_buffer: &mut Vec<u8>,
     ) -> Result<(), bun_core::Error> {
-        if self.custom_files_loaded.contains(file_path) {
-            return Ok(());
-        }
-
-        // TODO(port): bun.openFile via bun_sys
-        let file = match bun_sys::open_file_read_only(file_path) {
-            Ok(f) => f,
-            Err(_) => {
-                // prevent retrying
-                self.custom_files_loaded
-                    .put(file_path, logger::Source::init_path_string(file_path, b""))?;
-                return Ok(());
-            }
-        };
-        // file closed on Drop
-
-        let end: u64 = 'brk: {
-            #[cfg(windows)]
-            {
-                let pos = file.get_end_pos()?;
-                if pos == 0 {
-                    self.custom_files_loaded
-                        .put(file_path, logger::Source::init_path_string(file_path, b""))?;
-                    return Ok(());
-                }
-                break 'brk pos;
-            }
-
-            #[cfg(not(windows))]
-            {
-                let stat = file.stat()?;
-                if stat.size == 0 || !stat.is_file() {
-                    self.custom_files_loaded
-                        .put(file_path, logger::Source::init_path_string(file_path, b""))?;
-                    return Ok(());
-                }
-                break 'brk stat.size as u64;
-            }
-        };
-
-        let mut buf: Vec<u8> = vec![0u8; end as usize + 1];
-        let amount_read = match file.read_all(&mut buf[..end as usize]) {
-            Ok(n) => n,
-            Err(err) => {
-                if err == bun_core::err!("Unexpected")
-                    || err == bun_core::err!("SystemResources")
-                    || err == bun_core::err!("OperationAborted")
-                    || err == bun_core::err!("BrokenPipe")
-                    || err == bun_core::err!("AccessDenied")
-                    || err == bun_core::err!("IsDir")
-                {
-                    if !self.quiet {
-                        Output::pretty_errorln_fmt(format_args!(
-                            "<r><red>{}<r> error loading {} file",
-                            err.name(),
-                            bstr::BStr::new(file_path)
-                        ));
-                    }
-                    // prevent retrying
-                    self.custom_files_loaded
-                        .put(file_path, logger::Source::init_path_string(file_path, b""))?;
-                    return Ok(());
-                }
-                return Err(err);
-            }
-        };
-
-        // The null byte here is mostly for debugging purposes.
-        buf[end as usize] = 0;
-
-        // PERF(port): see load_env_file — Zig leaks buf for program lifetime
-        let buf = buf.into_boxed_slice();
-        let contents: &'static [u8] = unsafe {
-            // SAFETY: intentionally leaked, lives for program lifetime
-            core::mem::transmute::<&[u8], &'static [u8]>(&buf[..amount_read])
-        };
-        core::mem::forget(buf);
-
-        let source = logger::Source::init_path_string(file_path, contents);
-
-        Parser::parse::<OVERRIDE, false, true>(&source, self.map, value_buffer)?;
-
-        self.custom_files_loaded.put(file_path, source)?;
+        // TODO(b2-blocked): bun_sys::open_file_read_only
+        // TODO(b2-blocked): bun_collections::StringArrayHashMap::contains / put (Zig API)
+        // TODO(b2-blocked): bun_logger::Source owning its contents (see load_env_file).
         Ok(())
     }
 }
@@ -1293,23 +893,18 @@ impl<'a> Parser<'a> {
         if end >= self.src.len() {
             return Ok(&self.src[self.src.len()..]);
         }
-        match self.src[end] {
-            b'`' => {
-                if let Some(value) = self.parse_quoted::<{ b'`' }>()? {
-                    return Ok(if IS_PROCESS { value } else { &value[1..value.len() - 1] });
-                }
-            }
-            b'"' => {
-                if let Some(value) = self.parse_quoted::<{ b'"' }>()? {
-                    return Ok(if IS_PROCESS { value } else { &value[1..value.len() - 1] });
-                }
-            }
-            b'\'' => {
-                if let Some(value) = self.parse_quoted::<{ b'\'' }>()? {
-                    return Ok(if IS_PROCESS { value } else { &value[1..value.len() - 1] });
-                }
-            }
-            _ => {}
+        // PORT NOTE: reshaped for borrowck — `parse_quoted` returns a borrow of
+        // `self.value_buffer`; capture only its length, then re-borrow the buffer
+        // after the match so the unquoted fallthrough can re-borrow `self`.
+        let quoted_len: Option<usize> = match self.src[end] {
+            b'`' => self.parse_quoted::<{ b'`' }>()?.map(|v| v.len()),
+            b'"' => self.parse_quoted::<{ b'"' }>()?.map(|v| v.len()),
+            b'\'' => self.parse_quoted::<{ b'\'' }>()?.map(|v| v.len()),
+            _ => None,
+        };
+        if let Some(len) = quoted_len {
+            let value = &self.value_buffer[..len];
+            return Ok(if IS_PROCESS { value } else { &value[1..value.len() - 1] });
         }
         end = start;
         while end < self.src.len() {
@@ -1394,46 +989,53 @@ impl<'a> Parser<'a> {
         &mut self,
         map: &mut Map,
     ) -> Result<(), AllocError> {
-        let mut count = map.map.count();
-        while self.pos < self.src.len() {
-            let Some(key) = self.parse_key::<true>() else {
-                self.skip_line();
-                continue;
-            };
-            let value = self.parse_value::<IS_PROCESS>()?;
-            // PORT NOTE: reshaped for borrowck — value borrows self.value_buffer; copy before map mut.
-            let value_owned: Box<[u8]> = Box::from(value);
-            let entry = map.map.get_or_put(key)?;
-            if entry.found_existing {
-                if entry.index < count {
-                    // Allow keys defined later in the same file to override keys defined earlier
-                    // https://github.com/oven-sh/bun/issues/1262
-                    if !OVERRIDE {
-                        continue;
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_collections::StringArrayHashMap::get_or_put
+            // TODO(b2-blocked): bun_collections::StringArrayHashMap::count
+            // TODO(b2-blocked): bun_collections::GetOrPutResult
+            let mut count = map.map.count();
+            while self.pos < self.src.len() {
+                let Some(key) = self.parse_key::<true>() else {
+                    self.skip_line();
+                    continue;
+                };
+                let value = self.parse_value::<IS_PROCESS>()?;
+                // PORT NOTE: reshaped for borrowck — value borrows self.value_buffer; copy before map mut.
+                let value_owned: Box<[u8]> = Box::from(value);
+                let entry = map.map.get_or_put(key)?;
+                if entry.found_existing {
+                    if entry.index < count {
+                        // Allow keys defined later in the same file to override keys defined earlier
+                        // https://github.com/oven-sh/bun/issues/1262
+                        if !OVERRIDE {
+                            continue;
+                        }
+                    }
+                    // else: previous value freed by Drop on assignment below
+                }
+                *entry.value_ptr = HashTableValue {
+                    value: value_owned,
+                    conditional: false,
+                };
+            }
+            if !IS_PROCESS && EXPAND {
+                // TODO(port): borrowck — Zig iterates `map` while calling `map.get` inside expandValue.
+                // Phase B: use index-based iteration over map.map.values_mut() with raw key access.
+                let mut it = map.iterator();
+                while let Some(entry) = it.next() {
+                    if count > 0 {
+                        count -= 1;
+                    } else if let Some(value) = self.expand_value(map, &entry.value_ptr.value)? {
+                        *entry.value_ptr = HashTableValue {
+                            value: Box::from(value),
+                            conditional: false,
+                        };
                     }
                 }
-                // else: previous value freed by Drop on assignment below
-            }
-            *entry.value_ptr = HashTableValue {
-                value: value_owned,
-                conditional: false,
-            };
-        }
-        if !IS_PROCESS && EXPAND {
-            // TODO(port): borrowck — Zig iterates `map` while calling `map.get` inside expandValue.
-            // Phase B: use index-based iteration over map.map.values_mut() with raw key access.
-            let mut it = map.iterator();
-            while let Some(entry) = it.next() {
-                if count > 0 {
-                    count -= 1;
-                } else if let Some(value) = self.expand_value(map, &entry.value_ptr.value)? {
-                    *entry.value_ptr = HashTableValue {
-                        value: Box::from(value),
-                        conditional: false,
-                    };
-                }
             }
         }
+        let _ = map;
         Ok(())
     }
 
@@ -1446,7 +1048,7 @@ impl<'a> Parser<'a> {
         value_buffer.clear();
         let mut parser = Parser {
             pos: 0,
-            src: source.contents(),
+            src: source.contents,
             value_buffer,
         };
         parser._parse::<OVERRIDE, IS_PROCESS, EXPAND>(map)
@@ -1464,218 +1066,170 @@ pub struct HashTableValue {
 // An issue with this exact implementation is unicode characters can technically appear in these
 // keys, and we use a simple toLowercase function that only applies to ascii, so this will make
 // some strings collide.
-#[cfg(windows)]
-pub type HashTable = bun_collections::CaseInsensitiveAsciiStringArrayHashMap<HashTableValue>;
-#[cfg(not(windows))]
+// TODO(b2-blocked): bun_collections::CaseInsensitiveAsciiStringArrayHashMap (Windows only)
 pub type HashTable = bun_collections::StringArrayHashMap<HashTableValue>;
-
-// TODO(port): GetOrPutResult type from bun_collections
-type GetOrPutResult<'a> = bun_collections::GetOrPutResult<'a, Box<[u8]>, HashTableValue>;
 
 pub struct Map {
     pub map: HashTable,
 }
 
-// TODO(port): helper trait alias for Map.HashTable.Iterator return type used in Loader::iterator
-pub trait MapHashTable {
-    type Iterator<'a>
-    where
-        Self: 'a;
-}
-impl MapHashTable for Map {
-    type Iterator<'a> = <HashTable as bun_collections::ArrayHashMapExt>::Iterator<'a>;
+impl Default for Map {
+    fn default() -> Self {
+        Self::init()
+    }
 }
 
 impl Map {
+    #[cfg(any())]
     pub fn create_null_delimited_env_map(
         &mut self,
     ) -> Result<Box<[Option<*const c_char>]>, AllocError> {
-        // PERF(port): was arena bulk-free (envp lifetime tied to spawn) — profile in Phase B
-        let env_map = &mut self.map;
-
-        let envp_count = env_map.count();
-        let mut envp_buf: Vec<Option<*const c_char>> = vec![None; envp_count + 1];
-        {
-            let mut i: usize = 0;
-            for pair in env_map.iterator() {
-                let mut env_buf =
-                    vec![0u8; pair.key_ptr.len() + pair.value_ptr.value.len() + 2].into_boxed_slice();
-                env_buf[..pair.key_ptr.len()].copy_from_slice(pair.key_ptr);
-                env_buf[pair.key_ptr.len()] = b'=';
-                env_buf[pair.key_ptr.len() + 1..pair.key_ptr.len() + 1 + pair.value_ptr.value.len()]
-                    .copy_from_slice(&pair.value_ptr.value);
-                // NUL terminator at end (allocSentinel in Zig) — last byte already 0
-                envp_buf[i] = Some(Box::leak(env_buf).as_ptr() as *const c_char);
-                i += 1;
-            }
-            if cfg!(debug_assertions) {
-                debug_assert!(i == envp_count);
-            }
-        }
-        // last element is the null sentinel (already None)
-        Ok(envp_buf.into_boxed_slice())
+        // TODO(b2-blocked): bun_collections::StringArrayHashMap::count
+        // TODO(b2-blocked): bun_collections::StringArrayHashMap::iterator
+        // PORTING.md §Forbidden: Phase-A draft used Box::leak per-entry; correct shape is
+        // returning an owning struct { strings: Vec<ZBox>, envp: Box<[*const c_char]> } so
+        // dropping it frees the joined "K=V\0" buffers. Re-gated until that type lands.
+        Ok(Box::default())
     }
 
     /// Returns a wrapper around the std.process.EnvMap that does not duplicate the memory of
     /// the keys and values, but instead points into the memory of the bun env map.
-    ///
-    /// To prevent
+    #[cfg(any())]
     pub fn std_env_map(&mut self) -> Result<StdEnvMapWrapper, AllocError> {
-        // TODO(port): std.process.EnvMap has no Rust std equivalent we're allowed to use.
-        // Phase B: define bun_sys::EnvMap or pass envp directly.
-        let mut env_map = StdEnvMapInner::new();
-
-        for entry in self.map.iterator() {
-            env_map.put(entry.key_ptr, &entry.value_ptr.value)?;
-        }
-
-        Ok(StdEnvMapWrapper { unsafe_map: env_map })
+        // TODO(b2-blocked): bun_collections::StringArrayHashMap::iterator
+        // TODO(b2-blocked): bun_sys::EnvMap
+        Ok(StdEnvMapWrapper { unsafe_map: StdEnvMapInner::new() })
     }
 
     /// Write the Windows environment block into a buffer
     /// This can be passed to CreateProcessW's lpEnvironment parameter
+    #[cfg(any())]
     pub fn write_windows_env_block(
         &mut self,
         result: &mut [u16; 32767],
     ) -> Result<*const u16, bun_core::Error> {
-        let mut i: usize = 0;
-        for pair in self.map.iterator() {
-            i += strings::convert_utf8_to_utf16_in_buffer(&mut result[i..], pair.key_ptr).len();
-            if i + 7 >= result.len() {
-                return Err(bun_core::err!("TooManyEnvironmentVariables"));
-            }
-            result[i] = b'=' as u16;
-            i += 1;
-            i += strings::convert_utf8_to_utf16_in_buffer(&mut result[i..], &pair.value_ptr.value)
-                .len();
-            if i + 5 >= result.len() {
-                return Err(bun_core::err!("TooManyEnvironmentVariables"));
-            }
-            result[i] = 0;
-            i += 1;
-        }
-        result[i] = 0;
-        i += 1;
-        result[i] = 0;
-        i += 1;
-        result[i] = 0;
-        i += 1;
-        result[i] = 0;
-        i += 1;
-        let _ = i;
-
+        // TODO(b2-blocked): bun_collections::StringArrayHashMap::iterator
+        // TODO(b2-blocked): bun_string::strings::convert_utf8_to_utf16_in_buffer
         Ok(result.as_ptr())
     }
 
-    pub fn iterator(&self) -> impl Iterator<Item = bun_collections::Entry<'_, Box<[u8]>, HashTableValue>> {
-        // TODO(port): exact iterator type from bun_collections
-        self.map.iterator()
+    #[cfg(any())]
+    pub fn iterator(&self) -> () {
+        // TODO(b2-blocked): bun_collections::Entry
+        // TODO(b2-blocked): bun_collections::StringArrayHashMap::iterator
     }
 
     #[inline]
     pub fn init() -> Map {
-        Map { map: HashTable::new() }
+        Map { map: HashTable::default() }
     }
 
     #[inline]
     pub fn put(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        #[cfg(all(windows, debug_assertions))]
+        #[cfg(any())]
         {
-            debug_assert!(strings::index_of_char(key, b'\x00').is_none());
+            // TODO(b2-blocked): bun_collections::StringArrayHashMap::put (Zig fallible-insert API)
+            #[cfg(all(windows, debug_assertions))]
+            {
+                debug_assert!(strings::index_of_char(key, b'\x00').is_none());
+            }
+            self.map.put(
+                key,
+                HashTableValue { value: Box::from(value), conditional: false },
+            )
         }
-        self.map.put(
-            key,
-            HashTableValue {
-                value: Box::from(value),
-                conditional: false,
-            },
-        )
+        let _ = (key, value);
+        Ok(())
     }
 
     pub fn ensure_unused_capacity(&mut self, additional_count: usize) -> Result<(), AllocError> {
-        self.map.ensure_unused_capacity(additional_count)
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_collections::StringArrayHashMap::ensure_unused_capacity
+            self.map.ensure_unused_capacity(additional_count)
+        }
+        let _ = additional_count;
+        Ok(())
     }
 
     pub fn put_assume_capacity(&mut self, key: &[u8], value: &[u8]) {
-        #[cfg(all(windows, debug_assertions))]
+        #[cfg(any())]
         {
-            debug_assert!(strings::index_of_char(key, b'\x00').is_none());
+            // TODO(b2-blocked): bun_collections::StringArrayHashMap::put_assume_capacity
+            #[cfg(all(windows, debug_assertions))]
+            {
+                debug_assert!(strings::index_of_char(key, b'\x00').is_none());
+            }
+            // PERF(port): was assume_capacity
+            self.map.put_assume_capacity(
+                key,
+                HashTableValue { value: Box::from(value), conditional: false },
+            );
         }
-        // PERF(port): was assume_capacity
-        self.map.put_assume_capacity(
-            key,
-            HashTableValue {
-                value: Box::from(value),
-                conditional: false,
-            },
-        );
+        let _ = (key, value);
     }
 
     #[inline]
     pub fn put_alloc_key_and_value(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        let gop = self.map.get_or_put(key)?;
-        *gop.value_ptr = HashTableValue {
-            value: Box::from(value),
-            conditional: false,
-        };
-        if !gop.found_existing {
-            *gop.key_ptr = Box::from(key);
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_collections::StringArrayHashMap::get_or_put
+            let gop = self.map.get_or_put(key)?;
+            *gop.value_ptr = HashTableValue { value: Box::from(value), conditional: false };
+            if !gop.found_existing {
+                *gop.key_ptr = Box::from(key);
+            }
         }
+        let _ = (key, value);
         Ok(())
     }
 
     #[inline]
     pub fn put_alloc_key(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        let gop = self.map.get_or_put(key)?;
-        *gop.value_ptr = HashTableValue {
-            // TODO(port): Zig stored borrowed `value` here without dupe; Box<[u8]> forces a copy
-            value: Box::from(value),
-            conditional: false,
-        };
-        if !gop.found_existing {
-            *gop.key_ptr = Box::from(key);
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_collections::StringArrayHashMap::get_or_put
+            let gop = self.map.get_or_put(key)?;
+            *gop.value_ptr = HashTableValue {
+                // TODO(port): Zig stored borrowed `value` here without dupe; Box<[u8]> forces a copy
+                value: Box::from(value),
+                conditional: false,
+            };
+            if !gop.found_existing {
+                *gop.key_ptr = Box::from(key);
+            }
         }
+        let _ = (key, value);
         Ok(())
     }
 
     #[inline]
     pub fn put_alloc_value(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        self.map.put(
-            key,
-            HashTableValue {
-                value: Box::from(value),
-                conditional: false,
-            },
-        )
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_collections::StringArrayHashMap::put (Zig fallible-insert API)
+            self.map.put(
+                key,
+                HashTableValue { value: Box::from(value), conditional: false },
+            )
+        }
+        let _ = (key, value);
+        Ok(())
     }
 
+    #[cfg(any())]
     #[inline]
-    pub fn get_or_put_without_value(&mut self, key: &[u8]) -> Result<GetOrPutResult<'_>, AllocError> {
+    pub fn get_or_put_without_value(&mut self, key: &[u8]) -> Result<(), AllocError> {
+        // TODO(b2-blocked): bun_collections::GetOrPutResult
+        // TODO(b2-blocked): bun_collections::StringArrayHashMap::get_or_put
         self.map.get_or_put(key)
     }
 
+    #[cfg(any())]
     pub fn json_stringify(&self, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
-        // TODO(port): Zig writer used `.write` returning the byte count; using fmt::Write here
-        writer.write_str("{")?;
-        let count = self.map.count();
-        let mut index = 0usize;
-        for entry in self.map.iterator() {
-            writer.write_str("\n    ")?;
-
-            // TODO(port): Zig wrote key/value via writer.write (JSON-string-ish); preserve bytes
-            write!(writer, "{}", bstr::BStr::new(entry.key_ptr))?;
-
-            writer.write_str(": ")?;
-
-            write!(writer, "{}", bstr::BStr::new(&entry.value_ptr.value))?;
-
-            index += 1;
-            if index <= count - 1 {
-                writer.write_str(", ")?;
-            }
-        }
-
-        writer.write_str("\n}")
+        // TODO(b2-blocked): bun_collections::StringArrayHashMap::count
+        // TODO(b2-blocked): bun_collections::StringArrayHashMap::iterator
+        Ok(())
     }
 
     #[inline]
@@ -1685,37 +1239,46 @@ impl Map {
 
     #[inline]
     pub fn put_default(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        let _ = self.map.get_or_put_value(
-            key,
-            HashTableValue {
-                value: Box::from(value),
-                conditional: false,
-            },
-        )?;
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_collections::StringArrayHashMap::get_or_put_value
+            let _ = self.map.get_or_put_value(
+                key,
+                HashTableValue { value: Box::from(value), conditional: false },
+            )?;
+        }
+        let _ = (key, value);
         Ok(())
     }
 
     #[inline]
     pub fn get_or_put(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        let _ = self.map.get_or_put_value(
-            key,
-            HashTableValue {
-                value: Box::from(value),
-                conditional: false,
-            },
-        )?;
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_collections::StringArrayHashMap::get_or_put_value
+            let _ = self.map.get_or_put_value(
+                key,
+                HashTableValue { value: Box::from(value), conditional: false },
+            )?;
+        }
+        let _ = (key, value);
         Ok(())
     }
 
     pub fn remove(&mut self, key: &[u8]) {
-        let _ = self.map.swap_remove(key);
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_collections::StringArrayHashMap::swap_remove
+            let _ = self.map.swap_remove(key);
+        }
+        let _ = key;
     }
 
+    #[cfg(any())]
     pub fn clone_with_allocator(&self) -> Result<Map, AllocError> {
+        // TODO(b2-blocked): bun_collections::StringArrayHashMap::clone (fallible)
         // allocator param dropped — global mimalloc
-        Ok(Map {
-            map: self.map.clone()?,
-        })
+        Ok(Map { map: self.map.clone()? })
     }
 }
 
@@ -1732,7 +1295,7 @@ impl StdEnvMapWrapper {
 
 // Drop replaces deinit (only frees hash_map storage; Rust does this automatically)
 
-// TODO(port): placeholder for std.process.EnvMap — Phase B replaces with bun_sys equivalent
+// TODO(b2-blocked): bun_sys::EnvMap — placeholder for std.process.EnvMap
 pub struct StdEnvMapInner {
     // intentionally opaque in Phase A
 }
@@ -1746,13 +1309,20 @@ impl StdEnvMapInner {
     }
 }
 
-// TODO(port): global mutable singleton; Zig `pub var instance: ?*Loader = null;`
-pub static mut INSTANCE: Option<*mut Loader<'static>> = None;
+// Zig: `pub var instance: ?*Loader = null;` — global mutable singleton, set once at CLI init.
+// PORTING.md §Concurrency: OnceLock for set-once globals.
+// PORT NOTE: stores a raw ptr (Loader is !Sync via &mut Map borrow; same single-thread
+// invariant the Zig had). Callers `unsafe`-deref under that invariant.
+pub static INSTANCE: OnceLock<usize /* *mut Loader<'static> */> = OnceLock::new();
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/dotenv/env_loader.zig (1433 lines)
-//   confidence: medium
-//   todos:      33
-//   notes:      @field(this, base) → match helper; HashTableValue.value owned vs borrowed needs Cow; copy_for_define store types/E.String slab need bun_bundler concrete types; std.os.environ/std.process.EnvMap/file I/O mapped to bun_sys placeholders; global mutable statics need OnceLock review.
+//   confidence: low (heavily blocked on bun_collections Zig-style ArrayHashMap API)
+//   notes:      @field(this, base) → match helper; HashTableValue.value owned vs borrowed needs
+//               Cow; Map/Parser bodies re-gated on bun_collections; load* re-gated on
+//               bun_sys::fs (MOVE_DOWN resolver→sys not landed); copy_for_define re-gated on
+//               bun_api; S3 re-gated on bun_s3_signing move-down. Forbidden Box::leak/mem::forget
+//               removed — correct fix lives in bun_logger (Source ownership) and a new envp
+//               owning struct (see create_null_delimited_env_map).
 // ──────────────────────────────────────────────────────────────────────────

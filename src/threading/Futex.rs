@@ -11,6 +11,8 @@
 //! Using Futex, other Thread synchronization primitives can be built which
 //! efficiently wait for cross-thread events or signals.
 
+#![allow(unused_imports, dead_code)]
+
 use core::ffi::{c_int, c_ulong, c_void};
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -280,9 +282,12 @@ mod darwin_impl {
 #[cfg(target_os = "linux")]
 mod linux_impl {
     use super::*;
-    use bun_sys::linux;
 
     pub fn wait(ptr: &AtomicU32, expect: u32, timeout: Option<u64>) -> Result<(), TimeoutError> {
+        #[cfg(any())]
+        {
+        // TODO(b2-blocked): bun_sys::linux
+        use bun_sys::linux;
         // SAFETY: ts is fully initialized below before being passed to the kernel when
         // timeout.is_some(); when timeout is None we pass null and ts is never read.
         let mut ts: linux::timespec = unsafe { core::mem::zeroed() };
@@ -321,9 +326,17 @@ mod linux_impl {
                 );
             }
         }
+        }
+        // TODO(b2-blocked): bun_sys::linux
+        let _ = (ptr, expect, timeout);
+        unimplemented!("b2-blocked: bun_sys::linux::futex_4arg")
     }
 
     pub fn wake(ptr: &AtomicU32, max_waiters: u32) {
+        #[cfg(any())]
+        {
+        // TODO(b2-blocked): bun_sys::linux
+        use bun_sys::linux;
         let val: u32 = match i32::try_from(max_waiters) {
             Ok(v) => v as u32,
             Err(_) => i32::MAX as u32,
@@ -343,6 +356,10 @@ mod linux_impl {
             linux::E::FAULT => panic!("futex_wake() returned EFAULT unexpectedly"), // pointer became invalid while doing the wake
             _ => panic!("Unexpected futex_wake() return code"),
         }
+        }
+        // TODO(b2-blocked): bun_sys::linux
+        let _ = (ptr, max_waiters);
+        unimplemented!("b2-blocked: bun_sys::linux::futex_3arg")
     }
 }
 

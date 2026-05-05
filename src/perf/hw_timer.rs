@@ -18,6 +18,7 @@
 //! See WebKit r312153 (UnbarrieredMonotonicTime) for the original design and
 //! drift/monotonicity measurements on Darwin/arm64.
 
+#[allow(unused_imports)]
 use core::ffi::{c_char, c_int, c_void};
 
 /// True on every target Bun ships. Kept for callers that want to gate on it.
@@ -218,40 +219,52 @@ fn cpuid(leaf: u32, subleaf: u32) -> CpuidResult {
 /// per-call path when `mult == 0`.
 fn os_monotonic_ns() -> u64 {
     #[cfg(windows)]
+    #[cfg(any())]
     {
+        // TODO(b2-blocked): bun_sys::windows::QueryPerformanceCounter
+        // TODO(b2-blocked): bun_sys::windows::QueryPerformanceFrequency
         // QPF is a constant read from KUSER_SHARED_DATA; no need to cache.
         let counter = bun_sys::windows::QueryPerformanceCounter();
         let freq = bun_sys::windows::QueryPerformanceFrequency();
         return u64::try_from((counter as u128) * (NS_PER_S as u128) / (freq as u128)).unwrap();
     }
+    #[cfg(windows)]
+    {
+        todo!("b2-blocked: bun_sys::windows::QueryPerformanceCounter / QueryPerformanceFrequency");
+    }
     #[cfg(not(windows))]
     {
-        // TODO(port): verify bun_core::Timespec is #[repr(C)] layout-compatible with libc timespec
-        let mut spec = bun_core::Timespec { sec: 0, nsec: 0 };
+        // PORT NOTE: Zig used `bun.timespec` (struct with .sec/.nsec/.ns()) and called
+        // `std.os.linux.clock_gettime` / `std.c.clock_gettime` directly. The Rust port
+        // uses `libc::timespec` + `libc::clock_gettime` directly (same ABI) and
+        // computes ns inline; `bun_core::Timespec` does not exist at this tier.
+        let mut spec = libc::timespec { tv_sec: 0, tv_nsec: 0 };
         #[cfg(target_os = "linux")]
         {
             // CLOCK_MONOTONIC, not _RAW: guaranteed vDSO (no syscall). _RAW only
             // joined the vDSO in 5.3.
-            // SAFETY: spec is a valid out-pointer; layout matches struct timespec.
+            // SAFETY: spec is a valid out-pointer.
             unsafe {
-                let _ = clock_gettime(bun_sys::CLOCK_MONOTONIC, (&mut spec) as *mut _ as *mut c_void);
+                let _ = libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut spec);
             }
         }
         #[cfg(target_os = "macos")]
         {
-            // SAFETY: spec is a valid out-pointer; layout matches struct timespec.
+            // SAFETY: spec is a valid out-pointer.
             unsafe {
-                let _ = clock_gettime(bun_sys::CLOCK_MONOTONIC_RAW, (&mut spec) as *mut _ as *mut c_void);
+                let _ = libc::clock_gettime(libc::CLOCK_MONOTONIC_RAW, &mut spec);
             }
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
-            // SAFETY: spec is a valid out-pointer; layout matches struct timespec.
+            // SAFETY: spec is a valid out-pointer.
             unsafe {
-                let _ = clock_gettime(bun_sys::CLOCK_MONOTONIC, (&mut spec) as *mut _ as *mut c_void);
+                let _ = libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut spec);
             }
         }
-        spec.ns()
+        (spec.tv_sec as u64)
+            .wrapping_mul(NS_PER_S)
+            .wrapping_add(spec.tv_nsec as u64)
     }
 }
 
@@ -270,11 +283,6 @@ unsafe extern "C" {
     ) -> c_int;
 }
 
-// TODO(port): move to perf_sys / bun_sys
-#[cfg(unix)]
-unsafe extern "C" {
-    fn clock_gettime(clk_id: c_int, tp: *mut c_void) -> c_int;
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

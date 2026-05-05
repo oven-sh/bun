@@ -1,36 +1,16 @@
 #![allow(unused, non_snake_case, non_camel_case_types, clippy::all)]
 
 use core::fmt;
+use core::fmt::Write as _;
 
-use bun_core;
+use bun_core::{self, err, Output};
 
-// ── B-1 gate ───────────────────────────────────────────────────────────────
-// Phase-A draft modules preserved; bodies have nightly-only inherent assoc
-// types, missing `bun_str`/`thiserror` deps, and const-generic slice params.
-// Un-gated in B-2 once those are reshaped.
-#[cfg(any())] pub mod args;
-#[cfg(any())] pub mod comptime;
-#[cfg(any())] pub mod streaming;
+pub mod args;
+pub mod comptime;
+pub mod streaming;
 
-// ── stub surface for gated modules ────────────────────────────────────────
-pub mod args {
-    /// Stub: real impl gated above (B-1).
-    pub struct OsIterator {
-        pub exe_arg: Option<&'static [u8]>,
-    }
-    impl OsIterator {
-        pub fn init() -> Self { todo!("b1-stub: args::OsIterator") }
-        pub fn next(&mut self) -> Option<&'static [u8]> { todo!("b1-stub") }
-    }
-    pub struct SliceIterator<'a> { pub remain: &'a [&'a [u8]] }
-    pub struct ShellIterator<'a> { pub str: &'a [u8] }
-}
-
-/// Stub: real `ComptimeClap` (gated `comptime` mod) is generic over a comptime
-/// param table; needs proc-macro or `adt_const_params` (B-2).
-pub struct ComptimeClap<Id>(core::marker::PhantomData<Id>);
-/// Stub: real impl gated in `streaming` mod (B-1).
-pub struct StreamingClap<Id>(core::marker::PhantomData<Id>);
+pub use comptime::ComptimeClap;
+pub use streaming::StreamingClap;
 
 /// The names a `Param` can have.
 #[derive(Clone, Copy)]
@@ -52,6 +32,18 @@ impl Default for Names {
 }
 
 impl Names {
+    /// `.{ .short = c }`
+    #[inline]
+    pub const fn short(c: u8) -> Self {
+        Self { short: Some(c), long: None, long_aliases: &[] }
+    }
+
+    /// `.{ .long = name }`
+    #[inline]
+    pub const fn long(name: &'static [u8]) -> Self {
+        Self { short: None, long: Some(name), long_aliases: &[] }
+    }
+
     /// Check if the given name matches the primary long name or any alias
     pub fn matches_long(&self, name: &[u8]) -> bool {
         if let Some(l) = self.long {
@@ -70,7 +62,7 @@ impl Names {
 
 /// Whether a param takes no value (a flag), one value, or can be specified multiple times.
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum Values {
     #[default]
     None,
@@ -225,27 +217,14 @@ fn parse_long_names(param_str: &'static [u8]) -> Names {
     }
 
     // Second pass: collect aliases
-    let aliases: &'static [&'static [u8]] = 'blk: {
-        let mut result: Vec<&'static [u8]> = Vec::with_capacity(alias_count);
-        let mut it = param_str.split(|&b| b == b'/');
-        let mut is_first = true;
-        while let Some(name_part) = it.next() {
-            if !name_part.starts_with(b"--") {
-                continue;
-            }
-            if is_first {
-                is_first = false;
-                continue; // Skip primary
-            }
-            result.push(&name_part[2..]);
-        }
-        // PERF(port): Zig built this as a comptime array (zero runtime cost).
-        // Leaking here is acceptable because param tables are program-lifetime,
-        // but Phase B should make this a true `&'static`.
-        break 'blk Box::leak(result.into_boxed_slice());
-    };
+    // TODO(port): Zig builds `aliases` as a comptime `[N][]const u8` (zero runtime
+    // cost, true `&'static`). Stable Rust cannot materialize a `&'static [..]` from
+    // a runtime scan without leaking (forbidden per PORTING.md §Forbidden). The
+    // alias list is dropped at runtime; the Phase-B `parse_param!` proc-macro must
+    // restore alias support by emitting a `static` array per call site.
+    let _ = alias_count;
 
-    Names { long: primary, long_aliases: aliases, ..Default::default() }
+    Names { long: primary, long_aliases: &[], ..Default::default() }
 }
 
 fn parse_param_rest(line: &'static [u8]) -> Param<Help> {
@@ -297,71 +276,66 @@ fn expect_param(expect: Param<Help>, actual: Param<Help>) {
 }
 
 /// Optional diagnostics used for reporting useful errors
+// PORT NOTE: Zig `Diagnostic` borrows `arg`/`name.long` from the arg iterator. Rust
+// can't tie that lifetime through `&mut Diagnostic` without invariance headaches, and
+// this is an error-path-only struct, so it owns its bytes instead. The `name: Names`
+// field is flattened to `short`/`long` because `Names.long` is `&'static`.
+#[derive(Default)]
 pub struct Diagnostic {
-    // TODO(port): lifetime — `arg` borrows from the arg iterator (set in streaming.zig).
-    // Using `&'static [u8]` because OS args live for the program lifetime in practice.
-    pub arg: &'static [u8],
-    pub name: Names,
-}
-
-impl Default for Diagnostic {
-    fn default() -> Self {
-        Self { arg: b"", name: Names::default() }
-    }
+    pub arg: Vec<u8>,
+    pub short: Option<u8>,
+    pub long: Option<Vec<u8>>,
 }
 
 impl Diagnostic {
     /// Default diagnostics reporter when all you want is English with no colors.
     /// Use this as a reference for implementing your own if needed.
-    #[cfg(any())] // B-1 gate: Output::pretty_errorln / err! eq / Error::name() not in bun_core stub
     pub fn report<W>(&self, _stream: W, err: bun_core::Error) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         let mut name_buf = [0u8; 1024];
-        let name: &[u8] = if let Some(s) = self.name.short {
+        let name: &[u8] = if let Some(s) = self.short {
             name_buf[0] = b'-';
             name_buf[1] = s;
             name_buf[2] = 0;
             &name_buf[0..2]
-        } else if let Some(l) = self.name.long {
+        } else if let Some(l) = self.long.as_deref() {
             name_buf[0] = b'-';
             name_buf[1] = b'-';
             let long = &l[0..l.len().min(name_buf.len() - 2)];
             name_buf[2..][0..long.len()].copy_from_slice(long);
             &name_buf[0..2 + long.len()]
         } else {
-            self.arg
+            &self.arg
         };
 
         let name = bstr::BStr::new(name);
-        if err == err!("DoesntTakeValue") {
-            Output::pretty_errorln(format_args!(
+        // TODO(b2-blocked): bun_core::err! — `from_name` is a tier-0 stub returning a
+        // sentinel, so these equality checks all collapse. Restore once the interning
+        // table lands; meanwhile the `else` arm covers all cases.
+        if err == bun_core::err!("DoesntTakeValue") {
+            bun_core::pretty_errorln!(
                 "<red>error<r><d>:<r> The argument '{}' does not take a value.",
                 name
-            ));
-        } else if err == err!("MissingValue") {
-            Output::pretty_errorln(format_args!(
+            );
+        } else if err == bun_core::err!("MissingValue") {
+            bun_core::pretty_errorln!(
                 "<red>error<r><d>:<r> The argument '{}' requires a value but none was supplied.",
                 name
-            ));
-        } else if err == err!("InvalidArgument") {
-            Output::pretty_errorln(format_args!(
+            );
+        } else if err == bun_core::err!("InvalidArgument") {
+            bun_core::pretty_errorln!(
                 "<red>error<r><d>:<r> Invalid Argument '{}'",
                 name
-            ));
+            );
         } else {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<red>error<r><d>:<r> {} while parsing argument '{}'",
-                err.name(),
+                bstr::BStr::new(err.name()),
                 name
-            ));
+            );
         }
-        Output::flush();
+        bun_core::Output::flush();
         Ok(())
-    }
-
-    #[cfg(not(any()))]
-    pub fn report<W>(&self, _stream: W, _err: bun_core::Error) -> Result<(), bun_core::Error> {
-        todo!("b1-stub: Diagnostic::report")
     }
 }
 
@@ -410,31 +384,18 @@ fn get_value_simple(param: &Param<Help>) -> &'static [u8] {
     param.id.value
 }
 
-// ── B-1 gate ───────────────────────────────────────────────────────────────
-// `Args` / `parse` / `parse_ex` / `help_full` / `print_param` / `help_ex` /
-// `simple_*` / `usage_*` all depend on either:
-//   - const-generic `&'static [Param<Id>]` (E0770, needs adt_const_params), or
-//   - `bun_core::Output::pretty*` fns that don't exist in the tier-0 stub, or
-//   - fn-pointer return-lifetime inference Rust can't do.
-// Bodies preserved verbatim inside `#[cfg(any())] mod _gated_b1`; minimal
-// `todo!()` stubs exposed below for downstream type-checking. Un-gate in B-2.
-#[cfg(any())]
-mod _gated_b1 {
-use super::*;
-
 // TODO(port): `comptime params: []const Param(Id)` as a type parameter has no
-// stable-Rust equivalent. `&'static [Param<Id>]` as a const generic requires
-// `feature(adt_const_params)`. Phase B will likely turn `ComptimeClap` into a
-// macro-generated type per param table; this struct mirrors the Zig shape only.
-pub struct Args<Id: 'static, const PARAMS: &'static [Param<Id>]> {
+// stable-Rust equivalent. B-2 carries `params` at runtime; a Phase-B proc-macro
+// can restore the per-table monomorphization.
+pub struct Args<Id: 'static> {
     // PORT NOTE: Zig stored `arena: bun.ArenaAllocator` here and `deinit` freed it.
-    // Non-AST crate → arena removed; `ComptimeClap` must own its allocations.
+    // Non-AST crate → arena removed; `ComptimeClap` owns its allocations.
     // PERF(port): was arena bulk-free — profile in Phase B
-    pub clap: ComptimeClap<Id, PARAMS>,
+    pub clap: ComptimeClap<Id>,
     pub exe_arg: Option<&'static [u8]>,
 }
 
-impl<Id: 'static, const PARAMS: &'static [Param<Id>]> Args<Id, PARAMS> {
+impl<Id: 'static> Args<Id> {
     pub fn flag(&self, name: &'static [u8]) -> bool {
         self.clap.flag(name)
     }
@@ -455,30 +416,16 @@ impl<Id: 'static, const PARAMS: &'static [Param<Id>]> Args<Id, PARAMS> {
         self.clap.remaining()
     }
 
-    pub fn has_flag(name: &'static [u8]) -> bool {
-        ComptimeClap::<Id, PARAMS>::has_flag(name)
-    }
-}
-
-/// Options that can be set to customize the behavior of parsing.
-pub struct ParseOptions<'a> {
-    // PORT NOTE: `allocator: mem.Allocator` field deleted — non-AST crate uses
-    // the global mimalloc. The Zig doc-comment about `parse` vs `parseEx`
-    // allocator wrapping no longer applies.
-    pub diagnostic: Option<&'a mut Diagnostic>,
-    pub stop_after_positional_at: usize,
-}
-
-impl<'a> Default for ParseOptions<'a> {
-    fn default() -> Self {
-        Self { diagnostic: None, stop_after_positional_at: 0 }
+    pub fn has_flag(params: &[Param<Id>], name: &'static [u8]) -> bool {
+        ComptimeClap::<Id>::has_flag(params, name)
     }
 }
 
 /// Same as `parse_ex` but uses the `args::OsIterator` by default.
-pub fn parse<Id: 'static, const PARAMS: &'static [Param<Id>]>(
+pub fn parse<Id: 'static>(
+    params: &[Param<Id>],
     opt: ParseOptions<'_>,
-) -> Result<Args<Id, PARAMS>, bun_core::Error> {
+) -> Result<Args<Id>, bun_core::Error> {
     // TODO(port): narrow error set
     let mut iter = args::OsIterator::init();
     let exe_arg = iter.exe_arg;
@@ -486,7 +433,8 @@ pub fn parse<Id: 'static, const PARAMS: &'static [Param<Id>]>(
     // PORT NOTE: Zig reused `iter.arena` as the allocator for `parseEx` and
     // moved it into `res.arena`. Arena removed in port; ownership flows through
     // `ComptimeClap` directly.
-    let clap = parse_ex::<Id, PARAMS, _>(
+    let clap = parse_ex::<Id, _>(
+        params,
         &mut iter,
         ParseOptions {
             diagnostic: opt.diagnostic,
@@ -498,12 +446,16 @@ pub fn parse<Id: 'static, const PARAMS: &'static [Param<Id>]>(
 
 /// Parses the command line arguments passed into the program based on an
 /// array of `Param`s.
-pub fn parse_ex<Id: 'static, const PARAMS: &'static [Param<Id>], I>(
+pub fn parse_ex<Id: 'static, I>(
+    params: &[Param<Id>],
     iter: &mut I,
     opt: ParseOptions<'_>,
-) -> Result<ComptimeClap<Id, PARAMS>, bun_core::Error> {
+) -> Result<ComptimeClap<Id>, bun_core::Error>
+where
+    I: args::ArgIter<'static>,
+{
     // TODO(port): narrow error set
-    ComptimeClap::<Id, PARAMS>::parse(iter, opt)
+    ComptimeClap::<Id>::parse(params, iter, opt)
 }
 
 /// Will print a help message in the following format:
@@ -516,8 +468,8 @@ pub fn help_full<W, Id, E, C>(
     stream: &mut W,
     params: &[Param<Id>],
     context: &C,
-    help_text: fn(&C, &Param<Id>) -> Result<&[u8], E>,
-    value_text: fn(&C, &Param<Id>) -> Result<&[u8], E>,
+    help_text: fn(&C, &Param<Id>) -> Result<&'static [u8], E>,
+    value_text: fn(&C, &Param<Id>) -> Result<&'static [u8], E>,
 ) -> Result<(), bun_core::Error>
 where
     W: fmt::Write,
@@ -531,7 +483,7 @@ where
             // TODO(port): std.io.countingWriter(io.null_writer) — using a local
             // CountingWriter that discards output and counts bytes.
             let mut cs = CountingWriter::null();
-            print_param(&mut cs, param, context, value_text).map_err(Into::into)?;
+            print_param(&mut cs, param, context, value_text)?;
             if res < cs.bytes_written {
                 res = cs.bytes_written;
             }
@@ -550,7 +502,7 @@ where
             // TODO(port): std.io.countingWriter(stream) — wrapping `stream`
             let mut cs = CountingWriter::wrap(stream);
             write!(cs.inner(), "\t").map_err(|_| err!("WriteFailed"))?;
-            print_param(&mut cs, param, context, value_text).map_err(Into::into)?;
+            print_param(&mut cs, param, context, value_text)?;
             let written = cs.bytes_written;
             // stream.splatByteAll(' ', max_spacing - written)
             for _ in 0..(max_spacing - written) {
@@ -567,7 +519,7 @@ fn print_param<W, Id, E, C>(
     stream: &mut W,
     param: &Param<Id>,
     context: &C,
-    value_text: fn(&C, &Param<Id>) -> Result<&[u8], E>,
+    value_text: fn(&C, &Param<Id>) -> Result<&'static [u8], E>,
 ) -> Result<(), bun_core::Error>
 where
     W: fmt::Write,
@@ -625,11 +577,11 @@ where
         value_text: fn(&Param<Id>) -> &'static [u8],
     }
 
-    fn help<Id>(c: &Context<Id>, p: &Param<Id>) -> Result<&'static [u8], core::convert::Infallible> {
+    fn help<Id>(c: &Context<Id>, p: &Param<Id>) -> Result<&'static [u8], bun_core::Error> {
         Ok((c.help_text)(p))
     }
 
-    fn value<Id>(c: &Context<Id>, p: &Param<Id>) -> Result<&'static [u8], core::convert::Infallible> {
+    fn value<Id>(c: &Context<Id>, p: &Param<Id>) -> Result<&'static [u8], bun_core::Error> {
         Ok((c.value_text)(p))
     }
 
@@ -760,29 +712,9 @@ pub fn simple_help_bun_top_level(params: &'static [Param<Help>]) {
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct Help {
-    pub msg: &'static [u8],
-    pub value: &'static [u8],
-}
-
-impl Default for Help {
-    fn default() -> Self {
-        Self { msg: b"", value: b"" }
-    }
-}
-
 /// A wrapper around help_ex that takes a `Param<Help>`.
 pub fn help<W: fmt::Write>(stream: &mut W, params: &[Param<Help>]) -> Result<(), bun_core::Error> {
     help_ex(stream, params, get_help_simple, get_value_simple)
-}
-
-fn get_help_simple(param: &Param<Help>) -> &'static [u8] {
-    param.id.msg
-}
-
-fn get_value_simple(param: &Param<Help>) -> &'static [u8] {
-    param.id.value
 }
 
 /// Will print a usage message in the following format:
@@ -794,7 +726,7 @@ pub fn usage_full<W, Id, E, C>(
     stream: &mut W,
     params: &[Param<Id>],
     context: &C,
-    value_text: fn(&C, &Param<Id>) -> Result<&[u8], E>,
+    value_text: fn(&C, &Param<Id>) -> Result<&'static [u8], E>,
 ) -> Result<(), bun_core::Error>
 where
     W: fmt::Write,
@@ -897,7 +829,7 @@ where
         value_text: fn(&Param<Id>) -> &'static [u8],
     }
 
-    fn value<Id>(c: &Context<Id>, p: &Param<Id>) -> Result<&'static [u8], core::convert::Infallible> {
+    fn value<Id>(c: &Context<Id>, p: &Param<Id>) -> Result<&'static [u8], bun_core::Error> {
         Ok((c.value_text)(p))
     }
 
@@ -908,32 +840,6 @@ where
 pub fn usage<W: fmt::Write>(stream: &mut W, params: &[Param<Help>]) -> Result<(), bun_core::Error> {
     usage_ex(stream, params, get_value_simple)
 }
-
-} // mod _gated_b1
-
-// ── stub surface for the gated block above ────────────────────────────────
-pub struct Args<Id: 'static> {
-    pub clap: ComptimeClap<Id>,
-    pub exe_arg: Option<&'static [u8]>,
-}
-pub fn parse<Id: 'static>(_opt: ParseOptions<'_>) -> Result<Args<Id>, bun_core::Error> {
-    todo!("b1-stub: clap::parse")
-}
-pub fn parse_ex<Id: 'static, I>(
-    _iter: &mut I,
-    _opt: ParseOptions<'_>,
-) -> Result<ComptimeClap<Id>, bun_core::Error> {
-    todo!("b1-stub: clap::parse_ex")
-}
-pub fn help<W: fmt::Write>(_stream: &mut W, _params: &[Param<Help>]) -> Result<(), bun_core::Error> {
-    todo!("b1-stub: clap::help")
-}
-pub fn usage<W: fmt::Write>(_stream: &mut W, _params: &[Param<Help>]) -> Result<(), bun_core::Error> {
-    todo!("b1-stub: clap::usage")
-}
-pub fn simple_help(_params: &[Param<Help>]) { todo!("b1-stub") }
-pub fn simple_help_bun_top_level(_params: &'static [Param<Help>]) { todo!("b1-stub") }
-pub fn simple_print_param(_param: &Param<Help>) -> Result<(), bun_core::Error> { todo!("b1-stub") }
 
 #[cfg(test)]
 fn test_usage(expected: &[u8], params: &[Param<Help>]) -> Result<(), bun_core::Error> {
@@ -1023,11 +929,10 @@ impl<'a, W: fmt::Write> CountingWriter<'a, W> {
 
 impl CountingWriter<'static, NullWriter> {
     fn null() -> CountingWriter<'static, NullWriter> {
-        // PORT NOTE: reshaped for borrowck — Zig used `io.null_writer`; here we
-        // use a static-lifetime null sink so `print_param` can take `&mut W`.
-        // TODO(port): clean up the Option<&mut W> dance once a real bun_io::CountingWriter exists.
-        // NullWriter is a ZST so Box::leak is zero-cost (no allocation for ZSTs).
-        CountingWriter { inner: Some(Box::leak(Box::new(NullWriter))), bytes_written: 0 }
+        // PORT NOTE: reshaped for borrowck — Zig used `io.null_writer`. `inner: None`
+        // discards writes (the `Write` impl below already handles `None`); `inner()`
+        // is never called on the null variant.
+        CountingWriter { inner: None, bytes_written: 0 }
     }
 }
 

@@ -10,9 +10,9 @@ use core::mem::size_of;
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use bun_core::env_var;
-use bun_str::strings;
+use bun_string::strings;
 
-bun_output::declare_scope!(elf, visible);
+bun_core::declare_scope!(elf, visible);
 
 #[derive(Debug, thiserror::Error, strum::IntoStaticStr)]
 pub enum ElfError {
@@ -32,8 +32,7 @@ pub enum ElfError {
 
 impl From<ElfError> for bun_core::Error {
     fn from(e: ElfError) -> Self {
-        bun_core::Error::from_static_str(<&'static str>::from(e))
-        // TODO(port): confirm bun_core::Error construction API
+        bun_core::Error::from_name(<&'static str>::from(e))
     }
 }
 
@@ -145,7 +144,7 @@ impl ElfFile {
                     return;
                 }
 
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     elf,
                     "rewriting PT_INTERP {} -> {}",
                     bstr::BStr::new(current),
@@ -445,8 +444,9 @@ impl ElfFile {
         Ok(())
     }
 
-    pub fn write(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    pub fn write(&self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
+        // PORT NOTE: Zig used `writer: anytype` (`std.Io.Writer`); std::io::Write
+        // is the canonical Rust equivalent. bun_io has no Write trait.
         writer.write_all(&self.data)?;
         Ok(())
     }
@@ -577,7 +577,9 @@ fn host_uses_nix_store_interpreter() -> bool {
             // Test-only override: lets #29290's regression test force the
             // Nix-host branch without mutating `/etc/NIXOS` on the shared
             // rootfs (which would poison concurrent test workers).
-            if env_var::BUN_DEBUG_FORCE_NIX_HOST.get() {
+            // PORT NOTE: env_var .get() returns Option<bool> (nullability
+            // collapsed in the macro port); default-false makes None ≡ false.
+            if env_var::BUN_DEBUG_FORCE_NIX_HOST.get() == Some(true) {
                 return true;
             }
             if self_interp_is_nix_store() {
@@ -585,11 +587,15 @@ fn host_uses_nix_store_interpreter() -> bool {
             }
             // Canonical NixOS marker — present even when bun itself was not
             // installed via Nix (statically-linked bun, downloaded tarball).
-            if bun_sys::exists(b"/etc/NIXOS") {
+            if bun_sys::exists_z(bun_core::zstr!("/etc/NIXOS")) {
                 return true;
             }
             // Guix equivalent.
-            if bun_sys::directory_exists_at(bun_sys::Fd::cwd(), b"/gnu/store").unwrap_or(false) {
+            // TODO(b2-blocked): bun_sys::directory_exists_at
+            #[cfg(any())]
+            if bun_sys::directory_exists_at(bun_sys::Fd::cwd(), bun_core::zstr!("/gnu/store"))
+                .unwrap_or(false)
+            {
                 return true;
             }
             false
@@ -599,8 +605,9 @@ fn host_uses_nix_store_interpreter() -> bool {
             // 4 KiB is enough: PT_INTERP on a glibc-linked binary points into
             // the first page. Read just the leading bytes to avoid slurping
             // the whole bun binary.
+            use bun_sys::FdExt as _;
             let mut buf = [0u8; 4096];
-            let fd = match bun_sys::open(b"/proc/self/exe", bun_sys::O::RDONLY, 0) {
+            let fd = match bun_sys::open(bun_core::zstr!("/proc/self/exe"), bun_sys::O::RDONLY, 0) {
                 Ok(fd) => fd,
                 Err(_) => return false,
             };

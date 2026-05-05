@@ -114,14 +114,14 @@ impl Condition {
     /// The blocked thread must be sequenced before this call with respect to acquiring the same Mutex in order to be observable for unblocking.
     /// `signal()` can be called with or without the relevant Mutex being acquired and have no "effect" if there's no observable blocked threads.
     pub fn signal(&self) {
-        self.impl_.wake::<{ Notify::One }>();
+        self.impl_.wake(Notify::One);
     }
 
     /// Unblocks all threads currently blocked in a call to `wait()` or `timed_wait()` with a given Mutex.
     /// The blocked threads must be sequenced before this call with respect to acquiring the same Mutex in order to be observable for unblocking.
     /// `broadcast()` can be called with or without the relevant Mutex being acquired and have no "effect" if there's no observable blocked threads.
     pub fn broadcast(&self) {
-        self.impl_.wake::<{ Notify::All }>();
+        self.impl_.wake(Notify::All);
     }
 }
 
@@ -130,7 +130,10 @@ type Impl = WindowsImpl;
 #[cfg(not(windows))]
 type Impl = FutexImpl;
 
-#[derive(core::marker::ConstParamTy, PartialEq, Eq, Clone, Copy)]
+// PORT NOTE: Zig passed `comptime notify: Notify`. Stable Rust forbids enum
+// const-generic params (`adt_const_params`), so `wake()` takes it at runtime;
+// the two-variant match optimizes equivalently.
+#[derive(PartialEq, Eq, Clone, Copy)]
 enum Notify {
     One, // wake up only one thread
     All, // wake up all threads
@@ -211,9 +214,9 @@ mod windows_impl {
             Ok(())
         }
 
-        pub(super) fn wake<const NOTIFY: Notify>(&self) {
+        pub(super) fn wake(&self, notify: Notify) {
             // SAFETY: condition is a valid OS handle.
-            match NOTIFY {
+            match notify {
                 Notify::One => unsafe { kernel32::WakeConditionVariable(&self.condition as *const _ as *mut _) },
                 Notify::All => unsafe { kernel32::WakeAllConditionVariable(&self.condition as *const _ as *mut _) },
             }
@@ -262,7 +265,7 @@ impl FutexImpl {
             match futex_deadline.wait(&self.epoch, epoch) {
                 Ok(()) => {}
                 // On timeout, we must decrement the waiter we added above.
-                Err(TimeoutError::Timeout) => {
+                Err(crate::futex::TimeoutError::Timeout) => {
                     loop {
                         // If there's a signal when we're timing out, consume it and report being woken up instead.
                         // Acquire barrier ensures code before the wake() which added the signal happens before we decrement it and return.
@@ -314,7 +317,7 @@ impl FutexImpl {
         }
     }
 
-    fn wake<const NOTIFY: Notify>(&self) {
+    fn wake(&self, notify: Notify) {
         let mut state = self.state.load(Ordering::Relaxed);
         loop {
             let waiters = (state & Self::WAITER_MASK) / Self::ONE_WAITER;
@@ -328,7 +331,7 @@ impl FutexImpl {
                 return;
             }
 
-            let to_wake = match NOTIFY {
+            let to_wake = match notify {
                 Notify::One => 1,
                 Notify::All => wakeable,
             };

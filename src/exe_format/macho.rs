@@ -1,17 +1,10 @@
 use core::mem::size_of;
 
-// TODO(port): `std.macho` types (mach_header_64, segment_command_64, section_64,
-// linkedit_data_command, symtab_command, dysymtab_command, dyld_info_command,
-// LoadCommandIterator, SuperBlob, BlobIndex, CodeDirectory, LC, PROT, CPU_TYPE_ARM64,
-// MH_MAGIC_64, S_REGULAR, S_ATTR_NO_DEAD_STRIP) need a Rust home. Phase B: port
-// Zig's `lib/std/macho.zig` into `bun_exe_format::macho_types` (all `#[repr(C)]` POD).
+// `std.macho` types ported locally (see macho_types.rs).
 use crate::macho_types as macho;
 use crate::macho_types::{BlobIndex, CodeDirectory, SuperBlob};
 
-// TODO(port): verify crate path for `bun.sha.SHA256` (Phase B)
-use bun_sha::SHA256;
-// TODO(port): verify crate path for `bun.feature_flag` (Phase B)
-use bun_core::feature_flag;
+use bun_core::env_var::feature_flag;
 
 pub const SEGNAME_BUN: [u8; 16] = *b"__BUN\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
 pub const SECTNAME: [u8; 16] = *b"__bun\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
@@ -280,7 +273,7 @@ impl MachoFile {
 
         if let Some(idx) = code_sign_cmd_idx {
             if self.header.cputype == macho::CPU_TYPE_ARM64
-                && !feature_flag::BUN_NO_CODESIGN_MACHO_BINARY.get()
+                && feature_flag::BUN_NO_CODESIGN_MACHO_BINARY.get() != Some(true)
             {
                 // `buildAndSign` replaces the template's signature with one built by
                 // `MachoSigner`, whose size depends only on the (possibly-shifted)
@@ -434,15 +427,15 @@ impl MachoFile {
     }
 
     pub fn iterator(&self) -> macho::LoadCommandIterator {
-        macho::LoadCommandIterator {
-            buffer: &self.data[size_of::<macho::mach_header_64>()..]
-                [..self.header.sizeofcmds as usize],
-            ncmds: self.header.ncmds,
-        }
+        macho::LoadCommandIterator::new(
+            self.header.ncmds,
+            &self.data[size_of::<macho::mach_header_64>()..][..self.header.sizeofcmds as usize],
+        )
     }
 
-    pub fn build(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    pub fn build(&self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
+        // PORT NOTE: Zig used `writer: anytype`; std::io::Write is the canonical
+        // Rust equivalent (bun_io has no Write trait).
         writer.write_all(&self.data)?;
         Ok(())
     }
@@ -464,10 +457,10 @@ impl MachoFile {
         Ok(())
     }
 
-    pub fn build_and_sign(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
+    pub fn build_and_sign(&self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         if self.header.cputype == macho::CPU_TYPE_ARM64
-            && !feature_flag::BUN_NO_CODESIGN_MACHO_BINARY.get()
+            && feature_flag::BUN_NO_CODESIGN_MACHO_BINARY.get() != Some(true)
         {
             let mut data: Vec<u8> = Vec::new();
             self.build(&mut data)?;
@@ -546,10 +539,10 @@ impl MachoSigner {
         let mut text_seg: macho::segment_command_64 = unsafe { core::mem::zeroed() };
         let mut linkedit_seg: macho::segment_command_64 = unsafe { core::mem::zeroed() };
 
-        let mut it = macho::LoadCommandIterator {
-            ncmds: header.ncmds,
-            buffer: &obj[header_size..][..header.sizeofcmds as usize],
-        };
+        let mut it = macho::LoadCommandIterator::new(
+            header.ncmds,
+            &obj[header_size..][..header.sizeofcmds as usize],
+        );
 
         // First pass: find segments to establish bounds
         while let Some(cmd) = it.next() {
@@ -572,10 +565,10 @@ impl MachoSigner {
         }
 
         // Reset iterator
-        it = macho::LoadCommandIterator {
-            ncmds: header.ncmds,
-            buffer: &obj[header_size..][..header.sizeofcmds as usize],
-        };
+        it = macho::LoadCommandIterator::new(
+            header.ncmds,
+            &obj[header_size..][..header.sizeofcmds as usize],
+        );
 
         // Second pass: find code signature
         while let Some(cmd) = it.next() {
@@ -633,7 +626,7 @@ impl MachoSigner {
         super_blob_header_size + blob_index_size + code_dir_length
     }
 
-    pub fn sign(&mut self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
+    pub fn sign(&mut self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         const PAGE_SIZE: usize = MachoSigner::SIGNATURE_PAGE_SIZE;
         const HASH_SIZE: usize = MachoSigner::SIGNATURE_HASH_SIZE;
@@ -722,10 +715,10 @@ impl MachoSigner {
         let mut off: usize = 0;
         let end = self.sig_off;
         while end - off >= PAGE_SIZE {
-            let mut digest: SHA256::Digest = [0u8; HASH_SIZE];
+            let mut digest = [0u8; HASH_SIZE];
             // SAFETY: range [off..off+PAGE_SIZE] is within the original len (sig_off).
             let page = unsafe { core::slice::from_raw_parts(self.data.as_ptr().add(off), PAGE_SIZE) };
-            SHA256::hash(page, &mut digest, None);
+            sha256_hash(page, &mut digest);
             self.data.extend_from_slice(&digest);
             off += PAGE_SIZE;
         }
@@ -741,8 +734,8 @@ impl MachoSigner {
                     remaining_len,
                 );
             }
-            let mut digest: SHA256::Digest = [0u8; HASH_SIZE];
-            SHA256::hash(&last_page, &mut digest, None);
+            let mut digest = [0u8; HASH_SIZE];
+            sha256_hash(&last_page, &mut digest);
             self.data.extend_from_slice(&digest);
         }
 
@@ -798,6 +791,22 @@ const CSMAGIC_EMBEDDED_SIGNATURE: u32 = 0xfade0cc0;
 const CSSLOT_CODEDIRECTORY: u32 = 0;
 const SEC_CODE_SIGNATURE_HASH_SHA256: u8 = 2;
 const CS_EXECSEG_MAIN_BINARY: u64 = 0x1;
+
+/// `bun.sha.SHA256.hash(bytes, out, null)`.
+#[inline]
+fn sha256_hash(bytes: &[u8], out: &mut [u8; 32]) {
+    // TODO(b2-blocked): bun_sha_hmac::SHA256::hash
+    // (gated upstream on bun_boringssl_sys; see src/sha_hmac/sha.rs)
+    #[cfg(any())]
+    {
+        bun_sha_hmac::sha::SHA256::hash(bytes, out, None);
+    }
+    #[cfg(not(any()))]
+    {
+        let _ = (bytes, out);
+        todo!("b2-blocked: bun_sha_hmac::SHA256::hash (bun_boringssl_sys)");
+    }
+}
 
 /// Reinterpret a `#[repr(C)]` POD value as bytes (port of `std.mem.asBytes`).
 #[inline]

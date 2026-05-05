@@ -781,8 +781,9 @@ impl PEFile {
     }
 
     /// Write the modified PE file
-    pub fn write(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    pub fn write(&self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
+        // PORT NOTE: Zig used `writer: anytype` (`std.Io.Writer`); std::io::Write
+        // is the canonical Rust equivalent. bun_io has no Write trait.
         writer.write_all(&self.data)?;
         Ok(())
     }

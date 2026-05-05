@@ -535,8 +535,17 @@ pub fn GlobWalker_(
                                 .result => |fd| fd,
                             };
                             _ = Accessor.close(fd);
-                            try this.walker.appendMatchedPathSymlink(path);
-                            this.iter_state = .{ .matched = path };
+                            // `open` with `O_DIRECTORY` succeeded → `path` is a
+                            // directory. Emit it only when `only_files` is
+                            // false, matching the relative literal-tail branch
+                            // in `transitionToDirIterState` that gates on
+                            // `bun.S.ISDIR(mode) and !only_files`.
+                            if (!this.walker.only_files) {
+                                try this.walker.appendMatchedPathSymlink(path);
+                                this.iter_state = .{ .matched = path };
+                            } else {
+                                this.iter_state = .get_next;
+                            }
                             return .success;
                         }
 

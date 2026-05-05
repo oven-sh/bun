@@ -475,15 +475,23 @@ describe("fs.glob edge cases", () => {
     // shapes: path-is-file (ENOTDIR from open), path-is-directory
     // (open succeeds), path-is-missing (ENOENT → []). Each success-shaped
     // arm must push into `matchedPaths` — otherwise `walk()` discards the
-    // `.matched` yield and the final array is empty.
+    // `.matched` yield and the final array is empty. The directory arm
+    // gates on `!only_files` so the public `Bun.Glob` default
+    // (`onlyFiles: true`) still filters directories out.
     using dir = tempDir("glob-abs-literal", {
       "file.txt": "x",
       subdir: { ".keep": "" },
     });
     const root = String(dir);
+
+    // fs.glob sets onlyFiles: false, so directories and files both match.
     expect(fs.globSync(path.join(root, "file.txt"))).toStrictEqual([path.join(root, "file.txt")]);
     expect(fs.globSync(path.join(root, "subdir"))).toStrictEqual([path.join(root, "subdir")]);
     expect(fs.globSync(path.join(root, "does-not-exist"))).toStrictEqual([]);
+
+    // Public Bun.Glob (default onlyFiles: true) filters the directory.
+    expect([...new Bun.Glob(path.join(root, "file.txt")).scanSync()]).toStrictEqual([path.join(root, "file.txt")]);
+    expect([...new Bun.Glob(path.join(root, "subdir")).scanSync()]).toStrictEqual([]);
   });
 
   it("consecutive separators in a pattern do not break matching", () => {
@@ -509,12 +517,16 @@ describe("fs.glob edge cases", () => {
     }).toThrow(boom);
   });
 
-  it("pattern that is entirely separators does not throw", () => {
-    // `fs.globSync('/')` — Bun.Glob itself doesn't match root patterns
-    // (a known limitation; Node returns `['/']` but Bun returns `[]`). We
-    // just want to ensure we don't throw or hang on this shape.
-    const _ = fs.globSync(sep);
-    expect(Array.isArray(_)).toBe(true);
+  it("pattern that is entirely separators returns the root (POSIX)", () => {
+    // `fs.globSync('/')` on POSIX — the absolute-literal fast-path opens
+    // `/` with `O_DIRECTORY`, succeeds, and emits the root via
+    // `matchedPaths`. Node returns the same. On Windows a bare `\`
+    // exercises a different codepath; don't lock its shape here.
+    if (isWindows) {
+      expect(Array.isArray(fs.globSync(sep))).toBe(true);
+    } else {
+      expect(fs.globSync(sep)).toStrictEqual([sep]);
+    }
   });
 
   it("brace alternatives in a pattern yield every matching path", () => {

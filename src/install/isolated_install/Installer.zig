@@ -764,7 +764,16 @@ pub const Installer = struct {
                                             .hardlink => switch (linkedHardlinkPaths(folder_dir, publishable_paths.paths, &dest)) {
                                                 .result => {},
                                                 .err => |err| {
-                                                    if (err.getErrno() == .XDEV) continue :backend .copyfile;
+                                                    if (err.getErrno() == .XDEV) {
+                                                        // The partial hardlink pass may have placed
+                                                        // links under `dest` already. `linkedCopyPaths`
+                                                        // opens each destination with O_TRUNC, so any
+                                                        // hardlinks left behind would truncate the
+                                                        // producer's inode. Wipe the entry before
+                                                        // retrying with copyfile.
+                                                        FD.cwd().deleteTree(dest.slice()) catch {};
+                                                        continue :backend .copyfile;
+                                                    }
                                                     return .failure(.{ .link_package = err });
                                                 },
                                             },
@@ -804,6 +813,17 @@ pub const Installer = struct {
                                                 .result => {},
                                                 .err => |err| {
                                                     if (err.getErrno() == .XDEV) {
+                                                        // Wipe any partial hardlinks before the
+                                                        // copyfile fallback — see the note on the
+                                                        // publishable-paths branch above.
+                                                        if (comptime Environment.isWindows) {
+                                                            var u8_buf: bun.PathBuffer = undefined;
+                                                            if (bun.strings.convertUTF16toUTF8InBuffer(&u8_buf, dest.slice())) |u8_path| {
+                                                                FD.cwd().deleteTree(u8_path) catch {};
+                                                            } else |_| {}
+                                                        } else {
+                                                            FD.cwd().deleteTree(dest.slice()) catch {};
+                                                        }
                                                         continue :backend .copyfile;
                                                     }
                                                     return .failure(.{ .link_package = err });

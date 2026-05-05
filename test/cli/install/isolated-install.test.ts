@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readlinkSync } from "fs";
 import { mkdir, readdir, readlink, rm, stat, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, isWindows, readdirSorted, runBunInstall, tempDir } from "harness";
 import { dirname, join } from "path";
 
 const registry = new VerdaccioRegistry();
@@ -2302,7 +2302,12 @@ describe("bun link integration", () => {
   // binds the linker's behavior to bun's own publish semantics (which
   // already handle `package.json#files`, `.npmignore`, default excludes,
   // etc.), so the test doesn't go stale when those rules evolve.
-  test("isolated: .bun entry contains exactly what `bun pm pack` would publish", async () => {
+  // Windows: `pack_command.collectPublishablePaths` is POSIX-only for now
+  // (see the `publishable: ?…` comptime gate in `Installer.zig` and the
+  // Scope/follow-ups list in PR #30289). Windows falls back to a Walker
+  // that only applies the default basename skip list, so `files` whitelists
+  // and `.npmignore` won't be honored. Gate parity tests accordingly.
+  test.skipIf(isWindows)("isolated: .bun entry contains exactly what `bun pm pack` would publish", async () => {
     using home = tempDir("link-home-", {});
     const env = hermeticEnv(String(home));
 
@@ -2402,7 +2407,7 @@ describe("bun link integration", () => {
   // else (src/, docs/, .storybook/, config files) is dev-only and must not
   // end up inside a consumer's `.bun/<hash>/<pkg>/`. Same capability
   // assertion as the prior test; the producer shape is what changes.
-  test("isolated: .bun entry honors producer's package.json#files whitelist", async () => {
+  test.skipIf(isWindows)("isolated: .bun entry honors producer's package.json#files whitelist", async () => {
     using home = tempDir("link-home-", {});
     const env = hermeticEnv(String(home));
 
@@ -2495,7 +2500,7 @@ describe("bun link integration", () => {
   // SVG sources, excluded from publish) and `<root>/build/esm/web-tokens/
   // assets/` (built JSON shipped via files). A basename-only skip list
   // drops both; npm publish (and we) must keep the nested one.
-  test("isolated: root-only `files` exclusion does not strip same-named nested dirs", async () => {
+  test.skipIf(isWindows)("isolated: root-only `files` exclusion does not strip same-named nested dirs", async () => {
     using home = tempDir("link-home-", {});
     const env = hermeticEnv(String(home));
 

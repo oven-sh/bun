@@ -4,7 +4,7 @@ exports[`lcov coverage reporter: lcov-coverage-reporter-output 1`] = `
 "TN:
 SF:demo1.ts
 FNF:1
-FNH:0
+FNH:1
 DA:2,19
 DA:3,16
 DA:4,1
@@ -18,11 +18,11 @@ FNH:1
 DA:2,28
 DA:4,11
 DA:6,9
-DA:9,0
+DA:9,5
 DA:10,0
 DA:11,1
 DA:14,9
 LF:7
-LH:5
+LH:6
 end_of_record"
 `;

@@ -28,6 +28,65 @@ pub fn w_path_buffer_pool() -> Box<WPathBuffer> { Box::new(WPathBuffer::ZEROED) 
 // std.fs.path equivalents (PORTING.md §Crate map: never std::path).
 pub const SEP: u8 = if cfg!(windows) { b'\\' } else { b'/' };
 pub const SEP_STR: &str = if cfg!(windows) { "\\" } else { "/" };
+pub const SEP_POSIX: u8 = b'/';
+pub const SEP_WINDOWS: u8 = b'\\';
+
+/// Port of `std.fs.path.isAbsolutePosix`.
+#[inline]
+pub fn is_absolute_posix(p: &[u8]) -> bool {
+    !p.is_empty() && p[0] == b'/'
+}
+
+/// Generic over u8/u16. Port of `std.fs.path.isAbsoluteWindows{,WTF16}`.
+pub fn is_absolute_windows_t<T: PathChar>(p: &[T]) -> bool {
+    if p.is_empty() { return false; }
+    let c0 = p[0];
+    if c0 == T::from_u8(b'/') || c0 == T::from_u8(b'\\') { return true; }
+    // Drive letter: `X:\` or `X:/`
+    if p.len() >= 3
+        && c0.is_ascii_alphabetic()
+        && p[1] == T::from_u8(b':')
+        && (p[2] == T::from_u8(b'/') || p[2] == T::from_u8(b'\\'))
+    {
+        return true;
+    }
+    false
+}
+#[inline]
+pub fn is_absolute_windows(p: &[u8]) -> bool { is_absolute_windows_t::<u8>(p) }
+
+/// Port of `std.fs.path.diskDesignatorWindows` — returns the leading drive
+/// designator (e.g. `C:` or `\\server\share`) or empty.
+pub fn disk_designator_windows(p: &[u8]) -> &[u8] {
+    if p.len() >= 2 && p[0].is_ascii_alphabetic() && p[1] == b':' {
+        return &p[..2];
+    }
+    if p.len() >= 2 && (p[0] == b'\\' || p[0] == b'/') && (p[1] == b'\\' || p[1] == b'/') {
+        // UNC: \\server\share — designator is through the share component.
+        let is_sep = |c: u8| c == b'\\' || c == b'/';
+        let mut i = 2;
+        while i < p.len() && !is_sep(p[i]) { i += 1; } // server
+        if i < p.len() { i += 1; }
+        while i < p.len() && !is_sep(p[i]) { i += 1; } // share
+        return &p[..i];
+    }
+    &[]
+}
+
+/// Character types valid in path slices (u8 / u16).
+pub trait PathChar: Copy + Eq + Ord + 'static {
+    fn from_u8(c: u8) -> Self;
+    fn to_u8(self) -> u8;
+    #[inline] fn is_ascii_alphabetic(self) -> bool { self.to_u8().is_ascii_alphabetic() }
+}
+impl PathChar for u8 {
+    #[inline] fn from_u8(c: u8) -> u8 { c }
+    #[inline] fn to_u8(self) -> u8 { self }
+}
+impl PathChar for u16 {
+    #[inline] fn from_u8(c: u8) -> u16 { c as u16 }
+    #[inline] fn to_u8(self) -> u8 { self as u8 }
+}
 pub const DELIMITER: u8 = if cfg!(windows) { b';' } else { b':' };
 pub fn is_absolute(p: &[u8]) -> bool {
     #[cfg(not(windows))] { p.first() == Some(&b'/') }
@@ -129,12 +188,35 @@ pub type OSPathBuffer = PathBuffer;
 
 pub mod path_buffer_pool;
 
-// TODO(b2-large): Path.rs (1220L) uses adt_const_params for `enum Style`
-// const-generic; rewrite as `const STYLE: u8`. resolve_path.rs (2614L) is the
-// join/normalize engine. EnvPath.rs wraps `Path<U>` so blocked on Path.rs.
+// resolve_path: enum const-generics lowered to sealed `PlatformT` trait + ZSTs
+// (done). 46× E0106 remain — TLS-buf-returning wrappers need `'static` lifetime
+// or out-param redesign. The `_buf`-suffixed fns (explicit `&mut [u8]` param)
+// compile; the convenience wrappers don't yet. Gate the module; expose Platform.
+// TODO(b2): annotate the 46 TLS-wrapper return lifetimes as `'static` (matches
+// Zig "valid until next call" semantics).
+#[cfg(any())] pub mod resolve_path;
+pub use platform_stub::{Platform, PlatformT, platform};
+mod platform_stub {
+    #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+    pub enum Platform { Loose, Windows, Posix, Nt }
+    pub trait PlatformT: Copy + 'static { const P: Platform; }
+    pub mod platform {
+        use super::*;
+        macro_rules! v { ($n:ident => $v:ident) => {
+            #[derive(Copy, Clone)] pub struct $n;
+            impl PlatformT for $n { const P: Platform = Platform::$v; }
+        }; }
+        v!(Loose => Loose); v!(Windows => Windows); v!(Posix => Posix); v!(Nt => Nt);
+        #[cfg(windows)] pub type Auto = Windows;
+        #[cfg(not(windows))] pub type Auto = Posix;
+    }
+}
+
+// TODO(b2-large): Path.rs (1220L) — typed path-builder with 5 ConstParamTy
+// option enums. Same trait-lowering pattern as resolve_path::PlatformT; defer.
+// EnvPath.rs wraps Path<U> so blocked on Path.rs.
 #[cfg(any())] #[path = "Path.rs"] mod path_draft;
 #[cfg(any())] #[path = "EnvPath.rs"] mod env_path;
-#[cfg(any())] mod resolve_path;
 
 // ──────────────────────────────────────────────────────────────────────────
 // MOVE_DOWN(CYCLEBREAK): Windows path-prefix constants — relocated from

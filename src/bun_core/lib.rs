@@ -381,6 +381,96 @@ pub mod strings {
     pub fn first_non_ascii16(utf16: &[u16]) -> Option<usize> {
         utf16.iter().position(|&u| u >= 0x80)
     }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Generic-T helpers used by bun_paths (must live at T0).
+    // ──────────────────────────────────────────────────────────────────────
+
+    #[inline]
+    pub fn index_of_any_t<T: Copy + Eq>(s: &[T], chars: &[T]) -> Option<usize> {
+        s.iter().position(|c| chars.contains(c))
+    }
+
+    #[inline]
+    pub fn has_prefix_t<T: Eq>(s: &[T], prefix: &[T]) -> bool {
+        s.len() >= prefix.len() && &s[..prefix.len()] == prefix
+    }
+
+    #[inline]
+    pub fn last_index_of_char<T: Copy + Eq>(s: &[T], c: T) -> Option<usize> {
+        s.iter().rposition(|&x| x == c)
+    }
+    #[inline]
+    pub fn last_index_of_char_t<T: Copy + Eq>(s: &[T], c: T) -> Option<usize> {
+        last_index_of_char(s, c)
+    }
+
+    #[inline]
+    pub fn eql_long(a: &[u8], b: &[u8]) -> bool { a == b }
+
+    #[inline]
+    pub fn eql_case_insensitive_ascii_check_length(a: &[u8], b: &[u8]) -> bool {
+        eql_case_insensitive_ascii(a, b, true)
+    }
+
+    /// Port of `convertUTF8ToUTF16InBuffer`. Writes WTF-16 into `out`; returns
+    /// the slice written. Caller must size `out` ≥ utf8.len() (worst case 1:1).
+    pub fn convert_utf8_to_utf16_in_buffer<'a>(out: &'a mut [u16], utf8: &[u8]) -> &'a mut [u16] {
+        // SAFETY: simdutf reads utf8.len() bytes, writes ≤ utf8.len() u16.
+        let r = unsafe {
+            simdutf::simdutf__convert_utf8_to_utf16le_with_errors(
+                utf8.as_ptr(),
+                utf8.len(),
+                out.as_mut_ptr(),
+            )
+        };
+        if r.status == simdutf::Status::SUCCESS {
+            return &mut out[..r.count];
+        }
+        // WTF-8 fallback (passes through invalid bytes / unpaired surrogates).
+        // PERF(port): scalar loop; Zig had similar fallback.
+        let mut written = 0usize;
+        let mut i = 0usize;
+        while i < utf8.len() {
+            let b = utf8[i];
+            if b < 0x80 {
+                out[written] = b as u16;
+                written += 1;
+                i += 1;
+            } else {
+                // Decode one WTF-8 sequence; invalid → U+FFFD.
+                let (cp, adv) = decode_wtf8_one(&utf8[i..]);
+                if cp <= 0xFFFF {
+                    out[written] = cp as u16;
+                    written += 1;
+                } else {
+                    let cp = cp - 0x10000;
+                    out[written] = 0xD800 | ((cp >> 10) as u16);
+                    out[written + 1] = 0xDC00 | ((cp & 0x3FF) as u16);
+                    written += 2;
+                }
+                i += adv;
+            }
+        }
+        &mut out[..written]
+    }
+
+    fn decode_wtf8_one(s: &[u8]) -> (u32, usize) {
+        let b0 = s[0] as u32;
+        if b0 < 0x80 { return (b0, 1); }
+        if b0 < 0xC0 || s.len() < 2 { return (0xFFFD, 1); }
+        let b1 = s[1] as u32;
+        if b0 < 0xE0 { return (((b0 & 0x1F) << 6) | (b1 & 0x3F), 2); }
+        if s.len() < 3 { return (0xFFFD, 1); }
+        let b2 = s[2] as u32;
+        if b0 < 0xF0 { return (((b0 & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F), 3); }
+        if s.len() < 4 { return (0xFFFD, 1); }
+        let b3 = s[3] as u32;
+        (
+            ((b0 & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F),
+            4,
+        )
+    }
 }
 
 // bun_alloc stubs Global.rs expects (real consts deferred to B-2 ungate of bun_alloc::basic)

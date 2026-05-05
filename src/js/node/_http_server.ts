@@ -841,9 +841,10 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
     nodeSocket.emit("error", err);
   }
   // If the socket is still writable and no response was sent, send a default error response.
-  // Match Node.js `socketOnError`: write then destroy, which triggers us_socket_close()
-  // (graceful TCP close) rather than a half-close. This avoids FIN_WAIT_2 linger on
-  // keep-alive connections where the previous request set idleTimeout=0.
+  // Use end() so _final() → handle.end() → us_socket_shutdown() sends a graceful FIN.
+  // On Windows, us_socket_close() alone does not call shutdown() first, so using destroy()
+  // here would produce an abortive close (RST) on the client side on Windows libuv builds,
+  // breaking tests that assert `client.on('end')` fires.
   if (!nodeSocket.writableEnded && !nodeSocket.destroyed) {
     const bytesAfterEmit = handle?.bytesWritten ?? 0;
     if (nodeSocket.writable && bytesAfterEmit === bytesBeforeEmit) {
@@ -854,10 +855,10 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
           : errorCode === HttpParserError.HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE
             ? "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n"
             : "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
-      nodeSocket.write(response);
+      nodeSocket.end(response);
+    } else {
+      nodeSocket.end();
     }
-    // No error arg: avoid an unhandled 'error' event if no listener is attached.
-    nodeSocket.destroy();
   }
 }
 

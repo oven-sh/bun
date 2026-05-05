@@ -1,6 +1,75 @@
-import { describe, expect, it } from "bun:test";
-import { isWindows } from "harness";
+import { describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { WriteStream } from "node:tty";
+
+describe("ReadStream.prototype.setRawMode", () => {
+  // Regression: on Windows, the `fd === 0` branch returned early on success
+  // without ever reaching `this.isRaw = flag`, so `process.stdin.isRaw` stayed
+  // `false` after a successful `setRawMode(true)`. On POSIX this already
+  // worked; the test runs on both to lock the behaviour in.
+  test("updates isRaw on process.stdin after a successful call", async () => {
+    let output = "";
+    const decoder = new TextDecoder();
+    const done = Promise.withResolvers<void>();
+    const eof = Promise.withResolvers<void>();
+
+    const proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          if (!process.stdin.isTTY) {
+            process.stdout.write("SKIP:stdin is not a TTY");
+            process.exit(0);
+          }
+          const before = process.stdin.isRaw;
+          const ret = process.stdin.setRawMode(true);
+          const afterTrue = process.stdin.isRaw;
+          process.stdin.setRawMode(false);
+          const afterFalse = process.stdin.isRaw;
+          process.stdout.write(
+            "RESULT " +
+              JSON.stringify({
+                before,
+                afterTrue,
+                afterFalse,
+                returnsThis: ret === process.stdin,
+              }),
+          );
+          process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      terminal: {
+        cols: 80,
+        rows: 24,
+        data(_t, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          if (output.includes("RESULT ") && output.includes("}")) done.resolve();
+          if (output.includes("SKIP:")) done.resolve();
+        },
+        exit() {
+          eof.resolve();
+        },
+      },
+    });
+
+    await Promise.race([done.promise, eof.promise]);
+    proc.kill();
+    await proc.exited;
+    proc.terminal?.close();
+    output += decoder.decode();
+
+    const match = output.match(/RESULT (\{[^}]*\})/);
+    expect(match).not.toBeNull();
+    expect(JSON.parse(match![1])).toEqual({
+      before: false,
+      afterTrue: true,
+      afterFalse: false,
+      returnsThis: true,
+    });
+  });
+});
 
 describe("WriteStream.prototype.getColorDepth", () => {
   it("iTerm ancient", () => {

@@ -20,7 +20,7 @@
 // Fix: register the pidfd level-triggered (no EPOLLONESHOT). A pidfd stays
 // readable from process exit until close, so a dropped ready_polls slot is
 // harmless — the next epoll_wait returns it again.
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { isLinux } from "harness";
 
 // pidfd path is Linux-only; macOS/FreeBSD use EVFILT_PROC which is keyed

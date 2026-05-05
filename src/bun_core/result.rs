@@ -20,6 +20,26 @@ impl Error {
     pub const TODO: Self = Self::from_errno(-1);
     /// B-1: Phase-A `bun_core::Error::from_name("...")`. Real impl: name→code lookup.
     pub fn from_name(_name: &'static str) -> Self { Self::TODO }
+    /// Error tag name (e.g. "ENOENT"). Backed by `bun_errno` once that crate's
+    /// table un-gates; falls back to "EUNKNOWN".
+    pub fn name(self) -> &'static [u8] {
+        // TODO(b2): bun_errno::name(self.errno) once errno table un-gated.
+        match self.errno {
+            1 => b"EPERM",
+            2 => b"ENOENT",
+            5 => b"EIO",
+            9 => b"EBADF",
+            12 => b"ENOMEM",
+            13 => b"EACCES",
+            17 => b"EEXIST",
+            20 => b"ENOTDIR",
+            21 => b"EISDIR",
+            22 => b"EINVAL",
+            28 => b"ENOSPC",
+            32 => b"EPIPE",
+            _ => b"EUNKNOWN",
+        }
+    }
 }
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Self { Self::from_errno(e.raw_os_error().unwrap_or(-1)) }

@@ -453,9 +453,12 @@ pub(crate) mod kind {
             pub default: Option<ValueType>,
             pub deser: DeserOpts,
         }
+        impl CtorOptions {
+            pub const DEFAULT: Self = Self { default: None, deser: DeserOpts::DEFAULT };
+        }
         impl Default for CtorOptions {
             fn default() -> Self {
-                Self { default: None, deser: DeserOpts::default() }
+                Self::DEFAULT
             }
         }
 
@@ -495,12 +498,15 @@ pub(crate) mod kind {
             pub error_handling: ErrorHandling,
             pub empty_string_as: EmptyStringAs,
         }
+        impl DeserOpts {
+            pub const DEFAULT: Self = Self {
+                error_handling: ErrorHandling::DebugWarn,
+                empty_string_as: EmptyStringAs::Erroneous,
+            };
+        }
         impl Default for DeserOpts {
             fn default() -> Self {
-                Self {
-                    error_handling: ErrorHandling::DebugWarn,
-                    empty_string_as: EmptyStringAs::Erroneous,
-                }
+                Self::DEFAULT
             }
         }
 
@@ -685,6 +691,8 @@ macro_rules! platform_specific_new {
         posix = $posix:tt, windows = $windows:tt,
         { $($opts:tt)* }
     ) => {
+        #[allow(non_upper_case_globals)]
+        $vis const $name: $name::Accessor = $name::Accessor;
         #[allow(non_snake_case)]
         $vis mod $name {
             use super::*;
@@ -836,6 +844,18 @@ macro_rules! platform_specific_new {
             // Zig: `pub const default: DefaultType = if (opts.default) |d| d else {};`
             // Exposed above as `DEFAULT: Option<ValueType>`.
 
+            /// Unit value so call sites read `env_var::FOO.get()` (matching Zig
+            /// `bun.env_var.FOO.get()`). The module-path form `FOO::get()` also works.
+            pub struct Accessor;
+            impl Accessor {
+                #[inline] pub fn get(&self) -> Option<K::ValueType> { get() }
+                #[inline] pub fn platform_get(&self) -> Option<K::ValueType> { platform_get() }
+                #[inline] pub fn get_not_empty(&self) -> Option<K::ValueType>
+                    where K::ValueType: $crate::env_var::HasLen { get_not_empty() }
+                #[inline] pub fn key(&self) -> &'static $crate::ZStr { key() }
+                #[inline] pub fn platform_key(&self) -> Option<&'static $crate::ZStr> { platform_key() }
+            }
+
             fn assert_platform_supported() {
                 // Zig: `@compileError` when the current platform's key is null.
                 // TODO(port): Rust cannot `compile_error!` from inside a const-evaluated `if cfg!`
@@ -911,16 +931,19 @@ pub(crate) use __make_cache;
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __unsigned_opts {
-    ({ }) => { $crate::env_var::kind::unsigned::CtorOptions::default() };
+    ({ }) => { $crate::env_var::kind::unsigned::CtorOptions::DEFAULT };
     ({ default: $d:expr }) => {
-        $crate::env_var::kind::unsigned::CtorOptions { default: Some($d), ..Default::default() }
+        $crate::env_var::kind::unsigned::CtorOptions {
+            default: Some($d),
+            deser: $crate::env_var::kind::unsigned::DeserOpts::DEFAULT,
+        }
     };
     ({ deser: { error_handling: $eh:ident } }) => {
         $crate::env_var::kind::unsigned::CtorOptions {
             default: None,
             deser: $crate::env_var::kind::unsigned::DeserOpts {
                 error_handling: $crate::env_var::kind::unsigned::ErrorHandling::$eh,
-                ..Default::default()
+                empty_string_as: $crate::env_var::kind::unsigned::EmptyStringAs::Erroneous,
             },
         }
     };
@@ -950,14 +973,28 @@ macro_rules! __default_opt {
 pub(crate) use __default_opt;
 
 /// Helper trait so `get_not_empty` (which only makes sense for string-kind) can compile
-/// generically inside the macro body.
+/// generically inside the macro body. Non-string kinds report len 1 (always non-empty);
+/// callers never invoke `get_not_empty` on non-strings — the impl only satisfies the bound.
 #[doc(hidden)]
 pub trait HasLen {
     fn len(&self) -> usize;
 }
 impl HasLen for &'static [u8] {
+    #[inline]
     fn len(&self) -> usize {
         <[u8]>::len(self)
+    }
+}
+impl HasLen for bool {
+    #[inline]
+    fn len(&self) -> usize {
+        1
+    }
+}
+impl HasLen for u64 {
+    #[inline]
+    fn len(&self) -> usize {
+        1
     }
 }
 

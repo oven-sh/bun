@@ -21,7 +21,8 @@ where
     // TODO(port): replace with the real reader trait once it exists.
     R: DeprecatedRead,
 {
-    pub type Error = R::Error;
+    // Zig: `pub const Error = R.Error;` — inherent assoc types are nightly-only
+    // (E0658). Callers name `R::Error` directly; this alias was sugar.
     // TODO(port): `pub const Reader = std.Io.GenericReader(*Self, Error, read);` —
     // depends on the Rust port of `std.Io.GenericReader`. Left unported; `reader()`
     // below is stubbed accordingly.
@@ -111,9 +112,8 @@ pub struct SinglyLinkedNode<T> {
 }
 
 impl<T> SinglyLinkedNode<T> {
-    pub type Data = T;
-    // TODO(port): inherent associated types are unstable; Phase B may need to
-    // expose `Data` differently (or drop it — Zig only used it for reflection).
+    // `pub type Data = T;` — inherent assoc types are nightly-only. Dropped:
+    // Zig only used it for `@TypeOf` reflection; Rust callers name `T` directly.
 
     /// Insert a new node after the current one.
     ///
@@ -590,9 +590,10 @@ impl RapidHash {
 // misc
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(port): `std.Io.Writer.Error` has no Rust port yet. Using `bun_core::Error`
-// (interned tag) so callers can compare against `err!("WriteFailed")`. Revisit once
-// the writer error type lands.
+// TODO(b2-blocked): `JsError` is `bun_jsc::JsError` (tier-6). bun_core (tier-0)
+// cannot depend on it. The fn body is preserved for the bun_jsc move-in pass to
+// take ownership of (it converts JsError → write Error for Console formatting).
+#[cfg(any())]
 pub fn js_error_to_write_error(e: JsError) -> crate::Error {
     match e {
         // TODO: this might lose a JSTerminated, causing m_terminationException problems
@@ -601,9 +602,7 @@ pub fn js_error_to_write_error(e: JsError) -> crate::Error {
         JsError::Thrown => crate::err!("WriteFailed"),
         // `bun.handleOom(error.OutOfMemory)` — panic-on-OOM wrapper fed a literal OOM,
         // i.e. unconditionally abort.
-        JsError::OutOfMemory => bun_alloc::abort_on_oom(),
-        // TODO(port): Zig `bun.JSError` has exactly {JSTerminated, JSError, OutOfMemory};
-        // `bun_jsc::JsError` is {Thrown, OutOfMemory, Terminated}. Mapping is 1:1 above.
+        JsError::OutOfMemory => bun_alloc::out_of_memory(),
     }
 }
 

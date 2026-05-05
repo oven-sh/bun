@@ -13,6 +13,10 @@
 use core::cell::{Cell, RefCell};
 use core::ffi::c_int;
 use core::fmt;
+// `#[macro_export]` macros land at crate root; re-import so order-of-definition
+// inside this module doesn't matter for the early call sites.
+#[allow(unused_imports)]
+use crate::{pretty, prettyln, pretty_error, pretty_errorln, pretty_fmt, note, warn, err_generic, declare_scope, scoped_log};
 use core::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
 
 use crate::env_var;
@@ -38,14 +42,23 @@ use crate::io;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct OutputSinkVTable {
-    /// Returns a Progress::File wrapping stderr (used by Progress.rs).
-    pub stderr: unsafe fn() -> crate::Progress::File,
+    /// Returns a `File` wrapping stderr (used by Progress.rs).
+    pub stderr: unsafe fn() -> File,
     /// mkdir -p `dir` relative to cwd. Debug-log file setup only.
     pub make_path: unsafe fn(cwd: Fd, dir: &[u8]) -> Result<(), crate::Error>,
     /// open/create `path` for writing (truncating). Debug-log file setup only.
     pub create_file: unsafe fn(cwd: Fd, path: &[u8]) -> Result<Fd, crate::Error>,
-    /// Build a QuietWriter (opaque) from an fd.
+    /// Build a QuietWriter (opaque) from an fd. (`bun_sys::File::quietWriter`.)
     pub quiet_writer_from_fd: unsafe fn(fd: Fd) -> QuietWriter,
+    /// Wrap a QuietWriter in the std-adapter with the given backing buffer.
+    /// (`bun_sys::QuietWrite(File).adaptToNewApi`.)
+    pub quiet_writer_adapt: unsafe fn(qw: QuietWriter, buf: *mut u8, len: usize) -> QuietWriterAdapter,
+    /// Flush a QuietWriter. (`QuietWriter.flush`.)
+    pub quiet_writer_flush: unsafe fn(qw: &mut QuietWriter),
+    /// Write bytes via a QuietWriter (best-effort, errors swallowed by definition).
+    pub quiet_writer_write_all: unsafe fn(qw: &mut QuietWriter, bytes: &[u8]),
+    /// Read back the underlying fd from a QuietWriter (`.context.handle.handle`).
+    pub quiet_writer_fd: unsafe fn(qw: &QuietWriter) -> Fd,
 }
 
 /// Installed by `bun_sys` at startup via [`install_output_sink`]. Startup ordering
@@ -82,7 +95,33 @@ pub struct QuietWriter {
 }
 impl QuietWriter {
     pub const ZEROED: Self = Self { _opaque: [core::ptr::null_mut(); 4] };
+
+    #[inline]
+    pub fn adapt_to_new_api(self, buf: &mut [u8]) -> QuietWriterAdapter {
+        // SAFETY: vtable installed at startup; buf may be empty (unbuffered).
+        unsafe { (output_sink().quiet_writer_adapt)(self, buf.as_mut_ptr(), buf.len()) }
+    }
+    #[inline]
+    pub fn flush(&mut self) {
+        unsafe { (output_sink().quiet_writer_flush)(self) }
+    }
+    #[inline]
+    pub fn context_handle(&self) -> Fd {
+        unsafe { (output_sink().quiet_writer_fd)(self) }
+    }
+    /// Inherent forwarder so call sites don't need `use fmt::Write`.
+    #[inline]
+    pub fn write_fmt(&mut self, args: core::fmt::Arguments<'_>) -> core::fmt::Result {
+        <Self as core::fmt::Write>::write_fmt(self, args)
+    }
 }
+impl core::fmt::Write for QuietWriter {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        unsafe { (output_sink().quiet_writer_write_all)(self, s.as_bytes()) };
+        Ok(())
+    }
+}
+// `qw.write_fmt(args)` resolves through `fmt::Write`.
 
 /// Opaque adapter wrapping a QuietWriter and exposing `crate::io::Writer`.
 /// TODO(b0-genuine): bun_sys::QuietWrite::Adapter — size/align must match.
@@ -100,10 +139,67 @@ impl QuietWriterAdapter {
 }
 
 /// Opaque file handle. Replaces `bun_sys::File` in this crate.
-/// TODO(b0-genuine): bun_sys::File — repr must match (it wraps a single Fd).
+/// repr matches `bun_sys::File` (transparent over a single Fd).
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct File(pub Fd);
+
+impl File {
+    pub const ZEROED: Self = Self(Fd::INVALID);
+    #[inline]
+    pub fn handle(self) -> Fd {
+        self.0
+    }
+    #[inline]
+    pub fn quiet_writer(self) -> QuietWriter {
+        // SAFETY: vtable installed at startup.
+        unsafe { (output_sink().quiet_writer_from_fd)(self.0) }
+    }
+}
+impl From<Fd> for File {
+    #[inline]
+    fn from(fd: Fd) -> Self {
+        Self(fd)
+    }
+}
+
+/// `bun.argv` — process argv as borrowed byte slices. Owned by the process.
+pub fn argv() -> impl Iterator<Item = &'static [u8]> {
+    // PERF(port): std::env::args_os allocates an iterator wrapper; Zig walks
+    // `std.os.argv` directly. Fine for the one debug-log call site here.
+    static ARGV: std::sync::OnceLock<Vec<Box<[u8]>>> = std::sync::OnceLock::new();
+    ARGV.get_or_init(|| {
+        std::env::args_os()
+            .map(|a| a.as_encoded_bytes().to_vec().into_boxed_slice())
+            .collect()
+    })
+    .iter()
+    .map(|b| &**b)
+}
+
+/// `bun.Output.debugWarn` — eprint in debug builds only.
+#[inline]
+pub fn debug_warn(args: core::fmt::Arguments<'_>) {
+    if cfg!(debug_assertions) {
+        eprintln!("[debug-warn] {args}");
+    }
+}
+
+/// `bun.Output.Source.Stdio.restore` — restore terminal to cooked mode on exit.
+/// Real impl walks stdio fds and `tcsetattr`s; lives in bun_sys. Hook-registered.
+pub mod source {
+    pub mod stdio {
+        pub static RESTORE_HOOK: core::sync::atomic::AtomicPtr<()> =
+            core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+        pub fn restore() {
+            let p = RESTORE_HOOK.load(core::sync::atomic::Ordering::Acquire);
+            if !p.is_null() {
+                // SAFETY: installed as `fn()` by bun_sys at startup.
+                unsafe { core::mem::transmute::<*mut (), fn()>(p)() }
+            }
+        }
+    }
+}
 
 use crate::env as Environment;
 
@@ -201,6 +297,9 @@ impl Source {
     // TODO(port): in-place init — `out` is the pre-allocated thread_local slot; PORTING.md
     // says keep `&mut MaybeUninit<Self>` (or reshape to `-> Self`) for out-param ctors.
     pub fn init(out: &mut Source, stream: StreamType, err_stream: StreamType) {
+        // TODO(b2-blocked): bun_alloc::USE_MIMALLOC + mimalloc::Option::ShowErrors
+        // are gated in bun_alloc; re-enable once bun_alloc/basic.rs is un-gated.
+        #[cfg(any())]
         if cfg!(debug_assertions) && bun_alloc::USE_MIMALLOC && !SOURCE_SET.get() {
             bun_alloc::mimalloc::mi_option_set(bun_alloc::mimalloc::Option::ShowErrors, 1);
         }
@@ -246,7 +345,7 @@ impl Source {
     }
 
     pub fn is_no_color() -> bool {
-        env_var::NO_COLOR.get()
+        env_var::NO_COLOR.get().is_some()
     }
 
     pub fn get_force_color_depth() -> Option<ColorDepth> {
@@ -688,7 +787,7 @@ pub fn is_stdin_tty() -> bool {
 }
 
 pub fn is_github_action() -> bool {
-    if env_var::GITHUB_ACTIONS.get() {
+    if env_var::GITHUB_ACTIONS.get().unwrap_or(false) {
         // Do not print github annotations for AI agents because that wastes the context window.
         return !is_ai_agent();
     }
@@ -707,11 +806,11 @@ pub fn is_ai_agent() -> bool {
             return false;
         }
         // Claude Code.
-        if env_var::CLAUDECODE.get() {
+        if env_var::CLAUDECODE.get().unwrap_or(false) {
             return true;
         }
         // Replit.
-        if env_var::REPL_ID.get() {
+        if env_var::REPL_ID.get().is_some() {
             return true;
         }
         // TODO: add environment variable for Gemini
@@ -731,7 +830,7 @@ pub fn is_ai_agent() -> bool {
 
 pub fn is_verbose() -> bool {
     // Set by Github Actions when a workflow is run using debug mode.
-    env_var::RUNNER_DEBUG.get()
+    env_var::RUNNER_DEBUG.get().unwrap_or(false)
 }
 
 pub fn enable_buffering() {
@@ -1129,7 +1228,7 @@ pub struct ScopedLogger {
     pub tagname: &'static str, // already lowercased
     really_disable: AtomicBool,
     is_visible_once: std::sync::Once,
-    lock: Mutex,
+    lock: Mutex<()>,
     out_set: AtomicBool,
     // TODO(port): per-scope buffered writer (`buffer: [4096]u8` + adapter). For now route
     // through `scoped_writer()` directly; Phase B can reintroduce per-scope buffering.
@@ -1141,7 +1240,7 @@ impl ScopedLogger {
             tagname,
             really_disable: AtomicBool::new(matches!(visibility, Visibility::Hidden)),
             is_visible_once: std::sync::Once::new(),
-            lock: Mutex::new(),
+            lock: Mutex::new(()),
             out_set: AtomicBool::new(false),
         }
     }
@@ -1153,7 +1252,10 @@ impl ScopedLogger {
         env_key[..prefix.len()].copy_from_slice(prefix);
         let tag = self.tagname.as_bytes();
         env_key[prefix.len()..prefix.len() + tag.len()].copy_from_slice(tag);
-        let key = &env_key[..prefix.len() + tag.len()];
+        let key_len = prefix.len() + tag.len();
+        env_key[key_len] = 0;
+        // SAFETY: NUL written at key_len; bytes ..key_len are initialized ASCII.
+        let key = unsafe { crate::ZStr::from_raw(env_key.as_ptr(), key_len) };
 
         if let Some(val) = crate::getenv_z_any_case(key) {
             self.really_disable.store(val == b"0", Ordering::Relaxed);
@@ -1169,7 +1271,7 @@ impl ScopedLogger {
             flag[..pfx.len()].copy_from_slice(pfx);
             flag[pfx.len()..pfx.len() + tag.len()].copy_from_slice(tag);
             let flag_slice = &flag[..pfx.len() + tag.len()];
-            for arg in crate::argv() {
+            for arg in argv() {
                 if strings::eql_case_insensitive_ascii(arg, flag_slice, true)
                     || strings::eql_case_insensitive_ascii(arg, b"--debug-all", true)
                 {
@@ -1232,10 +1334,11 @@ impl ScopedLogger {
         let mut out = scoped_writer();
         // PERF(port): was comptime bool dispatch on use_ansi — profile in Phase B
         let result = if use_ansi {
-            out.write_fmt(colored).and_then(|_| out.flush())
+            out.write_fmt(colored)
         } else {
-            out.write_fmt(plain).and_then(|_| out.flush())
+            out.write_fmt(plain)
         };
+        out.flush();
         if result.is_err() {
             self.really_disable.store(true, Ordering::Relaxed);
         }
@@ -1332,7 +1435,17 @@ pub static COLOR_MAP: phf::Map<&'static [u8], &'static str> = phf::phf_map! {
     b"bgred" => "\x1b[41m",
     b"bggreen" => "\x1b[42m",
 };
-const RESET: &str = "\x1b[0m";
+pub const RESET: &str = "\x1b[0m";
+pub const BOLD: &str = "\x1b[1m";
+pub const DIM: &str = "\x1b[2m";
+
+/// `bun.Output.pretty(fmt, args)` — write to stdout with `<tag>` color expansion.
+/// Resolves the `pretty_fmt!` template at the call site via the `pretty!` macro;
+/// this fn is the dynamic-args entry point used by `bun.fmt`.
+#[inline]
+pub fn pretty(args: fmt::Arguments<'_>) {
+    print_to(Destination::Stdout, args);
+}
 
 /// Compile-time `<tag>` → ANSI escape rewriter.
 ///
@@ -1701,7 +1814,7 @@ impl ErrName for &[u8] {
 }
 impl ErrName for crate::Error {
     fn name(&self) -> &[u8] {
-        self.name().as_bytes()
+        (*self).name()
     }
 }
 // TODO(b0): `impl ErrName for bun_sys::Error` and `bun_sys::SystemErrno` arrive
@@ -1759,14 +1872,14 @@ pub fn init_scoped_debug_writer_at_startup() {
             // SAFETY: vtable fn-ptr has no preconditions.
             let fd: Fd = match unsafe { (output_sink().create_file)(Fd::cwd(), &path_fmt) } {
                 Ok(fd) => fd,
-                Err(open_err) => {
-                    super::panic(format_args!(
-                        "Failed to open file for debug output: {} ({})",
-                        open_err.name(),
-                        bstr::BStr::new(path),
-                    ));
-                }
+                Err(open_err) => panic(format_args!(
+                    "Failed to open file for debug output: {} ({})",
+                    bstr::BStr::new(open_err.name()),
+                    bstr::BStr::new(path),
+                )),
             };
+            // TODO(b2-blocked): bun_sys::Fd::truncate (Windows-only); add to OutputSinkVTable.
+            #[cfg(any())]
             let _ = fd.truncate(0); // windows
             // SAFETY: single-threaded startup.
             unsafe {

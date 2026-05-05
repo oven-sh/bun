@@ -101,6 +101,8 @@ pub const VERSION_STRING: &str = const_format::formatcp!(
     VERSION.minor,
     VERSION.patch
 );
+#[allow(non_upper_case_globals)]
+pub const version_string: &str = VERSION_STRING;
 
 #[inline(always)]
 pub fn only_mac() {
@@ -142,24 +144,24 @@ impl OperatingSystem {
     };
 
     /// user-facing name with capitalization
-    pub fn display_string(self) -> &'static [u8] {
+    pub const fn display_string(self) -> &'static str {
         match self {
-            Self::Mac => b"macOS",
-            Self::Linux => b"Linux",
-            Self::Freebsd => b"FreeBSD",
-            Self::Windows => b"Windows",
-            Self::Wasm => b"WASM",
+            Self::Mac => "macOS",
+            Self::Linux => "Linux",
+            Self::Freebsd => "FreeBSD",
+            Self::Windows => "Windows",
+            Self::Wasm => "WASM",
         }
     }
 
     /// same format as `process.platform`
-    pub fn name_string(self) -> &'static [u8] {
+    pub const fn name_string(self) -> &'static str {
         match self {
-            Self::Mac => b"darwin",
-            Self::Linux => b"linux",
-            Self::Freebsd => b"freebsd",
-            Self::Windows => b"win32",
-            Self::Wasm => b"wasm",
+            Self::Mac => "darwin",
+            Self::Linux => "linux",
+            Self::Freebsd => "freebsd",
+            Self::Windows => "win32",
+            Self::Wasm => "wasm",
         }
     }
 

@@ -212,18 +212,22 @@ crate::declare_scope!(JSC, hidden);
 #[macro_export]
 macro_rules! mark_binding {
     () => {
-        $crate::scoped_log!(
-            JSC,
-            "{} ({}:{})",
-            ::core::panic::Location::caller().file(), // TODO(port): fn_name needs #[track_caller] or stringify at call site
-            ::core::file!(),
-            ::core::line!()
-        );
+        $crate::mark_binding!(::core::panic::Location::caller().file())
     };
     ($fn_name:expr) => {
-        $crate::scoped_log!(JSC, "{} ({}:{})", $fn_name, ::core::file!(), ::core::line!());
+        // Zig: `Output.scoped(.JSC, .visible)("...")`. The `JSC` scope is owned by
+        // bun_core (callers don't declare it).
+        if cfg!(feature = "debug_logs") && $crate::Global::JSC_SCOPE.is_visible() {
+            $crate::Global::JSC_SCOPE.log(
+                ::core::format_args!("[JSC] {} ({}:{})\n", $fn_name, ::core::file!(), ::core::line!()),
+                ::core::format_args!("[JSC] {} ({}:{})\n", $fn_name, ::core::file!(), ::core::line!()),
+            );
+        }
     };
 }
+/// Shared `bun.Output.scoped(.JSC)` logger for `mark_binding!`.
+pub static JSC_SCOPE: crate::output::ScopedLogger =
+    crate::output::ScopedLogger::new("JSC", crate::output::Visibility::Visible);
 
 // ─── debug_flags (MOVE_DOWN from bun_cli, for bun_resolver) ───────────────
 // Zig: src/cli/cli.zig::debug_flags — debug-build-only breakpoint matchers.
@@ -569,9 +573,7 @@ pub fn configure_allocator(_: AllocatorConfiguration) {}
 
 #[cold]
 pub fn notimpl() -> ! {
-    Output::panic("Not implemented yet!!!!!", core::format_args!(""));
-    // TODO(port): Output.panic takes (fmt, args) in Zig; map to
-    // `Output::panic(format_args!("Not implemented yet!!!!!"))`.
+    Output::panic(core::format_args!("Not implemented yet!!!!!"));
 }
 
 // Make sure we always print any leftover

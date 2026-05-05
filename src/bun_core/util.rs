@@ -264,6 +264,80 @@ impl core::ops::Deref for ZStr {
     #[inline] fn deref(&self) -> &[u8] { &self.0 }
 }
 
+/// `bun.getenvZ` — read an environment variable. Returns the value as borrowed
+/// process-static bytes (env block lives for the process). On POSIX wraps
+/// `libc::getenv`; on Windows scans `environ` case-insensitively.
+///
+/// Port of `bun.zig:getenvZ` / `getenvZAnyCase`.
+pub fn getenv_z(key: &ZStr) -> Option<&'static [u8]> {
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = key;
+        return None;
+    }
+    #[cfg(unix)]
+    unsafe {
+        // SAFETY: key is NUL-terminated by ZStr invariant; getenv reads until NUL.
+        let p = libc::getenv(key.as_ptr());
+        if p.is_null() {
+            return None;
+        }
+        // SAFETY: getenv returns a pointer into the process env block, valid for
+        // process lifetime (modulo setenv races — same caveat as Zig original).
+        let len = libc::strlen(p);
+        return Some(core::slice::from_raw_parts(p.cast::<u8>(), len));
+    }
+    #[cfg(windows)]
+    {
+        // Windows: env names are case-insensitive. Scan std::env (which decodes
+        // the wide env block) and return a leaked byte copy. Zig avoids the leak
+        // by walking `std.os.environ` directly; the Win32 wide-walk port lands
+        // when `windows_sys::env_block()` is real.
+        // PERF(port): leaks one Box<[u8]> per first-read of each var on Windows.
+        for (k, v) in std::env::vars_os() {
+            let kb = k.as_encoded_bytes();
+            if kb.len() == key.len()
+                && kb.iter().zip(key.as_bytes()).all(|(a, b)| a.eq_ignore_ascii_case(b))
+            {
+                let bytes: Box<[u8]> = v.as_encoded_bytes().to_vec().into_boxed_slice();
+                return Some(Box::leak(bytes));
+            }
+        }
+        None
+    }
+}
+
+/// `bun.getenvZAnyCase` — case-insensitive env lookup (used on POSIX for
+/// CI-detection vars where casing varies across providers).
+pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
+    #[cfg(unix)]
+    unsafe {
+        // SAFETY: `environ` is the C env block; entries are NUL-terminated `KEY=VALUE`.
+        unsafe extern "C" {
+            static environ: *const *const core::ffi::c_char;
+        }
+        let mut p = environ;
+        while !(*p).is_null() {
+            let line = core::slice::from_raw_parts((*p).cast::<u8>(), libc::strlen(*p));
+            let key_end = line.iter().position(|&b| b == b'=').unwrap_or(line.len());
+            if line[..key_end].len() == key.len()
+                && line[..key_end]
+                    .iter()
+                    .zip(key.as_bytes())
+                    .all(|(a, b)| a.eq_ignore_ascii_case(b))
+            {
+                return Some(&line[(key_end + 1).min(line.len())..]);
+            }
+            p = p.add(1);
+        }
+        None
+    }
+    #[cfg(not(unix))]
+    {
+        getenv_z(key)
+    }
+}
+
 /// Borrowed `[:0]const u16` (Windows wide string).
 #[repr(transparent)]
 pub struct WStr([u16]);
@@ -457,6 +531,11 @@ pub mod io {
         #[inline]
         pub fn flush(&mut self) -> Result<(), crate::Error> {
             unsafe { (self.flush)(self as *mut _) }
+        }
+        /// Alias for `print` so `write!(w, ...)` works.
+        #[inline]
+        pub fn write_fmt(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), crate::Error> {
+            self.print(args)
         }
         #[inline]
         pub fn print(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), crate::Error> {

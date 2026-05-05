@@ -9,8 +9,10 @@ import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 // held a Ref<SerializedScriptValue> (e.g. a MessageEvent delivered through a
 // BroadcastChannel) the GC visitor could observe a torn variant and crash with
 // `ASSERTION FAILED: m_ptr` in Ref::operator-> (or a SIGSEGV in release).
-test("MessageEvent.initMessageEvent does not race GC visitor on m_data", async () => {
-  const script = /* js */ `
+test(
+  "MessageEvent.initMessageEvent does not race GC visitor on m_data",
+  async () => {
+    const script = /* js */ `
     const bc1 = new BroadcastChannel("message-event-init-gc");
     const bc2 = new BroadcastChannel("message-event-init-gc");
     const received = [];
@@ -35,21 +37,23 @@ test("MessageEvent.initMessageEvent does not race GC visitor on m_data", async (
     console.log("OK");
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: { ...bunEnv, BUN_JSC_collectContinuously: "1" },
-    stderr: "pipe",
-    stdout: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_JSC_collectContinuously: "1" },
+      stderr: "pipe",
+      stdout: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const filteredStderr = stderr
-    .split(/\r?\n/)
-    .filter(line => line && !line.startsWith("WARNING: ASAN interferes"))
-    .join("\n");
+    const filteredStderr = stderr
+      .split(/\r?\n/)
+      .filter(line => line && !line.startsWith("WARNING: ASAN interferes"))
+      .join("\n");
 
-  expect(filteredStderr).toBe("");
-  expect(stdout.trim()).toBe("OK");
-  expect(exitCode).toBe(0);
-}, isDebug || isASAN ? 120_000 : 30_000);
+    expect(filteredStderr).toBe("");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
+  },
+  isDebug || isASAN ? 120_000 : 30_000,
+);

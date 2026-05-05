@@ -85,6 +85,11 @@ pub const HardcodedModule = enum {
     @"node:_http_server",
     /// This is gated behind '--expose-internals'
     @"bun:internal-for-testing",
+    /// These mirror Node.js internal modules and are gated behind
+    /// the same condition as bun:internal-for-testing.
+    @"internal:http2/util",
+    @"internal:http2/core",
+    @"internal:test/binding",
 
     /// The module loader first uses `Aliases` to get a single string during
     /// resolution, then maps that single string to the actual module.
@@ -176,6 +181,10 @@ pub const HardcodedModule = enum {
         .{ "@vercel/fetch", HardcodedModule.vercel_fetch },
         .{ "utf-8-validate", HardcodedModule.@"utf-8-validate" },
         .{ "abort-controller", HardcodedModule.@"abort-controller" },
+
+        .{ "internal:http2/util", .@"internal:http2/util" },
+        .{ "internal:http2/core", .@"internal:http2/core" },
+        .{ "internal:test/binding", .@"internal:test/binding" },
     });
 
     /// Contains the list of built-in modules from the perspective of the module
@@ -370,6 +379,12 @@ pub const HardcodedModule = enum {
             .{ "bun:wrap", .{ .path = "bun:wrap" } },
             .{ "bun:internal-for-testing", .{ .path = "bun:internal-for-testing" } },
             .{ "ffi", .{ .path = "bun:ffi" } },
+
+            // Node.js internal modules exposed to user code for --expose-internals tests.
+            // Gated at load time the same way as bun:internal-for-testing.
+            .{ "internal/http2/util", .{ .path = "internal:http2/util" } },
+            .{ "internal/http2/core", .{ .path = "internal:http2/core" } },
+            .{ "internal/test/binding", .{ .path = "internal:test/binding" } },
 
             // Thirdparty packages we override
             .{ "@vercel/fetch", .{ .path = "@vercel/fetch" } },

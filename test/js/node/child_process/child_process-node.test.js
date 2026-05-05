@@ -674,7 +674,7 @@ describe("fork", () => {
             expect(() => fork(fixtures.path("child-process-echo-options.js"), arg)).toThrow({
               code: "ERR_INVALID_ARG_TYPE",
               name: "TypeError",
-              message: `The \"args\" argument must be of type Array. Received ${arg?.toString()}`,
+              message: `The \"args\" argument must be an instance of Array. Received ${arg?.toString()}`,
             });
           });
         } catch (e) {

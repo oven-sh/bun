@@ -15,7 +15,7 @@ invalidOptions.forEach((invalidOption) => {
     {
       name: 'TypeError',
       code: 'ERR_INVALID_ARG_TYPE',
-      message: 'The "options" argument must be of type Object.' +
+      message: 'The "options" argument must be of type object.' +
                common.invalidArgTypeHelper(invalidOption)
     }
   );
@@ -28,7 +28,7 @@ invalidOptions.forEach((invalidSettingsOption) => {
     {
       name: 'TypeError',
       code: 'ERR_INVALID_ARG_TYPE',
-      message: 'The "options.settings" property must be of type Object.' +
+      message: 'The "options.settings" property must be of type object.' +
                common.invalidArgTypeHelper(invalidSettingsOption)
     }
   );

@@ -278,10 +278,12 @@ pub fn renameSymbolsInChunk(
                 }
             },
         }
-        // Bulk-release every NumberScope we borrowed from the pool while
-        // processing this file. The recursive walk has already put each scope
-        // back individually; this is just a defensive reset that matches the
-        // previous per-part behavior.
+        // Bulk-reclaim hive slots for NumberScopes that the linear-chain walk
+        // in `assignNamesRecursiveWithNumberScope` acquired but did not put
+        // back individually — the single `defer put(s)` there only returns the
+        // final scope in each chain, so without this reset intermediate slots
+        // stay marked used and the 128-slot hive eventually spills to the
+        // arena fallback.
         r.number_scope_pool.hive.used = @TypeOf(r.number_scope_pool.hive.used).initEmpty();
     }
 

@@ -317,6 +317,84 @@ test("client session.close() completes when server response headers span HEADERS
   }
 });
 
+test("client POST stays writable when server replies early with CONTINUATION-spanning headers", async () => {
+  let client: ReturnType<typeof http2.connect> | undefined;
+  const { promise: done, resolve, reject } = Promise.withResolvers<{ writeOk: boolean; status: number | undefined }>();
+
+  const server = http2.createSecureServer({ key: tls.key, cert: tls.cert });
+
+  function cleanup() {
+    try {
+      client?.close();
+    } catch {}
+    try {
+      server.close();
+    } catch {}
+  }
+
+  server.on("stream", (stream: any, _headers: any) => {
+    stream.on("error", () => {});
+    stream.on("data", () => {});
+    // Send a bodyless early response whose headers exceed maxFrameSize so
+    // the framing lands as HEADERS(END_STREAM=1, END_HEADERS=0) +
+    // CONTINUATION(END_HEADERS=1). The client is still writing its request
+    // body, so its state is OPEN. The fix preserves OPEN through the split,
+    // leaving the client stream in HALF_CLOSED_REMOTE afterwards (writable
+    // side intact) — without it the client would be destroyed mid-write.
+    const bigHeaders: any = { [http2.constants.HTTP2_HEADER_STATUS]: 413 };
+    const value = Buffer.alloc(200, "x").toString();
+    for (let i = 0; i < 100; i++) {
+      bigHeaders[`x-custom-header-${i}`] = value;
+    }
+    stream.respond(bigHeaders, { endStream: true });
+  });
+
+  server.on("error", () => {});
+  server.listen(0, () => {
+    const port = (server.address() as any).port;
+    client = http2.connect(`https://localhost:${port}`, { rejectUnauthorized: false });
+    client.on("error", (err: Error) => {
+      cleanup();
+      reject(err);
+    });
+
+    // Start a POST without ending the body — the stream is OPEN when the
+    // server's early response arrives.
+    let respStatus: number | undefined;
+    const req = client.request({ ":path": "/upload", ":method": "POST" });
+    req.on("error", () => {});
+    req.resume();
+    req.write("chunk1");
+
+    req.on("response", headers => {
+      respStatus = headers[":status"];
+      // onStreamEnd fires synchronously right after onStreamHeaders on
+      // END_HEADERS; the pre-fix code transitioned OPEN → HALF_CLOSED_REMOTE
+      // → CLOSED there and scheduled stream.destroy(). The destruction
+      // happens at the END of the dispatchWithExtra sequence, so we need
+      // a setImmediate here to observe destroyed === true on the pre-fix
+      // binary. The fix leaves the stream in HALF_CLOSED_REMOTE instead.
+      setImmediate(() => {
+        let writeOk = false;
+        try {
+          req.write("chunk2");
+          writeOk = !req.destroyed;
+        } catch {}
+        req.end();
+        resolve({ writeOk, status: respStatus });
+      });
+    });
+  });
+
+  try {
+    const result = await done;
+    expect(result.status).toBe(413);
+    expect(result.writeOk).toBe(true);
+  } finally {
+    cleanup();
+  }
+});
+
 test("pushStream() does not leak http2.sensitiveHeaders symbol as a bogus header", async () => {
   let client: ReturnType<typeof http2.connect> | undefined;
   const { promise: done, resolve, reject } = Promise.withResolvers<string[]>();

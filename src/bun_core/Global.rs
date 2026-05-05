@@ -9,7 +9,8 @@ use crate::env; // @import("./env.zig")
 use crate::env::version_string;
 use crate::output as Output; // @import("./output.zig")
 
-use bun_alloc::{self as alloc, USE_MIMALLOC};
+use bun_alloc as alloc;
+use crate::{USE_MIMALLOC, debug_allocator_data}; // B-1 stubs (real consts ungate in B-2)
 // MOVE_DOWN: bun_str::ZStr → bun_core (move-in pass).
 use crate::ZStr;
 
@@ -471,7 +472,7 @@ pub fn exit(code: u32) -> ! {
     {
         // TODO(port): Zig asserts the debug allocator deinit() == .ok and nulls
         // the backing. Map to `bun_alloc::debug_allocator_data` once ported.
-        debug_assert!(bun_alloc::debug_allocator_data::deinit_ok());
+        debug_assert!(debug_allocator_data::deinit_ok());
     }
 
     // Flush output before exiting to ensure all messages are visible
@@ -604,9 +605,13 @@ pub const user_agent: &str = concatcp!("Bun/", package_json_version);
 // TODO(port): `*const c_char` is `!Sync`; Phase B should wrap this in a
 // `#[repr(transparent)]` Sync newtype or export via a `#[used]` static byte
 // array. Kept as-is to mirror the Zig `export const`.
+#[repr(transparent)]
+pub struct SyncCStr(pub *const c_char);
+// SAFETY: points into a `'static` string literal; the pointer is never mutated.
+unsafe impl Sync for SyncCStr {}
 #[unsafe(no_mangle)]
-pub static Bun__userAgent: *const c_char =
-    concatcp!(user_agent, "\0").as_ptr() as *const c_char;
+pub static Bun__userAgent: SyncCStr =
+    SyncCStr(concatcp!(user_agent, "\0").as_ptr() as *const c_char);
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__onExit() {

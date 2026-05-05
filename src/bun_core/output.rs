@@ -885,17 +885,19 @@ impl Default for ElapsedFormatter {
 impl fmt::Display for ElapsedFormatter {
     fn fmt(&self, w: &mut fmt::Formatter<'_>) -> fmt::Result {
         const NS_PER_MS: u64 = 1_000_000;
+        const FAST: u64 = NS_PER_MS * 10;
+        const SLOW: u64 = NS_PER_MS * 8_000;
         let ms = self.duration_ns as f64 / NS_PER_MS as f64;
         // PERF(port): was comptime bool dispatch on `colors` — profile in Phase B
         match self.duration_ns {
-            0..=const { NS_PER_MS * 10 } => {
+            0..=FAST => {
                 if self.colors {
                     write!(w, pretty_fmt!("<r><d>[{:>.2}ms<r><d>]<r>", true), ms)
                 } else {
                     write!(w, pretty_fmt!("<r><d>[{:>.2}ms<r><d>]<r>", false), ms)
                 }
             }
-            const { NS_PER_MS * 8_000 }..=u64::MAX => {
+            SLOW..=u64::MAX => {
                 if self.colors {
                     write!(w, pretty_fmt!("<r><d>[<r><yellow>{:>.2}ms<r><d>]<r>", true), ms)
                 } else {
@@ -1795,7 +1797,21 @@ fn scoped_writer() -> QuietWriter {
 #[macro_export]
 macro_rules! err_generic {
     ($fmt:literal $(, $arg:expr)* $(,)?) => {
-        $crate::pretty_errorln!(concat!("<r><red>error<r><d>:<r> ", $fmt) $(, $arg)*)
+        // B-1: `pretty_errorln!` requires `:literal`; can't pass `concat!(..)`.
+        // Prefix is applied at runtime instead (slightly less compile-time, same output).
+        $crate::output::pretty_to(
+            $crate::output::Destination::Stderr,
+            ::core::format_args!(
+                "{}{}\n",
+                $crate::pretty_fmt!("<r><red>error<r><d>:<r> ", true),
+                ::core::format_args!($crate::pretty_fmt!($fmt, true) $(, $arg)*),
+            ),
+            ::core::format_args!(
+                "{}{}\n",
+                $crate::pretty_fmt!("<r><red>error<r><d>:<r> ", false),
+                ::core::format_args!($crate::pretty_fmt!($fmt, false) $(, $arg)*),
+            ),
+        )
     };
 }
 

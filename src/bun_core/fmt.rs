@@ -473,7 +473,8 @@ pub fn dependency_url(url: &[u8]) -> DependencyUrlFormatter<'_> {
 // IntegrityFormatter
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(core::marker::ConstParamTy, PartialEq, Eq, Clone, Copy)]
+// B-1: ConstParamTy is nightly (adt_const_params). Use as runtime value instead.
+#[derive(PartialEq, Eq, Clone, Copy)]
 pub enum IntegrityFormatStyle {
     Short,
     Full,
@@ -2014,7 +2015,8 @@ pub fn quote(self_: &[u8]) -> QuotedFormatter<'_> {
 // EnumTagListFormatter
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(core::marker::ConstParamTy, Clone, Copy, PartialEq, Eq)]
+// B-1: ConstParamTy is nightly. Use as runtime value instead.
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum EnumTagListSeparator {
     List,
     Dash,

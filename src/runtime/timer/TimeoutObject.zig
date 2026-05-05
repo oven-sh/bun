@@ -84,6 +84,17 @@ pub fn finalize(self: *Self) void {
     self.internals.finalize();
 }
 
+/// Report the native size of this timer wrapper to JSC so its heap-sizing
+/// heuristic, heap snapshots, and memory-pressure accounting see pending
+/// timers rather than treating them as ~0 bytes. `@sizeOf(Self)` varies by
+/// build mode (debug/ASAN adds RefCount trace state; release collapses
+/// those fields to zero), so floor at 512 to stay above JSC's 256-byte
+/// `minExtraMemory` fast-path threshold in every configuration.
+pub fn estimatedSize(self: *Self) usize {
+    _ = self;
+    return @max(@sizeOf(Self), 512);
+}
+
 pub fn getDestroyed(self: *Self, globalThis: *JSGlobalObject) JSValue {
     _ = globalThis;
     return .jsBoolean(self.internals.getDestroyed());

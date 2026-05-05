@@ -83,6 +83,15 @@ pub fn finalize(self: *Self) void {
     self.internals.finalize();
 }
 
+/// Report the native size of this immediate wrapper to JSC so its
+/// heap-sizing heuristic, heap snapshots, and memory-pressure accounting
+/// see pending immediates. See TimeoutObject.estimatedSize for rationale
+/// on the 512-byte floor.
+pub fn estimatedSize(self: *Self) usize {
+    _ = self;
+    return @max(@sizeOf(Self), 512);
+}
+
 pub fn getDestroyed(self: *Self, globalThis: *JSGlobalObject) JSValue {
     _ = globalThis;
     return .jsBoolean(self.internals.getDestroyed());

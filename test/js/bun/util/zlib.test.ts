@@ -124,20 +124,61 @@ describe("Bun.gzipSync windowBits", () => {
 });
 
 describe("Bun.deflateSync memLevel & strategy", () => {
-  test("memLevel is honored (non-default value changes output)", () => {
-    // memLevel 1 uses minimum memory and can produce different compressed data
-    // at high compression levels compared to the default memLevel 8.
-    const defaultMem = Bun.deflateSync(payload, { level: 9, windowBits: 15 });
+  test("memLevel reaches zlib (byte-match against node:zlib)", () => {
+    // Byte-for-byte equality with node:zlib using the same memLevel proves the
+    // parameter reached deflateInit2_ — a mere roundtrip through inflate would
+    // pass even if the option were silently dropped.
     const lowMem = Bun.deflateSync(payload, { level: 9, windowBits: 15, memLevel: 1 });
-
-    // Both still roundtrip.
-    expect(Buffer.from(Bun.inflateSync(defaultMem, { windowBits: 15 }))).toEqual(payload);
+    expect(Buffer.from(lowMem)).toEqual(
+      Buffer.from(zlib.deflateSync(payload, { level: 9, windowBits: 15, memLevel: 1 })),
+    );
     expect(Buffer.from(Bun.inflateSync(lowMem, { windowBits: 15 }))).toEqual(payload);
   });
 
-  test("strategy: Z_HUFFMAN_ONLY (2) roundtrips correctly", () => {
+  test("strategy: Z_HUFFMAN_ONLY reaches zlib (byte-match against node:zlib)", () => {
     const compressed = Bun.deflateSync(payload, { level: 9, windowBits: 15, strategy: 2 });
-    const decompressed = Bun.inflateSync(compressed, { windowBits: 15 });
-    expect(Buffer.from(decompressed)).toEqual(payload);
+    expect(Buffer.from(compressed)).toEqual(
+      Buffer.from(
+        zlib.deflateSync(payload, { level: 9, windowBits: 15, strategy: zlib.constants.Z_HUFFMAN_ONLY }),
+      ),
+    );
+    expect(Buffer.from(Bun.inflateSync(compressed, { windowBits: 15 }))).toEqual(payload);
+  });
+});
+
+describe("Bun.gzipSync windowBits quirks", () => {
+  // Issue #30276 regression guard: before the fix, `Bun.gzipSync(buf, {windowBits: 15})`
+  // still produced gzip because the parsed windowBits was discarded. Passing it
+  // through verbatim would have broken that (15 = zlib wrap); the `+16`
+  // adjustment for `is_gzip` + 8..15 restores node:zlib's Gzip semantics.
+  test("windowBits: 15 stays in gzip mode (matches node:zlib Gzip)", () => {
+    const compressed = Bun.gzipSync(payload, { level: 9, windowBits: 15 });
+    expect(compressed[0]).toBe(GZIP_MAGIC_0);
+    expect(compressed[1]).toBe(GZIP_MAGIC_1);
+    // Byte-for-byte equality with node:zlib.gzipSync, which does the same.
+    expect(Buffer.from(compressed)).toEqual(
+      Buffer.from(zlib.gzipSync(payload, { level: 9, windowBits: 15 })),
+    );
+  });
+
+  test("windowBits: 9 produces gzip with a smaller window", () => {
+    const compressed = Bun.gzipSync(payload, { level: 9, windowBits: 9 });
+    expect(compressed[0]).toBe(GZIP_MAGIC_0);
+    expect(compressed[1]).toBe(GZIP_MAGIC_1);
+    expect(Buffer.from(compressed)).toEqual(
+      Buffer.from(zlib.gzipSync(payload, { level: 9, windowBits: 9 })),
+    );
+  });
+
+  // Issue #6280 regression guard: `Bun.gzipSync(buf, {windowBits: -15})` used
+  // to throw "Invalid buffer" because the `+16` made it `+1`, an invalid
+  // windowBits. Negative values are now passed through verbatim (raw deflate).
+  test("windowBits: -15 produces raw deflate (issue #6280)", () => {
+    const compressed = Bun.gzipSync(payload, { level: 9, windowBits: -15 });
+    // No zlib/gzip header.
+    expect(compressed[0]).not.toBe(ZLIB_MAGIC_BYTE);
+    expect(compressed[0]).not.toBe(GZIP_MAGIC_0);
+    // Round-trip as raw deflate.
+    expect(Buffer.from(Bun.inflateSync(compressed, { windowBits: -15 }))).toEqual(payload);
   });
 });

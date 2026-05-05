@@ -1747,6 +1747,13 @@ pub const JSZlib = struct {
         if (options_val_) |options_val| {
             if (try options_val.get(globalThis, "windowBits")) |window| {
                 windowBits = try window.coerce(i32, globalThis);
+                // For `Bun.gzipSync`, mirror node:zlib's Gzip semantics: a
+                // `windowBits` in the zlib-wrap range (8..15) stays in gzip
+                // mode by adding 16. Values already in the gzip range
+                // (25..31) or negative (raw deflate) are passed through.
+                if (is_gzip and windowBits >= 8 and windowBits <= 15) {
+                    windowBits += 16;
+                }
                 library = .zlib;
             }
 

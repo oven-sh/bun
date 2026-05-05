@@ -327,16 +327,27 @@ impl JSValue {
         if v.is_empty() { Err(JsError::Thrown) } else { Ok(v) }
     }
     pub fn create_buffer(global: &JSGlobalObject, slice: &mut [u8]) -> JSValue {
-        // SAFETY: `global` is live; slice ptr/len describe a valid range owned by caller.
-        unsafe { JSC__JSValue__createBuffer(global, slice.as_mut_ptr(), slice.len()) }
+        // JSValue.zig:createBuffer — wraps `JSBuffer__bufferFromPointerAndLengthAndDeinit`
+        // with `MarkedArrayBuffer_deallocator` (or null for empty slices).
+        // SAFETY: `global` is live; slice ptr/len describe a valid range whose
+        // ownership is transferred to JSC (freed via the deallocator).
+        unsafe {
+            JSBuffer__bufferFromPointerAndLengthAndDeinit(
+                global,
+                slice.as_mut_ptr(),
+                slice.len(),
+                core::ptr::null_mut(),
+                if slice.is_empty() { None } else { Some(MarkedArrayBuffer_deallocator) },
+            )
+        }
     }
     pub fn from_date_string(global: &JSGlobalObject, s: &core::ffi::CStr) -> JSValue {
         // SAFETY: `global` is live; `s` is a valid NUL-terminated C string.
-        unsafe { JSC__JSValue__fromDateString(global, s.as_ptr()) }
+        unsafe { JSC__JSValue__dateInstanceFromNullTerminatedString(global, s.as_ptr()) }
     }
     pub fn from_date_number(global: &JSGlobalObject, value: f64) -> JSValue {
         // SAFETY: `global` is live.
-        unsafe { JSC__JSValue__fromDateNumber(global, value) }
+        unsafe { JSC__JSValue__dateInstanceFromNumber(global, value) }
     }
     pub fn from_int64_no_truncate(global: &JSGlobalObject, i: i64) -> JSValue {
         // SAFETY: `global` is live.
@@ -345,8 +356,9 @@ impl JSValue {
 
     // ── conversions ──────────────────────────────────────────────────────
     #[inline] pub fn to_boolean(self) -> bool {
-        // SAFETY: pure FFI predicate.
-        unsafe { JSC__JSValue__toBoolean(self) }
+        // JSValue.zig:2103 — `this != .zero and JSC__JSValue__toBoolean(this)`.
+        // SAFETY: pure FFI predicate; the zero guard avoids passing empty.
+        !self.is_empty() && unsafe { JSC__JSValue__toBoolean(self) }
     }
     pub fn as_number(self) -> f64 {
         // TODO(b2): full `asNumber` impl (int32/double dispatch). Gated in JSValue.rs.
@@ -446,7 +458,10 @@ impl JSValue {
         self.get(global, property)
     }
     pub fn get_truthy(self, global: &JSGlobalObject, property: &[u8]) -> JsResult<Option<JSValue>> {
-        Ok(self.get(global, property)?.filter(|v| !v.is_empty_or_undefined_or_null()))
+        // JSValue.zig:1625 truthyPropertyValue: filters undef/null AND empty strings.
+        Ok(self.get(global, property)?.filter(|v| {
+            !v.is_empty_or_undefined_or_null() && !(v.is_string() && !v.to_boolean())
+        }))
     }
     pub fn get_stringish(
         self,
@@ -483,7 +498,7 @@ impl JSValue {
     pub fn put(self, global: &JSGlobalObject, key: &[u8], value: JSValue) {
         let zs = bun_string::ZigString::init(key);
         // SAFETY: `global` is live; `zs` borrowed for the call.
-        unsafe { JSC__JSValue__putZigString(self, global, &zs, value) }
+        unsafe { JSC__JSValue__put(self, global, &zs, value) }
     }
     pub fn put_index(self, global: &JSGlobalObject, i: u32, out: JSValue) -> JsResult<()> {
         // SAFETY: `global` is live; FFI may set an exception.
@@ -535,9 +550,14 @@ unsafe extern "C" {
     fn JSC__JSValue__createEmptyObject(global: *const JSGlobalObject, len: usize) -> JSValue;
     fn JSC__JSValue__createEmptyObjectWithNullPrototype(global: *const JSGlobalObject) -> JSValue;
     fn JSC__JSValue__createEmptyArray(global: *const JSGlobalObject, len: usize) -> JSValue;
-    fn JSC__JSValue__createBuffer(global: *const JSGlobalObject, ptr: *mut u8, len: usize) -> JSValue;
-    fn JSC__JSValue__fromDateString(global: *const JSGlobalObject, s: *const c_char) -> JSValue;
-    fn JSC__JSValue__fromDateNumber(global: *const JSGlobalObject, n: f64) -> JSValue;
+    fn JSBuffer__bufferFromPointerAndLengthAndDeinit(
+        global: *const JSGlobalObject, ptr: *mut u8, len: usize,
+        ctx: *mut core::ffi::c_void,
+        deallocator: Option<unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void)>,
+    ) -> JSValue;
+    fn MarkedArrayBuffer_deallocator(bytes: *mut core::ffi::c_void, ctx: *mut core::ffi::c_void);
+    fn JSC__JSValue__dateInstanceFromNullTerminatedString(global: *const JSGlobalObject, s: *const c_char) -> JSValue;
+    fn JSC__JSValue__dateInstanceFromNumber(global: *const JSGlobalObject, n: f64) -> JSValue;
     fn JSC__JSValue__fromInt64NoTruncate(global: *const JSGlobalObject, i: i64) -> JSValue;
     fn JSC__JSValue__toBoolean(this: JSValue) -> bool;
     fn JSC__JSValue__toInt32(this: JSValue) -> i32;
@@ -546,7 +566,7 @@ unsafe extern "C" {
     fn JSC__JSValue__toZigException(this: JSValue, global: *const JSGlobalObject, exception: *mut ZigException);
     fn JSC__JSValue__getUnixTimestamp(this: JSValue) -> f64;
     fn JSC__JSValue__getOwnByValue(this: JSValue, global: *const JSGlobalObject, key: JSValue) -> JSValue;
-    fn JSC__JSValue__putZigString(this: JSValue, global: *const JSGlobalObject, key: *const bun_string::ZigString, value: JSValue);
+    fn JSC__JSValue__put(this: JSValue, global: *const JSGlobalObject, key: *const bun_string::ZigString, value: JSValue);
     fn JSC__JSValue__putIndex(this: JSValue, global: *const JSGlobalObject, i: u32, value: JSValue);
 }
 
@@ -636,7 +656,8 @@ stub_ty!(
 unsafe extern "C" {
     fn JSC__JSGlobalObject__vm(this: *const JSGlobalObject) -> *mut VM;
     fn JSC__JSGlobalObject__bunVM(this: *const JSGlobalObject) -> *mut virtual_machine::VirtualMachine;
-    fn Bun__JSGlobalObject__hasException(this: *const JSGlobalObject) -> bool;
+    fn JSGlobalObject__hasException(this: *const JSGlobalObject) -> bool;
+    fn JSGlobalObject__throwOutOfMemoryError(this: *const JSGlobalObject);
     fn JSC__JSGlobalObject__createAggregateError(
         this: *const JSGlobalObject,
         errors: *const JSValue,
@@ -645,8 +666,9 @@ unsafe extern "C" {
     ) -> JSValue;
     fn JSC__JSGlobalObject__createAggregateErrorWithArray(
         this: *const JSGlobalObject,
-        message: bun_string::String,
         errors_array: JSValue,
+        message: bun_string::String,
+        cause: JSValue,
     ) -> JSValue;
     fn JSC__VM__throwError(vm: *mut VM, global: *const JSGlobalObject, value: JSValue);
 }
@@ -670,7 +692,7 @@ impl JSGlobalObject {
     #[inline]
     pub fn has_exception(&self) -> bool {
         // SAFETY: `self` is a live JSGlobalObject.
-        unsafe { Bun__JSGlobalObject__hasException(self) }
+        unsafe { JSGlobalObject__hasException(self) }
     }
 
     pub fn create_out_of_memory_error(&self) -> JSValue {
@@ -678,9 +700,16 @@ impl JSGlobalObject {
         todo!("JSGlobalObject::create_out_of_memory_error")
     }
     pub fn throw_out_of_memory_value(&self) -> JSValue {
-        let v = self.create_out_of_memory_error();
-        let _ = self.throw_value(v);
-        v
+        // JSGlobalObject.zig:21 — dedicated FFI, returns `.zero` (sentinel).
+        // SAFETY: `self` is a live JSGlobalObject.
+        unsafe { JSGlobalObject__throwOutOfMemoryError(self) };
+        JSValue::ZERO
+    }
+    pub fn throw_out_of_memory(&self) -> JsError {
+        // JSGlobalObject.zig:26 — same FFI, returns `error.JSError`.
+        // SAFETY: `self` is a live JSGlobalObject.
+        unsafe { JSGlobalObject__throwOutOfMemoryError(self) };
+        JsError::Thrown
     }
     pub fn create_syntax_error_instance(&self, args: core::fmt::Arguments<'_>) -> JSValue {
         let _ = args;
@@ -704,13 +733,21 @@ impl JSGlobalObject {
         errors_array: JSValue,
     ) -> JsResult<JSValue> {
         // SAFETY: `self` is live; `message` passed by value (FFI takes ownership of ref).
+        // JSGlobalObject.zig:523 — (errors_array, message, options=.js_undefined).
         let v = unsafe {
-            JSC__JSGlobalObject__createAggregateErrorWithArray(self, message, errors_array)
+            JSC__JSGlobalObject__createAggregateErrorWithArray(
+                self, errors_array, message, JSValue::UNDEFINED,
+            )
         };
         if v.is_empty() { Err(JsError::Thrown) } else { Ok(v) }
     }
 
     pub fn throw_value(&self, value: JSValue) -> JsError {
+        // JSGlobalObject.zig:474 — guard against an already-pending exception
+        // (avoids hitting `releaseAssertNoException` in C++).
+        if self.has_exception() {
+            return JsError::Thrown;
+        }
         // SAFETY: `self` is live; throws into the VM's exception scope.
         unsafe { JSC__VM__throwError(JSC__JSGlobalObject__vm(self), self, value) };
         JsError::Thrown
@@ -769,11 +806,15 @@ impl JSGlobalObject {
         todo!("JSGlobalObject::err_invalid_url")
     }
 
-    pub fn take_exception(&self, _proof: JsError) -> JSValue {
-        match self.try_take_exception() {
-            Some(v) => v,
-            None => JSValue::UNDEFINED,
+    pub fn take_exception(&self, proof: JsError) -> JSValue {
+        // JSGlobalObject.zig:561 — for `OutOfMemory` proof, throw OOM first so
+        // there IS a pending exception to take.
+        if proof == JsError::OutOfMemory {
+            let _ = self.throw_out_of_memory();
         }
+        self.try_take_exception().unwrap_or_else(|| {
+            panic!("A JavaScript exception was thrown, but it was cleared before it could be read.")
+        })
     }
     pub fn take_error(&self, proof: JsError) -> JSValue {
         let v = self.take_exception(proof);
@@ -865,11 +906,13 @@ impl JSObject {
         length: u32,
         names: *mut ExternColumnIdentifier,
     ) -> JSValue {
-        let _ = owner;
-        // SAFETY: `global` is live; `names[0..length]` valid; owner.asCell() needs
-        // DecodedJSValue (gated), so pass null and TODO.
-        // TODO(b2): owner.asCell() once DecodedJSValue.rs un-gates.
-        unsafe { JSC__createStructure(global, core::ptr::null(), length, names) }
+        debug_assert!(owner.is_cell());
+        // JSObject.zig:118 — passes `owner.asCell()`. A cell-tagged JSValue's
+        // payload IS the JSCell* (NotCellMask bits are zero), so the raw usize
+        // is the pointer. SAFETY: caller guarantees `owner.is_cell()`.
+        let owner_cell = owner.0 as *const JSCell;
+        // SAFETY: `global` is live; `names[0..length]` valid.
+        unsafe { JSC__createStructure(global, owner_cell, length, names) }
     }
 }
 
@@ -883,6 +926,15 @@ pub struct ExternColumnIdentifier {
 pub union ExternColumnIdentifierValue {
     pub index: u32,
     pub name: core::mem::ManuallyDrop<bun_string::String>,
+}
+impl ExternColumnIdentifier {
+    /// JSObject.zig:111 — `deinit()` derefs `name` only when `tag == 2`.
+    pub fn deinit(&mut self) {
+        if self.tag == 2 {
+            // SAFETY: `tag == 2` ⇔ `value.name` is the active union field.
+            unsafe { core::mem::ManuallyDrop::drop(&mut self.value.name) }
+        }
+    }
 }
 pub mod js_object {
     pub use super::ExternColumnIdentifier;
@@ -992,7 +1044,9 @@ impl VM {
     }
 }
 
-/// `jsc.SystemError` — extern struct laid out to match SystemError.zig.
+/// `jsc.SystemError` — extern struct laid out to match SystemError.zig
+/// (field order is ABI-load-bearing: errno, code, message, path, syscall,
+/// hostname, fd, dest).
 #[repr(C)]
 pub struct SystemError {
     pub errno: core::ffi::c_int,
@@ -1000,9 +1054,9 @@ pub struct SystemError {
     pub message: bun_string::String,
     pub path: bun_string::String,
     pub syscall: bun_string::String,
+    pub hostname: bun_string::String,
     pub fd: core::ffi::c_int,
     pub dest: bun_string::String,
-    pub hostname: bun_string::String,
 }
 unsafe extern "C" {
     fn SystemError__toErrorInstance(this: *const SystemError, global: *mut JSGlobalObject) -> JSValue;

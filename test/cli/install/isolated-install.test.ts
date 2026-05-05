@@ -2033,10 +2033,18 @@ describe("bun link integration", () => {
   // between parallel tests that register the same package name. Caller owns
   // the directory lifetime via a `using home = tempDir(...)` declaration so
   // the harness cleans up global-link fixtures on test exit.
+  //
+  // Override `BUN_INSTALL_GLOBAL_DIR` to an in-home path too — it takes
+  // precedence over `BUN_INSTALL` inside `openGlobalDir`. On CI where
+  // the agent sets it to a persistent host path (e.g. to share a
+  // cross-test warm global cache), a `bun link` in one test would leak
+  // its producer body into every subsequent test's `no-deps` override
+  // via that shared dir and the body-check assertions would flap.
   function hermeticEnv(home: string) {
     return {
       ...bunEnv,
       BUN_INSTALL: home,
+      BUN_INSTALL_GLOBAL_DIR: join(home, "install", "global"),
       HOME: home,
       XDG_CONFIG_HOME: home,
       USERPROFILE: home,

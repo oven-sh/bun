@@ -933,6 +933,15 @@ pub const PackCommand = struct {
     /// the recursive semantics of `files: ["dist/**/*.js"]`-style globs.
     /// Without this, callers were forced to mirror the publish rules by
     /// hand and inevitably drifted (cf. nested same-name directories).
+    ///
+    /// Known gap (tracked as a follow-up, same as `files`-glob / ignore-
+    /// file parity): vendored bundled dependencies. `pack()` walks them
+    /// via `iterateBundledDeps` after reading producer-side `node_modules`,
+    /// but that helper hangs off a full `Context` (lockfile, manager,
+    /// stats) we don't have here. A producer that publishes
+    /// `bundledDependencies` will materialize under `bun link` without
+    /// its vendored `node_modules/...` subtree; the caller should
+    /// run a full pack/install cycle rather than relying on `bun link`.
     pub fn collectPublishablePaths(
         parent_allocator: std.mem.Allocator,
         root_dir: std.fs.Dir,

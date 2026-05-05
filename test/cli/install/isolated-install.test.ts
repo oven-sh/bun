@@ -2043,6 +2043,26 @@ describe("bun link integration", () => {
     };
   }
 
+  // Recursively list every file under `dir` as a POSIX-separator relative
+  // path, so capability tests can compare the installed `.bun/<pkg>/` body
+  // against the set of files `bun pm pack --dry-run` reports. Shared by
+  // all tests that assert file-set parity; extract to avoid drift if the
+  // traversal contract changes (follow symlinks, depth limits, etc.).
+  async function listFilesRecursive(dir: string, prefix = ""): Promise<string[]> {
+    const out: string[] = [];
+    for (const name of await readdir(dir)) {
+      const abs = join(dir, name);
+      const rel = prefix ? `${prefix}/${name}` : name;
+      const s = await stat(abs);
+      if (s.isDirectory()) {
+        out.push(...(await listFilesRecursive(abs, rel)));
+      } else {
+        out.push(rel);
+      }
+    }
+    return out;
+  }
+
   // The registry's `no-deps@1.0.0` tarball contains only `package.json` and
   // `index.js`. Producer adds `marker.js` — presence of that file in
   // `node_modules/.bun/no-deps@1.0.0/node_modules/no-deps/` is proof the
@@ -2368,23 +2388,7 @@ describe("bun link integration", () => {
     expect(exitCode).toBe(0);
 
     const bodyDir = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
-
-    // Walk the installed entry and gather every file relative to bodyDir.
-    async function walk(dir: string, prefix = ""): Promise<string[]> {
-      const out: string[] = [];
-      for (const name of await readdir(dir)) {
-        const abs = join(dir, name);
-        const rel = prefix ? `${prefix}/${name}` : name;
-        const s = await stat(abs);
-        if (s.isDirectory()) {
-          out.push(...(await walk(abs, rel)));
-        } else {
-          out.push(rel);
-        }
-      }
-      return out;
-    }
-    const installedFiles = new Set(await walk(bodyDir));
+    const installedFiles = new Set(await listFilesRecursive(bodyDir));
 
     // Capability assertion: installed contents === publishable contents.
     // Sort for a readable diff on failure.
@@ -2479,22 +2483,7 @@ describe("bun link integration", () => {
     expect(exitCode).toBe(0);
 
     const bodyDir = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
-
-    async function walk(dir: string, prefix = ""): Promise<string[]> {
-      const out: string[] = [];
-      for (const name of await readdir(dir)) {
-        const abs = join(dir, name);
-        const rel = prefix ? `${prefix}/${name}` : name;
-        const s = await stat(abs);
-        if (s.isDirectory()) {
-          out.push(...(await walk(abs, rel)));
-        } else {
-          out.push(rel);
-        }
-      }
-      return out;
-    }
-    const installedFiles = new Set(await walk(bodyDir));
+    const installedFiles = new Set(await listFilesRecursive(bodyDir));
 
     expect([...installedFiles].sort()).toEqual([...publishedFiles].sort());
   });
@@ -2565,22 +2554,7 @@ describe("bun link integration", () => {
     expect(exitCode).toBe(0);
 
     const bodyDir = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
-
-    async function walk(dir: string, prefix = ""): Promise<string[]> {
-      const out: string[] = [];
-      for (const name of await readdir(dir)) {
-        const abs = join(dir, name);
-        const rel = prefix ? `${prefix}/${name}` : name;
-        const s = await stat(abs);
-        if (s.isDirectory()) {
-          out.push(...(await walk(abs, rel)));
-        } else {
-          out.push(rel);
-        }
-      }
-      return out;
-    }
-    const installedFiles = new Set(await walk(bodyDir));
+    const installedFiles = new Set(await listFilesRecursive(bodyDir));
 
     // Nested assets/ under build/ must be present.
     expect(installedFiles.has("build/esm/web-tokens/assets/icons.json")).toBe(true);

@@ -429,15 +429,29 @@ pub fn populateLinkedNamesCache(this: *PackageManager) void {
     // code path really does need the global dir (e.g. `bun link`
     // itself), `globalLinkDirPath` will be called on that path and
     // surface the error there.
+    //
+    // Publish the `global_dir` / `global_link_dir` fields only *after*
+    // the path lookup has succeeded — `globalLinkDir` uses those fields
+    // as an "already initialized" fast-path and returns
+    // `global_link_dir_path` without re-running the init block, so a
+    // half-initialized state (dir handles cached but path empty) would
+    // make every subsequent `globalLinkDirPath()` call resolve to `""`.
     const dir_path = dir_path: {
         if (this.global_link_dir_path.len != 0) break :dir_path this.global_link_dir_path;
         var global_dir = Options.openGlobalDir(this.options.explicit_global_directory) catch return;
-        const link_dir = global_dir.makeOpenPath("node_modules", .{}) catch return;
+        var link_dir = global_dir.makeOpenPath("node_modules", .{}) catch {
+            global_dir.close();
+            return;
+        };
+        var buf: bun.PathBuffer = undefined;
+        const path_slice = bun.getFdPath(.fromStdDir(link_dir), &buf) catch {
+            link_dir.close();
+            global_dir.close();
+            return;
+        };
+        this.global_link_dir_path = bun.handleOom(Fs.FileSystem.DirnameStore.instance.append([]const u8, path_slice));
         this.global_dir = global_dir;
         this.global_link_dir = link_dir;
-        var buf: bun.PathBuffer = undefined;
-        const path_slice = bun.getFdPath(.fromStdDir(link_dir), &buf) catch return;
-        this.global_link_dir_path = bun.handleOom(Fs.FileSystem.DirnameStore.instance.append([]const u8, path_slice));
         break :dir_path this.global_link_dir_path;
     };
     const root_fd = switch (bun.openDirForIteration(bun.FD.cwd(), dir_path)) {

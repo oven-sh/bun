@@ -13,6 +13,7 @@ test("HTTP/2 server push streams work", async () => {
     mainBody: string;
     pushPath: string;
     pushData: string;
+    pushResponseStatus: number;
   }>();
 
   const server = http2.createSecureServer({ key: tls.key, cert: tls.cert });
@@ -64,11 +65,12 @@ test("HTTP/2 server push streams work", async () => {
 
     let pushPath: string | null = null;
     let pushData: string | null = null;
+    let pushResponseStatus: number | null = null;
     let mainBody: string | null = null;
 
     function maybeFinish() {
-      if (mainBody !== null && pushData !== null && pushPath !== null) {
-        resolve({ mainBody, pushPath, pushData });
+      if (mainBody !== null && pushData !== null && pushPath !== null && pushResponseStatus !== null) {
+        resolve({ mainBody, pushPath, pushData, pushResponseStatus });
         cleanup();
       }
     }
@@ -80,6 +82,11 @@ test("HTTP/2 server push streams work", async () => {
       pushPath = path as string;
       pushedStream.setEncoding?.("utf8");
       pushedStream.on("error", () => {});
+      // Node emits 'push' (not 'response') for a pushed stream's final
+      // response headers. Capture :status so we exercise the event name.
+      pushedStream.on("push", (pushResponseHeaders: any) => {
+        pushResponseStatus = pushResponseHeaders[":status"];
+      });
       let data = "";
       pushedStream.on("data", (chunk: any) => (data += chunk));
       pushedStream.on("end", () => {
@@ -106,8 +113,9 @@ test("HTTP/2 server push streams work", async () => {
       mainBody: "main response",
       pushPath: "/style.css",
       pushData: "body { background: red; }",
+      pushResponseStatus: 200,
     });
   } finally {
     cleanup();
   }
-}, 15_000);
+});

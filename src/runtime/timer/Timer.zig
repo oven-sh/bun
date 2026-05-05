@@ -359,11 +359,10 @@ pub const All = struct {
     /// microtasks (timer callbacks queue their own that `TimerObjectInternals.
     /// fire` doesn't drain when nested inside `tick()`).
     ///
-    /// When the heap is empty, or the earliest deadline is still in the
-    /// future, this returns without taking the mutex inside `drainTimers` →
-    /// `next` or calling `timespec.now()`. The unlocked read of the heap root
-    /// is safe because the heap is mutated only from the JS thread; a stale
-    /// `null` just defers the drain by one loop iteration.
+    /// When the heap is empty or the earliest deadline is still in the future,
+    /// this returns without taking the mutex inside `drainTimers` → `next`.
+    /// The unlocked root peek is safe because the heap is mutated only from
+    /// the JS thread; a stale `null` just defers the drain by one iteration.
     ///
     /// On Windows, re-arms the uv_timer after firing so the next deadline
     /// still wakes `loop.tickWithTimeout` — but only when something actually

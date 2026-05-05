@@ -933,8 +933,8 @@ pub fn jsAddServerName(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 const ticket_key_size = 48;
 
 fn getSSLCtx(this: *Listener) ?*BoringSSL.SSL_CTX {
-    if (this.socket_context) |ctx| {
-        return @ptrCast(ctx.getNativeHandle(true));
+    if (this.secure_ctx) |ctx| {
+        return ctx;
     }
     if (Environment.isWindows) {
         if (this.listener == .namedPipe) {

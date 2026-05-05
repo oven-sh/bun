@@ -106,6 +106,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP2_INVALID_SESSION", Error],
   ["ERR_HTTP2_INVALID_STREAM", Error],
   ["ERR_HTTP2_MAX_PENDING_SETTINGS_ACK", Error],
+  ["ERR_HTTP2_NESTED_PUSH", Error],
   ["ERR_HTTP2_NO_SOCKET_MANIPULATION", Error],
   ["ERR_HTTP2_ORIGIN_LENGTH", TypeError],
   ["ERR_HTTP2_OUT_OF_STREAMS", Error],

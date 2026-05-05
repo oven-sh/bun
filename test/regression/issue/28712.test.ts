@@ -184,3 +184,73 @@ test("nested pushStream() throws ERR_HTTP2_NESTED_PUSH", async () => {
     cleanup();
   }
 });
+
+test("pushStream() does not leak http2.sensitiveHeaders symbol as a bogus header", async () => {
+  let client: ReturnType<typeof http2.connect> | undefined;
+  const { promise: done, resolve, reject } = Promise.withResolvers<string[]>();
+
+  const server = http2.createSecureServer({ key: tls.key, cert: tls.cert });
+
+  function cleanup() {
+    try {
+      client?.close();
+    } catch {}
+    try {
+      server.close();
+    } catch {}
+  }
+
+  server.on("stream", (stream: any) => {
+    stream.on("error", () => {});
+    // Pass a sensitiveHeaders symbol in the push headers; if the symbol leaks
+    // through the object spread to native, its description string
+    // "nodejs.http2.sensitiveHeaders" would be HPACK-encoded as a real header.
+    const pushHeaders: any = {
+      ":path": "/a.css",
+      authorization: "Bearer topsecret",
+      [http2.sensitiveHeaders]: ["authorization"],
+    };
+    stream.pushStream(pushHeaders, (err: Error | null, pushStream: any) => {
+      if (err) {
+        cleanup();
+        reject(err);
+        return;
+      }
+      pushStream.on("error", () => {});
+      pushStream.respond({ [http2.constants.HTTP2_HEADER_STATUS]: 200 });
+      pushStream.end("a");
+    });
+    stream.respond({ [http2.constants.HTTP2_HEADER_STATUS]: 200 });
+    stream.end("root");
+  });
+
+  server.on("error", () => {});
+  server.listen(0, () => {
+    const port = (server.address() as any).port;
+    client = http2.connect(`https://localhost:${port}`, { rejectUnauthorized: false });
+    client.on("error", (err: Error) => {
+      cleanup();
+      reject(err);
+    });
+    client.on("stream", (_pushedStream: any, headers: any) => {
+      // Emit the received header names for the PUSH_PROMISE request block.
+      resolve(Object.keys(headers));
+      _pushedStream.on("error", () => {});
+      _pushedStream.resume();
+    });
+    const req = client.request({ ":path": "/" });
+    req.on("error", () => {});
+    req.resume();
+    req.end();
+  });
+
+  try {
+    const names = await done;
+    // No HPACK-encoded header should have a name derived from the symbol.
+    for (const n of names) {
+      expect(n.toLowerCase()).not.toContain("nodejs.http2.sensitiveheaders");
+    }
+  } finally {
+    cleanup();
+  }
+});

@@ -2557,9 +2557,20 @@ class ServerHttp2Stream extends Http2Stream {
     // be HPACK-encoded with never-index (RFC 7541 Section 7.1.3), matching
     // `request()`/`respond()` semantics. Honour a top-level options override
     // first, then fall back to the magic symbol on the headers object.
-    const sensitiveNames = finalOptions[sensitiveHeaders] ?? pushHeaders[sensitiveHeaders] ?? [];
+    //
+    // Object spread (`{ ...headers }` above) copies own enumerable Symbol
+    // keys, and the native header iterator enumerates symbols. Without
+    // `delete pushHeaders[sensitiveHeaders]` the symbol's description string
+    // would leak onto the wire as a bogus "nodejs.http2.sensitiveheaders"
+    // header field. Also mirror the ERR_INVALID_ARG_VALUE validation used by
+    // request()/respond()/addTrailers().
+    const sensitiveNames = finalOptions[sensitiveHeaders] ?? pushHeaders[sensitiveHeaders];
+    delete pushHeaders[sensitiveHeaders];
     const sensitiveMap = {};
-    if ($isArray(sensitiveNames)) {
+    if (sensitiveNames !== undefined) {
+      if (!$isArray(sensitiveNames)) {
+        throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", sensitiveNames);
+      }
       for (let i = 0; i < sensitiveNames.length; i++) {
         sensitiveMap[String(sensitiveNames[i]).toLowerCase()] = true;
       }
@@ -2570,6 +2581,23 @@ class ServerHttp2Stream extends Http2Stream {
     if (streamId === -2) {
       // Stream ID space exhausted — push is still enabled, we just ran out of IDs.
       process.nextTick(callback, $ERR_HTTP2_OUT_OF_STREAMS());
+      return;
+    }
+    if (streamId === -3) {
+      // Parent stream closed/half-closed-local between the JS guard and
+      // the native call — surface as an invalid-stream error, not push-
+      // disabled (SETTINGS negotiation is fine; it's the parent's state).
+      process.nextTick(callback, $ERR_HTTP2_INVALID_STREAM());
+      return;
+    }
+    if (streamId === -4) {
+      // encoded_size > maxSendHeaderBlockLength. Node surfaces an equivalent
+      // condition on the regular request() path via a 'frameError' event.
+      // Report the same code via the callback so users can match on
+      // err.code rather than the less-specific PUSH_DISABLED.
+      const e = new Error("Frame size error") as Error & { code?: string };
+      e.code = "ERR_HTTP2_FRAME_ERROR";
+      process.nextTick(callback, e);
       return;
     }
     if (streamId < 0) {

@@ -8,6 +8,12 @@ filter_names: []const []const u8 = &.{},
 /// Glob patterns for paths to ignore. Matched against the path relative to the
 /// project root (top_level_dir). When a file matches any pattern, it is excluded.
 path_ignore_patterns: []const []const u8 = &.{},
+/// Whether `path_ignore_patterns` are the built-in defaults (see
+/// `default_path_ignore_patterns`) vs a list configured by the user via
+/// `--path-ignore-patterns` or `bunfig.toml`. When true, explicit file/directory
+/// arguments bypass the patterns — otherwise running `bun test build/foo.test.ts`
+/// would silently match nothing.
+path_ignore_patterns_are_defaults: bool = false,
 dirs_to_scan: Fifo,
 /// Paths to test files found while scanning.
 test_files: std.ArrayListUnmanaged(bun.PathString),
@@ -61,6 +67,31 @@ pub fn takeFoundTestFiles(this: *Scanner) Allocator.Error![]bun.PathString {
 }
 
 pub fn scan(this: *Scanner, path_literal: []const u8) Error!void {
+    return this.scanInternal(path_literal, .auto_discover);
+}
+
+/// Like `scan`, but the path came from an explicit command-line argument
+/// (`bun test ./build/foo.test.ts`). When the only patterns in play are the
+/// Scanner's built-in defaults, skip them for this invocation — the user
+/// pointed at this file/directory, so silently dropping it would be
+/// surprising. Any patterns the user configured themselves still apply.
+pub fn scanExplicit(this: *Scanner, path_literal: []const u8) Error!void {
+    return this.scanInternal(path_literal, .explicit_path);
+}
+
+const ScanMode = enum { auto_discover, explicit_path };
+
+fn scanInternal(this: *Scanner, path_literal: []const u8, mode: ScanMode) Error!void {
+    // Explicit paths bypass the built-in defaults only. User-configured
+    // patterns stay in effect either way, so we swap the field in place
+    // and restore it before returning.
+    const saved_patterns = this.path_ignore_patterns;
+    const bypass_defaults = mode == .explicit_path and this.path_ignore_patterns_are_defaults;
+    if (bypass_defaults) this.path_ignore_patterns = &.{};
+    defer if (bypass_defaults) {
+        this.path_ignore_patterns = saved_patterns;
+    };
+
     const parts = &[_][]const u8{ this.fs.top_level_dir, path_literal };
     const path = this.fs.absBuf(parts, &this.scan_dir_buf);
 
@@ -125,6 +156,16 @@ pub const test_name_suffixes = [_][]const u8{
     "_test",
     ".spec",
     "_spec",
+};
+
+/// Glob patterns applied when the user has not configured
+/// `pathIgnorePatterns` (neither in `bunfig.toml` nor via
+/// `--path-ignore-patterns`). Matches the relative path from the project
+/// root, so these patterns prune the conventional output directories at any
+/// depth. An explicit (even empty) user configuration replaces this list.
+pub const default_path_ignore_patterns = [_][]const u8{
+    "**/dist/**",
+    "**/build/**",
 };
 
 pub fn couldBeTestFile(this: *Scanner, name: []const u8, comptime needs_test_suffix: bool) bool {

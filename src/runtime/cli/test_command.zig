@@ -1540,7 +1540,18 @@ pub const TestCommand = struct {
 
         var scanner = bun.handleOom(Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len));
         defer scanner.deinit();
-        scanner.path_ignore_patterns = ctx.test_options.path_ignore_patterns;
+        // When the user hasn't configured `pathIgnorePatterns`, fall back to
+        // the scanner's built-in defaults so conventional output directories
+        // (`dist/`, `build/`) don't duplicate tests into the run. The
+        // `_are_defaults` flag lets `scanExplicit` know it can safely
+        // bypass them when the user names a path directly on the CLI.
+        if (ctx.test_options.path_ignore_patterns_configured) {
+            scanner.path_ignore_patterns = ctx.test_options.path_ignore_patterns;
+            scanner.path_ignore_patterns_are_defaults = false;
+        } else {
+            scanner.path_ignore_patterns = &Scanner.default_path_ignore_patterns;
+            scanner.path_ignore_patterns_are_defaults = true;
+        }
         const has_relative_path = for (ctx.positionals) |arg| {
             if (std.fs.path.isAbsolute(arg) or
                 strings.startsWith(arg, "./") or
@@ -1550,10 +1561,13 @@ pub const TestCommand = struct {
         } else false;
         if (has_relative_path) {
             // One of the files is a filepath. Instead of treating the
-            // arguments as filters, treat them as filepaths
+            // arguments as filters, treat them as filepaths.
+            // `scanExplicit` bypasses the Scanner's built-in default
+            // ignore patterns so `bun test ./build/foo.test.ts` isn't
+            // silently filtered out; any user-configured patterns still apply.
             const file_or_dirnames = ctx.positionals[1..];
             for (file_or_dirnames) |arg| {
-                scanner.scan(arg) catch |err| switch (err) {
+                scanner.scanExplicit(arg) catch |err| switch (err) {
                     error.OutOfMemory => bun.outOfMemory(),
                     // don't error if multiple are passed; one might fail
                     // but the others may not

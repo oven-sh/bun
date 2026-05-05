@@ -133,9 +133,69 @@ if (isDockerEnabled()) {
         const [{ x }] = await sql`select CAST(${value} as NUMERIC(30,20)) as x`;
         expect(x).toBe(value);
       }
-      // zero specifically
+      // zero specifically — a numeric with an explicit scale must preserve
+      // trailing zeros even for the value 0 (regression: #29772).
       const [{ x }] = await sql`select CAST(${"0.00000000000000000000"} as NUMERIC(30,20)) as x`;
-      expect(x).toBe("0");
+      expect(x).toBe("0.00000000000000000000");
+    });
+
+    test("numeric zero preserves scale on prepared/binary path (#29772)", async () => {
+      await using sql = postgres(options);
+      const table = "t_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql.unsafe(`CREATE TEMPORARY TABLE ${table} (v numeric(10, 4) NOT NULL)`);
+      await sql.unsafe(`INSERT INTO ${table} VALUES (0), (1), (1.5), (10)`);
+
+      // Unprepared (text protocol) path — always correct server-side.
+      const unprepared = await sql.unsafe(`SELECT v FROM ${table} ORDER BY v`);
+      expect(unprepared.map((r: any) => r.v)).toEqual(["0.0000", "1.0000", "1.5000", "10.0000"]);
+
+      // Prepared (binary protocol) path — must match.
+      const prepared = await sql.unsafe(`SELECT v FROM ${table} ORDER BY v LIMIT $1`, [10]);
+      expect(prepared.map((r: any) => r.v)).toEqual(["0.0000", "1.0000", "1.5000", "10.0000"]);
+
+      // numeric with no typmod (dscale = 0) — zero has no trailing fractional
+      // digits and should remain "0" on both paths.
+      const table2 = "t_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql.unsafe(`CREATE TEMPORARY TABLE ${table2} (v numeric NOT NULL)`);
+      await sql.unsafe(`INSERT INTO ${table2} VALUES (0)`);
+      expect((await sql.unsafe(`SELECT v FROM ${table2}`))[0].v).toBe("0");
+      expect((await sql.unsafe(`SELECT v FROM ${table2} LIMIT $1`, [1]))[0].v).toBe("0");
+
+      // numeric(p, 0) — explicit zero scale, same result on both paths.
+      const table3 = "t_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql.unsafe(`CREATE TEMPORARY TABLE ${table3} (v numeric(10, 0) NOT NULL)`);
+      await sql.unsafe(`INSERT INTO ${table3} VALUES (0)`);
+      expect((await sql.unsafe(`SELECT v FROM ${table3}`))[0].v).toBe("0");
+      expect((await sql.unsafe(`SELECT v FROM ${table3} LIMIT $1`, [1]))[0].v).toBe("0");
+
+      // Negative zero-adjacent values still format correctly on the prepared path.
+      const negRows = await sql.unsafe(`SELECT CAST($1 AS numeric(10,2)) AS v`, ["-0.50"]);
+      expect(negRows[0].v).toBe("-0.50");
+    });
+
+    // Regression: the fractional-digits loop in the binary-numeric decoder
+    // conflated postgres' digit-index (+1) and dscale-position (+4) counters,
+    // under-padding leading zeros for values whose first base-10000 digit
+    // group sits at weight <= -3 — i.e. anything smaller than ~1e-8. So
+    // e.g. 0.000000001234 came back as "0.000012340000" on the binary path.
+    test.each([
+      ["0.1"],
+      ["0.01"],
+      ["0.001"],
+      ["0.0001"],
+      ["0.00001"],
+      ["0.000001"],
+      ["0.0000001"],
+      ["0.00000001"],
+      ["0.000000001"],
+      ["0.0000000001"],
+      ["0.000000001234"],
+      ["0.000000000000000001234"],
+      ["-0.00000001234"],
+    ] as const)("numeric renders %s on prepared/binary path", async value => {
+      await using sql = postgres(options);
+      const r = await sql.unsafe(`SELECT CAST($1 AS numeric) AS v`, [value]);
+      expect(r[0].v).toBe(value);
     });
 
     describe("Array helpers", () => {

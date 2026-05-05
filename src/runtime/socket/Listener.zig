@@ -189,34 +189,42 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
                     // `node:net`'s `Server.prototype.listen` and re-emitted
                     // via `setTimeout` as the async 'error' event.
                     //
-                    // Match Node's `uvExceptionWithHostPort` shape:
+                    // Shape follows Node's `uvExceptionWithHostPort`:
                     //   message: "listen EADDRINUSE: address already in use <addr>"
                     //   fields:  .code, .errno, .syscall, .address   (no .path)
                     //
-                    // `bun.sys.Error.toSystemError()` would produce Node's
-                    // UVException shape instead — "<code>: <label>, <syscall>
-                    // '<path>'" — and attach a `.path` property that Node's
-                    // listen error never has. Build the error manually to
-                    // avoid that divergence; the label comes from
-                    // `libuv_error_map` which is what `node:errors` uses.
-                    //
-                    // One remaining quirk: `.errno` is the negated POSIX-mapped
-                    // value (-98 for EADDRINUSE) rather than the raw libuv
-                    // return code (-4091) Node uses. This matches Bun's
-                    // convention across every other libuv-sourced error (see
-                    // `toSystemError` in `src/sys/Error.zig`); real-world code
-                    // keys off `.code`, not `.errno`.
+                    // `.errno` is the negated POSIX-mapped value (-98 for
+                    // EADDRINUSE) rather than the raw libuv code (-4091) Node
+                    // uses — consistent with Bun's `toSystemError` convention
+                    // elsewhere, and real-world code keys off `.code` not
+                    // `.errno`.
                     //
                     // `this.connection.unix` is the user's original input (not
                     // `pipe_name`, which `normalizePipeName` rewrites to the
                     // canonical `\\.\pipe\` form). Node round-trips it verbatim.
+                    //
+                    // The label text is hardcoded per-errno rather than pulled
+                    // from `libuv_error_map.get(...)` — a direct `EnumMap.get`
+                    // call at this site crashed Zig 0.15.2's sema on Windows
+                    // with "reached unreachable code" during `std.Thread`
+                    // analysis (unrelated compiler bug). Only a handful of
+                    // errnos can reach `uv_pipe_bind2` / `uv_listen` failure
+                    // in practice; default to the code name for the rest.
                     const user_path = this.connection.unix;
-                    var code_label: [:0]const u8 = "UNKNOWN";
-                    var label_text: []const u8 = "unknown error";
-                    if (sys_err.getErrorCodeTagName()) |resolved| {
-                        code_label = resolved[0];
-                        if (bun.sys.libuv_error_map.get(resolved[1])) |text| label_text = text;
-                    }
+                    const system_errno = sys_err.getErrno();
+                    const code_label: [:0]const u8 = if (sys_err.getErrorCodeTagName()) |resolved| resolved[0] else "UNKNOWN";
+                    const label_text: []const u8 = switch (system_errno) {
+                        .ADDRINUSE => "address already in use",
+                        .ACCES => "permission denied",
+                        .NOENT => "no such file or directory",
+                        .NOTDIR => "not a directory",
+                        .NAMETOOLONG => "name too long",
+                        .INVAL => "invalid argument",
+                        .NOMEM => "not enough memory",
+                        .MFILE => "too many open files",
+                        .LOOP => "too many symbolic links encountered",
+                        else => code_label,
+                    };
                     const err = globalObject.createErrorInstance(
                         "listen {s}: {s} {s}",
                         .{ code_label, label_text, user_path },

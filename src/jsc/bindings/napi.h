@@ -3,7 +3,6 @@
 #include "root.h"
 #include <JavaScriptCore/DeferGC.h>
 #include <JavaScriptCore/JSFunction.h>
-#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/VM.h>
 
 #include "headers-handwritten.h"
@@ -513,17 +512,11 @@ private:
     size_t m_cleanupHookCounter = 0;
 
     // Drop any pending exception -- VM-scope or env-scope -- between
-    // finalizers run from cleanup(). Used by cleanup() only.
-    //
-    // TopExceptionScope::clearException() wraps VM::clearException(),
-    // which also resets the EXCEPTION_SCOPE_VERIFICATION bookkeeping
-    // (m_needExceptionCheck). Leaving that unreset would trip debug
-    // asserts in the next finalizer's napi calls.
-    void clearExceptionsBetweenFinalizers()
-    {
-        DECLARE_TOP_EXCEPTION_SCOPE(m_vm).clearException();
-        m_pendingException.clear();
-    }
+    // finalizers run from cleanup(). Used by cleanup() only. Defined
+    // out-of-line in napi.cpp so its uses of JSC::TopExceptionScope
+    // (which has JS_EXPORT_PRIVATE ctor/dtor under
+    // ENABLE_EXCEPTION_SCOPE_VERIFICATION) are confined to one TU.
+    void clearExceptionsBetweenFinalizers();
 
     // Returns a vector of hooks in reverse order of insertion.
     std::vector<Napi::EitherCleanupHook> getHooks() const

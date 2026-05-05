@@ -73,6 +73,7 @@
 #include "wtf/text/ASCIIFastPath.h"
 #include "JavaScriptCore/WeakInlines.h"
 #include <JavaScriptCore/BuiltinNames.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/TZoneMallocInlines.h>
 #include "AsyncContextFrame.h"
 
@@ -3052,4 +3053,17 @@ extern "C" void NapiEnv__deref(napi_env env)
     env->deref();
 }
 
+}
+
+// Defined out-of-line so its uses of DECLARE_TOP_EXCEPTION_SCOPE (whose
+// ctor/dtor are JS_EXPORT_PRIVATE when ENABLE_EXCEPTION_SCOPE_VERIFICATION
+// is on) are confined to a single TU instead of inlined into every
+// translation unit that includes napi.h.
+void NapiEnv::clearExceptionsBetweenFinalizers()
+{
+    // VM::clearException (via TopExceptionScope::clearException) also
+    // resets m_needExceptionCheck bookkeeping, so a leaked exception
+    // from one finalizer does not trip debug asserts in the next.
+    DECLARE_TOP_EXCEPTION_SCOPE(m_vm).clearException();
+    m_pendingException.clear();
 }

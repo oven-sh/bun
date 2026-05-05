@@ -1,111 +1,107 @@
 //! JavaScript printer — translates the AST back to source text.
 //! Port of src/js_printer/js_printer.zig.
 //!
-//! B-1 gate-and-stub: Phase-A draft body preserved below in `#[cfg(any())] mod __phase_a_draft`.
-//! Minimal stub surface exposed here; un-gating happens in B-2.
+//! B-2 UN-GATED. analyze_transpiled_module, string-escape helpers, Writer/BufferWriter,
+//! Indentation, ExprFlag, RequireOrImportMeta, RuntimeTranspilerCache vtable, and the
+//! enum/const surface compile for real. The `Printer` impl block, `Options<'a>`,
+//! `renamer.rs`, and the top-level `print_*` entry points stay `#[cfg(any())]`-gated on
+//! missing T0/T1 surface (see TODO(b2-blocked) notes inline).
 
 #![allow(unused, nonstandard_style, clippy::all)]
+#![allow(unsafe_op_in_unsafe_fn)]
+#![feature(adt_const_params)]
 
-// ──────────────────────────────────────────────────────────────────────────
-// STUB SURFACE (B-1)
-// TODO(b1): bun_js_parser dep gated (transitive bun_css broken). Local opaque
-// stand-ins for the few cross-crate types referenced by downstream consumers.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Opaque stand-in for `bun_js_parser::Ref` until B-2 un-gates the dep.
-pub type Ref = u64;
-
-/// Map of mangled property `Ref` → final mangled name bytes.
-pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum Encoding { #[default] Utf8, Latin1, Utf16, Ascii }
-
-pub mod options {
-    #[derive(Clone, Copy, Debug, Default)]
-    pub struct Indentation { pub scalar: u8, pub character: u8, pub count: u32 }
-}
-pub use options::Indentation;
-
-#[derive(Default)]
-pub struct Options(());
-
-#[derive(Default)]
-pub struct BufferWriter(());
-impl BufferWriter {
-    pub fn init() -> Self { Self(()) }
-}
-
-#[derive(Default)]
-pub struct BufferPrinter(());
-impl BufferPrinter {
-    pub fn init(_w: BufferWriter) -> Self { Self(()) }
-}
-
-#[derive(Default)]
-pub struct PrintJsonOptions { pub indent: Indentation, pub mangled_props: () }
-
-pub enum PrintResult {
-    Err(()),
-    Result { code: &'static [u8], source_map: Option<()> },
-}
-
-pub fn write_json_string<W>(_input: &[u8], _w: &mut W, _enc: Encoding) -> core::fmt::Result {
-    todo!("b1 stub: write_json_string")
-}
-pub fn write_pre_quoted_string<W>(
-    _input: &[u8], _w: &mut W, _allow_backtick: bool, _quote: u8, _ascii_only: bool, _enc: Encoding,
-) -> core::fmt::Result {
-    todo!("b1 stub: write_pre_quoted_string")
-}
-pub fn print_json<P, A>(_printer: &mut P, _expr: A, _opts: PrintJsonOptions) -> Result<usize, ()> {
-    todo!("b1 stub: print_json")
-}
-pub fn quote_for_json(_input: &[u8], _ascii_only: bool) -> Vec<u8> {
-    todo!("b1 stub: quote_for_json")
-}
-
-pub mod analyze_transpiled_module {
-    //! Stub — full draft gated below.
-    #[derive(Default)]
-    pub struct ModuleInfo(());
-    #[derive(Default)]
-    pub struct Flags { pub contains_import_meta: bool, pub is_typescript: bool, pub has_tla: bool }
-}
-
-/// Renamer module stub. Full Phase-A draft lives in `renamer.rs` (gated below).
-pub mod renamer {
-    pub struct NoOpRenamer(());
-    pub struct NumberRenamer(());
-    pub struct MinifyRenamer(());
-    pub enum Renamer { NoOp, Number, Minify }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// PHASE-A DRAFT (gated — does not compile yet)
-// ──────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
-mod __phase_a_draft {
-#[path = "renamer.rs"]
-pub mod renamer_draft;
-
+extern crate bun_string as bun_str;
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_str::strings;
-use bun_str::strings::{CodepointIterator, Encoding};
+use bun_str::strings::CodepointIterator;
+use bun_str::MutableString;
 use bun_logger as logger;
-use bun_sourcemap as SourceMap;
-use bun_options_types::{ImportRecord, ImportKind};
+use bun_options_types::import_record::{ImportRecord, ImportKind};
 // TYPE_ONLY: bun_bundler::options::{Target, ModuleType, Format} → bun_options_types
-use bun_options_types as options;
+use bun_options_types::BundleEnums as bundle_opts;
+use bun_core::Output;
+use bun_sys::Fd;
+
+/// Local stand-in for `bun_str::strings::Encoding` that derives `ConstParamTy` so it can
+/// be used as a const-generic parameter (`const ENCODING: Encoding`). The variant set is
+/// identical; convert at the boundary if a `strings::Encoding` is ever needed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, core::marker::ConstParamTy)]
+pub enum Encoding { Ascii, Utf8, Latin1, Utf16 }
+
+/// Minimal byte-sink trait used by the string-escape helpers and `StdWriterAdapter`.
+/// Zig's `anytype` writer interface is the analogue; `bun_io` does not (yet) expose a
+/// `Write` trait, so the printer defines its own and adapts callers via `WriterTrait`.
+// TODO(b2-blocked): bun_io::Write — replace once the io crate grows a public sink trait.
+pub trait Write {
+    fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error>;
+}
+impl Write for MutableString {
+    fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
+        self.append(bytes)?;
+        Ok(())
+    }
+}
+impl Write for Vec<u8> {
+    fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
+        self.extend_from_slice(bytes);
+        Ok(())
+    }
+}
+
+/// Local stand-in for `bun_js_parser` while that crate is concurrently being
+/// un-gated (B-2). Only the handful of leaf types the un-gated printer surface
+/// touches are mirrored here; everything else stays behind `#[cfg(any())]`.
+// TODO(b2-blocked): bun_js_parser::Ref — drop this shim and `use bun_js_parser as js_ast`
+// once that crate compiles.
+mod js_ast {
+    #[derive(Copy, Clone, Hash, PartialEq, Eq, Default, Debug)]
+    pub struct Ref(pub u64);
+    impl Ref {
+        pub const NONE: Ref = Ref(u64::MAX);
+    }
+    #[derive(Copy, Clone, Default)]
+    pub struct Expr;
+}
+use js_ast::Ref;
+
+/// Local stand-in for `bun_sourcemap` while that crate is concurrently being
+/// un-gated (B-2). Only `Chunk` is referenced by un-gated surface (`PrintResultSuccess`).
+// TODO(b2-blocked): bun_sourcemap::Chunk — drop this shim and `use bun_sourcemap as SourceMap`.
+mod SourceMap {
+    pub struct Chunk;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// renamer — Phase-A draft preserved on disk in `renamer.rs`. Blocked on the
+// real `bun_js_parser::ast::symbol::{Map, Symbol}` surface (B-1 stubbed) and
+// contains a `Box::leak` that must be reworked per PORTING.md §Forbidden.
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(any())]
+#[path = "renamer.rs"]
+pub mod renamer;
+// TODO(b2-blocked): bun_js_parser::ast::symbol::Map
+// TODO(b2-blocked): bun_js_parser::lexer
+#[cfg(not(any()))]
+pub mod renamer {
+    //! B-2 shadow stub — un-gate `renamer.rs` once bun_js_parser's real ast/symbol
+    //! surface lands.
+    pub struct NoOpRenamer(());
+    pub struct NumberRenamer(());
+    pub struct MinifyRenamer(());
+    pub enum Renamer<'a> { NoOp(core::marker::PhantomData<&'a ()>), Number, Minify }
+}
+use renamer as rename;
+
 /// Map of mangled property `Ref` → final mangled name bytes.
 /// Zig: `std.AutoArrayHashMapUnmanaged(Ref, []const u8)` (values borrow bundler arena).
 // MOVE_DOWN: from bun_bundler::MangledProps (src/bundler/bundle_v2.zig:47).
 // PERF(port): Zig values were arena-borrowed `[]const u8`; Box<[u8]> here owns —
 // revisit if profiling shows allocation pressure during link.
-pub type MangledProps = bun_collections::ArrayHashMap<bun_js_parser::Ref, Box<[u8]>>;
+pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // MOVE_DOWN: bun_bundler::analyze_transpiled_module (src/bundler/analyze_transpiled_module.zig)
@@ -359,6 +355,42 @@ pub mod analyze_transpiled_module {
     #[derive(Debug)]
     pub struct BadModuleInfo;
 
+    /// Insertion-ordered (key, value) store with O(1) duplicate-key rejection.
+    /// Stand-in for Zig's `AutoArrayHashMapUnmanaged` until `bun_collections::ArrayHashMap`
+    /// grows slice-yielding `keys()`/`values()`.
+    // PERF(port): two allocations + a side HashMap; revisit with a real IndexMap.
+    struct OrderedMap<K: Eq + core::hash::Hash + Copy, V> {
+        keys: Vec<K>,
+        values: Vec<V>,
+        index: HashMap<K, usize>,
+    }
+    impl<K: Eq + core::hash::Hash + Copy, V> Default for OrderedMap<K, V> {
+        fn default() -> Self {
+            Self { keys: Vec::new(), values: Vec::new(), index: HashMap::default() }
+        }
+    }
+    impl<K: Eq + core::hash::Hash + Copy, V> OrderedMap<K, V> {
+        fn keys(&self) -> &[K] { &self.keys }
+        fn values(&self) -> &[V] { &self.values }
+        /// Returns `true` if `key` was already present (Zig `getOrPut().found_existing`).
+        fn insert_if_absent(&mut self, key: K, value: V) -> bool {
+            if self.index.contains_key(&key) { return true; }
+            self.index.insert(key, self.keys.len());
+            self.keys.push(key);
+            self.values.push(value);
+            false
+        }
+        fn swap_remove(&mut self, key: &K) -> Option<V> {
+            let i = self.index.remove(key)?;
+            self.keys.swap_remove(i);
+            let v = self.values.swap_remove(i);
+            if i < self.keys.len() {
+                self.index.insert(self.keys[i], i);
+            }
+            Some(v)
+        }
+    }
+
     pub struct ModuleInfo {
         /// all strings in wtf-8. index in hashmap = StringID
         // Zig used an adapted ArrayHashMap keyed by offset; Rust keys by content
@@ -367,11 +399,11 @@ pub mod analyze_transpiled_module {
         strings_map: HashMap<Vec<u8>, u32>,
         strings_buf: Vec<u8>,
         strings_lens: Vec<u32>,
-        requested_modules: ArrayHashMap<StringID, FetchParameters>,
+        requested_modules: OrderedMap<StringID, FetchParameters>,
         buffer: Vec<StringID>,
         record_kinds: Vec<RecordKind>,
         pub flags: Flags,
-        exported_names: ArrayHashMap<StringID, ()>,
+        exported_names: HashMap<StringID, ()>,
         pub finalized: bool,
     }
 
@@ -384,11 +416,11 @@ pub mod analyze_transpiled_module {
                 strings_map: HashMap::default(),
                 strings_buf: Vec::new(),
                 strings_lens: Vec::new(),
-                requested_modules: ArrayHashMap::default(),
+                requested_modules: OrderedMap::default(),
                 buffer: Vec::new(),
                 record_kinds: Vec::new(),
                 flags: Flags { is_typescript, ..Flags::default() },
-                exported_names: ArrayHashMap::default(),
+                exported_names: HashMap::default(),
                 finalized: false,
             }
         }
@@ -472,7 +504,7 @@ pub mod analyze_transpiled_module {
 
         pub fn request_module(&mut self, import_record_path: StringID, fetch_parameters: FetchParameters) {
             // jsc only records the attributes of the first import with the given import_record_path. so only put if not exists.
-            self.requested_modules.entry(import_record_path).or_insert(fetch_parameters);
+            self.requested_modules.insert_if_absent(import_record_path, fetch_parameters);
         }
 
         /// Replace all occurrences of `old_id` with `new_id` in records and requested_modules.
@@ -483,10 +515,10 @@ pub mod analyze_transpiled_module {
                 if *item == old_id { *item = new_id; }
             }
             if let Some(v) = self.requested_modules.swap_remove(&old_id) {
-                // Zig preserved insertion order via reIndex(); ArrayHashMap::swap_remove
-                // does not. Acceptable: callers re-serialize immediately after.
+                // Zig preserved insertion order via reIndex(); swap_remove does not.
+                // Acceptable: callers re-serialize immediately after.
                 // PERF(port): verify ordering is not load-bearing for JSC linking.
-                self.requested_modules.insert(new_id, v);
+                self.requested_modules.insert_if_absent(new_id, v);
             }
         }
 
@@ -582,18 +614,21 @@ impl RuntimeTranspilerCacheRef {
     }
 }
 
-use bun_js_parser as js_ast;
-use bun_js_parser::{Ast, B, Binding, E, Expr, G, Ref, S, Stmt, Symbol, Op};
+// TODO(b2-blocked): bun_js_parser::Op::Level (real enum, not B-1 opaque stub)
+// TODO(b2-blocked): bun_js_parser::ast::expr::Data (real variant set)
+// TODO(b2-blocked): bun_js_parser::ast::stmt::Data (real variant set)
+// TODO(b2-blocked): bun_js_parser::runtime
+// TODO(b2-blocked): bun_core::FeatureFlags
+// TODO(b2-blocked): bun_core::schema::api
+#[cfg(any())]
+mod __gated_ast_uses {
+use bun_js_parser::{Ast, B, Binding, E, Expr, G, S, Stmt, Symbol, Op};
 use bun_js_parser::Op::Level;
 use bun_js_parser::js_lexer;
 use bun_js_parser::runtime;
-use bun_core::{Output, FeatureFlags, Environment};
+use bun_core::{FeatureFlags, Environment};
 use bun_core::schema::api;
-use bun_core::MutableString;
-use bun_sys::Fd;
-
-// (gated) pub mod renamer; — see renamer_draft above
-use renamer as rename;
+}
 
 const HEX_CHARS: &[u8; 16] = b"0123456789ABCDEF";
 const FIRST_ASCII: u32 = 0x20;
@@ -709,7 +744,8 @@ pub fn estimate_length_for_utf8<const ASCII_ONLY: bool, const QUOTE_CHAR: u8>(in
     let mut remaining = input;
     let mut len: usize = 2; // for quotes
 
-    while let Some(i) = strings::index_of_needs_escape_for_javascript_string(remaining, QUOTE_CHAR) {
+    while let Some(i) = strings::index_of_needs_escape_for_java_script_string(remaining, QUOTE_CHAR) {
+        let i = i as usize;
         len += i;
         remaining = &remaining[i..];
         let char_len = strings::wtf8_byte_sequence_length_with_invalid(remaining[0]);
@@ -748,11 +784,11 @@ pub fn write_pre_quoted_string<W, const QUOTE_CHAR: u8, const ASCII_ONLY: bool, 
     writer: &mut W,
 ) -> Result<(), bun_core::Error>
 where
-    W: bun_io::Write,
+    W: Write,
 {
     // TODO(port): for ENCODING == Utf16, Zig reinterprets `text_in` as []const u16 via bytesAsSlice.
     // In Rust we keep `text_in: &[u8]` and index by code-unit width below.
-    const _: () = assert!(!(JSON && QUOTE_CHAR != b'"'), "for json, quote_char must be '\"'");
+    debug_assert!(!(JSON && QUOTE_CHAR != b'"'), "for json, quote_char must be '\"'");
 
     // PORT NOTE: this is a large hot-path function; logic is ported 1:1 but the
     // utf16 path needs &[u16] handling in Phase B.
@@ -811,7 +847,8 @@ where
             match ENCODING {
                 Encoding::Ascii | Encoding::Utf8 => {
                     let remain = &text[i + clamped_width..];
-                    if let Some(j) = strings::index_of_needs_escape_for_javascript_string(remain, QUOTE_CHAR) {
+                    if let Some(j) = strings::index_of_needs_escape_for_java_script_string(remain, QUOTE_CHAR) {
+                        let j = j as usize;
                         let text_chunk = &text[i..i + clamped_width];
                         writer.write_all(text_chunk)?;
                         i += clamped_width;
@@ -825,7 +862,7 @@ where
                 }
                 Encoding::Latin1 | Encoding::Utf16 => {
                     let mut codepoint_bytes = [0u8; 4];
-                    let codepoint_len = strings::encode_wtf8_rune(&mut codepoint_bytes, c);
+                    let codepoint_len = strings::encode_wtf8_rune(&mut codepoint_bytes, c as u32);
                     writer.write_all(&codepoint_bytes[..codepoint_len])?;
                     i += clamped_width;
                 }
@@ -891,8 +928,8 @@ where
                     ])?;
                 } else {
                     let k = usize::try_from(c - 0x10000).unwrap();
-                    let lo = usize::from(FIRST_HIGH_SURROGATE) + ((k >> 10) & 0x3FF);
-                    let hi = usize::from(FIRST_LOW_SURROGATE) + (k & 0x3FF);
+                    let lo = FIRST_HIGH_SURROGATE as usize + ((k >> 10) & 0x3FF);
+                    let hi = FIRST_LOW_SURROGATE as usize + (k & 0x3FF);
                     writer.write_all(&[
                         b'\\', b'u',
                         HEX_CHARS[lo >> 12], HEX_CHARS[(lo >> 8) & 15], HEX_CHARS[(lo >> 4) & 15], HEX_CHARS[lo & 15],
@@ -909,12 +946,12 @@ where
 pub fn quote_for_json<const ASCII_ONLY: bool>(text: &[u8], bytes: &mut MutableString) -> Result<(), bun_core::Error> {
     bytes.grow_if_needed(estimate_length_for_utf8::<ASCII_ONLY, b'"'>(text))?;
     bytes.append_char(b'"')?;
-    write_pre_quoted_string::<_, b'"', ASCII_ONLY, true, { Encoding::Utf8 }>(text, &mut bytes.writer())?;
+    write_pre_quoted_string::<_, b'"', ASCII_ONLY, true, { Encoding::Utf8 }>(text, bytes)?;
     bytes.append_char(b'"').expect("unreachable");
     Ok(())
 }
 
-pub fn write_json_string<W: bun_io::Write, const ENCODING: Encoding>(input: &[u8], writer: &mut W) -> Result<(), bun_core::Error> {
+pub fn write_json_string<W: Write, const ENCODING: Encoding>(input: &[u8], writer: &mut W) -> Result<(), bun_core::Error> {
     writer.write_all(b"\"")?;
     write_pre_quoted_string::<_, b'"', false, true, ENCODING>(input, writer)?;
     writer.write_all(b"\"")?;
@@ -922,8 +959,16 @@ pub fn write_json_string<W: bun_io::Write, const ENCODING: Encoding>(input: &[u8
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// SourceMapHandler
+// SourceMapHandler / Options — gated on bun_sourcemap::Chunk::Builder and the
+// real bun_js_parser::{runtime, Ast::*} surface.
 // ───────────────────────────────────────────────────────────────────────────
+// TODO(b2-blocked): bun_sourcemap::Chunk::Builder
+// TODO(b2-blocked): bun_js_parser::runtime::Runtime::Imports
+// TODO(b2-blocked): bun_js_parser::Ast::CommonJSNamedExports
+// TODO(b2-blocked): bun_options_types::schema::api::CssInJsBehavior
+#[cfg(any())]
+mod __gated_options {
+use super::*;
 
 pub struct SourceMapHandler<'a> {
     pub ctx: &'a mut (),
@@ -1019,23 +1064,6 @@ pub struct Options<'a> {
     pub mangled_props: Option<&'a crate::MangledProps>,
 }
 
-// Default indentation is 2 spaces
-#[derive(Clone, Copy)]
-pub struct Indentation {
-    pub scalar: usize,
-    pub count: usize,
-    pub character: IndentationCharacter,
-}
-
-impl Default for Indentation {
-    fn default() -> Self {
-        Self { scalar: 2, count: 0, character: IndentationCharacter::Space }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum IndentationCharacter { Tab, Space }
-
 impl<'a> Options<'a> {
     pub fn require_or_import_meta_for_source(&self, id: u32, was_unwrapped_require: bool) -> RequireOrImportMeta {
         if self.require_or_import_meta_for_source_callback.ctx.is_none() {
@@ -1087,6 +1115,52 @@ impl<'a> Default for Options<'a> {
         }
     }
 }
+} // mod __gated_options
+#[cfg(not(any()))]
+/// B-2 shadow stub — un-gate `__gated_options` once bun_sourcemap/bun_js_parser
+/// expose the real Chunk::Builder / runtime::Imports / Ast::* surface.
+#[derive(Default)]
+pub struct Options<'a>(core::marker::PhantomData<&'a ()>);
+
+// Default indentation is 2 spaces
+#[derive(Clone, Copy)]
+pub struct Indentation {
+    pub scalar: usize,
+    pub count: usize,
+    pub character: IndentationCharacter,
+}
+
+impl Default for Indentation {
+    fn default() -> Self {
+        Self { scalar: 2, count: 0, character: IndentationCharacter::Space }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum IndentationCharacter { Tab, Space }
+
+/// Downstream-compat re-export: B-1 callers reference `bun_js_printer::options::Indentation`.
+pub mod options {
+    pub use super::{Indentation, IndentationCharacter};
+}
+
+/// Downstream-compat: `print_json` callers pass this. The real fn body lives in
+/// `__gated_entry_points` and ignores everything but `indent`/`mangled_props`.
+#[derive(Default)]
+pub struct PrintJsonOptions<'a> {
+    pub indent: Indentation,
+    pub mangled_props: Option<&'a MangledProps>,
+}
+
+/// B-2 shadow stub — real body in `__gated_entry_points::print_json`.
+// TODO(b2-blocked): bun_js_parser::Expr (real body)
+pub fn print_json<W: WriterTrait>(
+    _writer: W,
+    _expr: js_ast::Expr,
+    _opts: PrintJsonOptions<'_>,
+) -> Result<usize, bun_core::Error> {
+    todo!("b2 stub: print_json — un-gate __gated_entry_points")
+}
 
 // ───────────────────────────────────────────────────────────────────────────
 // RequireOrImportMeta
@@ -1136,6 +1210,8 @@ impl RequireOrImportMetaCallback {
     }
 }
 
+// TODO(b2-blocked): bun_js_parser::ast::expr::Data variants
+#[cfg(any())]
 fn is_identifier_or_numeric_constant_or_property_access(expr: &Expr) -> bool {
     match &expr.data {
         Expr::Data::EIdentifier(_) | Expr::Data::EDot(_) | Expr::Data::EIndex(_) => true,
@@ -1158,7 +1234,7 @@ pub struct PrintResultSuccess {
 // stage1 compiler bug:
 // > /optional-chain-with-function.js: Evaluation failed: TypeError: (intermediate value) is not a function
 // this test failure was caused by the packed struct implementation
-#[derive(Clone, Copy, PartialEq, Eq, enumset::EnumSetType)]
+#[derive(enumset::EnumSetType)]
 pub enum ExprFlag {
     ForbidCall,
     ForbidIn,
@@ -1218,6 +1294,9 @@ impl ImportVariant {
         }
     }
 
+    // TODO(b2-blocked): bun_js_parser::S::Import
+    // TODO(b2-blocked): bun_options_types::import_record::ImportRecord::flags fields
+    #[cfg(any())]
     pub fn determine(record: &ImportRecord, s_import: &S::Import) -> ImportVariant {
         let mut variant = ImportVariant::PathOnly;
 
@@ -1251,9 +1330,46 @@ enum ClauseItemAs { Import, Var, Export, ExportFrom }
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum IsTopLevel { Yes, VarOnly, No }
 
+/// `MAY_HAVE_MODULE_INFO = IS_BUN_PLATFORM && !REWRITE_ESM_TO_CJS`
+// TODO(port): const-generic associated const — written as a free fn until adt_const_params lands.
+#[inline(always)]
+pub const fn may_have_module_info(is_bun_platform: bool, rewrite_esm_to_cjs: bool) -> bool {
+    is_bun_platform && !rewrite_esm_to_cjs
+}
+
+// PORT NOTE: Zig defined `TopLevelAndIsExport`/`TopLevel` as conditional zero-size structs when
+// !may_have_module_info. In Rust we use one shape; dead-code elimination removes the unused
+// fields when MAY_HAVE_MODULE_INFO is false.
+#[derive(Clone, Copy, Default)]
+pub struct TopLevelAndIsExport {
+    pub is_export: bool,
+    pub is_top_level: Option<analyze_transpiled_module::VarKind>,
+}
+
+#[derive(Clone, Copy)]
+pub struct TopLevel {
+    pub is_top_level: IsTopLevel,
+}
+
+impl TopLevel {
+    #[inline] pub fn init(is_top_level: IsTopLevel) -> Self { Self { is_top_level } }
+    pub fn sub_var(self) -> Self {
+        if self.is_top_level == IsTopLevel::No { return Self::init(IsTopLevel::No); }
+        Self::init(IsTopLevel::VarOnly)
+    }
+    #[inline] pub fn is_top_level(self) -> bool { self.is_top_level != IsTopLevel::No }
+}
+
 // ───────────────────────────────────────────────────────────────────────────
-// Printer (NewPrinter)
+// Printer (NewPrinter) — gated; the impl body is the bulk of this crate and
+// touches nearly every bun_js_parser AST node type, all of which are still
+// B-1 opaque stubs upstream.
 // ───────────────────────────────────────────────────────────────────────────
+// TODO(b2-blocked): bun_js_parser::{E, S, B, G, Op, Expr, Stmt, Binding} real bodies
+// TODO(b2-blocked): bun_sourcemap::Chunk::Builder
+#[cfg(any())]
+mod __gated_printer {
+use super::*;
 
 /// `fn NewPrinter(...) type` → generic struct.
 pub struct Printer<
@@ -1296,36 +1412,6 @@ pub struct Printer<
     // PORT NOTE: Zig used `if (!may_have_module_info) void else ?*ModuleInfo` — in Rust we always
     // carry the Option and gate at call sites with MAY_HAVE_MODULE_INFO.
     pub module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
-}
-
-/// `MAY_HAVE_MODULE_INFO = IS_BUN_PLATFORM && !REWRITE_ESM_TO_CJS`
-// TODO(port): const-generic associated const — written as a free fn until adt_const_params lands.
-#[inline(always)]
-const fn may_have_module_info(is_bun_platform: bool, rewrite_esm_to_cjs: bool) -> bool {
-    is_bun_platform && !rewrite_esm_to_cjs
-}
-
-// PORT NOTE: Zig defined `TopLevelAndIsExport`/`TopLevel` as conditional zero-size structs when
-// !may_have_module_info. In Rust we use one shape; dead-code elimination removes the unused
-// fields when MAY_HAVE_MODULE_INFO is false.
-#[derive(Clone, Copy, Default)]
-pub struct TopLevelAndIsExport {
-    pub is_export: bool,
-    pub is_top_level: Option<analyze_transpiled_module::VarKind>,
-}
-
-#[derive(Clone, Copy)]
-pub struct TopLevel {
-    pub is_top_level: IsTopLevel,
-}
-
-impl TopLevel {
-    #[inline] pub fn init(is_top_level: IsTopLevel) -> Self { Self { is_top_level } }
-    pub fn sub_var(self) -> Self {
-        if self.is_top_level == IsTopLevel::No { return Self::init(IsTopLevel::No); }
-        Self::init(IsTopLevel::VarOnly)
-    }
-    #[inline] pub fn is_top_level(self) -> bool { self.is_top_level != IsTopLevel::No }
 }
 
 /// The handling of binary expressions is convoluted because we're using
@@ -5889,6 +5975,7 @@ where
         self.unindent();
     }
 }
+} // mod __gated_printer
 
 // ───────────────────────────────────────────────────────────────────────────
 // PrintArg helper trait (Zig's `anytype` for `print()`)
@@ -5909,7 +5996,7 @@ impl<const N: usize> PrintArg for &[u8; N] {
 
 /// Trait covering `B::ArrayItem` / `B::Property` for `maybe_print_default_binding_value`.
 pub trait HasDefaultValue {
-    fn default_value(&self) -> Option<Expr>;
+    fn default_value(&self) -> Option<js_ast::Expr>;
 }
 // TODO(port): impl HasDefaultValue for B::ArrayItem and B::Property in bun_js_parser.
 
@@ -5961,7 +6048,7 @@ pub trait WriterTrait {
 }
 
 pub struct StdWriterAdapter<'a, W: ?Sized>(&'a mut W);
-impl<'a, W: WriterTrait + ?Sized> bun_io::Write for StdWriterAdapter<'a, W> {
+impl<'a, W: WriterTrait + ?Sized> Write for StdWriterAdapter<'a, W> {
     fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
         self.0.print_slice(bytes);
         Ok(())
@@ -6093,10 +6180,10 @@ pub struct DirectWriter {
 impl DirectWriter {
     pub fn write(&mut self, buf: &[u8]) -> Result<usize, bun_core::Error> {
         // TODO(port): Zig used std.posix.write directly. Route via bun_sys::write.
-        bun_sys::write(self.handle, buf).map_err(Into::into)
+        bun_sys::write(self.handle, buf).map_err(|e| bun_core::Error::from_errno(i32::from(e.errno)))
     }
     pub fn write_all(&mut self, buf: &[u8]) -> Result<(), bun_core::Error> {
-        let _ = bun_sys::write(self.handle, buf)?;
+        let _ = self.write(buf)?;
         Ok(())
     }
 }
@@ -6104,7 +6191,7 @@ impl DirectWriter {
 pub struct BufferWriter {
     pub buffer: MutableString,
     pub written: Box<[u8]>,
-    pub sentinel: bun_str::ZStr<'static>, // TODO(port): lifetime — Zig stored a sentinel slice into `buffer`
+    pub sentinel: &'static bun_core::ZStr, // TODO(port): lifetime — Zig stored a sentinel slice into `buffer`
     pub append_null_byte: bool,
     pub append_newline: bool,
     pub approximate_newline_count: usize,
@@ -6124,7 +6211,7 @@ impl BufferWriter {
         BufferWriter {
             buffer: MutableString::init_empty(),
             written: Box::default(),
-            sentinel: bun_str::ZStr::EMPTY,
+            sentinel: bun_core::ZStr::EMPTY,
             append_null_byte: false,
             append_newline: false,
             approximate_newline_count: 0,
@@ -6134,11 +6221,12 @@ impl BufferWriter {
 
     pub fn print(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), bun_core::Error> {
         use std::io::Write as _;
-        write!(self.buffer.list_writer(), "{}", args).map_err(|_| bun_core::err!("WriteFailed"))
+        write!(&mut self.buffer.list, "{}", args).map_err(|_| bun_core::err!("WriteFailed"))
     }
 
     pub fn write_byte_n_times(&mut self, byte: u8, n: usize) -> Result<(), bun_core::Error> {
-        self.buffer.append_char_n_times(byte, n)
+        self.buffer.append_char_n_times(byte, n)?;
+        Ok(())
     }
     // alias
     pub fn splat_byte_all(&mut self, byte: u8, n: usize) -> Result<(), bun_core::Error> {
@@ -6260,6 +6348,17 @@ pub enum Format {
 
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
 pub enum GenerateSourceMap { Disable, Lazy, Eager }
+
+// ───────────────────────────────────────────────────────────────────────────
+// Top-level print entry points — gated on Printer + bun_js_parser::Ast surface.
+// ───────────────────────────────────────────────────────────────────────────
+// TODO(b2-blocked): bun_js_parser::Ast (real fields)
+// TODO(b2-blocked): bun_js_parser::Part
+// TODO(b2-blocked): bun_sourcemap::Chunk::Builder
+// TODO(b2-blocked): bun_sourcemap::LineOffsetTable::generate
+#[cfg(any())]
+mod __gated_entry_points {
+use super::*;
 
 pub fn get_source_map_builder<const GENERATE_SOURCE_MAP: GenerateSourceMap, const IS_BUN_PLATFORM: bool>(
     opts: &Options,
@@ -6658,6 +6757,7 @@ pub fn print_common_js<W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SO
 
     Ok(usize::try_from(printer.writer.written().max(0)).unwrap())
 }
+} // mod __gated_entry_points
 
 /// Serializes ModuleInfo to an owned byte slice. Returns null on failure.
 /// The caller is responsible for freeing the returned slice.
@@ -6679,5 +6779,3 @@ pub fn serialize_module_info(module_info: Option<&mut analyze_transpiled_module:
 //   todos:      38
 //   notes:      Huge comptime-generic printer; ws() needs const-eval macro, NewWriter→trait reshape, several arena-mutation sites & callback thunks stubbed; defer-if-wrap reshaped manually in printRequireOrImportExpr; print_stmt's `defer prev_stmt_tag = ...` expanded to per-return assignments for borrowck.
 // ──────────────────────────────────────────────────────────────────────────
-
-} // mod __phase_a_draft

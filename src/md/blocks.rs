@@ -7,7 +7,7 @@ use core::mem::{align_of, size_of};
 
 type BlockHeader = parser::BlockHeader;
 
-impl Parser {
+impl Parser<'_> {
     pub fn process_doc(&mut self) -> Result<(), parser::Error> {
         let dummy_blank = Line { r#type: LineType::Blank, ..Line::default() };
         let mut pivot_line = dummy_blank;
@@ -130,7 +130,7 @@ impl Parser {
         // Determine line type
         loop {
             // Check for fenced code continuation/closing (BEFORE blank line check, like md4c)
-            if effective_pivot_type == LineType::FencedCode {
+            if effective_pivot_type == LineType::Fencedcode {
                 line.beg = off;
 
                 // Check for closing fence
@@ -149,7 +149,7 @@ impl Parser {
                     } else {
                         line.indent = 0;
                     }
-                    line.r#type = LineType::FencedCode;
+                    line.r#type = LineType::Fencedcode;
                     break;
                 }
                 // If containers don't match, fenced code is implicitly ended.
@@ -183,8 +183,8 @@ impl Parser {
             // Check for blank line
             if off >= self.size || helpers::is_newline(self.text[off as usize]) {
                 // Indented code continuation through blank lines
-                if effective_pivot_type == LineType::IndentedCode && n_parents == self.n_containers {
-                    line.r#type = LineType::IndentedCode;
+                if effective_pivot_type == LineType::Indentedcode && n_parents == self.n_containers {
+                    line.r#type = LineType::Indentedcode;
                     if line.indent > self.code_indent_offset {
                         line.indent -= self.code_indent_offset;
                     } else {
@@ -265,9 +265,9 @@ impl Parser {
             }
 
             // Indented code continuation
-            if effective_pivot_type == LineType::IndentedCode {
+            if effective_pivot_type == LineType::Indentedcode {
                 if line.indent >= self.code_indent_offset {
-                    line.r#type = LineType::IndentedCode;
+                    line.r#type = LineType::Indentedcode;
                     line.indent -= self.code_indent_offset;
                     line.data = 0;
                     break;
@@ -283,7 +283,7 @@ impl Parser {
             {
                 let setext_result = self.is_setext_underline(off);
                 if setext_result.is_setext {
-                    line.r#type = LineType::SetextUnderline;
+                    line.r#type = LineType::Setextunderline;
                     line.data = setext_result.level;
                     break;
                 }
@@ -348,7 +348,7 @@ impl Parser {
 
             // Check for indented code
             if line.indent >= self.code_indent_offset && effective_pivot_type != LineType::Text {
-                line.r#type = LineType::IndentedCode;
+                line.r#type = LineType::Indentedcode;
                 line.indent -= self.code_indent_offset;
                 line.data = 0;
                 break;
@@ -453,7 +453,7 @@ impl Parser {
             {
                 let atx_result = self.is_atx_header_line(off);
                 if atx_result.is_atx {
-                    line.r#type = LineType::AtxHeader;
+                    line.r#type = LineType::Atxheader;
                     line.data = atx_result.level;
                     line.beg = atx_result.content_beg;
 
@@ -493,7 +493,7 @@ impl Parser {
             {
                 let fence_result = self.is_opening_code_fence(off);
                 if fence_result.is_fence {
-                    line.r#type = LineType::FencedCode;
+                    line.r#type = LineType::Fencedcode;
                     line.data = fence_result.fence_data;
                     line.enforce_new_block = true;
                     break;
@@ -540,7 +540,7 @@ impl Parser {
                         self.count_table_row_columns(header_line.beg, header_line.end);
                     if header_cols == tbl_result.col_count {
                         line.data = tbl_result.col_count;
-                        line.r#type = LineType::TableUnderline;
+                        line.r#type = LineType::Tableunderline;
                         break;
                     }
                 }
@@ -602,7 +602,7 @@ impl Parser {
         line.end = off;
 
         // Trim trailing closing marks for ATX header
-        if line.r#type == LineType::AtxHeader {
+        if line.r#type == LineType::Atxheader {
             let mut tmp = line.end;
             while tmp > line.beg && helpers::is_blank(self.text[(tmp - 1) as usize]) {
                 tmp -= 1;
@@ -620,8 +620,8 @@ impl Parser {
 
         // Trim trailing spaces (except for code/HTML/text)
         // Text lines keep trailing spaces for hard line break detection
-        if line.r#type != LineType::IndentedCode
-            && line.r#type != LineType::FencedCode
+        if line.r#type != LineType::Indentedcode
+            && line.r#type != LineType::Fencedcode
             && line.r#type != LineType::Html
             && line.r#type != LineType::Text
         {
@@ -719,7 +719,7 @@ impl Parser {
         }
 
         // Opening code fence: start block but don't include fence line as content
-        if line.r#type == LineType::FencedCode && line.enforce_new_block {
+        if line.r#type == LineType::Fencedcode && line.enforce_new_block {
             self.end_current_block()?;
             self.start_new_block(line)?;
             self.fence_indent = line.indent;
@@ -745,7 +745,7 @@ impl Parser {
         }
 
         // Single-line blocks
-        if line.r#type == LineType::Hr || line.r#type == LineType::AtxHeader {
+        if line.r#type == LineType::Hr || line.r#type == LineType::Atxheader {
             self.end_current_block()?;
             self.start_new_block(line)?;
             self.add_line_to_current_block(line)?;
@@ -755,7 +755,7 @@ impl Parser {
         }
 
         // Setext underline changes current block to header
-        if line.r#type == LineType::SetextUnderline {
+        if line.r#type == LineType::Setextunderline {
             if let Some(cb_off) = self.current_block {
                 let blk = self.get_block_at(cb_off);
                 blk.block_type = BlockType::H;
@@ -778,7 +778,7 @@ impl Parser {
         }
 
         // Table underline
-        if line.r#type == LineType::TableUnderline {
+        if line.r#type == LineType::Tableunderline {
             if let Some(cb_off) = self.current_block {
                 if self.current_block_lines.len() > 1 {
                     // GFM: table interrupts paragraph. Split: lines 0..N-2 stay as paragraph,
@@ -838,10 +838,10 @@ impl Parser {
     pub fn start_new_block(&mut self, line: &Line) -> Result<(), bun_alloc::AllocError> {
         let block_type: BlockType = match line.r#type {
             LineType::Hr => BlockType::Hr,
-            LineType::AtxHeader => BlockType::H,
-            LineType::FencedCode | LineType::IndentedCode => BlockType::Code,
+            LineType::Atxheader => BlockType::H,
+            LineType::Fencedcode | LineType::Indentedcode => BlockType::Code,
             LineType::Html => BlockType::Html,
-            LineType::Table | LineType::TableUnderline => BlockType::Table,
+            LineType::Table | LineType::Tableunderline => BlockType::Table,
             _ => BlockType::P,
         };
 
@@ -863,6 +863,7 @@ impl Parser {
         let hdr = self.get_block_header_at(aligned);
         *hdr = BlockHeader {
             block_type,
+            _pad: [0; 3],
             flags: 0,
             data: line.data,
             n_lines: 0,
@@ -888,21 +889,24 @@ impl Parser {
 
     pub fn end_current_block(&mut self) -> Result<(), bun_alloc::AllocError> {
         if let Some(cb_off) = self.current_block {
-            let mut hdr = self.get_block_header_at(cb_off);
-
-            // Consume link ref defs from setext headings (md4c: md_end_current_block).
-            // For regular paragraphs, ref defs are consumed in buildRefDefHashtable.
-            let is_setext =
-                hdr.block_type == BlockType::H && (hdr.flags & types::BLOCK_SETEXT_HEADER) != 0;
+            // PORT NOTE: reshaped for borrowck — capture header fields, drop the &mut borrow,
+            // then access other &self fields.
+            let (is_setext, hdr_n_lines) = {
+                let hdr = self.get_block_header_at(cb_off);
+                (
+                    hdr.block_type == BlockType::H && (hdr.flags & types::BLOCK_SETEXT_HEADER) != 0,
+                    hdr.n_lines,
+                )
+            };
             if is_setext
-                && hdr.n_lines > 0
+                && hdr_n_lines > 0
                 && self.current_block_lines.len() > 0
                 && self.current_block_lines[0].beg < self.size
                 && self.text[self.current_block_lines[0].beg as usize] == b'['
             {
                 self.consume_ref_defs_from_current_block();
-                hdr = self.get_block_header_at(cb_off);
             }
+            let mut hdr = self.get_block_header_at(cb_off);
 
             // Handle setext heading after ref def consumption
             if hdr.block_type == BlockType::H && (hdr.flags & types::BLOCK_SETEXT_HEADER) != 0 {
@@ -937,14 +941,15 @@ impl Parser {
     }
 
     pub fn consume_ref_defs_from_current_block(&mut self) {
-        let items = self.current_block_lines.as_slice();
-        if items.is_empty() {
+        if self.current_block_lines.is_empty() {
             return;
         }
 
         // Merge lines into buffer for ref def parsing
         self.buffer.clear();
-        for vline in items {
+        // PORT NOTE: reshaped for borrowck — index instead of borrowing items slice.
+        for idx in 0..self.current_block_lines.len() {
+            let vline = self.current_block_lines[idx];
             if vline.beg > vline.end || vline.end > self.size {
                 continue;
             }
@@ -955,18 +960,24 @@ impl Parser {
                 .extend_from_slice(&self.text[vline.beg as usize..vline.end as usize]);
         }
 
-        // PORT NOTE: reshaped for borrowck — re-borrow buffer after filling
-        let merged_len = self.buffer.len();
+        // PORT NOTE: reshaped for borrowck — move merged buffer out of self so
+        // parse_ref_def/normalize_label can borrow &self/&mut self.
+        let merged = core::mem::take(&mut self.buffer);
         let mut pos: usize = 0;
         let mut lines_consumed: u32 = 0;
 
-        while pos < merged_len {
-            let merged = self.buffer.as_slice();
-            let Some(result) = self.parse_ref_def(merged, pos) else {
+        while pos < merged.len() {
+            let Some(result) = self.parse_ref_def(&merged, pos) else {
                 break;
             };
 
-            let norm_label = self.normalize_label(result.label);
+            // Capture borrowed result fields before &mut self calls.
+            let raw_label: Box<[u8]> = Box::from(result.label);
+            let dest_dupe: Box<[u8]> = Box::from(result.dest);
+            let title_dupe: Box<[u8]> = Box::from(result.title);
+            let end_pos = result.end_pos;
+
+            let norm_label = self.normalize_label(&raw_label);
             if norm_label.is_empty() {
                 break;
             }
@@ -974,45 +985,46 @@ impl Parser {
             // First definition wins
             let mut already_exists = false;
             for existing in self.ref_defs.iter() {
-                if existing.label.as_ref() == norm_label.as_ref() {
+                if existing.label[..] == norm_label[..] {
                     already_exists = true;
                     break;
                 }
             }
             if !already_exists {
-                let dest_dupe = Box::<[u8]>::from(result.dest);
-                let title_dupe = Box::<[u8]>::from(result.title);
-                self.ref_defs.push(types::RefDef {
-                    label: norm_label,
+                self.ref_defs.push(crate::ref_defs::RefDef {
+                    label: norm_label.into_boxed_slice(),
                     dest: dest_dupe,
                     title: title_dupe,
                 });
                 // TODO(port): Zig used `catch return` on push; Vec::push is infallible here
             }
 
-            let merged = self.buffer.as_slice();
             let mut newlines: u32 = 0;
-            for &mc in &merged[pos..result.end_pos] {
+            for &mc in &merged[pos..end_pos] {
                 if mc == b'\n' {
                     newlines += 1;
                 }
             }
-            if result.end_pos >= merged.len()
-                && (result.end_pos == pos || merged[result.end_pos - 1] != b'\n')
+            if end_pos >= merged.len()
+                && (end_pos == pos || merged[end_pos - 1] != b'\n')
             {
                 newlines += 1;
             }
             lines_consumed += newlines;
-            pos = result.end_pos;
+            pos = end_pos;
         }
+
+        // Restore buffer for reuse.
+        self.buffer = merged;
 
         if lines_consumed > 0 {
             if let Some(cb_off) = self.current_block {
-                let hdr = self.get_block_header_at(cb_off);
-                if lines_consumed >= hdr.n_lines {
+                // PORT NOTE: reshaped for borrowck — capture n_lines, mutate, then write back.
+                let hdr_n_lines = self.get_block_header_at(cb_off).n_lines;
+                if lines_consumed >= hdr_n_lines {
                     // All lines consumed
                     self.current_block_lines.clear();
-                    hdr.n_lines = 0;
+                    self.get_block_header_at(cb_off).n_lines = 0;
                 } else {
                     // Remove first lines_consumed lines
                     let total = self.current_block_lines.len();
@@ -1021,23 +1033,13 @@ impl Parser {
                     self.current_block_lines
                         .copy_within(lines_consumed as usize..total, 0);
                     self.current_block_lines.truncate(remaining);
-                    hdr.n_lines -= lines_consumed;
+                    self.get_block_header_at(cb_off).n_lines = hdr_n_lines - lines_consumed;
                 }
             }
         }
     }
 
-    pub fn get_block_header_at(&mut self, off: usize) -> &mut BlockHeader {
-        // SAFETY: off is an aligned offset into block_bytes produced by start_new_block /
-        // push_container_bytes; the buffer holds a valid BlockHeader at that offset.
-        // TODO(port): borrowck — this returns &mut into self.block_bytes while other
-        // &mut self borrows may be live at call sites; Phase B may need raw *mut.
-        unsafe { &mut *(self.block_bytes.as_mut_ptr().add(off).cast::<BlockHeader>()) }
-    }
-
-    pub fn get_block_at(&mut self, off: usize) -> &mut BlockHeader {
-        self.get_block_header_at(off)
-    }
+    // get_block_header_at / get_block_at moved to parser.rs (shared by containers.rs).
 }
 
 // TODO(port): `Line.type` field — Zig uses `.type`; Rust uses `r#type`. The variant

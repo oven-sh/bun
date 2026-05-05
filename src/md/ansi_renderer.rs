@@ -12,7 +12,7 @@ use bun_str::strings;
 
 use crate::helpers;
 use crate::root;
-use crate::types::{self, Align, BlockType, Renderer, SpanDetail, SpanType, TextType};
+use crate::types::{self, Align, BlockType, JsResult, Renderer, RendererImpl, SpanDetail, SpanType, TextType};
 
 pub struct Theme<'a> {
     /// True when the terminal background is light. Controls color choices
@@ -72,40 +72,21 @@ impl ImageUrlCollector {
         ImageUrlCollector::default()
     }
 
-    pub fn renderer(&mut self) -> Renderer {
-        Renderer {
-            ptr: self as *mut _ as *mut c_void,
-            vtable: &Self::VTABLE,
-        }
+    pub fn renderer(&mut self) -> Renderer<'_> {
+        Renderer { ptr: self }
     }
+}
 
-    const VTABLE: types::RendererVTable = types::RendererVTable {
-        enter_block: Self::noop_enter_block,
-        leave_block: Self::noop_leave_block,
-        enter_span: Self::enter_span_impl,
-        leave_span: Self::noop_leave_span,
-        text: Self::noop_text,
-    };
-
-    fn noop_enter_block(_: *mut c_void, _: BlockType, _: u32, _: u32) -> JsResult<()> {
-        Ok(())
-    }
-    fn noop_leave_block(_: *mut c_void, _: BlockType, _: u32) -> JsResult<()> {
-        Ok(())
-    }
-    fn noop_leave_span(_: *mut c_void, _: SpanType) -> JsResult<()> {
-        Ok(())
-    }
-    fn noop_text(_: *mut c_void, _: TextType, _: &[u8]) -> JsResult<()> {
-        Ok(())
-    }
-
-    fn enter_span_impl(ptr: *mut c_void, span_type: SpanType, detail: SpanDetail) -> JsResult<()> {
+// PORT NOTE: Zig manual VTable collapsed into RendererImpl trait.
+impl RendererImpl for ImageUrlCollector {
+    fn enter_block(&mut self, _: BlockType, _: u32, _: u32) -> JsResult<()> { Ok(()) }
+    fn leave_block(&mut self, _: BlockType, _: u32) -> JsResult<()> { Ok(()) }
+    fn leave_span(&mut self, _: SpanType) -> JsResult<()> { Ok(()) }
+    fn text(&mut self, _: TextType, _: &[u8]) -> JsResult<()> { Ok(()) }
+    fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail<'_>) -> JsResult<()> {
         if span_type != SpanType::Img {
             return Ok(());
         }
-        // SAFETY: ptr was set from `&mut ImageUrlCollector` in `renderer()`.
-        let self_: &mut ImageUrlCollector = unsafe { &mut *(ptr as *mut ImageUrlCollector) };
         if detail.href.is_empty() {
             return Ok(());
         }
@@ -113,7 +94,7 @@ impl ImageUrlCollector {
         // is freed when renderWithRenderer returns (p.deinit). Dupe it so
         // callers can safely read collector.urls after rendering finishes.
         let owned = Box::<[u8]>::from(detail.href);
-        self_.urls.push(owned);
+        self.urls.push(owned);
         Ok(())
     }
 }
@@ -300,54 +281,8 @@ impl<'a> AnsiRenderer<'a> {
         Ok(core::mem::take(&mut self.out.list).into_boxed_slice())
     }
 
-    pub fn renderer(&mut self) -> Renderer {
-        Renderer {
-            ptr: self as *mut _ as *mut c_void,
-            vtable: &Self::VTABLE,
-        }
-    }
-
-    pub const VTABLE: types::RendererVTable = types::RendererVTable {
-        enter_block: Self::enter_block_impl,
-        leave_block: Self::leave_block_impl,
-        enter_span: Self::enter_span_impl,
-        leave_span: Self::leave_span_impl,
-        text: Self::text_impl,
-    };
-
-    fn enter_block_impl(ptr: *mut c_void, block_type: BlockType, data: u32, flags: u32) -> JsResult<()> {
-        // SAFETY: ptr was set from `&mut AnsiRenderer` in `renderer()`.
-        let self_: &mut AnsiRenderer = unsafe { &mut *(ptr as *mut AnsiRenderer) };
-        self_.enter_block(block_type, data, flags);
-        Ok(())
-    }
-
-    fn leave_block_impl(ptr: *mut c_void, block_type: BlockType, data: u32) -> JsResult<()> {
-        // SAFETY: ptr was set from `&mut AnsiRenderer` in `renderer()`.
-        let self_: &mut AnsiRenderer = unsafe { &mut *(ptr as *mut AnsiRenderer) };
-        self_.leave_block(block_type, data);
-        Ok(())
-    }
-
-    fn enter_span_impl(ptr: *mut c_void, span_type: SpanType, detail: SpanDetail) -> JsResult<()> {
-        // SAFETY: ptr was set from `&mut AnsiRenderer` in `renderer()`.
-        let self_: &mut AnsiRenderer = unsafe { &mut *(ptr as *mut AnsiRenderer) };
-        self_.enter_span(span_type, detail);
-        Ok(())
-    }
-
-    fn leave_span_impl(ptr: *mut c_void, span_type: SpanType) -> JsResult<()> {
-        // SAFETY: ptr was set from `&mut AnsiRenderer` in `renderer()`.
-        let self_: &mut AnsiRenderer = unsafe { &mut *(ptr as *mut AnsiRenderer) };
-        self_.leave_span(span_type);
-        Ok(())
-    }
-
-    fn text_impl(ptr: *mut c_void, text_type: TextType, content: &[u8]) -> JsResult<()> {
-        // SAFETY: ptr was set from `&mut AnsiRenderer` in `renderer()`.
-        let self_: &mut AnsiRenderer = unsafe { &mut *(ptr as *mut AnsiRenderer) };
-        self_.text(text_type, content);
-        Ok(())
+    pub fn renderer(&mut self) -> Renderer<'_> {
+        Renderer { ptr: self }
     }
 
     // ========================================
@@ -825,7 +760,7 @@ impl<'a> AnsiRenderer<'a> {
             let word = &data[i..j];
             let word_width = visible_width(word);
             let avail = max.saturating_sub(indent);
-            if avail > 0 && word_width > usize::from(avail) {
+            if avail > 0 && word_width > avail as usize {
                 // Word can never fit on a fresh line — hard-break from
                 // wherever the cursor is so we don't waste the tail of
                 // the current line.
@@ -836,7 +771,7 @@ impl<'a> AnsiRenderer<'a> {
                         self.wrap_break();
                         continue;
                     }
-                    let mut cut = visible_index_at(rest, usize::from(r));
+                    let mut cut = visible_index_at(rest, r as usize);
                     if cut == 0 {
                         cut = rest
                             .len()
@@ -852,7 +787,7 @@ impl<'a> AnsiRenderer<'a> {
                 }
             } else {
                 if self.col != 0
-                    && usize::from(self.col) + word_width > usize::from(max)
+                    && self.col as usize + word_width > max as usize
                     && self.col > indent
                 {
                     self.wrap_break();
@@ -880,9 +815,9 @@ impl<'a> AnsiRenderer<'a> {
                 // line; if it's wider than that it will hard-break, so
                 // emit the space and let the break start mid-line.
                 if self.col != 0
-                    && usize::from(self.col) + 1 + next_word_width > usize::from(max)
+                    && self.col as usize + 1 + next_word_width > max as usize
                     && self.col > indent
-                    && next_word_width <= usize::from(next_avail)
+                    && next_word_width <= next_avail as usize
                 {
                     self.write_raw(b"\n");
                     self.last_was_newline = true;
@@ -973,7 +908,7 @@ impl<'a> AnsiRenderer<'a> {
             if tw > 0 {
                 let max = u32::from(self.theme.columns);
                 let indent = self.current_indent();
-                if self.col > indent && usize::from(self.col) + tw > usize::from(max) {
+                if self.col > indent && self.col as usize + tw > max as usize {
                     self.wrap_break();
                 }
             }
@@ -1014,7 +949,7 @@ impl<'a> AnsiRenderer<'a> {
                 self.wrap_break();
                 continue;
             }
-            let cut = visible_index_at(rest, usize::from(room));
+            let cut = visible_index_at(rest, room as usize);
             if cut == rest.len() {
                 self.emit_inline(rest);
                 self.col += u32::try_from(visible_width(rest)).unwrap();
@@ -1343,7 +1278,7 @@ impl<'a> AnsiRenderer<'a> {
             let width = if self.theme.columns == 0 {
                 text_w
             } else {
-                text_w.min(usize::from(self.theme.columns).saturating_sub(usize::from(indent_cols)))
+                text_w.min((self.theme.columns as usize).saturating_sub(indent_cols as usize))
             };
             if self.theme.colors {
                 self.out.write(color(AnsiColor::Dim));
@@ -1463,19 +1398,27 @@ impl<'a> AnsiRenderer<'a> {
     }
 
     fn write_highlighted_js(&mut self, line: &[u8]) {
-        let highlighter = bun_core::fmt::QuickAndDirtyJavaScriptSyntaxHighlighter {
-            text: line,
-            opts: bun_core::fmt::QuickAndDirtyJavaScriptSyntaxHighlighterOpts {
-                enable_colors: true,
-                check_for_unhighlighted_write: false,
-            },
-        };
-        let mut aw: Vec<u8> = Vec::new();
-        // TODO(port): QuickAndDirtyJavaScriptSyntaxHighlighter::format
-        // signature/shape may differ once bun_core::fmt is ported.
-        match write!(&mut aw, "{}", highlighter) {
-            Ok(()) => self.out.write(&aw),
-            Err(_) => self.out.write(line),
+        #[cfg(any())]
+        {
+            let highlighter = bun_core::fmt::QuickAndDirtyJavaScriptSyntaxHighlighter {
+                text: line,
+                opts: bun_core::fmt::QuickAndDirtyJavaScriptSyntaxHighlighterOpts {
+                    enable_colors: true,
+                    check_for_unhighlighted_write: false,
+                },
+            };
+            let mut aw: Vec<u8> = Vec::new();
+            // TODO(port): QuickAndDirtyJavaScriptSyntaxHighlighter::format
+            // signature/shape may differ once bun_core::fmt is ported.
+            match write!(&mut aw, "{}", highlighter) {
+                Ok(()) => self.out.write(&aw),
+                Err(_) => self.out.write(line),
+            }
+        }
+        #[cfg(not(any()))]
+        {
+            // TODO(b2-blocked): bun_core::fmt::QuickAndDirtyJavaScriptSyntaxHighlighter
+            self.out.write(line);
         }
     }
 
@@ -1514,11 +1457,11 @@ impl<'a> AnsiRenderer<'a> {
         // leading `│` and the current indent.
         if self.theme.columns > 0 {
             let indent = self.current_indent();
-            let mut total: usize = usize::from(indent) + 1;
+            let mut total: usize = indent as usize + 1;
             for w in &widths {
                 total += w + 3;
             }
-            let budget = usize::from(self.theme.columns);
+            let budget = self.theme.columns as usize;
             while total > budget {
                 let mut widest: usize = 0;
                 for (i, w) in widths.iter().enumerate() {
@@ -1913,9 +1856,19 @@ impl<'a> AnsiRenderer<'a> {
     /// that don't understand the APC sequence silently drop it.
     fn emit_kitty_image_file(&mut self, path: &[u8]) {
         // Base64-encode the file path (Kitty expects the payload to be b64).
-        let encoded_len = bun_core::base64::encode_len(path);
-        let mut encoded = vec![0u8; encoded_len];
-        let _ = bun_core::base64::encode(&mut encoded, path);
+        #[cfg(any())]
+        let encoded = {
+            let encoded_len = bun_core::base64::encode_len(path);
+            let mut encoded = vec![0u8; encoded_len];
+            let _ = bun_core::base64::encode(&mut encoded, path);
+            encoded
+        };
+        #[cfg(not(any()))]
+        let encoded: Vec<u8> = {
+            // TODO(b2-blocked): bun_core::base64::encode
+            let _ = path;
+            Vec::new()
+        };
         self.write_raw_no_color(b"\x1b_Ga=T,t=f,f=100,q=2;");
         self.write_raw_no_color(&encoded);
         self.write_raw_no_color(b"\x1b\\");
@@ -2075,7 +2028,7 @@ impl<'s> CellAnsiState<'s> {
                     };
                     let body_stripped = &body[0..body_end];
                     if let Some(semi) = strings::index_of_char(body_stripped, b';') {
-                        let url = &body_stripped[usize::from(semi) + 1..];
+                        let url = &body_stripped[semi as usize + 1..];
                         if url.is_empty() {
                             self.link = None;
                         } else {
@@ -2291,13 +2244,27 @@ fn code_span_open(light: bool) -> &'static [u8] {
 /// Visible printable width of a UTF-8 byte slice, excluding ANSI escape
 /// sequences. Correctly handles multi-width graphemes (CJK, emoji).
 fn visible_width(s: &[u8]) -> usize {
-    bun_str::strings::visible::width::exclude_ansi_colors::utf8(s)
+    #[cfg(any())]
+    { bun_str::strings::visible::width::exclude_ansi_colors::utf8(s) }
+    #[cfg(not(any()))]
+    {
+        // TODO(b2-blocked): bun_string::strings::visible::width::exclude_ansi_colors::utf8
+        let _ = s;
+        0
+    }
 }
 
 /// Byte index of the longest prefix of `s` whose visible width is <=
 /// `max_cols`. ANSI escapes are zero-width and always included.
 fn visible_index_at(s: &[u8], max_cols: usize) -> usize {
-    bun_str::strings::visible::width::exclude_ansi_colors::utf8_index_at_width(s, max_cols)
+    #[cfg(any())]
+    { bun_str::strings::visible::width::exclude_ansi_colors::utf8_index_at_width(s, max_cols) }
+    #[cfg(not(any()))]
+    {
+        // TODO(b2-blocked): bun_string::strings::visible::width::exclude_ansi_colors::utf8_index_at_width
+        let _ = max_cols;
+        s.len()
+    }
 }
 
 fn is_js_lang(lang: &[u8]) -> bool {
@@ -2306,7 +2273,7 @@ fn is_js_lang(lang: &[u8]) -> bool {
         b"ts", b"typescript", b"tsx", b"mts", b"cts",
     ];
     for n in NAMES {
-        if strings::eql_case_insensitive_ascii(lang, n, true) {
+        if strings::eql_case_insensitive_ascii::<true>(lang, n) {
             return true;
         }
     }
@@ -2315,15 +2282,15 @@ fn is_js_lang(lang: &[u8]) -> bool {
 
 fn extract_language(src_text: &[u8], info_beg: u32) -> &[u8] {
     let mut lang_end: u32 = info_beg;
-    while usize::from(lang_end) < src_text.len() {
-        let c = src_text[usize::from(lang_end)];
+    while (lang_end as usize) < src_text.len() {
+        let c = src_text[lang_end as usize];
         if c == b' ' || c == b'\t' || c == b'\n' || c == b'\r' {
             break;
         }
         lang_end += 1;
     }
     if lang_end > info_beg {
-        return &src_text[usize::from(info_beg)..usize::from(lang_end)];
+        return &src_text[info_beg as usize..lang_end as usize];
     }
     b""
 }
@@ -2350,7 +2317,7 @@ fn resolve_href(detail: &SpanDetail) -> Result<Box<[u8]>, bun_alloc::AllocError>
 /// 1. `COLORFGBG` env var (set by rxvt, xterm, Konsole, iTerm2 in some modes)
 /// 2. Dark mode (default)
 pub fn detect_light_background() -> bool {
-    if let Some(value) = bun_core::getenv_z(b"COLORFGBG") {
+    if let Some(value) = bun_core::getenv_z(bun_core::zstr!("COLORFGBG")) {
         // Format: "fg;bg" or "fg;default;bg" — only 7 (white) and 15
         // (bright white) are light terminal backgrounds. Bright colors
         // 9-14 are high-intensity foreground codes, not light backgrounds.
@@ -2378,19 +2345,19 @@ pub fn detect_light_background() -> bool {
 pub fn detect_kitty_graphics() -> bool {
     // TERM=dumb is the standard opt-out for any ESC handling — bail
     // before any env match or probe runs.
-    if let Some(term) = bun_core::getenv_z(b"TERM") {
-        if strings::eql_case_insensitive_ascii(term, b"dumb", true) {
+    if let Some(term) = bun_core::getenv_z(bun_core::zstr!("TERM")) {
+        if strings::eql_case_insensitive_ascii::<true>(term, b"dumb") {
             return false;
         }
     }
     // Fast path: env vars set by known-compatible terminals.
-    if bun_core::getenv_z(b"KITTY_WINDOW_ID").is_some() {
+    if bun_core::getenv_z(bun_core::zstr!("KITTY_WINDOW_ID")).is_some() {
         return true;
     }
-    if bun_core::getenv_z(b"GHOSTTY_RESOURCES_DIR").is_some() {
+    if bun_core::getenv_z(bun_core::zstr!("GHOSTTY_RESOURCES_DIR")).is_some() {
         return true;
     }
-    if let Some(term) = bun_core::getenv_z(b"TERM") {
+    if let Some(term) = bun_core::getenv_z(bun_core::zstr!("TERM")) {
         if strings::index_of(term, b"kitty").is_some() {
             return true;
         }
@@ -2398,11 +2365,11 @@ pub fn detect_kitty_graphics() -> bool {
             return true;
         }
     }
-    if let Some(tp) = bun_core::getenv_z(b"TERM_PROGRAM") {
-        if strings::eql_case_insensitive_ascii(tp, b"wezterm", true) {
+    if let Some(tp) = bun_core::getenv_z(bun_core::zstr!("TERM_PROGRAM")) {
+        if strings::eql_case_insensitive_ascii::<true>(tp, b"wezterm") {
             return true;
         }
-        if strings::eql_case_insensitive_ascii(tp, b"ghostty", true) {
+        if strings::eql_case_insensitive_ascii::<true>(tp, b"ghostty") {
             return true;
         }
     }
@@ -2421,11 +2388,12 @@ pub fn detect_kitty_graphics() -> bool {
 /// the reply with a short timeout. Raw mode is applied + restored
 /// around the read so the bytes don't echo to the user's terminal.
 fn probe_kitty_graphics() -> bool {
-    #[cfg(not(unix))]
+    #[cfg(not(any()))]
     {
+        // TODO(b2-blocked): bun_sys::posix::tcgetattr / bun_sys::posix::poll / bun_core::tty::set_mode
         return false;
     }
-    #[cfg(unix)]
+    #[cfg(any())]
     {
         if bun_core::Output::bun_stdio_tty(0) == 0 || bun_core::Output::bun_stdio_tty(1) == 0 {
             return false;
@@ -2526,37 +2494,46 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
     // Percent-decode the path so file:///foo/bar%20baz works.
     let decoded = bun_url::PercentEncoding::decode_alloc(path).ok()?;
 
-    // Resolve to an absolute path. bun.path.joinAbsString returns a
-    // slice in a threadlocal buffer — dupe it before leaving this fn.
-    // Prefer the markdown file's directory when provided; otherwise fall
-    // back to cwd so `Bun.markdown.ansi()` callers without a source path
-    // still work.
-    let mut cwd_buf = bun_paths::PathBuffer::uninit();
-    let base: &[u8] = if let Some(d) = base_dir {
-        d
-    } else {
-        match bun_sys::getcwd(&mut cwd_buf) {
-            bun_sys::Result::Ok(c) => c,
+    #[cfg(any())]
+    {
+        // Resolve to an absolute path. bun.path.joinAbsString returns a
+        // slice in a threadlocal buffer — dupe it before leaving this fn.
+        // Prefer the markdown file's directory when provided; otherwise fall
+        // back to cwd so `Bun.markdown.ansi()` callers without a source path
+        // still work.
+        let mut cwd_buf = bun_paths::PathBuffer::uninit();
+        let base: &[u8] = if let Some(d) = base_dir {
+            d
+        } else {
+            match bun_sys::getcwd(&mut cwd_buf) {
+                bun_sys::Result::Ok(c) => c,
+                bun_sys::Result::Err(_) => return None,
+            }
+        };
+        let joined = bun_paths::join_abs_string(base, &[&decoded], bun_paths::Platform::Auto);
+        let abs = Box::<[u8]>::from(joined);
+        // Stat instead of plain exists() so a directory like `./assets/` gets
+        // rejected. bun.sys.exists wraps access(path, F_OK) which returns true
+        // for any entry, including directories — and emitKittyImageFile sets
+        // q=2 so the terminal silently drops directory paths without falling
+        // through to alt text.
+        let abs_z = bun_str::ZStr::from_bytes(&abs);
+        match bun_sys::stat(&abs_z) {
+            bun_sys::Result::Ok(s) => {
+                if (s.mode & bun_sys::S::IFMT) != bun_sys::S::IFREG {
+                    return None;
+                }
+            }
             bun_sys::Result::Err(_) => return None,
         }
-    };
-    let joined = bun_paths::join_abs_string(base, &[&decoded], bun_paths::Platform::Auto);
-    let abs = Box::<[u8]>::from(joined);
-    // Stat instead of plain exists() so a directory like `./assets/` gets
-    // rejected. bun.sys.exists wraps access(path, F_OK) which returns true
-    // for any entry, including directories — and emitKittyImageFile sets
-    // q=2 so the terminal silently drops directory paths without falling
-    // through to alt text.
-    let abs_z = bun_str::ZStr::from_bytes(&abs);
-    match bun_sys::stat(&abs_z) {
-        bun_sys::Result::Ok(s) => {
-            if (s.mode & bun_sys::S::IFMT) != bun_sys::S::IFREG {
-                return None;
-            }
-        }
-        bun_sys::Result::Err(_) => return None,
+        Some(abs)
     }
-    Some(abs)
+    #[cfg(not(any()))]
+    {
+        // TODO(b2-blocked): bun_paths::join_abs_string / bun_sys::stat / bun_sys::S
+        let _ = (decoded, base_dir);
+        None
+    }
 }
 
 // ========================================
@@ -2572,7 +2549,7 @@ fn extract_png_data_url_base64(src: &[u8]) -> Option<&[u8]> {
     if !src.starts_with(b"data:") {
         return None;
     }
-    let comma = usize::from(strings::index_of_char(src, b',')?);
+    let comma = strings::index_of_char(src, b',')? as usize;
     let header = &src[0..comma];
     let payload = &src[comma + 1..];
     if !header.ends_with(b";base64") {
@@ -2585,25 +2562,45 @@ fn extract_png_data_url_base64(src: &[u8]) -> Option<&[u8]> {
     Some(payload)
 }
 
+// PORT NOTE: Zig manual VTable collapsed into RendererImpl trait.
+impl RendererImpl for AnsiRenderer<'_> {
+    fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> JsResult<()> {
+        AnsiRenderer::enter_block(self, block_type, data, flags);
+        Ok(())
+    }
+    fn leave_block(&mut self, block_type: BlockType, data: u32) -> JsResult<()> {
+        AnsiRenderer::leave_block(self, block_type, data);
+        Ok(())
+    }
+    fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail<'_>) -> JsResult<()> {
+        AnsiRenderer::enter_span(self, span_type, detail);
+        Ok(())
+    }
+    fn leave_span(&mut self, span_type: SpanType) -> JsResult<()> {
+        AnsiRenderer::leave_span(self, span_type);
+        Ok(())
+    }
+    fn text(&mut self, text_type: TextType, content: &[u8]) -> JsResult<()> {
+        AnsiRenderer::text(self, text_type, content);
+        Ok(())
+    }
+}
+
 /// Render markdown text to ANSI. Caller owns the returned bytes.
-pub fn render_to_ansi(
-    text: &[u8],
+pub fn render_to_ansi<'a>(
+    text: &'a [u8],
     options: root::Options,
-    theme: Theme,
-) -> Result<Option<Box<[u8]>>, bun_core::Error> {
-    // TODO(port): narrow error set
+    theme: Theme<'a>,
+) -> Result<Option<Box<[u8]>>, crate::parser::ParserError> {
+    use crate::parser::ParserError;
     let mut renderer = AnsiRenderer::init(text, theme);
     match root::render_with_renderer(text, options, renderer.renderer()) {
         Ok(()) => {}
-        Err(e) if e == bun_core::err!("JSError") || e == bun_core::err!("JSTerminated") => {
-            return Ok(None);
-        }
-        Err(e) if e == bun_core::err!("OutOfMemory") => return Err(bun_core::err!("OutOfMemory")),
-        Err(e) if e == bun_core::err!("StackOverflow") => return Err(bun_core::err!("StackOverflow")),
+        Err(ParserError::JSError) | Err(ParserError::JSTerminated) => return Ok(None),
         Err(e) => return Err(e),
     }
     if renderer.out.oom {
-        return Err(bun_core::err!("OutOfMemory"));
+        return Err(ParserError::OutOfMemory);
     }
     Ok(Some(core::mem::take(&mut renderer.out.list).into_boxed_slice()))
 }
@@ -2613,5 +2610,5 @@ pub fn render_to_ansi(
 //   source:     src/md/ansi_renderer.zig (2249 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      Theme/AnsiRenderer carry <'a> per LIFETIMES.tsv BORROW_PARAM; several borrowck reshapes (find_parent_list→index, mem::take on bufs in flush_*); probe_kitty_graphics + write_highlighted_js depend on unported bun_sys::posix / bun_core::fmt shapes. u32→usize widening uses usize::from() per §Idiom — Phase B may need a helper if std lacks From<u32> for usize on target.
+//   notes:      Theme/AnsiRenderer carry <'a> per LIFETIMES.tsv BORROW_PARAM; several borrowck reshapes (find_parent_list→index, mem::take on bufs in flush_*); probe_kitty_graphics + write_highlighted_js depend on unported bun_sys::posix / bun_core::fmt shapes. u32→usize widening uses  as usize per §Idiom — Phase B may need a helper if std lacks From<u32> for usize on target.
 // ──────────────────────────────────────────────────────────────────────────

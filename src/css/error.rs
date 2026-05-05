@@ -1,13 +1,9 @@
-pub use crate::css_parser as css;
-pub use crate::values as css_values;
-pub use css::Error;
-
 use bstr::BStr;
 use core::fmt;
 
 use bun_logger as logger;
 
-type Location = css::Location;
+use crate::{Location, SourceLocation, Token};
 
 // Arena-owned byte slice. CSS is an AST crate (see PORTING.md §Allocators); these
 // slices point into the parser arena / source text and are never individually freed.
@@ -78,27 +74,38 @@ impl<T: fmt::Display> Err<T> {
         log: &mut logger::Log,
         source: &logger::Source,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        use std::io::Write as _;
-        let mut text: Vec<u8> = Vec::new();
-        write!(&mut text, "{}", self.kind).map_err(|_| bun_core::err!("WriteFailed"))?;
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_logger::Data — `text` field is currently
+            // `&'static [u8]`; logger.rs already notes Phase B must retype it
+            // to `Box<[u8]>`. Un-gate once that lands (cannot Box::leak per
+            // PORTING.md §Forbidden).
+            use std::io::Write as _;
+            let mut text: Vec<u8> = Vec::new();
+            write!(&mut text, "{}", self.kind).map_err(|_| bun_core::err!("WriteFailed"))?;
 
-        log.add_msg(logger::Msg {
-            kind: logger::Kind::Err,
-            data: logger::Data {
-                location: match &self.loc {
-                    Some(loc) => Some(loc.to_location(source)?),
-                    None => None,
+            log.add_msg(logger::Msg {
+                kind: logger::Kind::Err,
+                data: logger::Data {
+                    location: match &self.loc {
+                        Some(loc) => Some(loc.to_location(source)?),
+                        None => None,
+                    },
+                    text: text.into_boxed_slice(),
+                    ..Default::default()
                 },
-                text: text.into_boxed_slice(),
-                // TODO(port): logger::Data may have additional fields with defaults
                 ..Default::default()
-            },
-            ..Default::default()
-        })?;
+            })?;
 
-        log.errors += 1;
-        Ok(())
+            log.errors += 1;
+            Ok(())
+        }
+        #[cfg(not(any()))]
+        {
+            let _ = (log, source);
+            // TODO(b2-blocked): bun_logger::Data
+            Ok(())
+        }
     }
 }
 
@@ -107,7 +114,7 @@ pub struct ParseError<T> {
     /// Details of this error
     pub kind: ParserErrorKind<T>,
     /// Location where this error occurred
-    pub location: css::SourceLocation,
+    pub location: SourceLocation,
 }
 
 impl<T> ParseError<T> {
@@ -145,7 +152,7 @@ impl<T: fmt::Display> fmt::Display for ParserErrorKind<T> {
 #[allow(non_camel_case_types)]
 pub enum BasicParseErrorKind {
     /// An unexpected token was encountered.
-    unexpected_token(css::Token),
+    unexpected_token(Token),
     /// The end of the input was encountered unexpectedly.
     end_of_input,
     /// An `@` rule was encountered that was invalid.
@@ -199,20 +206,14 @@ impl ErrorLocation {
     }
 
     pub fn to_location(&self, source: &logger::Source) -> Result<logger::Location, bun_core::Error> {
-        // TODO(port): narrow error set
+        // TODO(port): narrow error set (Zig narrowed to alloc-only).
         Ok(logger::Location {
             file: source.path.text,
             namespace: source.path.namespace,
             line: i32::try_from(self.line + 1).unwrap(),
             column: i32::try_from(self.column).unwrap(),
-            line_text: if let Some(lines) =
-                bun_str::strings::get_lines_in_text(source.contents, self.line, 1)
-            {
-                Some(Box::<[u8]>::from(lines.buffer[0]))
-            } else {
-                None
-            },
-            // TODO(port): logger::Location may have additional fields with defaults
+            line_text: bun_string::strings::get_lines_in_text::<1>(source.contents, self.line)
+                .map(|lines| lines.as_slice()[0]),
             ..Default::default()
         })
     }
@@ -298,7 +299,7 @@ pub enum ParserError {
     /// A `@namespace` rule was encountered after any rules besides `@charset`, `@import`, or `@layer`.
     unexpected_namespace_rule,
     /// An unexpected token was encountered.
-    unexpected_token(css::Token),
+    unexpected_token(Token),
     /// Maximum nesting depth was reached.
     maximum_nesting_depth,
     unexpected_value {
@@ -344,7 +345,7 @@ pub struct BasicParseError {
     /// Details of this error
     pub kind: BasicParseErrorKind,
     /// Location where this error occurred
-    pub location: css::SourceLocation,
+    pub location: SourceLocation,
 }
 
 impl BasicParseError {
@@ -368,19 +369,19 @@ impl BasicParseError {
 #[allow(non_camel_case_types)]
 pub enum SelectorError {
     /// An unexpected token was found in an attribute selector.
-    bad_value_in_attr(css::Token),
+    bad_value_in_attr(Token),
     /// An unexpected token was found in a class selector.
-    class_needs_ident(css::Token),
+    class_needs_ident(Token),
     /// A dangling combinator was found.
     dangling_combinator,
     /// An empty selector.
     empty_selector,
     /// A `|` was expected in an attribute selector.
-    expected_bar_in_attr(css::Token),
+    expected_bar_in_attr(Token),
     /// A namespace was expected.
     expected_namespace(Str),
     /// An unexpected token was encountered in a namespace.
-    explicit_namespace_unexpected_token(css::Token),
+    explicit_namespace_unexpected_token(Token),
     /// An invalid pseudo class was encountered after a pseudo element.
     invalid_pseudo_class_after_pseudo_element,
     /// An invalid pseudo class was encountered after a `-webkit-scrollbar` pseudo element.
@@ -388,7 +389,7 @@ pub enum SelectorError {
     /// A `-webkit-scrollbar` state was encountered before a `-webkit-scrollbar` pseudo element.
     invalid_pseudo_class_before_webkit_scrollbar,
     /// Invalid qualified name in attribute selector.
-    invalid_qual_name_in_attr(css::Token),
+    invalid_qual_name_in_attr(Token),
     /// The current token is not allowed in this state.
     invalid_state,
     /// The selector is required to have the `&` nesting selector at the start.
@@ -396,16 +397,16 @@ pub enum SelectorError {
     /// The selector is missing a `&` nesting selector.
     missing_nesting_selector,
     /// No qualified name in attribute selector.
-    no_qualified_name_in_attribute_selector(css::Token),
+    no_qualified_name_in_attribute_selector(Token),
     /// An invalid token was encountered in a pseudo element.
-    pseudo_element_expected_ident(css::Token),
+    pseudo_element_expected_ident(Token),
     /// An unexpected identifier was encountered.
     unexpected_ident(Str),
     /// An unexpected token was encountered inside an attribute selector.
-    unexpected_token_in_attribute_selector(css::Token),
+    unexpected_token_in_attribute_selector(Token),
     /// An unsupported pseudo class or pseudo element was encountered.
     unsupported_pseudo_class_or_element(Str),
-    unexpected_selector_after_pseudo_element(css::Token),
+    unexpected_selector_after_pseudo_element(Token),
     ambiguous_css_module_class(Str),
 }
 
@@ -477,15 +478,20 @@ impl fmt::Display for SelectorError {
 
 pub struct ErrorWithLocation<T> {
     pub kind: T,
-    pub loc: css::Location,
+    pub loc: Location,
 }
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
+#[derive(strum::IntoStaticStr, Debug)]
 #[allow(non_camel_case_types)]
 pub enum MinifyErr {
-    #[error("minify_err")]
     minify_err,
 }
+impl fmt::Display for MinifyErr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(<&'static str>::from(self))
+    }
+}
+impl std::error::Error for MinifyErr {}
 impl From<MinifyErr> for bun_core::Error {
     fn from(e: MinifyErr) -> Self {
         bun_core::Error::from_name(<&'static str>::from(e))

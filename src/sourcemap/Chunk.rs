@@ -1,14 +1,10 @@
 use bun_str::{strings, MutableString};
-use bun_paths::PathBuffer;
-use bun_logger as logger;
 use bun_logger::{Loc, Source};
-// TODO(b0): FileSystem arrives from move-in (resolver::fs → sys, remapped fs target)
-use bun_sys::FileSystem;
-use bun_js_printer as js_printer;
 use bun_alloc::AllocError;
 
-use super::sourcemap::{
-    append_mapping_to_buffer, InternalSourceMap, LineOffsetTable, SourceMapState,
+use crate::{
+    append_mapping_to_buffer, internal_source_map, line_offset_table, InternalSourceMap,
+    LineOffsetTable, SourceMapState,
 };
 
 pub struct Chunk {
@@ -49,6 +45,8 @@ impl Chunk {
     // `pub fn deinit` dropped — body only freed `self.buffer`, which `Drop` on
     // `MutableString` handles automatically.
 
+    // TODO(b2-blocked): bun_js_printer::quote_for_json, bun_sys::FileSystem
+    #[cfg(any())]
     pub fn print_source_map_contents<const ASCII_ONLY: bool>(
         &self,
         source: &Source,
@@ -63,6 +61,8 @@ impl Chunk {
         )
     }
 
+    // TODO(b2-blocked): bun_js_printer::quote_for_json, bun_sys::FileSystem
+    #[cfg(any())]
     /// `chunk.buffer` holds an InternalSourceMap blob (the runtime path). Re-encode
     /// to a standard VLQ "mappings" string before emitting JSON.
     pub fn print_source_map_contents_from_internal<const ASCII_ONLY: bool>(
@@ -85,6 +85,9 @@ impl Chunk {
     }
 }
 
+// TODO(b2-blocked): bun_js_printer::quote_for_json — bun_js_printer does not
+// compile yet (1302 errors via bun_css). bun_sys::FileSystem move-in pending.
+#[cfg(any())]
 fn print_source_map_contents_json<const ASCII_ONLY: bool>(
     source: &Source,
     mutable: &mut MutableString,
@@ -200,7 +203,7 @@ impl<T: SourceMapFormatCtx> SourceMapFormat<T> {
 
 pub struct VLQSourceMap {
     pub data: MutableString,
-    pub internal: Option<super::sourcemap::internal_source_map::Builder>,
+    pub internal: Option<internal_source_map::Builder>,
     pub count: usize,
     pub offset: usize,
     pub approximate_input_line_count: usize,
@@ -223,7 +226,7 @@ impl SourceMapFormatCtx for VLQSourceMap {
         if prepend_count {
             return VLQSourceMap {
                 data: MutableString::init_empty(),
-                internal: Some(super::sourcemap::internal_source_map::Builder::init()),
+                internal: Some(internal_source_map::Builder::init()),
                 ..Default::default()
             };
         }
@@ -294,7 +297,7 @@ impl SourceMapFormatCtx for VLQSourceMap {
 
 pub struct NewBuilder<T: SourceMapFormatCtx> {
     pub source_map: SourceMapFormat<T>,
-    pub line_offset_tables: LineOffsetTable::List,
+    pub line_offset_tables: line_offset_table::List,
     pub prev_state: SourceMapState,
     pub last_generated_update: u32,
     pub generated_column: i32,
@@ -370,10 +373,10 @@ impl<T: SourceMapFormatCtx> NewBuilder<T> {
             // SAFETY: `decode_wtf8_rune_t` reads at most `len` bytes; the Zig
             // passes `.ptr[0..4]` (unchecked 4-byte view) and the decoder only
             // dereferences bytes covered by `len`.
-            c = strings::decode_wtf8_rune_t(
+            c = strings::decode_wtf8_rune_t::<i32>(
                 unsafe { &*(slice.as_ptr().add(i) as *const [u8; 4]) },
                 len,
-                strings::UNICODE_REPLACEMENT,
+                strings::UNICODE_REPLACEMENT as i32,
             );
             i += len as usize;
 
@@ -453,7 +456,7 @@ impl<T: SourceMapFormatCtx> NewBuilder<T> {
     pub fn add_source_mapping(&mut self, loc: Loc, output: &[u8]) {
         if
         // don't insert mappings for same location twice
-        self.prev_loc == loc ||
+        self.prev_loc.eql(loc) ||
             // exclude generated code from source
             loc.start == Loc::EMPTY.start
         {
@@ -480,10 +483,10 @@ impl<T: SourceMapFormatCtx> NewBuilder<T> {
         // Use the line to compute the column
         let mut original_column =
             loc.start - i32::try_from(line.byte_offset_to_start_of_line).unwrap();
-        if line.columns_for_non_ascii.len() > 0
+        if line.columns_for_non_ascii.slice().len() > 0
             && original_column >= i32::try_from(line.byte_offset_to_first_non_ascii).unwrap()
         {
-            original_column = line.columns_for_non_ascii.as_slice()
+            original_column = line.columns_for_non_ascii.slice()
                 [(u32::try_from(original_column).unwrap() - line.byte_offset_to_first_non_ascii)
                     as usize];
         }

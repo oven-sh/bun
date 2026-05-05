@@ -3,9 +3,11 @@ use core::ptr;
 
 use bun_collections::BabyList;
 
-use crate::css_parser as css;
-use crate::css_parser::{generic, void_wrap, Delimiters, Parser, PrintErr, Printer, Result as CssResult};
-use crate::css_properties::text::TextShadow;
+// PORT NOTE on `mem::forget` below: every `forget` is paired with a later
+// `Vec::from_raw_parts` reconstruction in `Drop` / `to_owned_slice` /
+// `try_reserve_heap`. This is the standard `Vec::into_raw_parts` pattern (still
+// unstable), not a `&'static`-lifetime leak (PORTING.md §Forbidden targets the
+// latter). The Zig original does the same with `Allocator.alloc`/`free`.
 
 /// This is a type whose items can either be heap-allocated (essentially the
 /// same as a BabyList(T)) or inlined in the struct itself.
@@ -26,16 +28,23 @@ pub struct SmallList<T, const N: usize> {
 
 #[repr(C)]
 union Data<T, const N: usize> {
-    inlined: [MaybeUninit<T>; N],
+    // ManuallyDrop is required by Rust for non-Copy union fields. The wrapped
+    // type `[MaybeUninit<T>; N]` has no Drop glue, so this is purely a
+    // type-system formality — element destruction is handled explicitly in
+    // `Drop for SmallList` / `clear_retaining_capacity` (mirrors Zig deinit).
+    inlined: core::mem::ManuallyDrop<[MaybeUninit<T>; N]>,
     heap: HeapData<T>,
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
 struct HeapData<T> {
     len: u32,
     ptr: *mut T,
 }
+// Manual impls: derive(Copy) would add a spurious `T: Copy` bound, but
+// HeapData is just `(u32, *mut T)` — always Copy regardless of T.
+impl<T> Clone for HeapData<T> { fn clone(&self) -> Self { *self } }
+impl<T> Copy for HeapData<T> {}
 
 impl<T> HeapData<T> {
     pub fn init_capacity(capacity: u32) -> HeapData<T> {
@@ -53,7 +62,7 @@ impl<T, const N: usize> Default for SmallList<T, N> {
             capacity: 0,
             data: Data {
                 // SAFETY: an array of MaybeUninit needs no initialization
-                inlined: unsafe { MaybeUninit::uninit().assume_init() },
+                inlined: core::mem::ManuallyDrop::new(unsafe { MaybeUninit::uninit().assume_init() }),
             },
         }
     }
@@ -74,22 +83,25 @@ impl<T, const N: usize> SmallList<T, N> {
             capacity: u32::try_from(values.len()).unwrap(),
             data: Data {
                 // SAFETY: array of MaybeUninit<T> needs no initialization
-                inlined: unsafe { MaybeUninit::uninit().assume_init() },
+                inlined: core::mem::ManuallyDrop::new(unsafe { MaybeUninit::uninit().assume_init() }),
             },
         };
         // SAFETY: values.len() <= N asserted above; inlined storage active.
         unsafe {
             ptr::copy_nonoverlapping(
                 values.as_ptr(),
-                this.data.inlined.as_mut_ptr().cast::<T>(),
+                (*this.data.inlined).as_mut_ptr().cast::<T>(),
                 values.len(),
             );
         }
         this
     }
 
-    // TODO(port): trait bound — T must implement css generic parse protocol
+    // `parse` / `to_css` depend on the still-gated parser/printer/generics hubs.
+    // They re-enable as inherent methods (or trait impls) when those un-gate.
+    #[cfg(any())]
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
+        // TODO(port): trait bound — T must implement css generic parse protocol
         let parse_fn = void_wrap::<T>(generic::parse_for::<T>());
         let mut values: Self = Self::default();
         loop {
@@ -112,8 +124,9 @@ impl<T, const N: usize> SmallList<T, N> {
         }
     }
 
-    // TODO(port): trait bound — T must implement ToCss
+    #[cfg(any())]
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        // TODO(port): trait bound — T must implement ToCss
         let length = self.len();
         for (idx, val) in self.slice().iter().enumerate() {
             generic::to_css(val, dest)?;
@@ -143,11 +156,11 @@ impl<T, const N: usize> SmallList<T, N> {
         let mut this = SmallList::<T, N> {
             capacity: len,
             // SAFETY: array of MaybeUninit<T> needs no initialization
-            data: Data { inlined: unsafe { MaybeUninit::uninit().assume_init() } },
+            data: Data { inlined: core::mem::ManuallyDrop::new(unsafe { MaybeUninit::uninit().assume_init() }) },
         };
         // SAFETY: len <= N; moving elements out of list into inlined storage.
         unsafe {
-            ptr::copy_nonoverlapping(list.as_ptr(), this.data.inlined.as_mut_ptr().cast::<T>(), list.len());
+            ptr::copy_nonoverlapping(list.as_ptr(), (*this.data.inlined).as_mut_ptr().cast::<T>(), list.len());
         }
         // Prevent double-drop of moved elements; Vec's buffer is freed.
         let mut list = list;
@@ -157,21 +170,24 @@ impl<T, const N: usize> SmallList<T, N> {
         this
     }
 
-    // TODO(port): bumpalo::collections::Vec<'bump, T> in css arena context; heap path should
-    // take by value with ManuallyDrop since it transfers the raw buffer (see impl-block note)
-    pub fn from_list_no_deinit(list: &Vec<T>) -> Self
+    // TODO(port): bumpalo::collections::Vec<'bump, T> in css arena context.
+    /// Transfers the buffer from `list` without freeing it (Zig
+    /// `fromListNoDeinit` took the list by value; the caller relinquished it).
+    /// Taking `Vec<T>` by value here matches that contract; the Vec's Drop is
+    /// suppressed via `ManuallyDrop` so SmallList becomes the sole owner of
+    /// the heap buffer.
+    pub fn from_list_no_deinit(list: Vec<T>) -> Self
     where
         T: Copy,
     {
-        // TODO(port): Zig version transfers heap ownership without deinit; in Rust this
-        // would alias the Vec's buffer. Restricted to Copy + bitwise copy semantics here.
+        let mut list = core::mem::ManuallyDrop::new(list);
         if list.capacity() > N {
             return SmallList {
                 capacity: u32::try_from(list.capacity()).unwrap(),
                 data: Data {
                     heap: HeapData {
                         len: u32::try_from(list.len()).unwrap(),
-                        ptr: list.as_ptr() as *mut T,
+                        ptr: list.as_mut_ptr(),
                     },
                 },
             };
@@ -180,12 +196,16 @@ impl<T, const N: usize> SmallList<T, N> {
         let mut this = SmallList::<T, N> {
             capacity: u32::try_from(len).unwrap(),
             // SAFETY: array of MaybeUninit<T> needs no initialization
-            data: Data { inlined: unsafe { MaybeUninit::uninit().assume_init() } },
+            data: Data { inlined: core::mem::ManuallyDrop::new(unsafe { MaybeUninit::uninit().assume_init() }) },
         };
         // SAFETY: len <= N; T: Copy so bitwise copy is sound; inlined storage active
         unsafe {
-            ptr::copy_nonoverlapping(list.as_ptr(), this.data.inlined.as_mut_ptr().cast::<T>(), len);
+            ptr::copy_nonoverlapping(list.as_ptr(), (*this.data.inlined).as_mut_ptr().cast::<T>(), len);
         }
+        // Inline path: free the now-unused source buffer (Zig leaves it for the
+        // arena; with global mimalloc we free explicitly via the suppressed Vec).
+        // SAFETY: T: Copy so dropping the Vec's elements is a no-op.
+        unsafe { core::mem::ManuallyDrop::drop(&mut list) };
         this
     }
 
@@ -194,7 +214,7 @@ impl<T, const N: usize> SmallList<T, N> {
         if list.cap > u32::try_from(N).unwrap() {
             let cap = list.cap;
             let len = list.len;
-            let ptr = list.ptr;
+            let ptr = list.ptr.as_ptr();
             // Ownership of the buffer transfers to SmallList; suppress BabyList's Drop to avoid double-free.
             core::mem::forget(list);
             return SmallList {
@@ -205,38 +225,53 @@ impl<T, const N: usize> SmallList<T, N> {
         let mut this = SmallList::<T, N> {
             capacity: list.len,
             // SAFETY: array of MaybeUninit<T> needs no initialization
-            data: Data { inlined: unsafe { MaybeUninit::uninit().assume_init() } },
+            data: Data { inlined: core::mem::ManuallyDrop::new(unsafe { MaybeUninit::uninit().assume_init() }) },
         };
         // SAFETY: list.len <= N
         unsafe {
-            ptr::copy_nonoverlapping(list.ptr, this.data.inlined.as_mut_ptr().cast::<T>(), list.len as usize);
+            ptr::copy_nonoverlapping(list.ptr.as_ptr(), (*this.data.inlined).as_mut_ptr().cast::<T>(), list.len as usize);
         }
-        // list dropped here, freeing its buffer (elements were moved out bitwise).
-        // TODO(port): BabyList Drop must not drop elements (matches Zig deinit which only frees buffer)
+        // Elements were bitwise-moved out. BabyList::Drop reconstructs
+        // `Vec::from_raw_parts(ptr, len, cap)` which would drop elements
+        // [0..len) again — double-drop. Zero `len` first so only the buffer is
+        // freed (matching Zig `list_.deinit(allocator)` which never destructs).
+        let mut list = list;
+        list.len = 0;
         drop(list);
         this
     }
 
-    pub fn from_baby_list_no_deinit(list: &BabyList<T>) -> Self
+    /// Transfers the buffer from `list` without dropping its elements (Zig
+    /// `fromBabyListNoDeinit` took the list by value). See
+    /// [`from_list_no_deinit`] for the ownership contract.
+    pub fn from_baby_list_no_deinit(list: BabyList<T>) -> Self
     where
         T: Copy,
     {
-        // TODO(port): see from_list_no_deinit — heap path aliases caller's buffer.
         if list.cap > u32::try_from(N).unwrap() {
+            let cap = list.cap;
+            let len = list.len;
+            let ptr = list.ptr.as_ptr();
+            core::mem::forget(list);
             return SmallList {
-                capacity: list.cap,
-                data: Data { heap: HeapData { len: list.len, ptr: list.ptr } },
+                capacity: cap,
+                data: Data { heap: HeapData { len, ptr } },
             };
         }
+        let len = list.len as usize;
         let mut this = SmallList::<T, N> {
             capacity: list.len,
             // SAFETY: array of MaybeUninit<T> needs no initialization
-            data: Data { inlined: unsafe { MaybeUninit::uninit().assume_init() } },
+            data: Data { inlined: core::mem::ManuallyDrop::new(unsafe { MaybeUninit::uninit().assume_init() }) },
         };
-        // SAFETY: list.len <= N; T: Copy so bitwise copy is sound; inlined storage active
+        // SAFETY: len <= N; T: Copy so bitwise copy is sound; inlined storage active
         unsafe {
-            ptr::copy_nonoverlapping(list.ptr, this.data.inlined.as_mut_ptr().cast::<T>(), list.len as usize);
+            ptr::copy_nonoverlapping(list.ptr.as_ptr(), (*this.data.inlined).as_mut_ptr().cast::<T>(), len);
         }
+        // T: Copy so element drop is a no-op; let BabyList free the source buffer.
+        let mut list = list;
+        list.len = 0;
+        drop(list);
         this
     }
 
@@ -244,7 +279,7 @@ impl<T, const N: usize> SmallList<T, N> {
         let mut ret = Self::default();
         ret.capacity = 1;
         // SAFETY: capacity 1 <= N (N >= 1 assumed for all instantiations); inlined active.
-        unsafe { ret.data.inlined[0].write(val) };
+        unsafe { (*ret.data.inlined)[0].write(val) };
         ret
     }
 
@@ -335,13 +370,14 @@ impl<T, const N: usize> SmallList<T, N> {
         } else {
             // SAFETY: !spilled => inlined active, first `capacity` slots initialized
             unsafe {
-                core::slice::from_raw_parts_mut(self.data.inlined.as_mut_ptr().cast::<T>(), self.capacity as usize)
+                core::slice::from_raw_parts_mut((*self.data.inlined).as_mut_ptr().cast::<T>(), self.capacity as usize)
             }
         }
     }
 
-    // TODO(port): trait bound — T: IsCompatible
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    #[cfg(any())] // re-enable with crate::generics
+    pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+        // TODO(port): trait bound — T: IsCompatible
         for v in self.slice() {
             if !generic::is_compatible(v, browsers) {
                 return false;
@@ -412,7 +448,7 @@ impl<T, const N: usize> SmallList<T, N> {
             // SAFETY: inlined storage of Copy T is bitwise-copyable
             return SmallList {
                 capacity: self.capacity,
-                data: Data { inlined: unsafe { self.data.inlined } },
+                data: Data { inlined: unsafe { core::mem::ManuallyDrop::new(*self.data.inlined) } },
             };
         }
         let mut h = HeapData::<T>::init_capacity(self.capacity);
@@ -424,6 +460,7 @@ impl<T, const N: usize> SmallList<T, N> {
         SmallList { capacity: self.capacity, data: Data { heap: h } }
     }
 
+    #[cfg(any())] // re-enable with crate::generics
     // TODO(port): trait bound — T: DeepClone (css::generic protocol)
     pub fn deep_clone(&self) -> Self {
         let mut ret = Self::init_capacity(self.len());
@@ -438,6 +475,7 @@ impl<T, const N: usize> SmallList<T, N> {
         ret
     }
 
+    #[cfg(any())] // re-enable with crate::generics
     // TODO(port): trait bound — T: css::generic::Eql
     pub fn eql(lhs: &Self, rhs: &Self) -> bool {
         if lhs.len() != rhs.len() {
@@ -460,7 +498,7 @@ impl<T, const N: usize> SmallList<T, N> {
             return SmallList {
                 capacity: self.capacity,
                 // SAFETY: !spilled() => inlined variant active; T: Copy so array bitwise copy is sound
-                data: Data { inlined: unsafe { self.data.inlined } },
+                data: Data { inlined: unsafe { core::mem::ManuallyDrop::new(*self.data.inlined) } },
             };
         }
         // Preserve the invariant that the heap allocation holds `capacity` elements,
@@ -479,6 +517,7 @@ impl<T, const N: usize> SmallList<T, N> {
         }
     }
 
+    #[cfg(any())] // re-enable with crate::generics
     // TODO(port): trait bound — hasher: impl core::hash::Hasher; T: css::generic::Hash
     pub fn hash(&self, hasher: &mut impl core::hash::Hasher) {
         for item in self.slice() {
@@ -509,7 +548,7 @@ impl<T, const N: usize> SmallList<T, N> {
             return list;
         }
         // SAFETY: array of MaybeUninit<T> needs no initialization
-        SmallList { capacity: 0, data: Data { inlined: unsafe { MaybeUninit::uninit().assume_init() } } }
+        SmallList { capacity: 0, data: Data { inlined: core::mem::ManuallyDrop::new(unsafe { MaybeUninit::uninit().assume_init() }) } }
     }
 
     pub fn ensure_total_capacity(&mut self, new_capacity: u32) {
@@ -651,7 +690,7 @@ impl<T, const N: usize> SmallList<T, N> {
             unsafe { self.data.heap.ptr }
         } else {
             // SAFETY: !spilled() => inlined variant active
-            unsafe { self.data.inlined.as_mut_ptr().cast::<T>() }
+            unsafe { (*self.data.inlined).as_mut_ptr().cast::<T>() }
         }
     }
 
@@ -688,7 +727,7 @@ impl<T, const N: usize> SmallList<T, N> {
             unsafe {
                 let mut inlined: [MaybeUninit<T>; N] = MaybeUninit::uninit().assume_init();
                 ptr::copy_nonoverlapping(ptr_, inlined.as_mut_ptr().cast::<T>(), length as usize);
-                self.data = Data { inlined };
+                self.data = Data { inlined: core::mem::ManuallyDrop::new(inlined) };
                 self.capacity = length;
                 // free old heap buffer (elements moved out)
                 drop(Vec::from_raw_parts(ptr_, 0, cap as usize));
@@ -727,7 +766,7 @@ impl<T, const N: usize> SmallList<T, N> {
         } else {
             // SAFETY: !spilled => inlined active
             (
-                unsafe { self.data.inlined.as_mut_ptr().cast::<T>() },
+                unsafe { (*self.data.inlined).as_mut_ptr().cast::<T>() },
                 &mut self.capacity as *mut u32,
                 u32::try_from(N).unwrap(),
             )
@@ -795,8 +834,17 @@ impl<T, const N: usize> Drop for SmallList<T, N> {
 
 pub trait GetFallbacks<const N: usize>: Sized {
     type Output;
-    fn get_fallbacks(this: &mut SmallList<Self, N>, targets: css::targets::Targets) -> Self::Output;
+    fn get_fallbacks(this: &mut SmallList<Self, N>, targets: crate::targets::Targets) -> Self::Output;
 }
+
+// `get_fallbacks_image` / `get_fallbacks_text_shadow` depend on still-gated
+// values::color, properties::text, css_parser::ImageFallback. Re-enable with
+// those modules.
+#[cfg(any())]
+mod fallbacks_gated {
+use super::*;
+use crate::css_parser as css;
+use crate::properties::text::TextShadow;
 
 // TODO(port): trait bound placeholder — any T with getImage()/withImage()/getFallback()/getNecessaryFallbacks()
 pub fn get_fallbacks_image<T>(this: &mut SmallList<T, 1>, targets: css::targets::Targets) -> BabyList<SmallList<T, 1>>
@@ -958,6 +1006,7 @@ pub fn get_fallbacks_text_shadow(
 
     res
 }
+} // mod fallbacks_gated
 
 /// Copy pasted from Zig std in array list:
 ///

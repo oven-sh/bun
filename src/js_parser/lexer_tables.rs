@@ -1,9 +1,9 @@
-use bun_str::strings::CodePoint;
+use bun_string::strings::CodePoint;
 use enum_map::{Enum, EnumMap};
 use phf::{phf_map, phf_set};
 
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Enum)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Enum, strum::IntoStaticStr)]
 pub enum T {
     TEndOfFile,
     // close brace is here so that we can do comparisons against EOF or close brace in one branch

@@ -1,5 +1,5 @@
 use crate::helpers;
-use crate::parser::EmphDelim; // TODO(port): Zig path is `Parser.EmphDelim`; verify Rust module layout in Phase B
+use crate::inlines::EmphDelim;
 
 pub fn is_list_bullet(c: u8) -> bool {
     c == b'-' || c == b'+' || c == b'*'

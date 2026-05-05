@@ -11,8 +11,12 @@
 
 use bun_alloc::Arena as Bump;
 use bun_core::StackCheck;
-// MOVE_DOWN(b0): bun_js_parser::lexer / {E,Expr,G} → bun_logger (js_ast remapped, T2)
-use bun_logger::lexer::identifier;
+// MOVE_DOWN(b0): bun_js_parser::lexer → bun_logger / bun_string (T1/T2).
+// `is_identifier_start/_part` landed in `bun_string::lexer`; route through there.
+use bun_str::lexer as identifier;
+// MOVE_DOWN(b0): bun_js_parser::{E,Expr,G,ExprNodeList} → bun_logger::js_ast (T2)
+// TODO(b2-blocked): bun_logger::js_ast — MOVE_DOWN not yet landed in T2.
+#[cfg(any())]
 use bun_logger::js_ast::{E, Expr, G};
 use bun_logger::{self as logger, Loc, Log, Source};
 use bun_str::strings;
@@ -68,7 +72,7 @@ impl<'a> TokenData<'a> {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr, Debug)]
 pub enum ParseError {
     OutOfMemory,
     UnexpectedCharacter,
@@ -94,6 +98,14 @@ pub enum ParseError {
     StackOverflow,
 }
 
+impl core::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // PORTING.md §Type-map: @errorName(e) → IntoStaticStr; Display is the tag.
+        f.write_str(<&'static str>::from(self))
+    }
+}
+impl core::error::Error for ParseError {}
+
 impl From<bun_alloc::AllocError> for ParseError {
     fn from(_: bun_alloc::AllocError) -> Self {
         ParseError::OutOfMemory
@@ -103,7 +115,7 @@ impl From<bun_alloc::AllocError> for ParseError {
 impl From<ParseError> for bun_core::Error {
     fn from(e: ParseError) -> Self {
         // IntoStaticStr yields the exact @errorName tag; intern into the global table.
-        bun_core::Error::intern(<&'static str>::from(e))
+        bun_core::Error::from_name(<&'static str>::from(e))
     }
 }
 
@@ -133,11 +145,17 @@ pub enum Error {
     TrailingData { pos: usize },
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr, Debug)]
 pub enum AddToLogError {
     OutOfMemory,
     StackOverflow,
 }
+impl core::fmt::Display for AddToLogError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(<&'static str>::from(self))
+    }
+}
+impl core::error::Error for AddToLogError {}
 
 impl From<AddToLogError> for bun_core::Error {
     fn from(e: AddToLogError) -> Self {
@@ -197,16 +215,22 @@ impl Error {
             Error::InvalidIdentifier { .. } => b"Invalid identifier start character",
             Error::TrailingData { .. } => b"Unexpected token after JSON5 value",
         };
-        log.add_error(source, loc, msg).map_err(|_| AddToLogError::OutOfMemory)
+        log.add_error(Some(source), loc, msg).map_err(|_| AddToLogError::OutOfMemory)
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr, Debug)]
 pub enum ExternalError {
     OutOfMemory,
     SyntaxError,
     StackOverflow,
 }
+impl core::fmt::Display for ExternalError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(<&'static str>::from(self))
+    }
+}
+impl core::error::Error for ExternalError {}
 
 impl From<ExternalError> for bun_core::Error {
     fn from(e: ExternalError) -> Self {
@@ -256,6 +280,8 @@ impl<'a> JSON5Parser<'a> {
         }
     }
 
+    // TODO(b2-blocked): bun_logger::js_ast::Expr
+    #[cfg(any())]
     pub fn parse(source: &'a Source, log: &mut Log, bump: &'a Bump) -> Result<Expr, ExternalError> {
         let mut parser = JSON5Parser {
             source: source.contents.as_ref(),
@@ -401,7 +427,7 @@ impl<'a> JSON5Parser<'a> {
                         let Some(cp) = self.read_codepoint() else {
                             return Err(ParseError::UnexpectedCharacter);
                         };
-                        if identifier::is_identifier_start(cp.cp) {
+                        if identifier::is_identifier_start(cp.cp as u32) {
                             break 'next TokenData::Identifier(self.scan_identifier()?);
                         } else {
                             return Err(ParseError::UnexpectedCharacter);
@@ -459,6 +485,10 @@ impl<'a> JSON5Parser<'a> {
 
     // ── Parser ──
 
+    // TODO(b2-blocked): bun_logger::js_ast::{Expr, E, G, ExprNodeList}
+    //   parse_root/parse_value/parse_object/parse_object_key/parse_array all
+    //   construct `Expr` AST nodes; re-gated until js_ast MOVE_DOWN lands in T2.
+    #[cfg(any())]
     fn parse_root(&mut self) -> Result<Expr, ParseError> {
         self.scan()?;
         let result = self.parse_value()?;
@@ -468,6 +498,7 @@ impl<'a> JSON5Parser<'a> {
         Ok(result)
     }
 
+    #[cfg(any())]
     fn parse_value(&mut self) -> Result<Expr, ParseError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(ParseError::StackOverflow);
@@ -509,6 +540,7 @@ impl<'a> JSON5Parser<'a> {
         }
     }
 
+    #[cfg(any())]
     fn parse_object(&mut self) -> Result<Expr, ParseError> {
         let loc = self.token.loc;
         self.scan()?; // advance past '{'
@@ -556,6 +588,7 @@ impl<'a> JSON5Parser<'a> {
         ))
     }
 
+    #[cfg(any())]
     fn parse_object_key(&mut self) -> Result<Expr, ParseError> {
         let loc = self.token.loc;
         match self.token.data {
@@ -581,6 +614,7 @@ impl<'a> JSON5Parser<'a> {
         }
     }
 
+    #[cfg(any())]
     fn parse_array(&mut self) -> Result<Expr, ParseError> {
         let loc = self.token.loc;
         self.scan()?; // advance past '['
@@ -876,11 +910,11 @@ impl<'a> JSON5Parser<'a> {
         if start_cp.cp == i32::from(b'\\') {
             // Unicode escape in identifier
             let escaped_cp = self.parse_identifier_unicode_escape()?;
-            if !identifier::is_identifier_start(escaped_cp) {
+            if !identifier::is_identifier_start(escaped_cp as u32) {
                 return Err(ParseError::InvalidIdentifier);
             }
             append_codepoint_to_utf8(&mut buf, escaped_cp)?;
-        } else if identifier::is_identifier_start(start_cp.cp) {
+        } else if identifier::is_identifier_start(start_cp.cp as u32) {
             self.pos += usize::from(start_cp.len);
             append_codepoint_to_utf8(&mut buf, start_cp.cp)?;
         } else {
@@ -893,11 +927,11 @@ impl<'a> JSON5Parser<'a> {
 
             if cont_cp.cp == i32::from(b'\\') {
                 let escaped_cp = self.parse_identifier_unicode_escape()?;
-                if !identifier::is_identifier_part(escaped_cp) {
+                if !identifier::is_identifier_part(escaped_cp as u32) {
                     break;
                 }
                 append_codepoint_to_utf8(&mut buf, escaped_cp)?;
-            } else if identifier::is_identifier_part(cont_cp.cp) {
+            } else if identifier::is_identifier_part(cont_cp.cp as u32) {
                 self.pos += usize::from(cont_cp.len);
                 append_codepoint_to_utf8(&mut buf, cont_cp.cp)?;
             } else {
@@ -1080,8 +1114,8 @@ fn append_codepoint_to_utf8(buf: &mut BumpVec<'_, u8>, cp: i32) -> Result<(), Pa
         return Err(ParseError::InvalidUnicodeEscape);
     }
     let mut encoded = [0u8; 4];
-    let len = strings::encode_wtf8_rune(&mut encoded, cp);
-    buf.extend_from_slice(&encoded[..usize::from(len)]);
+    let len = strings::encode_wtf8_rune(&mut encoded, cp as u32);
+    buf.extend_from_slice(&encoded[..len]);
     Ok(())
 }
 

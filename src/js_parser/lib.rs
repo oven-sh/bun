@@ -27,12 +27,15 @@ use bun_logger as logger;
 pub mod ast;
 #[cfg(any())]
 pub mod parser;
-#[cfg(any())]
 #[path = "lexer.rs"]
 pub mod lexer;
-#[cfg(any())]
 #[path = "lexer_tables.rs"]
 pub mod lexer_tables;
+// TODO(b2-blocked): bun_collections::StringSet
+// TODO(b2-blocked): bun_core::Output::debug
+// TODO(b2-blocked): bun_core::runtime_embed_file
+// TODO(b2-blocked): bun_core::EmbedKind
+// TODO(b2-blocked): bun_options_types::schema::api (or bun_schema crate)
 #[cfg(any())]
 #[path = "runtime.rs"]
 pub mod runtime;
@@ -113,11 +116,24 @@ pub mod ast {
     }
     pub mod e {
         #[derive(Copy, Clone, Default)] pub struct String;
+        impl String {
+            pub fn init(_data: &[u8]) -> Self { todo!("b1-stub: E::String::init") }
+            pub fn init_utf16(_data: &[u16]) -> Self { todo!("b1-stub: E::String::init_utf16") }
+            pub fn to_utf8(&mut self, _bump: &bun_alloc::Arena) -> core::result::Result<(), bun_alloc::AllocError> {
+                todo!("b1-stub: E::String::to_utf8")
+            }
+        }
         #[derive(Copy, Clone, Default)] pub struct Undefined;
         #[derive(Copy, Clone, Default)] pub struct Identifier;
         #[derive(Copy, Clone, Default)] pub struct Function;
     }
-    pub mod g {}
+    pub mod g {
+        #[derive(Copy, Clone)]
+        pub struct Comment {
+            pub text: super::super::ArenaStr,
+            pub loc: bun_logger::Loc,
+        }
+    }
     pub mod op {}
     pub mod s {}
 }
@@ -504,6 +520,7 @@ impl Default for TlaCheck {
     }
 }
 
+#[derive(Copy, Clone)]
 pub struct Span {
     pub text: ArenaStr,
     pub range: logger::Range,
@@ -628,19 +645,13 @@ impl ExportsKind {
 
     pub fn to_module_type(self) -> bun_options_types::BundleEnums::ModuleType {
         use bun_options_types::BundleEnums::ModuleType;
-        #[cfg(any())]
-        {
-            match self {
-                Self::None => ModuleType::Unknown,
-                Self::Cjs => ModuleType::Cjs,
-                Self::EsmWithDynamicFallback
-                | Self::EsmWithDynamicFallbackFromCjs
-                | Self::Esm => ModuleType::Esm,
-            }
+        match self {
+            Self::None => ModuleType::Unknown,
+            Self::Cjs => ModuleType::Cjs,
+            Self::EsmWithDynamicFallback
+            | Self::EsmWithDynamicFallbackFromCjs
+            | Self::Esm => ModuleType::Esm,
         }
-        // TODO(b1): bun_options_types::BundleEnums::ModuleType variants missing.
-        #[cfg(not(any()))]
-        { let _ = self; let _: ModuleType; todo!("b1-stub: ExportsKind::to_module_type") }
     }
 }
 
@@ -650,24 +661,67 @@ pub struct DeclaredSymbol {
     pub is_top_level: bool,
 }
 
+// Manual `MultiArrayElement` impl — `#[derive(MultiArrayElement)]` proc-macro
+// does not exist yet (TODO in bun_collections). Two fields, sorted by
+// alignment descending: `ref_` (8-byte, align 8) then `is_top_level` (1-byte).
+#[repr(usize)]
+#[derive(Copy, Clone)]
+pub enum DeclaredSymbolField {
+    Ref = 0,
+    IsTopLevel = 1,
+}
+
+impl bun_collections::multi_array_list::MultiArrayElement for DeclaredSymbol {
+    type Field = DeclaredSymbolField;
+    const FIELD_COUNT: usize = 2;
+    const ALIGN: usize = core::mem::align_of::<Ref>();
+    const SIZES_BYTES: &'static [usize] = &[
+        core::mem::size_of::<Ref>(),
+        core::mem::size_of::<bool>(),
+    ];
+    const SIZES_FIELDS: &'static [usize] = &[0, 1];
+
+    #[inline]
+    fn field_index(field: Self::Field) -> usize {
+        field as usize
+    }
+
+    #[inline]
+    unsafe fn scatter(self, ptrs: &[*mut u8], index: usize) {
+        // SAFETY: caller guarantees `ptrs[0..2]` are valid columns with capacity > `index`.
+        unsafe {
+            ptrs[0].cast::<Ref>().add(index).write(self.ref_);
+            ptrs[1].cast::<bool>().add(index).write(self.is_top_level);
+        }
+    }
+
+    #[inline]
+    unsafe fn gather(ptrs: &[*mut u8], index: usize) -> Self {
+        // SAFETY: caller guarantees `ptrs[0..2]` are valid columns with `len > index`.
+        unsafe {
+            DeclaredSymbol {
+                ref_: ptrs[0].cast::<Ref>().add(index).read(),
+                is_top_level: ptrs[1].cast::<bool>().add(index).read(),
+            }
+        }
+    }
+}
+
 pub struct DeclaredSymbolList {
     pub entries: MultiArrayList<DeclaredSymbol>,
 }
 
 impl Default for DeclaredSymbolList {
     fn default() -> Self {
-        // TODO(b1): bun_collections::MultiArrayList missing Default impl.
-        todo!("b1-stub: DeclaredSymbolList::default")
+        Self { entries: MultiArrayList::default() }
     }
 }
 
-// TODO(b1): bun_collections::MultiArrayList stub surface lacks
-// items_ref/clone/len/append_*/ensure_*/clear_*/slice. Preserve draft body.
-#[cfg(any())]
 impl DeclaredSymbolList {
     pub fn refs(&self) -> &[Ref] {
-        // TODO(port): MultiArrayList column accessor name (`items(.ref)` in Zig).
-        self.entries.items_ref()
+        // Zig `items(.ref)` → MultiArrayList column accessor.
+        // SAFETY: column 0 is `Ref` per the `MultiArrayElement` impl above.
+        unsafe { self.entries.items::<Ref>(DeclaredSymbolField::Ref) }
     }
 
     pub fn to_owned_slice(&mut self) -> DeclaredSymbolList {
@@ -675,7 +729,7 @@ impl DeclaredSymbolList {
     }
 
     pub fn clone(&self) -> core::result::Result<DeclaredSymbolList, bun_alloc::AllocError> {
-        Ok(DeclaredSymbolList { entries: self.entries.clone() })
+        Ok(DeclaredSymbolList { entries: self.entries.clone()? })
     }
 
     #[inline]
@@ -697,7 +751,7 @@ impl DeclaredSymbolList {
 
     pub fn append_list_assume_capacity(&mut self, other: DeclaredSymbolList) {
         // PERF(port): was assume_capacity
-        self.entries.append_list_assume_capacity(other.entries);
+        self.entries.append_list_assume_capacity(&other.entries);
     }
 
     pub fn append_assume_capacity(&mut self, entry: DeclaredSymbol) {
@@ -745,23 +799,19 @@ impl DeclaredSymbol {
         ctx: &mut C,
         f: impl Fn(&mut C, Ref),
     ) {
-        #[cfg(any())]
-        {
-            let entries = decls.entries.slice();
-            let is_top_level = entries.items_is_top_level();
-            let refs = entries.items_ref();
+        let entries = decls.entries.slice();
+        // SAFETY: column 1 is `bool`, column 0 is `Ref` per the `MultiArrayElement` impl above.
+        let is_top_level: &[bool] = unsafe { entries.items::<bool>(DeclaredSymbolField::IsTopLevel) };
+        let refs: &[Ref] = unsafe { entries.items::<Ref>(DeclaredSymbolField::Ref) };
 
-            // TODO: SIMD
-            debug_assert_eq!(is_top_level.len(), refs.len());
-            for (top, ref_) in is_top_level.iter().zip(refs.iter()) {
-                if *top {
-                    // PERF(port): was @call(bun.callmod_inline, ...) — relies on inlining.
-                    f(ctx, *ref_);
-                }
+        // TODO: SIMD
+        debug_assert_eq!(is_top_level.len(), refs.len());
+        for (top, ref_) in is_top_level.iter().zip(refs.iter()) {
+            if *top {
+                // PERF(port): was @call(bun.callmod_inline, ...) — relies on inlining.
+                f(ctx, *ref_);
             }
         }
-        #[cfg(not(any()))]
-        { let _ = (decls, ctx, f); todo!("b1-stub") }
     }
 
     pub fn for_each_top_level_symbol<C>(
@@ -866,25 +916,19 @@ pub type PartSymbolPropertyUseMap = ArrayHashMap<Ref, StringHashMap<symbol::Use>
 
 impl Default for Part {
     fn default() -> Self {
-        #[cfg(any())]
-        {
-            Self {
-                stmts: empty_arena_slice_mut::<Stmt>(),
-                scopes: empty_arena_slice_mut::<*mut Scope>(),
-                import_record_indices: PartImportRecordIndices::default(),
-                declared_symbols: DeclaredSymbolList::default(),
-                symbol_uses: PartSymbolUseMap::default(),
-                import_symbol_property_uses: PartSymbolPropertyUseMap::default(),
-                dependencies: DependencyList::default(),
-                can_be_removed_if_unused: false,
-                force_tree_shaking: false,
-                is_live: false,
-                tag: PartTag::None,
-            }
+        Self {
+            stmts: empty_arena_slice_mut::<Stmt>(),
+            scopes: empty_arena_slice_mut::<*mut Scope>(),
+            import_record_indices: PartImportRecordIndices::default(),
+            declared_symbols: DeclaredSymbolList::default(),
+            symbol_uses: PartSymbolUseMap::default(),
+            import_symbol_property_uses: PartSymbolPropertyUseMap::default(),
+            dependencies: DependencyList::default(),
+            can_be_removed_if_unused: false,
+            force_tree_shaking: false,
+            is_live: false,
+            tag: PartTag::None,
         }
-        // TODO(b1): bun_collections::BabyList missing Default impl.
-        #[cfg(not(any()))]
-        todo!("b1-stub: Part::default")
     }
 }
 
@@ -1002,11 +1046,10 @@ pub fn printmem(args: fmt::Arguments<'_>) {
     #[cfg(any())]
     {
         Output::init_test();
-        Output::print(args);
-        Output::flush();
     }
-    // TODO(b1): bun_core::Output::{init_test,print,flush} missing from stub surface.
-    let _ = args;
+    // TODO(b2-blocked): bun_core::Output::init_test
+    Output::print(args);
+    Output::flush();
 }
 
 // TODO(b1): `thiserror` not in this crate's deps; hand-roll Display/Error.
@@ -1044,15 +1087,14 @@ pub struct Batcher<T> {
 }
 
 impl<T> Batcher<T> {
-    pub fn init(bump: &bun_alloc::Arena, count: usize) -> core::result::Result<Self, bun_alloc::AllocError> {
+    pub fn init(bump: &bun_alloc::Arena, count: usize) -> core::result::Result<Self, bun_alloc::AllocError>
+    where
+        T: Default,
+    {
         // TODO(port): bumpalo alloc_slice for uninit T — Zig `allocator.alloc(Type, count)`.
-        #[cfg(any())]
-        {
-            let all = bump.alloc_slice_fill_default(count);
-            Ok(Self { head: all as *mut [T] })
-        }
-        #[cfg(not(any()))]
-        { let _ = (bump, count); todo!("b1-stub: Batcher::init") }
+        // PERF(port): Zig left the slice uninitialized; bumpalo requires Default fill.
+        let all = bump.alloc_slice_fill_default(count);
+        Ok(Self { head: all as *mut [T] })
     }
 
     pub fn done(&mut self) {

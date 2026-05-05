@@ -11,6 +11,14 @@ use crate::PrintErr;
 // TODO(port): narrow error set
 pub use crate::Error;
 
+// ─────────────────────────────────────────────────────────────────────────
+// `CssModule` + its impl block depend on still-gated hubs (Printer,
+// properties::css_modules::Specifier, selector::parser, ArrayHashMap
+// get_or_put Zig-style API). The data types below (Config, Pattern, Segment,
+// CssModuleExport/Reference) are un-gated; the runtime struct re-enables when
+// the printer/selector hubs land.
+// ─────────────────────────────────────────────────────────────────────────
+#[cfg(any())]
 pub struct CssModule<'a> {
     pub config: &'a Config,
     // TODO(port): LIFETIMES.tsv says Vec<String> but §Strings mandates bytes — fix TSV (Phase B: &'a [&'a [u8]] and drop .as_bytes() calls)
@@ -20,6 +28,7 @@ pub struct CssModule<'a> {
     pub references: &'a mut CssModuleReferences<'a>,
 }
 
+#[cfg(any())]
 impl<'a> CssModule<'a> {
     pub fn new(
         bump: &'a Bump,
@@ -251,14 +260,17 @@ impl Default for Config {
 /// A CSS modules class name pattern.
 pub struct Pattern {
     /// The list of segments in the pattern.
-    pub segments: css::SmallList<Segment, 3>,
+    pub segments: crate::SmallList<Segment, 3>,
 }
 
 impl Default for Pattern {
     fn default() -> Self {
         Self {
-            // TODO(port): SmallList::init_inlined API — verify in Phase B
-            segments: css::SmallList::init_inlined(&[Segment::Local, Segment::Literal(b"_"), Segment::Hash]),
+            segments: crate::SmallList::init_inlined(&[
+                Segment::Local,
+                Segment::Literal(b"_"),
+                Segment::Hash,
+            ]),
         }
     }
 }
@@ -278,12 +290,22 @@ impl Pattern {
                     writefn(s, false);
                 }
                 Segment::Name => {
-                    // TODO(port): std.fs.path.stem — bun_paths::stem(&[u8]) (do NOT use std::path, operates on OsStr)
-                    let stem = bun_paths::stem(path);
-                    if bun_str::strings::index_of(stem, b".").is_some() {
-                        writefn(stem, true);
-                    } else {
-                        writefn(stem, false);
+                    #[cfg(any())]
+                    {
+                        // TODO(b2-blocked): bun_paths::stem — std.fs.path.stem
+                        // equivalent over &[u8]. Do NOT use std::path (OsStr).
+                        let stem = bun_paths::stem(path);
+                        if bun_string::strings::index_of(stem, b".").is_some() {
+                            writefn(stem, true);
+                        } else {
+                            writefn(stem, false);
+                        }
+                    }
+                    #[cfg(not(any()))]
+                    {
+                        // TODO(b2-blocked): bun_paths::stem
+                        let _ = path;
+                        writefn(b"", false);
                     }
                 }
                 Segment::Local => {
@@ -354,6 +376,7 @@ impl Pattern {
 /// A segment in a CSS modules class name pattern.
 ///
 /// See [Pattern](Pattern).
+#[derive(Clone, Copy)]
 pub enum Segment {
     /// A literal string segment.
     Literal(&'static [u8]),
@@ -429,8 +452,9 @@ impl<'a> CssModuleReference<'a> {
 pub fn hash<'a>(bump: &'a Bump, args: Arguments<'_>, at_start: bool) -> &'a [u8] {
     // PERF(port): was stack-fallback alloc (StackFallbackAllocator 128B) — profile in Phase B
     let mut hasher = Wyhash11::init(0);
-    // PORT NOTE: std.fmt.count + allocPrint collapsed; write into bump Vec then hash
-    let mut fmt_str: BumpVec<'a, u8> = BumpVec::new_in(bump);
+    // PORT NOTE: std.fmt.count + allocPrint collapsed; write into a scratch
+    // Vec then hash. Freed immediately (Zig used stack-fallback for this).
+    let mut fmt_str: Vec<u8> = Vec::with_capacity(128);
     write!(&mut fmt_str, "{}", args).expect("unreachable");
     hasher.update(&fmt_str);
 

@@ -87,10 +87,11 @@
 use core::mem::size_of;
 use core::ptr;
 
-use bun_core::Ordinal;
+use crate::Ordinal; // TODO(b2-blocked): bun_core::Ordinal — local shim
 use bun_str::MutableString;
 
-use crate::sourcemap::{self, Mapping, SourceMapState, VLQ};
+use crate::vlq::decode as vlq_decode;
+use crate::{append_mapping_to_buffer, LineColumnOffset, Mapping, SourceMapState, VLQ};
 
 /// A sync entry is emitted every `SYNC_INTERVAL` mappings.
 pub const SYNC_INTERVAL: usize = 64;
@@ -265,11 +266,11 @@ impl State {
 
     fn to_mapping(self) -> Mapping {
         Mapping {
-            generated: sourcemap::LineColumnOffset {
+            generated: LineColumnOffset {
                 lines: Ordinal::from_zero_based(self.generated_line),
                 columns: Ordinal::from_zero_based(self.generated_column),
             },
-            original: sourcemap::LineColumnOffset {
+            original: LineColumnOffset {
                 lines: Ordinal::from_zero_based(self.original_line),
                 columns: Ordinal::from_zero_based(self.original_column),
             },
@@ -399,7 +400,10 @@ impl WindowReader {
     };
 
     #[inline]
-    fn bytes(&self) -> &[u8] {
+    fn bytes<'a>(&self) -> &'a [u8] {
+        // PORT NOTE: returns an unbound lifetime so callers can mutate other
+        // `self` fields while holding the slice — `self.bytes` is a raw `*const [u8]`
+        // pointing into the blob, not into `self`, so this is sound.
         // SAFETY: `bytes` was set from `InternalSourceMap.stream()` which is
         // valid for the lifetime of the blob; readers are only used while the
         // blob is live.
@@ -857,7 +861,7 @@ impl InternalSourceMap {
 
 fn emit_vlq(state: &State, prev: &mut SourceMapState, generated_line: &mut i32, out: &mut MutableString) {
     while *generated_line < state.generated_line {
-        out.append_char(b';');
+        out.list.push(b';');
         prev.generated_column = 0;
         *generated_line += 1;
     }
@@ -868,9 +872,8 @@ fn emit_vlq(state: &State, prev: &mut SourceMapState, generated_line: &mut i32, 
         original_line: state.original_line,
         original_column: state.original_column,
     };
-    // TODO(port): MutableString API — Zig accesses out.list.items directly.
-    let last_byte: u8 = if out.len() > 0 { out.as_slice()[out.len() - 1] } else { 0 };
-    sourcemap::append_mapping_to_buffer(out, last_byte, *prev, current);
+    let last_byte: u8 = out.list.last().copied().unwrap_or(0);
+    append_mapping_to_buffer(out, last_byte, *prev, current);
     *prev = current;
 }
 
@@ -1086,9 +1089,9 @@ impl Builder {
             let total: usize = stream_offset as usize + self.win_stream.len() + STREAM_TAIL_PAD;
 
             let mut out = MutableString::init_empty();
-            // TODO(port): MutableString API — Zig does out.list.resize(a, total).
-            out.resize(total);
-            let blob = out.as_mut_slice();
+            // Zig: out.list.resize(allocator, total)
+            out.list.resize(total, 0);
+            let blob = out.list.as_mut_slice();
 
             blob[0..24].fill(0);
             blob[24..28].copy_from_slice(&u32::try_from(self.sync_entries.len()).unwrap().to_ne_bytes());
@@ -1115,18 +1118,22 @@ impl Builder {
         }
         self.finalized.as_mut().unwrap()
     }
+
+    /// Move the finalized buffer out (Zig: `b.finalize().*` then `b.finalized = null`).
+    pub fn finalize_take(&mut self) -> MutableString {
+        let _ = self.finalize();
+        self.finalized.take().unwrap()
+    }
 }
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum FromVlqError {
-    #[error("InvalidSourceMap")]
     InvalidSourceMap,
 }
 
 impl From<FromVlqError> for bun_core::Error {
-    fn from(e: FromVlqError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(&e))
-        // TODO(port): verify bun_core::Error construction API
+    fn from(_e: FromVlqError) -> Self {
+        bun_core::err!("InvalidSourceMap")
     }
 }
 
@@ -1160,7 +1167,7 @@ pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, Fro
             }
         }
 
-        let gc = VLQ::decode(remain, 0);
+        let gc = vlq_decode(remain, 0);
         if gc.start == 0 {
             return Err(FromVlqError::InvalidSourceMap);
         }
@@ -1174,21 +1181,21 @@ pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, Fro
             continue;
         }
 
-        let si = VLQ::decode(remain, 0);
+        let si = vlq_decode(remain, 0);
         if si.start == 0 {
             return Err(FromVlqError::InvalidSourceMap);
         }
         source_index += si.value;
         remain = &remain[si.start as usize..];
 
-        let ol = VLQ::decode(remain, 0);
+        let ol = vlq_decode(remain, 0);
         if ol.start == 0 {
             return Err(FromVlqError::InvalidSourceMap);
         }
         original_line += ol.value;
         remain = &remain[ol.start as usize..];
 
-        let oc = VLQ::decode(remain, 0);
+        let oc = vlq_decode(remain, 0);
         if oc.start == 0 {
             return Err(FromVlqError::InvalidSourceMap);
         }
@@ -1196,7 +1203,7 @@ pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, Fro
         remain = &remain[oc.start as usize..];
 
         if !remain.is_empty() && remain[0] != b',' && remain[0] != b';' {
-            let ni = VLQ::decode(remain, 0);
+            let ni = vlq_decode(remain, 0);
             if ni.start == 0 {
                 return Err(FromVlqError::InvalidSourceMap);
             }
@@ -1220,15 +1227,14 @@ pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, Fro
     // `builder.finalized` mutably.
     let mapping_count: u64 = builder.count as u64;
     let out = builder.finalize();
-    // TODO(port): MutableString API — Zig accesses out.list.items / toOwnedSlice.
-    let blob = out.as_mut_slice();
+    let blob = out.list.as_mut_slice();
     let total_len: u64 = blob.len() as u64;
     let input_lines: u64 = (input_line_count_hint as u64).max(u64::try_from(max_original_line).unwrap() + 1);
     blob[0..8].copy_from_slice(&total_len.to_ne_bytes());
     blob[8..16].copy_from_slice(&mapping_count.to_ne_bytes());
     blob[16..24].copy_from_slice(&input_lines.to_ne_bytes());
 
-    let owned = core::mem::take(out).into_boxed_slice();
+    let owned = core::mem::take(&mut out.list).into_boxed_slice();
     builder.finalized = None;
     Ok(owned)
 }

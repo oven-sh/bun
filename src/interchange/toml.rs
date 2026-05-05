@@ -5,12 +5,17 @@ use bumpalo::Bump;
 use bun_core::{self, StackCheck};
 use bun_logger as logger;
 // MOVE_DOWN(b0): bun_js_parser::{ast,E,Expr} → bun_logger::js_ast (remapped, T2)
+// TODO(b2-blocked): bun_logger::js_ast — MOVE_DOWN not yet landed in T2.
+#[cfg(any())]
 use bun_logger::js_ast::{self, E, Expr};
 
+#[path = "toml/lexer.rs"]
 pub mod lexer;
 pub use self::lexer::Lexer;
+#[cfg(any())]
 use self::lexer::T;
 
+#[cfg(any())]
 type Rope = <E::Object as js_ast::e::ObjectExt>::Rope;
 // TODO(port): the line above guesses at how `js_ast::E::Object::Rope` is exposed in Rust;
 // in Zig it is `js_ast.E.Object.Rope`. Adjust to the real path in Phase B.
@@ -71,15 +76,15 @@ mod hash_map_pool {
     }
 
     pub fn release(node: *mut Node) {
-        LIST.with_borrow_mut(|list| match list {
-            Some(first) => {
-                // SAFETY: `node` came from `get()` (Box::into_raw) and is exclusively owned here.
-                unsafe { (*node).next = *first };
-                *first = node;
-            }
-            None => {
-                *list = Some(node);
-            }
+        // Zig models this as a sticky `loaded: bool` + `list.prepend(node)`;
+        // prepend always sets `node.next = list.first`. Folding into a single
+        // `Option<*mut Node>` means we must rewrite `next` on BOTH arms — a
+        // node coming back via `release` may carry a stale `next` from a prior
+        // prepend, and `get()` would follow it and double-vend that node.
+        LIST.with_borrow_mut(|list| {
+            // SAFETY: `node` came from `get()` (Box::into_raw) and is exclusively owned here.
+            unsafe { (*node).next = list.unwrap_or(core::ptr::null_mut()) };
+            *list = Some(node);
         });
     }
 }
@@ -87,6 +92,15 @@ mod hash_map_pool {
 // ──────────────────────────────────────────────────────────────────────────
 // TOML parser
 // ──────────────────────────────────────────────────────────────────────────
+//
+// TODO(b2-blocked): bun_logger::js_ast::{Expr, E, e::object::Rope, ExprData}
+//   The parser body produces `Expr` AST nodes; every public fn returns or
+//   threads `Expr`/`E::Object`/`E::Array`/`Rope`. Re-gated until the
+//   MOVE_DOWN of js_ast into bun_logger (T2) lands.
+#[cfg(any())]
+mod parser_body {
+use super::*;
+use self::lexer::T;
 
 pub struct TOML<'a> {
     pub lexer: Lexer,
@@ -482,6 +496,10 @@ impl<'a> TOML<'a> {
         Ok(true)
     }
 }
+
+} // mod parser_body
+#[cfg(any())]
+pub use parser_body::TOML;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

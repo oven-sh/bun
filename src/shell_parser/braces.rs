@@ -1,10 +1,12 @@
 use core::ptr;
 
 use bun_alloc::{AllocError, Arena as Bump};
-use bun_collections::SmallList;
+// PORT NOTE: `bun.SmallList` lives in `bun_css` (higher tier). Semantically it
+// is `smallvec::SmallVec` (inline-N, heap-spill). PORTING.md §Collections.
+use smallvec::SmallVec;
 // move-in (CYCLEBREAK MOVE_DOWN/TYPE_ONLY bun_shell → shell_parser): defined below.
-use crate::{has_eq_sign as shell_has_eq_sign, CharIter, ShellCharIter, StringEncoding as Encoding};
-use bun_str::{strings, SmolStr};
+use self::StringEncoding as Encoding;
+use bun_string::{strings, SmolStr};
 use bumpalo::collections::Vec as BumpVec;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -14,10 +16,8 @@ use bumpalo::collections::Vec as BumpVec;
 // without a back-edge. `bun_shell` re-exports these under its old paths.
 // ═══════════════════════════════════════════════════════════════════════════
 
-use bun_core::CodePoint;
-// TODO(port): `Cursor` is not in the `bun_str::strings` `pub use unicode::{…}` list yet —
-// Phase B must add it (and `CodePointZero`) to that re-export.
-use bun_str::strings::{CodepointIterator, Cursor};
+use bun_string::strings::CodePoint; // i32
+use bun_string::strings::{CodepointIterator, Cursor};
 
 /// Zig: `pub const StringEncoding = enum { ascii, wtf8, utf16 };`
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
@@ -86,8 +86,8 @@ impl SrcAscii {
 
 struct SrcUnicode {
     iter: CodepointIterator<'static>, // PORT NOTE: lifetime erased; see SrcAscii.bytes note.
-    cursor: Cursor<CodePoint>,
-    next_cursor: Cursor<CodePoint>,
+    cursor: Cursor,
+    next_cursor: Cursor,
 }
 
 #[derive(Copy, Clone)]
@@ -98,7 +98,7 @@ struct UnicodeIndexValue {
 
 impl SrcUnicode {
     #[inline]
-    fn next_cursor(iter: &CodepointIterator<'static>, cursor: &mut Cursor<CodePoint>) {
+    fn next_cursor(iter: &CodepointIterator<'static>, cursor: &mut Cursor) {
         if !CodepointIterator::next(iter, cursor) {
             // This will make `i > sourceBytes.len` so the condition in `index` will fail
             cursor.i = (iter.bytes.len() + 1) as u32;
@@ -111,7 +111,7 @@ impl SrcUnicode {
         let bytes: &'static [u8] =
             unsafe { core::slice::from_raw_parts(bytes.as_ptr(), bytes.len()) };
         let iter = CodepointIterator::init(bytes);
-        let mut cursor = Cursor::<CodePoint>::default();
+        let mut cursor = Cursor::default();
         Self::next_cursor(&iter, &mut cursor);
         let mut next_cursor = cursor;
         Self::next_cursor(&iter, &mut next_cursor);
@@ -323,7 +323,7 @@ pub fn has_eq_sign(str_: &[u8]) -> Option<u32> {
 
     // TODO actually i think that this can also use the simd stuff
     let iter = CodepointIterator::init(str_);
-    let mut cursor = Cursor::<CodePoint>::default();
+    let mut cursor = Cursor::default();
     while CodepointIterator::next(&iter, &mut cursor) {
         if cursor.c == b'=' as CodePoint {
             return Some(cursor.i);
@@ -334,7 +334,7 @@ pub fn has_eq_sign(str_: &[u8]) -> Option<u32> {
 
 // ═══════════════════════════════════════════════════════════════════════════
 
-bun_output::declare_scope!(BRACES, visible);
+bun_core::declare_scope!(BRACES, visible);
 
 /// Using u16 because anymore tokens than that results in an unreasonably high
 /// amount of brace expansion (like around 32k variants to expand)
@@ -365,15 +365,31 @@ pub struct ExpansionVariants {
     pub end: u16,
 }
 
-// TODO(port): Token Clone semantics — verify `SmolStr: Clone` is a cheap bitwise/refcount copy
-// (Zig copied the union by value).
-#[derive(Clone)]
 pub enum Token {
     Open(ExpansionVariants),
     Comma,
     Text(SmolStr),
     Close,
     Eof,
+}
+
+// TODO(b2-blocked): bun_string::SmolStr — missing `Clone` impl. Zig copied the
+// union by value (bitwise SmolStr copy with shared heap backing). Until the
+// lower-tier crate provides `Clone`, deep-copy via `from_slice` so the parser
+// can own its token. PERF(port): extra alloc on heap-backed SmolStr — profile
+// in Phase B once SmolStr grows Clone.
+impl Clone for Token {
+    fn clone(&self) -> Self {
+        match self {
+            Token::Open(v) => Token::Open(*v),
+            Token::Comma => Token::Comma,
+            Token::Text(s) => {
+                Token::Text(SmolStr::from_slice(s.slice()).expect("OOM cloning SmolStr"))
+            }
+            Token::Close => Token::Close,
+            Token::Eof => Token::Eof,
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -401,7 +417,8 @@ impl Token {
         match self {
             Token::Open(_) => SmolStr::from_char(b'{'),
             Token::Comma => SmolStr::from_char(b','),
-            Token::Text(txt) => txt.clone(),
+            // TODO(b2-blocked): bun_string::SmolStr — see Clone for Token above.
+            Token::Text(txt) => SmolStr::from_slice(txt.slice()).expect("OOM cloning SmolStr"),
             Token::Close => SmolStr::from_char(b'}'),
             Token::Eof => SmolStr::empty(),
         }
@@ -545,7 +562,7 @@ unsafe fn expand_nested(
                 // PERF(port): extra Vec alloc for prefix snapshot — profile in Phase B
                 let prefix: Vec<u8> = out[usize::from(out_key)][..length].to_vec();
                 let variants = expansion.variants;
-                let variants_len = (*variants).len();
+                let variants_len = variants.len();
                 for j in 0..variants_len {
                     let group: *mut ast::Group = (*variants).as_mut_ptr().add(j);
                     (*group).bubble_up = root;
@@ -571,7 +588,7 @@ unsafe fn expand_nested(
         ast::GroupAtoms::Many(m) => *m,
         _ => unreachable!(),
     };
-    let many_len = (*many).len();
+    let many_len = many.len();
 
     if start as usize >= many_len {
         if !(*root).bubble_up.is_null() {
@@ -595,7 +612,7 @@ unsafe fn expand_nested(
                 // PERF(port): extra Vec alloc for prefix snapshot — profile in Phase B
                 let prefix: Vec<u8> = out[usize::from(out_key)][..length].to_vec();
                 let variants = expansion.variants;
-                let variants_len = (*variants).len();
+                let variants_len = variants.len();
                 for j in 0..variants_len {
                     let group: *mut ast::Group = (*variants).as_mut_ptr().add(j);
                     (*group).bubble_up = root;
@@ -637,7 +654,7 @@ fn expand_flat(
     start: usize,
     end: usize,
 ) -> Result<(), ExpandError> {
-    bun_output::scoped_log!(BRACES, "expandFlat [{}, {}]", start, end);
+    bun_core::scoped_log!(BRACES, "expandFlat [{}, {}]", start, end);
     if start >= tokens.len() || end > tokens.len() {
         return Ok(());
     }
@@ -836,7 +853,7 @@ impl<'a> Parser<'a> {
 
     #[allow(dead_code)]
     fn has_eq_sign(&self, str_: &[u8]) -> Option<u32> {
-        shell_has_eq_sign(str_)
+        has_eq_sign(str_)
     }
 
     fn advance(&mut self) -> Token {
@@ -938,7 +955,7 @@ pub fn calculate_expanded_amount(tokens: &[Token]) -> u32 {
             Self { segment_product: 1, accumulator: 0 }
         }
     }
-    let mut nested_brace_stack: SmallList<StackEntry, MAX_NESTED_BRACES> = SmallList::default();
+    let mut nested_brace_stack: SmallVec<[StackEntry; MAX_NESTED_BRACES]> = SmallVec::new();
     let mut variant_count: u32 = 0;
 
     for tok in tokens {
@@ -986,7 +1003,7 @@ fn build_expansion_table(
         variants: u16,
         prev_tok_end: u16,
     }
-    let mut brace_stack: SmallList<BraceState, MAX_NESTED_BRACES> = SmallList::default();
+    let mut brace_stack: SmallVec<[BraceState; MAX_NESTED_BRACES]> = SmallVec::new();
 
     let mut i: u16 = 0;
     let mut prev_close = false;
@@ -1099,7 +1116,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
         // - If unclosed or encounter bad token:
         //   - Start at beginning of brace, replacing special tokens back with
         //     chars, skipping over actual closed braces
-        let mut brace_stack: SmallList<u32, MAX_NESTED_BRACES> = SmallList::default();
+        let mut brace_stack: SmallVec<[u32; MAX_NESTED_BRACES]> = SmallVec::new();
 
         loop {
             let Some(input) = self.eat() else { break };
@@ -1107,22 +1124,21 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
             let escaped = input.escaped;
 
             if !escaped {
-                // TODO(port): `char`'s type is `Chars<ENCODING>::CodepointType` (u8 for ascii,
-                // u32 for wtf8/wtf16). Comparison against ASCII bytes assumes it widens.
-                match char.into() {
-                    b'{' => {
+                // PORT NOTE: `char` is u32 (CodepointType unified across encodings).
+                match char {
+                    c if c == b'{' as u32 => {
                         brace_stack.push(u32::try_from(self.tokens.len()).unwrap());
                         self.tokens.push(Token::Open(ExpansionVariants::default()));
                         continue;
                     }
-                    b'}' => {
+                    c if c == b'}' as u32 => {
                         if brace_stack.len() > 0 {
                             let _ = brace_stack.pop();
                             self.tokens.push(Token::Close);
                             continue;
                         }
                     }
-                    b',' => {
+                    c if c == b',' as u32 => {
                         if brace_stack.len() > 0 {
                             self.tokens.push(Token::Comma);
                             continue;
@@ -1250,11 +1266,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
                     return Ok(());
                 }
                 let mut buf = [0u8; 4];
-                let len = strings::encode_wtf8_rune(
-                    &mut buf,
-                    // SAFETY: CodepointType for non-ascii encodings is u32; same-size bitcast to i32.
-                    unsafe { core::mem::transmute::<_, i32>(char) },
-                );
+                let len = strings::encode_wtf8_rune(&mut buf, char);
                 last.append_slice(&buf[..len])?;
                 return Ok(());
             }
@@ -1264,11 +1276,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
             self.tokens.push(Token::Text(SmolStr::from_slice(&[char as u8])?));
         } else {
             let mut buf = [0u8; 4];
-            let len = strings::encode_wtf8_rune(
-                &mut buf,
-                // SAFETY: see above.
-                unsafe { core::mem::transmute::<_, i32>(char) },
-            );
+            let len = strings::encode_wtf8_rune(&mut buf, char);
             self.tokens.push(Token::Text(SmolStr::from_slice(&buf[..len])?));
         }
         Ok(())

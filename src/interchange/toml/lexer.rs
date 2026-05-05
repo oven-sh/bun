@@ -1,14 +1,18 @@
 use core::fmt;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
-use bun_js_parser as js_ast;
+// MOVE_DOWN(b0): bun_js_parser::js_ast → bun_logger::js_ast (remapped, T2)
+// TODO(b2-blocked): bun_logger::js_ast — only `to_string()` needs it; gated below.
+#[cfg(any())]
+use bun_logger::js_ast;
 use bun_logger as logger;
 use bun_str::strings;
-// TODO(port): verify CodePoint lives here; in Zig it's `bun.CodePoint` (i32)
-use bun_str::CodePoint;
+// In Zig it's `bun.CodePoint` (i32); lives at `bun_str::strings::CodePoint`.
+use bun_str::strings::CodePoint;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug, strum::IntoStaticStr)]
+#[allow(non_camel_case_types)] // PORTING.md: "Match the Zig's structure" — Zig: `t_end_of_file`.
 pub enum T {
     t_end_of_file,
 
@@ -87,6 +91,12 @@ pub enum Error {
     ParserError,
 }
 
+impl From<bun_alloc::AllocError> for Error {
+    fn from(_: bun_alloc::AllocError) -> Self {
+        Error::OutOfMemory
+    }
+}
+
 impl From<Error> for bun_core::Error {
     fn from(e: Error) -> Self {
         match e {
@@ -105,7 +115,7 @@ impl From<Error> for bun_core::Error {
 impl<'a> Lexer<'a> {
     #[inline]
     pub fn loc(&self) -> logger::Loc {
-        logger::usize2_loc(self.start)
+        logger::usize2loc(self.start)
     }
 
     #[cold]
@@ -121,7 +131,7 @@ impl<'a> Lexer<'a> {
 
     #[cold]
     pub fn add_error(&mut self, _loc: usize, args: fmt::Arguments<'_>) {
-        let __loc = logger::usize2_loc(_loc);
+        let __loc = logger::usize2loc(_loc);
         if __loc.eql(self.prev_error_loc) {
             return;
         }
@@ -130,7 +140,7 @@ impl<'a> Lexer<'a> {
             .add_error_fmt_opts(
                 // TODO(port): Zig passed `self.log.msgs.allocator`; Rust Log owns its allocator.
                 args,
-                logger::AddErrorOpts {
+                logger::AddErrorOptions {
                     source: Some(&self.source),
                     loc: __loc,
                     redact_sensitive_information: self.should_redact_logs,
@@ -163,15 +173,10 @@ impl<'a> Lexer<'a> {
             return Ok(());
         }
 
-        // std.fmt.allocPrint → build into Vec<u8>
-        let mut error_message: Vec<u8> = Vec::new();
-        {
-            use std::io::Write;
-            write!(&mut error_message, "{}", args).expect("unreachable");
-        }
-        self.log.add_error_opts(
-            error_message,
-            logger::AddErrorOpts {
+        // std.fmt.allocPrint → logger::add_error_fmt_opts builds the buffer.
+        self.log.add_error_fmt_opts(
+            args,
+            logger::AddErrorOptions {
                 source: Some(&self.source),
                 loc: r.loc,
                 len: r.len,
@@ -245,14 +250,14 @@ impl<'a> Lexer<'a> {
                 // (matches Zig `slice.ptr[0..4]` which over-reads up to 4 bytes).
                 // TODO(port): verify bun_str signature; may take &[u8; 4] or *const u8.
                 unsafe { &*(slice.as_ptr() as *const [u8; 4]) },
-                u8::try_from(slice.len()).unwrap() as u8, // @intCast to u3
-                strings::UNICODE_REPLACEMENT,
+                u8::try_from(slice.len()).unwrap(), // @intCast to u3
+                strings::UNICODE_REPLACEMENT as CodePoint,
             ),
         };
 
         self.end = self.current;
 
-        self.current += if code_point != strings::UNICODE_REPLACEMENT {
+        self.current += if code_point != strings::UNICODE_REPLACEMENT as CodePoint {
             cp_len
         } else {
             1
@@ -424,11 +429,12 @@ impl<'a> Lexer<'a> {
                 if is_big_integer_literal {
                     self.identifier = text;
                 } else if is_invalid_legacy_octal_literal {
-                    match strings::parse_float(text) {
-                        Some(num) => {
+                    // MOVE_DOWN(b0): wtf::parse_double → bun_string (T1)
+                    match bun_str::wtf::parse_double(text) {
+                        Ok(num) => {
                             self.number = num;
                         }
-                        None => {
+                        Err(_) => {
                             self.add_syntax_error(
                                 self.start,
                                 format_args!("Invalid number {}", bstr::BStr::new(text)),
@@ -577,11 +583,12 @@ impl<'a> Lexer<'a> {
                 self.number = number as f64;
             } else {
                 // Parse a double-precision floating-point number;
-                match strings::parse_float(text) {
-                    Some(num) => {
+                // MOVE_DOWN(b0): wtf::parse_double → bun_string (T1)
+                match bun_str::wtf::parse_double(text) {
+                    Ok(num) => {
                         self.number = num;
                     }
-                    None => {
+                    Err(_) => {
                         self.add_syntax_error(self.start, format_args!("Invalid number"))?;
                     }
                 }
@@ -953,14 +960,14 @@ impl<'a> Lexer<'a> {
                     self.identifier = self.raw();
                     self.token = match self.identifier.len() {
                         4 => {
-                            if strings::eql_ignore_len(self.identifier, b"true") {
+                            if strings::eql_comptime_ignore_len(self.identifier, b"true") {
                                 T::t_true
                             } else {
                                 T::t_identifier
                             }
                         }
                         5 => {
-                            if strings::eql_ignore_len(self.identifier, b"false") {
+                            if strings::eql_comptime_ignore_len(self.identifier, b"false") {
                                 T::t_false
                             } else {
                                 T::t_identifier
@@ -985,8 +992,8 @@ impl<'a> Lexer<'a> {
         // PORT NOTE: Zig copied `*buf_` into a local and `defer`-wrote it back.
         // In Rust we operate on `buf` directly via &mut.
 
-        let iterator = strings::CodepointIterator { bytes: text, i: 0 };
-        let mut iter = strings::codepoint_iterator::Cursor::default();
+        let iterator = strings::CodepointIterator::init(text);
+        let mut iter = strings::Cursor::default();
         while iterator.next(&mut iter) {
             let width = iter.width;
             match iter.c {
@@ -1318,8 +1325,8 @@ impl<'a> Lexer<'a> {
                 }
                 _ => {
                     let mut part: [u8; 4] = [0; 4];
-                    let len = strings::encode_wtf8_rune(&mut part, iter.c);
-                    buf.extend_from_slice(&part[0..len as usize]);
+                    let len = strings::encode_wtf8_rune(&mut part, iter.c as u32);
+                    buf.extend_from_slice(&part[0..len]);
                 }
             }
         }
@@ -1368,7 +1375,7 @@ impl<'a> Lexer<'a> {
 
     pub fn range(&self) -> logger::Range {
         logger::Range {
-            loc: logger::usize2_loc(self.start),
+            loc: logger::usize2loc(self.start),
             len: (self.end - self.start) as i32, // std.math.lossyCast
         }
     }
@@ -1404,6 +1411,8 @@ impl<'a> Lexer<'a> {
         Ok(lex)
     }
 
+    // TODO(b2-blocked): bun_logger::js_ast::Expr
+    #[cfg(any())]
     #[inline]
     pub fn to_string(&self, loc_: logger::Loc) -> js_ast::Expr {
         if self.string_literal_is_ascii {

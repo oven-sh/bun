@@ -4,14 +4,14 @@
 
 use core::fmt;
 
-use bun_core::{Environment, FeatureFlags, Output};
+use bun_core::{Environment, feature_flags as FeatureFlags, Output};
 use bun_logger as logger;
 use bun_logger::{Loc, Log, Range, Source};
-use bun_str::strings;
-use bun_str::strings::CodepointIterator;
-use bun_js_parser::ast as js_ast;
-use bun_js_parser::lexer::identifier as js_identifier;
-use bun_js_parser::lexer_tables as tables;
+use bun_string::strings;
+use bun_string::strings::CodepointIterator;
+use crate as js_ast;
+use identifier as js_identifier;
+use crate::lexer_tables as tables;
 // MOVE-IN: Indentation now lives in this crate (was bun_js_printer::Options::Indentation).
 use crate::{Indentation, IndentationCharacter};
 // TODO(port): arena threading — js_parser is an AST crate; many `allocator.*` calls below
@@ -19,17 +19,27 @@ use crate::{Indentation, IndentationCharacter};
 // route owned buffers through `Vec`/`Box`.
 use bun_alloc::Arena;
 
+#[path = "lexer/identifier.rs"]
+pub mod identifier;
+
 pub type CodePoint = i32;
 type JavascriptString<'s> = &'s [u16];
 
 pub use tables::{
-    Keywords, PropertyModifierKeyword, StrictModeReservedWords, T,
-    TypeScriptAccessibilityModifier, TypescriptStmtKeyword, tokenToString,
+    PropertyModifierKeyword, T, TypescriptStmtKeyword,
+    KEYWORDS as Keywords, STRICT_MODE_RESERVED_WORDS as StrictModeReservedWords,
+    TYPE_SCRIPT_ACCESSIBILITY_MODIFIER as TypeScriptAccessibilityModifier,
+    TOKEN_TO_STRING as tokenToString,
 };
 
 #[cold]
 fn notimpl() -> ! {
-    Output::panic("not implemented yet!", format_args!(""));
+    Output::panic(format_args!("not implemented yet!"));
+}
+
+#[inline]
+fn tokenToString_get(token: T) -> &'static [u8] {
+    tokenToString[token]
 }
 
 pub static EMPTY_JAVASCRIPT_STRING: [u16; 1] = [0];
@@ -43,6 +53,7 @@ pub struct JSXPragma {
 }
 
 impl JSXPragma {
+    // `Span.text` is a raw `*const [u8]`; raw slice ptrs expose `.len()` without deref.
     pub fn jsx(&self) -> Option<js_ast::Span> {
         if self._jsx.text.len() > 0 { Some(self._jsx) } else { None }
     }
@@ -57,7 +68,10 @@ impl JSXPragma {
     }
 }
 
-#[derive(Clone, Copy, core::marker::ConstParamTy, PartialEq, Eq)]
+// TODO(port): `ConstParamTy` derive needs unstable `adt_const_params`; the
+// `NewLexer<const J: JSONOptions>` alias is gated above, so the derive is
+// not needed for compilation.
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct JSONOptions {
     /// Enable JSON-specific warnings/errors
     pub is_json: bool,
@@ -102,6 +116,10 @@ impl Default for JSONOptions {
 /// type. In Rust we model this as a generic over the eight comptime bools.
 ///
 /// `Lexer` (below) is the default instantiation (`NewLexer(.{})`).
+// TODO(port): `NewLexer<const J: JSONOptions>` requires unstable
+// `adt_const_params` + `generic_const_exprs` for field projection in const
+// position. Callers inline the eight bools at each instantiation site instead.
+#[cfg(any())]
 pub type NewLexer<'a, const J: JSONOptions> = LexerType<
     'a,
     { J.is_json },
@@ -113,32 +131,32 @@ pub type NewLexer<'a, const J: JSONOptions> = LexerType<
     { J.was_originally_macro },
     { J.guess_indentation },
 >;
-// TODO(port): `NewLexer` above uses struct-const-generic field projection in const generics,
-// which is unstable (`adt_const_params` + `generic_const_exprs`). Phase B may need to inline
-// the eight bools at each instantiation site instead.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
+// TODO(b1): `thiserror` not in this crate's deps; hand-roll Display/Error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum Error {
-    #[error("UTF8Fail")]
     UTF8Fail,
-    #[error("OutOfMemory")]
     OutOfMemory,
-    #[error("SyntaxError")]
     SyntaxError,
-    #[error("UnexpectedSyntax")]
     UnexpectedSyntax,
-    #[error("JSONStringsMustUseDoubleQuotes")]
     JSONStringsMustUseDoubleQuotes,
-    #[error("ParserError")]
     ParserError,
     // TODO(port): Zig `error.Backtrack` is returned from `expected()` but not declared in
     // the local error set; modeled here as an extra variant.
-    #[error("Backtrack")]
     Backtrack,
+}
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(<&'static str>::from(*self))
+    }
+}
+impl core::error::Error for Error {}
+impl From<bun_alloc::AllocError> for Error {
+    fn from(_: bun_alloc::AllocError) -> Self { Error::OutOfMemory }
 }
 impl From<Error> for bun_core::Error {
     fn from(e: Error) -> Self {
-        bun_core::Error::from_static_str(<&'static str>::from(e))
+        bun_core::Error::from_name(<&'static str>::from(e))
         // TODO(port): exact interning API
     }
 }
@@ -211,7 +229,7 @@ pub struct LexerType<
 > {
     // err: ?LexerType.Error,
     pub log: &'a mut Log,
-    pub source: Source,
+    pub source: &'a Source,
     pub current: usize,
     pub start: usize,
     pub end: usize,
@@ -257,8 +275,10 @@ pub struct LexerType<
 }
 
 // Convenience: associated constants mirroring Zig's `const json = json_options;` etc.
+// PORT NOTE: Rust macros must emit complete items; the macro now wraps the
+// entire `impl { ... }` block instead of just the header.
 macro_rules! lexer_impl_header {
-    () => {
+    ($($body:tt)*) => {
         impl<
             'a,
             const IS_JSON: bool,
@@ -281,10 +301,11 @@ macro_rules! lexer_impl_header {
                 WAS_ORIGINALLY_MACRO,
                 GUESS_INDENTATION,
             >
+        { $($body)* }
     };
 }
 
-lexer_impl_header!() {
+lexer_impl_header! {
     const JSON: JSONOptions = JSONOptions {
         is_json: IS_JSON,
         allow_comments: ALLOW_COMMENTS,
@@ -298,7 +319,7 @@ lexer_impl_header!() {
 
     #[inline]
     pub fn loc(&self) -> Loc {
-        logger::usize2_loc(self.start)
+        logger::usize2loc(self.start)
     }
 
     #[cold]
@@ -328,13 +349,13 @@ lexer_impl_header!() {
         if self.is_log_disabled {
             return;
         }
-        let __loc = logger::usize2_loc(loc);
+        let __loc = logger::usize2loc(loc);
         if __loc.eql(self.prev_error_loc) {
             return;
         }
 
         self.log
-            .add_error_fmt(&self.source, __loc, args)
+            .add_error_fmt(Some(self.source), __loc, args)
             .expect("unreachable");
         self.prev_error_loc = __loc;
     }
@@ -354,10 +375,7 @@ lexer_impl_header!() {
         }
 
         // TODO(port): allocator routing — Zig uses `std.fmt.allocPrint(self.allocator, ..)`.
-        let mut error_message = Vec::<u8>::new();
-        use std::io::Write as _;
-        write!(&mut error_message, "{}", args).expect("unreachable");
-        self.log.add_range_error(&self.source, r, error_message)?;
+        self.log.add_range_error_fmt(Some(self.source), r, args)?;
         self.prev_error_loc = r.loc;
 
         // if (panic) {
@@ -380,13 +398,10 @@ lexer_impl_header!() {
             return Ok(());
         }
 
-        let mut error_message = Vec::<u8>::new();
-        use std::io::Write as _;
-        write!(&mut error_message, "{}", args).expect("unreachable");
         // TODO(port): Zig dupes `notes` with `self.log.msgs.allocator`.
-        let notes_owned: Vec<logger::Data> = notes.to_vec();
+        let notes_owned: Box<[logger::Data]> = notes.to_vec().into_boxed_slice();
         self.log
-            .add_range_error_with_notes(&self.source, r, error_message, notes_owned)?;
+            .add_range_error_fmt_with_notes(Some(self.source), r, notes_owned, args)?;
         self.prev_error_loc = r.loc;
 
         // if (panic) {
@@ -470,7 +485,7 @@ lexer_impl_header!() {
 
     #[inline]
     pub fn is_identifier_or_keyword(&self) -> bool {
-        (self.token as u32) >= (T::t_identifier as u32)
+        (self.token as u32) >= (T::TIdentifier as u32)
     }
 
     // deinit → Drop (see impl Drop below)
@@ -487,12 +502,12 @@ lexer_impl_header!() {
             self.is_ascii_only = false;
         }
 
-        let iterator = CodepointIterator { bytes: text, i: 0 };
-        let mut iter = strings::CodepointIterator::Cursor::default();
+        let iterator = CodepointIterator::init(text);
+        let mut iter = strings::Cursor::default();
         while iterator.next(&mut iter) {
             let width = iter.width;
             match iter.c {
-                ('\r' as i32) => {
+                (0x0D) => {
                     // From the specification:
                     //
                     // 11.8.6.1 Static Semantics: TV and TRV
@@ -511,7 +526,7 @@ lexer_impl_header!() {
                     continue;
                 }
 
-                ('\\' as i32) => {
+                (0x5C) => {
                     if !iterator.next(&mut iter) {
                         return Ok(());
                     }
@@ -520,19 +535,19 @@ lexer_impl_header!() {
                     let width2 = iter.width;
                     match c2 {
                         // https://mathiasbynens.be/notes/javascript-escapes#single
-                        ('b' as i32) => {
+                        (0x62) => {
                             buf.push(0x08);
                             continue;
                         }
-                        ('f' as i32) => {
+                        (0x66) => {
                             buf.push(0x0C);
                             continue;
                         }
-                        ('n' as i32) => {
+                        (0x6E) => {
                             buf.push(0x0A);
                             continue;
                         }
-                        ('v' as i32) => {
+                        (0x76) => {
                             // Vertical tab is invalid JSON
                             // We're going to allow it.
                             // if (comptime is_json) {
@@ -542,17 +557,17 @@ lexer_impl_header!() {
                             buf.push(0x0B);
                             continue;
                         }
-                        ('t' as i32) => {
+                        (0x74) => {
                             buf.push(0x09);
                             continue;
                         }
-                        ('r' as i32) => {
+                        (0x72) => {
                             buf.push(0x0D);
                             continue;
                         }
 
                         // legacy octal literals
-                        c if (b'0' as i32..=b'7' as i32).contains(&c) => {
+                        c if (0x30..=0x37).contains(&c) => {
                             let octal_start =
                                 (iter.i as usize + width2 as usize) - 2;
                             if IS_JSON {
@@ -562,7 +577,7 @@ lexer_impl_header!() {
 
                             // 1-3 digit octal
                             let mut is_bad = false;
-                            let mut value: i64 = (c2 - b'0' as i32) as i64;
+                            let mut value: i64 = (c2 - 0x30) as i64;
                             let mut prev = iter;
 
                             if !iterator.next(&mut iter) {
@@ -577,8 +592,8 @@ lexer_impl_header!() {
                             let c3: CodePoint = iter.c;
 
                             match c3 {
-                                c if (b'0' as i32..=b'7' as i32).contains(&c) => {
-                                    value = value * 8 + (c3 - b'0' as i32) as i64;
+                                c if (0x30..=0x37).contains(&c) => {
+                                    value = value * 8 + (c3 - 0x30) as i64;
                                     prev = iter;
                                     if !iterator.next(&mut iter) {
                                         return self.syntax_error();
@@ -586,16 +601,16 @@ lexer_impl_header!() {
 
                                     let c4 = iter.c;
                                     match c4 {
-                                        c if (b'0' as i32..=b'7' as i32).contains(&c) => {
+                                        c if (0x30..=0x37).contains(&c) => {
                                             let temp =
-                                                value * 8 + (c4 - b'0' as i32) as i64;
+                                                value * 8 + (c4 - 0x30) as i64;
                                             if temp < 256 {
                                                 value = temp;
                                             } else {
                                                 iter = prev;
                                             }
                                         }
-                                        c if c == b'8' as i32 || c == b'9' as i32 => {
+                                        c if c == 0x38 || c == 0x39 => {
                                             is_bad = true;
                                         }
                                         _ => {
@@ -603,7 +618,7 @@ lexer_impl_header!() {
                                         }
                                     }
                                 }
-                                c if c == b'8' as i32 || c == b'9' as i32 => {
+                                c if c == 0x38 || c == 0x39 => {
                                     is_bad = true;
                                 }
                                 _ => {
@@ -629,11 +644,11 @@ lexer_impl_header!() {
                                 .expect("unreachable");
                             }
                         }
-                        c if c == b'8' as i32 || c == b'9' as i32 => {
+                        c if c == 0x38 || c == 0x39 => {
                             iter.c = c2;
                         }
                         // 2-digit hexadecimal
-                        ('x' as i32) => {
+                        (0x78) => {
                             let mut value: CodePoint = 0;
                             let mut c3: CodePoint;
                             let mut width3: u8;
@@ -644,14 +659,14 @@ lexer_impl_header!() {
                             c3 = iter.c;
                             width3 = iter.width;
                             match c3 {
-                                c if (b'0' as i32..=b'9' as i32).contains(&c) => {
-                                    value = value * 16 | (c3 - b'0' as i32);
+                                c if (0x30..=0x39).contains(&c) => {
+                                    value = value * 16 | (c3 - 0x30);
                                 }
-                                c if (b'a' as i32..=b'f' as i32).contains(&c) => {
-                                    value = value * 16 | (c3 + 10 - b'a' as i32);
+                                c if (0x61..=0x66).contains(&c) => {
+                                    value = value * 16 | (c3 + 10 - 0x61);
                                 }
-                                c if (b'A' as i32..=b'F' as i32).contains(&c) => {
-                                    value = value * 16 | (c3 + 10 - b'A' as i32);
+                                c if (0x41..=0x46).contains(&c) => {
+                                    value = value * 16 | (c3 + 10 - 0x41);
                                 }
                                 _ => {
                                     self.end =
@@ -666,14 +681,14 @@ lexer_impl_header!() {
                             c3 = iter.c;
                             width3 = iter.width;
                             match c3 {
-                                c if (b'0' as i32..=b'9' as i32).contains(&c) => {
-                                    value = value * 16 | (c3 - b'0' as i32);
+                                c if (0x30..=0x39).contains(&c) => {
+                                    value = value * 16 | (c3 - 0x30);
                                 }
-                                c if (b'a' as i32..=b'f' as i32).contains(&c) => {
-                                    value = value * 16 | (c3 + 10 - b'a' as i32);
+                                c if (0x61..=0x66).contains(&c) => {
+                                    value = value * 16 | (c3 + 10 - 0x61);
                                 }
-                                c if (b'A' as i32..=b'F' as i32).contains(&c) => {
-                                    value = value * 16 | (c3 + 10 - b'A' as i32);
+                                c if (0x41..=0x46).contains(&c) => {
+                                    value = value * 16 | (c3 + 10 - 0x41);
                                 }
                                 _ => {
                                     self.end =
@@ -684,7 +699,7 @@ lexer_impl_header!() {
 
                             iter.c = value;
                         }
-                        ('u' as i32) => {
+                        (0x75) => {
                             // We're going to make this an i64 so we don't risk integer overflows
                             // when people do weird things
                             let mut value: i64 = 0;
@@ -696,7 +711,7 @@ lexer_impl_header!() {
                             let mut width3 = iter.width;
 
                             // variable-length
-                            if c3 == b'{' as i32 {
+                            if c3 == 0x7B {
                                 if IS_JSON {
                                     self.end =
                                         start + iter.i as usize - width2 as usize;
@@ -716,19 +731,19 @@ lexer_impl_header!() {
                                     c3 = iter.c;
 
                                     match c3 {
-                                        c if (b'0' as i32..=b'9' as i32).contains(&c) => {
+                                        c if (0x30..=0x39).contains(&c) => {
                                             value =
-                                                value * 16 | (c3 - b'0' as i32) as i64;
+                                                value * 16 | (c3 - 0x30) as i64;
                                         }
-                                        c if (b'a' as i32..=b'f' as i32).contains(&c) => {
+                                        c if (0x61..=0x66).contains(&c) => {
                                             value = value * 16
-                                                | (c3 + 10 - b'a' as i32) as i64;
+                                                | (c3 + 10 - 0x61) as i64;
                                         }
-                                        c if (b'A' as i32..=b'F' as i32).contains(&c) => {
+                                        c if (0x41..=0x46).contains(&c) => {
                                             value = value * 16
-                                                | (c3 + 10 - b'A' as i32) as i64;
+                                                | (c3 + 10 - 0x41) as i64;
                                         }
-                                        c if c == b'}' as i32 => {
+                                        c if c == 0x7D => {
                                             if is_first {
                                                 self.end = (start + iter.i as usize)
                                                     .saturating_sub(width3 as usize);
@@ -779,17 +794,17 @@ lexer_impl_header!() {
                                 let mut j: usize = 0;
                                 while j < 4 {
                                     match c3 {
-                                        c if (b'0' as i32..=b'9' as i32).contains(&c) => {
+                                        c if (0x30..=0x39).contains(&c) => {
                                             value =
-                                                value * 16 | (c3 - b'0' as i32) as i64;
+                                                value * 16 | (c3 - 0x30) as i64;
                                         }
-                                        c if (b'a' as i32..=b'f' as i32).contains(&c) => {
+                                        c if (0x61..=0x66).contains(&c) => {
                                             value = value * 16
-                                                | (c3 + 10 - b'a' as i32) as i64;
+                                                | (c3 + 10 - 0x61) as i64;
                                         }
-                                        c if (b'A' as i32..=b'F' as i32).contains(&c) => {
+                                        c if (0x41..=0x46).contains(&c) => {
                                             value = value * 16
-                                                | (c3 + 10 - b'A' as i32) as i64;
+                                                | (c3 + 10 - 0x41) as i64;
                                         }
                                         _ => {
                                             self.end = start + iter.i as usize
@@ -812,7 +827,7 @@ lexer_impl_header!() {
 
                             iter.c = value as CodePoint; // @truncate
                         }
-                        ('\r' as i32) => {
+                        (0x0D) => {
                             if IS_JSON {
                                 self.end =
                                     start + iter.i as usize - width2 as usize;
@@ -827,7 +842,7 @@ lexer_impl_header!() {
                             // Ignore line continuations. A line continuation is not an escaped newline.
                             continue;
                         }
-                        c if c == b'\n' as i32 || c == 0x2028 || c == 0x2029 => {
+                        c if c == 0x0A || c == 0x2028 || c == 0x2029 => {
                             if IS_JSON {
                                 self.end =
                                     start + iter.i as usize - width2 as usize;
@@ -840,9 +855,9 @@ lexer_impl_header!() {
                         _ => {
                             if IS_JSON {
                                 match c2 {
-                                    c if c == b'"' as i32
-                                        || c == b'\\' as i32
-                                        || c == b'/' as i32 => {}
+                                    c if c == 0x22
+                                        || c == 0x5C
+                                        || c == 0x2F => {}
                                     _ => {
                                         self.end = start + iter.i as usize
                                             - width2 as usize;
@@ -883,14 +898,14 @@ lexer_impl_header!() {
         let mut needs_decode = false;
         'string_literal: loop {
             match self.code_point {
-                ('\\' as i32) => {
+                (0x5C) => {
                     needs_decode = true;
                     self.step();
 
                     // Handle Windows CRLF
-                    if self.code_point == b'\r' as i32 && !IS_JSON {
+                    if self.code_point == 0x0D && !IS_JSON {
                         self.step();
-                        if self.code_point == b'\n' as i32 {
+                        if self.code_point == 0x0A {
                             self.step();
                         }
                         continue 'string_literal;
@@ -907,10 +922,10 @@ lexer_impl_header!() {
 
                     match self.code_point {
                         // 0 cannot be in this list because it may be a legacy octal literal
-                        c if c == b'`' as i32
-                            || c == b'\'' as i32
-                            || c == b'"' as i32
-                            || c == b'\\' as i32 =>
+                        c if c == 0x60
+                            || c == 0x27
+                            || c == 0x22
+                            || c == 0x5C =>
                         {
                             self.step();
                             continue 'string_literal;
@@ -926,8 +941,8 @@ lexer_impl_header!() {
                     break 'string_literal;
                 }
 
-                ('\r' as i32) => {
-                    if QUOTE != b'`' as i32 {
+                (0x0D) => {
+                    if QUOTE != 0x60 {
                         self.add_default_error(b"Unterminated string literal")?;
                     }
 
@@ -935,30 +950,30 @@ lexer_impl_header!() {
                     needs_decode = true;
                 }
 
-                ('\n' as i32) => {
+                (0x0A) => {
                     // Implicitly-quoted strings end when they reach a newline OR end of file
                     // This only applies to .env
                     match QUOTE {
                         0 => {
                             break 'string_literal;
                         }
-                        c if c == b'`' as i32 => {}
+                        c if c == 0x60 => {}
                         _ => {
                             self.add_default_error(b"Unterminated string literal")?;
                         }
                     }
                 }
 
-                ('$' as i32) => {
-                    if QUOTE == b'`' as i32 {
+                (0x24) => {
+                    if QUOTE == 0x60 {
                         self.step();
-                        if self.code_point == b'{' as i32 {
+                        if self.code_point == 0x7B {
                             suffix_len = 2;
                             self.step();
                             self.token = if self.rescan_close_brace_as_template_token {
-                                T::t_template_middle
+                                T::TTemplateMiddle
                             } else {
-                                T::t_template_head
+                                T::TTemplateHead
                             };
                             break 'string_literal;
                         }
@@ -977,7 +992,7 @@ lexer_impl_header!() {
                         needs_decode = true;
                     } else if IS_JSON && self.code_point < 0x20 {
                         self.syntax_error()?;
-                    } else if (QUOTE == b'"' as i32 || QUOTE == b'\'' as i32)
+                    } else if (QUOTE == 0x22 || QUOTE == 0x27)
                         && Environment::IS_NATIVE
                     {
                         let remainder = &self.source.contents[self.current..];
@@ -1009,12 +1024,12 @@ lexer_impl_header!() {
     }
 
     pub fn parse_string_literal<const QUOTE: i32>(&mut self) -> Result<(), Error> {
-        if QUOTE != b'`' as i32 {
-            self.token = T::t_string_literal;
+        if QUOTE != 0x60 {
+            self.token = T::TStringLiteral;
         } else if self.rescan_close_brace_as_template_token {
-            self.token = T::t_template_tail;
+            self.token = T::TTemplateTail;
         } else {
-            self.token = T::t_no_substitution_template_literal;
+            self.token = T::TNoSubstitutionTemplateLiteral;
         }
         // quote is 0 when parsing JSON from .env
         // .env values may not always be quoted.
@@ -1045,7 +1060,7 @@ lexer_impl_header!() {
         }
 
         if !FeatureFlags::ALLOW_JSON_SINGLE_QUOTES {
-            if QUOTE == b'\'' as i32 && IS_JSON {
+            if QUOTE == 0x27 && IS_JSON {
                 self.add_range_error(
                     self.range(),
                     format_args!("JSON strings must use double quotes"),
@@ -1090,23 +1105,27 @@ lexer_impl_header!() {
             b""
         };
 
-        let code_point = match slice.len() {
+        let code_point: CodePoint = match slice.len() {
             0 => -1,
             1 => slice[0] as CodePoint,
-            _ => strings::decode_wtf8_rune_t_multibyte(
+            _ => {
                 // SAFETY: we read at most cp_len (≤4) bytes; Zig indexes ptr[0..4].
                 // TODO(port): the Zig code reads `slice.ptr[0..4]` which may read past
                 // `slice.len`. Phase B: ensure `decode_wtf8_rune_t_multibyte` only reads
                 // `len` bytes from the pointer.
-                slice.as_ptr(),
-                u8::try_from(slice.len()).unwrap() as u8,
-                strings::UNICODE_REPLACEMENT,
-            ),
+                let mut quad = [0u8; 4];
+                quad[..slice.len()].copy_from_slice(slice);
+                strings::decode_wtf8_rune_t_multibyte(
+                    &quad,
+                    u8::try_from(slice.len()).unwrap(),
+                    strings::UNICODE_REPLACEMENT as CodePoint,
+                )
+            }
         };
 
         self.end = self.current;
 
-        self.current += if code_point != strings::UNICODE_REPLACEMENT {
+        self.current += if code_point != strings::UNICODE_REPLACEMENT as CodePoint {
             cp_len as usize
         } else {
             1
@@ -1124,7 +1143,7 @@ lexer_impl_header!() {
         // This count is approximate because it handles "\n" and "\r\n" (the common
         // cases) but not "\r" or " " or " ". Getting this wrong is harmless
         // because it's only a preallocation. The array will just grow if it's too small.
-        self.approximate_newline_count += (self.code_point == b'\n' as i32) as usize;
+        self.approximate_newline_count += (self.code_point == 0x0A) as usize;
     }
 
     #[inline]
@@ -1138,12 +1157,12 @@ lexer_impl_header!() {
 
     #[inline]
     pub fn expect_or_insert_semicolon(&mut self) -> Result<(), Error> {
-        if self.token == T::t_semicolon
+        if self.token == T::TSemicolon
             || (!self.has_newline_before
-                && self.token != T::t_close_brace
-                && self.token != T::t_end_of_file)
+                && self.token != T::TCloseBrace
+                && self.token != T::TEndOfFile)
         {
-            self.expect(T::t_semicolon)?;
+            self.expect(T::TSemicolon)?;
         }
         Ok(())
     }
@@ -1165,17 +1184,17 @@ lexer_impl_header!() {
     ) -> Result<ScanResult<'a>, bun_core::Error> {
         // TODO(port): narrow error set
         let mut result = ScanResult {
-            token: T::t_end_of_file,
+            token: T::TEndOfFile,
             contents: b"".as_slice(),
         };
         // First pass: scan over the identifier to see how long it is
         loop {
             // Scan a unicode escape sequence. There is at least one because that's
             // what caused us to get on this slow path in the first place.
-            if self.code_point == b'\\' as i32 {
+            if self.code_point == 0x5C {
                 self.step();
 
-                if self.code_point != b'u' as i32 {
+                if self.code_point != 0x75 {
                     self.add_syntax_error(
                         self.loc().to_usize(),
                         format_args!(
@@ -1187,14 +1206,14 @@ lexer_impl_header!() {
                     )?;
                 }
                 self.step();
-                if self.code_point == b'{' as i32 {
+                if self.code_point == 0x7B {
                     // Variable-length
                     self.step();
-                    while self.code_point != b'}' as i32 {
+                    while self.code_point != 0x7D {
                         match self.code_point {
-                            c if (b'0' as i32..=b'9' as i32).contains(&c)
-                                || (b'a' as i32..=b'f' as i32).contains(&c)
-                                || (b'A' as i32..=b'F' as i32).contains(&c) =>
+                            c if (0x30..=0x39).contains(&c)
+                                || (0x61..=0x66).contains(&c)
+                                || (0x41..=0x46).contains(&c) =>
                             {
                                 self.step();
                             }
@@ -1208,9 +1227,9 @@ lexer_impl_header!() {
                     // comptime var j: usize = 0;
                     for _ in 0..4 {
                         match self.code_point {
-                            c if (b'0' as i32..=b'9' as i32).contains(&c)
-                                || (b'a' as i32..=b'f' as i32).contains(&c)
-                                || (b'A' as i32..=b'F' as i32).contains(&c) =>
+                            c if (0x30..=0x39).contains(&c)
+                                || (0x61..=0x66).contains(&c)
+                                || (0x41..=0x46).contains(&c) =>
                             {
                                 self.step();
                             }
@@ -1255,7 +1274,7 @@ lexer_impl_header!() {
         if !is_identifier(identifier) {
             self.add_range_error(
                 Range {
-                    loc: logger::usize2_loc(self.start),
+                    loc: logger::usize2loc(self.start),
                     len: i32::try_from(self.end - self.start).unwrap(),
                 },
                 format_args!(
@@ -1280,10 +1299,10 @@ lexer_impl_header!() {
         //   // This is an fine (equivalent to "foo.var;")
         //   foo.var;
         //
-        result.token = if Keywords::has(result.contents) {
-            T::t_escaped_keyword
+        result.token = if Keywords.contains_key(result.contents) {
+            T::TEscapedKeyword
         } else {
-            T::t_identifier
+            T::TIdentifier
         };
 
         Ok(result)
@@ -1320,19 +1339,19 @@ lexer_impl_header!() {
 
     pub fn maybe_expand_equals(&mut self) -> Result<(), Error> {
         match self.code_point {
-            c if c == b'>' as i32 => {
+            c if c == 0x3E => {
                 // "=" + ">" = "=>"
-                self.token = T::t_equals_greater_than;
+                self.token = T::TEqualsGreaterThan;
                 self.step();
             }
-            c if c == b'=' as i32 => {
+            c if c == 0x3D => {
                 // "=" + "=" = "=="
-                self.token = T::t_equals_equals;
+                self.token = T::TEqualsEquals;
                 self.step();
 
-                if self.code_point == b'=' as i32 {
+                if self.code_point == 0x3D {
                     // "=" + "==" = "==="
-                    self.token = T::t_equals_equals_equals;
+                    self.token = T::TEqualsEqualsEquals;
                     self.step();
                 }
             }
@@ -1345,28 +1364,28 @@ lexer_impl_header!() {
         &mut self,
     ) -> Result<(), Error> {
         match self.token {
-            T::t_less_than => {
+            T::TLessThan => {
                 if IS_INSIDE_JSX_ELEMENT {
                     self.next_inside_jsx_element()?;
                 } else {
                     self.next()?;
                 }
             }
-            T::t_less_than_equals => {
-                self.token = T::t_equals;
+            T::TLessThanEquals => {
+                self.token = T::TEquals;
                 self.start += 1;
                 self.maybe_expand_equals()?;
             }
-            T::t_less_than_less_than => {
-                self.token = T::t_less_than;
+            T::TLessThanLessThan => {
+                self.token = T::TLessThan;
                 self.start += 1;
             }
-            T::t_less_than_less_than_equals => {
-                self.token = T::t_less_than_equals;
+            T::TLessThanLessThanEquals => {
+                self.token = T::TLessThanEquals;
                 self.start += 1;
             }
             _ => {
-                self.expected(T::t_less_than)?;
+                self.expected(T::TLessThan)?;
             }
         }
         Ok(())
@@ -1376,7 +1395,7 @@ lexer_impl_header!() {
         &mut self,
     ) -> Result<(), Error> {
         match self.token {
-            T::t_greater_than => {
+            T::TGreaterThan => {
                 if IS_INSIDE_JSX_ELEMENT {
                     self.next_inside_jsx_element()?;
                 } else {
@@ -1384,34 +1403,34 @@ lexer_impl_header!() {
                 }
             }
 
-            T::t_greater_than_equals => {
-                self.token = T::t_equals;
+            T::TGreaterThanEquals => {
+                self.token = T::TEquals;
                 self.start += 1;
                 self.maybe_expand_equals()?;
             }
 
-            T::t_greater_than_greater_than_equals => {
-                self.token = T::t_greater_than_equals;
+            T::TGreaterThanGreaterThanEquals => {
+                self.token = T::TGreaterThanEquals;
                 self.start += 1;
             }
 
-            T::t_greater_than_greater_than_greater_than_equals => {
-                self.token = T::t_greater_than_greater_than_equals;
+            T::TGreaterThanGreaterThanGreaterThanEquals => {
+                self.token = T::TGreaterThanGreaterThanEquals;
                 self.start += 1;
             }
 
-            T::t_greater_than_greater_than => {
-                self.token = T::t_greater_than;
+            T::TGreaterThanGreaterThan => {
+                self.token = T::TGreaterThan;
                 self.start += 1;
             }
 
-            T::t_greater_than_greater_than_greater_than => {
-                self.token = T::t_greater_than_greater_than;
+            T::TGreaterThanGreaterThanGreaterThan => {
+                self.token = T::TGreaterThanGreaterThan;
                 self.start += 1;
             }
 
             _ => {
-                self.expected(T::t_greater_than)?;
+                self.expected(T::TGreaterThan)?;
             }
         }
         Ok(())
@@ -1425,14 +1444,14 @@ lexer_impl_header!() {
 
         loop {
             self.start = self.end;
-            self.token = T::t_end_of_file;
+            self.token = T::TEndOfFile;
 
             match self.code_point {
                 -1 => {
-                    self.token = T::t_end_of_file;
+                    self.token = T::TEndOfFile;
                 }
 
-                c if c == b'#' as i32 => {
+                c if c == 0x23 => {
                     if IS_JSON {
                         return self.add_unsupported_syntax_error(
                             b"Private identifiers are not allowed in JSON",
@@ -1443,12 +1462,12 @@ lexer_impl_header!() {
                         && self.source.contents[1] == b'!'
                     {
                         // "#!/usr/bin/env node"
-                        self.token = T::t_hashbang;
+                        self.token = T::THashbang;
                         'hashbang: loop {
                             self.step();
                             match self.code_point {
-                                c if c == b'\r' as i32
-                                    || c == b'\n' as i32
+                                c if c == 0x0D
+                                    || c == 0x0A
                                     || c == 0x2028
                                     || c == 0x2029 =>
                                 {
@@ -1464,7 +1483,7 @@ lexer_impl_header!() {
                     } else {
                         // "#foo"
                         self.step();
-                        if self.code_point == b'\\' as i32 {
+                        if self.code_point == 0x5C {
                             self.identifier = self
                                 .scan_identifier_with_escapes(IdentifierKind::Private)
                                 .map_err(|_| Error::SyntaxError)? // TODO(port): error coercion
@@ -1478,7 +1497,7 @@ lexer_impl_header!() {
                             while is_identifier_continue(self.code_point) {
                                 self.step();
                             }
-                            if self.code_point == b'\\' as i32 {
+                            if self.code_point == 0x5C {
                                 self.identifier = self
                                     .scan_identifier_with_escapes(IdentifierKind::Private)
                                     .map_err(|_| Error::SyntaxError)?
@@ -1487,12 +1506,12 @@ lexer_impl_header!() {
                                 self.identifier = self.raw();
                             }
                         }
-                        self.token = T::t_private_identifier;
+                        self.token = T::TPrivateIdentifier;
                         break;
                     }
                 }
-                c if c == b'\r' as i32
-                    || c == b'\n' as i32
+                c if c == 0x0D
+                    || c == 0x0A
                     || c == 0x2028
                     || c == 0x2029 =>
                 {
@@ -1500,16 +1519,16 @@ lexer_impl_header!() {
 
                     if GUESS_INDENTATION {
                         if self.indent_info.first_newline
-                            && self.code_point == b'\n' as i32
+                            && self.code_point == 0x0A
                         {
-                            while self.code_point == b'\n' as i32
-                                || self.code_point == b'\r' as i32
+                            while self.code_point == 0x0A
+                                || self.code_point == 0x0D
                             {
                                 self.step();
                             }
 
-                            if self.code_point != b' ' as i32
-                                && self.code_point != b'\t' as i32
+                            if self.code_point != 0x20
+                                && self.code_point != 0x09
                             {
                                 // try to get the next one. this handles cases where the file starts
                                 // with a newline
@@ -1526,7 +1545,7 @@ lexer_impl_header!() {
                             }
 
                             self.indent_info.guess.character =
-                                if indent_character == b' ' as i32 {
+                                if indent_character == 0x20 {
                                     IndentationCharacter::Space
                                 } else {
                                     IndentationCharacter::Tab
@@ -1539,87 +1558,87 @@ lexer_impl_header!() {
                     self.step();
                     continue;
                 }
-                c if c == b'\t' as i32 || c == b' ' as i32 => {
+                c if c == 0x09 || c == 0x20 => {
                     self.step();
                     continue;
                 }
-                c if c == b'(' as i32 => {
+                c if c == 0x28 => {
                     self.step();
-                    self.token = T::t_open_paren;
+                    self.token = T::TOpenParen;
                 }
-                c if c == b')' as i32 => {
+                c if c == 0x29 => {
                     self.step();
-                    self.token = T::t_close_paren;
+                    self.token = T::TCloseParen;
                 }
-                c if c == b'[' as i32 => {
+                c if c == 0x5B => {
                     self.step();
-                    self.token = T::t_open_bracket;
+                    self.token = T::TOpenBracket;
                 }
-                c if c == b']' as i32 => {
+                c if c == 0x5D => {
                     self.step();
-                    self.token = T::t_close_bracket;
+                    self.token = T::TCloseBracket;
                 }
-                c if c == b'{' as i32 => {
+                c if c == 0x7B => {
                     self.step();
-                    self.token = T::t_open_brace;
+                    self.token = T::TOpenBrace;
                 }
-                c if c == b'}' as i32 => {
+                c if c == 0x7D => {
                     self.step();
-                    self.token = T::t_close_brace;
+                    self.token = T::TCloseBrace;
                 }
-                c if c == b',' as i32 => {
+                c if c == 0x2C => {
                     self.step();
-                    self.token = T::t_comma;
+                    self.token = T::TComma;
                 }
-                c if c == b':' as i32 => {
+                c if c == 0x3A => {
                     self.step();
-                    self.token = T::t_colon;
+                    self.token = T::TColon;
                 }
-                c if c == b';' as i32 => {
+                c if c == 0x3B => {
                     if IS_JSON {
                         return self.add_unsupported_syntax_error(
                             b"Semicolons are not allowed in JSON",
                         );
                     }
                     self.step();
-                    self.token = T::t_semicolon;
+                    self.token = T::TSemicolon;
                 }
-                c if c == b'@' as i32 => {
+                c if c == 0x40 => {
                     if IS_JSON {
                         return self.add_unsupported_syntax_error(
                             b"Decorators are not allowed in JSON",
                         );
                     }
                     self.step();
-                    self.token = T::t_at;
+                    self.token = T::TAt;
                 }
-                c if c == b'~' as i32 => {
+                c if c == 0x7E => {
                     if IS_JSON {
                         return self
                             .add_unsupported_syntax_error(b"~ is not allowed in JSON");
                     }
                     self.step();
-                    self.token = T::t_tilde;
+                    self.token = T::TTilde;
                 }
-                c if c == b'?' as i32 => {
+                c if c == 0x3F => {
                     // '?' or '?.' or '??' or '??='
                     self.step();
                     match self.code_point {
-                        c if c == b'?' as i32 => {
+                        c if c == 0x3F => {
                             self.step();
                             match self.code_point {
-                                c if c == b'=' as i32 => {
+                                c if c == 0x3D => {
                                     self.step();
-                                    self.token = T::t_question_question_equals;
+                                    self.token = T::TQuestionQuestionEquals;
                                 }
                                 _ => {
-                                    self.token = T::t_question_question;
+                                    self.token = T::TQuestionQuestion;
                                 }
                             }
                         }
 
-                        c if c == b'.' as i32 => {
-                            self.token = T::t_question;
+                        c if c == 0x2E => {
+                            self.token = T::TQuestion;
                             let current = self.current;
                             let contents = &self.source.contents;
 
@@ -1628,16 +1647,16 @@ lexer_impl_header!() {
                                 let c = contents[current];
                                 if c < b'0' || c > b'9' {
                                     self.step();
-                                    self.token = T::t_question_dot;
+                                    self.token = T::TQuestionDot;
                                 }
                             }
                         }
                         _ => {
-                            self.token = T::t_question;
+                            self.token = T::TQuestion;
                         }
                     }
                 }
-                c if c == b'%' as i32 => {
+                c if c == 0x25 => {
                     if IS_JSON {
                         return self.add_unsupported_syntax_error(
                             b"Operators are not allowed in JSON",
@@ -1647,17 +1666,17 @@ lexer_impl_header!() {
                     // '%' or '%='
                     self.step();
                     match self.code_point {
-                        c if c == b'=' as i32 => {
+                        c if c == 0x3D => {
                             self.step();
-                            self.token = T::t_percent_equals;
+                            self.token = T::TPercentEquals;
                         }
                         _ => {
-                            self.token = T::t_percent;
+                            self.token = T::TPercent;
                         }
                     }
                 }
 
-                c if c == b'&' as i32 => {
+                c if c == 0x26 => {
                     if IS_JSON {
                         return self.add_unsupported_syntax_error(
                             b"Operators are not allowed in JSON",
@@ -1667,29 +1686,29 @@ lexer_impl_header!() {
                     // '&' or '&=' or '&&' or '&&='
                     self.step();
                     match self.code_point {
-                        c if c == b'=' as i32 => {
+                        c if c == 0x3D => {
                             self.step();
-                            self.token = T::t_ampersand_equals;
+                            self.token = T::TAmpersandEquals;
                         }
-                        c if c == b'&' as i32 => {
+                        c if c == 0x26 => {
                             self.step();
                             match self.code_point {
-                                c if c == b'=' as i32 => {
+                                c if c == 0x3D => {
                                     self.step();
-                                    self.token = T::t_ampersand_ampersand_equals;
+                                    self.token = T::TAmpersandAmpersandEquals;
                                 }
                                 _ => {
-                                    self.token = T::t_ampersand_ampersand;
+                                    self.token = T::TAmpersandAmpersand;
                                 }
                             }
                         }
                         _ => {
-                            self.token = T::t_ampersand;
+                            self.token = T::TAmpersand;
                         }
                     }
                 }
 
-                c if c == b'|' as i32 => {
+                c if c == 0x7C => {
                     if IS_JSON {
                         return self.add_unsupported_syntax_error(
                             b"Operators are not allowed in JSON",
@@ -1699,29 +1718,29 @@ lexer_impl_header!() {
                     // '|' or '|=' or '||' or '||='
                     self.step();
                     match self.code_point {
-                        c if c == b'=' as i32 => {
+                        c if c == 0x3D => {
                             self.step();
-                            self.token = T::t_bar_equals;
+                            self.token = T::TBarEquals;
                         }
-                        c if c == b'|' as i32 => {
+                        c if c == 0x7C => {
                             self.step();
                             match self.code_point {
-                                c if c == b'=' as i32 => {
+                                c if c == 0x3D => {
                                     self.step();
-                                    self.token = T::t_bar_bar_equals;
+                                    self.token = T::TBarBarEquals;
                                 }
                                 _ => {
-                                    self.token = T::t_bar_bar;
+                                    self.token = T::TBarBar;
                                 }
                             }
                         }
                         _ => {
-                            self.token = T::t_bar;
+                            self.token = T::TBar;
                         }
                     }
                 }
 
-                c if c == b'^' as i32 => {
+                c if c == 0x5E => {
                     if IS_JSON {
                         return self.add_unsupported_syntax_error(
                             b"Operators are not allowed in JSON",
@@ -1731,17 +1750,17 @@ lexer_impl_header!() {
                     // '^' or '^='
                     self.step();
                     match self.code_point {
-                        c if c == b'=' as i32 => {
+                        c if c == 0x3D => {
                             self.step();
-                            self.token = T::t_caret_equals;
+                            self.token = T::TCaretEquals;
                         }
                         _ => {
-                            self.token = T::t_caret;
+                            self.token = T::TCaret;
                         }
                     }
                 }
 
-                c if c == b'+' as i32 => {
+                c if c == 0x2B => {
                     if IS_JSON {
                         return self.add_unsupported_syntax_error(
                             b"Operators are not allowed in JSON",
@@ -1751,34 +1770,34 @@ lexer_impl_header!() {
                     // '+' or '+=' or '++'
                     self.step();
                     match self.code_point {
-                        c if c == b'=' as i32 => {
+                        c if c == 0x3D => {
                             self.step();
-                            self.token = T::t_plus_equals;
+                            self.token = T::TPlusEquals;
                         }
-                        c if c == b'+' as i32 => {
+                        c if c == 0x2B => {
                             self.step();
-                            self.token = T::t_plus_plus;
+                            self.token = T::TPlusPlus;
                         }
                         _ => {
-                            self.token = T::t_plus;
+                            self.token = T::TPlus;
                         }
                     }
                 }
 
-                c if c == b'-' as i32 => {
+                c if c == 0x2D => {
                     // '+' or '+=' or '++'
                     self.step();
                     match self.code_point {
-                        c if c == b'=' as i32 => {
+                        c if c == 0x3D => {
                             if IS_JSON {
                                 return self.add_unsupported_syntax_error(
                                     b"Operators are not allowed in JSON",
                                 );
                             }
                             self.step();
-                            self.token = T::t_minus_equals;
+                            self.token = T::TMinusEquals;
                         }
-                        c if c == b'-' as i32 => {
+                        c if c == 0x2D => {
                             if IS_JSON {
                                 return self.add_unsupported_syntax_error(
                                     b"Operators are not allowed in JSON",
@@ -1786,11 +1805,11 @@ lexer_impl_header!() {
                             }
                             self.step();
 
-                            if self.code_point == b'>' as i32 && self.has_newline_before {
+                            if self.code_point == 0x3E && self.has_newline_before {
                                 self.step();
                                 self.log
                                     .add_range_warning(
-                                        &self.source,
+                                        Some(self.source),
                                         self.range(),
                                         b"Treating \"-->\" as the start of a legacy HTML single-line comment",
                                     )
@@ -1798,8 +1817,8 @@ lexer_impl_header!() {
 
                                 'single_line_html_close_comment: loop {
                                     match self.code_point {
-                                        c if c == b'\r' as i32
-                                            || c == b'\n' as i32
+                                        c if c == 0x0D
+                                            || c == 0x0A
                                             || c == 0x2028
                                             || c == 0x2029 =>
                                         {
@@ -1815,49 +1834,49 @@ lexer_impl_header!() {
                                 continue;
                             }
 
-                            self.token = T::t_minus_minus;
+                            self.token = T::TMinusMinus;
                         }
                         _ => {
-                            self.token = T::t_minus;
+                            self.token = T::TMinus;
                         }
                     }
                 }
 
-                c if c == b'*' as i32 => {
+                c if c == 0x2A => {
                     // '*' or '*=' or '**' or '**='
                     self.step();
                     match self.code_point {
-                        c if c == b'=' as i32 => {
+                        c if c == 0x3D => {
                             self.step();
-                            self.token = T::t_asterisk_equals;
+                            self.token = T::TAsteriskEquals;
                         }
-                        c if c == b'*' as i32 => {
+                        c if c == 0x2A => {
                             self.step();
                             match self.code_point {
-                                c if c == b'=' as i32 => {
+                                c if c == 0x3D => {
                                     self.step();
-                                    self.token = T::t_asterisk_asterisk_equals;
+                                    self.token = T::TAsteriskAsteriskEquals;
                                 }
                                 _ => {
-                                    self.token = T::t_asterisk_asterisk;
+                                    self.token = T::TAsteriskAsterisk;
                                 }
                             }
                         }
                         _ => {
-                            self.token = T::t_asterisk;
+                            self.token = T::TAsterisk;
                         }
                     }
                 }
-                c if c == b'/' as i32 => {
+                c if c == 0x2F => {
                     // '/' or '/=' or '//' or '/* ... */'
                     self.step();
 
                     match self.code_point {
-                        c if c == b'=' as i32 => {
+                        c if c == 0x3D => {
                             self.step();
-                            self.token = T::t_slash_equals;
+                            self.token = T::TSlashEquals;
                         }
-                        c if c == b'/' as i32 => {
+                        c if c == 0x2F => {
                             self.scan_single_line_comment();
                             if IS_JSON {
                                 if !ALLOW_COMMENTS {
@@ -1872,20 +1891,20 @@ lexer_impl_header!() {
                             self.scan_comment_text(false);
                             continue;
                         }
-                        c if c == b'*' as i32 => {
+                        c if c == 0x2A => {
                             self.step();
 
                             'multi_line_comment: loop {
                                 match self.code_point {
-                                    c if c == b'*' as i32 => {
+                                    c if c == 0x2A => {
                                         self.step();
-                                        if self.code_point == b'/' as i32 {
+                                        if self.code_point == 0x2F {
                                             self.step();
                                             break 'multi_line_comment;
                                         }
                                     }
-                                    c if c == b'\r' as i32
-                                        || c == b'\n' as i32
+                                    c if c == 0x0D
+                                        || c == 0x0A
                                         || c == 0x2028
                                         || c == 0x2029 =>
                                     {
@@ -1941,12 +1960,12 @@ lexer_impl_header!() {
                             continue;
                         }
                         _ => {
-                            self.token = T::t_slash;
+                            self.token = T::TSlash;
                         }
                     }
                 }
 
-                c if c == b'=' as i32 => {
+                c if c == 0x3D => {
                     if IS_JSON {
                         return self.add_unsupported_syntax_error(
                             b"Operators are not allowed in JSON",
@@ -1956,29 +1975,29 @@ lexer_impl_header!() {
                     // '=' or '=>' or '==' or '==='
                     self.step();
                     match self.code_point {
-                        c if c == b'>' as i32 => {
+                        c if c == 0x3E => {
                             self.step();
-                            self.token = T::t_equals_greater_than;
+                            self.token = T::TEqualsGreaterThan;
                         }
-                        c if c == b'=' as i32 => {
+                        c if c == 0x3D => {
                             self.step();
                             match self.code_point {
-                                c if c == b'=' as i32 => {
+                                c if c == 0x3D => {
                                     self.step();
-                                    self.token = T::t_equals_equals_equals;
+                                    self.token = T::TEqualsEqualsEquals;
                                 }
                                 _ => {
-                                    self.token = T::t_equals_equals;
+                                    self.token = T::TEqualsEquals;
                                 }
                             }
                         }
                         _ => {
-                            self.token = T::t_equals;
+                            self.token = T::TEquals;
                         }
                     }
                 }
 
-                c if c == b'<' as i32 => {
+                c if c == 0x3C => {
                     if IS_JSON {
                         return self.add_unsupported_syntax_error(
                             b"Operators are not allowed in JSON",
@@ -1988,24 +2007,24 @@ lexer_impl_header!() {
                     // '<' or '<<' or '<=' or '<<=' or '<!--'
                     self.step();
                     match self.code_point {
-                        c if c == b'=' as i32 => {
+                        c if c == 0x3D => {
                             self.step();
-                            self.token = T::t_less_than_equals;
+                            self.token = T::TLessThanEquals;
                         }
-                        c if c == b'<' as i32 => {
+                        c if c == 0x3C => {
                             self.step();
                             match self.code_point {
-                                c if c == b'=' as i32 => {
+                                c if c == 0x3D => {
                                     self.step();
-                                    self.token = T::t_less_than_less_than_equals;
+                                    self.token = T::TLessThanLessThanEquals;
                                 }
                                 _ => {
-                                    self.token = T::t_less_than_less_than;
+                                    self.token = T::TLessThanLessThan;
                                 }
                             }
                         }
                         // Handle legacy HTML-style comments
-                        c if c == b'!' as i32 => {
+                        c if c == 0x21 => {
                             if self.peek("--".len()) == b"--" {
                                 self.add_unsupported_syntax_error(
                                     b"Legacy HTML comments not implemented yet!",
@@ -2013,15 +2032,15 @@ lexer_impl_header!() {
                                 return Ok(());
                             }
 
-                            self.token = T::t_less_than;
+                            self.token = T::TLessThan;
                         }
                         _ => {
-                            self.token = T::t_less_than;
+                            self.token = T::TLessThan;
                         }
                     }
                 }
 
-                c if c == b'>' as i32 => {
+                c if c == 0x3E => {
                     if IS_JSON {
                         return self.add_unsupported_syntax_error(
                             b"Operators are not allowed in JSON",
@@ -2032,41 +2051,41 @@ lexer_impl_header!() {
                     self.step();
 
                     match self.code_point {
-                        c if c == b'=' as i32 => {
+                        c if c == 0x3D => {
                             self.step();
-                            self.token = T::t_greater_than_equals;
+                            self.token = T::TGreaterThanEquals;
                         }
-                        c if c == b'>' as i32 => {
+                        c if c == 0x3E => {
                             self.step();
                             match self.code_point {
-                                c if c == b'=' as i32 => {
+                                c if c == 0x3D => {
                                     self.step();
-                                    self.token = T::t_greater_than_greater_than_equals;
+                                    self.token = T::TGreaterThanGreaterThanEquals;
                                 }
-                                c if c == b'>' as i32 => {
+                                c if c == 0x3E => {
                                     self.step();
                                     match self.code_point {
-                                        c if c == b'=' as i32 => {
+                                        c if c == 0x3D => {
                                             self.step();
-                                            self.token = T::t_greater_than_greater_than_greater_than_equals;
+                                            self.token = T::TGreaterThanGreaterThanGreaterThanEquals;
                                         }
                                         _ => {
-                                            self.token = T::t_greater_than_greater_than_greater_than;
+                                            self.token = T::TGreaterThanGreaterThanGreaterThan;
                                         }
                                     }
                                 }
                                 _ => {
-                                    self.token = T::t_greater_than_greater_than;
+                                    self.token = T::TGreaterThanGreaterThan;
                                 }
                             }
                         }
                         _ => {
-                            self.token = T::t_greater_than;
+                            self.token = T::TGreaterThan;
                         }
                     }
                 }
 
-                c if c == b'!' as i32 => {
+                c if c == 0x21 => {
                     if IS_JSON {
                         return self.add_unsupported_syntax_error(
                             b"Operators are not allowed in JSON",
@@ -2076,38 +2095,38 @@ lexer_impl_header!() {
                     // '!' or '!=' or '!=='
                     self.step();
                     match self.code_point {
-                        c if c == b'=' as i32 => {
+                        c if c == 0x3D => {
                             self.step();
                             match self.code_point {
-                                c if c == b'=' as i32 => {
+                                c if c == 0x3D => {
                                     self.step();
-                                    self.token = T::t_exclamation_equals_equals;
+                                    self.token = T::TExclamationEqualsEquals;
                                 }
                                 _ => {
-                                    self.token = T::t_exclamation_equals;
+                                    self.token = T::TExclamationEquals;
                                 }
                             }
                         }
                         _ => {
-                            self.token = T::t_exclamation;
+                            self.token = T::TExclamation;
                         }
                     }
                 }
 
-                c if c == b'\'' as i32 => {
-                    self.parse_string_literal::<{ b'\'' as i32 }>()?;
+                c if c == 0x27 => {
+                    self.parse_string_literal::<{ 0x27 }>()?;
                 }
-                c if c == b'"' as i32 => {
-                    self.parse_string_literal::<{ b'"' as i32 }>()?;
+                c if c == 0x22 => {
+                    self.parse_string_literal::<{ 0x22 }>()?;
                 }
-                c if c == b'`' as i32 => {
-                    self.parse_string_literal::<{ b'`' as i32 }>()?;
+                c if c == 0x60 => {
+                    self.parse_string_literal::<{ 0x60 }>()?;
                 }
 
-                c if c == b'_' as i32
-                    || c == b'$' as i32
-                    || (b'a' as i32..=b'z' as i32).contains(&c)
-                    || (b'A' as i32..=b'Z' as i32).contains(&c) =>
+                c if c == 0x5F
+                    || c == 0x24
+                    || (0x61..=0x7A).contains(&c)
+                    || (0x41..=0x5A).contains(&c) =>
                 {
                     let advance = latin1_identifier_continue_length(
                         &self.source.contents[self.current..],
@@ -2125,13 +2144,13 @@ lexer_impl_header!() {
                         }
                     }
 
-                    if self.code_point != b'\\' as i32 {
+                    if self.code_point != 0x5C {
                         // @branchHint(.likely)
                         // this code is so hot that if you save lexer.raw() into a temporary variable
                         // it shows up in profiling
                         self.identifier = self.raw();
                         self.token =
-                            Keywords::get(self.identifier).unwrap_or(T::t_identifier);
+                            Keywords.get(self.identifier).copied().unwrap_or(T::TIdentifier);
                     } else {
                         // @branchHint(.unlikely)
                         let scan_result = self
@@ -2142,7 +2161,7 @@ lexer_impl_header!() {
                     }
                 }
 
-                c if c == b'\\' as i32 => {
+                c if c == 0x5C => {
                     if IS_JSON && IGNORE_LEADING_ESCAPE_SEQUENCES {
                         if self.start == 0
                             || self.current == self.source.contents.len() - 1
@@ -2159,7 +2178,7 @@ lexer_impl_header!() {
                     self.token = scan_result.token;
                 }
 
-                c if c == b'.' as i32 || (b'0' as i32..=b'9' as i32).contains(&c) => {
+                c if c == 0x2E || (0x30..=0x39).contains(&c) => {
                     self.parse_numeric_literal_or_dot()?;
                 }
 
@@ -2175,21 +2194,21 @@ lexer_impl_header!() {
                         while is_identifier_continue(self.code_point) {
                             self.step();
                         }
-                        if self.code_point == b'\\' as i32 {
+                        if self.code_point == 0x5C {
                             let scan_result = self
                                 .scan_identifier_with_escapes(IdentifierKind::Normal)
                                 .map_err(|_| Error::SyntaxError)?;
                             self.identifier = scan_result.contents;
                             self.token = scan_result.token;
                         } else {
-                            self.token = T::t_identifier;
+                            self.token = T::TIdentifier;
                             self.identifier = self.raw();
                         }
                         break;
                     }
 
                     self.end = self.current;
-                    self.token = T::t_syntax_error;
+                    self.token = T::TSyntaxError;
                 }
             }
 
@@ -2201,8 +2220,8 @@ lexer_impl_header!() {
     pub fn expected(&mut self, token: T) -> Result<(), Error> {
         if self.is_log_disabled {
             return Err(Error::Backtrack);
-        } else if !tokenToString::get(token).is_empty() {
-            self.expected_string(tokenToString::get(token))
+        } else if !tokenToString_get(token).is_empty() {
+            self.expected_string(tokenToString_get(token))
         } else {
             self.unexpected()
         }
@@ -2239,7 +2258,7 @@ lexer_impl_header!() {
     }
 
     pub fn is_contextual_keyword(&self, keyword: &'static [u8]) -> bool {
-        self.token == T::t_identifier && self.raw() == keyword
+        self.token == T::TIdentifier && self.raw() == keyword
     }
 
     pub fn expected_string(&mut self, text: &[u8]) -> Result<(), Error> {
@@ -2247,8 +2266,8 @@ lexer_impl_header!() {
             let mut notes: [logger::Data; 1] = [logger::Data::default()];
             if !self.fn_or_arrow_start_loc.is_empty() {
                 notes[0] = logger::range_data(
-                    &self.source,
-                    range_of_identifier(&self.source, self.fn_or_arrow_start_loc),
+                    Some(self.source),
+                    range_of_identifier(self.source, self.fn_or_arrow_start_loc),
                     b"Consider adding the \"async\" keyword here",
                 );
             }
@@ -2329,6 +2348,7 @@ lexer_impl_header!() {
         let mut rest = &text[0..end_comment_text];
 
         while let Some(i) = strings::index_of_any(rest, b"@#") {
+            let i = i as usize;
             let c = rest[i];
             rest = &rest[(i + 1).min(rest.len())..];
             match c {
@@ -2364,8 +2384,8 @@ lexer_impl_header!() {
                 self.step(); // Consume the interesting char, sets code_point, advances current
 
                 match self.code_point {
-                    c if c == b'\r' as i32
-                        || c == b'\n' as i32
+                    c if c == 0x0D
+                        || c == 0x0A
                         || c == 0x2028
                         || c == 0x2029 =>
                     {
@@ -2377,14 +2397,17 @@ lexer_impl_header!() {
                         return;
                     } // EOF? Stop.
 
-                    c if c == b'#' as i32 || c == b'@' as i32 => {
+                    c if c == 0x23 || c == 0x40 => {
                         if !IS_JSON {
                             let pragma_trigger_pos = self.end; // Position OF #/@
                             // Use remaining() which starts *after* the consumed #/@
-                            let chunk = self.remaining();
-
+                            // PORT NOTE: reshaped for borrowck — `remaining()` borrows
+                            // `self.source.contents`; `scan_pragma` needs `&mut self`.
+                            // Re-slice via a raw ptr (arena-owned, lives for parse).
+                            let chunk: *const [u8] = self.remaining();
+                            // SAFETY: `chunk` points into `self.source.contents`, valid for the parse.
                             let offset =
-                                self.scan_pragma(pragma_trigger_pos, chunk, true);
+                                self.scan_pragma(pragma_trigger_pos, unsafe { &*chunk }, true);
 
                             if offset > 0 {
                                 // Pragma found (e.g., __PURE__).
@@ -2523,7 +2546,7 @@ lexer_impl_header!() {
 
     pub fn range(&self) -> Range {
         Range {
-            loc: logger::usize2_loc(self.start),
+            loc: logger::usize2loc(self.start),
             // TODO(port): std.math.lossyCast — saturate on overflow
             len: (self.end - self.start) as i32,
         }
@@ -2531,7 +2554,7 @@ lexer_impl_header!() {
 
     pub fn init_json(
         log: &'a mut Log,
-        source: &Source,
+        source: &'a Source,
         allocator: &'a Arena,
     ) -> Result<Self, Error> {
         let mut lex = Self::init_without_reading(log, source, allocator);
@@ -2542,19 +2565,19 @@ lexer_impl_header!() {
 
     pub fn init_without_reading(
         log: &'a mut Log,
-        source: &Source,
+        source: &'a Source,
         allocator: &'a Arena,
     ) -> Self {
         Self {
             log,
-            source: source.clone(),
+            source: source,
             current: 0,
             start: 0,
             end: 0,
             did_panic: false,
             approximate_newline_count: 0,
             previous_backslash_quote_in_jsx: Range::NONE,
-            token: T::t_end_of_file,
+            token: T::TEndOfFile,
             has_newline_before: false,
             has_pure_comment_before: false,
             has_no_side_effect_comment_before: false,
@@ -2590,7 +2613,7 @@ lexer_impl_header!() {
 
     pub fn init(
         log: &'a mut Log,
-        source: &Source,
+        source: &'a Source,
         allocator: &'a Arena,
     ) -> Result<Self, Error> {
         let mut lex = Self::init_without_reading(log, source, allocator);
@@ -2641,7 +2664,7 @@ lexer_impl_header!() {
                 } else {
                     let result =
                         self.allocator.alloc_slice_fill_default::<u8>(tmp.len());
-                    strings::copy_u16_into_u8(result, &tmp);
+                    strings::copy_utf16_into_utf8(result, &tmp);
                     js_ast::E::String::init(result)
                 };
                 tmp.clear();
@@ -2672,7 +2695,7 @@ lexer_impl_header!() {
         self.regex_flags_start = None;
         loop {
             match self.code_point {
-                c if c == b'/' as i32 => {
+                c if c == 0x2F => {
                     self.step();
 
                     let mut has_set_flags_start = false;
@@ -2681,18 +2704,18 @@ lexer_impl_header!() {
                     const MAX_FLAG: u8 = b'y'; // comptime std.mem.max
                     let mut flags = bun_collections::IntegerBitSet::<
                         { (MAX_FLAG - MIN_FLAG) as usize + 1 },
-                    >::empty();
+                    >::init_empty();
                     let _ = FLAG_CHARACTERS;
                     while is_identifier_continue(self.code_point) {
                         match self.code_point {
-                            c if c == b'd' as i32
-                                || c == b'g' as i32
-                                || c == b'i' as i32
-                                || c == b'm' as i32
-                                || c == b's' as i32
-                                || c == b'u' as i32
-                                || c == b'y' as i32
-                                || c == b'v' as i32 =>
+                            c if c == 0x64
+                                || c == 0x67
+                                || c == 0x69
+                                || c == 0x6D
+                                || c == 0x73
+                                || c == 0x75
+                                || c == 0x79
+                                || c == 0x76 =>
                             {
                                 if !has_set_flags_start {
                                     self.regex_flags_start =
@@ -2735,9 +2758,9 @@ lexer_impl_header!() {
                     }
                     return Ok(());
                 }
-                c if c == b'[' as i32 => {
+                c if c == 0x5B => {
                     self.step();
-                    while self.code_point != b']' as i32 {
+                    while self.code_point != 0x5D {
                         self.scan_reg_exp_validate_and_step()?;
                     }
                     self.step();
@@ -2754,7 +2777,9 @@ lexer_impl_header!() {
         js: JavascriptString<'_>,
     ) -> Result<&'a [u8], bun_core::Error> {
         // TODO(port): allocator routing — Zig: strings.toUTF8AllocWithType(lexer.allocator, js)
-        strings::to_utf8_alloc_with_type(self.allocator, js)
+        // PERF(port): goes through global Vec then dupes into the arena.
+        let owned = strings::to_utf8_alloc_with_type(js);
+        Ok(self.allocator.alloc_slice_copy(&owned))
     }
 
     pub fn next_inside_jsx_element(&mut self) -> Result<(), Error> {
@@ -2764,14 +2789,14 @@ lexer_impl_header!() {
 
         loop {
             self.start = self.end;
-            self.token = T::t_end_of_file;
+            self.token = T::TEndOfFile;
 
             match self.code_point {
                 -1 => {
-                    self.token = T::t_end_of_file;
+                    self.token = T::TEndOfFile;
                 }
-                c if c == b'\r' as i32
-                    || c == b'\n' as i32
+                c if c == 0x0D
+                    || c == 0x0A
                     || c == 0x2028
                     || c == 0x2029 =>
                 {
@@ -2779,44 +2804,44 @@ lexer_impl_header!() {
                     self.has_newline_before = true;
                     continue;
                 }
-                c if c == b'\t' as i32 || c == b' ' as i32 => {
+                c if c == 0x09 || c == 0x20 => {
                     self.step();
                     continue;
                 }
-                c if c == b'.' as i32 => {
+                c if c == 0x2E => {
                     self.step();
-                    self.token = T::t_dot;
+                    self.token = T::TDot;
                 }
-                c if c == b'=' as i32 => {
+                c if c == 0x3D => {
                     self.step();
-                    self.token = T::t_equals;
+                    self.token = T::TEquals;
                 }
-                c if c == b'{' as i32 => {
+                c if c == 0x7B => {
                     self.step();
-                    self.token = T::t_open_brace;
+                    self.token = T::TOpenBrace;
                 }
-                c if c == b'}' as i32 => {
+                c if c == 0x7D => {
                     self.step();
-                    self.token = T::t_close_brace;
+                    self.token = T::TCloseBrace;
                 }
-                c if c == b'<' as i32 => {
+                c if c == 0x3C => {
                     self.step();
-                    self.token = T::t_less_than;
+                    self.token = T::TLessThan;
                 }
-                c if c == b'>' as i32 => {
+                c if c == 0x3E => {
                     self.step();
-                    self.token = T::t_greater_than;
+                    self.token = T::TGreaterThan;
                 }
-                c if c == b'/' as i32 => {
+                c if c == 0x2F => {
                     // '/' or '//' or '/* ... */'
                     self.step();
                     match self.code_point {
-                        c if c == b'/' as i32 => {
+                        c if c == 0x2F => {
                             'single_line_comment: loop {
                                 self.step();
                                 match self.code_point {
-                                    c if c == b'\r' as i32
-                                        || c == b'\n' as i32
+                                    c if c == 0x0D
+                                        || c == 0x0A
                                         || c == 0x2028
                                         || c == 0x2029 =>
                                     {
@@ -2830,19 +2855,19 @@ lexer_impl_header!() {
                             }
                             continue;
                         }
-                        c if c == b'*' as i32 => {
+                        c if c == 0x2A => {
                             self.step();
                             'multi_line_comment: loop {
                                 match self.code_point {
-                                    c if c == b'*' as i32 => {
+                                    c if c == 0x2A => {
                                         self.step();
-                                        if self.code_point == b'/' as i32 {
+                                        if self.code_point == 0x2F {
                                             self.step();
                                             break 'multi_line_comment;
                                         }
                                     }
-                                    c if c == b'\r' as i32
-                                        || c == b'\n' as i32
+                                    c if c == 0x0D
+                                        || c == 0x0A
                                         || c == 0x2028
                                         || c == 0x2029 =>
                                     {
@@ -2866,15 +2891,15 @@ lexer_impl_header!() {
                             continue;
                         }
                         _ => {
-                            self.token = T::t_slash;
+                            self.token = T::TSlash;
                         }
                     }
                 }
-                c if c == b'\'' as i32 => {
+                c if c == 0x27 => {
                     self.step();
                     self.parse_jsx_string_literal::<{ b'\'' }>()?;
                 }
-                c if c == b'"' as i32 => {
+                c if c == 0x22 => {
                     self.step();
                     self.parse_jsx_string_literal::<{ b'"' }>()?;
                 }
@@ -2887,7 +2912,7 @@ lexer_impl_header!() {
                     if is_identifier_start(self.code_point) {
                         self.step();
                         while is_identifier_continue(self.code_point)
-                            || self.code_point == b'-' as i32
+                            || self.code_point == 0x2D
                         {
                             self.step();
                         }
@@ -2896,12 +2921,12 @@ lexer_impl_header!() {
                         // but someone using JSX syntax in more obscure ways may find a use for
                         // them. A namespaced name is just always turned into a string so you
                         // can't use this feature to reference JavaScript identifiers.
-                        if self.code_point == b':' as i32 {
+                        if self.code_point == 0x3A {
                             self.step();
 
                             if is_identifier_start(self.code_point) {
                                 while is_identifier_continue(self.code_point)
-                                    || self.code_point == b'-' as i32
+                                    || self.code_point == 0x2D
                                 {
                                     self.step();
                                 }
@@ -2917,12 +2942,12 @@ lexer_impl_header!() {
                         }
 
                         self.identifier = self.raw();
-                        self.token = T::t_identifier;
+                        self.token = T::TIdentifier;
                         break;
                     }
 
                     self.end = self.current;
-                    self.token = T::t_syntax_error;
+                    self.token = T::TSyntaxError;
                 }
             }
 
@@ -2942,12 +2967,12 @@ lexer_impl_header!() {
                 -1 => {
                     self.syntax_error()?;
                 }
-                c if c == b'&' as i32 => {
+                c if c == 0x26 => {
                     needs_decode = true;
                     self.step();
                 }
 
-                c if c == b'\\' as i32 => {
+                c if c == 0x5C => {
                     backslash = Range {
                         loc: Loc {
                             start: i32::try_from(self.end).unwrap(),
@@ -2959,10 +2984,10 @@ lexer_impl_header!() {
                     // JSX string literals do not support escaping
                     // They're "pre" escaped
                     match self.code_point {
-                        c if c == b'u' as i32
+                        c if c == 0x75
                             || c == 0x0C
                             || c == 0
-                            || c == b'\t' as i32
+                            || c == 0x09
                             || c == 0x0B // std.ascii.control_code.vt
                             || c == 0x08 =>
                         {
@@ -2995,7 +3020,7 @@ lexer_impl_header!() {
             backslash = Range::NONE;
         }
 
-        self.token = T::t_string_literal;
+        self.token = T::TStringLiteral;
 
         let raw_content_slice =
             &self.source.contents[self.start + 1..self.end - 1];
@@ -3048,19 +3073,19 @@ lexer_impl_header!() {
 
         loop {
             self.start = self.end;
-            self.token = T::t_end_of_file;
+            self.token = T::TEndOfFile;
 
             match self.code_point {
                 -1 => {
-                    self.token = T::t_end_of_file;
+                    self.token = T::TEndOfFile;
                 }
-                c if c == b'{' as i32 => {
+                c if c == 0x7B => {
                     self.step();
-                    self.token = T::t_open_brace;
+                    self.token = T::TOpenBrace;
                 }
-                c if c == b'<' as i32 => {
+                c if c == 0x3C => {
                     self.step();
-                    self.token = T::t_less_than;
+                    self.token = T::TLessThan;
                 }
                 _ => {
                     let mut needs_fixing = false;
@@ -3070,16 +3095,16 @@ lexer_impl_header!() {
                             -1 => {
                                 self.syntax_error()?;
                             }
-                            c if c == b'&' as i32
-                                || c == b'\r' as i32
-                                || c == b'\n' as i32
+                            c if c == 0x26
+                                || c == 0x0D
+                                || c == 0x0A
                                 || c == 0x2028
                                 || c == 0x2029 =>
                             {
                                 needs_fixing = true;
                                 self.step();
                             }
-                            c if c == b'{' as i32 || c == b'<' as i32 => {
+                            c if c == 0x7B || c == 0x3C => {
                                 break 'string_literal;
                             }
                             _ => {
@@ -3090,7 +3115,7 @@ lexer_impl_header!() {
                         }
                     }
 
-                    self.token = T::t_string_literal;
+                    self.token = T::TStringLiteral;
                     let raw_content_slice =
                         &self.source.contents[original_start..self.end];
 
@@ -3151,12 +3176,12 @@ lexer_impl_header!() {
         let mut first_non_whitespace: Option<u32> = Some(0);
 
         let iterator = CodepointIterator::init(text);
-        let mut cursor = strings::CodepointIterator::Cursor::default();
+        let mut cursor = strings::Cursor::default();
 
         while iterator.next(&mut cursor) {
             match cursor.c {
-                c if c == b'\r' as i32
-                    || c == b'\n' as i32
+                c if c == 0x0D
+                    || c == 0x0A
                     || c == 0x2028
                     || c == 0x2029 =>
                 {
@@ -3179,7 +3204,7 @@ lexer_impl_header!() {
                     // Reset for the next line
                     first_non_whitespace = None;
                 }
-                c if c == b'\t' as i32 || c == b' ' as i32 => {}
+                c if c == 0x09 || c == 0x20 => {}
                 _ => {
                     // Check for unusual whitespace characters
                     if !is_whitespace(cursor.c) {
@@ -3206,7 +3231,7 @@ lexer_impl_header!() {
     fn maybe_decode_jsx_entity(
         &mut self,
         text: &[u8],
-        cursor: &mut strings::CodepointIterator::Cursor,
+        cursor: &mut strings::Cursor,
     ) {
         self.assert_not_json();
 
@@ -3214,6 +3239,7 @@ lexer_impl_header!() {
             &text[cursor.width as usize + cursor.i as usize..],
             b';',
         ) {
+            let length = length as usize;
             let end = cursor.width as usize + cursor.i as usize;
             let entity = &text[end..end + length];
             if entity[0] == b'#' {
@@ -3226,41 +3252,31 @@ lexer_impl_header!() {
 
                 // PORT NOTE: std.fmt.parseInt(i32, ..) — bytes-based parser; source bytes are
                 // not guaranteed UTF-8 so we never round-trip through &str (PORTING.md §Strings).
-                cursor.c = match bun_str::strings::parse_int::<i32>(number, u32::from(base)) {
-                    Ok(v) => v,
-                    Err(e) => 'brk: {
-                        use bun_str::strings::ParseIntError;
-                        match e {
-                            ParseIntError::InvalidCharacter => {
-                                self.add_error(
-                                    self.start,
-                                    format_args!(
-                                        "Invalid JSX entity escape: {}",
-                                        bstr::BStr::new(entity)
-                                    ),
-                                    false,
-                                );
-                            }
-                            ParseIntError::Overflow => {
-                                self.add_error(
-                                    self.start,
-                                    format_args!(
-                                        "JSX entity escape is too big: {}",
-                                        bstr::BStr::new(entity)
-                                    ),
-                                    false,
-                                );
-                            }
-                            _ => {}
-                        }
-                        break 'brk strings::UNICODE_REPLACEMENT;
-                    }
+                #[cfg(any())]
+                {
+                    cursor.c = match bun_string::strings::parse_int::<i32>(number, u32::from(base)) {
+                        Ok(v) => v,
+                        Err(_) => strings::UNICODE_REPLACEMENT,
+                    };
+                }
+                // TODO(b2-blocked): bun_string::strings::parse_int
+                cursor.c = {
+                    let _ = (number, base);
+                    self.add_error(
+                        self.start,
+                        format_args!(
+                            "Invalid JSX entity escape: {}",
+                            bstr::BStr::new(entity)
+                        ),
+                        false,
+                    );
+                    strings::UNICODE_REPLACEMENT as CodePoint
                 };
 
                 cursor.i += u32::try_from(length).unwrap() + 1;
                 cursor.width = 1;
-            } else if let Some(ent) = tables::jsxEntity::get(entity) {
-                cursor.c = ent;
+            } else if let Some(ent) = tables::JSX_ENTITY.get(entity) {
+                cursor.c = *ent;
                 cursor.i += u32::try_from(length).unwrap() + 1;
             }
         }
@@ -3274,10 +3290,10 @@ lexer_impl_header!() {
         self.assert_not_json();
 
         let iterator = CodepointIterator::init(text);
-        let mut cursor = strings::CodepointIterator::Cursor::default();
+        let mut cursor = strings::Cursor::default();
 
         while iterator.next(&mut cursor) {
-            if cursor.c == b'&' as i32 {
+            if cursor.c == 0x26 {
                 self.maybe_decode_jsx_entity(text, &mut cursor);
             }
 
@@ -3325,13 +3341,13 @@ lexer_impl_header!() {
     fn scan_reg_exp_validate_and_step(&mut self) -> Result<(), Error> {
         self.assert_not_json();
 
-        if self.code_point == b'\\' as i32 {
+        if self.code_point == 0x5C {
             self.step();
         }
 
         match self.code_point {
-            c if c == b'\r' as i32
-                || c == b'\n' as i32
+            c if c == 0x0D
+                || c == 0x0A
                 || c == 0x2028
                 || c == 0x2029 =>
             {
@@ -3352,12 +3368,12 @@ lexer_impl_header!() {
     pub fn rescan_close_brace_as_template_token(&mut self) -> Result<(), Error> {
         self.assert_not_json();
 
-        if self.token != T::t_close_brace {
-            self.expected(T::t_close_brace)?;
+        if self.token != T::TCloseBrace {
+            self.expected(T::TCloseBrace)?;
         }
 
         self.rescan_close_brace_as_template_token = true;
-        self.code_point = b'`' as i32;
+        self.code_point = 0x60;
         self.current = self.end;
         self.end -= 1;
         self.next()?;
@@ -3371,10 +3387,10 @@ lexer_impl_header!() {
         let mut text: &[u8] = b"";
 
         match self.token {
-            T::t_no_substitution_template_literal | T::t_template_tail => {
+            T::TNoSubstitutionTemplateLiteral | T::TTemplateTail => {
                 text = &self.source.contents[self.start + 1..self.end - 1];
             }
-            T::t_template_middle | T::t_template_head => {
+            T::TTemplateMiddle | T::TTemplateHead => {
                 text = &self.source.contents[self.start + 1..self.end - 2];
             }
             _ => {}
@@ -3430,47 +3446,47 @@ lexer_impl_header!() {
         self.step();
 
         // Dot without a digit after it;
-        if first == b'.' as i32
-            && (self.code_point < b'0' as i32 || self.code_point > b'9' as i32)
+        if first == 0x2E
+            && (self.code_point < 0x30 || self.code_point > 0x39)
         {
             // "..."
-            if (self.code_point == b'.' as i32
+            if (self.code_point == 0x2E
                 && self.current < self.source.contents.len())
                 && self.source.contents[self.current] == b'.'
             {
                 self.step();
                 self.step();
-                self.token = T::t_dot_dot_dot;
+                self.token = T::TDotDotDot;
                 return Ok(());
             }
 
             // "."
-            self.token = T::t_dot;
+            self.token = T::TDot;
             return Ok(());
         }
 
         let mut underscore_count: usize = 0;
         let mut last_underscore_end: usize = 0;
-        let mut has_dot_or_exponent = first == b'.' as i32;
+        let mut has_dot_or_exponent = first == 0x2E;
         let mut base: f32 = 0.0;
         self.is_legacy_octal_literal = false;
 
         // Assume this is a number, but potentially change to a bigint later;
-        self.token = T::t_numeric_literal;
+        self.token = T::TNumericLiteral;
 
         // Check for binary, octal, or hexadecimal literal;
-        if first == b'0' as i32 {
+        if first == 0x30 {
             match self.code_point {
-                c if c == b'b' as i32 || c == b'B' as i32 => {
+                c if c == 0x62 || c == 0x42 => {
                     base = 2.0;
                 }
-                c if c == b'o' as i32 || c == b'O' as i32 => {
+                c if c == 0x6F || c == 0x4F => {
                     base = 8.0;
                 }
-                c if c == b'x' as i32 || c == b'X' as i32 => {
+                c if c == 0x78 || c == 0x58 => {
                     base = 16.0;
                 }
-                c if (b'0' as i32..=b'7' as i32).contains(&c) || c == b'_' as i32 => {
+                c if (0x30..=0x37).contains(&c) || c == 0x5F => {
                     base = 8.0;
                     self.is_legacy_octal_literal = true;
                 }
@@ -3489,7 +3505,7 @@ lexer_impl_header!() {
 
             'integer_literal: loop {
                 match self.code_point {
-                    c if c == b'_' as i32 => {
+                    c if c == 0x5F => {
                         // Cannot have multiple underscores in a row;
                         if last_underscore_end > 0 && self.end == last_underscore_end + 1
                         {
@@ -3505,40 +3521,40 @@ lexer_impl_header!() {
                         underscore_count += 1;
                     }
 
-                    c if c == b'0' as i32 || c == b'1' as i32 => {
+                    c if c == 0x30 || c == 0x31 => {
                         self.number = self.number * base as f64
-                            + float64(self.code_point - b'0' as i32);
+                            + float64(self.code_point - 0x30);
                     }
 
-                    c if (b'2' as i32..=b'7' as i32).contains(&c) => {
+                    c if (0x32..=0x37).contains(&c) => {
                         if base == 2.0 {
                             self.syntax_error()?;
                         }
                         self.number = self.number * base as f64
-                            + float64(self.code_point - b'0' as i32);
+                            + float64(self.code_point - 0x30);
                     }
-                    c if c == b'8' as i32 || c == b'9' as i32 => {
+                    c if c == 0x38 || c == 0x39 => {
                         if self.is_legacy_octal_literal {
                             is_invalid_legacy_octal_literal = true;
                         } else if base < 10.0 {
                             self.syntax_error()?;
                         }
                         self.number = self.number * base as f64
-                            + float64(self.code_point - b'0' as i32);
+                            + float64(self.code_point - 0x30);
                     }
-                    c if (b'A' as i32..=b'F' as i32).contains(&c) => {
+                    c if (0x41..=0x46).contains(&c) => {
                         if base != 16.0 {
                             self.syntax_error()?;
                         }
                         self.number = self.number * base as f64
-                            + float64(self.code_point + 10 - b'A' as i32);
+                            + float64(self.code_point + 10 - 0x41);
                     }
-                    c if (b'a' as i32..=b'f' as i32).contains(&c) => {
+                    c if (0x61..=0x66).contains(&c) => {
                         if base != 16.0 {
                             self.syntax_error()?;
                         }
                         self.number = self.number * base as f64
-                            + float64(self.code_point + 10 - b'a' as i32);
+                            + float64(self.code_point + 10 - 0x61);
                     }
                     _ => {
                         // The first digit must exist;
@@ -3555,7 +3571,7 @@ lexer_impl_header!() {
             }
 
             let is_big_integer_literal =
-                self.code_point == b'n' as i32 && !has_dot_or_exponent;
+                self.code_point == 0x6E && !has_dot_or_exponent;
 
             // Slow path: do we need to re-scan the input as text?
             if is_big_integer_literal || is_invalid_legacy_octal_literal {
@@ -3585,8 +3601,8 @@ lexer_impl_header!() {
                 if is_big_integer_literal {
                     self.identifier = text;
                 } else if is_invalid_legacy_octal_literal {
-                    // TODO(port): std.fmt.parseFloat — bytes-based; using bun_core::parse_double
-                    match bun_core::parse_double(text) {
+                    // TODO(port): std.fmt.parseFloat — bytes-based; using bun_string::wtf::parse_double
+                    match bun_string::wtf::parse_double(text) {
                         Ok(num) => {
                             self.number = num;
                         }
@@ -3604,13 +3620,13 @@ lexer_impl_header!() {
             }
         } else {
             // Floating-point literal;
-            let is_invalid_legacy_octal_literal = first == b'0' as i32
-                && (self.code_point == b'8' as i32 || self.code_point == b'9' as i32);
+            let is_invalid_legacy_octal_literal = first == 0x30
+                && (self.code_point == 0x38 || self.code_point == 0x39);
 
             // Initial digits;
             loop {
-                if self.code_point < b'0' as i32 || self.code_point > b'9' as i32 {
-                    if self.code_point != b'_' as i32 {
+                if self.code_point < 0x30 || self.code_point > 0x39 {
+                    if self.code_point != 0x5F {
                         break;
                     }
 
@@ -3631,7 +3647,7 @@ lexer_impl_header!() {
             }
 
             // Fractional digits;
-            if first != b'.' as i32 && self.code_point == b'.' as i32 {
+            if first != 0x2E && self.code_point == 0x2E {
                 // An underscore must not come last;
                 if last_underscore_end > 0 && self.end == last_underscore_end + 1 {
                     self.end -= 1;
@@ -3640,12 +3656,12 @@ lexer_impl_header!() {
 
                 has_dot_or_exponent = true;
                 self.step();
-                if self.code_point == b'_' as i32 {
+                if self.code_point == 0x5F {
                     self.syntax_error()?;
                 }
                 loop {
-                    if self.code_point < b'0' as i32 || self.code_point > b'9' as i32 {
-                        if self.code_point != b'_' as i32 {
+                    if self.code_point < 0x30 || self.code_point > 0x39 {
+                        if self.code_point != 0x5F {
                             break;
                         }
 
@@ -3664,7 +3680,7 @@ lexer_impl_header!() {
             }
 
             // Exponent;
-            if self.code_point == b'e' as i32 || self.code_point == b'E' as i32 {
+            if self.code_point == 0x65 || self.code_point == 0x45 {
                 // An underscore must not come last;
                 if last_underscore_end > 0 && self.end == last_underscore_end + 1 {
                     self.end -= 1;
@@ -3673,15 +3689,15 @@ lexer_impl_header!() {
 
                 has_dot_or_exponent = true;
                 self.step();
-                if self.code_point == b'+' as i32 || self.code_point == b'-' as i32 {
+                if self.code_point == 0x2B || self.code_point == 0x2D {
                     self.step();
                 }
-                if self.code_point < b'0' as i32 || self.code_point > b'9' as i32 {
+                if self.code_point < 0x30 || self.code_point > 0x39 {
                     self.syntax_error()?;
                 }
                 loop {
-                    if self.code_point < b'0' as i32 || self.code_point > b'9' as i32 {
-                        if self.code_point != b'_' as i32 {
+                    if self.code_point < 0x30 || self.code_point > 0x39 {
+                        if self.code_point != 0x5F {
                             break;
                         }
 
@@ -3720,9 +3736,9 @@ lexer_impl_header!() {
                 // with infallible bump alloc.
             }
 
-            if self.code_point == b'n' as i32 && !has_dot_or_exponent {
+            if self.code_point == 0x6E && !has_dot_or_exponent {
                 // The only bigint literal that can start with 0 is "0n"
-                if text.len() > 1 && first == b'0' as i32 {
+                if text.len() > 1 && first == 0x30 {
                     self.syntax_error()?;
                 }
 
@@ -3737,7 +3753,7 @@ lexer_impl_header!() {
                 self.number = number as f64;
             } else {
                 // Parse a double-precision floating-point number
-                match bun_core::parse_double(text) {
+                match bun_string::wtf::parse_double(text) {
                     Ok(num) => {
                         self.number = num;
                     }
@@ -3758,8 +3774,8 @@ lexer_impl_header!() {
         }
 
         // Handle bigint literals after the underscore-at-end check above;
-        if self.code_point == b'n' as i32 && !has_dot_or_exponent {
-            self.token = T::t_big_integer_literal;
+        if self.code_point == 0x6E && !has_dot_or_exponent {
+            self.token = T::TBigIntegerLiteral;
             self.step();
         }
 
@@ -3820,8 +3836,8 @@ pub fn is_identifier(text: &[u8]) -> bool {
         return false;
     }
 
-    let iter = CodepointIterator { bytes: text, i: 0 };
-    let mut cursor = strings::CodepointIterator::Cursor::default();
+    let iter = CodepointIterator::init(text);
+    let mut cursor = strings::Cursor::default();
     if !iter.next(&mut cursor) {
         return false;
     }
@@ -3880,7 +3896,7 @@ pub fn range_of_identifier(source: &Source, loc: Loc) -> Range {
     }
 
     let iter = CodepointIterator::init(&contents[loc.to_usize()..]);
-    let mut cursor = strings::CodepointIterator::Cursor::default();
+    let mut cursor = strings::Cursor::default();
 
     let mut r = Range { loc, len: 0 };
     if iter.bytes.is_empty() {
@@ -3894,16 +3910,16 @@ pub fn range_of_identifier(source: &Source, loc: Loc) -> Range {
     }
 
     // Handle private names
-    if cursor.c == b'#' as i32 {
+    if cursor.c == 0x23 {
         if !iter.next(&mut cursor) {
             r.len = 1;
             return r;
         }
     }
 
-    if is_identifier_start(cursor.c) || cursor.c == b'\\' as i32 {
+    if is_identifier_start(cursor.c) || cursor.c == 0x5C {
         while iter.next(&mut cursor) {
-            if cursor.c == b'\\' as i32 {
+            if cursor.c == 0x5C {
                 // Search for the end of the identifier
 
                 // Skip over bracketed unicode escapes such as "\u{10000}"
@@ -4002,7 +4018,7 @@ pub enum PragmaArg {
 
 impl PragmaArg {
     pub fn is_newline(c: CodePoint) -> bool {
-        c == b'\r' as i32 || c == b'\n' as i32 || c == 0x2028 || c == 0x2029
+        c == 0x0D || c == 0x0A || c == 0x2028 || c == 0x2029
     }
 
     // These can be extremely long, so we use SIMD.
@@ -4023,7 +4039,7 @@ impl PragmaArg {
             {
                 // SIMD found the delimiter at index 'delimiter_pos_in_arg' relative to url start.
                 // The argument's length is exactly this index.
-                break 'brk delimiter_pos_in_arg;
+                break 'brk delimiter_pos_in_arg as usize;
             } else {
                 // SIMD found no delimiter in the entire url.
                 // The argument is the whole chunk.
@@ -4062,7 +4078,7 @@ impl PragmaArg {
         let mut text = &text_[pragma.len()..];
         let mut iter = CodepointIterator::init(text);
 
-        let mut cursor = strings::CodepointIterator::Cursor::default();
+        let mut cursor = strings::Cursor::default();
         if !iter.next(&mut cursor) {
             return None;
         }
@@ -4082,7 +4098,7 @@ impl PragmaArg {
             }
             start = cursor.i;
             text = &text[cursor.i as usize..];
-            cursor = strings::CodepointIterator::Cursor::default();
+            cursor = strings::Cursor::default();
             iter = CodepointIterator::init(text);
             let _ = iter.next(&mut cursor);
         }
@@ -4158,14 +4174,14 @@ struct InvalidEscapeSequenceFormatter {
 impl fmt::Display for InvalidEscapeSequenceFormatter {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.code_point {
-            c if c == b'"' as i32 => {
+            c if c == 0x22 => {
                 writer.write_str("Unexpected escaped double quote '\"'")
             }
-            c if c == b'\'' as i32 => {
+            c if c == 0x27 => {
                 writer.write_str("Unexpected escaped single quote \"'\"")
             }
-            c if c == b'`' as i32 => writer.write_str("Unexpected escaped backtick '`'"),
-            c if c == b'\\' as i32 => {
+            c if c == 0x60 => writer.write_str("Unexpected escaped backtick '`'"),
+            c if c == 0x5C => {
                 writer.write_str("Unexpected escaped backslash '\\'")
             }
             _ => writer.write_str("Unexpected escape sequence"),

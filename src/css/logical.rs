@@ -1,6 +1,3 @@
-pub use crate::css_parser as css;
-pub use css::Error;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PropertyCategory {
     Logical,

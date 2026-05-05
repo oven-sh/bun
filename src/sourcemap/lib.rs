@@ -1,73 +1,97 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
-//! `bun_sourcemap` — B-1 minimal compiling surface.
+//! `bun_sourcemap` — B-2 un-gated.
 //!
-//! Phase-A draft bodies are preserved verbatim below inside the
-//! `#[cfg(any())] mod _phase_a_draft { ... }` block, and the sibling `.rs`
-//! files (`Chunk.rs`, `Mapping.rs`, …) are gated via `#[cfg(any())] mod` decls
-//! so the original port work is kept on disk for B-2 un-gating.
+//! All sibling modules (`Chunk.rs`, `InternalSourceMap.rs`, `LineOffsetTable.rs`,
+//! `Mapping.rs`, `ParsedSourceMap.rs`, `VLQ.rs`) compile. Remaining
+//! `#[cfg(any())]` fn-body gates are tagged `TODO(b2-blocked)` on missing
+//! lower-tier surface (bun_io::Write, bun_core::Ordinal, bun_js_printer,
+//! bun_interchange::json, bun_paths runtime-Platform join_abs).
 //!
-//! B-2: un-gate module-by-module, replace `todo!()` stubs with real impls,
-//! re-add `bun_js_parser` to Cargo.toml once it compiles.
+//! The `_phase_a_draft` block below preserves the bodies of `parse_url` /
+//! `parse_json` / `get_source_map_impl` / `SourceProvider` / `SerializedSourceMap`
+//! / `SourceMapPieces::finalize` / `append_source_map_chunk` for the next pass.
 
 // ── crate aliases ─────────────────────────────────────────────────────────
 // TODO(b1): Phase-A draft used `bun_str`; the workspace crate is `bun_string`.
 extern crate bun_string as bun_str;
 use bun_logger as logger;
 
-// ── gated Phase-A sibling modules (preserve drafts; un-gate in B-2) ───────
-#[cfg(any())] #[path = "Chunk.rs"]             mod chunk;
-#[cfg(any())] #[path = "InternalSourceMap.rs"] mod internal_source_map;
-#[cfg(any())] #[path = "LineOffsetTable.rs"]   mod line_offset_table;
-#[cfg(any())] #[path = "Mapping.rs"]           mod mapping_draft;
-#[cfg(any())] #[path = "ParsedSourceMap.rs"]   mod parsed_source_map_draft;
+// ── B-2 un-gated sibling modules ──────────────────────────────────────────
+#[path = "Chunk.rs"]             pub mod chunk;
+#[path = "InternalSourceMap.rs"] pub mod internal_source_map;
+#[path = "LineOffsetTable.rs"] pub mod line_offset_table;
+#[path = "Mapping.rs"]         pub mod mapping;
+#[path = "ParsedSourceMap.rs"] pub mod parsed_source_map;
 
 #[path = "VLQ.rs"]
 pub mod vlq;
 pub use vlq::{VLQ, encode as encode_vlq};
 use vlq::{decode as decode_vlq, decode_assume_valid as decode_vlq_assume_valid};
 
-// ── B-1 stub surface ──────────────────────────────────────────────────────
+pub use line_offset_table::LineOffsetTable;
+pub use mapping::{Mapping, Lookup as MappingLookup};
+pub use parsed_source_map::{ParsedSourceMap, SourceContentPtr};
 
-/// Opaque B-1 stand-in for the parsed-mapping table. B-2: un-gate `Mapping.rs`.
-#[derive(Default, Clone, Copy)]
-pub struct Mapping {
-    pub generated_line: i32,
-    pub generated_column: i32,
-    pub source_index: i32,
-    pub original_line: i32,
-    pub original_column: i32,
+// ── local shim: `bun.Ordinal` ─────────────────────────────────────────────
+// TODO(b2-blocked): bun_core::Ordinal — Zig `bun.Ordinal = OrdinalT(c_int)` is
+// not yet ported to bun_core. Local definition here so dependent modules
+// compile; move to bun_core (and re-export) once available.
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Ordinal(core::ffi::c_int);
+
+impl Default for Ordinal {
+    #[inline]
+    fn default() -> Self { Self::START }
 }
 
-pub mod mapping {
-    #[derive(Default)]
-    pub struct List;
-    #[derive(Default, Clone, Copy)]
-    pub struct ParseOptions {
-        pub allow_names: bool,
-        pub sort: bool,
+impl Ordinal {
+    pub const INVALID: Ordinal = Ordinal(-1);
+    pub const START: Ordinal = Ordinal(0);
+
+    #[inline]
+    pub const fn from_zero_based(int: core::ffi::c_int) -> Self {
+        debug_assert!(int >= 0);
+        Self(int)
     }
-    pub use super::Mapping;
-}
-
-/// Opaque B-1 stand-in. B-2: un-gate `ParsedSourceMap.rs`.
-#[derive(Default)]
-pub struct ParsedSourceMap;
-
-pub mod parsed_source_map {
-    #[derive(Default, Clone, Copy)]
-    pub struct SourceContentPtr {
-        pub load_hint: super::SourceMapLoadHint,
+    #[inline]
+    pub const fn from_one_based(int: core::ffi::c_int) -> Self {
+        debug_assert!(int > 0);
+        Self(int - 1)
     }
-    pub use super::ParsedSourceMap;
+    #[inline]
+    pub const fn zero_based(self) -> core::ffi::c_int { self.0 }
+    #[inline]
+    pub const fn one_based(self) -> core::ffi::c_int { self.0 + 1 }
+    #[inline]
+    pub const fn add(self, b: Self) -> Self { Self(self.0 + b.0) }
+    #[inline]
+    pub const fn add_scalar(self, inc: core::ffi::c_int) -> Self { Self(self.0 + inc) }
+    #[inline]
+    pub const fn is_valid(self) -> bool { self.0 >= 0 }
 }
 
-/// Opaque B-1 stand-in. B-2: un-gate `Chunk.rs`.
-pub struct Chunk;
-/// Opaque B-1 stand-in. B-2: un-gate `InternalSourceMap.rs`.
-pub struct InternalSourceMap;
-/// Opaque B-1 stand-in. B-2: un-gate `LineOffsetTable.rs`.
-#[derive(Default)]
-pub struct LineOffsetTable;
+pub use chunk::Chunk;
+pub use internal_source_map::InternalSourceMap;
+
+/// Opaque FFI handle. The real type lives in `bun_jsc` (tier 6); this crate
+/// only ever sees it as a pointer.
+#[repr(C)]
+pub struct BakeSourceProvider {
+    _p: [u8; 0],
+    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+}
+impl BakeSourceProvider {
+    pub fn get_source_map(
+        &self,
+        _source_filename: &[u8],
+        _load_hint: SourceMapLoadHint,
+        _result: ParseUrlResultHint,
+    ) -> Option<ParseUrl> {
+        // Real impl is in bun_sourcemap_jsc; here we only hold the pointer.
+        None
+    }
+}
 
 // ── leaf types that compile cleanly today ─────────────────────────────────
 
@@ -93,6 +117,12 @@ pub struct SourceMap {
     pub sources: Vec<Box<[u8]>>,
     pub sources_content: Vec<Box<[u8]>>,
     pub mapping: mapping::List,
+}
+
+impl SourceMap {
+    pub fn find(&self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
+        self.mapping.find(line, column)
+    }
 }
 
 /// For some sourcemap loading code, this enum is used as a hint if it should
@@ -142,6 +172,17 @@ pub struct ParseResultFail {
     pub msg: &'static [u8],
 }
 
+impl Default for ParseResultFail {
+    fn default() -> Self {
+        Self {
+            loc: logger::Loc::default(),
+            err: bun_core::err!("Unknown"), // TODO(port): Zig has no default for `err`
+            value: 0,
+            msg: b"",
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct SourceContent {
     pub value: Box<[u16]>,
@@ -151,8 +192,113 @@ pub struct SourceContent {
 /// The sourcemap spec says line and column offsets are zero-based.
 #[derive(Clone, Copy, Default)]
 pub struct LineColumnOffset {
-    pub lines: i32,
-    pub columns: i32,
+    /// The zero-based line offset
+    pub lines: Ordinal,
+    /// The zero-based column offset
+    pub columns: Ordinal,
+}
+
+impl LineColumnOffset {
+    pub fn add(&mut self, b: LineColumnOffset) {
+        if b.lines.zero_based() == 0 {
+            self.columns = self.columns.add(b.columns);
+        } else {
+            self.lines = self.lines.add(b.lines);
+            self.columns = b.columns;
+        }
+    }
+
+    pub fn comes_before(a: LineColumnOffset, b: LineColumnOffset) -> bool {
+        a.lines.zero_based() < b.lines.zero_based()
+            || (a.lines.zero_based() == b.lines.zero_based()
+                && a.columns.zero_based() < b.columns.zero_based())
+    }
+
+    pub fn cmp(_ctx: (), a: LineColumnOffset, b: LineColumnOffset) -> core::cmp::Ordering {
+        if a.lines.zero_based() != b.lines.zero_based() {
+            return a.lines.zero_based().cmp(&b.lines.zero_based());
+        }
+        a.columns.zero_based().cmp(&b.columns.zero_based())
+    }
+
+    pub fn advance(&mut self, input: &[u8]) {
+        let this_ptr = self;
+        use bun_str::strings;
+        // Instead of mutating `this_ptr` directly, copy the state to the stack and do
+        // all the work here, then move it back to the input pointer. When sourcemaps
+        // are enabled, this function is extremely hot.
+        let mut this = *this_ptr;
+
+        let mut offset: u32 = 0;
+        while let Some(i) = strings::index_of_newline_or_non_ascii(input, offset) {
+            debug_assert!(i >= offset);
+            debug_assert!((i as usize) < input.len());
+
+            let iter = strings::CodepointIterator::init_offset(input, i as usize);
+            let mut cursor = strings::Cursor { i, ..Default::default() };
+            let _ = iter.next(&mut cursor);
+
+            // Given a null byte, cursor.width becomes 0
+            // This can lead to integer overflow, crashes, or hangs.
+            // https://github.com/oven-sh/bun/issues/10624
+            if cursor.width == 0 {
+                this.columns = this.columns.add_scalar(1);
+                offset = i + 1;
+                continue;
+            }
+
+            offset = i + cursor.width as u32;
+
+            match cursor.c {
+                // '\r' | '\n' | U+2028 | U+2029
+                0x0D | 0x0A | 0x2028 | 0x2029 => {
+                    // Handle Windows-specific "\r\n" newlines
+                    if cursor.c == 0x0D
+                        && input.len() > (i as usize) + 1
+                        && input[(i as usize) + 1] == b'\n'
+                    {
+                        this.columns = this.columns.add_scalar(1);
+                        continue;
+                    }
+
+                    this.lines = this.lines.add_scalar(1);
+                    this.columns = Ordinal::START;
+                }
+                c => {
+                    // Mozilla's "source-map" library counts columns using UTF-16 code units
+                    this.columns = this.columns.add_scalar(if c > 0xFFFF { 2 } else { 1 });
+                }
+            }
+        }
+
+        let remain = &input[offset as usize..];
+
+        if cfg!(debug_assertions) {
+            debug_assert!(strings::is_all_ascii(remain));
+            debug_assert!(strings::index_of_char(remain, b'\n').is_none());
+            debug_assert!(strings::index_of_char(remain, b'\r').is_none());
+        }
+
+        this.columns = this.columns.add_scalar(i32::try_from(remain.len()).unwrap());
+
+        *this_ptr = this;
+    }
+}
+
+impl LineColumnOffsetOptional {
+    pub fn advance(&mut self, input: &[u8]) {
+        match self {
+            Self::Null => {}
+            Self::Value(v) => v.advance(input),
+        }
+    }
+
+    pub fn reset(&mut self) {
+        match self {
+            Self::Null => {}
+            Self::Value(_) => *self = Self::Value(LineColumnOffset::default()),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -172,6 +318,51 @@ pub struct SourceMapPieces {
     pub prefix: Vec<u8>,
     pub mappings: Vec<u8>,
     pub suffix: Vec<u8>,
+}
+
+/// This function is extremely hot.
+pub fn append_mapping_to_buffer(
+    buffer: &mut bun_str::MutableString,
+    last_byte: u8,
+    prev_state: SourceMapState,
+    current_state: SourceMapState,
+) {
+    let needs_comma = last_byte != 0 && last_byte != b';' && last_byte != b'"';
+
+    let vlqs: [VLQ; 4] = [
+        // Record the generated column (the line is recorded using ';' elsewhere)
+        VLQ::encode(current_state.generated_column.saturating_sub(prev_state.generated_column)),
+        // Record the generated source
+        VLQ::encode(current_state.source_index.saturating_sub(prev_state.source_index)),
+        // Record the original line
+        VLQ::encode(current_state.original_line.saturating_sub(prev_state.original_line)),
+        // Record the original column
+        VLQ::encode(current_state.original_column.saturating_sub(prev_state.original_column)),
+    ];
+
+    // Count exactly how many bytes we need to write
+    let total_len = vlqs[0].len as usize
+        + vlqs[1].len as usize
+        + vlqs[2].len as usize
+        + vlqs[3].len as usize;
+
+    // Instead of updating .len 5 times, we only need to update it once.
+    let mut writable = buffer
+        .writable_n_bytes(total_len + needs_comma as usize)
+        .expect("unreachable");
+
+    // Put commas in between mappings
+    if needs_comma {
+        writable[0] = b',';
+        writable = &mut writable[1..];
+    }
+
+    // PERF(port): was `inline for` — plain loop relies on LLVM unroll
+    for item in &vlqs {
+        let n = item.len as usize;
+        writable[..n].copy_from_slice(item.slice());
+        writable = &mut writable[n..];
+    }
 }
 
 /// https://github.com/getsentry/rfcs/blob/main/text/0081-sourcemap-debugid.md
@@ -194,11 +385,34 @@ pub struct SourceProviderMap {
     _p: [u8; 0],
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
+impl SourceProviderMap {
+    pub fn get_source_map(
+        &self,
+        _source_filename: &[u8],
+        _load_hint: SourceMapLoadHint,
+        _result: ParseUrlResultHint,
+    ) -> Option<ParseUrl> {
+        // TODO(b2): wire to get_source_map_impl once SourceProvider trait is un-gated
+        // (blocked on bun_string::String::tag/is_8bit/latin1/utf16 + bun_sys::File::read_from arena variant)
+        None
+    }
+}
 
 #[repr(C)]
 pub struct DevServerSourceProvider {
     _p: [u8; 0],
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+}
+impl DevServerSourceProvider {
+    pub fn get_source_map(
+        &self,
+        _source_filename: &[u8],
+        _load_hint: SourceMapLoadHint,
+        _result: ParseUrlResultHint,
+    ) -> Option<ParseUrl> {
+        // TODO(b2): wire to get_source_map_impl once SourceProvider trait is un-gated
+        None
+    }
 }
 
 // ── SavedSourceMap leaf state (compiles today; see Phase-A note) ──────────
@@ -220,8 +434,20 @@ pub mod SavedSourceMap {
         }
 
         pub fn print() {
-            // TODO(b1): bun_core::Output::note missing from stub surface.
-            todo!("B-2: MissingSourceMapNoteInfo::print")
+            if SEEN_INVALID.load(Ordering::Relaxed) {
+                return;
+            }
+            if let Some(note) = PATH.lock().as_deref() {
+                // TODO(b2-blocked): bun_core::Output::note — currently takes `&str`,
+                // not `format_args!`; format into a String for now.
+                bun_core::Output::note(&format!(
+                    "missing sourcemaps for {}",
+                    ::bstr::BStr::new(note)
+                ));
+                bun_core::Output::note(
+                    "consider bundling with '--sourcemap' to get unminified traces",
+                );
+            }
         }
     }
 }
@@ -257,8 +483,17 @@ fn last_index_of(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Phase-A draft body — preserved verbatim, gated off. Do NOT delete; B-2
-// un-gates this incrementally as lower-tier stub surfaces fill in.
+// Phase-A draft body — preserved, gated off. Remaining bodies here
+// (parse_url/parse_json/get_source_map_impl/SourceProvider trait/
+// SerializedSourceMap/SourceMapPieces::finalize/append_source_map_chunk/
+// append_source_mapping_url_remote) are blocked on:
+//   TODO(b2-blocked): bun_core::base64
+//   TODO(b2-blocked): bun_interchange::json::parse
+//   TODO(b2-blocked): bun_js_parser::Expr
+//   TODO(b2-blocked): bun_io::Write
+//   TODO(b2-blocked): bun_string::StringJoiner::push_owned
+//   TODO(b2-blocked): bun_string::StringPointer::slice
+//   TODO(b2-blocked): bun_zstd::get_decompressed_size
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(any())]
 mod _phase_a_draft {

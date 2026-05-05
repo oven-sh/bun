@@ -2,8 +2,13 @@ use crate::helpers;
 use crate::inlines;
 use crate::parser::{self, Parser};
 use crate::ref_defs::RefDef;
-use crate::types::{Off, Span, SpanAttrs, TextType};
-// TODO(port): verify Span / SpanAttrs / TextType type names & module path against types.rs
+use crate::types::{SpanDetail, SpanType, TextType, OFF};
+
+// PORT NOTE: Phase-A draft used `Span` / `SpanAttrs`; real types are
+// `SpanType` / `SpanDetail`.
+type Span = SpanType;
+type SpanAttrs<'a> = SpanDetail<'a>;
+type Off = OFF;
 
 /// Result of `try_match_bracket_link` — Zig anonymous return struct.
 pub struct BracketLinkMatch {
@@ -18,7 +23,7 @@ pub struct Autolink {
     pub is_email: bool,
 }
 
-impl Parser {
+impl Parser<'_> {
     pub fn process_link(
         &mut self,
         content: &[u8],
@@ -224,11 +229,15 @@ impl Parser {
                 let ref_label = if pos > ref_start { &content[ref_start..pos] } else { label };
                 pos += 1;
                 if let Some(ref_def) = self.lookup_ref_def(ref_label) {
+                    // PORT NOTE: reshaped for borrowck — clone owned dest/title so the
+                    // &self borrow from lookup_ref_def is dropped before &mut self calls.
+                    let dest: Box<[u8]> = Box::from(&ref_def.dest[..]);
+                    let title: Box<[u8]> = Box::from(&ref_def.title[..]);
                     // Link nesting prohibition
                     if !is_image && has_inner_bracket && self.label_contains_link(label) {
                         return Ok(None);
                     }
-                    self.render_ref_link(label, ref_def, is_image)?;
+                    self.render_ref_link(label, &dest, &title, is_image)?;
                     return Ok(Some(pos));
                 }
             } else {
@@ -243,11 +252,14 @@ impl Parser {
         let char_after_label: u8 = if label_end + 1 < content.len() { content[label_end + 1] } else { 0 };
         if char_after_label != b'[' {
             if let Some(ref_def) = self.lookup_ref_def(label) {
+                // PORT NOTE: reshaped for borrowck — clone owned dest/title.
+                let dest: Box<[u8]> = Box::from(&ref_def.dest[..]);
+                let title: Box<[u8]> = Box::from(&ref_def.title[..]);
                 // Link nesting prohibition
                 if !is_image && has_inner_bracket && self.label_contains_link(label) {
                     return Ok(None);
                 }
-                self.render_ref_link(label, ref_def, is_image)?;
+                self.render_ref_link(label, &dest, &title, is_image)?;
                 return Ok(Some(label_end + 1));
             }
         }
@@ -535,7 +547,8 @@ impl Parser {
     pub fn render_ref_link(
         &mut self,
         label_content: &[u8],
-        r#ref: RefDef,
+        dest: &[u8],
+        title: &[u8],
         is_image: bool,
     ) -> Result<(), parser::Error> {
         if self.image_nesting_level > 0 {
@@ -544,7 +557,7 @@ impl Parser {
         } else if is_image {
             self.renderer.enter_span(
                 Span::Img,
-                SpanAttrs { href: r#ref.dest, title: r#ref.title, ..Default::default() },
+                SpanAttrs { href: dest, title, ..Default::default() },
             )?;
             self.image_nesting_level += 1;
             self.process_inline_content(label_content, 0)?;
@@ -553,7 +566,7 @@ impl Parser {
         } else {
             self.renderer.enter_span(
                 Span::A,
-                SpanAttrs { href: r#ref.dest, title: r#ref.title, ..Default::default() },
+                SpanAttrs { href: dest, title, ..Default::default() },
             )?;
             self.link_nesting_level += 1;
             self.process_inline_content(label_content, 0)?;
@@ -656,8 +669,7 @@ impl Parser {
         None
     }
 
-    pub fn render_autolink(&mut self, url: &[u8], is_email: bool) -> bun_jsc::JsResult<()> {
-        // TODO(port): Zig sig is `bun.JSError!void`; verify parser::Error vs JsResult unification
+    pub fn render_autolink(&mut self, url: &[u8], is_email: bool) -> crate::types::JsResult<()> {
         self.renderer.enter_span(
             Span::A,
             SpanAttrs { href: url, autolink: true, autolink_email: is_email, ..Default::default() },

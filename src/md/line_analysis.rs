@@ -47,7 +47,7 @@ fn ch(text: &[u8], pos: OFF) -> u8 {
     text[pos as usize]
 }
 
-impl Parser {
+impl Parser<'_> {
     pub fn is_setext_underline(&self, off: OFF) -> SetextResult {
         let c = ch(&self.text, off);
         if c != b'=' && c != b'-' {

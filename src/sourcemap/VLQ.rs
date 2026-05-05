@@ -23,12 +23,16 @@ impl VLQ {
         &self.bytes[0..self.len as usize]
     }
 
-    // TODO(b1): bun_io::Write missing from lower-tier stub surface — gated.
+    // TODO(b2-blocked): bun_io::Write
     #[cfg(any())]
     pub fn write_to(self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         writer.write_all(&self.bytes[0..self.len as usize])?;
         Ok(())
+    }
+
+    pub const fn encode(value: i32) -> VLQ {
+        encode(value)
     }
 
     pub const ZERO: VLQ = VLQ_LOOKUP_TABLE[0];
@@ -48,9 +52,9 @@ const VLQ_LOOKUP_TABLE: [VLQ; 256] = {
 
 const VLQ_MAX_IN_BYTES: usize = 7;
 
-pub fn encode(value: i32) -> VLQ {
+pub const fn encode(value: i32) -> VLQ {
     if value >= 0 && value <= 255 {
-        VLQ_LOOKUP_TABLE[usize::try_from(value).unwrap()]
+        VLQ_LOOKUP_TABLE[value as usize]
     } else {
         encode_slow_path(value)
     }

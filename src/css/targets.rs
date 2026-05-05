@@ -2,7 +2,7 @@ use crate as css;
 use crate::VendorPrefix;
 
 use bun_core;
-use bun_str::strings;
+use bun_string::strings;
 
 // TODO(port): replace with bun_str::strings::parse_int once available — PORTING.md
 // forbids from_utf8 on external bytes (env vars / target strings).
@@ -57,7 +57,7 @@ impl Targets {
         if val.is_empty() {
             return None;
         }
-        if strings::eql_case_insensitive_ascii(val, b"null", true) {
+        if strings::eql_case_insensitive_ascii::<true>(val, b"null") {
             return None;
         }
 
@@ -92,7 +92,7 @@ impl Targets {
         Some(lhs << rhs)
     }
 
-    pub fn for_bundler_target(target: bun_options_types::Target) -> Targets {
+    pub fn for_bundler_target(target: bun_options_types::BundleEnums::Target) -> Targets {
         #[cfg(debug_assertions)]
         {
             let mut browsers = Browsers::default();
@@ -101,21 +101,21 @@ impl Targets {
             // Expanded manually per field.
             macro_rules! check_field {
                 ($field:ident, $env:literal) => {
-                    if let Some(val) = bun_core::getenv_z_any_case($env) {
+                    if let Some(val) = bun_core::getenv_z_any_case(bun_core::zstr!($env)) {
                         browsers.$field = Self::parse_debug_target(val);
                         has_any = true;
                     }
                 };
             }
-            check_field!(android, b"BUN_DEBUG_CSS_TARGET_android");
-            check_field!(chrome, b"BUN_DEBUG_CSS_TARGET_chrome");
-            check_field!(edge, b"BUN_DEBUG_CSS_TARGET_edge");
-            check_field!(firefox, b"BUN_DEBUG_CSS_TARGET_firefox");
-            check_field!(ie, b"BUN_DEBUG_CSS_TARGET_ie");
-            check_field!(ios_saf, b"BUN_DEBUG_CSS_TARGET_ios_saf");
-            check_field!(opera, b"BUN_DEBUG_CSS_TARGET_opera");
-            check_field!(safari, b"BUN_DEBUG_CSS_TARGET_safari");
-            check_field!(samsung, b"BUN_DEBUG_CSS_TARGET_samsung");
+            check_field!(android, "BUN_DEBUG_CSS_TARGET_android");
+            check_field!(chrome, "BUN_DEBUG_CSS_TARGET_chrome");
+            check_field!(edge, "BUN_DEBUG_CSS_TARGET_edge");
+            check_field!(firefox, "BUN_DEBUG_CSS_TARGET_firefox");
+            check_field!(ie, "BUN_DEBUG_CSS_TARGET_ie");
+            check_field!(ios_saf, "BUN_DEBUG_CSS_TARGET_ios_saf");
+            check_field!(opera, "BUN_DEBUG_CSS_TARGET_opera");
+            check_field!(safari, "BUN_DEBUG_CSS_TARGET_safari");
+            check_field!(samsung, "BUN_DEBUG_CSS_TARGET_samsung");
             if has_any {
                 return Targets {
                     browsers: Some(browsers),
@@ -123,7 +123,7 @@ impl Targets {
                 };
             }
         }
-        use bun_options_types::Target as T;
+        use bun_options_types::BundleEnums::Target as T;
         match target {
             T::Node | T::Bun => Self::runtime_default(),
             T::Browser | T::BunMacro | T::BakeServerComponentsSsr => Self::browser_default(),

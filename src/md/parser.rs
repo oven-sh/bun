@@ -15,6 +15,8 @@ impl<const N: usize> StaticBitSet<N> {
 pub struct StackCheck(());
 impl StackCheck {
     pub fn init() -> Self { Self(()) }
+    // TODO(b2-blocked): bun_core::StackCheck::is_safe_to_recurse
+    pub fn is_safe_to_recurse(&self) -> bool { true }
 }
 
 use super::blocks as blocks_mod;
@@ -127,6 +129,8 @@ impl Default for BlockHeader {
 // TODO(port): narrow error set — `bun_jsc::JsError` already covers the first
 // three; Phase B may want `enum { Js(JsError), StackOverflow }` instead.
 // TODO(b1): thiserror/strum not in workspace deps — derive dropped, hand-roll if needed.
+pub type Error = ParserError;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParserError {
     OutOfMemory,
@@ -149,9 +153,17 @@ impl From<ParserError> for bun_core::Error {
 }
 
 impl<'a> Parser<'a> {
-    /// TODO(b1): stub — `process_doc` lives in gated `blocks.rs`.
-    pub fn process_doc(&mut self) -> Result<(), ParserError> {
-        todo!("b1: gated in blocks.rs")
+    pub fn get_block_header_at(&mut self, off: usize) -> &mut BlockHeader {
+        // SAFETY: off is an aligned offset into block_bytes produced by start_new_block /
+        // push_container_bytes; the buffer holds a valid BlockHeader at that offset.
+        // TODO(port): borrowck — this returns &mut into self.block_bytes while other
+        // &mut self borrows may be live at call sites; Phase B may need raw *mut.
+        unsafe { &mut *(self.block_bytes.as_mut_ptr().add(off).cast::<BlockHeader>()) }
+    }
+
+    #[inline]
+    pub fn get_block_at(&mut self, off: usize) -> &mut BlockHeader {
+        self.get_block_header_at(off)
     }
 
     fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Parser<'a> {
@@ -308,61 +320,44 @@ pub fn render_to_html(
     flags: Flags,
     render_opts: RenderOptions,
 ) -> Result<Box<[u8]>, ParserError> {
-    #[cfg(any())]
-    {
-        // Skip UTF-8 BOM
-        let input = helpers::skip_utf8_bom(text);
+    // Skip UTF-8 BOM
+    let input = helpers::skip_utf8_bom(text);
 
-        let mut html_renderer = HtmlRenderer::init(input, render_opts);
-        // Zig `errdefer html_renderer.deinit()` — Drop handles cleanup on `?`.
+    let mut html_renderer = HtmlRenderer::init(input, render_opts);
+    // Zig `errdefer html_renderer.deinit()` — Drop handles cleanup on `?`.
 
-        let mut parser = Parser::init(input, flags, html_renderer.renderer());
-        // Zig `defer parser.deinit()` — Drop handles cleanup at scope exit.
+    let mut parser = Parser::init(input, flags, html_renderer.renderer());
+    // Zig `defer parser.deinit()` — Drop handles cleanup at scope exit.
 
-        // HtmlRenderer never returns JSError/JSTerminated, so OutOfMemory is the only possible error.
-        match parser.process_doc() {
-            Ok(()) => {}
-            Err(ParserError::OutOfMemory) => return Err(ParserError::OutOfMemory),
-            Err(ParserError::JSError) | Err(ParserError::JSTerminated) => unreachable!(),
-            Err(ParserError::StackOverflow) => return Err(ParserError::StackOverflow),
-        }
-
-        Ok(html_renderer.to_owned_slice())
+    // HtmlRenderer never returns JSError/JSTerminated, so OutOfMemory is the only possible error.
+    match parser.process_doc() {
+        Ok(()) => {}
+        Err(ParserError::OutOfMemory) => return Err(ParserError::OutOfMemory),
+        Err(ParserError::JSError) | Err(ParserError::JSTerminated) => unreachable!(),
+        Err(ParserError::StackOverflow) => return Err(ParserError::StackOverflow),
     }
-    #[cfg(not(any()))]
-    {
-        let _ = (text, flags, render_opts);
-        todo!("b1: HtmlRenderer gated")
-    }
+    drop(parser);
+
+    Ok(html_renderer.to_owned_slice()?)
 }
 
 /// Parse and render using a custom renderer. The caller provides its own
 /// Renderer implementation (e.g. for JS callback-based rendering).
 /// `render_options` carries render-only flags (tag_filter, heading_ids,
 /// autolink_headings) so they are not silently dropped by the API.
-pub fn render_with_renderer(
-    text: &[u8],
+pub fn render_with_renderer<'a>(
+    text: &'a [u8],
     flags: Flags,
     render_options: RenderOptions,
-    rend: Renderer,
+    rend: Renderer<'a>,
 ) -> Result<(), ParserError> {
-    #[cfg(any())]
-    {
-        let _ = render_options; // Available for renderer implementations; parse layer does not use these.
-        let input = helpers::skip_utf8_bom(text);
+    let _ = render_options; // Available for renderer implementations; parse layer does not use these.
+    let input = helpers::skip_utf8_bom(text);
 
-        let mut p = Parser::init(input, flags, rend);
-        // Zig `defer p.deinit()` — Drop.
+    let mut p = Parser::init(input, flags, rend);
+    // Zig `defer p.deinit()` — Drop.
 
-        p.process_doc()
-    }
-    #[cfg(not(any()))]
-    {
-        // TODO(b1): lifetime — `rend` borrows for `'_` but `Parser::init` wants
-        // `'a` tied to `input`; needs explicit lifetime param. Gated until B-2.
-        let _ = (text, flags, render_options, rend);
-        todo!("b1: lifetime threading")
-    }
+    p.process_doc()
 }
 
 // ──────────────────────────────────────────────────────────────────────────

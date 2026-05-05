@@ -6,7 +6,7 @@ use crate::parser::{self, BlockHeader, Parser};
 use crate::types::{self, BlockType, Container, VerbatimLine};
 use crate::autolinks::is_list_bullet;
 
-impl Parser {
+impl Parser<'_> {
     pub fn push_container(&mut self, c: &Container) -> Result<(), AllocError> {
         if (self.n_containers as usize) >= self.containers.len() {
             self.containers.push(*c);
@@ -47,6 +47,7 @@ impl Parser {
         let hdr = self.get_block_header_at(aligned);
         *hdr = BlockHeader {
             block_type,
+            _pad: [0; 3],
             flags,
             data,
             n_lines: 0,

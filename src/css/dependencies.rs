@@ -1,13 +1,6 @@
 //! CSS dependency tracking — `@import` and `url()` references collected during printing.
 
-use bun_alloc::Arena; // = bumpalo::Bump
-use bun_collections::BabyList;
-use bun_options_types::ImportRecord;
-
-pub use crate::css_parser as css;
-pub use crate::values as css_values;
-use css_values::url::Url;
-pub use css::Error;
+use crate::SourceLocation;
 // const Location = css.Location; — shadowed by the local `Location` below in Zig too.
 
 /// Options for `analyze_dependencies` in `PrinterOptions`.
@@ -34,7 +27,7 @@ pub struct Location {
 }
 
 impl Location {
-    pub fn from_source_location(loc: css::SourceLocation) -> Location {
+    pub fn from_source_location(loc: SourceLocation) -> Location {
         Location {
             line: loc.line + 1,
             column: loc.column,
@@ -64,6 +57,10 @@ pub struct ImportDependency {
     pub loc: SourceRange,
 }
 
+// Constructors depend on still-gated hubs (rules::import, css_modules,
+// to_css::string, values::url, printer). Data layout above is the un-gated
+// surface; bodies re-enable when those modules land.
+#[cfg(any())]
 impl ImportDependency {
     pub fn new<'bump>(
         bump: &'bump Arena,
@@ -155,6 +152,7 @@ pub struct UrlDependency {
     pub loc: SourceRange,
 }
 
+#[cfg(any())]
 impl UrlDependency {
     pub fn new<'bump>(
         bump: &'bump Arena,

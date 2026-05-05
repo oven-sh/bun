@@ -2,13 +2,12 @@ use core::ffi::c_void;
 use core::fmt;
 use core::sync::atomic::AtomicU32;
 
-use bun_core::Ordinal; // TODO(port): verify crate for bun.Ordinal
-use bun_ptr::IntrusiveArc;
-use bun_str::MutableString;
+use crate::Ordinal; // TODO(b2-blocked): bun_core::Ordinal — local shim
 
+use crate::mapping;
 use crate::{
     BakeSourceProvider, DevServerSourceProvider, InternalSourceMap, Mapping, ParseUrl,
-    ParseUrlResultHint, SourceMapLoadHint, SourceProviderMap, VLQ,
+    ParseUrlResultHint, SourceMapLoadHint, SourceProviderMap,
 };
 
 /// ParsedSourceMap can be acquired by different threads via the thread-safe
@@ -19,7 +18,7 @@ pub struct ParsedSourceMap {
     pub ref_count: AtomicU32,
 
     pub input_line_count: usize,
-    pub mappings: Mapping::List,
+    pub mappings: mapping::List,
     /// Set when this map's mappings are backed by an InternalSourceMap blob (e.g.
     /// embedded in a `bun build --compile` executable) instead of a materialized
     /// `Mapping.List`. The blob's bytes are borrowed (they live in the standalone
@@ -30,7 +29,7 @@ pub struct ParsedSourceMap {
     /// transpiled on-demand. If there are items, then it means this is a file
     /// loaded without transpilation but with external sources. This array
     /// maps `source_index` to the correct filename.
-    pub external_source_names: Box<[Box<[u8]>]>,
+    pub external_source_names: Vec<Box<[u8]>>,
     /// In order to load source contents from a source-map after the fact,
     /// a handle to the underlying source provider is stored. Within this pointer,
     /// a flag is stored if it is known to be an inline or external source map.
@@ -49,9 +48,9 @@ impl Default for ParsedSourceMap {
         Self {
             ref_count: AtomicU32::new(1),
             input_line_count: 0,
-            mappings: Mapping::List::default(),
+            mappings: mapping::List::default(),
             internal: None,
-            external_source_names: Box::default(),
+            external_source_names: Vec::new(),
             underlying_provider: SourceContentPtr::NONE,
             is_standalone_module_graph: false,
         }
@@ -66,7 +65,7 @@ enum SourceProviderKind {
     DevServer = 2,
 }
 
-enum AnySourceProvider {
+pub enum AnySourceProvider {
     Zig(*mut SourceProviderMap),
     Bake(*mut BakeSourceProvider),
     DevServer(*mut DevServerSourceProvider),
@@ -118,7 +117,7 @@ impl SourceContentPtr {
     const DATA_SHIFT: u32 = 4;
     const DATA_MASK: u64 = (1u64 << 60) - 1;
 
-    pub const NONE: SourceContentPtr = SourceContentPtr::new(SourceMapLoadHint::None, SourceProviderKind::Zig, 0);
+    pub const NONE: SourceContentPtr = SourceContentPtr(0);
 
     const fn new(load_hint: SourceMapLoadHint, kind: SourceProviderKind, data: u64) -> Self {
         Self(
@@ -209,10 +208,13 @@ impl ParsedSourceMap {
         self.mappings.find(line, column)
     }
 
-    pub fn internal_cursor(&self) -> Option<InternalSourceMap::Cursor> {
+    pub fn internal_cursor(&self) -> Option<crate::internal_source_map::Cursor> {
         self.internal.as_ref().map(|ism| ism.cursor())
     }
 
+    // TODO(b2): un-gate once `crate::SerializedSourceMap` is lifted from the
+    // phase-A draft (needs bun_string::StringPointer::slice + bun_zstd surface).
+    #[cfg(any())]
     pub fn standalone_module_graph_data(
         &self,
     ) -> *mut crate::SerializedSourceMap::Loaded {
@@ -232,6 +234,8 @@ impl ParsedSourceMap {
             + self.external_source_names.len() * core::mem::size_of::<Box<[u8]>>()
     }
 
+    // TODO(b2-blocked): bun_io::Write
+    #[cfg(any())]
     pub fn write_vlqs(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         if let Some(ism) = &self.internal {
@@ -247,7 +251,7 @@ impl ParsedSourceMap {
         let mut current_line: i32 = 0;
         debug_assert_eq!(self.mappings.generated().len(), self.mappings.original().len());
         debug_assert_eq!(self.mappings.generated().len(), self.mappings.source_index().len());
-        for (i, ((gen, orig), source_index)) in self
+        for (i, ((gn, orig), source_index)) in self
             .mappings
             .generated()
             .iter()
@@ -255,18 +259,18 @@ impl ParsedSourceMap {
             .zip(self.mappings.source_index())
             .enumerate()
         {
-            if current_line != gen.lines.zero_based() {
-                debug_assert!(gen.lines.zero_based() > current_line);
-                let inc = gen.lines.zero_based() - current_line;
+            if current_line != gn.lines.zero_based() {
+                debug_assert!(gn.lines.zero_based() > current_line);
+                let inc = gn.lines.zero_based() - current_line;
                 writer.splat_byte_all(b';', usize::try_from(inc).unwrap())?;
                 // TODO(port): bun_io::Write needs splat_byte_all (Zig std.io.Writer.splatByteAll)
-                current_line = gen.lines.zero_based();
+                current_line = gn.lines.zero_based();
                 last_col = 0;
             } else if i != 0 {
                 writer.write_byte(b',')?;
             }
-            VLQ::encode(gen.columns.zero_based() - last_col).write_to(writer)?;
-            last_col = gen.columns.zero_based();
+            VLQ::encode(gn.columns.zero_based() - last_col).write_to(writer)?;
+            last_col = gn.columns.zero_based();
             VLQ::encode(*source_index - last_src).write_to(writer)?;
             last_src = *source_index;
             VLQ::encode(orig.lines.zero_based() - last_ol).write_to(writer)?;
@@ -277,28 +281,26 @@ impl ParsedSourceMap {
         Ok(())
     }
 
+    // TODO(b2-blocked): bun_io::Write — needs `write_vlqs` above.
+    #[cfg(any())]
     pub fn format_vlqs(&self) -> VlqsFmt<'_> {
         VlqsFmt(self)
     }
 }
 
-impl Drop for ParsedSourceMap {
-    fn drop(&mut self) {
-        // PORT NOTE: Zig `deinit` called `bun.destroy(this)` at the end; that deallocation
-        // is now owned by `IntrusiveArc<ParsedSourceMap>` dropping its Box. This Drop only
-        // handles the conditional ownership of `internal`.
-        if self.is_standalone_module_graph {
-            // The InternalSourceMap blob borrows bytes from the standalone module graph
-            // section; do not free it.
-            // TODO(port): if InternalSourceMap impls Drop, this must be ManuallyDrop instead.
-            core::mem::forget(self.internal.take());
-        }
-        // `mappings` and `external_source_names` are dropped automatically.
-    }
-}
+// PORT NOTE: Zig `deinit` conditionally skipped freeing `internal` when
+// `is_standalone_module_graph` (the blob borrows bytes from the standalone
+// module graph section). The current `InternalSourceMap` stub has no Drop, so
+// the conditional is a no-op. When `InternalSourceMap.rs` is un-gated, retype
+// the field to `Option<core::mem::ManuallyDrop<InternalSourceMap>>` and drop
+// it explicitly only when `!is_standalone_module_graph` — do NOT use
+// `mem::forget` (PORTING.md §Forbidden).
+// `mappings` and `external_source_names` are dropped automatically.
 
 pub struct VlqsFmt<'a>(&'a ParsedSourceMap);
 
+// TODO(b2-blocked): bun_io::FmtAdapter
+#[cfg(any())]
 impl<'a> fmt::Display for VlqsFmt<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // TODO(port): write_vlqs targets a byte writer (bun_io::Write); bridging to

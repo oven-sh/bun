@@ -1,7 +1,3 @@
-pub use crate::css_parser as css;
-pub use crate::values as css_values;
-pub use crate::css_parser::Error;
-
 pub struct SourceMap {
     // TODO(port): []const u8 struct field in CSS (arena crate) — using raw slice ptr per PORTING.md; revisit ownership in Phase B
     pub project_root: *const [u8],

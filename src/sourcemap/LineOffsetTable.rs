@@ -1,4 +1,5 @@
-use bun_alloc::Arena;
+use bun_alloc::AllocError;
+use bun_collections::multi_array_list::MultiArrayElement;
 use bun_collections::{BabyList, MultiArrayList};
 use bun_logger::Loc;
 use bun_str::strings;
@@ -21,6 +22,55 @@ pub struct LineOffsetTable {
 }
 
 pub type List = MultiArrayList<LineOffsetTable>;
+
+// Manual `MultiArrayElement` impl — `#[derive(MultiArrayElement)]` proc-macro
+// does not exist yet (see bun_collections TODO). Fields sorted by alignment
+// descending: BabyList<i32> (align 8, size 16) first, then the two u32s.
+#[repr(usize)]
+#[derive(Copy, Clone)]
+pub enum LineOffsetTableField {
+    ColumnsForNonAscii = 0,
+    ByteOffsetToFirstNonAscii = 1,
+    ByteOffsetToStartOfLine = 2,
+}
+
+impl MultiArrayElement for LineOffsetTable {
+    type Field = LineOffsetTableField;
+    const FIELD_COUNT: usize = 3;
+    const ALIGN: usize = core::mem::align_of::<BabyList<i32>>();
+    // sorted by alignment descending (BabyList has ptr → align 8; u32 align 4)
+    const SIZES_BYTES: &'static [usize] = &[
+        core::mem::size_of::<BabyList<i32>>(),
+        core::mem::size_of::<u32>(),
+        core::mem::size_of::<u32>(),
+    ];
+    const SIZES_FIELDS: &'static [usize] = &[0, 1, 2];
+
+    #[inline]
+    fn field_index(field: Self::Field) -> usize { field as usize }
+
+    #[inline]
+    unsafe fn scatter(self, ptrs: &[*mut u8], index: usize) {
+        // SAFETY: caller guarantees `ptrs[0..3]` are valid columns with capacity > `index`.
+        unsafe {
+            ptrs[0].cast::<BabyList<i32>>().add(index).write(self.columns_for_non_ascii);
+            ptrs[1].cast::<u32>().add(index).write(self.byte_offset_to_first_non_ascii);
+            ptrs[2].cast::<u32>().add(index).write(self.byte_offset_to_start_of_line);
+        }
+    }
+
+    #[inline]
+    unsafe fn gather(ptrs: &[*mut u8], index: usize) -> Self {
+        // SAFETY: caller guarantees `ptrs[0..3]` are valid columns with len > `index`.
+        unsafe {
+            LineOffsetTable {
+                columns_for_non_ascii: ptrs[0].cast::<BabyList<i32>>().add(index).read(),
+                byte_offset_to_first_non_ascii: ptrs[1].cast::<u32>().add(index).read(),
+                byte_offset_to_start_of_line: ptrs[2].cast::<u32>().add(index).read(),
+            }
+        }
+    }
+}
 
 impl LineOffsetTable {
     pub fn find_line(byte_offsets_to_start_of_line: &[u32], loc: Loc) -> i32 {
@@ -79,19 +129,15 @@ impl LineOffsetTable {
         None
     }
 
-    // sourcemap is an AST crate per PORTING.md — `std.mem.Allocator` param becomes `&'bump Arena`.
+    // PORT NOTE: Zig threaded `std.mem.Allocator` through MultiArrayList/BabyList.
+    // The Rust MultiArrayList/BabyList own their storage on the global mimalloc
+    // heap (PORTING.md §allocators), so the allocator param is dropped.
     // TODO(port): callers in Zig pass mixed allocators (printer/bundler arenas vs VM default
-    // allocator in CodeCoverage.zig); Phase B may need a non-arena overload. MultiArrayList/
-    // BabyList arena APIs (`ensure_unused_capacity(bump, ..)`, `push(bump, ..)`,
-    // `from_slice`/`shrink_to_fit(bump)`) are assumed here — wire exact signatures in Phase B.
-    pub fn generate<'bump>(
-        bump: &'bump Arena,
-        contents: &[u8],
-        approximate_line_count: i32,
-    ) -> List {
+    // allocator in CodeCoverage.zig); revisit if an arena-backed MultiArrayList lands.
+    pub fn generate(contents: &[u8], approximate_line_count: i32) -> Result<List, AllocError> {
         let mut list = List::default();
         // Preallocate the top-level table using the approximate line count from the lexer
-        list.ensure_unused_capacity(bump, usize::try_from(approximate_line_count.max(1)).unwrap());
+        list.ensure_unused_capacity(usize::try_from(approximate_line_count.max(1)).unwrap())?;
         let mut column: i32 = 0;
         let mut byte_offset_to_first_non_ascii: u32 = 0;
         let mut column_byte_offset: u32 = 0;
@@ -106,10 +152,12 @@ impl LineOffsetTable {
         let mut remaining = contents;
         while !remaining.is_empty() {
             let len_ = strings::wtf8_byte_sequence_length_with_invalid(remaining[0]);
-            // TODO(port): Zig passes `remaining.ptr[0..4]` (unchecked 4-byte view). Verify the
-            // Rust signature of decode_wtf8_rune_t — passing the slice here; it must not read
-            // past `len_` bytes.
-            let c: i32 = strings::decode_wtf8_rune_t::<i32>(remaining, len_, 0);
+            // Zig passes `remaining.ptr[0..4]` (unchecked 4-byte view); decode_wtf8_rune_t
+            // takes `&[u8; 4]` and only reads `len_` bytes. Pad the tail with zeros.
+            let mut cp_bytes = [0u8; 4];
+            let take = (len_ as usize).min(remaining.len());
+            cp_bytes[..take].copy_from_slice(&remaining[..take]);
+            let c: i32 = strings::decode_wtf8_rune_t::<i32>(&cp_bytes, len_, 0);
             let cp_len = len_ as usize;
 
             if column == 0 {
@@ -148,13 +196,12 @@ impl LineOffsetTable {
                     // (@max('\r', '\n') + 1)...127  ==  14..=127
                     14..=127 => {
                         // skip ahead to the next newline or non-ascii character
-                        if let Some(j) = strings::index_of_newline_or_non_ascii_check_start(
+                        if let Some(j) = strings::index_of_newline_or_non_ascii_check_start::<false>(
                             remaining,
                             len_ as u32,
-                            false,
                         ) {
                             column += i32::try_from(j).unwrap();
-                            remaining = &remaining[j..];
+                            remaining = &remaining[j as usize..];
                         } else {
                             // if there are no more lines, we are done!
                             column += i32::try_from(remaining.len()).unwrap();
@@ -182,16 +229,16 @@ impl LineOffsetTable {
                     //
                     // PERF(port): Zig used a stack-fallback allocator for the scratch list and
                     // duped onto `allocator` only when stack-owned, then reset the fixed buffer.
-                    // Here the scratch is a heap Vec; we always dupe into the bump arena
+                    // Here the scratch is a heap Vec; we always dupe into a fresh BabyList
                     // (mirrors `allocator.dupe`) and `.clear()` to reuse capacity. Profile in
                     // Phase B.
-                    let owned: &'bump [i32] = bump.alloc_slice_copy(&columns_for_non_ascii);
+                    let owned = BabyList::from_slice(&columns_for_non_ascii)?;
 
-                    list.push(bump, LineOffsetTable {
+                    list.append(LineOffsetTable {
                         byte_offset_to_start_of_line: line_byte_offset,
                         byte_offset_to_first_non_ascii,
-                        columns_for_non_ascii: BabyList::from_slice(owned),
-                    });
+                        columns_for_non_ascii: owned,
+                    })?;
 
                     column = 0;
                     byte_offset_to_first_non_ascii = 0;
@@ -226,19 +273,19 @@ impl LineOffsetTable {
         }
         {
             // PERF(port): Zig checked stack_fallback.ownsSlice and duped onto `allocator` if so;
-            // here we always dupe the scratch Vec into the bump arena.
-            let owned: &'bump [i32] = bump.alloc_slice_copy(&columns_for_non_ascii);
-            list.push(bump, LineOffsetTable {
+            // here we always dupe the scratch Vec into a fresh BabyList.
+            let owned = BabyList::from_slice(&columns_for_non_ascii)?;
+            list.append(LineOffsetTable {
                 byte_offset_to_start_of_line: line_byte_offset,
                 byte_offset_to_first_non_ascii,
-                columns_for_non_ascii: BabyList::from_slice(owned),
-            });
+                columns_for_non_ascii: owned,
+            })?;
         }
 
         if list.capacity() > list.len() {
-            list.shrink_to_fit(bump);
+            list.shrink_and_free(list.len());
         }
-        list
+        Ok(list)
     }
 }
 

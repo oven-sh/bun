@@ -1,50 +1,55 @@
 // ──────────────────────────────────────────────────────────────────────────
-// B-1 GATE-AND-STUB
-//   Phase-A draft bodies are preserved on disk but gated behind
-//   `#[cfg(any())]` so they don't participate in compilation. Minimal stub
-//   surface is exposed below. Un-gating happens in B-2.
-//
-//   gated reasons (per module):
-//     json   - TODO(b1): bun_logger::js_ast / bun_logger::js_printer missing;
-//              bun_js_parser crate not in deps
-//     json5  - TODO(b1): bun_logger::lexer / bun_logger::js_ast missing;
-//              bun_str crate not in deps; thiserror not in deps
-//     toml   - TODO(b1): bun_logger::js_ast missing;
-//              bun_collections::identity_context missing;
-//              bun_js_parser / bun_str not in deps; thiserror not in deps
-//     yaml   - TODO(b1): bun_logger::ast missing; thiserror not in deps;
-//              E0658 adt_const_params (ConstParamTy on enum FirstChar);
-//              duplicate `FirstChar` definition
+// B-2 UN-GATE
+//   Phase-A draft bodies are progressively un-gated and made to compile.
+//   Modules that remain blocked on lower-tier MOVE_DOWN symbols (chiefly
+//   `bun_logger::js_ast`) keep a `#[cfg(any())]` gate on the affected items
+//   only, with `// TODO(b2-blocked): bun_X::Y` markers.
 // ──────────────────────────────────────────────────────────────────────────
 
+#![allow(dead_code)]
+#![allow(unused_imports)]
+#![allow(unused_variables)]
+#![allow(clippy::all)]
+
+// PORTING.md crate-map calls the string crate `bun_str`; the workspace package
+// is `bun_string`. Alias once here so submodule `use bun_str::…` paths resolve.
+extern crate bun_string as bun_str;
+
+// ───── json ───────────────────────────────────────────────────────────────
+// Blocked wholesale: depends on `bun_js_parser::js_lexer` (GENUINE same-tier
+// cycle per CYCLEBREAK §interchange) plus `bun_logger::{js_ast,js_printer}`
+// (MOVE_DOWN not yet landed in T2).
 #[cfg(any())]
 #[path = "json.rs"]
 pub mod json_draft;
-#[cfg(any())]
+
+pub mod json {
+    // TODO(b2-blocked): bun_logger::js_ast::Expr
+    // TODO(b2-blocked): bun_logger::js_printer
+    // TODO(b2-blocked): bun_js_parser::js_lexer (GENUINE cycle — needs js_lexer split)
+    /// Opaque stub for `json::Expr` (re-export of `bun_logger::js_ast::Expr`).
+    pub struct Expr(());
+}
+
+// ───── json5 ──────────────────────────────────────────────────────────────
 #[path = "json5.rs"]
-pub mod json5_draft;
-#[cfg(any())]
+pub mod json5;
+
+// ───── toml ───────────────────────────────────────────────────────────────
 #[path = "toml.rs"]
-pub mod toml_draft;
+pub mod toml;
+
+// ───── yaml ───────────────────────────────────────────────────────────────
 #[cfg(any())]
 #[path = "yaml.rs"]
 pub mod yaml_draft;
 
-// ───── stub surface ───────────────────────────────────────────────────────
-
-pub mod json {
-    /// Opaque stub for `json::Expr` (re-export of `bun_logger::js_ast::Expr`).
-    /// TODO(b1): bun_logger::js_ast::Expr missing from lower-tier stub surface.
-    pub struct Expr(());
+pub mod yaml {
+    // TODO(b2-blocked): bun_logger::js_ast::{Expr, E, G, ExprData}
+    //   yaml's Parser<Enc> output graph stores `Expr` in Document/anchors and
+    //   threads it through ~20 parse_* fns; un-gating requires the MOVE_DOWN
+    //   of js_ast into bun_logger (T2) to land first.
 }
-
-pub mod json5 {}
-
-pub mod toml {
-    pub mod lexer {}
-}
-
-pub mod yaml {}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

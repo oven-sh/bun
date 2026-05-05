@@ -45,7 +45,7 @@ impl Default for EmphDelim {
     }
 }
 
-impl Parser {
+impl Parser<'_> {
     /// Merge all lines into buffer with \n between them (unmodified),
     /// then process inlines on the merged text. Hard/soft breaks are detected
     /// during inline processing when \n is encountered.
@@ -69,7 +69,7 @@ impl Parser {
                 self.buffer.push(b'\n');
             }
             self.buffer
-                .extend_from_slice(&self.text[vline.beg..vline.end]);
+                .extend_from_slice(&self.text[vline.beg as usize..vline.end as usize]);
         }
 
         // For headings, trim trailing whitespace
@@ -97,8 +97,7 @@ impl Parser {
         base_off: OFF,
     ) -> Result<(), parser::Error> {
         if !self.stack_check.is_safe_to_recurse() {
-            // TODO(port): bun.throwStackOverflow() — map to parser::Error / bun_core stack overflow.
-            return Err(bun_core::throw_stack_overflow());
+            return Err(parser::Error::StackOverflow);
         }
 
         // Phase 1: Collect and resolve emphasis delimiters
@@ -118,7 +117,7 @@ impl Parser {
             let c = content[i];
 
             // Fast path: character has no special meaning, skip it
-            if !self.mark_char_map.is_set(c) {
+            if !self.mark_char_map.is_set(c as usize) {
                 i += 1;
                 continue;
             }
@@ -418,26 +417,26 @@ impl Parser {
         Ok(())
     }
 
-    pub fn enter_span(&mut self, span_type: SpanType) -> bun_jsc::JsResult<()> {
+    pub fn enter_span(&mut self, span_type: SpanType) -> crate::types::JsResult<()> {
         if self.image_nesting_level > 0 {
             return Ok(());
         }
         self.renderer.enter_span(span_type, Default::default())
     }
 
-    pub fn leave_span(&mut self, span_type: SpanType) -> bun_jsc::JsResult<()> {
+    pub fn leave_span(&mut self, span_type: SpanType) -> crate::types::JsResult<()> {
         if self.image_nesting_level > 0 {
             return Ok(());
         }
         self.renderer.leave_span(span_type)
     }
 
-    pub fn emit_text(&mut self, text_type: TextType, content: &[u8]) -> bun_jsc::JsResult<()> {
+    pub fn emit_text(&mut self, text_type: TextType, content: &[u8]) -> crate::types::JsResult<()> {
         self.renderer.text(text_type, content)
     }
 
     /// Emit emphasis opening tags (outermost to innermost).
-    pub fn emit_emph_open_tags(&mut self, sizes: &[u8]) -> bun_jsc::JsResult<()> {
+    pub fn emit_emph_open_tags(&mut self, sizes: &[u8]) -> crate::types::JsResult<()> {
         // First match = innermost, so emit in reverse (outermost first in HTML)
         for idx in 0..sizes.len() {
             let j = sizes.len() - 1 - idx;
@@ -452,7 +451,7 @@ impl Parser {
 
     /// Emit emphasis closing tags (innermost to outermost).
     /// First entry in sizes was matched first (innermost), emit in forward order.
-    pub fn emit_emph_close_tags(&mut self, sizes: &[u8]) -> bun_jsc::JsResult<()> {
+    pub fn emit_emph_close_tags(&mut self, sizes: &[u8]) -> crate::types::JsResult<()> {
         for &size in sizes {
             if size == 2 {
                 self.leave_span(SpanType::Strong)?;

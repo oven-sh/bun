@@ -165,7 +165,7 @@ pub fn render_to_html_with_options(text: &[u8], options: Options) -> Result<Box<
 
 /// Parse and render using a custom renderer implementation.
 // TODO(port): narrow error set — Zig: `parser.Parser.Error`
-pub fn render_with_renderer(text: &[u8], options: Options, renderer: Renderer) -> Result<(), parser::ParserError> {
+pub fn render_with_renderer<'a>(text: &'a [u8], options: Options, renderer: Renderer<'a>) -> Result<(), parser::ParserError> {
     parser::render_with_renderer(text, options.to_flags(), options.to_render_options(), renderer)
 }
 

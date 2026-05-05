@@ -6,7 +6,7 @@ use bun_str::strings;
 
 use crate::helpers;
 use crate::types;
-use crate::types::{BlockType, Renderer, SpanDetail, SpanType, TextType};
+use crate::types::{BlockType, JsResult, Renderer, RendererImpl, SpanDetail, SpanType, TextType};
 use crate::RenderOptions;
 
 // TODO(port): lifetime — `src_text` and `saved_img_title` borrow the caller's
@@ -18,7 +18,9 @@ pub struct HtmlRenderer<'src> {
     // allocator: dropped — non-AST crate uses global mimalloc
     pub src_text: &'src [u8],
     pub image_nesting_level: u32,
-    pub saved_img_title: &'src [u8],
+    // PORT NOTE: was `&'src [u8]` borrowing parser content; owned now so the
+    // RendererImpl trait does not entangle SpanDetail's lifetime with 'src.
+    pub saved_img_title: Box<[u8]>,
     pub tag_filter: bool,
     pub tag_filter_raw_depth: u32,
     pub autolink_headings: bool,
@@ -65,7 +67,7 @@ impl<'src> HtmlRenderer<'src> {
             },
             src_text,
             image_nesting_level: 0,
-            saved_img_title: b"",
+            saved_img_title: Box::default(),
             tag_filter: render_opts.tag_filter,
             tag_filter_raw_depth: 0,
             autolink_headings: render_opts.autolink_headings,
@@ -84,55 +86,8 @@ impl<'src> HtmlRenderer<'src> {
         Ok(core::mem::take(&mut self.out.list).into_boxed_slice())
     }
 
-    pub fn renderer(&mut self) -> Renderer {
-        Renderer {
-            ptr: self as *mut _ as *mut c_void,
-            vtable: &VTABLE,
-        }
-    }
-
-    // ========================================
-    // VTable implementation functions
-    // ========================================
-
-    fn enter_block_impl(
-        ptr: *mut c_void,
-        block_type: BlockType,
-        data: u32,
-        flags: u32,
-    ) -> JsResult<()> {
-        // SAFETY: ptr was created from `&mut HtmlRenderer` in `renderer()`.
-        let this = unsafe { &mut *(ptr as *mut HtmlRenderer) };
-        this.enter_block(block_type, data, flags);
-        Ok(())
-    }
-
-    fn leave_block_impl(ptr: *mut c_void, block_type: BlockType, data: u32) -> JsResult<()> {
-        // SAFETY: ptr was created from `&mut HtmlRenderer` in `renderer()`.
-        let this = unsafe { &mut *(ptr as *mut HtmlRenderer) };
-        this.leave_block(block_type, data);
-        Ok(())
-    }
-
-    fn enter_span_impl(ptr: *mut c_void, span_type: SpanType, detail: SpanDetail) -> JsResult<()> {
-        // SAFETY: ptr was created from `&mut HtmlRenderer` in `renderer()`.
-        let this = unsafe { &mut *(ptr as *mut HtmlRenderer) };
-        this.enter_span(span_type, detail);
-        Ok(())
-    }
-
-    fn leave_span_impl(ptr: *mut c_void, span_type: SpanType) -> JsResult<()> {
-        // SAFETY: ptr was created from `&mut HtmlRenderer` in `renderer()`.
-        let this = unsafe { &mut *(ptr as *mut HtmlRenderer) };
-        this.leave_span(span_type);
-        Ok(())
-    }
-
-    fn text_impl(ptr: *mut c_void, text_type: TextType, content: &[u8]) -> JsResult<()> {
-        // SAFETY: ptr was created from `&mut HtmlRenderer` in `renderer()`.
-        let this = unsafe { &mut *(ptr as *mut HtmlRenderer) };
-        this.text(text_type, content);
-        Ok(())
+    pub fn renderer(&mut self) -> Renderer<'_> {
+        Renderer { ptr: self }
     }
 
     // ========================================
@@ -321,7 +276,7 @@ impl<'src> HtmlRenderer<'src> {
     // Span rendering
     // ========================================
 
-    pub fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail<'src>) {
+    pub fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail<'_>) {
         if self.image_nesting_level > 0 {
             if span_type == SpanType::Img {
                 self.image_nesting_level += 1;
@@ -370,7 +325,7 @@ impl<'src> HtmlRenderer<'src> {
                 self.write(b">");
             }
             SpanType::Img => {
-                self.saved_img_title = detail.title;
+                self.saved_img_title = Box::from(detail.title);
                 self.write(b"<img src=\"");
                 self.write_url_with_escapes(detail.href);
                 self.write(b"\" alt=\"");
@@ -392,13 +347,13 @@ impl<'src> HtmlRenderer<'src> {
                     self.write(b"\"");
                     if !self.saved_img_title.is_empty() {
                         self.write(b" title=\"");
-                        // PORT NOTE: reshaped for borrowck — copy field ref before &mut self call.
-                        let title = self.saved_img_title;
-                        self.write_title_with_escapes(title);
+                        // PORT NOTE: reshaped for borrowck — take field before &mut self call.
+                        let title = core::mem::take(&mut self.saved_img_title);
+                        self.write_title_with_escapes(&title);
                         self.write(b"\"");
                     }
                     self.write(b" />");
-                    self.saved_img_title = b"";
+                    self.saved_img_title = Box::default();
                 }
             }
             return;
@@ -580,7 +535,7 @@ impl<'src> HtmlRenderer<'src> {
                 self.write(&txt[i..]);
                 return;
             };
-            let pos = i + next;
+            let pos = i + next as usize;
             if pos > i {
                 self.write(&txt[i..pos]);
             }
@@ -748,15 +703,30 @@ impl<'src> HtmlRenderer<'src> {
 // Static helpers
 // ========================================
 
-pub static VTABLE: Renderer::VTable = Renderer::VTable {
-    enter_block: HtmlRenderer::enter_block_impl,
-    leave_block: HtmlRenderer::leave_block_impl,
-    enter_span: HtmlRenderer::enter_span_impl,
-    leave_span: HtmlRenderer::leave_span_impl,
-    text: HtmlRenderer::text_impl,
-};
-// TODO(port): VTable fn pointer types must match crate::types::Renderer::VTable;
-// the `'src` on enter_span_impl's SpanDetail may need erasing at this boundary.
+// PORT NOTE: Zig's manual `*anyopaque + VTable` is collapsed into the
+// `RendererImpl` trait (see types.rs); the static VTABLE is no longer needed.
+impl RendererImpl for HtmlRenderer<'_> {
+    fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> JsResult<()> {
+        HtmlRenderer::enter_block(self, block_type, data, flags);
+        Ok(())
+    }
+    fn leave_block(&mut self, block_type: BlockType, data: u32) -> JsResult<()> {
+        HtmlRenderer::leave_block(self, block_type, data);
+        Ok(())
+    }
+    fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail<'_>) -> JsResult<()> {
+        HtmlRenderer::enter_span(self, span_type, detail);
+        Ok(())
+    }
+    fn leave_span(&mut self, span_type: SpanType) -> JsResult<()> {
+        HtmlRenderer::leave_span(self, span_type);
+        Ok(())
+    }
+    fn text(&mut self, text_type: TextType, content: &[u8]) -> JsResult<()> {
+        HtmlRenderer::text(self, text_type, content);
+        Ok(())
+    }
+}
 
 fn hex_digit(v: u8) -> u8 {
     if v < 10 {

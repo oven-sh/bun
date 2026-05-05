@@ -3,8 +3,8 @@ use core::mem::{align_of, size_of};
 use bun_alloc::AllocError;
 
 use crate::helpers;
-use crate::parser::Parser;
-use crate::types::{self, BlockHeader, VerbatimLine};
+use crate::parser::{BlockHeader, Parser};
+use crate::types::{self, VerbatimLine};
 use crate::unicode;
 
 pub struct RefDef {
@@ -32,7 +32,7 @@ pub struct ParsedTitle<'a> {
     pub end_pos: usize,
 }
 
-impl Parser {
+impl Parser<'_> {
     /// Normalize a link label for comparison: collapse whitespace runs to single space,
     /// strip leading/trailing whitespace, case-fold.
     pub fn normalize_label(&mut self, raw: &[u8]) -> Vec<u8> {
@@ -61,7 +61,7 @@ impl Parser {
                         let mut buf = [0u8; 4];
                         let len = helpers::encode_utf8(fold.codepoints[j as usize], &mut buf);
                         if len > 0 {
-                            result.extend_from_slice(&buf[0..len]);
+                            result.extend_from_slice(&buf[0..len as usize]);
                         }
                         j += 1;
                     }
@@ -373,7 +373,7 @@ impl Parser {
             // Merge lines into buffer to parse ref defs
             self.buffer.clear();
             for vline in block_lines {
-                if vline.beg > vline.end || vline.end as usize > self.size {
+                if vline.beg > vline.end || vline.end > self.size {
                     continue;
                 }
                 if !self.buffer.is_empty() {

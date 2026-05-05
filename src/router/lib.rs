@@ -62,7 +62,9 @@ mod b1_stubs {
     }
     pub use Fs::FileSystem;
 
-    // TODO(b1): bun_schema::api missing
+    // TODO(b2-blocked): bun_options_types::schema::{RouteConfig, LoadedRouteConfig, StringPointer}
+    // — schema.rs port hasn't reached these types yet. Shapes below mirror
+    // src/options_types/schema.zig:1528 / :1559 exactly.
     pub mod api {
         #[derive(Default, Clone)]
         pub struct LoadedRouteConfig {
@@ -71,15 +73,21 @@ mod b1_stubs {
             pub extensions: Box<[Box<[u8]>]>,
             pub static_dir: Box<[u8]>,
         }
-        pub struct RouteConfig;
+        #[derive(Default, Clone)]
+        pub struct RouteConfig {
+            pub dir: Box<[Box<[u8]>]>,
+            pub extensions: Box<[Box<[u8]>]>,
+            pub static_dir: Option<Box<[u8]>>,
+            pub asset_prefix: Option<Box<[u8]>>,
+        }
         pub struct StringPointer {
             pub offset: u32,
             pub length: u32,
         }
     }
 
-    // TODO(b1): bun_core::Error missing
-    pub type CoreError = ();
+    // bun_core::Error landed in T0; alias kept for churn-free callers.
+    pub type CoreError = bun_core::Error;
 
     // TODO(b1): bun_string::HashedString stub lacks init/eql/EMPTY/Copy; local
     // shim with the surface this crate needs.
@@ -131,8 +139,11 @@ mod b1_stubs {
             PathString { ptr: s.as_ptr(), len: s.len() }
         }
         #[inline]
-        pub fn slice(&self) -> &[u8] {
-            // SAFETY: ptr+len always come from a valid &[u8] in init.
+        pub fn slice(&self) -> &'static [u8] {
+            // SAFETY: ptr+len always come from a valid &[u8] in init; in this
+            // crate every PathString is backed by FileSystem::dirname_store
+            // (process-lifetime arena), so 'static is sound for Phase A. Phase
+            // B threads a real lifetime once bun_string::PathString lands.
             unsafe { core::slice::from_raw_parts(self.ptr, self.len) }
         }
         #[inline]
@@ -254,25 +265,27 @@ impl RouteConfig {
         }
     }
 
-    #[cfg(any())] // TODO(b1): bun_schema::api::RouteConfig + bun_string::strings::trim_* missing
     pub fn from_api(router_: &api::RouteConfig) -> Result<RouteConfig, CoreError> {
+        // TODO(b2-blocked): bun_string::strings::trim_left / trim_right — local shim.
+        use b1_stubs::strings_ext::{trim_left, trim_right};
+
         let mut router = Self::zero();
 
         let static_dir: &[u8] =
-            strings::trim_right(router_.static_dir.as_deref().unwrap_or(b""), b"/\\");
+            trim_right(router_.static_dir.as_deref().unwrap_or(b""), b"/\\");
         let asset_prefix: &[u8] =
-            strings::trim_right(router_.asset_prefix.as_deref().unwrap_or(b""), b"/\\");
+            trim_right(router_.asset_prefix.as_deref().unwrap_or(b""), b"/\\");
 
         match router_.dir.len() {
             0 => {}
             1 => {
-                router.dir = Box::from(strings::trim_right(&router_.dir[0], b"/\\"));
+                router.dir = Box::from(trim_right(&router_.dir[0], b"/\\"));
                 router.routes_enabled = !router.dir.is_empty();
             }
             _ => {
                 router.possible_dirs = router_.dir.clone();
                 for dir in router_.dir.iter() {
-                    let trimmed = strings::trim_right(dir, b"/\\");
+                    let trimmed = trim_right(dir, b"/\\");
                     if !trimmed.is_empty() {
                         router.dir = Box::from(trimmed);
                     }
@@ -292,7 +305,7 @@ impl RouteConfig {
         if !router_.extensions.is_empty() {
             let mut count: usize = 0;
             for _ext in router_.extensions.iter() {
-                let ext = strings::trim_left(_ext, b".");
+                let ext = trim_left(_ext, b".");
                 if ext.is_empty() {
                     continue;
                 }
@@ -301,7 +314,7 @@ impl RouteConfig {
 
             let mut extensions: Vec<Box<[u8]>> = Vec::with_capacity(count);
             for _ext in router_.extensions.iter() {
-                let ext = strings::trim_left(_ext, b".");
+                let ext = trim_left(_ext, b".");
                 if ext.is_empty() {
                     continue;
                 }
@@ -364,7 +377,6 @@ pub struct Router<'a> {
     pub config: RouteConfig,
 }
 
-#[cfg(any())] // TODO(b1): Fd::INVALID, Routes default, RouteLoader, URLPath fields, watcher — gate whole impl
 impl<'a> Router<'a> {
     pub fn init(
         fs: &'a FileSystem,
@@ -449,10 +461,10 @@ impl<'a> Router<'a> {
         }
 
         PARAMS_LIST.with_borrow_mut(|params_list| -> Result<(), CoreError> {
-            params_list.shrink_retaining_capacity(0);
+            params_list.truncate(0);
             if let Some(route) = app
                 .routes
-                .match_page(&app.config.dir, ctx.url().clone(), params_list)
+                .match_page(&app.config.dir, ctx.url(), params_list)
             {
                 if let Some(redirect) = route.redirect_path {
                     ctx.handle_redirect(redirect)?;
@@ -494,8 +506,46 @@ struct RouteIndex {
     hash: u32,
 }
 
-// TODO(b1): inherent assoc types unstable; module-level alias instead.
-type RouteIndexList = MultiArrayList<RouteIndex>;
+// TODO(b2-blocked): bun_collections::MultiArrayElement derive — proc-macro not
+// yet landed, so MultiArrayList<RouteIndex> can't expose per-field column
+// accessors. Hand-rolled SoA struct (semantically identical to Zig's
+// MultiArrayList(RouteIndex)) until the derive exists.
+#[derive(Default)]
+pub struct RouteIndexList {
+    route: Vec<Box<Route>>,
+    name: Vec<&'static [u8]>,
+    match_name: Vec<&'static [u8]>,
+    filepath: Vec<&'static [u8]>,
+    public_path: Vec<&'static [u8]>,
+    hash: Vec<u32>,
+}
+
+impl RouteIndexList {
+    pub fn set_capacity(&mut self, cap: usize) -> Result<(), CoreError> {
+        self.route.reserve_exact(cap);
+        self.name.reserve_exact(cap);
+        self.match_name.reserve_exact(cap);
+        self.filepath.reserve_exact(cap);
+        self.public_path.reserve_exact(cap);
+        self.hash.reserve_exact(cap);
+        Ok(())
+    }
+    pub fn push(&mut self, item: RouteIndex) {
+        self.route.push(item.route);
+        self.name.push(item.name);
+        self.match_name.push(item.match_name);
+        self.filepath.push(item.filepath);
+        self.public_path.push(item.public_path);
+        self.hash.push(item.hash);
+    }
+    #[inline] pub fn len(&self) -> usize { self.route.len() }
+    #[inline] pub fn items_route(&self) -> &[Box<Route>] { &self.route }
+    #[inline] pub fn items_name(&self) -> &[&'static [u8]] { &self.name }
+    #[inline] pub fn items_match_name(&self) -> &[&'static [u8]] { &self.match_name }
+    #[inline] pub fn items_filepath(&self) -> &[&'static [u8]] { &self.filepath }
+    #[inline] pub fn items_public_path(&self) -> &[&'static [u8]] { &self.public_path }
+    #[inline] pub fn items_hash(&self) -> &[u32] { &self.hash }
+}
 
 pub struct Routes<'a> {
     pub list: RouteIndexList,
@@ -523,7 +573,6 @@ pub struct Routes<'a> {
     pub client_framework_enabled: bool,
 }
 
-#[cfg(any())] // TODO(b1): MultiArrayList::default() not on stub
 impl<'a> Default for Routes<'a> {
     fn default() -> Self {
         Self {
@@ -540,12 +589,11 @@ impl<'a> Default for Routes<'a> {
     }
 }
 
-#[cfg(any())] // TODO(b1): URLPath fields, AbsPath::slice, strings::trim_left, route_param::List::shrink_retaining_capacity
 impl<'a> Routes<'a> {
     pub fn match_page_with_allocator<'p>(
         &mut self,
         _: &[u8],
-        url_path: URLPath,
+        url_path: &URLPath,
         params: &'p mut route_param::List,
     ) -> Option<Match<'p>> {
         // Trim trailing slash
@@ -613,7 +661,10 @@ impl<'a> Routes<'a> {
         let result = self.match_(path, &mut matcher.params);
         *params = matcher.params;
 
-        if let Some(route) = result {
+        if let Some(route_ptr) = result {
+            // SAFETY: pointers from static_/dynamic alias Box<Route> stored in
+            // self.list, which outlives self.
+            let route = unsafe { &*route_ptr };
             return Some(Match {
                 params,
                 name: route.name,
@@ -634,13 +685,13 @@ impl<'a> Routes<'a> {
     pub fn match_page<'p>(
         &mut self,
         _: &[u8],
-        url_path: URLPath,
+        url_path: &URLPath,
         params: &'p mut route_param::List,
     ) -> Option<Match<'p>> {
         self.match_page_with_allocator(b"", url_path, params)
     }
 
-    fn match_dynamic(&mut self, path: &[u8], params: &mut route_param::List) -> Option<*const Route> {
+    fn match_dynamic(&self, path: &[u8], params: &mut route_param::List) -> Option<*const Route> {
         // its cleaned, so now we search the big list of strings
         debug_assert_eq!(self.dynamic_names.len(), self.dynamic_match_names.len());
         debug_assert_eq!(self.dynamic_names.len(), self.dynamic.len());
@@ -658,57 +709,53 @@ impl<'a> Routes<'a> {
         None
     }
 
-    fn match_(&mut self, pathname_: &[u8], params: &mut route_param::List) -> Option<&Route> {
-        let pathname = strings::trim_left(pathname_, b"/");
+    fn match_(&self, pathname_: &[u8], params: &mut route_param::List) -> Option<*const Route> {
+        // TODO(b2-blocked): bun_string::strings::trim_left — using local shim.
+        let pathname = b1_stubs::strings_ext::trim_left(pathname_, b"/");
 
         if pathname.is_empty() {
-            return self.index;
+            return self.index.map(|r| r as *const Route);
         }
 
-        let found = self
-            .static_
+        self.static_
             .get(pathname)
             .copied()
-            .or_else(|| self.match_dynamic(pathname, params));
-        // SAFETY: pointers in static_/dynamic alias Box<Route> stored in self.list, which outlives self
-        found.map(|p| unsafe { &*p })
+            .or_else(|| self.match_dynamic(pathname, params))
     }
 }
 
 struct RouteLoader<'a> {
     // allocator: dropped — global mimalloc
-    fs: &'a FileSystem,
+    fs: &'static FileSystem,
     config: RouteConfig,
     route_dirname_len: u16,
 
     dedupe_dynamic: ArrayHashMap<u32, &'static [u8]>,
     log: &'a mut logger::Log,
-    index: Option<&'a Route>,
+    // PORT NOTE: raw ptr (not &'a Route) because it points into self.all_routes
+    // (self-referential); decouples log's lifetime from the returned Routes<'_>.
+    index: Option<*const Route>,
     static_list: StringHashMap<*const Route>,
     all_routes: Vec<Box<Route>>,
 }
 
-#[cfg(any())] // TODO(b1): logger::Log methods, Fs::Entry, bun_paths::extension/is_sep_any, StringHashMap::get_or_put
 impl<'a> RouteLoader<'a> {
     pub fn append_route(&mut self, route: Route) {
+        use bun_collections::hash_map::Entry;
+
         // /index.js
         if route.full_hash == index_route_hash() {
             let new_route = Box::new(route);
-            // TODO(port): lifetime — index borrows from self.all_routes; self-referential
             // SAFETY: Box contents have stable address; never removed from all_routes until consumed by load_all
-            self.index = Some(unsafe { &*(&*new_route as *const Route) });
+            self.index = Some(&*new_route as *const Route);
             self.all_routes.push(new_route);
             return;
         }
 
         // static route
         if route.param_count == 0 {
-            let entry = self
-                .static_list
-                .get_or_put(route.match_name.slice())
-                .expect("unreachable");
-
-            if entry.found_existing {
+            // PORT NOTE: Zig getOrPut → std Entry API (StringHashMap = std HashMap).
+            if let Some(existing) = self.static_list.get(route.match_name.slice()) {
                 let source = logger::Source::init_empty_file(route.abs_path.slice());
                 self.log
                     .add_error_fmt(
@@ -717,8 +764,8 @@ impl<'a> RouteLoader<'a> {
                         format_args!(
                             "Route \"{}\" is already defined by {}",
                             bstr::BStr::new(route.name),
-                            // SAFETY: value_ptr points to a *const Route stored in static_list
-                            bstr::BStr::new(unsafe { &**entry.value_ptr }.abs_path.slice()),
+                            // SAFETY: *existing aliases a Box<Route> in self.all_routes
+                            bstr::BStr::new(unsafe { &**existing }.abs_path.slice()),
                         ),
                     )
                     .expect("unreachable");
@@ -736,11 +783,7 @@ impl<'a> RouteLoader<'a> {
             // This hack is below the engineering quality bar I'm happy with.
             // It will cause unexpected behavior.
             if new_route.has_uppercase {
-                let static_entry = self
-                    .static_list
-                    .get_or_put(&new_route.name[1..])
-                    .expect("unreachable");
-                if static_entry.found_existing {
+                if let Some(existing) = self.static_list.get(&new_route.name[1..]) {
                     let source = logger::Source::init_empty_file(new_route.abs_path.slice());
                     self.log
                         .add_error_fmt(
@@ -749,10 +792,8 @@ impl<'a> RouteLoader<'a> {
                             format_args!(
                                 "Route \"{}\" is already defined by {}",
                                 bstr::BStr::new(new_route.name),
-                                // SAFETY: value_ptr points to a *const Route stored in static_list
-                                bstr::BStr::new(
-                                    unsafe { &**static_entry.value_ptr }.abs_path.slice()
-                                ),
+                                // SAFETY: *existing aliases a Box<Route> in self.all_routes
+                                bstr::BStr::new(unsafe { &**existing }.abs_path.slice()),
                             ),
                         )
                         .expect("unreachable");
@@ -760,34 +801,37 @@ impl<'a> RouteLoader<'a> {
                     return;
                 }
 
-                *static_entry.value_ptr = new_route_ptr;
+                self.static_list
+                    .insert(Box::from(&new_route.name[1..]), new_route_ptr);
             }
 
-            *entry.value_ptr = new_route_ptr;
+            self.static_list
+                .insert(Box::from(new_route.match_name.slice()), new_route_ptr);
             self.all_routes.push(new_route);
 
             return;
         }
 
         {
-            let entry = self
-                .dedupe_dynamic
-                .get_or_put_value(route.full_hash, route.abs_path.slice())
-                .expect("unreachable");
-            if entry.found_existing {
-                let source = logger::Source::init_empty_file(route.abs_path.slice());
-                self.log
-                    .add_error_fmt(
-                        Some(&source),
-                        logger::Loc::EMPTY,
-                        format_args!(
-                            "Route \"{}\" is already defined by {}",
-                            bstr::BStr::new(route.name),
-                            bstr::BStr::new(*entry.value_ptr),
-                        ),
-                    )
-                    .expect("unreachable");
-                return;
+            match self.dedupe_dynamic.entry(route.full_hash) {
+                Entry::Occupied(e) => {
+                    let source = logger::Source::init_empty_file(route.abs_path.slice());
+                    self.log
+                        .add_error_fmt(
+                            Some(&source),
+                            logger::Loc::EMPTY,
+                            format_args!(
+                                "Route \"{}\" is already defined by {}",
+                                bstr::BStr::new(route.name),
+                                bstr::BStr::new(*e.get()),
+                            ),
+                        )
+                        .expect("unreachable");
+                    return;
+                }
+                Entry::Vacant(v) => {
+                    v.insert(route.abs_path.slice());
+                }
             }
         }
 
@@ -797,16 +841,19 @@ impl<'a> RouteLoader<'a> {
         }
     }
 
-    pub fn load_all<R: ResolverLike>(
+    pub fn load_all<'r, R: ResolverLike>(
         config: RouteConfig,
         log: &'a mut logger::Log,
         resolver: &mut R,
         root_dir_info: DirInfoRef,
         base_dir: &[u8],
-    ) -> Routes<'a> {
+    ) -> Routes<'r> {
         let mut route_dirname_len: u16 = 0;
 
+        #[cfg(any())] // TODO(b2-blocked): bun_resolver::fs::FileSystem::relative
         let relative_dir = FileSystem::instance().relative(base_dir, &config.dir);
+        #[cfg(not(any()))]
+        let relative_dir: &[u8] = b"";
         if !relative_dir.starts_with(b"..") {
             route_dirname_len = (relative_dir.len()
                 + usize::from(config.dir[config.dir.len() - 1] != SEP))
@@ -824,7 +871,9 @@ impl<'a> RouteLoader<'a> {
             route_dirname_len,
         };
         // dedupe_dynamic dropped at end of scope (was `defer this.dedupe_dynamic.deinit()`)
+        #[cfg(any())] // TODO(b2-blocked): bun_resolver::fs::DirEntry (load() body gated)
         this.load(resolver, root_dir_info, base_dir);
+        let _ = root_dir_info;
         if this.all_routes.is_empty() {
             return Routes {
                 static_: this.static_list,
@@ -834,9 +883,9 @@ impl<'a> RouteLoader<'a> {
         }
 
         this.all_routes
-            .sort_unstable_by(|a, b| Route::Sorter::sort_by_name_cmp(a, b));
+            .sort_unstable_by(|a, b| Sorter::sort_by_name_cmp(a, b));
 
-        let mut route_list = RouteIndex::List::default();
+        let mut route_list = RouteIndexList::default();
         route_list
             .set_capacity(this.all_routes.len())
             .expect("unreachable");
@@ -902,13 +951,18 @@ impl<'a> RouteLoader<'a> {
             dynamic_names,
             dynamic_match_names,
             static_: this.static_list,
-            index: this.index,
+            // SAFETY: points into a Box<Route> now owned by `route_list`;
+            // Routes<'r> is the owner so the borrow is valid for its lifetime.
+            index: this.index.map(|p| unsafe { &*p }),
             config,
             index_id,
             client_framework_enabled: false,
         }
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_resolver::fs::DirEntry / bun_resolver::fs::Entry
+    // TODO(b2-blocked): bun_paths::extension
     pub fn load<R: ResolverLike>(
         &mut self,
         resolver: &mut R,
@@ -1107,7 +1161,12 @@ pub type RoutePtr = TinyPtr;
 impl Route {
     pub const INDEX_ROUTE_NAME: &'static [u8] = b"/";
 
-    #[cfg(any())] // TODO(b1): Fs::Entry fields, FileSystem::dirname_store, bun_sys::open_file_absolute_z, bun_str::ZStr
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_resolver::fs::Entry
+    // TODO(b2-blocked): bun_resolver::fs::FileSystem::dirname_store
+    // TODO(b2-blocked): bun_sys::open_file_absolute_z
+    // TODO(b2-blocked): bun_sys::get_fd_path
+    // TODO(b2-blocked): bun_string::strings::trim_right
     pub fn parse(
         base_: &[u8],
         extname: &[u8],
@@ -1473,7 +1532,7 @@ impl<'a> Match<'a> {
         PathnameScanner::init(self.pathname, self.name, self.params)
     }
 
-    #[cfg(any())] // TODO(b1): bun_paths::extension missing
+    #[cfg(any())] // TODO(b2-blocked): bun_paths::extension
     pub fn name_with_basename<'s>(file_path: &'s [u8], dir: &[u8]) -> &'s [u8] {
         let mut name = file_path;
         if let Some(i) = strings::index_of(name, dir) {
@@ -1495,7 +1554,10 @@ impl<'a> Match<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub trait ResolverLike {
-    fn fs(&self) -> &FileSystem;
+    // TODO(b2-blocked): bun_resolver::fs::FileSystem — singleton in Zig, so
+    // 'static here is faithful and avoids threading the resolver borrow into
+    // RouteLoader<'a>.
+    fn fs(&self) -> &'static FileSystem;
     fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef>;
 }
 
@@ -2016,7 +2078,6 @@ pub use pattern::Pattern;
 // Tests + test helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(any())] // TODO(b1): tests depend on gated impls
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2093,6 +2154,7 @@ mod tests {
         }
     }
 
+    #[cfg(any())] // TODO(b2-blocked): bun_core::Output::init_test
     fn make_test(cwd_path: &[u8], data: &[(&str, &str)]) -> Result<(), bun_core::Error> {
         // TODO(port): Zig used comptime field iteration over an anonymous struct.
         // Ported as runtime slice of (path, content) pairs.
@@ -2130,7 +2192,6 @@ mod tests {
 
     #[test]
     fn pattern_match() {
-        Output::init_test();
         type Entry = Param;
 
         // TODO(port): Zig used anonymous-struct field iteration; ported as explicit array.
@@ -2229,52 +2290,52 @@ mod tests {
             let mut parameters = route_param::List::default();
             let mut failures: usize = 0;
             for (pattern, pathname, entries) in list.iter() {
-                parameters.shrink_retaining_capacity(0);
+                parameters.truncate(0);
 
                 'fail: {
                     if !Pattern::match_::<true>(pathname, pattern, pattern, &mut parameters) {
-                        Output::pretty_errorln(format_args!(
-                            "Expected pattern <b>\"{}\"<r> to match <b>\"{}\"<r>",
+                        eprintln!(
+                            "Expected pattern \"{}\" to match \"{}\"",
                             bstr::BStr::new(pattern),
                             bstr::BStr::new(pathname)
-                        ));
+                        );
                         failures += 1;
                         break 'fail;
                     }
 
                     if !entries.is_empty() {
-                        for (i, entry_name) in parameters.items_name().iter().enumerate() {
-                            if *entry_name != entries[i].name {
+                        for (i, p) in parameters.iter().enumerate() {
+                            if p.name != entries[i].name {
                                 failures += 1;
-                                Output::pretty_errorln(format_args!(
-                                    "{} -- Expected name <b>\"{}\"<r> but received <b>\"{}\"<r> for path {}",
+                                eprintln!(
+                                    "{} -- Expected name \"{}\" but received \"{}\" for path {}",
                                     bstr::BStr::new(pattern),
                                     bstr::BStr::new(entries[i].name),
-                                    bstr::BStr::new(parameters.get(i).name),
+                                    bstr::BStr::new(parameters[i].name),
                                     bstr::BStr::new(pathname)
-                                ));
+                                );
                                 break 'fail;
                             }
-                            if parameters.get(i).value != entries[i].value {
+                            if parameters[i].value != entries[i].value {
                                 failures += 1;
-                                Output::pretty_errorln(format_args!(
-                                    "{} -- Expected value <b>\"{}\"<r> but received <b>\"{}\"<r> for path {}",
+                                eprintln!(
+                                    "{} -- Expected value \"{}\" but received \"{}\" for path {}",
                                     bstr::BStr::new(pattern),
                                     bstr::BStr::new(entries[i].value),
-                                    bstr::BStr::new(parameters.get(i).value),
+                                    bstr::BStr::new(parameters[i].value),
                                     bstr::BStr::new(pathname)
-                                ));
+                                );
                                 break 'fail;
                             }
                         }
                     }
 
                     if parameters.len() != entries.len() {
-                        Output::pretty_errorln(format_args!(
-                            "Expected parameter count for <b>\"{}\"<r> to match <b>\"{}\"<r>",
+                        eprintln!(
+                            "Expected parameter count for \"{}\" to match \"{}\"",
                             bstr::BStr::new(pattern),
                             bstr::BStr::new(pathname)
-                        ));
+                        );
                         failures += 1;
                         break 'fail;
                     }
@@ -2331,7 +2392,7 @@ mod tests {
             _ => panic!(),
         }
         match static_.value {
-            pattern::Value::Static(s) => assert_eq!(s.str(), b"static"),
+            pattern::Value::Static(s) => assert_eq!(s.slice(), b"static"),
             _ => panic!(),
         }
         match dynamic2.value {
@@ -2339,7 +2400,7 @@ mod tests {
             _ => panic!(),
         }
         match static2.value {
-            pattern::Value::Static(s) => assert_eq!(s.str(), b"static2"),
+            pattern::Value::Static(s) => assert_eq!(s.slice(), b"static2"),
             _ => panic!(),
         }
         match catch_all.value {

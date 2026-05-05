@@ -354,25 +354,37 @@ pub const All = struct {
         }
     }
 
-    /// Fast-path wrapper around `drainTimers`. Safe to call frequently from
-    /// within the task-drain loop to keep expired timers from being starved
-    /// by a continuous stream of concurrent tasks (e.g. HTTP responses arriving
-    /// during a `Promise.all` burst).
+    /// Fast-path wrapper around `drainTimers` for the task-drain loop. Returns
+    /// `true` if at least one timer fired, so the caller can re-drain
+    /// microtasks (timer callbacks queue their own that `TimerObjectInternals.
+    /// fire` doesn't drain when nested inside `tick()`).
     ///
-    /// On an empty heap the lock-free `peek` lets us skip the mutex round-trip
-    /// that `drainTimers` → `next` would otherwise do. The peek is a single-
-    /// pointer load and the heap is modified only from the JS thread, so a
-    /// racing stale `null` just defers the drain by one loop iteration — which
-    /// is harmless, the next task will redo the check.
+    /// When the heap is empty, or the earliest deadline is still in the
+    /// future, this returns without taking the mutex inside `drainTimers` →
+    /// `next` or calling `timespec.now()`. The unlocked read of the heap root
+    /// is safe because the heap is mutated only from the JS thread; a stale
+    /// `null` just defers the drain by one loop iteration.
     ///
-    /// On Windows, also re-arms the libuv timer after firing so the next
-    /// deadline still wakes `loop.tickWithTimeout`. Mirrors `onUVTimer`.
-    pub fn drainTimersIfNeeded(this: *All, vm: *VirtualMachine) void {
-        if (this.timers.peek() == null) return;
+    /// On Windows, re-arms the uv_timer after firing so the next deadline
+    /// still wakes `loop.tickWithTimeout` — but only when something actually
+    /// fired. Re-arming `uv_timer_start` on every task even when nothing ran
+    /// was observed to destabilise libuv's backend-timeout bookkeeping and
+    /// time out `test-http-should-emit-close-when-connection-is-aborted` on
+    /// all three Windows shards.
+    pub fn drainExpiredTimers(this: *All, vm: *VirtualMachine) bool {
+        const head = this.timers.peek() orelse return false;
+        // `getTimeout` fires `WTFTimer` entries eagerly regardless of deadline
+        // (they only fire once and act as a JSC stop-if-necessary hook); stay
+        // in sync with that so they're not skipped when they sit at the root.
+        if (head.tag != .WTFTimer) {
+            const now = timespec.now(.allow_mocked_time);
+            if (head.next.greater(&now)) return false;
+        }
         this.drainTimers(vm);
         if (Environment.isWindows) {
             this.ensureUVTimer(vm);
         }
+        return true;
     }
 
     const TimeoutWarning = enum {

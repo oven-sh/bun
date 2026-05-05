@@ -541,26 +541,27 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, co
         // Fire expired timers between tasks so that a long task batch (e.g.
         // a large HTTP-response burst under `Promise.all` where each response
         // drags a microtask chain of SDK middleware) doesn't starve timers
-        // until the entire queue drains. `drainTimersIfNeeded` bails out in
-        // the common case where the timer heap is empty. See issue #30273.
+        // until the entire queue drains. `drainExpiredTimers` returns early
+        // when nothing is due (the common case), so the only per-task cost
+        // on the hot path is a single unlocked pointer peek. See #30273.
         //
         // The mechanism is platform-agnostic — on Windows, `onUVTimer` also
         // only fires inside `autoTick`'s `loop.tickWithTimeout`, which is
         // reached only after `tick()` returns, so the same starvation applies.
-        // `drainTimersIfNeeded` handles the Windows uv_timer re-arm.
         //
         // Gated on `suppress_microtask_drain` because `tickQueueWithCount` is
         // shared with `SpawnSyncEventLoop`, which sets that flag to isolate
         // user JS from running mid-`spawnSync`. The flag's contract covers
         // timer callbacks too (they run arbitrary user code).
         if (!virtual_machine.suppress_microtask_drain) {
-            virtual_machine.timer.drainTimersIfNeeded(virtual_machine);
-            // Timer callbacks enter/exit the event loop with
-            // `entered_event_loop_count >= 2` (tick() already incremented
-            // it), so TimerObjectInternals.fire's own exit() skips its
-            // microtask drain — we drain again here so any microtasks the
-            // timer callback queued are flushed before the next task runs.
-            try this.drainMicrotasksWithGlobal(global, global_vm);
+            if (virtual_machine.timer.drainExpiredTimers(virtual_machine)) {
+                // Timer callbacks enter/exit the event loop with
+                // `entered_event_loop_count >= 2` (tick() already incremented
+                // it), so TimerObjectInternals.fire's own exit() skips its
+                // microtask drain — we drain again here so any microtasks the
+                // timer callback queued are flushed before the next task runs.
+                try this.drainMicrotasksWithGlobal(global, global_vm);
+            }
         }
     }
 

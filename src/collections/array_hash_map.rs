@@ -402,7 +402,8 @@ impl<K, V, C: ArrayHashContext<K>> ArrayHashMap<K, V, C> {
     pub fn put(&mut self, key: K, value: V) -> Result<(), AllocError> {
         let h = self.ctx.hash(&key);
         if let Some(i) = self.find_hash(h, |k, idx| self.ctx.eql(&key, k, idx)) {
-            self.keys[i] = key;
+            // Zig putContext (std/array_hash_map.zig:941): only assigns
+            // `result.value_ptr.*`; the original key is preserved.
             self.values[i] = value;
         } else {
             self.keys.push(key);
@@ -434,7 +435,7 @@ impl<K, V, C: ArrayHashContext<K>> ArrayHashMap<K, V, C> {
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
         let h = self.ctx.hash(&key);
         if let Some(i) = self.find_hash(h, |k, idx| self.ctx.eql(&key, k, idx)) {
-            self.keys[i] = key;
+            // std::HashMap::insert and Zig put: keep the original key on hit.
             Some(core::mem::replace(&mut self.values[i], value))
         } else {
             self.keys.push(key);
@@ -858,29 +859,26 @@ impl<V> StringHashMap<V> {
     }
 }
 
+/// `StringHashMap::get_or_put` result — `std::HashMap` cannot hand out
+/// `&mut K`, so this result omits `key_ptr` (unlike `GetOrPutResult` for the
+/// array-backed maps). Callers that need to overwrite the stored key must use
+/// `StringArrayHashMap` instead.
+pub struct StringHashMapGetOrPut<'a, V> {
+    pub found_existing: bool,
+    pub value_ptr: &'a mut V,
+}
+
 impl<V: Default> StringHashMap<V> {
     pub fn get_or_put(
         &mut self,
         key: &[u8],
-    ) -> Result<GetOrPutResult<'_, Box<[u8]>, V>, AllocError> {
-        // PORT NOTE: `HashMap` cannot hand out `&mut K`, so `key_ptr` points at
-        // a thread-local scratch slot and writes to it are discarded. The key
-        // is already stored correctly (boxed from `key` below); Zig callers
-        // that wrote `*key_ptr` were swapping in an arena-owned slice, which
-        // has no analogue under `Box<[u8]>` ownership.
-        // TODO(port): if a caller needs the real stored key, switch this type
-        // to the `ArrayHashMap` backing.
-        thread_local!(static SCRATCH: core::cell::UnsafeCell<Box<[u8]>> =
-            core::cell::UnsafeCell::new(Box::default()));
+    ) -> Result<StringHashMapGetOrPut<'_, V>, AllocError> {
         let found_existing = self.inner.contains_key(key);
         let value_ptr = self
             .inner
             .entry(Box::from(key))
             .or_insert_with(V::default);
-        // SAFETY: scratch is thread-local and the returned borrow does not
-        // outlive this call's `'_` (tied to `&mut self`).
-        let key_ptr = SCRATCH.with(|s| unsafe { &mut *s.get() });
-        Ok(GetOrPutResult { found_existing, index: 0, key_ptr, value_ptr })
+        Ok(StringHashMapGetOrPut { found_existing, value_ptr })
     }
 
     pub fn get_or_put_value(&mut self, key: &[u8], value: V) -> Result<&mut V, AllocError> {

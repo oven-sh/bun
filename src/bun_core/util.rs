@@ -484,8 +484,12 @@ pub fn dirname(path: &[u8]) -> Option<&[u8]> {
             return Some(&path[..j.max(root_end)]);
         }
     }
-    // No separator after root: Zig dirnamePosix/dirnameWindows return null for
-    // root-only inputs ("/", "C:\", "//") AND for non-root single components.
+    // No separator AFTER root, but content past it (e.g. "/foo", "C:\foo"):
+    // Zig returns the root prefix. Root-only inputs ("/", "C:\") have
+    // `end == root_end` and fall through to None.
+    if root_end > 0 && end > root_end {
+        return Some(&path[..root_end]);
+    }
     None
 }
 
@@ -1163,6 +1167,32 @@ pub fn is_readable(fd: Fd) -> Pollable {
 pub fn is_readable(_fd: Fd) -> Pollable {
     // Zig: @panic("TODO on Windows")
     unreachable!("is_readable: TODO on Windows");
+}
+
+/// Non-blocking poll for writability. POSIX-only (Zig panics on Windows).
+#[cfg(not(windows))]
+pub fn is_writable(fd: Fd) -> Pollable {
+    debug_assert!(fd.is_valid());
+    // bun.zig:657 — POLLOUT only; HUP/ERR detected via revents.
+    let mut polls = [libc::pollfd {
+        fd: fd.native(),
+        events: libc::POLLOUT,
+        revents: 0,
+    }];
+    // SAFETY: polls is a valid 1-element array; timeout 0 = non-blocking.
+    let rc = unsafe { libc::poll(polls.as_mut_ptr(), 1, 0) };
+    let result = rc > 0;
+    if result && (polls[0].revents & (libc::POLLHUP | libc::POLLERR)) != 0 {
+        Pollable::Hup
+    } else if result {
+        Pollable::Ready
+    } else {
+        Pollable::NotReady
+    }
+}
+#[cfg(windows)]
+pub fn is_writable(_fd: Fd) -> Pollable {
+    unreachable!("is_writable: TODO on Windows");
 }
 
 // ── csprng ────────────────────────────────────────────────────────────────

@@ -358,7 +358,14 @@ mod posix_impl {
         Ok(Fd::from_native(rc))
     }
     pub fn close(fd: Fd) -> Maybe<()> {
-        check!(unsafe { libc::close(fd.native()) }, Tag::close); Ok(())
+        // fd.zig:266 — call close ONCE; never retry on EINTR (Linux may have already
+        // released the fd, retrying would close someone else's). Only EBADF surfaces.
+        // SAFETY: fd is a valid open descriptor owned by caller.
+        let rc = unsafe { libc::close(fd.native()) };
+        if rc < 0 && get_errno(last_errno()) == E::EBADF {
+            return Err(Error::from_code_int(libc::EBADF, Tag::close).with_fd(fd));
+        }
+        Ok(())
     }
     pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
@@ -413,11 +420,16 @@ mod posix_impl {
         buf[..sub_path.len()].copy_from_slice(sub_path);
         let mut end = sub_path.len();
         while end > 0 && buf[end - 1] == bun_core::SEP { end -= 1; } // trim trailing seps
+        buf[end] = 0;
+        // Stack of separator positions we NUL'd while peeling back, so each
+        // can be restored before re-creating its component on the way up.
+        let mut nuls = [0u16; 256];
+        let mut nuls_len = 0usize;
         let mut peel = end;
         // Walk down: try mkdirat; on ENOENT, peel one component.
         loop {
-            buf[peel] = 0;
-            // SAFETY: buf[0..=peel] is NUL-terminated immediately above.
+            // SAFETY: buf[0..=peel] is NUL-terminated (initial buf[end]=0 or a
+            // peeled '/' overwritten below).
             let z = unsafe { ZStr::from_raw(buf.as_ptr(), peel) };
             match mkdirat(dir, z, 0o755) {
                 Ok(()) => break,
@@ -428,18 +440,23 @@ mod posix_impl {
                     };
                     if slash == 0 { return Err(e); }
                     peel = slash;
+                    buf[peel] = 0;
+                    nuls[nuls_len] = peel as u16;
+                    nuls_len += 1;
                 }
                 Err(e) => return Err(e),
             }
         }
-        // Walk back up, creating each peeled component.
-        while peel < end {
-            buf[peel] = bun_core::SEP; // restore separator we NUL'd
-            peel += 1;
-            while peel < end && buf[peel] != bun_core::SEP { peel += 1; }
-            buf[peel] = 0;
-            // SAFETY: buf[0..=peel] is NUL-terminated immediately above.
-            let z = unsafe { ZStr::from_raw(buf.as_ptr(), peel) };
+        // Walk back up, restoring each '/' and creating that prefix.
+        while nuls_len > 0 {
+            nuls_len -= 1;
+            let pos = nuls[nuls_len] as usize;
+            buf[pos] = bun_core::SEP;
+            // The only remaining NUL above `pos` is the next entry on the
+            // stack (or `end`), which is exactly the next component boundary.
+            let next_end = if nuls_len > 0 { nuls[nuls_len - 1] as usize } else { end };
+            // SAFETY: buf[next_end] == 0 (still un-restored or the original sentinel).
+            let z = unsafe { ZStr::from_raw(buf.as_ptr(), next_end) };
             match mkdirat(dir, z, 0o755) {
                 Ok(()) => {}
                 Err(e) if e.get_errno() == E::EEXIST => {}
@@ -509,25 +526,55 @@ mod posix_impl {
         );
         Ok(())
     }
-    /// `linkatTmpfile` (sys.zig:3973): materialize an `O_TMPFILE` fd via
-    /// `linkat(AT_FDCWD, "/proc/self/fd/<tmpfd>", dirfd, name, AT_SYMLINK_FOLLOW)`.
+    /// `linkatTmpfile` (sys.zig:3973): materialize an `O_TMPFILE` fd. Fast path
+    /// uses `linkat(tmpfd, "", dirfd, name, AT_EMPTY_PATH)` (requires
+    /// CAP_DAC_READ_SEARCH); falls back to `/proc/self/fd/N` + AT_SYMLINK_FOLLOW.
     /// Linux-only; on other unix this errors with EOPNOTSUPP (Zig same).
     #[cfg(target_os = "linux")]
     pub fn linkat_tmpfile(tmpfd: Fd, dirfd: Fd, name: &ZStr) -> Maybe<()> {
-        let mut buf = [0u8; 32];
-        let n = {
-            use std::io::Write as _;
-            let mut c = std::io::Cursor::new(&mut buf[..]);
-            let _ = write!(c, "/proc/self/fd/{}\0", tmpfd.native());
-            c.position() as usize - 1
-        };
-        // SAFETY: NUL written by the format string above.
-        let proc = unsafe { ZStr::from_raw(buf.as_ptr(), n) };
-        check_p!(
-            unsafe { libc::linkat(libc::AT_FDCWD, proc.as_ptr(), dirfd.native(), name.as_ptr(), libc::AT_SYMLINK_FOLLOW) },
-            Tag::linkat, name
-        );
-        Ok(())
+        // 0=unknown, 1=have CAP_DAC_READ_SEARCH, -1=no cap → use /proc fallback.
+        static CAP_STATUS: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
+        loop {
+            let status = CAP_STATUS.load(core::sync::atomic::Ordering::Relaxed);
+            let rc = if status != -1 {
+                // SAFETY: tmpfd/dirfd valid; "" with AT_EMPTY_PATH names tmpfd itself.
+                unsafe {
+                    libc::linkat(tmpfd.native(), c"".as_ptr(), dirfd.native(), name.as_ptr(), libc::AT_EMPTY_PATH)
+                }
+            } else {
+                let mut buf = [0u8; 32];
+                let n = {
+                    use std::io::Write as _;
+                    let mut c = std::io::Cursor::new(&mut buf[..]);
+                    let _ = write!(c, "/proc/self/fd/{}\0", tmpfd.native());
+                    c.position() as usize - 1
+                };
+                let _ = n;
+                // SAFETY: NUL written by the format string above.
+                unsafe {
+                    libc::linkat(
+                        libc::AT_FDCWD, buf.as_ptr().cast(), dirfd.native(), name.as_ptr(),
+                        libc::AT_SYMLINK_FOLLOW,
+                    )
+                }
+            };
+            if rc < 0 {
+                let e = last_errno();
+                match get_errno(e) {
+                    E::EINTR => continue,
+                    E::EISDIR | E::ENOENT | E::ENOTSUP | E::EPERM | E::EINVAL if status == 0 => {
+                        // sys.zig:4013 — first failure on AT_EMPTY_PATH ⇒ no cap; retry via /proc.
+                        CAP_STATUS.store(-1, core::sync::atomic::Ordering::Relaxed);
+                        continue;
+                    }
+                    _ => return Err(Error::from_code_int(e, Tag::link).with_fd(tmpfd)),
+                }
+            }
+            if status == 0 {
+                CAP_STATUS.store(1, core::sync::atomic::Ordering::Relaxed);
+            }
+            return Ok(());
+        }
     }
     #[cfg(all(unix, not(target_os = "linux")))]
     pub fn linkat_tmpfile(_tmpfd: Fd, _dirfd: Fd, name: &ZStr) -> Maybe<()> {
@@ -619,9 +666,9 @@ mod posix_impl {
         }
         unsafe { is_executable_file(path.as_ptr()) }
     }
-    /// sys.zig:4140 — `fstat` then `st_size`.
+    /// sys.zig:4152 — `fstat` then `@max(st_size, 0)` (clamp negative).
     pub fn get_file_size(fd: Fd) -> Maybe<u64> {
-        Ok(fstat(fd)?.st_size as u64)
+        Ok(fstat(fd)?.st_size.max(0) as u64)
     }
     /// `realpath` — `realpath$DARWIN_EXTSN` on macOS for proper symlink resolution
     /// (Zig: `bun.c.realpath`). Writes into `buf` and returns the written slice.
@@ -1204,10 +1251,26 @@ pub mod linux {
     pub struct RWFFlagSupport;
     static RWF_STATE: core::sync::atomic::AtomicI8 = core::sync::atomic::AtomicI8::new(0);
     impl RWFFlagSupport {
-        /// 0 = unknown (assume yes), 1 = yes, -1 = no.
+        /// 0 = unknown, 1 = yes, -1 = no. On first call (unknown), checks for
+        /// the buggy 5.9/5.10 kernels and the env-flag override before resolving.
         #[inline]
         pub fn is_maybe_supported() -> bool {
-            RWF_STATE.load(core::sync::atomic::Ordering::Relaxed) >= 0
+            match RWF_STATE.load(core::sync::atomic::Ordering::Relaxed) {
+                0 => {
+                    // platform/linux.zig:44 — kernels 5.9/5.10 have a buggy
+                    // RWF_NOWAIT (returns EAGAIN spuriously); disable on those.
+                    let v = bun_core::linux_kernel_version();
+                    let buggy = v.major == 5 && (v.minor == 9 || v.minor == 10);
+                    // BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK env override.
+                    let env_off = bun_core::getenv_z(
+                        bun_core::zstr!("BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK"),
+                    ).is_some();
+                    let r = if buggy || env_off { -1 } else { 1 };
+                    RWF_STATE.store(r, core::sync::atomic::Ordering::Relaxed);
+                    r > 0
+                }
+                s => s > 0,
+            }
         }
         #[inline]
         pub fn disable() {
@@ -1505,7 +1568,12 @@ pub fn read_nonblocking(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
             match get_errno(e) {
                 E::ENOTSUP | E::ENOSYS | E::EPERM | E::EACCES => {
                     linux::RWFFlagSupport::disable();
-                    return read(fd, buf);
+                    // sys.zig:4070 — only fall through to BLOCKING read if the fd is
+                    // actually readable now; otherwise return retry (EAGAIN).
+                    return match bun_core::is_readable(fd) {
+                        bun_core::Pollable::Ready | bun_core::Pollable::Hup => read(fd, buf),
+                        _ => Err(Error::retry().with_fd(fd)),
+                    };
                 }
                 E::EINTR => continue,
                 _ => return Err(Error::from_code_int(e, Tag::read).with_fd(fd)),
@@ -1527,7 +1595,15 @@ pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
             match get_errno(e) {
                 E::ENOTSUP | E::ENOSYS | E::EPERM | E::EACCES => {
                     linux::RWFFlagSupport::disable();
-                    return write(fd, buf);
+                    // sys.zig:4123 — poll before issuing a blocking write.
+                    return match bun_core::is_writable(fd) {
+                        bun_core::Pollable::Ready | bun_core::Pollable::Hup => write(fd, buf),
+                        _ => {
+                            let mut e = Error::retry();
+                            e.syscall = Tag::write;
+                            Err(e.with_fd(fd))
+                        }
+                    };
                 }
                 E::EINTR => continue,
                 _ => return Err(Error::from_code_int(e, Tag::write).with_fd(fd)),
@@ -1538,13 +1614,12 @@ pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
     write(fd, buf)
 }
 
-/// sys.zig:4536 — `posix_fallocate` (Linux) / no-op elsewhere.
+/// sys.zig:4536 — `fallocate(fd, 0, offset, len)` on Linux, result discarded; no-op elsewhere.
 pub fn preallocate_file(fd: FdNative, offset: i64, len: i64) -> core::result::Result<(), bun_core::Error> {
     #[cfg(target_os = "linux")] {
-        // SAFETY: fd is a valid open descriptor owned by caller.
-        let rc = unsafe { libc::posix_fallocate(fd, offset, len) };
-        // posix_fallocate returns the errno directly (0 on success).
-        if rc != 0 { return Err(bun_core::Error::from_errno(rc)); }
+        // SAFETY: fd is a valid open descriptor owned by caller. Result intentionally
+        // discarded (Zig: `_ = std.os.linux.fallocate(...)`) — preallocation is best-effort.
+        let _ = unsafe { libc::fallocate(fd, 0, offset, len) };
     }
     let _ = (fd, offset, len);
     Ok(())
@@ -1633,10 +1708,25 @@ pub fn move_file_z_with_handle(
             renameat(from_dir, filename, to_dir, destination).map_err(Into::into)
         }
         Err(e) if e.get_errno() == E::EXDEV => {
-            // Cross-device: copy bytes then unlink source.
-            let dst = openat(to_dir, destination, O::WRONLY | O::CREAT | O::TRUNC, 0o644)
-                .map_err(bun_core::Error::from)?;
+            // Cross-device: full `copyFileZSlowWithHandle` (sys.zig:4305).
+            let st = fstat(from_handle).map_err(bun_core::Error::from)?;
+            // Unlink dest first — fixes ETXTBUSY on Linux.
+            let _ = unlinkat(to_dir, destination, 0);
+            let dst = openat(
+                to_dir, destination,
+                O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC, 0o644,
+            ).map_err(bun_core::Error::from)?;
+            #[cfg(target_os = "linux")] {
+                // SAFETY: dst is a valid open fd; preallocation is best-effort.
+                let _ = unsafe { libc::fallocate(dst.native(), 0, 0, st.st_size) };
+            }
+            // Seek input to 0 — caller may have left offset at EOF after writing.
+            let _ = lseek(from_handle, 0, libc::SEEK_SET);
             let r = copy_file(from_handle, dst);
+            // Preserve mode/owner (best-effort).
+            // SAFETY: dst is a valid open fd.
+            let _ = unsafe { libc::fchmod(dst.native(), st.st_mode) };
+            let _ = unsafe { libc::fchown(dst.native(), st.st_uid, st.st_gid) };
             let _ = close(dst);
             r.map_err(bun_core::Error::from)?;
             let _ = unlinkat(from_dir, filename, 0);

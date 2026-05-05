@@ -152,15 +152,15 @@ pub mod unicode {
     }
 
     /// `toUTF16Literal` — comptime in Zig (`std.unicode.utf8ToUtf16LeStringLiteral`).
-    /// In Rust callers should use a `const` UTF-16 literal directly; this
-    /// runtime fallback leaks (call-site is rare and the Zig version was
-    /// comptime-only anyway).
-    pub fn to_utf16_literal(s: &[u8]) -> &'static [u16] {
-        // TODO(b2): const-eval via build script or const fn; runtime path leaks.
-        // ASCII fast path (covers all current call sites — comptime literals).
-        let v: Vec<u16> = s.iter().map(|&b| b as u16).collect();
-        debug_assert!(s.iter().all(|&b| b < 0x80), "to_utf16_literal: non-ASCII literal needs const-eval path");
-        Box::leak(v.into_boxed_slice())
+    /// Zig `toUTF16Literal` is `comptime`-only. There is no runtime equivalent
+    /// in Rust without leaking; callers must use the `crate::w!("…")` macro
+    /// (const `&'static [u16]`) instead. This stub panics to catch leftover
+    /// runtime calls.
+    #[track_caller]
+    pub fn to_utf16_literal(_s: &[u8]) -> &'static [u16] {
+        unimplemented!(
+            "to_utf16_literal is comptime-only; use the `w!(\"…\")` macro for a const &[u16]"
+        )
     }
 }
 // Transcoding suite re-exported from bun_core (T0).
@@ -690,6 +690,11 @@ pub fn index_of_char_neg(self_: &[u8], char: u8) -> i32 {
 }
 
 pub fn index_of_signed(self_: &[u8], str: &[u8]) -> i32 {
+    // std.mem.indexOf returns 0 for an empty needle; bun's `index_of` returns
+    // None. Match Zig semantics here (immutable.zig:412).
+    if str.is_empty() {
+        return 0;
+    }
     match index_of(self_, str) {
         Some(i) => i32::try_from(i).unwrap(),
         None => -1,
@@ -1191,7 +1196,12 @@ pub fn eql_comptime(self_: &[u8], alt: &'static [u8]) -> bool {
 }
 
 pub fn eql_comptime_utf16(self_: &[u16], alt: &'static [u8]) -> bool {
-    eql_comptime_check_len_with_type::<u16, true>(self_, to_utf16_literal(alt))
+    // Compare bytewise, widening each ASCII byte of `alt` on the fly — avoids
+    // materializing (and leaking) a `&'static [u16]`. All call sites pass
+    // ASCII literals (Zig was `comptime`).
+    debug_assert!(alt.iter().all(|&b| b < 0x80));
+    self_.len() == alt.len()
+        && self_.iter().zip(alt.iter()).all(|(&u, &b)| u == b as u16)
 }
 
 pub fn eql_comptime_ignore_len(self_: &[u8], alt: &'static [u8]) -> bool {
@@ -1203,8 +1213,9 @@ pub fn has_prefix_comptime(self_: &[u8], alt: &'static [u8]) -> bool {
 }
 
 pub fn has_prefix_comptime_utf16(self_: &[u16], alt: &'static [u8]) -> bool {
+    debug_assert!(alt.iter().all(|&b| b < 0x80));
     self_.len() >= alt.len()
-        && eql_comptime_check_len_with_type::<u16, false>(&self_[0..alt.len()], to_utf16_literal(alt))
+        && self_[..alt.len()].iter().zip(alt.iter()).all(|(&u, &b)| u == b as u16)
 }
 
 pub fn has_prefix_comptime_type<T: Copy + Eq>(self_: &[T], alt: &'static [T]) -> bool {
@@ -1501,7 +1512,11 @@ pub fn utf16_codepoint(input: &[u16]) -> Utf16CodepointLen {
         }
         let c1 = input[1] as u32;
         if c1 & !0x03ff != 0xdc00 {
-            return Utf16CodepointLen { code_point: c0, len: 1 };
+            // PORT NOTE: Zig (unicode.zig:1378) falls THROUGH the dead
+            // `if (input.len == 1)` and returns `len = 2` here. The sole
+            // caller (escape_html) advances by `.len`; preserve len=2 to
+            // match Zig's iteration behaviour.
+            return Utf16CodepointLen { code_point: c0, len: 2 };
         }
         Utf16CodepointLen {
             code_point: 0x10000 + (((c0 & 0x03ff) << 10) | (c1 & 0x03ff)),
@@ -1677,6 +1692,9 @@ pub fn index_of_any_pos_comptime(
 ) -> Option<usize> {
     if chars.len() == 1 {
         return index_of_char_pos(slice, chars[0], start_index);
+    }
+    if start_index >= slice.len() {
+        return None;
     }
     slice[start_index..]
         .iter()
@@ -2329,7 +2347,7 @@ pub fn concat(args: &[&[u8]]) -> Result<Box<[u8]>, AllocError> {
 }
 
 pub fn concat_if_needed(
-    dest: &mut &[u8],
+    dest: &mut Box<[u8]>,
     args: &[&[u8]],
     interned_strings_to_check: &[&'static [u8]],
 ) -> Result<(), AllocError> {
@@ -2342,7 +2360,7 @@ pub fn concat_if_needed(
     };
 
     if total_length == 0 {
-        *dest = b"";
+        *dest = Box::default();
         return Ok(());
     }
 
@@ -2357,15 +2375,17 @@ pub fn concat_if_needed(
         let stack_copy = &stack_buf[0..total_length];
         for &interned in interned_strings_to_check {
             if eql_long::<true>(stack_copy, interned) {
-                *dest = interned;
+                // PERF(port): Zig stored the interned slice directly; with an
+                // owned `Box<[u8]>` dest we copy once. Hit at most once per
+                // JSX config; no leak.
+                *dest = Box::from(interned);
                 return Ok(());
             }
         }
     }
 
     let is_needed = 'brk: {
-        let out = *dest;
-        let mut remain = out;
+        let mut remain: &[u8] = dest;
 
         for arg in args {
             // PORT NOTE: Zig has `args.len` here (likely a bug); preserved verbatim.
@@ -2387,11 +2407,7 @@ pub fn concat_if_needed(
         return Ok(());
     }
 
-    let buf = concat_with_length(args, total_length)?;
-    // TODO(port): lifetime — Zig stored a freshly-allocated slice into `*[]const u8`
-    // and the caller owns it. In Rust the caller should own a `Box<[u8]>`; leaking
-    // here to match Zig semantics. Phase B: change signature to return ownership.
-    *dest = Box::leak(buf);
+    *dest = concat_with_length(args, total_length)?;
     Ok(())
 }
 
@@ -2645,11 +2661,17 @@ pub fn to_utf8_alloc_with_type(utf16: &[u16]) -> Vec<u8> {
 // can link against `bun_string::strings::*` without un-gating the full drafts.
 // Each is a thin wrapper over simdutf or the scalar logic from the .zig source.
 
-/// `strings.utf8ByteSequenceLength` — same table as the WTF-8 variant; both
-/// accept any leading byte and return the expected UTF-8 sequence length.
+/// `strings.utf8ByteSequenceLength` — returns 0 for invalid lead bytes
+/// (unicode.zig:1509). NOT the same as the WTF-8 variant, which returns 1.
 #[inline]
 pub fn utf8_byte_sequence_length(first_byte: u8) -> u8 {
-    unicode::wtf8_byte_sequence_length(first_byte)
+    match first_byte {
+        0x00..=0x7F => 1,
+        0xC0..=0xDF => 2,
+        0xE0..=0xEF => 3,
+        0xF0..=0xF7 => 4,
+        _ => 0,
+    }
 }
 
 /// `std.mem.trimLeft(u8, str, chars)` — strip leading chars in `values_to_strip`.

@@ -226,3 +226,37 @@ pub mod parse_fn;
 #[path = "repl_transforms.rs"]
 pub mod repl_transforms;
 pub use known_global::KnownGlobal;
+
+// ── round-D batch 3 / E / F (16 files) ─────────────────────────────────────
+// Each file is a parse*/visit*/transform method-body mixin on `P`. The Phase-A
+// drafts have 30-200 path/shape errors each against the round-A/B/C type
+// surface. They are declared here behind `#[cfg(any())]` so:
+//   (a) the module tree is complete (`crate::ast::parse_stmt::*` is addressable);
+//   (b) the draft bodies are preserved verbatim on disk for the body-un-gate
+//       follow-up rounds (each file needs the same mixin→impl-P conversion as
+//       D1/D2 applied to parseJSXElement/parseFn/etc.).
+//
+// TODO(b2-ast-D3..F): un-cfg each module and apply the conversion:
+//   1. replace `JSXTransformType` const-generic + `NewParser_` alias with
+//      `impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, ...>`
+//   2. `pub fn foo(p: &mut P<...>, ...)` → `pub fn foo(&mut self, ...)`; `let p = self;`
+//   3. fix path names: `js_ast::Data` → `js_ast::expr::Data`, `js_ast::SymbolKind` →
+//      `js_ast::symbol::Kind`, `crate::Prefill` → `crate::parser::prefill`, etc.
+//   4. gate fn bodies that hit deeper blockers (Lexer snapshot, BabyList::len method,
+//      E::String rope ops, Scope adapted-API)
+#[cfg(any())] #[path = "parseTypescript.rs"] pub mod parse_typescript;
+#[cfg(any())] #[path = "ImportScanner.rs"] pub mod import_scanner;
+#[cfg(any())] #[path = "ConvertESMExportsForHmr.rs"] pub mod convert_esm_exports_for_hmr;
+#[cfg(any())] #[path = "visitBinaryExpression.rs"] pub mod visit_binary_expression;
+#[cfg(any())] #[path = "parseProperty.rs"] pub mod parse_property;
+#[cfg(any())] #[path = "maybe.rs"] pub mod maybe;
+#[cfg(any())] #[path = "SideEffects.rs"] pub mod side_effects;
+#[cfg(any())] #[path = "parsePrefix.rs"] pub mod parse_prefix;
+#[cfg(any())] #[path = "skipTypescript.rs"] pub mod skip_typescript;
+#[cfg(any())] #[path = "parseSuffix.rs"] pub mod parse_suffix;
+#[cfg(any())] #[path = "parseStmt.rs"] pub mod parse_stmt;
+#[cfg(any())] #[path = "parse.rs"] pub mod parse;
+#[cfg(any())] #[path = "visit.rs"] pub mod visit;
+#[cfg(any())] #[path = "visitStmt.rs"] pub mod visit_stmt;
+#[cfg(any())] #[path = "lowerDecorators.rs"] pub mod lower_decorators;
+#[cfg(any())] #[path = "visitExpr.rs"] pub mod visit_expr;

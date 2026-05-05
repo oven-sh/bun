@@ -689,12 +689,29 @@ pub const Installer = struct {
                                         FD.cwd().deleteTree(final.slice()) catch {};
                                     }
 
+                                    // Non-global linked entries may run lifecycle
+                                    // scripts (the ineligibility carve-out for
+                                    // trusted/scripted packages is what forces them
+                                    // out of the shared store in the first place).
+                                    // Any in-tree mutation inside `.bun/<storepath>/...`
+                                    // from such a script would propagate back into
+                                    // the producer's working tree through a shared
+                                    // inode. Force copyfile for those entries; the
+                                    // global-store branch already rules lifecycle
+                                    // scripts out via the eligibility DFS in
+                                    // `isolated_install.zig`, so hardlink is safe
+                                    // there.
+                                    const linked_initial_method: PackageInstall.Method = if (uses_global_store_link)
+                                        .hardlink
+                                    else
+                                        .copyfile;
+
                                     if (publishable_owned) |publishable_paths| {
                                         var dest: bun.Path(.{ .unit = .os, .sep = .auto }) = .init();
                                         defer dest.deinit();
                                         installer.appendRealStorePath(&dest, this.entry_id, .staging);
 
-                                        backend: switch (PackageInstall.Method.hardlink) {
+                                        backend: switch (linked_initial_method) {
                                             .hardlink => switch (linkedHardlinkPaths(folder_dir, publishable_paths.paths, &dest)) {
                                                 .result => {},
                                                 .err => |err| {
@@ -715,7 +732,7 @@ pub const Installer = struct {
                                     // Fallback (Windows or unparseable package.json):
                                     // existing Hardlinker / FileCopier path with
                                     // default exact-name excludes only.
-                                    backend: switch (PackageInstall.Method.hardlink) {
+                                    backend: switch (linked_initial_method) {
                                         .hardlink => {
                                             var src: bun.AbsPath(.{ .unit = .os, .sep = .auto }) = .initTopLevelDirLongPath();
                                             defer src.deinit();

@@ -137,13 +137,38 @@ function download_buildkite_artifact() {
 
 function upload_github_asset() {
   local version="$1"
-  local tag="$(release_tag "$version")"
+  # Declared separately from the assignment (same SC2155 rationale as
+  # the `local name` split further down): `local` masks the subshell's
+  # exit status behind its own always-zero return. `release_tag` is a
+  # pure-echo function today so the practical risk is nil, but keeping
+  # the pattern consistent prevents the anti-pattern from creeping back
+  # in a future caller-edit.
+  local tag
+  tag="$(release_tag "$version")"
   local file="$2"
+  # Declared separately from the assignment so `set -e` can catch a
+  # basename(1) failure (SC2155). The combined `local name=$(...)` form
+  # masks the subshell's exit status behind `local`'s own always-zero
+  # return, which would silently leave `name` empty and make the
+  # exact-match retry check below false-negative.
+  local name
+  name="$(basename "$file")"
   run_command gh release upload "$tag" "$file" --clobber --repo "$BUILDKITE_REPO"
 
   # Sometimes the upload fails, maybe this is a race condition in the gh CLI?
-  while [ "$(gh release view "$tag" --repo "$BUILDKITE_REPO" | grep -c "$file")" -eq 0 ]; do
-    echo "warn: Uploading $file to $tag failed, retrying..."
+  #
+  # Query asset names one-per-line via --json so we can exact-match the full
+  # line. A plain substring `grep -c "$file"` would false-positive when one
+  # asset name is a prefix of another — e.g. SHASUMS256.txt vs
+  # SHASUMS256.txt.asc — and skip the retry even though the file is missing.
+  while [ "$(gh release view "$tag" --repo "$BUILDKITE_REPO" --json assets --jq '.assets[].name' | grep -cFx -- "$name")" -eq 0 ]; do
+    # `>&2 || true` matches the SIGPIPE-guarded diagnostic pattern
+    # used by sign_and_upload_manifest and scripts/sign-release-manifest.sh.
+    # Without it, a dead Buildkite log aggregator delivering SIGPIPE to
+    # this echo would exit 141 under `set -eo pipefail`, terminating
+    # the retry loop before the `sleep` and re-upload — potentially
+    # leaving the asset permanently missing from the release.
+    echo "warn: Uploading $file to $tag failed, retrying..." >&2 || true
     sleep "$((RANDOM % 5 + 1))"
     run_command gh release upload "$tag" "$file" --clobber --repo "$BUILDKITE_REPO"
   done
@@ -151,11 +176,166 @@ function upload_github_asset() {
 
 function update_github_release() {
   local version="$1"
-  local tag="$(release_tag "$version")"
+  # SC2155 split — see upload_github_asset() above.
+  local tag
+  tag="$(release_tag "$version")"
   if [ "$tag" == "canary" ]; then
     sleep 5 # There is possibly a race condition where this overwrites artifacts?
     run_command gh release edit "$tag" --repo "$BUILDKITE_REPO" \
       --notes "This release of Bun corresponds to the commit: $BUILDKITE_COMMIT"
+  fi
+}
+
+function sign_and_upload_manifest() {
+  # Generate SHASUMS256.txt (always) and SHASUMS256.txt.asc (when the
+  # Buildkite GPG secrets exist) for the canonical artifact list in the
+  # current working directory, then upload both to the release.
+  #
+  # Rollout: before GPG_PRIVATE_KEY / GPG_PASSPHRASE are provisioned in
+  # Buildkite, the helper writes SHASUMS256.txt only and the wrapper
+  # uploads just that. Users running `sha256sum -c` get accurate hashes
+  # immediately; the daily .github/workflows/release.yml sign cron still
+  # regenerates the matching SHASUMS256.txt.asc within 24h. Once both
+  # secrets exist every canary push signs inline and the .asc stays
+  # byte-in-step with the .txt.
+  #
+  # See: https://github.com/oven-sh/bun/issues/28931
+  local version="$1"
+  shift
+  local artifacts=("$@")
+
+  # Fetch each GPG secret separately so a real backend failure (network
+  # down, auth error, agent crash, expired token) surfaces in the
+  # wrapper log instead of being silently swallowed into an empty
+  # string. The exit code alone can't reliably distinguish "secret
+  # genuinely not configured" (the expected rollout-fallback state)
+  # from "backend temporarily broken" — so we capture stderr on each
+  # call and echo it as a `warn:` line when the fetch fails. The value
+  # is still treated as unset either way (preserving rollout safety),
+  # but the operator now has a breadcrumb in the log to triage the
+  # difference between the two states manually.
+  local gpg_private_key=""
+  local gpg_passphrase=""
+  local _key_lookup_failed=0
+  local _pass_lookup_failed=0
+  local _secret_err
+  _secret_err=$(mktemp)
+  if ! gpg_private_key=$(buildkite-agent secret get "GPG_PRIVATE_KEY" 2>"$_secret_err"); then
+    gpg_private_key=""
+    _key_lookup_failed=1
+    if [ -s "$_secret_err" ]; then
+      echo "warn: buildkite-agent secret get GPG_PRIVATE_KEY failed (treating as unset):" >&2 || true
+      sed 's/^/warn:   /' "$_secret_err" >&2 || true
+    fi
+  fi
+  : > "$_secret_err"
+  if ! gpg_passphrase=$(buildkite-agent secret get "GPG_PASSPHRASE" 2>"$_secret_err"); then
+    gpg_passphrase=""
+    _pass_lookup_failed=1
+    if [ -s "$_secret_err" ]; then
+      echo "warn: buildkite-agent secret get GPG_PASSPHRASE failed (treating as unset):" >&2 || true
+      sed 's/^/warn:   /' "$_secret_err" >&2 || true
+    fi
+  fi
+  rm -f "$_secret_err"
+
+  # If EITHER lookup failed (non-zero `buildkite-agent secret get` exit)
+  # while the OTHER succeeded, clear both to the unsigned-fallback state
+  # instead of letting the partial-config branch below hard-fail the
+  # canary run. The failure paths this protects:
+  #
+  #   - both secrets configured, one fetch hits a transient backend blip
+  #     (network, agent restart, token refresh window). The other fetch
+  #     returns real bytes, so the partial branch would fire → `return 1`
+  #     → entire release aborted for a flake that has nothing to do with
+  #     signing correctness.
+  #
+  #   - operator half-provisioned (only one secret set). The partial
+  #     branch would also fire here, which is the case the hard error
+  #     was designed for.
+  #
+  # The two cases are indistinguishable from a one-shot fetch exit code,
+  # so we trade strict partial-config detection for release resilience:
+  # a misconfigured secret still produces a clear `warn:` line above
+  # (stderr from the agent is echoed as `warn:   …`) AND a rollout-
+  # fallback warning below, so operators see BOTH events in the log
+  # even though we continue with an unsigned manifest. The daily sign
+  # cron catches up with the matching .asc within 24h, so nothing is
+  # permanently corrupted in either scenario.
+  if [ "${_key_lookup_failed}" -ne 0 ] || [ "${_pass_lookup_failed}" -ne 0 ]; then
+    gpg_private_key=""
+    gpg_passphrase=""
+  fi
+  unset -v _key_lookup_failed _pass_lookup_failed
+
+  # Three-way state handling: both-set (sign), neither-set (unsigned
+  # rollout fallback), exactly-one-set (hard error before the helper
+  # runs). Without the explicit partial branch, the "uploading
+  # unsigned / cron will catch up" warnings below would also fire on
+  # the partial-config path — the operator would see a success-
+  # implying log line immediately followed by the helper's partial-
+  # config error and a "failed to generate SHASUMS256.txt" echo,
+  # which is confusing under time pressure during a canary push. The
+  # helper itself also rejects partial configuration with the same
+  # error code, but catching it here gives a single unambiguous line
+  # in the wrapper log instead of a contradictory pair.
+  #
+  # Every echo ends in `>&2 || true`, matching the SIGPIPE-guarded
+  # pattern applied to diagnostics inside the companion
+  # `scripts/sign-release-manifest.sh` helper. Buildkite multiplexes
+  # stdout/stderr through a single log-aggregator process, and if
+  # that process dies (OOM, agent restart) the kernel delivers
+  # SIGPIPE on every fd writing to it. Under `set -eo pipefail`
+  # bash would then exit 141 on the first affected echo — before
+  # sign-release-manifest.sh is ever invoked, which would leave
+  # SHASUMS256.txt ungenerated on that canary push and recreate the
+  # exact integrity gap this PR exists to close.
+  if [ -n "$gpg_private_key" ] && [ -n "$gpg_passphrase" ]; then
+    assert_command "gpg" "gnupg" "https://gnupg.org/download/"
+  elif [ -n "$gpg_private_key" ] || [ -n "$gpg_passphrase" ]; then
+    echo "error: only one of GPG_PRIVATE_KEY / GPG_PASSPHRASE is set in Buildkite secrets;" >&2 || true
+    echo "error: both are required to sign, or both unset to publish unsigned." >&2 || true
+    echo "error: partial configuration is almost always a typo in a secret name." >&2 || true
+    return 1
+  else
+    echo "warn: GPG_PRIVATE_KEY/GPG_PASSPHRASE not set in Buildkite secrets;" >&2 || true
+    echo "warn: uploading SHASUMS256.txt unsigned. The daily sign workflow" >&2 || true
+    echo "warn: will catch up with a matching SHASUMS256.txt.asc within 24h." >&2 || true
+  fi
+
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+  # `set -e` would kill the pipeline on a non-zero exit, so capture the
+  # helper's exit via `|| sign_exit=$?`.
+  local sign_exit=0
+  GPG_PRIVATE_KEY="$gpg_private_key" \
+  GPG_PASSPHRASE="$gpg_passphrase" \
+    "$script_dir/scripts/sign-release-manifest.sh" "$PWD" "${artifacts[@]}" \
+    || sign_exit=$?
+
+  if [ "$sign_exit" -ne 0 ]; then
+    # `>&2 || true` matches the warn echoes above and the diagnostics
+    # inside sign-release-manifest.sh itself: without `>&2` the error
+    # goes to stdout and is swallowed if the caller captures it; without
+    # `|| true` a SIGPIPE on the echo (Buildkite log aggregator dying)
+    # makes bash exit 141 under `set -eo pipefail` BEFORE the
+    # `return "$sign_exit"` runs, so the caller sees 141 instead of the
+    # real signing-failure code.
+    echo "error: failed to generate SHASUMS256.txt (exit $sign_exit)" >&2 || true
+    return "$sign_exit"
+  fi
+
+  upload_github_asset "$version" SHASUMS256.txt
+  # Only upload .asc when THIS run actually signed (gpg secrets present).
+  # A bare `[ -f SHASUMS256.txt.asc ]` would upload a stale .asc left
+  # behind by a previous run on a reused workspace — even if the helper
+  # rolled the new manifest in unsigned, the old signature would ride
+  # along and reintroduce the manifest/signature drift this PR closes.
+  # Gating on the secrets makes intent explicit and is defense-in-depth
+  # on top of the helper's own scratch-dir cleanup.
+  if [ -n "$gpg_private_key" ] && [ -n "$gpg_passphrase" ] && [ -f SHASUMS256.txt.asc ]; then
+    upload_github_asset "$version" SHASUMS256.txt.asc
   fi
 }
 
@@ -233,19 +413,56 @@ function create_release() {
   function upload_artifact() {
     local artifact="$1"
     download_buildkite_artifact "$artifact"
+    # Capture each background job's PID so we can check its exit code
+    # individually. A bare `wait` (no PID argument) always returns 0
+    # regardless of whether any child failed, because POSIX + bash
+    # specify "wait with no arguments waits for all children and
+    # returns 0". That meant a failed `upload_github_asset` in the
+    # background subshell — e.g. `gh release upload` exhausting its
+    # retry loop on a persistent 4xx — would be silently discarded,
+    # the outer loop would move on to the next artifact, and then
+    # `sign_and_upload_manifest` below would hash the on-disk bytes
+    # for an artifact that was never actually published to the
+    # release. The signed manifest would attest to a hash the
+    # release doesn't serve — exactly the manifest/release skew
+    # this PR exists to eliminate.
+    #
+    # `wait $pid` (with an explicit PID) propagates that child's
+    # real exit status, so `set -e` terminates the script and the
+    # Buildkite job fails loudly. Collect all PIDs first, then wait
+    # on each individually; if any non-zero, propagate.
+    local pids=()
     if [ "$tag" == "canary" ]; then
       upload_s3_file "releases/$BUILDKITE_COMMIT-canary" "$artifact" &
     else
       upload_s3_file "releases/$BUILDKITE_COMMIT" "$artifact" &
     fi
+    pids+=("$!")
     upload_s3_file "releases/$tag" "$artifact" &
+    pids+=("$!")
     upload_github_asset "$tag" "$artifact" &
-    wait
+    pids+=("$!")
+    local pid
+    local fail=0
+    for pid in "${pids[@]}"; do
+      if ! wait "$pid"; then
+        fail=1
+      fi
+    done
+    if [ "$fail" -ne 0 ]; then
+      echo "error: one or more upload_artifact jobs for $artifact failed" >&2 || true
+      exit 1
+    fi
   }
 
   for artifact in "${artifacts[@]}"; do
     upload_artifact "$artifact"
   done
+
+  # Hash and sign the canonical archive list in place, then upload the
+  # manifest. Must run after every archive has been uploaded so that the
+  # sha256 entries in SHASUMS256.txt match what GitHub now serves.
+  sign_and_upload_manifest "$tag" "${artifacts[@]}"
 
   update_github_release "$tag"
   create_sentry_release "$tag"

@@ -32,11 +32,36 @@ function crateName(dir: string): string {
   return dir.startsWith("bun_") ? dir : `bun_${dir}`;
 }
 
-// bun_* deps per crate (from .rs scan, comment-filtered, same-or-lower tier only later)
+// Intended tier (mirrors scripts/crate-dag.ts). *_sys = 0, *_jsc = 6.
+// prettier-ignore
+const TIER: Record<string, number> = {
+  bun_core:0, bun_alloc:0, wyhash:0, highway:0, meta:0, safety:0, errno:0, ptr:0,
+  string:1, collections:1, paths:1, sys:1, unicode:1, base64:1, platform:1,
+  io:2, threading:2, perf:2, logger:2, url:2, semver:2, glob:2, which:2,
+  zlib:2, brotli:2, zstd:2, sha_hmac:2, csrf:2, picohttp:2, boringssl:2,
+  libarchive:2, exe_format:2, watcher:2, clap:2, dotenv:2,
+  http_types:3, options_types:3, install_types:3, dns:3, crash_handler:3,
+  patch:3, ini:3, uws:3, aio:3, event_loop:3, analytics:3,
+  js_parser:4, js_printer:4, css:4, interchange:4, sourcemap:4,
+  shell_parser:4, md:4, router:4, codegen:4,
+  resolver:5, bundler:5, http:5, install:5, sql:5, valkey:5,
+  s3_signing:5, standalone_graph:5, resolve_builtins:5,
+  jsc:6, runtime:6,
+};
+function tier(d: string): number {
+  if (d.endsWith("_sys")) return 0;
+  if (d.endsWith("_jsc")) return 6;
+  return TIER[d] ?? 5;
+}
+
+// bun_* deps per crate (from .rs scan, comment-filtered).
+// Filtered to same-or-lower tier only; same-tier mutual cycles broken by
+// keeping only the alphabetically-later → alphabetically-earlier edge.
 function bunDeps(dir: string): string[] {
   const set = new Set<string>();
   const n2d: Record<string, string> = { str: "string", output: "bun_core", core: "bun_core", alloc: "bun_alloc" };
   for (const d of dirs) n2d[d.replace(/^bun_/, "")] = d;
+  const ti = tier(dir);
   function walk(d: string) {
     for (const e of readdirSync(d)) {
       const p = join(d, e);
@@ -46,7 +71,11 @@ function bunDeps(dir: string): string[] {
           if (line.trimStart().startsWith("//")) continue;
           for (const m of line.matchAll(/\bbun_([a-z_][a-z0-9_]*)::/g)) {
             const t = n2d[m[1]];
-            if (t && t !== dir) set.add(t);
+            if (!t || t === dir) continue;
+            const tj = tier(t);
+            if (tj > ti) continue; // back-edge: drop
+            if (tj === ti && t >= dir) continue; // same-tier: only later→earlier
+            set.add(t);
           }
         }
       }

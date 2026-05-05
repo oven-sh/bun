@@ -59,7 +59,6 @@ bun_semver.workspace = true
 bun_sha_hmac.workspace = true
 bun_shell_parser.workspace = true
 bun_sourcemap.workspace = true
-bun_sql_jsc.workspace = true
 bun_string.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true

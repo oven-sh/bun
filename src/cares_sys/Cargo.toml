@@ -18,4 +18,3 @@ enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
 bun_alloc.workspace = true
-bun_sys.workspace = true

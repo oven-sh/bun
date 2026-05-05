@@ -21,7 +21,6 @@ bun_base64.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
-bun_install_types.workspace = true
 bun_logger.workspace = true
 bun_string.workspace = true
 bun_sys.workspace = true

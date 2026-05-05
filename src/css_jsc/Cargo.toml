@@ -23,7 +23,6 @@ bun_bundler.workspace = true
 bun_collections.workspace = true
 bun_css.workspace = true
 bun_js_parser.workspace = true
-bun_jsc.workspace = true
 bun_logger.workspace = true
 bun_options_types.workspace = true
 bun_string.workspace = true

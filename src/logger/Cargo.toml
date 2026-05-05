@@ -20,6 +20,5 @@ bitflags.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
-bun_resolver.workspace = true
 bun_string.workspace = true
 bun_sys.workspace = true

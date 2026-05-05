@@ -22,6 +22,5 @@ typed-arena.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
-bun_js_parser.workspace = true
 bun_logger.workspace = true
 bun_string.workspace = true

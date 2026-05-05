@@ -19,5 +19,4 @@ libc.workspace = true
 bitflags.workspace = true
 bun_base64.workspace = true
 bun_core.workspace = true
-bun_sha_hmac.workspace = true
 bun_string.workspace = true

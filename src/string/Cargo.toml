@@ -23,5 +23,4 @@ bun_collections.workspace = true
 bun_highway.workspace = true
 bun_paths.workspace = true
 bun_ptr.workspace = true
-bun_sys.workspace = true
 bun_wyhash.workspace = true

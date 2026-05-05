@@ -41,7 +41,6 @@ bun_paths.workspace = true
 bun_ptr.workspace = true
 bun_resolve_builtins.workspace = true
 bun_resolver.workspace = true
-bun_runtime.workspace = true
 bun_sourcemap.workspace = true
 bun_string.workspace = true
 bun_sys.workspace = true

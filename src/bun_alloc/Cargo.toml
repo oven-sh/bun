@@ -17,9 +17,4 @@ enum-map.workspace = true
 enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
-bun_core.workspace = true
-bun_collections.workspace = true
-bun_ptr.workspace = true
-bun_runtime.workspace = true
-bun_safety.workspace = true
-bun_wyhash.workspace = true
+

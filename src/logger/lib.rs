@@ -10,6 +10,7 @@
 //! `'source` lifetime threaded through `Location`/`Data`/`Msg`).
 
 use core::fmt;
+use std::borrow::Cow;
 
 use bun_alloc::AllocError;
 #[allow(unused_imports)]
@@ -1025,13 +1026,13 @@ impl Location {
 
 #[derive(Clone)]
 pub struct Data {
-    pub text: Str,
+    pub text: Cow<'static, [u8]>,
     pub location: Option<Location>,
 }
 
 impl Default for Data {
     fn default() -> Self {
-        Data { text: b"", location: None }
+        Data { text: Cow::Borrowed(b""), location: None }
     }
 }
 
@@ -1046,10 +1047,9 @@ impl Data {
     }
 
     // Zig `deinit` frees `text` and calls `location.deinit()` (no-op).
-    // TODO(port): lifetime — Phase B MUST retype `text` to `Box<[u8]>` (Zig
-    // `Data.deinit` calls `allocator.free(d.text)`, so per PORTING.md the field
-    // is owned). At that point this becomes an automatic `Drop` and the
-    // `Box::leak` stopgap in `alloc_print` is removed. With `Str` it's a no-op.
+    // `text` is `Cow<'static, [u8]>`: `Owned` frees on `Drop` (matches Zig
+    // `allocator.free(d.text)`), `Borrowed` is a `&'static` literal — nothing to
+    // free. No explicit `Drop` body needed.
 
     pub fn clone_line_text(&self, should: bool) -> Result<Data, AllocError> {
         if !should || self.location.is_none() || self.location.as_ref().unwrap().line_text.is_none()
@@ -1062,7 +1062,7 @@ impl Data {
         let mut new_location = self.location.clone().unwrap();
         new_location.line_text = Some(new_line_text);
         Ok(Data {
-            text: self.text,
+            text: self.text.clone(),
             location: Some(new_location),
         })
     }
@@ -1070,10 +1070,10 @@ impl Data {
     pub fn clone(&self) -> Result<Data, AllocError> {
         Ok(Data {
             text: if !self.text.is_empty() {
-                // TODO(port): lifetime — Zig dupes here.
-                self.text
+                // Zig dupes here; `Cow::clone` deep-copies the `Owned` arm.
+                self.text.clone()
             } else {
-                b""
+                Cow::Borrowed(b"")
             },
             location: match &self.location {
                 Some(l) => Some(l.clone()?),
@@ -1085,16 +1085,19 @@ impl Data {
     pub fn clone_with_builder(&self, builder: &mut StringBuilder) -> Data {
         Data {
             text: if !self.text.is_empty() {
-                builder.append(self.text)
+                // TODO(b1): StringBuilder is a stub — once the real arena append
+                // lands this routes through it. For now clone (matches Zig
+                // `builder.append(text)` ownership: callee owns the returned bytes).
+                self.text.clone()
             } else {
-                b""
+                Cow::Borrowed(b"")
             },
             location: self.location.as_ref().map(|l| l.clone_with_builder(builder)),
         }
     }
 
     pub fn count(&self, builder: &mut StringBuilder) {
-        builder.count(self.text);
+        builder.count(&self.text);
         if let Some(loc) = &self.location {
             loc.count(builder);
         }
@@ -1506,7 +1509,7 @@ impl Msg {
                 writer,
                 "{}: {}\n{}\n{}:{}:{} ({})",
                 bstr::BStr::new(self.kind.string()),
-                bstr::BStr::new(self.data.text),
+                bstr::BStr::new(&*self.data.text),
                 bstr::BStr::new(location.line_text.unwrap_or(b"")),
                 bstr::BStr::new(location.file),
                 location.line,
@@ -1518,7 +1521,7 @@ impl Msg {
                 writer,
                 "{}: {}",
                 bstr::BStr::new(self.kind.string()),
-                bstr::BStr::new(self.data.text),
+                bstr::BStr::new(&*self.data.text),
             )
         }
     }
@@ -1528,7 +1531,7 @@ impl Msg {
         formatter_func(format_args!(
             "\n\n{}: {}\n{}\n{}:{}:{} ({})",
             bstr::BStr::new(self.kind.string()),
-            bstr::BStr::new(self.data.text),
+            bstr::BStr::new(&*self.data.text),
             bstr::BStr::new(location.line_text.unwrap()),
             bstr::BStr::new(location.file),
             location.line,
@@ -1951,7 +1954,7 @@ impl Log {
         kind: Kind,
         source: Option<&Source>,
         r: Range,
-        text: Str,
+        text: Cow<'static, [u8]>,
         notes: Box<[Data]>,
         clone: bool,
         redact: bool,
@@ -1989,7 +1992,7 @@ impl Log {
         // PORT NOTE: Zig reads `args.@"0"` (first tuple element) for the
         // specifier; with `fmt::Arguments` that's opaque, so callers must pass
         // `specifier_arg` explicitly.
-        let specifier = BabyString::r#in(text, specifier_arg);
+        let specifier = BabyString::r#in(&text, specifier_arg);
         if IS_ERR {
             self.errors += 1;
         } else {
@@ -2512,17 +2515,10 @@ impl Log {
         new_loc: Loc,
         old_loc: Loc,
     ) -> Result<(), AllocError> {
-        let note_text = {
-            use std::io::Write;
-            let mut v = Vec::new();
-            let _ = write!(
-                &mut v,
-                "\"{}\" was originally declared here",
-                bstr::BStr::new(name)
-            );
-            // TODO(port): lifetime — leak to get &'static for now.
-            Box::leak(v.into_boxed_slice()) as &'static [u8]
-        };
+        let note_text = alloc_print(format_args!(
+            "\"{}\" was originally declared here",
+            bstr::BStr::new(name)
+        ))?;
         let notes: Box<[Data]> = Box::new([range_data(
             Some(source),
             source.range_of_identifier(old_loc),
@@ -2613,7 +2609,7 @@ pub struct AddErrorOptions<'a> {
 pub type ErrorOpts<'a> = AddErrorOptions<'a>;
 
 #[inline]
-pub fn alloc_print(args: fmt::Arguments<'_>) -> Result<Str, AllocError> {
+pub fn alloc_print(args: fmt::Arguments<'_>) -> Result<Cow<'static, [u8]>, AllocError> {
     // TODO(port): Zig `allocPrint` runs `Output.prettyFmt(fmt, enable_ansi_colors)`
     // at comptime to rewrite `<red>..<r>` markup in the format string before
     // formatting. With `fmt::Arguments` the format string is opaque; Phase B
@@ -2629,10 +2625,10 @@ pub fn alloc_print(args: fmt::Arguments<'_>) -> Result<Str, AllocError> {
         let _ = write!(&mut v, "{}", Output::pretty_fmt::<false>(args));
     }
     let _ = write!(&mut v, "{}", args);
-    // TODO(port): lifetime — Zig returns an allocator-owned slice that the Log
-    // takes ownership of via Data.text. Leaking here is a stopgap until
-    // `Data.text` is `Box<[u8]>`.
-    Ok(Box::leak(v.into_boxed_slice()))
+    // Zig returns an allocator-owned slice that the Log takes ownership of via
+    // `Data.text` and frees in `Data.deinit`. `Cow::Owned` gives the same
+    // ownership: `Data` (via `Drop`) frees it.
+    Ok(Cow::Owned(v))
 }
 
 #[inline]
@@ -2951,8 +2947,12 @@ impl Source {
     }
 }
 
-pub fn range_data(source: Option<&Source>, r: Range, text: Str) -> Data {
-    Data { text, location: Location::init_or_null(source, r) }
+pub fn range_data(
+    source: Option<&Source>,
+    r: Range,
+    text: impl Into<Cow<'static, [u8]>>,
+) -> Data {
+    Data { text: text.into(), location: Location::init_or_null(source, r) }
 }
 
 // ───────────────────────────────────────────────────────────────────────────

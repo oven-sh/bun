@@ -86,9 +86,22 @@ pub mod strings {
         true
     }
     pub fn starts_with_npm_secret(s: &[u8]) -> usize {
-        if s.len() >= 40 && s.starts_with(b"npm_") && s[4..40].iter().all(|b| b.is_ascii_alphanumeric()) {
-            40
-        } else { 0 }
+        // Port of bun.strings.startsWithNpmSecret (immutable.zig): case-insensitive
+        // `npm`, then `_` or `s_`/`S_`, then 36..=48 alnum. Returns consumed length or 0.
+        if s.len() < 3 { return 0; }
+        if !(s[0] == b'n' || s[0] == b'N') { return 0; }
+        if !(s[1] == b'p' || s[1] == b'P') { return 0; }
+        if !(s[2] == b'm' || s[2] == b'M') { return 0; }
+        let mut i = 3usize;
+        if i < s.len() && (s[i] == b's' || s[i] == b'S') { i += 1; }
+        if i >= s.len() || s[i] != b'_' { return 0; }
+        i += 1;
+        let prefix_len = i;
+        while i < s.len() && (i - prefix_len) < 48 && s[i].is_ascii_alphanumeric() {
+            i += 1;
+        }
+        if i - prefix_len < 36 { return 0; }
+        i
     }
     /// Generic high-entropy-looking token. Returns (offset_into_match, len).
     pub fn starts_with_secret(s: &[u8]) -> Option<(usize, usize)> {
@@ -190,14 +203,19 @@ pub mod strings {
     /// `(offset, len)` of the password segment, or None.
     /// Zig only matches http:// and https:// schemes and rejects empty pw.
     pub fn find_url_password(s: &[u8]) -> Option<(usize, usize)> {
-        let scheme_end = if s.len() >= 7 && eql_case_insensitive_ascii(&s[..7], b"http://", false) {
+        // Zig uses case-sensitive `hasPrefixComptime` and truncates the search
+        // region at the first '\n' before scanning for '@'/':'.
+        let scheme_end = if s.starts_with(b"http://") {
             7
-        } else if s.len() >= 8 && eql_case_insensitive_ascii(&s[..8], b"https://", false) {
+        } else if s.starts_with(b"https://") {
             8
         } else {
             return None;
         };
-        let rest = &s[scheme_end..];
+        let mut rest = &s[scheme_end..];
+        if let Some(nl) = rest.iter().position(|&b| b == b'\n') {
+            rest = &rest[..nl];
+        }
         let at = rest.iter().position(|&b| b == b'@')?;
         let userinfo = &rest[..at];
         let colon = userinfo.iter().position(|&b| b == b':')?;
@@ -272,7 +290,21 @@ pub mod js_printer {
         let _ = (quote, enc);
         // TODO(port): full impl in bun_js_printer; this tier only needs the
         // "already quoted" passthrough for fmt.rs JS-string display.
-        write_json_string(input, f, enc)
+        // Zig writePreQuotedString writes the escaped body WITHOUT surrounding
+        // quotes — emit the same escape set as write_json_string sans the
+        // leading/trailing '"'.
+        for &b in input {
+            match b {
+                b'"' => f.write_str("\\\"")?,
+                b'\\' => f.write_str("\\\\")?,
+                b'\n' => f.write_str("\\n")?,
+                b'\r' => f.write_str("\\r")?,
+                b'\t' => f.write_str("\\t")?,
+                0x00..=0x1F => write!(f, "\\u{:04x}", b)?,
+                _ => f.write_char(b as char)?,
+            }
+        }
+        Ok(())
     }
 }
 use strum::IntoStaticStr;
@@ -455,8 +487,19 @@ impl Display for RedactedNpmUrlFormatter<'_> {
 
             // TODO: redact password from `https://username:password@registry.com/`
 
-            f.write_char(self.url[i] as char)?;
-            i += 1;
+            // Emit the run of bytes up to the next position where a uuid/npm
+            // secret could possibly start, so multi-byte UTF-8 sequences are
+            // written intact (Zig writes raw bytes, not Latin-1→UTF-8 chars).
+            let mut next = i + 1;
+            while next < self.url.len() {
+                let b = self.url[next];
+                if b.is_ascii_hexdigit() || b == b'n' || b == b'N' {
+                    break;
+                }
+                next += 1;
+            }
+            write_bytes(f, &self.url[i..next])?;
+            i = next;
         }
         Ok(())
     }
@@ -485,8 +528,17 @@ impl Display for RedactedSourceFormatter<'_> {
                 continue;
             }
 
-            f.write_char(self.text[i] as char)?;
-            i += 1;
+            // Batch the non-secret span so multi-byte UTF-8 sequences pass
+            // through intact (Zig writes raw bytes; per-byte `as char` would
+            // re-encode each >=0x80 byte as a 2-byte sequence).
+            let mut next = i + 1;
+            while next < self.text.len()
+                && strings::starts_with_secret(&self.text[next..]).is_none()
+            {
+                next += 1;
+            }
+            write_bytes(f, &self.text[i..next])?;
+            i = next;
         }
         Ok(())
     }

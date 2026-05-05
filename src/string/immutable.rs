@@ -243,9 +243,15 @@ pub mod unicode {
             let mut buf = [0u8; 4];
             let avail = (self.bytes.len() - pos).min(len as usize).min(4);
             buf[..avail].copy_from_slice(&self.bytes[pos..pos + avail]);
-            cursor.c = decode_wtf8_rune_t::<CodePoint>(&buf, len, -1);
+            let cp = decode_wtf8_rune_t::<CodePoint>(&buf, len, -1);
             cursor.i = pos as u32;
-            cursor.width = len;
+            if cp == -1 {
+                cursor.c = super::UNICODE_REPLACEMENT as CodePoint;
+                cursor.width = 1;
+            } else {
+                cursor.c = cp;
+                cursor.width = len;
+            }
             true
         }
     }
@@ -612,7 +618,7 @@ fn starts_with_redacted_item(text: &[u8], item: &'static [u8]) -> Option<(usize,
 
     let mut whitespace = false;
     let mut offset: usize = item.len();
-    while offset < text.len() && text[offset].is_ascii_whitespace() {
+    while offset < text.len() && WHITESPACE_CHARS.contains(&text[offset]) {
         offset += 1;
         whitespace = true;
     }
@@ -636,7 +642,7 @@ fn starts_with_redacted_item(text: &[u8], item: &'static [u8]) -> Option<(usize,
     offset += 1;
 
     let mut end = offset;
-    while end < text.len() && text[end].is_ascii_whitespace() {
+    while end < text.len() && WHITESPACE_CHARS.contains(&text[end]) {
         end += 1;
     }
 
@@ -2881,7 +2887,9 @@ where
             .ok_or(ParseIntError::Overflow)?;
     }
     if neg {
-        let signed: i128 = if acc > i128::MAX as u128 {
+        let signed: i128 = if acc == (i128::MAX as u128) + 1 {
+            i128::MIN
+        } else if acc > i128::MAX as u128 {
             return Err(ParseIntError::Overflow);
         } else {
             -(acc as i128)

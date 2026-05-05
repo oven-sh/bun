@@ -1938,6 +1938,15 @@ pub fn which<'a>(
     if bin.is_empty() { return None; }
     // If `bin` contains a separator, resolve relative to cwd only.
     let has_sep = bin.iter().any(|&b| b == b'/' || (cfg!(windows) && b == b'\\'));
+    #[inline]
+    fn is_absolute(p: &[u8]) -> bool {
+        if p.first() == Some(&b'/') { return true; }
+        if cfg!(windows) {
+            if p.first() == Some(&b'\\') { return true; }
+            if p.len() >= 2 && p[1] == b':' && p[0].is_ascii_alphabetic() { return true; }
+        }
+        false
+    }
     let check = |buf: &mut PathBuffer, dir: &[u8], bin: &[u8]| -> Option<usize> {
         let mut n = 0usize;
         if !dir.is_empty() {
@@ -1960,14 +1969,23 @@ pub fn which<'a>(
         }
         None
     };
+    // Absolute `bin` → probe it directly without joining `cwd` (which.zig:35-42).
+    if is_absolute(bin) {
+        return check(buf, b"", bin).map(|n| unsafe { ZStr::from_raw(buf.0.as_ptr(), n) });
+    }
     if has_sep {
+        // Relative with separator → resolve against cwd only. Zig trims
+        // trailing '/' from cwd and strips a leading "./" from bin.
+        let cwd = {
+            let mut c = cwd;
+            while let [rest @ .., b'/'] = c { c = rest; }
+            c
+        };
+        let bin = bin.strip_prefix(b"./").unwrap_or(bin);
         // SAFETY: n < buf.len, buf[n]==0.
         return check(buf, cwd, bin).map(|n| unsafe { ZStr::from_raw(buf.0.as_ptr(), n) });
     }
-    // cwd first (matches Zig).
-    if let Some(n) = check(buf, cwd, bin) {
-        return Some(unsafe { ZStr::from_raw(buf.0.as_ptr(), n) });
-    }
+    // Bare names go straight to PATH (which.zig:44-63) — do NOT consult cwd.
     let delim: u8 = if cfg!(windows) { b';' } else { b':' };
     for dir in path.split(|&b| b == delim) {
         if dir.is_empty() { continue; }
@@ -2043,7 +2061,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
             fn TerminateProcess(h: *mut core::ffi::c_void, code: u32) -> i32;
             fn GetCurrentProcess() -> *mut core::ffi::c_void;
         }
-        const WATCHER_RELOAD_EXIT: u32 = 0xBEEF_CAFE; // bun.windows.watcher_reload_exit
+        const WATCHER_RELOAD_EXIT: u32 = 0xC037_0332; // bun.windows.watcher_reload_exit
         let rc = unsafe { TerminateProcess(GetCurrentProcess(), WATCHER_RELOAD_EXIT) };
         if may_return {
             crate::output::pretty_errorln(format_args!("error: Failed to reload process"));
@@ -2201,8 +2219,10 @@ impl Timespec {
     /// monotonic clock directly. Mocked-time hook installed by bun_jsc at
     /// startup via `set_now_hook`.
     #[inline]
-    pub fn now(_mode: TimespecMockMode) -> Timespec {
-        if let Some(hook) = NOW_HOOK.load() { return hook(); }
+    pub fn now(mode: TimespecMockMode) -> Timespec {
+        if matches!(mode, TimespecMockMode::AllowMockedTime) {
+            if let Some(hook) = NOW_HOOK.load() { return hook(); }
+        }
         Self::now_real()
     }
     /// Convenience for `now(AllowMockedTime)` (downstream short-name).

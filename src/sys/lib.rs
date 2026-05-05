@@ -1016,7 +1016,8 @@ impl File {
     pub fn write_all(&self, mut buf: &[u8]) -> Maybe<()> {
         while !buf.is_empty() {
             let n = write(self.handle, buf)?;
-            if n == 0 { return Err(Error::from_code_int(libc::EIO, Tag::write)); }
+            // File.zig:118-133 — `if (amt == 0) return .success;` (matches Zig).
+            if n == 0 { return Ok(()); }
             buf = &buf[n..];
         }
         Ok(())
@@ -1039,12 +1040,42 @@ impl File {
         self.read_all(&mut v)?;
         Ok(v)
     }
+    /// `File.getEndPos()` — file size via fstat.
+    pub fn get_end_pos(&self) -> Maybe<usize> {
+        Ok(fstat(self.handle)?.st_size as usize)
+    }
     /// `File.readToEndWithArrayList(buf, hint)` — like `read_all` but takes a
     /// `SizeHint` so callers can pre-reserve. Returns the borrowed slice.
     pub fn read_to_end_with_array_list<'a>(&self, buf: &'a mut Vec<u8>, hint: SizeHint) -> Maybe<&'a [u8]> {
-        if let SizeHint::Size(n) = hint { buf.reserve(n); }
+        // File.zig:298 — `probably_small` reserves 64; `unknown_size` fstats and
+        // reserves `size+16`.
+        match hint {
+            SizeHint::ProbablySmall => buf.reserve(64),
+            SizeHint::UnknownSize => {
+                let size = self.get_end_pos()?;
+                if buf.capacity() < size + 16 {
+                    buf.reserve(size + 16 - buf.len());
+                }
+            }
+        }
         let start = buf.len();
-        self.read_all(buf)?;
+        let mut total: i64 = 0;
+        loop {
+            if buf.capacity() == buf.len() { buf.reserve(16); }
+            let spare = buf.spare_capacity_mut();
+            // SAFETY: pread()/read() write initialized bytes; we set_len to exactly what was written.
+            let dst = unsafe {
+                core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<u8>(), spare.len())
+            };
+            #[cfg(unix)]
+            let n = pread(self.handle, dst, total)?;
+            #[cfg(not(unix))]
+            let n = read(self.handle, dst)?;
+            if n == 0 { break; }
+            // SAFETY: `n` bytes were just initialized by the syscall.
+            unsafe { buf.set_len(buf.len() + n); }
+            total += n as i64;
+        }
         Ok(&buf[start..])
     }
     pub fn pwrite_all(&self, mut buf: &[u8], mut off: i64) -> Maybe<()> {
@@ -1061,15 +1092,18 @@ impl File {
     /// `bun.sys.File.readFrom` — open + read + close.
     pub fn read_from(dir: Fd, path: &ZStr) -> Maybe<Vec<u8>> {
         let f = Self::openat(dir, path, O::RDONLY, 0)?;
-        let v = f.read_to_end()?;
+        // File.zig: closes the fd on the error path too (no leak on read failure).
+        let v = f.read_to_end();
         let _ = close(f.handle);
-        Ok(v)
+        v
     }
     /// `bun.sys.File.writeFile` — open + write + close.
     pub fn write_file(dir: Fd, path: &ZStr, data: &[u8]) -> Maybe<()> {
-        let f = Self::openat(dir, path, O::WRONLY | O::CREAT | O::TRUNC, 0o644)?;
-        f.write_all(data)?;
-        close(f.handle)
+        // File.zig:141 — mode 0o664; `defer file.close()` (close on all paths).
+        let f = Self::openat(dir, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664)?;
+        let r = f.write_all(data);
+        let _ = close(f.handle);
+        r
     }
     /// `File.bufferedWriter()` — `std.io.BufferedWriter` wrapping this fd.
     pub fn buffered_writer(&self) -> std::io::BufWriter<FileWriter> {
@@ -1101,11 +1135,14 @@ pub type ErrorInt = error::Int;
 /// `Errno::AGAIN`/`Errno::EXIST` rely on those.
 pub type Errno = E;
 
-/// `bun.sys.File.SizeHint` — pre-reserve hint for `read_to_end`.
+/// `bun.sys.File.SizeHint` — pre-reserve hint for `read_to_end_with_array_list`.
+/// Mirrors Zig's `enum { probably_small, unknown_size }` (File.zig:298).
 #[derive(Clone, Copy, Debug)]
 pub enum SizeHint {
+    /// Reserve a small fixed buffer (64B).
+    ProbablySmall,
+    /// `fstat()` the fd to pre-size the buffer.
     UnknownSize,
-    Size(usize),
 }
 
 /// `std.process.EnvMap` — owned `KEY → VALUE` map of environment variables.
@@ -2291,13 +2328,56 @@ pub fn open_dir_for_iteration(dir: Fd, path: &[u8]) -> Maybe<Fd> {
 pub fn iterate_dir(dir: Fd) -> dir_iterator::WrappedIterator {
     dir_iterator::iterate(dir)
 }
-/// sys.zig:4246 — open `from` then delegate to `move_file_z_with_handle`.
+/// sys.zig:4246 — `moveFileZ`. Tries the rename first (no source open on the
+/// hot path); on EISDIR removes the dest dir and retries; on EXDEV falls back
+/// to the slow open+copy path. Only opens the source inside the EXDEV branch.
 pub fn move_file_z(from_dir: Fd, filename: &ZStr, to_dir: Fd, destination: &ZStr)
     -> core::result::Result<(), bun_core::Error>
 {
-    let handle = openat(from_dir, filename, O::RDONLY | O::CLOEXEC, 0)?;
-    let r = move_file_z_with_handle(handle, from_dir, filename, to_dir, destination);
-    let _ = close(handle);
+    // TODO(port): renameatConcurrentlyWithoutFallback (renameat2 NOREPLACE →
+    // EXCHANGE → deleteTree) — sys.zig:2480. Plain `renameat` for now.
+    match renameat(from_dir, filename, to_dir, destination) {
+        Ok(()) => Ok(()),
+        Err(e) if e.get_errno() == E::EISDIR => {
+            #[cfg(unix)]
+            // SAFETY: destination is NUL-terminated.
+            let _ = unsafe { libc::unlinkat(to_dir.native(), destination.as_ptr(), libc::AT_REMOVEDIR) };
+            renameat(from_dir, filename, to_dir, destination).map_err(Into::into)
+        }
+        Err(e) if e.get_errno() == E::EXDEV => {
+            move_file_z_slow(from_dir, filename, to_dir, destination).map_err(Into::into)
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+/// sys.zig:4291 — `moveFileZSlow`: open source, unlink, copy to dest.
+pub fn move_file_z_slow(from_dir: Fd, filename: &ZStr, to_dir: Fd, destination: &ZStr) -> Maybe<()> {
+    let in_handle = openat(
+        from_dir, filename,
+        O::RDONLY | O::CLOEXEC,
+        if cfg!(windows) { 0 } else { 0o644 },
+    )?;
+    let _ = unlinkat(from_dir, filename, 0);
+    let r = copy_file_z_slow_with_handle(in_handle, to_dir, destination);
+    let _ = close(in_handle);
+    r
+}
+/// sys.zig:4305 — `copyFileZSlowWithHandle` (POSIX read/write fallback arm).
+pub fn copy_file_z_slow_with_handle(in_handle: Fd, to_dir: Fd, destination: &ZStr) -> Maybe<()> {
+    let st = fstat(in_handle)?;
+    // Unlink dest first — fixes ETXTBUSY on Linux.
+    let _ = unlinkat(to_dir, destination, 0);
+    let dst = openat(to_dir, destination, O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC, 0o644)?;
+    #[cfg(target_os = "linux")] {
+        // SAFETY: dst is a valid open fd; preallocation is best-effort.
+        let _ = unsafe { libc::fallocate(dst.native(), 0, 0, st.st_size) };
+    }
+    let _ = lseek(in_handle, 0, libc::SEEK_SET);
+    let r = copy_file(in_handle, dst);
+    // SAFETY: dst is a valid open fd.
+    let _ = unsafe { libc::fchmod(dst.native(), st.st_mode) };
+    let _ = unsafe { libc::fchown(dst.native(), st.st_uid, st.st_gid) };
+    let _ = close(dst);
     r
 }
 /// `renameatZ` alias (bun_install reaches for it as the NUL-terminated form).

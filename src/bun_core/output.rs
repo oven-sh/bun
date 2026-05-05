@@ -909,7 +909,7 @@ pub fn is_ai_agent() -> bool {
             return true;
         }
         // Replit.
-        if env_var::REPL_ID.get().is_some() {
+        if env_var::REPL_ID.get().unwrap_or(false) {
             return true;
         }
         // TODO: add environment variable for Gemini
@@ -1437,10 +1437,15 @@ impl ScopedLogger {
         } else {
             out.write_fmt(plain)
         };
-        out.flush();
         if result.is_err() {
+            // Zig: write failure → disable scope and skip the flush.
             self.really_disable.store(true, Ordering::Relaxed);
+            return;
         }
+        // TODO(port): Zig also disables on flush failure; QuietWriter::flush()
+        // currently returns () via the SysHooks vtable so flush errors are not
+        // observable here. Surface a Result once bun_sys exposes it.
+        out.flush();
     }
 }
 

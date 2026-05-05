@@ -371,7 +371,7 @@ impl<const SSL: bool> App<SSL> {
     pub fn listen(
         &mut self,
         port: i32,
-        handler: extern "C" fn(*mut UwsListenSocket, c::uws_app_listen_config_t, *mut c_void),
+        handler: extern "C" fn(*mut UwsListenSocket, *mut c_void),
         user_data: *mut c_void,
     ) {
         // TODO(port): Zig generated a type-safe Wrapper.handle per (UserData, handler) at
@@ -779,9 +779,7 @@ pub mod c {
             ssl: i32,
             app: *mut uws_app_t,
             port: i32,
-            handler: Option<
-                extern "C" fn(*mut UwsListenSocket, uws_app_listen_config_t, *mut c_void),
-            >,
+            handler: uws_listen_handler,
             user_data: *mut c_void,
         );
         pub fn uws_app_listen_with_config(

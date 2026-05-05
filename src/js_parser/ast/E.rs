@@ -1405,11 +1405,7 @@ impl EString {
         if self.is_utf8() {
             strings::eql_long::<true>(self.data, other)
         } else {
-            // ASCII codepoint-wise compare; full WTF-16 path lives in the
-            // gated impl (track-A `utf16_eql_string`).
-            let s16 = self.slice16();
-            s16.len() == other.len()
-                && other.iter().zip(s16).all(|(b, c)| (*b as u16) == *c)
+            strings::utf16_eql_string(self.slice16(), other)
         }
     }
 

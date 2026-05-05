@@ -108,6 +108,32 @@ impl CaseInsensitiveAsciiStringContext {
     }
 }
 
+/// Lifts an `ArrayHashContext<[u8]>` to operate on `Box<[u8]>` keys by
+/// delegating to the underlying byte slice. Used as the inner context for
+/// `StringArrayHashMap` so methods reached via `Deref` (e.g. `put_no_clobber`,
+/// `remove`, `entry`) compute the *same* u32 hash as the wrapper's
+/// `&[u8]`-taking methods — otherwise the two paths disagree and lookups miss.
+#[derive(Clone, Copy)]
+pub struct BoxedSliceContext<C>(C);
+
+impl<C: Default> Default for BoxedSliceContext<C> {
+    #[inline]
+    fn default() -> Self {
+        Self(C::default())
+    }
+}
+
+impl<C: ArrayHashContext<[u8]>> ArrayHashContext<Box<[u8]>> for BoxedSliceContext<C> {
+    #[inline]
+    fn hash(&self, key: &Box<[u8]>) -> u32 {
+        self.0.hash(&**key)
+    }
+    #[inline]
+    fn eql(&self, a: &Box<[u8]>, b: &Box<[u8]>, b_index: usize) -> bool {
+        self.0.eql(&**a, &**b, b_index)
+    }
+}
+
 impl ArrayHashContext<[u8]> for CaseInsensitiveAsciiStringContext {
     #[inline]
     fn hash(&self, key: &[u8]) -> u32 {
@@ -709,9 +735,10 @@ impl<K, V, C> ArrayHashMapExt for ArrayHashMap<K, V, C> {
 /// whether to dupe them; here keys are `Box<[u8]>` and the borrowing methods
 /// box on insert.
 pub struct StringArrayHashMap<V, C = StringContext> {
-    inner: ArrayHashMap<Box<[u8]>, V, AutoContext>,
-    // The string context is consulted for hash/eql on `[u8]` borrows; the
-    // inner map's `AutoContext` is unused (hashes are fed in directly).
+    inner: ArrayHashMap<Box<[u8]>, V, BoxedSliceContext<C>>,
+    // The string context is consulted for hash/eql on `[u8]` borrows. The inner
+    // map's context is `BoxedSliceContext<C>` (NOT `AutoContext`) so methods
+    // reached via `Deref` hash identically to the `&[u8]` paths above.
     ctx: C,
 }
 
@@ -726,7 +753,7 @@ impl<V, C: Default> Default for StringArrayHashMap<V, C> {
 }
 
 impl<V, C> Deref for StringArrayHashMap<V, C> {
-    type Target = ArrayHashMap<Box<[u8]>, V, AutoContext>;
+    type Target = ArrayHashMap<Box<[u8]>, V, BoxedSliceContext<C>>;
     fn deref(&self) -> &Self::Target {
         &self.inner
     }

@@ -39,7 +39,11 @@ type BumpVec<'bump, T> = bumpalo::collections::Vec<'bump, T>;
 pub struct Parser<'a> {
     pub options: Options<'a>,
     pub lexer: js_lexer::Lexer<'a>,
-    pub log: &'a mut logger::Log,
+    /// Raw pointer alias of `lexer.log`. Zig held two `*Log` pointers; Rust
+    /// cannot hold two live `&'a mut Log`, so the parser-side handle is a
+    /// `NonNull` and dereferenced at use sites (see `log_mut`). The unique
+    /// `&'a mut Log` lives in `self.lexer.log`.
+    pub log: core::ptr::NonNull<logger::Log>,
     pub source: &'a logger::Source,
     pub define: &'a Define,
     pub bump: &'a Arena,
@@ -181,11 +185,9 @@ impl<'a> Options<'a> {
 }
 
 // ── live `Parser::init` (round-E unblock) ─────────────────────────────────
-// `Lexer::init` borrows `log` mutably for the lexer's lifetime, but `Parser`
-// also stores `log: &'a mut Log`. Zig held two aliasing `*Log` pointers; Rust
-// cannot. The lexer is given a raw-reborrowed `&mut Log` (Phase-A escape
-// hatch — Phase B should restructure `Parser` to own the log and have the
-// lexer borrow through an accessor).
+// `Lexer::init` borrows `log` mutably for the lexer's lifetime. Zig held two
+// aliasing `*Log` pointers; Rust forbids two live `&'a mut Log`, so `Parser`
+// stores a `NonNull<Log>` and the unique `&'a mut` lives in the lexer.
 impl<'a> Parser<'a> {
     pub fn init(
         options: Options<'a>,
@@ -194,18 +196,26 @@ impl<'a> Parser<'a> {
         define: &'a Define,
         bump: &'a Arena,
     ) -> Result<Parser<'a>, Error> {
-        // SAFETY: `log` outlives `'a`; the lexer and parser never deref the two
-        // `&mut Log` aliases concurrently (Zig invariant). Phase-B restructure
-        // tracked above.
-        let lexer_log: &'a mut logger::Log = unsafe { &mut *(log as *mut logger::Log) };
+        let log_ptr = core::ptr::NonNull::from(&mut *log);
         Ok(Parser {
             options,
             bump,
-            lexer: js_lexer::Lexer::init(lexer_log, source, bump)?,
+            lexer: js_lexer::Lexer::init(log, source, bump)?,
             define,
             source,
-            log,
+            log: log_ptr,
         })
+    }
+
+    /// Reborrow the shared `Log`. Callers must not hold another `&mut` derived
+    /// from `self.lexer.log` across this call.
+    #[inline]
+    pub fn log_mut(&mut self) -> &mut logger::Log {
+        // SAFETY: `log` was created from the `&'a mut Log` passed to `init`,
+        // which outlives `'a` (and therefore `self`). The unique borrow lives
+        // in `self.lexer.log`; `&mut self` here ensures no overlapping borrow
+        // of the lexer is live for the returned reference's lifetime.
+        unsafe { self.log.as_mut() }
     }
 }
 

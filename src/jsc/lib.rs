@@ -239,6 +239,9 @@ impl JSValue {
     pub const ZERO: JSValue = JSValue(0);
     pub const UNDEFINED: JSValue = JSValue(0xa);
     pub const NULL: JSValue = JSValue(0x2);
+    /// `JSC::JSValue::ValueDeleted` (0x4) — sentinel returned by
+    /// `getIfPropertyExistsImpl` when the property does not exist.
+    pub const PROPERTY_DOES_NOT_EXIST: JSValue = JSValue(0x4);
     #[inline] pub fn is_empty(self) -> bool { self.0 == 0 }
 }
 
@@ -408,11 +411,25 @@ impl JSValue {
         if self.is_int32() {
             return (self.0 & 0xffff_ffff) as u32 as i32;
         }
+        if let Some(num) = self.get_number() {
+            // JSValue.zig:2129 — coerceJSValueDoubleTruncatingT(i32, num):
+            // NaN → 0, ±Inf/out-of-range → saturate to i32 MIN/MAX, else truncate.
+            if num.is_nan() { return 0; }
+            return num as i32; // Rust `as` saturates on overflow, matching coerceJSValueDoubleTruncatingT
+        }
         // SAFETY: pure FFI conversion.
         unsafe { JSC__JSValue__toInt32(self) }
     }
     pub fn to_int64(self) -> i64 {
-        // SAFETY: pure FFI conversion.
+        if self.is_int32() {
+            return self.as_int32() as i64;
+        }
+        if let Some(num) = self.get_number() {
+            // JSValue.zig:916 — coerceDoubleTruncatingIntoInt64.
+            if num.is_nan() { return 0; }
+            return num as i64; // saturating truncation
+        }
+        // SAFETY: pure FFI conversion (BigInt / cell fallback).
         unsafe { JSC__JSValue__toInt64(self) }
     }
     pub fn coerce_to_i32(self, global: &JSGlobalObject) -> JsResult<i32> {
@@ -476,7 +493,7 @@ impl JSValue {
     pub fn as_array_buffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
         let mut out = ArrayBuffer::default();
         // SAFETY: `global` is live; `out` is a valid out-param.
-        if unsafe { JSC__JSValue__asArrayBuffer_(self, global, &mut out) } {
+        if unsafe { JSC__JSValue__asArrayBuffer(self, global, &mut out) } {
             out.value = self;
             Some(out)
         } else {
@@ -491,12 +508,14 @@ impl JSValue {
     }
     pub fn as_any_promise(self) -> Option<AnyPromise> {
         if !self.is_cell() { return None; }
-        // SAFETY: `self` is a cell; FFI returns null when not a promise type.
-        let p = unsafe { JSC__JSValue__asPromise(self) };
-        if !p.is_null() { return Some(AnyPromise::Normal(p)); }
+        // JSValue.zig:657 — check internal FIRST (JSInternalPromise extends JSPromise,
+        // so `asPromise` would also match it and misclassify).
         // SAFETY: `self` is a cell; FFI returns null when not an internal promise.
         let p = unsafe { JSC__JSValue__asInternalPromise(self) };
         if !p.is_null() { return Some(AnyPromise::Internal(p)); }
+        // SAFETY: `self` is a cell; FFI returns null when not a promise type.
+        let p = unsafe { JSC__JSValue__asPromise(self) };
+        if !p.is_null() { return Some(AnyPromise::Normal(p)); }
         None
     }
     pub fn get_unix_timestamp(self) -> f64 {
@@ -522,11 +541,12 @@ impl JSValue {
         // TODO(b2): BuiltinName fast-path — see JSValue.zig:1439.
         // SAFETY: `global` is live; bytes valid for the call.
         let v = unsafe {
-            JSC__JSValue__getIfPropertyExistsImpl(self, global, property.as_ptr(), property.len() as u32)
+            JSC__JSValue__getIfPropertyExistsImpl(self, global, property.as_ptr(), property.len())
         };
         if global.has_exception() { return Err(JsError::Thrown); }
-        // Zig: `.zero` means "not found"; `.js_undefined` is a real undefined value.
-        if v.is_empty() || v.is_undefined() { Ok(None) } else { Ok(Some(v)) }
+        // JSValue.zig:1545 — `.property_does_not_exist_on_object` (encoded 0x4 = ValueDeleted)
+        // and `.js_undefined` map to None. `.zero` ⇒ exception (handled above).
+        if v.0 == JSValue::PROPERTY_DOES_NOT_EXIST.0 || v.is_undefined() { Ok(None) } else { Ok(Some(v)) }
     }
     pub fn get_if_property_exists(
         self,
@@ -574,7 +594,9 @@ impl JSValue {
             JSC__JSValue__getLengthIfPropertyExistsInternal(self, global)
         })?;
         if len == f64::MAX { return Ok(0); }
-        Ok(len.clamp(0.0, MAX_SAFE_INTEGER as f64) as u64)
+        // JSValue.zig:2181 — clamps to `std.math.maxInt(i52)` (2^51 − 1), not MAX_SAFE_INTEGER.
+        const I52_MAX: i64 = (1i64 << 51) - 1;
+        Ok(len.clamp(0.0, I52_MAX as f64) as u64)
     }
     pub fn put(self, global: &JSGlobalObject, key: &[u8], value: JSValue) {
         let zs = bun_string::ZigString::init(key);
@@ -702,14 +724,14 @@ unsafe extern "C" {
     fn JSC__JSValue__putToPropertyKey(target: JSValue, global: *const JSGlobalObject, key: JSValue, value: JSValue);
     fn JSC__JSValue__toStringOrNull(this: JSValue, global: *const JSGlobalObject) -> *mut JSString;
     fn JSC__JSValue__asString(this: JSValue) -> *mut JSString;
-    fn JSC__JSValue__asArrayBuffer_(this: JSValue, global: *const JSGlobalObject, out: *mut ArrayBuffer) -> bool;
+    fn JSC__JSValue__asArrayBuffer(this: JSValue, global: *const JSGlobalObject, out: *mut ArrayBuffer) -> bool;
     fn JSC__JSValue__asPromise(this: JSValue) -> *mut JSPromise;
     fn JSC__JSValue__asInternalPromise(this: JSValue) -> *mut JSInternalPromise;
     fn JSC__JSValue__getClassInfoName(this: JSValue, out: *mut *const u8, len: *mut usize) -> bool;
     fn JSC__JSValue__getLengthIfPropertyExistsInternal(this: JSValue, global: *const JSGlobalObject) -> f64;
     fn JSC__JSValue__parseJSON(string: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
     fn JSC__JSValue__toZigString(this: JSValue, out: *mut bun_string::ZigString, global: *const JSGlobalObject);
-    fn JSC__JSValue__getIfPropertyExistsImpl(target: JSValue, global: *const JSGlobalObject, ptr: *const u8, len: u32) -> JSValue;
+    fn JSC__JSValue__getIfPropertyExistsImpl(target: JSValue, global: *const JSGlobalObject, ptr: *const u8, len: usize) -> JSValue;
 }
 
 /// `bun.JSError` — the canonical Bun JS error union (`error{Thrown, OutOfMemory, Terminated}`).
@@ -1031,20 +1053,27 @@ impl JSGlobalObject {
         let err = self.create_type_error_instance(args);
         self.throw_value(err)
     }
-    pub fn throw_range_error<V: core::fmt::Display>(&self, value: V, options: RangeErrorOptions<'_>) -> JsError {
-        // JSGlobalObject.zig — `ERR(.OUT_OF_RANGE).throw()`. Use a RangeError instance.
-        use bstr::ByteSlice;
-        let buf = alloc::format!(
-            "The value of \"{}\" is out of range. It must be {}. Received {}",
-            options.field_name.as_bstr(), options.msg.as_bstr(), value,
-        );
+    pub fn throw_range_error<V: bun_core::fmt::OutOfRangeValue>(&self, value: V, options: RangeErrorOptions<'_>) -> JsError {
+        // JSGlobalObject.zig:729 — `ERR(.OUT_OF_RANGE, "{}", bun.fmt.outOfRange(value, options)).throw()`.
+        // Delegate formatting to the ported `out_of_range` formatter so min/max/msg
+        // branching matches Zig.
+        let buf = alloc::format!("{}", bun_core::fmt::out_of_range(value, options));
         let zs = bun_string::ZigString::init_utf8(buf.as_bytes());
         // SAFETY: `self` is live; `zs` borrowed for the call.
         let err = unsafe { ZigString__toRangeErrorInstance(&zs, self) };
+        // Zig routes via `ERR(.OUT_OF_RANGE)` which tags `code: 'ERR_OUT_OF_RANGE'`.
+        if let Ok(code) = bun_string_jsc::create_utf8_for_js(self, b"ERR_OUT_OF_RANGE") {
+            err.put(self, b"code", code);
+        }
         self.throw_value(err)
     }
     pub fn throw_todo(&self, msg: &str) -> JsError {
-        self.throw(format_args!("TODO: {msg}"))
+        // JSGlobalObject.zig:52-59 — Error with raw `msg` (no prefix), then `name = "TODOError"`.
+        let err = self.create_error_instance(format_args!("{msg}"));
+        if let Ok(name) = bun_string_jsc::create_utf8_for_js(self, b"TODOError") {
+            err.put(self, b"name", name);
+        }
+        self.throw_value(err)
     }
     pub fn throw_invalid_arguments(&self, args: core::fmt::Arguments<'_>) -> JsError {
         // JSGlobalObject.zig:73 — `JSC::createInvalidThisError`-style TypeError.
@@ -1434,27 +1463,29 @@ pub mod array_buffer {
     crate::stub_ty!(JSCArrayBuffer, MarkedArrayBuffer);
 
     /// `jsc.ArrayBuffer` — slim mirror of array_buffer.zig:ArrayBuffer (extern struct).
+    /// Field order/sizes MUST match Zig exactly; this is an FFI out-param.
     #[repr(C)]
     #[derive(Debug, Clone, Copy)]
     pub struct ArrayBuffer {
         pub ptr: *mut u8,
-        pub offset: u32,
-        pub len: u32,
-        pub byte_len: u32,
-        pub typed_array_type: JSType,
+        pub len: usize,
+        pub byte_len: usize,
         pub value: JSValue,
+        pub typed_array_type: JSType,
         pub shared: bool,
+        /// True for resizable ArrayBuffer or growable SharedArrayBuffer.
+        pub resizable: bool,
     }
     impl Default for ArrayBuffer {
         fn default() -> Self {
             Self {
                 ptr: core::ptr::null_mut(),
-                offset: 0,
                 len: 0,
                 byte_len: 0,
-                typed_array_type: JSType::Cell,
                 value: JSValue::ZERO,
+                typed_array_type: JSType::Cell,
                 shared: false,
+                resizable: false,
             }
         }
     }
@@ -1472,17 +1503,17 @@ pub mod array_buffer {
         pub fn byte_slice(&self) -> &mut [u8] {
             if self.ptr.is_null() { return &mut []; }
             // SAFETY: `ptr`/`byte_len` were filled in by JSC for a live ArrayBuffer.
-            unsafe { core::slice::from_raw_parts_mut(self.ptr, self.byte_len as usize) }
+            unsafe { core::slice::from_raw_parts_mut(self.ptr, self.byte_len) }
         }
         pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> ArrayBuffer {
             ArrayBuffer {
                 ptr: bytes.as_mut_ptr(),
-                offset: 0,
-                len: bytes.len() as u32,
-                byte_len: bytes.len() as u32,
-                typed_array_type,
+                len: bytes.len(),
+                byte_len: bytes.len(),
                 value: JSValue::ZERO,
+                typed_array_type,
                 shared: false,
+                resizable: false,
             }
         }
         pub fn create_uint8_array(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {

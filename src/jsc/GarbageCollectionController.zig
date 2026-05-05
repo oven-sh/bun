@@ -43,8 +43,11 @@ pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
         }
     }
 
+    // init() runs from ensureWaker() before Transpiler.runEnvLoader() has
+    // copied the process environment into vm.transpiler.env, so read these
+    // directly from the OS environment.
     var gc_timer_interval: i32 = 1000;
-    if (vm.transpiler.env.get("BUN_GC_TIMER_INTERVAL")) |timer| {
+    if (bun.getenvZ("BUN_GC_TIMER_INTERVAL")) |timer| {
         if (std.fmt.parseInt(i32, timer, 10)) |parsed| {
             if (parsed > 0) {
                 gc_timer_interval = parsed;
@@ -53,7 +56,7 @@ pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
     }
     this.gc_timer_interval = gc_timer_interval;
 
-    if (vm.transpiler.env.get("BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS")) |val| {
+    if (bun.getenvZ("BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS")) |val| {
         if (std.fmt.parseInt(c_int, val, 10)) |parsed| {
             if (parsed >= 0) {
                 VirtualMachine.Bun__defaultRemainingRunsUntilSkipReleaseAccess = parsed;
@@ -61,7 +64,7 @@ pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
         } else |_| {}
     }
 
-    this.disabled = vm.transpiler.env.has("BUN_GC_TIMER_DISABLE");
+    this.disabled = bun.getenvZ("BUN_GC_TIMER_DISABLE") != null;
 
     if (!this.disabled)
         this.gc_repeating_timer.set(this, onGCRepeatingTimer, gc_timer_interval, gc_timer_interval);

@@ -8444,6 +8444,30 @@ declare module "bun" {
       timeout?: number;
     }
 
+    interface MouseButtonOptions {
+      /** @default "left" */
+      button?: "left" | "right" | "middle";
+      /** Modifier keys to hold during the event. */
+      modifiers?: Modifier[];
+      /** Click count for the event. @default 1 */
+      clickCount?: 1 | 2 | 3;
+    }
+
+    interface MouseMoveOptions {
+      /**
+       * Total number of `mousemove`/`pointermove` events dispatched from
+       * the current position to `(x, y)`, inclusive of the final event at
+       * the target. `1` = a single event at the target; larger values
+       * interpolate intermediate positions linearly. Drag handlers that
+       * observe `pointermove` at rAF rate want at least a handful;
+       * 5–20 is typical for smooth drags. Clamped to `[1, 1000]`.
+       * @default 1
+       */
+      steps?: number;
+      /** Modifier keys to hold during the move. */
+      modifiers?: Modifier[];
+    }
+
     interface ScrollToOptions {
       /**
        * Maximum time in milliseconds to wait for the element to exist.
@@ -8860,6 +8884,63 @@ declare module "bun" {
      * ```
      */
     click(selector: string, options?: WebView.ClickSelectorOptions): Promise<void>;
+
+    /**
+     * Move the pointer to the given viewport coordinates.
+     *
+     * Dispatches `options.steps` `mousemove`/`pointermove` events from
+     * the current pointer position to `(x, y)`, including the final
+     * event at the target. If a button is currently held (from a prior
+     * {@link mouseDown}), the browser treats each event as part of a
+     * drag: on WebKit it fires as a native `mouseDragged` NSEvent; on
+     * Chrome it's still a `mousemove` but with a non-zero `buttons`
+     * field, so DOM drag handlers (listening for `pointermove` with
+     * `e.buttons !== 0`) see the intermediate positions. This is NOT
+     * the HTML5 Drag and Drop API — no `dragstart`/`dragover` events
+     * fire unless a `draggable` element initiates them page-side.
+     *
+     * The pointer position is tracked internally — call
+     * {@link mouseMove} before {@link mouseDown}/{@link mouseUp} to
+     * position the cursor.
+     *
+     * As a standalone hover (no prior {@link mouseDown}), moves cursor
+     * to `(x, y)`. On the Chrome backend this fires plain
+     * `mousemove`/`pointermove` events, so `:hover` styles apply and
+     * cursor-CSS assertions work. On the WebKit backend (macOS
+     * default) it currently only updates the internal cursor position
+     * without dispatching a DOM event — use the Chrome backend if you
+     * need `:hover` or `mousemove` assertions without a button held.
+     *
+     * @example
+     * ```ts
+     * // Canvas drag: mouseMove → mouseDown → mouseMove(steps: 5) → mouseUp.
+     * await view.mouseMove(from.x, from.y);
+     * await view.mouseDown();
+     * await view.mouseMove(to.x, to.y, { steps: 5 });
+     * await view.mouseUp();
+     * ```
+     */
+    mouseMove(x: number, y: number, options?: WebView.MouseMoveOptions): Promise<void>;
+
+    /**
+     * Press a mouse button at the current pointer position.
+     *
+     * Uses the position last set by {@link mouseMove} (defaults to
+     * `(0, 0)` if never moved). Fires a `mousedown`/`pointerdown` event
+     * with `isTrusted: true` and holds the button down until
+     * {@link mouseUp}; between the two, {@link mouseMove} dispatches
+     * drag events.
+     */
+    mouseDown(options?: WebView.MouseButtonOptions): Promise<void>;
+
+    /**
+     * Release a mouse button at the current pointer position.
+     *
+     * Fires `mouseup`/`pointerup`. If the press and release share the
+     * same position, the browser synthesizes a `click` event as well —
+     * same as manual interaction.
+     */
+    mouseUp(options?: WebView.MouseButtonOptions): Promise<void>;
 
     /**
      * Insert text into the focused element.

@@ -334,6 +334,27 @@ void Host::dispatch(uint32_t viewId, Op op, Reader r)
         }
         return;
     }
+    case Op::MouseDown: {
+        auto p = decode<MouseDownPayload>(r);
+        if (auto* v = view(viewId, op)) {
+            if (!v->mouseDownIPC(p.x, p.y, p.button, p.modifiers, p.clickCount, p.buttonsMask)) writer.sendReply(viewId, Reply::Ack);
+        }
+        return;
+    }
+    case Op::MouseUp: {
+        auto p = decode<MouseUpPayload>(r);
+        if (auto* v = view(viewId, op)) {
+            if (!v->mouseUpIPC(p.x, p.y, p.button, p.modifiers, p.clickCount, p.buttonsMask)) writer.sendReply(viewId, Reply::Ack);
+        }
+        return;
+    }
+    case Op::MouseMove: {
+        auto p = decode<MouseMovePayload>(r);
+        if (auto* v = view(viewId, op)) {
+            if (!v->mouseMoveIPC(p.fromX, p.fromY, p.x, p.y, p.steps, p.buttonsMask, p.modifiers)) writer.sendReply(viewId, Reply::Ack);
+        }
+        return;
+    }
     }
     writer.sendReplyStr(viewId, Reply::Error, "unknown op"_s);
 }

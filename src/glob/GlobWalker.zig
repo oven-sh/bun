@@ -498,9 +498,27 @@ pub fn GlobWalker_(
                             const fd = switch (try Accessor.open(path)) {
                                 .err => |e| {
                                     if (e.getErrno() == bun.sys.E.NOTDIR) {
-                                        try this.walker.appendMatchedPathSymlink(path);
-                                        this.iter_state = .{ .matched = path };
-                                        return .success;
+                                        // `open(path, O_DIRECTORY)` returns
+                                        // NOTDIR both for a terminal
+                                        // non-directory (`/abs/file.txt`,
+                                        // entry exists — emit it) and for a
+                                        // mid-path non-directory
+                                        // (`/abs/file.txt/something`, path
+                                        // doesn't exist — Node returns `[]`).
+                                        // `lstat` disambiguates: succeeds for
+                                        // terminal, fails NOTDIR for mid-path.
+                                        // Same shape as the ELOOP arm below.
+                                        switch (Accessor.lstatat(.empty, path)) {
+                                            .result => {
+                                                try this.walker.appendMatchedPathSymlink(path);
+                                                this.iter_state = .{ .matched = path };
+                                                return .success;
+                                            },
+                                            .err => {
+                                                this.iter_state = .get_next;
+                                                return .success;
+                                            },
+                                        }
                                     }
                                     // Doesn't exist
                                     if (e.getErrno() == bun.sys.E.NOENT) {

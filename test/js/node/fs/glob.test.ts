@@ -471,11 +471,16 @@ describe("fs.glob edge cases", () => {
   });
 
   it("absolute all-literal patterns return the matched entry", () => {
-    // The absolute-literal fast-path in `Iterator.init()` handles three
-    // shapes: path-is-file (ENOTDIR from open), path-is-directory
-    // (open succeeds), path-is-missing (ENOENT → []). Each success-shaped
-    // arm must push into `matchedPaths` — otherwise `walk()` discards the
-    // `.matched` yield and the final array is empty. The directory arm
+    // The absolute-literal fast-path in `Iterator.init()` handles these
+    // shapes via `open(path, O_DIRECTORY)`:
+    //   * open succeeds                — path is a directory (emit unless
+    //                                    `only_files`)
+    //   * ENOTDIR, `lstat` succeeds    — terminal segment is a non-dir
+    //                                    (file, symlink-to-file) → emit
+    //   * ENOTDIR, `lstat` fails       — mid-path segment is a non-dir
+    //                                    (`/abs/file.txt/something`) → `[]`
+    //   * ENOENT                       — missing → `[]`
+    // Each emitting arm must push into `matchedPaths`; the directory arm
     // gates on `!only_files` so the public `Bun.Glob` default
     // (`onlyFiles: true`) still filters directories out.
     using dir = tempDir("glob-abs-literal", {
@@ -488,6 +493,10 @@ describe("fs.glob edge cases", () => {
     expect(fs.globSync(path.join(root, "file.txt"))).toStrictEqual([path.join(root, "file.txt")]);
     expect(fs.globSync(path.join(root, "subdir"))).toStrictEqual([path.join(root, "subdir")]);
     expect(fs.globSync(path.join(root, "does-not-exist"))).toStrictEqual([]);
+    // Mid-path traverses a file → ENOTDIR, path does not exist. Node
+    // throws; returning `[]` is strictly safer and consistent with the
+    // other missing-path shapes that go through `swallow_missing_cwd`.
+    expect(fs.globSync(path.join(root, "file.txt/something"))).toStrictEqual([]);
 
     // Public Bun.Glob (default onlyFiles: true) filters the directory.
     expect([...new Bun.Glob(path.join(root, "file.txt")).scanSync()]).toStrictEqual([path.join(root, "file.txt")]);

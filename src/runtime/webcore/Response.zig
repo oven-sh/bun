@@ -110,7 +110,7 @@ pub fn calculateEstimatedByteSize(this: *Response) void {
         @sizeOf(Response);
 }
 
-fn checkBodyStreamRef(this: *Response, globalObject: *JSGlobalObject) void {
+pub fn checkBodyStreamRef(this: *Response, globalObject: *JSGlobalObject) void {
     if (this.#js_ref.tryGet()) |js_value| {
         if (this.#body.value == .Locked) {
             if (this.#body.value.Locked.readable.get(globalObject)) |stream| {

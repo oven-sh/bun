@@ -400,6 +400,21 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
     expect(fs.globSync(path.join(String(dir), "loop"))).toStrictEqual([path.join(String(dir), "loop")]);
   });
 
+  it("absolute literal path pointing at a dangling symlink emits the symlink itself", () => {
+    // `open(path, O_DIRECTORY)` returns ENOENT for a dangling symlink
+    // (kernel follows the link, target missing) — same errno as a truly
+    // missing path. The absolute-literal fast-path's ENOENT arm
+    // disambiguates via `lstat`: succeeds (dirent exists) → emit like
+    // Node; fails ENOENT → `.get_next` → `[]`. Without the fallback the
+    // walker would return `[]` for dangling symlinks, diverging from
+    // Node's behavior.
+    using dir = tempDir("glob-dangling", {});
+    fs.symlinkSync("nonexistent-target", path.join(String(dir), "dangling"), "file");
+    expect(fs.globSync(path.join(String(dir), "dangling"))).toStrictEqual([path.join(String(dir), "dangling")]);
+    // Truly-missing path still returns [] (same arm, lstat fails).
+    expect(fs.globSync(path.join(String(dir), "does-not-exist"))).toStrictEqual([]);
+  });
+
   it("brace alternative that names a symlink still descends", () => {
     // `{link,dir}/*.txt` should yield matches for both branches; `link` is
     // a symlink. The walker's per-branch literal check sees `link` as a

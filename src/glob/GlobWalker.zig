@@ -598,10 +598,32 @@ pub fn GlobWalker_(
                                             },
                                         }
                                     }
-                                    // Doesn't exist
+                                    // `open(path, O_DIRECTORY)` returns ENOENT
+                                    // both for a truly-missing path (no
+                                    // dirent — `[]`) and for a *dangling*
+                                    // symlink (dirent exists, kernel
+                                    // follows the link, target is missing
+                                    // — Node emits the dirent). `lstat`
+                                    // disambiguates: succeeds for the
+                                    // dangling symlink, fails ENOENT for
+                                    // truly-missing. Same shape as the
+                                    // NOTDIR and ELOOP arms above/below.
                                     if (e.getErrno() == bun.sys.E.NOENT) {
-                                        this.iter_state = .get_next;
-                                        return .success;
+                                        switch (Syscall.lstat(path)) {
+                                            .result => |stat| {
+                                                if (trailing_sep and !bun.S.ISDIR(@intCast(stat.mode))) {
+                                                    this.iter_state = .get_next;
+                                                    return .success;
+                                                }
+                                                try this.walker.appendMatchedPathSymlink(emit_path);
+                                                this.iter_state = .{ .matched = emit_path };
+                                                return .success;
+                                            },
+                                            .err => {
+                                                this.iter_state = .get_next;
+                                                return .success;
+                                            },
+                                        }
                                     }
                                     // Windows: bare drive-relative roots like
                                     // `\` fall through `openat(.cwd(), "\\",

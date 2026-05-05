@@ -910,6 +910,40 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  describe("history file", () => {
+    // A history file written on Windows can contain CRLF line endings. Loading
+    // it must strip the trailing '\r' so entries don't carry a stray CR through
+    // recall, .history output, or the next save.
+    test("strips CRLF when loading existing history", async () => {
+      using dir = tempDir("repl-history-crlf", {
+        ".bun_repl_history": "old_one\r\nold_two\r\n",
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "repl"],
+        stdin: Buffer.from("new_three\n.exit\n"),
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...bunEnv,
+          TERM: "dumb",
+          NO_COLOR: "1",
+          HOME: String(dir),
+          USERPROFILE: String(dir), // Windows fallback
+        },
+      });
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
+
+      const saved = await Bun.file(path.join(String(dir), ".bun_repl_history")).text();
+      // Saved history must not preserve carriage returns from the original file.
+      expect(saved).not.toContain("\r");
+      expect(saved).toContain("old_one\n");
+      expect(saved).toContain("old_two\n");
+      expect(saved).toContain("new_three\n");
+    });
+  });
 });
 
 // Interactive terminal-based REPL tests

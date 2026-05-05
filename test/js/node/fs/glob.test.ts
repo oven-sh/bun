@@ -470,6 +470,22 @@ describe("fs.glob edge cases", () => {
     ]);
   });
 
+  it("absolute all-literal patterns return the matched entry", () => {
+    // The absolute-literal fast-path in `Iterator.init()` handles three
+    // shapes: path-is-file (ENOTDIR from open), path-is-directory
+    // (open succeeds), path-is-missing (ENOENT → []). Each success-shaped
+    // arm must push into `matchedPaths` — otherwise `walk()` discards the
+    // `.matched` yield and the final array is empty.
+    using dir = tempDir("glob-abs-literal", {
+      "file.txt": "x",
+      subdir: { ".keep": "" },
+    });
+    const root = String(dir);
+    expect(fs.globSync(path.join(root, "file.txt"))).toStrictEqual([path.join(root, "file.txt")]);
+    expect(fs.globSync(path.join(root, "subdir"))).toStrictEqual([path.join(root, "subdir")]);
+    expect(fs.globSync(path.join(root, "does-not-exist"))).toStrictEqual([]);
+  });
+
   it("consecutive separators in a pattern do not break matching", () => {
     // Node normalizes `a//b/*.txt` to `a/b/*.txt` in output; the walker
     // should accept the input pattern either way and yield the normalized

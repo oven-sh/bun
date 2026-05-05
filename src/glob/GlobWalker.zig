@@ -487,9 +487,18 @@ pub fn GlobWalker_(
                         // In that case we don't need to do any walking and can just open up the FS entry
                         if (starting_component_idx >= this.walker.patternComponents.items.len) {
                             const path = try this.walker.arena.allocator().dupeZ(u8, path_without_special_syntax);
+                            // All three success-shaped arms below set
+                            // `iter_state = .matched` AND push into
+                            // `matchedPaths`: the `next()` iterator yields
+                            // the path once from `.matched`, but
+                            // `GlobWalker.walk()` discards the yield and
+                            // `globWalkResultToJS` reads `matchedPaths.keys()`
+                            // — so the put is what actually populates the
+                            // result array for `scanSync`/`fs.glob`.
                             const fd = switch (try Accessor.open(path)) {
                                 .err => |e| {
                                     if (e.getErrno() == bun.sys.E.NOTDIR) {
+                                        try this.walker.appendMatchedPathSymlink(path);
                                         this.iter_state = .{ .matched = path };
                                         return .success;
                                     }
@@ -526,6 +535,7 @@ pub fn GlobWalker_(
                                 .result => |fd| fd,
                             };
                             _ = Accessor.close(fd);
+                            try this.walker.appendMatchedPathSymlink(path);
                             this.iter_state = .{ .matched = path };
                             return .success;
                         }

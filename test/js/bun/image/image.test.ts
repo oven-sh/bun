@@ -742,7 +742,12 @@ describe("Bun.Image", () => {
         `const b = Buffer.from(${JSON.stringify(fixture)}, "base64");` +
         `new Bun.Image(b).metadata().then(() => process.exit(0), e => process.exit(e?.code === "ERR_IMAGE_FORMAT_UNSUPPORTED" ? 2 : 1));`;
       try {
-        const p1 = Bun.spawnSync({ cmd: [bunExe(), "-e", probeScript], env: bunEnv, stdout: "ignore", stderr: "ignore" });
+        const p1 = Bun.spawnSync({
+          cmd: [bunExe(), "-e", probeScript],
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "ignore",
+        });
         if (p1.exitCode === 2) return false;
         // Encode probe: and does it have an AV1 encoder linked in?
         const pngB64 = Buffer.from(cornersPng).toString("base64");

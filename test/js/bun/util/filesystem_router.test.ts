@@ -569,3 +569,47 @@ it("throws a clean error for invalid route filenames (no use-after-free)", async
   expect(stdout.trim()).toBe("caught:Route is missing a closing bracket]");
   expect(exitCode).toBe(0);
 });
+
+it("FileSystemRouter finalize does not leak", async () => {
+  // FileSystemRouter.finalize previously called arena.deinit() but never freed the
+  // heap-allocated ArenaAllocator struct or the FileSystemRouter struct itself,
+  // leaking both on every GC'd instance.
+  //
+  // Use an empty pages dir so Route.parse is never called — that path appends to
+  // the global DirnameStore (separate, pre-existing behavior) which would add
+  // noise to the RSS measurement.
+  using dir = tempDir("fsr-finalize-leak", {
+    "pages/.keep": "",
+  });
+
+  const code = /* ts */ `
+    const pages = ${JSON.stringify(path.join(String(dir), "pages"))};
+
+    function churn(n) {
+      for (let i = 0; i < n; i++) {
+        new Bun.FileSystemRouter({ dir: pages, style: "nextjs" });
+      }
+      Bun.gc(true);
+    }
+
+    // warm up (directory cache, JIT, allocator pools)
+    churn(5000);
+    const before = process.memoryUsage.rss();
+
+    churn(80000);
+    const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+    console.error("RSS growth: " + growthMB.toFixed(2) + "MB");
+    if (growthMB > 16) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("leaked");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(0);
+}, 60_000);

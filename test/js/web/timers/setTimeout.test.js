@@ -359,8 +359,6 @@ it("setTimeout should not refresh after clearTimeout", done => {
 // Verify Timeout wrappers report their native size to JSC. Without this
 // wiring, vm.heap.extraMemorySize stays flat as timers are created, which
 // leaves the eden GC activity timer dark on otherwise-quiet workloads.
-// With it, each live JSTimeout contributes at least @sizeOf(TimeoutObject)
-// (floored to 512 bytes) to the accounting.
 //
 // Runs in a child process so the baseline isn't polluted by earlier tests
 // in this file (`extraMemorySize` accumulates across GCs for objects that
@@ -400,10 +398,12 @@ it("setTimeout reports native size to JSC heap (#30261)", async () => {
   expect(filteredStderr).toBe("");
 
   const delta = Number(stdout.trim());
-  // With the fix: ~512 bytes × 2000 timers = ~1,024,000 bytes reported via
-  // visitChildren. Without it: a few KB from unrelated JSC-internal
-  // growth. 512,000 sits an order of magnitude above the noise floor.
-  expect(delta).toBeGreaterThan(512_000);
+  // @sizeOf(TimeoutObject) is ~100 bytes in release, so 2000 timers × ~100
+  // bytes = ~200 KB. Debug/ASAN is larger (RefCount carries trace state).
+  // Without the estimatedSize wiring, delta is a few KB from unrelated
+  // JSC growth. 100_000 sits comfortably above the noise floor in every
+  // build mode.
+  expect(delta).toBeGreaterThan(100_000);
   expect(exitCode).toBe(0);
 }, 30_000);
 

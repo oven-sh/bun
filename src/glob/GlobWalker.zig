@@ -144,7 +144,16 @@ pub const SyscallAccessor = struct {
     };
 
     pub fn open(path: [:0]const u8) !Maybe(Handle) {
-        return switch (Syscall.open(path, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
+        // Route via `openat(.cwd(), ...)` rather than `Syscall.open` so the
+        // `O_DIRECTORY` flag is honored on Windows. The libuv path that
+        // `Syscall.open` takes on Windows silently drops `O_DIRECTORY`,
+        // which means opening a regular file with the flag succeeds
+        // (returns a file fd) instead of failing with `ENOTDIR`. The NT
+        // path `openat` takes uses `FILE_DIRECTORY_FILE` and maps
+        // `STATUS_NOT_A_DIRECTORY` → `ENOTDIR` correctly. On POSIX the
+        // two paths are identical (`Syscall.open` already delegates to
+        // `openat(.cwd(), ...)` there).
+        return switch (Syscall.openat(.cwd(), path, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
             .err => |err| .{ .err = err },
             .result => |fd| .{ .result = Handle{ .value = fd } },
         };

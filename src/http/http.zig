@@ -621,7 +621,13 @@ pub const Flags = packed struct(u32) {
     /// Set after the first H3 retry so a stale-session/GOAWAY race retries
     /// once on a fresh connection but never loops.
     h3_retried: bool = false,
-    _: u13 = 0,
+    /// Set by `fetch(url, { grpc: true })`: the request body is wrapped
+    /// in a gRPC Length-Prefixed Message, `te: trailers` and
+    /// `content-type: application/grpc` are injected, response trailers
+    /// are captured and merged into the response headers, and the
+    /// response body is unwrapped. Implies `force_http2`.
+    grpc: bool = false,
+    _: u12 = 0,
 };
 
 // TODO: reduce the size of this struct
@@ -3232,6 +3238,7 @@ pub const InitError = @import("./InitError.zig").InitError;
 pub const HTTPRequestBody = @import("./HTTPRequestBody.zig").HTTPRequestBody;
 pub const SendFile = @import("./SendFile.zig");
 pub const HeaderValueIterator = @import("./HeaderValueIterator.zig");
+pub const Grpc = @import("./Grpc.zig");
 pub const H2 = @import("./H2Client.zig");
 pub const H2Wire = @import("./H2FrameParser.zig");
 pub const H3 = @import("./H3Client.zig");

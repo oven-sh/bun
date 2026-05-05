@@ -22,6 +22,17 @@ decoded_headers: std.ArrayListUnmanaged(picohttp.Header) = .{},
 /// Final (non-1xx) status code; 0 until the response HEADERS arrive.
 status_code: u32 = 0,
 
+/// Trailers (a second HEADERS after the response body). Only captured
+/// when `client.flags.grpc` — every other consumer discards them.
+/// Backed by `trailers_bytes`; kept separate from `decoded_bytes` so
+/// appending here never reallocs under the `decoded_headers` slices.
+trailers_bytes: std.ArrayListUnmanaged(u8) = .{},
+trailers: std.ArrayListUnmanaged(picohttp.Header) = .{},
+/// Owned gRPC Length-Prefixed request body (`Grpc.frameMessage` output)
+/// when the original was an inline `.bytes` body. `pending_body` borrows
+/// from this instead of `client.state.request_body`.
+grpc_framed_body: []u8 = &.{},
+
 state: State = .open,
 /// `.closed` was reached via RST_STREAM (sent or received). Kept distinct
 /// from `state` so `rst()` stays idempotent (never answers an inbound RST,
@@ -66,6 +77,9 @@ pub fn deinit(this: *@This()) void {
     this.body_buffer.deinit(bun.default_allocator);
     this.decoded_bytes.deinit(bun.default_allocator);
     this.decoded_headers.deinit(bun.default_allocator);
+    this.trailers_bytes.deinit(bun.default_allocator);
+    this.trailers.deinit(bun.default_allocator);
+    if (this.grpc_framed_body.len > 0) bun.default_allocator.free(this.grpc_framed_body);
     bun.destroy(this);
 }
 

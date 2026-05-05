@@ -1179,6 +1179,10 @@ pub const FetchTasklet = struct {
         fetch_tasklet.http.?.client.flags.force_http2 = fetch_options.force_http2;
         fetch_tasklet.http.?.client.flags.force_http3 = fetch_options.force_http3;
         fetch_tasklet.http.?.client.flags.force_http1 = fetch_options.force_http1;
+        fetch_tasklet.http.?.client.flags.grpc = fetch_options.grpc;
+        // gRPC uses `grpc-encoding` for per-message compression, not
+        // `Content-Encoding`; keep the h1/h2 body pipeline out of it.
+        if (fetch_options.grpc) fetch_tasklet.http.?.client.flags.disable_decompression = true;
         fetch_tasklet.is_waiting_request_stream_start = isStream;
         if (isStream) {
             const buffer = http.ThreadSafeStreamBuffer.new(.{});
@@ -1370,6 +1374,7 @@ pub const FetchTasklet = struct {
         force_http2: bool = false,
         force_http3: bool = false,
         force_http1: bool = false,
+        grpc: bool = false,
     };
 
     pub fn queue(

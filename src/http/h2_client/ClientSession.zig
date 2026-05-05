@@ -656,6 +656,8 @@ fn deliverStream(this: *ClientSession, stream: *Stream) bool {
         return true;
     }
 
+    if (client.flags.grpc) return this.deliverStreamGrpc(stream, client);
+
     if (stream.headers_ready) {
         stream.headers_ready = false;
         const result = this.applyHeaders(stream, client) catch |err| {
@@ -751,6 +753,67 @@ fn deliverStream(this: *ClientSession, stream: *Stream) bool {
     }
 
     return false;
+}
+
+/// gRPC variant of `deliverStream`: the Response is not surfaced until
+/// END_STREAM so trailers (`grpc-status` / `grpc-message`) can be merged
+/// into the header list. The accumulated DATA is de-framed in place so
+/// JS sees the bare payload.
+fn deliverStreamGrpc(this: *ClientSession, stream: *Stream, client: *HTTPClient) bool {
+    if (stream.headers_ready) {
+        stream.headers_ready = false;
+        _ = this.applyHeaders(stream, client) catch |err| {
+            stream.rst(.CANCEL);
+            _ = this.flush() catch {};
+            stream.client = null;
+            client.h2 = null;
+            client.failFromH2(err);
+            return true;
+        };
+        // gRPC responses never carry Content-Length; drop anything
+        // handleResponseMetadata parsed so finishStream's §8.1.1 check
+        // and isDone() don't terminate early.
+        client.state.content_length = null;
+    }
+    if (!stream.remoteClosed()) return false;
+
+    // gRPC delivers `grpc-status` either in the initial HEADERS
+    // ("Trailers-Only") or in a trailing HEADERS. Merge both into the
+    // outgoing header list so JS reads `response.headers.get("grpc-status")`
+    // without caring which shape the server used.
+    const total = stream.decoded_headers.items.len + stream.trailers.items.len;
+    var merged = bun.handleOom(bun.default_allocator.alloc(picohttp.Header, total));
+    @memcpy(merged[0..stream.decoded_headers.items.len], stream.decoded_headers.items);
+    @memcpy(merged[stream.decoded_headers.items.len..], stream.trailers.items);
+    defer bun.default_allocator.free(merged);
+    client.state.pending_response = .{
+        .minor_version = 0,
+        .status_code = stream.status_code,
+        .status = "",
+        .headers = .{ .list = merged },
+        .bytes_read = 0,
+    };
+
+    // Strip the 5-byte Length-Prefixed-Message header(s). Only the first
+    // message's payload is delivered; extra messages (server-streaming)
+    // are discarded in unary mode. A truncated frame means the server
+    // ended DATA mid-message — surface the bytes as-is so callers can
+    // diagnose rather than silently dropping.
+    var body: []const u8 = stream.body_buffer.items;
+    if (HTTPClient.Grpc.parseMessage(body)) |msg| body = msg.payload;
+
+    stream.client = null;
+    client.h2 = null;
+    client.cloneMetadata();
+    client.state.flags.received_last_chunk = true;
+    if (body.len > 0) {
+        _ = client.handleResponseBody(body, false) catch |err| {
+            client.failFromH2(err);
+            return true;
+        };
+    }
+    client.progressUpdate(true, this.ctx, this.socket);
+    return true;
 }
 
 /// Terminal delivery: enforce the announced Content-Length (RFC 9113

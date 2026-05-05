@@ -173,16 +173,37 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
 
             // we need to add support for the backlog parameter on listen here we use the
             // default value of nodejs
-            const named_pipe = WindowsNamedPipeListeningContext.listen(
+            const named_pipe = switch (WindowsNamedPipeListeningContext.listen(
                 globalObject,
                 pipe_name,
                 511,
                 ssl,
                 this,
-            ) catch return globalObject.throwInvalidArguments(
-                "Failed to listen at {s}",
-                .{pipe_name},
-            );
+            )) {
+                .ok => |ctx| ctx,
+                .listen_error, .init_error => |sys_err| {
+                    // Surface a Node-compatible `Error` with `.code`, `.errno`,
+                    // `.syscall`, and `.address` so `net.Server`'s 'error'
+                    // event receives `EADDRINUSE` (etc.) instead of a
+                    // generic `TypeError`. The sync throw is caught in
+                    // `node:net`'s `Server.prototype.listen` and re-emitted
+                    // via `setTimeout` as the async 'error' event.
+                    //
+                    // `toSystemError().toErrorInstance()` builds the standard
+                    // "listen EADDRINUSE: address already in use" message and
+                    // populates `.code`, `.errno`, `.syscall`. Force the
+                    // syscall tag to `listen` — libuv reports `bind2` for
+                    // `uv_pipe_bind2`, but Node surfaces the listen step
+                    // (which bundles bind+listen) as `listen`.
+                    const err = sys_err.withPathAndSyscall(pipe_name, .listen).toSystemError().toErrorInstance(globalObject);
+                    err.put(globalObject, ZigString.static("address"), ZigString.initUTF8(pipe_name).toJS(globalObject));
+                    return globalObject.throwValue(err);
+                },
+                .invalid_ssl_options => return globalObject.throwInvalidArguments(
+                    "Invalid SSL options for named pipe listener at {s}",
+                    .{pipe_name},
+                ),
+            };
             this.listener = .{ .namedPipe = named_pipe };
 
             const this_value = this.toJS(globalObject);
@@ -972,6 +993,22 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
     ctx: ?*BoringSSL.SSL_CTX = null, // server reuses the same ctx
     pub const new = bun.TrivialNew(WindowsNamedPipeListeningContext);
 
+    /// Outcome of `listen()`. On failure, the caller gets the specific libuv
+    /// error (if any) so it can surface a Node-compatible `Error` with
+    /// `.code = 'EADDRINUSE'`, `.errno`, `.syscall = 'listen'`, etc. —
+    /// matching Node's `net.Server` 'error' event contract.
+    pub const ListenResult = union(enum) {
+        ok: *WindowsNamedPipeListeningContext,
+        /// `uv_pipe_bind2` / `uv_listen` failed. `err` carries the errno and
+        /// syscall tag from libuv.
+        listen_error: bun.sys.Error,
+        /// `uv_pipe_init` failed. Rare; not a user-reachable condition in
+        /// practice (OOM or invalid loop).
+        init_error: bun.sys.Error,
+        /// `createSSLContext` failed — malformed cert/key options.
+        invalid_ssl_options,
+    };
+
     fn onClientConnect(this: *WindowsNamedPipeListeningContext, status: uv.ReturnCode) void {
         if (status != uv.ReturnCode.zero or this.vm.isShuttingDown() or this.listener == null) {
             // connection dropped or vm is shutting down or we are deiniting/closing
@@ -1012,19 +1049,12 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
         backlog: i32,
         ssl_config: ?*const SSLConfig,
         listener: *Listener,
-    ) !*WindowsNamedPipeListeningContext {
+    ) ListenResult {
         const this = WindowsNamedPipeListeningContext.new(.{
             .globalThis = globalThis,
             .vm = globalThis.bunVM(),
             .listener = listener,
         });
-        var pipe_initialized = false;
-        errdefer {
-            // Once the uv pipe handle is registered with the loop it must be closed via
-            // uv_close; before that point we can free the struct directly. `deinit()` also
-            // frees the SSL context if one was created.
-            if (pipe_initialized) this.closePipeAndDeinit() else this.deinit();
-        }
 
         if (ssl_config) |ssl_options| {
             bun.BoringSSL.load();
@@ -1032,27 +1062,42 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
             const ctx_opts: uws.SocketContext.BunSocketContextOptions = ssl_options.asUSockets();
             var err: uws.create_bun_socket_error_t = .none;
             // Create SSL context using uSockets to match behavior of node.js
-            this.ctx = ctx_opts.createSSLContext(&err) orelse return error.InvalidOptions;
+            this.ctx = ctx_opts.createSSLContext(&err) orelse {
+                this.deinit();
+                return .invalid_ssl_options;
+            };
         }
 
-        const initResult = this.uvPipe.init(this.vm.uvLoop(), false);
-        if (initResult == .err) {
-            return error.FailedToInitPipe;
+        const init_result = this.uvPipe.init(this.vm.uvLoop(), false);
+        if (init_result == .err) {
+            const init_err = init_result.err;
+            this.deinit();
+            return .{ .init_error = init_err };
         }
-        pipe_initialized = true;
-        if (path[path.len - 1] == 0) {
-            // is already null terminated
-            const slice_z = path[0 .. path.len - 1 :0];
-            this.uvPipe.listenNamedPipe(slice_z, backlog, this, onClientConnect).unwrap() catch return error.FailedToBindPipe;
-        } else {
-            var path_buf: bun.PathBuffer = undefined;
-            // we need to null terminate the path
-            const len = @min(path.len, path_buf.len - 1);
+        // The uv pipe handle is now registered with the loop; any failure
+        // from here on must go through uv_close so the handle_queue stays
+        // consistent. `closePipeAndDeinit` does that and frees `this` via
+        // `onPipeClosed` once libuv drains.
+        const listen_result = blk: {
+            if (path[path.len - 1] == 0) {
+                // is already null terminated
+                const slice_z = path[0 .. path.len - 1 :0];
+                break :blk this.uvPipe.listenNamedPipe(slice_z, backlog, this, onClientConnect);
+            } else {
+                var path_buf: bun.PathBuffer = undefined;
+                // we need to null terminate the path
+                const len = @min(path.len, path_buf.len - 1);
 
-            @memcpy(path_buf[0..len], path[0..len]);
-            path_buf[len] = 0;
-            const slice_z = path_buf[0..len :0];
-            this.uvPipe.listenNamedPipe(slice_z, backlog, this, onClientConnect).unwrap() catch return error.FailedToBindPipe;
+                @memcpy(path_buf[0..len], path[0..len]);
+                path_buf[len] = 0;
+                const slice_z = path_buf[0..len :0];
+                break :blk this.uvPipe.listenNamedPipe(slice_z, backlog, this, onClientConnect);
+            }
+        };
+        if (listen_result == .err) {
+            const listen_err = listen_result.err;
+            this.closePipeAndDeinit();
+            return .{ .listen_error = listen_err };
         }
         //TODO: add readableAll and writableAll support if someone needs it
         // if(uv.uv_pipe_chmod(&this.uvPipe, uv.UV_WRITABLE | uv.UV_READABLE) != 0) {
@@ -1060,22 +1105,7 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
         // return error.FailedChmodPipe;
         //}
 
-        return this;
-    }
-
-    fn runEvent(this: *WindowsNamedPipeListeningContext) void {
-        switch (this.task_event) {
-            .deinit => {
-                this.deinit();
-            },
-            .none => @panic("Invalid event state"),
-        }
-    }
-
-    fn deinitInNextTick(this: *WindowsNamedPipeListeningContext) void {
-        bun.assert(this.task_event != .deinit);
-        this.task_event = .deinit;
-        this.vm.enqueueTask(jsc.Task.init(&this.task));
+        return .{ .ok = this };
     }
 
     fn deinit(this: *WindowsNamedPipeListeningContext) void {

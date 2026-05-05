@@ -18,14 +18,14 @@ describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
         socket: { data() {}, open() {}, close() {}, error() {} },
       });
 
-      let threw = false;
+      let threw;
       try {
         Bun.listen({
           unix: pipe,
           socket: { data() {}, open() {}, close() {}, error() {} },
         });
       } catch (e) {
-        threw = true;
+        threw = e;
       }
 
       first.stop(true);
@@ -35,8 +35,17 @@ describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
         process.exit(1);
       }
 
+      // The thrown error must match Node's 'listen EADDRINUSE' shape so
+      // node:net can re-emit it on the 'error' event with the right code.
+      const result = {
+        code: threw.code,
+        syscall: threw.syscall,
+        address: threw.address,
+        errnoType: typeof threw.errno,
+      };
+      console.log(JSON.stringify(result));
+
       Bun.gc(true);
-      console.log("OK");
     `;
 
     await using proc = Bun.spawn({
@@ -53,12 +62,84 @@ describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect({
-      stdout: stdout.trim(),
+      shape: JSON.parse(stdout.trim() || "null"),
       stderr: stderr.trim(),
       exitCode,
       signalCode: proc.signalCode ?? null,
-    }).toMatchObject({
-      stdout: "OK",
+    }).toEqual({
+      shape: {
+        code: "EADDRINUSE",
+        syscall: "listen",
+        address: expect.stringMatching(/^\\\\\.\\pipe\\bun-test-named-pipe-/),
+        errnoType: "number",
+      },
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // Regression test for https://github.com/oven-sh/bun/issues/30265 — a second
+  // `net.createServer().listen(<named-pipe>)` against an already-owned pipe
+  // used to panic with "Internal assertion failure" (Zig tagged-union partial
+  // write in the errdefer cleanup path). After that was fixed, the error
+  // arrived on `'error'` but as a generic `TypeError: Failed to listen at …`,
+  // missing `.code`, `.errno`, `.syscall`, `.address`. Node delivers
+  // `listen EADDRINUSE: address already in use <pipe>` with those fields;
+  // this test locks that contract down.
+  test("net.createServer().listen(pipe) emits 'error' with EADDRINUSE on busy pipe", async () => {
+    const src = /* js */ `
+      const { createServer } = require("node:net");
+      const pipe = "\\\\\\\\.\\\\pipe\\\\bun-test-net-listen-" + Math.random().toString(36).slice(2);
+
+      const first = createServer(() => {});
+      first.on("error", err => {
+        console.error("first listen errored:", err);
+        process.exit(2);
+      });
+      first.listen(pipe, () => {
+        const second = createServer(() => {});
+        second.on("error", err => {
+          const result = {
+            code: err.code,
+            syscall: err.syscall,
+            address: err.address,
+            errnoType: typeof err.errno,
+            messageHasCode: err.message.includes("EADDRINUSE"),
+            messageHasAddress: err.message.includes(pipe),
+          };
+          console.log(JSON.stringify(result));
+          first.close();
+        });
+        second.listen(pipe);
+      });
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15_000,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({
+      shape: JSON.parse(stdout.trim() || "null"),
+      stderr: stderr.trim(),
+      exitCode,
+      signalCode: proc.signalCode ?? null,
+    }).toEqual({
+      shape: {
+        code: "EADDRINUSE",
+        syscall: "listen",
+        address: expect.stringMatching(/^\\\\\.\\pipe\\bun-test-net-listen-/),
+        errnoType: "number",
+        messageHasCode: true,
+        messageHasAddress: true,
+      },
+      stderr: "",
       exitCode: 0,
       signalCode: null,
     });

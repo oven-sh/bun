@@ -349,6 +349,25 @@ throughput.
 - `bun.handleOom(expr)` → `expr` (Rust `Vec`/`Box` allocation aborts on OOM;
   `handleOom` was Zig's panic-on-OOM wrapper, which is now the default).
 
+## Forbidden patterns
+
+Never write these. The verify gate flags them as `logic-bug`.
+
+- **`Box::leak` / `mem::forget`** to satisfy a `&'static` lifetime — the field
+  should be `Box<[T]>` / `Vec<T>` / `Cow<'static, [T]>`, not `&'static [T]`.
+  If the Zig freed it (via arena or `deinit`), Rust must too.
+  **Only exception:** a true process-lifetime singleton, and even then use
+  `OnceLock<T>` / `LazyLock<T>`, never `Box::leak`.
+- **`ManuallyDrop<T>`** without a paired `unsafe { ManuallyDrop::drop(..) }` or
+  `into_inner` on every exit path. If you can't point to where it drops, it
+  leaks. Prefer an `enum` over a `union`+`ManuallyDrop`.
+- **`unsafe { &*(p as *const _) }` to extend a lifetime** — same as leak. Fix
+  the ownership.
+- **`.clone()` on a `&[u8]` / `Vec` just to escape a borrow** — restructure
+  (capture-len-then-reslice) or change the field type.
+- **`todo!()` / `unimplemented!()` in a non-gated, non-`#[cfg(test)]` fn** that
+  the `.zig` has real logic for and no higher-tier dep blocks it.
+
 ## Concurrency
 
 Rust enforces thread-safety at compile time via `Send`/`Sync` auto-traits.

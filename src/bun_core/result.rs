@@ -4,7 +4,7 @@
 // surface stays in bun_sys (which `impl ErrName for bun_core::Error` per
 // movein-skipped [bun_core] entry).
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Error {
     pub errno: i32,
     pub syscall: u16, // bun_sys::Syscall::Tag — opaque at this tier

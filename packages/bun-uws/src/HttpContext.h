@@ -408,14 +408,17 @@ private:
         /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
         if (httpErrorStatusCode) {
             if(httpContextData->onClientError) {
+                /* Uncork BEFORE calling onClientError so any corked responses
+                 * from prior pipelined requests in the same packet are flushed
+                 * to the kernel first — the JS handler's response goes through
+                 * the raw socket write path (not the cork buffer), so without
+                 * this the responses would be delivered out of order. */
+                ((AsyncSocket<SSL> *) s)->uncork();
                 httpContextData->onClientError(SSL, s, result.parserError, data, length);
                 /* The handler takes responsibility for the socket lifecycle.
                  * Unref so the socket doesn't keep the event loop alive
-                 * (balances the us_socket_ref at the top of on_data).
-                 * Uncork so any data written by the handler gets flushed.
-                 * uncork() is safe on a closed socket. */
+                 * (balances the us_socket_ref at the top of on_data). */
                 us_socket_unref(s);
-                ((AsyncSocket<SSL> *) s)->uncork();
                 return s;
             }
             /* For errors, we only deliver them "at most once". We don't care if they get halfways delivered or not. */

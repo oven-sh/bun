@@ -683,16 +683,32 @@ struct Http2Context {
 
     void handleWindowUpdate(us_socket_t *s, uint32_t stream, const char *p, uint32_t len) {
         if (len != 4) return protocolError(s, h2::ERR_FRAME_SIZE);
+        Http2Connection *c = conn(s);
+        /* §5.1: any frame other than HEADERS/PRIORITY on an idle stream
+         * is a connection PROTOCOL_ERROR. On a *closed* stream
+         * WINDOW_UPDATE is a permitted race (§5.1 "An endpoint MUST
+         * ignore WINDOW_UPDATE or RST_STREAM frames received in this
+         * state") — falls through to the find()-miss below. Checking
+         * here also stops abortStream() in the inc==0 branch from
+         * emitting an RST_STREAM on an idle stream, which is itself a
+         * §6.4 violation. */
+        if (stream != 0 && stream > c->lastStreamId)
+            return protocolError(s, h2::ERR_PROTOCOL);
         uint32_t inc = (((uint32_t)(unsigned char) p[0] & 0x7f) << 24) |
                        ((uint32_t)(unsigned char) p[1] << 16) |
                        ((uint32_t)(unsigned char) p[2] << 8) |
                        (uint32_t)(unsigned char) p[3];
         if (inc == 0) {
+            /* §6.9: zero increment is a connection error on stream 0,
+             * a stream error otherwise. Idle is rejected above; on a
+             * closed stream §5.1 says MUST ignore, so don't let
+             * abortStream's unconditional RST fire on a stream we
+             * already forgot. */
             if (stream == 0) return protocolError(s, h2::ERR_PROTOCOL);
-            abortStream(s, stream, h2::ERR_PROTOCOL);
+            if (c->streams.find(stream) != c->streams.end())
+                abortStream(s, stream, h2::ERR_PROTOCOL);
             return;
         }
-        Http2Connection *c = conn(s);
         if (stream == 0) {
             if ((int64_t) c->connSendWindow + inc > 0x7fffffff)
                 return protocolError(s, h2::ERR_FLOW_CONTROL);
@@ -977,7 +993,14 @@ struct Http2Context {
         if (len != 4) return protocolError(s, h2::ERR_FRAME_SIZE);
         Http2Connection *c = conn(s);
         auto it = c->streams.find(stream);
-        if (it == c->streams.end()) return;
+        if (it == c->streams.end()) {
+            /* §6.4/§5.1: RST_STREAM on an idle stream is a connection
+             * PROTOCOL_ERROR; on a closed stream it's a permitted race
+             * ("An endpoint MUST ignore … RST_STREAM frames received
+             * in this state"). */
+            if (stream > c->lastStreamId) return protocolError(s, h2::ERR_PROTOCOL);
+            return;
+        }
         Http2Response *r = it->second;
         Http2ResponseData *d = r->getHttpResponseData();
         c->streams.erase(it);

@@ -421,6 +421,47 @@ describe("Bun.serve h2: true", () => {
     });
   });
 
+  test("RST_STREAM / WINDOW_UPDATE on an idle stream → GOAWAY(PROTOCOL_ERROR)", async () => {
+    // RFC 9113 §5.1 (idle): "Receiving any frame other than HEADERS or
+    // PRIORITY on a stream in this state MUST be treated as a connection
+    // error of type PROTOCOL_ERROR." §6.4 repeats it for RST_STREAM.
+    // The *closed* case is distinct: §5.1 explicitly permits late
+    // RST_STREAM/WINDOW_UPDATE there as a race allowance.
+    const u32 = (v: number) => {
+      const b = Buffer.alloc(4);
+      b.writeUInt32BE(v, 0);
+      return b;
+    };
+    for (const [label, type, payload] of [
+      ["RST_STREAM", 0x03, u32(0)], // error code = 0
+      ["WINDOW_UPDATE", 0x08, u32(1)], // non-zero increment
+      ["WINDOW_UPDATE inc=0", 0x08, u32(0)], // §6.9 stream error — but on idle → connection error
+    ] as const) {
+      await withServer(async port => {
+        const h2 = await rawH2(port);
+        // Open and complete stream 1 so lastStreamId=1; then target stream 3 (idle).
+        h2.request(1, "GET", "/hello", true);
+        await h2.waitFor(f => f.sid === 1 && f.type === 0x00 && (f.flags & 0x1) !== 0);
+        const seen = h2.frames.length;
+        // Late frame on closed stream 1 → §5.1 MUST ignore. No GOAWAY, and
+        // no RST back on stream 1 either (would itself break §5.1's
+        // "MUST NOT send frames other than PRIORITY on a closed stream").
+        h2.sock.write(h2.frame(type, 0, 1, payload));
+        await h2.pong();
+        expect(
+          h2.frames.slice(seen).some(f => f.type === 0x07 || (f.type === 0x03 && f.sid === 1)),
+          `${label} on closed stream 1`,
+        ).toBe(false);
+        // Same frame on idle stream 3 → connection error.
+        h2.sock.write(h2.frame(type, 0, 3, payload));
+        const goaway = await h2.waitFor(f => f.type === 0x07);
+        expect(goaway.payload.readUInt32BE(4), `${label} on idle stream 3`).toBe(1);
+        h2.sock.on("error", () => {});
+        h2.sock.destroy();
+      });
+    }
+  });
+
   test("raising SETTINGS_INITIAL_WINDOW_SIZE drains backpressured streams", async () => {
     // RFC 9113 §6.9.2: a change to INITIAL_WINDOW_SIZE adjusts every
     // open stream's send window — equivalent to a per-stream

@@ -18,6 +18,7 @@ pub struct Block {
     pub close_brace_loc: logger::Loc, // = logger::Loc::EMPTY
 }
 
+#[derive(Default)]
 pub struct SExpr {
     pub value: ExprNodeIndex,
 
@@ -40,6 +41,7 @@ pub struct ExportClause {
     pub is_single_line: bool,
 }
 
+#[derive(Clone, Copy, Default)]
 pub struct Empty {}
 
 pub struct ExportStar {
@@ -59,8 +61,10 @@ pub struct Label {
 }
 
 /// This is a stand-in for a TypeScript type declaration
+#[derive(Clone, Copy, Default)]
 pub struct TypeScript {}
 
+#[derive(Clone, Copy, Default)]
 pub struct Debugger {}
 
 pub struct ExportFrom {
@@ -76,6 +80,9 @@ pub struct ExportDefault {
 }
 
 impl ExportDefault {
+    // TODO(b2-ast-round-C): forwards to `Expr::can_be_moved` /
+    // `G::Class::can_be_moved` (gated until Expr.rs methods un-gate).
+    #[cfg(any())]
     pub fn can_be_moved(&self) -> bool {
         match &self.value {
             StmtOrExpr::Expr(e) => e.can_be_moved(),
@@ -207,7 +214,7 @@ pub struct Throw {
 #[derive(Default)]
 pub struct Local {
     pub kind: Kind, // = Kind::KVar
-    pub decls: G::decl::List, // = .{}
+    pub decls: G::DeclList, // = .{}
     pub is_export: bool, // = false
     /// The TypeScript compiler doesn't generate code for "import foo = bar"
     /// statements where the import is never used.

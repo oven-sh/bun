@@ -59,10 +59,11 @@ impl ASTMemoryAllocator {
         self.previous = ptr::null_mut();
     }
 
-    pub fn append<T>(&self, value: T) -> &mut T {
+    pub fn append<T>(&self, value: T) -> crate::ast::StoreRef<T> {
         // Zig: `this.bump_allocator.create(ValueType) catch unreachable; ptr.* = value;`
         // bumpalo's `alloc` aborts on OOM, matching `catch unreachable`.
-        self.arena.alloc(value)
+        // SAFETY: bumpalo never returns null.
+        crate::ast::StoreRef::from_bump(self.arena.alloc(value))
     }
 
     /// Initialize ASTMemoryAllocator as `undefined`, and call this.

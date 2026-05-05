@@ -13,8 +13,8 @@ use bun_collections::BabyList;
 use bun_core as core_;
 use bun_logger as logger;
 use bun_options_types::ImportRecord;
-use bun_str::strings;
-use bun_str::ZigString;
+use bun_string::strings;
+use bun_string::ZigString;
 
 use crate::ast::{
     self as js_ast, Expr, ExprNodeIndex, ExprNodeList, Flags, G, Op, OptionalChain, Ref, StoreRef,
@@ -64,6 +64,10 @@ impl Default for Array {
         }
     }
 }
+// TODO(b2-ast-round-C): Array methods call `BabyList::init_capacity(bump, n)`
+// (signature mismatch: BabyList takes only `n`; AST-crate variant with bump
+// arena pending) and `Expr::Data::*` deep matches. Un-gate with parser round.
+#[cfg(any())]
 impl Array {
     pub fn push(&mut self, bump: &Bump, item: Expr) -> Result<(), AllocError> {
         self.items.append(bump, item)
@@ -86,10 +90,10 @@ impl Array {
         let mut remain = out.slice_mut();
         for item in self.items.slice() {
             match &item.data {
-                Expr::Data::ESpread(val) => {
-                    if let Expr::Data::EArray(inner) = &val.value.data {
+                crate::ast::expr::Data::ESpread(val) => {
+                    if let crate::ast::expr::Data::EArray(inner) = &val.value.data {
                         for inner_item in inner.items.slice() {
-                            if matches!(inner_item.data, Expr::Data::EMissing(_)) {
+                            if matches!(inner_item.data, crate::ast::expr::Data::EMissing(_)) {
                                 remain[0] = Expr::init(Undefined {}, inner_item.loc);
                                 remain = &mut remain[1..];
                             } else {
@@ -124,20 +128,17 @@ impl Array {
     pub fn alphabetize_strings(&mut self) {
         if cfg!(debug_assertions) {
             for item in self.items.slice() {
-                debug_assert!(matches!(item.data, Expr::Data::EString(_)));
+                debug_assert!(matches!(item.data, crate::ast::expr::Data::EString(_)));
             }
         }
         self.items.slice_mut().sort_by(array_sorter_is_less_than);
     }
 }
 
-fn array_sorter_is_less_than(lhs: &Expr, rhs: &Expr) -> Ordering {
-    // Zig: strings.cmpStringsAsc(ctx, lhs.data.e_string.data, rhs.data.e_string.data)
-    strings::cmp_strings_asc(lhs.data.e_string().data, rhs.data.e_string().data)
-}
+// (was: array_sorter_is_less_than — moved into the gated Array impl above)
 
 pub struct Unary {
-    pub op: Op::Code,
+    pub op: crate::ast::OpCode,
     pub value: ExprNodeIndex,
     pub flags: UnaryFlags,
 }
@@ -184,7 +185,7 @@ bitflags::bitflags! {
 pub struct Binary {
     pub left: ExprNodeIndex,
     pub right: ExprNodeIndex,
-    pub op: Op::Code,
+    pub op: crate::ast::OpCode,
 }
 
 #[derive(Clone, Copy)]
@@ -229,6 +230,7 @@ pub struct ImportMetaMain {
     pub inverted: bool,
 }
 
+#[derive(Clone, Copy)]
 pub enum Special {
     /// emits `exports` or `module.exports` depending on `commonjs_named_exports_deoptimized`
     ModuleExports,
@@ -244,7 +246,8 @@ pub enum Special {
     /// when passed strings. Printed as `hmr.acceptSpecifiers`
     HotAcceptVisited,
     /// Prints the resolved specifier string for an import record.
-    ResolvedSpecifierString(ImportRecord::Index),
+    /// Zig: `resolved_specifier_string: ImportRecord.Index` (a `u32`).
+    ResolvedSpecifierString(u32),
 }
 
 pub struct Call {
@@ -335,6 +338,10 @@ pub struct Arrow {
     pub prefer_expr: bool,
 }
 impl Arrow {
+    // TODO(port): the Zig `pub const noop_return_undefined` was a value const.
+    // `G::Fn`/`G::FnBody` field shapes (round-A) need confirming before
+    // stamping a default; un-gate once Arrow's struct fields are settled.
+    #[cfg(any())]
     pub const NOOP_RETURN_UNDEFINED: Arrow = Arrow {
         args: &[],
         body: G::FnBody { loc: logger::Loc::EMPTY, stmts: &[] },
@@ -497,7 +504,7 @@ pub struct JSXElement {
     /// needed to make sure parse and visit happen in the same order
     pub key_prop_index: i32,
 
-    pub flags: Flags::JSXElement::Bitset,
+    pub flags: crate::flags::JSXElementBitset,
 
     pub close_tag_loc: logger::Loc,
 }
@@ -508,7 +515,7 @@ impl Default for JSXElement {
             properties: G::PropertyList::default(),
             children: ExprNodeList::default(),
             key_prop_index: -1,
-            flags: Flags::JSXElement::Bitset::default(),
+            flags: crate::flags::JSXElementBitset::default(),
             close_tag_loc: logger::Loc::EMPTY,
         }
     }
@@ -524,13 +531,19 @@ pub enum JSXSpecialProp {
     Ref,
     Any,
 }
+// Associated `static` items aren't allowed; hoist to module level (Zig nested
+// `pub const Map = ComptimeStringMap(...)` was a namespacing convenience).
+pub static JSX_SPECIAL_PROP_MAP: phf::Map<&'static [u8], JSXSpecialProp> = phf_map! {
+    b"__self" => JSXSpecialProp::UnderscoreSelf,
+    b"__source" => JSXSpecialProp::UnderscoreSource,
+    b"key" => JSXSpecialProp::Key,
+    b"ref" => JSXSpecialProp::Ref,
+};
 impl JSXSpecialProp {
-    pub static MAP: phf::Map<&'static [u8], JSXSpecialProp> = phf_map! {
-        b"__self" => JSXSpecialProp::UnderscoreSelf,
-        b"__source" => JSXSpecialProp::UnderscoreSource,
-        b"key" => JSXSpecialProp::Key,
-        b"ref" => JSXSpecialProp::Ref,
-    };
+    #[inline]
+    pub fn from_bytes(s: &[u8]) -> Option<Self> {
+        JSX_SPECIAL_PROP_MAP.get(s).copied()
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -577,10 +590,14 @@ impl Number {
     /// by calling out to the APIs in WebKit which are responsible for this operation.
     ///
     /// This can return `None` in wasm builds to avoid linking JSC
+    #[cfg(any())] // TODO(b2-blocked): forwards to gated `to_string_from_f64`
     pub fn to_string(&self, bump: &Bump) -> Option<&'static [u8]> {
         Self::to_string_from_f64(self.value, bump)
     }
 
+    // TODO(b2-blocked): bumpalo::collections::Vec has no `io::Write` impl;
+    // use `bun_core::fmt::format_int_into_bump` once available.
+    #[cfg(any())]
     pub fn to_string_from_f64(value: f64, bump: &Bump) -> Option<&'static [u8]> {
         if value == value.trunc() && (value < i32::MAX as f64 && value > i32::MIN as f64) {
             let int_value = value as i64;
@@ -728,39 +745,40 @@ impl Default for Object {
     }
 }
 
-/// used in TOML parser to merge properties
-pub struct Rope<'arena> {
+/// used in TOML parser to merge properties.
+///
+/// Phase A keeps node types lifetime-free, so `next` is a raw `*mut Rope`
+/// into the bump arena (Zig: `next: ?*Rope`). Segments are bulk-freed at
+/// arena reset.
+pub struct Rope {
     pub head: Expr,
-    pub next: Option<&'arena Rope<'arena>>,
+    pub next: *mut Rope,
 }
-impl<'arena> Rope<'arena> {
-    pub fn append(
-        &mut self,
-        expr: Expr,
-        bump: &'arena Bump,
-    ) -> Result<&'arena mut Rope<'arena>, AllocError> {
-        // TODO(port): Zig recurses through `next` mutably; Rust `&'arena Rope` is immutable.
-        // This needs `&'arena mut Rope` or a `Cell`. Mirroring logic with raw-pointer escape.
-        if let Some(next) = self.next {
+impl Rope {
+    pub fn append(&mut self, expr: Expr, bump: &Bump) -> Result<*mut Rope, AllocError> {
+        if let Some(next) = core::ptr::NonNull::new(self.next) {
             // SAFETY: arena-allocated Rope nodes are uniquely owned by the chain at this
             // point in TOML parsing; Zig mutates them freely.
-            let next_mut = unsafe { &mut *(next as *const Rope<'arena> as *mut Rope<'arena>) };
-            return next_mut.append(expr, bump);
+            return unsafe { &mut *next.as_ptr() }.append(expr, bump);
         }
-
-        let rope = bump.alloc(Rope { head: expr, next: None });
-        self.next = Some(rope);
+        let rope: *mut Rope = bump.alloc(Rope { head: expr, next: core::ptr::null_mut() });
+        self.next = rope;
         Ok(rope)
     }
 }
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+// thiserror is not a dep of this crate; hand-roll Error+Display.
+#[derive(Debug, strum::IntoStaticStr)]
 pub enum SetError {
-    #[error("OutOfMemory")]
     OutOfMemory,
-    #[error("Clobber")]
     Clobber,
 }
+impl core::fmt::Display for SetError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(<&'static str>::from(self))
+    }
+}
+impl core::error::Error for SetError {}
 impl From<AllocError> for SetError {
     fn from(_: AllocError) -> Self {
         SetError::OutOfMemory
@@ -768,15 +786,22 @@ impl From<AllocError> for SetError {
 }
 impl From<SetError> for bun_core::Error {
     fn from(e: SetError) -> Self {
-        bun_core::Error::from_static_str(<&'static str>::from(e))
+        match e {
+            SetError::OutOfMemory => bun_core::err!(OutOfMemory),
+            SetError::Clobber => bun_core::err!(Clobber),
+        }
     }
 }
 
 pub struct RopeQuery<'a> {
     pub expr: Expr,
-    pub rope: &'a Rope<'a>,
+    pub rope: &'a Rope,
 }
 
+// TODO(b2-ast-round-C): Object accessors call `Expr::as_property`/`EString::eql`
+// which need `bun_string::utf16_eql_string` (track-A blocked_on) and the gated
+// `impl Expr` accessor block. Un-gate with the parser round.
+#[cfg(any())]
 impl Object {
     pub fn get(&self, key: &[u8]) -> Option<Expr> {
         self.as_property(key).map(|query| query.expr)
@@ -834,14 +859,14 @@ impl Object {
     ) -> Result<(), SetError> {
         if let Some(existing) = self.get(rope.head.data.e_string().data) {
             match &existing.data {
-                Expr::Data::EArray(array) => {
+                crate::ast::expr::Data::EArray(array) => {
                     if rope.next.is_none() {
                         array.push(bump, value)?;
                         return Ok(());
                     }
 
                     if let Some(last) = array.items.last() {
-                        if !matches!(last.data, Expr::Data::EObject(_)) {
+                        if !matches!(last.data, crate::ast::expr::Data::EObject(_)) {
                             return Err(SetError::Clobber);
                         }
 
@@ -852,7 +877,7 @@ impl Object {
                     array.push(bump, value)?;
                     return Ok(());
                 }
-                Expr::Data::EObject(object) => {
+                crate::ast::expr::Data::EObject(object) => {
                     if let Some(next) = rope.next {
                         object.set_rope(next, bump, value)?;
                         return Ok(());
@@ -887,13 +912,13 @@ impl Object {
     ) -> Result<Expr, SetError> {
         if let Some(existing) = self.get(rope.head.data.e_string().data) {
             match &existing.data {
-                Expr::Data::EArray(array) => {
+                crate::ast::expr::Data::EArray(array) => {
                     if rope.next.is_none() {
                         return Err(SetError::Clobber);
                     }
 
                     if let Some(last) = array.items.last() {
-                        if !matches!(last.data, Expr::Data::EObject(_)) {
+                        if !matches!(last.data, crate::ast::expr::Data::EObject(_)) {
                             return Err(SetError::Clobber);
                         }
 
@@ -902,7 +927,7 @@ impl Object {
 
                     return Err(SetError::Clobber);
                 }
-                Expr::Data::EObject(object) => {
+                crate::ast::expr::Data::EObject(object) => {
                     if let Some(next) = rope.next {
                         return object.get_or_put_object(next, bump);
                     }
@@ -941,13 +966,13 @@ impl Object {
     ) -> Result<Expr, SetError> {
         if let Some(existing) = self.get(rope.head.data.e_string().data) {
             match &existing.data {
-                Expr::Data::EArray(array) => {
+                crate::ast::expr::Data::EArray(array) => {
                     if rope.next.is_none() {
                         return Ok(existing);
                     }
 
                     if let Some(last) = array.items.last() {
-                        if !matches!(last.data, Expr::Data::EObject(_)) {
+                        if !matches!(last.data, crate::ast::expr::Data::EObject(_)) {
                             return Err(SetError::Clobber);
                         }
 
@@ -956,7 +981,7 @@ impl Object {
 
                     return Err(SetError::Clobber);
                 }
-                Expr::Data::EObject(object) => {
+                crate::ast::expr::Data::EObject(object) => {
                     if rope.next.is_none() {
                         return Err(SetError::Clobber);
                     }
@@ -990,7 +1015,7 @@ impl Object {
     pub fn has_property(&self, name: &[u8]) -> bool {
         for prop in self.properties.slice() {
             let Some(key) = &prop.key else { continue };
-            if !matches!(key.data, Expr::Data::EString(_)) {
+            if !matches!(key.data, crate::ast::expr::Data::EString(_)) {
                 continue;
             }
             if key.data.e_string().eql_bytes(name) {
@@ -1000,16 +1025,16 @@ impl Object {
         false
     }
 
-    pub fn as_property(&self, name: &[u8]) -> Option<Expr::Query> {
+    pub fn as_property(&self, name: &[u8]) -> Option<crate::ast::expr::Query> {
         for (i, prop) in self.properties.slice().iter().enumerate() {
             let Some(value) = prop.value else { continue };
             let Some(key) = &prop.key else { continue };
-            if !matches!(key.data, Expr::Data::EString(_)) {
+            if !matches!(key.data, crate::ast::expr::Data::EString(_)) {
                 continue;
             }
             let key_str = key.data.e_string();
             if key_str.eql_bytes(name) {
-                return Some(Expr::Query {
+                return Some(crate::ast::expr::Query {
                     expr: value,
                     loc: key.loc,
                     i: i as u32,
@@ -1025,7 +1050,7 @@ impl Object {
         #[cfg(debug_assertions)]
         {
             for prop in self.properties.slice() {
-                debug_assert!(matches!(prop.key.as_ref().unwrap().data, Expr::Data::EString(_)));
+                debug_assert!(matches!(prop.key.as_ref().unwrap().data, crate::ast::expr::Data::EString(_)));
             }
         }
         self.properties.slice_mut().sort_by(object_sorter_is_less_than);
@@ -1069,19 +1094,22 @@ static PACKAGE_JSON_SORT_MAP: phf::Map<&'static [u8], PackageJsonSortFields> = p
     b"exports" => PackageJsonSortFields::Exports,
 };
 
+// TODO(b2-ast-round-C): sorters call `.e_string().data` (Option deref) and
+// `strings::cmp_strings_asc` arity. Un-gate with the Object impl above.
+#[cfg(any())]
 fn package_json_sort_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Ordering {
     let mut lhs_key_size: u8 = PackageJsonSortFields::Fake as u8;
     let mut rhs_key_size: u8 = PackageJsonSortFields::Fake as u8;
 
     if let Some(k) = &lhs.key {
-        if let Expr::Data::EString(s) = &k.data {
+        if let crate::ast::expr::Data::EString(s) = &k.data {
             lhs_key_size =
                 *PACKAGE_JSON_SORT_MAP.get(s.data).unwrap_or(&PackageJsonSortFields::Fake) as u8;
         }
     }
 
     if let Some(k) = &rhs.key {
-        if let Expr::Data::EString(s) = &k.data {
+        if let crate::ast::expr::Data::EString(s) = &k.data {
             rhs_key_size =
                 *PACKAGE_JSON_SORT_MAP.get(s.data).unwrap_or(&PackageJsonSortFields::Fake) as u8;
         }
@@ -1097,6 +1125,7 @@ fn package_json_sort_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Order
     }
 }
 
+#[cfg(any())]
 fn object_sorter_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Ordering {
     strings::cmp_strings_asc(
         lhs.key.as_ref().unwrap().data.e_string().data,
@@ -1125,7 +1154,7 @@ pub struct EString {
     pub rope_len: u32,
     pub is_utf16: bool,
 }
-// Export under the Zig name `String` as well; `EString` avoids colliding with bun_str::String.
+// Export under the Zig name `String` as well; `EString` avoids colliding with bun_string::String.
 pub use EString as String;
 
 impl Default for EString {
@@ -1141,13 +1170,60 @@ impl Default for EString {
     }
 }
 
+// Minimal live surface for `IntoExprData` / `Data` / `lexer.rs` callers.
+impl EString {
+    #[inline]
+    pub const fn is_utf8(&self) -> bool {
+        !self.is_utf16
+    }
+    /// `data` is arena-owned (source text or `Expr.Data.Store` / bump arena)
+    /// and bulk-freed; per the Phase-A `Str` convention the lifetime is
+    /// erased. Phase B threads `'bump`.
+    pub fn init(data: &[u8]) -> Self {
+        // SAFETY: arena-owned slice; lifetime erased pending Phase-B `'bump`.
+        let data: &'static [u8] = unsafe { core::mem::transmute(data) };
+        Self { data, ..Default::default() }
+    }
+    /// Construct from a UTF-16 slice (arena-owned). The `data` slice's `.len()`
+    /// stores the **u16 element count** (not byte count) — Zig:
+    /// `@ptrCast(value.ptr)[0..value.len]`. `slice16()` and friends rely on
+    /// this. The pointer is reinterpreted to `*const u8` for storage only.
+    pub fn init_utf16(data: &[u16]) -> Self {
+        // SAFETY: `data` is &[u16]; we store the element count and reinterpret
+        // the ptr. Consumers must check `is_utf16` and re-slice via `slice16`.
+        let bytes = unsafe {
+            core::slice::from_raw_parts(data.as_ptr().cast::<u8>(), data.len())
+        };
+        // TODO(port): arena-owned slice lifetime — see `Str` alias note.
+        let bytes_static: &'static [u8] = unsafe { core::mem::transmute(bytes) };
+        Self { data: bytes_static, is_utf16: true, ..Default::default() }
+    }
+    /// Ensure `data` is UTF-8 (transcode from UTF-16 rope if needed).
+    /// `lexer.rs::to_utf8_e_string` only ever calls this on a freshly-decoded
+    /// non-rope string; the heavy rope-walk path is in the gated impl below.
+    pub fn to_utf8(&mut self, _bump: &Bump) -> Result<(), AllocError> {
+        if !self.is_utf16 {
+            return Ok(());
+        }
+        // TODO(b2-blocked): bun_string::strings::convert_utf16_to_utf8 surface
+        // (track-A). Until then, lexer's `NeedsDecode` arm already produces
+        // ASCII-only utf8 via `copy_utf16_into_utf8`, so this branch is not hit
+        // on the current call path. Fail loud if it is.
+        todo!("EString::to_utf8(utf16) — blocked on bun_string transcoding")
+    }
+}
+
+// TODO(b2-ast-round-C): EString rope/eql/transcode methods need
+// `bun_string::utf16_eql_string`/`to_utf16_alloc_for_real` (track-A
+// blocked_on) and bump-arena slice helpers. Un-gate with the parser round.
+#[cfg(any())]
 impl EString {
     pub fn is_identifier(&mut self, bump: &Bump) -> bool {
         if !self.is_utf8() {
-            return bun_js_parser::js_lexer::is_identifier_utf16(self.slice16());
+            return crate::lexer::is_identifier_utf16(self.slice16());
         }
 
-        bun_js_parser::js_lexer::is_identifier(self.slice(bump))
+        crate::lexer::is_identifier(self.slice(bump))
     }
 
     pub const CLASS: EString = EString {
@@ -1199,7 +1275,7 @@ impl EString {
                 // SAFETY: pointer is to a live Store node or `root` on this stack frame.
                 let node = unsafe { &mut *current.unwrap() };
                 if let Some(next) = node.next {
-                    node.next = Some(Expr::Data::Store::append_string(*next.get()));
+                    node.next = Some(crate::ast::expr::Data::Store::append_string(*next.get()));
                     current = node.next.map(|r| r.as_mut_ptr());
                 } else {
                     root.end = Some(StoreRef::from_mut(node));
@@ -1486,9 +1562,9 @@ impl EString {
         }
     }
 
-    pub fn string_z<'b>(&self, bump: &'b Bump) -> Result<&'b bun_str::ZStr, AllocError> {
+    pub fn string_z<'b>(&self, bump: &'b Bump) -> Result<&'b bun_string::ZStr, AllocError> {
         if self.is_utf8() {
-            bun_str::ZStr::from_bytes_in(self.data, bump)
+            bun_string::ZStr::from_bytes_in(self.data, bump)
         } else {
             strings::to_utf8_alloc_z(bump, self.slice16())
         }
@@ -1547,6 +1623,9 @@ impl EString {
     }
 }
 
+// TODO(b2-ast-round-C): EString Display walks the rope via `slice16()`/`.get()`
+// which are in the gated impl above.
+#[cfg(any())]
 impl fmt::Display for EString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("E.String")?;
@@ -1596,6 +1675,9 @@ pub enum TemplateContents {
     Cooked(EString),
     Raw(Str),
 }
+// TODO(b2-ast-round-C): Template fold/contents reference `EString::push`/
+// `Expr::unwrap_inlined`/`e_string()` which are gated above.
+#[cfg(any())]
 impl TemplateContents {
     pub fn is_utf8(&self) -> bool {
         matches!(self, TemplateContents::Cooked(c) if c.is_utf8())
@@ -1615,6 +1697,7 @@ impl TemplateContents {
     }
 }
 
+#[cfg(any())]
 impl Template {
     /// "`a${'b'}c`" => "`abc`"
     pub fn fold(&mut self, bump: &Bump, loc: logger::Loc) -> Expr {
@@ -1622,7 +1705,7 @@ impl Template {
             || (matches!(self.head, TemplateContents::Cooked(_)) && !self.head.cooked().is_utf8())
         {
             // we only fold utf-8/ascii for now
-            return Expr { data: Expr::Data::ETemplate(self), loc };
+            return Expr { data: crate::ast::expr::Data::ETemplate(self), loc };
         }
 
         debug_assert!(matches!(self.head, TemplateContents::Cooked(_)));
@@ -1641,30 +1724,30 @@ impl Template {
             part.value = part.value.unwrap_inlined();
 
             match &part.value.data {
-                Expr::Data::ENumber(n) => {
+                crate::ast::expr::Data::ENumber(n) => {
                     if let Some(s) = n.to_string(bump) {
                         part.value = Expr::init(EString::init(s), part.value.loc);
                     }
                 }
-                Expr::Data::ENull(_) => {
+                crate::ast::expr::Data::ENull(_) => {
                     part.value = Expr::init(EString::init(b"null"), part.value.loc);
                 }
-                Expr::Data::EBoolean(b) => {
+                crate::ast::expr::Data::EBoolean(b) => {
                     part.value = Expr::init(
                         EString::init(if b.value { b"true" } else { b"false" }),
                         part.value.loc,
                     );
                 }
-                Expr::Data::EUndefined(_) => {
+                crate::ast::expr::Data::EUndefined(_) => {
                     part.value = Expr::init(EString::init(b"undefined"), part.value.loc);
                 }
-                Expr::Data::EBigInt(value) => {
+                crate::ast::expr::Data::EBigInt(value) => {
                     part.value = Expr::init(EString::init(value.value), part.value.loc);
                 }
                 _ => {}
             }
 
-            if matches!(part.value.data, Expr::Data::EString(_))
+            if matches!(part.value.data, crate::ast::expr::Data::EString(_))
                 && part.tail.cooked().is_utf8()
                 && part.value.data.e_string().is_utf8()
             {
@@ -1764,10 +1847,10 @@ impl RegExp {
                 i -= 1;
             }
 
-            return bun_str::strings::trim(&self.value[..i as usize], b"/");
+            return bun_string::strings::trim(&self.value[..i as usize], b"/");
         }
 
-        bun_str::strings::trim(self.value, b"/")
+        bun_string::strings::trim(self.value, b"/")
     }
 
     pub fn flags(&self) -> &[u8] {
@@ -1852,6 +1935,9 @@ impl Import {
         self.import_record_index == u32::MAX
     }
 
+    // TODO(b2-ast-round-C): walks `options.data.e_object()?.get(b"...")` which
+    // is in the gated Object impl above.
+    #[cfg(any())]
     pub fn import_record_loader(&self) -> Option<bun_options_types::Loader> {
         // This logic is duplicated in js_printer.zig fn parsePath()
         let obj = self.options.data.as_e_object()?;

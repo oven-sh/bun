@@ -87,7 +87,8 @@ pub use crate::ast::stmt::Stmt;
 pub type StmtNodeIndex = Stmt;
 pub use crate::ast::symbol::Symbol;
 pub use crate::ast::b::B;
-pub use crate::ast::new_store::NewStore;
+// `NewStore` is a Zig comptime type-generator; in Rust it's the
+// `crate::new_store!` macro (see ast/NewStore.rs). No type to re-export.
 pub use crate::ast::use_directive::UseDirective;
 
 pub use crate::ast::char_freq as CharFreq;

@@ -6,7 +6,7 @@ use bun_logger as logger;
 
 use crate::ast::expr::{self, Expr};
 use crate::ast::s as S;
-use crate::ast::{ASTMemoryAllocator, NewBatcher, NewStore, StoreRef};
+use crate::ast::{ASTMemoryAllocator, DebugOnlyDisabler, NewBatcher, StoreRef};
 
 #[derive(Clone, Copy)]
 pub struct Stmt {
@@ -36,13 +36,13 @@ struct Serializable {
 }
 
 impl Stmt {
+    // TODO(b2-ast-round-C): Serializable + JsonWriter::write surface.
+    #[cfg(any())]
     pub fn json_stringify<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
     where
-        // TODO(port): narrow error set
         W: crate::ast::JsonWriter,
     {
-        // TODO(port): std.meta.activeTag — Data is a Rust enum so a discriminant accessor is needed
-        writer.write(Serializable {
+        writer.write(&Serializable {
             r#type: self.data.tag(),
             object: b"stmt",
             value: self.data,
@@ -152,7 +152,7 @@ impl Stmt {
     }
 }
 
-pub type Disabler = bun_core::DebugOnlyDisabler<Stmt>;
+pub type Disabler = DebugOnlyDisabler<Stmt>;
 
 impl Stmt {
     /// When the lifetime of an Stmt.Data's pointer must exist longer than reset() is called, use this function.
@@ -357,121 +357,104 @@ impl Data {
     }
 }
 
+// `new_store!` emits `pub mod stmt_store { pub struct Store; ... }` with
+// `init/append/reset/destroy`. Type list mirrors Zig's `Data.Store = NewStore(&.{...}, 128)`.
+crate::new_store!(
+    stmt_store,
+    [
+        S::Block, S::Break, S::Class, S::Comment, S::Continue, S::Directive, S::DoWhile, S::Enum,
+        S::ExportClause, S::ExportDefault, S::ExportEquals, S::ExportFrom, S::ExportStar, S::SExpr,
+        S::ForIn, S::ForOf, S::For, S::Function, S::If, S::Import, S::Label, S::Local,
+        S::Namespace, S::Return, S::Switch, S::Throw, S::Try, S::While, S::With,
+    ],
+    128
+);
+
 pub mod data {
     use super::*;
 
+    #[allow(non_snake_case)]
     pub mod Store {
-        #![allow(non_snake_case)]
         use super::*;
-
-        // TODO(port): NewStore takes a comptime type list + block size. Rust has
-        // no variadic type params; Phase B defines `StmtStoreTypes` as a tuple
-        // or generates per-type slabs via macro. The list below mirrors Zig.
-        pub type StoreType = NewStore<
-            (
-                S::Block,
-                S::Break,
-                S::Class,
-                S::Comment,
-                S::Continue,
-                S::Directive,
-                S::DoWhile,
-                S::Enum,
-                S::ExportClause,
-                S::ExportDefault,
-                S::ExportEquals,
-                S::ExportFrom,
-                S::ExportStar,
-                S::SExpr,
-                S::ForIn,
-                S::ForOf,
-                S::For,
-                S::Function,
-                S::If,
-                S::Import,
-                S::Label,
-                S::Local,
-                S::Namespace,
-                S::Return,
-                S::Switch,
-                S::Throw,
-                S::Try,
-                S::While,
-                S::With,
-            ),
-            128,
-        >;
+        use stmt_store::Store as Backing;
 
         thread_local! {
-            pub static INSTANCE: Cell<Option<NonNull<StoreType>>> =
-                const { Cell::new(None) };
-            pub static MEMORY_ALLOCATOR: Cell<Option<NonNull<ASTMemoryAllocator>>> =
-                const { Cell::new(None) };
+            // `*mut Backing` (not NonNull) because the Zig stores raw `?*StoreType`.
+            pub static INSTANCE: Cell<*mut Backing> = const { Cell::new(core::ptr::null_mut()) };
+            pub static MEMORY_ALLOCATOR: Cell<*mut ASTMemoryAllocator> =
+                const { Cell::new(core::ptr::null_mut()) };
             pub static DISABLE_RESET: Cell<bool> = const { Cell::new(false) };
         }
 
+        #[inline]
+        fn instance() -> *mut Backing {
+            INSTANCE.with(|c| c.get())
+        }
+
+        pub fn memory_allocator() -> *mut ASTMemoryAllocator {
+            MEMORY_ALLOCATOR.with(|c| c.get())
+        }
+        pub fn set_memory_allocator(p: *mut ASTMemoryAllocator) {
+            MEMORY_ALLOCATOR.with(|c| c.set(p));
+        }
+
         pub fn create() {
-            if INSTANCE.with(|c| c.get()).is_some()
-                || MEMORY_ALLOCATOR.with(|c| c.get()).is_some()
-            {
+            if !instance().is_null() || !memory_allocator().is_null() {
                 return;
             }
-            INSTANCE.with(|c| c.set(Some(StoreType::init())));
+            INSTANCE.with(|c| c.set(Backing::init()));
         }
 
         /// create || reset
         pub fn begin() {
-            if MEMORY_ALLOCATOR.with(|c| c.get()).is_some() {
+            if !memory_allocator().is_null() {
                 return;
             }
-            if INSTANCE.with(|c| c.get()).is_none() {
+            if instance().is_null() {
                 create();
                 return;
             }
             if !DISABLE_RESET.with(|c| c.get()) {
-                // SAFETY: checked is_some() above; thread-local, no concurrent mutation.
-                unsafe { INSTANCE.with(|c| c.get()).unwrap().as_mut() }.reset();
+                // SAFETY: checked non-null above; thread-local, no concurrent mutation.
+                Backing::reset(unsafe { &mut *instance() });
             }
         }
 
         pub fn reset() {
-            if DISABLE_RESET.with(|c| c.get()) || MEMORY_ALLOCATOR.with(|c| c.get()).is_some() {
+            if DISABLE_RESET.with(|c| c.get()) || !memory_allocator().is_null() {
                 return;
             }
             // SAFETY: caller contract — instance is set when reset() is called.
-            unsafe { INSTANCE.with(|c| c.get()).unwrap().as_mut() }.reset();
+            Backing::reset(unsafe { &mut *instance() });
         }
 
         pub fn deinit() {
-            if INSTANCE.with(|c| c.get()).is_none()
-                || MEMORY_ALLOCATOR.with(|c| c.get()).is_some()
-            {
+            if instance().is_null() || !memory_allocator().is_null() {
                 return;
             }
-            // SAFETY: checked is_some() above.
-            unsafe { INSTANCE.with(|c| c.get()).unwrap().as_mut() }.deinit();
-            INSTANCE.with(|c| c.set(None));
+            // SAFETY: checked non-null above; destroy frees the PreAlloc.
+            unsafe { Backing::destroy(instance()) };
+            INSTANCE.with(|c| c.set(core::ptr::null_mut()));
         }
 
         #[inline]
         pub fn assert() {
             if cfg!(debug_assertions) {
-                if INSTANCE.with(|c| c.get()).is_none()
-                    && MEMORY_ALLOCATOR.with(|c| c.get()).is_none()
-                {
+                if instance().is_null() && memory_allocator().is_null() {
                     unreachable!("Store must be init'd");
                 }
             }
         }
 
         pub fn append<T>(value: T) -> StoreRef<T> {
-            if let Some(allocator) = MEMORY_ALLOCATOR.with(|c| c.get()) {
+            let ma = memory_allocator();
+            if !ma.is_null() {
                 // SAFETY: MEMORY_ALLOCATOR is set by the owning scope and outlives this call.
-                return unsafe { allocator.as_ref() }.append(value);
+                return unsafe { &*ma }.append(value);
             }
             Disabler::assert();
-            // SAFETY: assert() guarantees instance is set on this thread.
-            unsafe { INSTANCE.with(|c| c.get()).unwrap().as_mut() }.append(value)
+            // SAFETY: assert() guarantees instance is non-null on this thread.
+            StoreRef::from(Backing::append(unsafe { &mut *instance() }, value))
         }
     }
 }
@@ -503,7 +486,7 @@ impl Stmt {
             | Data::SContinue(_)
             | Data::SDirective(_) => false,
 
-            Data::SLocal(local) => local.kind != S::local::Kind::KVar,
+            Data::SLocal(local) => local.kind != S::Kind::KVar,
 
             _ => true,
         }

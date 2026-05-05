@@ -6,21 +6,21 @@ use crate::ast::{
     CharFreq, ExportsKind, Expr, InlinedEnumValue, LocRef, NamedExport, NamedImport, Part, Ref,
     Scope, SlotCounts, Symbol,
 };
-use crate::runtime::Runtime;
+// `crate::runtime` is gated; use the round-B opaque stand-in.
+use crate::ast::runtime_stub as runtime;
 
-// TODO(port): `Part.List` / `Symbol.List` / `ImportRecord.List` are nested decls in Zig.
-// Rust has no inherent associated types on structs, so reference them via their modules.
-// Phase B: confirm actual paths.
 use crate::ast::part::List as PartList;
 use crate::ast::symbol::List as SymbolList;
-use bun_options_types::import_record::List as ImportRecordList;
+// TODO(port): `ImportRecord.List` is `BabyList<ImportRecord>` in Zig; the
+// options_types crate hasn't yet exposed a `List` alias, so define it here.
+type ImportRecordList = bun_collections::BabyList<ImportRecord>;
 
 pub type TopLevelSymbolToParts = ArrayHashMap<Ref, BabyList<u32>>;
 
 pub struct Ast {
     pub approximate_newline_count: usize,
     pub has_lazy_export: bool,
-    pub runtime_imports: crate::runtime::Imports,
+    pub runtime_imports: runtime::Imports,
 
     pub nested_scope_slot_counts: SlotCounts,
 
@@ -172,9 +172,15 @@ impl Ast {
         }
     }
 
+    // Zig `initTest` borrowed `parts` and relied on explicit `deinit` never
+    // being called. In Rust `Ast` has implicit Drop, and release builds lack
+    // the `Origin::Borrowed` debug guard — unwrapping `ManuallyDrop` here
+    // would free the caller's slice. Gate until test callers are surveyed and
+    // can switch to owned input (see Symbol::init_with_one_list, same issue).
+    #[cfg(any())]
     pub fn init_test(parts: &[Part]) -> Ast {
         Ast {
-            parts: PartList::from_borrowed_slice_dangerous(parts),
+            parts: PartList::from_owned_slice(parts.to_vec().into_boxed_slice()),
             runtime_imports: Default::default(),
             ..Default::default()
         }

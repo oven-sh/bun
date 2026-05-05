@@ -10,9 +10,8 @@
 use core::mem::{align_of, offset_of, size_of, MaybeUninit};
 use core::ptr::{addr_of_mut, NonNull};
 
-use bun_core::Output;
-
-bun_output::declare_scope!(Store, hidden);
+// Scope name distinct from the macro-generated `struct Store`.
+::bun_core::declare_scope!(STORE_LOG, hidden);
 
 /// Zig: `pub fn NewStore(comptime types: []const type, comptime count: usize) type`
 ///
@@ -70,19 +69,23 @@ macro_rules! new_store {
             }
 
             /// Zig: `pub const Block = struct { ... }`
-            // TODO(port): `buffer` needs `align(LARGEST_ALIGN)`. Rust `#[repr(align(N))]`
-            // requires a literal, not a const. Phase B: either emit per-alignment
-            // variants from this macro, or store `[MaybeUninit<AlignUnion>; _]` where
-            // `AlignUnion` is a `#[repr(C)] union` over `$($T),+`.
+            // PORT NOTE: `buffer` needs `align(LARGEST_ALIGN)` but `#[repr(align(N))]`
+            // requires a literal. Over-approximate with align(16) — every AST payload
+            // type is `<= 16` aligned (asserted below). Phase B can switch to a
+            // `#[repr(C)] union AlignUnion { $($T),+ }` element type if a >16-aligned
+            // payload is ever introduced.
+            const _: () = assert!(LARGEST_ALIGN <= 16, "NewStore payload type with align>16; bump Block repr(align)");
+            /// Zig: `pub const size = largest_size * count * 2;`
+            pub const BLOCK_SIZE: usize = LARGEST_SIZE * $count * 2;
+            #[repr(C, align(16))]
             pub struct Block {
-                buffer: [MaybeUninit<u8>; Block::SIZE],
+                buffer: [MaybeUninit<u8>; BLOCK_SIZE],
                 bytes_used: BlockSize,
                 next: Option<Box<Block>>,
             }
 
             impl Block {
-                /// Zig: `pub const size = largest_size * count * 2;`
-                pub const SIZE: usize = LARGEST_SIZE * $count * 2;
+                pub const SIZE: usize = BLOCK_SIZE;
 
                 // Zig: `pub const Size = std.math.IntFittingRange(0, size + largest_size);`
                 // PERF(port): was IntFittingRange — picks smallest uN; using u32 (Block::SIZE
@@ -177,7 +180,7 @@ macro_rules! new_store {
                 }
 
                 pub fn init() -> *mut Store {
-                    ::bun_output::scoped_log!(Store, "init");
+                    /* scoped_log elided — debug_logs feature only */
                     // Avoid initializing the entire struct.
                     // Zig: `bun.handleOom(backing_allocator.create(PreAlloc))` — Rust Box aborts on OOM.
                     let mut prealloc: Box<MaybeUninit<PreAlloc>> = Box::new_uninit();
@@ -197,13 +200,13 @@ macro_rules! new_store {
                 /// SAFETY: `store` must have been returned by `Store::init()` and not
                 /// yet destroyed.
                 pub unsafe fn destroy(store: *mut Store) {
-                    ::bun_output::scoped_log!(Store, "deinit");
+                    /* scoped_log elided — debug_logs feature only */
                     // do not free `store.head`
                     // SAFETY: caller contract.
                     let store_ref = unsafe { &mut *store };
                     let mut it = Store::first_block(store_ref).next.take();
                     while let Some(mut next) = it {
-                        #[cfg(any(debug_assertions, feature = "asan"))]
+                        #[cfg(debug_assertions)]
                         {
                             // Zig: `@memset(next.buffer, undefined);`
                             // SAFETY: poisoning bytes; buffer is MaybeUninit<u8>.
@@ -233,9 +236,9 @@ macro_rules! new_store {
                 }
 
                 pub fn reset(store: &mut Store) {
-                    ::bun_output::scoped_log!(Store, "reset");
+                    /* scoped_log elided — debug_logs feature only */
 
-                    #[cfg(any(debug_assertions, feature = "asan"))]
+                    #[cfg(debug_assertions)]
                     {
                         let mut it: Option<NonNull<Block>> =
                             Some(NonNull::from(Store::first_block(store)));
@@ -261,13 +264,13 @@ macro_rules! new_store {
                 }
 
                 fn allocate<T>(store: &mut Store) -> NonNull<T> {
-                    const _: () = assert!(size_of::<T>() > 0); // don't allocate!
+                    debug_assert!(size_of::<T>() > 0); // don't allocate!
                     // TODO(port): `comptime if (!supportsType(T)) @compileError(...)` —
                     // enforce via a sealed trait generated over `$($T),+` in Phase B.
 
                     // SAFETY: `current` always points into the live block chain.
                     let current = unsafe { store.current.as_mut() };
-                    if let Some(ptr) = current.try_alloc::<T>() {
+                    if let Some(ptr) = Block::try_alloc::<T>(current) {
                         return ptr;
                     }
 
@@ -288,23 +291,15 @@ macro_rules! new_store {
                     store.current = next_block;
 
                     // SAFETY: just assigned above.
-                    unsafe { store.current.as_mut() }
-                        .try_alloc::<T>()
+                    Block::try_alloc::<T>(unsafe { store.current.as_mut() })
                         // newly initialized blocks must have enough space for at least one
                         .unwrap_or_else(|| unreachable!())
                 }
 
                 #[inline]
                 pub fn append<T>(store: &mut Store, data: T) -> NonNull<T> {
-                    let mut ptr = store.allocate::<T>();
-                    if cfg!(debug_assertions) {
-                        ::bun_output::scoped_log!(
-                            Store,
-                            "append({}) -> 0x{:x}",
-                            ::core::any::type_name::<T>(),
-                            ptr.as_ptr() as usize
-                        );
-                    }
+                    let ptr = Store::allocate::<T>(store);
+                    /* scoped_log elided — debug_logs feature only */
                     // SAFETY: `allocate` returned aligned, in-bounds, exclusive storage for T.
                     unsafe { ptr.as_ptr().write(data) };
                     ptr

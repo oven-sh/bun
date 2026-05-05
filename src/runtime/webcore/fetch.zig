@@ -613,6 +613,12 @@ fn fetchImpl(
     }
 
     // keepalive: boolean | undefined;
+    //
+    // This is Bun's connection-pooling option (reuse TCP/TLS socket
+    // after response), NOT the Fetch spec's `Request.keepalive`
+    // (request-outlives-page). Skip Request objects so the prototype
+    // `keepalive` accessor — which defaults to `false` — doesn't
+    // silently flip this and disable pooling.
     disable_keepalive = extract_disable_keepalive: {
         const objects_to_try = [_]JSValue{
             options_object orelse .zero,
@@ -620,7 +626,9 @@ fn fetchImpl(
         };
 
         inline for (0..2) |i| {
-            if (objects_to_try[i] != .zero) {
+            // `.as()` (not `.asDirect()`) so Request subclasses and
+            // structure-mutated instances are also recognized and skipped.
+            if (objects_to_try[i] != .zero and objects_to_try[i].as(Request) == null) {
                 if (try objects_to_try[i].get(globalThis, "keepalive")) |keepalive_value| {
                     if (keepalive_value.isBoolean()) {
                         break :extract_disable_keepalive !keepalive_value.asBoolean();

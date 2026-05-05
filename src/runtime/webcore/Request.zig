@@ -10,17 +10,31 @@ signal: ?*AbortSignal = null,
 #js_ref: jsc.JSRef = .empty(),
 method: Method = Method.GET,
 flags: Flags = .{},
+/// Subresource integrity metadata. Empty means the default (no integrity).
+integrity: bun.String = bun.String.empty,
+/// Referrer state. Stored per the Fetch spec:
+/// - empty → "client" (default); getter returns "about:client"
+/// - equal to `no_referrer_sentinel` → getter returns ""
+/// - otherwise → the serialized URL; getter returns it as-is
+referrer: bun.String = bun.String.empty,
 request_context: jsc.API.AnyRequestContext = jsc.API.AnyRequestContext.Null,
 weak_ptr_data: WeakRef.Data = .empty,
 // We must report a consistent value for this
 reported_estimated_size: usize = 0,
 internal_event_callback: InternalJSEventCallback = .{},
 
-pub const Flags = packed struct(u8) {
+/// Sentinel value for `referrer` meaning "no-referrer"
+/// (the Fetch spec's request referrer state distinct from "client").
+/// When `referrer` is set to this, the getter returns "" per spec.
+const no_referrer_sentinel = "no-referrer";
+
+pub const Flags = packed struct(u16) {
     redirect: FetchRedirect = .follow,
     cache: FetchCacheMode = .default,
     mode: FetchRequestMode = .cors,
     https: bool = false,
+    keepalive: bool = false,
+    _padding: u7 = 0,
 };
 
 pub const js = jsc.Codegen.JSRequest;
@@ -43,7 +57,9 @@ pub const getBlobWithoutCallFrame = RequestMixin.getBlobWithoutCallFrame;
 pub const WeakRef = bun.ptr.WeakPtr(Request, "weak_ptr_data");
 
 pub fn memoryCost(this: *const Request) usize {
-    return @sizeOf(Request) + this.request_context.memoryCost() + this.url.byteSlice().len + this.#body.value.memoryCost();
+    return @sizeOf(Request) + this.request_context.memoryCost() + this.url.byteSlice().len +
+        this.integrity.byteSlice().len + this.referrer.byteSlice().len +
+        this.#body.value.memoryCost();
 }
 
 pub export fn Request__setCookiesOnRequestContext(this: *Request, cookieMap: ?*jsc.WebCore.CookieMap) void {
@@ -190,7 +206,9 @@ pub fn getRemoteSocketInfo(this: *Request, globalObject: *jsc.JSGlobalObject) ?j
 }
 
 pub fn calculateEstimatedByteSize(this: *Request) void {
-    this.reported_estimated_size = this.#body.value.estimatedSize() + this.sizeOfURL() + @sizeOf(Request);
+    this.reported_estimated_size = this.#body.value.estimatedSize() + this.sizeOfURL() +
+        this.integrity.byteSlice().len + this.referrer.byteSlice().len +
+        @sizeOf(Request);
 }
 
 pub export fn Bun__JSRequest__calculateEstimatedByteSize(this: *Request) void {
@@ -357,10 +375,18 @@ pub fn getDestination(
 }
 
 pub fn getIntegrity(
-    _: *Request,
+    this: *Request,
     globalThis: *jsc.JSGlobalObject,
+) bun.JSError!jsc.JSValue {
+    if (this.integrity.isEmpty()) return ZigString.Empty.toJS(globalThis);
+    return this.integrity.toJS(globalThis);
+}
+
+pub fn getKeepalive(
+    this: *Request,
+    _: *jsc.JSGlobalObject,
 ) jsc.JSValue {
-    return ZigString.Empty.toJS(globalThis);
+    return jsc.JSValue.jsBoolean(this.flags.keepalive);
 }
 
 pub fn getSignal(this: *Request, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
@@ -401,6 +427,12 @@ pub fn finalizeWithoutDeinit(this: *Request) void {
     this.url.deref();
     this.url = bun.String.empty;
 
+    this.integrity.deref();
+    this.integrity = bun.String.empty;
+
+    this.referrer.deref();
+    this.referrer = bun.String.empty;
+
     if (this.signal) |signal| {
         signal.unref();
         this.signal = null;
@@ -426,14 +458,18 @@ pub fn getRedirect(
 pub fn getReferrer(
     this: *Request,
     globalObject: *jsc.JSGlobalObject,
-) jsc.JSValue {
-    if (this.#headers) |headers_ref| {
-        if (headers_ref.get("referrer", globalObject)) |referrer| {
-            return ZigString.init(referrer).toJS(globalObject);
-        }
+) bun.JSError!jsc.JSValue {
+    // Fetch spec: the referrer getter returns
+    //   "about:client" when the referrer state is "client" (our default / empty),
+    //   ""             when the referrer state is "no-referrer",
+    //   the serialized URL otherwise.
+    if (this.referrer.isEmpty()) {
+        return ZigString.static("about:client").toJS(globalObject);
     }
-
-    return ZigString.init("").toJS(globalObject);
+    if (this.referrer.eqlComptime(no_referrer_sentinel)) {
+        return ZigString.Empty.toJS(globalObject);
+    }
+    return this.referrer.toJS(globalObject);
 }
 pub fn getReferrerPolicy(
     _: *Request,
@@ -565,14 +601,14 @@ const Fields = enum {
     method,
     headers,
     body,
-    // referrer,
+    referrer,
     // referrerPolicy,
     mode,
     // credentials,
     redirect,
     cache,
-    // integrity,
-    // keepalive,
+    integrity,
+    keepalive,
     signal,
     // proxy,
     // timeout,
@@ -648,7 +684,43 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
     };
     const values_to_try = values_to_try_[0 .. @as(usize, @intFromBool(!is_first_argument_a_url)) +
         @as(usize, @intFromBool(arguments.len > 1 and arguments[1].isObject()))];
-    for (values_to_try) |value| {
+    // Fetch spec step 12: if init is not empty (i.e. the WebIDL dictionary
+    // conversion of init has any present member), request's referrer is
+    // reset to "client" before init.referrer is consulted. When
+    // values_to_try.len == 2 the first value is the init object and the
+    // second is the base Request; in that case we probe init for any
+    // recognized RequestInit key with a non-undefined value and, if so,
+    // skip inheriting referrer from the base.
+    //
+    // Probing is up-front rather than inferred from what the parsing loop
+    // stores, because the spec's "is not empty" test keys on member
+    // *presence* — including members we don't read (credentials,
+    // referrerPolicy, duplex, window) and members filtered by our loop
+    // (signal: null is dropped by getTruthy, but it IS a present WebIDL
+    // member).
+    const init_has_key: bool = blk: {
+        if (values_to_try.len != 2) break :blk false;
+        const init_obj = values_to_try[0];
+        if (!init_obj.isObject()) break :blk false;
+        // Matches the members of WHATWG Fetch's RequestInit dictionary as
+        // recognized by Node/undici. Any member present here (including
+        // null — e.g. `signal: null` — which WebIDL treats as a present
+        // value) makes init non-empty.
+        const keys = [_][]const u8{
+            "method",         "headers",   "body",        "referrer",
+            "referrerPolicy", "mode",      "credentials", "cache",
+            "redirect",       "integrity", "keepalive",   "signal",
+            "duplex",         "window",
+        };
+        inline for (keys) |key| {
+            // value.get returns Zig null for missing OR undefined; any
+            // non-null return means the member is present (including
+            // null, false, 0, "", etc.), which WebIDL treats as present.
+            if (try init_obj.get(globalThis, key)) |_| break :blk true;
+        }
+        break :blk false;
+    };
+    for (values_to_try, 0..) |value, iter_idx| {
         const value_type = value.jsType();
         const explicit_check = values_to_try.len == 2 and value_type == .FinalObject and values_to_try[1].jsType() == .DOMWrapper;
         if (value_type == .DOMWrapper) {
@@ -677,6 +749,44 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
                 if (!fields.contains(.mode)) {
                     req.flags.mode = request.flags.mode;
                     fields.insert(.mode);
+                }
+
+                if (!fields.contains(.keepalive)) {
+                    req.flags.keepalive = request.flags.keepalive;
+                    fields.insert(.keepalive);
+                }
+
+                if (!fields.contains(.integrity)) {
+                    if (!request.integrity.isEmpty()) {
+                        req.integrity = request.integrity.dupeRef();
+                    }
+                    fields.insert(.integrity);
+                }
+
+                // Spec step 12: if init is not empty, referrer was already
+                // reset to "client" — do NOT inherit from the base Request.
+                // The gate only applies to the *base* iteration: when
+                // `init` is itself a Request (`new Request(base, other)`)
+                // this branch fires first with `request == other`, and
+                // there we DO want `other.referrer` (it is the init
+                // dictionary's `referrer` member per WebIDL). `base` is
+                // always the last entry in values_to_try (len==2 case).
+                //
+                // We still insert `.referrer` into fields unconditionally
+                // so the later init-parsing pass skips this iteration's
+                // Request getter (which would return the wrapped
+                // Request's own URL).
+                if (!fields.contains(.referrer)) {
+                    // Use loop index, not JSValue identity: aliasing
+                    // (`new Request(req, req)`) puts the same value in
+                    // both slots, and identity would misclassify iter 0
+                    // as the base iter.
+                    const is_base_iter = values_to_try.len == 2 and iter_idx == values_to_try.len - 1;
+                    const skip_copy = is_base_iter and init_has_key;
+                    if (!skip_copy and !request.referrer.isEmpty()) {
+                        req.referrer = request.referrer.dupeRef();
+                    }
+                    fields.insert(.referrer);
                 }
 
                 if (!fields.contains(.headers)) {
@@ -830,6 +940,65 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
             if (try value.getOptionalEnum(globalThis, "mode", FetchRequestMode)) |mode_value| {
                 req.flags.mode = mode_value;
                 fields.insert(.mode);
+            }
+        }
+
+        // Extract keepalive option (spec: `init["keepalive"] !== undefined`
+        // then request.keepalive = Boolean(init.keepalive)). `value.get` already
+        // collapses `undefined` into `null`, so the optional unwrap IS the
+        // `!== undefined` check.
+        if (!fields.contains(.keepalive)) {
+            if (try value.get(globalThis, "keepalive")) |keepalive_value| {
+                req.flags.keepalive = keepalive_value.toBoolean();
+                fields.insert(.keepalive);
+            }
+        }
+
+        // Extract integrity option (spec: `init["integrity"] !== undefined`
+        // then request.integrity = String(init.integrity)). Compute the new
+        // String before dropping the old one so a throwing fromJS doesn't
+        // leave req.integrity in an inconsistent state for the errdefer path.
+        if (!fields.contains(.integrity)) {
+            if (try value.get(globalThis, "integrity")) |integrity_value| {
+                const s = try bun.String.fromJS(integrity_value, globalThis);
+                req.integrity.deref();
+                req.integrity = s;
+                fields.insert(.integrity);
+            }
+        }
+
+        // Extract referrer option (spec: `init["referrer"] !== undefined`
+        // then: "" → "no-referrer"; else parse as URL, failure throws TypeError).
+        // Matches the integrity pattern: compute first, then swap.
+        //
+        // Spec step 12: if init is non-empty, the base Request's referrer
+        // must be reset to "client" — not leaked via its `referrer`
+        // getter. The DOMWrapper branch above handles this for direct
+        // Requests, but falls through to this generic block when the base
+        // is a Request subclass (or has a mutated structure), since
+        // `asDirect(Request)` returns null for those. Re-apply the gate
+        // here so `value.get("referrer")` doesn't invoke the inherited
+        // accessor and leak the base's URL back in.
+        const is_base_iter_for_referrer = values_to_try.len == 2 and iter_idx == values_to_try.len - 1;
+        if (!fields.contains(.referrer) and !(is_base_iter_for_referrer and init_has_key)) {
+            if (try value.get(globalThis, "referrer")) |referrer_value| {
+                var referrer_str = try bun.String.fromJS(referrer_value, globalThis);
+                const new_referrer: bun.String = if (referrer_str.isEmpty()) blk: {
+                    referrer_str.deref();
+                    // Static: no allocation. Getter maps this sentinel to "".
+                    break :blk bun.String.static(no_referrer_sentinel);
+                } else blk: {
+                    const parsed = bun.jsc.URL.hrefFromString(referrer_str);
+                    referrer_str.deref();
+                    if (parsed.isEmpty()) {
+                        parsed.deref();
+                        return globalThis.throwTypeError("Referrer is not a valid URL.", .{});
+                    }
+                    break :blk parsed;
+                };
+                req.referrer.deref();
+                req.referrer = new_referrer;
+                fields.insert(.referrer);
             }
         }
     }
@@ -1061,6 +1230,8 @@ pub fn cloneInto(
         .method = this.method,
         .flags = this.flags,
         .#headers = headers,
+        .integrity = this.integrity.dupeRef(),
+        .referrer = this.referrer.dupeRef(),
     };
 
     if (this.signal) |signal| {

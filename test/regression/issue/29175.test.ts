@@ -161,7 +161,9 @@ test("console.log on a fully-empty `new Array(N)` prints the summary (#29175)", 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toContain("42 x empty items");
-  expect(stdout).toContain("empty item"); // singular for length 1
+  // Use the full bracketed form to assert the singular "empty item"
+  // path — plain "empty item" would also match inside "42 x empty items".
+  expect(stdout).toContain("[ empty item ]");
   expect(stdout).toContain("[]");
   expect(stdout).toContain("1, 2, 3");
   expect(cleanStderr(stderr)).toBe("");

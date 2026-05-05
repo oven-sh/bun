@@ -139,6 +139,7 @@ extern fn WebWorker__teardownJSCVM(*jsc.JSGlobalObject) void;
 extern fn WebWorker__dispatchExit(*anyopaque, i32) void;
 extern fn WebWorker__dispatchOnline(cpp_worker: *anyopaque, *jsc.JSGlobalObject) void;
 extern fn WebWorker__fireEarlyMessages(cpp_worker: *anyopaque, *jsc.JSGlobalObject) void;
+extern fn WebWorker__hasMessageListener(*jsc.JSGlobalObject) bool;
 extern fn WebWorker__dispatchError(*jsc.JSGlobalObject, *anyopaque, bun.String, JSValue) void;
 
 /// Process-global registry of worker threads that have been spawned and
@@ -613,34 +614,141 @@ fn spin(this: *WebWorker) void {
         this.shutdown();
     }
 
-    var promise = vm.loadEntryPointForWebWorker(path) catch {
+    // Start loading the entry point module. This kicks off module
+    // resolution and evaluation but does not wait for top-level await.
+    const initial_promise = vm.reloadEntryPoint(path) catch {
         // process.exit() may have run during load; don't clobber its code.
         if (!this.exit_called) vm.exit_handler.exit_code = 1;
         this.flushLogs(vm);
         this.shutdown();
     };
+    vm.eventLoop().performGC();
 
-    if (promise.status() == .rejected) {
-        const handled = vm.uncaughtException(vm.global, promise.result(vm.jsc_vm), true);
+    // Spin the event loop until the module has progressed far enough to
+    // register a 'message' listener, the module promise settles (normal
+    // completion or synchronous module with no TLA), or termination is
+    // requested. Without this, a worker whose entry point imports a
+    // userland module would dispatch 'online' and fire buffered messages
+    // before the module body has had a chance to run its listener
+    // registration — messages would be dropped into an empty event scope.
+    //
+    // Once a listener exists (or the module finishes), the buffered
+    // inbox drain will reach live handlers. If the module's TLA never
+    // settles AND it never registers a listener, this loop blocks in
+    // autoTick() the same way waitForPromiseWithTermination would.
+    //
+    // Drain microtasks once unconditionally first: hasMessageListener
+    // is satisfied by ANY listener on the global event scope, and
+    // loadPreloads inside reloadEntryPoint already ran any preload
+    // bodies to completion. A preload that registers a 'message'
+    // listener would otherwise short-circuit the loop before the main
+    // module body runs, and buffered messages would dispatch to the
+    // preload's listener instead of the main module's.
+    vm.eventLoop().tick();
+    while (!this.hasRequestedTerminate() and
+        initial_promise.status() == .pending and
+        !WebWorker__hasMessageListener(vm.global))
+    {
+        vm.eventLoop().tick();
+        if (this.hasRequestedTerminate() or
+            initial_promise.status() != .pending or
+            WebWorker__hasMessageListener(vm.global))
+        {
+            break;
+        }
+        vm.eventLoop().autoTick();
+    }
 
+    if (this.hasRequestedTerminate()) {
+        // Terminate arrived after the module started running — exit
+        // code 1 because evaluation was forcibly interrupted (matches
+        // Node.js worker.terminate() semantics, and makes CloseEvent
+        // report wasClean:false on the parent). Don't clobber a
+        // user-chosen exit code from process.exit(N) inside the module
+        // body.
+        if (!this.exit_called) vm.exit_handler.exit_code = 1;
+        this.flushLogs(vm);
+        this.shutdown();
+    }
+
+    // If the module already rejected synchronously, handle the rejection
+    // before dispatchOnline. Unhandled rejection terminates the worker
+    // (via onUnhandledRejection → shutdown(), noreturn). A handled
+    // rejection falls through to dispatchOnline — matching Node.js
+    // semantics where process.on('uncaughtException') can keep the
+    // worker alive. This mirrors the post-TLA rejection path below, so
+    // a worker whose module throws behaves the same way whether the
+    // throw is synchronous or after an await.
+    //
+    // Track whether we already dispatched a rejection so the post-TLA
+    // check below doesn't double-fire. Re-reading the promise status
+    // isn't sufficient — `fireEarlyMessages` can synchronously run JS
+    // (drainInbox) which may resolve an awaited promise, run the TLA
+    // continuation, and transition `initial_promise` `.pending → .rejected`
+    // in between. Using a flag ensures: the sync-rejection dispatched
+    // here isn't re-dispatched later, and a rejection that happens during
+    // or after `fireEarlyMessages` still gets reported.
+    var rejection_dispatched = false;
+    if (initial_promise.status() == .rejected) {
+        rejection_dispatched = true;
+        const handled = vm.uncaughtException(vm.global, initial_promise.result(vm.jsc_vm), true);
         if (!handled) {
             vm.exit_handler.exit_code = 1;
+            this.flushLogs(vm);
             this.shutdown();
         }
-    } else {
-        _ = promise.result(vm.jsc_vm);
     }
 
     this.flushLogs(vm);
     log("[{d}] event loop start", .{this.execution_context_id});
-    // dispatchOnline fires the parent-side 'open' event and flips the C++
-    // state to Running (which routes postMessage directly instead of
-    // queuing). It is placed after the entry point has loaded so the parent
-    // observes 'online' only once the worker's top-level code has completed;
-    // moving it earlier would change that observable ordering.
+    // Dispatch 'online' and fire buffered messages BEFORE (potentially
+    // still) waiting for top-level await. The event loop spins during
+    // waitForPromiseWithTermination, so messages posted to the worker
+    // are processed even while TLA is pending. This matches Node.js
+    // and browser semantics (issue #21101).
     WebWorker__dispatchOnline(this.cpp_worker, vm.global);
     WebWorker__fireEarlyMessages(this.cpp_worker, vm.global);
     this.setStatus(.running);
+
+    // Wait for the module's top-level await to settle (or termination).
+    // No-op on an already-settled promise, so this is safe to run
+    // unconditionally; the rejection_dispatched flag prevents the
+    // post-TLA check from firing twice on sync-rejection.
+    vm.eventLoop().waitForPromiseWithTermination(jsc.AnyPromise{
+        .internal = initial_promise,
+    });
+
+    if (this.hasRequestedTerminate()) {
+        // Terminate arrived while TLA was pending — exit code 1,
+        // same reasoning as the pre-online check above.
+        if (!this.exit_called) vm.exit_handler.exit_code = 1;
+        // Drain any CppTask fireEarlyMessages posted (else-branch of
+        // the no-listener case) before shutdown() runs — otherwise
+        // the heap-allocated EventLoopTask and the Ref<Worker> it
+        // captures would leak, since shutdown() is noreturn and
+        // EventLoop.deinit frees only the fifo buffer.
+        vm.tick();
+        this.flushLogs(vm);
+        this.shutdown();
+    }
+
+    const promise = vm.pending_internal_promise.?;
+
+    // Handle rejection from TLA (or from JS run during
+    // fireEarlyMessages) — but only if we didn't already dispatch it
+    // above.
+    if (promise.status() == .rejected and !rejection_dispatched) {
+        const handled = vm.uncaughtException(vm.global, promise.result(vm.jsc_vm), true);
+        if (!handled) {
+            vm.exit_handler.exit_code = 1;
+            this.flushLogs(vm);
+            this.shutdown();
+        }
+    } else if (promise.status() == .fulfilled) {
+        _ = promise.result(vm.jsc_vm);
+    }
+
+    this.flushLogs(vm);
 
     // don't run the GC if we don't actually need to
     if (vm.isEventLoopAlive() or
@@ -651,8 +759,10 @@ fn spin(this: *WebWorker) void {
         _ = vm.global.vm().runGC(false);
     }
 
-    // Always do a first tick so we call CppTask without delay after
-    // dispatchOnline.
+    // Tick once so the drain CppTask that fireEarlyMessages may have
+    // posted (synchronous module with no message listener) runs even
+    // when waitForPromiseWithTermination above was a no-op because the
+    // module promise was already settled.
     vm.tick();
 
     while (vm.isEventLoopAlive()) {

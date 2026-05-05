@@ -713,8 +713,10 @@ void ImportMetaObject::finishCreation(VM& vm)
         }
 
         auto* object = Bun::JSCommonJSModule::createBoundRequireFunction(init.vm, meta->globalObject(), path);
-        RETURN_IF_EXCEPTION(scope, );
-        ASSERT(object);
+        if (scope.exception() || !object) [[unlikely]] {
+            init.property.setMayBeNull(init.vm, init.owner, nullptr);
+            return;
+        }
         init.set(uncheckedDowncast<JSFunction>(object));
     });
     this->urlProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSString>::Initializer& init) {

@@ -1,14 +1,46 @@
-pub use self::path::Path;
-pub use self::path::AbsPath;
-pub use self::path::AutoAbsPath;
-pub use self::path::RelPath;
-pub use self::path::AutoRelPath;
+#![allow(unused, non_snake_case, non_camel_case_types, clippy::all)]
 
-pub use self::env_path::EnvPath;
+// B-1: Path.rs uses E0658 ConstParamTy / adt_const_params; gate + stub the
+// width-generic surface. Full bodies preserved for B-2.
+pub mod path {
+    /// Trait the width-generic Path<U> code keys on (B-2: u8/u16 impls).
+    pub trait PathUnit: Copy + 'static {
+        const LONG_PATH_PREFIX: &'static [Self];
+    }
+    impl PathUnit for u8 { const LONG_PATH_PREFIX: &'static [u8] = b"\\\\?\\"; }
+    impl PathUnit for u16 { const LONG_PATH_PREFIX: &'static [u16] = &super::windows::LONG_PATH_PREFIX; }
+}
+// Stub width-generic path types — B-2 implements `Path<U: PathUnit, const ABS: bool>`.
+pub type Path = [u8];
+pub type AbsPath = [u8];
+pub type AutoAbsPath = [u8];
+pub type RelPath = [u8];
+pub type AutoRelPath = [u8];
 
-pub use self::path_buffer_pool::path_buffer_pool;
-pub use self::path_buffer_pool::w_path_buffer_pool;
-pub use self::path_buffer_pool::os_path_buffer_pool;
+pub struct EnvPath; // B-2
+
+// path_buffer_pool — return Box<PathBuffer> guards (B-2: pooled).
+pub fn path_buffer_pool() -> Box<PathBuffer> { Box::new(PathBuffer::ZEROED) }
+pub fn w_path_buffer_pool() -> Box<WPathBuffer> { Box::new(WPathBuffer::ZEROED) }
+#[cfg(windows)] pub fn os_path_buffer_pool() -> Box<WPathBuffer> { w_path_buffer_pool() }
+#[cfg(not(windows))] pub fn os_path_buffer_pool() -> Box<PathBuffer> { path_buffer_pool() }
+
+// std.fs.path equivalents (PORTING.md §Crate map: never std::path).
+pub const SEP: u8 = if cfg!(windows) { b'\\' } else { b'/' };
+pub const SEP_STR: &str = if cfg!(windows) { "\\" } else { "/" };
+pub const DELIMITER: u8 = if cfg!(windows) { b';' } else { b':' };
+pub fn is_absolute(p: &[u8]) -> bool {
+    #[cfg(not(windows))] { p.first() == Some(&b'/') }
+    #[cfg(windows)] { is_absolute_windows(p) }
+}
+pub fn dirname(p: &[u8]) -> &[u8] {
+    p.iter().rposition(|&c| c == b'/' || (cfg!(windows) && c == b'\\'))
+        .map(|i| &p[..i]).unwrap_or(b"")
+}
+pub fn basename(p: &[u8]) -> &[u8] {
+    p.iter().rposition(|&c| c == b'/' || (cfg!(windows) && c == b'\\'))
+        .map(|i| &p[i+1..]).unwrap_or(p)
+}
 
 // TODO(port): Zig's `std.fs.max_path_bytes` is platform-derived; values below mirror Zig std.
 #[cfg(target_family = "wasm")]
@@ -87,11 +119,10 @@ pub type OSPathBuffer = WPathBuffer;
 #[cfg(not(windows))]
 pub type OSPathBuffer = PathBuffer;
 
-#[path = "Path.rs"]
-mod path;
-#[path = "EnvPath.rs"]
-mod env_path;
-mod path_buffer_pool;
+#[cfg(any())] #[path = "Path.rs"] mod path_draft;
+#[cfg(any())] #[path = "EnvPath.rs"] mod env_path;
+#[cfg(any())] mod path_buffer_pool;
+#[cfg(any())] mod resolve_path;
 
 // ──────────────────────────────────────────────────────────────────────────
 // MOVE_DOWN(CYCLEBREAK): Windows path-prefix constants — relocated from

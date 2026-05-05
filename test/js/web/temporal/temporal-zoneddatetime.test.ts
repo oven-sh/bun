@@ -5,6 +5,12 @@ import { bunEnv, bunExe } from "harness";
 // the Temporal.ZonedDateTime foundation and the Temporal.Now additions that
 // depend on it. Algorithms were ported from the temporal_rs reference
 // implementation that V8 / Node.js use.
+//
+// The implementation lives in JavaScriptCore (oven-sh/WebKit#218, #219, #220),
+// not in this repo's src/. Until the vendored WebKit is bumped to include
+// those changes, prebuilt-WebKit builds won't have Temporal.ZonedDateTime and
+// these tests skip. They activate automatically once the bump lands.
+//
 // Tracking: https://github.com/oven-sh/bun/issues/15853
 const env = { ...bunEnv, BUN_JSC_useTemporal: "1", TZ: "UTC" };
 
@@ -19,7 +25,19 @@ async function run(code: string) {
   return { stdout, stderr, exitCode };
 }
 
-test("Temporal.ZonedDateTime exists", async () => {
+// Probe once so each test can skipIf cheaply. We spawn the same bunExe()
+// that the tests below use, because the availability depends on which
+// WebKit that binary was linked against, not on the test-runner process.
+const hasZonedDateTime = await (async () => {
+  const { stdout } = await run(
+    `console.log(typeof Temporal !== "undefined" && typeof Temporal.ZonedDateTime === "function")`,
+  );
+  return stdout.trim() === "true";
+})();
+
+const zdtTest = test.skipIf(!hasZonedDateTime);
+
+zdtTest("Temporal.ZonedDateTime exists", async () => {
   const { stdout, stderr, exitCode } = await run(`
     console.log(typeof Temporal.ZonedDateTime);
     console.log(Temporal.ZonedDateTime.prototype[Symbol.toStringTag]);
@@ -29,7 +47,7 @@ test("Temporal.ZonedDateTime exists", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("Temporal.ZonedDateTime constructor + getters at Unix epoch in UTC", async () => {
+zdtTest("Temporal.ZonedDateTime constructor + getters at Unix epoch in UTC", async () => {
   const { stdout, stderr, exitCode } = await run(`
     const z = new Temporal.ZonedDateTime(0n, "UTC");
     console.log(JSON.stringify({
@@ -78,7 +96,7 @@ test("Temporal.ZonedDateTime constructor + getters at Unix epoch in UTC", async 
   expect(exitCode).toBe(0);
 });
 
-test("Temporal.ZonedDateTime offset time zone", async () => {
+zdtTest("Temporal.ZonedDateTime offset time zone", async () => {
   const { stdout, stderr, exitCode } = await run(`
     const z = new Temporal.ZonedDateTime(0n, "+05:30");
     console.log(z.timeZoneId, z.offset, z.hour, z.minute, z.toString());
@@ -88,7 +106,7 @@ test("Temporal.ZonedDateTime offset time zone", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("Temporal.ZonedDateTime named IANA zone honors DST", async () => {
+zdtTest("Temporal.ZonedDateTime named IANA zone honors DST", async () => {
   const { stdout, stderr, exitCode } = await run(`
     const summer = new Temporal.ZonedDateTime(BigInt(Date.UTC(2024, 6, 1, 12)) * 1000000n, "America/New_York");
     const winter = new Temporal.ZonedDateTime(BigInt(Date.UTC(2024, 0, 1, 12)) * 1000000n, "America/New_York");
@@ -99,7 +117,7 @@ test("Temporal.ZonedDateTime named IANA zone honors DST", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("Temporal.ZonedDateTime conversions", async () => {
+zdtTest("Temporal.ZonedDateTime conversions", async () => {
   const { stdout, stderr, exitCode } = await run(`
     const z = new Temporal.ZonedDateTime(0n, "+05:00");
     console.log(z.toInstant().epochNanoseconds.toString());
@@ -119,7 +137,7 @@ test("Temporal.ZonedDateTime conversions", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("Temporal.ZonedDateTime negative epoch (sub-nanosecond boundary)", async () => {
+zdtTest("Temporal.ZonedDateTime negative epoch (sub-nanosecond boundary)", async () => {
   const { stdout, stderr, exitCode } = await run(`
     const z = new Temporal.ZonedDateTime(-1n, "UTC");
     console.log(z.year, z.month, z.day, z.hour, z.minute, z.second, z.millisecond, z.microsecond, z.nanosecond);
@@ -133,7 +151,7 @@ test("Temporal.ZonedDateTime negative epoch (sub-nanosecond boundary)", async ()
   expect(exitCode).toBe(0);
 });
 
-test("Temporal.ZonedDateTime.compare and equals", async () => {
+zdtTest("Temporal.ZonedDateTime.compare and equals", async () => {
   const { stdout, stderr, exitCode } = await run(`
     const a = new Temporal.ZonedDateTime(0n, "UTC");
     const b = new Temporal.ZonedDateTime(1n, "UTC");
@@ -149,7 +167,7 @@ test("Temporal.ZonedDateTime.compare and equals", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("Temporal.ZonedDateTime error handling", async () => {
+zdtTest("Temporal.ZonedDateTime error handling", async () => {
   const { stdout, stderr, exitCode } = await run(`
     function errName(fn) { try { fn(); return "no-throw"; } catch(e) { return e.constructor.name; } }
     console.log(errName(() => new Temporal.ZonedDateTime(0n, "Not/AZone")));
@@ -162,7 +180,7 @@ test("Temporal.ZonedDateTime error handling", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("Temporal.Now additions (zonedDateTimeISO/plainDateISO/plainTimeISO/plainDateTimeISO)", async () => {
+zdtTest("Temporal.Now additions (zonedDateTimeISO/plainDateISO/plainTimeISO/plainDateTimeISO)", async () => {
   const { stdout, stderr, exitCode } = await run(`
     console.log(typeof Temporal.Now.zonedDateTimeISO);
     console.log(typeof Temporal.Now.plainDateISO);
@@ -187,7 +205,7 @@ test("Temporal.Now additions (zonedDateTimeISO/plainDateISO/plainTimeISO/plainDa
   expect(exitCode).toBe(0);
 });
 
-test("Temporal.Instant.from accepts ZonedDateTime", async () => {
+zdtTest("Temporal.Instant.from accepts ZonedDateTime", async () => {
   const { stdout, stderr, exitCode } = await run(`
     const z = new Temporal.ZonedDateTime(12345n, "Asia/Tokyo");
     console.log(Temporal.Instant.from(z).epochNanoseconds.toString());

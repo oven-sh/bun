@@ -1824,11 +1824,12 @@ pub const ESModule = struct {
                         log.addNoteFmt("Substituted \"{s}\" for \"*\" in \".{s}\" to get \".{s}\" ", .{ subpath, resolved_target, result });
                     }
 
-                    const status: Status = if (strings.endsWithCharOrIsZeroLength(result, '*') and strings.indexOfChar(result, '*').? == result.len - 1)
-                        .ExactEndsWithStar
-                    else
-                        .Exact;
-                    return Resolution{ .path = result, .status = status, .debug = .{ .token = target.first_token } };
+                    // Mark any wildcard-pattern expansion with `.ExactEndsWithStar` so
+                    // the resolver knows this result came from a `"./*"`-style
+                    // expansion key. When the target has no extension (e.g.
+                    // `"./*": { "import": "./dist/*" }`), the resolver then probes
+                    // for `*.js`, `*.mjs`, etc. the same way it does for bare paths.
+                    return Resolution{ .path = result, .status = .ExactEndsWithStar, .debug = .{ .token = target.first_token } };
                 } else {
                     const parts2 = [_]string{ package_url, str, subpath };
                     const result = resolve_path.joinStringBuf(resolve_target_buf2, parts2, .auto);

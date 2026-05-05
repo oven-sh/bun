@@ -8,14 +8,15 @@
 // concurrent completions doesn't block `setTimeout`/`setInterval`.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
 
 // Gate uses `bun bd` (ASAN/debug) for regression verification — see
 // test/CLAUDE.md. In ASAN debug each SDK call is slow enough that the
 // pre-fix starvation ratio is reliably visible; release timings are tighter
 // and can blur when a cached release binary already has the fix compiled
-// in, so pin the invariant here.
-test.skipIf(!isDebug)(
+// in, so pin the invariant here. Windows is excluded because the fix itself
+// is gated to POSIX (see `Environment.isPosix` at Task.zig:561).
+test.skipIf(!isDebug || isWindows)(
   "setTimeout fires early in a node:http + @aws-sdk burst",
   async () => {
     const N = 100;

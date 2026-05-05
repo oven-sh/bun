@@ -546,13 +546,13 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, co
         // an empty heap, or peek + `timespec.now()` for a future deadline.
         // See #30273.
         //
-        // POSIX-only: on Windows, routing timers through this path interacts
-        // badly with libuv's backend-timeout bookkeeping (`test-http-should-
-        // emit-close-when-connection-is-aborted` times out on Windows 2019
-        // shards). The POSIX gate matches where Bun's own timer heap is
-        // normally dispatched (via `autoTick`'s `drainTimers`). Windows
-        // drives timers through libuv's `uv_timer`, which fires independently
-        // from its own loop phase and doesn't hit the same starvation shape.
+        // POSIX-only. The starvation mechanism is platform-agnostic (both
+        // POSIX's `drainTimers` and Windows's `onUVTimer` only run after
+        // `tick()` returns to `autoTick`), but routing this mid-tick drain
+        // through libuv's `uv_timer` bookkeeping on Windows destabilised
+        // `test-http-should-emit-close-when-connection-is-aborted` on the
+        // Windows 2019 shards. Windows is left unfixed pending a libuv-safe
+        // implementation of the same drain.
         //
         // Gated on `suppress_microtask_drain` because `tickQueueWithCount` is
         // shared with `SpawnSyncEventLoop`, which sets that flag to isolate

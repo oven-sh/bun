@@ -189,7 +189,7 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
                     // `node:net`'s `Server.prototype.listen` and re-emitted
                     // via `setTimeout` as the async 'error' event.
                     //
-                    // Match Node's `uvExceptionWithHostPort` output exactly:
+                    // Match Node's `uvExceptionWithHostPort` shape:
                     //   message: "listen EADDRINUSE: address already in use <addr>"
                     //   fields:  .code, .errno, .syscall, .address   (no .path)
                     //
@@ -199,6 +199,13 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
                     // listen error never has. Build the error manually to
                     // avoid that divergence; the label comes from
                     // `libuv_error_map` which is what `node:errors` uses.
+                    //
+                    // One remaining quirk: `.errno` is the negated POSIX-mapped
+                    // value (-98 for EADDRINUSE) rather than the raw libuv
+                    // return code (-4091) Node uses. This matches Bun's
+                    // convention across every other libuv-sourced error (see
+                    // `toSystemError` in `src/sys/Error.zig`); real-world code
+                    // keys off `.code`, not `.errno`.
                     //
                     // `this.connection.unix` is the user's original input (not
                     // `pipe_name`, which `normalizePipeName` rewrites to the

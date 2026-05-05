@@ -12,13 +12,13 @@ use bumpalo::Bump;
 
 use bun_logger as logger;
 
-use bun_js_parser::ast as js_ast;
-use bun_js_parser::ast::{
+use crate::ast as js_ast;
+use crate::ast::{
     B, Binding, E, Expr, ExprNodeList, G, S, Stmt,
 };
 // TODO(port): verify exact module paths for nested types (Decl::List, G::Property::List,
 // S::Local::Kind, stmt::Data / binding::Data variant names) once bun_js_parser crate lands.
-use bun_js_parser::ast::G::Decl;
+use crate::ast::G::Decl;
 
 /// Zig: `pub fn ReplTransforms(comptime P: type) type { return struct { ... } }`
 ///
@@ -631,9 +631,9 @@ impl<P> ReplTransforms<P> {
 
 // TODO(port): these `stmt::Data` / `binding::Data` module paths are placeholders for the
 // Rust enum that replaces Zig's `Stmt.Data` / `Binding.Data` union(enum). Phase B: align
-// with actual bun_js_parser::ast variant naming.
-use bun_js_parser::ast::stmt;
-use bun_js_parser::ast::binding;
+// with actual crate::ast variant naming.
+use crate::ast::stmt;
+use crate::ast::binding;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -1,17 +1,17 @@
 use bun_core::{self, err};
 use bun_logger as logger;
-use bun_str::strings;
+use bun_string::strings;
 
 use crate::{
     self as js_parser, AwaitOrYield, DeferredErrors, FnOrArrowDataParse, JSXTransformType,
     NewParser_, ParseStatementOptions, PropertyOpts, TypeScript,
 };
-use bun_js_parser::ast as js_ast;
+use crate::ast as js_ast;
 use js_ast::{
     E, Expr, ExprNodeList, Flags, Stmt, Symbol,
     G::{self, Property},
 };
-use bun_js_parser::lexer as js_lexer;
+use crate::lexer as js_lexer;
 use js_lexer::{PropertyModifierKeyword, T};
 
 // TODO(port): exact paths for these enums (Phase B import fix)

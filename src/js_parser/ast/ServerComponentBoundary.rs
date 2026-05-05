@@ -6,16 +6,13 @@
 //!
 //! This is sometimes abbreviated as SCB
 
-use bun_collections::{ArrayHashMap, DynamicBitSet, MultiArrayList};
+use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_collections::multi_array_list;
+// TODO(b2-blocked): bun_collections::DynamicBitSet — use Vec<bool> or ArrayBitSet for now
+type DynamicBitSet = Vec<bool>;
 
-use super::index::{self, Index};
-use super::UseDirective;
-
-// Zig: `Index.Int` is a `pub const Int = u32;` decl on the `Index` struct.
-// Rust structs cannot carry associated type aliases, so reference the
-// module-level alias instead.
-type IndexInt = index::Int;
+use super::base::{Index, IndexInt};
+use super::use_directive::UseDirective;
 
 #[derive(Clone, Copy)]
 pub struct ServerComponentBoundary {
@@ -54,6 +51,10 @@ pub struct List {
 // (getOrPutAdapted / getIndexAdapted) that accepts an external hasher+eq.
 type Map = ArrayHashMap<(), ()>;
 
+// TODO(port): hand-roll MultiArrayElement for ServerComponentBoundary (4 fields).
+// Until then the MultiArrayList<SCB> append/slice methods don't resolve, so the
+// impl blocks below stay gated. The struct/List/Slice types themselves are real.
+#[cfg(any())] // TODO(b2-blocked): MultiArrayElement derive + ArrayHashMap::*_adapted (track-A)
 impl List {
     /// Can only be called on the bundler thread.
     pub fn put(
@@ -94,14 +95,16 @@ impl List {
     }
 }
 
+// TODO(b2-blocked): Slice<SCB> needs MultiArrayElement; gate the whole struct since it's
+// only useful with the gated impls below.
+#[cfg(any())]
 pub struct Slice<'a> {
-    pub list: multi_array_list::Slice<'a, ServerComponentBoundary>,
-    // Zig stored `Map` by value (it is unmanaged: ptr+len+cap with no
-    // allocator). Borrow it here so `List::slice` does not move ownership.
-    // TODO(port): lifetime — revisit if callers need an owned snapshot.
+    pub list: multi_array_list::Slice<ServerComponentBoundary>,
     pub map: &'a Map,
 }
+#[cfg(any())]
 
+#[cfg(any())] // TODO(b2-blocked): MultiArrayElement + ArrayHashMap::*_adapted (track-A)
 impl<'a> Slice<'a> {
     pub fn get_index(&self, real_source_index: IndexInt) -> Option<usize> {
         self.map.get_index_adapted(
@@ -128,19 +131,18 @@ impl<'a> Slice<'a> {
     }
 }
 
-pub struct Adapter<'a> {
-    pub list: multi_array_list::Slice<'a, ServerComponentBoundary>,
+#[cfg(any())] // TODO(b2-blocked): MultiArrayElement bound (see file-top note)
+pub struct Adapter {
+    pub list: multi_array_list::Slice<ServerComponentBoundary>,
 }
 
-impl<'a> Adapter<'a> {
+#[cfg(any())] // TODO(b2-blocked): bun_wyhash::hash_int + Slice<SCB>::items() (track-A)
+impl Adapter {
     pub fn hash(&self, key: IndexInt) -> u32 {
-        // TODO(port): `std.hash.int` — Zig's integer mixer; expose an
-        // equivalent in `bun_wyhash` or `bun_collections` and call it here.
         bun_wyhash::hash_int(key as u32)
     }
-
     pub fn eql(&self, a: IndexInt, _: (), b_index: usize) -> bool {
-        debug_assert!(self.list.capacity() > 0); // optimize MultiArrayList.Slice.items
+        debug_assert!(self.list.capacity() > 0);
         a == self.list.items().source_index[b_index]
     }
 }

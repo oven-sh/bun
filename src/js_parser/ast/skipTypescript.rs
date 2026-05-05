@@ -1,13 +1,13 @@
 use bun_core::{self, err, Error};
 use bun_logger as logger;
-use bun_js_parser::{
+use crate::{
     self as js_parser, JSXTransformType, ParseStatementOptions, Ref, SkipTypeParameterResult,
     TypeParameterFlag, TypeScript,
 };
-use bun_js_parser::ast::{self as js_ast, Op};
-use bun_js_parser::ast::Op::Level;
-use bun_js_parser::lexer::T;
-use bun_js_parser::TypeScript::{Metadata, SkipTypeOptions};
+use crate::ast::{self as js_ast, Op};
+use crate::ast::Op::Level;
+use crate::lexer::T;
+use crate::TypeScript::{Metadata, SkipTypeOptions};
 // TODO(port): verify exact module paths for TypeScript::{Metadata, SkipTypeOptions, Identifier}
 // TODO(port): narrow error set
 

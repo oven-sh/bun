@@ -1,5 +1,5 @@
 use bun_logger as logger;
-use bun_str::strings;
+use bun_string::strings;
 
 use crate::ast as js_ast;
 use crate::ast::{E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, S, Scope, Stmt, Symbol};

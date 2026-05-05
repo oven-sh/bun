@@ -1,7 +1,7 @@
 use core::cmp::Ordering;
 
-use bun_js_parser::ast::{self as js_ast, E, Expr, ExprData, ExprTag, Op, Symbol};
-use bun_js_parser::{
+use crate::ast::{self as js_ast, E, Expr, ExprData, ExprTag, Op, Symbol};
+use crate::{
     fold_string_addition, float_to_int32, ExprIn, JSXTransformType, NewParser_, Prefill,
     SideEffects, StringAdditionKind,
 };

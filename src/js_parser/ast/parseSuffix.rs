@@ -1,9 +1,9 @@
 use bun_core::{err, Error};
-use bun_js_parser::ast::{self as js_ast, E, Expr, Op, OptionalChain};
-use bun_js_parser::ast::op::Level;
-use bun_js_parser::ast::expr::EFlags;
-use bun_js_parser::lexer::T;
-use bun_js_parser::{self as js_parser, DeferredErrors, JSXTransformType, SideEffects};
+use crate::ast::{self as js_ast, E, Expr, Op, OptionalChain};
+use crate::ast::op::Level;
+use crate::ast::expr::EFlags;
+use crate::lexer::T;
+use crate::{self as js_parser, DeferredErrors, JSXTransformType, SideEffects};
 
 // Zig: `fn ParseSuffix(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
 // Rust: zero-sized struct carrying the const-generic feature flags; all fns are associated.

@@ -4,7 +4,7 @@ use bumpalo::collections::Vec as BumpVec;
 
 use bun_core::{err, Error};
 use bun_logger as logger;
-use bun_str::strings;
+use bun_string::strings;
 
 use crate::ast as js_ast;
 use crate::ast::{

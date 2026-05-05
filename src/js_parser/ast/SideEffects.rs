@@ -1,4 +1,4 @@
-use bun_js_parser::ast::{self, Binding, BindingData, E, Expr, ExprData, G, Op, Stmt, StmtData};
+use crate::ast::{self, Binding, BindingData, E, Expr, ExprData, G, Op, Stmt, StmtData};
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export
 // TODO(port): narrow these imports once crate layout is fixed in Phase B
 

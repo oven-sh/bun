@@ -1,15 +1,15 @@
 use bun_core::{err, Error};
-use bun_js_parser::js_ast::{
+use crate::js_ast::{
     self, B, Decl, DeclList, E, EnumValue, Expr, ExprEFlags, ExprNodeIndex, ExprNodeList, G,
     LocRef, S, Stmt, TSNamespaceMember, TSNamespaceMemberData,
 };
-use bun_js_parser::js_lexer::{self, T};
-use bun_js_parser::{
+use crate::js_lexer::{self, T};
+use crate::{
     JSXTransformType, Level, NewParser, ParseStatementOptions, Ref, ScopeKind, ScopeOrder,
     SymbolKind,
 };
 use bun_logger as logger;
-use bun_str::strings;
+use bun_string::strings;
 use bumpalo::collections::Vec as BumpVec;
 
 // Zig: `pub fn ParseTypescript(comptime ...) type { return struct { ... } }`

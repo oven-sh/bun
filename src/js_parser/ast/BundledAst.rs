@@ -8,15 +8,18 @@
 
 use std::io::Write as _;
 
-use bun_css::BundlerStyleSheet;
+// TODO(b2-blocked): bun_css::BundlerStyleSheet — bun_css crate not a dep of js_parser (would back-edge T4→T4).
+// Use opaque ptr; downstream bundler casts.
+type BundlerStyleSheet = core::ffi::c_void;
 
 use bun_logger as logger;
 use bun_options_types::import_record;
-use bun_str::strings;
+use bun_string::strings;
 
-use crate::ast::ast_mod::{self as ast, Ast};
-use crate::ast::{CharFreq, ExportsKind, Ref, Scope, SlotCounts, TlaCheck};
+use crate::ast::ast::{self, Ast};
+use crate::ast::{CharFreq, ExportsKind, Ref, Scope, SlotCounts};
 use crate::ast::{part, symbol};
+use crate::TlaCheck;
 // TODO(port): verify exact module paths for Ast/Part/Symbol associated `List` types in Phase B.
 
 pub type CommonJSNamedExports = ast::CommonJSNamedExports;
@@ -94,6 +97,11 @@ bitflags::bitflags! {
     }
 }
 
+// TODO(b2-ast-D): BundledAst<'arena> is a borrowing slice-view of Ast for bundler perf.
+// The conversions (init/to_ast/empty) need either (a) Clone bounds on heavy fields, or
+// (b) signature changes to consume/produce by value, or (c) arena param + alloc_slice_copy.
+// Struct def is real (downstream bundler::LinkerGraph stores it); methods gated.
+#[cfg(any())]
 impl<'arena> BundledAst<'arena> {
     // TODO(port): Zig `pub const empty = BundledAst.init(Ast.empty);` — cannot be a `const` in Rust
     // because `init` is not const-evaluable. Phase B: consider a `static` via `OnceLock` or make
@@ -104,7 +112,7 @@ impl<'arena> BundledAst<'arena> {
 
     pub fn to_ast(&self) -> Ast {
         Ast {
-            approximate_newline_count: self.approximate_newline_count,
+            approximate_newline_count: self.approximate_newline_count as usize,
             nested_scope_slot_counts: self.nested_scope_slot_counts,
 
             exports_kind: self.exports_kind,
@@ -132,13 +140,19 @@ impl<'arena> BundledAst<'arena> {
             // is conveniently fully parallelized.
             named_imports: self.named_imports,
             named_exports: self.named_exports,
-            export_star_import_records: self.export_star_import_records,
+            // PORT NOTE: Ast owns Box<[u32]>; BundledAst borrows &'arena [u32]. Clone on the
+            // way back to owned Ast (rare path: BundledAst→Ast only used for diagnostics).
+            export_star_import_records: Box::<[u32]>::from(self.export_star_import_records),
 
             top_level_symbols_to_parts: self.top_level_symbols_to_parts,
 
             commonjs_named_exports: self.commonjs_named_exports,
 
-            redirect_import_record_index: self.redirect_import_record_index,
+            redirect_import_record_index: if self.redirect_import_record_index == u32::MAX {
+                None
+            } else {
+                Some(self.redirect_import_record_index)
+            },
 
             target: self.target,
 
@@ -169,6 +183,11 @@ impl<'arena> BundledAst<'arena> {
         }
     }
 
+    // TODO(b2-ast-D): `export_star_import_records` field-type reconciliation —
+    // Ast owns Box<[u32]>, BundledAst<'arena> borrows &'arena [u32]. With no arena param
+    // and no Box::leak (PORTING.md §Forbidden), either retype the field to Box<[u32]> or
+    // add an `&'arena Bump` param and `bump.alloc_slice_copy(&ast.export_star_import_records)`.
+    #[cfg(any())]
     pub fn init(ast: Ast) -> Self {
         let mut flags = Flags::empty();
         flags.set(Flags::USES_EXPORTS_REF, ast.uses_exports_ref);
@@ -235,6 +254,7 @@ impl<'arena> BundledAst<'arena> {
     }
 
     /// TODO: Move this from being done on all parse tasks into the start of the linker. This currently allocates base64 encoding for every small file loaded thing.
+    #[cfg(any())] // TODO(b2-blocked): bun_http_types::MimeType + bun_paths::extension (back-edge); CSS-only helper
     pub fn add_url_for_css(
         &mut self,
         bump: &'arena bun_alloc::Arena,

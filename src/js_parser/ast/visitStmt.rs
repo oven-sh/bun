@@ -2,14 +2,14 @@ use core::marker::PhantomData;
 
 use bun_core::Error;
 use bun_logger as logger;
-use bun_js_parser::{
+use crate::{
     self as js_parser, JSXTransformType, NewParser, Prefill, PrependTempRefsOpts, ReactRefresh,
     Ref, RelocateVars, SideEffects, StmtsKind, statement_cares_about_scope,
 };
-use bun_js_parser::ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt};
-use bun_js_parser::ast::G::Decl;
-use bun_js_parser::lexer as js_lexer;
-use bun_str::strings;
+use crate::ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt};
+use crate::ast::G::Decl;
+use crate::lexer as js_lexer;
+use bun_string::strings;
 use bumpalo::Bump;
 use bumpalo::collections::Vec as BumpVec;
 

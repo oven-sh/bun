@@ -1,7 +1,10 @@
 use bun_alloc::Arena; // bumpalo::Bump re-export
-use bun_js_parser::ast::{self as js_ast, E, Expr};
-// TODO(port): exact module path for Expr::Data / E::Template / E::TemplatePart / TemplateString
+use crate::ast::{self as js_ast, e, E, Expr};
 
+// TODO(b2-ast-D): bodies depend on gated E::String rope methods (clone_rope_nodes/push/append),
+// data::Store::append_string, e::TemplateContents construction (enum, not struct), Expr::init_template.
+// Type def `FoldStringAdditionKind` is real; fn bodies gated.
+#[cfg(any())]
 /// Concatenate two `E::String`s, mutating BOTH inputs
 /// unless `has_inlined_enum_poison` is set.
 ///
@@ -36,7 +39,7 @@ fn join_strings(left: &E::String, right: &E::String, has_inlined_enum_poison: bo
     //   };
     //   console.log(A.B, A.C);
     // TODO(port): Expr::Data::Store is a typed_arena::Arena<E::String>; `append` returns &'arena mut E::String
-    let rhs_clone = js_ast::expr_data::Store::append_string(if has_inlined_enum_poison {
+    let rhs_clone = js_ast::expr::data::Store::append_string(if has_inlined_enum_poison {
         right.clone_rope_nodes()
     } else {
         *right
@@ -68,6 +71,8 @@ pub fn fold_string_addition<'bump>(
     bump: &'bump Arena,
     kind: FoldStringAdditionKind,
 ) -> Option<Expr> {
+    #[cfg(any())] // TODO(b2-ast-D): see file-top note
+    {
     // "See through" inline enum constants
     // TODO: implement foldAdditionPreProcess to fold some more things :)
     let mut lhs = l.unwrap_inlined();
@@ -76,7 +81,7 @@ pub fn fold_string_addition<'bump>(
     if kind != FoldStringAdditionKind::NestedLeft {
         // See comment on `FoldStringAdditionKind` for examples
         match &rhs.data {
-            js_ast::Data::EString(_) | js_ast::Data::ETemplate(_) => {
+            js_ast::expr::Data::EString(_) | js_ast::expr::Data::ETemplate(_) => {
                 if let Some(str) = lhs.to_string_expr_without_side_effects(bump) {
                     lhs = str;
                 }
@@ -86,7 +91,7 @@ pub fn fold_string_addition<'bump>(
     }
 
     match &lhs.data {
-        js_ast::Data::EString(left) => {
+        js_ast::expr::Data::EString(left) => {
             if let Some(str) = rhs.to_string_expr_without_side_effects(bump) {
                 rhs = str;
             }
@@ -94,11 +99,11 @@ pub fn fold_string_addition<'bump>(
             if left.is_utf8() {
                 match &rhs.data {
                     // "bar" + "baz" => "barbaz"
-                    js_ast::Data::EString(right) => {
+                    js_ast::expr::Data::EString(right) => {
                         if right.is_utf8() {
                             let has_inlined_enum_poison =
-                                matches!(l.data, js_ast::Data::EInlinedEnum(_))
-                                    || matches!(r.data, js_ast::Data::EInlinedEnum(_));
+                                matches!(l.data, js_ast::expr::Data::EInlinedEnum(_))
+                                    || matches!(r.data, js_ast::expr::Data::EInlinedEnum(_));
 
                             return Some(Expr::init_string(
                                 join_strings(left, right, has_inlined_enum_poison),
@@ -107,16 +112,16 @@ pub fn fold_string_addition<'bump>(
                         }
                     }
                     // "bar" + `baz${bar}` => `barbaz${bar}`
-                    js_ast::Data::ETemplate(right) => {
+                    js_ast::expr::Data::ETemplate(right) => {
                         if right.head.is_utf8() {
                             return Some(Expr::init_template(
                                 E::Template {
                                     parts: right.parts,
-                                    head: E::TemplateString {
+                                    head: e::TemplateContents {
                                         cooked: join_strings(
                                             left,
                                             &right.head.cooked,
-                                            matches!(l.data, js_ast::Data::EInlinedEnum(_)),
+                                            matches!(l.data, js_ast::expr::Data::EInlinedEnum(_)),
                                         ),
                                     },
                                     // TODO(port): remaining E::Template fields (tag, etc.)
@@ -132,21 +137,21 @@ pub fn fold_string_addition<'bump>(
                 }
 
                 // "'x' + `y${z}`" => "`xy${z}`"
-                if let js_ast::Data::ETemplate(t) = &rhs.data {
+                if let js_ast::expr::Data::ETemplate(t) = &rhs.data {
                     if t.tag.is_none() {
                         // (intentionally empty — matches Zig)
                     }
                 }
             }
 
-            if left.len() == 0 && rhs.known_primitive() == js_ast::Primitive::String {
+            if left.len() == 0 && rhs.known_primitive() == js_ast::expr::PrimitiveType::String {
                 return Some(rhs);
             }
 
             return None;
         }
 
-        js_ast::Data::ETemplate(left) => {
+        js_ast::expr::Data::ETemplate(left) => {
             // "`${x}` + 0" => "`${x}` + '0'"
             if let Some(str) = rhs.to_string_expr_without_side_effects(bump) {
                 rhs = str;
@@ -155,7 +160,7 @@ pub fn fold_string_addition<'bump>(
             if left.tag.is_none() {
                 match &rhs.data {
                     // `foo${bar}` + "baz" => `foo${bar}baz`
-                    js_ast::Data::EString(right) => {
+                    js_ast::expr::Data::EString(right) => {
                         if right.is_utf8() {
                             // Mutation of this node is fine because it will be not
                             // be shared by other places. Note that e_template will
@@ -167,22 +172,22 @@ pub fn fold_string_addition<'bump>(
                                 let i = left.parts.len() - 1;
                                 let last = &left.parts[i];
                                 if last.tail.is_utf8() {
-                                    left.parts[i].tail = E::TemplateString {
+                                    left.parts[i].tail = e::TemplateContents {
                                         cooked: join_strings(
                                             &last.tail.cooked,
                                             right,
-                                            matches!(r.data, js_ast::Data::EInlinedEnum(_)),
+                                            matches!(r.data, js_ast::expr::Data::EInlinedEnum(_)),
                                         ),
                                     };
                                     return Some(lhs);
                                 }
                             } else {
                                 if left.head.is_utf8() {
-                                    left.head = E::TemplateString {
+                                    left.head = e::TemplateContents {
                                         cooked: join_strings(
                                             &left.head.cooked,
                                             right,
-                                            matches!(r.data, js_ast::Data::EInlinedEnum(_)),
+                                            matches!(r.data, js_ast::expr::Data::EInlinedEnum(_)),
                                         ),
                                     };
                                     return Some(lhs);
@@ -191,17 +196,17 @@ pub fn fold_string_addition<'bump>(
                         }
                     }
                     // `foo${bar}` + `a${hi}b` => `foo${bar}a${hi}b`
-                    js_ast::Data::ETemplate(right) => {
+                    js_ast::expr::Data::ETemplate(right) => {
                         if right.tag.is_none() && right.head.is_utf8() {
                             if !left.parts.is_empty() {
                                 let i = left.parts.len() - 1;
                                 let last = &left.parts[i];
                                 if last.tail.is_utf8() && right.head.is_utf8() {
-                                    left.parts[i].tail = E::TemplateString {
+                                    left.parts[i].tail = e::TemplateContents {
                                         cooked: join_strings(
                                             &last.tail.cooked,
                                             &right.head.cooked,
-                                            matches!(r.data, js_ast::Data::EInlinedEnum(_)),
+                                            matches!(r.data, js_ast::expr::Data::EInlinedEnum(_)),
                                         ),
                                     };
 
@@ -222,11 +227,11 @@ pub fn fold_string_addition<'bump>(
                                 }
                             } else {
                                 if left.head.is_utf8() && right.head.is_utf8() {
-                                    left.head = E::TemplateString {
+                                    left.head = e::TemplateContents {
                                         cooked: join_strings(
                                             &left.head.cooked,
                                             &right.head.cooked,
-                                            matches!(r.data, js_ast::Data::EInlinedEnum(_)),
+                                            matches!(r.data, js_ast::expr::Data::EInlinedEnum(_)),
                                         ),
                                     };
                                     left.parts = right.parts;
@@ -248,12 +253,15 @@ pub fn fold_string_addition<'bump>(
     }
 
     if let Some(right) = rhs.data.as_e_string() {
-        if right.len() == 0 && lhs.known_primitive() == js_ast::Primitive::String {
+        if right.len() == 0 && lhs.known_primitive() == js_ast::expr::PrimitiveType::String {
             return Some(lhs);
         }
     }
 
-    None
+    return None;
+    } // end #[cfg(any())]
+    let _ = (l, r, bump, kind);
+    todo!("b2-ast-D: fold_string_addition body")
 }
 
 // ──────────────────────────────────────────────────────────────────────────

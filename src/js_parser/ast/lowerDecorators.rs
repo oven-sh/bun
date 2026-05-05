@@ -4,9 +4,9 @@
 use bun_collections::HashMap;
 use bun_logger as logger;
 
-use bun_js_parser::ast::{self as js_ast, B, E, Expr, ExprNodeList, Flags, G, S, Stmt, Symbol};
-use bun_js_parser::ast::g::{Arg, Decl, Property};
-use bun_js_parser::{self as js_parser, JSXTransformType, Ref, ARGUMENTS_STR as arguments_str};
+use crate::ast::{self as js_ast, B, E, Expr, ExprNodeList, Flags, G, S, Stmt, Symbol};
+use crate::ast::g::{Arg, Decl, Property};
+use crate::{self as js_parser, JSXTransformType, Ref, ARGUMENTS_STR as arguments_str};
 
 // TODO(port): `P` is the monomorphized parser type `NewParser_<TS, JSX, SCAN_ONLY>`.
 // In Phase A we model the const-param plumbing on the impl block; Phase B may

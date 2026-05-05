@@ -1,8 +1,8 @@
 use bun_core::Error;
-use bun_js_parser::ast::{self as js_ast, ClauseItem, Expr, ExprData, LocRef, E};
-use bun_js_parser::ast::op::Level;
-use bun_js_parser::lexer::{self as js_lexer, T};
-use bun_js_parser::{
+use crate::ast::{self as js_ast, ClauseItem, Expr, ExprData, LocRef, E};
+use crate::ast::op::Level;
+use crate::lexer::{self as js_lexer, T};
+use crate::{
     is_eval_or_arguments, ExportClauseResult, ImportClause, JSXTransformType, NewParser_,
 };
 use bun_logger as logger;

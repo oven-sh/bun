@@ -4,12 +4,12 @@ use std::io::Write as _;
 use bun_core::FeatureFlags;
 use bun_core::fmt as bun_fmt;
 use bun_logger as logger;
-use bun_str::strings;
+use bun_string::strings;
 
-use bun_js_parser::ast::{self as js_ast, B, Binding, E, Expr, Flags, G, LocRef, S, Stmt};
-use bun_js_parser::ast::G::{Decl, Property};
-use bun_js_parser::lexer as js_lexer;
-use bun_js_parser::{
+use crate::ast::{self as js_ast, B, Binding, E, Expr, Flags, G, LocRef, S, Stmt};
+use crate::ast::G::{Decl, Property};
+use crate::lexer as js_lexer;
+use crate::{
     self as js_parser, IdentifierOpts, JSXTransformType, NewParser_, RelocateVars, SideEffects,
 };
 
@@ -540,8 +540,8 @@ impl<
                             return Some(p.new_expr(E::String::init(p.source.path.text), name_loc));
                         } else if name == b"url" {
                             // Inline import.meta.url as file:// URL
-                            let bunstr = bun_str::String::from_bytes(p.source.path.text);
-                            // `defer bunstr.deref()` — handled by Drop on bun_str::String
+                            let bunstr = bun_string::String::from_bytes(p.source.path.text);
+                            // `defer bunstr.deref()` — handled by Drop on bun_string::String
                             let url = {
                                 let mut v = bumpalo::collections::Vec::new_in(p.allocator);
                                 write!(&mut v, "{}", JscURL::file_url_from_string(&bunstr)).expect("unreachable");
@@ -867,7 +867,7 @@ impl<
     }
 }
 
-use bun_js_parser::ast::Symbol;
+use crate::ast::Symbol;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

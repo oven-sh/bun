@@ -1,8 +1,8 @@
-use bun_js_parser::ast::{self as js_ast, Binding, Expr, G, LocRef, S, Stmt, Symbol};
-use bun_js_parser::{ConvertESMExportsForHmr, ImportItemForNamespaceMap, Ref};
+use crate::ast::{self as js_ast, Binding, Expr, G, LocRef, S, Stmt, Symbol};
+use crate::{ConvertESMExportsForHmr, ImportItemForNamespaceMap, Ref};
 use bun_logger as logger;
 use bun_options_types::ImportRecord;
-use bun_str::strings;
+use bun_string::strings;
 
 // PORT NOTE: Zig file-level struct → Rust struct. `stmts` is a sub-slice of the
 // input `stmts` argument (in-place compacted), so it borrows from the caller.

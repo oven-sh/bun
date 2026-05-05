@@ -1,10 +1,10 @@
 use bun_core::{self, err};
 use bun_logger as logger;
-use bun_str::strings;
+use bun_string::strings;
 
-use bun_js_parser as js_parser;
-use bun_js_parser::js_ast;
-use bun_js_parser::js_lexer;
+use crate as js_parser;
+use crate::js_ast;
+use crate::js_lexer;
 
 use js_ast::{Binding, Expr, LocRef, Stmt, Symbol, G, S};
 use js_ast::Op::Level;

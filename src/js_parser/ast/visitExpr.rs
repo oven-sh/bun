@@ -6,15 +6,15 @@ use bstr::BStr;
 use bun_collections::BabyList;
 use bun_core::Environment;
 use bun_logger as logger;
-use bun_str::strings;
+use bun_string::strings;
 
-use bun_js_parser::ast as js_ast;
-use bun_js_parser::ast::{
+use crate::ast as js_ast;
+use crate::ast::{
     E, Expr, ExprNodeIndex, ExprNodeList, G, Scope, Stmt, Symbol, B,
 };
-use bun_js_parser::ast::G::Property;
-use bun_js_parser::lexer as js_lexer;
-use bun_js_parser::{
+use crate::ast::G::Property;
+use crate::lexer as js_lexer;
+use crate::{
     self as js_parser, float_to_int32, options, ExprIn, FnOrArrowDataVisit, IdentifierOpts,
     JSXTransformType, KnownGlobal, Prefill, PrependTempRefsOpts, ReactRefresh, Ref, SideEffects,
     ThenCatchChain, TransposeState, VisitArgsOpts,

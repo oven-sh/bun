@@ -225,22 +225,16 @@ pub use parser_entry::{Parser, Options as ParserOptions};
 // (defined at crate root in lib.rs, re-exported here for `js_ast::Result`).
 pub use crate::Result;
 
-// ── STUB (round-D+ targets) ────────────────────────────────────────────────
-
-pub mod bundled_ast {
-    #[derive(Default)]
-    pub struct BundledAst;
-}
-pub mod server_component_boundary {
-    use bun_collections::MultiArrayList;
-    #[derive(Default)]
-    pub struct ServerComponentBoundary;
-    /// Zig: `ServerComponentBoundary.List = struct { list: MultiArrayList(SCB), map: Map }`
-    /// where `Map = std.ArrayHashMapUnmanaged(void, void, …)`.
-    #[derive(Default)]
-    pub struct List {
-        pub list: MultiArrayList<ServerComponentBoundary>,
-        // TODO(b1): `map: ArrayHashMap<(), ()>` — bun_collections::ArrayHashMap currently
-        // requires `K: Hash + Eq`; revisit once the void-key adapter pattern is ported.
-    }
-}
+// ── round-D batch 1 ────────────────────────────────────────────────────────
+#[path = "ServerComponentBoundary.rs"]
+pub mod server_component_boundary;
+#[path = "symbols.rs"]
+pub mod symbols;
+#[path = "foldStringAddition.rs"]
+pub mod fold_string_addition;
+#[path = "BundledAst.rs"]
+pub mod bundled_ast;
+#[path = "parseJSXElement.rs"]
+pub mod parse_jsx_element;
+pub use bundled_ast::BundledAst;
+pub use server_component_boundary::ServerComponentBoundary;

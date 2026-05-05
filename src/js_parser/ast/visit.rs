@@ -4,14 +4,14 @@
 //! classes, and declarations. This is the second pass after parsing.
 
 use bun_collections::{BabyList, HashMap};
-use bun_js_parser::ast as js_ast;
-use bun_js_parser::ast::{
+use crate::ast as js_ast;
+use crate::ast::{
     AssignTarget, Binding, BindingData, BindingNodeIndex, DeclaredSymbol, Expr, ExprData,
     ExprNodeList, LocRef, Scope, Stmt, StmtData, StmtNodeIndex, Symbol, B, E, G, S,
 };
-use bun_js_parser::ast::G::{Arg, Decl, Property};
-use bun_js_parser::lexer as js_lexer;
-use bun_js_parser::{
+use crate::ast::G::{Arg, Decl, Property};
+use crate::lexer as js_lexer;
+use crate::{
     is_eval_or_arguments, ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap,
     JSXTransformType, NewParser_, PrependTempRefsOpts, Ref, RuntimeFeatures, SideEffects,
     StmtsKind, StringVoidMap, TempRef, VisitArgsOpts,
@@ -1858,18 +1858,18 @@ pub fn fn_body_contains_use_strict(body: &[Stmt]) -> Option<logger::Loc> {
 }
 
 // TODO(port): the following are placeholder imports referenced above whose exact
-// Rust paths depend on how `bun_js_parser::ast` lays out enum variants and flag
+// Rust paths depend on how `crate::ast` lays out enum variants and flag
 // types. Phase B fixes the `use` lines.
-use bun_js_parser::ast::Expr as _ExprAlias; // keep `Expr::Tag` callsites in mind
-use bun_js_parser::ast::PropertyFlags;
-use bun_js_parser::ast::PropertyKind;
-use bun_js_parser::ast::Scope::Kind as ScopeKind;
-use bun_js_parser::ast::StrictMode;
-use bun_js_parser::ast::Symbol::Kind as SymbolKind;
-use bun_js_parser::ast::S::Local::Kind as LocalKind;
-use bun_js_parser::ast::E::Binary::Op as BinOp;
-use bun_js_parser::RelocateMode;
-use bun_js_parser::StrictModeFeature;
+use crate::ast::Expr as _ExprAlias; // keep `Expr::Tag` callsites in mind
+use crate::ast::PropertyFlags;
+use crate::ast::PropertyKind;
+use crate::ast::Scope::Kind as ScopeKind;
+use crate::ast::StrictMode;
+use crate::ast::Symbol::Kind as SymbolKind;
+use crate::ast::S::Local::Kind as LocalKind;
+use crate::ast::E::Binary::Op as BinOp;
+use crate::RelocateMode;
+use crate::StrictModeFeature;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

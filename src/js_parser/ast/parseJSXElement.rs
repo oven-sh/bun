@@ -1,52 +1,29 @@
-use bun_js_parser::{self as js_parser, JSXTag, JSXTransformType, NewParser_};
-use bun_js_parser::ast::{self as js_ast, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, Op};
-use bun_js_parser::ast::Op::Level;
-use bun_js_parser::lexer::{self as js_lexer, T};
-use bun_logger as logger;
-use bun_str::strings;
+use crate::ast::{self as js_ast, e, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, Op};
+use crate::ast::expr::Data as ExprData;
+use crate::ast::p::P;
+use crate::lexer::{self as js_lexer, T};
+use crate::parser::{JSXTag, JSXTransformType, JsxT};
 use bun_core::err;
+use bun_logger as logger;
+use bun_string::strings;
 
-// TODO(port): `Expr::Data` variant path is assumed; fix to actual enum path in Phase B.
-use bun_js_parser::ast::expr::Data as ExprData;
+// Zig: `pub fn ParseJSXElement(comptime ...) type { return struct { ... } }`
+// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`
+// (sealed trait + ZST), so this becomes a direct `impl` on `P` instead of a wrapper struct.
 
-/// Zig: `pub fn ParseJSXElement(comptime ...) type { return struct { ... } }`
-/// Type-returning comptime fn → zero-sized generic struct with associated fns.
-pub struct ParseJSXElement<
-    const PARSER_FEATURE_TYPESCRIPT: bool,
-    const PARSER_FEATURE_JSX: JSXTransformType,
-    const PARSER_FEATURE_SCAN_ONLY: bool,
->;
-
-// Local alias mirroring Zig `const P = js_parser.NewParser_(...)`.
-type P<
-    const PARSER_FEATURE_TYPESCRIPT: bool,
-    const PARSER_FEATURE_JSX: JSXTransformType,
-    const PARSER_FEATURE_SCAN_ONLY: bool,
-> = NewParser_<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>;
-
-impl<
-    const PARSER_FEATURE_TYPESCRIPT: bool,
-    const PARSER_FEATURE_JSX: JSXTransformType,
-    const PARSER_FEATURE_SCAN_ONLY: bool,
-> ParseJSXElement<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>
-{
-    const IS_TYPESCRIPT_ENABLED: bool =
-        P::<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>::IS_TYPESCRIPT_ENABLED;
-    const ONLY_SCAN_IMPORTS_AND_DO_NOT_VISIT: bool =
-        P::<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>::ONLY_SCAN_IMPORTS_AND_DO_NOT_VISIT;
-
-    pub fn parse_jsx_element(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
-        loc: logger::Loc,
-    ) -> Result<Expr, bun_core::Error> {
-        if Self::ONLY_SCAN_IMPORTS_AND_DO_NOT_VISIT {
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+    pub fn parse_jsx_element(&mut self, loc: logger::Loc) -> Result<Expr, bun_core::Error> {
+        #[cfg(any())] // TODO(b2-ast-D): body — depends on JSXTag::parse, skip_type_script_type_arguments, G::PropertyList path fixups
+        {
+        let p = self;
+        if SCAN_ONLY {
             p.needs_jsx_import = true;
         }
 
         let tag = JSXTag::parse(p)?;
 
         // The tag may have TypeScript type arguments: "<Foo<T>/>"
-        if Self::IS_TYPESCRIPT_ENABLED {
+        if TYPESCRIPT {
             // Pass a flag to the type argument skipper because we need to call
             let _ = p.skip_type_script_type_arguments(true)?;
         }
@@ -383,6 +360,9 @@ impl<
                 }
             }
         }
+        } // end #[cfg(any())]
+        let _ = loc;
+        todo!("b2-ast-D: parse_jsx_element body")
     }
 }
 

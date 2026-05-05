@@ -36,7 +36,9 @@ pub struct Graph {
     pub input_files: MultiArrayList<InputFile>,
     /// Every source index has an associated Ast
     /// When a parse is in progress / queued, it is `Ast.empty`
-    pub ast: MultiArrayList<JSAst>,
+    // PORT NOTE: BundledAst<'arena> borrows from self.heap (sibling-field self-ref);
+    // 'static here is a placeholder — Phase-B lifetime threading via raw ptr or Ouroboros.
+    pub ast: MultiArrayList<JSAst<'static>>,
 
     /// During the scan + parse phase, this value keeps a count of the remaining
     /// tasks. Once it hits zero, the scan phase ends and linking begins. Note

@@ -529,8 +529,8 @@ pub fn GlobWalker_(
                                 path
                             else
                                 try this.walker.arena.allocator().dupeZ(u8, trimmed);
-                            // All three success-shaped arms below set
-                            // `iter_state = .matched` AND push into
+                            // Every success-shaped arm below sets
+                            // `iter_state = .matched` AND pushes into
                             // `matchedPaths`: the `next()` iterator yields
                             // the path once from `.matched`, but
                             // `GlobWalker.walk()` discards the yield and
@@ -602,13 +602,18 @@ pub fn GlobWalker_(
                                     // both for a truly-missing path (no
                                     // dirent — `[]`) and for a *dangling*
                                     // symlink (dirent exists, kernel
-                                    // follows the link, target is missing
-                                    // — Node emits the dirent). `lstat`
-                                    // disambiguates: succeeds for the
-                                    // dangling symlink, fails ENOENT for
-                                    // truly-missing. Same shape as the
-                                    // NOTDIR and ELOOP arms above/below.
-                                    if (e.getErrno() == bun.sys.E.NOENT) {
+                                    // follows the link, target is missing).
+                                    // Node's `fs.glob` emits the dirent for
+                                    // the dangling case; public `Bun.Glob`
+                                    // pre-PR returned `[]` uniformly. Gated
+                                    // on `swallow_missing_cwd` so `fs.glob`
+                                    // gets the dangling-symlink dirent and
+                                    // public `Bun.Glob` callers still see
+                                    // the empty result — same pattern as
+                                    // the ELOOP arm below and the literal-
+                                    // tail branch in
+                                    // `transitionToDirIterState`.
+                                    if (this.walker.swallow_missing_cwd and e.getErrno() == bun.sys.E.NOENT) {
                                         switch (Syscall.lstat(path)) {
                                             .result => |stat| {
                                                 if (trailing_sep and !bun.S.ISDIR(@intCast(stat.mode))) {
@@ -624,6 +629,13 @@ pub fn GlobWalker_(
                                                 return .success;
                                             },
                                         }
+                                    }
+                                    // Truly missing path (or dangling symlink
+                                    // under public `Bun.Glob` that didn't opt
+                                    // into `swallow_missing_cwd`): `[]`.
+                                    if (e.getErrno() == bun.sys.E.NOENT) {
+                                        this.iter_state = .get_next;
+                                        return .success;
                                     }
                                     // Windows: bare drive-relative roots like
                                     // `\` fall through `openat(.cwd(), "\\",

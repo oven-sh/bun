@@ -400,19 +400,26 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
     expect(fs.globSync(path.join(String(dir), "loop"))).toStrictEqual([path.join(String(dir), "loop")]);
   });
 
-  it("absolute literal path pointing at a dangling symlink emits the symlink itself", () => {
+  it("absolute literal path pointing at a dangling symlink emits the symlink itself under fs.glob, not public Bun.Glob", () => {
     // `open(path, O_DIRECTORY)` returns ENOENT for a dangling symlink
     // (kernel follows the link, target missing) — same errno as a truly
-    // missing path. The absolute-literal fast-path's ENOENT arm
-    // disambiguates via `lstat`: succeeds (dirent exists) → emit like
-    // Node; fails ENOENT → `.get_next` → `[]`. Without the fallback the
-    // walker would return `[]` for dangling symlinks, diverging from
-    // Node's behavior.
+    // missing path. The absolute-literal fast-path's ENOENT arm, gated
+    // on `swallow_missing_cwd`, disambiguates via `lstat`:
+    //   * `fs.glob` (sets the flag) → succeeds → emit like Node; fails
+    //                                 ENOENT → `.get_next` → `[]`.
+    //   * public `Bun.Glob` (no flag) → always `[]`, preserving the
+    //                                   pre-PR contract that direct
+    //                                   consumers don't cross symlinks.
     using dir = tempDir("glob-dangling", {});
     fs.symlinkSync("nonexistent-target", path.join(String(dir), "dangling"), "file");
+    // fs.glob: Node-compat, emits the dirent.
     expect(fs.globSync(path.join(String(dir), "dangling"))).toStrictEqual([path.join(String(dir), "dangling")]);
     // Truly-missing path still returns [] (same arm, lstat fails).
     expect(fs.globSync(path.join(String(dir), "does-not-exist"))).toStrictEqual([]);
+    // Public Bun.Glob: unchanged — dangling symlink not emitted, same
+    // as pre-PR behavior.
+    expect([...new Bun.Glob(path.join(String(dir), "dangling")).scanSync()]).toStrictEqual([]);
+    expect([...new Bun.Glob(path.join(String(dir), "dangling")).scanSync({ onlyFiles: false })]).toStrictEqual([]);
   });
 
   it("brace alternative that names a symlink still descends", () => {

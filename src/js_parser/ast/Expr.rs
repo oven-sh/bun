@@ -60,12 +60,9 @@ impl Expr {
     };
 }
 
-// TODO(b2-ast-round-C): clone/deep_clone/can_be_moved/wrap_in_arrow forward to
-// `Data::deep_clone`/`Data::can_be_moved` (gated below).
-#[cfg(any())]
 impl Expr {
-    pub fn is_anonymous_named(expr: Expr) -> bool {
-        match expr.data {
+    pub fn is_anonymous_named(&self) -> bool {
+        match self.data {
             Data::EArrow(_) => true,
             Data::EFunction(func) => func.func.name.is_none(),
             Data::EClass(class) => class.class_name.is_none(),
@@ -73,6 +70,51 @@ impl Expr {
         }
     }
 
+    pub fn can_be_inlined_from_property_access(&self) -> bool {
+        match self.data {
+            // if the array has a spread we must keep it
+            // https://github.com/oven-sh/bun/issues/2594
+            Data::ESpread(_) => false,
+            Data::EMissing(_) => false,
+            _ => true,
+        }
+    }
+
+    pub fn can_be_const_value(&self) -> bool {
+        self.data.can_be_const_value()
+    }
+
+    pub fn can_be_moved(&self) -> bool {
+        self.data.can_be_moved()
+    }
+
+    pub fn unwrap_inlined(self) -> Expr {
+        if let Data::EInlinedEnum(inlined) = self.data {
+            return inlined.value;
+        }
+        self
+    }
+
+    #[inline]
+    pub fn init_identifier(ref_: Ref, loc: Loc) -> Expr {
+        Expr {
+            loc,
+            data: Data::EIdentifier(E::Identifier::init(ref_)),
+        }
+    }
+
+    pub fn to_empty(self) -> Expr {
+        Expr {
+            data: Data::EMissing(E::Missing {}),
+            loc: self.loc,
+        }
+    }
+}
+
+// TODO(b2-ast-round-C): clone/deep_clone/wrap_in_arrow forward to
+// `Data::deep_clone` (gated below) / Stmt::alloc + E::Arrow Default.
+#[cfg(any())]
+impl Expr {
     pub fn clone(this: Expr, bump: &Bump) -> Result<Expr, bun_core::Error> {
         // TODO(port): narrow error set
         Ok(Expr {
@@ -105,31 +147,6 @@ impl Expr {
             },
             this.loc,
         ))
-    }
-
-    pub fn can_be_inlined_from_property_access(this: Expr) -> bool {
-        match this.data {
-            // if the array has a spread we must keep it
-            // https://github.com/oven-sh/bun/issues/2594
-            Data::ESpread(_) => false,
-            Data::EMissing(_) => false,
-            _ => true,
-        }
-    }
-
-    pub fn can_be_const_value(this: Expr) -> bool {
-        this.data.can_be_const_value()
-    }
-
-    pub fn can_be_moved(expr: Expr) -> bool {
-        expr.data.can_be_moved()
-    }
-
-    pub fn unwrap_inlined(expr: Expr) -> Expr {
-        if let Data::EInlinedEnum(inlined) = expr.data {
-            return inlined.value;
-        }
-        expr
     }
 
     // TODO(b2-blocked): bun_http_types::MimeType + bun_interchange::json::parse — this is the
@@ -187,25 +204,6 @@ impl Expr {
             },
             loc,
         ))
-    }
-
-    #[inline]
-    pub fn init_identifier(ref_: Ref, loc: Loc) -> Expr {
-        Expr {
-            loc,
-            data: Data::EIdentifier(E::Identifier::init(ref_)),
-        }
-    }
-
-    pub fn to_empty(expr: Expr) -> Expr {
-        Expr {
-            data: Data::EMissing(E::Missing {}),
-            loc: expr.loc,
-        }
-    }
-
-    pub fn is_empty(expr: Expr) -> bool {
-        matches!(expr.data, Data::EMissing(_))
     }
 }
 
@@ -610,15 +608,12 @@ pub struct ArrayIterator<'a> {
     pub index: u32,
 }
 
-// TODO(b2-ast-round-C): `BabyList::len()` returns u32; `.ptr()` is private.
-// Un-gate with the accessor block above.
-#[cfg(any())]
-impl<'a> ArrayIterator<'a> {
+impl ArrayIterator<'_> {
     pub fn next(&mut self) -> Option<Expr> {
-        if self.index >= self.array.items.len() {
+        if self.index >= self.array.items.len {
             return None;
         }
-        let result = self.array.items.ptr()[self.index as usize];
+        let result = self.array.items.slice()[self.index as usize];
         self.index += 1;
         Some(result)
     }
@@ -2121,12 +2116,14 @@ impl Data {
             | Data::ESpecial(_) => {}
         }
     }
+} // end gated `impl Data` (clone/deep_clone/write_to_hasher)
 
+impl Data {
     /// "const values" here refers to expressions that can participate in constant
     /// inlining, as they have no side effects on instantiation, and there would be
     /// no observable difference if duplicated. This is a subset of canBeMoved()
-    pub fn can_be_const_value(this: &Data) -> bool {
-        match this {
+    pub fn can_be_const_value(&self) -> bool {
+        match self {
             Data::ENumber(_)
             | Data::EBoolean(_)
             | Data::EBranchBoolean(_)
@@ -2143,8 +2140,8 @@ impl Data {
     /// Expressions that can be moved are those that do not have side
     /// effects on their own. This is used to determine what can be moved
     /// outside of a module wrapper (__esm/__commonJS).
-    pub fn can_be_moved(data: &Data) -> bool {
-        match data {
+    pub fn can_be_moved(&self) -> bool {
+        match self {
             // TODO: identifiers can be removed if unused, however code that
             // moves expressions around sometimes does so incorrectly when
             // doing destructures. test case: https://github.com/oven-sh/bun/issues/14027
@@ -2174,8 +2171,8 @@ impl Data {
         }
     }
 
-    pub fn is_safe_to_string(data: &Data) -> bool {
-        match data {
+    pub fn is_safe_to_string(&self) -> bool {
+        match self {
             // rope strings can throw when toString is called.
             Data::EString(str) => str.next.is_none(),
 
@@ -2190,8 +2187,8 @@ impl Data {
         }
     }
 
-    pub fn known_primitive(data: &Data) -> PrimitiveType {
-        match data {
+    pub fn known_primitive(&self) -> PrimitiveType {
+        match self {
             Data::EBigInt(_) => PrimitiveType::Bigint,
             Data::EBoolean(_) | Data::EBranchBoolean(_) => PrimitiveType::Boolean,
             Data::ENull(_) => PrimitiveType::Null,
@@ -2324,20 +2321,20 @@ impl Data {
         }
     }
 
-    pub fn merge_known_primitive(lhs: &Data, rhs: &Data) -> PrimitiveType {
-        lhs.known_primitive().merge(rhs.known_primitive())
+    pub fn merge_known_primitive(&self, rhs: &Data) -> PrimitiveType {
+        PrimitiveType::merge(self.known_primitive(), rhs.known_primitive())
     }
 
     /// Returns true if the result of the "typeof" operator on this expression is
     /// statically determined and this expression has no side effects (i.e. can be
     /// removed without consequence).
     #[inline]
-    pub fn to_typeof(data: &Data) -> Option<&'static [u8]> {
-        data.tag().typeof_()
+    pub fn to_typeof(&self) -> Option<&'static [u8]> {
+        Tag::typeof_(self.tag())
     }
 
-    pub fn to_number(data: &Data) -> Option<f64> {
-        match data {
+    pub fn to_number(&self) -> Option<f64> {
+        match self {
             Data::ENull(_) => Some(0.0),
             Data::EUndefined(_) => Some(f64::NAN),
             Data::EString(str) => {
@@ -2370,8 +2367,8 @@ impl Data {
         }
     }
 
-    pub fn to_finite_number(data: &Data) -> Option<f64> {
-        match data {
+    pub fn to_finite_number(&self) -> Option<f64> {
+        match self {
             Data::EBoolean(b) | Data::EBranchBoolean(b) => Some(if b.value { 1.0 } else { 0.0 }),
             Data::ENumber(n) => {
                 if n.value.is_finite() {
@@ -2394,8 +2391,8 @@ impl Data {
         }
     }
 
-    pub fn extract_numeric_value(data: &Data) -> Option<f64> {
-        match data {
+    pub fn extract_numeric_value(&self) -> Option<f64> {
+        match self {
             Data::ENumber(n) => Some(n.value),
             Data::EInlinedEnum(inlined) => match &inlined.value.data {
                 Data::ENumber(num) => Some(num.value),
@@ -2407,9 +2404,9 @@ impl Data {
 
     pub fn extract_string_value(data: Data) -> Option<*mut E::String> {
         match data {
-            Data::EString(s) => Some(s),
+            Data::EString(s) => Some(s.as_ptr()),
             Data::EInlinedEnum(inlined) => match inlined.value.data {
-                Data::EString(str) => Some(str),
+                Data::EString(str) => Some(str.as_ptr()),
                 _ => None,
             },
             _ => None,
@@ -2420,8 +2417,8 @@ impl Data {
     // TODO(port): move to *_jsc
 
     #[inline]
-    pub fn is_string_value(self_: &Data) -> bool {
-        matches!(self_, Data::EString(_))
+    pub fn is_string_value(&self) -> bool {
+        matches!(self, Data::EString(_))
     }
 }
 

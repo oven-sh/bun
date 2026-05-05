@@ -53,8 +53,13 @@ gated_mod!(rules, "rules/mod.rs");
 gated_mod!(selectors, "selectors/selector.rs");
 gated_mod!(context, "context.rs");
 gated_mod!(declaration, "declaration.rs");
-gated_mod!(generics, "generics.rs");
 gated_mod!(media_query, "media_query.rs");
+
+// generics: un-gated (B-2). Core protocol traits (DeepClone/CssEql/CssHash/
+// IsCompatible/ListContainer) compile; Parse/ToCss/Angle impls remain
+// internally gated until css_parser/values un-gate.
+#[path = "generics.rs"]
+pub mod generics;
 
 // `values`, `printer`, `css_parser` carry stub bodies so cross-crate
 // dependents (css_jsc, bundler) can name the public surface types while the
@@ -166,6 +171,18 @@ gated_mod!(values, "values/mod.rs", {
         pub enum CssColorParseResult {
             Result(CssColor),
             Err(crate::error::ParseError<crate::error::ParserError>),
+        }
+    }
+
+    /// Data-only stub of `values/url.rs::Url` so `dependencies::UrlDependency::new`
+    /// can compile. Behavior (`parse`/`is_absolute`/`to_css`) lives in the gated
+    /// file. Field layout matches `url.zig`.
+    pub mod url {
+        pub struct Url {
+            /// The url string.
+            pub import_record_idx: u32,
+            /// The location where the `url()` was seen in the CSS source file.
+            pub loc: crate::dependencies::Location,
         }
     }
 });
@@ -323,8 +340,21 @@ gated_mod!(css_parser, "css_parser.rs", {
 
 // ─── stub re-exports referenced cross-crate ────────────────────────────────
 // TODO(b1): real types come back when modules are un-gated in B-2.
-pub type PrintErr = ();
 pub type CustomMedia = ();
+
+/// Hoisted from `css_parser.rs` (gated). Single-variant error type returned by
+/// every `to_css` path; the *kind* lives in `Printer.error_kind` (PrinterError)
+/// — this is just the bubbled signal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrintErr {
+    CSSPrintError,
+}
+impl core::fmt::Display for PrintErr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("CSS print error")
+    }
+}
+impl core::error::Error for PrintErr {}
 pub use dependencies::Dependency;
 
 // B-2 Track A surface: re-export the stubbed hub types at the crate root so

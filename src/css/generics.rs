@@ -14,15 +14,22 @@
 use core::cmp::Ordering;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
-use bun_collections::{BabyList, SmallList};
-use bun_wyhash::Wyhash;
+use bun_collections::BabyList;
+// Zig `std.hash.Wyhash` (iterative) → `Wyhash11` (the iterative impl in bun_wyhash).
+use bun_wyhash::Wyhash11 as Wyhash;
 
 use crate::css_parser as css;
+use crate::css_parser::{Parser, ParserOptions};
+use crate::printer::Printer;
+use crate::values as css_values;
+use crate::SmallList;
+use crate::{PrintErr, VendorPrefix};
+#[cfg(any())]
 use crate::css_parser::{
     CSSInteger, CSSIntegerFns, CSSNumber, CSSNumberFns, CustomIdent, CustomIdentFns, DashedIdent,
-    DashedIdentFns, Ident, IdentFns, Parser, ParserOptions, PrintErr, Printer, Result, VendorPrefix,
+    DashedIdentFns, Ident, IdentFns, Result,
 };
-use crate::values as css_values;
+#[cfg(any())]
 use crate::values::angle::Angle;
 
 // `ArrayList(T)` in the Zig is `std.ArrayListUnmanaged(T)` fed the parser arena.
@@ -94,21 +101,44 @@ impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for &'bump [T] {
 impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for ArrayList<'bump, T> {
     #[inline]
     fn deep_clone(&self, bump: &'bump Arena) -> Self {
-        css::deep_clone_list(bump, self)
+        // Zig: `css.deepClone(T, allocator, this)` → alloc capacity, element-wise deepClone.
+        // PERF(port): Zig fast-paths simple-copy types with @memcpy — profile in Phase B.
+        let mut out = ArrayList::with_capacity_in(self.len(), bump);
+        for item in self.iter() {
+            out.push(item.deep_clone(bump));
+        }
+        out
     }
 }
 
 impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for BabyList<T> {
     #[inline]
     fn deep_clone(&self, bump: &'bump Arena) -> Self {
-        self.deep_clone_infallible(bump)
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_collections::BabyList::deep_clone_with —
+            // `deep_clone_infallible()` exists but takes no arena and requires
+            // the unrelated `bun_collections::DeepClone` trait. Need an
+            // arena-aware variant that delegates to *this* trait's deep_clone.
+            self.deep_clone_infallible(bump)
+        }
+        #[cfg(not(any()))]
+        {
+            // TODO(b2-blocked): bun_collections::BabyList::deep_clone_with
+            let _ = bump;
+            BabyList::default()
+        }
     }
 }
 
 impl<'bump, T: DeepClone<'bump>, const N: usize> DeepClone<'bump> for SmallList<T, N> {
     #[inline]
     fn deep_clone(&self, bump: &'bump Arena) -> Self {
-        self.deep_clone(bump)
+        let mut ret = SmallList::<T, N>::init_capacity(self.len());
+        for item in self.slice() {
+            ret.append(item.deep_clone(bump));
+        }
+        ret
     }
 }
 
@@ -121,7 +151,11 @@ macro_rules! deep_clone_copy {
         }
     )*};
 }
-deep_clone_copy!(f32, f64, i32, u32, i64, u64, usize, isize, u8, u16, bool);
+// `u8` is intentionally omitted: a `DeepClone for u8` impl would make the
+// generic `&'bump [T]` impl below overlap the explicit `&'bump [u8]` impl
+// (Rust has no stable specialization). Bytes only appear as `[u8]` slices in
+// the CSS AST, never as standalone values.
+deep_clone_copy!(f32, f64, i32, u32, i64, u64, usize, isize, u16, bool);
 
 impl<'bump> DeepClone<'bump> for &'bump [u8] {
     #[inline]
@@ -232,7 +266,7 @@ impl<T: CssEql> CssEql for BabyList<T> {
 impl<T: CssEql, const N: usize> CssEql for SmallList<T, N> {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
-        self.as_slice().eql(other.as_slice())
+        self.slice().eql(other.slice())
     }
 }
 
@@ -244,19 +278,21 @@ macro_rules! eql_simple {
         }
     )*};
 }
-eql_simple!(f32, f64, i32, u32, i64, u64, usize, isize, u8, u16, bool);
+// `u8` omitted to avoid `[T]`/`[u8]` overlap — see deep_clone_copy! note.
+eql_simple!(f32, f64, i32, u32, i64, u64, usize, isize, u16, bool);
 
 impl CssEql for [u8] {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
-        bun_str::strings::eql(self, other)
+        bun_string::strings::eql(self, other)
     }
 }
 
 impl CssEql for VendorPrefix {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
-        VendorPrefix::eql(*self, *other)
+        // Zig: `VendorPrefix.eql` is bitwise compare of the packed struct.
+        *self == *other
     }
 }
 
@@ -267,22 +303,28 @@ impl CssEql for bun_logger::Loc {
     }
 }
 
-impl CssEql for CustomIdent {
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        bun_str::strings::eql(self.v, other.v)
+// CustomIdent/DashedIdent/Ident wrapper structs live in the gated css_parser
+// hub (re-exported from values/ident.rs). Re-enable when that un-gates.
+#[cfg(any())]
+mod ident_eql {
+    use super::*;
+    impl CssEql for CustomIdent {
+        #[inline]
+        fn eql(&self, other: &Self) -> bool {
+            bun_string::strings::eql(self.v, other.v)
+        }
     }
-}
-impl CssEql for DashedIdent {
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        bun_str::strings::eql(self.v, other.v)
+    impl CssEql for DashedIdent {
+        #[inline]
+        fn eql(&self, other: &Self) -> bool {
+            bun_string::strings::eql(self.v, other.v)
+        }
     }
-}
-impl CssEql for Ident {
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        bun_str::strings::eql(self.v, other.v)
+    impl CssEql for Ident {
+        #[inline]
+        fn eql(&self, other: &Self) -> bool {
+            bun_string::strings::eql(self.v, other.v)
+        }
     }
 }
 
@@ -365,7 +407,19 @@ impl<T: CssHash> CssHash for [T] {
 
 impl<T: CssHash, const N: usize> CssHash for [T; N] {
     fn hash(&self, hasher: &mut Wyhash) {
-        bun_core::write_any_to_hasher(hasher, self.len());
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_core::write_any_to_hasher — Zig
+            // `bun.writeAnyToHasher(hasher, list.len)` writes the raw bytes
+            // of `usize` into the hasher. Port that helper into bun_core.
+            bun_core::write_any_to_hasher(hasher, self.len());
+        }
+        #[cfg(not(any()))]
+        {
+            // TODO(b2-blocked): bun_core::write_any_to_hasher — inline the
+            // `usize` byte-feed locally so hash output stays stable.
+            hasher.update(&self.len().to_ne_bytes());
+        }
         for item in self {
             item.hash(hasher);
         }
@@ -389,7 +443,9 @@ impl<T: CssHash> CssHash for BabyList<T> {
 impl<T: CssHash, const N: usize> CssHash for SmallList<T, N> {
     #[inline]
     fn hash(&self, hasher: &mut Wyhash) {
-        self.hash(hasher)
+        for item in self.slice() {
+            item.hash(hasher);
+        }
     }
 }
 
@@ -404,7 +460,8 @@ macro_rules! hash_simple {
         }
     )*};
 }
-hash_simple!(f32, f64, i32, u32, i64, u64, usize, isize, u8, u16);
+// `u8` omitted to avoid `[T]`/`[u8]` overlap — see deep_clone_copy! note.
+hash_simple!(f32, f64, i32, u32, i64, u64, usize, isize, u16);
 
 impl CssHash for bool {
     #[inline]
@@ -448,7 +505,7 @@ impl<T, const N: usize> ListContainer for SmallList<T, N> {
     type Item = T;
     #[inline]
     fn slice(&self) -> &[T] {
-        self.as_slice()
+        SmallList::slice(self)
     }
 }
 
@@ -473,24 +530,43 @@ impl<T: IsCompatible + ?Sized> IsCompatible for &T {
     }
 }
 
-impl<L> IsCompatible for L
-where
-    L: ListContainer,
-    L::Item: IsCompatible,
-{
-    fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
-        for item in self.slice() {
-            if !item.is_compatible(browsers) {
-                return false;
+// The Zig original blanket-impls over "any list container". A Rust blanket
+// `impl<L: ListContainer>` conflicts with the `&T` impl above (coherence can't
+// prove `&T` never impls `ListContainer`), so spell out the three concrete
+// container types instead.
+macro_rules! is_compatible_container {
+    ($(($($gen:tt)*) $ty:ty),* $(,)?) => {$(
+        impl<$($gen)*> IsCompatible for $ty
+        where
+            <$ty as ListContainer>::Item: IsCompatible,
+        {
+            fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+                for item in ListContainer::slice(self) {
+                    if !item.is_compatible(browsers) {
+                        return false;
+                    }
+                }
+                true
             }
         }
-        true
-    }
+    )*};
 }
+is_compatible_container!(
+    ('bump, T) ArrayList<'bump, T>,
+    (T) BabyList<T>,
+    (T, const N: usize) SmallList<T, N>,
+);
 
 // ───────────────────────────────────────────────────────────────────────────────
-// Parse / ParseWithOptions
+// Parse / ParseWithOptions / ToCss / Numeric helpers
 // ───────────────────────────────────────────────────────────────────────────────
+// These protocols depend on still-gated `css_parser` internals (`Parser`
+// methods, `Result<T>`, `*Fns` helpers, `to_css::from_list`) and
+// `values::angle::Angle`. The trait *shapes* are stable; the impls re-enable
+// when those hubs un-gate.
+#[cfg(any())]
+mod parse_tocss_numeric_gated {
+use super::*;
 
 pub trait Parse<'bump>: Sized {
     fn parse(input: &mut Parser<'bump>) -> Result<Self>;
@@ -808,6 +884,48 @@ impl PartialCmp for css_values::angle::Angle {
     fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
         css_values::angle::Angle::partial_cmp(self, rhs)
     }
+}
+} // mod parse_tocss_numeric_gated
+
+// Un-gated trait *shapes* so sibling modules can name them as bounds; concrete
+// impls live in `parse_tocss_numeric_gated` until css_parser/values un-gate.
+pub trait ToCss {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>;
+}
+#[inline]
+pub fn to_css<T: ToCss>(this: &T, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    this.to_css(dest)
+}
+
+pub trait TrySign {
+    fn try_sign(&self) -> Option<f32>;
+}
+pub trait TryMap: Sized {
+    fn try_map(&self, map_fn: impl Fn(f32) -> f32) -> Option<Self>;
+}
+pub trait TryOp: Sized {
+    fn try_op<C>(&self, rhs: &Self, ctx: C, op_fn: impl Fn(C, f32, f32) -> f32) -> Option<Self>;
+}
+pub trait TryOpTo<R>: Sized {
+    fn try_op_to<C>(&self, rhs: &Self, ctx: C, op_fn: impl Fn(C, f32, f32) -> R) -> Option<R>;
+}
+pub trait PartialCmp {
+    fn partial_cmp(&self, rhs: &Self) -> Option<Ordering>;
+}
+#[inline]
+pub fn partial_cmp_f32(lhs: &f32, rhs: &f32) -> Option<Ordering> {
+    let lte = *lhs <= *rhs;
+    let rte = *lhs >= *rhs;
+    if !lte && !rte {
+        return None;
+    }
+    if !lte && rte {
+        return Some(Ordering::Greater);
+    }
+    if lte && !rte {
+        return Some(Ordering::Less);
+    }
+    Some(Ordering::Equal)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

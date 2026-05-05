@@ -24,13 +24,12 @@ bun_core.workspace = true
 bun_collections.workspace = true
 bun_crash_handler.workspace = true
 bun_io.workspace = true
-# TODO(b2-blocked): bun_js_parser — concurrently being un-gated by another B-2
-# pass; restore once it compiles cleanly.
+# TODO(b2-blocked): bun_js_parser — transitively pulls in bun_interchange which
+# does not compile (yaml.rs borrowck + missing bun_string::parse_double); restore
+# once that crate's B-2 pass lands.
 # bun_js_parser.workspace = true
 bun_logger.workspace = true
-# TODO(b2-blocked): bun_sourcemap — concurrently being un-gated; restore once it
-# compiles cleanly.
-# bun_sourcemap.workspace = true
+bun_sourcemap.workspace = true
 bun_options_types.workspace = true
 bun_string.workspace = true
 bun_sys.workspace = true

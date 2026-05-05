@@ -1398,27 +1398,18 @@ impl<'a> AnsiRenderer<'a> {
     }
 
     fn write_highlighted_js(&mut self, line: &[u8]) {
-        #[cfg(any())]
-        {
-            let highlighter = bun_core::fmt::QuickAndDirtyJavaScriptSyntaxHighlighter {
-                text: line,
-                opts: bun_core::fmt::QuickAndDirtyJavaScriptSyntaxHighlighterOpts {
-                    enable_colors: true,
-                    check_for_unhighlighted_write: false,
-                },
-            };
-            let mut aw: Vec<u8> = Vec::new();
-            // TODO(port): QuickAndDirtyJavaScriptSyntaxHighlighter::format
-            // signature/shape may differ once bun_core::fmt is ported.
-            match write!(&mut aw, "{}", highlighter) {
-                Ok(()) => self.out.write(&aw),
-                Err(_) => self.out.write(line),
-            }
-        }
-        #[cfg(not(any()))]
-        {
-            // TODO(b2-blocked): bun_core::fmt::QuickAndDirtyJavaScriptSyntaxHighlighter
-            self.out.write(line);
+        let highlighter = bun_core::fmt::QuickAndDirtyJavaScriptSyntaxHighlighter {
+            text: line,
+            opts: bun_core::fmt::HighlighterOptions {
+                enable_colors: true,
+                check_for_unhighlighted_write: false,
+                ..Default::default()
+            },
+        };
+        let mut aw: Vec<u8> = Vec::new();
+        match write!(&mut aw, "{}", highlighter) {
+            Ok(()) => self.out.write(&aw),
+            Err(_) => self.out.write(line),
         }
     }
 
@@ -2390,7 +2381,7 @@ pub fn detect_kitty_graphics() -> bool {
 fn probe_kitty_graphics() -> bool {
     #[cfg(not(any()))]
     {
-        // TODO(b2-blocked): bun_sys::posix::tcgetattr / bun_sys::posix::poll / bun_core::tty::set_mode
+        // TODO(b2-blocked): bun_sys::posix::tcgetattr / bun_sys::posix::tcsetattr / bun_sys::posix::poll
         return false;
     }
     #[cfg(any())]
@@ -2494,46 +2485,38 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
     // Percent-decode the path so file:///foo/bar%20baz works.
     let decoded = bun_url::PercentEncoding::decode_alloc(path).ok()?;
 
-    #[cfg(any())]
-    {
-        // Resolve to an absolute path. bun.path.joinAbsString returns a
-        // slice in a threadlocal buffer — dupe it before leaving this fn.
-        // Prefer the markdown file's directory when provided; otherwise fall
-        // back to cwd so `Bun.markdown.ansi()` callers without a source path
-        // still work.
-        let mut cwd_buf = bun_paths::PathBuffer::uninit();
-        let base: &[u8] = if let Some(d) = base_dir {
-            d
-        } else {
-            match bun_sys::getcwd(&mut cwd_buf) {
-                bun_sys::Result::Ok(c) => c,
-                bun_sys::Result::Err(_) => return None,
-            }
-        };
-        let joined = bun_paths::join_abs_string(base, &[&decoded], bun_paths::Platform::Auto);
-        let abs = Box::<[u8]>::from(joined);
-        // Stat instead of plain exists() so a directory like `./assets/` gets
-        // rejected. bun.sys.exists wraps access(path, F_OK) which returns true
-        // for any entry, including directories — and emitKittyImageFile sets
-        // q=2 so the terminal silently drops directory paths without falling
-        // through to alt text.
-        let abs_z = bun_str::ZStr::from_bytes(&abs);
-        match bun_sys::stat(&abs_z) {
-            bun_sys::Result::Ok(s) => {
-                if (s.mode & bun_sys::S::IFMT) != bun_sys::S::IFREG {
-                    return None;
-                }
-            }
-            bun_sys::Result::Err(_) => return None,
+    // Resolve to an absolute path. bun.path.joinAbsString returns a
+    // slice in a threadlocal buffer — dupe it before leaving this fn.
+    // Prefer the markdown file's directory when provided; otherwise fall
+    // back to cwd so `Bun.markdown.ansi()` callers without a source path
+    // still work.
+    let mut cwd_buf = bun_paths::PathBuffer::uninit();
+    let base: &[u8] = if let Some(d) = base_dir {
+        d
+    } else {
+        match bun_sys::getcwd(&mut cwd_buf[..]) {
+            Ok(len) => &cwd_buf[..len],
+            Err(_) => return None,
         }
-        Some(abs)
+    };
+    let joined = bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(base, &[&decoded]);
+    let abs = Box::<[u8]>::from(joined);
+    // Stat instead of plain exists() so a directory like `./assets/` gets
+    // rejected. bun.sys.exists wraps access(path, F_OK) which returns true
+    // for any entry, including directories — and emitKittyImageFile sets
+    // q=2 so the terminal silently drops directory paths without falling
+    // through to alt text.
+    let mut zbuf = bun_paths::PathBuffer::uninit();
+    let abs_z = bun_paths::resolve_path::z(&abs, &mut zbuf);
+    match bun_sys::stat(abs_z) {
+        Ok(s) => {
+            if !bun_sys::S::ISREG(s.st_mode as _) {
+                return None;
+            }
+        }
+        Err(_) => return None,
     }
-    #[cfg(not(any()))]
-    {
-        // TODO(b2-blocked): bun_paths::join_abs_string / bun_sys::stat / bun_sys::S
-        let _ = (decoded, base_dir);
-        None
-    }
+    Some(abs)
 }
 
 // ========================================

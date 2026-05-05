@@ -12,13 +12,11 @@ use crate::PrintErr;
 pub use crate::Error;
 
 // ─────────────────────────────────────────────────────────────────────────
-// `CssModule` + its impl block depend on still-gated hubs (Printer,
-// properties::css_modules::Specifier, selector::parser, ArrayHashMap
-// get_or_put Zig-style API). The data types below (Config, Pattern, Segment,
-// CssModuleExport/Reference) are un-gated; the runtime struct re-enables when
-// the printer/selector hubs land.
+// `CssModule` is un-gated (B-2). `reference_dashed` / `handle_composes`
+// remain internally gated — they depend on still-gated `Printer.allocator` /
+// `import_record()`, `properties::css_modules::Specifier`, and
+// `selector::parser::{SelectorList, Component}`.
 // ─────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
 pub struct CssModule<'a> {
     pub config: &'a Config,
     // TODO(port): LIFETIMES.tsv says Vec<String> but §Strings mandates bytes — fix TSV (Phase B: &'a [&'a [u8]] and drop .as_bytes() calls)
@@ -28,7 +26,6 @@ pub struct CssModule<'a> {
     pub references: &'a mut CssModuleReferences<'a>,
 }
 
-#[cfg(any())]
 impl<'a> CssModule<'a> {
     pub fn new(
         bump: &'a Bump,
@@ -45,9 +42,10 @@ impl<'a> CssModule<'a> {
                 let source: &[u8] = 'source: {
                     // Make paths relative to project root so hashes are stable
                     if let Some(root) = project_root {
-                        if bun_paths::Platform::auto().is_absolute(root) {
+                        // Zig: `bun.path.Platform.auto.isAbsolute(root)`
+                        if bun_paths::is_absolute(root) {
                             alloced = true;
-                            break 'source bump.alloc_slice_copy(bun_paths::relative(root, path.as_bytes()));
+                            break 'source bump.alloc_slice_copy(bun_paths::resolve_path::relative(root, path.as_bytes()));
                         }
                     }
                     break 'source path.as_bytes();
@@ -83,25 +81,34 @@ impl<'a> CssModule<'a> {
     // PORT NOTE: `deinit` was a no-op (`// TODO: deinit`); Drop is implicit. No `impl Drop` needed.
 
     pub fn get_reference(&mut self, bump: &'a Bump, name: &'a [u8], source_index: u32) {
-        // TODO(port): ArrayHashMap getOrPut API — assuming entry()-like; verify in Phase B
-        let gop = self.exports_by_source_index[source_index as usize].get_or_put(bump, name);
-        if gop.found_existing {
-            gop.value.is_referenced = true;
-        } else {
-            *gop.value = CssModuleExport {
-                name: self.config.pattern.write_to_string(
-                    bump,
-                    BumpVec::new_in(bump),
-                    self.hashes[source_index as usize],
-                    self.sources[source_index as usize].as_bytes(),
-                    name,
-                ),
-                composes: BumpVec::new_in(bump),
-                is_referenced: true,
-            };
+        // PORT NOTE: Zig `getOrPut` returns an uninitialized value slot;
+        // bun_collections::ArrayHashMap::get_or_put requires `V: Default`
+        // (CssModuleExport can't be Default — BumpVec field). Reshaped to the
+        // entry()-API instead.
+        use bun_collections::array_hash_map::MapEntry;
+        match self.exports_by_source_index[source_index as usize].entry(name) {
+            MapEntry::Occupied(mut o) => {
+                o.get_mut().is_referenced = true;
+            }
+            MapEntry::Vacant(v) => {
+                v.insert(CssModuleExport {
+                    name: self.config.pattern.write_to_string(
+                        bump,
+                        BumpVec::new_in(bump),
+                        self.hashes[source_index as usize],
+                        self.sources[source_index as usize].as_bytes(),
+                        name,
+                    ),
+                    composes: BumpVec::new_in(bump),
+                    is_referenced: true,
+                });
+            }
         }
     }
 
+    // Depends on `Printer.allocator` / `Printer.import_record()` (gated stub)
+    // and `properties::css_modules::Specifier` (gated). Re-enable with those hubs.
+    #[cfg(any())]
     pub fn reference_dashed(
         &mut self,
         dest: &mut css::Printer,
@@ -166,6 +173,9 @@ impl<'a> CssModule<'a> {
         Ok(Some(the_hash))
     }
 
+    // Depends on `selector::parser::{SelectorList, Component}` and
+    // `properties::css_modules::Composes` (both gated). Re-enable with those hubs.
+    #[cfg(any())]
     pub fn handle_composes(
         &mut self,
         _dest: &mut css::Printer,
@@ -187,9 +197,11 @@ impl<'a> CssModule<'a> {
     }
 
     pub fn add_dashed(&mut self, bump: &'a Bump, local: &'a [u8], source_index: u32) {
-        let gop = self.exports_by_source_index[source_index as usize].get_or_put(bump, local);
-        if !gop.found_existing {
-            *gop.value = CssModuleExport {
+        use bun_collections::array_hash_map::MapEntry;
+        if let MapEntry::Vacant(v) =
+            self.exports_by_source_index[source_index as usize].entry(local)
+        {
+            v.insert(CssModuleExport {
                 // todo_stuff.depth
                 name: self.config.pattern.write_to_string_with_prefix(
                     bump,
@@ -200,14 +212,16 @@ impl<'a> CssModule<'a> {
                 ),
                 composes: BumpVec::new_in(bump),
                 is_referenced: false,
-            };
+            });
         }
     }
 
     pub fn add_local(&mut self, bump: &'a Bump, exported: &'a [u8], local: &'a [u8], source_index: u32) {
-        let gop = self.exports_by_source_index[source_index as usize].get_or_put(bump, exported);
-        if !gop.found_existing {
-            *gop.value = CssModuleExport {
+        use bun_collections::array_hash_map::MapEntry;
+        if let MapEntry::Vacant(v) =
+            self.exports_by_source_index[source_index as usize].entry(exported)
+        {
+            v.insert(CssModuleExport {
                 // todo_stuff.depth
                 name: self.config.pattern.write_to_string(
                     bump,
@@ -218,7 +232,7 @@ impl<'a> CssModule<'a> {
                 ),
                 composes: BumpVec::new_in(bump),
                 is_referenced: false,
-            };
+            });
         }
     }
 }

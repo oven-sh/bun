@@ -161,8 +161,7 @@ fn scan_small(out: &mut Buffer, text: &[u8], delta: i32) {
     *out = freqs;
 }
 
-// Zig file ends with `pub const Class = G.Class;` — re-export once g::Class is real.
-#[cfg(any())]
+// Zig file ends with `pub const Class = G.Class;` — re-export.
 pub use crate::ast::g::Class;
 
 // ──────────────────────────────────────────────────────────────────────────

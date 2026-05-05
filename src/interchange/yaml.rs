@@ -17,7 +17,14 @@ use bun_alloc::AllocError;
 use bun_collections::{BabyList, StringHashMap};
 use bun_core::{self, StackCheck};
 // MOVE_DOWN(b0): bun_js_parser::ast → bun_logger::ast (js_ast remapped into logger, T2)
+// TODO(b2-blocked): bun_logger::js_ast — MOVE_DOWN not yet landed in T2.
+#[cfg(any())]
 use bun_logger::ast::{self, Expr, E, G};
+// Local opaque stub so `Document.root` / `Parser.anchors` and the scanner half
+// can type-check while the AST-producing parse_* fns stay gated below.
+#[cfg(not(any()))]
+#[derive(Clone, Default)]
+pub struct Expr;
 use bun_logger::{self as logger, Loc, Log, Source};
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -26,6 +33,9 @@ use bun_logger::{self as logger, Loc, Log, Source};
 
 pub struct YAML;
 
+// TODO(b2-blocked): bun_logger::js_ast::{Expr, E}
+// TODO(b2-blocked): bun_core::analytics::Features::yaml_parse_inc
+#[cfg(any())]
 impl YAML {
     pub fn parse(
         source: &logger::Source,
@@ -82,6 +92,8 @@ impl From<AllocError> for YamlParseError {
 // Top-level free functions
 // ───────────────────────────────────────────────────────────────────────────
 
+// TODO(b2-blocked): bun_logger::js_ast::Expr — Parser::parse() is gated.
+#[cfg(any())]
 pub fn parse<Enc: Encoding>(input: &[Enc::Unit]) -> ParseResult<Enc> {
     let mut parser: Parser<Enc> = Parser::init(input);
 
@@ -657,14 +669,18 @@ impl StringRange {
     }
 }
 
-pub struct StringRangeStart<'a, Enc: Encoding> {
+// PORT NOTE: reshaped for borrowck — Zig captured `parser.pos` lazily via a
+// pointer field; in Rust that pins an immutable borrow across mutating scans.
+// Capture only `off` and have callers pass the end `Pos` explicitly.
+#[derive(Clone, Copy)]
+pub struct StringRangeStart {
     pub off: Pos,
-    pub parser: &'a Parser<'a, Enc>,
 }
 
-impl<'a, Enc: Encoding> StringRangeStart<'a, Enc> {
-    pub fn end(&self) -> StringRange {
-        StringRange { off: self.off, end: self.parser.pos }
+impl StringRangeStart {
+    #[inline]
+    pub fn end(&self, end: Pos) -> StringRange {
+        StringRange { off: self.off, end }
     }
 }
 
@@ -713,19 +729,32 @@ impl<Enc: Encoding> YamlString<Enc> {
 // drives scanning). For Phase A we keep a raw pointer with SAFETY notes;
 // Phase B should refactor whitespace_buf out of Parser or pass &mut explicitly.
 pub struct StringBuilder<'a, Enc: Encoding> {
-    pub parser: &'a mut Parser<'a, Enc>,
-    // TODO(port): lifetime — see LIFETIMES.tsv BORROW_PARAM. This aliases the
-    // outer `&mut self` in scanPlainScalar; Phase B must reshape (e.g. pass
-    // `&mut whitespace_buf` separately or use a raw `*mut Parser<Enc>`).
+    // PORT NOTE: was `&'a mut Parser<'a, Enc>` in the Phase-A draft. That ties the
+    // borrow lifetime to Parser's input lifetime (invariant under &mut), which
+    // both fails borrowck at `string_builder()` and is exactly the aliasing the
+    // Zig already had. Use a raw backref (the LIFETIMES.tsv BACKREF resolution).
+    pub parser: *mut Parser<'a, Enc>,
     pub str: YamlString<Enc>,
 }
 
 impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
+    // SAFETY: callers construct StringBuilder via Parser::string_builder{,_raw}()
+    // which stores `self as *mut Parser`; the builder never outlives the parser
+    // stack frame and is the sole mutator of `whitespace_buf` while live.
+    #[inline]
+    fn parser(&self) -> &Parser<'a, Enc> {
+        unsafe { &*self.parser }
+    }
+    #[inline]
+    fn parser_mut(&mut self) -> &mut Parser<'a, Enc> {
+        unsafe { &mut *self.parser }
+    }
+
     pub fn append_source(&mut self, unit: Enc::Unit, pos: Pos) -> Result<(), AllocError> {
         self.drain_whitespace()?;
 
         if cfg!(feature = "ci_assert") {
-            let actual = self.parser.input[pos.cast()];
+            let actual = self.parser().input[pos.cast()];
             debug_assert!(actual == unit);
         }
         match &mut self.str {
@@ -746,12 +775,12 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
 
     fn drain_whitespace(&mut self) -> Result<(), AllocError> {
         // PORT NOTE: reshaped for borrowck — take ownership of buf, process, clear.
-        let buf = core::mem::take(&mut self.parser.whitespace_buf);
+        let buf = core::mem::take(&mut self.parser_mut().whitespace_buf);
         for ws in &buf {
             match ws {
                 Whitespace::Source { pos, unit } => {
                     if cfg!(feature = "ci_assert") {
-                        let actual = self.parser.input[pos.cast()];
+                        let actual = self.parser().input[pos.cast()];
                         debug_assert!(actual == *unit);
                     }
                     match &mut self.str {
@@ -769,7 +798,8 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
                 Whitespace::New(unit) => match &mut self.str {
                     YamlString::Range(range) => {
                         let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + 1);
-                        list.extend_from_slice(range.slice(self.parser.input));
+                        // SAFETY: see StringBuilder::parser() note.
+                        list.extend_from_slice(range.slice(unsafe { (*self.parser).input }));
                         list.push(*unit);
                         // PERF(port): was assume_capacity
                         self.str = YamlString::List(list);
@@ -780,23 +810,23 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
         }
         let mut buf = buf;
         buf.clear();
-        self.parser.whitespace_buf = buf;
+        self.parser_mut().whitespace_buf = buf;
         Ok(())
     }
 
     pub fn append_source_whitespace(&mut self, unit: Enc::Unit, pos: Pos) -> Result<(), AllocError> {
-        self.parser.whitespace_buf.push(Whitespace::Source { unit, pos });
+        self.parser_mut().whitespace_buf.push(Whitespace::Source { unit, pos });
         Ok(())
     }
 
     pub fn append_whitespace(&mut self, unit: Enc::Unit) -> Result<(), AllocError> {
-        self.parser.whitespace_buf.push(Whitespace::New(unit));
+        self.parser_mut().whitespace_buf.push(Whitespace::New(unit));
         Ok(())
     }
 
     pub fn append_whitespace_n_times(&mut self, unit: Enc::Unit, n: usize) -> Result<(), AllocError> {
         for _ in 0..n {
-            self.parser.whitespace_buf.push(Whitespace::New(unit));
+            self.parser_mut().whitespace_buf.push(Whitespace::New(unit));
         }
         Ok(())
     }
@@ -813,7 +843,9 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
                 range.end = end;
             }
             YamlString::List(list) => {
-                list.extend_from_slice(&self.parser.input[off.cast()..end.cast()]);
+                // SAFETY: see StringBuilder::parser() note.
+                let input = unsafe { (*self.parser).input };
+                list.extend_from_slice(&input[off.cast()..end.cast()]);
             }
         }
         Ok(())
@@ -828,7 +860,7 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
         self.drain_whitespace()?;
 
         if cfg!(feature = "ci_assert") {
-            let actual = &self.parser.input[off.cast()..end.cast()];
+            let actual = &self.parser().input[off.cast()..end.cast()];
             debug_assert!(actual == expected);
         }
 
@@ -842,7 +874,9 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
                 range.end = end;
             }
             YamlString::List(list) => {
-                list.extend_from_slice(&self.parser.input[off.cast()..end.cast()]);
+                // SAFETY: see StringBuilder::parser() note.
+                let input = unsafe { (*self.parser).input };
+                list.extend_from_slice(&input[off.cast()..end.cast()]);
             }
         }
         Ok(())
@@ -853,7 +887,8 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
         match &mut self.str {
             YamlString::Range(range) => {
                 let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + 1);
-                list.extend_from_slice(range.slice(self.parser.input));
+                // SAFETY: see StringBuilder::parser() note.
+                list.extend_from_slice(range.slice(unsafe { (*self.parser).input }));
                 list.push(unit);
                 // PERF(port): was assume_capacity
                 self.str = YamlString::List(list);
@@ -871,7 +906,8 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
         match &mut self.str {
             YamlString::Range(range) => {
                 let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + s.len());
-                list.extend_from_slice(range.slice(self.parser.input));
+                // SAFETY: see StringBuilder::parser() note.
+                list.extend_from_slice(range.slice(unsafe { (*self.parser).input }));
                 list.extend_from_slice(s);
                 // PERF(port): was assume_capacity
                 self.str = YamlString::List(list);
@@ -889,7 +925,8 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
         match &mut self.str {
             YamlString::Range(range) => {
                 let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + n);
-                list.extend_from_slice(range.slice(self.parser.input));
+                // SAFETY: see StringBuilder::parser() note.
+                list.extend_from_slice(range.slice(unsafe { (*self.parser).input }));
                 for _ in 0..n {
                     list.push(unit);
                 }
@@ -910,7 +947,7 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
     }
 
     pub fn done(mut self) -> YamlString<Enc> {
-        self.parser.whitespace_buf.clear();
+        self.parser_mut().whitespace_buf.clear();
         self.str
     }
 }
@@ -1407,7 +1444,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
             }
             // TODO(port): bun.jsc.wtf.parseDouble over &[Enc::Unit] — Phase B.
             // MOVE_DOWN(b0): wtf::parse_double → bun_str (T1)
-            let float = match bun_str::parse_double(parser.slice(start, end)) {
+            let float = match parse_double_generic::<Enc>(parser.slice(start, end)) {
                 Ok(v) => v,
                 Err(_) => return Ok(()),
             };
@@ -1435,6 +1472,13 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
 
 // TODO(port): placeholder for std.fmt.parseUnsigned(u64, _, 0). Phase B should
 // route through bun_str or core u64::from_str_radix after ASCII narrowing.
+fn parse_double_generic<Enc: Encoding>(_s: &[Enc::Unit]) -> Result<f64, ()> {
+    // TODO(port): bun_str::wtf::parse_double takes &[u8]; need Enc::Unit→u8
+    // narrowing (or a u16 overload) before this can call through. Mirrors
+    // parse_unsigned_radix0 below — Phase B.
+    Err(())
+}
+
 fn parse_unsigned_radix0<Enc: Encoding>(_s: &[Enc::Unit]) -> Result<u64, ()> {
     Err(())
 }
@@ -1466,6 +1510,8 @@ pub enum NodeTag {
 }
 
 impl NodeTag {
+    // TODO(b2-blocked): bun_logger::js_ast::{Expr, E}
+    #[cfg(any())]
     pub fn resolve_null(self, loc: logger::Loc) -> Expr {
         match self {
             NodeTag::None
@@ -1492,6 +1538,8 @@ pub enum NodeScalar<Enc: Encoding> {
 }
 
 impl<Enc: Encoding> NodeScalar<Enc> {
+    // TODO(b2-blocked): bun_logger::js_ast::{Expr, E}
+    #[cfg(any())]
     pub fn to_expr(&self, pos: Pos, input: &[Enc::Unit]) -> Expr {
         match self {
             NodeScalar::Null => Expr::init(E::Null, E::Null {}, pos.loc()),
@@ -1810,43 +1858,43 @@ impl ParseResultError {
             ParseResultError::Oom => return Err(YamlParseError::OutOfMemory),
             ParseResultError::StackOverflow => return Err(YamlParseError::StackOverflow),
             ParseResultError::UnexpectedEof { pos } => {
-                log.add_error(source, pos.loc(), "Unexpected EOF")?;
+                log.add_error(Some(source), pos.loc(), b"Unexpected EOF")?;
             }
             ParseResultError::UnexpectedToken { pos } => {
-                log.add_error(source, pos.loc(), "Unexpected token")?;
+                log.add_error(Some(source), pos.loc(), b"Unexpected token")?;
             }
             ParseResultError::UnexpectedCharacter { pos } => {
-                log.add_error(source, pos.loc(), "Unexpected character")?;
+                log.add_error(Some(source), pos.loc(), b"Unexpected character")?;
             }
             ParseResultError::InvalidDirective { pos } => {
-                log.add_error(source, pos.loc(), "Invalid directive")?;
+                log.add_error(Some(source), pos.loc(), b"Invalid directive")?;
             }
             ParseResultError::UnresolvedTagHandle { pos } => {
-                log.add_error(source, pos.loc(), "Unresolved tag handle")?;
+                log.add_error(Some(source), pos.loc(), b"Unresolved tag handle")?;
             }
             ParseResultError::UnresolvedAlias { pos } => {
-                log.add_error(source, pos.loc(), "Unresolved alias")?;
+                log.add_error(Some(source), pos.loc(), b"Unresolved alias")?;
             }
             ParseResultError::MultilineImplicitKey { pos } => {
-                log.add_error(source, pos.loc(), "Multiline implicit key")?;
+                log.add_error(Some(source), pos.loc(), b"Multiline implicit key")?;
             }
             ParseResultError::MultipleAnchors { pos } => {
-                log.add_error(source, pos.loc(), "Multiple anchors")?;
+                log.add_error(Some(source), pos.loc(), b"Multiple anchors")?;
             }
             ParseResultError::MultipleTags { pos } => {
-                log.add_error(source, pos.loc(), "Multiple tags")?;
+                log.add_error(Some(source), pos.loc(), b"Multiple tags")?;
             }
             ParseResultError::UnexpectedDocumentStart { pos } => {
-                log.add_error(source, pos.loc(), "Unexpected document start")?;
+                log.add_error(Some(source), pos.loc(), b"Unexpected document start")?;
             }
             ParseResultError::UnexpectedDocumentEnd { pos } => {
-                log.add_error(source, pos.loc(), "Unexpected document end")?;
+                log.add_error(Some(source), pos.loc(), b"Unexpected document end")?;
             }
             ParseResultError::MultipleYamlDirectives { pos } => {
-                log.add_error(source, pos.loc(), "Multiple YAML directives")?;
+                log.add_error(Some(source), pos.loc(), b"Multiple YAML directives")?;
             }
             ParseResultError::InvalidIndentation { pos } => {
-                log.add_error(source, pos.loc(), "Invalid indentation")?;
+                log.add_error(Some(source), pos.loc(), b"Invalid indentation")?;
             }
         }
         Ok(())
@@ -1977,11 +2025,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         ParseError::UnexpectedToken
     }
 
+    // TODO(b2-blocked): bun_logger::js_ast::Expr — calls parse_stream → parse_document → parse_node.
+    #[cfg(any())]
     pub fn parse(&mut self) -> Result<Stream<Enc>, ParseError> {
         self.scan(ScanOptions { first_scan: true, ..Default::default() })?;
         self.parse_stream()
     }
 
+    // TODO(b2-blocked): bun_logger::js_ast::Expr — calls parse_document.
+    #[cfg(any())]
     pub fn parse_stream(&mut self) -> Result<Stream<Enc>, ParseError> {
         let mut docs: Vec<Document> = Vec::new();
 
@@ -2046,6 +2098,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     // not part of the root expression.
 
     // TODO: move most of this into `scan()`
+    // TODO(b2-blocked): bun_collections::StringHashMap::put with generic Enc::Unit key —
+    //   `tag_handles.put(handle.slice(self.input), ())` needs `&[u8]` but slice yields
+    //   `&[Enc::Unit]`. Only reachable from parse_document (also gated).
+    #[cfg(any())]
     fn parse_directive(&mut self) -> Result<Directive, ParseError> {
         if self.token.indent != Indent::NONE {
             return Err(ParseError::InvalidDirective);
@@ -2099,7 +2155,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             // named tag handle
             let range = self.string_range();
             self.try_skip_ns_word_chars()?;
-            let handle = range.end();
+            let handle = range.end(self.pos);
             self.try_skip_char(Enc::ch(b'!'))?;
             self.try_skip_s_white()?;
 
@@ -2117,7 +2173,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // reserved directive
         let range = self.string_range();
         self.try_skip_ns_chars()?;
-        let reserved = range.end();
+        let reserved = range.end(self.pos);
 
         self.skip_s_white();
 
@@ -2137,7 +2193,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             self.inc(1);
             let range = self.string_range();
             self.skip_ns_uri_chars();
-            return Ok(DirectiveTagPrefix::Local(range.end()));
+            return Ok(DirectiveTagPrefix::Local(range.end(self.pos)));
         }
 
         // global tag prefix
@@ -2145,12 +2201,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             let range = self.string_range();
             self.inc(char_len as usize);
             self.skip_ns_uri_chars();
-            return Ok(DirectiveTagPrefix::Global(range.end()));
+            return Ok(DirectiveTagPrefix::Global(range.end(self.pos)));
         }
 
         Err(ParseError::InvalidDirective)
     }
 
+    // TODO(b2-blocked): bun_logger::js_ast::Expr — calls parse_node / parse_directive.
+    #[cfg(any())]
     pub fn parse_document(&mut self) -> Result<Document, ParseError> {
         let mut directives: Vec<Directive> = Vec::new();
 
@@ -2210,6 +2268,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         Ok(Document { root, directives })
     }
 
+    // TODO(b2-blocked): bun_logger::js_ast::{Expr, E}
+    #[cfg(any())]
     fn parse_flow_sequence(&mut self) -> Result<Expr, ParseError> {
         let sequence_start = self.token.start;
         let _sequence_indent = self.token.indent;
@@ -2252,6 +2312,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         ))
     }
 
+    // TODO(b2-blocked): bun_logger::js_ast::{Expr, E, G}
+    #[cfg(any())]
     fn parse_flow_mapping(&mut self) -> Result<Expr, ParseError> {
         let mapping_start = self.token.start;
         let _mapping_indent = self.token.indent;
@@ -2327,6 +2389,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         ))
     }
 
+    // TODO(b2-blocked): bun_logger::js_ast::{Expr, E}
+    #[cfg(any())]
     fn parse_block_sequence(&mut self) -> Result<Expr, ParseError> {
         let sequence_start = self.token.start;
         let sequence_indent = self.token.indent;
@@ -2457,6 +2521,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// Should only be used with expressions created with the YAML parser. It assumes
     /// only null, boolean, number, string, array, object are possible. It also only
     /// does pointer comparison with arrays and objects (so exponential merges are avoided)
+    // TODO(b2-blocked): bun_logger::js_ast::ExprData
+    #[cfg(any())]
     fn yaml_merge_key_expr_eql(l: &Expr, r: &Expr) -> bool {
         if core::mem::discriminant(&l.data) != core::mem::discriminant(&r.data) {
             return false;
@@ -2474,6 +2540,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // TODO(port): exact ExprData variant names depend on bun_js_parser::ast.
     }
 
+    // TODO(b2-blocked): bun_logger::js_ast::{Expr, E, G}
+    #[cfg(any())]
     fn parse_block_mapping(
         &mut self,
         first_key: Expr,
@@ -2667,10 +2735,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 // MappingProps
 // ───────────────────────────────────────────────────────────────────────────
 
+// TODO(b2-blocked): bun_logger::js_ast::G::Property
+#[cfg(any())]
 pub struct MappingProps {
     list: Vec<G::Property>,
 }
 
+// TODO(b2-blocked): bun_logger::js_ast::{G, ExprData}
+#[cfg(any())]
 impl MappingProps {
     pub fn init() -> Self {
         Self { list: Vec::new() }
@@ -2911,7 +2983,10 @@ impl Default for ScanOptions {
 // Escape
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
+// PERF(port): was a comptime parameter (Zig `comptime escape`); ConstParamTy needs
+// nightly `adt_const_params`. Downgraded to a runtime arg — branch is trivially
+// predicted (3 fixed call sites). Re-evaluate in Phase B.
+#[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Escape {
     X = 2,
@@ -2925,23 +3000,16 @@ impl Escape {
     }
 }
 
-// ───────────────────────────────────────────────────────────────────────────
-// FirstChar (for tryResolveNumber)
-// ───────────────────────────────────────────────────────────────────────────
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum FirstChar {
-    Positive,
-    Negative,
-    Dot,
-    Other,
-}
+// PORT NOTE: FirstChar is defined once above (alongside ScalarResolverCtx); the
+// Phase-A draft duplicated it here for tryResolveNumber. Removed.
 
 // ───────────────────────────────────────────────────────────────────────────
 // Parser methods (continued)
 // ───────────────────────────────────────────────────────────────────────────
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
+    // TODO(b2-blocked): bun_logger::js_ast::{Expr, E, ExprData}
+    #[cfg(any())]
     fn parse_node(&mut self, opts: ParseNodeOptions<Enc>) -> Result<Expr, ParseError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(ParseError::StackOverflow);
@@ -4331,9 +4399,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             EncodingKind::Latin1 => return Err(ParseError::UnexpectedCharacter),
                         },
 
-                        0x78 /* 'x' */ => self.decode_hex_code_point::<{ Escape::X }>(&mut text)?,
-                        0x75 /* 'u' */ => self.decode_hex_code_point::<{ Escape::LowerU }>(&mut text)?,
-                        0x55 /* 'U' */ => self.decode_hex_code_point::<{ Escape::UpperU }>(&mut text)?,
+                        0x78 /* 'x' */ => self.decode_hex_code_point(Escape::X, &mut text)?,
+                        0x75 /* 'u' */ => self.decode_hex_code_point(Escape::LowerU, &mut text)?,
+                        0x55 /* 'U' */ => self.decode_hex_code_point(Escape::UpperU, &mut text)?,
 
                         _ => return Err(ParseError::UnexpectedCharacter),
                     }
@@ -4349,12 +4417,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     }
 
     // TODO: should this append replacement characters instead of erroring?
-    fn decode_hex_code_point<const ESCAPE: Escape>(
+    fn decode_hex_code_point(
         &mut self,
+        escape: Escape,
         text: &mut Vec<Enc::Unit>,
     ) -> Result<(), ParseError> {
         let mut value: u32 = 0;
-        for _ in 0..(ESCAPE as u8) {
+        for _ in 0..(escape as u8) {
             self.inc(1);
             let digit = Enc::wide(self.next());
             let num: u8 = match digit {
@@ -4445,13 +4514,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         self.inc(1);
                         let range = self.string_range();
                         self.skip_ns_uri_chars();
-                        break 'prefix range.end();
+                        break 'prefix range.end(self.pos);
                     }
                     if let Some(len) = self.is_ns_tag_char() {
                         let range = self.string_range();
                         self.inc(len as usize);
                         self.skip_ns_uri_chars();
-                        break 'prefix range.end();
+                        break 'prefix range.end(self.pos);
                     }
                     return Err(ParseError::UnexpectedCharacter);
                 };
@@ -4483,7 +4552,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     _ => return Err(ParseError::UnexpectedCharacter),
                 }
 
-                let shorthand = range.end();
+                let shorthand = range.end(self.pos);
                 let tag = self.shorthand_to_tag(shorthand);
 
                 return Ok(Token::tag(TagInit {
@@ -4498,25 +4567,18 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 let mut range = self.string_range();
                 let off = range.off;
                 self.try_skip_ns_word_chars()?;
-                let mut handle_or_shorthand = range.end();
+                let mut handle_or_shorthand = range.end(self.pos);
 
                 if Enc::wide(self.next()) == 0x21 /* '!' */ {
                     self.inc(1);
-                    if !self.tag_handles.contains(handle_or_shorthand.slice(self.input)) {
-                        self.pos = off;
-                        return Err(ParseError::UnresolvedTagHandle);
-                    }
-
-                    range = self.string_range();
-                    self.try_skip_ns_tag_chars()?;
-                    let shorthand = range.end();
-
-                    return Ok(Token::tag(TagInit {
-                        start,
-                        indent: self.line_indent,
-                        line: self.line,
-                        tag: NodeTag::Unknown(shorthand),
-                    }));
+                    // PORT NOTE: yaml.zig:3488-3491 always checks `tag_handles.contains(handle)`.
+                    // The only writer (parse_directive %TAG) is gated, so the table is provably
+                    // empty here; Zig therefore ALWAYS errors on a named handle `!foo!bar`.
+                    // Match that until parse_directive lands (at which point this becomes a
+                    // real contains_key check against `handle_or_shorthand`).
+                    let _ = (&mut range, &handle_or_shorthand);
+                    self.pos = off;
+                    return Err(ParseError::UnresolvedTagHandle);
                 }
 
                 // primary
@@ -4711,7 +4773,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         start,
                         indent: self.line_indent,
                         line: self.line,
-                        name: range.end(),
+                        name: range.end(self.pos),
                     });
                     match Enc::wide(self.next()) {
                         0 | 0x20 | 0x09 | 0x0A | 0x0D => break 'next anchor,
@@ -4732,7 +4794,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         start,
                         indent: self.line_indent,
                         line: self.line,
-                        name: range.end(),
+                        name: range.end(self.pos),
                     });
                     match Enc::wide(self.next()) {
                         0 | 0x20 | 0x09 | 0x0A | 0x0D => break 'next alias,
@@ -5134,14 +5196,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         Ok(())
     }
 
-    fn string_range(&self) -> StringRangeStart<'_, Enc> {
-        StringRangeStart { off: self.pos, parser: self }
+    fn string_range(&self) -> StringRangeStart {
+        StringRangeStart { off: self.pos }
     }
 
-    fn string_builder(&mut self) -> StringBuilder<'_, Enc> {
-        // TODO(port): borrowck — see StringBuilder note.
+    fn string_builder(&mut self) -> StringBuilder<'i, Enc> {
         StringBuilder {
-            parser: self,
+            parser: self as *mut Parser<'i, Enc>,
             str: YamlString::Range(StringRange { off: Pos::ZERO, end: Pos::ZERO }),
         }
     }
@@ -5150,11 +5211,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     // and that no other &mut borrow of `*self` overlaps with builder method
     // calls that touch `whitespace_buf`/`input`. Used by scan_plain_scalar.
     unsafe fn string_builder_raw(&mut self) -> StringBuilder<'i, Enc> {
-        // TODO(port): borrowck reshape — raw transmute of the &mut self lifetime
-        // to 'i so the builder can be stored in ScalarResolverCtx alongside
-        // `*mut Parser`. Phase B: change StringBuilder.parser to *mut Parser.
         StringBuilder {
-            parser: unsafe { &mut *(self as *mut Parser<'i, Enc>) },
+            parser: self as *mut Parser<'i, Enc>,
             str: YamlString::Range(StringRange { off: Pos::ZERO, end: Pos::ZERO }),
         }
     }

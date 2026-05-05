@@ -590,14 +590,10 @@ impl Number {
     /// by calling out to the APIs in WebKit which are responsible for this operation.
     ///
     /// This can return `None` in wasm builds to avoid linking JSC
-    #[cfg(any())] // TODO(b2-blocked): forwards to gated `to_string_from_f64`
     pub fn to_string(&self, bump: &Bump) -> Option<&'static [u8]> {
         Self::to_string_from_f64(self.value, bump)
     }
 
-    // TODO(b2-blocked): bumpalo::collections::Vec has no `io::Write` impl;
-    // use `bun_core::fmt::format_int_into_bump` once available.
-    #[cfg(any())]
     pub fn to_string_from_f64(value: f64, bump: &Bump) -> Option<&'static [u8]> {
         if value == value.trunc() && (value < i32::MAX as f64 && value > i32::MIN as f64) {
             let int_value = value as i64;
@@ -613,14 +609,33 @@ impl Number {
             }
 
             // std.fmt.allocPrint(allocator, "{d}", .{@as(i32, @intCast(int_value))}) catch return null
-            use std::io::Write as _;
-            let mut v = bumpalo::collections::Vec::<u8>::new_in(bump);
-            if write!(&mut v, "{}", i32::try_from(int_value).unwrap()).is_err() {
+            // i32 fits in 11 bytes ("-2147483648"); format on stack then bump-copy.
+            struct StackWriter {
+                buf: [u8; 16],
+                len: usize,
+            }
+            impl core::fmt::Write for StackWriter {
+                fn write_str(&mut self, s: &str) -> core::fmt::Result {
+                    let b = s.as_bytes();
+                    let end = self.len + b.len();
+                    if end > self.buf.len() {
+                        return Err(core::fmt::Error);
+                    }
+                    self.buf[self.len..end].copy_from_slice(b);
+                    self.len = end;
+                    Ok(())
+                }
+            }
+            use core::fmt::Write as _;
+            let mut w = StackWriter { buf: [0u8; 16], len: 0 };
+            if write!(w, "{}", int_value as i32).is_err() {
                 return None;
             }
             // TODO(port): arena slice lifetime — see Str alias note.
             // SAFETY: arena-owned slice; lifetime erased to 'static pending Phase B StoreRef/Str.
-            return Some(unsafe { core::mem::transmute::<&[u8], &'static [u8]>(v.into_bump_slice()) });
+            return Some(unsafe {
+                core::mem::transmute::<&[u8], &'static [u8]>(bump.alloc_slice_copy(&w.buf[..w.len]))
+            });
         }
 
         if value.is_nan() {
@@ -1176,6 +1191,18 @@ impl EString {
     pub const fn is_utf8(&self) -> bool {
         !self.is_utf16
     }
+    #[inline]
+    pub fn slice8(&self) -> &[u8] {
+        debug_assert!(!self.is_utf16);
+        self.data
+    }
+    #[inline]
+    pub fn slice16(&self) -> &[u16] {
+        debug_assert!(self.is_utf16);
+        // SAFETY: when is_utf16, `data.ptr` was originally a `*const u16` and `data.len`
+        // is the u16 element count (see `init_utf16`).
+        unsafe { core::slice::from_raw_parts(self.data.as_ptr().cast::<u16>(), self.data.len()) }
+    }
     /// Const constructor for `'static` literals (Prefill globals).
     pub const fn from_static(data: &'static [u8]) -> Self {
         Self { data, prefer_template: false, next: None, end: None, rope_len: 0, is_utf16: false }
@@ -1627,9 +1654,6 @@ impl EString {
     }
 }
 
-// TODO(b2-ast-round-C): EString Display walks the rope via `slice16()`/`.get()`
-// which are in the gated impl above.
-#[cfg(any())]
 impl fmt::Display for EString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("E.String")?;
@@ -1650,7 +1674,7 @@ impl fmt::Display for EString {
                 } else {
                     write!(f, "\"{}\"", bun_core::fmt::utf16(part.slice16()))?;
                 }
-                it = part.next.map(|r| r.get());
+                it = part.next.as_deref();
                 if it.is_some() {
                     f.write_str(" ")?;
                 }
@@ -1679,21 +1703,18 @@ pub enum TemplateContents {
     Cooked(EString),
     Raw(Str),
 }
-// TODO(b2-ast-round-C): Template fold/contents reference `EString::push`/
-// `Expr::unwrap_inlined`/`e_string()` which are gated above.
-#[cfg(any())]
 impl TemplateContents {
     pub fn is_utf8(&self) -> bool {
         matches!(self, TemplateContents::Cooked(c) if c.is_utf8())
     }
 
-    fn cooked(&self) -> &EString {
+    pub fn cooked(&self) -> &EString {
         match self {
             TemplateContents::Cooked(c) => c,
             _ => unreachable!(),
         }
     }
-    fn cooked_mut(&mut self) -> &mut EString {
+    pub fn cooked_mut(&mut self) -> &mut EString {
         match self {
             TemplateContents::Cooked(c) => c,
             _ => unreachable!(),

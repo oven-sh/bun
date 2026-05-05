@@ -463,12 +463,6 @@ pub struct Lookup<'a> {
 }
 
 impl<'a> Lookup<'a> {
-    // TODO(b2-blocked): bun_paths::join_abs — `display_source_url_if_needed` and
-    // `get_source_code` need `join_abs`/`join_abs_string_buf_z` with a runtime
-    // `Platform` arg (current bun_paths takes `PlatformT` const-generic), plus
-    // `bun_paths::dirname(path, Platform)` and `bun_sys::File::read_from(Fd, &[u8])`.
-    // Re-gate just these two bodies; the rest of `Lookup` compiles.
-    #[cfg(any())]
     /// This creates a bun.String if the source remap *changes* the source url,
     /// which is only possible if the executed file differs from the source file:
     ///
@@ -485,22 +479,24 @@ impl<'a> Lookup<'a> {
             return None;
         }
 
-        let name = &source_map.external_source_names[source_idx];
+        let name: &[u8] = &source_map.external_source_names[source_idx];
 
         if source_map.is_standalone_module_graph {
             return Some(bun_str::String::clone_utf8(name));
         }
 
         if bun_paths::is_absolute(base_filename) {
-            let dir = bun_paths::dirname(base_filename, Platform::Auto);
-            return Some(bun_str::String::clone_utf8(bun_paths::join_abs(
-                dir,
-                Platform::Auto,
-                name,
-            )));
+            // PORT NOTE: Zig passed runtime `.auto` Platform; bun_paths exposes
+            // const-generic `PlatformT` only. `platform::Auto` is a cfg-selected
+            // type alias (Posix on unix, Windows on windows), which is what
+            // `.auto` resolved to at comptime anyway.
+            let dir = bun_paths::dirname(base_filename);
+            return Some(bun_str::String::clone_utf8(
+                bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(dir, name),
+            ));
         }
 
-        Some(bun_str::String::init(name))
+        Some(bun_str::String::borrow_utf8(name))
     }
 
     // TODO(b2-blocked): bun_paths::join_abs_string_buf_z, bun_sys::File::read_from

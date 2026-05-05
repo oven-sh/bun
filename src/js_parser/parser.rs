@@ -350,7 +350,6 @@ impl<'a, Context, State: Copy> ExpressionTransposer<'a, Context, State> {
         Self { context: c, visitor }
     }
 
-    #[cfg(any())] // round-D: ExprData::e_if() accessor + Expr::init for E::If gated
     pub fn maybe_transpose_if(&mut self, arg: Expr, state: State) -> Expr {
         match arg.data {
             js_ast::ExprData::EIf(ex) => Expr::init(
@@ -365,10 +364,9 @@ impl<'a, Context, State: Copy> ExpressionTransposer<'a, Context, State> {
         }
     }
 
-    #[cfg(any())] // round-D: as above
     pub fn transpose_known_to_be_if(&mut self, arg: Expr, state: State) -> Expr {
-        // SAFETY: caller guarantees `arg.data` is `e_if`
-        let ex = arg.data.e_if();
+        // Caller guarantees `arg.data` is `EIf`.
+        let js_ast::ExprData::EIf(ex) = arg.data else { unreachable!() };
         Expr::init(
             E::If {
                 yes: self.maybe_transpose_if(ex.yes, state),
@@ -1188,14 +1186,11 @@ impl ScanPassResult {
     }
 
     pub fn reset(&mut self) {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_collections::ArrayHashMap::clear / StringArrayHashMap::clear
-            self.named_imports.clear();
-            self.import_records.clear();
-            self.used_symbols.clear();
-        }
+        self.named_imports.clear_retaining_capacity();
         self.import_records.clear();
+        self.used_symbols.clear_retaining_capacity();
+        // PORT NOTE: parser.zig:778-783 does NOT clear import_records_to_keep here;
+        // matching Zig (the keep-list persists across reset()).
         self.approximate_newline_count = 0;
     }
 }

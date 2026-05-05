@@ -2,10 +2,12 @@
 //! Port of src/js_printer/js_printer.zig.
 //!
 //! B-2 UN-GATED. analyze_transpiled_module, string-escape helpers, Writer/BufferWriter,
-//! Indentation, ExprFlag, RequireOrImportMeta, RuntimeTranspilerCache vtable, and the
-//! enum/const surface compile for real. The `Printer` impl block, `Options<'a>`,
-//! `renamer.rs`, and the top-level `print_*` entry points stay `#[cfg(any())]`-gated on
-//! missing T0/T1 surface (see TODO(b2-blocked) notes inline).
+//! Indentation, ExprFlag, RequireOrImportMeta, RuntimeTranspilerCache vtable,
+//! SourceMapHandler, and the enum/const surface compile for real against
+//! `bun_sourcemap`. The `Printer` impl block, `Options<'a>`, `renamer.rs`, and
+//! the top-level `print_*` entry points stay `#[cfg(any())]`-gated on
+//! `bun_js_parser` (which itself compiles, but transitively pulls in
+//! `bun_interchange::yaml` which does not — see TODO(b2-blocked) notes inline).
 
 #![allow(unused, nonstandard_style, clippy::all)]
 #![allow(unsafe_op_in_unsafe_fn)]
@@ -52,39 +54,63 @@ impl Write for Vec<u8> {
     }
 }
 
-/// Local stand-in for `bun_js_parser` while that crate is concurrently being
-/// un-gated (B-2). Only the handful of leaf types the un-gated printer surface
-/// touches are mirrored here; everything else stays behind `#[cfg(any())]`.
-// TODO(b2-blocked): bun_js_parser::Ref — drop this shim and `use bun_js_parser as js_ast`
-// once that crate compiles.
+/// Local stand-in for `bun_js_parser` while that crate's dependency graph is
+/// being un-gated (B-2). `bun_js_parser` itself compiles, but its hard dep
+/// `bun_interchange` does not (yaml.rs borrowck + missing `bun_string::parse_double`),
+/// so the crate cannot be linked yet. Only the handful of leaf types the
+/// un-gated printer surface touches are mirrored here.
+// TODO(b2-blocked): bun_interchange::yaml — once it compiles, drop this shim
+// and `use bun_js_parser as js_ast` (the real surface is ready upstream).
 mod js_ast {
     #[derive(Copy, Clone, Hash, PartialEq, Eq, Default, Debug)]
     pub struct Ref(pub u64);
     impl Ref {
-        pub const NONE: Ref = Ref(u64::MAX);
+        pub const NONE: Ref = Ref(0);
     }
     #[derive(Copy, Clone, Default)]
     pub struct Expr;
 }
 use js_ast::Ref;
+use bun_options_types::import_record::Flags as ImportRecordFlags;
 
-/// Local stand-in for `bun_sourcemap` while that crate is concurrently being
-/// un-gated (B-2). Only `Chunk` is referenced by un-gated surface (`PrintResultSuccess`).
-// TODO(b2-blocked): bun_sourcemap::Chunk — drop this shim and `use bun_sourcemap as SourceMap`.
-mod SourceMap {
-    pub struct Chunk;
-}
+use bun_sourcemap as SourceMap;
 
 // ──────────────────────────────────────────────────────────────────────────
-// renamer — Phase-A draft preserved on disk in `renamer.rs`. Blocked on the
-// real `bun_js_parser::ast::symbol::{Map, Symbol}` surface (B-1 stubbed) and
-// contains a `Box::leak` that must be reworked per PORTING.md §Forbidden.
+// Local stand-ins for types not yet exported by lower-tier crates.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Local stand-in for `bun_options_types::schema::api::CssInJsBehavior` —
+/// schema.rs has not yet been ported (only schema.zig defines this enum).
+// TODO(b2-blocked): bun_options_types::schema::api::CssInJsBehavior
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum CssInJsBehavior { #[default] Facade, FacadeOnlyCssFiles, AutoOnlyCssFiles }
+
+/// Local stand-in for `bun_resolver::fs::Path`. The resolver crate is a
+/// sibling tier-4 crate and pulling it in would risk a dependency cycle;
+/// `Options.source_path` is only ever forwarded, never inspected, so an
+/// opaque newtype suffices for now.
+// TODO(b2-blocked): bun_resolver::fs::Path
+#[derive(Clone, Default)]
+pub struct FsPath(());
+
+// ──────────────────────────────────────────────────────────────────────────
+// renamer — Phase-A draft preserved on disk in `renamer.rs`. The required
+// `bun_js_parser::ast::symbol::{Map, Symbol, SlotNamespace}` / `Scope` /
+// `lexer::{Keywords, StrictModeReservedWords}` surface now exists upstream,
+// but `bun_js_parser` cannot be linked (transitively blocked by
+// `bun_interchange::yaml` not compiling). Additionally contains four
+// `Box::leak` sites that must be reworked per PORTING.md §Forbidden
+// (`TinyString::init`, `NumberScope::find_unused_name` ×2,
+// `ExportRenamer::next_renamed_name`) — replace with arena-backed
+// `bumpalo::Bump` once the AST arena is threaded through.
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(any())]
 #[path = "renamer.rs"]
 pub mod renamer;
-// TODO(b2-blocked): bun_js_parser::ast::symbol::Map
-// TODO(b2-blocked): bun_js_parser::lexer
+// TODO(b2-blocked): bun_interchange::yaml (blocks bun_js_parser link)
+// TODO(b2-blocked): bun_collections::StringHashMap::{get_adapted,contains_adapted,put_no_clobber,put_assume_capacity,ensure_total_capacity}
+// TODO(b2-blocked): bun_collections::StringHashMapContext::pre
 #[cfg(not(any()))]
 pub mod renamer {
     //! B-2 shadow stub — un-gate `renamer.rs` once bun_js_parser's real ast/symbol
@@ -614,22 +640,6 @@ impl RuntimeTranspilerCacheRef {
     }
 }
 
-// TODO(b2-blocked): bun_js_parser::Op::Level (real enum, not B-1 opaque stub)
-// TODO(b2-blocked): bun_js_parser::ast::expr::Data (real variant set)
-// TODO(b2-blocked): bun_js_parser::ast::stmt::Data (real variant set)
-// TODO(b2-blocked): bun_js_parser::runtime
-// TODO(b2-blocked): bun_core::FeatureFlags
-// TODO(b2-blocked): bun_core::schema::api
-#[cfg(any())]
-mod __gated_ast_uses {
-use bun_js_parser::{Ast, B, Binding, E, Expr, G, S, Stmt, Symbol, Op};
-use bun_js_parser::Op::Level;
-use bun_js_parser::js_lexer;
-use bun_js_parser::runtime;
-use bun_core::{FeatureFlags, Environment};
-use bun_core::schema::api;
-}
-
 const HEX_CHARS: &[u8; 16] = b"0123456789ABCDEF";
 const FIRST_ASCII: u32 = 0x20;
 const LAST_ASCII: u32 = 0x7E;
@@ -965,48 +975,47 @@ pub fn write_json_string<W: Write, const ENCODING: Encoding>(input: &[u8], write
 // TODO(b2-blocked): bun_sourcemap::Chunk::Builder
 // TODO(b2-blocked): bun_js_parser::runtime::Runtime::Imports
 // TODO(b2-blocked): bun_js_parser::Ast::CommonJSNamedExports
-// TODO(b2-blocked): bun_options_types::schema::api::CssInJsBehavior
-#[cfg(any())]
-mod __gated_options {
-use super::*;
-
 pub struct SourceMapHandler<'a> {
-    pub ctx: &'a mut (),
+    pub ctx: NonNull<()>,
     pub callback: fn(*mut (), SourceMap::Chunk, &logger::Source) -> Result<(), bun_core::Error>,
+    _marker: core::marker::PhantomData<&'a mut ()>,
 }
 
 impl<'a> SourceMapHandler<'a> {
     pub fn on_source_map_chunk(&self, chunk: SourceMap::Chunk, source: &logger::Source) -> Result<(), bun_core::Error> {
-        (self.callback)(self.ctx as *const _ as *mut (), chunk, source)
+        (self.callback)(self.ctx.as_ptr(), chunk, source)
     }
 
     pub fn for_<T>(
         ctx: &'a mut T,
         handler: fn(&mut T, SourceMap::Chunk, &logger::Source) -> Result<(), bun_core::Error>,
     ) -> SourceMapHandler<'a> {
-        // SAFETY: type-erased borrow; `on_chunk` casts back to `*mut T` before calling `handler`.
-        unsafe extern "Rust" fn on_chunk<T>(
-            this: *mut (),
-            chunk: SourceMap::Chunk,
-            source: &logger::Source,
-        ) -> Result<(), bun_core::Error> {
-            // TODO(port): proc-macro — Zig used a comptime fn-type generator (`For`) to monomorphize.
-            unreachable!()
-        }
+        // TODO(port): proc-macro — Zig used a comptime fn-type generator (`For`) to monomorphize
+        // the typed `handler` into the erased `callback`. Phase B should generate a thunk per `T`.
         let _ = handler;
-        // TODO(port): store `handler` in a thunk; needs trait or Box<dyn>. Phase B.
         SourceMapHandler {
-            // SAFETY: `ctx` is a live `&mut T` type-erased to `*mut ()`; the callback
-            // casts back to `*mut T` before use and outlives this handler by construction.
-            ctx: unsafe { &mut *(ctx as *mut T as *mut ()) },
-            callback: |_, _, _| Ok(()),
+            // SAFETY: `ctx` is a live `&mut T` so the pointer is non-null; type-erased to `*mut ()`
+            // and cast back to `*mut T` inside the thunk before dereference.
+            ctx: unsafe { NonNull::new_unchecked(ctx as *mut T as *mut ()) },
+            callback: |_, _, _| Ok(()), // TODO(port): wire thunk
+            _marker: core::marker::PhantomData,
         }
     }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Options
+// Options — gated on bun_js_parser (transitively blocked by bun_interchange).
+// SourceMapHandler above is un-gated (only needs bun_sourcemap::Chunk).
 // ───────────────────────────────────────────────────────────────────────────
+// TODO(b2-blocked): bun_interchange::yaml (blocks bun_js_parser link)
+// TODO(b2-blocked): bun_js_parser::runtime::Imports
+// TODO(b2-blocked): bun_js_parser::ast::ast::CommonJSNamedExports
+// TODO(b2-blocked): bun_js_parser::ast::ast::TsEnumsMap
+#[cfg(any())]
+mod __gated_options {
+use super::*;
+use bun_js_parser::ast::ast::{CommonJSNamedExports, TsEnumsMap};
+use bun_js_parser::runtime;
 
 pub struct Options<'a> {
     pub bundling: bool,
@@ -1017,21 +1026,23 @@ pub struct Options<'a> {
     pub import_meta_ref: Ref,
     pub hmr_ref: Ref,
     pub indent: Indentation,
-    pub runtime_imports: runtime::Runtime::Imports,
+    pub runtime_imports: runtime::Imports,
     pub module_hash: u32,
-    pub source_path: Option<fs::Path>,
+    // TODO(b2-blocked): bun_resolver::fs::Path — `FsPath` is a local stand-in.
+    pub source_path: Option<FsPath>,
     // allocator: dropped — global mimalloc (this is an AST crate but Options.allocator is the global default)
     // TODO(port): source_map_allocator was Option<Allocator>; arena-backed in some callers
     pub source_map_handler: Option<SourceMapHandler<'a>>,
-    pub source_map_builder: Option<&'a mut SourceMap::Chunk::Builder>,
-    pub css_import_behavior: api::CssInJsBehavior,
-    pub target: options::Target,
+    pub source_map_builder: Option<&'a mut SourceMap::chunk::Builder>,
+    // TODO(b2-blocked): bun_options_types::schema::api::CssInJsBehavior — local stand-in.
+    pub css_import_behavior: CssInJsBehavior,
+    pub target: bundle_opts::Target,
 
     pub runtime_transpiler_cache: Option<RuntimeTranspilerCacheRef>,
     pub module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
     pub input_files_for_dev_server: Option<&'a [logger::Source]>,
 
-    pub commonjs_named_exports: js_ast::Ast::CommonJSNamedExports,
+    pub commonjs_named_exports: CommonJSNamedExports,
     pub commonjs_named_exports_deoptimized: bool,
     pub commonjs_module_exports_assigned_deoptimized: bool,
     pub commonjs_named_exports_ref: Ref,
@@ -1050,16 +1061,16 @@ pub struct Options<'a> {
 
     /// The module type of the importing file (after linking), used to determine interop helper behavior.
     /// Controls whether __toESM uses Node ESM semantics (isNodeMode=1 for .esm) or respects __esModule markers.
-    pub input_module_type: options::ModuleType,
-    pub module_type: options::Format,
+    pub input_module_type: bundle_opts::ModuleType,
+    pub module_type: bundle_opts::Format,
 
     // /// Used for cross-module inlining of import items when bundling
     // const_values: Ast.ConstValuesMap = .{},
-    pub ts_enums: Ast::TsEnumsMap,
+    pub ts_enums: TsEnumsMap,
 
     // If we're writing out a source map, this table of line start indices lets
     // us do binary search on to figure out what line a given AST node came from
-    pub line_offset_tables: Option<SourceMap::LineOffsetTable::List>,
+    pub line_offset_tables: Option<SourceMap::line_offset_table::List>,
 
     pub mangled_props: Option<&'a crate::MangledProps>,
 }
@@ -1084,13 +1095,13 @@ impl<'a> Default for Options<'a> {
             import_meta_ref: Ref::NONE,
             hmr_ref: Ref::NONE,
             indent: Indentation::default(),
-            runtime_imports: runtime::Runtime::Imports::default(),
+            runtime_imports: runtime::Imports::default(),
             module_hash: 0,
             source_path: None,
             source_map_handler: None,
             source_map_builder: None,
-            css_import_behavior: api::CssInJsBehavior::Facade,
-            target: options::Target::Browser,
+            css_import_behavior: CssInJsBehavior::Facade,
+            target: bundle_opts::Target::Browser,
             runtime_transpiler_cache: None,
             module_info: None,
             input_files_for_dev_server: None,
@@ -1107,8 +1118,8 @@ impl<'a> Default for Options<'a> {
             inline_require_and_import_errors: true,
             has_run_symbol_renamer: false,
             require_or_import_meta_for_source_callback: RequireOrImportMetaCallback::default(),
-            input_module_type: options::ModuleType::Unknown,
-            module_type: options::Format::Esm,
+            input_module_type: bundle_opts::ModuleType::Unknown,
+            module_type: bundle_opts::Format::Esm,
             ts_enums: Default::default(),
             line_offset_tables: None,
             mangled_props: None,
@@ -1117,8 +1128,8 @@ impl<'a> Default for Options<'a> {
 }
 } // mod __gated_options
 #[cfg(not(any()))]
-/// B-2 shadow stub — un-gate `__gated_options` once bun_sourcemap/bun_js_parser
-/// expose the real Chunk::Builder / runtime::Imports / Ast::* surface.
+/// B-2 shadow stub — un-gate `__gated_options` once bun_interchange compiles
+/// (transitively unblocks `bun_js_parser::{runtime, ast::ast}`).
 #[derive(Default)]
 pub struct Options<'a>(core::marker::PhantomData<&'a ()>);
 
@@ -1210,12 +1221,13 @@ impl RequireOrImportMetaCallback {
     }
 }
 
-// TODO(b2-blocked): bun_js_parser::ast::expr::Data variants
+// TODO(b2-blocked): bun_interchange::yaml (blocks bun_js_parser::{Expr, ExprData} link)
 #[cfg(any())]
-fn is_identifier_or_numeric_constant_or_property_access(expr: &Expr) -> bool {
+fn is_identifier_or_numeric_constant_or_property_access(expr: &bun_js_parser::Expr) -> bool {
+    use bun_js_parser::ExprData;
     match &expr.data {
-        Expr::Data::EIdentifier(_) | Expr::Data::EDot(_) | Expr::Data::EIndex(_) => true,
-        Expr::Data::ENumber(e) => e.value.is_infinite() || e.value.is_nan(),
+        ExprData::EIdentifier(_) | ExprData::EDot(_) | ExprData::EIndex(_) => true,
+        ExprData::ENumber(e) => e.value.is_infinite() || e.value.is_nan(),
         _ => false,
     }
 }
@@ -1294,18 +1306,17 @@ impl ImportVariant {
         }
     }
 
-    // TODO(b2-blocked): bun_js_parser::S::Import
-    // TODO(b2-blocked): bun_options_types::import_record::ImportRecord::flags fields
+    // TODO(b2-blocked): bun_interchange::yaml (blocks bun_js_parser::S::Import link)
     #[cfg(any())]
-    pub fn determine(record: &ImportRecord, s_import: &S::Import) -> ImportVariant {
+    pub fn determine(record: &ImportRecord, s_import: &bun_js_parser::S::Import) -> ImportVariant {
         let mut variant = ImportVariant::PathOnly;
 
-        if record.flags.contains_import_star {
+        if record.flags.contains(ImportRecordFlags::CONTAINS_IMPORT_STAR) {
             variant = variant.has_star();
         }
 
-        if !record.flags.was_originally_bare_import {
-            if !record.flags.contains_default_alias {
+        if !record.flags.contains(ImportRecordFlags::WAS_ORIGINALLY_BARE_IMPORT) {
+            if !record.flags.contains(ImportRecordFlags::CONTAINS_DEFAULT_ALIAS) {
                 if let Some(default_name) = &s_import.default_name {
                     if default_name.ref_.is_some() {
                         variant = variant.has_default();
@@ -1316,7 +1327,8 @@ impl ImportVariant {
             }
         }
 
-        if s_import.items.len() > 0 {
+        // SAFETY: `items` is an arena-owned slice; the AST arena outlives the printer.
+        if unsafe { (&*s_import.items).len() } > 0 {
             variant = variant.has_items();
         }
 
@@ -1362,11 +1374,12 @@ impl TopLevel {
 
 // ───────────────────────────────────────────────────────────────────────────
 // Printer (NewPrinter) — gated; the impl body is the bulk of this crate and
-// touches nearly every bun_js_parser AST node type, all of which are still
-// B-1 opaque stubs upstream.
+// touches nearly every bun_js_parser AST node type. Those types now exist
+// upstream, but `bun_js_parser` cannot be linked (transitively blocked by
+// `bun_interchange::yaml` not compiling).
 // ───────────────────────────────────────────────────────────────────────────
-// TODO(b2-blocked): bun_js_parser::{E, S, B, G, Op, Expr, Stmt, Binding} real bodies
-// TODO(b2-blocked): bun_sourcemap::Chunk::Builder
+// TODO(b2-blocked): bun_interchange::yaml (blocks bun_js_parser link)
+// TODO(b2-blocked): bun_js_parser::{E, S, B, G, Op, Expr, Stmt, Binding} (link only)
 #[cfg(any())]
 mod __gated_printer {
 use super::*;
@@ -6352,10 +6365,8 @@ pub enum GenerateSourceMap { Disable, Lazy, Eager }
 // ───────────────────────────────────────────────────────────────────────────
 // Top-level print entry points — gated on Printer + bun_js_parser::Ast surface.
 // ───────────────────────────────────────────────────────────────────────────
-// TODO(b2-blocked): bun_js_parser::Ast (real fields)
-// TODO(b2-blocked): bun_js_parser::Part
-// TODO(b2-blocked): bun_sourcemap::Chunk::Builder
-// TODO(b2-blocked): bun_sourcemap::LineOffsetTable::generate
+// TODO(b2-blocked): bun_interchange::yaml (blocks bun_js_parser link)
+// TODO(b2-blocked): bun_js_parser::{Ast, Part} (link only)
 #[cfg(any())]
 mod __gated_entry_points {
 use super::*;

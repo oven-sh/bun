@@ -382,53 +382,46 @@ pub struct Map {
 }
 
 impl Map {
-    // TODO(b2-ast-round): bun_core::Output::prettyln is a macro, not a fn; rewrite when
-    // the output sink is wired. Debug-only.
-    #[cfg(any())]
+    // Debug-only dump of the symbol table.
     pub fn dump(&self) {
-        use bun_core::Output;
-        // TODO(port): Output.prettyln formatting — verify bun_core::Output API
         for (i, symbols) in self.symbols_for_source.slice().iter().enumerate() {
-            Output::prettyln(format_args!(
-                "\n\n-- Source ID: {} ({} symbols) --\n\n",
+            bun_core::prettyln!(
+                "\n\n-- Source ID: {} ({} symbols) --\n",
                 i,
-                symbols.len()
-            ));
+                symbols.len,
+            );
             for (inner_index, symbol) in symbols.slice().iter().enumerate() {
                 let display_ref = if symbol.has_link() {
                     symbol.link
                 } else {
-                    Ref {
-                        source_index: i as u32,        // @truncate
-                        inner_index: inner_index as u32, // @truncate
-                        tag: crate::ast::ref_::Tag::Symbol,
-                    }
+                    Ref::new(
+                        inner_index as u32, // @truncate
+                        i as u32,           // @truncate
+                        crate::ast::base::RefTag::Symbol,
+                    )
                 };
                 // SAFETY: original_name is an arena-owned slice valid for the lifetime of
                 // symbols_for_source (the parser/AST arena outlives this Map).
                 let name = unsafe { &*symbol.original_name };
-                Output::prettyln(format_args!(
-                    " name: {}\n  tag: {}\n       {}\n",
+                bun_core::prettyln!(
+                    " name: {}\n  tag: {}\n       {}",
                     bstr::BStr::new(name),
                     <&'static str>::from(symbol.kind),
                     display_ref,
-                ));
+                );
             }
         }
-        Output::flush();
+        bun_core::output::flush();
     }
 
-    // TODO(b2-ast-round): DeclaredSymbol::List + for_each_top_level_symbol live at crate
-    // root and need DeclaredSymbol's MultiArrayList iteration; wire after Stmt/Part land.
-    #[cfg(any())]
-    pub fn assign_chunk_index(&mut self, decls_: crate::DeclaredSymbol::List, chunk_index: u32) {
+    pub fn assign_chunk_index(&mut self, decls_: crate::DeclaredSymbolList, chunk_index: u32) {
         use crate::DeclaredSymbol;
         struct Iterator<'a> {
             map: &'a mut Map,
             chunk_index: u32,
         }
 
-        impl<'a> Iterator<'a> {
+        impl Iterator<'_> {
             pub fn next(&mut self, ref_: Ref) {
                 // SAFETY: ref_ is a valid top-level symbol ref produced by the parser; Map
                 // contains an entry for it.
@@ -440,7 +433,7 @@ impl Map {
 
         DeclaredSymbol::for_each_top_level_symbol(
             &mut decls,
-            Iterator { map: self, chunk_index },
+            &mut Iterator { map: self, chunk_index },
             Iterator::next,
         );
     }

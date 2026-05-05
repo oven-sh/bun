@@ -6,7 +6,7 @@ use crate::ast::binding::Binding as BindingNodeIndex;
 use crate::ast::expr::Expr as ExprNodeIndex;
 use crate::ast::stmt::Stmt;
 use crate::ast::TypeScript;
-use crate::{flags, ExprNodeList, LocRef, StmtNodeList};
+use crate::{flags, ExprData, ExprNodeList, LocRef, StmtNodeList};
 
 // PORT NOTE: all `&'ast mut [T]` arena slices are raw `*mut [T]` in Phase A (per
 // the lib.rs file-doc and S.rs convention). 'ast/'bump threaded crate-wide in
@@ -88,9 +88,6 @@ impl Default for Class {
 }
 
 impl Class {
-    // TODO(b2-ast-round): depends on Expr::Data variants (EArrow/EFunction) and
-    // Expr::can_be_moved — wire after Expr.rs lands.
-    #[cfg(any())]
     pub fn can_be_moved(&self) -> bool {
         if self.extends.is_some() {
             return false;
@@ -100,27 +97,27 @@ impl Class {
             return false;
         }
 
-        for property in self.properties.iter() {
+        // SAFETY: `properties` is an arena-owned slice valid for the lifetime of
+        // the AST arena that owns this `Class` (Zig: `[]Property`).
+        let properties = unsafe { &*self.properties };
+        for property in properties.iter() {
             if property.kind == PropertyKind::ClassStaticBlock {
                 return false;
             }
 
-            let flags = property.flags;
-            if flags.contains(Flags::Property::IS_COMPUTED) || flags.contains(Flags::Property::IS_SPREAD) {
+            let f = property.flags;
+            if f.contains(flags::Property::IsComputed) || f.contains(flags::Property::IsSpread) {
                 return false;
             }
 
-            if property.kind == PropertyKind::Normal {
-                if flags.contains(Flags::Property::IS_STATIC) {
-                    for val_ in [property.value, property.initializer] {
-                        if let Some(val) = val_ {
-                            match val.data {
-                                // TODO(port): exact Expr.Data variant names (e_arrow / e_function)
-                                ExprData::EArrow(..) | ExprData::EFunction(..) => {}
-                                _ => {
-                                    if !val.can_be_moved() {
-                                        return false;
-                                    }
+            if property.kind == PropertyKind::Normal && f.contains(flags::Property::IsStatic) {
+                for val_ in [property.value, property.initializer] {
+                    if let Some(val) = val_ {
+                        match val.data {
+                            ExprData::EArrow(..) | ExprData::EFunction(..) => {}
+                            _ => {
+                                if !val.data.can_be_moved() {
+                                    return false;
                                 }
                             }
                         }

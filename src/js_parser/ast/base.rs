@@ -360,8 +360,6 @@ impl fmt::Debug for Ref {
 }
 
 // Zig: `DumpImplData` + `dumpImpl` — formatter wrapper returned by `Ref.dump`.
-// Gated until Symbol.rs lands its `original_name`/`use_count_estimate` fields.
-#[cfg(any())]
 mod ref_dump {
     use super::*;
     pub struct RefDump<'a> {
@@ -370,23 +368,27 @@ mod ref_dump {
     }
     impl fmt::Display for RefDump<'_> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            // SAFETY: original_name is an arena-owned slice valid for the lifetime of
+            // the symbol table this RefDump was borrowed from (parser/AST arena outlives it).
+            let name = unsafe { &*self.symbol.original_name };
             write!(
                 f,
                 "Ref[inner={}, src={}, .{}; original_name={}, uses={}]",
                 self.ref_.inner_index(),
                 self.ref_.source_index(),
                 <&'static str>::from(self.ref_.tag()),
-                bstr::BStr::new(&self.symbol.original_name),
+                bstr::BStr::new(name),
                 self.symbol.use_count_estimate,
             )
         }
     }
     impl Ref {
-        pub fn dump<'a, T: SymbolTable + ?Sized>(self, symbol_table: &'a mut T) -> RefDump<'a> {
+        pub fn dump<T: SymbolTable + ?Sized>(self, symbol_table: &mut T) -> RefDump<'_> {
             RefDump { ref_: self, symbol: symbol_table.get_symbol(self) }
         }
     }
 }
+pub use ref_dump::RefDump;
 
 // ─────────────── getSymbol `anytype` dispatch → trait ───────────────
 //

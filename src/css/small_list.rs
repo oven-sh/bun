@@ -2,6 +2,7 @@ use core::mem::MaybeUninit;
 use core::ptr;
 
 use bun_collections::BabyList;
+use crate::generics as generic;
 
 // PORT NOTE on `mem::forget` below: every `forget` is paired with a later
 // `Vec::from_raw_parts` reconstruction in `Drop` / `to_owned_slice` /
@@ -375,9 +376,10 @@ impl<T, const N: usize> SmallList<T, N> {
         }
     }
 
-    #[cfg(any())] // re-enable with crate::generics
-    pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
-        // TODO(port): trait bound — T: IsCompatible
+    pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool
+    where
+        T: generic::IsCompatible,
+    {
         for v in self.slice() {
             if !generic::is_compatible(v, browsers) {
                 return false;
@@ -460,24 +462,24 @@ impl<T, const N: usize> SmallList<T, N> {
         SmallList { capacity: self.capacity, data: Data { heap: h } }
     }
 
-    #[cfg(any())] // re-enable with crate::generics
-    // TODO(port): trait bound — T: DeepClone (css::generic protocol)
-    pub fn deep_clone(&self) -> Self {
+    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    where
+        T: generic::DeepClone<'bump>,
+    {
+        // PORT NOTE: append-loop instead of `set_len` + raw `ptr::write` — keeps
+        // every slot initialized at all times so an unwind in T::deep_clone
+        // doesn't drop uninitialized memory.
         let mut ret = Self::init_capacity(self.len());
-        ret.set_len(self.len());
-        debug_assert_eq!(self.slice().len(), ret.slice_mut().len());
-        // PORT NOTE: reshaped for borrowck — write through raw ptr instead of zip(slice_mut)
-        let out_ptr = ret.as_ptr();
-        for (i, in_) in self.slice().iter().enumerate() {
-            // SAFETY: i < len; slot is uninitialized (set_len above); writing fresh value
-            unsafe { ptr::write(out_ptr.add(i), generic::deep_clone(in_)) };
+        for in_ in self.slice() {
+            ret.append(generic::deep_clone(in_, bump));
         }
         ret
     }
 
-    #[cfg(any())] // re-enable with crate::generics
-    // TODO(port): trait bound — T: css::generic::Eql
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
+    pub fn eql(lhs: &Self, rhs: &Self) -> bool
+    where
+        T: generic::CssEql,
+    {
         if lhs.len() != rhs.len() {
             return false;
         }
@@ -517,9 +519,10 @@ impl<T, const N: usize> SmallList<T, N> {
         }
     }
 
-    #[cfg(any())] // re-enable with crate::generics
-    // TODO(port): trait bound — hasher: impl core::hash::Hasher; T: css::generic::Hash
-    pub fn hash(&self, hasher: &mut impl core::hash::Hasher) {
+    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash11)
+    where
+        T: generic::CssHash,
+    {
         for item in self.slice() {
             generic::hash(item, hasher);
         }

@@ -152,23 +152,23 @@ pub struct UrlDependency {
     pub loc: SourceRange,
 }
 
-#[cfg(any())]
 impl UrlDependency {
     pub fn new<'bump>(
-        bump: &'bump Arena,
-        url: &Url,
+        bump: &'bump bun_alloc::Arena,
+        url: &crate::values::url::Url,
         filename: &[u8],
-        import_records: &BabyList<ImportRecord>,
+        import_records: &bun_collections::BabyList<bun_options_types::ImportRecord>,
     ) -> UrlDependency {
-        let theurl: &[u8] = &import_records.at(url.import_record_idx).path.pretty;
-        let placeholder = css::css_modules::hash(
+        // TODO(port): `bun_paths::fs::Path::pretty` is currently `&'static str`;
+        // should become `&[u8]` per PORTING.md §Strings. Until then, `.as_bytes()`.
+        let theurl: &[u8] = import_records
+            .at(url.import_record_idx as usize)
+            .path
+            .pretty
+            .as_bytes();
+        let placeholder = crate::css_modules::hash(
             bump,
-            // TODO(port): see note in ImportDependency::new re: `css_modules::hash` signature.
-            format_args!(
-                "{}_{}",
-                bstr::BStr::new(filename),
-                bstr::BStr::new(theurl)
-            ),
+            format_args!("{}_{}", bstr::BStr::new(filename), bstr::BStr::new(theurl)),
             false,
         );
         UrlDependency {

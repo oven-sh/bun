@@ -228,9 +228,6 @@ impl ParsedSourceMap {
         self.internal.as_ref().map(|ism| ism.cursor())
     }
 
-    // TODO(b2): un-gate once `crate::SerializedSourceMap` is lifted from the
-    // phase-A draft (needs bun_string::StringPointer::slice + bun_zstd surface).
-    #[cfg(any())]
     pub fn standalone_module_graph_data(
         &self,
     ) -> *mut crate::SerializedSourceMap::Loaded {

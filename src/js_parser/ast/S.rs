@@ -80,9 +80,6 @@ pub struct ExportDefault {
 }
 
 impl ExportDefault {
-    // TODO(b2-ast-round-C): forwards to `Expr::can_be_moved` /
-    // `G::Class::can_be_moved` (gated until Expr.rs methods un-gate).
-    #[cfg(any())]
     pub fn can_be_moved(&self) -> bool {
         match &self.value {
             StmtOrExpr::Expr(e) => e.can_be_moved(),

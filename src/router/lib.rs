@@ -850,10 +850,10 @@ impl<'a> RouteLoader<'a> {
     ) -> Routes<'r> {
         let mut route_dirname_len: u16 = 0;
 
-        #[cfg(any())] // TODO(b2-blocked): bun_resolver::fs::FileSystem::relative
-        let relative_dir = FileSystem::instance().relative(base_dir, &config.dir);
-        #[cfg(not(any()))]
-        let relative_dir: &[u8] = b"";
+        // Zig: `FileSystem.instance().relative(base_dir, config.dir)` — thin wrapper
+        // around `path_handler.relative` (resolver/fs.zig:439). Call bun_paths directly
+        // to avoid the higher-tier bun_resolver dep.
+        let relative_dir = bun_paths::resolve_path::relative(base_dir, &config.dir);
         if !relative_dir.starts_with(b"..") {
             route_dirname_len = (relative_dir.len()
                 + usize::from(config.dir[config.dir.len() - 1] != SEP))
@@ -871,7 +871,7 @@ impl<'a> RouteLoader<'a> {
             route_dirname_len,
         };
         // dedupe_dynamic dropped at end of scope (was `defer this.dedupe_dynamic.deinit()`)
-        #[cfg(any())] // TODO(b2-blocked): bun_resolver::fs::DirEntry (load() body gated)
+        #[cfg(any())] // TODO(b2-blocked): bun_sys::fs::DirEntry (load() body gated; MOVE_DOWN bun_resolver::fs→sys pending)
         this.load(resolver, root_dir_info, base_dir);
         let _ = root_dir_info;
         if this.all_routes.is_empty() {
@@ -961,7 +961,8 @@ impl<'a> RouteLoader<'a> {
     }
 
     #[cfg(any())]
-    // TODO(b2-blocked): bun_resolver::fs::DirEntry / bun_resolver::fs::Entry
+    // TODO(b2-blocked): bun_sys::fs::DirEntry / bun_sys::fs::Entry (MOVE_DOWN bun_resolver::fs→sys pending)
+    // TODO(b2-blocked): bun_sys::fs::FileSystem::abs
     // TODO(b2-blocked): bun_paths::extension
     pub fn load<R: ResolverLike>(
         &mut self,
@@ -1162,10 +1163,11 @@ impl Route {
     pub const INDEX_ROUTE_NAME: &'static [u8] = b"/";
 
     #[cfg(any())]
-    // TODO(b2-blocked): bun_resolver::fs::Entry
-    // TODO(b2-blocked): bun_resolver::fs::FileSystem::dirname_store
+    // TODO(b2-blocked): bun_sys::fs::Entry (MOVE_DOWN bun_resolver::fs→sys pending)
+    // TODO(b2-blocked): bun_sys::fs::FileSystem::dirname_store
+    // TODO(b2-blocked): bun_sys::fs::FileSystem::abs_buf
+    // TODO(b2-blocked): bun_sys::fs::FileSystem::set_max_fd
     // TODO(b2-blocked): bun_sys::open_file_absolute_z
-    // TODO(b2-blocked): bun_sys::get_fd_path
     // TODO(b2-blocked): bun_string::strings::trim_right
     pub fn parse(
         base_: &[u8],

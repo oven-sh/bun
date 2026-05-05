@@ -9,6 +9,8 @@
 #![allow(dead_code)]
 #![allow(unused_imports)]
 #![allow(unused_variables)]
+#![allow(unused_assignments)]
+#![allow(unexpected_cfgs)]
 #![allow(clippy::all)]
 
 // PORTING.md crate-map calls the string crate `bun_str`; the workspace package
@@ -40,16 +42,10 @@ pub mod json5;
 pub mod toml;
 
 // ───── yaml ───────────────────────────────────────────────────────────────
-#[cfg(any())]
+// Scanner + utility types compile against a local opaque `Expr` stub; the
+// AST-producing parse_* fns remain gated on the js_ast MOVE_DOWN.
 #[path = "yaml.rs"]
-pub mod yaml_draft;
-
-pub mod yaml {
-    // TODO(b2-blocked): bun_logger::js_ast::{Expr, E, G, ExprData}
-    //   yaml's Parser<Enc> output graph stores `Expr` in Document/anchors and
-    //   threads it through ~20 parse_* fns; un-gating requires the MOVE_DOWN
-    //   of js_ast into bun_logger (T2) to land first.
-}
+pub mod yaml;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

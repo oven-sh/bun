@@ -2,14 +2,15 @@
 //! `bun_sourcemap` — B-2 un-gated.
 //!
 //! All sibling modules (`Chunk.rs`, `InternalSourceMap.rs`, `LineOffsetTable.rs`,
-//! `Mapping.rs`, `ParsedSourceMap.rs`, `VLQ.rs`) compile. Remaining
-//! `#[cfg(any())]` fn-body gates are tagged `TODO(b2-blocked)` on missing
-//! lower-tier surface (bun_io::Write, bun_core::Ordinal, bun_js_printer,
-//! bun_interchange::json, bun_paths runtime-Platform join_abs).
+//! `Mapping.rs`, `ParsedSourceMap.rs`, `VLQ.rs`) compile. `SerializedSourceMap`
+//! and `SourceMapPieces::finalize` are lifted from the Phase-A draft and live.
+//! Remaining `#[cfg(any())]` fn-body gates are tagged `TODO(b2-blocked)` on
+//! missing lower-tier surface (bun_io::Write, bun_core::Ordinal, bun_js_printer,
+//! bun_core::base64, bun_string::StringJoiner::push_owned).
 //!
 //! The `_phase_a_draft` block below preserves the bodies of `parse_url` /
-//! `parse_json` / `get_source_map_impl` / `SourceProvider` / `SerializedSourceMap`
-//! / `SourceMapPieces::finalize` / `append_source_map_chunk` for the next pass.
+//! `parse_json` / `get_source_map_impl` / `append_source_map_chunk` /
+//! `append_source_mapping_url_remote` for the next pass.
 
 // ── crate aliases ─────────────────────────────────────────────────────────
 // TODO(b1): Phase-A draft used `bun_str`; the workspace crate is `bun_string`.
@@ -496,6 +497,244 @@ pub mod SavedSourceMap {
     }
 }
 
+// ── SerializedSourceMap (lifted from _phase_a_draft) ──────────────────────
+//
+// Source-map serialization for `bun build --compile` standalone executables.
+// The bundler writes this blob; the runtime mmaps it and hands a
+// `SerializedSourceMap::Loaded` to `ParsedSourceMap` for on-demand source
+// retrieval. Moved down from `bun_standalone_graph` so `ParsedSourceMap` can
+// name `Loaded` without an upward dep.
+//
+// Zig nests `Header` / `Loaded` inside the struct; Rust models that namespace
+// as a module so `crate::SerializedSourceMap::Loaded` resolves as a path.
+#[allow(non_snake_case)]
+pub mod SerializedSourceMap {
+    use bun_str::StringPointer;
+    use core::mem::size_of;
+
+    /// Following the header bytes:
+    /// - `source_files_count` × `StringPointer` — file names
+    /// - `source_files_count` × `StringPointer` — zstd-compressed contents
+    /// - the `InternalSourceMap` blob, `map_bytes_length` bytes
+    /// - all the `StringPointer` payload bytes
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct Header {
+        pub source_files_count: u32,
+        pub map_bytes_length: u32,
+    }
+
+    /// The on-disk view (`bytes` points into the standalone-graph trailer, so
+    /// it lives for the process — modelled as `'static`).
+    #[derive(Clone, Copy)]
+    pub struct SerializedSourceMap {
+        pub bytes: &'static [u8],
+    }
+
+    // TODO(b2-blocked): bun_string::StringPointer::slice — local helper until
+    // the method lands on `StringPointer` in bun_string.
+    #[inline]
+    fn sp_slice(sp: StringPointer, buf: &[u8]) -> &[u8] {
+        &buf[sp.offset as usize..][..sp.length as usize]
+    }
+
+    impl SerializedSourceMap {
+        #[inline]
+        pub fn header(self) -> Header {
+            // Zig: `*align(1) const Header` — read_unaligned because the blob
+            // sits at an arbitrary offset inside the executable.
+            // SAFETY: callers guarantee `bytes.len() >= size_of::<Header>()`.
+            unsafe { core::ptr::read_unaligned(self.bytes.as_ptr().cast::<Header>()) }
+        }
+
+        pub fn mapping_blob(self) -> Option<&'static [u8]> {
+            if self.bytes.len() < size_of::<Header>() {
+                return None;
+            }
+            let head = self.header();
+            let start = size_of::<Header>()
+                + head.source_files_count as usize * size_of::<StringPointer>() * 2;
+            if start > self.bytes.len()
+                || head.map_bytes_length as usize > self.bytes.len() - start
+            {
+                return None;
+            }
+            Some(&self.bytes[start..][..head.map_bytes_length as usize])
+        }
+
+        pub fn source_file_names(self) -> &'static [StringPointer] {
+            let head = self.header();
+            // SAFETY: layout per `Header` doc; `StringPointer` is `repr(C)`
+            // `{u32,u32}` so unaligned reads through the slice are fine on all
+            // targets we ship (x86_64 / aarch64).
+            unsafe {
+                core::slice::from_raw_parts(
+                    self.bytes[size_of::<Header>()..].as_ptr().cast::<StringPointer>(),
+                    head.source_files_count as usize,
+                )
+            }
+        }
+
+        fn compressed_source_files(self) -> &'static [StringPointer] {
+            let head = self.header();
+            // SAFETY: second contiguous `StringPointer` array immediately
+            // follows the first (see `Header` layout doc).
+            unsafe {
+                core::slice::from_raw_parts(
+                    self.bytes[size_of::<Header>()..]
+                        .as_ptr()
+                        .cast::<StringPointer>()
+                        .add(head.source_files_count as usize),
+                    head.source_files_count as usize,
+                )
+            }
+        }
+    }
+
+    /// Once loaded, this map stores additional data for keeping track of
+    /// source code. Held behind `ParsedSourceMap.underlying_provider` as a raw
+    /// pointer (see `ParsedSourceMap::standalone_module_graph_data`).
+    pub struct Loaded {
+        pub map: SerializedSourceMap,
+        /// Only decompress source code once! Once a file is decompressed,
+        /// it is stored here. Decompression failure is recorded as an empty
+        /// `Vec`, which `source_file_contents` treats as "no contents".
+        pub decompressed_files: Box<[Option<Vec<u8>>]>,
+    }
+
+    impl Loaded {
+        pub fn source_file_contents(&mut self, index: usize) -> Option<&[u8]> {
+            // PORT NOTE: reshaped for borrowck — Zig checked the cache, then
+            // wrote and re-read in the same scope. Here we populate first if
+            // empty, then take a single borrow at the end.
+            if self.decompressed_files[index].is_none() {
+                let compressed_codes = self.map.compressed_source_files();
+                let compressed_file = sp_slice(compressed_codes[index], self.map.bytes);
+                let size = bun_zstd::get_decompressed_size(compressed_file);
+
+                let mut bytes = vec![0u8; size];
+                self.decompressed_files[index] = Some(
+                    match bun_zstd::decompress(&mut bytes, compressed_file) {
+                        bun_zstd::Result::Err(err) => {
+                            bun_core::Output::warn(format_args!(
+                                "Source map decompression error: {}",
+                                ::bstr::BStr::new(err.as_bytes())
+                            ));
+                            Vec::new()
+                        }
+                        bun_zstd::Result::Success(n) => {
+                            bytes.truncate(n);
+                            bytes
+                        }
+                    },
+                );
+            }
+
+            let decompressed = self.decompressed_files[index].as_deref().unwrap();
+            if decompressed.is_empty() { None } else { Some(decompressed) }
+        }
+    }
+}
+
+// ── SourceMapPieces impl (lifted from _phase_a_draft) ─────────────────────
+
+impl SourceMapPieces {
+    pub fn init() -> SourceMapPieces {
+        SourceMapPieces::default()
+    }
+
+    pub fn has_content(&self) -> bool {
+        (self.prefix.len() + self.mappings.len() + self.suffix.len()) > 0
+    }
+
+    pub fn finalize(
+        &mut self,
+        shifts_: &[SourceMapShifts],
+    ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
+        let mut shifts = shifts_;
+        let mut start_of_run: usize = 0;
+        let mut current: usize = 0;
+        let mut generated = LineColumnOffset::default();
+        let mut prev_shift_column_delta: i32 = 0;
+
+        // the joiner's node allocator contains string join nodes as well as some vlq encodings
+        // it doesnt contain json payloads or source code, so 16kb is probably going to cover
+        // most applications.
+        // PERF(port): was stack-fallback (16384)
+        let mut j = bun_str::string_joiner::StringJoiner::default();
+
+        j.push_static(&self.prefix);
+        let mappings = &self.mappings;
+
+        while current < mappings.len() {
+            if mappings[current] == b';' {
+                generated.lines = generated.lines.add_scalar(1);
+                generated.columns = Ordinal::START;
+                prev_shift_column_delta = 0;
+                current += 1;
+                continue;
+            }
+
+            let potential_end_of_run = current;
+
+            let decode_result = decode_vlq(mappings, current);
+            generated.columns = generated.columns.add_scalar(decode_result.value);
+            current = decode_result.start;
+
+            let potential_start_of_run = current;
+
+            current = decode_vlq_assume_valid(mappings, current).start;
+            current = decode_vlq_assume_valid(mappings, current).start;
+            current = decode_vlq_assume_valid(mappings, current).start;
+
+            if current < mappings.len() {
+                let c = mappings[current];
+                if c != b',' && c != b';' {
+                    current = decode_vlq_assume_valid(mappings, current).start;
+                }
+            }
+
+            if current < mappings.len() && mappings[current] == b',' {
+                current += 1;
+            }
+
+            let mut did_cross_boundary = false;
+            if shifts.len() > 1 && LineColumnOffset::comes_before(shifts[1].before, generated) {
+                shifts = &shifts[1..];
+                did_cross_boundary = true;
+            }
+
+            if !did_cross_boundary {
+                continue;
+            }
+
+            let shift = shifts[0];
+            if shift.after.lines.zero_based() != generated.lines.zero_based() {
+                continue;
+            }
+
+            j.push_static(&mappings[start_of_run..potential_end_of_run]);
+
+            debug_assert!(shift.before.lines.zero_based() == shift.after.lines.zero_based());
+
+            let shift_column_delta =
+                shift.after.columns.zero_based() - shift.before.columns.zero_based();
+            let vlq_value = decode_result.value + shift_column_delta - prev_shift_column_delta;
+            let encode = VLQ::encode(vlq_value);
+            j.push_cloned(encode.slice());
+            prev_shift_column_delta = shift_column_delta;
+
+            start_of_run = potential_start_of_run;
+        }
+
+        j.push_static(&mappings[start_of_run..]);
+
+        let str = j.done_with_end(&self.suffix)?;
+        debug_assert!(str[0] == b'{'); // invalid json
+        Ok(str)
+    }
+}
+
 // ── stubbed entry points (bodies gated; un-gate in B-2) ───────────────────
 
 pub fn parse_url(
@@ -528,16 +767,15 @@ fn last_index_of(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Phase-A draft body — preserved, gated off. Remaining bodies here
-// (parse_url/parse_json/get_source_map_impl/SourceProvider trait/
-// SerializedSourceMap/SourceMapPieces::finalize/append_source_map_chunk/
+// (parse_url/parse_json/get_source_map_impl/append_source_map_chunk/
 // append_source_mapping_url_remote) are blocked on:
 //   TODO(b2-blocked): bun_core::base64
-//   TODO(b2-blocked): bun_interchange::json::parse
 //   TODO(b2-blocked): bun_js_parser::Expr
 //   TODO(b2-blocked): bun_io::Write
 //   TODO(b2-blocked): bun_string::StringJoiner::push_owned
-//   TODO(b2-blocked): bun_string::StringPointer::slice
-//   TODO(b2-blocked): bun_zstd::get_decompressed_size
+//   TODO(b2-blocked): bun_sys::File::read_from (arena variant)
+// `SerializedSourceMap` and `SourceMapPieces::finalize` have been lifted out
+// of this block and are now live above.
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(any())]
 mod _phase_a_draft {

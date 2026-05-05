@@ -720,12 +720,29 @@ pub fn GlobWalker_(
                         const stackbuf_size = 256;
                         var stfb = std.heap.stackFallback(stackbuf_size, this.walker.arena.allocator());
                         const pathz = try stfb.get().dupeZ(u8, this.walker.patternComponents.items[idx].patternSlice(this.walker.pattern));
-                        const stat_result: bun.Stat = switch (Accessor.statat(fd, pathz)) {
+                        const stat_result: bun.Stat = stat_result: switch (Accessor.statat(fd, pathz)) {
                             .err => |e_| {
                                 var e: bun.sys.Error = e_;
                                 if (e.getErrno() == .NOENT) {
                                     this.iter_state = .get_next;
                                     return .success;
+                                }
+                                // Self-referential symlink: `statat` follows
+                                // the link and fails with ELOOP. Node's
+                                // `fs.glob` reports the dirent as-is
+                                // (`['loop']`); fall back to `lstatat` so
+                                // the `matches` expression below sees the
+                                // symlink's own mode. Gated on the Node-
+                                // compat flag so public Bun.Glob still
+                                // surfaces the error for its callers.
+                                if (this.walker.swallow_missing_cwd and e.getErrno() == .LOOP) {
+                                    break :stat_result switch (Accessor.lstatat(fd, pathz)) {
+                                        .err => {
+                                            this.iter_state = .get_next;
+                                            return .success;
+                                        },
+                                        .result => |stat| stat,
+                                    };
                                 }
                                 return .{ .err = e.withPath(this.walker.patternComponents.items[idx].patternSlice(this.walker.pattern)) };
                             },

@@ -379,6 +379,23 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
     expect(fs.globSync(path.join(String(dir), "loop/inside.txt"))).toStrictEqual([]);
   });
 
+  it("literal-tail self-referential symlink reports the symlink itself", () => {
+    // `fs.globSync('loop', {cwd})` and `fs.globSync('*/loop', {cwd})` against
+    // a self-referential symlink hit the *literal-tail optimization* in
+    // `transitionToDirIterState` — it calls `statat` (which follows links)
+    // and fails with ELOOP. Node returns the dirent name (`['loop']` or
+    // `['sub/loop']`) since the entry exists. Under `swallow_missing_cwd`
+    // the walker falls back to `lstatat` on ELOOP so the symlink's own
+    // mode drives the match decision.
+    using dir = tempDir("glob-loop-literal-tail", {
+      sub: {},
+    });
+    fs.symlinkSync("loop", path.join(String(dir), "loop"), "dir");
+    fs.symlinkSync("loop", path.join(String(dir), "sub", "loop"), "dir");
+    expect(fs.globSync("loop", { cwd: String(dir) })).toStrictEqual(["loop"]);
+    expect(fs.globSync("*/loop", { cwd: String(dir) })).toStrictEqual([path.join("sub", "loop")]);
+  });
+
   it("brace alternative that names a symlink still descends", () => {
     // `{link,dir}/*.txt` should yield matches for both branches; `link` is
     // a symlink. The walker's per-branch literal check sees `link` as a

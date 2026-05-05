@@ -666,6 +666,12 @@ pub const WriteFilePromise = struct {
     }
 };
 
+/// Used by `Bun.write` for `.Locked` Response/Request bodies whose producer
+/// does not support streaming (e.g. HTMLRewriter's BufferOutputSink) and only
+/// knows how to call `Body.Value.resolve()` once the full payload is ready.
+/// Streamable producers (fetch responses, server request bodies, user
+/// ReadableStreams) take the `pipeReadableStreamToBlob` path instead and never
+/// reach this.
 pub const WriteFileWaitFromLockedValueTask = struct {
     file_blob: Blob,
     globalThis: *JSGlobalObject,

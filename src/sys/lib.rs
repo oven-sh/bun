@@ -8,9 +8,10 @@
 #[cfg(any())] #[path = "File.rs"] pub mod file;
 #[cfg(any())] #[path = "Error.rs"] mod error;
 #[cfg(any())] mod walker_skippable;
-#[cfg(any())] mod coreutils_error_map;
-#[cfg(any())] mod libuv_error_map;
-#[cfg(any())] #[path = "SignalCode.rs"] mod signal_code;
+pub mod coreutils_error_map;
+pub mod libuv_error_map;
+#[path = "SignalCode.rs"] pub mod signal_code;
+pub use signal_code::SignalCode;
 #[cfg(any())] mod tmp;
 #[cfg(any())] pub mod windows;
 

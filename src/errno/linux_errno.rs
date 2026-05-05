@@ -77,7 +77,7 @@ pub mod posix {
 }
 
 #[repr(u16)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr, strum::EnumString, enum_map::Enum)]
 pub enum SystemErrno {
     SUCCESS = 0,
     EPERM = 1,

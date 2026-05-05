@@ -19,7 +19,7 @@ pub static COREUTILS_ERROR_MAP: LazyLock<EnumMap<SystemErrno, &'static str>> =
             // `from_name`) on `SystemErrno`. This replaces Zig's `@hasField` +
             // `@field` comptime filter — names not present on this platform's
             // `SystemErrno` are silently skipped, matching the Zig behavior.
-            if let Some(errno) = SystemErrno::from_name(key) {
+            if let Some(errno) = key.parse::<SystemErrno>().ok() {
                 map[errno] = text;
             }
         }

@@ -2,7 +2,7 @@ use std::sync::LazyLock;
 
 use enum_map::EnumMap;
 
-use bun_sys::SystemErrno;
+use crate::SystemErrno;
 
 /// This map is derived off of uv.h's definitions, and is what Node.js uses in printing errors.
 //
@@ -107,7 +107,7 @@ pub static LIBUV_ERROR_MAP: LazyLock<EnumMap<SystemErrno, &'static str>> = LazyL
         // TODO(port): requires `SystemErrno::from_name(&str) -> Option<Self>` (e.g. via
         // `#[derive(strum::EnumString)]` on SystemErrno). Entries naming variants that
         // don't exist on this platform are skipped, matching the Zig `@hasField` guard.
-        if let Some(errno) = SystemErrno::from_name(key) {
+        if let Some(errno) = key.parse::<SystemErrno>().ok() {
             map[errno] = text;
         }
     }

@@ -6,9 +6,10 @@
 use core::ffi::{c_int, c_long};
 use core::sync::atomic::{AtomicU8, Ordering};
 
-use bun_sys::Fd;
+use bun_core::Fd;
 
-pub use bun_alloc::LinuxMemFdAllocator as MemFdAllocator;
+// TODO(b2-blocked): bun_alloc::LinuxMemFdAllocator is gated (depends on bun_sys mmap surface).
+// pub use bun_alloc::LinuxMemFdAllocator as MemFdAllocator;
 
 /// splice() moves data between two file descriptors without copying
 /// between kernel address space and user address space.  It
@@ -69,7 +70,7 @@ impl RWFFlagSupport {
         match current {
             RWFFlagSupport::Unknown => {
                 if Self::is_linux_kernel_version_with_buggy_rwf_nonblock()
-                    || bun_core::feature_flag::BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK.get()
+                    || bun_core::getenv_z(bun_core::zstr!("BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK")).is_some()
                 {
                     RWF_BOOL.store(RWFFlagSupport::Unsupported as u8, Ordering::Relaxed);
                     return false;
@@ -93,7 +94,7 @@ pub fn ioctl_ficlone(dest_fd: Fd, srcfd: Fd) -> usize {
         libc::syscall(
             libc::SYS_ioctl,
             dest_fd.native() as usize,
-            bun_sys::c::FICLONE as usize,
+            libc::FICLONE as usize,
             // @intCast(srcfd.native()) — valid fds are non-negative
             usize::try_from(srcfd.native()).unwrap(),
         ) as usize
@@ -112,9 +113,9 @@ pub extern "C" fn sys_epoll_pwait2(
     unsafe {
         libc::syscall(
             libc::SYS_epoll_pwait2,
-            isize::from(epfd) as usize,
+            epfd as isize as usize,
             events as usize,
-            isize::from(maxevents) as usize,
+            maxevents as isize as usize,
             timeout as usize,
             sigmask as usize,
             // This is the correct value. glibc claims to pass `sizeof sigset_t` for this argument,

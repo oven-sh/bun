@@ -11,7 +11,7 @@ use windows_sys::{self as windows, Win32Error, NTSTATUS};
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(u16)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr, strum::EnumString, enum_map::Enum)]
 pub enum E {
     SUCCESS = 0,
     PERM = 1,
@@ -349,7 +349,7 @@ pub fn get_errno<T>(_rc: T) -> E {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(u16)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr, strum::EnumString, enum_map::Enum)]
 pub enum SystemErrno {
     SUCCESS = 0,
     EPERM = 1,

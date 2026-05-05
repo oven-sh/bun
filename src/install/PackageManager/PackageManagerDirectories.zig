@@ -590,18 +590,32 @@ pub fn linkedPackagePath(
     // install lands here as a real directory. Treat only symlinks /
     // reparse-points as registered links; real directories are global
     // installs that must not trigger the linked-package override.
-    if (comptime bun.Environment.isWindows) {
+    //
+    // After the kind check, follow the link and confirm the target
+    // resolves to a readable directory. A dangling symlink (producer
+    // deleted without `bun unlink`) would otherwise make the installer
+    // skip the registry download and fail ENOENT in the worker — same
+    // guarantee as `isLinkedEntry` above, restated for callers that
+    // reach this non-cached fallback (Windows, or callers outside the
+    // isolated-install flow that didn't run populateLinkedNamesCache).
+    const is_link: bool = if (comptime bun.Environment.isWindows) link: {
         const attrs = bun.sys.getFileAttributes(joined) orelse return null;
-        return if (attrs.is_reparse_point) joined else null;
-    }
-    return switch (bun.sys.lstat(joined)) {
-        .result => |st| brk: {
-            const mode: u32 = @intCast(st.mode);
-            if (std.posix.S.ISLNK(mode)) break :brk joined;
-            break :brk null;
-        },
-        .err => null,
+        break :link attrs.is_reparse_point;
+    } else link: {
+        const st = switch (bun.sys.lstat(joined)) {
+            .result => |s| s,
+            .err => return null,
+        };
+        break :link std.posix.S.ISLNK(@intCast(st.mode));
     };
+    if (!is_link) return null;
+
+    const target_fd = switch (bun.openDirForIteration(bun.FD.cwd(), joined)) {
+        .result => |fd| fd,
+        .err => return null,
+    };
+    target_fd.close();
+    return joined;
 }
 
 pub fn pathForCachedNPMPath(

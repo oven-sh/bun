@@ -985,6 +985,22 @@ pub fn installIsolatedPackages(
                             {
                                 break :eligible false;
                             }
+                            // An active `bun link` sources the body from the
+                            // producer's live working tree, which is mutable
+                            // by design. Hardlinking that into the shared
+                            // content-addressed <cache>/links/<hash>/ would
+                            // poison every other consumer on the machine
+                            // that resolves the same lockfile closure: they
+                            // warm-hit the entry, run producer code instead
+                            // of the npm tarball, and stay poisoned after
+                            // `bun unlink` (collision-is-success keeps the
+                            // stale entry). Force linked packages
+                            // project-local.
+                            var link_buf: bun.PathBuffer = undefined;
+                            const pkg_name_slice = pkg_names[pkg_id].slice(string_buf);
+                            if (manager.linkedPackagePath(pkg_name_slice, &link_buf) != null) {
+                                break :eligible false;
+                            }
                             break :eligible true;
                         },
                         else => false,

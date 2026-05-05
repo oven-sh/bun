@@ -373,13 +373,8 @@ pub const All = struct {
     /// all three Windows shards.
     pub fn drainExpiredTimers(this: *All, vm: *VirtualMachine) bool {
         const head = this.timers.peek() orelse return false;
-        // `getTimeout` fires `WTFTimer` entries eagerly regardless of deadline
-        // (they only fire once and act as a JSC stop-if-necessary hook); stay
-        // in sync with that so they're not skipped when they sit at the root.
-        if (head.tag != .WTFTimer) {
-            const now = timespec.now(.allow_mocked_time);
-            if (head.next.greater(&now)) return false;
-        }
+        const now = timespec.now(.allow_mocked_time);
+        if (head.next.greater(&now)) return false;
         this.drainTimers(vm);
         if (Environment.isWindows) {
             this.ensureUVTimer(vm);

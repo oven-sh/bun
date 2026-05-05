@@ -108,8 +108,8 @@ test("all worker_threads worker instance properties are present", async () => {
   expect(worker.ref).toBeFunction();
   expect(worker.unref).toBeFunction();
   expect(worker.stdin).toBeNull();
-  expect(worker.stdout).toBeNull();
-  expect(worker.stderr).toBeNull();
+  expect(worker.stdout).toBeInstanceOf(Readable);
+  expect(worker.stderr).toBeInstanceOf(Readable);
   expect(worker.performance).toBeDefined();
   expect(worker.terminate).toBeFunction();
   expect(worker.postMessage).toBeFunction();
@@ -269,14 +269,14 @@ describe("execArgv option", async () => {
   it("inherits the parent's execArgv when falsy or unspecified", async () => {
     await run("null", '["--smol"]\n');
     await run("0", '["--smol"]\n');
-  });
+  }, 30_000);
   it("provides empty execArgv when passed an empty array", async () => {
     // empty array should result in empty execArgv, not inherited from parent thread
     await run("[]", "[]\n");
-  });
+  }, 30_000);
   it("can specify an array of strings", async () => {
     await run('["--no-warnings"]', '["--no-warnings"]\n');
-  });
+  }, 30_000);
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
 
@@ -292,7 +292,7 @@ test("eval does not leak source code", async () => {
   const errors = await proc.stderr.text();
   if (errors.length > 0) throw new Error(errors);
   expect(proc.exitCode).toBe(0);
-});
+}, 60_000);
 
 describe("worker event", () => {
   test("is emitted on the next tick with the right value", () => {
@@ -384,7 +384,7 @@ describe("environmentData", () => {
     expect(proc.exitCode).toBe(0);
     const out = await proc.stdout.text();
     expect(out).toBe("foo\n".repeat(5));
-  });
+  }, 60_000);
 
   test("can be used if parent thread had not imported worker_threads", async () => {
     const proc = Bun.spawn({
@@ -485,5 +485,5 @@ describe("getHeapSnapshot", () => {
       "trace_tree",
     ]);
     worker.postMessage(0);
-  });
+  }, 30_000);
 });

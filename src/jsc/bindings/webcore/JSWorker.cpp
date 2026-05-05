@@ -145,9 +145,14 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
 
     WorkerOptions options {};
     JSValue nodeWorkerObject {};
-    if (callFrame->argumentCount() == 3) {
+    // Internal-only data passed from the node:worker_threads Worker wrapper.
+    // Currently holds [stdioPort, hasStdin] so the worker thread can replace
+    // its process.stdout/stderr/stdin with port-backed streams.
+    JSValue nodeWorkerInternalData = jsUndefined();
+    if (callFrame->argumentCount() >= 3) {
         nodeWorkerObject = callFrame->argument(2);
         options.kind = WorkerOptions::Kind::Node;
+        nodeWorkerInternalData = callFrame->argument(3);
     }
     JSValue workerData = jsUndefined();
     Vector<JSC::Strong<JSC::JSObject>> transferList;
@@ -307,13 +312,23 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
         }
     }
 
+    // The internal stdio MessagePort (if any) must be transferred, not cloned.
+    if (auto* internalArray = dynamicDowncast<JSC::JSArray>(nodeWorkerInternalData)) {
+        JSValue stdioPort = internalArray->getIndex(lexicalGlobalObject, 0);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (auto* portObject = stdioPort.getObject()) {
+            transferList.append({ vm, portObject });
+        }
+    }
+
     Vector<RefPtr<MessagePort>> ports;
-    auto* valueToTransfer = constructEmptyArray(globalObject, nullptr, 2);
+    auto* valueToTransfer = constructEmptyArray(globalObject, nullptr, 3);
     RETURN_IF_EXCEPTION(throwScope, {});
     valueToTransfer->putDirectIndex(globalObject, 0, workerData);
     auto* environmentData = globalObject->nodeWorkerEnvironmentData();
     // If node:worker_threads has not been imported, environment data will not be set up yet.
     valueToTransfer->putDirectIndex(globalObject, 1, environmentData ? environmentData : jsUndefined());
+    valueToTransfer->putDirectIndex(globalObject, 2, nodeWorkerInternalData);
 
     ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*lexicalGlobalObject, valueToTransfer, WTF::move(transferList), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
     if (serialized.hasException()) {

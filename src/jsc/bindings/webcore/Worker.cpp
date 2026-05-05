@@ -40,6 +40,7 @@
 #include "ScriptExecutionContext.h"
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include "MessageEvent.h"
 #include "BunWorkerGlobalScope.h"
 #include "CloseEvent.h"
@@ -551,6 +552,20 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
         globalObject->requireMap()->clear(globalObject);
         scope.exception(); // TODO: handle or assert none?
         vm.deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
+        // Take the context out of the global map now rather than relying on
+        // the collect below to finalize ~GlobalObject and do it. That collect
+        // is best-effort: any JSC::Strong, conservative stack root, or
+        // DOM object with hasPendingActivity (e.g. an entangled MessagePort
+        // with a listener) keeps the global marked, so ~GlobalObject may not
+        // run before shutdown() proceeds to vm.deinit() and sets
+        // has_terminated. A nested child worker's dispatchExit posting to
+        // this context between those two points would then trip the
+        // enqueueTaskConcurrent has_terminated assert. Removing the entry
+        // here makes postTaskTo() return false instead. ~GlobalObject's
+        // later removeFromContextsMap() is a no-op once m_isInContextsMap
+        // is cleared.
+        if (auto* ctx = globalObject->scriptExecutionContext())
+            ctx->removeFromContextsMap();
         gcUnprotect(globalObject);
         globalObject = nullptr;
     }
@@ -578,6 +593,20 @@ extern "C" void WebWorker__fireEarlyMessages(Worker* worker, Zig::GlobalObject* 
 
 extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker* worker, BunString message, JSC::EncodedJSValue errorValue)
 {
+    // Zig's onUnhandledRejection calls us and then proceeds straight to
+    // shutdown() → teardownJSCVM, whose DECLARE_THROW_SCOPE is the next
+    // scope declared on this thread. Both dispatchEvent (user onerror
+    // listeners) and SerializedScriptValue::create below declare throw
+    // scopes; without a scope here to observe them, the validator flags
+    // an unchecked exception when teardownJSCVM's scope is entered. This
+    // is a top-of-JS-stack boundary (we're called from Zig and return to
+    // Zig), so catch-and-clear — any listener exception during uncaught-
+    // error dispatch shouldn't block serializing the original error to
+    // the parent, and a termination exception (set by setRequestedTerminate
+    // right after we return) is expected and left alone.
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
     JSValue error = JSC::JSValue::decode(errorValue);
     ErrorEvent::Init init;
     init.message = message.toWTFString(BunString::ZeroCopy).isolatedCopy();
@@ -586,16 +615,19 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     init.bubbles = false;
 
     globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
+    scope.clearExceptionExceptTermination();
     switch (worker->options().kind) {
     case WorkerOptions::Kind::Web:
-        return worker->dispatchErrorWithMessage(message.toWTFString(BunString::ZeroCopy));
+        worker->dispatchErrorWithMessage(message.toWTFString(BunString::ZeroCopy));
+        break;
     case WorkerOptions::Kind::Node:
         if (!worker->dispatchErrorWithValue(globalObject, error)) {
             // If serialization threw an error, use the string instead
             worker->dispatchErrorWithMessage(message.toWTFString(BunString::ZeroCopy));
         }
-        return;
+        break;
     }
+    scope.clearExceptionExceptTermination();
 }
 
 extern "C" WebCore::Worker* WebWorker__getParentWorker(void* bunVM);
@@ -634,6 +666,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     JSValue workerData = jsNull();
     JSValue threadId = jsNumber(0);
     JSMap* environmentData = nullptr;
+    JSValue internalData = jsUndefined();
 
     if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM())) {
         auto& options = worker->options();
@@ -641,9 +674,9 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
         RefPtr<WebCore::SerializedScriptValue> serialized = WTF::move(options.workerDataAndEnvironmentData);
         JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTF::move(ports));
         RETURN_IF_EXCEPTION(scope, {});
-        // Should always be set to an Array of length 2 in the constructor in JSWorker.cpp
+        // Should always be set to an Array of length 3 in the constructor in JSWorker.cpp
         auto* pair = uncheckedDowncast<JSArray>(deserialized);
-        ASSERT(pair->length() == 2);
+        ASSERT(pair->length() == 3);
         ASSERT(pair->canGetIndexQuickly(0u));
         ASSERT(pair->canGetIndexQuickly(1u));
         workerData = pair->getIndexQuickly(0);
@@ -652,6 +685,9 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
         // it might not be a Map if the parent had not set up environmentData yet
         environmentData = environmentDataValue ? dynamicDowncast<JSMap>(environmentDataValue) : nullptr;
         RETURN_IF_EXCEPTION(scope, {});
+        if (pair->canGetIndexQuickly(2u)) {
+            internalData = pair->getIndexQuickly(2);
+        }
 
         // Main thread starts at 1
         threadId = jsNumber(worker->clientIdentifier() - 1);
@@ -663,12 +699,18 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     ASSERT(environmentData);
     globalObject->setNodeWorkerEnvironmentData(environmentData);
 
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 4);
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 5);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
     array->putDirectIndex(globalObject, 1, threadId);
     array->putDirectIndex(globalObject, 2, JSFunction::create(vm, globalObject, 1, "receiveMessageOnPort"_s, jsReceiveMessageOnPort, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 3, environmentData);
+    // Internal-only data from the node:worker_threads wrapper in the parent.
+    // Currently [stdioPort, hasStdin] so process.stdout/stderr/stdin inside
+    // the worker can be redirected to the parent-side Readable/Writable
+    // streams. Undefined for Web Workers or nested workers started via the
+    // global Worker constructor.
+    array->putDirectIndex(globalObject, 4, internalData);
     return array;
 }
 

@@ -517,6 +517,33 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
     expect(fs.globSync(path.join(root, "dangling") + "/")).toStrictEqual([path.join(root, "dangling")]);
     expect(fs.globSync(path.join(root, "loop") + "/")).toStrictEqual([path.join(root, "loop")]);
   });
+
+  it("pathological brace-nesting pattern does not hang the literal matcher", () => {
+    // `hasLiteralMatch` recurses into each alternative for every `{`
+    // it sees, and a pattern like `{,}`.repeat(N) chains N sequential
+    // empty-alternative groups — naive recursion is O(2^N). The
+    // matcher is called for every symlink dirent under
+    // `descend_literal_symlinks` (which `fs.glob` always sets), so a
+    // symlink-bearing `cwd` + pathological pattern used to hang.
+    // `max_brace_depth` caps the recursion at a depth that mirrors
+    // the existing matcher's `BraceStack` budget; past the cap we
+    // conservatively return `false` (= don't cross the symlink via
+    // this component), which is always safe.
+    using dir = tempDir("glob-brace-dos", {});
+    fs.symlinkSync("self", path.join(String(dir), "self"), "dir");
+    const pattern = "{,}".repeat(50) + "/x";
+    const start = Date.now();
+    const result = fs.globSync(pattern, { cwd: String(dir) });
+    // Must complete quickly — pre-cap this would hang indefinitely.
+    // Allow generous slack since CI runners are slow; the failure
+    // mode is ~seconds-to-minutes, not milliseconds.
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(2000);
+    // The exact empty-match result isn't the point; just that it
+    // returned. Any brace-bearing pattern that hits the cap is still
+    // a valid (potentially empty) match set.
+    expect(Array.isArray(result)).toBe(true);
+  });
 }); // </symlink behavior>
 
 // Cross-platform edge cases — no symlink fixtures, so these run on every

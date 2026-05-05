@@ -1873,8 +1873,21 @@ pub fn GlobWalker_(
         /// segment, so top-level separators are unreachable.
         ///
         /// Escaped metacharacters (`\*foo`) count as literal.
+        /// Max recursion depth for `matchLiteral` brace expansion. Each
+        /// `{` increments the counter; tail recursion into the next
+        /// sequential group also increments. Bounds worst-case work to
+        /// `N^max_brace_depth` per call — matches the existing
+        /// `src/glob/matcher.zig` `BraceStack = BoundedArray(Brace, 10)`
+        /// budget. Beyond this we conservatively return `false` (= don't
+        /// cross the symlink via this component); under-matching is
+        /// always safe, over-matching would re-enable the pnpm cycle
+        /// this PR exists to fix. `{,}'.repeat(50)` and similar
+        /// pathological patterns hit the cap and bail cleanly instead
+        /// of hanging at ~2^50 recursive calls.
+        const max_brace_depth: u32 = 10;
+
         fn hasLiteralMatch(pattern: []const u8, entry_name: []const u8) bool {
-            return matchLiteral(pattern, 0, @intCast(pattern.len), entry_name, 0, @intCast(entry_name.len));
+            return matchLiteral(pattern, 0, @intCast(pattern.len), entry_name, 0, @intCast(entry_name.len), 0);
         }
 
         /// Match `pattern[pi..phi]` against `entry[ei..ehi]` as a literal
@@ -1889,6 +1902,7 @@ pub fn GlobWalker_(
             entry: []const u8,
             ei_in: u32,
             ehi: u32,
+            depth: u32,
         ) bool {
             var pi = pi_in;
             var ei = ei_in;
@@ -1903,9 +1917,10 @@ pub fn GlobWalker_(
                         ei += 1;
                     },
                     '{' => {
+                        if (depth >= max_brace_depth) return false;
                         const close = findMatchingBraceEnd(pattern, pi, phi) orelse return false;
                         var alt_lo: u32 = pi + 1;
-                        var depth: u32 = 1;
+                        var inner_depth: u32 = 1;
                         var scan: u32 = pi + 1;
                         while (scan < close) : (scan += 1) {
                             const sc = pattern[scan];
@@ -1914,15 +1929,15 @@ pub fn GlobWalker_(
                                 continue;
                             }
                             if (sc == '{') {
-                                depth += 1;
+                                inner_depth += 1;
                             } else if (sc == '}') {
-                                depth -= 1;
-                            } else if (sc == ',' and depth == 1) {
-                                if (tryBranch(pattern, alt_lo, scan, close + 1, phi, entry, ei, ehi)) return true;
+                                inner_depth -= 1;
+                            } else if (sc == ',' and inner_depth == 1) {
+                                if (tryBranch(pattern, alt_lo, scan, close + 1, phi, entry, ei, ehi, depth + 1)) return true;
                                 alt_lo = scan + 1;
                             }
                         }
-                        return tryBranch(pattern, alt_lo, close, close + 1, phi, entry, ei, ehi);
+                        return tryBranch(pattern, alt_lo, close, close + 1, phi, entry, ei, ehi, depth + 1);
                     },
                     else => {
                         if (ei >= ehi or entry[ei] != c) return false;
@@ -1939,7 +1954,9 @@ pub fn GlobWalker_(
         /// `entry[ei..ehi]` — if the alt matches the prefix literally AND
         /// the tail matches the suffix literally, this branch works.
         /// A single path segment is short (typically < 255 bytes), so the
-        /// O(n²) split iteration is cheap in practice.
+        /// O(n²) split iteration is cheap in practice. `depth` is
+        /// threaded from `matchLiteral` and bounds total brace-nesting
+        /// work (see `max_brace_depth`).
         fn tryBranch(
             pattern: []const u8,
             alt_lo: u32,
@@ -1949,11 +1966,12 @@ pub fn GlobWalker_(
             entry: []const u8,
             ei: u32,
             ehi: u32,
+            depth: u32,
         ) bool {
             var k: u32 = ei;
             while (k <= ehi) : (k += 1) {
-                if (matchLiteral(pattern, alt_lo, alt_hi, entry, ei, k) and
-                    matchLiteral(pattern, tail_lo, tail_hi, entry, k, ehi))
+                if (matchLiteral(pattern, alt_lo, alt_hi, entry, ei, k, depth) and
+                    matchLiteral(pattern, tail_lo, tail_hi, entry, k, ehi, depth))
                 {
                     return true;
                 }

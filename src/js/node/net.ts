@@ -99,6 +99,41 @@ function destroyWhenAborted(err) {
     this.destroy(err.target.reason);
   }
 }
+// Node's `net.Socket` reads data by having the underlying handle synchronously
+// emit 'data' on the Readable stream. If a user listener throws, the throw
+// propagates back through the handle's read callback and is surfaced as
+// `uncaughtException` — the socket's own 'error' event never fires, and the
+// socket stays alive. In Bun, the Zig socket layer catches exceptions from the
+// 'data' JS callback and funnels them into the socket's onError handler, which
+// conflates user-code bugs with transport errors. Wrap `self.push(buffer)`
+// here so a user-listener throw is re-dispatched as `uncaughtException` (via
+// `reportError`) and never reaches the native error-routing path.
+function pushDataToSocket(self, buffer) {
+  try {
+    return self.push(buffer);
+  } catch (e) {
+    reportError(e);
+    return true;
+  }
+}
+// Runs `fn` and routes any synchronous throw to `uncaughtException` via
+// `reportError`, instead of letting it unwind back through the Zig socket
+// callback — which would catch it and funnel it into
+// `Handlers.callErrorHandler` (socket's 'error' event) or, on the `onOpen`
+// path, tear the connection down. Same rationale as `pushDataToSocket`.
+//
+// Use this around a *group* of consecutive `self.emit(...)` calls rather
+// than one-per-emit: Node's synchronous `emit('a'); emit('b')` short-circuits
+// — a throw from the 'a' listener prevents 'b' from firing at all. Wrapping
+// each emit individually would reorder that into "'a' threw, reported, 'b'
+// still fires", which is not what Node does.
+function safelyInvokeListeners(fn) {
+  try {
+    fn();
+  } catch (e) {
+    reportError(e);
+  }
+}
 // in node's code this callback is called 'onReadableStreamEnd' but that seemed confusing when `ReadableStream`s now exist
 function onSocketEnd() {
   if (!this.allowHalfOpen) {
@@ -158,7 +193,7 @@ const SocketHandlers: SocketHandler = {
 
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    if (!self.push(buffer)) {
+    if (!pushDataToSocket(self, buffer)) {
       socket.pause();
     }
   },
@@ -231,8 +266,10 @@ const SocketHandlers: SocketHandler = {
       self[kBytesWritten] = socket.bytesWritten;
       // this is not actually emitted on nodejs when socket used on the connection
       // this is already emmited on non-TLS socket and on TLS socket is emmited secureConnect after handshake
-      self.emit("connect", self);
-      self.emit("ready");
+      safelyInvokeListeners(() => {
+        self.emit("connect", self);
+        self.emit("ready");
+      });
     }
 
     SocketHandlers.drain(socket);
@@ -306,7 +343,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
 
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    if (!self.push(buffer)) {
+    if (!pushDataToSocket(self, buffer)) {
       socket.pause();
     }
   },
@@ -389,11 +426,13 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         self.prependOnceListener("connection", connectionListener);
       }
     }
-    self.emit("connection", _socket);
-    // the duplex implementation start paused, so we resume when pauseOnConnect is falsy
-    if (!pauseOnConnect && !isTLS) {
-      _socket.resume();
-    }
+    safelyInvokeListeners(() => {
+      self.emit("connection", _socket);
+      // the duplex implementation start paused, so we resume when pauseOnConnect is falsy
+      if (!pauseOnConnect && !isTLS) {
+        _socket.resume();
+      }
+    });
   },
   handshake(socket, success, verifyError) {
     const self = socket.data;
@@ -512,7 +551,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     const { self } = socket.data;
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    if (!self.push(buffer)) socket.pause();
+    if (!pushDataToSocket(self, buffer)) socket.pause();
   },
   drain(socket) {
     $debug("Bun.Socket drain");
@@ -755,7 +794,11 @@ function Socket(options?) {
         try {
           onread.callback(buffer.length, buffer);
         } catch (e) {
-          self.emit("error", e);
+          // Node surfaces a throw from onread.callback as 'uncaughtException'
+          // (it's invoked from onStreamRead with no try/catch). Route it the
+          // same way as pushDataToSocket — via reportError — instead of
+          // emitting on the socket's 'error' event.
+          reportError(e);
         }
       },
     };
@@ -1974,8 +2017,10 @@ function afterConnect(status, handle, req, readable, writable) {
       self._handle.setKeepAlive(true, self[kSetKeepAliveInitialDelay]);
     }
 
-    self.emit("connect");
-    self.emit("ready");
+    safelyInvokeListeners(() => {
+      self.emit("connect");
+      self.emit("ready");
+    });
 
     // Start the first read, or get an immediate EOF.
     // this doesn't actually consume any bytes, because len=0.

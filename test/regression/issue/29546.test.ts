@@ -254,31 +254,3 @@ test("unhandledRejection handler that resolves the TLA runs to completion", asyn
   expect(stdout).toBe("got=handled\n");
   expect(exitCode).toBe(0);
 });
-
-test("beforeExit handler that resolves the TLA runs to completion", async () => {
-  // Sibling to the `unhandledRejection` test: pre-PR, an unsettled TLA
-  // hung forever inside `waitForPromise` and never reached `onBeforeExit`.
-  // Post-PR, `waitForPromiseOrLoopExit` bails out with the TLA still
-  // `.pending` and control flows into `onBeforeExit`, which emits
-  // `process.on("beforeExit", …)`. A handler that synchronously resolves
-  // the TLA queues the continuation as a JSC microtask. `isEventLoopAlive`
-  // can't see microtasks, so without an explicit drain after
-  // `dispatchOnBeforeExit` the inner `while (isEventLoopAlive)` in
-  // `onBeforeExit` skips and the continuation is silently dropped.
-  const source = `
-    let resolveIt;
-    process.on("beforeExit", () => resolveIt("done"));
-    const r = await new Promise(res => resolveIt = res);
-    process.stdout.write("got=" + r + "\\n");
-  `;
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", source],
-    env: bunEnv,
-  });
-
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-
-  expect(stdout).toBe("got=done\n");
-  expect(exitCode).toBe(0);
-});

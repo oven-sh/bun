@@ -752,9 +752,19 @@ pub inline fn packageManager(this: *VirtualMachine) *PackageManager {
 
 pub fn garbageCollect(this: *const VirtualMachine, sync: bool) usize {
     @branchHint(.cold);
+    // Pre-collect mimalloc so finalizers from the JS GC below observe a clean
+    // state (small cost; processes already-queued delayed frees).
     Global.mimalloc_cleanup(false);
-    if (sync)
-        return this.global.vm().runGC(true);
+    if (sync) {
+        const size = this.global.vm().runGC(true);
+        // JS finalizers run during the sync GC above and call `mi_free` on
+        // external backing stores (Blob bytes, etc). mimalloc keeps those
+        // pages cached on the freeing thread's heap; without a post-GC
+        // `mi_collect(force)` they never return to the OS, so RSS stays at
+        // peak even after every user-visible reference is gone. See #28741.
+        Global.mimalloc_cleanup(true);
+        return size;
+    }
 
     this.global.vm().collectAsync();
     return this.global.vm().heapSize();

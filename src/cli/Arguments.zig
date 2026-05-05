@@ -728,7 +728,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
     }
 
     opts.tsconfig_override = if (args.option("--tsconfig-override")) |ts|
-        resolve_path.joinAbsString(cwd, &[_]string{ts}, .auto)
+        // joinAbsString returns a slice into a threadlocal buffer that is
+        // reused by later path operations (e.g. fs.abs() in the resolver's
+        // package.json parser), so the result must be copied.
+        try allocator.dupe(u8, resolve_path.joinAbsString(cwd, &[_]string{ts}, .auto))
     else
         null;
 

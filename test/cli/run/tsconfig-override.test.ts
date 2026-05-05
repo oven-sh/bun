@@ -1,6 +1,40 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { createHash } from "node:crypto";
 import path from "node:path";
+
+// Build a minimal npm tarball containing the given files under `package/`.
+function buildTarball(files: Record<string, string>) {
+  function header(name: string, size: number) {
+    const buf = Buffer.alloc(512, 0);
+    buf.write(name, 0, 100, "utf8");
+    buf.write("0000644\0", 100);
+    buf.write("0000000\0", 108);
+    buf.write("0000000\0", 116);
+    buf.write(size.toString(8).padStart(11, "0") + "\0", 124);
+    buf.write("00000000000\0", 136);
+    buf.fill(" ", 148, 156);
+    buf.write("0", 156);
+    buf.write("ustar\0", 257);
+    buf.write("00", 263);
+    let sum = 0;
+    for (let i = 0; i < 512; i++) sum += buf[i];
+    buf.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
+    return buf;
+  }
+  const blocks: Buffer[] = [];
+  for (const [name, body] of Object.entries(files)) {
+    const data = Buffer.from(body);
+    blocks.push(header("package/" + name, data.length), data, Buffer.alloc((512 - (data.length % 512)) % 512, 0));
+  }
+  blocks.push(Buffer.alloc(1024, 0));
+  const tgz = Buffer.from(Bun.gzipSync(Buffer.concat(blocks)));
+  return {
+    tgz,
+    shasum: createHash("sha1").update(tgz).digest("hex"),
+    integrity: "sha512-" + createHash("sha512").update(tgz).digest("base64"),
+  };
+}
 
 describe("bun run --tsconfig-override", () => {
   test("should use custom tsconfig for path resolution", async () => {
@@ -302,4 +336,91 @@ describe("bun run --tsconfig-override", () => {
     }
     expect(exitCode).toBe(0);
   });
+
+  // `--tsconfig-override` stores the resolved absolute path in the resolver
+  // options. That path was previously a slice into joinAbsString's
+  // threadlocal scratch buffer. The first root-level DirInfo read (for `/`)
+  // happens before any overwrite so the common case worked, but auto-install
+  // resolves packages from the global cache via `dirInfoForResolution`, which
+  // calls `dirInfoUncached` with `parent == null` for a directory that *does*
+  // contain a package.json — so the package.json parse (fs.abs) clobbers the
+  // buffer before the subsequent tsconfig_override read, leaving a garbage
+  // path and dropping the override's path mappings for that tree.
+  test("path survives threadlocal buffer reuse when auto-installing", async () => {
+    const pkg = "dummy-pkg-tsconfig-override-buffer";
+    const tarball = buildTarball({
+      "package.json": JSON.stringify({ name: pkg, version: "1.0.0", main: "index.js" }),
+      // This import is resolved from inside the global-cache directory, whose
+      // DirInfo only has the override's path mappings if the override path
+      // survived until the second parent==null read.
+      "index.js": "module.exports.hello = require('@utils/math').value;\n",
+    });
+
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === `/${pkg}`) {
+          return Response.json({
+            name: pkg,
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: pkg,
+                version: "1.0.0",
+                dist: {
+                  tarball: `${server.url}${pkg}/-/${pkg}-1.0.0.tgz`,
+                  shasum: tarball.shasum,
+                  integrity: tarball.integrity,
+                },
+              },
+            },
+          });
+        }
+        if (url.pathname === `/${pkg}/-/${pkg}-1.0.0.tgz`) {
+          return new Response(tarball.tgz, { headers: { "content-type": "application/octet-stream" } });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    const dir = tempDirWithFiles("run-tsconfig-override-buffer-reuse", {
+      "package.json": JSON.stringify({
+        name: "tsconfig-override-buffer-reuse",
+        version: "1.0.0",
+        dependencies: { [pkg]: "1.0.0" },
+      }),
+      "custom-tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          baseUrl: ".",
+          paths: { "@utils/*": ["./src/*"] },
+        },
+      }),
+      "src/math.ts": `export const value = 42;\n`,
+      "index.ts": `
+        import { hello } from "${pkg}";
+        console.log("hello=" + hello);
+      `,
+      "cache/.keep": "",
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--install=force", "--tsconfig-override", "./custom-tsconfig.json", "./index.ts"],
+      env: {
+        ...bunEnv,
+        BUN_CONFIG_REGISTRY: server.url.href,
+        NPM_CONFIG_REGISTRY: server.url.href,
+        BUN_INSTALL_CACHE_DIR: path.join(dir, "cache"),
+      },
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("Cannot find module '@utils/math'");
+    expect(stdout).toContain("hello=42");
+    expect(exitCode).toBe(0);
+  }, 60_000);
 });

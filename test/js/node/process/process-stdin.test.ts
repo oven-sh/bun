@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isMacOS, isPosix } from "harness";
 
 test("pipe does the right thing", async () => {
   // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
@@ -153,3 +153,158 @@ test("stdin should not allow process to exit when not paused", async () => {
   expect(await proc.stdout.text()).toMatchInlineSnapshot(`""`);
   expect(await proc.stderr.text()).toMatchInlineSnapshot(`""`);
 });
+
+// https://github.com/oven-sh/bun/issues/30189
+// Signal handlers must fire even when process.stdin has a flowing 'data'
+// listener on a non-pollable character device (/dev/zero, /dev/urandom, ...).
+// Previously, onPull drove `reader.read()` synchronously for non-pollable
+// fds, so the `onPull -> resolve -> await -> push -> _read -> onPull` loop
+// stayed inside a microtask chain and never yielded to the event loop.
+// `Bun__onPosixSignal` kept enqueuing into the signal ring, but
+// `tickConcurrentWithCount` never ran to drain it.
+//
+// Parameterized across SIGTERM/SIGINT/SIGUSR1/SIGUSR2 — a break that only
+// affected one signal type would sneak through single-signal coverage.
+//
+// SIGUSR1/SIGUSR2 are skipped on macOS: JSC reserves SIGUSR2 for its own
+// signal machinery (see WTF/wtf/threads/Signals.cpp `Signal::Usr` →
+// `SIGUSR2`), and delivering SIGUSR1 to a Bun process on Darwin currently
+// crashes the runtime with `Bus error at address 0x0` — a pre-existing Bun
+// issue unrelated to this PR's event-loop yield fix. The Linux matrix still
+// exercises all four signals.
+describe.skipIf(!isPosix)("signals with flowing stdin on /dev/zero", () => {
+  const cases = [
+    { signal: "SIGTERM", exit: 42 },
+    { signal: "SIGINT", exit: 43 },
+    ...(isMacOS
+      ? []
+      : ([
+          { signal: "SIGUSR1", exit: 44 },
+          { signal: "SIGUSR2", exit: 45 },
+        ] as const)),
+  ] as const;
+
+  describe.each(cases)("$signal", ({ signal, exit }) => {
+    test("handler fires", async () => {
+      // await using: on regression the child is a CPU-bound infinite
+      // /dev/zero reader. An early expect() throw has to still terminate
+      // the subprocess or we leak a busy-looping process into the rest
+      // of the run.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          // Order matters: without the fix, `process.stdin.on("data")`
+          // synchronously enters the blocking read loop, so any writes
+          // that come AFTER it never flush. Emit READY and install the
+          // signal handler FIRST, then attach the listener that arms
+          // the bug. The readiness ping proves the child got far enough
+          // to have the handler registered before we send the signal.
+          `
+            const fs = require("fs");
+            process.on(${JSON.stringify(signal)}, () => {
+              fs.writeSync(2, ${JSON.stringify(signal)} + "\\n");
+              process.exit(${exit});
+            });
+            fs.writeSync(1, "READY\\n");
+            process.stdin.on("data", () => {});
+            `,
+        ],
+        stdin: Bun.file("/dev/zero"),
+        stdout: "pipe",
+        stderr: "pipe",
+        env: bunEnv,
+      });
+
+      // Wait for READY so the child has definitely installed the signal
+      // handler (and entered the wedge) before we kill it.
+      await waitForLine(proc, "READY");
+
+      proc.kill(signal);
+
+      // Both assertions are satisfied by the same event: the JS signal
+      // handler actually running (writes the signal name to stderr and
+      // exits with the matching code). On regression Bun's sigaction
+      // catches the signal and queues it in the ring buffer, but
+      // `tickConcurrentWithCount` never runs to drain it, so the child
+      // hangs — `proc.stderr.text()` never resolves and the test falls
+      // through to its 5s timeout. `await using` then SIGKILLs the
+      // subprocess.
+      expect(await proc.stderr.text()).toContain(signal);
+      expect(await proc.exited).toBe(exit);
+    });
+  });
+
+  // Timer callbacks share the same starvation path — setInterval stalled
+  // whenever tick() never returned.
+  test("setInterval fires", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        // Same ordering as above: handler + timer first, then READY,
+        // then the data listener that arms the bug. The interval emits
+        // TICKED on its first tick so the parent can synchronize on an
+        // observed condition instead of a wall-clock delay — on
+        // regression the event loop is wedged and TICKED never arrives,
+        // so waitForLine() fails deterministically.
+        `
+          const fs = require("fs");
+          let ticked = false;
+          process.on("SIGTERM", () => {
+            fs.writeSync(1, "SAW_SIGTERM\\n");
+            process.exit(46);
+          });
+          setInterval(() => {
+            if (!ticked) {
+              ticked = true;
+              fs.writeSync(1, "TICKED\\n");
+            }
+          }, 10);
+          fs.writeSync(1, "READY\\n");
+          process.stdin.on("data", () => {});
+          `,
+      ],
+      stdin: Bun.file("/dev/zero"),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    // Timer must fire at least once while stdin is flowing. waitForLine
+    // throws on EOF so a child that dies before ticking surfaces as a
+    // clear startup failure rather than a later assertion mismatch.
+    await waitForLine(proc, "TICKED");
+    proc.kill("SIGTERM");
+
+    // Confirm the SIGTERM handler fired (not just the default
+    // disposition) by checking the handler's distinctive marker.
+    const stdout = await proc.stdout.text();
+    expect(stdout).toContain("SAW_SIGTERM");
+    expect(await proc.exited).toBe(46);
+  });
+});
+
+// waitForLine reads from proc.stdout until `needle` appears. Throws on EOF
+// so a child that dies before writing the marker fails the test with a
+// useful diagnostic instead of letting callers continue against a corpse.
+// Releases the lock in a finally so `await using` disposal can still drain.
+async function waitForLine(proc: Bun.Subprocess, needle: string): Promise<string> {
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let seen = "";
+  try {
+    while (!seen.includes(needle)) {
+      const { value, done } = await reader.read();
+      if (done) {
+        throw new Error(
+          `stdout ended before ${JSON.stringify(needle)} was seen; output so far: ${JSON.stringify(seen)}`,
+        );
+      }
+      seen += decoder.decode(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return seen;
+}

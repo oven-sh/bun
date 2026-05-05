@@ -40,7 +40,10 @@ pub mod build_options {
 }
 
 // ── re-exports (the tier-0 surface downstream crates need) ────────────────
-pub use bun_alloc::{out_of_memory, AllocError, Alignment, Allocator, page_size, ZigString};
+pub use bun_alloc::{
+    is_slice_in_buffer, is_slice_in_buffer_t, out_of_memory, range_of_slice_in_buffer, AllocError,
+    Alignment, Allocator, page_size, ZigString,
+};
 pub use util::*;
 pub use result::*;
 pub use Global::*;

@@ -529,19 +529,16 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
     // the existing matcher's `BraceStack` budget; past the cap we
     // conservatively return `false` (= don't cross the symlink via
     // this component), which is always safe.
+    //
+    // The test guards "the call returns at all". If the cap
+    // regressed, `fs.globSync` would never return (synchronous
+    // native, ~2^50 recursive calls) and `bun:test`'s built-in
+    // timeout would fire. The `Array.isArray` assertion is the
+    // positive signal that the call completed.
     using dir = tempDir("glob-brace-dos", {});
     fs.symlinkSync("self", path.join(String(dir), "self"), "dir");
     const pattern = "{,}".repeat(50) + "/x";
-    const start = Date.now();
     const result = fs.globSync(pattern, { cwd: String(dir) });
-    // Must complete quickly — pre-cap this would hang indefinitely.
-    // Allow generous slack since CI runners are slow; the failure
-    // mode is ~seconds-to-minutes, not milliseconds.
-    const elapsed = Date.now() - start;
-    expect(elapsed).toBeLessThan(2000);
-    // The exact empty-match result isn't the point; just that it
-    // returned. Any brace-bearing pattern that hits the cap is still
-    // a valid (potentially empty) match set.
     expect(Array.isArray(result)).toBe(true);
   });
 }); // </symlink behavior>

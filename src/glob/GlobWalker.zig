@@ -1865,6 +1865,19 @@ pub fn GlobWalker_(
             return out;
         }
 
+        /// Max recursion depth for `matchLiteral` brace expansion. Each
+        /// `{` increments the counter; tail recursion into the next
+        /// sequential group also increments. Bounds worst-case work to
+        /// `N^max_brace_depth` per call — matches the existing
+        /// `src/glob/matcher.zig` `BraceStack = BoundedArray(Brace, 10)`
+        /// budget. Beyond this we conservatively return `false` (= don't
+        /// cross the symlink via this component); under-matching is
+        /// always safe, over-matching would re-enable pnpm-style
+        /// symlink cycles. `{,}'.repeat(50)` and similar pathological
+        /// patterns hit the cap and bail cleanly instead of hanging at
+        /// ~2^50 recursive calls.
+        const max_brace_depth: u32 = 10;
+
         /// Does `pattern` match `entry_name` via a **literal branch** — i.e.
         /// a concatenation of brace alternatives containing no `*`, `?`, or
         /// `[...]` character class? For `{link,d*}` the only literal branch
@@ -1873,19 +1886,6 @@ pub fn GlobWalker_(
         /// segment, so top-level separators are unreachable.
         ///
         /// Escaped metacharacters (`\*foo`) count as literal.
-        /// Max recursion depth for `matchLiteral` brace expansion. Each
-        /// `{` increments the counter; tail recursion into the next
-        /// sequential group also increments. Bounds worst-case work to
-        /// `N^max_brace_depth` per call — matches the existing
-        /// `src/glob/matcher.zig` `BraceStack = BoundedArray(Brace, 10)`
-        /// budget. Beyond this we conservatively return `false` (= don't
-        /// cross the symlink via this component); under-matching is
-        /// always safe, over-matching would re-enable the pnpm cycle
-        /// this PR exists to fix. `{,}'.repeat(50)` and similar
-        /// pathological patterns hit the cap and bail cleanly instead
-        /// of hanging at ~2^50 recursive calls.
-        const max_brace_depth: u32 = 10;
-
         fn hasLiteralMatch(pattern: []const u8, entry_name: []const u8) bool {
             return matchLiteral(pattern, 0, @intCast(pattern.len), entry_name, 0, @intCast(entry_name.len), 0);
         }

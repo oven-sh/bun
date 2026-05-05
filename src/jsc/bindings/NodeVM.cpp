@@ -1084,17 +1084,17 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
     }
 
     if (descriptor.isAccessorDescriptor()) {
-        RELEASE_AND_RETURN(scope, contextifiedObject->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
+        RELEASE_AND_RETURN(scope, contextifiedObject->defineOwnProperty(contextifiedObject, globalObject, propertyName, descriptor, shouldThrow));
     }
 
     bool isDeclaredOnSandbox = contextifiedObject->getPropertySlot(globalObject, propertyName, slot);
     RETURN_IF_EXCEPTION(scope, false);
 
     if (isDeclaredOnSandbox && !isDeclaredOnGlobalProxy) {
-        RELEASE_AND_RETURN(scope, contextifiedObject->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
+        RELEASE_AND_RETURN(scope, contextifiedObject->defineOwnProperty(contextifiedObject, globalObject, propertyName, descriptor, shouldThrow));
     }
 
-    auto did = contextifiedObject->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow);
+    auto did = contextifiedObject->defineOwnProperty(contextifiedObject, globalObject, propertyName, descriptor, shouldThrow);
     RETURN_IF_EXCEPTION(scope, false);
     if (!did) return false;
 

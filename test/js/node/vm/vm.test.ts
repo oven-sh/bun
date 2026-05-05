@@ -856,6 +856,64 @@ describe("codeGeneration options", () => {
   });
 });
 
+describe("defineProperty errors use vm-realm global", () => {
+  // When Object.defineProperty(this, ...) throws inside a vm context (e.g. redefining
+  // a non-configurable property on the sandbox), the TypeError must be created with
+  // the vm-realm global, not the host-realm global that the sandbox object belongs to.
+  // Otherwise `err.constructor.constructor('return process')()` leaks the host realm.
+
+  test("data descriptor on sandbox-only property", () => {
+    const sandbox = {};
+    Object.defineProperty(sandbox, "locked", { value: 1, writable: false, configurable: false });
+    createContext(sandbox);
+
+    const result = runInContext(
+      `
+        let err;
+        try {
+          Object.defineProperty(this, "locked", { value: 2, configurable: true });
+        } catch (e) { err = e; }
+        ({
+          isVmRealmTypeError: err instanceof TypeError,
+          hostFunction: err && err.constructor && err.constructor.constructor,
+        });
+      `,
+      sandbox,
+    );
+
+    expect(result.isVmRealmTypeError).toBe(true);
+    // err.constructor.constructor must be the vm-realm Function, not the host-realm Function.
+    expect(result.hostFunction === Function).toBe(false);
+    expect(typeof result.hostFunction).toBe("function");
+    // Evaluating in the vm realm: `process` must not be defined.
+    expect(result.hostFunction("return typeof process")()).toBe("undefined");
+  });
+
+  test("accessor descriptor", () => {
+    const sandbox = {};
+    Object.defineProperty(sandbox, "locked", { value: 1, writable: false, configurable: false });
+    createContext(sandbox);
+
+    const result = runInContext(
+      `
+        let err;
+        try {
+          Object.defineProperty(this, "locked", { get() { return 2; }, configurable: true });
+        } catch (e) { err = e; }
+        ({
+          isVmRealmTypeError: err instanceof TypeError,
+          hostFunction: err && err.constructor && err.constructor.constructor,
+        });
+      `,
+      sandbox,
+    );
+
+    expect(result.isVmRealmTypeError).toBe(true);
+    expect(result.hostFunction === Function).toBe(false);
+    expect(result.hostFunction("return typeof process")()).toBe("undefined");
+  });
+});
+
 test("Loader is not defined in vm context", () => {
   // Test with empty context - internal Loader should not leak through
   const emptyContext = createContext({});

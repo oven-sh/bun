@@ -2975,7 +2975,19 @@ pub fn getWriter(
 
     if (arguments.len > 0 and arguments.ptr[0].isObject()) {
         stream_start = try jsc.WebCore.streams.Start.fromJSWithTag(globalThis, arguments[0], .FileSink);
-        stream_start.FileSink.input_path = input_path;
+        switch (stream_start) {
+            .err => |err| {
+                sink.deref();
+                return globalThis.throwValue(try err.toJS(globalThis));
+            },
+            .FileSink => |*file| {
+                file.input_path.deinit();
+                file.input_path = input_path;
+            },
+            else => {
+                stream_start = .{ .FileSink = .{ .input_path = input_path } };
+            },
+        }
     }
 
     switch (sink.start(stream_start)) {

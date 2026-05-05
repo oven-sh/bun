@@ -207,6 +207,13 @@ it("write result is not cumulative", async () => {
   await util.promisify(fs.close)(fd);
 });
 
+it.skipIf(isWindows)("writer() throws on invalid options instead of crashing", () => {
+  const file = Bun.file(path.join(tmpdirSync(), "test.txt"));
+  expect(() => file.writer({ path: 123 })).toThrow(expect.objectContaining({ code: "EINVAL" }));
+  expect(() => file.writer({ fd: "not a number" })).toThrow(expect.objectContaining({ code: "EBADF" }));
+  expect(() => file.writer({ fd: -9999.5 })).toThrow(expect.objectContaining({ code: "EBADF" }));
+});
+
 if (isWindows) {
   it("ENOENT, Windows", () => {
     expect(() => Bun.file("A:\\this-does-not-exist.txt").writer()).toThrow(

@@ -1087,9 +1087,14 @@ pub const ESMConditions = struct {
         var require_condition_map = ConditionsMap.init(allocator);
         var style_condition_map = ConditionsMap.init(allocator);
 
-        try default_condition_amp.ensureTotalCapacity(defaults.len + 2 + if (allow_addons) 1 else 0 + conditions.len);
-        try import_condition_map.ensureTotalCapacity(defaults.len + 2 + if (allow_addons) 1 else 0 + conditions.len);
-        try require_condition_map.ensureTotalCapacity(defaults.len + 2 + if (allow_addons) 1 else 0 + conditions.len);
+        // Parenthesize the `if`: without parens the else-arm greedily consumes
+        // `0 + conditions.len`, so when allow_addons=true (the default) the
+        // capacity collapses to `defaults.len + 3` and user conditions overflow
+        // the map on putAssumeCapacity. Assertion failure in debug, heap
+        // corruption in release.
+        try default_condition_amp.ensureTotalCapacity(defaults.len + 2 + (if (allow_addons) @as(usize, 1) else 0) + conditions.len);
+        try import_condition_map.ensureTotalCapacity(defaults.len + 2 + (if (allow_addons) @as(usize, 1) else 0) + conditions.len);
+        try require_condition_map.ensureTotalCapacity(defaults.len + 2 + (if (allow_addons) @as(usize, 1) else 0) + conditions.len);
         try style_condition_map.ensureTotalCapacity(defaults.len + 2 + conditions.len);
 
         import_condition_map.putAssumeCapacity("import", {});

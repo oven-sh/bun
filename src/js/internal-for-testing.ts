@@ -71,6 +71,16 @@ export const subprocessInternals = {
   ) => boolean,
 };
 
+export const fileReaderInternals = {
+  /**
+   * Make the next lazy `Bun.file(...).stream()` start behave as if the
+   * underlying `reader.start()` call failed with EBADF. On POSIX the real
+   * `PosixBufferedReader.start()` can never return an error, so this is the
+   * only way to exercise the start-failure cleanup path outside of Windows.
+   */
+  failNextReaderStart: $newZigFunction("FileReader.zig", "TestingAPIs.failNextReaderStart", 0) as () => void,
+};
+
 export const iniInternals = {
   parse: $newZigFunction("ini.zig", "IniTestingAPIs.parse", 1),
   // loadNpmrc: (

@@ -1174,7 +1174,7 @@ it.skipIf(!isWindows)("should not crash on corrupted .bunx file with missing quo
   await initProc.exited;
 
   const subprocess1 = spawn({
-    cmd: [bunExe(), "add", "typescript@5.0.0"],
+    cmd: [bunExe(), "add", "typescript@5.0.4"],
     cwd: x_dir,
     stdout: "pipe",
     stderr: "pipe",

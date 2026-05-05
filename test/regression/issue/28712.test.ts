@@ -277,8 +277,9 @@ test("client session.close() completes when server response headers span HEADERS
     // Keep the pair count under maxHeaderListPairs (128) and total size
     // under maxHeaderListSize (65535) so only the per-frame limit matters.
     const bigHeaders: any = { [http2.constants.HTTP2_HEADER_STATUS]: 200 };
+    const value = Buffer.alloc(200, "x").toString();
     for (let i = 0; i < 100; i++) {
-      bigHeaders[`x-custom-header-${i}`] = "x".repeat(200);
+      bigHeaders[`x-custom-header-${i}`] = value;
     }
     stream.respond(bigHeaders, { endStream: true });
   });

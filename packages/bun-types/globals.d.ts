@@ -1077,8 +1077,8 @@ interface SharedArrayBuffer {
 
 interface ArrayConstructor {
   /**
-   * Create an array from an iterable or async iterable object.
-   * Values from the iterable are awaited.
+   * Create an array from an async iterable, iterable, or array-like object.
+   * Values from the iterable are awaited, and promises are unwrapped.
    *
    * ```ts
    * await Array.fromAsync([1]); // [1]
@@ -1086,31 +1086,31 @@ interface ArrayConstructor {
    * await Array.fromAsync((async function*() { yield 1 })()); // [1]
    * ```
    *
-   * @param arrayLike - The iterable or async iterable to convert to an array.
+   * @param iterableOrArrayLike - The async iterable, iterable, or array-like object to convert to an array.
    * @returns A {@link Promise} whose fulfillment is a new {@link Array} instance containing the values from the iterator.
    */
-  fromAsync<T>(arrayLike: AsyncIterable<T> | Iterable<T> | ArrayLike<T>): Promise<Awaited<T>[]>;
+  fromAsync<T>(
+    iterableOrArrayLike: AsyncIterable<T> | Iterable<T | PromiseLike<T>> | ArrayLike<T | PromiseLike<T>>,
+  ): Promise<T[]>;
 
   /**
-   * Create an array from an iterable or async iterable object.
-   * Values from the iterable are awaited. Results of the map function are also awaited.
+   * Create an array from an async iterable, iterable, or array-like object.
+   * Each element is passed through a mapping function, and both the values and
+   * the results of the map function are awaited.
    *
    * ```ts
-   * await Array.fromAsync([1]); // [1]
-   * await Array.fromAsync([Promise.resolve(1)]); // [1]
-   * await Array.fromAsync((async function*() { yield 1 })()); // [1]
    * await Array.fromAsync([1], (n) => n + 1); // [2]
    * await Array.fromAsync([1], (n) => Promise.resolve(n + 1)); // [2]
    * ```
    *
-   * @param arrayLike - The iterable or async iterable to convert to an array.
-   * @param mapFn - A mapper function that transforms each element of `arrayLike` after awaiting them.
+   * @param iterableOrArrayLike - The async iterable, iterable, or array-like object to convert to an array.
+   * @param mapFn - A mapper function that transforms each element of `iterableOrArrayLike` after awaiting them.
    * @param thisArg - The `this` to which `mapFn` is bound.
    * @returns A {@link Promise} whose fulfillment is a new {@link Array} instance containing the values from the iterator.
    */
   fromAsync<T, U>(
-    arrayLike: AsyncIterable<T> | Iterable<T> | ArrayLike<T>,
-    mapFn?: (value: T, index: number) => U,
+    iterableOrArrayLike: AsyncIterable<T> | Iterable<T> | ArrayLike<T>,
+    mapFn: (value: Awaited<T>, index: number) => U,
     thisArg?: any,
   ): Promise<Awaited<U>[]>;
 }

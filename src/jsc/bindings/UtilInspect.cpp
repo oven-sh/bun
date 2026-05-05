@@ -58,7 +58,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(depth));
     arguments.append(options);
-    arguments.append(inspectFn);
+    arguments.append(inspectFn ? JSValue(inspectFn) : jsUndefined());
 
     auto inspectRet = JSC::profiledCall(globalObject, ProfilingReason::API, functionToCall, callData, thisValue, arguments);
     RETURN_IF_EXCEPTION(scope, {});

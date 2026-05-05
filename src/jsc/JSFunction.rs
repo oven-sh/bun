@@ -1,7 +1,7 @@
 use core::marker::{PhantomData, PhantomPinned};
 use core::mem::MaybeUninit;
 
-use bun_str::{String as BunString, ZigString};
+use bun_string::{String as BunString, ZigString};
 
 use crate::{JSGlobalObject, JSHostFn, JSValue};
 

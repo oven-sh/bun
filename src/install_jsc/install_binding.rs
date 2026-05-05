@@ -1,30 +1,54 @@
-use std::io::Write as _;
-
-use bstr::BStr;
-
-use bun_install::Lockfile;
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
-use bun_logger as logger;
-use bun_paths as path;
-use bun_str::{String as BunString, StringJsc as _, ZigString};
-use bun_sys::Fd;
+use bun_jsc::{JSGlobalObject, JSValue};
 
 pub mod bun_install_js_bindings {
     use super::*;
 
-    pub fn generate(global: &JSGlobalObject) -> JSValue {
-        let obj = JSValue::create_empty_object(global, 1);
-        let parse_lockfile = ZigString::static_(b"parseLockfile");
-        obj.put(
-            global,
-            parse_lockfile,
-            JSFunction::create(global, b"parseLockfile", js_parse_lockfile, 1, Default::default()),
-        );
-        obj
+    // TODO(b2-blocked): bun_jsc::JSValue::create_empty_object
+    // TODO(b2-blocked): bun_jsc::JSFunction::create
+    // TODO(b2-blocked): bun_string::ZigString::static_
+    pub fn generate(_global: &JSGlobalObject) -> JSValue {
+        #[cfg(any())]
+        {
+            use bun_jsc::JSFunction;
+            use bun_string::ZigString;
+            let obj = JSValue::create_empty_object(_global, 1);
+            let parse_lockfile = ZigString::static_(b"parseLockfile");
+            obj.put(
+                _global,
+                parse_lockfile,
+                JSFunction::create(_global, b"parseLockfile", js_parse_lockfile, 1, Default::default()),
+            );
+            return obj;
+        }
+        #[cfg(not(any()))]
+        todo!("install_binding::generate — gated on bun_jsc method surface")
     }
 
+    // TODO(b2-blocked): bun_jsc::JsResult
+    // TODO(b2-blocked): bun_jsc::host_fn (proc-macro)
+    // TODO(b2-blocked): bun_jsc::CallFrame::arguments_old
+    // TODO(b2-blocked): bun_jsc::JSGlobalObject::bun_vm
+    // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw
+    // TODO(b2-blocked): bun_paths::join_abs_string_z
+    // TODO(b2-blocked): bun_sys::open_dir_absolute_not_for_deleting_or_renaming
+    // TODO(b2-blocked): bun_sys::Fd::from_std_dir
+    // TODO(b2-blocked): bun_install::lockfile::LoadResult
+    // TODO(b2-blocked): bun_install::lockfile::JsonFmtOptions
+    // TODO(b2-blocked): bun_install::lockfile::JsonWhitespace
+    // TODO(b2-blocked): bun_install::Lockfile::init_empty
+    // TODO(b2-blocked): bun_install::Lockfile::load_from_dir
+    // TODO(b2-blocked): bun_string::String::to_js_by_parse_json
+    #[cfg(any())]
     #[bun_jsc::host_fn]
-    pub fn js_parse_lockfile(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn js_parse_lockfile(global: &JSGlobalObject, frame: &bun_jsc::CallFrame) -> bun_jsc::JsResult<JSValue> {
+        use std::io::Write as _;
+        use bstr::BStr;
+        use bun_install::Lockfile;
+        use bun_logger as logger;
+        use bun_paths as path;
+        use bun_string::{String as BunString, ZigString};
+        use bun_sys::Fd;
+
         let mut log = logger::Log::init();
 
         let args = frame.arguments_old(1).slice();

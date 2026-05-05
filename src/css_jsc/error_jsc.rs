@@ -3,8 +3,8 @@
 use core::fmt::Display;
 
 use bun_alloc::AllocError;
-use bun_jsc::{JSGlobalObject, JSValue, StringJsc as _};
-use bun_str::String as BunString;
+use bun_jsc::{JSGlobalObject, JSValue};
+use bun_string::String as BunString;
 
 /// `this` is `&css::Err<T>` for any `T`; only `.kind` is accessed.
 // Zig `!JSValue` (inferred set) — only fallible call is `create_format` (OOM), so AllocError.
@@ -14,17 +14,24 @@ pub fn to_error_instance<T>(
 ) -> Result<JSValue, AllocError>
 where
     // The Zig formats `this.kind` with `{f}`; in Rust the kind type must be `Display`.
-    bun_css::ErrKind<T>: Display,
+    T: Display,
 {
-    let str = BunString::create_format(format_args!("{}", this.kind))?;
-    // `defer str.deref()` — handled by `Drop for bun_str::String`.
-    Ok(str.to_error_instance(global_this))
+    #[cfg(any())]
+    {
+        // TODO(b2-blocked): bun_string::String::create_format
+        // TODO(b2-blocked): bun_jsc::StringJsc::to_error_instance
+        let str = BunString::create_format(format_args!("{}", this.kind))?;
+        // `defer str.deref()` — handled by `Drop for bun_str::String`.
+        return Ok(str.to_error_instance(global_this));
+    }
+    let _ = (this, global_this);
+    todo!("bun_css_jsc::error_jsc::to_error_instance — gated on bun_string::create_format / bun_jsc::StringJsc")
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/css_jsc/error_jsc.zig (10 lines)
 //   confidence: medium
-//   todos:      0
-//   notes:      `anytype` mapped to `&bun_css::Err<T>`; assumed `ErrKind<T>: Display` and `StringJsc::to_error_instance` ext-trait — verify exact names in Phase B.
+//   todos:      2 (b2-blocked)
+//   notes:      `anytype` mapped to `&bun_css::Err<T>`; `T: Display` bound; body gated on bun_string/bun_jsc ext-trait surface.
 // ──────────────────────────────────────────────────────────────────────────

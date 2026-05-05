@@ -42,17 +42,22 @@ impl JSCell {
     }
 
     pub fn to_js(&self) -> JSValue {
-        JSValue::from_cell(self)
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_jsc::JSValue::from_cell (JSValue.rs still gated)
+            return JSValue::from_cell(self);
+        }
+        todo!("JSCell::to_js — JSValue.rs gated")
     }
 
     pub fn get_getter_setter(&self) -> &GetterSetter {
-        debug_assert!(JSValue::from_cell(self).is_getter_setter());
+        // TODO(b2-blocked): bun_jsc::JSValue::is_getter_setter (debug_assert dropped while JSValue.rs gated)
         // SAFETY: caller-asserted invariant — this cell's JSType is GetterSetter.
         unsafe { &*(self as *const JSCell as *const GetterSetter) }
     }
 
     pub fn get_custom_getter_setter(&self) -> &CustomGetterSetter {
-        debug_assert!(JSValue::from_cell(self).is_custom_getter_setter());
+        // TODO(b2-blocked): bun_jsc::JSValue::is_custom_getter_setter (debug_assert dropped while JSValue.rs gated)
         // SAFETY: caller-asserted invariant — this cell's JSType is CustomGetterSetter.
         unsafe { &*(self as *const JSCell as *const CustomGetterSetter) }
     }

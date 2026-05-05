@@ -5,12 +5,13 @@
 use core::ffi::c_char;
 use core::marker::{PhantomData, PhantomPinned};
 
-use bun_jsc::{JSGlobalObject, VM};
-use bun_runtime::test_runner::diff_format::DiffFormatter;
+use crate::{JSGlobalObject, VM};
 
 use bun_bundler::analyze_transpiled_module as analyze;
 use analyze::{ModuleInfoDeserialized, StringID};
-// TODO(port): confirm exported names `RecordKind` / `RequestedModuleValue` in bun_bundler::analyze_transpiled_module
+// TODO(b2-blocked): bun_bundler::analyze_transpiled_module::RecordKind (enum variants — currently `struct RecordKind(u8)`)
+// TODO(b2-blocked): bun_bundler::analyze_transpiled_module::RequestedModuleValue (currently `FetchParameters(u32)`)
+#[cfg(any())]
 use analyze::{RecordKind, RequestedModuleValue};
 
 #[unsafe(no_mangle)]
@@ -21,16 +22,23 @@ pub extern "C" fn zig__renderDiff(
     received_len: usize,
     global_this: &JSGlobalObject,
 ) {
-    // SAFETY: caller (C++) guarantees ptr is valid for `len` bytes and NUL-terminated.
-    let received = unsafe { core::slice::from_raw_parts(received_ptr as *const u8, received_len) };
-    // SAFETY: same as above.
-    let expected = unsafe { core::slice::from_raw_parts(expected_ptr as *const u8, expected_len) };
-    let formatter = DiffFormatter {
-        received_string: received,
-        expected_string: expected,
-        global_this,
-    };
-    let _ = write!(bun_core::Output::error_writer(), "DIFF:\n{}\n", formatter);
+    #[cfg(any())]
+    {
+        // TODO(b2-blocked): bun_runtime::test_runner::diff_format::DiffFormatter (higher-tier crate)
+        use bun_runtime::test_runner::diff_format::DiffFormatter;
+        // SAFETY: caller (C++) guarantees ptr is valid for `len` bytes and NUL-terminated.
+        let received = unsafe { core::slice::from_raw_parts(received_ptr as *const u8, received_len) };
+        // SAFETY: same as above.
+        let expected = unsafe { core::slice::from_raw_parts(expected_ptr as *const u8, expected_len) };
+        let formatter = DiffFormatter {
+            received_string: received,
+            expected_string: expected,
+            global_this,
+        };
+        let _ = write!(bun_core::Output::error_writer(), "DIFF:\n{}\n", formatter);
+    }
+    let _ = (expected_ptr, expected_len, received_ptr, received_len, global_this);
+    unreachable!("b2-blocked: bun_runtime::test_runner is higher-tier")
 }
 
 #[unsafe(no_mangle)]
@@ -43,6 +51,8 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     lexical_variables: &mut VariableEnvironment,
     res: &ModuleInfoDeserialized,
 ) -> *mut JSModuleRecord {
+    #[cfg(any())]
+    {
     // Ownership of `res` stays with the caller; this function only reads it.
     // The caller (BunAnalyzeTranspiledModule.cpp) decides whether to free
     // immediately or keep it alive on the SourceProvider for the isolation
@@ -192,7 +202,14 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
         }
     }
 
-    module_record
+    return module_record;
+    }
+    // TODO(b2-blocked): bun_bundler::analyze_transpiled_module::RecordKind (enum variants)
+    // TODO(b2-blocked): bun_bundler::analyze_transpiled_module::RequestedModuleValue
+    // TODO(b2-blocked): bun_bundler::analyze_transpiled_module::StringID::STAR_NAMESPACE
+    // TODO(b2-blocked): bun_bundler::analyze_transpiled_module::Flags::{contains_import_meta,is_typescript,has_tla} (field accessors)
+    let _ = (global_object, vm, module_key, source_code, declared_variables, lexical_variables, res);
+    core::ptr::null_mut()
 }
 
 // ─── opaque FFI types ─────────────────────────────────────────────────────────

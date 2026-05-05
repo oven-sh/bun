@@ -1,7 +1,8 @@
 //! JSC bridge for `bun.Semver.String`. Keeps `src/semver/` free of JSC types.
 
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_semver::String as SemverString;
+
+use crate::jsc_stub::{JSGlobalObject, JSValue, JsResult};
 
 pub trait SemverStringJsc {
     fn to_js(&self, buffer: &[u8], global: &JSGlobalObject) -> JsResult<JSValue>;
@@ -9,7 +10,13 @@ pub trait SemverStringJsc {
 
 impl SemverStringJsc for SemverString {
     fn to_js(&self, buffer: &[u8], global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_str::String::create_utf8_for_js(global, self.slice(buffer))
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_jsc::bun_string_jsc::create_utf8_for_js
+            return bun_jsc::bun_string_jsc::create_utf8_for_js(global, self.slice(buffer));
+        }
+        let _ = (buffer, global);
+        todo!("SemverStringJsc::to_js — gated on bun_jsc::bun_string_jsc::create_utf8_for_js")
     }
 }
 
@@ -18,5 +25,5 @@ impl SemverStringJsc for SemverString {
 //   source:     src/semver_jsc/SemverString_jsc.zig (9 lines)
 //   confidence: high
 //   todos:      0
-//   notes:      extension-trait pattern; create_utf8_for_js may live on StringJsc ext trait in bun_str_jsc
+//   notes:      extension-trait pattern; create_utf8_for_js lives in bun_jsc::bun_string_jsc (gated in B-2)
 // ──────────────────────────────────────────────────────────────────────────

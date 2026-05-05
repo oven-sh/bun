@@ -1,132 +1,73 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
 // AUTOGEN: mod declarations only — real exports added in B-1.
-//
-// B-1 gate-and-stub: all top-level modules are gated behind `#[cfg(any())]`
-// to preserve their Phase-A draft bodies on disk without compiling them.
-// A minimal stub surface is exposed below each gate. Un-gating happens in B-2.
 
-// ─── gated Phase-A drafts (preserved, not compiled) ──────────────────────
-#[cfg(any())]
+// PORTING.md crate map says `bun.String`/`bun.strings` → `bun_str`, but the
+// workspace crate is named `bun_string`. Alias once here so draft modules that
+// followed the guide compile without per-file edits.
+extern crate bun_string as bun_str;
+
+/// Crate-local shim for `bun_jsc` while that crate is under concurrent B-2
+/// work and does not compile. Draft modules import `crate::jsc::…` instead of
+/// `bun_jsc::…`; once `bun_jsc` is green, swap this for `pub use bun_jsc as jsc;`.
+// TODO(b2-blocked): bun_jsc::* — replace this shim with `pub use bun_jsc as jsc;`.
+pub mod jsc {
+    macro_rules! opaque {
+        ($($(#[$m:meta])* $name:ident),* $(,)?) => {
+            $($(#[$m])* #[repr(transparent)] #[derive(Debug, Clone, Copy, Default)]
+              pub struct $name(pub usize);)*
+        };
+    }
+    opaque!(
+        JSValue, JSGlobalObject, JSObject, JSCell, JSString, JSFunction, JSArray,
+        JSPromise, CallFrame, VM, ArrayBuffer, MarkedArrayBuffer, JSUint8Array,
+        Exception, ErrorCode, AnyPromise, AbortSignal, FetchHeaders,
+    );
+    pub type JsResult<T> = Result<T, JsError>;
+    #[derive(Debug, Clone, Copy, Default)]
+    pub struct JsError;
+    #[derive(Debug, Default)]
+    pub struct Strong<T>(core::marker::PhantomData<T>);
+    #[derive(Debug, Default)]
+    pub struct Weak<T>(core::marker::PhantomData<T>);
+    pub mod virtual_machine {
+        #[derive(Debug, Default)]
+        pub struct VirtualMachine {
+            pub active_tasks: u32,
+        }
+    }
+    pub use virtual_machine::VirtualMachine as VirtualMachineRef;
+}
+
+// ─── un-gated in B-2 (heavy submodules re-gated inside each file) ────────
 pub mod crypto;
-#[cfg(any())]
-pub mod ffi;
-#[cfg(any())]
 pub mod server;
-#[cfg(any())]
+pub mod ffi;
 pub mod socket;
-#[cfg(any())]
-#[path = "api.rs"]
-pub mod api_draft;
-#[cfg(any())]
 #[path = "webcore.rs"]
-pub mod webcore_draft;
-#[cfg(any())]
+pub mod webcore;
 #[path = "node.rs"]
-pub mod node_draft;
-#[cfg(any())]
+pub mod node;
+
 pub mod bake;
-#[cfg(any())]
 pub mod shell;
-#[cfg(any())]
 pub mod cli;
-#[cfg(any())]
 pub mod napi;
+#[path = "api.rs"]
+pub mod api;
+
+// Newly declared in B-2 (was in the "unwired" list).
+pub mod image {
+    #[path = "thumbhash.rs"]
+    pub mod thumbhash;
+    #[path = "quantize.rs"]
+    pub mod quantize;
+    #[path = "exif.rs"]
+    pub mod exif;
+    // Remaining image submodules (codec_*, Image, codecs, backend_*) depend on
+    // bun_jsc / FFI sys crates and stay gated.
+}
 
 // Additional subdirectories present under src/runtime/ but not yet wired:
-// dns_jsc, image, test_runner, timer, valkey_jsc, webview, api/ (dir), node/ (dir), webcore/ (dir).
-// These remain un-declared until B-2.
+// dns_jsc, test_runner, timer, valkey_jsc, webview.
+// These remain un-declared (blocked on bun_jsc method surface).
 
-// ─── stub surface (opaque types / todo!() bodies) ────────────────────────
-
-/// TODO(b1): bun_jsc dependency is gated (does not compile). Local shim so
-/// downstream re-exports type-check. Remove once bun_jsc is green.
-#[cfg(any())]
-extern crate bun_jsc;
-
-pub mod crypto_stub {
-    // TODO(b1): stub — un-gate `crypto` in B-2.
-}
-pub use crypto_stub as crypto;
-
-pub mod ffi_stub {
-    // TODO(b1): stub — un-gate `ffi` in B-2.
-    pub struct FFI(());
-    pub mod ffi_object {}
-}
-pub use ffi_stub as ffi;
-
-pub mod server_stub {
-    // TODO(b1): stub — un-gate `server` in B-2.
-    pub struct AnyRequestContext(());
-    pub struct AnyServer(());
-    pub struct DebugHTTPSServer(());
-    pub struct DebugHTTPServer(());
-    pub struct HTMLBundle(());
-    pub struct HTTPSServer(());
-    pub struct HTTPServer(());
-    pub struct NodeHTTPResponse(());
-    pub struct SavedRequest(());
-    pub struct ServerConfig(());
-    pub struct ServerWebSocket(());
-}
-pub use server_stub as server;
-
-pub mod socket_stub {
-    // TODO(b1): stub — un-gate `socket` in B-2.
-    pub struct Listener(());
-    pub struct SocketAddress(());
-    pub struct TCPSocket(());
-    pub struct TLSSocket(());
-    pub struct Handlers(());
-    pub struct NewSocket(());
-    pub mod udp_socket {
-        pub struct UDPSocket(());
-    }
-}
-pub use socket_stub as socket;
-
-pub mod api {
-    // TODO(b1): stub — un-gate `api.rs` (re-export hub) in B-2.
-}
-
-pub mod webcore {
-    // TODO(b1): stub — un-gate `webcore.rs` in B-2.
-    pub mod streams {
-        pub struct Result(());
-    }
-    #[derive(Copy, Clone, Eq, PartialEq)]
-    pub enum Lifetime {
-        Clone,
-        Transfer,
-        Share,
-        Temporary,
-    }
-}
-
-pub mod node {
-    // TODO(b1): stub — un-gate `node.rs` in B-2.
-    pub enum Maybe<R, E> {
-        Err(E),
-        Result(R),
-    }
-}
-
-pub mod bake_stub {
-    // TODO(b1): stub — un-gate `bake` in B-2.
-}
-pub use bake_stub as bake;
-
-pub mod shell_stub {
-    // TODO(b1): stub — un-gate `shell` in B-2.
-}
-pub use shell_stub as shell;
-
-pub mod cli_stub {
-    // TODO(b1): stub — un-gate `cli` in B-2.
-}
-pub use cli_stub as cli;
-
-pub mod napi_stub {
-    // TODO(b1): stub — un-gate `napi` in B-2.
-}
-pub use napi_stub as napi;

@@ -1,4 +1,4 @@
-use bun_jsc::{JSGlobalObject, JSValue};
+use crate::{JSGlobalObject, JSValue};
 
 /// Common strings from `BunCommonStrings.h`.
 ///

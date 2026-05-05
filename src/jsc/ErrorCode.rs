@@ -12,23 +12,23 @@ impl ErrorCode {
     #[inline]
     pub fn from(code: Error) -> ErrorCode {
         // Zig: @as(ErrorCode, @enumFromInt(@intFromError(code)))
-        // bun_core::Error is #[repr(transparent)] NonZeroU16 — extract the raw u16.
-        // TODO(port): confirm exact accessor name on bun_core::Error (.as_u16() / .raw())
-        ErrorCode(code.as_u16())
+        // TODO(b2-blocked): bun_core::Error::as_u16 — bun_core::Error is currently the
+        // wide errno-carrying struct, not the NonZeroU16 anyerror code. Use errno as a
+        // stand-in until the interning table lands.
+        ErrorCode(code.errno as ErrorCodeInt)
     }
 
     #[inline]
     pub fn to_error(self) -> Error {
         // Zig: @errorFromInt(@intFromEnum(self))
-        // SAFETY: self.0 was produced from a valid Error via `from()`; non-zero and
-        // registered in the link-time error-name table by construction.
-        // TODO(port): confirm exact constructor name on bun_core::Error (from_raw / from_u16)
-        unsafe { Error::from_raw(self.0) }
+        // TODO(b2-blocked): bun_core::Error::from_raw — see `from` above.
+        Error::from_errno(self.0 as i32)
     }
 
-    // TODO(port): requires bun_core::err! and .as_u16() to be const-evaluable
-    pub const PARSER_ERROR: ErrorCodeInt = bun_core::err!("ParserError").as_u16();
-    pub const JS_ERROR_OBJECT: ErrorCodeInt = bun_core::err!("JSErrorObject").as_u16();
+    // TODO(b2-blocked): bun_core::err! is not const-evaluable yet (no NonZeroU16 table).
+    // Use sentinel codes; the C++ side only compares for equality.
+    pub const PARSER_ERROR: ErrorCodeInt = 0xFFFE;
+    pub const JS_ERROR_OBJECT: ErrorCodeInt = 0xFFFD;
 
     // Zig: `pub const Type = ErrorCodeInt;`
     // TODO(port): inherent associated types are unstable; callers should use u16 directly

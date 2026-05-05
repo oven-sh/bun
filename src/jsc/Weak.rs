@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
-use bun_jsc::{JSGlobalObject, JSValue};
+use crate::{JSGlobalObject, JSValue};
 
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -91,7 +91,13 @@ impl<'a, T> Weak<'a, T> {
         let Some(function) = self.try_swap() else {
             return JSValue::ZERO;
         };
-        function.call(self.global_this.unwrap(), args)
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_jsc::JSValue::call (JSValue.rs gated)
+            return function.call(self.global_this.unwrap(), args);
+        }
+        let _ = (function, args);
+        JSValue::ZERO
     }
 
     pub fn create(

@@ -1,8 +1,8 @@
 use core::cmp::Ordering;
 use core::marker::{PhantomData, PhantomPinned};
 
-use bun_jsc::{from_js_host_call_generic, JSGlobalObject, JSValue, JsResult};
-use bun_str::String as BunString;
+use crate::{JSGlobalObject, JSValue, JsResult};
+use bun_string::String as BunString;
 
 /// Opaque JSC BigInt cell. Always used behind a reference (`&JSBigInt`).
 #[repr(C)]
@@ -78,13 +78,17 @@ impl JSBigInt {
     }
 
     pub fn to_string(&self, global: &JSGlobalObject) -> JsResult<BunString> {
-        // TODO(port): `from_js_host_call_generic` wraps the raw FFI call with
-        // exception-scope checking (Zig: `bun.jsc.fromJSHostCallGeneric`).
-        // Signature assumed: (global, src_loc, fn, args) -> JsResult<T>.
-        from_js_host_call_generic(global, core::panic::Location::caller(), || {
-            // SAFETY: `self` and `global` are valid for the duration of the call.
-            unsafe { JSC__JSBigInt__toString(self, global) }
-        })
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_jsc::from_js_host_call_generic (host_fn.rs gated)
+            return from_js_host_call_generic(global, core::panic::Location::caller(), || {
+                // SAFETY: `self` and `global` are valid for the duration of the call.
+                unsafe { JSC__JSBigInt__toString(self, global) }
+            });
+        }
+        // SAFETY: `self` and `global` are valid for the duration of the call.
+        // B-2 fallback: call raw FFI without exception-scope check until host_fn un-gates.
+        Ok(unsafe { JSC__JSBigInt__toString(self, global) })
     }
 }
 

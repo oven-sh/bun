@@ -1,6 +1,6 @@
 use core::marker::{PhantomData, PhantomPinned};
 
-use bun_str::String as BunString;
+use bun_string::String as BunString;
 
 /// Opaque FFI handle for `JSC::Yarr::RegularExpression`.
 #[repr(C)]
@@ -42,7 +42,8 @@ unsafe extern "C" {
     fn Yarr__RegularExpression__deinit(pattern: *mut RegularExpression);
     fn Yarr__RegularExpression__isValid(this: *mut RegularExpression) -> bool;
     fn Yarr__RegularExpression__matchedLength(this: *mut RegularExpression) -> i32;
-    fn Yarr__RegularExpression__searchRev(this: *mut RegularExpression) -> i32;
+    // C++: int Yarr__RegularExpression__searchRev(RegularExpression*, BunString) (bindings/RegularExpression.cpp:30)
+    fn Yarr__RegularExpression__searchRev(this: *mut RegularExpression, string: BunString) -> i32;
     fn Yarr__RegularExpression__matches(this: *mut RegularExpression, string: BunString) -> i32;
 }
 
@@ -85,11 +86,8 @@ impl RegularExpression {
 
     #[inline]
     pub fn search_rev(&mut self, str: BunString) -> i32 {
-        // TODO(port): Zig source passes `str` here but the extern decl takes no string
-        // argument — mirrors the upstream mismatch; verify C++ signature in Phase B.
-        let _ = str;
         // SAFETY: `self` is a valid live Yarr RegularExpression handle.
-        unsafe { Yarr__RegularExpression__searchRev(self) }
+        unsafe { Yarr__RegularExpression__searchRev(self, str) }
     }
 
     #[inline]

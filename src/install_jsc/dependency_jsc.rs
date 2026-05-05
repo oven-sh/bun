@@ -3,25 +3,27 @@
 //! `to_js`/`from_js` surface lives here as extension-trait methods on the base
 //! type (see PORTING.md "Idiom map" — `*_jsc` alias lines are deleted).
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_str::String as BunString;
-// TODO(port): confirm crate for StringBuilder (bun.StringBuilder) — assuming bun_str
-use bun_str::StringBuilder;
-use bun_logger::Log;
-use bun_semver::SlicedString;
-use bun_install::Dependency;
-use bun_install::dependency::{self, version::Tag};
-// TODO(port): extension traits providing .to_js() on bun_str::String / install
-// string types / bun_logger::Log inside *_jsc crates — exact module paths TBD
-// in Phase B.
-use bun_str_jsc::StringJsc as _;
-use bun_logger_jsc::LogJsc as _;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
 
+// TODO(b2-blocked): bun_jsc::JsResult
+// TODO(b2-blocked): bun_jsc::JSValue::create_empty_object
+// TODO(b2-blocked): bun_jsc::JSValue::put
+// TODO(b2-blocked): bun_jsc::JSGlobalObject::throw_todo
+// TODO(b2-blocked): bun_jsc::StringJsc (to_js / transfer_to_js on bun_string::String)
+// TODO(b2-blocked): bun_install::dependency::Version
+// TODO(b2-blocked): bun_install::dependency::version::Tag
+// TODO(b2-blocked): bun_install::dependency::tarball
+// TODO(b2-blocked): bun_string::String::create_format
+// TODO(b2-blocked): bun_semver_jsc::SemverStringJsc (to_js with buf)
+#[cfg(any())]
 pub fn version_to_js(
-    dep: &dependency::Version,
+    dep: &bun_install::dependency::Version,
     buf: &[u8],
     global: &JSGlobalObject,
-) -> JsResult<JSValue> {
+) -> bun_jsc::JsResult<JSValue> {
+    use bun_string::String as BunString;
+    use bun_install::dependency::{self, version::Tag};
+
     let object = JSValue::create_empty_object(global, 0);
     object.put(
         global,
@@ -99,8 +101,16 @@ pub fn version_to_js(
     Ok(object)
 }
 
+// TODO(b2-blocked): bun_jsc::host_fn (proc-macro)
+// TODO(b2-blocked): bun_jsc::CallFrame::arguments_old
+// TODO(b2-blocked): bun_jsc::JSValue::to_bun_string
+// TODO(b2-blocked): bun_install::dependency::version::Tag::infer
+#[cfg(any())]
 #[bun_jsc::host_fn]
-pub fn tag_infer_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fn tag_infer_from_js(global: &JSGlobalObject, frame: &CallFrame) -> bun_jsc::JsResult<JSValue> {
+    use bun_string::String as BunString;
+    use bun_install::dependency::version::Tag;
+
     let arguments = frame.arguments_old(1).slice();
     if arguments.is_empty() || !arguments[0].is_string() {
         return Ok(JSValue::UNDEFINED);
@@ -114,13 +124,24 @@ pub fn tag_infer_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     str.transfer_to_js(global)
 }
 
+// TODO(b2-blocked): bun_jsc::JSValue::to_slice
+// TODO(b2-blocked): bun_jsc::JSGlobalObject::throw_value
+// TODO(b2-blocked): bun_string::StringBuilder::init_capacity
+// TODO(b2-blocked): bun_install::Dependency::parse
+// TODO(b2-blocked): bun_logger_jsc::LogJsc (Log::to_js)
+#[cfg(any())]
 #[bun_jsc::host_fn]
-pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> bun_jsc::JsResult<JSValue> {
+    use bun_string::String as BunString;
+    use bun_string::StringBuilder;
+    use bun_logger::Log;
+    use bun_semver::SlicedString;
+    use bun_install::Dependency;
+    use bun_install::dependency;
+
     let arguments = frame.arguments_old(2).slice();
     if arguments.len() == 1 {
-        // TODO(port): UpdateRequest::from_js lives in this crate (install_jsc) —
-        // confirm exact module path in Phase B.
-        return crate::package_manager::update_request_from_js(global, arguments[0]);
+        return crate::update_request_jsc::from_js(global, arguments[0]);
     }
     // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B
     // PERF(port): was stack-fallback (std.heap.stackFallback(1024, ...)) — profile in Phase B

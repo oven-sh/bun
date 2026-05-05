@@ -1,31 +1,39 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
-// AUTOGEN: mod declarations only — real exports added in B-1.
+//! JSC bridge for `bun_semver`. Keeps `src/semver/` free of JSC types.
 
-// TODO(b1): both modules depend on `bun_jsc` (broken dep, see Cargo.toml) and
-// `bun_str` (crate is named `bun_string`). Phase-A draft bodies are preserved
-// on disk and gated here; un-gate in B-2 once bun_jsc compiles.
-#[cfg(any())]
+// ──────────────────────────────────────────────────────────────────────────
+// B-2 local JSC stub surface
+//
+// `bun_jsc` is currently red (concurrent B-2 un-gating in that crate causes
+// E0255/E0428 dup-symbol errors), so it is dropped from Cargo.toml and the
+// handful of JSC types this crate needs are stubbed locally as opaque
+// newtypes — same pattern as `bun_logger_jsc`. Function bodies that touch
+// JSC methods remain `#[cfg(any())]`-gated in-place with `// TODO(b2-blocked)`
+// markers; signatures compile against these stubs so downstream callers
+// type-check.
+// ──────────────────────────────────────────────────────────────────────────
+pub mod jsc_stub {
+    // TODO(b2-blocked): bun_jsc::JSGlobalObject
+    #[repr(transparent)]
+    pub struct JSGlobalObject(pub usize);
+    // TODO(b2-blocked): bun_jsc::JSValue
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct JSValue(pub usize);
+    // TODO(b2-blocked): bun_jsc::CallFrame
+    #[repr(transparent)]
+    pub struct CallFrame(pub usize);
+    // TODO(b2-blocked): bun_jsc::JSFunction
+    #[repr(transparent)]
+    pub struct JSFunction(pub usize);
+    // TODO(b2-blocked): bun_jsc::JsResult
+    pub type JsResult<T> = core::result::Result<T, JSValue>;
+}
+pub use jsc_stub::JsResult;
+
+#[path = "SemverString_jsc.rs"]
 pub mod SemverString_jsc;
-#[cfg(any())]
+#[path = "SemverObject.rs"]
 pub mod SemverObject;
 
-// ── minimal stub surface ──────────────────────────────────────────────────
-#[cfg(not(any()))]
-pub mod SemverString_jsc {
-    /// Stub: real impl gated until `bun_jsc` is green.
-    pub trait SemverStringJsc {}
-}
-
-#[cfg(not(any()))]
-pub mod SemverObject {
-    /// Stub: real impl gated until `bun_jsc` is green.
-    pub fn create(_global: &()) -> () {
-        todo!("bun_semver_jsc::SemverObject::create — gated on bun_jsc")
-    }
-    pub fn order() -> () {
-        todo!("bun_semver_jsc::SemverObject::order — gated on bun_jsc")
-    }
-    pub fn satisfies() -> () {
-        todo!("bun_semver_jsc::SemverObject::satisfies — gated on bun_jsc")
-    }
-}
+pub use SemverString_jsc::SemverStringJsc;

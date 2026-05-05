@@ -1,4 +1,4 @@
-use bun_jsc::{JSGlobalObject, JSValue};
+use crate::{JSGlobalObject, JSValue};
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]

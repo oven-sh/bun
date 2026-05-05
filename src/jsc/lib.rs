@@ -14,6 +14,7 @@
 //! ──────────────────────────────────────────────────────────────────────────
 
 #![allow(dead_code, unused_imports, unused_variables, deprecated, non_snake_case)]
+#![allow(unexpected_cfgs)] // TODO(b2): ci_assert / asan features — wire up in Cargo.toml
 
 use core::ffi::{c_char, c_void};
 
@@ -35,69 +36,112 @@ pub const CONV: &str = "C";
 // Each `#[path]` points at the actual PascalCase / snake_case .rs file so the
 // draft body is addressable for B-2 un-gating.
 // ──────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────
+// B-2 un-gated modules (real Phase-A draft code, now compiling).
+// ──────────────────────────────────────────────────────────────────────────
+#[path = "JSPromiseRejectionOperation.rs"] pub mod js_promise_rejection_operation;
+#[path = "ScriptExecutionStatus.rs"] pub mod script_execution_status;
+#[path = "SourceType.rs"] pub mod source_type;
+#[path = "sizes.rs"] pub mod sizes;
+#[path = "SourceProvider.rs"] pub mod source_provider;
+#[path = "JSRuntimeType.rs"] pub mod js_runtime_type;
+#[path = "GetterSetter.rs"] pub mod getter_setter;
+#[path = "CustomGetterSetter.rs"] pub mod custom_getter_setter;
+#[path = "ZigStackFrameCode.rs"] pub mod zig_stack_frame_code;
+#[path = "JSErrorCode.rs"] pub mod js_error_code;
+#[path = "EventType.rs"] pub mod event_type;
+#[path = "static_export.rs"] pub mod static_export;
+#[path = "CommonAbortReason.rs"] pub mod common_abort_reason;
+#[path = "JSMap.rs"] pub mod js_map;
+#[path = "URLSearchParams.rs"] pub mod url_search_params;
+#[path = "RegularExpression.rs"] pub mod regular_expression;
+#[path = "TextCodec.rs"] pub mod text_codec;
+#[path = "WTF.rs"] pub mod wtf;
+#[path = "JSUint8Array.rs"] pub mod js_uint8_array;
+#[path = "MarkedArgumentBuffer.rs"] pub mod marked_argument_buffer;
+#[path = "JSCell.rs"] pub mod js_cell;
+#[path = "ErrorCode.rs"] pub mod error_code;
+#[path = "ZigErrorType.rs"] pub mod zig_error_type;
+#[path = "Errorable.rs"] pub mod errorable;
+#[path = "ZigStackFramePosition.rs"] pub mod zig_stack_frame_position;
+#[path = "JSType.rs"] pub mod js_type;
+#[path = "Exception.rs"] pub mod exception;
+#[path = "TopExceptionScope.rs"] pub mod top_exception_scope;
+#[path = "JSBigInt.rs"] pub mod js_big_int;
+#[path = "DOMURL.rs"] pub mod dom_url;
+#[path = "CommonStrings.rs"] pub mod common_strings;
+#[path = "JSModuleLoader.rs"] pub mod js_module_loader;
+#[path = "JSFunction.rs"] pub mod js_function;
+#[path = "Strong.rs"] pub mod strong;
+#[path = "Weak.rs"] pub mod weak;
+
+pub use self::js_module_loader::JSModuleLoader;
+pub use self::js_function::JSFunction;
+pub use self::strong::{Strong, Optional as StrongOptional};
+pub use self::weak::{Weak, WeakRefType};
+
+pub use self::js_type::JSType;
+pub use self::exception::Exception;
+pub use self::top_exception_scope::{TopExceptionScope, ExceptionValidationScope};
+pub use self::js_big_int::JSBigInt;
+pub use self::dom_url::DOMURL;
+pub use self::common_strings::CommonStrings;
+
+pub use self::js_promise_rejection_operation::JSPromiseRejectionOperation;
+pub use self::script_execution_status::ScriptExecutionStatus;
+pub use self::source_type::SourceType;
+pub use self::source_provider::SourceProvider;
+pub use self::js_runtime_type::JSRuntimeType;
+pub use self::getter_setter::GetterSetter;
+pub use self::custom_getter_setter::CustomGetterSetter;
+pub use self::zig_stack_frame_code::ZigStackFrameCode;
+pub use self::js_error_code::{JSErrorCode, DOMExceptionCode};
+pub use self::event_type::EventType;
+pub use self::common_abort_reason::CommonAbortReason;
+pub use self::js_map::JSMap;
+pub use self::url_search_params::URLSearchParams;
+pub use self::regular_expression::RegularExpression;
+pub use self::text_codec::TextCodec;
+pub use self::js_uint8_array::JSUint8Array;
+pub use self::marked_argument_buffer::MarkedArgumentBuffer;
+pub use self::js_cell::JSCell;
+pub use self::error_code::ErrorCode;
+pub use self::zig_error_type::ZigErrorType;
+pub use self::errorable::Errorable;
+pub use self::zig_stack_frame_position::ZigStackFramePosition;
+
 #[rustfmt::skip]
 mod _gated {
     #![cfg(any())]
-    #[path = "WTF.rs"] pub mod wtf;
     #[path = "JSValue.rs"] pub mod js_value;
     #[path = "host_fn.rs"] pub mod host_fn;
     #[path = "AnyPromise.rs"] pub mod any_promise;
     #[path = "array_buffer.rs"] pub mod array_buffer;
     #[path = "CachedBytecode.rs"] pub mod cached_bytecode;
     #[path = "CallFrame.rs"] pub mod call_frame;
-    #[path = "CommonAbortReason.rs"] pub mod common_abort_reason;
-    #[path = "CommonStrings.rs"] pub mod common_strings;
-    #[path = "CustomGetterSetter.rs"] pub mod custom_getter_setter;
     #[path = "DOMFormData.rs"] pub mod dom_form_data;
-    #[path = "DOMURL.rs"] pub mod dom_url;
     #[path = "DecodedJSValue.rs"] pub mod decoded_js_value;
     #[path = "DeferredError.rs"] pub mod deferred_error;
-    #[path = "GetterSetter.rs"] pub mod getter_setter;
     #[path = "JSArray.rs"] pub mod js_array;
     #[path = "JSArrayIterator.rs"] pub mod js_array_iterator;
-    #[path = "JSCell.rs"] pub mod js_cell;
-    #[path = "JSFunction.rs"] pub mod js_function;
     #[path = "JSGlobalObject.rs"] pub mod js_global_object;
     #[path = "JSInternalPromise.rs"] pub mod js_internal_promise;
-    #[path = "JSMap.rs"] pub mod js_map;
-    #[path = "JSModuleLoader.rs"] pub mod js_module_loader;
     #[path = "JSObject.rs"] pub mod js_object;
     #[path = "JSPromise.rs"] pub mod js_promise;
-    #[path = "JSPromiseRejectionOperation.rs"] pub mod js_promise_rejection_operation;
     #[path = "JSRef.rs"] pub mod js_ref;
     #[path = "JSString.rs"] pub mod js_string;
-    #[path = "JSUint8Array.rs"] pub mod js_uint8_array;
-    #[path = "JSBigInt.rs"] pub mod js_big_int;
     #[path = "RefString.rs"] pub mod ref_string;
-    #[path = "ScriptExecutionStatus.rs"] pub mod script_execution_status;
-    #[path = "SourceType.rs"] pub mod source_type;
-    #[path = "Strong.rs"] pub mod strong;
     #[path = "SystemError.rs"] pub mod system_error;
     #[path = "URL.rs"] pub mod url;
-    #[path = "URLSearchParams.rs"] pub mod url_search_params;
     #[path = "VM.rs"] pub mod vm;
-    #[path = "Weak.rs"] pub mod weak;
-    #[path = "Exception.rs"] pub mod exception;
-    #[path = "SourceProvider.rs"] pub mod source_provider;
-    #[path = "TopExceptionScope.rs"] pub mod top_exception_scope;
-    #[path = "MarkedArgumentBuffer.rs"] pub mod marked_argument_buffer;
-    #[path = "RegularExpression.rs"] pub mod regular_expression;
-    #[path = "Errorable.rs"] pub mod errorable;
     #[path = "ResolvedSource.rs"] pub mod resolved_source;
-    #[path = "ErrorCode.rs"] pub mod error_code;
-    #[path = "JSErrorCode.rs"] pub mod js_error_code;
-    #[path = "ZigErrorType.rs"] pub mod zig_error_type;
     #[path = "Debugger.rs"] pub mod debugger;
     #[path = "SavedSourceMap.rs"] pub mod saved_source_map;
     #[path = "VirtualMachine.rs"] pub mod virtual_machine;
     #[path = "ModuleLoader.rs"] pub mod module_loader;
     #[path = "rare_data.rs"] pub mod rare_data;
-    #[path = "EventType.rs"] pub mod event_type;
-    #[path = "JSRuntimeType.rs"] pub mod js_runtime_type;
-    #[path = "ZigStackFrameCode.rs"] pub mod zig_stack_frame_code;
     #[path = "ZigStackTrace.rs"] pub mod zig_stack_trace;
     #[path = "ZigStackFrame.rs"] pub mod zig_stack_frame;
-    #[path = "ZigStackFramePosition.rs"] pub mod zig_stack_frame_position;
     #[path = "ZigException.rs"] pub mod zig_exception;
     #[path = "ConsoleObject.rs"] pub mod console_object;
     #[path = "hot_reloader.rs"] pub mod hot_reloader;
@@ -125,14 +169,12 @@ mod _gated {
     #[path = "JSCScheduler.rs"] pub mod jsc_scheduler;
     #[path = "JSONLineBuffer.rs"] pub mod json_line_buffer;
     #[path = "JSSecrets.rs"] pub mod js_secrets;
-    #[path = "JSType.rs"] pub mod js_type;
     #[path = "NodeModuleModule.rs"] pub mod node_module_module;
     #[path = "PosixSignalHandle.rs"] pub mod posix_signal_handle;
     #[path = "ProcessAutoKiller.rs"] pub mod process_auto_killer;
     #[path = "ResolveMessage.rs"] pub mod resolve_message;
     #[path = "StringBuilder.rs"] pub mod string_builder;
     #[path = "Task.rs"] pub mod task;
-    #[path = "TextCodec.rs"] pub mod text_codec;
     #[path = "WorkTask.rs"] pub mod work_task;
     #[path = "ZigString.rs"] pub mod zig_string;
     #[path = "bindgen.rs"] pub mod bindgen;
@@ -146,7 +188,6 @@ mod _gated {
     #[path = "ipc.rs"] pub mod ipc;
     #[path = "resolve_path_jsc.rs"] pub mod resolve_path_jsc;
     #[path = "resolver_jsc.rs"] pub mod resolver_jsc;
-    #[path = "static_export.rs"] pub mod static_export;
     #[path = "uuid.rs"] pub mod uuid;
     #[path = "virtual_machine_exports.rs"] pub mod virtual_machine_exports;
     #[path = "web_worker.rs"] pub mod web_worker;
@@ -172,11 +213,6 @@ macro_rules! stub_ty {
     };
 }
 
-/// Web Template Framework
-pub mod wtf {
-    // TODO(b1): gated — see _gated::wtf (WTF.rs)
-}
-
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
 pub fn initialize(_eval_mode: bool) {
     // TODO(b1): gated — bun_core::analytics::Features::jsc_inc / bun_sys::environ missing
@@ -184,6 +220,50 @@ pub fn initialize(_eval_mode: bool) {
 }
 
 stub_ty!(JSValue);
+
+// B-2: minimal `JSValue` surface so un-gated leaf modules type-check while
+// `JSValue.rs` itself remains gated. These match the real definitions in
+// `JSValue.rs` (`#[repr(transparent)] i64` — stub uses `usize`, same size).
+impl JSValue {
+    pub const ZERO: JSValue = JSValue(0);
+    pub const UNDEFINED: JSValue = JSValue(0xa);
+    pub const NULL: JSValue = JSValue(0x2);
+    #[inline] pub fn is_empty(self) -> bool { self.0 == 0 }
+}
+
+/// `bun.JSError` — the canonical Bun JS error union (`error{Thrown, OutOfMemory, Terminated}`).
+/// `JsResult<T>` is the Rust spelling of Zig's `bun.JSError!T`.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum JsError {
+    /// A JavaScript exception is pending in the VM's exception scope.
+    Thrown,
+    /// Allocation failure; caller must throw an `OutOfMemoryError`.
+    OutOfMemory,
+    /// The VM is terminating (worker shutdown / `process.exit`).
+    Terminated,
+}
+pub type JsResult<T> = core::result::Result<T, JsError>;
+
+impl From<bun_core::AllocError> for JsError {
+    fn from(_: bun_core::AllocError) -> Self { JsError::OutOfMemory }
+}
+
+/// Debug-only binding-presence marker. In Zig this is `jsc.markBinding(@src())`;
+/// here it's a no-op (track_caller gives us the location if we ever wire it up).
+#[macro_export]
+macro_rules! mark_binding {
+    () => {{
+        // TODO(port): bun_output::scoped_log!(.bind, "{}", core::panic::Location::caller())
+    }};
+}
+
+// B-2 stub: WTF.rs re-exports `crate::string_builder::StringBuilder`; the real
+// StringBuilder.rs is still gated (depends on TopExceptionScope FFI). Expose a
+// minimal opaque type here so wtf compiles.
+pub mod string_builder {
+    #[repr(C, align(8))]
+    pub struct StringBuilder { bytes: [u8; 24] }
+}
 
 // Host functions are the native function pointer type that can be used by a
 // JSC::JSFunction to call native code from JavaScript.
@@ -195,8 +275,11 @@ pub mod host_fn {
     pub fn to_js_host_fn() { todo!() }
     pub fn to_js_host_fn_result() { todo!() }
     pub fn to_js_host_fn_with_context() { todo!() }
-    pub type JSHostFn = unsafe extern "C" fn();
-    pub type JSHostFnZig = unsafe extern "C" fn();
+    // TODO(port): jsc.conv ABI — proc-macro emits `extern "sysv64"` on windows-x64.
+    pub type JSHostFn =
+        unsafe extern "C" fn(*mut crate::JSGlobalObject, *mut crate::CallFrame) -> crate::JSValue;
+    pub type JSHostFnZig =
+        fn(&crate::JSGlobalObject, &crate::CallFrame) -> crate::JsResult<crate::JSValue>;
     pub type JSHostFnZigWithContext = unsafe extern "C" fn();
     pub type JSHostFunctionTypeWithContext = unsafe extern "C" fn();
 }
@@ -206,37 +289,44 @@ pub use self::host_fn::{
     JSHostFunctionTypeWithContext,
 };
 
-// JSC Classes Bindings — opaque stubs
+// JSC Classes Bindings — opaque stubs (B-2: trimmed as real modules un-gate)
 stub_ty!(
-    AnyPromise, CachedBytecode, CallFrame, CommonAbortReason, CommonStrings, CustomGetterSetter,
-    DOMFormData, DOMURL, DecodedJSValue, DeferredError, GetterSetter, JSArray, JSArrayIterator,
-    JSCell, JSFunction, JSGlobalObject, JSInternalPromise, JSMap, JSModuleLoader, JSObject,
-    JSPromise, JSPromiseRejectionOperation, JsRef, JSString, JSUint8Array, JSBigInt,
-    ScriptExecutionStatus, SourceType, SystemError, URL, URLSearchParams, VM, Exception,
-    SourceProvider, ExceptionValidationScope, TopExceptionScope, MarkedArgumentBuffer,
-    RegularExpression, ResolvedSource, ErrorCode, JSErrorCode, ZigErrorType, EventType,
-    JSRuntimeType, ZigStackFrameCode, ZigStackTrace, ZigStackFrame, ZigStackFramePosition,
+    AnyPromise, CachedBytecode, CallFrame,
+    DOMFormData, DecodedJSValue, DeferredError, JSArray, JSArrayIterator,
+    JSGlobalObject, JSInternalPromise, JSObject,
+    JSPromise, JsRef, JSString,
+    SystemError, URL, VM,
+    ResolvedSource, ZigStackTrace, ZigStackFrame,
     ZigException, Formatter, JSPropertyIteratorOptions, RuntimeTranspilerCache,
 );
 
 pub mod array_buffer {
     crate::stub_ty!(ArrayBuffer, JSCArrayBuffer, MarkedArrayBuffer);
+    /// Mirror of `JSC::TypedArrayType` (used by `JSType::to_typed_array_type`).
+    /// Real definition lives in array_buffer.rs (still gated).
+    #[repr(u8)]
+    #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+    pub enum TypedArrayType {
+        TypeNone = 0,
+        TypeInt8,
+        TypeUint8,
+        TypeUint8Clamped,
+        TypeInt16,
+        TypeUint16,
+        TypeInt32,
+        TypeUint32,
+        TypeFloat16,
+        TypeFloat32,
+        TypeFloat64,
+        TypeBigInt64,
+        TypeBigUint64,
+        TypeDataView,
+    }
 }
 pub use self::array_buffer::{ArrayBuffer, JSCArrayBuffer, MarkedArrayBuffer};
 
 pub mod ref_string {}
 pub use self::ref_string as RefString;
-pub mod strong {}
-pub use self::strong as Strong;
-
-pub mod weak {
-    crate::stub_ty!(Weak, WeakRefType);
-}
-pub use self::weak::{Weak, WeakRefType};
-
-// JavaScript-related
-#[derive(Debug, Default)]
-pub struct Errorable<T>(pub core::marker::PhantomData<T>);
 
 pub mod debugger {}
 pub use self::debugger as Debugger;
@@ -318,8 +408,6 @@ pub type PlatformEventLoop = bun_aio::Loop;
 pub mod c_api {}
 pub use self::c_api as C;
 /// Deprecated: Remove all of these please.
-#[deprecated]
-pub mod sizes {}
 pub use self::sizes as Sizes;
 /// Deprecated: Use `bun_string::String`
 #[deprecated]

@@ -5,63 +5,89 @@ use core::ptr::NonNull;
 // NOTE(port): the Zig `comptime { _ = @import("./webcore/prompt.zig"); _ = @import("./webcore/TextEncoder.zig"); }`
 // force-reference block is dropped — Rust links what's `pub`. (See PORTING.md §Don't translate.)
 
-pub use bun_jsc::js_error_code::DOMExceptionCode;
+// ─── submodules under ./webcore/ ─────────────────────────────────────────────
+// All gated: depend on bun_jsc method surface (broken under concurrent B-2).
+#[cfg(any())]
+mod _gated_submods {
+    pub use bun_jsc::js_error_code::DOMExceptionCode;
+    pub use bun_jsc::abort_signal::AbortSignal;
+    pub use bun_jsc::web_worker;
+    // TODO(b2-blocked): bun_event_loop::auto_flusher
+    pub use bun_event_loop::auto_flusher;
+    pub use bun_jsc::fetch_headers::FetchHeaders;
+
+    pub mod crypto;
+    pub mod encoding_label;
+    pub use encoding_label::EncodingLabel;
+    pub mod fetch;
+    pub mod response;
+    pub mod bake_response;
+    pub mod text_decoder;
+    pub mod text_encoder;
+    pub mod text_encoder_stream_encoder;
+    pub mod encoding;
+    pub mod readable_stream;
+    pub mod blob;
+    pub mod s3_stat;
+    pub use s3_stat::S3Stat;
+    pub mod resumable_sink;
+    pub use resumable_sink::ResumableFetchSink;
+    pub use resumable_sink::ResumableS3UploadSink;
+    pub use resumable_sink::ResumableSinkBackpressure;
+    pub mod s3_client;
+    pub use s3_client::S3Client;
+    pub mod request;
+    pub mod body;
+    pub mod cookie_map;
+    pub use cookie_map::CookieMap;
+    pub mod object_url_registry;
+    pub mod sink;
+    pub mod file_sink;
+    pub mod byte_blob_loader;
+    pub mod byte_stream;
+    pub mod file_reader;
+    pub mod script_execution_context;
+
+    pub use streams::NetworkSink;
+    pub use streams::HTTPResponseSink;
+    pub use streams::HTTPSResponseSink;
+    pub use streams::H3ResponseSink;
+    pub use streams::HTTPServerWritable;
+}
 
 // TODO: make this JSGlobalObject local for better security
 // TODO(port): `bun.ObjectPool` / `bun.ByteList` are not in the crate map; assuming `bun_collections`.
+// TODO(b2-blocked): bun_collections::ObjectPool generic arity mismatch — verify signature.
+#[cfg(any())]
 pub type ByteListPool = bun_collections::ObjectPool<bun_collections::ByteList, 8>;
 
-// ─── submodules under ./webcore/ ─────────────────────────────────────────────
-pub mod crypto;
-pub use bun_jsc::abort_signal::AbortSignal;
-pub use bun_jsc::web_worker;
-pub use bun_event_loop::auto_flusher;
+// ─── compiling submodules ────────────────────────────────────────────────────
+#[path = "webcore/EncodingLabel.rs"]
 pub mod encoding_label;
 pub use encoding_label::EncodingLabel;
-pub mod fetch;
-pub mod response;
-pub mod bake_response;
-pub mod text_decoder;
-pub mod text_encoder;
-pub mod text_encoder_stream_encoder;
-pub mod encoding;
-pub mod readable_stream;
-pub mod blob;
-pub mod s3_stat;
-pub use s3_stat::S3Stat;
-pub mod resumable_sink;
-pub use resumable_sink::ResumableFetchSink;
-pub use resumable_sink::ResumableS3UploadSink;
-pub use resumable_sink::ResumableSinkBackpressure;
-pub mod s3_client;
-pub use s3_client::S3Client;
-pub mod request;
-pub mod body;
-pub mod cookie_map;
-pub use cookie_map::CookieMap;
-pub mod object_url_registry;
-pub mod sink;
-pub mod file_sink;
-pub use bun_jsc::fetch_headers::FetchHeaders;
-pub mod byte_blob_loader;
-pub mod byte_stream;
-pub mod file_reader;
-pub mod script_execution_context;
 
-pub mod streams;
-pub use streams::NetworkSink;
-pub use streams::HTTPResponseSink;
-pub use streams::HTTPSResponseSink;
-pub use streams::H3ResponseSink;
-pub use streams::HTTPServerWritable;
+#[doc(hidden)]
+#[path = "webcore/s3/multipart_options.rs"]
+pub mod multipart_options_impl;
+pub mod s3 {
+    pub use super::multipart_options_impl as multipart_options;
+    pub use super::multipart_options_impl::MultiPartUploadOptions;
+}
+
+pub mod streams {
+    // TODO(b2-blocked): bun_jsc::* — full streams.rs draft gated.
+    pub struct Result(());
+}
 
 // NOTE(port): the Zig `comptime { WebSocketClient.exportAll(); ... }` block forces export of
 // `extern "C"` symbols from `src/http/websocket_http_client.zig`. In Rust, those become
 // `#[unsafe(no_mangle)] pub extern "C" fn` in `bun_http::websocket_http_client` and need no
 // force-reference here. Dropped per PORTING.md §Don't translate.
 
+#[cfg(any())]
 pub enum PathOrFileDescriptor {
     // TODO(port): `jsc.ZigString.Slice` mapped to `bun_str::zig_string::Slice` — verify path in Phase B.
+    // TODO(b2-blocked): bun_string::zig_string::Slice
     Path(bun_str::zig_string::Slice),
     Fd(bun_sys::Fd),
 }

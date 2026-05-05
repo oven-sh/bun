@@ -2,8 +2,8 @@ use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
-use bun_jsc::{JSGlobalObject, JSValue};
-use bun_str::ZigString;
+use crate::{JSGlobalObject, JSValue};
+use bun_string::ZigString;
 
 /// Opaque FFI handle to WebCore::URLSearchParams (lives on the C++ side).
 #[repr(C)]

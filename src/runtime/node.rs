@@ -5,65 +5,74 @@
 
 use core::fmt;
 
-use bun_jsc::{self as jsc, ArrayBuffer, JSGlobalObject, JSValue, JsResult};
-use bun_sys::{self as sys, Fd, SystemErrno};
+// ─── compiling submodules ─────────────────────────────────────────────────
+#[path = "node/nodejs_error_code.rs"]
+pub mod nodejs_error_code;
+pub use nodejs_error_code::Code as ErrorCode;
 
 // ─── submodule re-exports ─────────────────────────────────────────────────
-// TODO(port): Phase B wires the `mod` declarations for the `node/` subdir;
-// these `pub use` lines mirror the Zig `pub const X = @import("./node/...")`.
+// All `node/` subdir modules depend heavily on `bun_jsc` (currently broken
+// under concurrent B-2 work) — gated until the lower tier is green.
+// Phase-A drafts remain on disk; see #[cfg(any())] block below.
+#[cfg(any())]
+mod _gated_submods {
+    /// node:fs
+    pub use crate::node::node_fs as fs;
+    /// node:path
+    pub use crate::node::path;
+    /// node:crypto
+    pub use crate::node::node_crypto_binding as crypto;
+    /// node:os
+    pub use crate::node::node_os as os;
+    /// node:process
+    pub use crate::node::node_process as process;
+    pub use crate::node::util::validators;
+    pub use crate::node::nodejs_error_code::Code as ErrorCode;
 
-/// node:fs
-pub use crate::node::node_fs as fs;
-/// node:path
-pub use crate::node::path;
-/// node:crypto
-pub use crate::node::node_crypto_binding as crypto;
-/// node:os
-pub use crate::node::node_os as os;
-/// node:process
-pub use crate::node::node_process as process;
-pub use crate::node::util::validators;
-pub use crate::node::nodejs_error_code::Code as ErrorCode;
+    pub use bun_jsc::MarkedArrayBuffer as Buffer;
 
-pub use jsc::MarkedArrayBuffer as Buffer;
+    pub use self::types::PathOrBlob;
+    pub use self::types::Dirent;
+    pub use self::types::FileSystemFlags;
+    pub use self::types::PathOrFileDescriptor;
+    pub use self::types::mode_from_js;
+    pub use self::types::VectorArrayBuffer;
+    pub use self::types::Valid;
+    pub use self::types::PathLike;
+    pub use self::types::CallbackTask;
+    pub use self::types::PathOrBuffer;
+    pub use self::types::js_assert_encoding_valid;
+    pub use self::types::Encoding;
+    pub use self::types::StringOrBuffer;
+    pub use self::types::BlobOrStringOrBuffer;
 
-pub use self::types::PathOrBlob;
-pub use self::types::Dirent;
-pub use self::types::FileSystemFlags;
-pub use self::types::PathOrFileDescriptor;
-pub use self::types::mode_from_js;
-pub use self::types::VectorArrayBuffer;
-pub use self::types::Valid;
-pub use self::types::PathLike;
-pub use self::types::CallbackTask;
-pub use self::types::PathOrBuffer;
-pub use self::types::js_assert_encoding_valid;
-pub use self::types::Encoding;
-pub use self::types::StringOrBuffer;
-pub use self::types::BlobOrStringOrBuffer;
+    pub use crate::node::fs_events as FSEvents;
+    pub use self::stat::Stats;
+    pub use self::stat::StatsBig;
+    pub use self::stat::StatsSmall;
 
-pub use crate::node::fs_events as FSEvents;
-pub use self::stat::Stats;
-pub use self::stat::StatsBig;
-pub use self::stat::StatsSmall;
+    pub use self::statfs::StatFSSmall;
+    pub use self::statfs::StatFSBig;
+    pub use self::statfs::StatFS;
 
-pub use self::statfs::StatFSSmall;
-pub use self::statfs::StatFSBig;
-pub use self::statfs::StatFS;
+    pub use crate::node::time_like;
+    pub use self::time_like::TimeLike;
+    pub use self::time_like::from_js as time_like_from_js;
+
+    use crate::node::stat;
+    use crate::node::statfs;
+    use crate::node::types;
+}
 
 #[cfg(unix)]
-pub type uid_t = bun_sys::posix::uid_t;
+pub type uid_t = libc::uid_t;
 #[cfg(not(unix))]
-pub type uid_t = bun_sys::windows::libuv::uv_uid_t;
+pub type uid_t = u32; // TODO(b2-blocked): bun_sys::windows::libuv::uv_uid_t
 
 #[cfg(unix)]
-pub type gid_t = bun_sys::posix::gid_t;
+pub type gid_t = libc::gid_t;
 #[cfg(not(unix))]
-pub type gid_t = bun_sys::windows::libuv::uv_gid_t;
-
-pub use crate::node::time_like;
-pub use self::time_like::TimeLike;
-pub use self::time_like::from_js as time_like_from_js;
+pub type gid_t = u32; // TODO(b2-blocked): bun_sys::windows::libuv::uv_gid_t
 
 /// Node.js expects the error to include contextual information
 /// - "syscall"
@@ -86,10 +95,9 @@ pub enum MaybeTag {
 }
 
 impl<R, E> Maybe<R, E> {
-    pub type ErrorType = E;
-    pub type ReturnType = R;
-
-    pub type Tag = MaybeTag;
+    // PORT NOTE: Zig `pub const ErrorType = ErrorTypeT` etc. would be inherent
+    // associated types in Rust, which are unstable. Dropped — callers use the
+    // generic params directly. `Tag` is exposed at module scope as `MaybeTag`.
 
     #[inline]
     pub fn todo() -> Self
@@ -214,21 +222,28 @@ impl<E> Maybe<bool, E> {
 }
 
 // ─── methods that assume `E` carries an errno (i.e. `bun_sys::Error`) ─────
-
-impl<R> Maybe<R, sys::Error> {
+// Gated: depends on `bun_sys::ErrorInt` (missing), `bun_sys::posix::E::INTR`/
+// `SUCCESS` shape, `bun_sys::Tag::access` (missing), `bun_core::errno_to_zig_err`
+// (missing), and `bun_jsc::{ArrayBuffer, JSGlobalObject, JSValue}` method
+// surface (bun_jsc broken).
+#[cfg(any())]
+impl<R> Maybe<R, bun_sys::Error> {
     /// This value is technically garbage, but that is okay as `.aborted` is
     /// only meant to be returned in an operation when there is an aborted
     /// `AbortSignal` object associated with the operation.
     pub fn aborted() -> Self {
-        Maybe::Err(sys::Error {
-            errno: sys::posix::E::INTR as sys::ErrorInt,
-            syscall: sys::Tag::access,
+        // TODO(b2-blocked): bun_sys::Tag::access
+        // TODO(b2-blocked): bun_sys::ErrorInt
+        Maybe::Err(bun_sys::Error {
+            errno: bun_sys::posix::E::INTR as bun_sys::ErrorInt,
+            syscall: bun_sys::Tag::access,
             ..Default::default()
         })
     }
 
     pub fn unwrap(self) -> Result<R, bun_core::Error> {
         // TODO(port): narrow error set
+        // TODO(b2-blocked): bun_core::errno_to_zig_err
         match self {
             Maybe::Result(r) => Ok(r),
             Maybe::Err(e) => Err(bun_core::errno_to_zig_err(e.errno)),
@@ -237,44 +252,46 @@ impl<R> Maybe<R, sys::Error> {
 
     #[inline]
     pub fn init_err_with_p(
-        e: SystemErrno,
-        syscall: sys::Tag,
+        e: bun_sys::SystemErrno,
+        syscall: bun_sys::Tag,
         file_path: impl AsRef<[u8]>,
-    ) -> Maybe<R, sys::Error> {
-        Maybe::Err(sys::Error {
-            errno: e as sys::ErrorInt,
+    ) -> Maybe<R, bun_sys::Error> {
+        Maybe::Err(bun_sys::Error {
+            errno: e as bun_sys::ErrorInt,
             syscall,
             path: file_path.as_ref().into(),
             ..Default::default()
         })
     }
 
-    pub fn to_array_buffer(self, global_object: &JSGlobalObject) -> JSValue
+    pub fn to_array_buffer(self, global_object: &crate::jsc::JSGlobalObject) -> crate::jsc::JSValue
     where
         R: Into<Vec<u8>>,
     {
+        // TODO(b2-blocked): bun_jsc::ArrayBuffer::from_bytes
+        // TODO(b2-blocked): bun_jsc::TypedArrayType
         match self {
             Maybe::Result(r) => {
-                ArrayBuffer::from_bytes(r.into(), jsc::TypedArrayType::ArrayBuffer)
+                bun_jsc::ArrayBuffer::from_bytes(r.into(), bun_jsc::TypedArrayType::ArrayBuffer)
                     .to_js(global_object, None)
             }
             Maybe::Err(e) => e.to_js(global_object),
         }
     }
 
-    pub fn get_errno(self) -> sys::posix::E {
+    pub fn get_errno(self) -> bun_sys::posix::E {
         match self {
-            Maybe::Result(_) => sys::posix::E::SUCCESS,
+            Maybe::Result(_) => bun_sys::posix::E::SUCCESS,
             Maybe::Err(e) => {
                 // SAFETY: `e.errno` was produced from `@intFromEnum(posix.E)` /
                 // `translateToErrInt`, so it is always a valid `posix::E`
                 // discriminant.
-                unsafe { core::mem::transmute::<sys::ErrorInt, sys::posix::E>(e.errno) }
+                unsafe { core::mem::transmute::<bun_sys::ErrorInt, bun_sys::posix::E>(e.errno) }
             }
         }
     }
 
-    pub fn errno_sys<Rc: SyscallRc>(rc: Rc, syscall: sys::Tag) -> Option<Self> {
+    pub fn errno_sys<Rc: SyscallRc>(rc: Rc, syscall: bun_sys::Tag) -> Option<Self> {
         #[cfg(windows)]
         {
             if !Rc::IS_NTSTATUS {
@@ -283,9 +300,9 @@ impl<R> Maybe<R, sys::Error> {
                 }
             }
         }
-        match sys::get_errno(rc) {
-            sys::posix::E::SUCCESS => None,
-            e => Some(Maybe::Err(sys::Error {
+        match bun_sys::get_errno(rc) {
+            bun_sys::posix::E::SUCCESS => None,
+            e => Some(Maybe::Err(bun_sys::Error {
                 // always truncate
                 errno: translate_to_err_int(e),
                 syscall,
@@ -294,8 +311,8 @@ impl<R> Maybe<R, sys::Error> {
         }
     }
 
-    pub fn errno<Er: IntoErrInt>(err: Er, syscall: sys::Tag) -> Self {
-        Maybe::Err(sys::Error {
+    pub fn errno<Er: IntoErrInt>(err: Er, syscall: bun_sys::Tag) -> Self {
+        Maybe::Err(bun_sys::Error {
             // always truncate
             errno: translate_to_err_int(err),
             syscall,
@@ -303,7 +320,7 @@ impl<R> Maybe<R, sys::Error> {
         })
     }
 
-    pub fn errno_sys_fd<Rc: SyscallRc>(rc: Rc, syscall: sys::Tag, fd: Fd) -> Option<Self> {
+    pub fn errno_sys_fd<Rc: SyscallRc>(rc: Rc, syscall: bun_sys::Tag, fd: bun_sys::Fd) -> Option<Self> {
         #[cfg(windows)]
         {
             if !Rc::IS_NTSTATUS {
@@ -312,9 +329,9 @@ impl<R> Maybe<R, sys::Error> {
                 }
             }
         }
-        match sys::get_errno(rc) {
-            sys::posix::E::SUCCESS => None,
-            e => Some(Maybe::Err(sys::Error {
+        match bun_sys::get_errno(rc) {
+            bun_sys::posix::E::SUCCESS => None,
+            e => Some(Maybe::Err(bun_sys::Error {
                 // Always truncate
                 errno: translate_to_err_int(e),
                 syscall,
@@ -326,7 +343,7 @@ impl<R> Maybe<R, sys::Error> {
 
     pub fn errno_sys_p<Rc: SyscallRc>(
         rc: Rc,
-        syscall: sys::Tag,
+        syscall: bun_sys::Tag,
         file_path: impl AsRef<[u8]>,
     ) -> Option<Self> {
         // PORT NOTE: Zig `@compileError` on `u16` paths is enforced by the
@@ -339,9 +356,9 @@ impl<R> Maybe<R, sys::Error> {
                 }
             }
         }
-        match sys::get_errno(rc) {
-            sys::posix::E::SUCCESS => None,
-            e => Some(Maybe::Err(sys::Error {
+        match bun_sys::get_errno(rc) {
+            bun_sys::posix::E::SUCCESS => None,
+            e => Some(Maybe::Err(bun_sys::Error {
                 // Always truncate
                 errno: translate_to_err_int(e),
                 syscall,
@@ -353,8 +370,8 @@ impl<R> Maybe<R, sys::Error> {
 
     pub fn errno_sys_fp<Rc: SyscallRc>(
         rc: Rc,
-        syscall: sys::Tag,
-        fd: Fd,
+        syscall: bun_sys::Tag,
+        fd: bun_sys::Fd,
         file_path: impl AsRef<[u8]>,
     ) -> Option<Self> {
         #[cfg(windows)]
@@ -365,9 +382,9 @@ impl<R> Maybe<R, sys::Error> {
                 }
             }
         }
-        match sys::get_errno(rc) {
-            sys::posix::E::SUCCESS => None,
-            e => Some(Maybe::Err(sys::Error {
+        match bun_sys::get_errno(rc) {
+            bun_sys::posix::E::SUCCESS => None,
+            e => Some(Maybe::Err(bun_sys::Error {
                 // Always truncate
                 errno: translate_to_err_int(e),
                 syscall,
@@ -380,7 +397,7 @@ impl<R> Maybe<R, sys::Error> {
 
     pub fn errno_sys_pd<Rc: SyscallRc>(
         rc: Rc,
-        syscall: sys::Tag,
+        syscall: bun_sys::Tag,
         file_path: impl AsRef<[u8]>,
         dest: impl AsRef<[u8]>,
     ) -> Option<Self> {
@@ -393,9 +410,9 @@ impl<R> Maybe<R, sys::Error> {
                 }
             }
         }
-        match sys::get_errno(rc) {
-            sys::posix::E::SUCCESS => None,
-            e => Some(Maybe::Err(sys::Error {
+        match bun_sys::get_errno(rc) {
+            bun_sys::posix::E::SUCCESS => None,
+            e => Some(Maybe::Err(bun_sys::Error {
                 // Always truncate
                 errno: translate_to_err_int(e),
                 syscall,
@@ -407,9 +424,12 @@ impl<R> Maybe<R, sys::Error> {
     }
 }
 
+// Gated: bun_css::BasicParseError lacks `into_default_parse_error`.
+#[cfg(any())]
 impl<R> Maybe<R, bun_css::BasicParseError> {
     #[inline]
     pub fn to_css_result(self) -> Maybe<R, bun_css::ParseError<bun_css::ParserError>> {
+        // TODO(b2-blocked): bun_css::BasicParseError::into_default_parse_error
         // Zig comptime-switched on `ErrorTypeT`; in Rust we express each arm
         // as a separate inherent impl. The `ParseError(ParserError)` and
         // catch-all arms were `@compileError`s and need no Rust body.
@@ -421,67 +441,76 @@ impl<R> Maybe<R, bun_css::BasicParseError> {
 }
 
 // ─── to_js: comptime @typeInfo dispatch → trait ───────────────────────────
+// Gated: bun_jsc broken; JSValue/ArrayBuffer have no methods on stub.
+#[cfg(any())]
+mod _gated_to_js {
+    use super::*;
+    use bun_jsc::{ArrayBuffer, JSGlobalObject, JSValue, JsResult};
 
-impl<R, E> Maybe<R, E>
-where
-    R: MaybeToJs,
-    E: MaybeToJs,
-{
-    pub fn to_js(self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        match self {
-            Maybe::Result(r) => r.maybe_to_js(global_object),
-            Maybe::Err(e) => e.maybe_to_js(global_object),
+    impl<R, E> Maybe<R, E>
+    where
+        R: MaybeToJs,
+        E: MaybeToJs,
+    {
+        pub fn to_js(self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+            match self {
+                Maybe::Result(r) => r.maybe_to_js(global_object),
+                Maybe::Err(e) => e.maybe_to_js(global_object),
+            }
         }
     }
-}
 
-/// Replaces the Zig `switch (ReturnType) { ... @typeInfo ... }` reflection in
-/// `Maybe.toJS`. Each concrete `R`/`E` opts in by implementing this trait.
-// TODO(port): proc-macro / blanket impls for numeric & struct types may be
-// preferable in Phase B; the explicit impls below cover the arms the Zig
-// `switch` handled directly.
-pub trait MaybeToJs {
-    fn maybe_to_js(self, global_object: &JSGlobalObject) -> JsResult<JSValue>;
-}
-
-impl MaybeToJs for JSValue {
-    fn maybe_to_js(self, _global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(self)
+    /// Replaces the Zig `switch (ReturnType) { ... @typeInfo ... }` reflection in
+    /// `Maybe.toJS`. Each concrete `R`/`E` opts in by implementing this trait.
+    // TODO(port): proc-macro / blanket impls for numeric & struct types may be
+    // preferable in Phase B; the explicit impls below cover the arms the Zig
+    // `switch` handled directly.
+    pub trait MaybeToJs {
+        fn maybe_to_js(self, global_object: &JSGlobalObject) -> JsResult<JSValue>;
     }
-}
 
-impl MaybeToJs for () {
-    fn maybe_to_js(self, _global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::UNDEFINED)
+    impl MaybeToJs for JSValue {
+        fn maybe_to_js(self, _global_object: &JSGlobalObject) -> JsResult<JSValue> {
+            Ok(self)
+        }
     }
-}
 
-impl MaybeToJs for bool {
-    fn maybe_to_js(self, _global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::from(self))
+    impl MaybeToJs for () {
+        fn maybe_to_js(self, _global_object: &JSGlobalObject) -> JsResult<JSValue> {
+            // TODO(b2-blocked): bun_jsc::JSValue::UNDEFINED
+            Ok(JSValue::UNDEFINED)
+        }
     }
-}
 
-impl MaybeToJs for ArrayBuffer {
-    fn maybe_to_js(self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        self.to_js(global_object)
+    impl MaybeToJs for bool {
+        fn maybe_to_js(self, _global_object: &JSGlobalObject) -> JsResult<JSValue> {
+            // TODO(b2-blocked): bun_jsc::JSValue::from(bool)
+            Ok(JSValue::from(self))
+        }
     }
-}
 
-impl MaybeToJs for Vec<u8> {
-    fn maybe_to_js(self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        ArrayBuffer::from_bytes(self, jsc::TypedArrayType::ArrayBuffer).to_js(global_object)
+    impl MaybeToJs for ArrayBuffer {
+        fn maybe_to_js(self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+            // TODO(b2-blocked): bun_jsc::ArrayBuffer::to_js
+            self.to_js(global_object)
+        }
     }
-}
 
-// TODO(port): the Zig fallback arms dispatched on `@typeInfo(ReturnType)`:
-//   .int/.float          => JSValue.jsNumber(r)
-//   .struct/.enum/.opaque/.union => r.toJS(globalObject)
-//   .pointer (zig string) => ZigString.init(..).withEncoding().toJS(..)
-//   .pointer (other)     => r.toJS(globalObject)
-// In Rust these become per-type `MaybeToJs` impls (or a blanket
-// `impl<T: jsc::ToJs> MaybeToJs for T`). Phase B should add the blanket impl
-// once `jsc::ToJs` exists; left intentionally un-generated here.
+    impl MaybeToJs for Vec<u8> {
+        fn maybe_to_js(self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+            ArrayBuffer::from_bytes(self, bun_jsc::TypedArrayType::ArrayBuffer).to_js(global_object)
+        }
+    }
+
+    // TODO(port): the Zig fallback arms dispatched on `@typeInfo(ReturnType)`:
+    //   .int/.float          => JSValue.jsNumber(r)
+    //   .struct/.enum/.opaque/.union => r.toJS(globalObject)
+    //   .pointer (zig string) => ZigString.init(..).withEncoding().toJS(..)
+    //   .pointer (other)     => r.toJS(globalObject)
+    // In Rust these become per-type `MaybeToJs` impls (or a blanket
+    // `impl<T: jsc::ToJs> MaybeToJs for T`). Phase B should add the blanket impl
+    // once `jsc::ToJs` exists; left intentionally un-generated here.
+}
 
 // ─── Display ──────────────────────────────────────────────────────────────
 
@@ -511,32 +540,34 @@ pub trait SyscallRc: Copy {
 
 /// Abstracts over the `err: anytype` parameter of `translateToErrInt`.
 pub trait IntoErrInt: Copy {
-    fn into_err_int(self) -> sys::ErrorInt;
+    fn into_err_int(self) -> u16;
 }
 
-impl IntoErrInt for sys::posix::E {
-    fn into_err_int(self) -> sys::ErrorInt {
-        // @truncate(@intFromEnum(err))
-        self as sys::ErrorInt
+// Gated: depends on bun_sys::posix::E enum repr matching ErrorInt and
+// bun_sys::windows::translate_ntstatus_to_errno.
+#[cfg(any())]
+mod _gated_err_int {
+    use super::*;
+    impl IntoErrInt for bun_sys::posix::E {
+        fn into_err_int(self) -> bun_sys::ErrorInt {
+            // @truncate(@intFromEnum(err))
+            // TODO(b2-blocked): bun_sys::ErrorInt
+            self as bun_sys::ErrorInt
+        }
+    }
+
+    #[cfg(windows)]
+    impl IntoErrInt for bun_sys::windows::NTSTATUS {
+        fn into_err_int(self) -> bun_sys::ErrorInt {
+            // TODO(b2-blocked): bun_sys::windows::translate_ntstatus_to_errno
+            bun_sys::windows::translate_ntstatus_to_errno(self) as bun_sys::ErrorInt
+        }
     }
 }
 
-#[cfg(windows)]
-impl IntoErrInt for bun_sys::windows::NTSTATUS {
-    fn into_err_int(self) -> sys::ErrorInt {
-        bun_sys::windows::translate_ntstatus_to_errno(self) as sys::ErrorInt
-    }
-}
-
-fn translate_to_err_int<Er: IntoErrInt>(err: Er) -> sys::ErrorInt {
+fn translate_to_err_int<Er: IntoErrInt>(err: Er) -> u16 {
     err.into_err_int()
 }
-
-// ─── private module aliases (mirrors bottom-of-file `@import`s) ───────────
-
-use crate::node::stat;
-use crate::node::statfs;
-use crate::node::types;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

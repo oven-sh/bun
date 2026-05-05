@@ -1,91 +1,64 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
-// AUTOGEN: mod declarations only — real exports added in B-1.
+//! JSC bridge crate for `bun_sys`. Adds `to_js`/`from_js` extension surfaces
+//! onto `bun_sys::{Fd, Error, SignalCode}` without pulling JSC types into the
+//! syscall layer.
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-1 gate-and-stub: Phase-A draft modules are preserved on disk but gated
-// behind `#[cfg(any())]` because dependency `bun_jsc` does not yet compile
-// (254 errors). Minimal stub surface is exposed below so downstream crates
-// can `use bun_sys_jsc::*`. Un-gate in B-2 once bun_jsc is green.
-// TODO(b1): bun_jsc::{JSGlobalObject, JSValue, JSPromise, JsResult, CallFrame, SystemError, RangeErrorOptions, host_fn} missing
+// B-2 un-gate: Phase-A draft modules are now compiled. `bun_jsc` itself does
+// not yet build (18 errors), so this crate cannot `use bun_jsc::*` directly.
+// Instead, the JSC opaque handle types are shimmed locally below and the
+// modules import them from `crate::`. Fn bodies that need real `bun_jsc`
+// methods (`JSValue::get_number`, `throw_range_error`, the `#[host_fn]`
+// proc-macro, …) are re-gated with `#[cfg(any())]` and a `todo!()` fallback,
+// each tagged `// TODO(b2-blocked): bun_jsc::Symbol`.
+//
+// Once `bun_jsc` is green, swap the shim block for
+// `pub use bun_jsc::{JSValue, JSGlobalObject, JSPromise, CallFrame, JsResult, JsError};`
+// and drop the per-body gates.
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(any())]
 pub mod signal_code_jsc;
-#[cfg(any())]
 pub mod error_jsc;
-#[cfg(any())]
 pub mod fd_jsc;
 
-// ───── stub surface ───────────────────────────────────────────────────────
+pub use error_jsc::ErrorJsc;
+pub use fd_jsc::FdJsc;
 
-/// Opaque stand-in for `bun_jsc::JSGlobalObject` while bun_jsc is gated.
-pub struct JSGlobalObject(());
-/// Opaque stand-in for `bun_jsc::JSValue` while bun_jsc is gated.
-pub struct JSValue(());
-/// Opaque stand-in for `bun_jsc::JSPromise` while bun_jsc is gated.
-pub struct JSPromise(());
-/// Opaque stand-in for `bun_jsc::CallFrame` while bun_jsc is gated.
-pub struct CallFrame(());
-/// Stand-in for `bun_jsc::JsResult<T>` while bun_jsc is gated.
-pub type JsResult<T> = Result<T, ()>;
+// ──────────────────────────────────────────────────────────────────────────
+// Crate-local JSC type shims (bun_jsc is not yet a usable dependency).
+// These are layout-compatible with bun_jsc's B-1 stub_ty! opaque newtypes so
+// downstream callers can switch to `bun_jsc::*` without signature churn.
+// ──────────────────────────────────────────────────────────────────────────
 
-pub mod signal_code_jsc {
-    use super::*;
-    // TODO(b1): bun_sys::SignalCode missing from stub surface
-    pub struct SignalCode(pub u8);
-    pub fn from_js(_arg: JSValue, _global_this: &JSGlobalObject) -> JsResult<SignalCode> {
-        todo!("gated: bun_jsc unavailable")
-    }
-}
+/// Stand-in for `bun_jsc::JSValue` (`#[repr(transparent)] i64`, `Copy`, `!Send`).
+// TODO(b2-blocked): bun_jsc::JSValue
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct JSValue(pub usize);
 
-pub mod error_jsc {
-    use super::*;
-    pub trait ErrorJsc {
-        fn to_js(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-            todo!("gated: bun_jsc unavailable")
-        }
-        fn to_js_with_async_stack(
-            &self,
-            _global: &JSGlobalObject,
-            _promise: &JSPromise,
-        ) -> JsResult<JSValue> {
-            todo!("gated: bun_jsc unavailable")
-        }
-    }
-    impl ErrorJsc for bun_sys::Error {}
+/// Stand-in for `bun_jsc::JSGlobalObject` (always borrowed, never owned).
+// TODO(b2-blocked): bun_jsc::JSGlobalObject
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct JSGlobalObject(pub usize);
 
-    pub struct TestingAPIs;
-    impl TestingAPIs {
-        pub fn sys_error_name_from_libuv(
-            _global: &JSGlobalObject,
-            _frame: &CallFrame,
-        ) -> JsResult<JSValue> {
-            todo!("gated: bun_jsc unavailable")
-        }
-        pub fn translate_uv_error_to_e(
-            _global: &JSGlobalObject,
-            _frame: &CallFrame,
-        ) -> JsResult<JSValue> {
-            todo!("gated: bun_jsc unavailable")
-        }
-    }
-}
+/// Stand-in for `bun_jsc::JSPromise`.
+// TODO(b2-blocked): bun_jsc::JSPromise
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct JSPromise(pub usize);
 
-pub mod fd_jsc {
-    use super::*;
-    pub trait FdJsc: Sized {
-        fn from_js(_value: JSValue) -> Option<Self> {
-            todo!("gated: bun_jsc unavailable")
-        }
-        fn from_js_validated(_value: JSValue, _global: &JSGlobalObject) -> JsResult<Option<Self>> {
-            todo!("gated: bun_jsc unavailable")
-        }
-        fn to_js(self, _global: &JSGlobalObject) -> JSValue {
-            todo!("gated: bun_jsc unavailable")
-        }
-        fn to_js_without_making_lib_uv_owned(self) -> JSValue {
-            todo!("gated: bun_jsc unavailable")
-        }
-    }
-    impl FdJsc for bun_sys::Fd {}
-}
+/// Stand-in for `bun_jsc::CallFrame`.
+// TODO(b2-blocked): bun_jsc::CallFrame
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CallFrame(pub usize);
+
+/// Stand-in for `bun_jsc::JsError` (opaque "exception pending" marker).
+// TODO(b2-blocked): bun_jsc::JsError
+#[derive(Debug, Clone, Copy, Default)]
+pub struct JsError;
+
+/// Stand-in for `bun_jsc::JsResult<T>` (= `Result<T, JsError>`).
+// TODO(b2-blocked): bun_jsc::JsResult
+pub type JsResult<T> = core::result::Result<T, JsError>;

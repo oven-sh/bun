@@ -86,7 +86,13 @@ impl Optional {
 
     pub fn call(&mut self, global: &JSGlobalObject, args: &[JSValue]) -> JSValue {
         let Some(function) = self.try_swap() else { return JSValue::ZERO };
-        function.call(global, args)
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_jsc::JSValue::call (JSValue.rs gated)
+            return function.call(global, args);
+        }
+        let _ = (function, global, args);
+        JSValue::ZERO
     }
 
     pub fn get(&self) -> Option<JSValue> {
@@ -158,10 +164,11 @@ impl Impl {
 
     pub fn get(this: NonNull<Impl>) -> JSValue {
         // `this` is actually a pointer to a `JSC::JSValue`; see Strong.cpp.
-        let js_value: *const crate::DecodedJSValue = this.as_ptr().cast();
-        // SAFETY: HandleSlot storage is a live, aligned JSC::JSValue for the
-        // lifetime of the Impl handle.
-        unsafe { (*js_value).encode() }
+        // SAFETY: HandleSlot storage is a live, aligned JSC::JSValue (encoded i64) for the
+        // lifetime of the Impl handle. JSValue stub is `#[repr(transparent)] usize` (same
+        // size); reading it directly is the encode() operation.
+        // TODO(b2): once DecodedJSValue.rs un-gates, switch back to `(*js_value).encode()`.
+        unsafe { *this.as_ptr().cast::<JSValue>() }
     }
 
     pub fn set(this: NonNull<Impl>, global: &JSGlobalObject, value: JSValue) {
@@ -191,7 +198,8 @@ unsafe extern "C" {
     fn Bun__StrongRef__clear(this: *mut Impl);
 }
 
-// TODO(port): verify module path for DeprecatedStrong.zig re-export
+// TODO(b2-blocked): bun_jsc::deprecated_strong (DeprecatedStrong.rs still gated)
+#[cfg(any())]
 pub use crate::deprecated_strong as deprecated;
 
 // ──────────────────────────────────────────────────────────────────────────

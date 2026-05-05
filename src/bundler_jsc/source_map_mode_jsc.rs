@@ -2,13 +2,19 @@
 //! `options_types/schema.zig` so that file has no `JSGlobalObject`/`JSValue`
 //! references.
 
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
-use bun_options_types::schema::api::SourceMapMode;
+use crate::{JSGlobalObject, JSValue, JsResult};
 
+// TODO(b2-blocked): bun_options_types::schema::api::SourceMapMode
+// schema.rs is a peechy-generated stub that does not yet emit `SourceMapMode`.
+// The fn is gated whole (signature names the missing type).
+#[cfg(any())]
 pub fn source_map_mode_from_js(
     global: &JSGlobalObject,
     value: JSValue,
-) -> JsResult<Option<SourceMapMode>> {
+) -> JsResult<Option<bun_options_types::schema::api::SourceMapMode>> {
+    use bun_options_types::schema::api::SourceMapMode;
+    // TODO(b2-blocked): bun_jsc::JSValue::is_string
+    // TODO(b2-blocked): bun_jsc::JSValue::to_slice_or_null
     if value.is_string() {
         let str = value.to_slice_or_null(global)?;
         let utf8 = str.slice();

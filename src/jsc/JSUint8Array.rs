@@ -18,7 +18,7 @@ impl JSUint8Array {
         // Using byte_add preserves provenance vs. the Zig `@ptrFromInt(@intFromPtr(..)+off)`.
         unsafe {
             (self as *const Self)
-                .byte_add(sizes::Bun_FFI_PointerOffsetToTypedArrayVector)
+                .byte_add(sizes::BUN_FFI_POINTER_OFFSET_TO_TYPED_ARRAY_VECTOR)
                 .cast::<*mut u8>()
                 .read()
         }
@@ -29,16 +29,22 @@ impl JSUint8Array {
         // cell where the typed-array length is stored.
         unsafe {
             (self as *const Self)
-                .byte_add(sizes::Bun_FFI_PointerOffsetToTypedArrayLength)
+                .byte_add(sizes::BUN_FFI_POINTER_OFFSET_TO_TYPED_ARRAY_LENGTH)
                 .cast::<usize>()
                 .read()
         }
     }
 
     pub fn slice(&mut self) -> &mut [u8] {
-        // SAFETY: `ptr()` and `len()` describe the live backing store of this typed
-        // array; JSC guarantees `ptr` is valid for `len` bytes while the cell is alive.
-        unsafe { core::slice::from_raw_parts_mut(self.ptr(), self.len()) }
+        // PORT NOTE: detached/empty JSUint8Array has ptr=null, len=0. Zig `ptr[0..0]` is
+        // valid for any ptr; Rust `from_raw_parts_mut` requires non-null even at len 0.
+        let p = self.ptr();
+        let n = self.len();
+        if n == 0 || p.is_null() {
+            return &mut [];
+        }
+        // SAFETY: JSC guarantees `p` is valid for `n` bytes while the cell is alive.
+        unsafe { core::slice::from_raw_parts_mut(p, n) }
     }
 
     /// `bytes` must come from `bun.default_allocator` (the global mimalloc allocator);

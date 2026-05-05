@@ -1,6 +1,14 @@
 use core::ffi::c_int;
 
-use bun_core::Ordinal;
+// TODO(b2-blocked): bun_core::Ordinal — `bun.Ordinal` (= `OrdinalT(c_int)`, a 1-based/0-based
+// index newtype) is not yet ported into bun_core. Until it lands, model it locally as a
+// `#[repr(transparent)] c_int` so the extern-struct layout matches Zig exactly.
+#[repr(transparent)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub struct Ordinal(pub c_int);
+impl Ordinal {
+    pub const INVALID: Self = Self(-1);
+}
 
 /// Represents a position in source code with line and column information
 #[repr(C)]
@@ -27,6 +35,8 @@ impl ZigStackFramePosition {
 
     // TODO(port): narrow error set
     // TODO(port): `reader: anytype` — bound by whatever trait provides `read_value::<i32>()`
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_core::Ordinal — type does not exist in bun_core yet
     pub fn decode<R>(reader: &mut R) -> Result<Self, bun_core::Error>
     where
         R: ?Sized, // TODO(port): add proper Reader trait bound
@@ -41,6 +51,8 @@ impl ZigStackFramePosition {
     }
 
     // TODO(port): `writer: anytype` — bound by whatever trait provides `write_int(i32)`
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_core::Ordinal — type does not exist in bun_core yet
     pub fn encode<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
     where
         W: ?Sized, // TODO(port): add proper Writer trait bound

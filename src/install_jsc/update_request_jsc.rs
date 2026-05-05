@@ -1,11 +1,22 @@
 //! JSC bridge for `bun.install.PackageManager.UpdateRequest`.
 
-use bun_install::package_manager::update_request::{self, UpdateRequest};
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
-use bun_logger::Log;
-use bun_str::String as BunString;
+use bun_jsc::{JSGlobalObject, JSValue};
 
-pub fn from_js(global: &JSGlobalObject, input: JSValue) -> JsResult<JSValue> {
+// TODO(b2-blocked): bun_jsc::JsResult
+// TODO(b2-blocked): bun_install::package_manager::update_request
+// TODO(b2-blocked): bun_install::Subcommand
+// TODO(b2-blocked): bun_jsc::JSValue::to_slice_clone
+// TODO(b2-blocked): bun_jsc::JSValue::array_iterator
+// TODO(b2-blocked): bun_jsc::JSValue::create_empty_object
+// TODO(b2-blocked): bun_jsc::JSGlobalObject::throw_value
+// TODO(b2-blocked): bun_logger_jsc::LogJsc (Log::to_js)
+// TODO(b2-blocked): bun_string::String::transfer_to_js
+#[cfg(any())]
+pub fn from_js(global: &JSGlobalObject, input: JSValue) -> bun_jsc::JsResult<JSValue> {
+    use bun_install::package_manager::update_request::{self, UpdateRequest};
+    use bun_logger::Log;
+    use bun_string::String as BunString;
+
     // PERF(port): was arena bulk-free — profile in Phase B
     // PERF(port): was stack-fallback — profile in Phase B
     // TODO(port): `to_slice_clone` exact return type — Zig `toSliceCloneWithAllocator` yields
@@ -78,6 +89,12 @@ pub fn from_js(global: &JSGlobalObject, input: JSValue) -> JsResult<JSValue> {
             .to_js(&update_requests[0].version_buf, global)?,
     );
     Ok(object)
+}
+
+#[cfg(not(any()))]
+pub fn from_js(_global: &JSGlobalObject, _input: JSValue) -> Result<JSValue, JSValue> {
+    // TODO(b2-blocked): bun_jsc::JsResult / bun_install::package_manager::update_request
+    todo!("update_request_jsc::from_js — gated on bun_jsc + bun_install lower-tier surface")
 }
 
 // ──────────────────────────────────────────────────────────────────────────

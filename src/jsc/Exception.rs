@@ -1,5 +1,4 @@
-use crate::{JSGlobalObject, JSValue};
-use crate::zig_stack_trace::ZigStackTrace;
+use crate::{JSGlobalObject, JSValue, ZigStackTrace};
 
 /// Opaque representation of a JavaScript exception
 #[repr(C)]

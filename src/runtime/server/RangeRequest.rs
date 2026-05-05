@@ -4,7 +4,8 @@
 //! (serve full body) rather than 416, matching common static-server behavior.
 
 use bun_str::strings;
-use bun_uws::AnyRequest;
+#[cfg(any())]
+use bun_uws::AnyRequest; // TODO(b2-blocked): bun_uws::AnyRequest::header (opaque stub)
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum Result {
@@ -63,7 +64,7 @@ impl Raw {
 /// optional whitespace before "=". https://fetch.spec.whatwg.org/#simple-range-header-value
 pub fn parse_raw(header: &[u8]) -> Raw {
     let mut rest = header;
-    if rest.len() < 5 || !strings::eql_case_insensitive_ascii(&rest[0..5], b"bytes", false) {
+    if rest.len() < 5 || !strings::eql_case_insensitive_ascii::<false>(&rest[0..5], b"bytes") {
         return Raw::None;
     }
     rest = strings::trim(&rest[5..], b" \t");
@@ -109,14 +110,18 @@ pub fn parse(header: &[u8], total: u64) -> Result {
     parse_raw(header).resolve(total)
 }
 
+#[cfg(any())]
 pub fn from_request(req: AnyRequest, total: u64) -> Result {
+    // TODO(b2-blocked): bun_uws::AnyRequest::header
     let Some(h) = req.header(b"range") else {
         return Result::None;
     };
     parse(h, total)
 }
 
+#[cfg(any())]
 pub fn raw_from_request(req: AnyRequest) -> Raw {
+    // TODO(b2-blocked): bun_uws::AnyRequest::header
     let Some(h) = req.header(b"range") else {
         return Raw::None;
     };

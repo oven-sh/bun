@@ -34,8 +34,10 @@ pub fn encode<'a>(out: &'a mut [u8; MAX_LEN], w: u32, h: u32, rgba: &[u8]) -> &'
         i += 4;
     }
     if avg[3] > 0.0 {
+        // PORT NOTE: reshaped for borrowck — Zig indexed avg[3] inside the loop body.
+        let a3 = avg[3];
         for c in &mut avg[0..3] {
-            *c /= avg[3];
+            *c /= a3;
         }
     }
 

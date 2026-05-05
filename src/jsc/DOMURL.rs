@@ -1,8 +1,8 @@
 use core::ffi::c_int;
 use core::marker::{PhantomData, PhantomPinned};
 
-use bun_jsc::{JSValue, VM, VirtualMachine};
-use bun_str::{self as bstr, ZigString};
+use crate::{JSValue, VM};
+use bun_string::{self as bstr, ZigString};
 
 /// Opaque FFI handle for WebCore::DOMURL (C++ side).
 #[repr(C)]
@@ -44,8 +44,13 @@ impl DOMURL {
     }
 
     pub fn cast<'a>(value: JSValue) -> Option<&'a mut DOMURL> {
-        // TODO(port): lifetime — see cast_.
-        Self::cast_(value, VirtualMachine::get().global().vm())
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_jsc::VirtualMachine::get (VirtualMachine.rs gated)
+            return Self::cast_(value, VirtualMachine::get().global().vm());
+        }
+        let _ = value;
+        None
     }
 
     pub fn href_(&mut self, out: &mut ZigString) {
@@ -69,7 +74,7 @@ impl DOMURL {
             3 => return Err(ToFileSystemPathError::NotFileUrl),
             _ => {}
         }
-        debug_assert!(path.tag != bstr::Tag::Dead);
+        debug_assert!(path.tag() != bun_string::Tag::Dead);
         Ok(path)
     }
 

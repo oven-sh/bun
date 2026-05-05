@@ -1,6 +1,6 @@
 use core::marker::{PhantomData, PhantomPinned};
 
-use bun_jsc::{JSGlobalObject, JSValue, JsType};
+use crate::{JSGlobalObject, JSValue};
 
 /// Opaque type for working with JavaScript `Map` objects.
 #[repr(C)]
@@ -18,7 +18,8 @@ unsafe extern "C" {
     fn JSC__JSMap__has(this: *mut JSMap, global: *mut JSGlobalObject, key: JSValue) -> bool;
     fn JSC__JSMap__remove(this: *mut JSMap, global: *mut JSGlobalObject, key: JSValue) -> bool;
     fn JSC__JSMap__clear(this: *mut JSMap, global: *mut JSGlobalObject);
-    fn JSC__JSMap__size(this: *mut JSMap) -> u32;
+    // C++: uint32_t JSC__JSMap__size(JSC::JSMap*, JSC::JSGlobalObject*) (bindings/headers.h:199)
+    fn JSC__JSMap__size(this: *mut JSMap, global: *mut JSGlobalObject) -> u32;
 }
 
 impl JSMap {
@@ -60,9 +61,9 @@ impl JSMap {
     }
 
     /// Retrieve the number of entries in this JS Map object.
-    pub fn size(&mut self) -> u32 {
+    pub fn size(&mut self, global: &JSGlobalObject) -> u32 {
         // SAFETY: self is a valid *JSMap cell on the GC heap.
-        unsafe { JSC__JSMap__size(self) }
+        unsafe { JSC__JSMap__size(self, global as *const _ as *mut _) }
     }
 
     /// Attempt to convert a `JSValue` to a `&mut JSMap`.
@@ -70,11 +71,15 @@ impl JSMap {
     /// Returns `None` if the value is not a Map.
     // TODO(port): 'static is a stand-in lifetime — JSMap is a GC-heap cell; refine ownership in Phase B.
     pub fn from_js(value: JSValue) -> Option<&'static mut JSMap> {
-        if value.js_type_loose() == JsType::Map {
-            // SAFETY: value is a Map cell; its encoded pointer is a valid, non-null *JSMap on the GC heap.
-            return Some(unsafe { &mut *value.as_encoded().as_ptr.unwrap().cast::<JSMap>() });
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_jsc::JSValue::js_type_loose / as_encoded (JSValue.rs still gated)
+            if value.js_type_loose() == JsType::Map {
+                // SAFETY: value is a Map cell; its encoded pointer is a valid, non-null *JSMap on the GC heap.
+                return Some(unsafe { &mut *value.as_encoded().as_ptr.unwrap().cast::<JSMap>() });
+            }
         }
-
+        let _ = value;
         None
     }
 }

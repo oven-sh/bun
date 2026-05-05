@@ -1,6 +1,6 @@
 //! JSC bridge for `bun_http_types::Method`. Keeps `bun_http_types` free of JSC types.
 
-use bun_http_types::Method;
+use bun_http_types::Method::Method;
 use bun_jsc::{JSGlobalObject, JSValue};
 
 unsafe extern "C" {

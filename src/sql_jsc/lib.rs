@@ -1,53 +1,85 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
-// AUTOGEN: mod declarations only — real exports added in B-1.
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-1 gate-and-stub: Phase-A draft bodies preserved on disk but gated out of
-// compilation behind `#[cfg(any())]`. Minimal stub surface re-exposed below.
-// Un-gating happens in B-2 once lower-tier crates (bun_jsc, bun_runtime,
-// bun_sql) expose the required symbols.
+// B-2: top-level `#[cfg(any())]` gates removed; module tree wired with
+// explicit `#[path]` attrs (Phase-A draft files use PascalCase basenames).
+// Heavy leaf modules remain individually gated with `// TODO(b2-blocked):`
+// markers naming the lower-tier symbol they need. Un-gate one-by-one as
+// `bun_jsc` / `bun_string` / `bun_runtime` grow real method surfaces.
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(any())]
+// TODO(b2-blocked): bun_jsc fails to compile (concurrent B-2 work in
+// DOMURL.rs / JSBigInt.rs / TopExceptionScope.rs). Until it is green, expose
+// local opaque stubs for the handful of JSC types this crate names in
+// signatures. Swap to `pub use bun_jsc::{...}` once `bun_jsc` is a dep again.
+pub mod jsc {
+    #[repr(transparent)]
+    #[derive(Debug, Clone, Copy, Default)]
+    pub struct JSValue(pub i64);
+    #[repr(C)]
+    pub struct JSGlobalObject { _opaque: [u8; 0] }
+    #[repr(C)]
+    pub struct CallFrame { _opaque: [u8; 0] }
+}
+pub use jsc::{JSValue, JSGlobalObject, CallFrame};
+
 pub mod mysql;
-#[cfg(any())]
 pub mod postgres;
 
-// TODO(b1): `shared/` submodules (CachedStructure, ObjectIterator,
-// QueryBindingIterator, SQLDataCell) are not yet wired into the module tree.
-// They depend on bun_jsc::{JSValue, JSGlobalObject, Structure} which are
-// currently stub-only. Wire in B-2.
+pub mod shared {
+    // TODO(b2-blocked): bun_jsc::Strong (type, not module) + bun_jsc::ExternColumnIdentifier
+    #[cfg(any())]
+    #[path = "CachedStructure.rs"]
+    pub mod cached_structure;
 
-// ─── stub surface ─────────────────────────────────────────────────────────
+    // TODO(b2-blocked): bun_jsc::JSValue::{is_empty_or_undefined_or_null,is_empty,get_own_by_value,is_undefined}
+    // TODO(b2-blocked): bun_jsc::JSObject::get_index
+    // TODO(b2-blocked): bun_jsc::JSGlobalObject::{throw,has_exception}
+    #[cfg(any())]
+    #[path = "ObjectIterator.rs"]
+    pub mod object_iterator;
 
-#[cfg(not(any()))]
-pub mod mysql {
-    // TODO(b1): bun_jsc::{JSGlobalObject, JSValue, JSFunction} missing/unstable;
-    // TODO(b1): bun_str::ZigString missing (crate is bun_string);
-    // TODO(b1): submodule filenames are PascalCase (JSMySQLConnection.rs) but
-    //           draft mod decls use snake_case — fix in B-2.
-    pub struct MySQLConnection(());
-    pub struct MySQLQuery(());
-    pub struct MySQLContext(());
-    pub struct MySQLStatement(());
+    // TODO(b2-blocked): bun_jsc::JSArrayIterator::{init,next,i}
+    // TODO(b2-blocked): bun_jsc::JsResult
+    #[cfg(any())]
+    #[path = "QueryBindingIterator.rs"]
+    pub mod query_binding_iterator;
 
-    pub fn create_binding(_global_object: *mut core::ffi::c_void) -> *mut core::ffi::c_void {
-        todo!("b1: mysql::create_binding gated")
+    // TODO(b2-blocked): bun_jsc::js_object::ExternColumnIdentifier
+    // TODO(b2-blocked): bun_string::wtf::{RefPtr,StringImpl}
+    // TODO(b2-blocked): bun_jsc::JSType (real enum, not opaque stub)
+    #[cfg(any())]
+    #[path = "SQLDataCell.rs"]
+    pub mod sql_data_cell;
+
+    // ─── stub re-exports so sibling crates can name the types ───────────────
+    #[cfg(not(any()))]
+    pub mod cached_structure {
+        #[derive(Default)]
+        pub struct CachedStructure(());
     }
-}
-
-#[cfg(not(any()))]
-pub mod postgres {
-    // TODO(b1): bun_jsc::{JSGlobalObject, JSValue, JSFunction} missing/unstable;
-    // TODO(b1): bun_sql::postgres::{postgres_protocol, postgres_types} missing;
-    // TODO(b1): submodule filenames are PascalCase (PostgresSQLConnection.rs)
-    //           but draft mod decls use snake_case — fix in B-2.
-    pub struct PostgresSQLConnection(());
-    pub struct PostgresSQLQuery(());
-    pub struct PostgresSQLContext(());
-    pub struct PostgresSQLStatement(());
-
-    pub fn create_binding(_global_object: *mut core::ffi::c_void) -> *mut core::ffi::c_void {
-        todo!("b1: postgres::create_binding gated")
+    #[cfg(not(any()))]
+    pub mod sql_data_cell {
+        #[derive(Default)]
+        pub struct SQLDataCell(());
+        #[derive(Default, Clone, Copy)]
+        pub struct Flags {
+            pub has_duplicate_columns: bool,
+            pub has_named_columns: bool,
+            pub has_indexed_columns: bool,
+        }
     }
+    #[cfg(not(any()))]
+    pub mod query_binding_iterator {
+        pub enum QueryBindingIterator {}
+    }
+    #[cfg(not(any()))]
+    pub mod object_iterator {
+        pub struct ObjectIterator(());
+    }
+
+    pub use cached_structure::CachedStructure;
+    pub use sql_data_cell::SQLDataCell;
+    pub use query_binding_iterator::QueryBindingIterator;
+    pub use object_iterator::ObjectIterator;
 }

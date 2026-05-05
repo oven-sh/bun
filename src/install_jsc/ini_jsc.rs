@@ -1,24 +1,46 @@
 //! Test-only host fns for `bun.ini` (used by `internal-for-testing.ts`).
 //! Kept out of `ini/` so that directory has no JSC references.
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_str::String as BunString;
-use bun_str::StringJsc as _; // extension trait: .to_js()
-
-use bun_logger::{Log, Source};
-use bun_install::npm::Registry;
-use bun_ini::{config_iterator, load_npmrc, Parser};
-use bun_dotenv as dotenv;
-use bun_schema::api::BunInstall;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
 
 pub struct IniTestingAPIs;
 
 impl IniTestingAPIs {
+    // TODO(b2-blocked): bun_jsc::host_fn (proc-macro)
+    // TODO(b2-blocked): bun_jsc::JsResult
+    // TODO(b2-blocked): bun_jsc::CallFrame::argument
+    // TODO(b2-blocked): bun_jsc::JSValue::to_bun_string
+    // TODO(b2-blocked): bun_jsc::JSValue::is_empty_or_undefined_or_null
+    // TODO(b2-blocked): bun_jsc::JSValue::get_object
+    // TODO(b2-blocked): bun_jsc::JSGlobalObject::bun_vm
+    // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw_type_error
+    // TODO(b2-blocked): bun_jsc::JSPropertyIterator::init
+    // TODO(b2-blocked): bun_jsc::JSObject::create
+    // TODO(b2-blocked): bun_jsc::StringJsc (to_js on bun_string::String)
+    // TODO(b2-blocked): bun_logger::Source::init_path_string
+    // TODO(b2-blocked): bun_logger::Log::new
+    // TODO(b2-blocked): bun_logger_jsc::LogJsc (Log::to_js)
+    // TODO(b2-blocked): bun_dotenv::Loader
+    // TODO(b2-blocked): bun_dotenv::Map
+    // TODO(b2-blocked): bun_dotenv::map::HashTable
+    // TODO(b2-blocked): bun_api::BunInstall
+    // TODO(b2-blocked): bun_ini::load_npmrc (signature)
+    // TODO(b2-blocked): bun_install::npm::Registry::DEFAULT_URL
+    // TODO(b2-blocked): bun_string::String::from_bytes
+    // TODO(b2-blocked): bun_string::String::from_static
+    #[cfg(any())]
     #[bun_jsc::host_fn]
     pub fn load_npmrc_from_js(
         global: &JSGlobalObject,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> bun_jsc::JsResult<JSValue> {
+        use bun_string::String as BunString;
+        use bun_logger::{Log, Source};
+        use bun_install::npm::Registry;
+        use bun_ini::{config_iterator, load_npmrc};
+        use bun_dotenv as dotenv;
+        use bun_api::BunInstall;
+
         let arg = frame.argument(0);
         let npmrc_contents = arg.to_bun_string(global)?;
         let npmrc_utf8 = npmrc_contents.to_utf8();
@@ -31,10 +53,13 @@ impl IniTestingAPIs {
 
         let envjs = frame.argument(1);
         // PORT NOTE: reshaped for borrowck — Zig returned either a VM-owned *Loader or
-        // an arena-allocated *Loader from a labeled block. Here we hold the owned case
-        // in `env_storage` and borrow uniformly.
-        let mut env_storage: Option<Box<dotenv::Loader>> = None;
-        let env: &dotenv::Loader = if envjs.is_empty_or_undefined_or_null() {
+        // an arena-allocated *Loader from a labeled block. Per PORTING.md §Forbidden
+        // (`Box::leak` is banned), keep both `Map` and `Loader` owned in fn-scope
+        // `Option`s and borrow uniformly. Both drop at fn return — same lifetime as
+        // the original arena.
+        let mut map_storage: Option<Box<dotenv::Map>> = None;
+        let mut env_storage: Option<dotenv::Loader<'_>> = None;
+        let env: &dotenv::Loader<'_> = if envjs.is_empty_or_undefined_or_null() {
             global.bun_vm().transpiler.env
         } else {
             let mut envmap = dotenv::map::HashTable::new();
@@ -74,13 +99,12 @@ impl IniTestingAPIs {
                 );
             }
 
-            let map = Box::new(dotenv::Map { map: envmap });
-            // TODO(port): lifetime — Loader borrows `map`; Zig used arena so both lived
-            // until fn return. Leaking the Box mirrors arena semantics for this test-only path.
-            let map_ref: &'static mut dotenv::Map = Box::leak(map);
-            let loader = dotenv::Loader::init(map_ref);
-            env_storage = Some(Box::new(loader));
-            env_storage.as_deref().unwrap()
+            map_storage = Some(Box::new(dotenv::Map { map: envmap }));
+            // SAFETY-NOTE: `Loader` borrows from `map_storage`; both live until fn
+            // return, mirroring the Zig arena's bulk-free.
+            let map_ref: &mut dotenv::Map = map_storage.as_deref_mut().unwrap();
+            env_storage = Some(dotenv::Loader::init(map_ref));
+            env_storage.as_ref().unwrap()
         };
 
         // SAFETY: all-zero is a valid BunInstall (#[repr(C)] POD per schema codegen).
@@ -116,7 +140,7 @@ impl IniTestingAPIs {
                 BunString::from_bytes(&default_registry.email),
             )
         };
-        // `defer { *.deref() }` deleted — bun_str::String impls Drop.
+        // `defer { *.deref() }` deleted — bun_string::String impls Drop.
 
         // TODO(port): `jsc.JSObject.create(.{ .field = val, ... }, global)` reflects over
         // an anon struct's fields at comptime. Phase B needs a builder or proc-macro;
@@ -134,8 +158,15 @@ impl IniTestingAPIs {
         .to_js())
     }
 
+    // TODO(b2-blocked): bun_jsc::CallFrame::arguments_old
+    // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw_error
+    // TODO(b2-blocked): bun_ini::Parser::init
+    // TODO(b2-blocked): bun_ini::Parser::parse
+    #[cfg(any())]
     #[bun_jsc::host_fn]
-    pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> bun_jsc::JsResult<JSValue> {
+        use bun_ini::Parser;
+
         let arguments_ = frame.arguments_old(1);
         let arguments = arguments_.slice();
 
@@ -165,5 +196,5 @@ impl IniTestingAPIs {
 //   source:     src/install_jsc/ini_jsc.zig (129 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      arena removed (test-only path); JSObject::create anon-struct + JSPropertyIterator comptime opts need Phase-B API; dotenv::Loader/Map crate path guessed
+//   notes:      arena removed (test-only path); JSObject::create anon-struct + JSPropertyIterator comptime opts need Phase-B API; dotenv::Loader/Map ownership reshaped to fn-scope Options (no Box::leak per §Forbidden)
 // ──────────────────────────────────────────────────────────────────────────

@@ -2,7 +2,9 @@
 //! themselves stay in `http_types/`; only the JSC extern + wrapper live here
 //! so `http_types/` has no `JSValue`/`JSGlobalObject` references.
 
-use bun_http::{FetchCacheMode, FetchRedirect, FetchRequestMode};
+use bun_http_types::FetchCacheMode::FetchCacheMode;
+use bun_http_types::FetchRedirect::FetchRedirect;
+use bun_http_types::FetchRequestMode::FetchRequestMode;
 use bun_jsc::{JSGlobalObject, JSValue};
 
 // TODO(port): move to <area>_sys

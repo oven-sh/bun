@@ -3,21 +3,29 @@ use core::ffi::c_void;
 
 use bun_collections::{ArrayHashMap, HashMap};
 use bun_core::{err, Error, Output};
+use bun_js_parser::{self as js_ast, Expr, ExprNodeList, Stmt, ToJSError, E, G, S};
+use bun_logger::{self as logger, Log, Range, Source};
+use bun_resolver::package_json::{
+    MacroImportReplacementMap as MacroRemapEntry, MacroMap as MacroRemap,
+};
+use bun_resolver::Resolver;
+use bun_dotenv::Loader as DotEnvLoader;
+use bun_bundler::{entry_points::MacroEntryPoint, Transpiler};
+use bun_http::MimeType;
+use bun_string::strings;
+
+// TODO(b2-blocked): bun_jsc (crate does not yet compile — B-2 of bun_jsc pending)
+#[cfg(any())]
 use bun_jsc::{
     self as jsc, c as js, ConsoleObject, JSArrayIterator, JSGlobalObject, JSPropertyIterator,
     JSValue, JsError, MarkedArgumentBuffer, ModuleLoader, VirtualMachine, WebCore, ZigException,
 };
-use bun_js_parser::{
-    self as js_ast, Expr, ExprNodeList, Stmt, ToJSError, E, G, S,
-};
-use bun_logger::{self as logger, Log, Range, Source};
-use bun_resolver::package_json::{MacroImportReplacementMap as MacroRemapEntry, MacroMap as MacroRemap};
-use bun_resolver::resolver::{Resolver, Result as ResolveResult};
-use bun_dotenv::Loader as DotEnvLoader;
-use bun_bundler::{entry_points::MacroEntryPoint, Transpiler};
-use bun_http::MimeType;
+// TODO(b2-blocked): bun_runtime::api::BuildMessage
+// TODO(b2-blocked): bun_runtime::api::ResolveMessage
+#[cfg(any())]
 use bun_runtime::api::{BuildMessage, ResolveMessage};
-use bun_str::strings;
+// TODO(b2-blocked): bun_resolver::Result (real fields — currently opaque stub)
+use bun_resolver::Result as ResolveResult;
 
 pub const NAMESPACE: &[u8] = b"macro";
 pub const NAMESPACE_WITH_COLON: &[u8] = b"macro:";
@@ -26,6 +34,12 @@ pub fn is_macro_path(str: &[u8]) -> bool {
     strings::has_prefix(str, NAMESPACE_WITH_COLON)
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// MacroContext
+// ══════════════════════════════════════════════════════════════════════════
+
+// TODO(b2-blocked): bun_jsc::JSValue
+#[cfg(any())]
 pub struct MacroContext<'a> {
     pub resolver: &'a mut Resolver,
     pub env: &'a mut DotEnvLoader,
@@ -33,10 +47,14 @@ pub struct MacroContext<'a> {
     pub remap: MacroRemap,
     pub javascript_object: JSValue,
 }
+/// B-2 stub: real struct gated above (needs `bun_jsc::JSValue`).
+pub struct MacroContext<'a>(core::marker::PhantomData<&'a ()>);
 
 pub type MacroMap<'a> = ArrayHashMap<i32, Macro<'a>>;
 
+#[cfg(any())]
 impl<'a> MacroContext<'a> {
+    // TODO(b2-blocked): bun_resolver::package_json::MacroMap::get (StringArrayHashMap::get by &[u8])
     pub fn get_remap(&self, path: &[u8]) -> Option<MacroRemapEntry> {
         if self.remap.entries.len() == 0 {
             return None;
@@ -44,6 +62,7 @@ impl<'a> MacroContext<'a> {
         self.remap.get(path)
     }
 
+    // TODO(b2-blocked): bun_bundler::Transpiler (real fields — currently opaque stub)
     pub fn init(transpiler: &'a mut Transpiler) -> MacroContext<'a> {
         MacroContext {
             macros: MacroMap::new(),
@@ -54,6 +73,10 @@ impl<'a> MacroContext<'a> {
         }
     }
 
+    // TODO(b2-blocked): bun_js_parser::Expr::Data::Store
+    // TODO(b2-blocked): bun_jsc::ModuleLoader::HardcodedModule
+    // TODO(b2-blocked): bun_resolver::Resolver::resolve
+    // TODO(b2-blocked): bun_jsc::VirtualMachine
     pub fn call(
         &mut self,
         import_record_path: &[u8],
@@ -80,9 +103,11 @@ impl<'a> MacroContext<'a> {
         debug_assert!(!is_macro_path(import_record_path_without_macro_prefix));
 
         let input_specifier: &[u8] = 'brk: {
-            if let Some(replacement) =
-                ModuleLoader::HardcodedModule::Alias::get(import_record_path, jsc::Target::Bun, Default::default())
-            {
+            if let Some(replacement) = ModuleLoader::HardcodedModule::Alias::get(
+                import_record_path,
+                jsc::Target::Bun,
+                Default::default(),
+            ) {
                 break 'brk replacement.path;
             }
 
@@ -94,9 +119,13 @@ impl<'a> MacroContext<'a> {
                 Ok(r) => r,
                 Err(e) if e == err!("ModuleNotFound") => {
                     log.add_resolve_error(
-                        source,
+                        Some(source),
                         import_range,
-                        format_args!("Macro \"{}\" not found", bstr::BStr::new(import_record_path)),
+                        format_args!(
+                            "Macro \"{}\" not found",
+                            bstr::BStr::new(import_record_path)
+                        ),
+                        import_record_path,
                         bun_options_types::ImportKind::Stmt,
                         e,
                     )
@@ -105,7 +134,7 @@ impl<'a> MacroContext<'a> {
                 }
                 Err(e) => {
                     log.add_range_error_fmt(
-                        source,
+                        Some(source),
                         import_range,
                         format_args!(
                             "{} resolving macro \"{}\"",
@@ -206,12 +235,27 @@ impl<'a> MacroContext<'a> {
     }
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// MacroResult
+// ══════════════════════════════════════════════════════════════════════════
+
+// TODO(b2-blocked): bun_js_parser::S::Import
+#[cfg(any())]
 #[derive(Default)]
 pub struct MacroResult {
     pub import_statements: Box<[S::Import]>,
     pub replacement: Expr,
 }
+/// B-2 stub: real struct gated above (needs `bun_js_parser::S::Import`).
+#[derive(Default)]
+pub struct MacroResult(());
 
+// ══════════════════════════════════════════════════════════════════════════
+// Macro
+// ══════════════════════════════════════════════════════════════════════════
+
+// TODO(b2-blocked): bun_jsc::VirtualMachine
+#[cfg(any())]
 pub struct Macro<'a> {
     pub resolver: &'a mut Resolver,
     pub vm: &'static VirtualMachine,
@@ -219,7 +263,10 @@ pub struct Macro<'a> {
     pub resolved: ResolveResult,
     pub disabled: bool,
 }
+/// B-2 stub: real struct gated above (needs `bun_jsc::VirtualMachine`).
+pub struct Macro<'a>(core::marker::PhantomData<&'a ()>);
 
+#[cfg(any())]
 impl<'a> Macro<'a> {
     // TODO(port): see note in MacroContext::call — Zig uses an undefined-resolver sentinel.
     fn disabled_sentinel() -> Self {
@@ -228,6 +275,9 @@ impl<'a> Macro<'a> {
         todo!("port: disabled sentinel — restructure resolver/vm as Option<NonNull<_>> or enum {{ Disabled, Loaded(..) }}")
     }
 
+    // TODO(b2-blocked): bun_jsc::VirtualMachine
+    // TODO(b2-blocked): bun_jsc::initialize
+    // TODO(b2-blocked): bun_resolver::Resolver (real `opts` field — currently opaque stub)
     pub fn init(
         // allocator param deleted — always default_allocator
         resolver: &'a mut Resolver,
@@ -270,7 +320,8 @@ impl<'a> Macro<'a> {
         vm.enable_macro_mode();
         vm.event_loop().ensure_waker();
 
-        let loaded_result = vm.load_macro_entry_point(input_specifier, function_name, specifier, hash)?;
+        let loaded_result =
+            vm.load_macro_entry_point(input_specifier, function_name, specifier, hash)?;
 
         match loaded_result.unwrap(vm.jsc_vm, jsc::PromiseUnwrapMode::LeaveUnhandled) {
             jsc::PromiseResult::Rejected(result) => {
@@ -290,10 +341,19 @@ impl<'a> Macro<'a> {
     }
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// Runner / Run
+// ══════════════════════════════════════════════════════════════════════════
+
 pub struct Runner;
 
+// TODO(b2-blocked): bun_jsc::JSValue
+#[cfg(any())]
 type VisitMap = HashMap<JSValue, Expr>;
 
+// TODO(b2-blocked): bun_jsc::c::JSObjectRef
+// TODO(b2-blocked): bun_jsc::ZigException::Holder
+#[cfg(any())]
 thread_local! {
     static ARGS_BUF: RefCell<[js::JSObjectRef; 3]> =
         const { RefCell::new([core::ptr::null_mut(); 3]) };
@@ -309,6 +369,8 @@ pub enum MacroError {
     OutOfMemory,
     #[error(transparent)]
     ToJs(#[from] ToJSError),
+    // TODO(b2-blocked): bun_jsc::JsError
+    #[cfg(any())]
     #[error(transparent)]
     Js(#[from] JsError),
 }
@@ -325,11 +387,16 @@ impl From<MacroError> for Error {
             MacroError::MacroFailed => err!("MacroFailed"),
             MacroError::OutOfMemory => err!("OutOfMemory"),
             MacroError::ToJs(e) => e.into(),
+            // TODO(b2-blocked): bun_jsc::JsError
+            #[cfg(any())]
             MacroError::Js(e) => e.into(),
         }
     }
 }
 
+// TODO(b2-blocked): bun_jsc::JSGlobalObject
+// TODO(b2-blocked): bun_jsc::JSValue
+#[cfg(any())]
 pub struct Run<'a> {
     pub caller: Expr,
     pub function_name: &'a [u8],
@@ -342,8 +409,13 @@ pub struct Run<'a> {
     pub visited: VisitMap,
     pub is_top_level: bool,
 }
+/// B-2 stub: real struct gated above (needs `bun_jsc::JSGlobalObject`).
+pub struct Run<'a>(core::marker::PhantomData<&'a ()>);
 
+#[cfg(any())]
 impl<'a> Run<'a> {
+    // TODO(b2-blocked): bun_jsc::MarkedArgumentBuffer
+    // TODO(b2-blocked): bun_jsc::c::JSObjectCallAsFunctionReturnValueHoldingAPILock
     pub fn run_async(
         macro_: Macro<'a>,
         log: &'a mut Log,
@@ -386,6 +458,7 @@ impl<'a> Run<'a> {
         runner.run(result)
     }
 
+    // TODO(b2-blocked): bun_jsc::ConsoleObject::Formatter::Tag
     pub fn run(&mut self, value: JSValue) -> Result<Expr, MacroError> {
         use ConsoleObject::Formatter::Tag as T;
         match ConsoleObject::Formatter::Tag::get(value, self.global)?.tag {
@@ -406,7 +479,7 @@ impl<'a> Run<'a> {
 
                 self.log
                     .add_error_fmt(
-                        self.source,
+                        Some(self.source),
                         self.caller.loc,
                         format_args!(
                             "cannot coerce {} ({}) to Bun's AST. Please return a simpler type",
@@ -423,6 +496,22 @@ impl<'a> Run<'a> {
     // TODO(port): `ConsoleObject::Formatter::Tag` must derive `core::marker::ConstParamTy`
     // for this const-generic dispatch to compile. Phase B may instead inline each arm
     // into `run` and drop the const generic.
+    //
+    // TODO(b2-blocked): bun_jsc::ConsoleObject::Formatter::Tag
+    // TODO(b2-blocked): bun_jsc::JSArrayIterator
+    // TODO(b2-blocked): bun_jsc::JSPropertyIterator
+    // TODO(b2-blocked): bun_jsc::WebCore::Blob
+    // TODO(b2-blocked): bun_jsc::WebCore::Response
+    // TODO(b2-blocked): bun_jsc::WebCore::Request
+    // TODO(b2-blocked): bun_runtime::api::ResolveMessage
+    // TODO(b2-blocked): bun_runtime::api::BuildMessage
+    // TODO(b2-blocked): bun_js_parser::Expr::init
+    // TODO(b2-blocked): bun_js_parser::Expr::from_blob
+    // TODO(b2-blocked): bun_js_parser::E::Array
+    // TODO(b2-blocked): bun_js_parser::E::Object
+    // TODO(b2-blocked): bun_js_parser::E::Number
+    // TODO(b2-blocked): bun_js_parser::E::Null
+    // TODO(b2-blocked): bun_js_parser::G::Property
     pub fn coerce<const TAG: ConsoleObject::Formatter::Tag>(
         &mut self,
         value: JSValue,
@@ -475,7 +564,9 @@ impl<'a> Run<'a> {
 
             T::Boolean => {
                 return Ok(Expr {
-                    data: js_ast::ExprData::EBoolean(E::Boolean { value: value.to_boolean() }),
+                    data: js_ast::ExprData::EBoolean(E::Boolean {
+                        value: value.to_boolean(),
+                    }),
                     loc: self.caller.loc,
                 });
             }
@@ -494,7 +585,10 @@ impl<'a> Run<'a> {
                 // PERF(port): was allocator.alloc(Expr, iter.len) — profile in Phase B
                 // (errdefer free deleted — Vec drops on `?`)
                 let expr = Expr::init(
-                    E::Array { items: ExprNodeList::empty(), was_originally_macro: true },
+                    E::Array {
+                        items: ExprNodeList::empty(),
+                        was_originally_macro: true,
+                    },
                     self.caller.loc,
                 );
                 *_entry.value_ptr = expr;
@@ -508,7 +602,8 @@ impl<'a> Run<'a> {
                     i += 1;
                 }
 
-                expr.data.e_array().items = ExprNodeList::from_owned_slice(array.into_boxed_slice());
+                expr.data.e_array().items =
+                    ExprNodeList::from_owned_slice(array.into_boxed_slice());
                 expr.data.e_array().items.len = i as u32;
                 return Ok(expr);
             }
@@ -522,17 +617,24 @@ impl<'a> Run<'a> {
 
                 // Reserve a placeholder to break cycles.
                 let expr = Expr::init(
-                    E::Object { properties: G::Property::List::default(), was_originally_macro: true },
+                    E::Object {
+                        properties: G::Property::List::default(),
+                        was_originally_macro: true,
+                    },
                     self.caller.loc,
                 );
                 *_entry.value_ptr = expr;
 
                 // SAFETY: tag ensures `value` is an object.
                 let obj = value.get_object().expect("unreachable");
-                let mut object_iter = JSPropertyIterator::<{ jsc::PropertyIteratorOptions {
-                    skip_empty_name: false,
-                    include_value: true,
-                } }>::init(self.global, obj)?;
+                let mut object_iter = JSPropertyIterator::<
+                    {
+                        jsc::PropertyIteratorOptions {
+                            skip_empty_name: false,
+                            include_value: true,
+                        }
+                    },
+                >::init(self.global, obj)?;
                 // `object_iter` dropped at scope exit (was `defer object_iter.deinit()`)
 
                 // Build properties list
@@ -575,13 +677,17 @@ impl<'a> Run<'a> {
 
             T::Integer => {
                 return Ok(Expr::init(
-                    E::Number { value: value.to_int32() as f64 },
+                    E::Number {
+                        value: value.to_int32() as f64,
+                    },
                     self.caller.loc,
                 ));
             }
             T::Double => {
                 return Ok(Expr::init(
-                    E::Number { value: value.as_number() },
+                    E::Number {
+                        value: value.as_number(),
+                    },
                     self.caller.loc,
                 ));
             }
@@ -593,7 +699,10 @@ impl<'a> Run<'a> {
                 let mut utf16_bytes: Vec<u16> = vec![0u16; bun_str.length()];
                 // PERF(port): was allocator.alloc(u16, len) — profile in Phase B
                 let encoded_bytes = bun_str
-                    .encode_into(bytemuck::cast_slice_mut(&mut utf16_bytes), bun_str::Encoding::Utf16Le)
+                    .encode_into(
+                        bytemuck::cast_slice_mut(&mut utf16_bytes),
+                        bun_string::Encoding::Utf16Le,
+                    )
                     .unwrap_or(0);
                 utf16_bytes.truncate(encoded_bytes / 2);
                 return Ok(Expr::init(
@@ -606,9 +715,7 @@ impl<'a> Run<'a> {
                     return Ok(*cached);
                 }
 
-                let promise = value
-                    .as_any_promise()
-                    .expect("Unexpected promise type");
+                let promise = value.as_any_promise().expect("Unexpected promise type");
 
                 self.macro_.vm.wait_for_promise(promise);
 
@@ -625,9 +732,11 @@ impl<'a> Run<'a> {
                     || promise_result.is_aggregate_error(self.global)
                     || promise_result.is_exception(self.global.vm())
                 {
-                    self.macro_
-                        .vm
-                        .unhandled_rejection(self.global, promise_result, promise.as_value());
+                    self.macro_.vm.unhandled_rejection(
+                        self.global,
+                        promise_result,
+                        promise.as_value(),
+                    );
                     return Err(MacroError::MacroFailed);
                 }
                 self.is_top_level = false;
@@ -641,7 +750,7 @@ impl<'a> Run<'a> {
 
         self.log
             .add_error_fmt(
-                self.source,
+                Some(self.source),
                 self.caller.loc,
                 format_args!(
                     "cannot coerce {} to Bun's AST. Please return a simpler type",
@@ -653,7 +762,12 @@ impl<'a> Run<'a> {
     }
 }
 
+#[cfg(any())]
 impl Runner {
+    // TODO(b2-blocked): bun_jsc::VirtualMachine
+    // TODO(b2-blocked): bun_jsc::MarkedArgumentBuffer
+    // TODO(b2-blocked): bun_jsc::ZigException::Holder
+    // TODO(b2-blocked): bun_js_parser::ExprData
     pub fn run(
         macro_: Macro<'_>,
         log: &mut Log,

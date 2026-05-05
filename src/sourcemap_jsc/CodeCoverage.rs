@@ -1,14 +1,13 @@
-use core::cell::Cell;
+use core::cell::UnsafeCell;
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
-use bun_io::Write as _;
-
-use bun_collections::{BabyList, DynamicBitSet};
+use bun_collections::bit_set::DynamicBitSet;
+use bun_collections::BabyList;
 use bun_core::pretty_fmt; // TODO(port): comptime ANSI tag expander macro (Output.prettyFmt)
-use bun_jsc::{JSGlobalObject, JSValue, VirtualMachine, VM};
-use bun_sourcemap::{self as sourcemap, LineOffsetTable};
-use bun_str::{self, strings, ZigString};
+use bun_jsc::{JSGlobalObject, JSValue, VM};
+use bun_sourcemap::{self as sourcemap, line_offset_table, LineOffsetTable, Ordinal};
+use bun_str::{self, strings, ZigStringSlice};
 
 type LinesHits = BabyList<u32>;
 type Bitset = DynamicBitSet;
@@ -27,7 +26,7 @@ type Bitset = DynamicBitSet;
 /// We use two bitsets since the typical size will be decently small,
 /// bitsets are simple and bitsets are relatively fast to construct and query
 pub struct Report {
-    pub source_url: ZigString::Slice,
+    pub source_url: ZigStringSlice,
     pub executable_lines: Bitset,
     pub lines_which_have_executed: Bitset,
     pub line_hits: LinesHits,
@@ -40,7 +39,10 @@ pub struct Report {
 
 impl Report {
     pub fn lines_coverage_fraction(&self) -> f64 {
-        let mut intersected = self.executable_lines.clone();
+        let mut intersected = self
+            .executable_lines
+            .clone()
+            .unwrap_or_else(|_| bun_alloc::out_of_memory());
         intersected.set_intersection(&self.lines_which_have_executed);
 
         let total_count: f64 = self.executable_lines.count() as f64;
@@ -76,38 +78,45 @@ impl Report {
         byte_range_mapping: &mut ByteRangeMapping,
         ignore_sourcemap_: bool,
     ) -> Option<Report> {
-        bun_jsc::mark_binding!();
-        let vm = global_this.vm();
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_jsc::JSGlobalObject::vm
+            bun_jsc::mark_binding(core::panic::Location::caller());
+            let vm = global_this.vm();
 
-        let mut result: Option<Report> = None;
+            let mut result: Option<Report> = None;
 
-        let mut generator = Generator {
-            result: &mut result,
-            byte_range_mapping,
-        };
+            let mut generator = Generator { result: &mut result, byte_range_mapping };
 
-        // SAFETY: Generator and the callback are kept alive for the duration of the FFI call;
-        // CodeCoverage__withBlocksAndFunctions invokes the callback synchronously.
-        let ok = unsafe {
-            CodeCoverage__withBlocksAndFunctions(
-                vm,
-                generator.byte_range_mapping.source_id,
-                (&mut generator as *mut Generator).cast::<c_void>(),
-                ignore_sourcemap_,
-                Generator::do_,
-            )
-        };
-        if !ok {
-            return None;
+            // SAFETY: Generator and the callback are kept alive for the duration of the FFI call;
+            // CodeCoverage__withBlocksAndFunctions invokes the callback synchronously.
+            let ok = unsafe {
+                CodeCoverage__withBlocksAndFunctions(
+                    vm,
+                    generator.byte_range_mapping.source_id,
+                    (&mut generator as *mut Generator).cast::<c_void>(),
+                    ignore_sourcemap_,
+                    Generator::do_,
+                )
+            };
+            if !ok {
+                return None;
+            }
+
+            return result;
         }
-
-        result
+        let _ = (global_this, byte_range_mapping, ignore_sourcemap_);
+        None
     }
 }
 
 // Report::deinit only freed owned containers; Rust drops Bitset/BabyList/Vec fields automatically.
 // Note: source_url is NOT freed, matching the Zig deinit (caller owns it).
 
+// TODO(b2-blocked): bun_io::Write — `text`/`lcov` formatters are written against a
+// byte-oriented `bun_io::Write` trait + `bun_io::Result` that the io crate has not
+// surfaced yet. The bodies are preserved verbatim for un-gating once that lands.
+#[cfg(any())]
 pub mod text {
     use super::*;
 
@@ -284,6 +293,8 @@ pub mod text {
     }
 }
 
+// TODO(b2-blocked): bun_io::Write
+#[cfg(any())]
 pub mod lcov {
     use super::*;
 
@@ -379,8 +390,17 @@ impl<'a> Generator<'a> {
             return;
         }
 
-        // PORT NOTE: reshaped for borrowck — capture source_url before &mut self call
-        let source_url = this.byte_range_mapping.source_url.clone();
+        // PORT NOTE: reshaped for borrowck — capture a borrowed view of source_url (Zig
+        // assigns the slice by value with no ownership transfer here).
+        let source_url = ZigStringSlice::from_utf8_never_free(unsafe {
+            // SAFETY: borrows bytes owned by `byte_range_mapping.source_url`; we
+            // erase the lifetime to break the &/&mut overlap and the slice is not
+            // accessed past `generate_report_from_blocks` (which moves it into Report).
+            core::slice::from_raw_parts(
+                this.byte_range_mapping.source_url.slice().as_ptr(),
+                this.byte_range_mapping.source_url.slice().len(),
+            )
+        });
         *this.result = this
             .byte_range_mapping
             .generate_report_from_blocks(source_url, blocks, function_blocks, ignore_sourcemap)
@@ -390,7 +410,7 @@ impl<'a> Generator<'a> {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct BasicBlockRange {
+pub struct BasicBlockRange {
     start_offset: c_int,
     end_offset: c_int,
     has_executed: bool,
@@ -404,18 +424,47 @@ impl Default for BasicBlockRange {
 }
 
 pub struct ByteRangeMapping {
-    pub line_offset_table: LineOffsetTable::List,
+    pub line_offset_table: line_offset_table::List,
     pub source_id: i32,
-    pub source_url: ZigString::Slice,
+    pub source_url: ZigStringSlice,
 }
 
 // TODO(port): IdentityContext(u64) hasher — key is already a wyhash, hash fn should be identity
 pub type ByteRangeMappingHashMap = bun_collections::HashMap<u64, ByteRangeMapping>;
 
 thread_local! {
-    // Stored as a leaked raw pointer to match Zig semantics: extern "C" fns return
-    // *ByteRangeMapping pointing into this map, which must remain stable across calls.
-    static MAP: Cell<Option<NonNull<ByteRangeMappingHashMap>>> = const { Cell::new(None) };
+    // Lazily-initialized per-thread map. Stored behind `Box` so the address of the
+    // `HashMap` is stable for the lifetime of the thread (extern "C" fns return
+    // `*mut ByteRangeMapping` pointing into it). The Box is **owned** by the
+    // thread-local — it is dropped on thread exit, never leaked (PORTING.md
+    // §Forbidden: no Box::leak).
+    static MAP: UnsafeCell<Option<Box<ByteRangeMappingHashMap>>> =
+        const { UnsafeCell::new(None) };
+}
+
+/// Returns a raw pointer to this thread's map, lazily creating it.
+/// The pointer is valid until thread exit (the Box is pinned in the thread-local
+/// slot and never moved or dropped earlier).
+fn thread_map() -> *mut ByteRangeMappingHashMap {
+    MAP.with(|cell| {
+        // SAFETY: thread-local; no other reference to this UnsafeCell can exist
+        // concurrently on this thread while we hold this exclusive borrow.
+        let slot = unsafe { &mut *cell.get() };
+        if slot.is_none() {
+            *slot = Some(Box::new(ByteRangeMappingHashMap::default()));
+        }
+        // SAFETY: just ensured Some above; Box deref gives stable address.
+        &mut **slot.as_mut().unwrap() as *mut ByteRangeMappingHashMap
+    })
+}
+
+/// Returns a raw pointer to this thread's map if it has been created, else null.
+fn thread_map_opt() -> Option<NonNull<ByteRangeMappingHashMap>> {
+    MAP.with(|cell| {
+        // SAFETY: thread-local exclusive access.
+        let slot = unsafe { &mut *cell.get() };
+        slot.as_mut().map(|b| NonNull::from(&mut **b))
+    })
 }
 
 impl ByteRangeMapping {
@@ -425,16 +474,20 @@ impl ByteRangeMapping {
 
     pub fn generate_report_from_blocks(
         &mut self,
-        source_url: ZigString::Slice,
+        source_url: ZigStringSlice,
         blocks: &[BasicBlockRange],
         function_blocks: &[BasicBlockRange],
         ignore_sourcemap: bool,
     ) -> Result<Report, bun_alloc::AllocError> {
+        // TODO(b2-blocked): bun_jsc::VirtualMachine::get
+        // TODO(b2-blocked): bun_sourcemap::line_offset_table::List::items_byte_offset_to_start_of_line
+        #[cfg(any())]
+        return (|| {
         let line_starts = self.line_offset_table.items_byte_offset_to_start_of_line();
 
         let mut executable_lines: Bitset = Bitset::default();
         let mut lines_which_have_executed: Bitset = Bitset::default();
-        let parsed_mappings_ = VirtualMachine::get().source_mappings.get(source_url.slice());
+        let parsed_mappings_ = bun_jsc::VirtualMachine::get().source_mappings.get(source_url.slice());
         // `parsed_mappings_` is refcounted; Drop on the returned guard handles deref().
         let mut line_hits = LinesHits::default();
 
@@ -705,12 +758,16 @@ impl ByteRangeMapping {
             functions_which_have_executed,
             stmts_which_have_executed,
         })
+        })();
+        let _ = (source_url, blocks, function_blocks, ignore_sourcemap);
+        todo!("blocked on bun_jsc::VirtualMachine::get + MultiArrayList column accessor")
     }
 
-    pub fn compute(source_contents: &[u8], source_id: i32, source_url: ZigString::Slice) -> ByteRangeMapping {
+    pub fn compute(source_contents: &[u8], source_id: i32, source_url: ZigStringSlice) -> ByteRangeMapping {
         ByteRangeMapping {
             // TODO(port): VirtualMachine::get().allocator dropped — LineOffsetTable::generate uses global mimalloc
-            line_offset_table: LineOffsetTable::generate(source_contents, 0),
+            line_offset_table: LineOffsetTable::generate(source_contents, 0)
+                .unwrap_or_else(|_| bun_alloc::out_of_memory()),
             source_id,
             source_url,
         }
@@ -726,16 +783,10 @@ pub extern "C" fn ByteRangeMapping__generate(
     source_contents_str: bun_str::String,
     source_id: i32,
 ) {
-    // SAFETY: MAP is thread-local; the leaked Box lives for the thread's lifetime.
-    let map_ptr = MAP.with(|m| match m.get() {
-        Some(p) => p,
-        None => {
-            let p = NonNull::from(Box::leak(Box::new(ByteRangeMappingHashMap::default())));
-            m.set(Some(p));
-            p
-        }
-    });
-    let map = unsafe { &mut *map_ptr.as_ptr() };
+    // SAFETY: thread_map() returns a pointer into this thread's owned Box<HashMap>;
+    // valid for the lifetime of the thread, and we are the only mutable accessor on
+    // this thread for the duration of this call.
+    let map = unsafe { &mut *thread_map() };
 
     let slice = str_.to_utf8();
     let hash = bun_wyhash::hash(slice.slice());
@@ -758,8 +809,8 @@ pub extern "C" fn ByteRangeMapping__getSourceID(this: *mut ByteRangeMapping) -> 
 pub extern "C" fn ByteRangeMapping__find(path: bun_str::String) -> Option<NonNull<ByteRangeMapping>> {
     let slice = path.to_utf8();
 
-    let map_ptr = MAP.with(|m| m.get())?;
-    // SAFETY: map_ptr is a leaked Box valid for the thread's lifetime.
+    let map_ptr = thread_map_opt()?;
+    // SAFETY: map_ptr points into this thread's owned Box; valid until thread exit.
     let map = unsafe { &mut *map_ptr.as_ptr() };
     let hash = bun_wyhash::hash(slice.slice());
     let entry = map.get_mut(&hash)?;
@@ -775,6 +826,12 @@ pub extern "C" fn ByteRangeMapping__findExecutedLines(
     function_start_offset: usize,
     ignore_sourcemap: bool,
 ) -> JSValue {
+    #[cfg(any())]
+    {
+    // TODO(b2-blocked): bun_jsc::JSValue::{NULL, ZERO}
+    // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw_out_of_memory_value
+    // TODO(b2-blocked): bun_string::String::{clone, utf8_byte_length, create_utf8_for_js}
+    // TODO(b2-blocked): bun_io::Write — text::write_format::<false>
     // SAFETY: global_this is a valid JSGlobalObject* from JSC.
     let global_this = unsafe { &*global_this };
 
@@ -824,7 +881,10 @@ pub extern "C" fn ByteRangeMapping__findExecutedLines(
     let Ok(v) = bun_str::String::create_utf8_for_js(global_this, &buf) else {
         return JSValue::ZERO;
     };
-    v
+    return v;
+    }
+    let _ = (global_this, source_url, blocks_ptr, blocks_len, function_start_offset, ignore_sourcemap);
+    todo!("bun_jsc method surface gated")
 }
 
 #[derive(Clone, Copy)]

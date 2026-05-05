@@ -3,17 +3,21 @@
 //! `pub const jsFunction… = @import(...)` alias so call sites and the
 //! `$newZigFunction("npm.zig", "…")` codegen path are unchanged.
 
-use std::io::Write as _;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
 
-use bstr::BStr;
-
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult};
-use bun_str::{strings, String as BunString, ZigString};
-use bun_install::npm;
-use bun_sys;
-
+// TODO(b2-blocked): bun_jsc::host_fn (proc-macro)
+// TODO(b2-blocked): bun_jsc::JsResult
+// TODO(b2-blocked): bun_jsc::CallFrame::arguments_old
+// TODO(b2-blocked): bun_jsc::JSValue::array_iterator
+// TODO(b2-blocked): bun_jsc::JSValue::to_slice
+// TODO(b2-blocked): bun_jsc::JSGlobalObject::has_exception
+// TODO(b2-blocked): bun_install::npm::OperatingSystem
+// TODO(b2-blocked): bun_install::npm::Libc
+// TODO(b2-blocked): bun_install::npm::Architecture
+#[cfg(any())]
 #[bun_jsc::host_fn]
-pub fn operating_system_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fn operating_system_is_match(global: &JSGlobalObject, frame: &CallFrame) -> bun_jsc::JsResult<JSValue> {
+    use bun_install::npm;
     let args = frame.arguments_old(1);
     let mut operating_system = npm::OperatingSystem::negatable(npm::OperatingSystem::NONE);
     let mut iter = args.ptr[0].array_iterator(global)?;
@@ -32,8 +36,10 @@ pub fn operating_system_is_match(global: &JSGlobalObject, frame: &CallFrame) -> 
     ))
 }
 
+#[cfg(any())]
 #[bun_jsc::host_fn]
-pub fn libc_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fn libc_is_match(global: &JSGlobalObject, frame: &CallFrame) -> bun_jsc::JsResult<JSValue> {
+    use bun_install::npm;
     let args = frame.arguments_old(1);
     let mut libc = npm::Libc::negatable(npm::Libc::NONE);
     // PORT NOTE: Zig source omits `try` on arrayIterator/next/toSlice here (unlike the
@@ -53,8 +59,10 @@ pub fn libc_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
     Ok(JSValue::from(libc.combine().is_match(npm::Libc::CURRENT)))
 }
 
+#[cfg(any())]
 #[bun_jsc::host_fn]
-pub fn architecture_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fn architecture_is_match(global: &JSGlobalObject, frame: &CallFrame) -> bun_jsc::JsResult<JSValue> {
+    use bun_install::npm;
     let args = frame.arguments_old(1);
     let mut architecture = npm::Architecture::negatable(npm::Architecture::NONE);
     let mut iter = args.ptr[0].array_iterator(global)?;
@@ -77,19 +85,47 @@ pub fn architecture_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
 pub struct ManifestBindings;
 
 impl ManifestBindings {
-    pub fn generate(global: &JSGlobalObject) -> JSValue {
-        let obj = JSValue::create_empty_object(global, 1);
-        let parse_manifest_string = ZigString::static_(b"parseManifest");
-        obj.put(
-            global,
-            parse_manifest_string,
-            JSFunction::create(global, b"parseManifest", Self::js_parse_manifest, 2, Default::default()),
-        );
-        obj
+    // TODO(b2-blocked): bun_jsc::JSValue::create_empty_object
+    // TODO(b2-blocked): bun_jsc::JSValue::put
+    // TODO(b2-blocked): bun_jsc::JSFunction::create
+    // TODO(b2-blocked): bun_string::ZigString::static_
+    pub fn generate(_global: &JSGlobalObject) -> JSValue {
+        #[cfg(any())]
+        {
+            use bun_jsc::JSFunction;
+            use bun_string::ZigString;
+            let obj = JSValue::create_empty_object(_global, 1);
+            let parse_manifest_string = ZigString::static_(b"parseManifest");
+            obj.put(
+                _global,
+                parse_manifest_string,
+                JSFunction::create(_global, b"parseManifest", Self::js_parse_manifest, 2, Default::default()),
+            );
+            return obj;
+        }
+        #[cfg(not(any()))]
+        todo!("npm_jsc::ManifestBindings::generate — gated on bun_jsc method surface")
     }
 
+    // TODO(b2-blocked): bun_jsc::JsError
+    // TODO(b2-blocked): bun_jsc::JSValue::to_bun_string
+    // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw
+    // TODO(b2-blocked): bun_sys::File::open_at
+    // TODO(b2-blocked): bun_sys::Fd::cwd
+    // TODO(b2-blocked): bun_install::npm::registry
+    // TODO(b2-blocked): bun_install::npm::package_manifest
+    // TODO(b2-blocked): bun_string::strings::without_trailing_slash
+    // TODO(b2-blocked): bun_string::strings::without_prefix
+    // TODO(b2-blocked): bun_string::String::to_js_by_parse_json
+    #[cfg(any())]
     #[bun_jsc::host_fn]
-    pub fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> bun_jsc::JsResult<JSValue> {
+        use std::io::Write as _;
+        use bstr::BStr;
+        use bun_jsc::JsError;
+        use bun_string::{strings, String as BunString, ZigString};
+        use bun_install::npm;
+
         let args = frame.arguments_old(2).slice();
         if args.len() < 2 || !args[0].is_string() || !args[1].is_string() {
             return global.throw(format_args!(

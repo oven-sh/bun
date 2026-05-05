@@ -9,6 +9,7 @@ use phf::phf_map;
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct EventType(pub u8);
 
+#[allow(non_upper_case_globals)]
 impl EventType {
     pub const Event: Self = Self(0);
     pub const MessageEvent: Self = Self(1);

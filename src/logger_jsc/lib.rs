@@ -2,98 +2,77 @@
 
 #![allow(unused, nonstandard_style)]
 
-// ──────────────────────────────────────────────────────────────────────────
-// B-1 stub surface
-//
-// `bun_jsc` does not currently `cargo check` (transitively pulls in
-// `bun_http_jsc` and others that are still red), so it is dropped from
-// Cargo.toml for now and the JSC types are stubbed locally as opaque
-// newtypes. The Phase-A draft is preserved verbatim below behind
-// `#[cfg(any())]` and will be un-gated in B-2 once `bun_jsc` is green.
-// ──────────────────────────────────────────────────────────────────────────
+use bun_logger::{self as logger, Data, Level, Location, Log, Metadata, Msg};
+use bun_string::ZigString;
 
-use bun_logger::{self as logger, Log, Msg};
-
-// TODO(b1): bun_jsc::{JSGlobalObject, JSValue, JsResult, CallFrame} missing — bun_jsc not yet green.
-pub struct JSGlobalObject(());
-#[derive(Clone, Copy)]
-pub struct JSValue(());
+// TODO(b2-blocked): bun_jsc::JSGlobalObject
+// TODO(b2-blocked): bun_jsc::JSValue
+// TODO(b2-blocked): bun_jsc::JsResult
+// `bun_jsc` is currently red (concurrent B-2 un-gating). Local opaque stubs mirror
+// bun_jsc's `stub_ty!` shape (`#[repr(transparent)] struct(usize)`, Copy+Default) so
+// the swap to `use bun_jsc::{JSGlobalObject, JSValue, JsResult}` is mechanical once
+// that crate is green. PORTING.md §JSC: `bun.JSError!T` → `bun_jsc::JsResult<T>`.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct JSGlobalObject(pub usize);
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct JSValue(pub usize);
 pub type JsResult<T> = Result<T, JSValue>;
-
-// TODO(b1): bun_runtime::api::{BuildMessage, ResolveMessage} missing — bun_runtime not a dep here.
-
-pub fn msg_from_js(_global_object: &JSGlobalObject, _file: &[u8], _err: JSValue) -> JsResult<Msg> {
-    todo!("logger_jsc::msg_from_js — gated until bun_jsc is green (B-2)")
+mod jsc {
+    pub use super::{JSGlobalObject, JSValue};
 }
 
-pub fn msg_to_js(_this: Msg, _global_object: &JSGlobalObject) -> Result<JSValue, bun_alloc::AllocError> {
-    todo!("logger_jsc::msg_to_js — gated until bun_jsc is green (B-2)")
-}
-
-pub fn level_from_js(_global_this: &JSGlobalObject, _value: JSValue) -> JsResult<Option<logger::Level>> {
-    todo!("logger_jsc::level_from_js — gated until bun_jsc is green (B-2)")
-}
-
-pub fn log_to_js(_this: &Log, _global: &JSGlobalObject, _message: &[u8]) -> JsResult<JSValue> {
-    todo!("logger_jsc::log_to_js — gated until bun_jsc is green (B-2)")
-}
-
-/// unlike `to_js`, this always produces an AggregateError object
-pub fn log_to_js_aggregate_error(_this: &Log, _global: &JSGlobalObject, _message: bun_string::String) -> JsResult<JSValue> {
-    todo!("logger_jsc::log_to_js_aggregate_error — gated until bun_jsc is green (B-2)")
-}
-
-pub fn log_to_js_array(_this: &Log, _global: &JSGlobalObject) -> JsResult<JSValue> {
-    todo!("logger_jsc::log_to_js_array — gated until bun_jsc is green (B-2)")
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Phase-A draft (preserved, gated — do not delete)
-// ──────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
-mod phase_a_draft {
-    use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-    use bun_logger::{self as logger, Location, Log, Msg};
-    use bun_str::{self as string, ZigString};
-
-    // TODO(port): `bun.api.BuildMessage` / `bun.api.ResolveMessage` live under
-    // `src/runtime/api/` per repo layout → `bun_runtime::api::*`. Phase B: confirm crate path.
-    use bun_runtime::api::{BuildMessage, ResolveMessage};
-
-    pub fn msg_from_js(global_object: &JSGlobalObject, file: &[u8], err: JSValue) -> JsResult<Msg> {
-        // TODO(port): `jsc.ZigException.Holder` — exact Rust path TBD in bun_jsc.
-        let mut zig_exception_holder = bun_jsc::zig_exception::Holder::init();
+pub fn msg_from_js(global_object: &JSGlobalObject, file: &[u8], err: JSValue) -> JsResult<Msg> {
+    // TODO(b2-blocked): bun_jsc::zig_exception::Holder
+    // TODO(b2-blocked): bun_jsc::JSValue::to_error
+    // TODO(b2-blocked): bun_jsc::JSValue::to_zig_exception
+    // TODO(b2-blocked): bun_jsc::JSValue::to_bun_string
+    #[cfg(any())]
+    {
+        let mut zig_exception_holder = jsc::zig_exception::Holder::init();
         if let Some(value) = err.to_error() {
             value.to_zig_exception(global_object, zig_exception_holder.zig_exception());
         } else {
             zig_exception_holder.zig_exception().message = err.to_bun_string(global_object)?;
         }
 
-        Ok(Msg {
-            data: logger::Data {
-                text: zig_exception_holder.zig_exception().message.to_owned_slice()?,
-                location: Some(Location {
-                    // TODO(port): Location.file ownership — Zig borrowed the caller's slice;
-                    // Rust field type (Box<[u8]> vs &'static [u8]) is decided in bun_logger.
-                    file: Box::<[u8]>::from(file),
-                    line: 0,
-                    column: 0,
-                    ..Default::default()
-                }),
-                ..Default::default()
+        return Ok(Msg {
+            data: Data {
+                // TODO(port): lifetime — `Data.text`/`Location.file` are currently
+                // `&'static [u8]` in bun_logger; Zig owned this via allocator.dupe.
+                // Revisit once bun_logger retypes `Str` to owned (see logger TODO(port)).
+                text: zig_exception_holder.zig_exception().message.to_owned_slice(),
+                location: Some(Location { file, line: 0, column: 0, ..Default::default() }),
             },
             ..Default::default()
-        })
+        });
     }
+    let _ = (global_object, file, err);
+    todo!("logger_jsc::msg_from_js — blocked on bun_jsc::zig_exception::Holder + JSValue methods")
+}
 
-    pub fn msg_to_js(this: Msg, global_object: &JSGlobalObject) -> Result<JSValue, bun_alloc::AllocError> {
-        match this.metadata {
-            logger::Metadata::Build => BuildMessage::create(global_object, this),
-            logger::Metadata::Resolve { .. } => ResolveMessage::create(global_object, this, b""),
-        }
+pub fn msg_to_js(this: Msg, global_object: &JSGlobalObject) -> Result<JSValue, bun_alloc::AllocError> {
+    // TODO(b2-blocked): bun_jsc::BuildMessage
+    // TODO(b2-blocked): bun_jsc::ResolveMessage
+    #[cfg(any())]
+    {
+        return match this.metadata {
+            Metadata::Build => jsc::BuildMessage::create(global_object, this),
+            Metadata::Resolve(_) => jsc::ResolveMessage::create(global_object, &this, b""),
+        };
     }
+    let _ = (this, global_object);
+    todo!("logger_jsc::msg_to_js — blocked on bun_jsc::{{BuildMessage, ResolveMessage}}")
+}
 
-    pub fn level_from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Option<logger::log::Level>> {
+pub fn level_from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Option<Level>> {
+    // TODO(b2-blocked): bun_jsc::JSValue::is_undefined
+    // TODO(b2-blocked): bun_jsc::JSValue::is_string
+    // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw_invalid_arguments
+    // TODO(b2-blocked): bun_jsc::comptime_string_map_jsc::from_js
+    #[cfg(any())]
+    {
         if value.is_empty() || value.is_undefined() {
             return Ok(None);
         }
@@ -102,61 +81,90 @@ mod phase_a_draft {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected logLevel to be a string")));
         }
 
-        // TODO(port): `Log.Level.Map` is a ComptimeStringMap in Zig → `phf::Map` in bun_logger;
-        // `.fromJS` is the JSC-aware lookup helper. Phase B: wire `Level::map_from_js`.
-        logger::log::Level::map_from_js(global_this, value)
+        // Zig: `Log.Level.Map.fromJS` — ComptimeStringMap JSC-aware lookup.
+        // Rust: `Level::MAP` is the `phf::Map`; the `.fromJS` helper lives in
+        // `bun_jsc::comptime_string_map_jsc`.
+        return jsc::comptime_string_map_jsc::from_js(&Level::MAP, global_this, value);
     }
+    let _ = (global_this, value);
+    todo!("logger_jsc::level_from_js — blocked on bun_jsc JSValue/JSGlobalObject methods")
+}
 
-    pub fn log_to_js(this: &Log, global: &JSGlobalObject, message: &[u8]) -> JsResult<JSValue> {
-        let msgs: &[Msg] = this.msgs.as_slice();
-        // On-stack array: conservative GC stack scan keeps these JSValues alive (see PORTING.md §JSC).
-        let mut errors_stack: [JSValue; 256] = [JSValue::ZERO; 256];
+pub fn log_to_js(this: &Log, global: &JSGlobalObject, message: &[u8]) -> JsResult<JSValue> {
+    let msgs: &[Msg] = this.msgs.as_slice();
+    // On-stack array: conservative GC stack scan keeps these JSValues alive (see PORTING.md §JSC).
+    let mut errors_stack: [JSValue; 256] = [JSValue::default(); 256];
 
-        let count = u16::try_from(msgs.len().min(errors_stack.len())).unwrap();
-        match count {
+    let count = u16::try_from(msgs.len().min(errors_stack.len())).unwrap();
+    // TODO(b2-blocked): bun_jsc::BuildMessage
+    // TODO(b2-blocked): bun_jsc::ResolveMessage
+    // TODO(b2-blocked): bun_jsc::JSGlobalObject::create_aggregate_error
+    #[cfg(any())]
+    {
+        return match count {
             0 => Ok(JSValue::UNDEFINED),
             1 => {
-                let msg = msgs[0].clone();
+                let msg = msgs[0].clone()?;
                 Ok(match msg.metadata {
-                    logger::Metadata::Build => BuildMessage::create(global, msg)?,
-                    logger::Metadata::Resolve { .. } => ResolveMessage::create(global, msg, b"")?,
+                    Metadata::Build => jsc::BuildMessage::create(global, msg)?,
+                    Metadata::Resolve(_) => jsc::ResolveMessage::create(global, &msg, b"")?,
                 })
             }
             _ => {
                 for (i, msg) in msgs[..usize::from(count)].iter().enumerate() {
                     errors_stack[i] = match msg.metadata {
-                        logger::Metadata::Build => BuildMessage::create(global, msg.clone())?,
-                        logger::Metadata::Resolve { .. } => ResolveMessage::create(global, msg.clone(), b"")?,
+                        Metadata::Build => jsc::BuildMessage::create(global, msg.clone()?)?,
+                        Metadata::Resolve(_) => jsc::ResolveMessage::create(global, msg, b"")?,
                     };
                 }
                 let out = ZigString::init(message);
                 let agg = global.create_aggregate_error(&errors_stack[..usize::from(count)], &out)?;
                 Ok(agg)
             }
-        }
+        };
     }
+    let _ = (errors_stack, count, message, global);
+    todo!("logger_jsc::log_to_js — blocked on bun_jsc::{{BuildMessage, ResolveMessage, JSGlobalObject::create_aggregate_error}}")
+}
 
-    /// unlike `to_js`, this always produces an AggregateError object
-    pub fn log_to_js_aggregate_error(this: &Log, global: &JSGlobalObject, message: bun_str::String) -> JsResult<JSValue> {
-        global.create_aggregate_error_with_array(message, log_to_js_array(this, global)?)
+/// unlike `to_js`, this always produces an AggregateError object
+pub fn log_to_js_aggregate_error(this: &Log, global: &JSGlobalObject, message: bun_string::String) -> JsResult<JSValue> {
+    // TODO(b2-blocked): bun_jsc::JSGlobalObject::create_aggregate_error_with_array
+    #[cfg(any())]
+    {
+        return global.create_aggregate_error_with_array(message, log_to_js_array(this, global)?);
     }
+    let _ = (this, global, message);
+    todo!("logger_jsc::log_to_js_aggregate_error — blocked on bun_jsc::JSGlobalObject::create_aggregate_error_with_array")
+}
 
-    pub fn log_to_js_array(this: &Log, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let msgs: &[Msg] = this.msgs.as_slice();
+pub fn log_to_js_array(this: &Log, global: &JSGlobalObject) -> JsResult<JSValue> {
+    let msgs: &[Msg] = this.msgs.as_slice();
 
+    // TODO(b2-blocked): bun_jsc::JSValue::create_empty_array
+    // TODO(b2-blocked): bun_jsc::JSValue::put_index
+    #[cfg(any())]
+    {
         let arr = JSValue::create_empty_array(global, msgs.len())?;
         for (i, msg) in msgs.iter().enumerate() {
-            arr.put_index(global, u32::try_from(i).unwrap(), msg_to_js(msg.clone(), global)?)?;
+            arr.put_index(global, u32::try_from(i).unwrap(), msg_to_js(msg.clone()?, global)?)?;
         }
-
-        Ok(arr)
+        return Ok(arr);
     }
+    let _ = (msgs, global);
+    todo!("logger_jsc::log_to_js_array — blocked on bun_jsc::JSValue::{{create_empty_array, put_index}}")
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/logger_jsc/logger_jsc.zig (93 lines)
 //   confidence: medium
-//   todos:      4
-//   notes:      bun.api.{Build,Resolve}Message crate path + ZigException::Holder path need Phase-B confirmation; Msg/Location field init uses ..Default — verify bun_logger struct shapes.
+//   todos:      see TODO(b2-blocked) markers
+//   notes:      B-2 un-gated. Signatures now use real bun_jsc::{JSGlobalObject,
+//               JSValue} (currently opaque stub_ty! newtypes). Every fn body
+//               re-gated on bun_jsc methods that the B-1 stub surface does not
+//               yet export (JSValue methods, JSGlobalObject methods,
+//               zig_exception::Holder, BuildMessage, ResolveMessage,
+//               comptime_string_map_jsc). Metadata/Level/Log/Msg shapes
+//               corrected against bun_logger.
 // ──────────────────────────────────────────────────────────────────────────

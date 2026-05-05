@@ -133,6 +133,21 @@ const tinyJpeg = await new Bun.Image(tinyPng).jpeg({ quality: 80 }).bytes();
 const tinyWebp = await new Bun.Image(tinyPng).webp({ quality: 80 }).bytes();
 const tinyWebpLossless = await new Bun.Image(tinyPng).webp({ lossless: true }).bytes();
 
+// 1×1 white pixel AVIF (libavif tests/data/white_1x1.avif). Not generated
+// on the fly — AVIF encode on Linux is dlopen-gated on libavif.so.16
+// having an AV1 encoder linked in, which a hermetic fuzz file can't assume.
+// Same bytes as in image.test.ts; kept here so this file stays standalone-
+// runnable.
+const tinyAvif = Buffer.from(
+  "AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUEAAADybWV0YQAAAAAAAAAoaGRs" +
+    "cgAAAAAAAAAAcGljdAAAAAAAAAAAAAAAAGxpYmF2aWYAAAAADnBpdG0AAAAAAAEAAAAe" +
+    "aWxvYwAAAABEAAABAAEAAAABAAABGgAAABcAAAAoaWluZgAAAAAAAQAAABppbmZlAgAA" +
+    "AAABAABhdjAxQ29sb3IAAAAAamlwcnAAAABLaXBjbwAAABRpc3BlAAAAAAAAAAEAAAAB" +
+    "AAAAEHBpeGkAAAAAAwgICAAAAAxhdjFDgSAAAAAAABNjb2xybmNseAABAA0ABoAAAAAX" +
+    "aXBtYQAAAAAAAAABAAEEAQKDBAAAAB9tZGF0EgAKBzgABhAQ0GkyCh/wP///xAAAr3A=",
+  "base64",
+);
+
 /** Assert the promise either rejects or resolves — never aborts/hangs. */
 async function survives(p: Promise<unknown>): Promise<"rejected" | "resolved"> {
   try {
@@ -762,17 +777,32 @@ describe("random-byte fuzz", () => {
 
   // Mutate one byte of each known-good fixture at every offset — catches
   // codec parsers that trust a length/type byte without bounds-checking.
-  for (const [name, fixture] of [
+  // The AVIF fixture is Linux-only — on mac/win the same bytes go through
+  // the ImageIO/WIC decoder, which has its own hardening surface and isn't
+  // what this file's meant to exercise.
+  const fuzzFormats: Array<readonly [string, Uint8Array]> = [
     ["png", tinyPng],
     ["jpeg", tinyJpeg],
     ["webp-lossless", tinyWebpLossless],
-  ] as const) {
-    test.concurrent(`${name}: single-byte flip at every offset`, async () => {
-      for (let off = 0; off < fixture.length; off++) {
-        const mut = Buffer.from(fixture);
-        mut[off] ^= 0xff;
-        await survives(new Bun.Image(mut).bytes());
-      }
-    });
+  ];
+  if (process.platform === "linux") fuzzFormats.push(["avif", tinyAvif]);
+  for (const [name, fixture] of fuzzFormats) {
+    // Raise the per-test timeout for AVIF: a handful of flips end up producing
+    // bytes that still decode (some mdat corruption doesn't reach the bit
+    // reader), triggering real AV1 decode at ~40ms each under ASAN. 305 flips
+    // × worst-case ~60% full-decode ratio blows past Jest's 5s default. JPEG/
+    // PNG/WebP flips all reject in parse so they don't need it.
+    const perTestTimeout = name === "avif" ? 30_000 : undefined;
+    test.concurrent(
+      `${name}: single-byte flip at every offset`,
+      async () => {
+        for (let off = 0; off < fixture.length; off++) {
+          const mut = Buffer.from(fixture);
+          mut[off] ^= 0xff;
+          await survives(new Bun.Image(mut).bytes());
+        }
+      },
+      perTestTimeout,
+    );
   }
 });

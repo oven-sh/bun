@@ -29,10 +29,15 @@ else
 ///     and the `quality` scale match Linux.
 ///   • lanczos3 resize, rotate90, flip → vImage (AMX, ~3-6× the Highway
 ///     kernel on the geometry step).
-///   • heic/avif decode+encode → ImageIO/WIC (no static codec).
+///   • heic decode+encode → ImageIO/WIC (no static codec).
+///   • avif decode+encode → ImageIO/WIC on mac/win; on Linux, dlopen'd
+///     libavif (see `codec_avif.zig`).
 ///
-/// `.bun` skips the OS layer entirely (Highway geometry, heic/avif throw)
-/// so behaviour is byte-identical to a Linux build.
+/// `.bun` skips the OS layer entirely: Highway geometry everywhere, heic
+/// throws `UnsupportedOnPlatform` on every platform (no static codec),
+/// avif uses the dlopen'd libavif on Linux and throws
+/// `UnsupportedOnPlatform` elsewhere (the `avif` comptime optional-type
+/// is `null` on mac/win).
 ///
 /// Unsynchronised: written from JS, read from WorkPool — a torn read of a
 /// 1-byte enum is fine and the worst case is one task using the previous
@@ -58,7 +63,12 @@ pub const Format = enum(u8) {
     webp,
     /// System-backend-only on macOS/Windows; no static codec.
     heic,
-    /// System-backend-only on macOS/Windows; no static codec.
+    /// Decode + encode via dlopen'd libavif on Linux (libavif pulls in dav1d
+    /// for decode and whichever AV1 encoder the distro bundled — typically
+    /// aom, rav1e, and/or SVT-AV1 — for encode). System backend (ImageIO/WIC)
+    /// on macOS/Windows. Linux without libavif installed returns
+    /// `UnsupportedOnPlatform`; a libavif that was built decode-only returns
+    /// `EncodeFailed` when you call `.avif()`.
     avif,
     /// Decode-only. Static `BI_RGB`/`BI_BITFIELDS` parser everywhere; the
     /// system backend is tried first (covers RLE/JPEG-in-BMP). The Windows
@@ -171,8 +181,9 @@ pub const Error = error{
     /// decompression-bomb defence — checked AFTER reading the header but
     /// BEFORE allocating the full RGBA buffer.
     TooManyPixels,
-    /// HEIC/AVIF on a platform with no system backend (Linux), or the system
-    /// backend declined and there's no static codec to fall back to.
+    /// HEIC on a platform with no system backend (Linux), AVIF on Linux
+    /// without libavif.so.16 installed, or the system backend declined
+    /// and there's no static codec to fall back to.
     UnsupportedOnPlatform,
     OutOfMemory,
 };
@@ -204,8 +215,16 @@ pub fn decode(bytes: []const u8, max_pixels: u64, hint: DecodeHint) Error!Decode
         // system libz). The OS backend is purely a *capability* fallback for
         // containers we don't link a decoder for — and `backend == .bun` opts
         // out of even that so behaviour is identical to Linux.
-        .heic, .avif, .tiff => decodeViaSystem(bytes, max_pixels) catch |e| switch (e) {
+        .heic, .tiff => decodeViaSystem(bytes, max_pixels) catch |e| switch (e) {
             error.BackendUnavailable => error.UnsupportedOnPlatform,
+            else => |narrowed| narrowed,
+        },
+        // AVIF: system backend (ImageIO/WIC) on macOS/Windows, dlopen'd
+        // libavif + libdav1d on Linux. Same capability-fallback pattern as
+        // BMP/GIF — mac/win users never trigger the dlopen path because
+        // ImageIO/WIC satisfy the call first.
+        .avif => decodeViaSystem(bytes, max_pixels) catch |e| switch (e) {
+            error.BackendUnavailable => if (avif) |a| a.decode(bytes, max_pixels) else error.UnsupportedOnPlatform,
             else => |narrowed| narrowed,
         },
         // BMP/GIF have static decoders so Linux (and `backend == .bun`) work;
@@ -282,10 +301,25 @@ pub fn probe(bytes: []const u8, max_pixels: u64) Error!struct { format: Format, 
             // actually decodes it (system backend on mac/win, else error).
             return error.UnsupportedOnPlatform;
         },
-        .heic, .avif => {
-            // System backend handles these; fall through to a full decode if
-            // available, otherwise UnsupportedOnPlatform.
+        .heic => {
+            // System backend handles this; the probe path currently surfaces
+            // UnsupportedOnPlatform everywhere — a real dimensions read would
+            // need to go through the backend's decode+stash pattern.
             return error.UnsupportedOnPlatform;
+        },
+        .avif => {
+            // Linux: libavif's parse() reads the ispe box without decoding
+            // the AV1 stream — cheap enough to be our real probe path.
+            // mac/win have no static codec here, so falling through to
+            // UnsupportedOnPlatform matches the probe-only path's current
+            // behaviour on those platforms.
+            if (avif) |a| {
+                const dims = try a.probe(bytes, max_pixels);
+                w = dims.width;
+                h = dims.height;
+            } else {
+                return error.UnsupportedOnPlatform;
+            }
         },
     }
     // The PNG/JPEG/BMP specs all cap each dimension at 2³¹−1; a header with
@@ -369,18 +403,43 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: EncodeOptions) Er
         // libjpeg-turbo's, and it can't honour compressionLevel/palette/
         // lossless, so using it for jpeg/png/webp would make output bytes
         // diverge from Linux for no speed win.
-        .heic, .avif => if (system_backend) |b| if (useSystem())
+        .heic => if (system_backend) |b| if (useSystem())
             Encoded.fromOwned(b.encode(rgba, width, height, opts) catch |e| switch (e) {
                 error.BackendUnavailable => return error.UnsupportedOnPlatform,
                 else => |narrowed| return narrowed,
             })
         else
             error.UnsupportedOnPlatform else error.UnsupportedOnPlatform,
+        // AVIF encode: system backend on mac/win (ImageIO/WIC wrap the OS
+        // AV1 encoder), dlopen'd libavif on Linux. `encodeAvif` walks both
+        // paths so the switch arm stays a single expression.
+        .avif => try encodeAvif(rgba, width, height, opts),
         // Decode-only formats — no .bmp()/.tiff()/.gif() chain methods, so the
         // pipeline never sets these on EncodeOptions.format. Exhaustiveness
         // arm only.
         .bmp, .tiff, .gif => error.UnsupportedOnPlatform,
     };
+}
+
+/// AVIF encode dispatch: OS backend first on mac/win (it reports
+/// `BackendUnavailable` when the dlopen misses), dlopen'd libavif on Linux.
+/// If neither path is available, returns `UnsupportedOnPlatform` — same
+/// contract as HEIC on Linux. `opts.icc_profile` (if any) is forwarded so
+/// a non-sRGB source preserves its colour meaning through re-encode
+/// — same contract as jpeg/png/webp. See #30197.
+fn encodeAvif(rgba: []const u8, width: u32, height: u32, opts: EncodeOptions) Error!Encoded {
+    if (system_backend) |b| if (useSystem()) {
+        return Encoded.fromOwned(b.encode(rgba, width, height, opts) catch |e| switch (e) {
+            error.BackendUnavailable => return encodeAvifStatic(rgba, width, height, opts.quality, opts.icc_profile),
+            else => |narrowed| return narrowed,
+        });
+    };
+    return encodeAvifStatic(rgba, width, height, opts.quality, opts.icc_profile);
+}
+
+fn encodeAvifStatic(rgba: []const u8, width: u32, height: u32, quality: u8, icc_profile: ?[]const u8) Error!Encoded {
+    if (avif) |a| return a.encode(rgba, width, height, quality, icc_profile);
+    return error.UnsupportedOnPlatform;
 }
 
 // ───────────────────────────── highway kernels ──────────────────────────────
@@ -493,6 +552,20 @@ pub const png = @import("./codec_png.zig");
 pub const webp = @import("./codec_webp.zig");
 pub const bmp = @import("./codec_bmp.zig");
 pub const gif = @import("./codec_gif.zig");
+/// AVIF decode + encode on Linux via dlopen'd libavif (+ transitively libdav1d
+/// for decode and whichever AV1 encoder — aom/rav1e/SvtAv1Enc — the distro
+/// bundled for encode). See `src/jsc/bindings/image_avif_shim.cpp`. Nothing
+/// is linked statically; if libavif isn't installed the shim returns
+/// AVIF_UNAVAILABLE at the first call and we surface `UnsupportedOnPlatform`
+/// (same contract as a mac/win system-backend miss). A libavif built without
+/// any registered AV1 encoder surfaces `EncodeFailed` on `.avif()`. Android
+/// is excluded because the shim itself is gated on `__linux__ && !__ANDROID__`
+/// — bionic would link fine, but Android images shouldn't try to pull in a
+/// Linux distro package. macOS/Windows handle AVIF via `system_backend`.
+pub const avif: ?type = if (bun.Environment.isLinux and !bun.Environment.isAndroid)
+    @import("./codec_avif.zig")
+else
+    null;
 
 const bun = @import("bun");
 const std = @import("std");

@@ -87,6 +87,17 @@ pub fn getRemoteSocketInfo(self: AnyRequestContext) ?uws.SocketAddress {
     }.f, .{});
 }
 
+pub fn getFd(self: AnyRequestContext) ?bun.FD {
+    return self.dispatch(?bun.FD, null, struct {
+        fn f(comptime T: type, ctx: anytype) ?bun.FD {
+            // HTTP/3 multiplexes streams over a single UDP socket, so there
+            // is no meaningful per-request OS fd to hand back.
+            if (comptime T.is_h3) return null;
+            return ctx.getFd();
+        }
+    }.f, .{});
+}
+
 pub fn detachRequest(self: AnyRequestContext) void {
     self.dispatch(void, {}, struct {
         fn f(comptime _: type, ctx: anytype) void {

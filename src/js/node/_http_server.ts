@@ -951,6 +951,12 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     return this.writableLength;
   }
 
+  get fd() {
+    const handle = this[kHandle];
+    if (!handle) return -1;
+    return handle.fd ?? -1;
+  }
+
   connect(_port, _host, _connectListener) {
     return this;
   }

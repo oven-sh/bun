@@ -181,8 +181,9 @@ pub const Error = error{
     /// decompression-bomb defence — checked AFTER reading the header but
     /// BEFORE allocating the full RGBA buffer.
     TooManyPixels,
-    /// HEIC/AVIF on a platform with no system backend (Linux), or the system
-    /// backend declined and there's no static codec to fall back to.
+    /// HEIC on a platform with no system backend (Linux), AVIF on Linux
+    /// without libavif.so.16 installed, or the system backend declined
+    /// and there's no static codec to fall back to.
     UnsupportedOnPlatform,
     OutOfMemory,
 };

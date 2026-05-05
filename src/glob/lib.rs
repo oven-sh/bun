@@ -1,7 +1,49 @@
 // Port of src/glob/glob.zig
 
+// ──────────────────────────────────────────────────────────────────────────
+// B-1 GATE: Phase-A draft modules preserved behind #[cfg(any())].
+// Stub surface exposed below. Un-gate in B-2.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[cfg(any())]
 pub mod matcher;
+#[cfg(any())]
+#[path = "GlobWalker.rs"]
 pub mod glob_walker;
+
+// ─── stub: matcher ────────────────────────────────────────────────────────
+#[cfg(not(any()))]
+pub mod matcher {
+    // TODO(b1): bun_str::strings missing; bun_collections::BoundedArray lacks new/push/pop/len/as_slice
+    #[derive(Copy, Clone, Eq, PartialEq)]
+    pub enum MatchResult {
+        NoMatch,
+        Match,
+        NegateNoMatch,
+        NegateMatch,
+    }
+    impl MatchResult {
+        pub fn matches(self) -> bool {
+            matches!(self, MatchResult::Match | MatchResult::NegateMatch)
+        }
+    }
+    pub fn r#match(_glob: &[u8], _path: &[u8]) -> MatchResult {
+        todo!("b1-stub: matcher::match")
+    }
+}
+
+// ─── stub: glob_walker ────────────────────────────────────────────────────
+#[cfg(not(any()))]
+pub mod glob_walker {
+    use core::marker::PhantomData;
+    pub struct SyscallAccessor;
+    pub struct GlobWalker_<A, const SENTINEL: bool>(PhantomData<A>);
+    impl<A, const SENTINEL: bool> GlobWalker_<A, SENTINEL> {
+        pub fn new() -> Self {
+            todo!("b1-stub: GlobWalker_::new")
+        }
+    }
+}
 
 // `match` is a Rust keyword; re-export with raw identifier.
 pub use crate::matcher::r#match;

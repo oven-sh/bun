@@ -1,4 +1,352 @@
 // This is close to WHATWG URL, but we don't want the validation errors
+//
+// ══════════════════════════════════════════════════════════════════════════
+// B-1 GATE-AND-STUB SURFACE
+// Phase-A draft preserved verbatim below in `#[cfg(any())] mod _phase_a_draft`.
+// This top section exposes the minimal public types/fns downstream crates name
+// (URL, PercentEncoding, QueryStringMap, route_param, whatwg, scanners) so the
+// dep graph type-checks. Bodies are `todo!()`; un-gating happens in B-2.
+// ══════════════════════════════════════════════════════════════════════════
+#![allow(unused, non_snake_case, clippy::all)]
+
+use bun_string::{self, strings, String as BunString, Tag as BunStringTag};
+
+// ── local stubs for lower-tier symbols not yet on their stub surface ──────
+// TODO(b1): bun_schema::api missing — StringPointer is `{offset:u32,length:u32}`
+pub mod api {
+    #[repr(C)]
+    #[derive(Clone, Copy, Default, Debug)]
+    pub struct StringPointer {
+        pub offset: u32,
+        pub length: u32,
+    }
+}
+
+// TODO(b1): bun_io gated (does not compile) — minimal byte-writer trait stub
+mod bun_io {
+    pub trait Write {}
+    impl Write for Vec<u8> {}
+}
+
+// ── route_param (TYPE_ONLY move-down from bun_router, see CYCLEBREAK.md) ──
+pub mod route_param {
+    #[derive(Clone, Copy)]
+    pub struct Param {
+        pub name: &'static [u8],
+        pub value: &'static [u8],
+    }
+    // TODO(b1): bun_collections::MultiArrayList is an opaque stub; use Vec for now
+    pub type List = Vec<Param>;
+}
+pub use route_param::List as ParamsList;
+
+// ── whatwg (WTF::URL FFI shim, MOVE_DOWN from bun_jsc) ────────────────────
+pub mod whatwg {
+    use super::BunString as String;
+
+    #[repr(C)]
+    pub struct URL {
+        _opaque: [u8; 0],
+    }
+
+    unsafe extern "C" {
+        fn URL__fromString(str: *mut String) -> Option<core::ptr::NonNull<URL>>;
+        fn URL__protocol(url: *mut URL) -> String;
+        fn URL__href(url: *mut URL) -> String;
+        fn URL__username(url: *mut URL) -> String;
+        fn URL__password(url: *mut URL) -> String;
+        fn URL__search(url: *mut URL) -> String;
+        fn URL__host(url: *mut URL) -> String;
+        fn URL__hostname(url: *mut URL) -> String;
+        fn URL__port(url: *mut URL) -> u32;
+        fn URL__deinit(url: *mut URL);
+        fn URL__pathname(url: *mut URL) -> String;
+        fn URL__getHref(input: *mut String) -> String;
+        fn URL__getFileURLString(input: *mut String) -> String;
+        fn URL__getHrefJoin(base: *mut String, relative: *mut String) -> String;
+        fn URL__pathFromFileURL(input: *mut String) -> String;
+        fn URL__hash(url: *mut URL) -> String;
+        fn URL__fragmentIdentifier(url: *mut URL) -> String;
+        fn URL__originLength(latin1_slice: *const u8, len: usize) -> u32;
+    }
+
+    #[inline]
+    fn as_mut_ptr(s: &String) -> *mut String {
+        s as *const String as *mut String
+    }
+
+    pub fn href_from_string(str: &String) -> String {
+        unsafe { URL__getHref(as_mut_ptr(str)) }
+    }
+    pub fn join(base: &String, relative: &String) -> String {
+        unsafe { URL__getHrefJoin(as_mut_ptr(base), as_mut_ptr(relative)) }
+    }
+    pub fn file_url_from_string(str: &String) -> String {
+        unsafe { URL__getFileURLString(as_mut_ptr(str)) }
+    }
+    pub fn path_from_file_url(str: &String) -> String {
+        unsafe { URL__pathFromFileURL(as_mut_ptr(str)) }
+    }
+    pub fn origin_from_slice(slice: &[u8]) -> Option<&[u8]> {
+        let first_non_ascii = super::strings::first_non_ascii(slice).unwrap_or(slice.len());
+        let len = unsafe { URL__originLength(slice.as_ptr(), first_non_ascii) };
+        if len == 0 {
+            return None;
+        }
+        Some(&slice[..len as usize])
+    }
+
+    impl URL {
+        pub fn from_string(str: &String) -> Option<core::ptr::NonNull<URL>> {
+            unsafe { URL__fromString(as_mut_ptr(str)) }
+        }
+        pub fn from_utf8(input: &[u8]) -> Option<core::ptr::NonNull<URL>> {
+            Self::from_string(&String::borrow_utf8(input))
+        }
+        pub fn hash(&mut self) -> String { unsafe { URL__hash(self) } }
+        pub fn fragment_identifier(&mut self) -> String { unsafe { URL__fragmentIdentifier(self) } }
+        pub fn protocol(&mut self) -> String { unsafe { URL__protocol(self) } }
+        pub fn href(&mut self) -> String { unsafe { URL__href(self) } }
+        pub fn username(&mut self) -> String { unsafe { URL__username(self) } }
+        pub fn password(&mut self) -> String { unsafe { URL__password(self) } }
+        pub fn search(&mut self) -> String { unsafe { URL__search(self) } }
+        pub fn host(&mut self) -> String { unsafe { URL__host(self) } }
+        pub fn hostname(&mut self) -> String { unsafe { URL__hostname(self) } }
+        pub fn port(&mut self) -> u32 { unsafe { URL__port(self) } }
+        pub fn pathname(&mut self) -> String { unsafe { URL__pathname(self) } }
+        pub fn deinit(&mut self) { unsafe { URL__deinit(self) } }
+    }
+}
+pub use whatwg::{file_url_from_string, href_from_string, join, origin_from_slice, path_from_file_url};
+
+// ── URL view-struct ───────────────────────────────────────────────────────
+#[derive(Clone)]
+pub struct URL<'a> {
+    pub hash: &'a [u8],
+    pub host: &'a [u8],
+    pub hostname: &'a [u8],
+    pub href: &'a [u8],
+    pub origin: &'a [u8],
+    pub password: &'a [u8],
+    pub pathname: &'a [u8],
+    pub path: &'a [u8],
+    pub port: &'a [u8],
+    pub protocol: &'a [u8],
+    pub search: &'a [u8],
+    pub search_params: Option<QueryStringMap>,
+    pub username: &'a [u8],
+    pub port_was_automatically_set: bool,
+}
+
+impl<'a> Default for URL<'a> {
+    fn default() -> Self {
+        Self {
+            hash: b"",
+            host: b"",
+            hostname: b"",
+            href: b"",
+            origin: b"",
+            password: b"",
+            pathname: b"/",
+            path: b"/",
+            port: b"",
+            protocol: b"",
+            search: b"",
+            search_params: None,
+            username: b"",
+            port_was_automatically_set: false,
+        }
+    }
+}
+
+impl<'a> URL<'a> {
+    pub fn parse(_base: &'a [u8]) -> URL<'a> {
+        todo!("B-2: un-gate _phase_a_draft::URL::parse")
+    }
+    pub fn from_string(_input: &BunString) -> Result<URL<'static>, bun_core::Error> {
+        todo!("B-2")
+    }
+    pub fn from_utf8(_input: &[u8]) -> Result<URL<'static>, bun_core::Error> {
+        todo!("B-2")
+    }
+    pub fn is_file(&self) -> bool { self.protocol == b"file" }
+    pub fn is_blob(&self) -> bool {
+        self.href.len() == b"blob:".len() + 36 && self.href.starts_with(b"blob:")
+    }
+    pub fn is_localhost(&self) -> bool {
+        self.hostname.is_empty() || self.hostname == b"localhost" || self.hostname == b"0.0.0.0"
+    }
+    #[inline] pub fn is_unix(&self) -> bool { self.protocol.starts_with(b"unix") }
+    #[inline] pub fn is_https(&self) -> bool { self.protocol == b"https" }
+    #[inline] pub fn is_s3(&self) -> bool { self.protocol == b"s3" }
+    #[inline] pub fn is_http(&self) -> bool { self.protocol == b"http" }
+    pub fn is_empty(&self) -> bool { self.href.is_empty() }
+    pub fn is_absolute(&self) -> bool { !self.hostname.is_empty() && !self.pathname.is_empty() }
+    pub fn has_http_like_protocol(&self) -> bool {
+        self.protocol == b"http" || self.protocol == b"https"
+    }
+    pub fn display_hostname(&self) -> &[u8] {
+        if !self.hostname.is_empty() { self.hostname } else { b"localhost" }
+    }
+    pub fn display_protocol(&self) -> &[u8] {
+        if !self.protocol.is_empty() {
+            return self.protocol;
+        }
+        if let Some(443) = self.get_port() {
+            return b"https";
+        }
+        b"http"
+    }
+    pub fn get_port(&self) -> Option<u16> {
+        core::str::from_utf8(self.port).ok()?.parse::<u16>().ok()
+    }
+    pub fn get_port_auto(&self) -> u16 {
+        self.get_port().unwrap_or_else(|| self.get_default_port())
+    }
+    pub fn get_default_port(&self) -> u16 {
+        if self.is_https() { 443u16 } else { 80u16 }
+    }
+    pub fn has_valid_port(&self) -> bool { self.get_port().unwrap_or(0) > 0 }
+    pub fn s3_path(&self) -> &'a [u8] {
+        let href = if !self.protocol.is_empty() && self.href.len() > self.protocol.len() + 2 {
+            &self.href[self.protocol.len() + 2..]
+        } else {
+            self.href
+        };
+        &href[0..href.len() - (self.search.len() + self.hash.len())]
+    }
+    // gated in B-1: host_with_path, display_host, is_ip_address, join_normalize,
+    // join_write, join_alloc, parse_{protocol,username,password,host} — see draft below.
+}
+
+// ── QueryStringMap & friends ──────────────────────────────────────────────
+#[derive(Clone)]
+pub struct QueryStringMap {
+    _opaque: (),
+}
+
+#[derive(Clone, Copy)]
+pub struct Param {
+    pub name: api::StringPointer,
+    pub name_hash: u64,
+    pub value: api::StringPointer,
+}
+
+pub type ParamList = Vec<Param>; // TODO(b1): bun_collections::MultiArrayList<Param>
+
+#[derive(Clone, Copy)]
+pub struct ScannerResult {
+    pub name_needs_decoding: bool,
+    pub value_needs_decoding: bool,
+    pub name: api::StringPointer,
+    pub value: api::StringPointer,
+}
+
+pub struct Scanner<'a> {
+    pub query_string: &'a [u8],
+    pub i: usize,
+    pub start: usize,
+}
+impl<'a> Scanner<'a> {
+    pub fn init(_query_string: &'a [u8]) -> Scanner<'a> { todo!("B-2") }
+    pub fn next(&mut self) -> Option<ScannerResult> { todo!("B-2") }
+    pub fn reset(&mut self) { self.i = self.start; }
+}
+
+pub struct PathnameScanner<'a> {
+    pub params: &'a ParamsList,
+    pub pathname: &'a [u8],
+    pub routename: &'a [u8],
+    pub i: usize,
+}
+impl<'a> PathnameScanner<'a> {
+    pub fn init(_pathname: &'a [u8], _routename: &'a [u8], _params: &'a ParamsList) -> PathnameScanner<'a> {
+        todo!("B-2")
+    }
+    pub fn next(&mut self) -> Option<ScannerResult> { todo!("B-2") }
+    pub fn reset(&mut self) { self.i = 0; }
+}
+
+pub struct CombinedScanner<'a> {
+    pub query: Scanner<'a>,
+    pub pathname: PathnameScanner<'a>,
+}
+impl<'a> CombinedScanner<'a> {
+    pub fn init(
+        _query_string: &'a [u8],
+        _pathname: &'a [u8],
+        _routename: &'a [u8],
+        _url_params: &'a ParamsList,
+    ) -> CombinedScanner<'a> {
+        todo!("B-2")
+    }
+    pub fn next(&mut self) -> Option<ScannerResult> { todo!("B-2") }
+    pub fn reset(&mut self) {}
+}
+
+pub struct Iterator<'a> {
+    pub i: usize,
+    pub map: &'a QueryStringMap,
+}
+pub struct IteratorResult<'a> {
+    pub name: &'a [u8],
+    pub values: &'a mut [&'a [u8]],
+}
+
+// ── PercentEncoding ───────────────────────────────────────────────────────
+pub struct PercentEncoding;
+
+#[derive(Debug)]
+pub enum DecodeError {
+    DecodingError,
+    Write(bun_core::Error),
+}
+impl From<bun_core::Error> for DecodeError {
+    fn from(e: bun_core::Error) -> Self { DecodeError::Write(e) }
+}
+impl From<DecodeError> for bun_core::Error {
+    fn from(_e: DecodeError) -> Self { bun_core::err!("DecodingError") }
+}
+
+impl PercentEncoding {
+    pub fn decode(_writer: &mut impl bun_io::Write, _input: &[u8]) -> Result<u32, DecodeError> {
+        todo!("B-2")
+    }
+    pub fn decode_alloc(_input: &[u8]) -> Result<Box<[u8]>, DecodeError> {
+        todo!("B-2")
+    }
+    pub fn decode_into(_out: &mut [u8], _input: &[u8]) -> Result<u32, DecodeError> {
+        todo!("B-2")
+    }
+    pub fn decode_fault_tolerant<W: bun_io::Write, const FAULT_TOLERANT: bool>(
+        _writer: &mut W,
+        _input: &[u8],
+        _needs_redirect: Option<&mut bool>,
+    ) -> Result<u32, DecodeError> {
+        todo!("B-2")
+    }
+}
+
+impl QueryStringMap {
+    pub fn init(_query_string: &[u8]) -> Result<Option<QueryStringMap>, bun_alloc::AllocError> {
+        todo!("B-2")
+    }
+    pub fn init_with_scanner(
+        _scanner: CombinedScanner<'_>,
+    ) -> Result<Option<QueryStringMap>, bun_alloc::AllocError> {
+        todo!("B-2")
+    }
+    pub fn get(&self, _input: &[u8]) -> Option<&[u8]> { todo!("B-2") }
+    pub fn has(&self, _input: &[u8]) -> bool { todo!("B-2") }
+    pub fn iter(&self) -> Iterator<'_> { todo!("B-2") }
+    pub fn get_name_count(&mut self) -> usize { todo!("B-2") }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// PHASE-A DRAFT (gated — preserved verbatim for B-2 un-gating)
+// ══════════════════════════════════════════════════════════════════════════
+#[cfg(any())]
+mod _phase_a_draft {
 
 use core::cell::RefCell;
 
@@ -1517,3 +1865,5 @@ impl ScannerResult {
 //   todos:      12
 //   notes:      URL<'a> borrows href (view struct) — Phase-A rule prefers raw *const [u8] but PORT NOTE above documents the deviation for Phase B to resolve; QueryStringMap.slice is self-referential raw ptr; MultiArrayList Slice accessor API (items_name_hash/items_name/items_value) assumed; bun_io::Write trait assumed for byte writers; from_string leaks owned href to match Zig caller-frees contract.
 // ──────────────────────────────────────────────────────────────────────────
+
+} // end #[cfg(any())] mod _phase_a_draft

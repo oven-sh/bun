@@ -5,14 +5,39 @@ pub use crate::version::Version;
 pub use crate::version::VersionType;
 
 pub use crate::sliced_string::SlicedString;
-pub use crate::semver_range::SemverRange as Range;
-pub use crate::semver_query::SemverQuery as Query;
+pub use crate::semver_range::Range;
+pub use crate::semver_query::Query;
 // PORT NOTE: `SemverObject` re-export from `../semver_jsc/` deleted — *_jsc
 // extension traits live in the `bun_semver_jsc` crate, not here.
 
-pub mod version;
-pub mod semver_range;
-pub mod semver_query;
+// TODO(b1): Phase-A draft bodies preserved behind cfg(any()); un-gate in B-2.
+#[cfg(any())] #[path = "Version.rs"] pub mod version;
+#[cfg(any())] #[path = "SemverRange.rs"] pub mod semver_range;
+#[cfg(any())] #[path = "SemverQuery.rs"] pub mod semver_query;
+
+// ── B-1 stub surface for gated modules ────────────────────────────────────
+#[cfg(not(any()))]
+pub mod version {
+    #[repr(C)] #[derive(Copy, Clone, Default)]
+    pub struct VersionType<T> { _p: core::marker::PhantomData<T> }
+    pub type Version = VersionType<u64>;
+}
+#[cfg(not(any()))]
+pub mod semver_range {
+    #[derive(Copy, Clone, Default)]
+    pub struct Range;
+}
+#[cfg(not(any()))]
+pub mod semver_query {
+    #[derive(Default)]
+    pub struct Query;
+    pub mod token {
+        #[derive(Copy, Clone, Default)]
+        pub struct Wildcard;
+    }
+}
+pub use crate::semver_range as range;
+pub use crate::semver_query as query;
 
 /// Alias so callers can name `bun_semver::string::Formatter` etc.
 pub use crate::semver_string as string;
@@ -92,19 +117,20 @@ pub mod sliced_string {
         #[inline]
         pub fn sub(self, input: &'a [u8]) -> SlicedString<'a> {
             if cfg!(debug_assertions) {
-                if !bun_core::is_slice_in_buffer(input, self.buf) {
+                if !bun_alloc::is_slice_in_buffer(input, self.buf) {
                     let start_buf = self.buf.as_ptr() as usize;
                     let end_buf = (self.buf.as_ptr() as usize) + self.buf.len();
                     let start_i = input.as_ptr() as usize;
                     let end_i = (input.as_ptr() as usize) + input.len();
 
-                    bun_core::output::panic(format_args!(
+                    // TODO(b1): bun_core::output::panic stub takes (&str, Arguments); use std panic for now
+                    panic!(
                         concat!(
                             "SlicedString.sub input [{}, {}) is not a substring of the ",
                             "slice [{}, {})"
                         ),
                         start_i, end_i, start_buf, end_buf
-                    ));
+                    );
                 }
             }
             SlicedString { buf: self.buf, slice: input }
@@ -154,7 +180,7 @@ pub mod external_string {
             ExternalString {
                 value: String::init(in_, in_),
                 // `bun.Wyhash.hash(0, in)` — std.hash.Wyhash with seed 0, same as `bun.hash`
-                hash: bun_wyhash::hash(in_),
+                hash: bun_wyhash::Wyhash11::hash(0, in_),
             }
         }
 
@@ -179,7 +205,7 @@ pub mod external_string {
         }
 
         #[inline]
-        pub fn slice<'a>(&self, buf: &'a [u8]) -> &'a [u8] {
+        pub fn slice<'a>(&'a self, buf: &'a [u8]) -> &'a [u8] {
             self.value.slice(buf)
         }
     }
@@ -194,8 +220,19 @@ pub mod semver_string {
     use core::fmt;
 
     use bun_alloc::AllocError;
-    use bun_collections::{HashMap, IdentityContext};
-    use bun_str::strings;
+    // TODO(b1): bun_collections::IdentityContext missing from lower-tier stub surface
+    #[allow(unused_imports)]
+    use bun_collections::HashMap;
+
+    // TODO(b1): bun_string::strings missing `order` / `is_all_ascii`; local shim wraps it.
+    mod strings {
+        #[allow(unused_imports)]
+        pub use bun_string::strings::*;
+        #[inline]
+        pub fn order(a: &[u8], b: &[u8]) -> core::cmp::Ordering { a.cmp(b) }
+        #[inline]
+        pub fn is_all_ascii(s: &[u8]) -> bool { s.iter().all(|&b| b < 0x80) }
+    }
 
     use super::external_string::ExternalString;
     use super::sliced_string::SlicedString;
@@ -268,8 +305,9 @@ pub mod semver_string {
 
         #[inline]
         pub fn can_inline(buf: &[u8]) -> bool {
+            const MAX_INLINE_LEN_M1: usize = String::MAX_INLINE_LEN - 1;
             match buf.len() {
-                0..=const { Self::MAX_INLINE_LEN - 1 } => true,
+                0..=MAX_INLINE_LEN_M1 => true,
                 Self::MAX_INLINE_LEN => buf[Self::MAX_INLINE_LEN - 1] & 0x80 == 0,
                 _ => false,
             }
@@ -587,14 +625,20 @@ pub mod semver_string {
 
     impl<'a> fmt::Display for JsonFormatter<'a> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            write!(
-                f,
-                "{}",
-                bun_core::fmt::format_json_string_utf8(
-                    self.str.slice(self.buf),
-                    bun_core::fmt::JsonStringOptions { quote: self.opts.quote },
-                ),
-            )
+            // TODO(b1): bun_core::fmt gated out in lower tier; preserve draft behind cfg(any())
+            #[cfg(any())]
+            {
+                return write!(
+                    f,
+                    "{}",
+                    bun_core::fmt::format_json_string_utf8(
+                        self.str.slice(self.buf),
+                        bun_core::fmt::JsonStringOptions { quote: self.opts.quote },
+                    ),
+                );
+            }
+            #[cfg(not(any()))]
+            { let _ = f; todo!("b1: JsonFormatter Display") }
         }
     }
 
@@ -624,21 +668,25 @@ pub mod semver_string {
     }
 
     // ── Sorter(comptime direction) ────────────────────────────────────────
-    #[derive(core::marker::ConstParamTy, PartialEq, Eq, Clone, Copy)]
+    // TODO(b1): was `const DIRECTION: SortDirection` const-generic param; requires nightly
+    // `adt_const_params`. Rewritten as a runtime field for stable. Revisit in B-2 if
+    // monomorphization is load-bearing for perf.
+    #[derive(PartialEq, Eq, Clone, Copy)]
     pub enum SortDirection {
         Asc,
         Desc,
     }
 
-    pub struct Sorter<'a, const DIRECTION: SortDirection> {
+    pub struct Sorter<'a> {
+        pub direction: SortDirection,
         pub lhs_buf: &'a [u8],
         pub rhs_buf: &'a [u8],
     }
 
-    impl<'a, const DIRECTION: SortDirection> Sorter<'a, DIRECTION> {
+    impl<'a> Sorter<'a> {
         pub fn less_than(&self, lhs: String, rhs: String) -> bool {
             lhs.order(&rhs, self.lhs_buf, self.rhs_buf)
-                == if DIRECTION == SortDirection::Asc { Ordering::Less } else { Ordering::Greater }
+                == if self.direction == SortDirection::Asc { Ordering::Less } else { Ordering::Greater }
         }
     }
 
@@ -655,7 +703,7 @@ pub mod semver_string {
 
         pub fn hash(&self, arg: String) -> u64 {
             let str = arg.slice(self.arg_buf);
-            bun_wyhash::hash(str)
+            bun_wyhash::Wyhash11::hash(0, str)
         }
     }
 
@@ -671,7 +719,7 @@ pub mod semver_string {
 
         pub fn hash(&self, arg: String) -> u32 {
             let str = arg.slice(self.arg_buf);
-            bun_wyhash::hash(str) as u32
+            bun_wyhash::Wyhash11::hash(0, str) as u32
         }
     }
 
@@ -687,7 +735,7 @@ pub mod semver_string {
         #[inline]
         pub fn init(buf: &[u8], in_: &[u8]) -> Pointer {
             if cfg!(debug_assertions) {
-                debug_assert!(bun_core::is_slice_in_buffer(in_, buf));
+                debug_assert!(bun_alloc::is_slice_in_buffer(in_, buf));
             }
 
             Pointer {
@@ -726,7 +774,26 @@ pub mod semver_string {
 
     // TODO(port): std.HashMap(u64, String, IdentityContext(u64), 80) — 80% max load factor not
     // expressible in bun_collections::HashMap signature; verify default load factor matches.
-    pub type StringPool = HashMap<u64, String, IdentityContext<u64>>;
+    // TODO(b1): bun_collections::HashMap stub is 2-param std alias and lacks `get_or_put`;
+    // local opaque stub keeps Buf/Builder signatures intact. Un-stub in B-2.
+    #[derive(Default)]
+    pub struct StringPool {
+        _p: (),
+    }
+    pub struct StringPoolEntry<'a> {
+        pub found_existing: bool,
+        pub value_ptr: &'a mut String,
+    }
+    impl StringPool {
+        #[allow(unused_variables)]
+        pub fn get_or_put(&mut self, hash: u64) -> Result<StringPoolEntry<'_>, AllocError> {
+            todo!("b1: StringPool::get_or_put")
+        }
+        #[allow(unused_variables)]
+        pub fn contains(&self, hash: &u64) -> bool {
+            todo!("b1: StringPool::contains")
+        }
+    }
 
     pub struct Builder {
         pub len: usize,

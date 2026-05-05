@@ -2,14 +2,37 @@
 //! It provides protection against Cross-Site Request Forgery attacks
 //! by generating and validating tokens using HMAC signatures
 
+#![allow(unused, nonstandard_style)]
+
+// TODO(b1): bun_boringssl_sys missing — gated; un-gate in B-2
+#[cfg(any())]
 use bun_boringssl_sys as boring;
+// TODO(b1): bun_sha_hmac missing — gated; un-gate in B-2
+#[cfg(any())]
 use bun_sha_hmac::hmac;
+// TODO(b1): bun_str missing — gated; un-gate in B-2
+#[cfg(any())]
 use bun_str::strings;
 
 // CYCLEBREAK: TYPE_ONLY — EVP::Algorithm moved down to bun_sha_hmac (move-in pass defines it there)
+#[cfg(any())]
 use bun_sha_hmac::Algorithm;
 // CYCLEBREAK: TYPE_ONLY — node::Encoding moved down to bun_str (move-in pass defines it there)
+#[cfg(any())]
 use bun_str::Encoding as NodeEncoding;
+
+// ──────────────────────────────────────────────────────────────────────────
+// B-1 stub surface (opaque local stand-ins for gated deps; remove in B-2)
+// ──────────────────────────────────────────────────────────────────────────
+/// TODO(b1): stub for `bun_sha_hmac::Algorithm`
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Algorithm(());
+impl Algorithm {
+    pub const Sha256: Self = Self(());
+}
+/// TODO(b1): stub for `bun_str::Encoding`
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct NodeEncoding(());
 
 /// Default expiration time for tokens (24 hours)
 pub const DEFAULT_EXPIRATION_MS: u64 = 24 * 60 * 60 * 1000;
@@ -18,17 +41,20 @@ pub const DEFAULT_EXPIRATION_MS: u64 = 24 * 60 * 60 * 1000;
 pub const DEFAULT_ALGORITHM: Algorithm = Algorithm::Sha256;
 
 /// Error types for CSRF operations
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
+// TODO(b1): thiserror not in deps — manual Display/Error impl for now
+#[derive(strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
-    #[error("InvalidToken")]
     InvalidToken,
-    #[error("ExpiredToken")]
     ExpiredToken,
-    #[error("TokenCreationFailed")]
     TokenCreationFailed,
-    #[error("DecodingFailed")]
     DecodingFailed,
 }
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(<&'static str>::from(*self))
+    }
+}
+impl std::error::Error for Error {}
 
 impl From<Error> for bun_core::Error {
     fn from(e: Error) -> Self {
@@ -74,10 +100,17 @@ pub enum TokenFormat {
 
 impl TokenFormat {
     pub fn to_node_encoding(self) -> NodeEncoding {
-        match self {
-            TokenFormat::Base64 => NodeEncoding::Base64,
-            TokenFormat::Base64Url => NodeEncoding::Base64Url,
-            TokenFormat::Hex => NodeEncoding::Hex,
+        #[cfg(any())]
+        {
+            match self {
+                TokenFormat::Base64 => NodeEncoding::Base64,
+                TokenFormat::Base64Url => NodeEncoding::Base64Url,
+                TokenFormat::Hex => NodeEncoding::Hex,
+            }
+        }
+        #[cfg(all())]
+        {
+            todo!("b1-stub: TokenFormat::to_node_encoding")
         }
     }
 }
@@ -93,6 +126,13 @@ pub fn generate<'a>(
     options: GenerateOptions<'_>,
     out_buffer: &'a mut [u8; 512],
 ) -> Result<&'a mut [u8], Error> {
+    #[cfg(all())]
+    {
+        let _ = (options, out_buffer);
+        return todo!("b1-stub: csrf::generate — gated on bun_sha_hmac/bun_boringssl_sys");
+    }
+    #[cfg(any())]
+    {
     // Generate nonce from entropy
     let mut nonce = [0u8; 16];
     bun_core::csprng(&mut nonce);
@@ -129,6 +169,7 @@ pub fn generate<'a>(
     // Return slice of the output buffer with the final token
     let len = 32 + digest.len();
     Ok(&mut out_buffer[0..len])
+    } // end #[cfg(any())]
 }
 
 /// Validate a CSRF token
@@ -138,6 +179,13 @@ pub fn generate<'a>(
 ///
 /// Returns: true if valid, false if invalid
 pub fn verify(options: VerifyOptions<'_>) -> bool {
+    #[cfg(all())]
+    {
+        let _ = options;
+        return todo!("b1-stub: csrf::verify — gated on bun_sha_hmac/bun_boringssl_sys/bun_str");
+    }
+    #[cfg(any())]
+    {
     // Detect the encoding format
     let encoding: TokenFormat = options.encoding;
 
@@ -252,6 +300,7 @@ pub fn verify(options: VerifyOptions<'_>) -> bool {
             signature.len(),
         ) == 0
     }
+    } // end #[cfg(any())]
 }
 
 // NOTE: the Zig file re-exports csrf__generate / csrf__verify from

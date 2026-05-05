@@ -1,12 +1,72 @@
+#![allow(unused, non_camel_case_types, non_snake_case)]
+
 use core::ffi::c_int;
 use core::fmt;
 
 use bstr::BStr;
 
 use bun_core::output as Output;
-use bun_core::StringBuilder;
-use bun_picohttp_sys as c;
-use bun_str::strings;
+// TODO(b1): bun_core::StringBuilder missing — local opaque stub
+pub struct StringBuilder(());
+impl StringBuilder {
+    pub fn count(&mut self, _: &[u8]) { todo!("B-2: StringBuilder::count") }
+    pub fn append<'a>(&mut self, _: &[u8]) -> &'a [u8] { todo!("B-2: StringBuilder::append") }
+}
+
+// TODO(b1): bun_picohttp_sys crate missing — local FFI stub surface.
+// Real bindings land in B-2 (bindgen over vendor/picohttpparser).
+#[allow(non_camel_case_types)]
+mod c {
+    use core::ffi::{c_char, c_int};
+    #[repr(C)]
+    pub struct phr_header {
+        pub name: *const c_char,
+        pub name_len: usize,
+        pub value: *const c_char,
+        pub value_len: usize,
+    }
+    pub type struct_phr_header = phr_header;
+    #[repr(C)]
+    pub struct phr_chunked_decoder { _opaque: [u8; 0] }
+    pub type struct_phr_chunked_decoder = phr_chunked_decoder;
+    unsafe extern "C" {
+        pub fn phr_parse_request(
+            buf: *const u8, len: usize,
+            method: *mut *const c_char, method_len: *mut usize,
+            path: *mut *const c_char, path_len: *mut usize,
+            minor_version: *mut c_int,
+            headers: *mut phr_header, num_headers: *mut usize,
+            last_len: usize,
+        ) -> c_int;
+        pub fn phr_parse_response(
+            buf: *const u8, len: usize,
+            minor_version: *mut c_int, status: *mut c_int,
+            msg: *mut *const c_char, msg_len: *mut usize,
+            headers: *mut phr_header, num_headers: *mut usize,
+            last_len: usize,
+        ) -> c_int;
+        pub fn phr_parse_headers(
+            buf: *const u8, len: usize,
+            headers: *mut phr_header, num_headers: *mut usize,
+            last_len: usize,
+        ) -> c_int;
+        pub fn phr_decode_chunked(
+            decoder: *mut phr_chunked_decoder, buf: *mut u8, len: *mut usize,
+        ) -> isize;
+        pub fn phr_decode_chunked_is_in_data(decoder: *mut phr_chunked_decoder) -> c_int;
+    }
+}
+
+// TODO(b1): bun_str crate missing — local stub for the few helpers used here.
+mod strings {
+    #[inline] pub fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], _check_len: bool) -> bool {
+        a.eq_ignore_ascii_case(b)
+    }
+    #[inline] pub fn has_prefix(h: &[u8], p: &[u8]) -> bool { h.starts_with(p) }
+    #[inline] pub fn contains(h: &[u8], n: &[u8]) -> bool {
+        ::bstr::ByteSlice::find(h, n).is_some()
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Header
@@ -68,6 +128,8 @@ impl fmt::Display for Header {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // TODO(port): Output::pretty_fmt! is the comptime ANSI-tag expander
         // (`<r><cyan>` → escape codes). Phase B must provide this macro.
+        #[cfg(any())]
+        {
         if Output::enable_ansi_colors_stderr() {
             if self.is_multiline() {
                 write!(f, Output::pretty_fmt!("<r><cyan>{}", true), BStr::new(self.value()))
@@ -91,6 +153,8 @@ impl fmt::Display for Header {
                 )
             }
         }
+        }
+        todo!("B-2: Header Display (needs Output::pretty_fmt!)")
     }
 }
 
@@ -154,13 +218,18 @@ impl<'a> HeaderList<'a> {
 // Request
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+// TODO(b1): thiserror not in workspace deps — manual Display/Error impl.
+#[derive(Debug, strum::IntoStaticStr)]
 pub enum ParseRequestError {
-    #[error("BadRequest")]
     BadRequest,
-    #[error("ShortRead")]
     ShortRead,
 }
+impl fmt::Display for ParseRequestError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(<&'static str>::from(self))
+    }
+}
+impl std::error::Error for ParseRequestError {}
 impl From<ParseRequestError> for bun_core::Error {
     fn from(e: ParseRequestError) -> Self {
         bun_core::Error::from_name(<&'static str>::from(e))
@@ -248,6 +317,8 @@ impl<'a> Request<'a> {
 
 impl fmt::Display for Request<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        #[cfg(any())]
+        {
         if Output::enable_ansi_colors_stderr() {
             f.write_str(Output::pretty_fmt!("<r><d>[fetch]<r> ", true))?;
         }
@@ -260,6 +331,8 @@ impl fmt::Display for Request<'_> {
             write!(f, "{}\n", header)?;
         }
         Ok(())
+        }
+        todo!("B-2: Request Display (needs Output::pretty_fmt!)")
     }
 }
 
@@ -284,6 +357,8 @@ impl<'a> RequestCurlFormatter<'a> {
 
 impl fmt::Display for RequestCurlFormatter<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        #[cfg(any())]
+        {
         let request = self.request;
         if Output::enable_ansi_colors_stderr() {
             f.write_str(Output::pretty_fmt!("<r><d>[fetch] $<r> ", true))?;
@@ -330,6 +405,8 @@ impl fmt::Display for RequestCurlFormatter<'_> {
         }
 
         Ok(())
+        }
+        todo!("B-2: RequestCurlFormatter Display (needs Output::pretty_fmt! + bun_str::printer)")
     }
 }
 
@@ -343,6 +420,8 @@ struct StatusCodeFormatter {
 
 impl fmt::Display for StatusCodeFormatter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        #[cfg(any())]
+        {
         if Output::enable_ansi_colors_stderr() {
             match self.code {
                 101 | 200..=299 => write!(f, Output::pretty_fmt!("<r><green>{}<r>", true), self.code),
@@ -352,6 +431,8 @@ impl fmt::Display for StatusCodeFormatter {
         } else {
             write!(f, "{}", self.code)
         }
+        }
+        todo!("B-2: StatusCodeFormatter Display (needs Output::pretty_fmt!)")
     }
 }
 
@@ -359,13 +440,17 @@ impl fmt::Display for StatusCodeFormatter {
 // Response
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+#[derive(Debug, strum::IntoStaticStr)]
 pub enum ParseResponseError {
-    #[error("Malformed_HTTP_Response")]
     Malformed_HTTP_Response,
-    #[error("ShortRead")]
     ShortRead,
 }
+impl fmt::Display for ParseResponseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(<&'static str>::from(self))
+    }
+}
+impl std::error::Error for ParseResponseError {}
 impl From<ParseResponseError> for bun_core::Error {
     fn from(e: ParseResponseError) -> Self {
         bun_core::Error::from_name(<&'static str>::from(e))
@@ -446,7 +531,7 @@ impl<'a> Response<'a> {
 
         match rc {
             -1 => {
-                #[cfg(debug_assertions)]
+                #[cfg(any())]
                 {
                     Output::debug!("Malformed HTTP response:\n{}", BStr::new(buf));
                 }
@@ -476,6 +561,8 @@ impl<'a> Response<'a> {
 
 impl fmt::Display for Response<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        #[cfg(any())]
+        {
         if Output::enable_ansi_colors_stderr() {
             f.write_str(Output::pretty_fmt!("<r><d>[fetch]<r> ", true))?;
         }
@@ -495,6 +582,8 @@ impl fmt::Display for Response<'_> {
             write!(f, "{}\n", header)?;
         }
         Ok(())
+        }
+        todo!("B-2: Response Display (needs Output::pretty_fmt!)")
     }
 }
 
@@ -502,13 +591,17 @@ impl fmt::Display for Response<'_> {
 // Headers
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+#[derive(Debug, strum::IntoStaticStr)]
 pub enum ParseHeadersError {
-    #[error("BadHeaders")]
     BadHeaders,
-    #[error("ShortRead")]
     ShortRead,
 }
+impl fmt::Display for ParseHeadersError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(<&'static str>::from(self))
+    }
+}
+impl std::error::Error for ParseHeadersError {}
 impl From<ParseHeadersError> for bun_core::Error {
     fn from(e: ParseHeadersError) -> Self {
         bun_core::Error::from_name(<&'static str>::from(e))

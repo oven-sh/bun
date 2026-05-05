@@ -1,8 +1,19 @@
+#[allow(unused_imports)]
 use core::ffi::{c_char, c_int};
+#[allow(unused_imports)]
 use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::Once;
 
-use crate::generated_perf_trace_events::PerfEvent;
+pub mod generated_perf_trace_events;
+// TODO(b1): un-gate once these compile
+#[cfg(any())]
+pub mod hw_timer;
+#[cfg(any())]
+pub mod system_timer;
+#[cfg(any())]
+pub mod tracy;
+
+pub use crate::generated_perf_trace_events::PerfEvent;
 
 #[cfg(target_os = "macos")]
 pub type EnabledImpl = Darwin;
@@ -39,17 +50,33 @@ static IS_ENABLED: AtomicBool = AtomicBool::new(false);
 #[allow(dead_code)]
 fn is_enabled_on_mac_os_once() {
     // TODO(port): verify crate path for bun.env_var / bun.feature_flag (assumed bun_core)
-    if bun_core::env_var::DYLD_ROOT_PATH.get().is_some()
-        || bun_core::feature_flag::BUN_INSTRUMENTS.get()
+    #[cfg(any())]
     {
-        IS_ENABLED.store(true, Ordering::SeqCst);
+        // TODO(b1): bun_core::env_var gated out; bun_core::feature_flag::BUN_INSTRUMENTS missing
+        if bun_core::env_var::DYLD_ROOT_PATH.get().is_some()
+            || bun_core::feature_flag::BUN_INSTRUMENTS.get()
+        {
+            IS_ENABLED.store(true, Ordering::SeqCst);
+        }
+    }
+    #[cfg(not(any()))]
+    {
+        todo!("b1: bun_core::env_var / feature_flag stubs")
     }
 }
 
 #[allow(dead_code)]
 fn is_enabled_on_linux_once() {
-    if bun_core::feature_flag::BUN_TRACE.get() {
-        IS_ENABLED.store(true, Ordering::SeqCst);
+    #[cfg(any())]
+    {
+        // TODO(b1): bun_core::feature_flag::BUN_TRACE missing
+        if bun_core::feature_flag::BUN_TRACE.get() {
+            IS_ENABLED.store(true, Ordering::SeqCst);
+        }
+    }
+    #[cfg(not(any()))]
+    {
+        todo!("b1: bun_core::feature_flag::BUN_TRACE")
     }
 }
 
@@ -185,10 +212,19 @@ impl Linux {
     }
 
     pub fn init(event: PerfEvent) -> Self {
-        Self {
-            // TODO(port): verify crate path for `bun.timespec` (.now(.force_real_time).ns())
-            start_time: bun_timespec::Timespec::now(bun_timespec::Clock::ForceRealTime).ns(),
-            event,
+        #[cfg(any())]
+        {
+            // TODO(b1): bun_timespec crate missing
+            return Self {
+                // TODO(port): verify crate path for `bun.timespec` (.now(.force_real_time).ns())
+                start_time: bun_timespec::Timespec::now(bun_timespec::Clock::ForceRealTime).ns(),
+                event,
+            };
+        }
+        #[cfg(not(any()))]
+        {
+            let _ = event;
+            todo!("b1: bun_timespec")
         }
     }
 
@@ -197,6 +233,9 @@ impl Linux {
             return;
         }
 
+        #[cfg(any())]
+        {
+        // TODO(b1): bun_timespec crate missing
         let duration = bun_timespec::Timespec::now(bun_timespec::Clock::ForceRealTime)
             .ns()
             .saturating_sub(self.start_time);
@@ -211,6 +250,12 @@ impl Linux {
                 i64::try_from(duration).unwrap(),
             )
         };
+        }
+        #[cfg(not(any()))]
+        {
+            let _ = (&self.start_time, &self.event);
+            todo!("b1: bun_timespec")
+        }
     }
 }
 

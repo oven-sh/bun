@@ -3,6 +3,152 @@
 //!
 //! Most I/O happens on the main thread.
 
+// ════════════════════════════════════════════════════════════════════════════
+// B-1 GATE-AND-STUB SURFACE
+// Phase-A draft bodies are preserved verbatim below inside
+// `#[cfg(any())] mod __phase_a_draft { ... }` and in the `#[cfg(any())]`-gated
+// `#[path]` submodules. Un-gating happens in B-2.
+// ════════════════════════════════════════════════════════════════════════════
+
+#![allow(dead_code, unused_variables, unused_imports)]
+
+// ── gated submodules (Phase-A drafts, not yet compiling) ────────────────────
+#[cfg(any())]
+#[path = "heap.rs"]
+pub mod heap;
+#[cfg(any())]
+#[path = "source.rs"]
+pub mod source;
+#[cfg(any())]
+#[path = "pipes.rs"]
+pub mod pipes;
+#[cfg(any())]
+#[path = "PipeReader.rs"]
+pub mod pipe_reader;
+#[cfg(any())]
+#[path = "PipeWriter.rs"]
+pub mod pipe_writer;
+#[cfg(any())]
+#[path = "openForWriting.rs"]
+pub mod open_for_writing_mod;
+#[cfg(any())]
+#[path = "MaxBuf.rs"]
+pub mod max_buf;
+
+// ── minimal stub surface ────────────────────────────────────────────────────
+// Opaque newtypes / `todo!()` fns. Higher tiers that need richer shapes will
+// surface as errors there and get added incrementally.
+
+use core::ffi::c_void;
+
+/// TODO(b1): bun_collections::TaggedPtr missing from lower-tier stub surface.
+#[allow(non_camel_case_types)]
+type __TaggedPtr = u64;
+
+pub struct Loop;
+impl Loop {
+    pub fn get() -> &'static mut Loop { todo!("B-2: Loop::get") }
+    pub fn schedule(&mut self, _r: &mut Request) { todo!("B-2: Loop::schedule") }
+}
+
+#[derive(Default)]
+pub struct Request {
+    pub next: Option<core::ptr::NonNull<Request>>,
+    pub scheduled: bool,
+}
+
+pub enum Action<'a> {
+    Readable(&'a mut Poll),
+    Writable(&'a mut Poll),
+    Close(&'a mut Poll),
+}
+
+#[derive(Default)]
+pub struct Poll;
+
+#[repr(u16)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PollableTag { Empty = 0, ReadFile, WriteFile }
+pub type Tag = PollableTag;
+
+pub struct Flags;
+pub type FlagsSet = u32;
+
+pub struct Waker;
+impl Waker {
+    pub fn init() -> Result<Self, ()> { todo!("B-2: Waker::init") }
+    pub fn wake(&self) { todo!("B-2: Waker::wake") }
+    pub fn wait(&self) { todo!("B-2: Waker::wait") }
+}
+
+pub struct Closer;
+
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+pub struct EventLoopHandle(pub *mut c_void);
+impl EventLoopHandle {
+    #[inline] pub fn init(h: EventLoopHandle) -> EventLoopHandle { h }
+    #[inline] pub fn loop_(self) -> *mut c_void { todo!("B-2: EventLoopHandle::loop_") }
+}
+
+pub type FilePollPtr = *mut c_void;
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+pub struct FilePoll(pub FilePollPtr);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum FilePollFlag { PollWritable, Nonblocking, Hup, WasEverRegistered }
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum FilePollKind { Readable, Writable }
+
+pub struct FilePollVTable;
+pub struct PollOwnerVTable;
+
+pub enum PathOrFileDescriptor {
+    Path(()),  // TODO(b1): bun_str::PathString missing
+    Fd(()),    // TODO(b1): bun_sys::Fd shape
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum FileType { Pipe, Tty, File, Socket, Nonblocking }
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ReadState { Progress, Done, Err, Drained }
+
+pub struct Source;
+pub struct BufferedReader;
+pub struct PipeReader;
+pub struct BufferedWriter;
+pub struct StreamBuffer;
+pub struct StreamingWriter;
+pub struct WriteResult;
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum WriteStatus { Pending, Done, EndOfFile, Drained }
+
+pub mod heap_stub {
+    pub struct IntrusiveHeap;
+}
+pub use heap_stub as heap;
+
+#[allow(non_snake_case)]
+pub mod MaxBuf {
+    pub const VALUE: usize = 0;
+}
+
+pub fn open_for_writing() -> ! { todo!("B-2: open_for_writing") }
+pub fn open_for_writing_impl() -> ! { todo!("B-2: open_for_writing_impl") }
+
+// TODO(b1): bun_sys::Errno surface — RETRY constant deferred to B-2.
+
+// ════════════════════════════════════════════════════════════════════════════
+// Phase-A draft (gated; preserved verbatim modulo syntax-only fixes)
+// ════════════════════════════════════════════════════════════════════════════
+#[cfg(any())]
+mod __phase_a_draft {
+
 use core::ffi::{c_int, c_void};
 use core::mem::offset_of;
 use core::ptr::NonNull;
@@ -478,10 +624,10 @@ impl Loop {
         Self::update_timespec(&mut self.cached_now);
     }
 
-    // TODO(port): move to io_sys
-    unsafe extern "C" {
-        fn clock_gettime_monotonic(sec: *mut i64, nsec: *mut i64) -> c_int;
-    }
+    // TODO(port): move to io_sys — extern block can't live inside impl; hoist to module scope in B-2.
+    // unsafe extern "C" {
+    //     fn clock_gettime_monotonic(sec: *mut i64, nsec: *mut i64) -> c_int;
+    // }
 
     pub fn update_timespec(timespec: &mut libc::timespec) {
         #[cfg(target_os = "linux")]
@@ -799,15 +945,15 @@ impl Poll {
         #[cfg(target_os = "macos")]
         {
             #[cfg(debug_assertions)]
-            let gen: u64 = if ACTION == ApplyAction::Cancel {
+            let gen_: u64 = if ACTION == ApplyAction::Cancel {
                 poll.generation_number
             } else {
                 // SAFETY: only the IO thread mutates this counter.
                 unsafe { GENERATION_NUMBER_MONOTONIC }
             };
             #[cfg(not(debug_assertions))]
-            let gen: u64 = 0;
-            kqueue_event.ext = [gen, 0];
+            let gen_: u64 = 0;
+            kqueue_event.ext = [gen_, 0];
         }
 
         // Zig `defer` block — runs after the body above.
@@ -1509,3 +1655,5 @@ pub use crate::max_buf as MaxBuf;
 //   todos:      10
 //   notes:      static-mut singleton + heavy cfg branching; libc/bun_sys::linux constant names and UnboundedQueue generic shape will need Phase B fixup; tick_epoll has &mut self aliasing with poll.register_for_epoll(.., self, ..) — may need reshape; Flags needs ConstParamTy for register_for_epoll<const FLAG>.
 // ──────────────────────────────────────────────────────────────────────────
+
+} // end #[cfg(any())] mod __phase_a_draft

@@ -1,13 +1,26 @@
 // TODO: move all custom functions from the translated file into this file, then
 // the translated file can be provided by `zig translate-c`
 
+#![allow(unused, static_mut_refs)]
+
 use core::ffi::{c_char, c_int, c_void};
 use core::ffi::CStr;
 use core::ptr;
 
-use bun_boringssl_sys as boring;
-use bun_cares_sys as c_ares;
-use bun_str::strings;
+// ── B-1 gate ───────────────────────────────────────────────────────────────
+// TODO(b1): bun_boringssl_sys / bun_cares_sys / bun_str crates missing.
+// Local opaque stubs keep the public signatures stable; bodies gated below.
+#[allow(non_camel_case_types)]
+pub mod boring {
+    pub enum SSL {}
+    pub enum SSL_CTX {}
+    pub enum X509 {}
+    #[repr(C)]
+    pub struct ASN1_OCTET_STRING { pub length: core::ffi::c_int, pub data: *const u8 }
+}
+#[cfg(any())] use bun_boringssl_sys as boring;
+#[cfg(any())] use bun_cares_sys as c_ares;
+#[cfg(any())] use bun_str::strings;
 
 // MOVE_DOWN: ported from `src/runtime/api/bun/x509.zig::isSafeAltName`.
 // Lives here so `boringssl` does not depend on `bun_runtime` (tier-6).
@@ -48,11 +61,13 @@ pub mod x509 {
 use x509 as X509;
 
 /// BoringSSL's translated C API
-pub use bun_boringssl_sys as c;
+// TODO(b1): bun_boringssl_sys missing — re-export local stub for now.
+pub use boring as c;
 
 static mut LOADED: bool = false;
 
 pub fn load() {
+    #[cfg(any())] // TODO(b1): gated — bun_boringssl_sys missing
     // SAFETY: matches Zig's non-atomic global; callers are expected to invoke
     // this on a single thread during startup before any concurrent BoringSSL use.
     unsafe {
@@ -77,6 +92,8 @@ pub fn load() {
 static mut CTX_STORE: Option<*mut boring::SSL_CTX> = None;
 
 pub fn init_client() -> *mut boring::SSL {
+    #[cfg(not(any()))] { todo!("b1: bun_boringssl_sys") }
+    #[cfg(any())] // TODO(b1): gated — bun_boringssl_sys missing
     // SAFETY: matches Zig's non-atomic global; single-threaded startup assumption.
     unsafe {
         if let Some(ctx) = CTX_STORE {
@@ -156,6 +173,9 @@ pub fn canonicalize_ip<'a>(
     addr_str: &[u8],
     out_ip: &'a mut [u8; INET6_ADDRSTRLEN + 1],
 ) -> Option<&'a [u8]> {
+    #[cfg(not(any()))] { todo!("b1: bun_cares_sys / bun_sys::AF_INET") }
+    #[cfg(any())] // TODO(b1): gated — bun_cares_sys + bun_sys::AF_INET missing
+    {
     if addr_str.len() >= INET6_ADDRSTRLEN {
         return None;
     }
@@ -193,6 +213,7 @@ pub fn canonicalize_ip<'a>(
         .to_bytes()
         .len();
     Some(&out_ip[..size])
+    }
 }
 
 /// converts ASN1_OCTET_STRING to canonicalized IP string
@@ -201,6 +222,9 @@ pub fn ip2_string<'a>(
     ip: &boring::ASN1_OCTET_STRING,
     out_ip: &'a mut [u8; INET6_ADDRSTRLEN + 1],
 ) -> Option<&'a [u8]> {
+    #[cfg(not(any()))] { todo!("b1: bun_cares_sys / bun_sys::AF_INET") }
+    #[cfg(any())] // TODO(b1): gated — bun_cares_sys + bun_sys::AF_INET missing
+    {
     let af: c_int = if ip.length == 4 {
         bun_sys::AF_INET
     } else {
@@ -221,10 +245,12 @@ pub fn ip2_string<'a>(
         .to_bytes()
         .len();
     Some(&out_ip[..size])
+    }
 }
 
 /// Matches a DNS name pattern (possibly with a leading `*.` wildcard) against
 /// `hostname`. Mirrors Node.js `check()` in lib/tls.js for a single pattern.
+#[cfg(any())] // TODO(b1): gated — bun_str::strings missing
 fn match_dns_name(pattern: &[u8], hostname: &[u8]) -> bool {
     if pattern.is_empty() {
         return false;
@@ -263,6 +289,9 @@ fn match_dns_name(pattern: &[u8], hostname: &[u8]) -> bool {
 }
 
 pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> bool {
+    #[cfg(not(any()))] { todo!("b1: bun_boringssl_sys / bun_str") }
+    #[cfg(any())] // TODO(b1): gated — bun_boringssl_sys + bun_str missing
+    {
     let host_is_ip = strings::is_ip_address(hostname);
     // Node.js: CN is consulted only when the certificate carries no
     // DNS / IP / URI subjectAltName entries. Track whether any were seen.
@@ -297,8 +326,8 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
                             boring::sk_GENERAL_NAME_pop_free(n, boring::sk_GENERAL_NAME_free)
                         });
                         for i in 0..boring::sk_GENERAL_NAME_num(names) {
-                            let gen = boring::sk_GENERAL_NAME_value(names, i);
-                            if let Some(name) = gen.as_ref() {
+                            let r#gen = boring::sk_GENERAL_NAME_value(names, i);
+                            if let Some(name) = r#gen.as_ref() {
                                 // TODO(port): name_type discriminants — verify GEN_* are c_int consts in bun_boringssl_sys
                                 match name.name_type {
                                     boring::GEN_DNS | boring::GEN_URI => {
@@ -327,8 +356,8 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
                             boring::sk_GENERAL_NAME_pop_free(n, boring::sk_GENERAL_NAME_free)
                         });
                         for i in 0..boring::sk_GENERAL_NAME_num(names) {
-                            let gen = boring::sk_GENERAL_NAME_value(names, i);
-                            if let Some(name) = gen.as_ref() {
+                            let r#gen = boring::sk_GENERAL_NAME_value(names, i);
+                            if let Some(name) = r#gen.as_ref() {
                                 match name.name_type {
                                     boring::GEN_IPADD | boring::GEN_URI => {
                                         has_identifier_san = true;
@@ -391,9 +420,12 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
     }
 
     false
+    }
 }
 
 pub fn check_server_identity(ssl_ptr: &mut boring::SSL, hostname: &[u8]) -> bool {
+    #[cfg(not(any()))] { todo!("b1: bun_boringssl_sys") }
+    #[cfg(any())] // TODO(b1): gated — bun_boringssl_sys missing
     // SAFETY: ssl_ptr is a valid &mut so non-null/aligned; sk_X509_value returns
     // a borrowed cert pointer valid for the lifetime of the chain.
     unsafe {

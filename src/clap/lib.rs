@@ -1,11 +1,36 @@
+#![allow(unused, non_snake_case, non_camel_case_types, clippy::all)]
+
 use core::fmt;
 
-use bun_core::Output;
-use bun_core::{self, err};
+use bun_core;
 
-pub mod args;
-pub use crate::comptime::ComptimeClap;
-pub use crate::streaming::StreamingClap;
+// ── B-1 gate ───────────────────────────────────────────────────────────────
+// Phase-A draft modules preserved; bodies have nightly-only inherent assoc
+// types, missing `bun_str`/`thiserror` deps, and const-generic slice params.
+// Un-gated in B-2 once those are reshaped.
+#[cfg(any())] pub mod args;
+#[cfg(any())] pub mod comptime;
+#[cfg(any())] pub mod streaming;
+
+// ── stub surface for gated modules ────────────────────────────────────────
+pub mod args {
+    /// Stub: real impl gated above (B-1).
+    pub struct OsIterator {
+        pub exe_arg: Option<&'static [u8]>,
+    }
+    impl OsIterator {
+        pub fn init() -> Self { todo!("b1-stub: args::OsIterator") }
+        pub fn next(&mut self) -> Option<&'static [u8]> { todo!("b1-stub") }
+    }
+    pub struct SliceIterator<'a> { pub remain: &'a [&'a [u8]] }
+    pub struct ShellIterator<'a> { pub str: &'a [u8] }
+}
+
+/// Stub: real `ComptimeClap` (gated `comptime` mod) is generic over a comptime
+/// param table; needs proc-macro or `adt_const_params` (B-2).
+pub struct ComptimeClap<Id>(core::marker::PhantomData<Id>);
+/// Stub: real impl gated in `streaming` mod (B-1).
+pub struct StreamingClap<Id>(core::marker::PhantomData<Id>);
 
 /// The names a `Param` can have.
 #[derive(Clone, Copy)]
@@ -90,15 +115,19 @@ impl<Id: Default> Default for Param<Id> {
     }
 }
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
+// TODO(b1): `thiserror` not in workspace deps — manual Display/Error below.
+#[derive(strum::IntoStaticStr, Debug)]
 pub enum ParseParamError {
-    #[error("NoParamFound")]
     NoParamFound,
-    #[error("InvalidShortParam")]
     InvalidShortParam,
-    #[error("TrailingComma")]
     TrailingComma,
 }
+impl fmt::Display for ParseParamError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(<&'static str>::from(self))
+    }
+}
+impl std::error::Error for ParseParamError {}
 // TODO(port): impl From<ParseParamError> for bun_core::Error
 
 /// Takes a string and parses it to a `Param<Help>`.
@@ -145,7 +174,8 @@ pub fn parse_param(line: &'static [u8]) -> Result<Param<Help>, ParseParamError> 
     } else if found_comma {
         return Err(ParseParamError::TrailingComma);
     } else if short_name.is_none() {
-        return Ok(parse_param_rest(bun_str::strings::trim_left(line, b" \t")));
+        // TODO(b1): bun_str::strings::trim_left missing — local helper
+        return Ok(parse_param_rest(trim_left(line, b" \t")));
     }
 
     let mut res = parse_param_rest(it.rest());
@@ -239,7 +269,8 @@ fn parse_param_rest(line: &'static [u8]) -> Param<Help> {
                 Values::One
             },
             id: Help {
-                msg: bun_str::strings::trim(&line[help_start..], b" \t"),
+                // TODO(b1): bun_str::strings::trim missing — local helper
+                msg: trim(&line[help_start..], b" \t"),
                 value: &line[1..len],
             },
             ..Default::default()
@@ -247,7 +278,7 @@ fn parse_param_rest(line: &'static [u8]) -> Param<Help> {
     }
 
     Param {
-        id: Help { msg: bun_str::strings::trim(line, b" \t"), ..Default::default() },
+        id: Help { msg: trim(line, b" \t"), ..Default::default() },
         ..Default::default()
     }
 }
@@ -282,6 +313,7 @@ impl Default for Diagnostic {
 impl Diagnostic {
     /// Default diagnostics reporter when all you want is English with no colors.
     /// Use this as a reference for implementing your own if needed.
+    #[cfg(any())] // B-1 gate: Output::pretty_errorln / err! eq / Error::name() not in bun_core stub
     pub fn report<W>(&self, _stream: W, err: bun_core::Error) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         let mut name_buf = [0u8; 1024];
@@ -326,6 +358,11 @@ impl Diagnostic {
         Output::flush();
         Ok(())
     }
+
+    #[cfg(not(any()))]
+    pub fn report<W>(&self, _stream: W, _err: bun_core::Error) -> Result<(), bun_core::Error> {
+        todo!("b1-stub: Diagnostic::report")
+    }
 }
 
 #[cfg(test)]
@@ -338,6 +375,52 @@ fn test_diag(diag: Diagnostic, err: bun_core::Error, expected: &[u8]) {
     let _ = expected;
     // TODO(port): assert against captured Output
 }
+
+#[derive(Clone, Copy)]
+pub struct Help {
+    pub msg: &'static [u8],
+    pub value: &'static [u8],
+}
+
+impl Default for Help {
+    fn default() -> Self {
+        Self { msg: b"", value: b"" }
+    }
+}
+
+/// Options that can be set to customize the behavior of parsing.
+pub struct ParseOptions<'a> {
+    // PORT NOTE: `allocator: mem.Allocator` field deleted — non-AST crate uses
+    // the global mimalloc.
+    pub diagnostic: Option<&'a mut Diagnostic>,
+    pub stop_after_positional_at: usize,
+}
+
+impl<'a> Default for ParseOptions<'a> {
+    fn default() -> Self {
+        Self { diagnostic: None, stop_after_positional_at: 0 }
+    }
+}
+
+fn get_help_simple(param: &Param<Help>) -> &'static [u8] {
+    param.id.msg
+}
+
+fn get_value_simple(param: &Param<Help>) -> &'static [u8] {
+    param.id.value
+}
+
+// ── B-1 gate ───────────────────────────────────────────────────────────────
+// `Args` / `parse` / `parse_ex` / `help_full` / `print_param` / `help_ex` /
+// `simple_*` / `usage_*` all depend on either:
+//   - const-generic `&'static [Param<Id>]` (E0770, needs adt_const_params), or
+//   - `bun_core::Output::pretty*` fns that don't exist in the tier-0 stub, or
+//   - fn-pointer return-lifetime inference Rust can't do.
+// Bodies preserved verbatim inside `#[cfg(any())] mod _gated_b1`; minimal
+// `todo!()` stubs exposed below for downstream type-checking. Un-gate in B-2.
+#[cfg(any())]
+mod _gated_b1 {
+use super::*;
 
 // TODO(port): `comptime params: []const Param(Id)` as a type parameter has no
 // stable-Rust equivalent. `&'static [Param<Id>]` as a const generic requires
@@ -826,6 +909,32 @@ pub fn usage<W: fmt::Write>(stream: &mut W, params: &[Param<Help>]) -> Result<()
     usage_ex(stream, params, get_value_simple)
 }
 
+} // mod _gated_b1
+
+// ── stub surface for the gated block above ────────────────────────────────
+pub struct Args<Id: 'static> {
+    pub clap: ComptimeClap<Id>,
+    pub exe_arg: Option<&'static [u8]>,
+}
+pub fn parse<Id: 'static>(_opt: ParseOptions<'_>) -> Result<Args<Id>, bun_core::Error> {
+    todo!("b1-stub: clap::parse")
+}
+pub fn parse_ex<Id: 'static, I>(
+    _iter: &mut I,
+    _opt: ParseOptions<'_>,
+) -> Result<ComptimeClap<Id>, bun_core::Error> {
+    todo!("b1-stub: clap::parse_ex")
+}
+pub fn help<W: fmt::Write>(_stream: &mut W, _params: &[Param<Help>]) -> Result<(), bun_core::Error> {
+    todo!("b1-stub: clap::help")
+}
+pub fn usage<W: fmt::Write>(_stream: &mut W, _params: &[Param<Help>]) -> Result<(), bun_core::Error> {
+    todo!("b1-stub: clap::usage")
+}
+pub fn simple_help(_params: &[Param<Help>]) { todo!("b1-stub") }
+pub fn simple_help_bun_top_level(_params: &'static [Param<Help>]) { todo!("b1-stub") }
+pub fn simple_print_param(_param: &Param<Help>) -> Result<(), bun_core::Error> { todo!("b1-stub") }
+
 #[cfg(test)]
 fn test_usage(expected: &[u8], params: &[Param<Help>]) -> Result<(), bun_core::Error> {
     // TODO(port): std.io.fixedBufferStream — using a Vec<u8> via fmt::Write shim
@@ -843,6 +952,20 @@ fn test_usage(expected: &[u8], params: &[Param<Help>]) -> Result<(), bun_core::E
 }
 
 // ───────────── helpers (no Zig std equivalent in PORTING.md) ─────────────
+
+// TODO(b1): bun_str::strings::{trim, trim_left} missing from lower-tier stub.
+fn trim_left<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
+    let mut i = 0;
+    while i < s.len() && chars.contains(&s[i]) { i += 1; }
+    &s[i..]
+}
+fn trim<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
+    let s = trim_left(s, chars);
+    let mut e = s.len();
+    while e > 0 && chars.contains(&s[e - 1]) { e -= 1; }
+    &s[..e]
+}
+
 
 // TODO(port): `std.mem.tokenizeAny` replacement that supports `.rest()`. If a
 // shared helper exists in `bun_str::strings`, replace this.
@@ -902,10 +1025,9 @@ impl CountingWriter<'static, NullWriter> {
     fn null() -> CountingWriter<'static, NullWriter> {
         // PORT NOTE: reshaped for borrowck — Zig used `io.null_writer`; here we
         // use a static-lifetime null sink so `print_param` can take `&mut W`.
-        // TODO(port): clean up the Option<&mut W> dance once a real bun_io::CountingWriter exists
-        static mut NULL: NullWriter = NullWriter;
-        // SAFETY: NullWriter is zero-sized and has no state.
-        CountingWriter { inner: Some(unsafe { &mut NULL }), bytes_written: 0 }
+        // TODO(port): clean up the Option<&mut W> dance once a real bun_io::CountingWriter exists.
+        // NullWriter is a ZST so Box::leak is zero-cost (no allocation for ZSTs).
+        CountingWriter { inner: Some(Box::leak(Box::new(NullWriter))), bytes_written: 0 }
     }
 }
 

@@ -1,9 +1,34 @@
 use core::ffi::c_void;
+#[allow(unused_imports)]
 use core::ptr;
 
+// TODO(b1): bun_brotli_sys crate missing — Phase-A draft gated, local stub
+// surface below so struct fields / signatures still typecheck.
+#[cfg(any())]
 use bun_brotli_sys as c;
+#[cfg(any())]
 use c::{BrotliDecoder, BrotliEncoder};
 
+#[cfg(not(any()))]
+#[allow(dead_code, non_camel_case_types, unused_variables)]
+mod c {
+    pub enum BrotliDecoderState {}
+    pub enum BrotliEncoderState {}
+    #[derive(Clone, Copy)]
+    pub enum BrotliEncoderOperation {
+        Process,
+        Finish,
+        Flush,
+        EmitMetadata,
+    }
+    pub enum BrotliDecoder {}
+    pub enum BrotliEncoder {}
+}
+#[cfg(not(any()))]
+#[allow(unused_imports)]
+use c::{BrotliDecoder, BrotliEncoder};
+
+#[allow(unused_imports)]
 use bun_core::{self as bun, err, Error};
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -146,6 +171,8 @@ impl<'a> BrotliReaderArrayList<'a> {
         finish_flush_op: c::BrotliEncoderOperation,
         full_flush_op: c::BrotliEncoderOperation,
     ) -> Result<Self, Error> {
+        #[cfg(any())]
+        {
         // TODO(port): narrow error set
         if !BrotliDecoder::initialize_brotli() {
             return Err(err!("BrotliFailedToLoad"));
@@ -192,6 +219,12 @@ impl<'a> BrotliReaderArrayList<'a> {
             finish_flush_op,
             full_flush_op,
         })
+        }
+        #[cfg(not(any()))]
+        {
+            let _ = (input, list, options, flush_op, finish_flush_op, full_flush_op);
+            todo!("bun_brotli: init_with_options gated on bun_brotli_sys")
+        }
     }
 
     pub fn end(&mut self) {
@@ -199,6 +232,8 @@ impl<'a> BrotliReaderArrayList<'a> {
     }
 
     pub fn read_all(&mut self, is_done: bool) -> Result<(), Error> {
+        #[cfg(any())]
+        {
         // TODO(port): narrow error set
         // PORT NOTE: Zig's `defer this.list_ptr.* = this.list;` is gone — we
         // mutate through `list_ptr` directly (see field note above).
@@ -299,11 +334,18 @@ impl<'a> BrotliReaderArrayList<'a> {
         }
 
         Ok(())
+        }
+        #[cfg(not(any()))]
+        {
+            let _ = is_done;
+            todo!("bun_brotli: read_all gated on bun_brotli_sys")
+        }
     }
 }
 
 impl<'a> Drop for BrotliReaderArrayList<'a> {
     fn drop(&mut self) {
+        #[cfg(any())]
         // SAFETY: self.brotli was created by BrotliDecoder::create_instance and
         // is destroyed exactly once here.
         unsafe {
@@ -341,6 +383,8 @@ impl BrotliCompressionStream {
         finish_flush_op: c::BrotliEncoderOperation,
         full_flush_op: c::BrotliEncoderOperation,
     ) -> Result<Self, Error> {
+        #[cfg(any())]
+        {
         // TODO(port): narrow error set
         let instance = BrotliEncoder::create_instance(
             Some(BrotliAllocator::alloc),
@@ -358,9 +402,17 @@ impl BrotliCompressionStream {
             finish_flush_op,
             full_flush_op,
         })
+        }
+        #[cfg(not(any()))]
+        {
+            let _ = (flush_op, finish_flush_op, full_flush_op);
+            todo!("bun_brotli: BrotliCompressionStream::init gated on bun_brotli_sys")
+        }
     }
 
     pub fn write_chunk(&mut self, input: &[u8], last: bool) -> Result<&[u8], Error> {
+        #[cfg(any())]
+        {
         // TODO(port): narrow error set
         self.total_in += input.len();
         // SAFETY: self.brotli is a live encoder instance; `input` is valid for
@@ -382,6 +434,12 @@ impl BrotliCompressionStream {
         // buffer, valid until the next compress_stream/destroy call. Zig
         // returned `[]const u8`; we return `&[u8]` tied to `&mut self` here.
         Ok(result.output)
+        }
+        #[cfg(not(any()))]
+        {
+            let _ = (input, last);
+            todo!("bun_brotli: write_chunk gated on bun_brotli_sys")
+        }
     }
 
     pub fn write(&mut self, input: &[u8], last: bool) -> Result<&[u8], Error> {
@@ -400,17 +458,25 @@ impl BrotliCompressionStream {
         // TODO(port): borrowck — returned slice borrows encoder buffer via
         // &mut self; Phase B resolve (scopeguard on disjoint field or change
         // return type).
-        let result = self.write(b"", true);
-        self.state = CompressionState::End;
-        result
+        #[cfg(any())]
+        {
+            let result = self.write(b"", true);
+            self.state = CompressionState::End;
+            result
+        }
+        #[cfg(not(any()))]
+        todo!("bun_brotli: end() gated on borrowck redesign")
     }
 
+    // TODO(b1): bun_io::Write missing — gated.
+    #[cfg(any())]
     pub fn writer_context<W: bun_io::Write>(&mut self, writable: W) -> BrotliWriter<'_, W> {
         BrotliWriter::init(self, writable)
     }
 
     // TODO(port): Zig's `writer()` returned a `std.Io.GenericWriter` adapter.
     // Rust callers should use `writer_context()` directly (it impls Write).
+    #[cfg(any())]
     pub fn writer<W: bun_io::Write>(&mut self, writable: W) -> BrotliWriter<'_, W> {
         self.writer_context(writable)
     }
@@ -418,6 +484,7 @@ impl BrotliCompressionStream {
 
 impl Drop for BrotliCompressionStream {
     fn drop(&mut self) {
+        #[cfg(any())]
         // SAFETY: self.brotli was created by BrotliEncoder::create_instance and
         // is destroyed exactly once here.
         unsafe {
@@ -432,6 +499,8 @@ pub struct BrotliWriter<'a, W> {
     pub input_writer: W,
 }
 
+// TODO(b1): bun_io::Write missing — whole impl gated.
+#[cfg(any())]
 impl<'a, W: bun_io::Write> BrotliWriter<'a, W> {
     // Zig: `WriteError = error{BrotliCompressionError} || InputWriter.Error`
     // TODO(port): error-set union — using bun_core::Error in Phase A.

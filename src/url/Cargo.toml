@@ -20,7 +20,8 @@ bitflags.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
-bun_io.workspace = true
+# TODO(b1): bun_io gated — crate does not compile yet; local Write stub in lib.rs
+# bun_io.workspace = true
 bun_paths.workspace = true
 bun_string.workspace = true
 bun_wyhash.workspace = true

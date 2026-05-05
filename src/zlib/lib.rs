@@ -164,11 +164,12 @@ pub enum ZlibReaderState {
 impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
     pub extern "C" fn alloc(_: *mut c_void, items: uInt, len: uInt) -> *mut c_void {
         // SAFETY: mi_malloc is a plain C allocator; null on OOM.
-        unsafe { mimalloc::mi_malloc((items * len) as usize) as *mut c_void }
-            .as_mut()
-            .map(|p| p as *mut c_void)
-            .unwrap_or_else(|| unreachable!())
         // TODO(port): simplify — mi_malloc returns *mut c_void already; `orelse unreachable` → expect non-null
+        let p = unsafe { mimalloc::mi_malloc((items * len) as usize) };
+        if p.is_null() {
+            unreachable!();
+        }
+        p
     }
 
     pub extern "C" fn free(_: *mut c_void, data: *mut c_void) {
@@ -250,6 +251,8 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
     }
 
     // TODO(port): narrow error set — Zig inferred error union includes Writer's error set.
+    // TODO(b1): bun_io::Write missing (bun_io tier-0 dep gated). Body preserved behind cfg(any()).
+    #[cfg(any())]
     pub fn read_all(&mut self, is_done: bool) -> Result<(), bun_core::Error>
     where
         W: bun_io::Write, // TODO(port): exact trait for `context.write(&[u8]) -> !usize`
@@ -346,17 +349,21 @@ impl<'a, W, const BUFFER_SIZE: usize> Drop for ZlibReader<'a, W, BUFFER_SIZE> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
+// TODO(b1): thiserror not in workspace deps; manual Display impl below.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ZlibError {
-    #[error("OutOfMemory")]
     OutOfMemory,
-    #[error("InvalidArgument")]
     InvalidArgument,
-    #[error("ZlibError")]
     ZlibError,
-    #[error("ShortRead")]
     ShortRead,
 }
+
+impl core::fmt::Display for ZlibError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(<&'static str>::from(*self))
+    }
+}
+impl core::error::Error for ZlibError {}
 
 impl From<ZlibError> for bun_core::Error {
     fn from(e: ZlibError) -> Self {
@@ -369,6 +376,8 @@ struct ZlibAllocator;
 
 impl ZlibAllocator {
     pub extern "C" fn alloc(_: *mut c_void, items: uInt, len: uInt) -> *mut c_void {
+        // TODO(b1): bun_alloc::heap_breakdown is gated (cfg(any())) in tier-0. Preserve draft body:
+        #[cfg(any())]
         if bun_alloc::heap_breakdown::ENABLED {
             let zone = bun_alloc::heap_breakdown::get_zone("zlib");
             // SAFETY: zone is a valid malloc zone; calloc returns null on OOM.
@@ -385,6 +394,8 @@ impl ZlibAllocator {
     }
 
     pub extern "C" fn free(_: *mut c_void, data: *mut c_void) {
+        // TODO(b1): bun_alloc::heap_breakdown is gated (cfg(any())) in tier-0. Preserve draft body:
+        #[cfg(any())]
         if bun_alloc::heap_breakdown::ENABLED {
             let zone = bun_alloc::heap_breakdown::get_zone("zlib");
             // SAFETY: data was allocated by malloc_zone_calloc above.
@@ -1106,7 +1117,73 @@ impl<'a> Drop for ZlibCompressorArrayList<'a> {
 
 // TODO(port): `@import("zlib-internal")` — confirm Rust module path. Assuming `crate::internal`
 // for `z_stream`, `z_streamp`, `zStream_struct`, `FlushValue`, `ReturnCode`, `DataType`.
+//
+// B-1 STUB: zlib-internal is not yet a Rust module. Minimal opaque/repr(C)
+// surface so this crate type-checks. Un-gate the real `pub use crate::zlib_internal::*;`
+// in B-2 once that module is ported.
+#[allow(non_camel_case_types, dead_code)]
 mod internal {
+    use core::ffi::{c_int, c_ulong, c_void};
+
+    pub type uInt = u32;
+    pub type uLong = c_ulong;
+
+    #[repr(C)]
+    pub struct zStream_struct {
+        pub next_in: *const u8,
+        pub avail_in: uInt,
+        pub total_in: uLong,
+        pub next_out: *mut u8,
+        pub avail_out: uInt,
+        pub total_out: uLong,
+        pub err_msg: *const core::ffi::c_char,
+        pub internal_state: *mut c_void,
+        pub alloc_func: extern "C" fn(*mut c_void, uInt, uInt) -> *mut c_void,
+        pub free_func: extern "C" fn(*mut c_void, *mut c_void),
+        pub user_data: *mut c_void,
+        pub data_type: DataType,
+        pub adler: uLong,
+        pub reserved: uLong,
+    }
+
+    pub type z_stream = zStream_struct;
+    pub type z_streamp = *mut zStream_struct;
+
+    #[repr(i32)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum ReturnCode {
+        Ok = 0,
+        StreamEnd = 1,
+        NeedDict = 2,
+        ErrNo = -1,
+        StreamError = -2,
+        DataError = -3,
+        MemError = -4,
+        BufError = -5,
+        VersionError = -6,
+    }
+
+    #[repr(i32)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum FlushValue {
+        NoFlush = 0,
+        PartialFlush = 1,
+        SyncFlush = 2,
+        FullFlush = 3,
+        Finish = 4,
+        Block = 5,
+        Trees = 6,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum DataType {
+        Binary = 0,
+        Text = 1,
+        Unknown = 2,
+    }
+
+    #[cfg(any())]
     pub use crate::zlib_internal::*;
     // placeholder; Phase B wires the real module
 }

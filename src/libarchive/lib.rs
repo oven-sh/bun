@@ -1,4 +1,97 @@
 // @link "../deps/libarchive.a"
+#![allow(unused, dead_code)]
+
+// ──────────────────────────────────────────────────────────────────────────
+// Phase B-1 stub surface. The Phase-A draft port is preserved below inside
+// `#[cfg(any())] mod phase_a_draft { ... }` and will be un-gated in B-2 once
+// the dependent crate surfaces (bun_sys / bun_paths / bun_core::fmt /
+// bun_libarchive_sys / bun_str / bun_wyhash) are filled in.
+// ──────────────────────────────────────────────────────────────────────────
+
+// TODO(b1): bun_libarchive_sys crate missing — local placeholder.
+mod lib {
+    pub enum Archive {}
+    pub enum Entry {}
+    pub type la_ssize_t = isize;
+    pub type la_int64_t = i64;
+    #[repr(C)]
+    pub enum Result { Ok, Eof, Retry, Warn, Failed, Fatal }
+}
+
+#[repr(i32)]
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum Seek { Set = 0, Current = 1, End = 2 }
+
+pub struct BufferReadStream(());
+impl BufferReadStream {
+    pub fn init(_buf: &[u8]) -> Self { todo!("phase-b2") }
+    pub fn open_read(&mut self) -> lib::Result { todo!("phase-b2") }
+}
+
+pub struct Archiver;
+
+pub mod archiver {
+    pub struct Context(());
+    pub struct Plucker(());
+    pub struct U64Context;
+    pub type EntryMap = ();
+    #[derive(Clone, Copy)]
+    pub struct ExtractOptions {
+        pub depth_to_skip: usize,
+        pub close_handles: bool,
+        pub log: bool,
+        pub npm: bool,
+    }
+    impl Default for ExtractOptions {
+        fn default() -> Self {
+            Self { depth_to_skip: 0, close_handles: true, log: false, npm: false }
+        }
+    }
+}
+pub use archiver::{Context, ExtractOptions, Plucker};
+
+pub trait ArchiveAppender {
+    const HAS_ON_FIRST_DIRECTORY_NAME: bool = false;
+    const HAS_APPEND_MUTABLE: bool = false;
+    fn needs_first_dirname(&self) -> bool { false }
+    fn on_first_directory_name(&mut self, _name: &[u8]) {}
+}
+impl ArchiveAppender for () {}
+
+impl Archiver {
+    pub fn get_overwriting_file_list<A: ArchiveAppender, const DEPTH_TO_SKIP: usize>(
+        _file_buffer: &[u8],
+        _root: &[u8],
+        _ctx: &mut Context,
+        _appender: &mut A,
+    ) -> Result<(), bun_core::Error> {
+        todo!("phase-b2")
+    }
+    pub fn extract_to_dir<A: ArchiveAppender>(
+        _file_buffer: &[u8],
+        _dir: bun_sys::Fd,
+        _ctx: Option<&mut Context>,
+        _appender: &mut A,
+        _options: ExtractOptions,
+    ) -> Result<u32, bun_core::Error> {
+        todo!("phase-b2")
+    }
+    pub fn extract_to_disk<A: ArchiveAppender>(
+        _file_buffer: &[u8],
+        _root: &[u8],
+        _ctx: Option<&mut Context>,
+        _appender: &mut A,
+        _options: ExtractOptions,
+    ) -> Result<u32, bun_core::Error> {
+        todo!("phase-b2")
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Phase-A draft (gated; does not compile yet — see B-1 notes above)
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(any())]
+mod phase_a_draft {
 
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
@@ -1045,3 +1138,5 @@ fn slice_as_bytes(s: &[OSPathChar]) -> &[u8] {
 //   todos:      21
 //   notes:      std.fs.Dir ops mapped to bun_sys placeholders; @hasDecl duck-typing → ArchiveAppender trait; tokenizer.rest() hand-rolled; defer-close of file_handle uses awkward scopeguard — restructure in Phase B.
 // ──────────────────────────────────────────────────────────────────────────
+
+} // mod phase_a_draft

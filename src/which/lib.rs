@@ -1,13 +1,20 @@
+#![allow(unused_imports, unused_variables, dead_code, unreachable_code)]
 use bstr::BStr;
 use bun_paths::{
-    is_absolute, path_buffer_pool, w_path_buffer_pool, PathBuffer, PosixToWinNormalizer,
+    is_absolute, path_buffer_pool, w_path_buffer_pool, PathBuffer,
     WPathBuffer, DELIMITER, MAX_PATH_BYTES, SEP, SEP_STR,
 };
-use bun_str::{strings, w, WStr, ZStr};
+// TODO(b1): bun_paths::PosixToWinNormalizer missing from stub surface
+struct PosixToWinNormalizer;
+// TODO(b1): bun_str crate (was bun_str::{strings, w, WStr, ZStr}) — using bun_string re-exports
+use bun_string::{strings, WStr, ZStr};
 
-bun_output::declare_scope!(which, hidden);
+// TODO(b1): bun_output crate missing
+// bun_output::declare_scope!(which, hidden);
 
 fn is_valid(buf: &mut PathBuffer, segment: &[u8], bin: &[u8]) -> Option<u16> {
+    #[cfg(any())]
+    {
     let prefix_len = segment.len() + 1; // includes trailing path separator
     let len = prefix_len + bin.len();
     let len_z = len + 1; // includes null terminator
@@ -25,6 +32,8 @@ fn is_valid(buf: &mut PathBuffer, segment: &[u8], bin: &[u8]) -> Option<u16> {
         return None;
     }
     Some(u16::try_from(filepath.len()).unwrap())
+    }
+    todo!("b1-stub: is_valid")
 }
 
 // Like /usr/bin/which but without needing to exec a child process
@@ -35,6 +44,8 @@ pub fn which<'a>(
     cwd: &[u8],
     bin: &[u8],
 ) -> Option<&'a ZStr> {
+    #[cfg(any())]
+    {
     if bin.len() > MAX_PATH_BYTES {
         return None;
     }
@@ -104,8 +115,12 @@ pub fn which<'a>(
 
         None
     }
+    }
+    todo!("b1-stub: which")
 }
 
+// TODO(b1): bun_str::w! macro missing — gate WIN_EXTENSIONS_W
+#[cfg(any())]
 static WIN_EXTENSIONS_W: [&[u16]; 3] = [
     w!("exe"),
     w!("cmd"),
@@ -118,6 +133,8 @@ const WIN_EXTENSIONS: [&[u8]; 3] = [
 ];
 
 pub fn ends_with_extension(str: &[u8]) -> bool {
+    #[cfg(any())]
+    {
     if str.len() < 4 {
         return false;
     }
@@ -132,6 +149,8 @@ pub fn ends_with_extension(str: &[u8]) -> bool {
         }
     }
     false
+    }
+    todo!("b1-stub: ends_with_extension")
 }
 
 /// Check if the WPathBuffer holds a existing file path, checking also for windows extensions variants like .exe, .cmd and .bat (internally used by which_win)
@@ -140,6 +159,8 @@ fn search_bin(
     path_size: usize,
     check_windows_extensions: bool,
 ) -> Option<&mut WStr> {
+    #[cfg(any())]
+    {
     if !check_windows_extensions {
         // On Windows, files without extensions are not executable
         // Therefore, we should only care about this check when the file already has an extension.
@@ -168,6 +189,8 @@ fn search_bin(
         }
     }
     None
+    }
+    todo!("b1-stub: search_bin")
 }
 
 /// Check if bin file exists in this path (internally used by which_win)
@@ -178,6 +201,8 @@ fn search_bin_in_path<'a>(
     bin: &[u8],
     check_windows_extensions: bool,
 ) -> Option<&'a mut WStr> {
+    #[cfg(any())]
+    {
     if path.is_empty() {
         return None;
     }
@@ -201,6 +226,8 @@ fn search_bin_in_path<'a>(
     buf[path_size] = 0;
 
     search_bin(buf, path_size, check_windows_extensions)
+    }
+    todo!("b1-stub: search_bin_in_path")
 }
 
 /// This is the windows version of `which`.
@@ -212,6 +239,8 @@ pub fn which_win<'a>(
     cwd: &[u8],
     bin: &[u8],
 ) -> Option<&'a WStr> {
+    #[cfg(any())]
+    {
     if bin.is_empty() {
         return None;
     }
@@ -261,6 +290,8 @@ pub fn which_win<'a>(
     }
 
     None
+    }
+    todo!("b1-stub: which_win")
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -269,4 +300,11 @@ pub fn which_win<'a>(
 //   confidence: medium
 //   todos:      1
 //   notes:      ZStr/WStr from_raw return-borrow shapes + which_win loop borrowck need Phase B attention
+//   b1-status:  all fn bodies gated #[cfg(any())] + todo!() — missing deps:
+//               bun_sys::{is_executable_file_path, exists_os_path},
+//               bun_paths::{PosixToWinNormalizer, posix_to_platform_in_place},
+//               bun_str::w! macro, bun_output crate,
+//               strings::{trim_right, without_prefix, without_trailing_slash,
+//                         convert_utf8_to_utf16_in_buffer, convert_utf16_to_utf8_in_buffer,
+//                         eql_case_insensitive_ascii_icheck_length}
 // ──────────────────────────────────────────────────────────────────────────

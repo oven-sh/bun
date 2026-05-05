@@ -12,9 +12,37 @@
 use core::fmt;
 
 use bun_alloc::AllocError;
+#[allow(unused_imports)]
 use bun_core::Output;
-use bun_core::StringBuilder;
-use bun_paths as fs; // MOVE_DOWN: fs::Path (bun_resolver::fs → bun_paths, T1)
+
+// TODO(b1): bun_core::StringBuilder missing — local stub surface until B-2.
+#[derive(Default)]
+pub struct StringBuilder;
+#[allow(unused_variables)]
+impl StringBuilder {
+    pub fn count(&mut self, s: &[u8]) { let _ = s; }
+    pub fn append(&mut self, s: &'static [u8]) -> &'static [u8] { s }
+    pub fn allocate(&mut self) -> Result<(), AllocError> { Ok(()) }
+}
+
+// TODO(b1): bun_paths crate not yet linked — local stub of fs::Path so `Source`
+// stays structurally intact. Real impl: bun_paths (MOVE_DOWN from bun_resolver::fs).
+#[allow(dead_code)]
+pub mod fs {
+    #[derive(Clone, Default)]
+    pub struct PathName;
+    #[derive(Clone, Default)]
+    pub struct Path {
+        pub text: &'static [u8],
+        pub namespace: &'static [u8],
+        pub name: PathName,
+    }
+    impl Path {
+        pub fn init(text: &'static [u8]) -> Path {
+            Path { text, namespace: b"", name: PathName }
+        }
+    }
+}
 
 // TYPE_ONLY (CYCLEBREAK §logger): moved-in locally so the import drop doesn't dangle.
 // Canonical definition is here now; bun_js_parser re-exports `bun_logger::Index`.
@@ -448,17 +476,20 @@ pub struct SymbolUse {
 /// `js_ast.Symbol.{List,NestedList,Map}` — exposed as `bun_logger::symbol` so css's
 /// `bun_logger::symbol::{Map, List}` forward-refs resolve.
 pub mod symbol {
+    #[allow(unused_imports)]
     use super::{BabyList, Ref, Symbol};
 
     pub type List = BabyList<Symbol>;
     pub type NestedList = BabyList<List>;
 
     /// Two-level array indexed by `(source_index, inner_index)`. See comment on `Ref`.
-    #[derive(Default)]
     pub struct Map {
         pub symbols_for_source: NestedList,
     }
 
+    // TODO(b1): bun_collections::BabyList stub lacks Default/at/mut_/append — gate
+    // impl until B-2 un-gates the real BabyList.
+    #[cfg(any())]
     impl Map {
         pub fn init_list(list: NestedList) -> Map {
             Map { symbols_for_source: list }
@@ -592,8 +623,11 @@ mod fs_ext {
     }
 }
 use fs_ext::PathContentsPair;
-use bun_schema::api;
-use bun_str::strings;
+// TODO(b1): bun_schema::api missing — `to_api` methods gated behind #[cfg(any())].
+// TODO(b1): bun_str::strings missing — callers gated; local re-export of the
+// minimal subset bun_core already stubs so non-gated code paths still resolve.
+#[allow(unused_imports)]
+use bun_core::strings;
 
 // In Zig: `const string = []const u8;`
 type Str = &'static [u8];
@@ -636,6 +670,7 @@ impl Kind {
         }
     }
 
+    #[cfg(any())] // TODO(b1): bun_schema::api missing
     #[inline]
     pub fn to_api(self) -> api::MessageLevel {
         match self {
@@ -796,6 +831,7 @@ impl Location {
         }
     }
 
+    #[cfg(any())] // TODO(b1): bun_schema::api missing
     pub fn to_api(&self) -> api::Location {
         api::Location {
             file: self.file,
@@ -831,6 +867,7 @@ impl Location {
     }
 
     pub fn init_or_null(_source: Option<&Source>, r: Range) -> Option<Location> {
+        #[cfg(any())] // TODO(b1): bun_str::strings::trim_left + Source::init_error_position gated
         if let Some(source) = _source {
             if r.is_empty() {
                 return Some(Location {
@@ -865,6 +902,7 @@ impl Location {
                 offset: usize::try_from(r.loc.start.max(0)).unwrap(),
             });
         }
+        let _ = r;
         None
     }
 }
@@ -904,7 +942,7 @@ impl Data {
     pub fn clone_line_text(&self, should: bool) -> Result<Data, AllocError> {
         if !should || self.location.is_none() || self.location.as_ref().unwrap().line_text.is_none()
         {
-            return Ok(self.clone());
+            return self.clone();
         }
 
         // TODO(port): lifetime — Zig dupes `line_text` here.
@@ -950,6 +988,7 @@ impl Data {
         }
     }
 
+    #[cfg(any())] // TODO(b1): bun_schema::api missing
     pub fn to_api(&self) -> api::MessageData {
         api::MessageData {
             text: self.text,
@@ -957,12 +996,17 @@ impl Data {
         }
     }
 
+    #[allow(unused_variables)]
     pub fn write_format<const ENABLE_ANSI_COLORS: bool>(
         &self,
         to: &mut impl fmt::Write,
         kind: Kind,
         redact_sensitive_information: bool,
     ) -> fmt::Result {
+        // TODO(b1): Output::{color_map,pretty_fmt,enable_ansi_colors_stderr} +
+        // bun_core::fmt + bun_str::strings missing — gate draft body.
+        #[cfg(any())]
+        {
         if self.text.is_empty() {
             return Ok(());
         }
@@ -1131,10 +1175,13 @@ impl Data {
         }
 
         Ok(())
+        } // end #[cfg(any())]
+        todo!("Data::write_format — gated until Output/fmt deps land")
     }
 }
 
 // Helper: Zig `to.splatByteAll(b, n)`
+#[allow(dead_code)] // TODO(b1): only caller (Data::write_format) is gated
 fn write_n_bytes(to: &mut impl fmt::Write, b: u8, n: usize) -> fmt::Result {
     for _ in 0..n {
         to.write_char(b as char)?;
@@ -1143,6 +1190,7 @@ fn write_n_bytes(to: &mut impl fmt::Write, b: u8, n: usize) -> fmt::Result {
 }
 
 // Helper: Zig `std.fmt.count(fmt, args)` — count rendered bytes without allocating.
+#[allow(dead_code)] // TODO(b1): only caller (Data::write_format) is gated
 fn fmt_count(args: fmt::Arguments<'_>) -> usize {
     struct Counter(usize);
     impl fmt::Write for Counter {
@@ -1183,7 +1231,8 @@ impl BabyString {
     }
 
     pub fn r#in(parent: &[u8], text: &[u8]) -> BabyString {
-        let off = strings::index_of(parent, text).expect("unreachable");
+        // TODO(b1): bun_str::strings::index_of missing — inline bstr fallback.
+        let off = bstr::ByteSlice::find(parent, text).expect("unreachable");
         BabyString::new(off as u16, text.len() as u16) // @truncate
     }
 
@@ -1272,6 +1321,7 @@ impl Msg {
         }
     }
 
+    #[cfg(any())] // TODO(b1): bun_schema::api missing
     pub fn to_api(&self) -> Result<api::Message, AllocError> {
         let mut notes = vec![api::MessageData::default(); self.notes.len()].into_boxed_slice();
         let msg = api::Message {
@@ -1296,6 +1346,7 @@ impl Msg {
         Ok(api::Message { notes, ..msg })
     }
 
+    #[cfg(any())] // TODO(b1): bun_schema::api missing
     pub fn to_api_from_list(list: &[Msg]) -> Result<Box<[api::Message]>, AllocError> {
         // PORT NOTE: Zig took `comptime ListType: type, list: ListType` and read
         // `list.items`; collapsed to `&[Msg]`.
@@ -1572,6 +1623,7 @@ impl Log {
         (self.warnings + self.errors) > 0
     }
 
+    #[cfg(any())] // TODO(b1): bun_schema::api missing
     pub fn to_api(&self) -> Result<api::Log, AllocError> {
         let mut warnings: u32 = 0;
         let mut errors: u32 = 0;
@@ -1966,11 +2018,15 @@ impl Log {
     }
 
     /// Use a bun.sys.Error's message in addition to some extra context.
+    #[allow(unused_variables)]
     pub fn add_sys_error(
         &mut self,
         e: &bun_sys::Error,
         args: fmt::Arguments<'_>,
     ) -> Result<(), AllocError> {
+        // TODO(b1): bun_sys::Error::get_error_code_tag_name + coreutils_error_map gated.
+        #[cfg(any())]
+        {
         let Some((tag_name, sys_errno)) = e.get_error_code_tag_name() else {
             return self.add_error_fmt(None, Loc::EMPTY, args);
         };
@@ -1983,6 +2039,8 @@ impl Log {
             Loc::EMPTY,
             format_args!("{}: {}", bstr::BStr::new(prefix), args),
         )
+        } // end #[cfg(any())]
+        self.add_error_fmt(None, Loc::EMPTY, args)
     }
 
     #[cold]
@@ -1996,12 +2054,18 @@ impl Log {
         let notes: Box<[Data]> =
             Box::new([range_data(None, Range::NONE, alloc_print(note_args)?)]);
 
+        // TODO(b1): bun_core::Error::name() missing — gate draft body.
+        #[cfg(any())]
+        {
         self.add_msg(Msg {
             kind: Kind::Err,
             data: range_data(None, Range::NONE, err.name().as_bytes()),
             notes,
             ..Default::default()
         })
+        }
+        let _ = err;
+        self.add_msg(Msg { kind: Kind::Err, notes, ..Default::default() })
     }
 
     #[cold]
@@ -2071,6 +2135,10 @@ impl Log {
 
         // TODO: do this properly
 
+        // TODO(b1): lifetime — `Location.file: &'static [u8]` vs borrowed `filepath`.
+        // Gate draft body until Phase-B ownership rework.
+        #[cfg(any())]
+        {
         let data = Data {
             text: alloc_print(args)?,
             location: Some(Location {
@@ -2089,6 +2157,9 @@ impl Log {
             notes,
             ..Default::default()
         })
+        } // end #[cfg(any())]
+        let _ = (filepath, line, col, args, notes);
+        todo!("add_warning_fmt_line_col_with_notes — gated on Location ownership")
     }
 
     // (Zig has a large commented-out `addWarningFmtLineColWithNote` here — omitted.)
@@ -2360,11 +2431,14 @@ impl Log {
     }
 
     pub fn print(&self, to: &mut impl fmt::Write) -> fmt::Result {
+        // TODO(b1): Output::enable_ansi_colors_stderr missing.
+        #[cfg(any())]
         if Output::enable_ansi_colors_stderr() {
             self.print_with_enable_ansi_colors::<true>(to)
         } else {
             self.print_with_enable_ansi_colors::<false>(to)
         }
+        self.print_with_enable_ansi_colors::<false>(to)
     }
 
     pub fn print_with_enable_ansi_colors<const ENABLE_ANSI_COLORS: bool>(
@@ -2437,11 +2511,14 @@ pub fn alloc_print(args: fmt::Arguments<'_>) -> Result<Str, AllocError> {
     // For now, render args verbatim and pass through `Output::pretty_runtime`.
     use std::io::Write;
     let mut v = Vec::new();
+    // TODO(b1): Output::{enable_ansi_colors_stderr,pretty_fmt} missing — render verbatim.
+    #[cfg(any())]
     if Output::enable_ansi_colors_stderr() {
         let _ = write!(&mut v, "{}", Output::pretty_fmt::<true>(args));
     } else {
         let _ = write!(&mut v, "{}", Output::pretty_fmt::<false>(args));
     }
+    let _ = write!(&mut v, "{}", args);
     // TODO(port): lifetime — Zig returns an allocator-owned slice that the Log
     // takes ownership of via Data.text. Leaking here is a stopgap until
     // `Data.text` is `Box<[u8]>`.
@@ -2491,6 +2568,7 @@ pub struct ErrorPosition {
 }
 
 impl Source {
+    #[cfg(any())] // TODO(b1): bun_core::fmt::FormatValidIdentifier + fs::PathName::fmt_identifier missing
     pub fn fmt_identifier(&self) -> bun_core::fmt::FormatValidIdentifier<'_> {
         self.path.name.fmt_identifier()
     }
@@ -2502,9 +2580,14 @@ impl Source {
         }
 
         debug_assert!(!self.path.text.is_empty());
+        // TODO(b1): fs::PathName::non_unique_name_string missing — gate.
+        #[cfg(any())]
+        {
         let name = self.path.name.non_unique_name_string()?;
         self.identifier_name = name;
         Ok(name)
+        }
+        todo!("Source::identifier_name — fs::PathName stub")
     }
 
     pub fn range_of_identifier(&self, loc: Loc) -> Range {
@@ -2558,7 +2641,11 @@ impl Source {
         &self.contents[r.loc.i()..r.end_i()]
     }
 
+    #[allow(unused_variables)]
     pub fn range_of_operator_before(&self, loc: Loc, op: &[u8]) -> Range {
+        // TODO(b1): bun_str::strings::index missing — gate draft body.
+        #[cfg(any())]
+        {
         let text = &self.contents[0..loc.i()];
         let index = strings::index(text, op);
         if index >= 0 {
@@ -2568,6 +2655,8 @@ impl Source {
             };
         }
 
+        Range { loc, ..Default::default() }
+        } // end #[cfg(any())]
         Range { loc, ..Default::default() }
     }
 
@@ -2602,7 +2691,11 @@ impl Source {
         Range { loc, len: 0 }
     }
 
+    #[allow(unused_variables)]
     pub fn range_of_operator_after(&self, loc: Loc, op: &[u8]) -> Range {
+        // TODO(b1): bun_str::strings::index missing — gate draft body.
+        #[cfg(any())]
+        {
         let text = &self.contents[loc.i()..];
         let index = strings::index(text, op);
         if index >= 0 {
@@ -2613,9 +2706,15 @@ impl Source {
         }
 
         Range { loc, ..Default::default() }
+        } // end #[cfg(any())]
+        Range { loc, ..Default::default() }
     }
 
+    #[allow(unused_variables)]
     pub fn init_error_position(&self, offset_loc: Loc) -> ErrorPosition {
+        // TODO(b1): bun_str::strings::CodepointIterator missing — gate draft body.
+        #[cfg(any())]
+        {
         debug_assert!(!offset_loc.is_empty());
         let mut prev_code_point: i32 = 0;
         let offset: usize =
@@ -2687,8 +2786,11 @@ impl Source {
             line_count,
             column_count: column_number,
         }
+        } // end #[cfg(any())]
+        todo!("Source::init_error_position — gated on bun_str::strings::CodepointIterator")
     }
 
+    #[allow(unused_variables)]
     pub fn line_col_to_byte_offset(
         source_contents: &[u8],
         start_line: usize,
@@ -2696,6 +2798,9 @@ impl Source {
         line: usize,
         col: usize,
     ) -> Option<usize> {
+        // TODO(b1): bun_str::strings::CodepointIterator missing — gate draft body.
+        #[cfg(any())]
+        {
         let mut iter_ = strings::CodepointIterator {
             bytes: source_contents,
             i: 0,
@@ -2742,6 +2847,8 @@ impl Source {
             }
         }
         None
+        } // end #[cfg(any())]
+        None
     }
 }
 
@@ -2757,6 +2864,16 @@ pub fn range_data(source: Option<&Source>, r: Range, text: Str) -> Data {
 // code via `use bun_logger::FileSourceExt`.
 // ───────────────────────────────────────────────────────────────────────────
 
+// TODO(b1): bun_sys::file gated, bun_str crate missing — provide local stub type
+// and gate the bodies/trait. Un-gate in B-2 once bun_sys::file lands.
+#[derive(Default, Clone, Copy)]
+pub struct ToSourceOptions {
+    pub convert_bom: bool,
+}
+
+#[cfg(any())]
+mod file_source_ext_draft {
+use super::*;
 pub use bun_sys::file::ToSourceOptions;
 
 /// Read `path` (relative to `dir_fd`) into memory and wrap it in a `Source`.
@@ -2813,6 +2930,7 @@ impl FileSourceExt for bun_sys::file::File {
         to_source(path, opts)
     }
 }
+} // end #[cfg(any())] mod file_source_ext_draft
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

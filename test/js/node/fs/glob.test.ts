@@ -524,7 +524,7 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
     // empty-alternative groups — naive recursion is O(2^N). The
     // matcher is called for every symlink dirent under
     // `descend_literal_symlinks` (which `fs.glob` always sets), so a
-    // symlink-bearing `cwd` + pathological pattern used to hang.
+    // symlink-bearing `cwd` + pathological pattern would hang.
     // `max_brace_depth` caps the recursion at a depth that mirrors
     // the existing matcher's `BraceStack` budget; past the cap we
     // conservatively return `false` (= don't cross the symlink via

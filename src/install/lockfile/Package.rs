@@ -5,7 +5,8 @@ use bun_core::{Global, Output, StringSet};
 use bun_js_parser::ast::Expr;
 use bun_logger as logger;
 use bun_paths::{self as path, AbsPath, PathBuffer, MAX_PATH_BYTES};
-use bun_resolver::fs::FileSystem;
+// MOVE_DOWN(b0): bun_resolver::fs → bun_sys::fs
+use bun_sys::fs::FileSystem;
 use bun_semver::{self as semver, ExternalString, String, Version as SemverVersion};
 use bun_str::strings;
 use bun_sys::File;

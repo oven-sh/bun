@@ -17,7 +17,9 @@ use bun_paths::{self as Path, PathBuffer};
 use bun_install::npm as Npm;
 use bun_install::PackageInstall;
 use bun_install::package_manager::Subcommand;
-use bun_cli::package_manager_command::PackageManagerCommand;
+// TODO(b0): PackageManagerCommand arrives from move-in
+// (bun_cli::package_manager_command::PackageManagerCommand → install::PackageManager::CommandLineArguments).
+use crate::package_manager::PackageManagerCommand;
 
 use super::package_manager_options as Options;
 

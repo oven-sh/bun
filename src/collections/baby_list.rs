@@ -3,7 +3,8 @@ use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
 use bun_alloc::AllocError;
-use bun_str::strings;
+// TODO(b0): `strings` arrives in bun_core via move-in (was bun_str::strings — same-tier cycle).
+use bun_core::strings;
 
 // TODO(port): Environment.ci_assert — using debug_assertions as the closest analogue.
 pub const SAFETY_CHECKS: bool = cfg!(debug_assertions);
@@ -16,7 +17,8 @@ enum Origin {
     Borrowed {
         // TODO(port): StoredTrace when traces_enabled, () otherwise — Rust cannot express
         // `if (traces_enabled) StoredTrace else void` as a field type without cfg gymnastics.
-        trace: Option<bun_crash_handler::StoredTrace>,
+        // TODO(b0): StoredTrace arrives in bun_core via move-in (MOVE_DOWN from crash_handler).
+        trace: Option<bun_core::StoredTrace>,
     },
 }
 
@@ -487,7 +489,7 @@ impl<T> BabyList<T> {
     where
         T: AsRef<[u8]>,
     {
-        // TODO(port): bun.strings.sortAsc — assuming it exists at bun_str::strings::sort_asc.
+        // TODO(port): bun.strings.sortAsc — assuming it exists at bun_core::strings::sort_asc.
         strings::sort_asc(self.slice_mut());
     }
 
@@ -536,30 +538,32 @@ impl<T> BabyList<T> {
         self.cap as usize * core::mem::size_of::<T>()
     }
 
+    // CYCLEBREAK(b0): `parse` / `to_css` / `eql` depend on bun_css (T4). They move to bun_css
+    // as an extension trait on BabyList<T>. Preserved here behind cfg(any()) so the move-in
+    // pass can lift the bodies verbatim into bun_css::BabyListCssExt.
+    // TODO(b0-genuine): bun_css::generic — needs BabyListCssExt move-in (CYCLEBREAK §css).
+    #[cfg(any())]
     pub fn parse(input: &mut bun_css::Parser) -> bun_css::Result<Self>
     where
         T: bun_css::generic::Parse,
     {
-        // TODO(port): move to bun_css extension trait — base collection crate should not depend on css.
         match input.parse_comma_separated::<T>(bun_css::generic::parse_for::<T>) {
             Ok(v) => Ok(Self::move_from_list(v)),
             Err(e) => Err(e),
         }
     }
-
+    #[cfg(any())]
     pub fn to_css(&self, dest: &mut bun_css::Printer) -> Result<(), bun_css::PrintErr>
     where
         T: bun_css::ToCss,
     {
-        // TODO(port): move to bun_css extension trait.
         bun_css::to_css::from_baby_list::<T>(self, dest)
     }
-
+    #[cfg(any())]
     pub fn eql(lhs: &Self, rhs: &Self) -> bool
     where
         T: bun_css::generic::Eql,
     {
-        // TODO(port): move to bun_css extension trait (uses bun.css.generic.eql).
         if lhs.len != rhs.len {
             return false;
         }
@@ -640,7 +644,8 @@ impl<T> BabyList<T> {
         {
             this.origin = Origin::Borrowed {
                 trace: if TRACES_ENABLED {
-                    Some(bun_crash_handler::StoredTrace::capture())
+                    // TODO(b0): StoredTrace arrives in bun_core via move-in.
+                    Some(bun_core::StoredTrace::capture())
                 } else {
                     None
                 },
@@ -667,9 +672,11 @@ impl<T> BabyList<T> {
             if TRACES_ENABLED {
                 if let Origin::Borrowed { trace: Some(trace) } = &self.origin {
                     bun_core::Output::note("borrowed BabyList created here:");
-                    bun_crash_handler::dump_stack_trace(
+                    // TODO(b0): dump_stack_trace arrives in bun_core via move-in
+                    // (MOVE_DOWN from crash_handler).
+                    bun_core::dump_stack_trace(
                         trace.trace(),
-                        crate::dump::Options /* TODO(port): was crash_handler */ {
+                        bun_core::DumpStackTraceOptions {
                             frame_count: 10,
                             stop_at_jsc_llint: true,
                         },

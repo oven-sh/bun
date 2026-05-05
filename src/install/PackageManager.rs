@@ -13,11 +13,11 @@ use bun_fs::FileSystem;
 use bun_http as http;
 use bun_http::AsyncHTTP;
 use bun_ini as ini;
-use bun_jsc as jsc;
+// MOVE_DOWN(b0): bun_jsc::{AnyEventLoop, MiniEventLoop, EventLoopHandle} → bun_event_loop
+use bun_event_loop::{self, AnyEventLoop, EventLoopHandle, MiniEventLoop};
 use bun_logger as logger;
 use bun_paths::{self as path, PathBuffer, DELIMITER, SEP, SEP_STR};
 use bun_progress::Progress;
-use bun_resolver::DirInfo;
 use bun_schema::api as Api;
 use bun_semver::{self as Semver, String as SemverString};
 use bun_spawn::process::WaiterThread;
@@ -27,7 +27,17 @@ use bun_threading::ThreadPool;
 use bun_transpiler::{self as transpiler, Transpiler};
 use bun_url::URL;
 
-use bun_cli::{Arguments as BunArguments, RunCommand};
+// MOVE_DOWN(b0): bun_cli::Arguments → bun_bunfig::Arguments (config loading is bunfig-tier).
+use bun_bunfig::Arguments as BunArguments;
+// TODO(b0): RunCommand arrives from move-in (bun_cli::RunCommand → install).
+use crate::RunCommand;
+
+// FORWARD_DECL(b0): bun_resolver::DirInfo — only stored as raw pointer in
+// ScriptRunEnvironment.root_dir_info; never dereferenced in this crate.
+#[repr(C)]
+pub struct DirInfo {
+    _opaque: [u8; 0],
+}
 
 use bun_install::{
     initialize_store, ArrayIdentityContext, Dependency, DependencyID, Features, FolderResolution,
@@ -252,7 +262,7 @@ pub struct PackageManager {
     // name hash from alias package name -> aliased package dependency version info
     pub known_npm_aliases: NpmAliasMap,
 
-    pub event_loop: jsc::AnyEventLoop,
+    pub event_loop: AnyEventLoop,
 
     // During `installPackages` we learn exactly what dependencies from --trust
     // actually have scripts to run, and we add them to this list
@@ -1359,7 +1369,7 @@ pub fn init(
                 lockfile: Box::new(unsafe { core::mem::zeroed() }), // overwritten below
                 root_package_json_file,
                 // .progress
-                event_loop: jsc::AnyEventLoop::Mini(jsc::MiniEventLoop::init()),
+                event_loop: AnyEventLoop::Mini(MiniEventLoop::init()),
                 original_package_json_path: ZStr::from_vec(original_package_json_path_buf),
                 // TODO(port): owned [:0]const u8 conversion
                 workspace_package_json_cache,
@@ -1426,7 +1436,7 @@ pub fn init(
         .event_loop
         .loop_()
         .internal_loop_data
-        .set_parent_event_loop(jsc::EventLoopHandle::init(&manager.event_loop));
+        .set_parent_event_loop(EventLoopHandle::init(&manager.event_loop));
     manager.lockfile = Box::new(Lockfile::default());
     // PORT NOTE: Zig `try ctx.allocator.create(Lockfile)` allocates uninit; Rust needs Default.
 
@@ -1442,7 +1452,7 @@ pub fn init(
         // normalized.deinit() → Drop
     }
 
-    jsc::MiniEventLoop::set_global(&mut manager.event_loop.mini());
+    MiniEventLoop::set_global(&mut manager.event_loop.mini());
     if !manager.options.enable.cache {
         manager.options.enable.manifest_cache = false;
         manager.options.enable.manifest_cache_control = false;
@@ -1627,7 +1637,10 @@ pub fn init_with_runtime_once(
                 // sentinel. Zig leaves this `undefined` (never read in the runtime path).
                 // TODO(port): use bun_sys::File::INVALID once available.
                 root_package_json_file: unsafe { core::mem::zeroed() },
-                event_loop: jsc::AnyEventLoop::Js(jsc::VirtualMachine::get().event_loop()),
+                // MOVE_DOWN(b0): AnyEventLoop is now bun_event_loop. The Js variant wraps an
+                // erased *mut () set by tier-6; bun_event_loop::AnyEventLoop::js_current() reads
+                // the JS_EVENT_LOOP_HOOK registered by bun_runtime::init().
+                event_loop: AnyEventLoop::js_current(),
                 original_package_json_path: ZStr::from_vec(original_package_json_path),
                 subcommand: Subcommand::Install,
 

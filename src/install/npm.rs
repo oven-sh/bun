@@ -3074,8 +3074,8 @@ impl PackageManifest {
                 if let Some(time_obj) = json.as_property("time") {
                     if let Some(publish_time_expr) = time_obj.expr.get(version_name) {
                         if let Some(publish_time_str) = publish_time_expr.as_string() {
-                            if let Ok(Some(time)) = bun_jsc::wtf::parse_es5_date(publish_time_str) {
-                                // TODO(port): move to *_jsc — bun.jsc.wtf.parseES5Date
+                            // MOVE_DOWN(b0): bun_jsc::wtf → bun_wtf (date parser is jsc-independent FFI).
+                            if let Ok(Some(time)) = bun_wtf::parse_es5_date(publish_time_str) {
                                 package_version.publish_timestamp_ms = time;
                             }
                         }

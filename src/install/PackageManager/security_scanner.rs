@@ -14,7 +14,9 @@ use bun_install::{
     invalid_dependency_id, invalid_package_id, DependencyID, PackageID, PackageManager,
 };
 use bun_io::{BufferedReader, ReadState};
-use bun_jsc::{self as jsc, subprocess::StdioResult};
+// MOVE_DOWN(b0): bun_jsc::subprocess → bun_sys::subprocess; bun_jsc::EventLoopHandle → bun_event_loop.
+use bun_sys::subprocess::{self, StdioResult};
+use bun_event_loop::EventLoopHandle;
 use bun_js_parser::Expr;
 use bun_logger as logger;
 use bun_spawn::{self as spawn, Process, Rusage, SpawnOptions, Status, Stdio};
@@ -909,8 +911,8 @@ pub struct SecurityScanSubprocess<'a> {
 }
 
 // TODO(port): jsc.Subprocess.NewStaticPipeWriter(@This()) is a comptime type generator parameterized
-// on the parent type; map to a generic StaticPipeWriter<Parent> in bun_jsc::subprocess.
-pub type StaticPipeWriter = jsc::subprocess::StaticPipeWriter<SecurityScanSubprocess<'static>>;
+// on the parent type; map to a generic StaticPipeWriter<Parent> in bun_sys::subprocess.
+pub type StaticPipeWriter = subprocess::StaticPipeWriter<SecurityScanSubprocess<'static>>;
 
 impl<'a> Drop for SecurityScanSubprocess<'a> {
     fn drop(&mut self) {
@@ -1076,7 +1078,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             cwd: FileSystem::instance().top_level_dir(),
             extra_fds: &extra_fds,
             windows: spawn::WindowsOptions {
-                loop_: jsc::EventLoopHandle::init(&self.manager.event_loop),
+                loop_: EventLoopHandle::init(&self.manager.event_loop),
             },
             ..Default::default()
         };
@@ -1114,9 +1116,10 @@ impl<'a> SecurityScanSubprocess<'a> {
         // this fails, nothing is registered yet and the caller's defer can safely
         // destroy the struct.
         let json_data_copy = Box::<[u8]>::from(&*self.json_data);
-        let json_source = jsc::subprocess::Source::Blob(
-            jsc::webcore::blob::Any::from_owned_slice(json_data_copy),
-        );
+        // MOVE_DOWN(b0): subprocess::Source moves to bun_sys; the owned-bytes variant no longer
+        // routes through webcore::blob::Any (tier-6). The move-in pass adds
+        // `bun_sys::subprocess::Source::from_owned_bytes(Box<[u8]>)`.
+        let json_source = subprocess::Source::from_owned_bytes(json_data_copy);
 
         // 2 = ipc_reader (fd 3) + json_writer (fd 4). Both must complete before
         // isDone() returns true, otherwise we risk freeing this struct while
@@ -1163,7 +1166,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         Ok(())
     }
 
-    pub fn on_close_io(&mut self, _: jsc::subprocess::StdioKind) {
+    pub fn on_close_io(&mut self, _: subprocess::StdioKind) {
         if let Some(writer) = self.json_writer.take() {
             writer.source.detach();
             // Rc::drop handles deref()
@@ -1366,7 +1369,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                     // The scanner might have been installed but the lockfile wasn't updated
                     if is_retry {
                         // Check if the scanner is an npm package name (not a file path)
-                        let is_package_name = bun_resolver::is_package_path(security_scanner);
+                        let is_package_name = bun_paths::is_package_path(security_scanner);
 
                         if is_package_name {
                             // For npm packages, after install they should be resolvable
@@ -1391,7 +1394,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                         return Ok(ScanAttemptResult::NeedsInstall(pkg_id));
                     } else {
                         // No package ID means it's not in dependencies
-                        let is_package_name = bun_resolver::is_package_path(security_scanner);
+                        let is_package_name = bun_paths::is_package_path(security_scanner);
 
                         if is_package_name {
                             Output::err_generic(format_args!(

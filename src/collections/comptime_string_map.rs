@@ -18,7 +18,8 @@
 // prefer `phf::phf_map!` directly when they only need `.get()`/`.has()`. This struct exists
 // for the call sites that need `get_with_eql` / `get_any_case` / `index_of` / `get_key`.
 
-use bun_str::strings;
+// TODO(b0): `strings` arrives in bun_core via move-in (was bun_str::strings — same-tier cycle).
+use bun_core::strings;
 
 #[derive(Copy, Clone)]
 pub struct KV<K: 'static, V> {
@@ -63,7 +64,8 @@ impl<T> HasLength for &[T] {
         (*self).len()
     }
 }
-impl HasLength for bun_str::String {
+// TODO(b0): `String` arrives in bun_alloc via move-in (was bun_str::String — same-tier cycle).
+impl HasLength for bun_alloc::String {
     #[inline]
     fn length(&self) -> usize {
         self.length()
@@ -146,7 +148,7 @@ where
         for i in start..end {
             // PERF(port): Zig used `strings.eqlComptimeCheckLenWithType(K, str, kvs[i].key, false)`
             // (length-known SIMD compare). Plain slice == here; Phase B may swap to
-            // `bun_str::strings::eql_comptime_check_len_with_type`.
+            // `bun_core::strings::eql_comptime_check_len_with_type`.
             if str == self.kvs[i].key {
                 return Some(self.kvs[i].value);
             }
@@ -296,8 +298,9 @@ where
 {
     // PORT NOTE: Zig `fromString` calls `bun.String.eqlComptime`, which compares against
     // `[]const u8` — effectively u8-only. Lives in the K=u8 impl, not the generic one.
-    pub fn from_string(&self, str: &bun_str::String) -> Option<V> {
-        self.get_with_eql(str, bun_str::String::eql_comptime)
+    // TODO(b0): `String` arrives in bun_alloc via move-in (was bun_str::String).
+    pub fn from_string(&self, str: &bun_alloc::String) -> Option<V> {
+        self.get_with_eql(str, bun_alloc::String::eql_comptime)
     }
 
     pub fn get_asciii_case_insensitive(&self, input: &[u8]) -> Option<V> {

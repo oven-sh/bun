@@ -274,13 +274,14 @@ impl Drop for InstallDirState {
 // ───────────────────────────── thread-local NodeFS ─────────────────────────────
 
 // TODO(port): `bun.ThreadlocalBuffers(struct { fs: NodeFS })` — using thread_local! directly.
+// MOVE_DOWN(b0): node::fs::NodeFS → bun_sys (path-buffer mkdir/cp helpers; no JS dependency).
 thread_local! {
-    static NODE_FS_BUFS: core::cell::RefCell<bun_runtime::node::fs::NodeFS> =
-        const { core::cell::RefCell::new(bun_runtime::node::fs::NodeFS::new()) };
+    static NODE_FS_BUFS: core::cell::RefCell<bun_sys::node_fs::NodeFS> =
+        const { core::cell::RefCell::new(bun_sys::node_fs::NodeFS::new()) };
 }
 
 #[inline]
-fn node_fs_for_package_installer<R>(f: impl FnOnce(&mut bun_runtime::node::fs::NodeFS) -> R) -> R {
+fn node_fs_for_package_installer<R>(f: impl FnOnce(&mut bun_sys::node_fs::NodeFS) -> R) -> R {
     NODE_FS_BUFS.with_borrow_mut(f)
 }
 

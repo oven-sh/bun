@@ -2,7 +2,7 @@ use super::thread_id::{self, ThreadId, INVALID as INVALID_THREAD_ID};
 // TODO(port): verify `super::thread_id` exports `ThreadId` + `current()` in the Rust port;
 // Zig used `std.Thread.Id` / `std.Thread.getCurrentId()` directly with `invalid` from thread_id.zig.
 #[cfg(debug_assertions)]
-use bun_crash_handler::StoredTrace;
+use bun_core::StoredTrace; // MOVE_DOWN: was bun_crash_handler::StoredTrace (CYCLEBREAK → core)
 
 // TODO(port): `bun.Environment.ci_assert` — confirm the exact cfg/feature name in Phase B.
 // Using feature = "ci_assert" as a placeholder; Zig gates the entire struct payload on this.
@@ -46,15 +46,10 @@ impl ThreadLock {
                         "assertion failure",
                         format_args!("`ThreadLock` was already locked here:"),
                     );
-                    bun_crash_handler::dump_stack_trace(
-                        self.locked_at.trace(),
-                        // TODO(port): DumpStackTraceOptions { frame_count: 10, stop_at_jsc_llint: true }
-                        bun_crash_handler::DumpStackTraceOptions {
-                            frame_count: 10,
-                            stop_at_jsc_llint: true,
-                            ..Default::default()
-                        },
-                    );
+                    // Hook-registered: bun_crash_handler::dump_stack_trace (CYCLEBREAK §Debug-hook).
+                    // Options { frame_count: 10, stop_at_jsc_llint: true } are baked into the
+                    // provider registered by bun_runtime::init().
+                    crate::dump_stored_trace(&self.locked_at);
                 }
                 panic!(
                     "tried to lock `ThreadLock` on thread {}, but was already locked by thread {}",

@@ -288,9 +288,8 @@ impl NetworkTask {
                 name
             };
 
-            // TODO(port): `bun_jsc::url::join` pulls in jsc from a base crate —
-            // verify this is acceptable or route through a non-jsc URL joiner.
-            let tmp = bun_jsc::url::join(
+            // MOVE_DOWN(b0): bun_jsc::url::join → bun_url::join (WHATWG URL FFI moves out of jsc).
+            let tmp = bun_url::join(
                 bun_str::String::borrow_utf8(&scope.url.href),
                 bun_str::String::borrow_utf8(encoded_name),
             );

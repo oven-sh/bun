@@ -14,7 +14,8 @@ use bun_install::install::{self as Install, DependencyID, ExtractData, PackageMa
 use bun_install::integrity::Integrity;
 use bun_install::npm::{self as Npm};
 use bun_install::resolution::Resolution;
-use bun_resolver::fs::FileSystem;
+// MOVE_DOWN(b0): bun_resolver::fs → bun_sys::fs
+use bun_sys::fs::FileSystem;
 
 // TODO(port): narrow error set
 type Error = bun_core::Error;

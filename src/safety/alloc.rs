@@ -4,8 +4,8 @@ use core::fmt;
 use bun_alloc::{self, Allocator, MimallocArena, NullableAllocator};
 #[cfg(target_os = "linux")]
 use bun_alloc::LinuxMemFdAllocator;
-use bun_crash_handler::{self, StoredTrace};
 use bun_core::Output;
+use bun_core::StoredTrace; // MOVE_DOWN: was bun_crash_handler::StoredTrace (CYCLEBREAK → core)
 
 // TODO(port): Zig's `std.mem.Allocator` is a `{ ptr: *anyopaque, vtable: *const VTable }` pair.
 // In Rust the closest analogue is `&dyn bun_alloc::Allocator` (fat pointer = data + vtable).
@@ -86,9 +86,13 @@ fn has_ptr(alloc: &dyn Allocator) -> bool {
         || vtable_of(alloc) == bun_alloc::z_allocator_vtable()
         || MimallocArena::is_instance(alloc)
         /* TODO(port): CachedBytecode hook */
-        || bun_bundler::allocator_has_pointer(alloc)
+        // Hook-registered: bun_bundler::allocator_has_pointer (CYCLEBREAK §Debug-hook ALLOC_HAS_PTR).
+        // NOTE: Zig predicates compare *vtable identity* (bundle_v2.zig:4423, string.zig:979),
+        // so pass the vtable half of the fat pointer, not the data half.
+        || crate::call_alloc_predicate(&crate::ALLOC_HAS_PTR, vtable_of(alloc))
         || heap_breakdown_zone_is_instance(alloc)
-        || bun_str::String::is_wtf_allocator(alloc)
+        // Hook-registered: bun_str::String::is_wtf_allocator (CYCLEBREAK §Debug-hook IS_WTF_ALLOCATOR).
+        || crate::call_alloc_predicate(&crate::IS_WTF_ALLOCATOR, vtable_of(alloc))
 }
 
 /// Returns true if the allocators are definitely different.
@@ -213,11 +217,8 @@ impl CheckedAllocator {
                     "allocator mismatch",
                     format_args!("collection first used here, with a different allocator:"),
                 );
-                let mut trace = self.trace;
-                bun_crash_handler::dump_stack_trace(
-                    trace.trace(),
-                    bun_crash_handler::DumpOptions { frame_count: 10, stop_at_jsc_llint: true },
-                );
+                // Hook-registered: bun_crash_handler::dump_stack_trace (CYCLEBREAK §Debug-hook).
+                crate::dump_stored_trace(&self.trace);
             }
             // Assertion will always fail. We want the error message.
             crate::alloc::assert_eq(old_alloc, alloc);
@@ -266,11 +267,8 @@ impl CheckedAllocator {
             #[cfg(debug_assertions)]
             {
                 Output::err_generic(format_args!("collection first used here:"));
-                let mut trace = self.trace;
-                bun_crash_handler::dump_stack_trace(
-                    trace.trace(),
-                    bun_crash_handler::DumpOptions { frame_count: 10, stop_at_jsc_llint: true },
-                );
+                // Hook-registered: bun_crash_handler::dump_stack_trace (CYCLEBREAK §Debug-hook).
+                crate::dump_stored_trace(&self.trace);
             }
             panic!(
                 "cannot transfer ownership from non-MimallocArena (old vtable is {:p})",

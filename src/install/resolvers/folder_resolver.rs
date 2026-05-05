@@ -5,7 +5,8 @@ use bun_core::fmt::QuotedFormatter;
 use bun_js_parser as js_ast;
 use bun_logger as logger;
 use bun_paths::{self, PathBuffer, MAX_PATH_BYTES, SEP, SEP_STR};
-use bun_resolver::fs::FileSystem;
+// MOVE_DOWN(b0): bun_resolver::fs → bun_sys::fs
+use bun_sys::fs::FileSystem;
 use bun_semver::{self as semver, String as SemverString};
 use bun_str::{strings, ZStr};
 use bun_sys::{self, Fd, File, O};

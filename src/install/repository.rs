@@ -878,7 +878,8 @@ impl Repository {
             }
         };
 
-        let ret_json_path = bun_resolver::fs::FileSystem::instance()
+        // MOVE_DOWN(b0): bun_resolver::fs → bun_sys::fs
+        let ret_json_path = bun_sys::fs::FileSystem::instance()
             .dirname_store
             .append(json_path)?;
 

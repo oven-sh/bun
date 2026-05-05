@@ -513,9 +513,10 @@ pub fn do_patch_commit(
         path::Style::Posix,
     );
 
-    let mut nodefs = bun_jsc::node::fs::NodeFS::default();
-    let args = bun_jsc::node::fs::Arguments::Mkdir {
-        path: bun_jsc::node::fs::PathLike::String(bun_str::PathString::init(&manager.options.patch_features.commit.patches_dir)),
+    // MOVE_DOWN(b0): bun_jsc::node::fs::NodeFS → bun_sys::node_fs (mkdir_recursive needs no JS).
+    let mut nodefs = bun_sys::node_fs::NodeFS::default();
+    let args = bun_sys::node_fs::Arguments::Mkdir {
+        path: bun_sys::node_fs::PathLike::String(bun_str::PathString::init(&manager.options.patch_features.commit.patches_dir)),
         ..Default::default()
     };
     if let Some(e) = nodefs.mkdir_recursive(&args).as_err() {

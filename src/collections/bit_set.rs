@@ -1530,7 +1530,8 @@ impl AutoBitSet {
     }
 
     pub fn eql(&self, b: &AutoBitSet) -> bool {
-        bun_str::strings::eql_long(self.raw_bytes(), b.raw_bytes(), true)
+        // TODO(b0): `strings` arrives in bun_core via move-in (was bun_str::strings).
+        bun_core::strings::eql_long(self.raw_bytes(), b.raw_bytes(), true)
     }
 
     pub fn hash(&self) -> u64 {

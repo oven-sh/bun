@@ -29,7 +29,7 @@
 use core::fmt;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use bun_crash_handler::StoredTrace;
+use bun_core::StoredTrace; // MOVE_DOWN: was bun_crash_handler::StoredTrace (CYCLEBREAK → core)
 
 // TODO(port): `ThreadId` / `INVALID_THREAD_ID` / `current_thread_id()` come from the sibling
 // `src/safety/thread_id.zig` port + Zig's `std.Thread`. Phase B: confirm the concrete integer
@@ -139,10 +139,8 @@ impl State {
         #[cfg(debug_assertions)]
         {
             bun_core::Output::err("race condition", "`CriticalSection` first entered here:");
-            bun_crash_handler::dump_stack_trace(
-                self.owner_trace.trace(),
-                bun_crash_handler::DumpOptions { frame_count: 10, stop_at_jsc_llint: true },
-            );
+            // Hook-registered: bun_crash_handler::dump_stack_trace (CYCLEBREAK §Debug-hook).
+            crate::dump_stored_trace(&self.owner_trace);
         }
     }
 

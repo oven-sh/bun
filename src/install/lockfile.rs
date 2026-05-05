@@ -15,7 +15,8 @@ use bun_core::{err, Error as BunError, Global, Output, ConfigVersion};
 use bun_alloc::AllocError;
 use bun_logger as logger;
 use bun_paths::{self as Path, PathBuffer, MAX_PATH_BYTES, SEP, SEP_STR};
-use bun_resolver::fs::FileSystem;
+// MOVE_DOWN(b0): bun_resolver::fs → bun_sys::fs
+use bun_sys::fs::FileSystem;
 use bun_semver::{self as Semver, ExternalString, String as SemverString};
 use bun_sha::Hashers as Crypto;
 use bun_str::{strings, ZStr};
@@ -1562,7 +1563,7 @@ impl<'a> Printer<'a> {
         };
 
         let entries_option = fs.fs.read_directory(&fs.top_level_dir, None, 0, true)?;
-        if let bun_resolver::fs::EntriesOption::Err(e) = &*entries_option {
+        if let bun_sys::fs::EntriesOption::Err(e) = &*entries_option {
             return Err(e.canonical_error);
         }
 

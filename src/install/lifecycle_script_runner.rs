@@ -219,7 +219,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         self.has_called_process_exit = false;
 
         let mut copy_script: Vec<u8> = Vec::with_capacity(original_script.len() + 1);
-        bun_cli::run_command::replace_package_manager_run(&mut copy_script, original_script)?;
+        // TODO(b0): replace_package_manager_run arrives from move-in (bun_cli::run_command → install::lifecycle_script_runner).
+        replace_package_manager_run(&mut copy_script, original_script)?;
         copy_script.push(0);
 
         // SAFETY: we just pushed a NUL byte at copy_script[len-1]; slice [..len-1] is the body.
@@ -321,7 +322,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
             #[cfg(windows)]
             windows: bun_spawn::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init(&manager.event_loop),
+                // MOVE_DOWN(b0): bun_jsc::EventLoopHandle → bun_event_loop::EventLoopHandle
+                loop_: bun_event_loop::EventLoopHandle::init(&manager.event_loop),
             },
 
             stream: false,

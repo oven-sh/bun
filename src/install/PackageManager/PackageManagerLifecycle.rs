@@ -413,7 +413,8 @@ impl PackageManager {
             #[cfg(not(windows))]
             {
                 if let Some(env_path) = self.env.get(b"PATH") {
-                    break 'shell_bin bun_cli::RunCommand::find_shell(env_path, cwd);
+                    // TODO(b0): RunCommand::find_shell arrives from move-in (bun_cli::RunCommand → install).
+                    break 'shell_bin crate::RunCommand::find_shell(env_path, cwd);
                 }
 
                 break 'shell_bin None;

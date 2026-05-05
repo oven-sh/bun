@@ -100,16 +100,11 @@ impl<'a> PatchFile<'a> {
                             &[abs_patch_dir.as_bytes(), todir],
                             paths::Style::Auto,
                         );
-                        let mut nodefs = bun_runtime::node::fs::NodeFs::default();
-                        if let sys::Result::Err(e) = nodefs.mkdir_recursive(
-                            bun_runtime::node::fs::MkdirArgs {
-                                path: bun_runtime::node::fs::PathLike::String(
-                                    bun_str::PathString::init(path_to_make.as_bytes()),
-                                ),
-                                recursive: true,
-                                mode: 0o755,
-                            },
-                        ) {
+                        // CYCLEBREAK(b0): was bun_runtime::node::fs::NodeFs::mkdir_recursive — moved down to bun_sys (T1).
+                        // Move-in pass adds `pub fn mkdir_recursive(path: &[u8], mode: sys::Mode) -> sys::Result<()>` to bun_sys.
+                        if let sys::Result::Err(e) =
+                            sys::mkdir_recursive(path_to_make.as_bytes(), 0o755)
+                        {
                             return Some(e.without_path());
                         }
                     }
@@ -127,17 +122,11 @@ impl<'a> PatchFile<'a> {
                         .unwrap_or(b"");
                     let mode = file_creation.mode;
 
-                    let mut nodefs = bun_runtime::node::fs::NodeFs::default();
                     if !filedir.is_empty() {
-                        if let sys::Result::Err(e) = nodefs.mkdir_recursive(
-                            bun_runtime::node::fs::MkdirArgs {
-                                path: bun_runtime::node::fs::PathLike::String(
-                                    bun_str::PathString::init(filedir),
-                                ),
-                                recursive: true,
-                                mode: u32::try_from(mode as u32).unwrap(),
-                            },
-                        ) {
+                        // CYCLEBREAK(b0): was bun_runtime::node::fs::NodeFs::mkdir_recursive — moved down to bun_sys (T1).
+                        if let sys::Result::Err(e) =
+                            sys::mkdir_recursive(filedir, u32::try_from(mode as u32).unwrap())
+                        {
                             return Some(e.without_path());
                         }
                     }
@@ -1429,7 +1418,7 @@ pub fn spawn_opts(
     new_folder: &[u8],
     cwd: &ZStr,
     git: &ZStr,
-    loop_: &mut bun_jsc::AnyEventLoop,
+    loop_: &mut bun_event_loop::AnyEventLoop,
 ) -> bun_spawn::sync::Options {
     let argv: Vec<&[u8]> = {
         const ARGV: &[&[u8]] = &[
@@ -1488,10 +1477,11 @@ pub fn spawn_opts(
         argv,
         #[cfg(windows)]
         windows: bun_spawn::sync::WindowsOptions {
-            loop_: match loop_ {
-                bun_jsc::AnyEventLoop::Js(x) => bun_jsc::EventLoopHandle::Js(*x),
-                bun_jsc::AnyEventLoop::Mini(x) => bun_jsc::EventLoopHandle::Mini(x),
-            },
+            // CYCLEBREAK(b0): re-import — bun_jsc::{AnyEventLoop,EventLoopHandle} → bun_event_loop (T3).
+            // AnyEventLoop::Js is now a struct variant {owner, vtable}; avoid naming variant
+            // internals here — bun_event_loop owns the conversion.
+            // TODO(b0-move-in): bun_event_loop must define `EventLoopHandle` + `as_handle`.
+            loop_: bun_event_loop::AnyEventLoop::as_handle(loop_),
         },
         ..Default::default()
     }
@@ -1501,7 +1491,7 @@ pub fn diff_post_process(
     result: &mut bun_spawn::sync::Result,
     old_folder: &[u8],
     new_folder: &[u8],
-) -> Result<bun_runtime::node::Maybe<Vec<u8>, Vec<u8>>, bun_core::Error> {
+) -> Result<bun_sys::node::Maybe<Vec<u8>, Vec<u8>>, bun_core::Error> {
     let mut stdout: Vec<u8> = Vec::new();
     let mut stderr: Vec<u8> = Vec::new();
 
@@ -1512,12 +1502,12 @@ pub fn diff_post_process(
     // the unreturned vec is dropped automatically.
 
     if !stderr.is_empty() {
-        return Ok(bun_runtime::node::Maybe::Err(stderr));
+        return Ok(bun_sys::node::Maybe::Err(stderr));
     }
 
     bun_output::scoped_log!(patch, "Before postprocess: {}\n", bstr::BStr::new(&stdout));
     git_diff_postprocess(&mut stdout, old_folder, new_folder)?;
-    Ok(bun_runtime::node::Maybe::Ok(stdout))
+    Ok(bun_sys::node::Maybe::Ok(stdout))
 }
 
 // TODO(port): Zig signature returns `[2]if (sentinel) [:0]const u8 else []const u8` —
@@ -1581,7 +1571,7 @@ pub fn git_diff_preprocess_paths<const SENTINEL: bool>(
 pub fn git_diff_internal(
     old_folder_: &[u8],
     new_folder_: &[u8],
-) -> Result<bun_runtime::node::Maybe<Vec<u8>, Vec<u8>>, bun_core::Error> {
+) -> Result<bun_sys::node::Maybe<Vec<u8>, Vec<u8>>, bun_core::Error> {
     let paths = git_diff_preprocess_paths::<false>(old_folder_, new_folder_);
     let old_folder = &paths[0][..];
     let new_folder = &paths[1][..];

@@ -193,6 +193,13 @@ fn processGCTimerWithHeapSize(this: *GarbageCollectionController, vm: *jsc.VM, t
                 } else {
                     this.scheduleGCTimer();
                 }
+            } else if (this_heap_size < prev) {
+                // An async GC shrank the heap. The repeating timer no longer
+                // writes gc_last_heap_size and the growth branch above won't
+                // fire until re-growth exceeds the pre-shrink value, so lower
+                // the baseline here. Don't reschedule or touch the repeat
+                // timer — that would cancel idle reduction.
+                this.gc_last_heap_size = this_heap_size;
             }
         },
         .scheduled => {

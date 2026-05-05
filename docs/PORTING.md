@@ -349,6 +349,31 @@ throughput.
 - `bun.handleOom(expr)` → `expr` (Rust `Vec`/`Box` allocation aborts on OOM;
   `handleOom` was Zig's panic-on-OOM wrapper, which is now the default).
 
+## Concurrency
+
+Rust enforces thread-safety at compile time via `Send`/`Sync` auto-traits.
+Most Zig locks were defensive or init-once; they disappear.
+
+| Zig | Rust | |
+|---|---|---|
+| `lock: Lock` + `has_loaded: bool` + data (lazy init) | `static X: OnceLock<T>` (or `LazyLock<T>` if init is `const fn`-ish) | std handles double-checked locking |
+| `lock: Lock` around a refcount | `Arc<T>` | Arc's count is atomic |
+| `lock: Lock` + single-producer→consumer queue | `crossbeam::channel::{bounded,unbounded}` or `crossbeam::queue::SegQueue` | lock-free |
+| `lock: Lock` protecting data that only the JS thread touches | **delete the lock**; type is `!Sync` (contains `JSValue`/`*mut JSGlobalObject` which are `!Sync`), sharing won't compile | compiler proves it |
+| `lock: Lock` + genuinely cross-thread mutable state (HTTP↔main, watcher↔main, worker-pool tables) | `parking_lot::Mutex<T>` (owns T) or `RwLock<T>` | the ~20% that stay |
+| `Futex`/`Condition` wait | `parking_lot::Condvar` + `Mutex` | |
+| `std.atomic.Value(T)` | `core::sync::atomic::Atomic*` | same orderings (`.monotonic`→`Relaxed`, `.acquire`→`Acquire`, `.release`→`Release`, `.seq_cst`→`SeqCst`) |
+| `bun.threading.Once` | `std::sync::Once` | |
+
+**Never** `std::sync::Mutex` (poisoning is noise here); always `parking_lot`.
+**Never** put a lock *next to* the data — `Mutex<T>` *owns* T. If the Zig had
+`lock: Lock, table: HashMap` → Rust is `table: Mutex<HashMap>`.
+
+When unsure if a lock is defensive: delete it, mark the type `// PERF(port):
+was Lock-guarded — verify !Sync is sufficient`. Phase B `cargo check` will
+error if another thread actually needs it (`T: Sync` bound fails) and you add
+the `Mutex<T>` then.
+
 ## Dispatch (`union(enum)` across crate tiers)
 
 Zig's `union(enum) { A: *Foo, B: *Bar, fn run(self) { switch(self) { inline else => |p| p.run() } } }`

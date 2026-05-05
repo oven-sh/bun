@@ -25,7 +25,8 @@ misc (case-by-case in §move-out).
 
 `bake`, `shell`, `test_runner`, `cli`, `napi` become **modules of
 `bun_runtime`**, not separate crates. Mechanically: their `src/<x>/` dirs move
-under `src/runtime/<x>/`; `bun_bake::` → `crate::bake::`, etc. `bun_jsc`
+under `src/runtime/<x>/`; `bun_bake::` → `crate::bake::`, etc. Both `.rs` and
+`.zig` move together via `git mv` of the whole directory. `bun_jsc`
 remains separate (it's the FFI layer; `runtime` depends on it, not vice versa
 — `jsc→runtime` GENUINE refs become `runtime→jsc` callbacks via vtable).
 
@@ -99,7 +100,7 @@ One agent per crate below. Read your section, apply the changes inside
 
 ### `bun_alloc` (T0, 14 syms)
 - **GENUINE** `bun_runtime::webcore::blob::store::Bytes`, `bun_ptr::IntrusiveArc`
-- **MOVE_DOWN** `bun_str::String`→`alloc`, `bun_sys::page_size`→`alloc`, `VirtualMachine::is_smol_mode`→`core`, `bun_threading::Mutex`→`lock`, `bun_threading::Guarded`→`lock`, `bun_core::declare_scope`→`output`, `bun_core::scoped_log`→`output`, `bun_core::output`→`output`, `bun_core::Output`→`output`, `bun_core::out_of_memory`→`alloc`, `bun_safety::ThreadLock`→`core`
+- **MOVE_DOWN** `bun_str::String`→`alloc`, `bun_sys::page_size`→`alloc`, `VirtualMachine::is_smol_mode`→`core`, `bun_threading::Mutex`→`core`, `bun_threading::Guarded`→`core`, `bun_core::declare_scope`→`core`, `bun_core::scoped_log`→`core`, `bun_core::output`→`core`, `bun_core::Output`→`core`, `bun_core::out_of_memory`→`alloc`, `bun_safety::ThreadLock`→`core`
 - **TYPE_ONLY** `bun_paths::PathBuffer`→`core`
 
 ### `bun_core` (T0, 28 syms)
@@ -115,12 +116,12 @@ One agent per crate below. Read your section, apply the changes inside
 
 ### `ptr` (T0, 2 syms)
 - **GENUINE** `bun_crash_handler::dump_stack_trace`
-- **MOVE_DOWN** `bun_crash_handler::StoredTrace`→`debug`
+- **MOVE_DOWN** `bun_crash_handler::StoredTrace`→`core`
 
 ### `safety` (T0, 7 syms)
 - **GENUINE** `bun_crash_handler::dump_stack_trace`, `bun_bundler::allocator_has_pointer`, `bun_string::String`
-- **MOVE_DOWN** `bun_threading::ThreadId`→`safety`, `bun_crash_handler::StoredTrace`→`debug`
-- **TYPE_ONLY** `bun_crash_handler::DumpOptions`→`debug`, `bun_crash_handler::DumpStackTraceOptions`→`debug`
+- **MOVE_DOWN** `bun_threading::ThreadId`→`safety`, `bun_crash_handler::StoredTrace`→`core`
+- **TYPE_ONLY** `bun_crash_handler::DumpOptions`→`core`, `bun_crash_handler::DumpStackTraceOptions`→`core`
 
 ### `uws_sys` (T0, 5 syms)
 - **FORWARD_DECL** `bun_threading::Mutex`
@@ -156,7 +157,7 @@ One agent per crate below. Read your section, apply the changes inside
 
 ### `dotenv` (T2, 3 syms)
 - **GENUINE** `bun_bundler::defines::DefineData`, `bun_bundler::defines::DefineDataInit`
-- **MOVE_DOWN** `bun_resolver::fs`→`fs`
+- **MOVE_DOWN** `bun_resolver::fs`→`sys`
 
 ### `glob` (T2, 1 syms)
 - **MOVE_DOWN** `bun_runtime::node::dir_iterator`→`sys`
@@ -210,25 +211,25 @@ One agent per crate below. Read your section, apply the changes inside
 - **MOVE_DOWN** `bun_http::Headers`→`http_types`
 
 ### `ini` (T3, 7 syms)
-- **MOVE_DOWN** `e`→`js_ast`, `E`→`js_ast`, `Expr`→`js_ast`, `ExprData`→`js_ast`, `e::object::Rope`→`js_ast`, `bun_install::PnpmMatcher`→`install_types`, `bun_install::npm::Registry::DEFAULT_URL`→`install_types`
+- **MOVE_DOWN** `e`→`logger`, `E`→`logger`, `Expr`→`logger`, `ExprData`→`logger`, `e::object::Rope`→`logger`, `bun_install::PnpmMatcher`→`install_types`, `bun_install::npm::Registry::DEFAULT_URL`→`install_types`
 
 ### `options_types` (T3, 7 syms)
 - **FORWARD_DECL** `bun_jsc::RegularExpression`
 - **GENUINE** `bun_http::HTTPThread`, `bun_http::AsyncHTTP`
-- **MOVE_DOWN** `PackageManager::fetch_cache_directory_path`→`fs`
+- **MOVE_DOWN** `PackageManager::fetch_cache_directory_path`→`sys`
 - **TYPE_ONLY** `coverage::Fraction`→`options_types`, `bun_bundler::options::Loader`→`options_types`, `bun_js_parser::Index`→`options_types`
 
 ### `patch` (T3, 2 syms)
 - **GENUINE** `bun_jsc::AnyEventLoop`, `bun_jsc::EventLoopHandle`
 
 ### `css` (T4, 7 syms)
-- **MOVE_DOWN** `bun_bundler::cheap_prefix_normalizer`→`string`, `bun_js_parser::ast`→`js_ast`, `bun_js_parser::Symbol`→`js_ast`, `bun_js_parser::symbol`→`js_ast`
+- **MOVE_DOWN** `bun_bundler::cheap_prefix_normalizer`→`string`, `bun_js_parser::ast`→`logger`, `bun_js_parser::Symbol`→`logger`, `bun_js_parser::symbol`→`logger`
 - **TYPE_ONLY** `bun_bundler::Ref`→`js_parser`, `bun_bundler::options::Target`→`options_types`, `bun_bundler::v2`→`js_parser`
 
 ### `interchange` (T4, 7 syms)
 - **GENUINE** `bun_js_parser::js_lexer`→`js_lexer`
-- **MOVE_DOWN** `wtf::parse_double`→`string`, `bun_js_parser::ast`→`js_ast`, `bun_js_parser::lexer`→`js_ident`, `bun_js_parser::ExprNodeList`→`js_ast`, `bun_js_parser::js_ast`→`js_ast`
-- **TYPE_ONLY** `bun_js_parser::js_printer`→`js_ast`
+- **MOVE_DOWN** `wtf::parse_double`→`string`, `bun_js_parser::ast`→`logger`, `bun_js_parser::lexer`→`logger`, `bun_js_parser::ExprNodeList`→`logger`, `bun_js_parser::js_ast`→`logger`
+- **TYPE_ONLY** `bun_js_parser::js_printer`→`logger`
 
 ### `js_parser` (T4, 10 syms)
 - **MOVE_DOWN** `bun_bundler::defines`→`js_parser`, `bun_jsc::math`→`js_parser`, `bun_jsc::URL`→`url`, `bun_jsc::RuntimeTranspilerCache`→`js_parser`, `bun_resolver::fs`→`paths`, `bun_js_printer::quote_for_json`→`string`, `bun_js_printer::renamer`→`js_parser`
@@ -241,7 +242,7 @@ One agent per crate below. Read your section, apply the changes inside
 
 ### `router` (T4, 3 syms)
 - **GENUINE** `bun_resolver::dir_info::DirInfo`
-- **MOVE_DOWN** `bun_resolver::fs`→`fs`, `options::RouteConfig`→`router`
+- **MOVE_DOWN** `bun_resolver::fs`→`sys`, `options::RouteConfig`→`router`
 
 ### `shell_parser` (T4, 4 syms)
 - **MOVE_DOWN** `bun_shell::CharIter`→`shell_parser`, `bun_shell::ShellCharIter`→`shell_parser`, `bun_shell::has_eq_sign`→`shell_parser`
@@ -253,7 +254,7 @@ One agent per crate below. Read your section, apply the changes inside
 ### `bundler` (T5, 21 syms)
 - **FORWARD_DECL** `bun_bundler_jsc::plugin_runner::{MacroJSCtx, default_macro_js_value}`
 - **GENUINE** `bun_jsc::VirtualMachine`, `bun_jsc::initialize`, `bun_jsc::CachedBytecode`, `bun_jsc::EventLoopHandle`, `bun_jsc::hot_reloader`, `bun_bake::DevServer`, `bun_resolver::package_json`
-- **MOVE_DOWN** `bun_runtime::node::fs::NodeFS::write_file_with_path_buffer`→`sys`, `bun_jsc::RuntimeTranspilerCache`→`bundler`, `bun_bake::get_hmr_runtime`→`bundler`, `bun_resolver::fs`→`fs`, `bun_resolver::data_url`→`data_url`, `bun_resolver::node_fallbacks`→`node_fallbacks`
+- **MOVE_DOWN** `bun_runtime::node::fs::NodeFS::write_file_with_path_buffer`→`sys`, `bun_jsc::RuntimeTranspilerCache`→`bundler`, `bun_bake::get_hmr_runtime`→`bundler`, `bun_resolver::fs`→`sys`, `bun_resolver::data_url`→`data_url`, `bun_resolver::node_fallbacks`→`node_fallbacks`
 - **TYPE_ONLY** `bun_jsc::api`→`bundler`, `bun_bake::Side`→`bundler`, `bun_bake::Graph`→`bundler`, `bun_bake::BuiltInModule`→`bundler`, `bun_bake::Framework`→`bundler`, `bun_bundler_jsc::output_file_jsc::SavedFile`→`bundler`, `bun_resolver::SideEffects`→`options_types`
 
 ### `http` (T5, 7 syms)
@@ -264,7 +265,7 @@ One agent per crate below. Read your section, apply the changes inside
 ### `install` (T5, 15 syms)
 - **FORWARD_DECL** `bun_resolver::DirInfo`
 - **GENUINE** `bun_cli::BuildCommand`
-- **MOVE_DOWN** `bun_cli::RunCommand`→`install`, `bun_cli::run_command::replace_package_manager_run`→`install::lifecycle_script_runner`, `bun_cli::package_manager_command::PackageManagerCommand`→`install::PackageManager::CommandLineArguments`, `bun_cli::ShellCompletions`→`install`, `bun_cli::Arguments`→`bunfig`, `bun_jsc::subprocess`→`spawn`, `bun_jsc::url`→`url`, `bun_jsc::URL`→`url`, `bun_jsc::wtf`→`wtf`, `bun_jsc::EventLoopHandle`→`event_loop`, `node::fs::NodeFS`→`sys`, `bun_resolver::is_package_path`→`paths`, `bun_resolver::fs`→`fs`
+- **MOVE_DOWN** `bun_cli::RunCommand`→`install`, `bun_cli::run_command::replace_package_manager_run`→`install::lifecycle_script_runner`, `bun_cli::package_manager_command::PackageManagerCommand`→`install::PackageManager::CommandLineArguments`, `bun_cli::ShellCompletions`→`install`, `bun_cli::Arguments`→`bunfig`, `bun_jsc::subprocess`→`sys`, `bun_jsc::url`→`url`, `bun_jsc::URL`→`url`, `bun_jsc::wtf`→`wtf`, `bun_jsc::EventLoopHandle`→`event_loop`, `node::fs::NodeFS`→`sys`, `bun_resolver::is_package_path`→`paths`, `bun_resolver::fs`→`sys`
 
 ### `resolver` (T5, 3 syms)
 - **MOVE_DOWN** `bun_cli::debug_flags`→`core`, `bun_jsc::wtf`→`http_types`
@@ -279,26 +280,25 @@ One agent per crate below. Read your section, apply the changes inside
 
 ## Per-target-crate move-in tasks
 
-One agent per target crate. Add the listed symbols (type defs / fns) by
-extracting them from the `from` crate's `.zig` (NOT its `.rs` — the `.rs` may
-already be edited by move-out). New leaf crates (`js_ast`, `spawn`, `lock`,
-`debug`, `output`, `fs`): create `src/<name>/lib.rs` with the listed symbols.
+**No new files.** Every move-in adds to an EXISTING `.rs` file in the target
+crate (typically `lib.rs` or the most-related file). The sibling `.zig` stays
+where it is. One agent per target crate. Add the listed symbols (type defs /
+fns) by extracting them from the `from` crate's `.zig` (NOT its `.rs` — the
+`.rs` may already be edited by move-out).
 
-### → `core` (31 incoming)
+### → `core` (42 incoming — includes remapped `lock`/`debug`/`output`)
 - from `aio`: `bun_jsc::mark_binding`
-- from `bun_alloc`: `VirtualMachine::is_smol_mode`, `bun_safety::ThreadLock`, `bun_paths::PathBuffer`
+- from `bun_alloc`: `VirtualMachine::is_smol_mode`, `bun_safety::ThreadLock`, `bun_paths::PathBuffer`, `bun_threading::Mutex` (was→lock), `bun_threading::Guarded` (was→lock), `bun_core::declare_scope` (was→output), `bun_core::scoped_log` (was→output), `bun_core::output` (was→output), `bun_core::Output` (was→output)
 - from `bun_core`: `bun_str::ZStr`, `bun_str::zstr`, `bun_str::strings`, `bun_sys::Fd`, `bun_sys::fd`, `bun_sys::coreutils_error_map`, `bun_analytics::features`, `bun_crash_handler::is_panicking`, `bun_crash_handler::sleep_forever_if_another_thread_is_crashing`, `bun_js_parser::js_printer`, `bun_js_parser::js_lexer`, `bun_threading::Mutex`, `bun_io::Writer`, `bun_paths::SEP`, `bun_paths::PathBuffer`, `bun_semver::Version`, `bun_sys::Winsize`, `bun_paths::OSPathSlice`
 - from `collections`: `bun_crash_handler::StoredTrace`, `bun_crash_handler::dump_stack_trace`
 - from `event_loop`: `bun_jsc::mark_binding`
+- from `http_jsc`: `bun_jsc::mark_binding` (was→output)
 - from `paths`: `bun_string::ZStr`, `bun_string::WStr`
+- from `ptr`: `bun_crash_handler::StoredTrace` (was→debug)
 - from `resolver`: `bun_cli::debug_flags`
+- from `safety`: `bun_crash_handler::StoredTrace` (was→debug), `bun_crash_handler::DumpOptions` (was→debug), `bun_crash_handler::DumpStackTraceOptions` (was→debug)
 - from `sys`: `bun_crash_handler::DumpOptions`
 - from `uws_sys`: `bun_str::ZStr`, `bun_sys::Fd`
-
-### → `js_ast` (13 incoming)
-- from `css`: `bun_js_parser::ast`, `bun_js_parser::Symbol`, `bun_js_parser::symbol`
-- from `ini`: `e`, `E`, `Expr`, `ExprData`, `e::object::Rope`
-- from `interchange`: `bun_js_parser::ast`, `bun_js_parser::lexer`, `bun_js_parser::ExprNodeList`, `bun_js_parser::js_ast`, `bun_js_parser::js_printer`
 
 ### → `options_types` (12 incoming)
 - from `analytics`: `module_loader::HardcodedModule`
@@ -322,11 +322,15 @@ already be edited by move-out). New leaf crates (`js_ast`, `spawn`, `lock`,
 ### → `bundler` (8 incoming)
 - from `bundler`: `bun_jsc::RuntimeTranspilerCache`, `bun_bake::get_hmr_runtime`, `bun_jsc::api`, `bun_bake::Side`, `bun_bake::Graph`, `bun_bake::BuiltInModule`, `bun_bake::Framework`, `bun_bundler_jsc::output_file_jsc::SavedFile`
 
-### → `sys` (8 incoming)
+### → `sys` (20 incoming — includes remapped `spawn`/`fs`)
 - from `bake`: `bun_runtime::node::os::totalmem`, `bun_runtime::node::os::freemem`
-- from `bundler`: `bun_runtime::node::fs::NodeFS::write_file_with_path_buffer`
+- from `bundler`: `bun_runtime::node::fs::NodeFS::write_file_with_path_buffer`, `bun_resolver::fs` (was→fs)
+- from `cli`: `bun_runtime::spawn` (was→spawn), `bun_runtime::spawn_sync` (was→spawn), `bun_runtime::process` (was→spawn), `bun_runtime::SpawnSyncOptions` (was→spawn), `bun_runtime::Stdio` (was→spawn), `bun_runtime::WindowsSpawnOptions` (was→spawn)
+- from `dotenv`: `bun_resolver::fs` (was→fs)
 - from `glob`: `bun_runtime::node::dir_iterator`
-- from `install`: `node::fs::NodeFS`
+- from `install`: `node::fs::NodeFS`, `bun_jsc::subprocess` (was→spawn), `bun_resolver::fs` (was→fs)
+- from `options_types`: `PackageManager::fetch_cache_directory_path` (was→fs)
+- from `router`: `bun_resolver::fs` (was→fs)
 - from `sys`: `bun_runtime::node`, `generate_header`, `bun_jsc::SystemError`
 
 ### → `js_parser` (7 incoming)
@@ -340,22 +344,11 @@ already be edited by move-out). New leaf crates (`js_ast`, `spawn`, `lock`,
 - from `paths`: `bun_resolver::fs`, `bun_sys::windows::long_path_prefix_for`
 - from `string`: `bun_sys::windows`
 
-### → `spawn` (7 incoming)
-- from `cli`: `bun_runtime::spawn`, `bun_runtime::spawn_sync`, `bun_runtime::process`, `bun_runtime::SpawnSyncOptions`, `bun_runtime::Stdio`, `bun_runtime::WindowsSpawnOptions`
-- from `install`: `bun_jsc::subprocess`
-
 ### → `url` (6 incoming)
 - from `bake`: `bun_jsc::URL`
 - from `install`: `bun_jsc::url`, `bun_jsc::URL`
 - from `js_parser`: `bun_jsc::URL`
 - from `url`: `bun_jsc::URL`, `bun_router::param::List`
-
-### → `fs` (5 incoming)
-- from `bundler`: `bun_resolver::fs`
-- from `dotenv`: `bun_resolver::fs`
-- from `install`: `bun_resolver::fs`
-- from `options_types`: `PackageManager::fetch_cache_directory_path`
-- from `router`: `bun_resolver::fs`
 
 ### → `http_types` (5 incoming)
 - from `http`: `bun_runtime::webcore::fetch_headers::HeaderName`
@@ -364,17 +357,9 @@ already be edited by move-out). New leaf crates (`js_ast`, `spawn`, `lock`,
 - from `resolver`: `bun_jsc::wtf`
 - from `uws_sys`: `bun_http::Method`
 
-### → `output` (5 incoming)
-- from `bun_alloc`: `bun_core::declare_scope`, `bun_core::scoped_log`, `bun_core::output`, `bun_core::Output`
-- from `http_jsc`: `bun_jsc::mark_binding`
-
 ### → `alloc` (4 incoming)
 - from `bun_alloc`: `bun_str::String`, `bun_sys::page_size`, `bun_core::out_of_memory`
 - from `threading`: `wtf::release_fast_malloc_free_memory_for_this_thread`
-
-### → `debug` (4 incoming)
-- from `ptr`: `bun_crash_handler::StoredTrace`
-- from `safety`: `bun_crash_handler::StoredTrace`, `bun_crash_handler::DumpOptions`, `bun_crash_handler::DumpStackTraceOptions`
 
 ### → `http` (4 incoming)
 - from `http`: `bun_runtime::api::server::server_config::SSLConfig`, `bun_runtime::api::server::server_config::ssl_config::SharedPtr`, `bun_runtime::socket::ssl_wrapper::SSLWrapper`, `bun_runtime::socket::ssl_wrapper::Handlers`
@@ -411,10 +396,10 @@ already be edited by move-out). New leaf crates (`js_ast`, `spawn`, `lock`,
 ### → `js_printer` (2 incoming)
 - from `js_printer`: `bun_bundler::analyze_transpiled_module`, `bun_bundler::MangledProps`
 
-### → `lock` (2 incoming)
-- from `bun_alloc`: `bun_threading::Mutex`, `bun_threading::Guarded`
-
-### → `logger` (2 incoming)
+### → `logger` (15 incoming — includes remapped `js_ast`)
+- from `css`: `bun_js_parser::ast` (was→js_ast), `bun_js_parser::Symbol` (was→js_ast), `bun_js_parser::symbol` (was→js_ast)
+- from `ini`: `e` (was→js_ast), `E` (was→js_ast), `Expr` (was→js_ast), `ExprData` (was→js_ast), `e::object::Rope` (was→js_ast)
+- from `interchange`: `bun_js_parser::ast` (was→js_ast), `bun_js_parser::lexer` (was→js_ast), `bun_js_parser::ExprNodeList` (was→js_ast), `bun_js_parser::js_ast` (was→js_ast), `bun_js_parser::js_printer` (was→js_ast)
 - from `logger`: `bun_js_parser::Index`, `bun_options_types::ImportKind`
 
 ### → `sha_hmac` (2 incoming)

@@ -349,6 +349,69 @@ throughput.
 - `bun.handleOom(expr)` → `expr` (Rust `Vec`/`Box` allocation aborts on OOM;
   `handleOom` was Zig's panic-on-OOM wrapper, which is now the default).
 
+## Dispatch (`union(enum)` across crate tiers)
+
+Zig's `union(enum) { A: *Foo, B: *Bar, fn run(self) { switch(self) { inline else => |p| p.run() } } }`
+is closed-set dynamic dispatch with **inlined arms**. When the variants live in
+a higher-tier crate than the union, a naïve port creates a cycle. Break it
+**without losing the inlining**:
+
+**Cold path** (called per-request, not per-tick — most cases):
+Low tier defines a manual vtable; high tier provides static instances.
+```rust
+// low tier (e.g. bun_io) — leaf, names no high-tier types
+pub struct SourceVTable {
+    pub on_read:  unsafe fn(*mut (), &[u8]),
+    pub on_close: unsafe fn(*mut ()),
+}
+pub struct Source { pub owner: *mut (), pub vtable: &'static SourceVTable }
+
+// high tier (e.g. bun_runtime)
+pub static SUBPROCESS_SOURCE: SourceVTable = SourceVTable {
+    on_read:  |p, b| unsafe { &mut *p.cast::<Subprocess>() }.on_read(b),
+    on_close: |p|    unsafe { &mut *p.cast::<Subprocess>() }.on_close(),
+};
+```
+Indirect call; LTO will **not** devirtualize a heterogeneous list. Acceptable
+when the callee does real work (syscall, JS callback). Mark
+`// PERF(port): was inline switch`.
+
+**Hot path** (per-tick dispatch — short list below):
+Low tier stores `(tag: u8, ptr: *mut ())` and exposes an iterator; **high tier
+owns the `match` loop**. Direct calls per arm → LLVM inlines exactly like Zig.
+```rust
+// low tier (bun_event_loop)
+#[repr(transparent)] pub struct TaskTag(pub u8);
+pub struct Task { pub tag: TaskTag, pub ptr: *mut () }
+impl Queue { pub fn drain(&mut self) -> impl Iterator<Item = Task> + '_ { ... } }
+
+// high tier (bun_runtime) — the ONLY place variant types are named
+#[inline] pub fn run_tasks(q: &mut Queue) {
+    for Task { tag, ptr } in q.drain() {
+        match tag.0 {
+            tag::PROMISE => unsafe { &mut *ptr.cast::<PromiseTask>() }.run(),
+            tag::TIMER   => unsafe { &mut *ptr.cast::<TimerTask>()   }.run(),
+            // ... one arm per variant
+            _ => unsafe { core::hint::unreachable_unchecked() },
+        }
+    }
+}
+```
+
+**Hot-path list** (use hoisted-match; everything else uses vtable):
+- `bun_event_loop::Task` / `ConcurrentTask` (microtask queue)
+- `bun_aio::FilePoll::Owner` (`TaggedPointerUnion` — ~13 variants)
+- `bun_event_loop::EventLoopTimer::Tag`
+- `bun_io::Source`
+- `bun_threading::WorkPool::Task`
+
+Do **not** use `Box<dyn Trait>` / `enum_dispatch` for these. `dyn Trait` only
+where Zig already used `*anyopaque` + fn-ptr (already indirect).
+
+**Debug/crash hooks** (`crash_handler` dump callbacks, `safety` allocator
+checks): low tier defines `static HOOK: AtomicPtr<()>`; high tier writes the
+fn-ptr at init. One-shot registration, no vtable.
+
 ## Pointers & ownership
 
 | Zig | Rust |

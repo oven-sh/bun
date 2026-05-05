@@ -3,7 +3,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-test("console.log(new Array(N)) on a huge sparse array is fast (#29175)", async () => {
+test.concurrent("console.log(new Array(N)) on a huge sparse array is fast (#29175)", async () => {
   // 1.67 billion — the number from the issue. The 10s threshold is
   // >50x the post-fix time on any runner and still well under the
   // pre-fix ~16s, so any regression back to the O(N) path trips it
@@ -33,7 +33,7 @@ test("console.log(new Array(N)) on a huge sparse array is fast (#29175)", async 
   expect(exitCode).toBe(0);
 });
 
-test("console.log on a sparse array with populated slots still prints values (#29175)", async () => {
+test.concurrent("console.log on a sparse array with populated slots still prints values (#29175)", async () => {
   const code = `
     const a = new Array(1_000_000);
     a[0] = "start";
@@ -61,7 +61,7 @@ test("console.log on a sparse array with populated slots still prints values (#2
   expect(exitCode).toBe(0);
 });
 
-test("console.log on a small sparse array with a non-primitive value keeps single-line output (#29175)", async () => {
+test.concurrent("console.log on a small sparse array with a non-primitive value keeps single-line output (#29175)", async () => {
   // Regression guard: the first-element heuristic that chooses
   // single-line vs multi-line bracket format keys off slot 0, not
   // first_populated. A small sparse array with an object at a
@@ -94,7 +94,7 @@ test("console.log on a small sparse array with a non-primitive value keeps singl
   expect(exitCode).toBe(0);
 });
 
-test("console.log on a sparse double array with NaN values renders correctly (#29175)", async () => {
+test.concurrent("console.log on a sparse double array with NaN values renders correctly (#29175)", async () => {
   // ArrayWithDouble stores holes and user NaNs with identical bits. The
   // formatter must not skip populated slots by scanning for non-NaN —
   // doing so either mis-renders NaN as 'empty item' (return end) or
@@ -136,7 +136,7 @@ test("console.log on a sparse double array with NaN values renders correctly (#2
   expect(exitCode).toBe(0);
 });
 
-test("console.log elision past 100 items counts holes and doesn't double-emit a trailing summary (#29175)", async () => {
+test.concurrent("console.log elision past 100 items counts holes and doesn't double-emit a trailing summary (#29175)", async () => {
   // When the `... N more items` elision fires mid-iteration, the
   // count must include any pending hole run (the hole-jump already
   // advanced `i` past it) and `empty_start` must be cleared so the
@@ -170,7 +170,7 @@ test("console.log elision past 100 items counts holes and doesn't double-emit a 
   expect(exitCode).toBe(0);
 });
 
-test("console.log on a fully-empty `new Array(N)` prints the summary (#29175)", async () => {
+test.concurrent("console.log on a fully-empty `new Array(N)` prints the summary (#29175)", async () => {
   const code = `
     console.log(new Array(42));
     console.log(new Array(1));

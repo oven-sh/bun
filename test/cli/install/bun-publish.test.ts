@@ -886,6 +886,40 @@ it("$npm_lifecycle_event is accurate during publish", async () => {
   expect(exitCode).toBe(0);
 });
 
+test("publish sends README contents as readme / readmeFilename", async () => {
+  // Regression for https://github.com/oven-sh/bun/issues/30255 — `bun publish`
+  // packed the README into the tarball but never populated the version-level
+  // `readme` / `readmeFilename` fields, so the registry stored an empty readme.
+  let captured: any = null;
+  using mock = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      if (req.method === "PUT") captured = await req.json();
+      return new Response("OK", { status: 200 });
+    },
+  });
+
+  const packageDir = tmpdirSync();
+  const readmeContents = "# readme-pkg-1\n\nA readme.";
+  await Promise.all([
+    write(
+      join(packageDir, "bunfig.toml"),
+      `[install]\ncache = false\nregistry = { url = "http://localhost:${mock.port}", token = "unused" }\n`,
+    ),
+    write(join(packageDir, "package.json"), JSON.stringify({ name: "readme-pkg-1", version: "1.0.0" })),
+    write(join(packageDir, "README.md"), readmeContents),
+  ]);
+
+  const { err, exitCode } = await publish(env, packageDir);
+  expect(err).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  expect(captured.versions["1.0.0"]).toMatchObject({
+    readme: readmeContents,
+    readmeFilename: "README.md",
+  });
+});
+
 describe("--tolerate-republish", async () => {
   test("republishing normally fails", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();

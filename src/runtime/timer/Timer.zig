@@ -354,6 +354,19 @@ pub const All = struct {
         }
     }
 
+    /// Fast-path wrapper around `drainTimers` that skips the `timespec.now()`
+    /// call when the heap is empty. Safe to call frequently from within the
+    /// task drain loop to keep expired timers from being starved by a continuous
+    /// stream of concurrent tasks (e.g. HTTP responses arriving during a
+    /// `Promise.all` burst).
+    ///
+    /// The `peek` is a single-pointer load; a stale `null` just defers the
+    /// drain by one loop iteration, which is harmless.
+    pub fn drainTimersIfNeeded(this: *All, vm: *VirtualMachine) void {
+        if (this.timers.peek() == null) return;
+        this.drainTimers(vm);
+    }
+
     const TimeoutWarning = enum {
         TimeoutOverflowWarning,
         TimeoutNegativeWarning,

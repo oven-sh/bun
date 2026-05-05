@@ -537,6 +537,17 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, co
         }
 
         try this.drainMicrotasksWithGlobal(global, global_vm);
+
+        // Fire expired timers between tasks so that a long task batch (e.g.
+        // a large HTTP-response burst under `Promise.all` where each response
+        // drags a microtask chain of SDK middleware) doesn't starve timers
+        // until the entire queue drains. `drainTimersIfNeeded` bails out in
+        // the common case where the timer heap is empty. See issue #30273.
+        // Windows drives timers via libuv's uv_timer, which libuv fires from
+        // its own loop phase, so leave that path alone.
+        if (comptime Environment.isPosix) {
+            virtual_machine.timer.drainTimersIfNeeded(virtual_machine);
+        }
     }
 
     this.tasks.head = if (this.tasks.count == 0) 0 else this.tasks.head;

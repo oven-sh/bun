@@ -143,6 +143,12 @@ pub fn onGCRepeatingTimer(timer: *uws.Timer) callconv(.c) void {
             // instead of crossing. Fire an explicit Full so old-gen + age-based
             // CodeBlock jettison run before we go to the 30s interval.
             this.#idle_full_gcs_fired = 1;
+            // The counter has done its job. If the allocation path observes
+            // growth between this tick and the next, it clears
+            // #idle_full_gcs_fired (bypassing reduction mode); leaving the
+            // counter at 30 would immediately re-enter this branch and fire
+            // another Full GC, skipping the < 2 cap in the reduction branch.
+            this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
             vm.collectAsyncFull();
             return;
         }

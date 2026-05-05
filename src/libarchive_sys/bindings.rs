@@ -5,7 +5,54 @@ use core::marker::{PhantomData, PhantomPinned};
 
 use bun_core::{ZStr, WStr};
 use bun_core::{Fd, FileKind, Mode, kind_from_mode};
-use enumset::EnumSet;
+
+// ───────────────────────────────────────────────────────────────────────────
+// Local helpers (B-2): bun_core::{ZStr,WStr} expose `from_raw(ptr,len)` but
+// not a strlen-walking `from_ptr`. libarchive returns bare NUL-terminated
+// pointers, so wrap once here rather than at every call site.
+// ───────────────────────────────────────────────────────────────────────────
+
+#[inline]
+unsafe fn zstr_from_ptr<'a>(p: *const u8) -> &'a ZStr {
+    if p.is_null() {
+        return ZStr::EMPTY;
+    }
+    // SAFETY: caller guarantees `p` is a NUL-terminated string valid for `'a`.
+    unsafe { ZStr::from_raw(p, libc::strlen(p.cast())) }
+}
+
+#[inline]
+unsafe fn wstr_from_ptr<'a>(p: *const u16) -> &'a WStr {
+    if p.is_null() {
+        return WStr::EMPTY;
+    }
+    let mut len = 0usize;
+    // SAFETY: caller guarantees `p` is a NUL-terminated wide string valid for `'a`.
+    unsafe {
+        while *p.add(len) != 0 {
+            len += 1;
+        }
+        WStr::from_raw(p, len)
+    }
+}
+
+/// Bitset over [`FileKind`] (Zig: `std.EnumSet(std.fs.File.Kind)`).
+/// Local because `bun_core::FileKind` does not derive `enumset::EnumSetType`.
+#[derive(Copy, Clone, Eq, PartialEq, Default)]
+pub struct FileKindSet(u16);
+
+impl FileKindSet {
+    #[inline] pub const fn empty() -> Self { Self(0) }
+    #[inline] pub const fn is_empty(self) -> bool { self.0 == 0 }
+    #[inline]
+    pub fn contains(self, kind: FileKind) -> bool {
+        self.0 & (1u16 << (kind as u8)) != 0
+    }
+    #[inline]
+    pub fn insert(&mut self, kind: FileKind) {
+        self.0 |= 1u16 << (kind as u8);
+    }
+}
 
 // ───────────────────────────────────────────────────────────────────────────
 // File-sink vtable (CYCLEBREAK §Dispatch — cold path)
@@ -619,7 +666,7 @@ impl Archive {
 
     pub fn write_open_fd(&self, fd: Fd) -> ArchiveResult {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_open_fd(p(self), fd.cast()) }
+        unsafe { archive_write_open_fd(p(self), fd.native()) }
     }
 
     pub fn write_open_memory(&self, buf: *mut c_void, buf_size: usize, used: &mut usize) -> ArchiveResult {
@@ -849,9 +896,9 @@ impl Archive {
                         continue;
                     } else {
                         *can_use_pwrite = false;
-                        bun_core::Output::debug_warn(
+                        bun_core::Output::debug_warn(format_args!(
                             "libarchive: falling back to write() after pwrite() failure",
-                        );
+                        ));
                         // Fall through to lseek+write path
                     }
                 }
@@ -1087,15 +1134,15 @@ impl ArchiveEntry {
 
     pub fn pathname(&self) -> &ZStr {
         // SAFETY: returns NUL-terminated string owned by the entry.
-        unsafe { ZStr::from_ptr(archive_entry_pathname(ep(self)).cast()) }
+        unsafe { zstr_from_ptr(archive_entry_pathname(ep(self)).cast()) }
     }
     pub fn pathname_utf8(&self) -> &ZStr {
         // SAFETY: libarchive returns a NUL-terminated string owned by the handle.
-        unsafe { ZStr::from_ptr(archive_entry_pathname_utf8(ep(self)).cast()) }
+        unsafe { zstr_from_ptr(archive_entry_pathname_utf8(ep(self)).cast()) }
     }
     pub fn pathname_w(&self) -> &WStr {
         // SAFETY: libarchive returns a NUL-terminated string owned by the handle.
-        unsafe { WStr::from_ptr(archive_entry_pathname_w(ep(self))) }
+        unsafe { wstr_from_ptr(archive_entry_pathname_w(ep(self))) }
     }
     pub fn filetype(&self) -> Mode {
         // SAFETY: FFI call on valid opaque libarchive handle.
@@ -1115,11 +1162,11 @@ impl ArchiveEntry {
     }
     pub fn symlink(&self) -> &ZStr {
         // SAFETY: libarchive returns a NUL-terminated string owned by the handle.
-        unsafe { ZStr::from_ptr(archive_entry_symlink(ep(self)).cast()) }
+        unsafe { zstr_from_ptr(archive_entry_symlink(ep(self)).cast()) }
     }
     pub fn symlink_utf8(&self) -> &ZStr {
         // SAFETY: libarchive returns a NUL-terminated string owned by the handle.
-        unsafe { ZStr::from_ptr(archive_entry_symlink_utf8(ep(self)).cast()) }
+        unsafe { zstr_from_ptr(archive_entry_symlink_utf8(ep(self)).cast()) }
     }
     pub fn symlink_type(&self) -> SymlinkType {
         // SAFETY: FFI call on valid opaque libarchive handle.
@@ -1127,7 +1174,7 @@ impl ArchiveEntry {
     }
     pub fn symlink_w(&self) -> &WStr {
         // SAFETY: libarchive returns a NUL-terminated string owned by the handle.
-        unsafe { WStr::from_ptr(archive_entry_symlink_w(ep(self))) }
+        unsafe { wstr_from_ptr(archive_entry_symlink_w(ep(self))) }
     }
 }
 
@@ -1138,7 +1185,7 @@ impl ArchiveEntry {
 pub struct ArchiveIterator {
     pub archive: *mut Archive,
     // TODO(port): Zig used `std.EnumSet(std.fs.File.Kind)`; mapped to bun_core::FileKind.
-    pub filter: EnumSet<FileKind>,
+    pub filter: FileKindSet,
 }
 
 /// Generic result type used by [`ArchiveIterator`] (Zig: `Iterator.Result(T)`).
@@ -1188,10 +1235,10 @@ impl ArchiveIterator {
             _ => {}
         }
 
-        // TODO(port): need a const ZStr literal helper for "read_concatenated_archives"
         // SAFETY: byte literal is NUL-terminated and 'static.
-        match a.read_set_options(unsafe { ZStr::from_ptr(b"read_concatenated_archives\0".as_ptr()) })
-        {
+        match a.read_set_options(unsafe {
+            ZStr::from_raw(b"read_concatenated_archives\0".as_ptr(), 26)
+        }) {
             ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
                 return IteratorResult::init_err(
                     archive,
@@ -1210,7 +1257,7 @@ impl ArchiveIterator {
 
         IteratorResult::init_res(Self {
             archive,
-            filter: EnumSet::empty(),
+            filter: FileKindSet::empty(),
         })
     }
 

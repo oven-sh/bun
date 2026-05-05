@@ -197,6 +197,22 @@ impl SourceContentPtr {
 }
 
 impl ParsedSourceMap {
+    /// Construct a `ParsedSourceMap` whose mappings are backed by an
+    /// `InternalSourceMap` blob (e.g. one embedded in a `bun build --compile`
+    /// executable's standalone module graph) instead of a materialized
+    /// `mapping::List`. The blob's bytes are *borrowed* — `internal` is not
+    /// freed on drop (see PORT NOTE on conditional Drop below).
+    ///
+    /// Mirrors Zig `SourceMap.ParsedSourceMap{ .internal = ism, .input_line_count
+    /// = ism.inputLineCount() }` struct-init at the standalone-graph load site.
+    pub fn from_internal(internal: InternalSourceMap) -> Self {
+        Self {
+            input_line_count: internal.input_line_count(),
+            internal: Some(internal),
+            ..Default::default()
+        }
+    }
+
     pub fn is_external(&self) -> bool {
         !self.external_source_names.is_empty()
     }

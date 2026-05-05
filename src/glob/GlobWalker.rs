@@ -566,7 +566,7 @@ pub type Result_ = Maybe<()>;
 // `BunString` key + `MatchedMapContext` (custom hash on byte_slice) and `get_or_put` API are
 // blocked. Using `ArrayHashMap<Box<[u8]>, ()>` as a stand-in so the field type compiles;
 // `prepare_matched_path*` bodies are gated below.
-pub type MatchedMap = ArrayHashMap<Box<[u8]>, ()>;
+pub type MatchedMap = bun_collections::StringArrayHashMap<()>;
 
 pub struct MatchedMapContext;
 // TODO(port): ArrayHashMap context trait shape — Phase B wires the actual trait.
@@ -2148,11 +2148,11 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         }
         if !SENTINEL {
             let slice: Box<[u8]> = Box::from(symlink_full_path);
-            self.matched_paths.insert(slice.clone(), ());
+            self.matched_paths.insert(&slice, ());
             return Ok(Some(slice));
         }
         let slicez = dupe_z(symlink_full_path);
-        self.matched_paths.insert(slicez.clone(), ());
+        self.matched_paths.insert(&slicez, ());
         Ok(Some(slicez))
     }
 
@@ -2168,7 +2168,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             log!("(dupe) prepared match: {}", bstr::BStr::new(&name_matched_path));
             return Ok(None);
         }
-        self.matched_paths.insert(name_matched_path.clone(), ());
+        self.matched_paths.insert(&name_matched_path, ());
         // if SENTINEL { return name[0..name.len()-1 :0]; }
         log!("prepared match: {}", bstr::BStr::new(&name_matched_path));
         Ok(Some(name_matched_path))
@@ -2186,13 +2186,12 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             log!("(dupe) prepared match: {}", bstr::BStr::new(&name_matched_path));
             return Ok(());
         }
-        self.matched_paths.insert(name_matched_path, ());
+        self.matched_paths.insert(&name_matched_path, ());
         Ok(())
     }
 
     fn append_matched_path_symlink(&mut self, symlink_full_path: &[u8]) -> Result<(), AllocError> {
-        let name: Box<[u8]> = Box::from(symlink_full_path);
-        self.matched_paths.insert(name, ());
+        self.matched_paths.insert(symlink_full_path, ());
         Ok(())
     }
 

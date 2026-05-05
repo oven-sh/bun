@@ -1053,6 +1053,450 @@ impl StackCheck {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// B-2 Track A — small helpers from src/bun.zig that downstream crates need.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Zig `bun.Generation` (bun.zig:1926) — bumped each rebuild/rescan to
+/// invalidate stale cache entries.
+pub type Generation = u16;
+
+// ── Ordinal ───────────────────────────────────────────────────────────────
+// Port of `OrdinalT(c_int)` (bun.zig:3421). ABI-equivalent of WTF::OrdinalNumber:
+// a zero-based index where -1 means "invalid". Represented as a transparent
+// newtype rather than a Rust enum so the full `c_int` range round-trips across
+// FFI without UB.
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct Ordinal(pub core::ffi::c_int);
+
+impl Ordinal {
+    pub const INVALID: Self = Self(-1);
+    pub const START: Self = Self(0);
+
+    #[inline]
+    pub const fn from_zero_based(int: core::ffi::c_int) -> Self {
+        debug_assert!(int >= 0);
+        Self(int)
+    }
+    #[inline]
+    pub const fn from_one_based(int: core::ffi::c_int) -> Self {
+        debug_assert!(int > 0);
+        Self(int - 1)
+    }
+    #[inline] pub const fn zero_based(self) -> core::ffi::c_int { self.0 }
+    #[inline] pub const fn one_based(self) -> core::ffi::c_int { self.0 + 1 }
+    /// Add two ordinal numbers together. Both are converted to zero-based before addition.
+    #[inline] pub const fn add(self, b: Self) -> Self { Self::from_zero_based(self.0 + b.0) }
+    /// Add a scalar value to an ordinal number.
+    #[inline] pub const fn add_scalar(self, inc: core::ffi::c_int) -> Self { Self::from_zero_based(self.0 + inc) }
+    #[inline] pub const fn is_valid(self) -> bool { self.0 >= 0 }
+}
+impl Default for Ordinal {
+    #[inline] fn default() -> Self { Self::INVALID }
+}
+
+// ── Once ──────────────────────────────────────────────────────────────────
+// Port of `bun.Once(f)` (bun.zig:3637). Zig parameterizes over a comptime fn
+// and stores the payload; Rust callers use two shapes:
+//   * `Once<T>` — fn supplied at `.call(f)` time (resolver/fs.rs)
+//   * `Once<T, fn(A) -> T>` — fn supplied at construction (PackageManagerDirectories.rs)
+// Backed by `std::sync::OnceLock` per PORTING.md §Concurrency.
+pub struct Once<T, F = ()> {
+    cell: std::sync::OnceLock<T>,
+    f: F,
+}
+// SAFETY: OnceLock<T> handles the Sync; F is only read under its lock.
+unsafe impl<T: Send + Sync, F: Send + Sync> Sync for Once<T, F> {}
+
+impl<T> Once<T, ()> {
+    pub const fn new() -> Self { Self { cell: std::sync::OnceLock::new(), f: () } }
+    /// Run `f` exactly once; subsequent calls return the cached payload.
+    #[inline]
+    pub fn call(&self, f: impl FnOnce() -> T) -> T where T: Copy {
+        *self.cell.get_or_init(f)
+    }
+    #[inline] pub fn get(&self) -> Option<&T> { self.cell.get() }
+    #[inline] pub fn done(&self) -> bool { self.cell.get().is_some() }
+}
+impl<T, A> Once<T, fn(A) -> T> {
+    pub const fn new(f: fn(A) -> T) -> Self { Self { cell: std::sync::OnceLock::new(), f } }
+    /// Run the stored fn exactly once with `arg`; returns a borrow of the cached
+    /// payload. Bound to `&'static self` because every call site is a `static`.
+    #[inline]
+    pub fn call(&'static self, arg: A) -> &'static T {
+        let f = self.f;
+        self.cell.get_or_init(|| f(arg))
+    }
+    #[inline] pub fn get(&self) -> Option<&T> { self.cell.get() }
+    #[inline] pub fn done(&self) -> bool { self.cell.get().is_some() }
+}
+
+// ── Pollable / is_readable ────────────────────────────────────────────────
+// Port of `bun.PollFlag` + `bun.isReadable` (bun.zig:637). Named `Pollable` to
+// match the Phase-A draft callers (io/PipeReader.rs).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Pollable { Ready, NotReady, Hup }
+/// Zig `bun.PollFlag` — original name kept as an alias.
+pub type PollFlag = Pollable;
+
+/// Non-blocking poll for readability. POSIX-only (Zig panics on Windows).
+#[cfg(not(windows))]
+pub fn is_readable(fd: Fd) -> Pollable {
+    debug_assert!(fd.is_valid());
+    let mut polls = [libc::pollfd {
+        fd: fd.native(),
+        events: libc::POLLIN | libc::POLLERR | libc::POLLHUP,
+        revents: 0,
+    }];
+    // SAFETY: polls is a valid 1-element array; timeout 0 = non-blocking.
+    let rc = unsafe { libc::poll(polls.as_mut_ptr(), 1, 0) };
+    let result = rc > 0;
+    if result && (polls[0].revents & (libc::POLLHUP | libc::POLLERR)) != 0 {
+        Pollable::Hup
+    } else if result {
+        Pollable::Ready
+    } else {
+        Pollable::NotReady
+    }
+}
+#[cfg(windows)]
+pub fn is_readable(_fd: Fd) -> Pollable {
+    // Zig: @panic("TODO on Windows")
+    unreachable!("is_readable: TODO on Windows");
+}
+
+// ── csprng ────────────────────────────────────────────────────────────────
+// Zig calls `BoringSSL.c.RAND_bytes` (bun.zig:621). bun_core sits below
+// boringssl_sys in the crate graph, so we go to the OS CSPRNG directly:
+// getrandom(2) on Linux, SecRandomCopyBytes/getentropy on Darwin,
+// RtlGenRandom on Windows. All are the same entropy source BoringSSL seeds
+// from. PERF(port): if a hot path needs the BoringSSL DRBG, install a
+// vtable hook from bun_runtime at startup.
+pub fn csprng(bytes: &mut [u8]) {
+    #[cfg(target_os = "linux")]
+    {
+        let mut filled = 0usize;
+        while filled < bytes.len() {
+            // SAFETY: writes at most len-filled bytes into the slice.
+            let rc = unsafe {
+                libc::getrandom(
+                    bytes.as_mut_ptr().add(filled).cast(),
+                    bytes.len() - filled,
+                    0,
+                )
+            };
+            if rc < 0 {
+                let err = unsafe { *libc::__errno_location() };
+                if err == libc::EINTR { continue; }
+                panic!("getrandom failed: errno {err}");
+            }
+            filled += rc as usize;
+        }
+    }
+    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
+    {
+        // getentropy caps at 256 bytes per call.
+        for chunk in bytes.chunks_mut(256) {
+            // SAFETY: chunk is a valid writable slice ≤ 256 bytes.
+            let rc = unsafe { libc::getentropy(chunk.as_mut_ptr().cast(), chunk.len()) };
+            if rc != 0 { panic!("getentropy failed"); }
+        }
+    }
+    #[cfg(windows)]
+    {
+        unsafe extern "system" {
+            // advapi32!SystemFunction036 a.k.a. RtlGenRandom — what BoringSSL uses on Windows.
+            #[link_name = "SystemFunction036"]
+            fn RtlGenRandom(buf: *mut u8, len: u32) -> u8;
+        }
+        for chunk in bytes.chunks_mut(u32::MAX as usize) {
+            // SAFETY: chunk fits in u32; RtlGenRandom writes exactly that many bytes.
+            let ok = unsafe { RtlGenRandom(chunk.as_mut_ptr(), chunk.len() as u32) };
+            if ok == 0 { panic!("RtlGenRandom failed"); }
+        }
+    }
+}
+
+// ── self_exe_path ─────────────────────────────────────────────────────────
+// Port of `bun.selfExePath` (bun.zig:3011). Memoized into a process-lifetime
+// static buffer; thread-safe via OnceLock. Returns a `&'static ZStr`.
+pub fn self_exe_path() -> Result<&'static ZStr, crate::Error> {
+    static CELL: std::sync::OnceLock<Result<ZBox, crate::Error>> = std::sync::OnceLock::new();
+    let r = CELL.get_or_init(|| {
+        let path = std::env::current_exe().map_err(crate::Error::from)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            Ok(ZBox::from_vec_with_nul(path.into_os_string().into_vec()))
+        }
+        #[cfg(windows)]
+        {
+            // PORT NOTE: Zig stored the WTF-8 form. `into_string()` rejects unpaired
+            // surrogates; fall back to the lossy form (Windows exe paths are valid
+            // Unicode in practice).
+            let s = path.into_os_string().into_string()
+                .unwrap_or_else(|os| os.to_string_lossy().into_owned());
+            Ok(ZBox::from_vec_with_nul(s.into_bytes()))
+        }
+    });
+    match r {
+        Ok(z) => Ok(z.as_zstr()),
+        Err(e) => Err(*e),
+    }
+}
+
+// ── get_thread_count ──────────────────────────────────────────────────────
+// Port of `bun.getThreadCount` (bun.zig:3597). Clamped to [2, 1024]; honours
+// UV_THREADPOOL_SIZE / GOMAXPROCS overrides.
+pub fn get_thread_count() -> u16 {
+    static CELL: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+    *CELL.get_or_init(|| {
+        const MAX: u16 = 1024;
+        const MIN: u16 = 2;
+        let from_env = || -> Option<u16> {
+            for key in [crate::zstr!("UV_THREADPOOL_SIZE"), crate::zstr!("GOMAXPROCS")] {
+                if let Some(v) = getenv_z(key) {
+                    if let Ok(s) = core::str::from_utf8(v) {
+                        if let Ok(n) = s.trim().parse::<u16>() {
+                            if n >= MIN { return Some(n.min(MAX)); }
+                        }
+                    }
+                }
+            }
+            None
+        };
+        let raw = from_env().unwrap_or_else(|| {
+            // Zig calls `jsc.wtf.numberOfProcessorCores()`; that crate is above
+            // bun_core, so use std (same value: sysconf/_SC_NPROCESSORS_ONLN).
+            std::thread::available_parallelism().map(|n| n.get() as u16).unwrap_or(MIN)
+        });
+        raw.clamp(MIN, MAX)
+    })
+}
+
+// ── errno_to_zig_err ──────────────────────────────────────────────────────
+// Port of `bun.errnoToZigErr` (bun.zig:2854). Zig indexes into a comptime
+// `errno_map: [N]anyerror`; the Rust `bun_core::Error` already carries the raw
+// errno, so the mapping is identity (and `Error::name()` recovers the tag).
+#[inline]
+pub fn errno_to_zig_err(errno: i32) -> crate::Error {
+    let n = if cfg!(windows) { errno.unsigned_abs() as i32 } else { errno };
+    debug_assert!(n != 0);
+    crate::Error::from_errno(n)
+}
+
+// ── time ──────────────────────────────────────────────────────────────────
+// Ports of `std.time.{nanoTimestamp,milliTimestamp,timestamp}` plus the
+// constants the install/http crates reference. Using libc clock_gettime keeps
+// this consistent with the Zig stdlib (which does the same on POSIX).
+pub mod time {
+    pub const NS_PER_MS: i128 = 1_000_000;
+    pub const NS_PER_S: i128 = 1_000_000_000;
+    pub const MS_PER_S: i64 = 1_000;
+    pub const S_PER_DAY: u32 = 86_400;
+    pub const MS_PER_DAY: u64 = 86_400_000;
+
+    /// `std.time.nanoTimestamp()` — wall-clock nanoseconds since the Unix epoch.
+    #[inline]
+    pub fn nano_timestamp() -> i128 {
+        #[cfg(unix)]
+        {
+            let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+            // SAFETY: ts is valid for write.
+            unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, &mut ts) };
+            (ts.tv_sec as i128) * NS_PER_S + (ts.tv_nsec as i128)
+        }
+        #[cfg(not(unix))]
+        {
+            // SystemTime is backed by GetSystemTimePreciseAsFileTime on Windows.
+            match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+                Ok(d) => d.as_nanos() as i128,
+                Err(e) => -(e.duration().as_nanos() as i128),
+            }
+        }
+    }
+    /// `std.time.milliTimestamp()`
+    #[inline] pub fn milli_timestamp() -> i64 { (nano_timestamp() / NS_PER_MS) as i64 }
+    /// `std.time.timestamp()` — wall-clock seconds since the Unix epoch.
+    #[inline] pub fn timestamp() -> i64 { (nano_timestamp() / NS_PER_S) as i64 }
+
+    /// `std.time.Timer` — monotonic stopwatch.
+    #[derive(Clone, Copy, Debug)]
+    pub struct Timer { start: std::time::Instant }
+    impl Timer {
+        #[inline] pub fn start() -> Result<Self, crate::Error> { Ok(Self { start: std::time::Instant::now() }) }
+        #[inline] pub fn read(&self) -> u64 { self.start.elapsed().as_nanos() as u64 }
+        #[inline] pub fn lap(&mut self) -> u64 {
+            let now = std::time::Instant::now();
+            let ns = now.duration_since(self.start).as_nanos() as u64;
+            self.start = now;
+            ns
+        }
+        #[inline] pub fn reset(&mut self) { self.start = std::time::Instant::now(); }
+    }
+}
+
+// ── runtime_embed_file ────────────────────────────────────────────────────
+// Port of `bun.runtimeEmbedFile` (bun.zig:2938). The Zig version comptime-
+// captures `sub_path` to manufacture a per-call-site `static once` cache; Rust
+// can't do that from a plain fn without leaking, so the canonical port is the
+// `runtime_embed_file!` macro below (per-site `OnceLock<String>` — sanctioned
+// by PORTING.md §Forbidden, "true process-lifetime singleton"). The fn form is
+// kept so existing Phase-A drafts type-check; it's only reachable when the
+// `codegen_embed` feature is off (debug fast-iteration), where panicking with a
+// migration hint is the same UX as the Zig `Output.panic` on read failure.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EmbedKind { Codegen, CodegenEager, Src, SrcEager }
+/// Phase-A drafts spelled this both ways; alias keeps both compiling.
+pub type EmbedDir = EmbedKind;
+
+pub fn runtime_embed_file(_root: EmbedKind, sub_path: &'static str) -> &'static str {
+    debug_assert!(crate::Environment::IS_DEBUG);
+    panic!(
+        "runtime_embed_file({sub_path}): non-embedded debug load requires a per-site \
+         static cache — migrate this call to `bun_core::runtime_embed_file!` or rebuild \
+         with codegen_embed",
+    );
+}
+
+/// Per-call-site cached file load. `($root, $sub_path)` mirrors the Zig
+/// signature; `$sub_path` must be a string literal.
+#[macro_export]
+macro_rules! runtime_embed_file {
+    ($root:expr, $sub_path:literal) => {{
+        static __CELL: ::std::sync::OnceLock<String> = ::std::sync::OnceLock::new();
+        let _ = $root; // type-checked but unused at this tier (resolveSourcePath wires later)
+        __CELL.get_or_init(|| {
+            let base: &[u8] = match $root {
+                $crate::EmbedKind::Codegen | $crate::EmbedKind::CodegenEager => {
+                    $crate::build_options::CODEGEN_PATH
+                }
+                $crate::EmbedKind::Src | $crate::EmbedKind::SrcEager => {
+                    $crate::build_options::BASE_PATH
+                }
+            };
+            let mut p = ::std::path::PathBuf::from(::std::str::from_utf8(base).unwrap_or(""));
+            p.push($sub_path);
+            ::std::fs::read_to_string(&p).unwrap_or_else(|e| {
+                panic!(
+                    "Failed to load '{}': {e}\n\n\
+                     To improve iteration speed, some files are not embedded but loaded \
+                     at runtime, at the cost of making the binary non-portable. To fix \
+                     this, build with codegen_embed.",
+                    p.display(),
+                )
+            })
+        }).as_str()
+    }};
+}
+
+// ── StringBuilder ─────────────────────────────────────────────────────────
+// Port of src/string/StringBuilder.zig. Count-then-allocate-then-append arena
+// for building a single contiguous buffer. Allocator param dropped per
+// PORTING.md §Allocators (always `bun.default_allocator`).
+//
+// PORT NOTE: returned sub-slices borrow `*self`, but in Zig they alias the
+// final `allocated_slice()` and outlive the builder. To keep that pattern
+// without self-referential lifetimes, callers stash `(offset, len)` via
+// `StringPointer` (see install/hosted_git_info.rs). The append methods here
+// therefore return `StringPointer`, not `&[u8]`.
+#[derive(Default)]
+pub struct StringBuilder {
+    pub len: usize,
+    pub cap: usize,
+    pub ptr: Option<Box<[u8]>>,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct StringPointer { pub offset: u32, pub length: u32 }
+impl StringPointer {
+    #[inline] pub fn slice<'a>(&self, buf: &'a [u8]) -> &'a [u8] {
+        &buf[self.offset as usize..(self.offset + self.length) as usize]
+    }
+}
+
+impl StringBuilder {
+    pub fn init_capacity(cap: usize) -> Result<Self, AllocError> {
+        Ok(Self { len: 0, cap, ptr: Some(vec![0u8; cap].into_boxed_slice()) })
+    }
+    #[inline] pub fn count(&mut self, slice: &[u8]) { self.cap += slice.len(); }
+    #[inline] pub fn count_z(&mut self, slice: &[u8]) { self.cap += slice.len() + 1; }
+    #[inline]
+    pub fn count16(&mut self, slice: &[u16]) {
+        self.cap += crate::strings::element_length_utf16_into_utf8(slice);
+    }
+    /// `std.fmt.count` — measures the formatted byte length.
+    #[inline]
+    pub fn fmt_count(&mut self, args: core::fmt::Arguments<'_>) {
+        struct Counter(usize);
+        impl core::fmt::Write for Counter {
+            fn write_str(&mut self, s: &str) -> core::fmt::Result { self.0 += s.len(); Ok(()) }
+        }
+        let mut c = Counter(0);
+        let _ = core::fmt::write(&mut c, args);
+        self.cap += c.0;
+    }
+    pub fn allocate(&mut self) -> Result<(), AllocError> {
+        self.ptr = Some(vec![0u8; self.cap].into_boxed_slice());
+        self.len = 0;
+        Ok(())
+    }
+    pub fn deinit(&mut self) { self.ptr = None; self.len = 0; self.cap = 0; }
+    #[inline]
+    pub fn allocated_slice(&mut self) -> &mut [u8] {
+        match &mut self.ptr { Some(p) => &mut p[..], None => &mut [] }
+    }
+    #[inline]
+    pub fn writable(&mut self) -> &mut [u8] {
+        let len = self.len;
+        match &mut self.ptr { Some(p) => &mut p[len..], None => &mut [] }
+    }
+    pub fn append(&mut self, slice: &[u8]) -> StringPointer {
+        debug_assert!(self.ptr.is_some(), "StringBuilder::append: must allocate() first");
+        debug_assert!(self.len + slice.len() <= self.cap, "StringBuilder::append: didn't count() everything");
+        let off = self.len;
+        self.writable()[..slice.len()].copy_from_slice(slice);
+        self.len += slice.len();
+        StringPointer { offset: off as u32, length: slice.len() as u32 }
+    }
+    pub fn append_z(&mut self, slice: &[u8]) -> StringPointer {
+        let sp = self.append(slice);
+        self.writable()[0] = 0;
+        self.len += 1;
+        sp
+    }
+    pub fn add(&mut self, len: usize) -> StringPointer {
+        debug_assert!(self.len + len <= self.cap);
+        let off = self.len;
+        self.len += len;
+        StringPointer { offset: off as u32, length: len as u32 }
+    }
+    /// `std.fmt.bufPrint` into the writable region.
+    pub fn fmt(&mut self, args: core::fmt::Arguments<'_>) -> StringPointer {
+        struct Cursor<'a> { buf: &'a mut [u8], pos: usize }
+        impl core::fmt::Write for Cursor<'_> {
+            fn write_str(&mut self, s: &str) -> core::fmt::Result {
+                let b = s.as_bytes();
+                self.buf[self.pos..self.pos + b.len()].copy_from_slice(b);
+                self.pos += b.len();
+                Ok(())
+            }
+        }
+        let off = self.len;
+        let mut c = Cursor { buf: self.writable(), pos: 0 };
+        let _ = core::fmt::write(&mut c, args);
+        let written = c.pos;
+        self.len += written;
+        StringPointer { offset: off as u32, length: written as u32 }
+    }
+    /// Transfer ownership of the underlying buffer; resets self.
+    pub fn move_to_slice(&mut self) -> Box<[u8]> {
+        core::mem::take(&mut self.ptr).unwrap_or_default()
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bun_core/util.zig (235 lines)
 //   confidence: low

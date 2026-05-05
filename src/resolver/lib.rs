@@ -31,8 +31,8 @@ pub use package_json::PackageJSON;
 pub use tsconfig_json::TSConfigJSON;
 /// Re-export real `DirInfo`.
 pub use dir_info::DirInfo;
-/// Stub for filesystem `Path`.
-pub struct Path(());
+/// Re-export real filesystem `Path`.
+pub use fs::Path;
 /// Stub for `PathPair`.
 pub struct PathPair(());
 /// Stub for `MatchResult`.
@@ -50,11 +50,352 @@ pub struct Bufs(());
 /// Stub for `DirEntryResolveQueueItem`.
 pub struct DirEntryResolveQueueItem(());
 
-/// Stub modules mirroring gated submodules so `bun_resolver::fs::X` paths
-/// at least resolve to *something* for downstream crates during B-1.
+/// Side-effects classification for a resolved module.
+/// Port of `SideEffects` enum in `resolver.zig`.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum SideEffects {
+    /// The default value conservatively considers all files to have side effects.
+    #[default]
+    HasSideEffects,
+
+    /// This file was listed as not having side effects by a "package.json"
+    /// file in one of our containing directories with a "sideEffects" field.
+    NoSideEffectsPackageJson,
+
+    /// This file is considered to have no side effects because the AST was empty
+    /// after parsing finished. This should be the case for ".d.ts" files.
+    NoSideEffectsEmptyAst,
+
+    /// This file was loaded using a data-oriented loader (e.g. "text") that is
+    /// known to not have side effects.
+    NoSideEffectsPureData,
+    // /// Same as above but it came from a plugin. We don't want to warn about
+    // /// unused imports to these files since running the plugin is a side effect.
+    // /// Removing the import would not call the plugin which is observable.
+    // NoSideEffectsPureDataFromPlugin,
+}
+
+impl Resolver {
+    /// Port of `Resolver.resolve` in `resolver.zig`:
+    /// `pub fn resolve(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind) !Result`
+    ///
+    /// Body is gated behind the Phase-A draft (`__phase_a_body::Resolver::resolve`)
+    /// which depends on `resolve_and_auto_install` (still blocked on bun_install /
+    /// bun_bundler). Signature is exposed so dependents type-check.
+    pub fn resolve(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &[u8],
+        kind: bun_options_types::import_record::ImportKind,
+    ) -> core::result::Result<Result, bun_core::Error> {
+        let _ = (source_dir, import_path, kind);
+        // TODO(b2-blocked): bun_install / bun_bundler — see __phase_a_body::Resolver::resolve
+        Err(bun_core::err!("ModuleNotFound"))
+    }
+}
+
+/// Minimal real subset of `src/resolver/fs.zig` so `bun_resolver::fs::X` paths
+/// resolve for downstream crates during B-2. Full Phase-A draft remains in
+/// `fs.rs` (gated) until bun_alloc::BSSStringList / bun_output land.
 pub mod fs {
-    pub type Path = super::Path;
-    pub type FileSystem = ();
+    use core::sync::atomic::{AtomicU32, Ordering};
+    use std::io::Write as _;
+
+    use bun_core::ZStr;
+    use bun_paths::resolve_path::{is_sep_any, last_index_of_sep};
+
+    // ── FileSystem ───────────────────────────────────────────────────────
+
+    /// Port of `FileSystem` in `fs.zig` (minimal — `fs: Implementation`,
+    /// `dirname_store`, `filename_store` omitted until bun_alloc::BSSStringList
+    /// is un-gated).
+    pub struct FileSystem {
+        pub top_level_dir: &'static ZStr,
+    }
+
+    // TODO(port): lifetime — global mutable singleton; Zig used `var instance: FileSystem = undefined`
+    pub static mut INSTANCE: core::mem::MaybeUninit<FileSystem> = core::mem::MaybeUninit::uninit();
+    pub static mut INSTANCE_LOADED: bool = false;
+
+    static TMPNAME_ID_NUMBER: AtomicU32 = AtomicU32::new(0);
+
+    impl FileSystem {
+        /// Port of `FileSystem.tmpname` in `fs.zig`:
+        /// `pub fn tmpname(extname: string, buf: []u8, hash: u64) std.fmt.BufPrintError![:0]u8`
+        pub fn tmpname<'b>(
+            extname: &[u8],
+            buf: &'b mut [u8],
+            hash: u64,
+        ) -> core::result::Result<&'b mut ZStr, bun_core::Error> {
+            // PORT NOTE: `std.time.nanoTimestamp()` — bun_core has no `time` module yet;
+            // use std directly (matches Zig which also calls std.time).
+            let nanos: u128 = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let hex_value: u64 = (u128::from(hash) | nanos) as u64;
+
+            let len = buf.len();
+            let mut cursor = &mut buf[..];
+            write!(
+                &mut cursor,
+                ".{:x}-{:X}.{}",
+                hex_value,
+                TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed),
+                bstr::BStr::new(extname),
+            )
+            .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
+            let written = len - cursor.len();
+            if written >= len {
+                return Err(bun_core::err!("NoSpaceLeft"));
+            }
+            buf[written] = 0;
+            // SAFETY: buf[written] == 0 written above; ZStr wraps buf[0..written] with NUL sentinel.
+            Ok(unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), written) })
+        }
+
+        #[inline]
+        pub fn instance() -> &'static mut FileSystem {
+            // SAFETY: caller guarantees init() was called (matches Zig global singleton).
+            // `&raw mut` avoids the `static_mut_refs` edition-2024 deny lint.
+            unsafe { (*(&raw mut INSTANCE)).assume_init_mut() }
+        }
+    }
+
+    // ── PathName ─────────────────────────────────────────────────────────
+
+    /// Port of `PathName` in `fs.zig`. Lifetime-generic over the input path
+    /// (Zig used implicit borrow; Phase-A draft transmuted to `'static`).
+    #[derive(Clone, Copy, Default)]
+    pub struct PathName<'a> {
+        pub base: &'a [u8],
+        pub dir: &'a [u8],
+        /// includes the leading .
+        /// extensionless files report ""
+        pub ext: &'a [u8],
+        pub filename: &'a [u8],
+    }
+
+    #[inline]
+    fn last_index_of_char(s: &[u8], c: u8) -> Option<usize> {
+        s.iter().rposition(|&b| b == c)
+    }
+
+    impl<'a> PathName<'a> {
+        pub fn find_extname(path_: &[u8]) -> &[u8] {
+            let mut start: usize = 0;
+            if let Some(i) = last_index_of_sep(path_) {
+                start = i + 1;
+            }
+            let base = &path_[start..];
+            if let Some(dot) = last_index_of_char(base, b'.') {
+                if dot > 0 {
+                    return &base[dot..];
+                }
+            }
+            b""
+        }
+
+        pub fn ext_without_leading_dot(&self) -> &'a [u8] {
+            if !self.ext.is_empty() && self.ext[0] == b'.' {
+                &self.ext[1..]
+            } else {
+                self.ext
+            }
+        }
+
+        pub fn non_unique_name_string_base(&self) -> &'a [u8] {
+            // /bar/foo/index.js -> foo
+            if !self.dir.is_empty() && self.base == b"index" {
+                // "/index" -> "index"
+                return PathName::init(self.dir).base;
+            }
+
+            if cfg!(debug_assertions) {
+                debug_assert!(!bun_core::strings::includes(self.base, b"/"));
+            }
+
+            // /bar/foo.js -> foo
+            self.base
+        }
+
+        pub fn dir_or_dot(&self) -> &'a [u8] {
+            if self.dir.is_empty() {
+                return b".";
+            }
+            self.dir
+        }
+
+        #[inline]
+        pub fn dir_with_trailing_slash(&self) -> &'a [u8] {
+            // The three strings basically always point to the same underlying ptr
+            // so if dir does not have a trailing slash, but is spaced one apart from the basename
+            // we can assume there is a trailing slash there
+            // so we extend the original slice's length by one
+            if self.dir.is_empty() {
+                return b"./";
+            }
+            let extend = (!is_sep_any(self.dir[self.dir.len() - 1])
+                && (self.dir.as_ptr() as usize + self.dir.len() + 1) == self.base.as_ptr() as usize)
+                as usize;
+            // SAFETY: when extend==1, dir.ptr[dir.len] is the separator byte preceding base
+            // (same allocation — both borrow the original `path_` passed to `init`).
+            unsafe { core::slice::from_raw_parts(self.dir.as_ptr(), self.dir.len() + extend) }
+        }
+
+        pub fn init(path_: &'a [u8]) -> PathName<'a> {
+            #[cfg(windows)]
+            if cfg!(debug_assertions) {
+                // This path is likely incorrect. I think it may be *possible*
+                // but it is almost entirely certainly a bug.
+                debug_assert!(!path_.starts_with(b"/:/"));
+                debug_assert!(!path_.starts_with(b"\\:\\"));
+            }
+
+            let mut path = path_;
+            let mut base = path;
+            let ext: &[u8];
+            let mut dir = path;
+            let mut is_absolute = true;
+            let has_disk_designator = path.len() > 2
+                && path[1] == b':'
+                && matches!(path[0], b'a'..=b'z' | b'A'..=b'Z')
+                && is_sep_any(path[2]);
+            if has_disk_designator {
+                path = &path[2..];
+            }
+
+            while let Some(i) = last_index_of_sep(path) {
+                // Stop if we found a non-trailing slash
+                if i + 1 != path.len() && path.len() > i + 1 {
+                    base = &path[i + 1..];
+                    dir = &path[0..i];
+                    is_absolute = false;
+                    break;
+                }
+
+                // Ignore trailing slashes
+                path = &path[0..i];
+            }
+
+            // Strip off the extension
+            if let Some(dot) = last_index_of_char(base, b'.') {
+                ext = &base[dot..];
+                base = &base[0..dot];
+            } else {
+                ext = b"";
+            }
+
+            if is_absolute {
+                dir = b"";
+            }
+
+            if base.len() > 1 && is_sep_any(base[base.len() - 1]) {
+                base = &base[0..base.len() - 1];
+            }
+
+            if !is_absolute && has_disk_designator {
+                dir = &path_[0..dir.len() + 2];
+            }
+
+            let filename = if !dir.is_empty() { &path_[dir.len() + 1..] } else { path_ };
+
+            PathName { dir, base, ext, filename }
+        }
+    }
+
+    // ── Path ─────────────────────────────────────────────────────────────
+
+    /// Port of `Path` in `fs.zig`. Lifetime-generic over the backing buffers.
+    #[derive(Clone)]
+    pub struct Path<'a> {
+        /// The display path. In the bundler, this is relative to the current
+        /// working directory. Since it can be emitted in bundles (and used
+        /// for content hashes), this should contain forward slashes on Windows.
+        pub pretty: &'a [u8],
+        /// The location of this resource. For the `file` namespace, this is
+        /// usually an absolute path with native slashes or an empty string.
+        pub text: &'a [u8],
+        pub namespace: &'a [u8],
+        // TODO(@paperclover): investigate removing or simplifying this property (it's 64 bytes)
+        pub name: PathName<'a>,
+        pub is_disabled: bool,
+        pub is_symlink: bool,
+    }
+
+    impl<'a> Path<'a> {
+        pub const EMPTY: Path<'static> = Path {
+            pretty: b"",
+            text: b"",
+            namespace: b"file",
+            name: PathName { base: b"", dir: b"", ext: b"", filename: b"" },
+            is_disabled: false,
+            is_symlink: false,
+        };
+
+        pub fn is_file(&self) -> bool {
+            self.namespace.is_empty() || self.namespace == b"file"
+        }
+
+        pub fn is_data_url(&self) -> bool {
+            self.namespace == b"dataurl"
+        }
+
+        pub fn is_bun(&self) -> bool {
+            self.namespace == b"bun"
+        }
+
+        pub fn is_macro(&self) -> bool {
+            self.namespace == b"macro"
+        }
+
+        #[inline]
+        pub fn source_dir(&self) -> &'a [u8] {
+            self.name.dir_with_trailing_slash()
+        }
+
+        pub fn init(text: &'a [u8]) -> Path<'a> {
+            Path {
+                pretty: text,
+                text,
+                namespace: b"file",
+                name: PathName::init(text),
+                is_disabled: false,
+                is_symlink: false,
+            }
+        }
+
+        pub fn init_with_pretty(text: &'a [u8], pretty: &'a [u8]) -> Path<'a> {
+            Path {
+                pretty,
+                text,
+                namespace: b"file",
+                name: PathName::init(text),
+                is_disabled: false,
+                is_symlink: false,
+            }
+        }
+
+        /// Port of `Path.initWithNamespace` in `fs.zig`.
+        pub fn init_with_namespace(text: &'a [u8], namespace: &'a [u8]) -> Path<'a> {
+            Path {
+                pretty: text,
+                text,
+                namespace,
+                name: PathName::init(text),
+                is_disabled: false,
+                is_symlink: false,
+            }
+        }
+    }
+
+    impl Default for Path<'_> {
+        fn default() -> Self {
+            Path::EMPTY
+        }
+    }
+
+    // ── Remaining stubs (un-gated in later B-2 batches) ──────────────────
     pub type RealFS = ();
     pub type Entry = ();
     pub type DirEntry = ();

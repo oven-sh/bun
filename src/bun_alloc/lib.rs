@@ -545,6 +545,294 @@ pub fn slice_range(slice: &[u8], buffer: &[u8]) -> Option<[u32; 2]> {
     }
 }
 
+/// Zig: `bun.rangeOfSliceInBuffer` (`src/bun.zig`).
+/// Returns `[offset, len]` if `slice` lies within `buffer`, else `None`.
+pub fn range_of_slice_in_buffer(slice: &[u8], buffer: &[u8]) -> Option<[u32; 2]> {
+    if !is_slice_in_buffer(slice, buffer) {
+        return None;
+    }
+    let r = [
+        // Zig: `@truncate(@intFromPtr(slice.ptr) -| @intFromPtr(buffer.ptr))`
+        (slice.as_ptr() as usize).saturating_sub(buffer.as_ptr() as usize) as u32,
+        slice.len() as u32,
+    ];
+    debug_assert_eq!(slice, &buffer[r[0] as usize..][..r[1] as usize]);
+    Some(r)
+}
+
+/// Zig: `bun.freeSensitive` (`src/bun.zig`).
+///
+/// Memory is typically not decommitted immediately when freed. Sensitive
+/// information kept in memory can be read until the OS decommits it or the
+/// allocator reuses it. Zero it before dropping.
+///
+/// Zig used `std.crypto.secureZero` then `allocator.free`; Rust drops the
+/// allocator param (global mimalloc) and uses volatile writes so the zeroing
+/// cannot be elided by the optimizer.
+pub fn free_sensitive<T: Copy>(mut slice: Box<[T]>) {
+    // SAFETY: `slice` is exclusively owned; writing `size_of_val` zero bytes
+    // over its storage is sound for `T: Copy` (no drop glue, no invariants on
+    // the bit pattern we're discarding). Volatile prevents dead-store elision.
+    unsafe {
+        let len = core::mem::size_of_val::<[T]>(&slice);
+        core::ptr::write_bytes(slice.as_mut_ptr().cast::<u8>(), 0, len);
+        // Compiler fence: ensure the volatile-ish zeroing isn't reordered past drop.
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    }
+    drop(slice);
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// IndexType — `packed struct(u32) { index: u31, is_overflow: bool = false }`
+// Zig packed-struct fields are LSB-first: bits 0..=30 = index, bit 31 = is_overflow.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub struct IndexType(u32);
+
+impl IndexType {
+    #[inline]
+    pub const fn new(index: u32, is_overflow: bool) -> Self {
+        Self((index & 0x7FFF_FFFF) | ((is_overflow as u32) << 31))
+    }
+    #[inline]
+    pub const fn index(self) -> u32 {
+        self.0 & 0x7FFF_FFFF
+    }
+    #[inline]
+    pub const fn is_overflow(self) -> bool {
+        (self.0 >> 31) != 0
+    }
+    #[inline]
+    pub fn set_index(&mut self, index: u32) {
+        self.0 = (self.0 & 0x8000_0000) | (index & 0x7FFF_FFFF);
+    }
+    #[inline]
+    pub fn set_is_overflow(&mut self, v: bool) {
+        self.0 = (self.0 & 0x7FFF_FFFF) | ((v as u32) << 31);
+    }
+    #[inline]
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
+}
+
+pub const NOT_FOUND: IndexType = IndexType::new(u32::MAX >> 1, false); // maxInt(u31)
+pub const UNASSIGNED: IndexType = IndexType::new((u32::MAX >> 1) - 1, false); // maxInt(u31) - 1
+
+#[repr(u8)] // Zig: enum(u3)
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ItemStatus {
+    Unknown,
+    Exists,
+    NotFound,
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// BSSList / BSSStringList / BSSMapInner — minimal type shapes
+//
+// Full method bodies live in the `_bss_gated` module below (blocked on
+// `bun_collections` + a non-RAII `Mutex` and per-monomorphization statics).
+// These shapes let dependents (`resolver::dir_info`, `bundler::linker`) name
+// the types and store them in fields; instantiation goes through `init()`
+// which is a Phase-B `unimplemented!()` until the gated impl is un-gated.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// "Formerly-BSSList" — fixed-capacity backing array with heap-chunked overflow.
+/// `COUNT` is the post-doubled capacity (Zig: `count = _count * 2`).
+pub struct BSSList<ValueType, const COUNT: usize> {
+    _value: core::marker::PhantomData<ValueType>,
+    // Real fields (backing_buf, head/tail overflow chain, mutex) live in the
+    // gated impl; PhantomData keeps the type non-ZST-agnostic for variance.
+}
+
+impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
+    pub fn init() -> &'static mut Self {
+        // TODO(port): per-monomorphization singleton (generic statics not on stable).
+        unimplemented!("BSSList::init requires per-type static storage (Phase B)")
+    }
+}
+
+/// Append-only string interner backed by a `.bss` slab, overflowing to heap.
+/// `COUNT` / `ITEM_LENGTH` are the post-adjusted Zig values
+/// (`count = _count * 2`, `item_length = _item_length + 1`).
+pub struct BSSStringList<const COUNT: usize, const ITEM_LENGTH: usize> {
+    _priv: (),
+}
+
+impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LENGTH> {
+    pub fn init() -> &'static mut Self {
+        // TODO(port): per-monomorphization singleton.
+        unimplemented!("BSSStringList::init requires per-type static storage (Phase B)")
+    }
+}
+
+/// `BSSMap` with `store_keys = false` — wyhash-keyed `IndexMap` over a fixed
+/// backing array + overflow list.
+pub struct BSSMapInner<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool> {
+    _value: core::marker::PhantomData<ValueType>,
+}
+
+impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
+    BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES>
+{
+    pub fn init() -> &'static mut Self {
+        // TODO(port): per-monomorphization singleton.
+        unimplemented!("BSSMapInner::init requires per-type static storage (Phase B)")
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// heap_breakdown — macOS `malloc_zone_*` per-tag heaps (debug-only)
+//
+// Full draft lives in `heap_breakdown.rs` (gated below; depends on a richer
+// `Allocator` trait + a string-keyed map). This inline module exposes the
+// symbols dependents reference (`ENABLED`, `Zone`, `get_zone`,
+// `malloc_zone_{calloc,free,malloc}`) and compiles on all targets — on
+// non-macOS the FFI surface is `unreachable!()` behind `ENABLED == false`.
+// ──────────────────────────────────────────────────────────────────────────
+
+pub mod heap_breakdown {
+    #[allow(unused_imports)]
+    use core::ffi::{c_char, c_uint, c_void};
+    use core::marker::{PhantomData, PhantomPinned};
+
+    /// `Environment.allow_assert and Environment.isMac and !Environment.enable_asan`
+    // TODO(port): `enable_asan` → cargo feature; wire in Phase B.
+    pub const ENABLED: bool = cfg!(debug_assertions) && cfg!(target_os = "macos");
+
+    /// Opaque FFI handle for a macOS `malloc_zone_t`.
+    #[repr(C)]
+    pub struct Zone {
+        _p: [u8; 0],
+        _m: PhantomData<(*mut u8, PhantomPinned)>,
+    }
+
+    // SAFETY: `malloc_zone_t` is internally synchronized by libmalloc; sharing a
+    // `*const Zone` across threads is the documented usage.
+    unsafe impl Sync for Zone {}
+    unsafe impl Send for Zone {}
+
+    impl Zone {
+        /// Zig: `Zone.init(comptime name)` — creates and names a malloc zone.
+        #[cfg(target_os = "macos")]
+        pub fn init(name: &'static core::ffi::CStr) -> &'static Zone {
+            // SAFETY: `malloc_create_zone(0, 0)` returns a process-lifetime zone;
+            // `malloc_set_zone_name` stores (does not copy) `name`, hence 'static.
+            unsafe {
+                let zone = malloc_create_zone(0, 0);
+                malloc_set_zone_name(zone, name.as_ptr());
+                &*zone
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        pub fn init(_name: &'static core::ffi::CStr) -> &'static Zone {
+            unreachable!("heap_breakdown is macOS-only; guard call sites on ENABLED")
+        }
+
+        /// Zig: `Zone.isInstance(allocator)` — vtable-identity check.
+        // TODO(port): Zig compared `allocator.vtable == &Zone.vtable`; with the
+        // marker `Allocator` trait there is no portable identity to compare.
+        pub fn is_instance(_alloc: &dyn crate::Allocator) -> bool {
+            false
+        }
+
+        #[inline]
+        pub fn malloc_zone_malloc(&self, size: usize) -> Option<*mut c_void> {
+            // SAFETY: `self` is a live `malloc_zone_t`.
+            let p = unsafe { malloc_zone_malloc(self as *const Zone as *mut Zone, size) };
+            if p.is_null() { None } else { Some(p) }
+        }
+
+        /// # Safety
+        /// `ptr` must have been allocated by this zone (via `malloc_zone_malloc`
+        /// / `malloc_zone_calloc`) and not already freed.
+        #[inline]
+        pub unsafe fn malloc_zone_free(&self, ptr: *mut c_void) {
+            // SAFETY: caller contract above; `self` is a live `malloc_zone_t`.
+            unsafe { malloc_zone_free(self as *const Zone as *mut Zone, ptr) }
+        }
+    }
+
+    /// Runtime `getZone(name)` — looks up (or creates) the per-name zone.
+    ///
+    /// Zig used a comptime-monomorphized `static` per literal; the macro
+    /// `get_zone!` below is the zero-cost form. This runtime path keys a
+    /// process-global map for callers that pass a non-literal name.
+    #[allow(clippy::assertions_on_constants)]
+    pub fn get_zone(name: &[u8]) -> &'static Zone {
+        debug_assert!(ENABLED, "heap_breakdown::get_zone called with ENABLED=false");
+        static ZONES: std::sync::OnceLock<
+            parking_lot::Mutex<std::collections::HashMap<Vec<u8>, &'static Zone>>,
+        > = std::sync::OnceLock::new();
+        let map = ZONES.get_or_init(Default::default);
+        let mut map = map.lock();
+        if let Some(&z) = map.get(name) {
+            return z;
+        }
+        // Zone names live forever (zones are never destroyed); allocate the
+        // NUL-terminated label once and hand its pointer to the OS.
+        let mut owned = Vec::with_capacity(name.len() + 1);
+        owned.extend_from_slice(name);
+        owned.push(0);
+        let raw = owned.as_ptr();
+        // Keep `owned` alive for 'static by storing it in the map key alongside
+        // the zone (the map itself is 'static). No `Box::leak` needed.
+        // SAFETY: `owned` ends in NUL and contains no interior NUL (type-name input).
+        let cstr = unsafe { core::ffi::CStr::from_ptr(raw as *const c_char) };
+        // SAFETY: the bytes backing `cstr` are owned by `owned`, which is moved
+        // into the 'static map below before this fn returns, so the pointer the
+        // OS stores via `malloc_set_zone_name` remains valid for process lifetime.
+        let cstr_static: &'static core::ffi::CStr =
+            unsafe { &*(cstr as *const core::ffi::CStr) };
+        let zone = Zone::init(cstr_static);
+        map.insert(owned, zone);
+        zone
+    }
+
+    #[cfg(target_os = "macos")]
+    unsafe extern "C" {
+        pub fn malloc_create_zone(start_size: usize, flags: c_uint) -> *mut Zone;
+        pub fn malloc_set_zone_name(zone: *mut Zone, name: *const c_char);
+        pub fn malloc_zone_malloc(zone: *mut Zone, size: usize) -> *mut c_void;
+        pub fn malloc_zone_calloc(zone: *mut Zone, num_items: usize, size: usize) -> *mut c_void;
+        pub fn malloc_zone_free(zone: *mut Zone, ptr: *mut c_void);
+        pub fn malloc_zone_memalign(zone: *mut Zone, alignment: usize, size: usize) -> *mut c_void;
+    }
+
+    // Non-macOS stubs so cross-platform call sites guarded by `if ENABLED { … }`
+    // (where `ENABLED` is a `const false`) still type-check. Never executed.
+    #[cfg(not(target_os = "macos"))]
+    #[allow(clippy::missing_safety_doc)]
+    mod stubs {
+        use super::*;
+        pub unsafe fn malloc_zone_malloc(_: *mut Zone, _: usize) -> *mut c_void { unreachable!() }
+        pub unsafe fn malloc_zone_calloc(_: *mut Zone, _: usize, _: usize) -> *mut c_void { unreachable!() }
+        pub unsafe fn malloc_zone_free(_: *mut Zone, _: *mut c_void) { unreachable!() }
+    }
+    #[cfg(not(target_os = "macos"))]
+    pub use stubs::{malloc_zone_calloc, malloc_zone_free, malloc_zone_malloc};
+}
+
+/// Comptime-literal form of `heap_breakdown::get_zone` — expands a per-name `OnceLock`.
+#[macro_export]
+macro_rules! get_zone {
+    ($name:literal) => {{
+        static ZONE: ::std::sync::OnceLock<&'static $crate::heap_breakdown::Zone> =
+            ::std::sync::OnceLock::new();
+        *ZONE.get_or_init(|| {
+            // SAFETY: concat!($name, "\0") is a valid NUL-terminated C string literal.
+            let cstr = unsafe {
+                ::core::ffi::CStr::from_bytes_with_nul_unchecked(
+                    concat!($name, "\0").as_bytes(),
+                )
+            };
+            $crate::heap_breakdown::Zone::init(cstr)
+        })
+    }};
+}
+
 // ── B-1 gate: BSSList/BSSMap/FBS need bun_collections + bare Mutex ────────
 #[cfg(any())]
 mod _bss_gated {
@@ -1518,7 +1806,7 @@ impl Allocator for DefaultAlloc {}
 // `basic.zig` ported as `impl GlobalAlloc for Mimalloc` above (the real impl).
 // Draft kept for diff-pass only.
 #[cfg(any())] #[path = "basic.rs"] pub mod basic;
-#[cfg(any())] pub mod heap_breakdown; // DEBUG-ONLY (macOS malloc_zone_*); keep gated
+#[cfg(any())] #[path = "heap_breakdown.rs"] mod heap_breakdown_full; // DEBUG-ONLY draft; superseded by inline `heap_breakdown` above
 pub mod memory;
 
 // ──────────────────────────────────────────────────────────────────────────

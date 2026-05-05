@@ -17,6 +17,7 @@ enum-map.workspace = true
 enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
+thiserror.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
 # TODO(b1): bun_event_loop pulls in bun_aio which doesn't compile yet — gated out.

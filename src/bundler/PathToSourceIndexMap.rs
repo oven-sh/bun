@@ -46,7 +46,9 @@ impl PathToSourceIndexMap {
     }
 
     pub fn get_or_put(&mut self, text: &[u8]) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
-        use bun_collections::hash_map::Entry;
+        // `Map` derefs to `std::collections::HashMap`, so this is std's Entry —
+        // not `bun_collections::hash_map::Entry` (which is `ArrayHashMap`'s).
+        use std::collections::hash_map::Entry;
         // PERF(port): see note in `put` re: key duplication.
         match self.map.entry(Box::<[u8]>::from(text)) {
             Entry::Occupied(e) => Ok(GetOrPutResult { value_ptr: e.into_mut(), found_existing: true }),

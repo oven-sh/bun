@@ -25,3 +25,4 @@ bun_io.workspace = true
 bun_paths.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true
+bun_uws.workspace = true

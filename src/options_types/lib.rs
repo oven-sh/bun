@@ -21,3 +21,9 @@ pub mod Context;
 
 #[path = "CompileTarget.rs"]
 pub mod CompileTarget;
+
+// ─── B-2 Track A: crate-root re-exports for dependents ───────────────────
+// Dependents (bundler/css/js_parser/http_types/watcher) import these by bare
+// name from the crate root rather than reaching into the defining module.
+pub use import_record::{ImportRecord, ImportKind, Index as ImportRecordIndex, Flags as ImportRecordFlags, Tag as ImportRecordTag};
+pub use BundleEnums::{Loader, LoaderOptional, Format, Target, SideEffects, BundlePackage, BuiltInModule, WindowsOptions};

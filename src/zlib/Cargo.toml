@@ -19,5 +19,7 @@ libc.workspace = true
 bitflags.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
-# TODO(b1): bun_io removed (tier-0 dep doesn't compile); only used for a Write trait bound which is gated.
+bun_zlib_sys.workspace = true
+# TODO(b2-blocked): bun_io::Write — bun_io doesn't compile yet and lacks the Write trait;
+# only used for a Write trait bound on ZlibReader::read_all which is gated.
 # bun_io.workspace = true

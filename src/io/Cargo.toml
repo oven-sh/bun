@@ -22,3 +22,5 @@ bun_collections.workspace = true
 bun_string.workspace = true
 bun_sys.workspace = true
 bun_uws_sys.workspace = true
+bun_paths.workspace = true
+bun_errno.workspace = true

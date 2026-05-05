@@ -4340,6 +4340,83 @@ pub fn GetEnvironmentVariableW(lpName: LPWSTR, lpBuffer: *mut u16, nSize: DWORD)
 
 pub mod env;
 
+// ──────────────────────────────────────────────────────────────────────────
+// B-2 Track A — additional surface unblocked for dependents.
+// ──────────────────────────────────────────────────────────────────────────
+
+unsafe extern "system" {
+    /// kernel32 high-resolution timer.
+    pub fn QueryPerformanceCounter(lpPerformanceCount: *mut i64) -> BOOL;
+    pub fn QueryPerformanceFrequency(lpFrequency: *mut i64) -> BOOL;
+}
+
+/// `bun.windows.translateNtStatusToErrno` — `RtlNtStatusToDosError` →
+/// Win32Error → `E`. Unknown status codes map to `EUNKNOWN`.
+pub fn translate_ntstatus_to_errno(status: NTSTATUS) -> E {
+    // SAFETY: ntdll export; status is a plain integer.
+    let win32 = unsafe { RtlNtStatusToDosError(status) };
+    win32.to_system_errno().unwrap_or(E::EUNKNOWN)
+}
+
+/// `bun.windows.getenvW` — read a UTF-16 env var into an owned `Vec<u16>`.
+pub fn getenv_w(name: &[u16]) -> Option<Vec<u16>> {
+    let mut buf = vec![0u16; 256];
+    loop {
+        // SAFETY: name and buf are valid for the call's duration.
+        let n = unsafe {
+            kernel32_2::GetEnvironmentVariableW(name.as_ptr(), buf.as_mut_ptr(), buf.len() as DWORD)
+        };
+        if n == 0 { return None; }
+        if (n as usize) < buf.len() { buf.truncate(n as usize); return Some(buf); }
+        buf.resize(n as usize + 1, 0);
+    }
+}
+
+/// `bun.windows.libuv` — thin re-export of the libuv FFI surface that the
+/// rest of the codebase reaches as `bun_sys::windows::libuv::*`.
+pub mod libuv {
+    use core::ffi::{c_int, c_void};
+    use crate::E;
+
+    /// `uv_uid_t` — `int` on Windows (libuv `include/uv/win.h`).
+    pub type uv_uid_t = c_int;
+    pub type uv_gid_t = c_int;
+    pub type uv_file  = c_int;
+
+    /// Opaque `uv_loop_t`.
+    #[repr(C)]
+    pub struct Loop { _p: [u8; 0] }
+    impl Loop {
+        pub fn get() -> *mut Loop {
+            // SAFETY: libuv guarantees `uv_default_loop()` is valid for the
+            // process lifetime once the library is loaded.
+            unsafe { uv_default_loop() }
+        }
+    }
+    /// Opaque `uv_timer_t`.
+    #[repr(C)]
+    pub struct Timer { _p: [u8; 0] }
+
+    /// Map a negative libuv return code to `E` (libuv codes are negated POSIX
+    /// errno on Unix; on Windows they are an internal table). Port of
+    /// `bun.windows.libuv.translateUvErrorToE`.
+    pub fn translate_uv_error_to_e(rc: c_int) -> E {
+        if rc >= 0 { return E::SUCCESS; }
+        let pos = (-rc) as u16;
+        crate::SystemErrno::init(pos as i64).unwrap_or(E::EUNKNOWN)
+    }
+
+    unsafe extern "C" {
+        pub fn uv_default_loop() -> *mut Loop;
+        pub fn uv_replace_allocator(
+            malloc: unsafe extern "C" fn(usize) -> *mut c_void,
+            realloc: unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void,
+            calloc: unsafe extern "C" fn(usize, usize) -> *mut c_void,
+            free: unsafe extern "C" fn(*mut c_void),
+        ) -> c_int;
+    }
+}
+
 bun_output::declare_scope!(windowsUserUniqueId, visible);
 
 // SetFilePointerEx referenced via externs above

@@ -779,6 +779,18 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
         self.len
     }
 
+    /// Zig `self.len = new_len`. Exposed for callers that pre-reserve capacity
+    /// and then bulk-initialize columns out of band (e.g. `Headers::from`).
+    ///
+    /// # Safety
+    /// `new_len <= self.capacity()`, and every column element in
+    /// `old_len..new_len` must be initialized before any read (including Drop).
+    #[inline]
+    pub unsafe fn set_len(&mut self, new_len: usize) {
+        debug_assert!(new_len <= self.capacity);
+        self.len = new_len;
+    }
+
     #[inline]
     pub fn capacity(&self) -> usize {
         self.capacity

@@ -22,10 +22,14 @@ bun_base64.workspace = true
 bun_boringssl_sys.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
-# TODO(b1): bun_jsc does not compile (254 errors); re-enable in B-2.
+# TODO(b2-blocked): bun_jsc fails to compile (concurrent B-2 un-gating in
+# DOMURL/JSBigInt/TopExceptionScope). Re-enable once bun_jsc is green; this
+# crate uses local opaque stubs in the meantime (see lib.rs `mod jsc`).
 # bun_jsc.workspace = true
 bun_ptr.workspace = true
-bun_runtime.workspace = true
+# TODO(b2-blocked): bun_runtime fails to compile (concurrent B-2 work in
+# server.rs / node.rs). Only gated SASL::compute_salted_password references it.
+# bun_runtime.workspace = true
 bun_sql.workspace = true
 bun_string.workspace = true
 bun_uws.workspace = true

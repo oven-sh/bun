@@ -28,7 +28,7 @@ pub mod vlq;
 pub use vlq::{VLQ, encode as encode_vlq};
 use vlq::{decode as decode_vlq, decode_assume_valid as decode_vlq_assume_valid};
 
-pub use line_offset_table::LineOffsetTable;
+pub use line_offset_table::{LineOffsetTable, ListExt as LineOffsetTableListExt};
 pub use mapping::{Mapping, Lookup as MappingLookup};
 pub use parsed_source_map::{ParsedSourceMap, SourceContentPtr};
 
@@ -413,6 +413,50 @@ impl DevServerSourceProvider {
         // TODO(b2): wire to get_source_map_impl once SourceProvider trait is un-gated
         None
     }
+}
+
+// ── SourceProvider trait + get_source_map_impl ─────────────────────────────
+
+/// Abstraction over `SourceProviderMap` / `DevServerSourceProvider` /
+/// `BakeSourceProvider` — Zig used `comptime SourceProviderKind: type` plus
+/// `@hasDecl` checks; in Rust this is a trait with default-`None` optional
+/// methods so each provider only overrides what it actually has.
+pub trait SourceProvider {
+    fn get_source_slice(&self) -> bun_str::String;
+    fn to_source_content_ptr(&self) -> SourceContentPtr;
+
+    /// Returns the dev-server source map JSON, if this provider is a
+    /// `DevServerSourceProvider`. Default: `None`.
+    fn get_source_map_json(&self) -> Option<&[u8]> {
+        None
+    }
+
+    /// Returns external data (Bake production build), if available.
+    /// Default: `None`.
+    fn get_external_data(&self, _source_filename: &[u8]) -> Option<&[u8]> {
+        None
+    }
+
+    /// Mirrors Zig `comptime SourceProviderKind == DevServerSourceProvider`.
+    const IS_DEV_SERVER: bool = false;
+    /// Mirrors `@hasDecl(SourceProviderKind, "getExternalData")`.
+    const HAS_EXTERNAL_DATA: bool = false;
+}
+
+/// The last two arguments to this specify loading hints.
+///
+/// Body is preserved in `_phase_a_draft::get_source_map_impl` and gated on the
+/// same lower-tier surface as `parse_url`/`parse_json` (which it calls).
+pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
+    _provider: &P,
+    _source_filename: &[u8],
+    _load_hint: SourceMapLoadHint,
+    _result: ParseUrlResultHint,
+) -> Option<ParseUrl> {
+    // TODO(b2-blocked): bun_interchange::json::parse + bun_core::base64
+    // (via parse_url/parse_json) and bun_sys::File::read_from arena variant.
+    // Full body lives in `_phase_a_draft::get_source_map_impl`.
+    todo!("B-2: get_source_map_impl — see _phase_a_draft")
 }
 
 // ── SavedSourceMap leaf state (compiles today; see Phase-A note) ──────────

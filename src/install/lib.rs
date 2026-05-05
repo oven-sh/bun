@@ -76,12 +76,290 @@ pub mod tarball_stream { pub struct TarballStream; }
 #[cfg(not(any()))]
 pub mod npm {
     pub struct PackageManifest;
+
     pub struct Registry;
+    impl Registry {
+        /// Zig: `npm.Registry.default_url` (src/install/npm.zig)
+        pub const DEFAULT_URL: &'static str = "https://registry.npmjs.org/";
+        // NOTE: Zig computes this at comptime via Wyhash11; lazy-init here because
+        // bun_wyhash::Wyhash11::hash is not `const fn` yet.
+        pub fn default_url_hash() -> u64 {
+            static H: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+            *H.get_or_init(|| {
+                let url = Self::DEFAULT_URL.as_bytes();
+                // strings.withoutTrailingSlash(default_url)
+                let trimmed = url.strip_suffix(b"/").unwrap_or(url);
+                bun_wyhash::Wyhash11::hash(0, trimmed)
+            })
+        }
+        // TODO(b2): make this a true const once Wyhash11::hash is const fn.
+        pub const DEFAULT_URL_HASH: u64 = 0; // placeholder — callers should use default_url_hash()
+    }
+
+    /// Port of `Negatable(T)` generic struct (src/install/npm.zig).
+    #[derive(Clone, Copy, Default)]
+    pub struct Negatable<T: NegatableSet> {
+        pub added: T,
+        pub removed: T,
+        pub had_wildcard: bool,
+        pub had_unrecognized_values: bool,
+    }
+
+    /// Common trait for `OperatingSystem` / `Libc` / `Architecture` so the
+    /// `Negatable<T>` generic can dispatch on bitwidth + name table without
+    /// macro duplication. Mirrors the Zig `enum(uN) { none, all, _ }` shape.
+    pub trait NegatableSet: Copy + Default {
+        type Repr: Copy
+            + core::ops::BitOr<Output = Self::Repr>
+            + core::ops::BitAnd<Output = Self::Repr>
+            + core::ops::Not<Output = Self::Repr>
+            + PartialEq
+            + From<u8>;
+        const ALL_VALUE: Self::Repr;
+        fn from_repr(v: Self::Repr) -> Self;
+        fn to_repr(self) -> Self::Repr;
+        fn name_map_get(name: &[u8]) -> Option<Self::Repr>;
+    }
+
+    impl<T: NegatableSet> Negatable<T> {
+        // https://github.com/pnpm/pnpm/blob/1f228b0aeec2ef9a2c8577df1d17186ac83790f9/config/package-is-installable/src/checkPlatform.ts#L56-L86
+        // https://github.com/npm/cli/blob/fefd509992a05c2dfddbe7bc46931c42f1da69d7/node_modules/npm-install-checks/lib/index.js#L2-L96
+        pub fn combine(self) -> T {
+            let zero: T::Repr = 0u8.into();
+            let added = if self.had_wildcard { T::ALL_VALUE } else { self.added.to_repr() };
+            let removed = self.removed.to_repr();
+
+            if added == zero && removed == zero {
+                if self.had_unrecognized_values {
+                    return T::from_repr(zero);
+                }
+                return T::from_repr(T::ALL_VALUE);
+            }
+            if added == zero && removed != zero {
+                return T::from_repr(T::ALL_VALUE & !removed);
+            }
+            if removed == zero {
+                return T::from_repr(added);
+            }
+            T::from_repr(added & !removed)
+        }
+
+        pub fn apply(&mut self, str: &[u8]) {
+            if str.is_empty() {
+                return;
+            }
+            if str == b"any" {
+                self.had_wildcard = true;
+                return;
+            }
+            if str == b"none" {
+                self.had_unrecognized_values = true;
+                return;
+            }
+            let is_not = str[0] == b'!';
+            let body = if is_not { &str[1..] } else { str };
+            let Some(field) = T::name_map_get(body) else {
+                if !is_not {
+                    self.had_unrecognized_values = true;
+                }
+                return;
+            };
+            if is_not {
+                self.removed = T::from_repr(self.removed.to_repr() | field);
+            } else {
+                self.added = T::from_repr(self.added.to_repr() | field);
+            }
+        }
+    }
+
+    macro_rules! negatable_bitset {
+        (
+            $(#[$m:meta])*
+            $name:ident : $repr:ty {
+                $( $variant:ident = $shift:expr ),* $(,)?
+            }
+            current = $current:expr ;
+        ) => {
+            $(#[$m])*
+            #[repr(transparent)]
+            #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+            pub struct $name(pub $repr);
+
+            #[allow(non_upper_case_globals)]
+            impl $name {
+                pub const NONE: $name = $name(0);
+                $( pub const $variant: $repr = 1 << $shift; )*
+                pub const ALL_VALUE: $repr = 0 $( | (1 << $shift) )*;
+                pub const ALL: $name = $name(Self::ALL_VALUE);
+                pub const CURRENT: $name = $name($current);
+
+                #[inline] pub fn is_match(self, target: $name) -> bool { self.0 & target.0 != 0 }
+                #[inline] pub fn has(self, other: $repr) -> bool { self.0 & other != 0 }
+                #[inline] pub fn negatable(self) -> Negatable<$name> {
+                    Negatable { added: self, removed: $name::NONE, had_wildcard: false, had_unrecognized_values: false }
+                }
+
+                pub fn name_map_get(name: &[u8]) -> Option<$repr> {
+                    match name {
+                        $( s if s == stringify!($variant).as_bytes() => Some(Self::$variant), )*
+                        _ => None,
+                    }
+                }
+            }
+
+            impl NegatableSet for $name {
+                type Repr = $repr;
+                const ALL_VALUE: $repr = $name::ALL_VALUE;
+                #[inline] fn from_repr(v: $repr) -> Self { $name(v) }
+                #[inline] fn to_repr(self) -> $repr { self.0 }
+                #[inline] fn name_map_get(name: &[u8]) -> Option<$repr> { $name::name_map_get(name) }
+            }
+        };
+    }
+
+    // src/install/npm.zig: OperatingSystem
+    negatable_bitset! {
+        OperatingSystem: u16 {
+            aix = 1, darwin = 2, freebsd = 3, linux = 4,
+            openbsd = 5, sunos = 6, win32 = 7, android = 8,
+        }
+        current = if cfg!(target_os = "linux") { 1u16 << 4 }
+            else if cfg!(target_os = "macos") { 1u16 << 2 }
+            else if cfg!(target_os = "windows") { 1u16 << 7 }
+            else if cfg!(target_os = "freebsd") { 1u16 << 3 }
+            else if cfg!(target_os = "android") { 1u16 << 8 }
+            else { 0 };
+    }
+
+    // src/install/npm.zig: Libc
+    negatable_bitset! {
+        Libc: u8 {
+            glibc = 1, musl = 2,
+        }
+        // TODO(port): Zig hardcodes glibc; revisit musl detection.
+        current = 1u8 << 1;
+    }
+
+    // src/install/npm.zig: Architecture
+    negatable_bitset! {
+        /// https://docs.npmjs.com/cli/v8/configuring-npm/package-json#cpu
+        Architecture: u16 {
+            arm = 1, arm64 = 2, ia32 = 3, mips = 4, mipsel = 5,
+            ppc = 6, ppc64 = 7, s390 = 8, s390x = 9, x32 = 10, x64 = 11,
+        }
+        current = if cfg!(target_arch = "aarch64") { 1u16 << 2 }
+            else if cfg!(target_arch = "x86_64") { 1u16 << 11 }
+            else { 0 };
+    }
+
+    /// Lower-case path alias so `npm::registry::Scope` resolves (Zig:
+    /// `npm.Registry.Scope`). Real defs live in gated `npm.rs`.
+    pub mod registry {
+        pub use super::Registry;
+
+        #[derive(Default)]
+        pub struct Url<'a> {
+            pub host: &'a [u8],
+            pub hostname: &'a [u8],
+            pub href: &'a [u8],
+            pub origin: &'a [u8],
+            pub protocol: &'a [u8],
+        }
+
+        #[derive(Default)]
+        pub struct Scope<'a> {
+            pub name: &'a [u8],
+            pub url: Url<'a>,
+            pub url_hash: u64,
+        }
+        impl<'a> Scope<'a> {
+            #[inline]
+            pub fn hash(name: &[u8]) -> u64 { bun_wyhash::Wyhash11::hash(0, name) }
+        }
+    }
+
+    /// Lower-case path alias so `npm::package_manifest::Serializer` resolves.
+    pub mod package_manifest {
+        pub use super::PackageManifest;
+        pub struct Serializer;
+        impl Serializer {
+            pub fn load_by_file(
+                _scope: &super::registry::Scope<'_>,
+                _file: impl Sized,
+            ) -> Result<Option<PackageManifest>, bun_core::Error> {
+                todo!("B-2: npm::PackageManifest::Serializer::load_by_file")
+            }
+        }
+    }
 }
 #[cfg(not(any()))]
 pub mod package_manager {
     pub struct PackageManager;
     pub mod security_scanner { pub struct SecurityScanSubprocess; }
+
+    /// Port of `PackageManager.Subcommand` (src/install/PackageManager.zig).
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
+    #[strum(serialize_all = "kebab-case")]
+    pub enum Subcommand {
+        Install,
+        Update,
+        Pm,
+        Add,
+        Remove,
+        Link,
+        Unlink,
+        Patch,
+        PatchCommit,
+        Outdated,
+        Pack,
+        Publish,
+        Audit,
+        Info,
+        Why,
+        Scan,
+    }
+
+    impl Subcommand {
+        pub fn can_globally_install_packages(self) -> bool {
+            matches!(self, Self::Install | Self::Update | Self::Add)
+        }
+        pub fn supports_workspace_filtering(self) -> bool {
+            matches!(self, Self::Outdated | Self::Install | Self::Update)
+        }
+        pub fn supports_json_output(self) -> bool {
+            matches!(self, Self::Audit | Self::Pm | Self::Info)
+        }
+        // TODO: make all subcommands find root and chdir
+        pub fn should_chdir_to_root(self) -> bool {
+            !matches!(self, Self::Link)
+        }
+    }
+
+    /// Stub for `PackageManager/UpdateRequest.zig`. Real impl gated.
+    pub mod update_request {
+        pub type Array = Vec<UpdateRequest>;
+
+        #[derive(Default)]
+        pub struct UpdateRequest {
+            pub name: Vec<u8>,
+            pub version: crate::dependency::Version,
+            pub version_buf: Vec<u8>,
+            pub failed: bool,
+        }
+
+        impl UpdateRequest {
+            pub fn parse_with_error(
+                _manager: Option<&mut super::PackageManager>,
+                _log: &mut bun_logger::Log,
+                _positionals: &[&[u8]],
+                _out: &mut Array,
+                _subcommand: super::Subcommand,
+                _is_dev: bool,
+            ) -> Result<&'static mut [UpdateRequest], bun_core::Error> {
+                todo!("B-2: UpdateRequest::parse_with_error")
+            }
+        }
+    }
 }
 #[cfg(not(any()))]
 pub mod package_manifest_map { pub struct PackageManifestMap; }
@@ -93,6 +371,110 @@ pub mod lockfile {
     pub struct PatchedDep;
     pub mod bun_lock {}
     pub mod tree { pub type Id = u32; }
+
+    impl Lockfile {
+        /// Zig: `Lockfile.initEmpty(this: *Lockfile, allocator)` — out-param init.
+        /// In Rust the allocator is implicit (global), so this is a value constructor.
+        pub fn init_empty() -> Self {
+            // TODO(b2): populate fields once Lockfile struct is un-gated.
+            Lockfile
+        }
+
+        /// Zig: `Lockfile.loadFromDir(this, dir, ?*PackageManager, allocator, *Log,
+        /// comptime attempt_loading_from_other_lockfile)`. Allocator dropped per
+        /// PORTING.md; comptime bool becomes a runtime bool.
+        pub fn load_from_dir(
+            &mut self,
+            _dir: bun_sys::Fd,
+            _manager: Option<&mut crate::package_manager::PackageManager>,
+            _log: &mut bun_logger::Log,
+            _attempt_loading_from_other_lockfile: bool,
+        ) -> LoadResult {
+            todo!("B-2: Lockfile::load_from_dir")
+        }
+
+        pub fn to_json_fmt(&self, _opts: JsonFmtOptions) -> impl core::fmt::Display + '_ {
+            struct F<'a>(&'a Lockfile);
+            impl core::fmt::Display for F<'_> {
+                fn fmt(&self, _f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                    todo!("B-2: Lockfile JSON serializer (std.json.fmt port)")
+                }
+            }
+            F(self)
+        }
+    }
+
+    /// Port of `LoadResult` tagged union (src/install/lockfile.zig).
+    pub enum LoadResult {
+        NotFound,
+        Err(LoadResultErr),
+        Ok(LoadResultOk),
+    }
+
+    pub struct LoadResultErr {
+        pub step: Step,
+        pub value: bun_core::Error,
+        pub lockfile_path: &'static str,
+        pub format: LockfileFormat,
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+    pub enum Migrated { #[default] None, Npm, Yarn, Pnpm }
+
+    pub struct LoadResultOk {
+        pub lockfile: Box<Lockfile>,
+        pub loaded_from_binary_lockfile: bool,
+        pub migrated: Migrated,
+        pub format: LockfileFormat,
+        // TODO(b2): serializer_result once Serializer is ported
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum LockfileFormat { Text, Binary }
+    impl LockfileFormat {
+        pub fn filename(self) -> &'static str {
+            match self { Self::Text => "bun.lock", Self::Binary => "bun.lockb" }
+        }
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Step { OpenFile, ReadFile, ParseFile, Migrating }
+
+    impl LoadResult {
+        pub fn loaded_from_text_lockfile(&self) -> bool {
+            match self {
+                Self::NotFound => false,
+                Self::Err(e) => e.format == LockfileFormat::Text,
+                Self::Ok(o) => o.format == LockfileFormat::Text,
+            }
+        }
+        pub fn loaded_from_binary_lockfile(&self) -> bool {
+            match self {
+                Self::NotFound => false,
+                Self::Err(e) => e.format == LockfileFormat::Binary,
+                Self::Ok(o) => o.format == LockfileFormat::Binary,
+            }
+        }
+    }
+
+    /// Options for the `std.json.fmt(Lockfile, …)` port — see
+    /// `lockfile_json_stringify_for_debugging.zig`. Shape mirrors
+    /// `std.json.StringifyOptions` subset Bun actually uses.
+    #[derive(Clone, Copy, Default)]
+    pub struct JsonFmtOptions {
+        pub whitespace: JsonWhitespace,
+        pub emit_null_optional_fields: bool,
+        pub emit_nonportable_numbers_as_strings: bool,
+    }
+
+    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    pub enum JsonWhitespace {
+        #[default]
+        Minified,
+        Indent2,
+        Indent4,
+        IndentTab,
+    }
 }
 #[cfg(not(any()))]
 pub mod bin { pub struct Bin; }
@@ -105,7 +487,14 @@ pub mod lifecycle_script_runner { pub struct LifecycleScriptSubprocess; }
 #[cfg(not(any()))]
 pub mod package_install { pub struct PackageInstall; }
 #[cfg(not(any()))]
-pub mod repository { pub struct Repository; }
+pub mod repository {
+    #[derive(Default)]
+    pub struct Repository {
+        pub owner: bun_semver::String,
+        pub repo: bun_semver::String,
+        pub committish: bun_semver::String,
+    }
+}
 #[cfg(not(any()))]
 pub mod resolution { pub struct Resolution; }
 #[cfg(not(any()))]
@@ -120,13 +509,193 @@ pub mod isolated_install {
 pub mod postinstall_optimizer { pub struct PostinstallOptimizer; }
 #[cfg(not(any()))]
 pub mod dependency {
-    pub struct Dependency;
+    use bun_semver::{SlicedString, String as SemverString};
+
+    #[derive(Default)]
+    pub struct Dependency {
+        pub name_hash: crate::PackageNameHash,
+        pub name: SemverString,
+        pub version: Version,
+        pub behavior: Behavior,
+    }
+
+    impl Dependency {
+        /// Zig: `Dependency.parse(allocator, alias, ?alias_hash, dep, *SlicedString,
+        /// ?*Log, ?*PackageManager) ?Version` (src/install/dependency.zig).
+        /// Allocator dropped per PORTING.md.
+        pub fn parse(
+            _alias: SemverString,
+            _alias_hash: Option<crate::PackageNameHash>,
+            _dependency: &[u8],
+            _sliced: &SlicedString<'_>,
+            _log: Option<&mut bun_logger::Log>,
+            _manager: Option<&mut crate::package_manager::PackageManager>,
+        ) -> Option<Version> {
+            todo!("B-2: Dependency::parse — un-gate dependency.rs")
+        }
+    }
+
     #[repr(transparent)]
     #[derive(Clone, Copy, Default)]
     pub struct Behavior(pub u8);
+
+    /// Port of `Dependency.Version` (struct { tag, literal, value: bare-union }).
+    /// `Value` is exposed as a struct-of-options in the stub so dependents that
+    /// match on `tag` and read the corresponding field still type-check; the
+    /// real ported layout (gated `dependency.rs`) keeps the Zig union.
+    #[derive(Default)]
+    pub struct Version {
+        pub tag: version::Tag,
+        pub literal: SemverString,
+        pub value: Value,
+    }
+
+    /// Stub layout for `Dependency.Version.Value` — see TODO(port) in
+    /// `dependency_jsc.rs` re: collapsing tag+value into a Rust enum.
+    #[derive(Default)]
+    pub struct Value {
+        pub npm: NpmInfo,
+        pub dist_tag: TagInfo,
+        pub tarball: tarball::TarballInfo,
+        pub folder: SemverString,
+        pub symlink: SemverString,
+        pub workspace: SemverString,
+        pub git: crate::repository::Repository,
+        pub github: crate::repository::Repository,
+        pub catalog: SemverString,
+    }
+
+    #[derive(Default)]
+    pub struct NpmInfo {
+        pub name: SemverString,
+        // TODO(b2): bun_semver::query::Group once lifetime story is settled
+        pub is_alias: bool,
+    }
+
+    #[derive(Default)]
+    pub struct TagInfo {
+        pub name: SemverString,
+        pub tag: SemverString,
+    }
+
+    /// `Dependency.Version.Tag` enum (src/install/dependency.zig). Exposed at
+    /// `dependency::version::Tag` to mirror Zig's nested-namespace path.
+    pub mod version {
+        #[repr(u8)]
+        #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, strum::IntoStaticStr)]
+        #[strum(serialize_all = "snake_case")]
+        pub enum Tag {
+            #[default]
+            Uninitialized = 0,
+            Npm = 1,
+            DistTag = 2,
+            Tarball = 3,
+            Folder = 4,
+            Symlink = 5,
+            Workspace = 6,
+            Git = 7,
+            Github = 8,
+            Catalog = 9,
+        }
+
+        impl Tag {
+            #[inline]
+            pub fn is_npm(self) -> bool { (self as u8) < 3 }
+
+            pub fn cmp(self, other: Tag) -> core::cmp::Ordering {
+                (self as u8).cmp(&(other as u8))
+            }
+
+            pub fn infer(_dependency: &[u8]) -> Tag {
+                // empty string means `latest`
+                if _dependency.is_empty() { return Tag::DistTag; }
+                todo!("B-2: dependency::version::Tag::infer — un-gate dependency.rs")
+            }
+        }
+    }
+    pub use version::Tag as VersionTag;
+
+    /// `URI` union + `TarballInfo` (src/install/dependency.zig). Exposed at
+    /// `dependency::tarball` so `dependency::tarball::Uri::{Local,Remote}`
+    /// resolves for `dependency_jsc.rs`.
+    pub mod tarball {
+        use bun_semver::String as SemverString;
+
+        pub enum Uri {
+            Local(SemverString),
+            Remote(SemverString),
+        }
+        impl Default for Uri {
+            fn default() -> Self { Uri::Local(SemverString::default()) }
+        }
+
+        #[derive(Default)]
+        pub struct TarballInfo {
+            pub uri: Uri,
+            pub package_name: SemverString,
+        }
+    }
 }
 #[cfg(not(any()))]
 pub mod patch_install { pub struct PatchTask; }
+
+#[cfg(not(any()))]
+pub mod hosted_git_info {
+    /// Port of `HostedGitInfo` (src/install/hosted_git_info.zig). Owned-buffer
+    /// fields collapse to `Box<[u8]>`; the Zig `_memory_buffer`/`_allocator`
+    /// pair is the backing arena and drops with the struct.
+    pub struct HostedGitInfo {
+        pub committish: Option<Box<[u8]>>,
+        pub project: Box<[u8]>,
+        pub user: Option<Box<[u8]>>,
+        pub host_provider: HostProvider,
+        pub default_representation: Representation,
+    }
+
+    impl HostedGitInfo {
+        pub fn from_url(_npa_str: &mut [u8]) -> Result<Option<Self>, bun_core::Error> {
+            todo!("B-2: HostedGitInfo::from_url")
+        }
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum HostProvider { Github, Gitlab, Bitbucket, Gist, Sourcehut }
+    impl HostProvider {
+        pub fn type_str(self) -> &'static [u8] {
+            match self {
+                Self::Github => b"github", Self::Gitlab => b"gitlab",
+                Self::Bitbucket => b"bitbucket", Self::Gist => b"gist",
+                Self::Sourcehut => b"sourcehut",
+            }
+        }
+        pub fn domain(self) -> &'static [u8] {
+            match self {
+                Self::Github => b"github.com", Self::Gitlab => b"gitlab.com",
+                Self::Bitbucket => b"bitbucket.org", Self::Gist => b"gist.github.com",
+                Self::Sourcehut => b"git.sr.ht",
+            }
+        }
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
+    #[strum(serialize_all = "lowercase")]
+    pub enum Representation { Shortcut, Https, Ssh, Git }
+
+    pub struct ParsedUrl {
+        // TODO(b2): real type is `*jsc.URL` — needs bun_jsc dep (not allowed in
+        // bun_install). Phase B will route this through bun_url or an opaque ptr.
+        pub url: Box<dyn core::any::Any>,
+        pub proto: UrlProtocol,
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum UrlProtocol { Git, GitSsh, GitHttps, Http, Https, Ssh, File, Other }
+
+    /// Zig: `parseUrl(allocator, npa_str) error{InvalidGitUrl,OOM}!{ url, proto }`.
+    pub fn parse_url(_npa_str: &mut [u8]) -> Result<ParsedUrl, bun_core::Error> {
+        todo!("B-2: hosted_git_info::parse_url")
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports
@@ -171,6 +740,10 @@ pub use dependency::Behavior;
 
 pub use lockfile::Lockfile;
 pub use lockfile::PatchedDep;
+pub use lockfile::LoadResult;
+pub use lockfile::Step as LoadStep;
+
+pub use package_manager::Subcommand;
 
 pub use patch_install as patch;
 pub use patch::PatchTask;

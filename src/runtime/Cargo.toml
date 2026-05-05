@@ -8,6 +8,7 @@ path = "lib.rs"
 
 [dependencies]
 parking_lot.workspace = true
+thiserror.workspace = true
 strum.workspace = true
 phf.workspace = true
 bstr.workspace = true
@@ -35,7 +36,7 @@ bun_dotenv.workspace = true
 bun_event_loop.workspace = true
 bun_glob.workspace = true
 bun_http.workspace = true
-# TODO(b1): bun_http_jsc does not compile (67 errors); re-enable in B-2.
+# TODO(b2-blocked): bun_jsc currently broken (concurrent B-2 work, 28 errors). Re-enable once green.
 # bun_http_jsc.workspace = true
 bun_http_types.workspace = true
 bun_install.workspace = true
@@ -44,7 +45,7 @@ bun_io.workspace = true
 bun_js.workspace = true
 bun_js_parser.workspace = true
 bun_js_printer.workspace = true
-# TODO(b1): bun_jsc does not compile (254 errors); re-enable in B-2.
+# TODO(b2-blocked): bun_jsc currently broken (concurrent B-2 work, 28 errors). Re-enable once green.
 # bun_jsc.workspace = true
 bun_libarchive.workspace = true
 bun_logger.workspace = true

@@ -30,6 +30,26 @@ pub use crate::ffi::FFI;
 
 pub use crate::napi;
 pub use crate::node;
+pub use crate::crypto;
+
+// ─── BuildMessage / ResolveMessage ───────────────────────────────────────────
+// Zig: `pub const BuildMessage = @import("../jsc/BuildMessage.zig").BuildMessage;`
+// The full implementations are JSC-codegen-backed and live in `bun_jsc`
+// (BuildMessage.rs / ResolveMessage.rs). That crate is broken under concurrent
+// B-2 work, and re-exporting from it here would also create a dependency cycle
+// (bun_jsc → bun_runtime → bun_jsc). Until the cycle is resolved, define the
+// minimal struct shape locally so dependents (`bun_jsc`, `bun_js_parser_jsc`)
+// can name the type.
+// TODO(b2-blocked): bun_jsc::build_message — reconcile defs once bun_jsc is green.
+pub struct BuildMessage {
+    pub msg: bun_logger::Msg,
+    pub logged: bool,
+}
+pub struct ResolveMessage {
+    pub msg: bun_logger::Msg,
+    pub referrer: Option<bun_logger::fs::Path>,
+    pub logged: bool,
+}
 
 // ─── compiling submodules (api/ dir) ─────────────────────────────────────────
 #[path = "api/cron_parser.rs"]
@@ -59,8 +79,6 @@ mod _gated_reexports {
     // TODO(b2-blocked): crate::timer (module not declared)
     pub use crate::timer as Timer;
     pub use crate::api::js_bundler::BuildArtifact;
-    // TODO(b2-blocked): bun_jsc::build_message::BuildMessage
-    pub use bun_jsc::build_message::BuildMessage;
     // TODO(b2-blocked): crate::dns_jsc (module not declared)
     pub use crate::dns_jsc::dns;
     pub use crate::api::html_rewriter as HTMLRewriter;
@@ -78,8 +96,6 @@ mod _gated_reexports {
     // TODO(b2-blocked): bun_sql_jsc (not in deps)
     pub use bun_sql_jsc::postgres as Postgres;
     pub use bun_sql_jsc::mysql as MySQL;
-    // TODO(b2-blocked): bun_jsc::resolve_message::ResolveMessage
-    pub use bun_jsc::resolve_message::ResolveMessage;
     // TODO(b2-blocked): bun_shell (no such workspace crate; shell lives in bun_runtime)
     pub use bun_shell as Shell;
     // TODO(b2-blocked): crate::valkey_jsc (module not declared)

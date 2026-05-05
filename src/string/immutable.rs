@@ -2640,6 +2640,177 @@ pub fn to_utf8_alloc_with_type(utf16: &[u16]) -> Vec<u8> {
     bun_core::strings::to_utf8_alloc(utf16)
 }
 
+// ───────────── B-2 Track A: minimal real impls of gated-submodule fns ─────────────
+// These mirror the same-named fns in `unicode_draft`/`paths_draft` so dependents
+// can link against `bun_string::strings::*` without un-gating the full drafts.
+// Each is a thin wrapper over simdutf or the scalar logic from the .zig source.
+
+/// `strings.utf8ByteSequenceLength` — same table as the WTF-8 variant; both
+/// accept any leading byte and return the expected UTF-8 sequence length.
+#[inline]
+pub fn utf8_byte_sequence_length(first_byte: u8) -> u8 {
+    unicode::wtf8_byte_sequence_length(first_byte)
+}
+
+/// `std.mem.trimLeft(u8, str, chars)` — strip leading chars in `values_to_strip`.
+pub fn trim_left<'a>(slice: &'a [u8], values_to_strip: &[u8]) -> &'a [u8] {
+    let mut begin = 0usize;
+    while begin < slice.len() && values_to_strip.contains(&slice[begin]) {
+        begin += 1;
+    }
+    &slice[begin..]
+}
+
+/// `withoutPrefix` (runtime) — strip `prefix` from `input` if present.
+/// Unlike `without_prefix_comptime`, this accepts a non-`'static` prefix.
+#[inline]
+pub fn without_prefix<'a>(input: &'a [u8], prefix: &[u8]) -> &'a [u8] {
+    if has_prefix(input, prefix) {
+        &input[prefix.len()..]
+    } else {
+        input
+    }
+}
+
+/// `strings.withoutTrailingSlash` — strip trailing `/` or `\` (but not down
+/// to empty; matches `paths.zig:withoutTrailingSlash` behavior `len > 1`).
+pub fn without_trailing_slash(this: &[u8]) -> &[u8] {
+    let mut href = this;
+    while href.len() > 1 && matches!(href[href.len() - 1], b'/' | b'\\') {
+        href = &href[..href.len() - 1];
+    }
+    href
+}
+
+/// `strings.startsWithWindowsDriveLetterT` — true for `[A-Za-z]:` prefix
+/// followed by at least one more byte (Zig: `s.len > 2`).
+#[inline]
+pub fn starts_with_windows_drive_letter_t<T: Copy + Into<u32>>(s: &[T]) -> bool {
+    s.len() > 2 && s[1].into() == b':' as u32 && {
+        let c = s[0].into();
+        (c >= b'a' as u32 && c <= b'z' as u32) || (c >= b'A' as u32 && c <= b'Z' as u32)
+    }
+}
+
+/// `strings.convertUTF8toUTF16InBuffer` — best-effort UTF-8 → UTF-16LE into
+/// a caller-supplied buffer. Invalid UTF-8 is silently dropped (returns the
+/// written prefix). Port of `unicode.zig:convertUTF8toUTF16InBuffer`.
+pub fn convert_utf8_to_utf16_in_buffer<'a>(buf: &'a mut [u16], input: &[u8]) -> &'a mut [u16] {
+    if input.is_empty() {
+        return &mut buf[..0];
+    }
+    let result = simdutf::convert::utf8::to::utf16::le(input, buf);
+    &mut buf[..result]
+}
+
+/// `strings.toUTF8ListWithType` — append UTF-8 transcoding of `utf16` onto
+/// `list` and return the (possibly-reallocated) list. Port of
+/// `unicode.zig:toUTF8ListWithType` (always uses simdutf path; Bun is built
+/// with `FeatureFlags.use_simdutf = true`).
+pub fn to_utf8_list_with_type(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8>, AllocError> {
+    if utf16.is_empty() {
+        return Ok(list);
+    }
+    // PORT NOTE: Zig's path validates UTF-16 first then falls back to a manual
+    // loop on failure (`toUTF8ListWithTypeBun`). For B-2 we route through
+    // `bun_core::strings::convert_utf16_to_utf8_append`, which already replaces
+    // unpaired surrogates with U+FFFD — semantically equivalent.
+    bun_core::strings::convert_utf16_to_utf8_append(&mut list, utf16);
+    Ok(list)
+}
+
+/// Errors from `to_utf16_alloc` when `fail_if_invalid = true`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToUTF16Error {
+    InvalidByteSequence,
+    OutOfMemory,
+}
+impl From<AllocError> for ToUTF16Error {
+    fn from(_: AllocError) -> Self { ToUTF16Error::OutOfMemory }
+}
+
+/// `strings.toUTF16Alloc` — convert UTF-8 → UTF-16LE **iff** `bytes` contains
+/// any non-ASCII byte; pure-ASCII inputs return `Ok(None)` (caller keeps the
+/// 8-bit form). When `fail_if_invalid` is set, invalid UTF-8 yields
+/// `Err(InvalidByteSequence)`; otherwise invalid sequences are replaced with
+/// U+FFFD (per `unicode.zig:toUTF16Alloc`). When `sentinel` is set the result
+/// includes a trailing 0 u16.
+pub fn to_utf16_alloc(
+    bytes: &[u8],
+    fail_if_invalid: bool,
+    sentinel: bool,
+) -> Result<Option<Vec<u16>>, ToUTF16Error> {
+    let Some(_first) = first_non_ascii(bytes) else { return Ok(None) };
+
+    let out_length = simdutf::length::utf16::from::utf8(bytes);
+    let cap = out_length + if sentinel { 1 } else { 0 };
+    let mut out = vec![0u16; cap.max(1)];
+    let res = simdutf::convert::utf8::to::utf16::with_errors::le(bytes, &mut out[..out_length.max(1)]);
+    if res.is_successful() && out_length > 0 {
+        if sentinel {
+            out[out_length] = 0;
+            out.truncate(out_length + 1);
+        } else {
+            out.truncate(out_length);
+        }
+        return Ok(Some(out));
+    }
+    if fail_if_invalid {
+        return Err(ToUTF16Error::InvalidByteSequence);
+    }
+    // Slow path: WTF-8 decode with replacement. Reuse `out` capacity.
+    out.clear();
+    out.reserve(bytes.len() + if sentinel { 1 } else { 0 });
+    let mut remaining = bytes;
+    while let Some(i) = first_non_ascii(remaining) {
+        let i = i as usize;
+        // Copy ASCII prefix as-is (one u16 per byte).
+        out.extend(remaining[..i].iter().map(|&b| b as u16));
+        remaining = &remaining[i..];
+        // Decode one codepoint.
+        let len = unicode::wtf8_byte_sequence_length(remaining[0]).max(1) as usize;
+        let avail = len.min(remaining.len());
+        let mut buf = [0u8; 4];
+        buf[..avail].copy_from_slice(&remaining[..avail]);
+        let cp = unicode::decode_wtf8_rune_t::<i32>(&buf, len as u8, -1);
+        if cp < 0 || avail < len {
+            out.push(0xFFFD);
+            remaining = &remaining[1..];
+        } else if cp <= 0xFFFF {
+            out.push(cp as u16);
+            remaining = &remaining[len..];
+        } else {
+            let c = (cp - 0x10000) as u32;
+            out.push((0xD800 + (c >> 10)) as u16);
+            out.push((0xDC00 + (c & 0x3FF)) as u16);
+            remaining = &remaining[len..];
+        }
+    }
+    out.extend(remaining.iter().map(|&b| b as u16));
+    if sentinel {
+        out.push(0);
+    }
+    Ok(Some(out))
+}
+
+/// `PATTERN_KEY_COMPARE` from the Node.js ESM resolution spec — the comparator
+/// behind `NewGlobLengthSorter`. Returns an [`Ordering`] suitable for
+/// `slice.sort_by(|a, b| glob_length_compare(a, b))` to sort in **descending
+/// order of specificity** (matches Zig `lessThan` returning `true` ⇒ `Less`).
+pub fn glob_length_compare(key_a: &[u8], key_b: &[u8]) -> Ordering {
+    let star_a = index_of_char(key_a, b'*');
+    let star_b = index_of_char(key_b, b'*');
+    let base_length_a = star_a.map_or(key_a.len(), |i| i as usize);
+    let base_length_b = star_b.map_or(key_b.len(), |i| i as usize);
+    if base_length_a > base_length_b { return Ordering::Less; }
+    if base_length_b > base_length_a { return Ordering::Greater; }
+    if star_a.is_none() { return Ordering::Greater; }
+    if star_b.is_none() { return Ordering::Less; }
+    if key_a.len() > key_b.len() { return Ordering::Less; }
+    if key_b.len() > key_a.len() { return Ordering::Greater; }
+    Ordering::Equal
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/string/immutable.zig (2431 lines)

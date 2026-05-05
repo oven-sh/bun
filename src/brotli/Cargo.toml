@@ -6,6 +6,9 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
+[features]
+heap_breakdown = []
+
 [dependencies]
 parking_lot.workspace = true
 strum.workspace = true
@@ -19,3 +22,4 @@ libc.workspace = true
 bitflags.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
+bun_brotli_sys.workspace = true

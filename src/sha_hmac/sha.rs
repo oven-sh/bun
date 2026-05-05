@@ -1,8 +1,114 @@
-use core::ffi::{c_int, c_void};
+use core::ffi::{c_int, c_uint, c_void};
 use core::ptr;
 
 use bun_boringssl as boringssl;
 use bun_boringssl_sys as boringssl_sys;
+
+// ──────────────────────────────────────────────────────────────────────────
+// Local BoringSSL FFI surface.
+//
+// `bun_boringssl_sys` is a bindgen target that has not been generated yet, so
+// the handful of EVP/HMAC symbols this crate needs are declared here directly
+// against the vendored headers (`vendor/boringssl/include/openssl/digest.h`,
+// `hmac.h`). Once the sys crate is populated these can be replaced with
+// `pub use bun_boringssl_sys::*` and this module deleted.
+// ──────────────────────────────────────────────────────────────────────────
+pub mod ffi {
+    use core::ffi::{c_int, c_uint, c_void};
+    use core::marker::{PhantomData, PhantomPinned};
+
+    /// `#define EVP_MAX_MD_SIZE 64` — SHA-512 is the longest digest.
+    pub const EVP_MAX_MD_SIZE: usize = 64;
+
+    /// `#define EVP_MAX_MD_DATA_SIZE 240` — size of the largest digest state
+    /// (SHA-512 / BLAKE2b). Private in BoringSSL; needed only to size
+    /// `EVP_MD_CTX::md_data` correctly.
+    const EVP_MAX_MD_DATA_SIZE: usize = 240;
+
+    /// Opaque `struct env_md_st` (`typedef ... EVP_MD`).
+    #[repr(C)]
+    pub struct EVP_MD {
+        _p: [u8; 0],
+        _m: PhantomData<(*mut u8, PhantomPinned)>,
+    }
+
+    /// Opaque `struct engine_st` (`typedef ... ENGINE`).
+    #[repr(C)]
+    pub struct ENGINE {
+        _p: [u8; 0],
+        _m: PhantomData<(*mut u8, PhantomPinned)>,
+    }
+
+    /// `struct env_md_ctx_st` — laid out to match
+    /// `vendor/boringssl/include/openssl/digest.h` so it can live by-value on
+    /// the Rust side (the Zig port stores it inline, not behind a heap
+    /// `EVP_MD_CTX_new`).
+    #[repr(C)]
+    pub struct EVP_MD_CTX {
+        /// `union { uint8_t md_data[240]; uint64_t alignment; }` — modelled as
+        /// a `[u64; 30]` to get both the 240-byte size and the 8-byte
+        /// alignment the C union guarantees.
+        md_data: [u64; EVP_MAX_MD_DATA_SIZE / core::mem::size_of::<u64>()],
+        digest: *const EVP_MD,
+        pctx: *mut c_void,
+        pctx_ops: *const c_void,
+    }
+
+    unsafe extern "C" {
+        // const EVP_MD *EVP_xxx(void);
+        pub fn EVP_md4() -> *const EVP_MD;
+        pub fn EVP_md5() -> *const EVP_MD;
+        pub fn EVP_sha1() -> *const EVP_MD;
+        pub fn EVP_sha224() -> *const EVP_MD;
+        pub fn EVP_sha256() -> *const EVP_MD;
+        pub fn EVP_sha384() -> *const EVP_MD;
+        pub fn EVP_sha512() -> *const EVP_MD;
+        pub fn EVP_sha512_224() -> *const EVP_MD;
+        pub fn EVP_sha512_256() -> *const EVP_MD;
+        pub fn EVP_sha3_224() -> *const EVP_MD;
+        pub fn EVP_sha3_256() -> *const EVP_MD;
+        pub fn EVP_sha3_384() -> *const EVP_MD;
+        pub fn EVP_sha3_512() -> *const EVP_MD;
+        pub fn EVP_blake2b256() -> *const EVP_MD;
+        pub fn EVP_blake2b512() -> *const EVP_MD;
+        pub fn EVP_md5_sha1() -> *const EVP_MD;
+        pub fn EVP_ripemd160() -> *const EVP_MD;
+
+        // void EVP_MD_CTX_init(EVP_MD_CTX *ctx);
+        pub fn EVP_MD_CTX_init(ctx: *mut EVP_MD_CTX);
+        // int EVP_MD_CTX_cleanup(EVP_MD_CTX *ctx);
+        pub fn EVP_MD_CTX_cleanup(ctx: *mut EVP_MD_CTX) -> c_int;
+        // int EVP_DigestInit(EVP_MD_CTX *ctx, const EVP_MD *type);
+        pub fn EVP_DigestInit(ctx: *mut EVP_MD_CTX, type_: *const EVP_MD) -> c_int;
+        // int EVP_DigestUpdate(EVP_MD_CTX *ctx, const void *data, size_t len);
+        pub fn EVP_DigestUpdate(ctx: *mut EVP_MD_CTX, data: *const c_void, len: usize) -> c_int;
+        // int EVP_DigestFinal(EVP_MD_CTX *ctx, uint8_t *md_out, unsigned int *out_size);
+        pub fn EVP_DigestFinal(ctx: *mut EVP_MD_CTX, md_out: *mut u8, out_size: *mut c_uint) -> c_int;
+        // int EVP_Digest(const void *data, size_t len, uint8_t *md_out,
+        //                unsigned int *out_size, const EVP_MD *type, ENGINE *impl);
+        pub fn EVP_Digest(
+            data: *const c_void,
+            len: usize,
+            md_out: *mut u8,
+            out_size: *mut c_uint,
+            type_: *const EVP_MD,
+            impl_: *mut ENGINE,
+        ) -> c_int;
+
+        // uint8_t *HMAC(const EVP_MD *evp_md, const void *key, size_t key_len,
+        //               const uint8_t *data, size_t data_len, uint8_t *out,
+        //               unsigned int *out_len);
+        pub fn HMAC(
+            evp_md: *const EVP_MD,
+            key: *const c_void,
+            key_len: usize,
+            data: *const u8,
+            data_len: usize,
+            out: *mut u8,
+            out_len: *mut c_uint,
+        ) -> *mut u8;
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Digest-length constants (Zig pulled these from `std.crypto.hash.*.digest_length`;
@@ -97,54 +203,46 @@ macro_rules! new_evp {
     ($name:ident, $digest_size:expr, $md_fn:ident) => {
         #[repr(C)]
         pub struct $name {
-            #[cfg(any())]
-            ctx: boringssl_sys::EVP_MD_CTX,
-            // TODO(b2-blocked): bun_boringssl_sys::EVP_MD_CTX
-            #[cfg(not(any()))]
-            _ctx: (),
+            ctx: ffi::EVP_MD_CTX,
         }
 
         impl $name {
             pub const DIGEST: usize = $digest_size;
 
-            #[cfg(any())]
-            // TODO(b2-blocked): bun_boringssl_sys::EVP_MD_CTX_init / EVP_DigestInit / $md_fn
             pub fn init() -> Self {
                 boringssl::load();
 
                 // SAFETY: EVP md getters are infallible and take no arguments.
-                let md = unsafe { boringssl_sys::$md_fn() };
+                let md = unsafe { ffi::$md_fn() };
                 // SAFETY: EVP_MD_CTX_init zero-initialises; reading zeroed POD is fine.
                 let mut this: Self = unsafe { core::mem::zeroed() };
 
                 // SAFETY: ctx is zeroed POD; EVP_MD_CTX_init writes it in place.
-                unsafe { boringssl_sys::EVP_MD_CTX_init(&mut this.ctx) };
+                unsafe { ffi::EVP_MD_CTX_init(&mut this.ctx) };
 
                 // SAFETY: ctx initialised by EVP_MD_CTX_init above; md is non-null.
-                let rc: c_int = unsafe { boringssl_sys::EVP_DigestInit(&mut this.ctx, md) };
+                let rc: c_int = unsafe { ffi::EVP_DigestInit(&mut this.ctx, md) };
                 debug_assert!(rc == 1);
 
                 this
             }
 
-            #[cfg(any())]
-            // TODO(b2-blocked): bun_boringssl_sys::ENGINE / EVP_Digest / $md_fn
             pub fn hash(
                 bytes: &[u8],
                 out: &mut [u8; $digest_size],
-                engine: Option<&mut boringssl_sys::ENGINE>,
+                engine: Option<&mut ffi::ENGINE>,
             ) {
                 // SAFETY: see `init()` re: md getter.
-                let md = unsafe { boringssl_sys::$md_fn() };
+                let md = unsafe { ffi::$md_fn() };
 
                 let engine_ptr = match engine {
-                    Some(e) => e as *mut boringssl_sys::ENGINE,
+                    Some(e) => e as *mut ffi::ENGINE,
                     None => ptr::null_mut(),
                 };
 
                 // SAFETY: `out` is DIGEST bytes; `size` out-param is nullable.
                 let rc: c_int = unsafe {
-                    boringssl_sys::EVP_Digest(
+                    ffi::EVP_Digest(
                         bytes.as_ptr().cast::<c_void>(),
                         bytes.len(),
                         out.as_mut_ptr(),
@@ -156,12 +254,10 @@ macro_rules! new_evp {
                 debug_assert!(rc == 1);
             }
 
-            #[cfg(any())]
-            // TODO(b2-blocked): bun_boringssl_sys::EVP_DigestUpdate
             pub fn update(&mut self, data: &[u8]) {
                 // SAFETY: ctx initialised in `init()`; EVP_DigestUpdate reads `len` bytes.
                 let rc: c_int = unsafe {
-                    boringssl_sys::EVP_DigestUpdate(
+                    ffi::EVP_DigestUpdate(
                         &mut self.ctx,
                         data.as_ptr().cast::<c_void>(),
                         data.len(),
@@ -170,25 +266,21 @@ macro_rules! new_evp {
                 debug_assert!(rc == 1);
             }
 
-            #[cfg(any())]
-            // TODO(b2-blocked): bun_boringssl_sys::EVP_DigestFinal
             pub fn r#final(&mut self, out: &mut [u8; $digest_size]) {
                 // SAFETY: `out` is DIGEST bytes; `out_size` is nullable.
                 let rc: c_int = unsafe {
-                    boringssl_sys::EVP_DigestFinal(&mut self.ctx, out.as_mut_ptr(), ptr::null_mut())
+                    ffi::EVP_DigestFinal(&mut self.ctx, out.as_mut_ptr(), ptr::null_mut())
                 };
                 debug_assert!(rc == 1);
             }
         }
 
-        #[cfg(any())]
-        // TODO(b2-blocked): bun_boringssl_sys::EVP_MD_CTX_cleanup
         impl Drop for $name {
             fn drop(&mut self) {
                 // SAFETY: ctx was EVP_MD_CTX_init'd; cleanup is idempotent on a
                 // zeroed/initialised ctx.
                 unsafe {
-                    let _ = boringssl_sys::EVP_MD_CTX_cleanup(&mut self.ctx);
+                    let _ = ffi::EVP_MD_CTX_cleanup(&mut self.ctx);
                 }
             }
         }
@@ -260,39 +352,30 @@ pub mod evp {
     }
 
     impl Algorithm {
-        #[cfg(any())]
-        // TODO(b2-blocked): bun_boringssl_sys::EVP_MD
-        pub fn md(self) -> Option<*const boringssl_sys::EVP_MD> {
+        pub fn md(self) -> Option<*const ffi::EVP_MD> {
             // SAFETY: BoringSSL EVP_* md getters take no arguments and return a
             // static const singleton (never NULL for the ones listed here).
             unsafe {
                 match self {
-                    Algorithm::Blake2b256 => Some(boringssl_sys::EVP_blake2b256()),
-                    Algorithm::Blake2b512 => Some(boringssl_sys::EVP_blake2b512()),
-                    Algorithm::Md4 => Some(boringssl_sys::EVP_md4()),
-                    Algorithm::Md5 => Some(boringssl_sys::EVP_md5()),
-                    Algorithm::Ripemd160 => Some(boringssl_sys::EVP_ripemd160()),
-                    Algorithm::Sha1 => Some(boringssl_sys::EVP_sha1()),
-                    Algorithm::Sha224 => Some(boringssl_sys::EVP_sha224()),
-                    Algorithm::Sha256 => Some(boringssl_sys::EVP_sha256()),
-                    Algorithm::Sha384 => Some(boringssl_sys::EVP_sha384()),
-                    Algorithm::Sha512 => Some(boringssl_sys::EVP_sha512()),
-                    Algorithm::Sha512_224 => Some(boringssl_sys::EVP_sha512_224()),
-                    Algorithm::Sha512_256 => Some(boringssl_sys::EVP_sha512_256()),
-                    Algorithm::Sha3_224 => Some(boringssl_sys::EVP_sha3_224()),
-                    Algorithm::Sha3_256 => Some(boringssl_sys::EVP_sha3_256()),
-                    Algorithm::Sha3_384 => Some(boringssl_sys::EVP_sha3_384()),
-                    Algorithm::Sha3_512 => Some(boringssl_sys::EVP_sha3_512()),
+                    Algorithm::Blake2b256 => Some(ffi::EVP_blake2b256()),
+                    Algorithm::Blake2b512 => Some(ffi::EVP_blake2b512()),
+                    Algorithm::Md4 => Some(ffi::EVP_md4()),
+                    Algorithm::Md5 => Some(ffi::EVP_md5()),
+                    Algorithm::Ripemd160 => Some(ffi::EVP_ripemd160()),
+                    Algorithm::Sha1 => Some(ffi::EVP_sha1()),
+                    Algorithm::Sha224 => Some(ffi::EVP_sha224()),
+                    Algorithm::Sha256 => Some(ffi::EVP_sha256()),
+                    Algorithm::Sha384 => Some(ffi::EVP_sha384()),
+                    Algorithm::Sha512 => Some(ffi::EVP_sha512()),
+                    Algorithm::Sha512_224 => Some(ffi::EVP_sha512_224()),
+                    Algorithm::Sha512_256 => Some(ffi::EVP_sha512_256()),
+                    Algorithm::Sha3_224 => Some(ffi::EVP_sha3_224()),
+                    Algorithm::Sha3_256 => Some(ffi::EVP_sha3_256()),
+                    Algorithm::Sha3_384 => Some(ffi::EVP_sha3_384()),
+                    Algorithm::Sha3_512 => Some(ffi::EVP_sha3_512()),
                     _ => None,
                 }
             }
-        }
-
-        // TODO(b2-blocked): bun_boringssl_sys::EVP_MD — stub mirrors B-1 surface
-        // so dependents (csrf, hmac) can call `.md()` and get an opaque pointer.
-        #[cfg(not(any()))]
-        pub fn md(self) -> Option<*const core::ffi::c_void> {
-            todo!("gated: bun_boringssl_sys::EVP_MD missing")
         }
     }
 }

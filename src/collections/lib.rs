@@ -22,23 +22,32 @@ pub use comptime_string_map::{ComptimeStringMap, ComptimeStringMapWithKeyType};
 pub mod static_hash_map;
 pub use static_hash_map::StaticHashMap;
 
-pub use multi_array_list::MultiArrayList;
+pub use multi_array_list::{MultiArrayList, MultiArrayElement};
 pub use baby_list::{BabyList, ByteList, OffsetByteList};
 pub use hive_array::HiveArray;
 pub use bounded_array::BoundedArray;
-pub use linear_fifo::LinearFifo;
+pub use linear_fifo::{LinearFifo, LinearFifoBufferType};
 
 pub use bit_set::{AutoBitSet, IntegerBitSet, StaticBitSet, DynamicBitSetUnmanaged};
 
+pub mod array_hash_map;
+pub use array_hash_map::{
+    ArrayHashMap, ArrayHashMapExt, CaseInsensitiveAsciiStringArrayHashMap, Entry, GetOrPutResult,
+    MapEntry, OccupiedEntry, StringArrayHashMap, StringHashMap, StringHashMapUnownedKey,
+    VacantEntry,
+};
 
-// HashMap aliases. PORTING.md: must be wyhash-backed for determinism.
-// B-1 stub: std hasher until bun_wyhash::Hasher lands (TODO(b1): swap in B-2).
+pub mod string_map;
+pub use string_map::StringMap;
+
+// Unordered HashMap alias. PORTING.md: must be wyhash-backed for determinism.
+// TODO(port): swap RandomState for a wyhash BuildHasher once bun_wyhash exposes one.
 pub type HashMap<K, V> = std::collections::HashMap<K, V>;
-pub type StringHashMap<V> = HashMap<Box<[u8]>, V>;
-pub type StringArrayHashMap<V> = indexmap_stub::IndexMap<Box<[u8]>, V>;
-pub type ArrayHashMap<K, V> = indexmap_stub::IndexMap<K, V>;
-pub mod hash_map { pub use std::collections::hash_map::Entry; }
-mod indexmap_stub { pub type IndexMap<K, V> = std::collections::HashMap<K, V>; }
+/// std-compat path so call sites that wrote `bun_collections::hash_map::Entry`
+/// against the old std-alias keep compiling now that `ArrayHashMap` is real.
+pub mod hash_map {
+    pub use crate::array_hash_map::{MapEntry as Entry, OccupiedEntry, VacantEntry};
+}
 
 pub mod array_list;
 // TODO(port): per PORTING.md the managed/unmanaged ArrayList split collapses to

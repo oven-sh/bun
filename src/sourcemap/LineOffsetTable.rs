@@ -23,6 +23,44 @@ pub struct LineOffsetTable {
 
 pub type List = MultiArrayList<LineOffsetTable>;
 
+/// Typed SoA column accessors on [`List`] (= `MultiArrayList<LineOffsetTable>`).
+///
+/// Mirrors Zig `list.items(.byte_offset_to_start_of_line)`. Can't be an
+/// inherent impl (orphan rules — `MultiArrayList` lives in `bun_collections`),
+/// so it's an extension trait; same pattern as `mapping::MappingColumns`.
+pub trait ListExt {
+    fn items_byte_offset_to_start_of_line(&self) -> &[u32];
+    fn items_byte_offset_to_first_non_ascii(&self) -> &[u32];
+}
+
+impl ListExt for List {
+    #[inline]
+    fn items_byte_offset_to_start_of_line(&self) -> &[u32] {
+        // SAFETY: column 2 of `LineOffsetTable`'s `MultiArrayElement` layout is
+        // `u32` (`byte_offset_to_start_of_line`). `Slice::items` returns the
+        // column at the requested field index typed `&mut [F]`; we narrow it to
+        // a shared borrow tied to `self` via the raw-pointer round-trip (same
+        // pattern as `mapping::MappingColumns::items_generated`).
+        unsafe {
+            &*(self
+                .slice()
+                .items::<u32>(LineOffsetTableField::ByteOffsetToStartOfLine)
+                as *const [_])
+        }
+    }
+
+    #[inline]
+    fn items_byte_offset_to_first_non_ascii(&self) -> &[u32] {
+        // SAFETY: column 1 is `u32` (`byte_offset_to_first_non_ascii`).
+        unsafe {
+            &*(self
+                .slice()
+                .items::<u32>(LineOffsetTableField::ByteOffsetToFirstNonAscii)
+                as *const [_])
+        }
+    }
+}
+
 // Manual `MultiArrayElement` impl — `#[derive(MultiArrayElement)]` proc-macro
 // does not exist yet (see bun_collections TODO). Fields sorted by alignment
 // descending: BabyList<i32> (align 8, size 16) first, then the two u32s.

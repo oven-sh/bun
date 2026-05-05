@@ -37,6 +37,18 @@ impl RecordKind {
     /// module_name
     pub const EXPORT_INFO_STAR: Self = Self(8);
 
+    // PascalCase aliases — `bundler_jsc::analyze_jsc` pattern-matches on these
+    // (the SCREAMING_CASE consts above are kept for intra-crate use).
+    pub const DeclaredVariable: Self = Self::DECLARED_VARIABLE;
+    pub const LexicalVariable: Self = Self::LEXICAL_VARIABLE;
+    pub const ImportInfoSingle: Self = Self::IMPORT_INFO_SINGLE;
+    pub const ImportInfoSingleTypeScript: Self = Self::IMPORT_INFO_SINGLE_TYPE_SCRIPT;
+    pub const ImportInfoNamespace: Self = Self::IMPORT_INFO_NAMESPACE;
+    pub const ExportInfoIndirect: Self = Self::EXPORT_INFO_INDIRECT;
+    pub const ExportInfoLocal: Self = Self::EXPORT_INFO_LOCAL;
+    pub const ExportInfoNamespace: Self = Self::EXPORT_INFO_NAMESPACE;
+    pub const ExportInfoStar: Self = Self::EXPORT_INFO_STAR;
+
     pub fn len(self) -> Result<usize, bun_core::Error> {
         match self {
             Self::DECLARED_VARIABLE | Self::LEXICAL_VARIABLE => Ok(1),
@@ -64,6 +76,26 @@ bitflags::bitflags! {
         const IS_TYPESCRIPT        = 1 << 1;
         const HAS_TLA              = 1 << 2;
         // _padding: u5 = 0
+    }
+}
+
+impl Flags {
+    /// Zig: `Flags.contains_import_meta` packed-struct field. Exposed as a
+    /// method so downstream callers (e.g. `bundler_jsc::analyze_jsc`) can read
+    /// the bit without depending on the bitflags const name.
+    #[inline]
+    pub const fn contains_import_meta(self) -> bool {
+        self.contains(Flags::CONTAINS_IMPORT_META)
+    }
+    /// Zig: `Flags.is_typescript` packed-struct field.
+    #[inline]
+    pub const fn is_typescript(self) -> bool {
+        self.contains(Flags::IS_TYPESCRIPT)
+    }
+    /// Zig: `Flags.has_tla` packed-struct field.
+    #[inline]
+    pub const fn has_tla(self) -> bool {
+        self.contains(Flags::HAS_TLA)
     }
 }
 
@@ -338,10 +370,29 @@ impl FetchParameters {
     pub const JSON: Self = Self(u32::MAX - 3);
     // _ => host_defined: cast to StringID
 
+    // PascalCase aliases — `bundler_jsc::analyze_jsc` matches on these names
+    // (Zig: `enum(u32) { none, javascript, webassembly, json, _ }`).
+    pub const None: Self = Self::NONE;
+    pub const Javascript: Self = Self::JAVASCRIPT;
+    pub const Webassembly: Self = Self::WEBASSEMBLY;
+    pub const Json: Self = Self::JSON;
+
     pub fn host_defined(value: StringID) -> FetchParameters {
         FetchParameters(value.0)
     }
+
+    /// Inverse of `host_defined` for the open-enum case (Zig:
+    /// `@enumFromInt(@intFromEnum(uv))`).
+    #[inline]
+    pub const fn as_string_id(self) -> StringID {
+        StringID(self.0)
+    }
 }
+
+/// Downstream name for `FetchParameters` — mirrors how
+/// `ModuleInfoDeserialized.requested_modules_values` is consumed in
+/// `bundler_jsc::analyze_jsc::to_js_module_record`.
+pub type RequestedModuleValue = FetchParameters;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum VarKind {

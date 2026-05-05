@@ -29,8 +29,102 @@ impl StringBuilder {
 // stays structurally intact. Real impl: bun_paths (MOVE_DOWN from bun_resolver::fs).
 #[allow(dead_code)]
 pub mod fs {
+    // Minimal real port of `src/resolver/fs.zig` PathName/Path — just enough for
+    // `Path::source_dir()` so dependents (resolver/bundler/js_parser) unblock.
+    // TODO(port): lifetimes — Phase A keeps `'static [u8]` like the rest of this
+    // crate; Phase B threads a `'source` lifetime once bun_paths lands.
+
+    #[inline]
+    fn is_sep_any(c: u8) -> bool {
+        if cfg!(windows) { c == b'/' || c == b'\\' } else { c == b'/' }
+    }
+
+    #[inline]
+    fn last_index_of_sep(path: &[u8]) -> Option<usize> {
+        path.iter().rposition(|&c| is_sep_any(c))
+    }
+
     #[derive(Clone, Default)]
-    pub struct PathName;
+    pub struct PathName {
+        pub base: &'static [u8],
+        pub dir: &'static [u8],
+        /// includes the leading .
+        /// extensionless files report ""
+        pub ext: &'static [u8],
+        pub filename: &'static [u8],
+    }
+
+    impl PathName {
+        pub fn init(path_: &'static [u8]) -> PathName {
+            let mut path = path_;
+            let mut base = path;
+            let ext: &[u8];
+            let mut dir = path;
+            let mut is_absolute = true;
+            let has_disk_designator = path.len() > 2
+                && path[1] == b':'
+                && matches!(path[0], b'a'..=b'z' | b'A'..=b'Z')
+                && is_sep_any(path[2]);
+            if has_disk_designator {
+                path = &path[2..];
+            }
+
+            while let Some(i) = last_index_of_sep(path) {
+                // Stop if we found a non-trailing slash
+                if i + 1 != path.len() && path.len() > i + 1 {
+                    base = &path[i + 1..];
+                    dir = &path[0..i];
+                    is_absolute = false;
+                    break;
+                }
+
+                // Ignore trailing slashes
+                path = &path[0..i];
+            }
+
+            // Strip off the extension
+            if let Some(dot) = base.iter().rposition(|&c| c == b'.') {
+                ext = &base[dot..];
+                base = &base[0..dot];
+            } else {
+                ext = b"";
+            }
+
+            if is_absolute {
+                dir = b"";
+            }
+
+            if base.len() > 1 && is_sep_any(base[base.len() - 1]) {
+                base = &base[0..base.len() - 1];
+            }
+
+            if !is_absolute && has_disk_designator {
+                dir = &path_[0..dir.len() + 2];
+            }
+
+            let filename = if !dir.is_empty() { &path_[dir.len() + 1..] } else { path_ };
+
+            PathName { dir, base, ext, filename }
+        }
+
+        #[inline]
+        pub fn dir_with_trailing_slash(&self) -> &[u8] {
+            // The three strings basically always point to the same underlying ptr
+            // so if dir does not have a trailing slash, but is spaced one apart from the basename
+            // we can assume there is a trailing slash there
+            // so we extend the original slice's length by one
+            if self.dir.is_empty() {
+                return b"./";
+            }
+            let extend = (!is_sep_any(self.dir[self.dir.len() - 1])
+                && (self.dir.as_ptr() as usize + self.dir.len() + 1) == self.base.as_ptr() as usize)
+                as usize;
+            // SAFETY: when extend==1, dir.ptr[dir.len] is the separator byte preceding
+            // base — both slices borrow the same underlying allocation (see init()).
+            unsafe { core::slice::from_raw_parts(self.dir.as_ptr(), self.dir.len() + extend) }
+        }
+    }
+
     #[derive(Clone, Default)]
     pub struct Path {
         pub text: &'static [u8],
@@ -39,7 +133,13 @@ pub mod fs {
     }
     impl Path {
         pub fn init(text: &'static [u8]) -> Path {
-            Path { text, namespace: b"", name: PathName }
+            Path { text, namespace: b"", name: PathName::init(text) }
+        }
+
+        // Zig: `pub inline fn sourceDir(this: *const Path) string`
+        #[inline]
+        pub fn source_dir(&self) -> &[u8] {
+            self.name.dir_with_trailing_slash()
         }
     }
 }
@@ -1645,6 +1745,13 @@ impl Log {
             level,
             ..Default::default()
         }
+    }
+
+    /// Zig: `pub fn init(allocator: std.mem.Allocator) Log` — Rust callers spell
+    /// this `Log::new()`; the allocator parameter is dropped (global allocator).
+    #[inline]
+    pub fn new() -> Log {
+        Log::init()
     }
 
     pub fn init_comptime() -> Log {

@@ -41,6 +41,19 @@ pub mod framework_router {
 pub use dev_server as DevServer;
 pub use framework_router as FrameworkRouter;
 
+pub mod production {
+    /// Data used on each rendering thread. Contains all information in the
+    /// bundle needed to render. Referred to as `pt` in variable/field naming,
+    /// and `Bake::ProductionPerThread` in C++.
+    ///
+    /// Full struct (lifetime-parameterized, with `bundled_outputs`/`source_maps`
+    /// fields) lives in the gated `production.rs` draft and depends on
+    /// `bun_jsc::Strong` + `bun_bundler::OutputFile::Index`. Dependents
+    /// (`bun_sourcemap_jsc`) only need the type identity for now.
+    // TODO(b2-blocked): bun_jsc::Strong — un-gate full PerThread<'a> from production.rs.
+    pub struct PerThread(());
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bake/bake.zig

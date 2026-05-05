@@ -14,7 +14,6 @@ mod _gated_submods {
     pub use bun_jsc::web_worker;
     // TODO(b2-blocked): bun_event_loop::auto_flusher
     pub use bun_event_loop::auto_flusher;
-    pub use bun_jsc::fetch_headers::FetchHeaders;
 
     pub mod crypto;
     pub mod encoding_label;
@@ -62,6 +61,13 @@ mod _gated_submods {
 pub type ByteListPool = bun_collections::ObjectPool<bun_collections::ByteList, 8>;
 
 // ─── compiling submodules ────────────────────────────────────────────────────
+// Zig: `pub const FetchHeaders = @import("../jsc/FetchHeaders.zig").FetchHeaders;` (opaque {}).
+// Re-export the crate-local jsc shim's opaque type until `bun_jsc::fetch_headers`
+// is green; the shim's `#[repr(transparent)] struct FetchHeaders(usize)` matches the
+// opaque-handle ABI used by the `WebCore__FetchHeaders__*` extern fns.
+// TODO(b2-blocked): bun_jsc::fetch_headers — swap to `pub use bun_jsc::fetch_headers::FetchHeaders;`.
+pub use crate::jsc::FetchHeaders;
+
 #[path = "webcore/EncodingLabel.rs"]
 pub mod encoding_label;
 pub use encoding_label::EncodingLabel;

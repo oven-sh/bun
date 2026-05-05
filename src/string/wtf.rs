@@ -297,6 +297,15 @@ unsafe impl bun_ptr::ExternalSharedDescriptor for WTFStringImplStruct {
 /// Behaves like `WTF::Ref<WTF::StringImpl>`.
 pub type WTFString = bun_ptr::ExternalShared<WTFStringImplStruct>;
 
+/// `WTF::RefPtr<T>` — a nullable owning reference into an externally-refcounted
+/// object. Generic re-export so callers can write `wtf::RefPtr<StringImpl>`
+/// (matching the C++ spelling) without reaching into `bun_ptr` directly.
+pub type RefPtr<T> = bun_ptr::ExternalShared<T>;
+
+/// `WTF::StringImpl` — alias to the layout-mirroring struct so call sites can
+/// spell `wtf::StringImpl` (used by `wtf::RefPtr<StringImpl>`).
+pub type StringImpl = WTFStringImplStruct;
+
 // PORT NOTE: Zig's `StringImplAllocator` was a `std.mem.Allocator` vtable trick
 // (alloc() bumped ref, free() dropped it) so a `ZigString.Slice` would deref the
 // WTFStringImpl when freed. Replaced by `ZigStringSlice::WTF { .. }` explicit

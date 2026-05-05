@@ -19,16 +19,18 @@ libc.workspace = true
 bitflags.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
-# TODO(b1): bun_bundler dep removed — crate does not compile yet; re-add in B-2.
+# TODO(b2-blocked): bun_bundler::options::OutputFile — re-add once bun_bundler compiles.
 # bun_bundler.workspace = true
 bun_collections.workspace = true
 bun_dotenv.workspace = true
+bun_exe_format.workspace = true
 bun_io.workspace = true
 bun_js_parser.workspace = true
 bun_logger.workspace = true
 bun_options_types.workspace = true
 bun_paths.workspace = true
 bun_perf.workspace = true
+bun_sourcemap.workspace = true
 bun_string.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true

@@ -217,6 +217,29 @@ impl InternalSourceMap {
     pub fn memory_cost(self) -> usize {
         self.total_len()
     }
+
+    /// Sanity-check a blob's outer header against its actual length. See the
+    /// module-level [`is_valid_blob`] for details.
+    ///
+    /// Associated-fn alias so callers can write `InternalSourceMap::is_valid_blob(..)`
+    /// (Zig: `pub fn isValidBlob` is a decl on the file-struct `@This()`).
+    #[inline]
+    pub fn is_valid_blob(blob: &[u8]) -> bool {
+        is_valid_blob(blob)
+    }
+
+    /// Decode a standard VLQ "mappings" string and re-encode it as an
+    /// `InternalSourceMap` blob. See the module-level [`from_vlq`] for details.
+    ///
+    /// Associated-fn alias so callers can write `InternalSourceMap::from_vlq(..)`
+    /// (Zig: `pub fn fromVLQ` is a decl on the file-struct `@This()`).
+    #[inline]
+    pub fn from_vlq(
+        vlq: &[u8],
+        input_line_count_hint: u32,
+    ) -> Result<Box<[u8]>, FromVlqError> {
+        from_vlq(vlq, input_line_count_hint)
+    }
 }
 
 /// Sanity-check the blob's outer header (total_len, sync_count, stream_offset)

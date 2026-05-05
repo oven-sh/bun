@@ -28,4 +28,17 @@ pub mod api {
     pub struct BunInstall {
         _opaque: (), // TODO(b2): peechy-generated fields
     }
+
+    /// schema.zig:1967 — `enum(u8)` (open). Generated body emits `_` open
+    /// variant; Rust side keeps it closed since callers exhaustively match
+    /// only the four named tags (see bundler/options.rs `SourceMapOption`).
+    #[repr(u8)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+    pub enum SourceMapMode {
+        #[default]
+        None,
+        Inline,
+        External,
+        Linked,
+    }
 }

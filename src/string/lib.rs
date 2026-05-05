@@ -70,6 +70,8 @@ unsafe extern "C" {
     fn BunString__toWTFString(this: *mut String);
     fn BunString__toThreadSafe(this: *mut String);
     fn BunString__createAtom(bytes: *const u8, len: usize) -> String;
+    fn BunString__tryCreateAtom(bytes: *const u8, len: usize) -> String;
+    fn BunString__createStaticExternal(bytes: *const u8, len: usize, isLatin1: bool) -> String;
     fn BunString__toInt32(this: *const String) -> i64;
 }
 
@@ -136,6 +138,50 @@ impl String {
     }
     pub fn create_atom(s: &[u8]) -> Self {
         unsafe { BunString__createAtom(s.as_ptr(), s.len()) }
+    }
+    /// `bun.String.tryCreateAtom` — `None` if `bytes` is non-ASCII or too long
+    /// to atomize (string.zig:270).
+    pub fn try_create_atom(bytes: &[u8]) -> Option<Self> {
+        // SAFETY: bytes describes a valid slice.
+        let atom = unsafe { BunString__tryCreateAtom(bytes.as_ptr(), bytes.len()) };
+        if atom.tag == Tag::Dead { None } else { Some(atom) }
+    }
+    /// `bun.String.createAtomIfPossible` — atomized strings are interned in a
+    /// thread-local table; falls back to a regular WTF copy if atomization
+    /// fails. Cannot be used cross-thread (string.zig:278).
+    pub fn create_atom_if_possible(bytes: &[u8]) -> Self {
+        if bytes.is_empty() {
+            return Self::EMPTY;
+        }
+        if bytes.len() < 64 {
+            if let Some(atom) = Self::try_create_atom(bytes) {
+                return atom;
+            }
+        }
+        Self::clone_utf8(bytes)
+    }
+    /// `bun.String.createStaticExternal` — wraps `bytes` in a
+    /// `WTF::ExternalStringImpl` that will **never** be freed. Only use for
+    /// dynamically-allocated data with process lifetime (string.zig:427).
+    pub fn create_static_external(bytes: &[u8], is_latin1: bool) -> Self {
+        debug_assert!(!bytes.is_empty());
+        // SAFETY: bytes describes a valid slice; C++ side stores ptr/len
+        // without copying and never frees it.
+        unsafe { BunString__createStaticExternal(bytes.as_ptr(), bytes.len(), is_latin1) }
+    }
+    /// `bun.String.createFormat` — formats `args` into a temporary buffer and
+    /// copies the result into a fresh WTF-backed string. Port collapses Zig's
+    /// `(comptime fmt, args: anytype)` into [`core::fmt::Arguments`].
+    pub fn create_format(args: core::fmt::Arguments<'_>) -> Self {
+        use core::fmt::Write;
+        // PORT NOTE: Zig used a 512-byte stackFallback. SmallVec<512> would be
+        // ideal; for B-2 a heap buffer is acceptable (cold path, error msgs).
+        if let Some(s) = args.as_str() {
+            return Self::clone_utf8(s.as_bytes());
+        }
+        let mut buf = std::string::String::with_capacity(128);
+        let _ = buf.write_fmt(args);
+        Self::clone_utf8(buf.as_bytes())
     }
     /// Returns `(String, ptr)` where `ptr` is `len` writable bytes — or
     /// `(dead, null)` if WTF allocation failed (string.zig:128 checks
@@ -314,6 +360,77 @@ impl String {
     }
     pub fn eql_comptime(&self, lit: &'static [u8]) -> bool { self.eql_utf8(lit) }
 
+    #[inline] pub fn is_dead(&self) -> bool { self.tag == Tag::Dead }
+
+    /// `bun.String.static` (alt. spelling for callers that prefer `from_*`).
+    #[inline]
+    pub fn from_static(s: &'static [u8]) -> Self { Self::static_(s) }
+
+    /// `bun.String.fromBytes` — borrow `value` without copying or refcounting;
+    /// auto-tags UTF-8 if `value` contains any non-ASCII byte (string.zig:504).
+    #[inline]
+    pub fn from_bytes(value: &[u8]) -> Self {
+        Self::init(ZigString::from_bytes(value))
+    }
+
+    /// `bun.String.clone` — produce an owned, WTF-backed copy of `self`.
+    /// WTF-backed inputs just bump the refcount; ZigString inputs are copied
+    /// into a fresh WTF::StringImpl (string.zig:244).
+    pub fn clone(&self) -> Self {
+        if self.tag == Tag::WTFStringImpl {
+            return self.dupe_ref();
+        }
+        if self.is_empty() {
+            return Self::EMPTY;
+        }
+        if self.is_utf16() {
+            let len = self.length();
+            let (new, ptr) = Self::create_uninitialized_utf16(len);
+            if new.tag != Tag::Dead {
+                // SAFETY: ptr points to `len` writable u16s; tag ≠ WTFStringImpl
+                // is excluded above so `value.zig` is the active variant.
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        self.value.zig.utf16_slice().as_ptr(),
+                        ptr,
+                        len,
+                    );
+                }
+            }
+            return new;
+        }
+        Self::clone_utf8(self.byte_slice())
+    }
+
+    /// `bun.String.toZigString` — borrow as a `ZigString` (no ref taken).
+    pub fn to_zig_string(&self) -> ZigString {
+        match self.tag {
+            Tag::ZigString | Tag::StaticZigString => unsafe { self.value.zig },
+            Tag::WTFStringImpl => unsafe { (*self.value.wtf).to_zig_string() },
+            _ => ZigString::EMPTY,
+        }
+    }
+
+    /// `bun.String.eql` — encoding-aware equality (string.zig:1014).
+    pub fn eql(&self, other: &Self) -> bool {
+        self.to_zig_string().eql(other.to_zig_string())
+    }
+
+    /// `bun.String.utf8ByteLength` — exact number of UTF-8 bytes needed to
+    /// encode `self` (string.zig:292).
+    pub fn utf8_byte_length(&self) -> usize {
+        match self.tag {
+            Tag::WTFStringImpl => unsafe { (*self.value.wtf).utf8_byte_length() },
+            Tag::ZigString | Tag::StaticZigString => unsafe { self.value.zig.utf8_byte_length() },
+            Tag::Dead | Tag::Empty => 0,
+        }
+    }
+
+    /// `bun.String.toOwnedSliceZ` — allocate a NUL-terminated UTF-8 copy.
+    pub fn to_owned_slice_z(&self) -> bun_core::ZBox {
+        self.to_zig_string().to_owned_slice_z()
+    }
+
     // `to_js` / `transfer_to_js` / `create_utf8_for_js` are tier-6 (jsc) — the
     // *_jsc alias pattern: deleted here per PORTING.md, defined as extension
     // trait in `bun_jsc`.
@@ -377,6 +494,78 @@ impl ZigString {
     #[inline] pub fn mark_utf8(&mut self) { self.ptr = (self.ptr as usize | ZS_UTF8_BIT) as *const u8; }
     #[inline] pub fn mark_utf16(&mut self) { self.ptr = (self.ptr as usize | ZS_16BIT_BIT) as *const u8; }
     #[inline] pub fn mark_global(&mut self) { self.ptr = (self.ptr as usize | ZS_GLOBAL_BIT) as *const u8; }
+
+    /// `ZigString.fromBytes` — borrow `slice`; if it contains any non-ASCII
+    /// byte, sets the UTF-8 ptr-tag (ZigString.zig:14).
+    #[inline]
+    pub fn from_bytes(slice: &[u8]) -> Self {
+        if !strings::is_all_ascii(slice) {
+            Self::init_utf8(slice)
+        } else {
+            Self::init(slice)
+        }
+    }
+
+    /// `ZigString.static` — wraps a `'static` ASCII literal. Zig returned a
+    /// `*const ZigString` to a comptime-interned holder; Rust callers consume
+    /// the value directly (ZigString is `Copy`), so we return by value.
+    #[inline]
+    pub const fn static_(slice: &'static [u8]) -> Self {
+        Self { ptr: slice.as_ptr(), len: slice.len() }
+    }
+    /// Alias of `static_` for callers that spell it `static_str`.
+    #[inline]
+    pub const fn static_str(slice: &'static [u8]) -> Self { Self::static_(slice) }
+
+    /// `ZigString.utf8ByteLength` — exact UTF-8 byte length needed to encode
+    /// this string (ZigString.zig:221). UTF-16 → simdutf length; Latin-1
+    /// → simdutf utf8-from-latin1 length; UTF-8 → `len`.
+    pub fn utf8_byte_length(self) -> usize {
+        if self.is_utf8() {
+            return self.len;
+        }
+        if self.is_16bit() {
+            return bun_core::strings::element_length_utf16_into_utf8(self.utf16_slice());
+        }
+        // Latin-1 path (ZigString.zig delegates to encoding.byteLengthU8(.utf8),
+        // which is `simdutf.length.utf8.from.latin1` for the latin1 case).
+        let s = self.slice();
+        // SAFETY: s describes a valid byte slice.
+        unsafe { bun_simdutf_sys::simdutf::simdutf__utf8_length_from_latin1(s.as_ptr(), s.len()) }
+    }
+
+    /// `ZigString.toOwnedSliceZ` — allocate a NUL-terminated UTF-8 copy.
+    pub fn to_owned_slice_z(self) -> bun_core::ZBox {
+        if self.is_utf8() {
+            let mut v = self.slice().to_vec();
+            v.push(0);
+            return bun_core::ZBox::from_vec_with_nul(v);
+        }
+        let mut list = if self.is_16bit() {
+            bun_core::strings::to_utf8_alloc(self.utf16_slice())
+        } else {
+            bun_core::strings::allocate_latin1_into_utf8_with_list(Vec::new(), 0, self.slice())
+        };
+        list.push(0);
+        bun_core::ZBox::from_vec_with_nul(list)
+    }
+
+    /// `ZigString.eql` — encoding-aware equality (ZigString.zig).
+    pub fn eql(self, other: Self) -> bool {
+        if self.len == 0 || other.len == 0 {
+            return self.len == other.len;
+        }
+        let l16 = self.is_16bit();
+        let r16 = other.is_16bit();
+        if l16 && r16 {
+            return self.utf16_slice() == other.utf16_slice();
+        }
+        if !l16 && !r16 {
+            return self.slice() == other.slice();
+        }
+        // Mixed encoding — go through the UTF-8 view (matches Zig's slow path).
+        self.to_slice().slice() == other.to_slice().slice()
+    }
 
     #[inline]
     pub fn untagged(ptr: *const u8) -> *const u8 {
@@ -487,6 +676,19 @@ impl Drop for ZigStringSlice {
 // PORTING.md: ZStr/WStr are length-carrying NUL-terminated slices.
 // bun_core re-exports these; we are the canonical home.
 pub use bun_core::{ZStr, WStr};
+
+/// `bun_str::zig_string` — module path so callers can spell `ZigString.Slice`
+/// as `zig_string::Slice` (matches the Zig namespace `ZigString.Slice`).
+pub mod zig_string {
+    pub use super::ZigString;
+    pub use super::ZigStringSlice as Slice;
+    impl super::ZigStringSlice {
+        /// `ZigString.Slice.empty` — Rust idiom is `EMPTY`, but several
+        /// dependents call `.empty()` (matching Zig's `.empty`).
+        #[inline]
+        pub const fn empty() -> Self { Self::Static(core::ptr::null(), 0) }
+    }
+}
 
 /// `bun.schema.api.StringPointer` — `(offset, length)` into an external buffer.
 /// Widely used as a flat span descriptor (lockfile, HTTP headers, etc.).

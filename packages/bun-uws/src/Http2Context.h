@@ -886,6 +886,9 @@ struct Http2Context {
 
         /* §6.9: connection window is consumed even for unknown/reset streams. */
         c->connRecvWindow -= (int32_t) flowLen;
+        /* §6.9.1: a receiver MAY treat overshoot as FLOW_CONTROL_ERROR. We
+         * do — h2spec 6.9.1/1-2 expect it, and nginx/nghttp2 enforce it. */
+        if (c->connRecvWindow < 0) return protocolError(s, h2::ERR_FLOW_CONTROL);
         if (c->connRecvWindow < h2::LOCAL_INIT_WINDOW / 2) {
             writeWindowUpdate(s, 0, (uint32_t)(h2::LOCAL_INIT_WINDOW - c->connRecvWindow));
             c->connRecvWindow = h2::LOCAL_INIT_WINDOW;
@@ -914,6 +917,10 @@ struct Http2Context {
         }
         bool fin = (flags & h2::END_STREAM) != 0;
         r->recvWindow -= (int32_t) flowLen;
+        if (r->recvWindow < 0) {
+            abortStream(s, stream, h2::ERR_FLOW_CONTROL);
+            return;
+        }
         /* Flag half-closed(remote) *before* dispatching the final chunk so
          * a handler that responds synchronously inside inStream reaches
          * markDone() with remoteClosed set and doesn't emit the §8.1

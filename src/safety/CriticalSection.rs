@@ -120,10 +120,9 @@ impl State {
             Ok(_) => {
                 #[cfg(debug_assertions)]
                 {
-                    // TODO(port): Zig passes `@returnAddress()` here; no stable Rust equivalent.
-                    // Phase B: decide whether `StoredTrace::capture` should take a frame skip
-                    // count instead, or use inline asm / a nightly intrinsic.
-                    self.owner_trace = StoredTrace::capture(0);
+                    // PORT NOTE: Zig passes `@returnAddress()` here; no stable Rust
+                    // equivalent. `None` lets capture() use the current frame.
+                    self.owner_trace = StoredTrace::capture(None);
                 }
                 current_id
             }
@@ -138,7 +137,10 @@ impl State {
         }
         #[cfg(debug_assertions)]
         {
-            bun_core::Output::err("race condition", "`CriticalSection` first entered here:");
+            bun_core::Output::err(
+                "race condition",
+                format_args!("`CriticalSection` first entered here:"),
+            );
             // Hook-registered: bun_crash_handler::dump_stack_trace (CYCLEBREAK §Debug-hook).
             crate::dump_stored_trace(&self.owner_trace);
         }

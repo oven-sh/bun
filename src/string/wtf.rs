@@ -3,7 +3,7 @@ use core::ffi::c_void;
 use crate::strings;
 use crate::ZigString;
 // TODO(port): ZigString.Slice is a nested type in Zig; in Rust it lives alongside ZigString.
-use crate::zig_string::Slice as ZigStringSlice;
+use crate::ZigStringSlice;
 use crate::ZStr;
 
 pub type WTFStringImpl = *mut WTFStringImplStruct;
@@ -165,7 +165,14 @@ impl WTFStringImplStruct {
 
     pub fn to_latin1_slice(&self) -> ZigStringSlice {
         self.r#ref();
-        ZigStringSlice::init(self.ref_count_allocator(), self.latin1_slice())
+        let s = self.latin1_slice();
+        // ZigStringSlice::WTF derefs `self` on Drop — replaces the Zig
+        // StringImplAllocator vtable trick with explicit ownership.
+        ZigStringSlice::WTF {
+            string_impl: self as *const _ as *mut _,
+            ptr: s.as_ptr(),
+            len: s.len(),
+        }
     }
 
     /// Compute the hash() if necessary
@@ -199,16 +206,16 @@ impl WTFStringImplStruct {
         ZigStringSlice::init_owned(strings::to_utf8_alloc(self.utf16_slice()))
     }
 
-    pub fn to_owned_slice_z(&self) -> Box<ZStr> {
-        // TODO(port): return type was [:0]u8 (owned NUL-terminated mutable slice).
+    /// Allocates a NUL-terminated UTF-8 copy. Port of `toOwnedSliceZ`.
+    pub fn to_owned_slice_z(&self) -> Vec<u8> {
         if self.is_8bit() {
             if let Some(utf8) = strings::to_utf8_from_latin1_z(self.latin1_slice()) {
-                // Zig: utf8.items[0 .. utf8.items.len - 1 :0]
-                // SAFETY: to_utf8_from_latin1_z guarantees a trailing NUL byte.
-                return unsafe { ZStr::from_vec_with_nul_unchecked(utf8) };
+                return utf8;
             }
-
-            return ZStr::from_bytes(self.latin1_slice());
+            // ASCII: copy + append NUL.
+            let mut v = self.latin1_slice().to_vec();
+            v.push(0);
+            return v;
         }
         strings::to_utf8_alloc_z(self.utf16_slice())
     }
@@ -245,13 +252,11 @@ impl WTFStringImplStruct {
         if self.is_8bit() {
             let input = self.latin1_slice();
             if !input.is_empty() {
-                // TODO(port): jsc.WebCore.encoding.byteLengthU8 lives in src/runtime/webcore/;
-                // referencing across crates here. Phase B: confirm path.
-                crate::encoding::byte_length_u8(
-                    input.as_ptr(),
-                    input.len(),
-                    crate::encoding::Encoding::Utf8,
-                )
+                // Port: latin1→utf8 length is just elementLengthLatin1IntoUTF8
+                // (each high byte becomes 2 utf8 bytes). The Zig went through
+                // jsc.WebCore.encoding.byteLengthU8 but for Utf8 target that
+                // reduces to the same arithmetic.
+                strings::element_length_latin1_into_utf8(input)
             } else {
                 0
             }
@@ -271,71 +276,32 @@ impl WTFStringImplStruct {
         self.length() as usize
     }
 
-    pub fn ref_count_allocator(&self) -> &dyn bun_alloc::Allocator {
-        // TODO(port): Zig built a std.mem.Allocator { ptr: self, vtable: StringImplAllocator }.
-        // In Rust, ZigStringSlice should hold an enum/trait object that knows how to deref the
-        // WTFStringImpl on Drop instead of faking an allocator. See StringImplAllocator below.
-        StringImplAllocator::for_impl(self)
-    }
-
     pub fn has_prefix(&self, text: &[u8]) -> bool {
         // SAFETY: `self` is a valid WTF::StringImpl; text.ptr/len describe a valid slice.
         unsafe { Bun__WTFStringImpl__hasPrefix(self, text.as_ptr(), text.len()) }
     }
 }
 
-// TODO(port): Zig's `external_shared_descriptor` nested struct provided ref/deref fn pointers
-// for `bun.ptr.ExternalShared`. In Rust this is a trait impl.
-impl bun_ptr::ExternalSharedDescriptor for WTFStringImplStruct {
-    fn r#ref(&self) {
-        WTFStringImplStruct::r#ref(self)
+// SAFETY: ref/deref delegate to JSC's WTF::StringImpl atomic refcount via FFI;
+// the pointee remains valid while count > 0 (JSC contract).
+unsafe impl bun_ptr::ExternalSharedDescriptor for WTFStringImplStruct {
+    unsafe fn ext_ref(this: *mut Self) {
+        // SAFETY: caller guarantees `this` is a live WTFStringImpl.
+        unsafe { (*this).r#ref() }
     }
-    fn deref(&self) {
-        WTFStringImplStruct::deref(self)
+    unsafe fn ext_deref(this: *mut Self) {
+        // SAFETY: caller guarantees `this` is a live WTFStringImpl.
+        unsafe { (*this).deref() }
     }
 }
 
 /// Behaves like `WTF::Ref<WTF::StringImpl>`.
 pub type WTFString = bun_ptr::ExternalShared<WTFStringImplStruct>;
 
-// TODO(port): StringImplAllocator is a Zig std.mem.Allocator vtable trick — alloc() does ref(),
-// free() does deref(), so a ZigString.Slice holding this "allocator" will deref the StringImpl
-// when freed. Rust ZigStringSlice should carry an explicit ownership tag instead. Kept here as
-// a thin shim so to_latin1_slice/ref_count_allocator have something to call; Phase B should
-// replace with the real ZigStringSlice ownership design.
-pub struct StringImplAllocator;
-
-impl StringImplAllocator {
-    // TODO(port): signature/semantics depend on bun_alloc::Allocator trait shape.
-    pub fn for_impl(_this: &WTFStringImplStruct) -> &'static dyn bun_alloc::Allocator {
-        unimplemented!("StringImplAllocator: replace with ZigStringSlice ownership tag")
-    }
-
-    fn alloc(ptr: *mut c_void, len: usize) -> Option<*mut u8> {
-        // SAFETY: ptr was constructed from a &WTFStringImplStruct in ref_count_allocator().
-        let this = unsafe { &*(ptr as *const WTFStringImplStruct) };
-        let len_ = this.byte_length();
-
-        if len_ != len {
-            // we don't actually allocate, we just reference count
-            return None;
-        }
-
-        this.r#ref();
-
-        // we should never actually allocate
-        // SAFETY: returning the (immutable) backing buffer; callers never write through it.
-        Some(unsafe { this.m_ptr.latin1 } as *mut u8)
-    }
-
-    pub fn free(ptr: *mut c_void, buf: &mut [u8]) {
-        // SAFETY: ptr was constructed from a &WTFStringImplStruct in ref_count_allocator().
-        let this = unsafe { &*(ptr as *const WTFStringImplStruct) };
-        debug_assert!(this.latin1_slice().as_ptr() == buf.as_ptr());
-        debug_assert!(this.latin1_slice().len() == buf.len());
-        this.deref();
-    }
-}
+// PORT NOTE: Zig's `StringImplAllocator` was a `std.mem.Allocator` vtable trick
+// (alloc() bumped ref, free() dropped it) so a `ZigString.Slice` would deref the
+// WTFStringImpl when freed. Replaced by `ZigStringSlice::WTF { .. }` explicit
+// ownership variant — see `to_latin1_slice` above. No allocator trait needed.
 
 // ──────────────────────────────────────────────────────────────────────────
 // move-in: parse_double (MOVE_DOWN ← src/jsc/WTF.zig `WTF.parseDouble`)
@@ -365,7 +331,7 @@ pub fn parse_double(buf: &[u8]) -> Result<f64, InvalidCharacter> {
 unsafe extern "C" {
     fn WTF__parseDouble(bytes: *const u8, length: usize, counted: *mut usize) -> f64;
     fn WTFStringImpl__isThreadSafe(this: *const WTFStringImplStruct) -> bool;
-    fn Bun__WTFStringImpl__deref(this: *const WTFStringImplStruct);
+    pub(crate) fn Bun__WTFStringImpl__deref(this: *const WTFStringImplStruct);
     fn Bun__WTFStringImpl__ref(this: *const WTFStringImplStruct);
     fn Bun__WTFStringImpl__ensureHash(this: *const WTFStringImplStruct);
     fn Bun__WTFStringImpl__hasPrefix(

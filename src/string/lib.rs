@@ -11,21 +11,8 @@
 #[path = "StringJoiner.rs"]  pub mod string_joiner;
 #[path = "escapeRegExp.rs"]  pub mod escape_reg_exp;
 
-// TODO(b2): MutableString needs strings::{copy_utf16_into_utf8, to_utf8_from_latin1_z,
-// to_utf8_alloc_z, element_length_utf16_into_utf8} + js_lexer::is_identifier + bun_sys.
-// 10 errors; un-gate after those land in immutable.rs/js_lexer.
-#[cfg(any())] #[path = "MutableString.rs"] pub mod mutable_string;
-pub mod mutable_string {
-    #[derive(Default)]
-    pub struct MutableString(pub Vec<u8>);
-}
-// TODO(b2-blocked): wtf.rs is the WTFStringImpl FFI surface — needs
-// bun_ptr::ExternalSharedDescriptor + crate::encoding + js_lexer::is_identifier.
-// Gate until those land.
-#[cfg(any())] pub mod wtf;
-pub mod wtf {
-    pub use bun_alloc::WTFStringImplStruct as WTFStringImpl;
-}
+#[path = "MutableString.rs"] pub mod mutable_string;
+pub mod wtf;
 
 // `bun.strings.*` — 132 SIMD-backed scanners over highway/simdutf FFI.
 // Submodules (unicode_draft etc.) gated inside; core scalar+highway fns real.
@@ -67,6 +54,49 @@ unsafe impl Sync for String {}
 #[repr(C)] pub struct WTFStringImpl { _p: [u8; 0] }
 pub type WTFString = *const WTFStringImpl;
 #[repr(C)] pub struct ZigString { ptr: *const u8, len: usize }
+impl ZigString {
+    pub const fn init(s: &[u8]) -> Self { Self { ptr: s.as_ptr(), len: s.len() } }
+    pub fn init_utf16(s: &[u16]) -> Self {
+        // High bit on len marks UTF-16 (matches ZigString.zig is16BitMask).
+        Self { ptr: s.as_ptr().cast(), len: s.len() | (1usize << (usize::BITS - 1)) }
+    }
+}
+
+/// `ZigString.Slice` — a borrowed-or-owned UTF-8 byte slice. Replaces the
+/// Zig allocator-vtable trick (`StringImplAllocator` etc.) with explicit ownership.
+pub enum ZigStringSlice {
+    /// Borrowed; never freed (`fromUTF8NeverFree`).
+    Static(*const u8, usize),
+    /// Heap-owned; Drop frees via global mimalloc.
+    Owned(Vec<u8>),
+    /// Backed by a WTFStringImpl ref; Drop derefs it. Stored as raw ptr to
+    /// avoid wtf-module cycle; `wtf::to_latin1_slice` constructs this.
+    WTF { string_impl: *mut wtf::WTFStringImplStruct, ptr: *const u8, len: usize },
+}
+impl ZigStringSlice {
+    pub const EMPTY: Self = Self::Static(core::ptr::null(), 0);
+    pub fn from_utf8_never_free(s: &[u8]) -> Self { Self::Static(s.as_ptr(), s.len()) }
+    pub fn init_owned(v: Vec<u8>) -> Self { Self::Owned(v) }
+    pub fn slice(&self) -> &[u8] {
+        match self {
+            Self::Static(p, l) if *l == 0 => &[],
+            // SAFETY: constructor guarantees ptr/len describe a valid slice for self's lifetime.
+            Self::Static(p, l) => unsafe { core::slice::from_raw_parts(*p, *l) },
+            Self::Owned(v) => v.as_slice(),
+            Self::WTF { ptr, len, .. } if *len == 0 => &[],
+            // SAFETY: WTF variant holds a ref; latin1 buffer valid while ref held.
+            Self::WTF { ptr, len, .. } => unsafe { core::slice::from_raw_parts(*ptr, *len) },
+        }
+    }
+}
+impl Drop for ZigStringSlice {
+    fn drop(&mut self) {
+        if let Self::WTF { string_impl, .. } = *self {
+            // SAFETY: constructor took a ref; we now release it.
+            unsafe { wtf::Bun__WTFStringImpl__deref(string_impl) }
+        }
+    }
+}
 
 // PORTING.md: ZStr/WStr are length-carrying NUL-terminated slices.
 // bun_core re-exports these; we are the canonical home.
@@ -120,6 +150,19 @@ pub mod lexer {
     }
     #[inline] pub fn is_identifier_continue(c: u32) -> bool {
         is_identifier_start(c) || (c as u8 as u32 == c && (c as u8).is_ascii_digit())
+    }
+    #[inline] pub fn is_identifier_part(c: u32) -> bool { is_identifier_continue(c) }
+    /// Whole-string check. Port of `js_lexer.isIdentifier`. ASCII-only fast path;
+    /// non-ASCII via hook (ES_NEXT tables installed by bun_js_parser at startup).
+    pub fn is_identifier(s: &[u8]) -> bool {
+        if s.is_empty() { return false; }
+        let mut iter = crate::strings::CodepointIterator::init(s);
+        let mut cur = crate::strings::Cursor::default();
+        if !iter.next(&mut cur) || !is_identifier_start(cur.c as u32) { return false; }
+        while iter.next(&mut cur) {
+            if !is_identifier_continue(cur.c as u32) { return false; }
+        }
+        true
     }
 }
 

@@ -1,12 +1,13 @@
 #![allow(unused, non_snake_case, clippy::all)]
 
-// B-1: alloc.rs / CriticalSection.rs reference gated bun_alloc symbols + Output::err.
-// Gate; expose stub types. Bodies preserved for B-2.
+// alloc.rs — OBSOLETE per PORTING.md §Allocators (no `Allocator` trait; global
+// mimalloc + bumpalo for AST). The Zig allocator-identity checks it provided
+// (`assertEq`, `CheckedAllocator`) are replaced by the AtomicPtr hooks below
+// (`ALLOC_HAS_PTR`/`IS_WTF_ALLOCATOR`). Draft kept for diff-pass only.
 #[cfg(any())] pub mod alloc;
-pub struct CheckedAllocator; // B-2: wraps allocator with debug bookkeeping
 
-#[cfg(any())] #[path = "CriticalSection.rs"] mod critical_section;
-pub struct CriticalSection; // B-2: re-entrancy guard
+#[path = "CriticalSection.rs"] mod critical_section;
+pub use critical_section::CriticalSection;
 
 #[path = "ThreadLock.rs"] mod thread_lock;
 pub use thread_lock::ThreadLock;

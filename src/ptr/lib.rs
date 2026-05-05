@@ -14,17 +14,19 @@ pub type CowSlice<'a, T> = Cow<'a, [T]>;
 pub type CowSliceZ<'a> = Cow<'a, core::ffi::CStr>;
 pub type CowString<'a> = Cow<'a, [u8]>;
 
-// owned/shared/external_shared — OBSOLETE per PORTING.md §Pointers: callers
+// owned/shared — OBSOLETE per PORTING.md §Pointers: callers
 // use std `Box`/`Rc`/`Arc` directly. Draft modules kept for diff-pass only.
 #[cfg(any())] pub mod owned;
 #[cfg(any())] pub mod shared;
-#[cfg(any())] pub mod external_shared;
 pub type Owned<T> = Box<T>;
 pub type OwnedIn<T> = Box<T>;
 pub type DynamicOwned<T> = Box<T>;
 pub type Shared<T> = std::rc::Rc<T>;
 pub type AtomicShared<T> = std::sync::Arc<T>;
-pub struct ExternalShared<T>(*mut T); // FFI-crossing Arc — TODO(b2) if any caller actually needs it
+
+// FFI-crossing externally-ref-counted pointer (e.g., WTFStringImpl). Real impl.
+pub mod external_shared;
+pub use external_shared::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional};
 
 pub mod raw_ref_count;
 pub mod weak_ptr;

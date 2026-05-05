@@ -124,7 +124,7 @@ impl MutableString {
         }
 
         let mut iterator = strings::CodepointIterator::init(str);
-        let mut cursor = strings::CodepointIterator::Cursor::default();
+        let mut cursor = strings::Cursor::default();
 
         let mut has_needed_gap = false;
         let mut needs_gap;
@@ -139,11 +139,11 @@ impl MutableString {
         use crate::lexer as js_lexer;
 
         // Common case: no gap necessary. No allocation necessary.
-        needs_gap = !js_lexer::is_identifier_start(cursor.c);
+        needs_gap = !js_lexer::is_identifier_start(cursor.c as u32);
         if !needs_gap {
             // Are there any non-alphanumeric chars at all?
             while iterator.next(&mut cursor) {
-                if !js_lexer::is_identifier_continue(cursor.c) || cursor.width > 1 {
+                if !js_lexer::is_identifier_continue(cursor.c as u32) || cursor.width > 1 {
                     needs_gap = true;
                     start_i = cursor.i as usize;
                     break;
@@ -171,10 +171,10 @@ impl MutableString {
 
             let items = &str[start_i..];
             iterator = strings::CodepointIterator::init(items);
-            cursor = strings::CodepointIterator::Cursor::default();
+            cursor = strings::Cursor::default();
 
             while iterator.next(&mut cursor) {
-                if js_lexer::is_identifier_continue(cursor.c) && cursor.width == 1 {
+                if js_lexer::is_identifier_continue(cursor.c as u32) && cursor.width == 1 {
                     if needs_gap {
                         mutable.append_char(b'_')?;
                         needs_gap = false;
@@ -305,7 +305,7 @@ impl MutableString {
 
     #[inline]
     pub fn append_int(&mut self, int: u64) -> Result<(), AllocError> {
-        let count = bun_core::fmt::fast_digit_count(int);
+        let count = bun_core::fmt::fast_digit_count(int) as usize;
         self.list.reserve(count);
         let old = self.list.len();
         // SAFETY: reserved `count` bytes above; fully written below.
@@ -403,19 +403,16 @@ impl MutableString {
     pub fn to_socket_buffers<const COUNT: usize>(
         &self,
         ranges: [(usize, usize); COUNT],
-    ) -> [bun_sys::IoVecConst; COUNT] {
-        // TODO(port): `std.posix.iovec_const` mapped to `bun_sys::IoVecConst`;
-        // verify exact type name in Phase B.
+    ) -> [libc::iovec; COUNT] {
+        // PORT NOTE: `std.posix.iovec_const` is just `libc::iovec` (the
+        // `iov_base` is `*mut` in libc but writev/sendmsg never write through it).
         // PERF(port): Zig used `inline for` (unrolled); plain loop here.
-        let mut buffers: [bun_sys::IoVecConst; COUNT] =
+        let mut buffers: [libc::iovec; COUNT] =
             // SAFETY: every element is written in the loop below before return.
             unsafe { core::mem::zeroed() };
         for (b, r) in buffers.iter_mut().zip(ranges.iter()) {
             let s = &self.list[r.0..r.1];
-            *b = bun_sys::IoVecConst {
-                iov_base: s.as_ptr(),
-                iov_len: s.len(),
-            };
+            *b = libc::iovec { iov_base: s.as_ptr() as *mut _, iov_len: s.len() };
         }
         buffers
     }
@@ -444,14 +441,16 @@ impl std::io::Write for MutableString {
     }
 }
 
+const BUFFERED_WRITER_MAX: usize = 2048;
+
 pub struct BufferedWriter<'a> {
     pub context: &'a mut MutableString,
-    pub buffer: [u8; Self::MAX],
+    pub buffer: [u8; BUFFERED_WRITER_MAX],
     pub pos: usize,
 }
 
 impl<'a> BufferedWriter<'a> {
-    const MAX: usize = 2048;
+    const MAX: usize = BUFFERED_WRITER_MAX;
 
     // Zig: `pub const Writer = std.Io.GenericWriter(*BufferedWriter, Allocator.Error, writeAll)`
     // → `impl std::io::Write for BufferedWriter` below; `writer()` returns `&mut Self`.
@@ -563,8 +562,9 @@ impl<'a> BufferedWriter<'a> {
     pub fn write_html_attribute_value(&mut self, bytes: &[u8]) -> Result<(), AllocError> {
         let mut items = bytes;
         while !items.is_empty() {
-            // TODO: SIMD
+            // index_of_any_char dispatches to highway SIMD for n>=2.
             if let Some(j) = strings::index_of_any(items, b"\"<>") {
+                let j = j as usize;
                 let _ = self.write_all(&items[0..j])?;
                 let _ = match items[j] {
                     b'"' => self.write_all(b"&quot;")?,
@@ -586,9 +586,11 @@ impl<'a> BufferedWriter<'a> {
     pub fn write_html_attribute_value16(&mut self, bytes: &[u16]) -> Result<(), AllocError> {
         let mut items = bytes;
         while !items.is_empty() {
-            if let Some(j) = strings::index_of_any16(items, b"\"<>") {
+            const NEEDLES: &[u16] = &[b'"' as u16, b'<' as u16, b'>' as u16];
+            if let Some(j) = strings::index_of_any16(items, NEEDLES) {
                 // this won't handle strings larger than 4 GB
                 // that's fine though, 4 GB of SSR'd HTML is quite a lot...
+                let j = j as usize;
                 let _ = self.write_all16(&items[0..j])?;
                 let _ = match items[j] {
                     c if c == '"' as u16 => self.write_all(b"&quot;")?,

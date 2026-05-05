@@ -157,8 +157,13 @@ pub mod unicode {
         Box::leak(v.into_boxed_slice())
     }
 }
-// Placeholder: full transcoding suite re-exported once `unicode_draft` un-gates.
+// Transcoding suite re-exported from bun_core (T0).
 pub use self::unicode::to_utf16_literal;
+pub use bun_core::strings::{
+    EncodeIntoResult, copy_latin1_into_utf8, copy_utf16_into_utf8,
+    element_length_latin1_into_utf8, element_length_utf16_into_utf8,
+    to_utf8_alloc_z, to_utf8_from_latin1_z,
+};
 
 /// memmem — libc on posix, scalar fallback on windows.
 #[cfg(not(windows))]

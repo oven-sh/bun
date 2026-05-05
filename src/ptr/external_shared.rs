@@ -68,10 +68,8 @@ impl<T: ExternalSharedDescriptor> ExternalShared<T> {
         ExternalSharedOptional { ptr: Some(ptr) }
     }
 
-    /// Associated optional type (mirrors Zig's nested `Optional`).
-    pub type Optional = ExternalSharedOptional<T>;
-    // TODO(port): inherent associated types are unstable (feature(inherent_associated_types)).
-    // Phase B: either gate on nightly or have callers spell `ExternalSharedOptional<T>` directly.
+    // TODO(port): Zig's `ExternalShared(T).Optional` was an inherent associated type.
+    // Stable Rust callers spell `ExternalSharedOptional<T>` directly.
 }
 
 /// Clones the shared pointer, incrementing the ref count.

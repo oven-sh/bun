@@ -263,6 +263,124 @@ pub mod strings {
         list.reserve(need + 16);
         convert_utf16_to_utf8_append(list, utf16);
     }
+
+    /// Result of an encode-into-fixed-buffer operation. Port of `EncodeIntoResult`.
+    #[derive(Clone, Copy, Default, Debug)]
+    pub struct EncodeIntoResult {
+        pub read: u32,
+        pub written: u32,
+    }
+
+    /// Port of `elementLengthUTF16IntoUTF8` — exact UTF-8 byte length of a UTF-16
+    /// (LE) input. simdutf-backed; falls back to scalar would be in unicode_draft.
+    #[inline]
+    pub fn element_length_utf16_into_utf8(utf16: &[u16]) -> usize {
+        simdutf::length::utf8::from::utf16::le(utf16)
+    }
+
+    /// Port of `elementLengthLatin1IntoUTF8`.
+    pub fn element_length_latin1_into_utf8(latin1: &[u8]) -> usize {
+        let mut len = latin1.len();
+        let mut rest = latin1;
+        while let Some(i) = first_non_ascii(rest) {
+            rest = &rest[i..];
+            while let Some(&c) = rest.first() {
+                if c < 0x80 { break; }
+                len += 1; // each high-latin1 byte → 2 utf8 bytes
+                rest = &rest[1..];
+            }
+        }
+        len
+    }
+
+    /// Port of `copyUTF16IntoUTF8` — encode UTF-16 into a fixed-size UTF-8 buffer
+    /// (WTF-8 semantics: unpaired surrogates pass through). Returns units read /
+    /// bytes written. Caller is responsible for sizing `buf`.
+    pub fn copy_utf16_into_utf8(buf: &mut [u8], utf16: &[u16]) -> EncodeIntoResult {
+        if utf16.is_empty() || buf.is_empty() {
+            return EncodeIntoResult::default();
+        }
+        // Fast path: if buf can definitely hold the whole conversion, try simdutf.
+        let need = simdutf::length::utf8::from::utf16::le(utf16);
+        if need > 0 && need <= buf.len() {
+            // SAFETY: buf has `need` writable bytes; simdutf reads exactly utf16.len() u16.
+            let r = unsafe {
+                simdutf::simdutf__convert_utf16le_to_utf8_with_errors(
+                    utf16.as_ptr(),
+                    utf16.len(),
+                    buf.as_mut_ptr(),
+                )
+            };
+            if r.status == simdutf::Status::SUCCESS {
+                return EncodeIntoResult { read: utf16.len() as u32, written: r.count as u32 };
+            }
+        }
+        // Scalar WTF-8 path (handles unpaired surrogates + partial-buffer fill).
+        let mut read = 0usize;
+        let mut written = 0usize;
+        let mut tmp = [0u8; 4];
+        while read < utf16.len() {
+            let unit = utf16[read] as u32;
+            let (cp, adv) = if (0xD800..=0xDBFF).contains(&unit) {
+                if read + 1 < utf16.len() {
+                    let lo = utf16[read + 1] as u32;
+                    if (0xDC00..=0xDFFF).contains(&lo) {
+                        (0x10000 + ((unit - 0xD800) << 10) + (lo - 0xDC00), 2)
+                    } else { (unit, 1) }
+                } else { (unit, 1) }
+            } else { (unit, 1) };
+            let n = encode_wtf8_rune(&mut tmp, cp);
+            if written + n > buf.len() { break; }
+            buf[written..written + n].copy_from_slice(&tmp[..n]);
+            written += n;
+            read += adv;
+        }
+        EncodeIntoResult { read: read as u32, written: written as u32 }
+    }
+
+    /// Port of `copyLatin1IntoUTF8` — encode Latin-1 into a fixed-size UTF-8 buffer.
+    pub fn copy_latin1_into_utf8(buf: &mut [u8], latin1: &[u8]) -> EncodeIntoResult {
+        let mut read = 0usize;
+        let mut written = 0usize;
+        while read < latin1.len() {
+            let c = latin1[read];
+            if c < 0x80 {
+                if written >= buf.len() { break; }
+                buf[written] = c;
+                written += 1;
+                read += 1;
+            } else {
+                if written + 2 > buf.len() { break; }
+                let [a, b] = latin1_to_codepoint_bytes_assume_not_ascii(c);
+                buf[written] = a;
+                buf[written + 1] = b;
+                written += 2;
+                read += 1;
+            }
+        }
+        // PERF(port): Zig fast-paths ASCII spans via SWAR; could re-add via first_non_ascii.
+        EncodeIntoResult { read: read as u32, written: written as u32 }
+    }
+
+    /// Null-terminated variant of `to_utf8_from_latin1`. Appends a trailing NUL.
+    pub fn to_utf8_from_latin1_z(latin1: &[u8]) -> Option<Vec<u8>> {
+        let mut v = to_utf8_from_latin1(latin1)?;
+        v.push(0);
+        Some(v)
+    }
+
+    /// Null-terminated variant of `to_utf8_alloc`.
+    pub fn to_utf8_alloc_z(utf16: &[u16]) -> Vec<u8> {
+        let mut v = to_utf8_alloc(utf16);
+        v.push(0);
+        v
+    }
+
+    /// Port of `firstNonASCII16`.
+    #[inline]
+    pub fn first_non_ascii16(utf16: &[u16]) -> Option<usize> {
+        utf16.iter().position(|&u| u >= 0x80)
+    }
 }
 
 // bun_alloc stubs Global.rs expects (real consts deferred to B-2 ungate of bun_alloc::basic)

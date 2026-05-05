@@ -1,11 +1,8 @@
 use bun_collections::BabyList;
-use bun_core::Output;
-use bun_alloc::Arena; // bumpalo::Bump re-export
 
-use crate::ast::declared_symbol::DeclaredSymbol;
-use crate::ast::G;
-use crate::ast::ImportItemStatus;
-use crate::ast::Ref;
+use crate::ImportItemStatus;
+use crate::ast::base::{Ref, RefInt};
+use crate::ast::g as G;
 
 pub struct Symbol {
     /// This is the name that came from the parser. Printed names may be renamed
@@ -190,10 +187,9 @@ pub enum SlotNamespace {
     MangledProp,
 }
 
-impl SlotNamespace {
-    // std.EnumArray(SlotNamespace, u32)
-    pub type CountsArray = enum_map::EnumMap<SlotNamespace, u32>;
-}
+// Zig: `pub const CountsArray = std.EnumArray(SlotNamespace, u32);` (nested decl).
+// Inherent associated types are nightly-only; expose as a free alias.
+pub type SlotNamespaceCountsArray = enum_map::EnumMap<SlotNamespace, u32>;
 
 impl Symbol {
     /// This is for generating cross-chunk imports and exports for code splitting.
@@ -229,8 +225,8 @@ impl Symbol {
 
     #[inline]
     pub fn has_link(&self) -> bool {
-        // TODO(port): verify Ref::tag field/variant path
-        self.link.tag != crate::ast::ref_::Tag::Invalid
+        // Zig: `self.link.tag != .invalid`
+        self.link.is_valid()
     }
 }
 
@@ -386,7 +382,11 @@ pub struct Map {
 }
 
 impl Map {
+    // TODO(b2-ast-round): bun_core::Output::prettyln is a macro, not a fn; rewrite when
+    // the output sink is wired. Debug-only.
+    #[cfg(any())]
     pub fn dump(&self) {
+        use bun_core::Output;
         // TODO(port): Output.prettyln formatting — verify bun_core::Output API
         for (i, symbols) in self.symbols_for_source.slice().iter().enumerate() {
             Output::prettyln(format_args!(
@@ -418,7 +418,11 @@ impl Map {
         Output::flush();
     }
 
-    pub fn assign_chunk_index(&mut self, decls_: DeclaredSymbol::List, chunk_index: u32) {
+    // TODO(b2-ast-round): DeclaredSymbol::List + for_each_top_level_symbol live at crate
+    // root and need DeclaredSymbol's MultiArrayList iteration; wire after Stmt/Part land.
+    #[cfg(any())]
+    pub fn assign_chunk_index(&mut self, decls_: crate::DeclaredSymbol::List, chunk_index: u32) {
+        use crate::DeclaredSymbol;
         struct Iterator<'a> {
             map: &'a mut Map,
             chunk_index: u32,
@@ -482,40 +486,44 @@ impl Map {
         if Ref::is_source_index_null(ref_.source_index()) || ref_.is_source_contents_slice() {
             return None;
         }
-
-        Some(
-            self.symbols_for_source
-                .at(ref_.source_index())
-                .mut_(ref_.inner_index()),
-        )
+        // SAFETY: union-find (merge/follow) deliberately holds aliasing *mut into the
+        // NestedList; mirrors Zig's `*const Map -> ?*Symbol`. Backing storage is never
+        // reallocated during a merge/follow pass. Going through raw ptrs avoids a
+        // `&mut self` reshape that would preclude aliasing.
+        let inner = self.symbols_for_source.at(ref_.source_index() as usize);
+        let base = inner.slice().as_ptr() as *mut Symbol;
+        Some(unsafe { base.add(ref_.inner_index() as usize) })
     }
 
     pub fn get_const(&self, ref_: Ref) -> Option<&Symbol> {
         if Ref::is_source_index_null(ref_.source_index()) || ref_.is_source_contents_slice() {
             return None;
         }
-
         Some(
             self.symbols_for_source
-                .at(ref_.source_index())
-                .at(ref_.inner_index()),
+                .at(ref_.source_index() as usize)
+                .at(ref_.inner_index() as usize),
         )
     }
 
-    pub fn init(source_count: usize, bump: &Arena) -> Result<Map, bun_alloc::AllocError> {
-        // TODO(port): Zig does `allocator.alloc([]Symbol, sourceCount)` then `NestedList.init(...)`.
-        // Verify whether callers pass an arena or default_allocator; using arena per AST-crate rule.
-        let symbols_for_source: NestedList =
-            NestedList::init(bump.alloc_slice_fill_default::<List>(source_count));
-        Ok(Map { symbols_for_source })
+    pub fn init(source_count: usize) -> Map {
+        // Zig: `allocator.alloc([]Symbol, sourceCount)` (default_allocator) then NestedList.init.
+        // Per PORTING.md §Allocators (non-arena path), use Vec → BabyList.
+        let mut v: Vec<List> = Vec::with_capacity(source_count);
+        v.resize_with(source_count, List::default);
+        Map { symbols_for_source: NestedList::move_from_list(v) }
     }
 
+    // TODO(b2-ast-round): `from_borrowed_slice_dangerous` returns ManuallyDrop and the
+    // Zig original aliases the caller's stack `list` — unsound in Rust without an
+    // explicit owner. Revisit once the single caller (printer one-shot) is ported.
+    #[cfg(any())]
     pub fn init_with_one_list(list: List) -> Map {
-        // SAFETY: caller must keep `list` alive for the lifetime of the returned Map —
-        // mirrors Zig's `fromBorrowedSliceDangerous((&list)[0..1])`.
-        // TODO(port): this borrows a by-value parameter; in Zig the slice points at the
-        // caller's stack/heap copy. Phase B must ensure `list` outlives the Map.
-        let baby_list = BabyList::<List>::from_borrowed_slice_dangerous(core::slice::from_ref(&list));
+        let baby_list = unsafe {
+            core::mem::ManuallyDrop::into_inner(
+                BabyList::<List>::from_borrowed_slice_dangerous(core::slice::from_ref(&list)),
+            )
+        };
         Self::init_list(baby_list)
     }
 
@@ -542,13 +550,17 @@ impl Map {
     }
 
     pub fn follow_all(&mut self) {
-        // TODO(port): bun.perf.trace — assuming RAII guard with Drop calling .end()
-        let _trace = bun_core::perf::trace("Symbols.followAll");
-        for list in self.symbols_for_source.slice() {
-            for symbol_ptr in list.slice_mut() {
-                // PORT NOTE: reshaped for borrowck — iterate raw, follow via &self
-                // SAFETY: follow() does not reallocate symbols_for_source.
-                let symbol = unsafe { &mut *(symbol_ptr as *mut Symbol) };
+        // TODO(b2-blocked): bun_perf::trace("Symbols.followAll") — RAII guard
+        // PORT NOTE: reshaped for borrowck — iterate via raw ptrs (same aliasing
+        // model as `get`). follow() does not reallocate symbols_for_source.
+        let outer_len = self.symbols_for_source.slice().len();
+        for src in 0..outer_len {
+            let inner = self.symbols_for_source.at(src);
+            let base = inner.slice().as_ptr() as *mut Symbol;
+            let inner_len = inner.slice().len();
+            for i in 0..inner_len {
+                // SAFETY: in-bounds; storage stable across follow().
+                let symbol = unsafe { &mut *base.add(i) };
                 if !symbol.has_link() {
                     continue;
                 }

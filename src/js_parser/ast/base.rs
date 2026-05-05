@@ -2,8 +2,7 @@
 
 use core::fmt;
 
-use bun_js_parser::ast;
-use bun_wyhash;
+use crate::ast;
 
 // ───────────────────────────── RefHashCtx / RefCtx ─────────────────────────────
 //
@@ -120,6 +119,22 @@ impl Index {
     }
 }
 
+impl Default for Index {
+    #[inline]
+    fn default() -> Self {
+        Self::INVALID
+    }
+}
+
+/// Compat shim for callers that wrote `<Index as IndexExt>::Int` (Zig's
+/// `Index.Int` nested-decl pattern). Prefer the module-level `IndexInt`.
+pub trait IndexExt {
+    type Int;
+}
+impl IndexExt for Index {
+    type Int = IndexInt;
+}
+
 // ───────────────────────────────── Ref ─────────────────────────────────
 
 /// -- original comment from esbuild --
@@ -142,7 +157,7 @@ impl Index {
 //   bits 31..33  tag
 //   bits 33..64  source_index
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Ref(u64);
 
 /// Zig: `pub const Int = u31;` — Rust has no `u31`; use `u32` and mask at the
@@ -317,15 +332,8 @@ impl Ref {
         writer.write(&[self.source_index(), self.inner_index()])
     }
 
-    pub fn get_symbol<T: SymbolTable + ?Sized>(self, symbol_table: &mut T) -> &mut ast::Symbol {
+    pub fn get_symbol<T: SymbolTable + ?Sized>(self, symbol_table: &mut T) -> &mut ast::symbol::Symbol {
         symbol_table.get_symbol(self)
-    }
-
-    pub fn dump<'a, T: SymbolTable + ?Sized>(self, symbol_table: &'a mut T) -> RefDump<'a> {
-        RefDump {
-            ref_: self,
-            symbol: symbol_table.get_symbol(self),
-        }
     }
 }
 
@@ -352,22 +360,31 @@ impl fmt::Debug for Ref {
 }
 
 // Zig: `DumpImplData` + `dumpImpl` — formatter wrapper returned by `Ref.dump`.
-pub struct RefDump<'a> {
-    ref_: Ref,
-    symbol: &'a ast::Symbol,
-}
-
-impl fmt::Display for RefDump<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Ref[inner={}, src={}, .{}; original_name={}, uses={}]",
-            self.ref_.inner_index(),
-            self.ref_.source_index(),
-            <&'static str>::from(self.ref_.tag()),
-            bstr::BStr::new(&self.symbol.original_name),
-            self.symbol.use_count_estimate,
-        )
+// Gated until Symbol.rs lands its `original_name`/`use_count_estimate` fields.
+#[cfg(any())]
+mod ref_dump {
+    use super::*;
+    pub struct RefDump<'a> {
+        pub(super) ref_: Ref,
+        pub(super) symbol: &'a ast::symbol::Symbol,
+    }
+    impl fmt::Display for RefDump<'_> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(
+                f,
+                "Ref[inner={}, src={}, .{}; original_name={}, uses={}]",
+                self.ref_.inner_index(),
+                self.ref_.source_index(),
+                <&'static str>::from(self.ref_.tag()),
+                bstr::BStr::new(&self.symbol.original_name),
+                self.symbol.use_count_estimate,
+            )
+        }
+    }
+    impl Ref {
+        pub fn dump<'a, T: SymbolTable + ?Sized>(self, symbol_table: &'a mut T) -> RefDump<'a> {
+            RefDump { ref_: self, symbol: symbol_table.get_symbol(self) }
+        }
     }
 }
 
@@ -382,19 +399,19 @@ impl fmt::Display for RefDump<'_> {
 // In the parser you only have one array, and .sourceIndex() is ignored.
 // In the bundler, you have a 2D array where both parts of the ref are used.
 pub trait SymbolTable {
-    fn get_symbol(&mut self, r: Ref) -> &mut ast::Symbol;
+    fn get_symbol(&mut self, r: Ref) -> &mut ast::symbol::Symbol;
 }
 
-impl SymbolTable for [ast::Symbol] {
+impl SymbolTable for [ast::symbol::Symbol] {
     #[inline]
-    fn get_symbol(&mut self, r: Ref) -> &mut ast::Symbol {
+    fn get_symbol(&mut self, r: Ref) -> &mut ast::symbol::Symbol {
         &mut self[r.inner_index() as usize]
     }
 }
 
-impl SymbolTable for Vec<ast::Symbol> {
+impl SymbolTable for Vec<ast::symbol::Symbol> {
     #[inline]
-    fn get_symbol(&mut self, r: Ref) -> &mut ast::Symbol {
+    fn get_symbol(&mut self, r: Ref) -> &mut ast::symbol::Symbol {
         &mut self[r.inner_index() as usize]
     }
 }

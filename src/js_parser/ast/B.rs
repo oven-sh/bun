@@ -1,5 +1,7 @@
-use crate::ast::{ArrayBinding, Binding, Expr, ExprNodeIndex, Flags, G, Ref};
-use bun_core::write_any_to_hasher;
+use crate::ast::base::Ref;
+use crate::ast::binding::Binding;
+use crate::ast::expr::Expr;
+use crate::{flags, ArrayBinding, ExprNodeIndex};
 
 /// B is for Binding! Bindings are on the left side of variable
 /// declarations (s_local), which is how destructuring assignments
@@ -19,15 +21,24 @@ use bun_core::write_any_to_hasher;
 ///         ----------------
 ///         B.Object
 // Zig: `union(Binding.Tag)` — tag enum lives on `Binding::Tag`.
-pub enum B<'a> {
+// PORT NOTE: arena ptrs are raw `*mut` in Phase A (LIFETIMES.tsv: ARENA → raw);
+// 'bump threaded crate-wide in Phase B (`&'bump mut T`).
+#[derive(Copy, Clone)]
+pub enum B {
     // let x = ...
-    BIdentifier(&'a mut Identifier),
+    BIdentifier(*mut Identifier),
     // let [a, b] = ...
-    BArray(&'a mut Array<'a>),
+    BArray(*mut Array),
     // let { a, b: c } = ...
-    BObject(&'a mut Object<'a>),
+    BObject(*mut Object),
     // this is used to represent array holes
     BMissing(Missing),
+}
+
+impl Default for B {
+    fn default() -> Self {
+        B::BMissing(Missing {})
+    }
 }
 
 pub struct Identifier {
@@ -35,23 +46,25 @@ pub struct Identifier {
 }
 
 pub struct Property {
-    pub flags: Flags::Property::Set,
+    pub flags: flags::PropertySet,
     pub key: ExprNodeIndex,
     pub value: Binding,
     pub default_value: Option<Expr>,
 }
 // TODO(port): partial defaults — Zig only defaults `flags`/`default_value`; `key`/`value` have none, so no `impl Default`.
 
-pub struct Object<'a> {
-    pub properties: &'a mut [Property],
+pub struct Object {
+    // TODO(port): &'bump mut [Property]
+    pub properties: *mut [Property],
     pub is_single_line: bool,
 }
 // Zig: `pub const Property = B.Property;` — inherent associated type alias.
 // TODO(port): inherent associated types are unstable; callers use `B::Property` directly.
 // TODO(port): partial defaults — Zig only defaults `is_single_line`; `properties` has none, so no `impl Default`.
 
-pub struct Array<'a> {
-    pub items: &'a mut [ArrayBinding],
+pub struct Array {
+    // TODO(port): &'bump mut [ArrayBinding]
+    pub items: *mut [ArrayBinding],
     pub has_spread: bool,
     pub is_single_line: bool,
 }
@@ -59,10 +72,25 @@ pub struct Array<'a> {
 // TODO(port): inherent associated types are unstable; callers use `ArrayBinding` directly.
 // TODO(port): partial defaults — Zig only defaults `has_spread`/`is_single_line`; `items` has none, so no `impl Default`.
 
-#[derive(Default)]
+#[derive(Default, Copy, Clone)]
 pub struct Missing {}
 
-impl<'a> B<'a> {
+impl B {
+    pub fn tag(&self) -> super::binding::Tag {
+        use super::binding::Tag;
+        match self {
+            B::BIdentifier(_) => Tag::BIdentifier,
+            B::BArray(_) => Tag::BArray,
+            B::BObject(_) => Tag::BObject,
+            B::BMissing(_) => Tag::BMissing,
+        }
+    }
+}
+
+// TODO(b2-ast-round): write_to_hasher needs Expr::Data::write_to_hasher +
+// SymbolTable bound + bun_core::write_any_to_hasher; wire after Expr lands.
+#[cfg(any())]
+impl B {
     // TODO(port): `union(Binding.Tag)` — Phase B should ensure `Binding::Tag` discriminants
     // match this enum's variant order so `tag()` stays a transmute/match.
     fn tag(&self) -> Binding::Tag {
@@ -116,7 +144,7 @@ impl<'a> B<'a> {
     }
 }
 
-pub use crate::ast::G::Class;
+pub use crate::ast::g::Class;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -1,23 +1,25 @@
-use bun_alloc::Arena as Bump;
 use bun_collections::BabyList;
 use bun_logger as logger;
 
-use bun_js_parser::ast::{
-    BindingNodeIndex, Expr, ExprNodeIndex, ExprNodeList, Flags, LocRef, Ref, Stmt, StmtNodeList, S,
-};
-use bun_js_parser::TypeScript;
+use crate::ast::base::Ref;
+use crate::ast::binding::Binding as BindingNodeIndex;
+use crate::ast::expr::Expr as ExprNodeIndex;
+use crate::ast::stmt::Stmt;
+use crate::ast::TypeScript;
+use crate::{flags, ExprNodeList, LocRef, StmtNodeList};
 
-// TODO(port): narrow error set — Zig `!T` here is effectively OOM-only from arena allocs
-type Result<T> = core::result::Result<T, bun_alloc::AllocError>;
+// PORT NOTE: all `&'ast mut [T]` arena slices are raw `*mut [T]` in Phase A (per
+// the lib.rs file-doc and S.rs convention). 'ast/'bump threaded crate-wide in
+// Phase B in one pass.
 
 pub struct Decl {
     pub binding: BindingNodeIndex,
     pub value: Option<ExprNodeIndex>,
 }
 
-impl Decl {
-    pub type List = BabyList<Decl>;
-}
+// Zig: `pub const List = BabyList(Decl);` (nested decl) — inherent assoc types
+// are nightly; free alias.
+pub type DeclList = BabyList<Decl>;
 
 impl Default for Decl {
     fn default() -> Self {
@@ -56,20 +58,20 @@ pub struct ExportStarAlias {
     pub original_name: *const [u8],
 }
 
-pub struct Class<'ast> {
+pub struct Class {
     pub class_keyword: logger::Range,
     pub ts_decorators: ExprNodeList,
     pub class_name: Option<LocRef>,
     pub extends: Option<ExprNodeIndex>,
     pub body_loc: logger::Loc,
     pub close_brace_loc: logger::Loc,
-    // TODO(port): arena-owned mutable slice; default is empty static slice in Zig
-    pub properties: &'ast mut [Property<'ast>],
+    // TODO(port): arena-owned slice — &'bump mut [Property] once 'bump threaded.
+    pub properties: *mut [Property],
     pub has_decorators: bool,
     pub should_lower_standard_decorators: bool,
 }
 
-impl<'ast> Default for Class<'ast> {
+impl Default for Class {
     fn default() -> Self {
         Self {
             class_keyword: logger::Range::NONE,
@@ -78,14 +80,17 @@ impl<'ast> Default for Class<'ast> {
             extends: None,
             body_loc: logger::Loc::EMPTY,
             close_brace_loc: logger::Loc::EMPTY,
-            properties: &mut [],
+            properties: crate::empty_arena_slice_mut(),
             has_decorators: false,
             should_lower_standard_decorators: false,
         }
     }
 }
 
-impl<'ast> Class<'ast> {
+impl Class {
+    // TODO(b2-ast-round): depends on Expr::Data variants (EArrow/EFunction) and
+    // Expr::can_be_moved — wire after Expr.rs lands.
+    #[cfg(any())]
     pub fn can_be_moved(&self) -> bool {
         if self.extends.is_some() {
             return false;
@@ -128,9 +133,6 @@ impl<'ast> Class<'ast> {
     }
 }
 
-// TODO(port): Expr.Data tag type — placeholder import path for match arms above
-use bun_js_parser::ast::expr::Data as ExprData;
-
 // invalid shadowing if left as Comment
 pub struct Comment {
     pub loc: logger::Loc,
@@ -149,7 +151,7 @@ impl Default for ClassStaticBlock {
     }
 }
 
-pub struct Property<'ast> {
+pub struct Property {
     /// This is used when parsing a pattern that uses default values:
     ///
     ///   [a = 1] = [];
@@ -161,9 +163,10 @@ pub struct Property<'ast> {
     ///
     pub initializer: Option<ExprNodeIndex>,
     pub kind: PropertyKind,
-    pub flags: Flags::Property::Set,
+    pub flags: flags::PropertySet,
 
-    pub class_static_block: Option<&'ast mut ClassStaticBlock>,
+    // TODO(port): Option<&'bump mut ClassStaticBlock> once 'bump threaded.
+    pub class_static_block: Option<core::ptr::NonNull<ClassStaticBlock>>,
     pub ts_decorators: ExprNodeList,
     // Key is optional for spread
     pub key: Option<ExprNodeIndex>,
@@ -174,16 +177,15 @@ pub struct Property<'ast> {
     pub ts_metadata: TypeScript::Metadata,
 }
 
-impl<'ast> Property<'ast> {
-    pub type List = BabyList<Property<'ast>>;
-}
+// Zig: nested `pub const List = BabyList(Property);` — free alias.
+pub type PropertyList = BabyList<Property>;
 
-impl<'ast> Default for Property<'ast> {
+impl Default for Property {
     fn default() -> Self {
         Self {
             initializer: None,
             kind: PropertyKind::Normal,
-            flags: Flags::Property::NONE,
+            flags: flags::PROPERTY_NONE,
             class_static_block: None,
             ts_decorators: ExprNodeList::default(),
             key: None,
@@ -193,8 +195,11 @@ impl<'ast> Default for Property<'ast> {
     }
 }
 
-impl<'ast> Property<'ast> {
-    pub fn deep_clone(&self, bump: &'ast Bump) -> Result<Property<'ast>> {
+impl Property {
+    // TODO(b2-ast-round): depends on Expr::deep_clone / ExprNodeList::deep_clone /
+    // BabyList<Stmt>::clone — wire after Expr/Stmt land.
+    #[cfg(any())]
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> core::result::Result<Property, bun_alloc::AllocError> {
         let mut class_static_block: Option<&'ast mut ClassStaticBlock> = None;
         if let Some(csb) = &self.class_static_block {
             class_static_block = Some(bump.alloc(ClassStaticBlock {
@@ -243,7 +248,9 @@ impl PropertyKind {
     // TODO(port): Zig `jsonStringify(self, writer: anytype) !void` — maps to a serde-like
     // protocol writing @tagName(self). Phase B: decide on the json writer trait.
     pub fn json_stringify(self, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
-        writer.write_str(<&'static str>::from(self))
+        // Zig: `writer.write(@tagName(self))` on a std.json WriteStream — emits a
+        // *quoted* JSON string. Tag names are [a-z_] so no escaping needed.
+        write!(writer, "\"{}\"", <&'static str>::from(self))
     }
 }
 
@@ -253,7 +260,9 @@ pub struct FnBody {
 }
 
 impl FnBody {
-    pub fn init_return_expr<'ast>(bump: &'ast Bump, expr: Expr) -> Result<FnBody> {
+    // TODO(b2-ast-round): Stmt::alloc + S::Return — wire after Stmt store lands.
+    #[cfg(any())]
+    pub fn init_return_expr(bump: &bun_alloc::Arena, expr: Expr) -> core::result::Result<FnBody, bun_alloc::AllocError> {
         // PERF(port): Zig used allocator.dupe over a 1-elem array literal; bumpalo equivalent
         let stmts = bump.alloc_slice_copy(&[Stmt::alloc::<S::Return>(
             S::Return { value: Some(expr) },
@@ -267,37 +276,39 @@ impl FnBody {
     }
 }
 
-pub struct Fn<'ast> {
+pub struct Fn {
     pub name: Option<LocRef>,
     pub open_parens_loc: logger::Loc,
-    // TODO(port): arena-owned mutable slice
-    pub args: &'ast mut [Arg],
+    // TODO(port): arena-owned slice — &'bump mut [Arg]
+    pub args: *mut [Arg],
     // This was originally nullable, but doing so I believe caused a miscompilation
     // Specifically, the body was always null.
     pub body: FnBody,
     pub arguments_ref: Option<Ref>,
 
-    pub flags: Flags::Function::Set,
+    pub flags: flags::FunctionSet,
 
     pub return_ts_metadata: TypeScript::Metadata,
 }
 
-impl<'ast> Default for Fn<'ast> {
+impl Default for Fn {
     fn default() -> Self {
         Self {
             name: None,
             open_parens_loc: logger::Loc::EMPTY,
-            args: &mut [],
-            body: FnBody { loc: logger::Loc::EMPTY, stmts: StmtNodeList::default() },
+            args: crate::empty_arena_slice_mut(),
+            body: FnBody { loc: logger::Loc::EMPTY, stmts: crate::empty_arena_slice_mut() },
             arguments_ref: None,
-            flags: Flags::Function::NONE,
+            flags: flags::FUNCTION_NONE,
             return_ts_metadata: TypeScript::Metadata::MNone,
         }
     }
 }
 
-impl<'ast> Fn<'ast> {
-    pub fn deep_clone(&self, bump: &'ast Bump) -> Result<Fn<'ast>> {
+impl Fn {
+    // TODO(b2-ast-round): Arg::deep_clone — wire after Expr lands.
+    #[cfg(any())]
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> core::result::Result<Fn, bun_alloc::AllocError> {
         // PERF(port): Zig allocator.alloc + per-index assign; bumpalo equivalent
         let args = bump.alloc_slice_fill_default::<Arg>(self.args.len());
         for i in 0..args.len() {
@@ -342,7 +353,9 @@ impl Default for Arg {
 }
 
 impl Arg {
-    pub fn deep_clone<'ast>(&self, bump: &'ast Bump) -> Result<Arg> {
+    // TODO(b2-ast-round): ExprNodeList/Expr deep_clone.
+    #[cfg(any())]
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> core::result::Result<Arg, bun_alloc::AllocError> {
         Ok(Arg {
             ts_decorators: self.ts_decorators.deep_clone(bump)?,
             binding: self.binding,

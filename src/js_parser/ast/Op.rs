@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 use enum_map::{enum_map, Enum, EnumMap};
 use strum::IntoStaticStr;
 
-use bun_js_parser::ast::AssignTarget;
+use crate::AssignTarget;
 
 // If you add a new token, remember to add it to "TABLE" too
 #[repr(u8)]
@@ -116,11 +116,9 @@ pub enum Code {
 }
 
 impl Code {
-    // TODO(port): json serialization protocol — Zig std.json.Stringify hook.
-    // Writer is `anytype` calling `.write(str)`; mapped to a generic byte writer.
-    pub fn json_stringify<W: bun_io::Write>(self, writer: &mut W) -> Result<(), bun_core::Error> {
-        writer.write(<&'static str>::from(self).as_bytes())?;
-        Ok(())
+    // Zig std.json.Stringify hook → write the tag name as a JSON string.
+    pub fn json_stringify<W: crate::JsonWriter>(self, writer: &mut W) -> Result<(), bun_core::Error> {
+        writer.write(<&'static str>::from(self))
     }
 
     pub fn unary_assign_target(code: Code) -> AssignTarget {
@@ -247,7 +245,8 @@ impl Op {
         Op { text, level, is_keyword }
     }
 
-    // TODO(port): json serialization protocol — Zig std.json.Stringify hook.
+    // TODO(b2-blocked): bun_io::Write — Zig std.json.Stringify hook writes raw bytes.
+    #[cfg(any())]
     pub fn json_stringify<W: bun_io::Write>(&self, writer: &mut W) -> Result<(), bun_core::Error> {
         writer.write(self.text)?;
         Ok(())

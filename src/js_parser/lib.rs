@@ -18,12 +18,9 @@ use bun_logger as logger;
 // primary type. Module path segments are snake_cased per PORTING.md.
 // TODO(port): verify module names once ast/*.rs land in Phase B.
 //
-// TODO(b1): the real `ast/` and `parser` modules are gated behind `#[cfg(any())]`
-// until B-2 un-gating. The Phase-A draft bodies are preserved on disk in
-// `src/js_parser/ast/*.rs` and `src/js_parser/parser.rs`; an inline stub
-// `pub mod ast { … }` below exposes the minimal opaque type surface needed
-// for the rest of this file to type-check.
-#[cfg(any())]
+// B-2 round A: `ast/mod.rs` now declares real type-def modules incrementally;
+// remaining un-gated files keep inline stubs there. `parser.rs` stays gated
+// until ast types + P.rs land.
 pub mod ast;
 #[cfg(any())]
 pub mod parser;
@@ -40,312 +37,6 @@ pub mod lexer_tables;
 #[path = "runtime.rs"]
 pub mod runtime;
 
-/// B-1 stub surface for `ast/*`. Every type is opaque; methods `todo!()`.
-/// Real Phase-A drafts live in `src/js_parser/ast/*.rs` (gated above).
-#[cfg(not(any()))]
-#[allow(non_snake_case, dead_code)]
-pub mod ast {
-    pub mod base {
-        #[derive(Copy, Clone, Hash, PartialEq, Eq, Default, Debug)]
-        pub struct Ref(pub u64);
-        impl Ref {
-            pub const NONE: Ref = Ref(u64::MAX);
-            pub fn inner_index(self) -> u32 { todo!("b1-stub") }
-        }
-        #[derive(Copy, Clone, Default, Debug)]
-        pub struct RefCtx;
-        #[derive(Copy, Clone, Default, Debug)]
-        pub struct RefFields;
-        #[derive(Copy, Clone, Default, Debug)]
-        pub struct RefHashCtx;
-        #[derive(Copy, Clone, Default, Debug)]
-        pub struct RefTag;
-
-        #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-        pub struct Index(pub u32);
-        impl Index {
-            pub const INVALID: Index = Index(u32::MAX);
-            pub fn get(self) -> u32 { self.0 }
-        }
-        pub trait IndexExt { type Int; }
-        impl IndexExt for Index { type Int = u32; }
-    }
-    pub mod ast_memory_allocator { #[derive(Default)] pub struct ASTMemoryAllocator; }
-    pub mod ast { #[derive(Default)] pub struct Ast; }
-    pub mod binding { #[derive(Copy, Clone, Default)] pub struct Binding; }
-    pub mod bundled_ast { #[derive(Default)] pub struct BundledAst; }
-    pub mod expr {
-        use bun_logger as logger;
-
-        #[derive(Copy, Clone, Default)]
-        pub struct Expr {
-            pub loc: logger::Loc,
-            // TODO(b1): real `data: Data` is a tagged-union pointer; the stub
-            // `Data` below is opaque so this stays a marker until ast/Expr.rs
-            // is un-gated.
-        }
-        #[derive(Copy, Clone)]
-        pub struct Data; // opaque tag — real variant set lives in ast/Expr.rs
-
-        /// Result of `Expr::as_property` — Zig: `struct { expr: Expr, loc: Loc, i: u32 = 0 }`.
-        #[derive(Copy, Clone)]
-        pub struct Query {
-            pub expr: Expr,
-            pub loc: logger::Loc,
-            pub i: u32,
-        }
-
-        /// Backing arena store for `Expr.Data` payloads.
-        ///
-        /// Zig nests this as `Expr.Data.Store`; Rust cannot express that path
-        /// on a struct without nightly `inherent_associated_types`, so the
-        /// stub lives at `ast::expr::Store`. Callers that wrote
-        /// `Expr::Data::Store::create()` should use `ast::expr::Store::create()`.
-        pub struct Store;
-        impl Store {
-            #[inline]
-            pub fn create() { todo!("b1-stub: Expr.Data.Store::create — gated NewStore") }
-            #[inline]
-            pub fn reset() { todo!("b1-stub: Expr.Data.Store::reset — gated NewStore") }
-            #[inline]
-            pub fn begin() { todo!("b1-stub: Expr.Data.Store::begin — gated NewStore") }
-            #[inline]
-            pub fn deinit() { todo!("b1-stub: Expr.Data.Store::deinit — gated NewStore") }
-            #[inline]
-            pub fn assert() {}
-        }
-
-        impl Expr {
-            /// Allocate `st` into the thread-local `Data.Store` and return an
-            /// `Expr` wrapping it.
-            ///
-            /// Zig: `pub fn init(comptime Type: type, st: Type, loc: Loc) Expr`.
-            /// `T` is one of the `E::*` payload structs.
-            #[inline]
-            pub fn init<T>(_st: T, _loc: logger::Loc) -> Expr {
-                todo!("b1-stub: Expr::init — Data.Store is gated (ast/Expr.rs)")
-            }
-
-            /// Look up `name` in this object expression's properties.
-            ///
-            /// Zig: `pub fn asProperty(expr: *const Expr, name: string) ?Query`.
-            #[inline]
-            pub fn as_property(&self, _name: &[u8]) -> Option<Query> {
-                todo!("b1-stub: Expr::as_property — Data variants are gated (ast/Expr.rs)")
-            }
-
-            /// Build an `Expr` from a fetched Blob during macro expansion.
-            ///
-            /// Zig: `pub fn fromBlob(blob: *const jsc.WebCore.Blob, allocator,
-            /// mime_type_: ?MimeType, log: *logger.Log, loc: Loc) !Expr`.
-            /// `B`/`M` are generic stand-ins for the higher-tier `Blob` and
-            /// `MimeType` types so this crate stays free of a *_jsc dep.
-            #[inline]
-            pub fn from_blob<B, M>(
-                _blob: &B,
-                _mime_type: Option<M>,
-                _log: &mut logger::Log,
-                _loc: logger::Loc,
-            ) -> core::result::Result<Expr, bun_core::Error> {
-                todo!("b1-stub: Expr::from_blob — JSC-dependent macro path (bun_js_parser_jsc)")
-            }
-        }
-    }
-    pub mod stmt {
-        #[derive(Copy, Clone, Default)]
-        pub struct Stmt;
-        #[derive(Copy, Clone)]
-        pub struct Data; // opaque tag — real variant set lives in ast/Stmt.rs
-    }
-    pub mod scope { #[derive(Default)] pub struct Scope; }
-    pub mod server_component_boundary {
-        use bun_collections::MultiArrayList;
-
-        #[derive(Default)] pub struct ServerComponentBoundary;
-
-        /// Lookup-friendly container of all server-component boundaries.
-        ///
-        /// Zig: `ServerComponentBoundary.List = struct {
-        ///   list: std.MultiArrayList(ServerComponentBoundary), map: Map }`
-        /// where `Map = std.ArrayHashMapUnmanaged(void, void, …)`.
-        #[derive(Default)]
-        pub struct List {
-            pub list: MultiArrayList<ServerComponentBoundary>,
-            // TODO(b1): `map: ArrayHashMap<(), ()>` — bun_collections::ArrayHashMap
-            // currently requires `K: Hash + Eq`; revisit once the void-key
-            // adapter pattern is ported.
-        }
-    }
-    pub mod symbol {
-        #[derive(Copy, Clone, Default)]
-        pub struct Symbol;
-        #[derive(Copy, Clone, Default)]
-        pub struct Use;
-        #[derive(Copy, Clone, Default)]
-        pub struct SlotNamespace;
-        pub const INVALID_NESTED_SCOPE_SLOT: u32 = u32::MAX;
-        /// Stub for `std.EnumArray(SlotNamespace, u32)`.
-        #[derive(Clone, Default)]
-        pub struct SlotNamespaceCountsArray(pub [u32; 4]);
-        impl SlotNamespaceCountsArray {
-            pub fn init_fill(v: u32) -> Self { Self([v; 4]) }
-            pub fn values(&self) -> core::slice::Iter<'_, u32> { self.0.iter() }
-            pub fn values_mut(&mut self) -> core::slice::IterMut<'_, u32> { self.0.iter_mut() }
-        }
-    }
-    pub mod b { #[derive(Copy, Clone, Default)] pub struct B; }
-    pub mod new_store { #[derive(Default)] pub struct NewStore; }
-    pub mod use_directive { #[derive(Copy, Clone, Default)] pub struct UseDirective; }
-    pub mod char_freq { pub const CHAR_FREQ_COUNT: usize = 64; }
-    pub mod ts {
-        #[derive(Default)] pub struct TSNamespaceMember;
-        #[derive(Default)] pub struct TSNamespaceMemberMap;
-        #[derive(Default)] pub struct TSNamespaceScope;
-    }
-    pub mod e {
-        use bun_collections::BabyList;
-        use bun_logger as logger;
-
-        #[derive(Copy, Clone, Default)] pub struct String;
-        impl String {
-            pub fn init(_data: &[u8]) -> Self { todo!("b1-stub: E::String::init") }
-            pub fn init_utf16(_data: &[u16]) -> Self { todo!("b1-stub: E::String::init_utf16") }
-            pub fn to_utf8(&mut self, _bump: &bun_alloc::Arena) -> core::result::Result<(), bun_alloc::AllocError> {
-                todo!("b1-stub: E::String::to_utf8")
-            }
-            /// Flatten a UTF-8 rope-string into a single contiguous slice.
-            ///
-            /// Zig: `pub fn resolveRopeIfNeeded(this: *String, allocator) void`.
-            pub fn resolve_rope_if_needed(&mut self, _bump: &bun_alloc::Arena) {
-                todo!("b1-stub: E::String::resolve_rope_if_needed — rope fields gated (ast/E.rs)")
-            }
-        }
-        #[derive(Copy, Clone, Default)] pub struct Undefined;
-        #[derive(Copy, Clone, Default)] pub struct Identifier;
-        #[derive(Copy, Clone, Default)] pub struct Function;
-
-        /// Zig: `E.Null = struct {}`.
-        #[derive(Copy, Clone, Default)] pub struct Null;
-
-        /// Zig: `E.Boolean = struct { value: bool }`.
-        #[derive(Copy, Clone, Default)]
-        pub struct Boolean {
-            pub value: bool,
-        }
-
-        /// Zig: `E.Number = struct { value: f64 }`.
-        #[derive(Copy, Clone, Default)]
-        pub struct Number {
-            pub value: f64,
-        }
-
-        /// Zig: `E.BigInt = struct { value: string }` (source-text slice).
-        #[derive(Copy, Clone)]
-        pub struct BigInt {
-            pub value: super::super::ArenaStr,
-        }
-        impl Default for BigInt {
-            fn default() -> Self { Self { value: super::super::empty_arena_str() } }
-        }
-
-        /// Zig: `E.Array = struct { items: ExprNodeList, comma_after_spread: ?Loc,
-        /// is_single_line, is_parenthesized, was_originally_macro: bool,
-        /// close_bracket_loc: Loc }`.
-        #[derive(Default)]
-        pub struct Array {
-            pub items: BabyList<super::expr::Expr>,
-            pub comma_after_spread: Option<logger::Loc>,
-            pub is_single_line: bool,
-            pub is_parenthesized: bool,
-            pub was_originally_macro: bool,
-            pub close_bracket_loc: logger::Loc,
-        }
-
-        /// Zig: `E.Object = struct { properties: G.Property.List, comma_after_spread: ?Loc,
-        /// is_single_line, is_parenthesized, was_originally_macro: bool,
-        /// close_brace_loc: Loc }`.
-        #[derive(Default)]
-        pub struct Object {
-            pub properties: BabyList<super::g::Property>,
-            pub comma_after_spread: Option<logger::Loc>,
-            pub is_single_line: bool,
-            pub is_parenthesized: bool,
-            pub was_originally_macro: bool,
-            pub close_brace_loc: logger::Loc,
-        }
-    }
-    pub mod g {
-        use super::expr::Expr;
-
-        #[derive(Copy, Clone)]
-        pub struct Comment {
-            pub text: super::super::ArenaStr,
-            pub loc: bun_logger::Loc,
-        }
-
-        /// Object/class property descriptor.
-        ///
-        /// Zig: `G.Property = struct { initializer: ?Expr, kind: Kind, flags,
-        /// class_static_block: ?*ClassStaticBlock, ts_decorators: ExprNodeList,
-        /// key: ?Expr, value: ?Expr, ts_metadata }`.
-        ///
-        /// TODO(b1): `class_static_block` / `ts_decorators` / `ts_metadata`
-        /// omitted from the stub — they reference still-gated types and no
-        /// dependent reads them yet.
-        #[derive(Copy, Clone, Default)]
-        pub struct Property {
-            pub initializer: Option<Expr>,
-            pub kind: PropertyKind,
-            pub flags: crate::flags::PropertySet,
-            pub key: Option<Expr>,
-            pub value: Option<Expr>,
-        }
-
-        /// Zig: `G.Property.Kind = enum(u3)`.
-        #[repr(u8)]
-        #[derive(Copy, Clone, PartialEq, Eq, Default, Debug)]
-        pub enum PropertyKind {
-            #[default]
-            Normal,
-            Get,
-            Set,
-            Spread,
-            Declare,
-            Abstract,
-            ClassStaticBlock,
-            AutoAccessor,
-        }
-    }
-    pub mod op {}
-    pub mod s {
-        use bun_logger as logger;
-
-        /// Zig: `S.Import = struct { namespace_ref: Ref, default_name: ?LocRef,
-        /// items: []ClauseItem, star_name_loc: ?Loc, import_record_index: u32,
-        /// is_single_line: bool }`.
-        pub struct Import {
-            pub namespace_ref: super::base::Ref,
-            pub default_name: Option<crate::LocRef>,
-            // TODO(port): &'bump mut [ClauseItem] once 'bump is threaded.
-            pub items: *mut [crate::ClauseItem],
-            pub star_name_loc: Option<logger::Loc>,
-            pub import_record_index: u32,
-            pub is_single_line: bool,
-        }
-        impl Default for Import {
-            fn default() -> Self {
-                Self {
-                    namespace_ref: super::base::Ref::NONE,
-                    default_name: None,
-                    items: super::super::empty_arena_slice_mut(),
-                    star_name_loc: None,
-                    import_record_index: 0,
-                    is_single_line: false,
-                }
-            }
-        }
-    }
-}
 
 pub use crate::ast::ast_memory_allocator::ASTMemoryAllocator;
 pub use crate::ast::ast::Ast;
@@ -415,13 +106,13 @@ use crate::ast::symbol; // for symbol::Use, symbol::SlotNamespace
 
 // ─── arena-slice helpers (Phase-A raw-pointer stand-ins for &'bump [T]) ─────
 // TODO(port): replace with &'bump [u8] / &'bump mut [T] in Phase B.
-type ArenaStr = *const [u8];
+pub(crate) type ArenaStr = *const [u8];
 #[inline]
-const fn empty_arena_str() -> ArenaStr {
+pub(crate) const fn empty_arena_str() -> ArenaStr {
     core::ptr::slice_from_raw_parts(core::ptr::NonNull::<u8>::dangling().as_ptr(), 0)
 }
 #[inline]
-const fn empty_arena_slice_mut<T>() -> *mut [T] {
+pub(crate) const fn empty_arena_slice_mut<T>() -> *mut [T] {
     core::ptr::slice_from_raw_parts_mut(core::ptr::NonNull::<T>::dangling().as_ptr(), 0)
 }
 
@@ -610,7 +301,8 @@ pub struct SlotCounts {
 
 impl Default for SlotCounts {
     fn default() -> Self {
-        Self { slots: symbol::SlotNamespaceCountsArray::init_fill(0) }
+        // EnumMap<_, u32>::default() zero-fills (Zig: SlotNamespace.CountsArray.initFill(0)).
+        Self { slots: symbol::SlotNamespaceCountsArray::default() }
     }
 }
 

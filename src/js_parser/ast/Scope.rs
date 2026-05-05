@@ -3,8 +3,10 @@ use core::ptr::NonNull;
 use bun_collections::{ArrayHashMap, BabyList, StringHashMap};
 use bun_logger as logger;
 
-use crate::ast::{Ref, StrictModeKind, Symbol, TSNamespaceScope};
-use crate::ast::symbol;
+use crate::StrictModeKind;
+use crate::ast::base::Ref;
+use crate::ast::symbol::{self, Symbol};
+use crate::ast::ts::TSNamespaceScope;
 
 pub type MemberHashMap = StringHashMap<Member>;
 
@@ -61,39 +63,33 @@ impl Default for Scope {
 pub type NestedScopeMap = ArrayHashMap<u32, BabyList<NonNull<Scope>>>;
 
 impl Scope {
+    // TODO(b2-blocked): bun_collections::string_hash_map prehashed adapter API
+    // (`hash`/`Prehashed`/`get_adapted`/`get_or_put_context_adapted`). The parser's
+    // hot path computes the wyhash once and reuses it for lookup+insert; until the
+    // adapter surface lands in bun_collections, callers can use `members.get(name)`
+    // / `members.entry(name)` directly (re-hashes per call).
+    #[cfg(any())]
     pub fn get_member_hash(name: &[u8]) -> u64 {
-        // TODO(port): bun.StringHashMapContext.hash — confirm bun_collections exposes this.
         bun_collections::string_hash_map::hash(name)
     }
-
+    #[cfg(any())]
     pub fn get_member_with_hash(&self, name: &[u8], hash_value: u64) -> Option<Member> {
-        // TODO(port): StringHashMap prehashed-adapter lookup API name.
-        let hashed = bun_collections::string_hash_map::Prehashed {
-            value: hash_value,
-            input: name,
-        };
+        let hashed = bun_collections::string_hash_map::Prehashed { value: hash_value, input: name };
         self.members.get_adapted(name, hashed).copied()
     }
-
-    pub fn get_or_put_member_with_hash<'bump>(
+    #[cfg(any())]
+    pub fn get_or_put_member_with_hash(
         &mut self,
-        bump: &'bump bun_alloc::Arena,
         name: &[u8],
         hash_value: u64,
-    ) -> Result<bun_collections::string_hash_map::GetOrPutResult<'_, Member>, bun_alloc::AllocError>
-    {
-        // TODO(port): StringHashMap prehashed get-or-put API; allocator threading
-        // (Zig passed `allocator` per-call for the unmanaged map; AST-crate arena here).
-        let hashed = bun_collections::string_hash_map::Prehashed {
-            value: hash_value,
-            input: name,
-        };
-        self.members.get_or_put_context_adapted(bump, name, hashed)
+    ) -> bun_collections::string_hash_map::GetOrPutResult<'_, Member> {
+        let hashed = bun_collections::string_hash_map::Prehashed { value: hash_value, input: name };
+        self.members.get_or_put_context_adapted(name, hashed)
     }
 
     pub fn reset(&mut self) {
-        self.children.clear();
-        self.generated.clear();
+        self.children.clear_retaining_capacity();
+        self.generated.clear_retaining_capacity();
         self.members.clear();
         self.parent = None;
         self.id = 0;

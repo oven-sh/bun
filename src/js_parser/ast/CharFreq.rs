@@ -1,8 +1,3 @@
-use bumpalo::Bump;
-
-use crate::ast::NameMinifier;
-use crate::ast::g;
-
 pub const CHAR_FREQ_COUNT: usize = 64;
 
 #[derive(Copy, Clone, Default)]
@@ -64,7 +59,10 @@ impl CharFreq {
         }
     }
 
-    pub fn compile<'bump>(&self, bump: &'bump Bump) -> NameMinifier<'bump> {
+    // TODO(b2-ast-round): NameMinifier lives in renamer.rs (not yet un-gated).
+    #[cfg(any())]
+    pub fn compile<'bump>(&self, bump: &'bump bumpalo::Bump) -> crate::ast::NameMinifier<'bump> {
+        use crate::ast::NameMinifier;
         let array: CharAndCountArray = 'brk: {
             let mut arr: [CharAndCount; CHAR_FREQ_COUNT] = [CharAndCount::default(); CHAR_FREQ_COUNT];
 
@@ -163,7 +161,9 @@ fn scan_small(out: &mut Buffer, text: &[u8], delta: i32) {
     *out = freqs;
 }
 
-pub use g::Class;
+// Zig file ends with `pub const Class = G.Class;` — re-export once g::Class is real.
+#[cfg(any())]
+pub use crate::ast::g::Class;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -1,8 +1,8 @@
 use bun_collections::StringArrayHashMap;
 use bun_logger::Loc;
 
-use crate::ast::e::EString;
-use crate::ast::Ref;
+use crate::ast::base::Ref;
+use crate::ast::e::String as EString;
 
 /// This is for TypeScript "enum" and "namespace" blocks. Each block can
 /// potentially be instantiated multiple times. The exported members of each
@@ -35,7 +35,9 @@ use crate::ast::Ref;
 /// hierarchical scope-based identifier lookup in JavaScript. Lookup now needs
 /// to search sibling scopes in addition to parent scopes. This is accomplished
 /// by sharing the map of exported members between all matching sibling scopes.
-pub struct TSNamespaceScope<'arena> {
+// PORT NOTE: 'arena lifetime dropped — `EnumString` payload uses *const EString
+// (LIFETIMES.tsv ARENA → raw ptr in Phase A; Phase B threads 'bump crate-wide).
+pub struct TSNamespaceScope {
     /// This is specific to this namespace block. It's the argument of the
     /// immediately-invoked function expression that the namespace block is
     /// compiled into:
@@ -51,7 +53,7 @@ pub struct TSNamespaceScope<'arena> {
 
     /// This is shared between all sibling namespace blocks
     // LIFETIMES.tsv: ARENA — p.allocator.create(Pair); &pair.map; shared across sibling scopes
-    pub exported_members: *mut TSNamespaceMemberMap<'arena>,
+    pub exported_members: *mut TSNamespaceMemberMap,
 
     /// This is a lazily-generated map of identifiers that actually represent
     /// property accesses to this namespace's properties. For example:
@@ -108,29 +110,30 @@ pub struct TSNamespaceScope<'arena> {
     pub is_enum_scope: bool,
 }
 
-pub type TSNamespaceMemberMap<'arena> = StringArrayHashMap<TSNamespaceMember<'arena>>;
+pub type TSNamespaceMemberMap = StringArrayHashMap<TSNamespaceMember>;
 
-pub struct TSNamespaceMember<'arena> {
+pub struct TSNamespaceMember {
     pub loc: Loc,
-    pub data: Data<'arena>,
+    pub data: Data,
 }
 
-pub enum Data<'arena> {
+pub enum Data {
     /// "namespace ns { export let it }"
     Property,
     /// "namespace ns { export namespace it {} }"
     // LIFETIMES.tsv: ARENA — assigned from ts_namespace.exported_members (parser-arena alloc)
-    Namespace(*mut TSNamespaceMemberMap<'arena>),
+    Namespace(*mut TSNamespaceMemberMap),
     /// "enum ns { it }"
     EnumNumber(f64),
     /// "enum ns { it = 'it' }"
-    // LIFETIMES.tsv: ARENA — assigned from Expr.Data.e_string payload (AST Expr store)
-    EnumString(&'arena EString),
+    // LIFETIMES.tsv: ARENA — assigned from Expr.Data.e_string payload (AST Expr store).
+    // TODO(port): &'bump EString once 'bump threaded crate-wide.
+    EnumString(*const EString),
     /// "enum ns { it = something() }"
     EnumProperty,
 }
 
-impl<'arena> Data<'arena> {
+impl Data {
     pub fn is_enum(&self) -> bool {
         // PORT NOTE: Zig used `inline else` + comptime `@tagName` prefix check ("enum_").
         // Expanded to an explicit match over the enum_* variants.
@@ -141,6 +144,8 @@ impl<'arena> Data<'arena> {
     }
 }
 
+// Zig file ends with `pub const Class = G.Class;` — re-export once g::Class is real.
+#[cfg(any())]
 pub use crate::ast::g::Class;
 
 // ──────────────────────────────────────────────────────────────────────────

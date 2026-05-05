@@ -33,8 +33,11 @@ else
 ///   • avif decode+encode → ImageIO/WIC on mac/win; on Linux, dlopen'd
 ///     libavif (see `codec_avif.zig`).
 ///
-/// `.bun` skips the OS layer entirely (Highway geometry, heic throws on
-/// Linux, avif goes through dlopen'd libavif).
+/// `.bun` skips the OS layer entirely: Highway geometry everywhere, heic
+/// throws `UnsupportedOnPlatform` on every platform (no static codec),
+/// avif uses the dlopen'd libavif on Linux and throws
+/// `UnsupportedOnPlatform` elsewhere (the `avif` comptime optional-type
+/// is `null` on mac/win).
 ///
 /// Unsynchronised: written from JS, read from WorkPool — a torn read of a
 /// 1-byte enum is fine and the worst case is one task using the previous

@@ -50,9 +50,6 @@ extern fn bun_avif_encode(
     out_size: *usize,
 ) i32;
 extern fn bun_avif_free_output(data: ?*anyopaque) void;
-// ICC profile buffer handed back by bun_avif_decode is plain malloc'd —
-// free() via the C runtime (same lib we dlopen'd libavif against).
-extern "c" fn free(ptr: ?*anyopaque) void;
 
 fn mapDecodeErr(rc: i32) codecs.Error {
     return switch (rc) {
@@ -98,7 +95,7 @@ pub fn decode(bytes: []const u8, max_pixels: u64) codecs.Error!codecs.Decoded {
     // (implicitly sRGB via CICP).
     const icc: ?[]u8 = blk: {
         if (icc_ptr == null or icc_size == 0) break :blk null;
-        defer free(icc_ptr);
+        defer std.c.free(icc_ptr);
         const p = icc_ptr orelse break :blk null;
         break :blk bun.default_allocator.dupe(u8, p[0..icc_size]) catch break :blk null;
     };
@@ -145,4 +142,5 @@ pub fn encode(rgba: []const u8, w: u32, h: u32, quality: u8, icc_profile: ?[]con
 }
 
 const bun = @import("bun");
+const std = @import("std");
 const codecs = @import("./codecs.zig");

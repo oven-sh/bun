@@ -30,6 +30,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib> // malloc (ICC-profile copy in bun_avif_decode)
 #include <cstring>
 #include <dlfcn.h>
 

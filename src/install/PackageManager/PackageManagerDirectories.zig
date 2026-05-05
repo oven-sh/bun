@@ -523,6 +523,14 @@ pub fn linkedPackagePath(
         return bun.path.joinAbsStringBufZ(dir_path, buf, &.{pkg_name}, .auto);
     }
 
+    // If populate ran and left the cache empty because the global link
+    // dir couldn't be set up (no writable profile, locked-down container,
+    // etc.), don't re-attempt via globalLinkDirPath — that path
+    // `Global.exit(1)`s on setup failure, which would turn a plain
+    // npm-only install on Windows into a hard exit. Honor populate's
+    // "no links on this machine" result.
+    if (this.linked_names_populated and this.global_link_dir_path.len == 0) return null;
+
     const dir_path = this.globalLinkDirPath();
     const joined = bun.path.joinAbsStringBufZ(dir_path, buf, &.{pkg_name}, .auto);
     if (comptime bun.Environment.isWindows) {

@@ -35,7 +35,8 @@ bun_dotenv.workspace = true
 bun_event_loop.workspace = true
 bun_glob.workspace = true
 bun_http.workspace = true
-bun_http_jsc.workspace = true
+# TODO(b1): bun_http_jsc does not compile (67 errors); re-enable in B-2.
+# bun_http_jsc.workspace = true
 bun_http_types.workspace = true
 bun_install.workspace = true
 bun_interchange.workspace = true
@@ -43,7 +44,8 @@ bun_io.workspace = true
 bun_js.workspace = true
 bun_js_parser.workspace = true
 bun_js_printer.workspace = true
-bun_jsc.workspace = true
+# TODO(b1): bun_jsc does not compile (254 errors); re-enable in B-2.
+# bun_jsc.workspace = true
 bun_libarchive.workspace = true
 bun_logger.workspace = true
 bun_lolhtml_sys.workspace = true

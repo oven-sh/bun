@@ -18,7 +18,9 @@ enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
 bun_core.workspace = true
-bun_jsc.workspace = true
+# TODO(b1): bun_jsc does not compile yet (missing module files / bun_http_jsc broken).
+# Re-enable in B-2 once bun_jsc is green.
+# bun_jsc.workspace = true
 bun_patch.workspace = true
 bun_string.workspace = true
 bun_sys.workspace = true

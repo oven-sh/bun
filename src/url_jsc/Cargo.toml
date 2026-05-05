@@ -18,5 +18,7 @@ enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
 bun_core.workspace = true
-bun_jsc.workspace = true
+# TODO(b1): bun_jsc transitively pulls bun_http_jsc which does not compile yet.
+# Re-enable once bun_jsc is green; lib.rs gates all bun_jsc usage behind cfg(any()).
+# bun_jsc.workspace = true
 bun_url.workspace = true

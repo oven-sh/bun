@@ -17,6 +17,7 @@ enum-map.workspace = true
 enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
-bun_jsc.workspace = true
+# TODO(b1): bun_jsc dependency disabled — crate has 254 compile errors; re-enable in B-2.
+# bun_jsc.workspace = true
 bun_string.workspace = true
 bun_sys.workspace = true

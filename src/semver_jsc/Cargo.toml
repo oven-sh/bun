@@ -17,6 +17,7 @@ enum-map.workspace = true
 enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
-bun_jsc.workspace = true
+# TODO(b1): bun_jsc dependency is broken (transitive E0583/E0432); re-enable when bun_jsc is green.
+# bun_jsc.workspace = true
 bun_semver.workspace = true
 bun_string.workspace = true

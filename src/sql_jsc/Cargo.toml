@@ -22,7 +22,8 @@ bun_base64.workspace = true
 bun_boringssl_sys.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
-bun_jsc.workspace = true
+# TODO(b1): bun_jsc does not compile (254 errors); re-enable in B-2.
+# bun_jsc.workspace = true
 bun_ptr.workspace = true
 bun_runtime.workspace = true
 bun_sql.workspace = true

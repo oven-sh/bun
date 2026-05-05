@@ -21,9 +21,11 @@ bun_alloc.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
 bun_io.workspace = true
-bun_jsc.workspace = true
+# TODO(b1): bun_jsc does not compile yet (255 errors) — re-enable in B-2 when gated.
+# bun_jsc.workspace = true
 bun_paths.workspace = true
-bun_runtime.workspace = true
+# TODO(b1): bun_runtime → bun_http_jsc does not compile yet — re-enable in B-2 when gated.
+# bun_runtime.workspace = true
 bun_sourcemap.workspace = true
 bun_string.workspace = true
 bun_wyhash.workspace = true

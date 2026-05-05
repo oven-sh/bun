@@ -707,7 +707,12 @@ pub const Installer = struct {
                                         .copyfile;
 
                                     if (publishable_owned) |publishable_paths| {
-                                        var dest: bun.Path(.{ .unit = .os, .sep = .auto }) = .init();
+                                        // `publishable` is unconditionally null on
+                                        // Windows (pack_command yields POSIX subpaths;
+                                        // see the `publishable: ?…` block above), so
+                                        // this branch is POSIX-only and a u8-unit
+                                        // Path is always correct here.
+                                        var dest: bun.Path(.{ .sep = .auto }) = .init();
                                         defer dest.deinit();
                                         installer.appendRealStorePath(&dest, this.entry_id, .staging);
 
@@ -2274,8 +2279,19 @@ const debug = Output.scoped(.IsolatedInstaller, .hidden);
 fn linkedHardlinkPaths(
     folder_dir: FD,
     paths: []const [:0]const u8,
-    dest: *bun.Path(.{ .unit = .os, .sep = .auto }),
+    dest: *bun.Path(.{ .sep = .auto }),
 ) sys.Maybe(void) {
+    // POSIX-only. The caller sets `publishable = null` on Windows because
+    // `pack_command.collectPublishablePaths` yields POSIX-separator
+    // subpaths and the iteration helpers aren't WTF-16-ready yet. The
+    // `comptime` check here tells Zig's semantic analyzer to skip the
+    // POSIX-signature syscalls (`sys.linkatZ`) on Windows targets so the
+    // dead-code body still compiles.
+    if (comptime !Environment.isPosix) {
+        _ = .{ folder_dir, paths, dest };
+        return .success;
+    }
+
     FD.cwd().makePath(u8, dest.sliceZ()) catch {};
 
     for (paths) |rel| {
@@ -2313,8 +2329,17 @@ fn linkedHardlinkPaths(
 fn linkedCopyPaths(
     folder_dir: FD,
     paths: []const [:0]const u8,
-    dest: *bun.Path(.{ .unit = .os, .sep = .auto }),
+    dest: *bun.Path(.{ .sep = .auto }),
 ) sys.Maybe(void) {
+    // POSIX-only; see the note on `linkedHardlinkPaths`. On Windows
+    // `bun.copyFileWithState` takes `bun.OSPathSliceZ` (`[:0]const u16`)
+    // rather than FDs, so the FD-based body below does not type-check
+    // there even though it's unreachable at runtime.
+    if (comptime !Environment.isPosix) {
+        _ = .{ folder_dir, paths, dest };
+        return .success;
+    }
+
     FD.cwd().makePath(u8, dest.sliceZ()) catch {};
     var copy_state: bun.CopyFileState = .{};
 
@@ -2342,14 +2367,12 @@ fn linkedCopyPaths(
         };
         defer dest_fd.close();
 
-        if (comptime Environment.isPosix) {
-            // Best-effort: preserve file mode. Failure here is non-fatal.
-            switch (src.stat()) {
-                .result => |stat| {
-                    _ = bun.c.fchmod(dest_fd.cast(), @intCast(stat.mode));
-                },
-                .err => {},
-            }
+        // Best-effort: preserve file mode. Failure here is non-fatal.
+        switch (src.stat()) {
+            .result => |stat| {
+                _ = bun.c.fchmod(dest_fd.cast(), @intCast(stat.mode));
+            },
+            .err => {},
         }
 
         switch (bun.copyFileWithState(src, dest_fd, &copy_state)) {

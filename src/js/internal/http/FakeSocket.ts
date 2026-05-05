@@ -11,6 +11,11 @@ var FakeSocket = class Socket extends Duplex {
   timeout = 0;
   isServer = false;
 
+  // TLS socket properties — encrypted/authorized set by IncomingMessage for HTTPS
+  encrypted = false;
+  authorized = false;
+  alpnProtocol: string | false = false;
+
   #address;
   _httpMessage: any;
   constructor(httpMessage: any) {
@@ -127,6 +132,81 @@ var FakeSocket = class Socket extends Duplex {
   destroy() {
     this._httpMessage?.destroy?.();
     return super.destroy();
+  }
+
+  // TLS methods — stubs for compatibility when res.socket is accessed as TLSSocket
+  getPeerCertificate(_detailed?: boolean) {
+    return this.encrypted ? {} : null;
+  }
+
+  getCipher() {
+    return this.encrypted ? { name: "", standardName: "", version: "" } : null;
+  }
+
+  getProtocol() {
+    return this.encrypted ? "TLSv1.3" : null;
+  }
+
+  getSession() {
+    return undefined;
+  }
+
+  getEphemeralKeyInfo() {
+    return this.encrypted ? {} : null;
+  }
+
+  getSharedSigalgs() {
+    return this.encrypted ? [] : null;
+  }
+
+  isSessionReused() {
+    return false;
+  }
+
+  getFinished() {
+    return undefined;
+  }
+
+  getPeerFinished() {
+    return undefined;
+  }
+
+  getTLSTicket() {
+    return undefined;
+  }
+
+  exportKeyingMaterial(_length, _label, _context) {
+    return undefined;
+  }
+
+  setMaxSendFragment(_size) {
+    return this.encrypted ? true : false;
+  }
+
+  setServername(_name) {}
+
+  setSession(_session) {}
+
+  renegotiate(_options, _callback) {
+    if (typeof _callback === "function") {
+      process.nextTick(_callback, new Error("TLS renegotiation is not supported"));
+    }
+  }
+
+  disableRenegotiation() {}
+
+  enableTrace() {}
+
+  getCertificate() {
+    return this.encrypted ? {} : null;
+  }
+
+  getPeerX509Certificate() {
+    return undefined;
+  }
+
+  getX509Certificate() {
+    return undefined;
   }
 };
 

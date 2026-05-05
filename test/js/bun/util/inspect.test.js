@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { normalizeBunSnapshot, tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -314,6 +314,34 @@ it("jsx with fragment", () => {
   const output = `<>foo bar</>`;
 
   expect(input).toBe(output);
+});
+
+it("jsx with circular references does not stack overflow", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const sym = Symbol.for("react.element");
+        const a = { $$typeof: sym, type: "div", key: null, props: {} };
+        a.key = a;
+        console.log(Bun.inspect(a));
+        const b = { $$typeof: sym, type: "div", key: null, props: {} };
+        b.props.children = b;
+        console.log(Bun.inspect(b));
+        const c = { $$typeof: sym, type: "div", key: null, props: {} };
+        c.props.foo = c;
+        console.log(Bun.inspect(c));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("<div key=[Circular] />\n" + "<div>\n  [Circular]\n</div>\n" + "<div foo=[Circular] />\n");
+  expect(exitCode).toBe(0);
 });
 
 it("inspect", () => {

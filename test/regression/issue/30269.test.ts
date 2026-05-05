@@ -14,7 +14,7 @@
 // Fix: split the single-pass interleaved loop into two passes — register
 // all top-level symbols for the whole chunk first, then walk nested scopes.
 // Matches esbuild's structure.
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("#30269 bundler doesn't rename a nested local into another top-level symbol's name", async () => {

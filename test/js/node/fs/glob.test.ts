@@ -588,9 +588,10 @@ describe("fs.glob edge cases", () => {
 
     // But a trailing separator on a pattern that names a non-directory
     // means "directories only" — Node returns `[]` for
-    // `fs.globSync('/abs/file.txt/')`, and so do we. The walker must
-    // run `lstat` on the *unstripped* path so the kernel's
-    // trailing-slash type-check applies.
+    // `fs.globSync('/abs/file.txt/')`, and so do we. The walker checks
+    // the explicit `trailing_sep` flag against the lstat'd mode
+    // (`!ISDIR && !ISLNK → []`) so the filter works uniformly on
+    // POSIX and Windows.
     expect(fs.globSync(path.join(root, "file.txt") + sep)).toStrictEqual([]);
   });
 

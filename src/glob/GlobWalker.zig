@@ -112,9 +112,7 @@ pub fn statatWindows(fd: bun.FD, path: [:0]const u8) Maybe(bun.Stat) {
 
 /// Windows `lstatat`. Mirrors `statatWindows` but ends in `Syscall.lstat`
 /// instead of `Syscall.stat` so the dirent's own mode is returned (ISLNK
-/// for symlinks). `SyscallAccessor.lstatat` on Windows routes through
-/// `statatWindows` which follows links; for callers that actually need
-/// the no-follow view (`trailing_sep` disambiguation) use this directly.
+/// for symlinks). Used by `SyscallAccessor.lstatat` on Windows.
 pub fn lstatatWindows(fd: bun.FD, path: [:0]const u8) Maybe(bun.Stat) {
     if (comptime !bun.Environment.isWindows) @compileError("oi don't use this");
     var buf: bun.PathBuffer = undefined;
@@ -596,7 +594,7 @@ pub fn GlobWalker_(
                                         // Windows. Use `Syscall.lstat`
                                         // directly rather than
                                         // `Accessor.lstatat(.empty, ...)` —
-                                        // `statatWindows` dereferences the
+                                        // `lstatatWindows` dereferences the
                                         // handle before checking whether
                                         // `path` is absolute, so passing
                                         // `.empty` fails with EBADF on

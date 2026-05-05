@@ -54,6 +54,14 @@ pub fn Visit(
             var func = _func;
             const old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
             const old_fn_only_data = p.fn_only_data_visit;
+            // Reset `fold_numeric_constants_unconditionally` across function
+            // boundaries: the callers that force-fold (enum body, macro/require
+            // args, const initializer for inlining) want the override only for
+            // the immediate initializer expression, not for any nested function
+            // body's arithmetic — which goes with the function when it's
+            // called and must obey the usual size-aware gate.
+            const old_fold_numeric_constants_unconditionally = p.fold_numeric_constants_unconditionally;
+            p.fold_numeric_constants_unconditionally = false;
             p.fn_or_arrow_data_visit = FnOrArrowDataVisit{ .is_async = func.flags.contains(.is_async) };
             p.fn_only_data_visit = FnOnlyDataVisit{ .is_this_nested = true, .arguments_ref = func.arguments_ref };
 
@@ -100,6 +108,7 @@ pub fn Visit(
 
             p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
             p.fn_only_data_visit = old_fn_only_data;
+            p.fold_numeric_constants_unconditionally = old_fold_numeric_constants_unconditionally;
 
             return func;
         }
@@ -191,9 +200,25 @@ pub fn Visit(
                     if (was_anonymous_named_expr and val.data == .e_class and val.data.e_class.should_lower_standard_decorators and decl.binding.data == .b_identifier) {
                         p.decorator_class_name = p.loadNameFromRef(decl.binding.data.b_identifier.ref);
                     }
+                    // For a const decl that could become a const_values entry
+                    // (inlining on), force numeric arithmetic to fold in the
+                    // initializer. Otherwise `const RATIO = 16/9` stays as
+                    // `E.Binary`, `canBeConstValue` returns false, the ref is
+                    // never registered, and cross-statement inlining / DCE
+                    // that depended on it (e.g. `if (RATIO > 1) { keep } else
+                    // { dead }`) silently stops working.
+                    const want_unconditional_numeric_fold = was_const and
+                        !p.current_scope.is_after_const_local_prefix and
+                        p.options.features.inlining and
+                        decl.binding.data == .b_identifier;
+                    const prev_fold_numeric_constants_unconditionally = p.fold_numeric_constants_unconditionally;
+                    if (want_unconditional_numeric_fold) {
+                        p.fold_numeric_constants_unconditionally = true;
+                    }
                     decl.value = p.visitExprInOut(val, .{
                         .is_immediately_assigned_to_decl = true,
                     });
+                    p.fold_numeric_constants_unconditionally = prev_fold_numeric_constants_unconditionally;
                     p.decorator_class_name = prev_decorator_class_name;
 
                     if (p.options.features.react_fast_refresh) {
@@ -525,6 +550,20 @@ pub fn Visit(
             if (only_scan_imports_and_do_not_visit) {
                 @compileError("only_scan_imports_and_do_not_visit must not run this.");
             }
+
+            // Reset `fold_numeric_constants_unconditionally` across the class
+            // boundary: class-level TS decorators, the `extends` clause, and
+            // the class body (field initializers, static blocks) visit
+            // through `p.visitExpr`/`p.visitStmts` directly without routing
+            // through `visitFunc` or the arrow visitor, so a caller that
+            // force-folded for the enclosing decl (const-decl inlining,
+            // macro/require args) would otherwise leak into any of those
+            // contexts. `canBeConstValue` rejects `.e_class` anyway, so the
+            // force-fold buys nothing here — reset matches the `visitFunc` /
+            // `e_arrow` handling.
+            const old_fold_numeric_constants_unconditionally = p.fold_numeric_constants_unconditionally;
+            p.fold_numeric_constants_unconditionally = false;
+            defer p.fold_numeric_constants_unconditionally = old_fold_numeric_constants_unconditionally;
 
             class.ts_decorators = p.visitTSDecorators(class.ts_decorators);
 

@@ -272,6 +272,15 @@ pub fn NewParser_(
         /// we always fold constant expressions.
         should_fold_typescript_constant_expressions: bool = false,
 
+        /// When set, numeric binary arithmetic folds unconditionally even if
+        /// the folded literal would print larger than the source expression.
+        /// Used inside TypeScript enum bodies so the emitted enum table has
+        /// fully computed numeric values (matching `tsc`), and so subsequent
+        /// enum members that reference prior members can resolve to a number.
+        /// Outside this flag, arithmetic folding under `minify_syntax` only
+        /// happens when the folded literal is no longer than the source.
+        fold_numeric_constants_unconditionally: bool = false,
+
         emitted_namespace_vars: RefMap = RefMap{},
         is_exported_inside_namespace: RefRefMap = .{},
         local_type_names: StringBoolMap = StringBoolMap{},
@@ -4261,6 +4270,31 @@ pub fn NewParser_(
                                     return right == left and p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.left) and p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.right);
                                 },
                                 else => {},
+                            }
+                        },
+
+                        // Arithmetic between two numeric literals (or inlined
+                        // enum numbers) has no `valueOf`/`toString` side
+                        // effects and cannot throw — removable when both
+                        // sides are. Pre-PR this never fired because every
+                        // such node was folded to `.e_number` before reaching
+                        // here; with size-aware folding the `.e_binary`
+                        // survives (e.g. `export class C { ratio = 1/3 }`)
+                        // and without this arm the unused export no longer
+                        // tree-shakes.
+                        //
+                        // `extractNumericValue` is a non-recursive shallow
+                        // match on `.e_number`/inlined enum — not
+                        // `knownPrimitive`, whose recursion through
+                        // `.bin_add` would stack-overflow on the
+                        // million-deep `a+a+a+…` chain in
+                        // `transpiler-stack-overflow.test.ts`. For those
+                        // tags `exprCanBeRemovedIfUnusedWithoutDCECheck` is
+                        // already known to return true (literal fast-path
+                        // above), so no recursion is needed.
+                        .bin_add, .bin_sub, .bin_mul, .bin_div, .bin_rem, .bin_pow => {
+                            if (ex.left.data.extractNumericValue() != null and ex.right.data.extractNumericValue() != null) {
+                                return true;
                             }
                         },
                         else => {},

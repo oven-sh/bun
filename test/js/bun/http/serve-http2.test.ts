@@ -396,6 +396,31 @@ describe("Bun.serve h2: true", () => {
     });
   });
 
+  test("SETTINGS_ENABLE_PUSH value other than 0/1 → GOAWAY(PROTOCOL_ERROR)", async () => {
+    // RFC 9113 §6.5.2: "Any value other than 0 or 1 MUST be treated as a
+    // connection error of type PROTOCOL_ERROR." ENABLE_PUSH is a *defined*
+    // setting with a value constraint — it's not in the "unknown settings
+    // MUST be ignored" bucket even though the server never pushes.
+    await withServer(async port => {
+      const h2 = await rawH2(port);
+      const setting = (id: number, v: number) => {
+        const b = Buffer.alloc(6);
+        b.writeUInt16BE(id, 0);
+        b.writeUInt32BE(v, 2);
+        return b;
+      };
+      // ENABLE_PUSH = 0 is valid → ACK'd.
+      h2.sock.write(h2.frame(0x04, 0, 0, setting(2, 0)));
+      await h2.pong();
+      // ENABLE_PUSH = 2 is invalid → GOAWAY(PROTOCOL_ERROR).
+      h2.sock.write(h2.frame(0x04, 0, 0, setting(2, 2)));
+      const goaway = await h2.waitFor(f => f.type === 0x07);
+      expect(goaway.payload.readUInt32BE(4)).toBe(1); // PROTOCOL_ERROR
+      h2.sock.on("error", () => {});
+      h2.sock.destroy();
+    });
+  });
+
   test("raising SETTINGS_INITIAL_WINDOW_SIZE drains backpressured streams", async () => {
     // RFC 9113 §6.9.2: a change to INITIAL_WINDOW_SIZE adjusts every
     // open stream's send window — equivalent to a per-stream

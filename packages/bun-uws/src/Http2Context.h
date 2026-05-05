@@ -608,6 +608,9 @@ struct Http2Context {
             switch (id) {
             case 1: /* HEADER_TABLE_SIZE */
                 lshpack_enc_set_max_capacity(&c->enc, v); break;
+            case 2: /* ENABLE_PUSH — §6.5.2: MUST be 0 or 1 */
+                if (v > 1) return protocolError(s, h2::ERR_PROTOCOL);
+                break;
             case 4: { /* INITIAL_WINDOW_SIZE — §6.9.2 also adjusts open streams */
                 if (v > 0x7fffffff) return protocolError(s, h2::ERR_FLOW_CONTROL);
                 int32_t delta = (int32_t) v - c->remoteInitialWindow;

@@ -245,18 +245,23 @@ constexpr int kAvifTooManyPixels = 4; // match CG_TOO_MANY_PIXELS
 extern "C" {
 
 // Common decoder setup. Split out so probe() and decode() apply the exact
-// same knobs — they both need the dimension-limit disable in particular:
-// libavif's default `imageDimensionLimit` is 32768 per side (see avif.h's
-// AVIF_DEFAULT_IMAGE_DIMENSION_LIMIT), and `avifDecoderParse` rejects
-// anything over that before w/h are exposed. Panoramas / wide UI banners
-// can legitimately cross 32768 on one side while staying under the
-// imageSizeLimit total-pixel cap (16384² = our default_max_pixels). We
-// need the rejection outcome to come from codecs.guard — both so it's
-// ERR_IMAGE_TOO_MANY_PIXELS (matching jpeg/png/webp) and so `maxPixels`
-// opt-in values above the default work. Per avif.h:1299-1300, `0`
-// disables the per-side limit (it's documented, not reserved —
-// imageSizeLimit is the one where 0 is reserved, and we leave that at
-// its default).
+// same knobs. Both of libavif's pre-parse limits fire inside
+// `avifDecoderParse` *before* w/h are exposed, so if they trip the
+// rejection comes through as DecodeFailed — masking the shim's own pixel-
+// count check. We want the rejection outcome to come from codecs.guard
+// (ERR_IMAGE_TOO_MANY_PIXELS, matching jpeg/png/webp), so:
+//
+//   • `imageDimensionLimit` (default 32768 per side) → set to 0 to
+//     disable. Panoramas/wide UI banners can legitimately cross 32768
+//     on one side while staying under the total-pixel cap.
+//   • `imageSizeLimit` (default 16384² = 268MP) → left at default. The
+//     API explicitly documents that it can only be *reduced*, not
+//     raised; the header warns about uint32 arithmetic overflow at
+//     larger values. So for `maxPixels` opt-ins above 268MP the AVIF
+//     path still rejects with DecodeFailed — a known gap the Zig guard
+//     can't help with. In practice 268MP is ~16k × 16k, well above the
+//     input a Sharp-style web pipeline sees; users past that point are
+//     in "custom libavif build" territory anyway.
 static void configureDecoder(AvifDecoder* dec)
 {
     dec->maxThreads = 1;
@@ -302,9 +307,14 @@ int32_t bun_avif_probe(const uint8_t* bytes, size_t len, uint64_t max_pixels,
 // into a freshly `malloc`'d buffer at `*out_icc_ptr` with `*out_icc_size`
 // bytes — `NULL`/`0` when the container had no profile. The Zig wrapper
 // re-homes those bytes into bun.default_allocator and then calls `free()`
-// on the libavif-malloc'd source. Two-phase like the CG shim would be
-// nicer but libavif's `NextImage` owns the YUV→RGB; we do it in one pass
-// and expose dims first via `bun_avif_probe`.
+// on the libavif-malloc'd source.
+//
+// Two-phase: the Zig side calls this twice — once with `out=nullptr` to
+// read dims from the container (so it can allocate the RGBA buffer), then
+// once with `out=buf` to run the AV1 decode + YUV→RGB into that buffer.
+// The first call stops at `avifDecoderParse` (ispe-box cheap), the second
+// runs `avifDecoderNextImage` + `avifImageYUVToRGB`. Cheap to re-create
+// the decoder relative to the AV1 decode itself.
 int32_t bun_avif_decode(const uint8_t* bytes, size_t len, uint64_t max_pixels,
     uint32_t* out_w, uint32_t* out_h, uint8_t* out,
     uint8_t** out_icc_ptr, size_t* out_icc_size)

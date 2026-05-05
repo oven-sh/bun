@@ -532,6 +532,15 @@ pub fn doMetadata(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.Cal
     // in memory it's cheaper to do it inline than to bounce off the WorkPool
     // (~0.4 ms roundtrip). Path-backed sources still go async for the file I/O.
     if (this.jsThreadBytes(callframe.this(), global)) |buf| {
+        // AVIF's probe is via dlopen'd libavif — the first call triggers
+        // a synchronous `dlopen("libavif.so.16", RTLD_NOW)` that also eagerly
+        // resolves dav1d + aom/rav1e/SvtAv1Enc. Doing that on the JS thread
+        // would stall the event loop on first use; force AVIF through the
+        // async path even with inline bytes. JPEG/PNG/WebP/BMP/GIF probes
+        // are pure Zig and stay sync. `Format.sniff` is just byte reads.
+        if (codecs.Format.sniff(buf)) |fmt| if (fmt == .avif) {
+            return this.schedule(global, callframe.this(), .metadata, .uint8array);
+        };
         if (codecs.probe(buf, this.max_pixels)) |p| {
             var w = p.width;
             var h = p.height;

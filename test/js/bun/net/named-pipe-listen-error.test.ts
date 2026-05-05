@@ -1,6 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 
+// Safe JSON parse for subprocess stdout. An unguarded `JSON.parse` throws
+// on malformed output *before* the test's final assertion runs, hiding
+// stderr/exitCode context — we want failures to surface the raw subprocess
+// output next to the parse result for diagnosis.
+function parseJSON(text: string): unknown {
+  try {
+    return JSON.parse(text.trim() || "null");
+  } catch {
+    return null;
+  }
+}
+
 // When `Bun.listen()` on a Windows named pipe fails (e.g. the pipe name is
 // already in use), the cleanup path must:
 //   - not double-unprotect the socket handler callbacks (previously both
@@ -62,7 +74,8 @@ describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect({
-      shape: JSON.parse(stdout.trim() || "null"),
+      shape: parseJSON(stdout),
+      rawStdout: stdout.trim(),
       stderr: stderr.trim(),
       exitCode,
       signalCode: proc.signalCode ?? null,
@@ -73,6 +86,7 @@ describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
         address: expect.stringMatching(/^\\\\\.\\pipe\\bun-test-named-pipe-/),
         errnoType: "number",
       },
+      rawStdout: expect.any(String),
       stderr: "",
       exitCode: 0,
       signalCode: null,
@@ -128,10 +142,10 @@ describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const shape = JSON.parse(stdout.trim() || "null");
 
     expect({
-      shape,
+      shape: parseJSON(stdout),
+      rawStdout: stdout.trim(),
       stderr: stderr.trim(),
       exitCode,
       signalCode: proc.signalCode ?? null,
@@ -145,6 +159,7 @@ describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
         message: expect.stringMatching(/^listen EADDRINUSE: address already in use \\\\\.\\pipe\\bun-test-net-listen-/),
         hasPath: false,
       },
+      rawStdout: expect.any(String),
       stderr: "",
       exitCode: 0,
       signalCode: null,
@@ -201,7 +216,8 @@ describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect({
-      shape: JSON.parse(stdout.trim() || "null"),
+      shape: parseJSON(stdout),
+      rawStdout: stdout.trim(),
       stderr: stderr.trim(),
       exitCode,
       signalCode: proc.signalCode ?? null,
@@ -211,6 +227,7 @@ describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
         address: expect.stringMatching(/^\/\/\.\/pipe\/bun-test-forward-slash-/),
         messageContainsForward: true,
       },
+      rawStdout: expect.any(String),
       stderr: "",
       exitCode: 0,
       signalCode: null,

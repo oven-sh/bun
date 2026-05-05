@@ -10,6 +10,16 @@ pub fn installIsolatedPackages(
 ) OOM!PackageInstall.Summary {
     bun.analytics.Features.isolated_bun_install += 1;
 
+    // Prime Bin.Linker.umask on the main thread before any bin-linking
+    // tasks are scheduled. The isolated installer runs `Bin.Linker.link()`
+    // on thread-pool workers; `ensureUmask()` isn't thread-safe (plain
+    // bool + two non-atomic `umask(2)` syscalls) so calling it from
+    // concurrent workers races and can leave the process umask at 0.
+    // Hoisted install primes it the same way on its main-thread entry.
+    if (comptime Environment.isPosix) {
+        Bin.Linker.ensureUmask();
+    }
+
     const lockfile = manager.lockfile;
 
     const store: Store = store: {
@@ -1267,8 +1277,8 @@ pub fn installIsolatedPackages(
         const node_modules_path = bun.OSPathLiteral("node_modules");
         const bun_modules_path = bun.OSPathLiteral("node_modules/" ++ Store.modules_dir_name);
 
-        sys.mkdirat(FD.cwd(), node_modules_path, 0o755).unwrap() catch {
-            sys.mkdirat(FD.cwd(), bun_modules_path, 0o755).unwrap() catch {
+        sys.mkdirat(FD.cwd(), node_modules_path, bun.umask_mkdir_mode).unwrap() catch {
+            sys.mkdirat(FD.cwd(), bun_modules_path, bun.umask_mkdir_mode).unwrap() catch {
                 break :is_new_bun_modules false;
             };
 
@@ -1291,7 +1301,7 @@ pub fn installIsolatedPackages(
                     rename_path.append(mkdir_path.slice());
 
                     // 1
-                    sys.mkdirat(FD.cwd(), mkdir_path.sliceZ(), 0o755).unwrap() catch {
+                    sys.mkdirat(FD.cwd(), mkdir_path.sliceZ(), bun.umask_mkdir_mode).unwrap() catch {
                         break :is_new_bun_modules true;
                     };
                 }
@@ -1356,12 +1366,12 @@ pub fn installIsolatedPackages(
                 };
 
                 // 2
-                sys.mkdirat(FD.cwd(), node_modules_path, 0o755).unwrap() catch |err| {
+                sys.mkdirat(FD.cwd(), node_modules_path, bun.umask_mkdir_mode).unwrap() catch |err| {
                     Output.err(err, "failed to create './node_modules'", .{});
                     Global.exit(1);
                 };
 
-                sys.mkdirat(FD.cwd(), bun_modules_path, 0o755).unwrap() catch |err| {
+                sys.mkdirat(FD.cwd(), bun_modules_path, bun.umask_mkdir_mode).unwrap() catch |err| {
                     Output.err(err, "failed to create './node_modules/.bun'", .{});
                     Global.exit(1);
                 };
@@ -1410,7 +1420,7 @@ pub fn installIsolatedPackages(
             break :is_new_bun_modules true;
         };
 
-        sys.mkdirat(FD.cwd(), bun_modules_path, 0o755).unwrap() catch |err| {
+        sys.mkdirat(FD.cwd(), bun_modules_path, bun.umask_mkdir_mode).unwrap() catch |err| {
             Output.err(err, "failed to create './node_modules/.bun'", .{});
             Global.exit(1);
         };
@@ -1940,6 +1950,7 @@ const sys = bun.sys;
 const Command = bun.cli.Command;
 
 const install = bun.install;
+const Bin = install.Bin;
 const DependencyID = install.DependencyID;
 const PackageID = install.PackageID;
 const PackageInstall = install.PackageInstall;

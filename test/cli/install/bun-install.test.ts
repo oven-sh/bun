@@ -8770,6 +8770,74 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // Regression for https://github.com/oven-sh/bun/issues/29723:
+  // `bun install` hard-coded 0o755 when creating directories, which meant the
+  // caller's umask could never loosen the perms beyond 0o755. With
+  // `umask 0o002` a user would still get 0o755 cache/node_modules dirs —
+  // blocking shared multi-user repos.
+  //
+  // POSIX-only. Windows has no umask, and directory creation goes through a
+  // different code path there.
+  //
+  // Parametrized over the two linkers because they share almost no directory-
+  // creation code — isolated goes through `isolated_install.zig` /
+  // `isolated_install/Installer.zig`, hoisted through `hoisted_install.zig`
+  // and `PackageInstall.installWithHardlink`. Bin linking in particular
+  // relied on `Bin.Linker.ensureUmask()` being primed by the hoisted entry
+  // point; the isolated path never called it, so bin targets would chmod to
+  // 0o777 regardless of umask.
+  for (const linker of ["hoisted", "isolated"] as const) {
+    it.skipIf(isWindows)(
+      `${linker} install respects process umask for directories and bin targets (#29723)`,
+      async () => {
+        const pkgDir = tempDirWithFiles(`bun-install-umask-29723-${linker}`, {
+          // Local tarball that ships executable bins — exercises both the
+          // package-dir mkdir path and `Bin.Linker.createSymlink`'s chmod.
+          "multi-tool-pkg-1.0.0.tgz": await file(join(import.meta.dir, "multi-tool-pkg-1.0.0.tgz")).arrayBuffer(),
+          "package.json": JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            dependencies: {
+              "multi-tool-pkg": "file:multi-tool-pkg-1.0.0.tgz",
+            },
+          }),
+          "bunfig.toml": `[install]\nlinker = "${linker}"\n`,
+        });
+        const cacheDir = join(pkgDir, ".umask-cache");
+
+        // Drive umask through a shell wrapper — calling process.umask() in
+        // the test runner would leak into unrelated concurrent tests.
+        //
+        // BUN_INSTALL_CACHE_DIR wins over bunfig's `cache = "..."`, and the
+        // CI runner sets it to a per-test tmpdir. Point it at our own dir
+        // so the assertion below checks the cache we actually created.
+        await using proc = Bun.spawn({
+          cmd: ["sh", "-c", `umask 0002 && exec "$@"`, "sh", bunExe(), "install"],
+          cwd: pkgDir,
+          env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+          stderr: "pipe",
+          stdout: "pipe",
+          stdin: "ignore",
+        });
+        const [errText, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(errText).not.toContain("error:");
+        expect(exitCode).toBe(0);
+
+        const statMode = (p: string) => stat(p).then(s => s.mode & 0o777);
+
+        // Directories we create: final mode = 0o777 & ~0o002 = 0o775.
+        expect(await statMode(join(pkgDir, "node_modules"))).toBe(0o775);
+        expect(await statMode(cacheDir)).toBe(0o775);
+
+        // Bin target — `stat` follows the symlink so this is the mode of
+        // the executable file that `Bin.Linker.createSymlink` chmod'd.
+        // Pre-fix isolated installs left this at 0o777.
+        const binLink = join(pkgDir, "node_modules", ".bin", "multi-tool");
+        expect((await stat(binLink)).mode & 0o777).toBe(0o775);
+      },
+    );
+  }
+
   it("should handle @scoped name that contains tilde, issue#7045", async () => {
     await withContext(defaultOpts, async ctx => {
       await writeFile(

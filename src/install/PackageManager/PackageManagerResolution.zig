@@ -189,6 +189,8 @@ pub fn verifyResolutions(this: *PackageManager, log_level: PackageManager.Option
             // TODO lockfile rewrite: remove this and make non-optional peer dependencies error if they did not resolve.
             //      Need to keep this for now because old lockfiles might have a peer dependency without the optional flag set.
             if (failed_dep.behavior.isPeer()) continue;
+            // Bundled dependencies are included inside the parent tarball and don't need resolution.
+            if (failed_dep.behavior.isBundled()) continue;
 
             const features = switch (pkg_resolutions[parent_id].tag) {
                 .root, .workspace, .folder => this.options.local_package_features,

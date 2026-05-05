@@ -266,6 +266,7 @@ jobs:
           labels: ${{ steps.metadata.outputs.labels }}
           build-args: |
             BUN_VERSION=${{ env.BUN_VERSION }}
+          outputs: type=image,push=true,compression=zstd,oci-mediatypes=true
   homebrew:
     name: Release to Homebrew
     runs-on: ubuntu-latest

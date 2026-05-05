@@ -61,38 +61,41 @@ test.concurrent("console.log on a sparse array with populated slots still prints
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("console.log on a small sparse array with a non-primitive value keeps single-line output (#29175)", async () => {
-  // Regression guard: the first-element heuristic that chooses
-  // single-line vs multi-line bracket format keys off slot 0, not
-  // first_populated. A small sparse array with an object at a
-  // non-zero index must not flip to the multi-line layout just
-  // because the formatter jumps past the leading holes.
-  const code = `
+test.concurrent(
+  "console.log on a small sparse array with a non-primitive value keeps single-line output (#29175)",
+  async () => {
+    // Regression guard: the first-element heuristic that chooses
+    // single-line vs multi-line bracket format keys off slot 0, not
+    // first_populated. A small sparse array with an object at a
+    // non-zero index must not flip to the multi-line layout just
+    // because the formatter jumps past the leading holes.
+    const code = `
     const a = new Array(5);
     a[3] = { x: 1 };
     console.log(a);
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", code],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // Single-line layout: opens and closes on the same line, no bare
-  // '[' line. The hole run renders between the brackets and the
-  // actual object is printed — not dropped or collapsed. Objects
-  // themselves break onto multiple lines inside the array, but the
-  // array brackets stay single-line.
-  expect(stdout).toContain("[ 3 x empty items,");
-  expect(stdout).toContain("x: 1");
-  expect(stdout).toContain("empty item ]");
-  expect(stdout).not.toContain("[\n");
-  expect(exitCode).toBe(0);
-});
+    // Single-line layout: opens and closes on the same line, no bare
+    // '[' line. The hole run renders between the brackets and the
+    // actual object is printed — not dropped or collapsed. Objects
+    // themselves break onto multiple lines inside the array, but the
+    // array brackets stay single-line.
+    expect(stdout).toContain("[ 3 x empty items,");
+    expect(stdout).toContain("x: 1");
+    expect(stdout).toContain("empty item ]");
+    expect(stdout).not.toContain("[\n");
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.concurrent("console.log on a sparse double array with NaN values renders correctly (#29175)", async () => {
   // ArrayWithDouble stores holes and user NaNs with identical bits. The
@@ -136,39 +139,42 @@ test.concurrent("console.log on a sparse double array with NaN values renders co
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("console.log elision past 100 items counts holes and doesn't double-emit a trailing summary (#29175)", async () => {
-  // When the `... N more items` elision fires mid-iteration, the
-  // count must include any pending hole run (the hole-jump already
-  // advanced `i` past it) and `empty_start` must be cleared so the
-  // post-loop trailing-holes block doesn't emit a second summary
-  // over the same slots. Regression check for both failure modes:
-  //
-  //   bad 1: "... 50 more items, 100 x empty items"  (over-count, 250/200)
-  //   bad 2: "... 50 more items"                     (under-count, 150/200)
-  //   good:  "... 100 more items"                    (100 printed + 100 remaining)
-  const code = `
+test.concurrent(
+  "console.log elision past 100 items counts holes and doesn't double-emit a trailing summary (#29175)",
+  async () => {
+    // When the `... N more items` elision fires mid-iteration, the
+    // count must include any pending hole run (the hole-jump already
+    // advanced `i` past it) and `empty_start` must be cleared so the
+    // post-loop trailing-holes block doesn't emit a second summary
+    // over the same slots. Regression check for both failure modes:
+    //
+    //   bad 1: "... 50 more items, 100 x empty items"  (over-count, 250/200)
+    //   bad 2: "... 50 more items"                     (under-count, 150/200)
+    //   good:  "... 100 more items"                    (100 printed + 100 remaining)
+    const code = `
     const a = Array.from({ length: 200 }, (_, i) => i);
     for (let k = 100; k < 150; k++) delete a[k];
     console.log(a);
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", code],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // 100 printed values followed by "... 100 more items" matches
-  // Node's output for the same input (100 holes + 50 populated tail).
-  expect(stdout).toContain("... 100 more items");
-  // The trailing-holes block must not re-describe the same slots
-  // the `more items` summary already covered.
-  expect(stdout).not.toContain("x empty items");
-  expect(exitCode).toBe(0);
-});
+    // 100 printed values followed by "... 100 more items" matches
+    // Node's output for the same input (100 holes + 50 populated tail).
+    expect(stdout).toContain("... 100 more items");
+    // The trailing-holes block must not re-describe the same slots
+    // the `more items` summary already covered.
+    expect(stdout).not.toContain("x empty items");
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.concurrent("console.log on a fully-empty `new Array(N)` prints the summary (#29175)", async () => {
   const code = `

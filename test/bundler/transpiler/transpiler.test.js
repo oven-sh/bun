@@ -3778,3 +3778,56 @@ const Layout = () => {
     expect(result).not.toContain("fn(");
   });
 });
+
+describe("reactFastRefresh", () => {
+  const reactComponent = `
+import { useState } from "react";
+export function App() {
+  const [n, setN] = useState(0);
+  return <h1>{n}</h1>;
+}
+`;
+
+  it("is not applied by default", () => {
+    const t = new Bun.Transpiler({ loader: "tsx" });
+    const out = t.transformSync(reactComponent);
+    expect(out).not.toContain("$RefreshReg$");
+    expect(out).not.toContain("$RefreshSig$");
+  });
+
+  it("injects $RefreshReg$/$RefreshSig$ calls for tsx", () => {
+    const t = new Bun.Transpiler({ loader: "tsx", reactFastRefresh: true });
+    const out = t.transformSync(reactComponent);
+    expect(out).toContain("$RefreshReg$");
+    expect(out).toContain("$RefreshSig$");
+    expect(out).toContain('from "react-refresh/runtime"');
+  });
+
+  it("injects $RefreshReg$/$RefreshSig$ calls for jsx", () => {
+    const t = new Bun.Transpiler({ loader: "jsx", reactFastRefresh: true });
+    const out = t.transformSync(reactComponent);
+    expect(out).toContain("$RefreshReg$");
+    expect(out).toContain("$RefreshSig$");
+  });
+
+  it("also works on the async transform()", async () => {
+    const t = new Bun.Transpiler({ loader: "tsx", reactFastRefresh: true });
+    const out = await t.transform(reactComponent);
+    expect(out).toContain("$RefreshReg$");
+    expect(out).toContain("$RefreshSig$");
+  });
+
+  it("does not inject on non-JSX loaders even when enabled", () => {
+    const t = new Bun.Transpiler({ loader: "ts", reactFastRefresh: true });
+    const out = t.transformSync(`export function foo() { return 42; }\n`);
+    expect(out).not.toContain("$RefreshReg$");
+    expect(out).not.toContain("$RefreshSig$");
+  });
+
+  it("does not inject for JSX files without components", () => {
+    const t = new Bun.Transpiler({ loader: "tsx", reactFastRefresh: true });
+    const out = t.transformSync(`export const x = 42;\nexport function notAComponent() { return 42; }\n`);
+    expect(out).not.toContain("$RefreshReg$");
+    expect(out).not.toContain("$RefreshSig$");
+  });
+});

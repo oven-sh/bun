@@ -142,9 +142,7 @@ describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
         address: expect.stringMatching(/^\\\\\.\\pipe\\bun-test-net-listen-/),
         errnoType: "number",
         // Node's exact format: "listen EADDRINUSE: address already in use \\.\pipe\..."
-        message: expect.stringMatching(
-          /^listen EADDRINUSE: address already in use \\\\\.\\pipe\\bun-test-net-listen-/,
-        ),
+        message: expect.stringMatching(/^listen EADDRINUSE: address already in use \\\\\.\\pipe\\bun-test-net-listen-/),
         hasPath: false,
       },
       stderr: "",

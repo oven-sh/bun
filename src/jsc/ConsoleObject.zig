@@ -2440,8 +2440,9 @@ pub const Formatter = struct {
                     this.quote_strings = true;
                     defer this.quote_strings = prev_quote_strings;
 
-                    // Array lengths larger than u32 max fall back to the slow
-                    // per-index path (findNextPopulatedIndex takes u32).
+                    // Clamp to u32 for findNextPopulatedIndex. JS Array.length
+                    // is spec-bounded to 2^32 - 1 so this never truncates a
+                    // real JSArray in practice; the clamp is just type safety.
                     const len_u32: u32 = if (len > std.math.maxInt(u32)) std.math.maxInt(u32) else @intCast(len);
 
                     // Find the first populated index in O(1) for Undecided
@@ -2569,12 +2570,18 @@ pub const Formatter = struct {
                             writer.writeAll("\n"); // we want the line break to be unconditional here
                             this.estimated_line_length = 0;
                             this.writeIndent(Writer, writer_) catch unreachable;
-                            writer.pretty("<r><d>... {d} more items<r>", enable_ansi_colors, .{len - i});
-                            // The `more items` summary covers everything from
-                            // `i` onward, including any pending hole run.
-                            // Clear `empty_start` so the trailing-holes block
-                            // after the loop doesn't emit a second (wrong)
-                            // `N x empty items` over the same range.
+                            // The remaining slots start at the pending hole
+                            // run (if any) rather than at `i` — the
+                            // hole-jump already advanced `i` past it. Count
+                            // from `empty_start` so a run of holes that
+                            // immediately precedes the elision is included
+                            // in the summary.
+                            const remaining_from: u64 = if (empty_start) |empty| empty else i;
+                            writer.pretty("<r><d>... {d} more items<r>", enable_ansi_colors, .{len - remaining_from});
+                            // Clear `empty_start` so the trailing-holes
+                            // block after the loop doesn't also emit a
+                            // (now-overlapping) `N x empty items` summary
+                            // for the same range.
                             empty_start = null;
                             break;
                         }

@@ -136,12 +136,16 @@ test("console.log on a sparse double array with NaN values renders correctly (#2
   expect(exitCode).toBe(0);
 });
 
-test("console.log elision past 100 items does not emit a spurious trailing-hole summary (#29178)", async () => {
-  // When the `... N more items` elision fires mid-iteration, any
-  // pending hole run must be considered consumed by that summary —
-  // leaving `empty_start` set caused a bogus `N x empty items` to
-  // be emitted after the elision (claiming more slots than the
-  // array actually had).
+test("console.log elision past 100 items counts holes and doesn't double-emit a trailing summary (#29175)", async () => {
+  // When the `... N more items` elision fires mid-iteration, the
+  // count must include any pending hole run (the hole-jump already
+  // advanced `i` past it) and `empty_start` must be cleared so the
+  // post-loop trailing-holes block doesn't emit a second summary
+  // over the same slots. Regression check for both failure modes:
+  //
+  //   bad 1: "... 50 more items, 100 x empty items"  (over-count, 250/200)
+  //   bad 2: "... 50 more items"                     (under-count, 150/200)
+  //   good:  "... 100 more items"                    (100 printed + 100 remaining)
   const code = `
     const a = Array.from({ length: 200 }, (_, i) => i);
     for (let k = 100; k < 150; k++) delete a[k];
@@ -157,10 +161,12 @@ test("console.log elision past 100 items does not emit a spurious trailing-hole 
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout).toContain("... 50 more items");
+  // 100 printed values followed by "... 100 more items" matches
+  // Node's output for the same input (100 holes + 50 populated tail).
+  expect(stdout).toContain("... 100 more items");
   // The trailing-holes block must not re-describe the same slots
   // the `more items` summary already covered.
-  expect(stdout).not.toContain("100 x empty items");
+  expect(stdout).not.toContain("x empty items");
   expect(exitCode).toBe(0);
 });
 

@@ -5142,6 +5142,9 @@ fn NewPrinter(
                     .s_with => |current| {
                         s = &current.body.data;
                     },
+                    .s_label => |current| {
+                        s = &current.stmt.data;
+                    },
                     else => {
                         return false;
                     },

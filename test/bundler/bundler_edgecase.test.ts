@@ -649,6 +649,53 @@ describe("bundler", () => {
       `,
     },
   });
+  // https://github.com/oven-sh/bun/issues/30271
+  //
+  // When dead-code elimination prunes an if/else body, the scaffolding
+  // itself only collapses with --minify-syntax. Even so, the empty `else {}`
+  // remnant produced by the prune is ugly — trim it so the output at least
+  // says `if (true) { kept }` instead of `if (true) { kept } else {}`.
+  itBundled("edgecase/DCEEmptyElseTrimmed#30271", {
+    files: {
+      "/entry.js": /* js */ `
+        if ("foo" === "foo") {
+          console.log("success");
+        } else {
+          console.log("fail");
+        }
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // The dead branch body is gone...
+      expect(out).not.toContain("fail");
+      // ...and so is the empty `else {}` remnant.
+      expect(out).not.toContain("else");
+    },
+    run: {
+      stdout: "success",
+    },
+  });
+  // Trimming the empty `else {}` from an inner labeled `if` used to drop the
+  // dangling-else guard: `if (a) L: if (b) c(); else {} else d();` would print
+  // as `if (a) L: if (b) c(); else d();`, re-binding `else d()` to the inner
+  // `if (b)`. `wrapToAvoidAmbiguousElse` needs to traverse `.s_label`.
+  itBundled("edgecase/DCEEmptyElseTrimmedLabeledDanglingElse#30271", {
+    files: {
+      "/entry.js": /* js */ `
+        var a = false, b = false;
+        if (a)
+          L: if (b) console.log("inner-then");
+          else {}
+        else console.log("outer-else");
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: "outer-else",
+    },
+  });
   itBundled("edgecase/AbsolutePathShouldNotResolveAsRelative", {
     files: {
       "/entry.js": /* js */ `

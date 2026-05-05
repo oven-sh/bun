@@ -36,7 +36,13 @@ pub type OOM = AllocError;
 #[macro_export] macro_rules! err_generic { ($($t:tt)*) => {}; }
 #[macro_export] macro_rules! warn { ($($t:tt)*) => {}; }
 #[macro_export] macro_rules! note { ($($t:tt)*) => {}; }
-#[macro_export] macro_rules! err { ($name:ident) => { $crate::Error::TODO }; }
+// `err!(Name)` / `err!("Name")` — Phase-A drafts use both forms.
+// Real impl: NonZeroU16 interning table populated at link time. B-1 stub
+// returns a placeholder so type-checking passes; actual codes wired in B-2.
+#[macro_export] macro_rules! err {
+    ($name:ident) => { $crate::Error::TODO };
+    ($name:literal) => { $crate::Error::TODO };
+}
 // `mark_binding!` and `zstr!` are defined in Global.rs / util.rs respectively.
 
 // ── env stubs (real module gated above) ──
@@ -109,3 +115,12 @@ pub mod strings {
 // bun_alloc stubs Global.rs expects (real consts deferred to B-2 ungate of bun_alloc::basic)
 pub const USE_MIMALLOC: bool = true;
 pub mod debug_allocator_data { #[inline] pub fn deinit_ok() -> bool { true } }
+
+/// ASAN poison/unpoison stubs (real impl wraps __asan_* intrinsics).
+pub mod asan {
+    #[inline] pub unsafe fn poison(_: *const u8, _: usize) {}
+    #[inline] pub unsafe fn unpoison(_: *const u8, _: usize) {}
+    #[inline] pub fn poison_slice<T>(_: &[T]) {}
+    #[inline] pub fn unpoison_slice<T>(_: &[T]) {}
+    pub const ENABLED: bool = false;
+}

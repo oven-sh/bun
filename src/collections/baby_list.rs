@@ -786,7 +786,7 @@ impl BabyList<u8> {
                 // This length is an estimate. `str` isn't validated and might contain invalid
                 // sequences. If it does simdutf will assume they require 2 characters instead
                 // of 3.
-                bun_simdutf::length::utf8::from::utf16::le(str)
+                bun_simdutf_sys::length::utf8::from::utf16::le(str)
             } else {
                 str.len()
             };

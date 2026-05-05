@@ -82,7 +82,7 @@ pub trait SortContext {
     fn less_than(&self, a_index: usize, b_index: usize) -> bool;
 }
 
-#[derive(Clone, Copy, core::marker::ConstParamTy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum SortMode {
     Stable,
     Unstable,

@@ -114,6 +114,9 @@ enum-map = "2"
 enumset = "1"
 libc = "0.2"
 bitflags = "2"
+thiserror = "2"
+crossbeam = "0.8"
+smallvec = "1"
 bumpalo = { version = "3", features = ["collections", "boxed"] }
 typed-arena = "2"
 bun_analytics = { path = "src/analytics" }

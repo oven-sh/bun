@@ -20,3 +20,7 @@ bitflags.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
 bun_wyhash.workspace = true
+
+thiserror.workspace = true
+
+bun_simdutf_sys.workspace = true

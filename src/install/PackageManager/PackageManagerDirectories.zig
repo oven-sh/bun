@@ -485,6 +485,12 @@ pub fn populateLinkedNamesCache(this: *PackageManager) void {
             while (scope_iter.next().unwrap() catch null) |scope_entry| {
                 const sub_name = scope_entry.name.slice();
                 if (sub_name.len == 0) continue;
+                // Only symlinks — the global link dir is shared with
+                // `bun add -g`, which drops real directories under the
+                // same path when the hoisted linker is in use. A real
+                // directory there means a global install, not a link,
+                // and must not trigger the linked-package override.
+                if (scope_entry.kind != .sym_link) continue;
                 const full = bun.handleOom(std.fmt.allocPrint(this.allocator, "{s}/{s}", .{ name, sub_name }));
                 bun.handleOom(this.linked_names.put(this.allocator, full, {}));
             }
@@ -492,6 +498,9 @@ pub fn populateLinkedNamesCache(this: *PackageManager) void {
         }
 
         if (comptime bun.Environment.isWindows) continue;
+        // See note above — the global link dir is shared with `bun add -g`.
+        // Only treat symlinks as registered links.
+        if (entry.kind != .sym_link) continue;
         const dup = bun.handleOom(this.allocator.dupe(u8, name));
         bun.handleOom(this.linked_names.put(this.allocator, dup, {}));
     }
@@ -533,16 +542,19 @@ pub fn linkedPackagePath(
 
     const dir_path = this.globalLinkDirPath();
     const joined = bun.path.joinAbsStringBufZ(dir_path, buf, &.{pkg_name}, .auto);
+    // The global link dir is shared with `bun add -g` (same root —
+    // `<globalDir>/node_modules/`), and on POSIX a hoisted global
+    // install lands here as a real directory. Treat only symlinks /
+    // reparse-points as registered links; real directories are global
+    // installs that must not trigger the linked-package override.
     if (comptime bun.Environment.isWindows) {
         const attrs = bun.sys.getFileAttributes(joined) orelse return null;
-        return if (attrs.is_directory or attrs.is_reparse_point) joined else null;
+        return if (attrs.is_reparse_point) joined else null;
     }
     return switch (bun.sys.lstat(joined)) {
         .result => |st| brk: {
             const mode: u32 = @intCast(st.mode);
-            if (std.posix.S.ISDIR(mode) or std.posix.S.ISLNK(mode)) {
-                break :brk joined;
-            }
+            if (std.posix.S.ISLNK(mode)) break :brk joined;
             break :brk null;
         },
         .err => null,

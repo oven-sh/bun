@@ -270,7 +270,7 @@ pub fn can_use_copy_file_range_syscall() -> bool {
 
         let kernel = Platform::kernel_version();
         // TODO(port): exact API for Semver-ish compare `orderWithoutTag(...).compare(.gte)`
-        if kernel.order_without_tag(&bun_semver::Version { major: 4, minor: 5, ..Default::default() })
+        if kernel.at_least(4, 5)
             >= core::cmp::Ordering::Equal
         {
             bun_output::scoped_log!(copy_file, "copy_file_range is supported");
@@ -313,7 +313,7 @@ pub fn can_use_ioctl_ficlone() -> bool {
 
         let kernel = Platform::kernel_version();
         // TODO(port): exact API for Semver-ish compare `orderWithoutTag(...).compare(.gte)`
-        if kernel.order_without_tag(&bun_semver::Version { major: 4, minor: 5, ..Default::default() })
+        if kernel.at_least(4, 5)
             >= core::cmp::Ordering::Equal
         {
             bun_output::scoped_log!(copy_file, "ioctl_ficlonerange is supported");

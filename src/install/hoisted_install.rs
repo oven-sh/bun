@@ -7,7 +7,7 @@ use bun_sys::{self as sys, Fd};
 use bun_paths::SEP;
 use bun_collections::{DynamicBitSet as Bitset, StringHashMap};
 
-use bun_cli::Command;
+
 use bun_fs::FileSystem;
 
 use bun_install::{self as install, Bin, Lockfile, PackageID, PackageInstall};

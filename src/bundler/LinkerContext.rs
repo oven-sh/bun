@@ -13,7 +13,7 @@ use bun_sourcemap::{self as SourceMap, LineOffsetTable, SourceMapState, SourceMa
 use bun_threading::{self as sync, ThreadPool as ThreadPoolLib, WaitGroup};
 use bun_options_types::{ImportRecord, ImportKind};
 use bun_bake as bake;
-use bun_jsc::{self as jsc, AnyEventLoop as EventLoop};
+use bun_jsc::{self as jsc};
 use bun_css as css;
 
 use bun_js_parser::{self as js_ast, Ref, Index, Expr, Stmt, Part, Symbol, Binding, Dependency, NamedImport, TlaCheck, DeclaredSymbol, ExportsKind, BundledAst as JSAst};

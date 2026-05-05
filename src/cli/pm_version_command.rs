@@ -729,7 +729,7 @@ impl PmVersionCommand {
             envp: None,
             #[cfg(windows)]
             windows: bun_runtime::process::WindowsSpawnOptions {
-                loop_: bun_jsc::EventLoopHandle::init(bun_jsc::MiniEventLoop::init_global(
+                loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(
                     None, None,
                 )),
             },
@@ -776,7 +776,7 @@ impl PmVersionCommand {
             envp: None,
             #[cfg(windows)]
             windows: bun_runtime::process::WindowsSpawnOptions {
-                loop_: bun_jsc::EventLoopHandle::init(bun_jsc::MiniEventLoop::init_global(
+                loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(
                     None, None,
                 )),
             },
@@ -844,7 +844,7 @@ impl PmVersionCommand {
             envp: None,
             #[cfg(windows)]
             windows: bun_runtime::process::WindowsSpawnOptions {
-                loop_: bun_jsc::EventLoopHandle::init(bun_jsc::MiniEventLoop::init_global(
+                loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(
                     None, None,
                 )),
             },
@@ -890,7 +890,7 @@ impl PmVersionCommand {
             envp: None,
             #[cfg(windows)]
             windows: bun_runtime::process::WindowsSpawnOptions {
-                loop_: bun_jsc::EventLoopHandle::init(bun_jsc::MiniEventLoop::init_global(
+                loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(
                     None, None,
                 )),
             },
@@ -928,7 +928,7 @@ impl PmVersionCommand {
             envp: None,
             #[cfg(windows)]
             windows: bun_runtime::process::WindowsSpawnOptions {
-                loop_: bun_jsc::EventLoopHandle::init(bun_jsc::MiniEventLoop::init_global(
+                loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(
                     None, None,
                 )),
             },

@@ -9,7 +9,7 @@ use bun_cli::Command;
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
 use bun_io::{BufferedReader, ReadState};
-use bun_jsc::{EventLoopHandle, MiniEventLoop};
+use bun_jsc::{EventLoopHandle};
 use bun_resolver::package_json::DependencyMap;
 use bun_spawn::{self as spawn, Process, Rusage, SpawnOptions, Status};
 use bun_str::{strings, ZStr};

@@ -3,7 +3,7 @@
 
 use core::ffi::c_void;
 
-use bun_collections::{ArrayHashMap, HashMap};
+use bun_collections::{ArrayHashMap};
 use bun_core::Output;
 use bun_crash_handler::{self as crash_handler, StoredTrace, WriteStackTraceLimits};
 use bun_threading::Guarded;
@@ -430,7 +430,7 @@ impl<'a, A> Borrowed<'a, A> {
 
         let new_std_parent = crate::as_std(&new_parent);
         // TODO(port): `bun.safety.alloc.assertEqFmt` — debug-only allocator-equality check.
-        bun_core::safety::alloc::assert_eq_fmt(
+        bun_safety::alloc::assert_eq_fmt::alloc::assert_eq_fmt(
             current_std_parent,
             new_std_parent,
             "tried to downcast allocation scope with wrong parent allocator",
@@ -480,7 +480,7 @@ impl<'a, A> Borrowed<'a, A> {
     {
         // TODO(port): Zig branched on `Allocator == std.mem.Allocator` to pass `null` here.
         // Collapsed to the `initDefault` path; Phase B specializes for `A = StdAllocator`.
-        Self::downcast_impl(std_alloc, Some(bun_core::memory::init_default::<crate::Borrowed<A>>()))
+        Self::downcast_impl(std_alloc, Some(crate::memory::init_default::init_default::<crate::Borrowed<A>>()))
     }
 }
 
@@ -503,7 +503,7 @@ impl<A> AllocationScopeIn<A> {
     where
         A: Default,
     {
-        Self::init(bun_core::memory::init_default::<A>())
+        Self::init(crate::memory::init_default::init_default::<A>())
     }
 
     /// Borrows this `AllocationScope`. Use this method instead of copying `self`, as that makes

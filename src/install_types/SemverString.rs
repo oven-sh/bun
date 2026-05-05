@@ -4,7 +4,7 @@ use core::fmt;
 use bun_alloc::AllocError;
 use bun_collections::{HashMap, IdentityContext};
 use bun_core::fmt as bun_fmt;
-use bun_install::Lockfile;
+
 use bun_semver::{ExternalString, SlicedString};
 use bun_str::strings;
 use bun_wyhash;

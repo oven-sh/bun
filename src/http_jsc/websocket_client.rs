@@ -1342,7 +1342,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let opcode: Opcode = unsafe { core::mem::transmute::<u8, Opcode>(op) };
 
         // Cast the JSValue to a Blob
-        if let Some(blob) = blob_value.as_::<bun_runtime::webcore::Blob>() {
+        if let Some(blob) = blob_value.as_::<bun_jsc::fetch_headers::FetchHeaders::Blob>() {
             // Get the shared view of the blob data
             let data = blob.shared_view();
             if data.is_empty() {

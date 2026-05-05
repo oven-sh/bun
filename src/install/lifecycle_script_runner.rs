@@ -7,7 +7,7 @@ use bun_install::store::{self as Store, Installer};
 use bun_install::PackageManager;
 use bun_io::heap as io_heap;
 use bun_io::BufferedReader;
-use bun_jsc::AnyEventLoop;
+
 use bun_spawn::{Process, Rusage, SpawnOptions, Status};
 use bun_str::ZStr;
 use bun_sys::Fd;

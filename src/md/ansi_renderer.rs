@@ -7,7 +7,7 @@ use std::io::Write as _;
 
 use bun_collections::StringHashMap;
 use bun_core::env_var;
-use bun_jsc::JsResult;
+
 use bun_str::strings;
 
 use crate::helpers;

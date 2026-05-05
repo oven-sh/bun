@@ -142,7 +142,7 @@ impl<C: CompletionStruct> BundleThread<C> {
             transpiler,
             None, // TODO: Kit
             bump,
-            bun_jsc::AnyEventLoop::init(),
+            bun_event_loop::AnyEventLoop::init(),
             false,
             WorkPool::get(),
             &mut heap,

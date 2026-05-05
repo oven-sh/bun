@@ -148,7 +148,7 @@ pub struct WildcardPattern {
 
 impl ExternalModules {
     pub fn is_node_builtin(str: &[u8]) -> bool {
-        bun_jsc::ModuleLoader::HardcodedModule::Alias::has(str, bun_jsc::ModuleLoader::RuntimeTarget::Node, Default::default())
+        bun_resolve_builtins::HardcodedModule::HardcodedModule::Alias::has(str, bun_resolve_builtins::HardcodedModule::RuntimeTarget::Node, Default::default())
     }
 
     const DEFAULT_WILDCARD_PATTERNS: &'static [(&'static [u8], &'static [u8])] = &[
@@ -2844,7 +2844,7 @@ impl RouteConfig {
     }
 }
 
-pub use bun_resolver::GlobalCache;
+
 
 #[derive(Debug, Clone, Default)]
 pub struct PathTemplate {

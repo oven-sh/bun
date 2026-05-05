@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 
 use bun_alloc::AllocError;
-use bun_jsc::JsResult;
+
 use bun_str::strings;
 
 use crate::helpers;

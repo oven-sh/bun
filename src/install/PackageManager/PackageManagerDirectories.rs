@@ -2,7 +2,7 @@ use core::fmt;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
-use bun_cli::Command;
+
 use bun_core::{env_var, fmt as bun_fmt, Error, Global, Output, Progress};
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_fs::FileSystem;

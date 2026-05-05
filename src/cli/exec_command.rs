@@ -3,7 +3,7 @@ use bstr::BStr;
 use bun_bundler::Transpiler;
 use bun_core::{Global, Output};
 use bun_jsc::config::configure_transform_options_for_bun_vm;
-use bun_jsc::MiniEventLoop;
+
 use bun_paths::{self, PathBuffer, Platform};
 use bun_shell::Interpreter;
 use bun_sys;

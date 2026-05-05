@@ -757,11 +757,11 @@ impl AnyResponse {
             AnyResponse::SSL(ptr) => unsafe {
                 // SAFETY: live FFI socket handle.
                 // TODO(port): bun_uws_sys::us_socket_t::close signature / CloseCode::Failure
-                (&mut *(&mut *ptr).downcast_socket()).close(bun_uws::CloseCode::Failure);
+                (&mut *(&mut *ptr).downcast_socket()).close(crate::us_socket_t::CloseCode::Failure);
             },
             AnyResponse::TCP(ptr) => unsafe {
                 // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
-                (&mut *(&mut *ptr).downcast_socket()).close(bun_uws::CloseCode::Failure);
+                (&mut *(&mut *ptr).downcast_socket()).close(crate::us_socket_t::CloseCode::Failure);
             },
             AnyResponse::H3(ptr) => {
                 // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
@@ -947,7 +947,7 @@ impl From<*mut H3Response> for AnyResponse {
     }
 }
 
-pub type H3Response = bun_uws::h3::Response;
+pub type H3Response = crate::h3::Response::Response;
 
 bitflags::bitflags! {
     /// Non-exhaustive bitset (`enum(u8) { ..., _ }` in Zig) — values may carry

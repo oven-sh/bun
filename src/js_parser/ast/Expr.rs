@@ -13,7 +13,7 @@ use bun_core::{self, OOM};
 use bun_logger as logger;
 use bun_logger::Loc;
 use bun_str::{self as strings, ZStr};
-use bun_http::MimeType;
+
 use bun_jsc::{self as jsc};
 
 use crate::ast::{self as js_ast, E, G, S, Stmt, Op, Ref, ASTMemoryAllocator, NewStore};

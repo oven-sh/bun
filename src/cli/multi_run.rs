@@ -8,7 +8,7 @@ use bun_alloc::AllocError;
 use bun_collections::StringArrayHashMap;
 use bun_core::{self as bun, err, Error, Global, Output};
 use bun_io::{BufferedReader, ReadState};
-use bun_jsc::{EventLoopHandle, MiniEventLoop};
+use bun_jsc::{EventLoopHandle};
 use bun_paths::{self as path, PathBuffer};
 use bun_str::{strings, ZStr};
 

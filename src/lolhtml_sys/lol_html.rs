@@ -774,16 +774,16 @@ impl HTMLString {
 
     pub fn to_string(self) -> bun_str::String {
         let bytes = self.slice();
-        if !bytes.is_empty() && bun_str::strings::is_all_ascii(bytes) {
+        if !bytes.is_empty() && /* TODO(port) */ bun_str::strings::is_all_ascii(bytes) {
             // SAFETY: bytes.ptr is the lol-html-owned buffer; deinit_external frees it when WTFString drops
-            return bun_str::String::create_external::<*mut u8>(
+            return /* TODO(port): move to bun_lolhtml wrapper */ bun_str::String::create_external::<*mut u8>(
                 bytes,
                 true,
                 bytes.as_ptr() as *mut u8,
                 Self::deinit_external,
             );
         }
-        let result = bun_str::String::clone_utf8(bytes);
+        let result = /* TODO(port): move to bun_lolhtml wrapper */ bun_str::String::clone_utf8(bytes);
         self.deinit();
         result
     }

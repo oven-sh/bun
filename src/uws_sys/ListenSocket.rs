@@ -33,11 +33,11 @@ impl ListenSocket {
         unsafe { &mut *(self as *mut ListenSocket).cast::<us_socket_t>() }
     }
 
-    pub fn socket<const IS_SSL: bool>(&mut self) -> bun_uws::NewSocketHandler<IS_SSL> {
+    pub fn socket<const IS_SSL: bool>(&mut self) -> crate::socket::NewSocketHandler<IS_SSL> {
         // TODO(port): bun_uws::NewSocketHandler lives in the wrapper crate; verify
         // this dependency direction (uws_sys -> uws) is acceptable in Phase B or
         // move this method to bun_uws as an extension.
-        bun_uws::NewSocketHandler::<IS_SSL>::from(self.get_socket())
+        crate::socket::NewSocketHandler::<IS_SSL>::from(self.get_socket())
     }
 
     /// Group accepted sockets are linked into.

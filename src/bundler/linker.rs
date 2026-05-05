@@ -203,10 +203,10 @@ impl<'a> Linker<'a> {
                     if IS_BUN {
                         // TODO(port): jsc::ModuleLoader lives in the runtime crate; verify path
                         if let Some(replacement) =
-                            bun_jsc::module_loader::HardcodedModule::Alias::get(
+                            bun_resolve_builtins::HardcodedModule::HardcodedModule::Alias::get(
                                 import_record.path.text,
                                 self.options.target,
-                                bun_jsc::module_loader::AliasOptions {
+                                bun_resolve_builtins::HardcodedModule::AliasOptions {
                                     rewrite_jest_for_tests: self.options.rewrite_jest_for_tests,
                                 },
                             )

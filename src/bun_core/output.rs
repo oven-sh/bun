@@ -262,7 +262,7 @@ impl Source {
 pub mod windows_stdio {
     use super::*;
     use bun_sys::windows as w;
-    use bun_sys::windows::c;
+
 
     /// At program start, we snapshot the console modes of standard in, out, and err
     /// so that we can restore them at program exit if they change. Restoration is

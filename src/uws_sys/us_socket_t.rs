@@ -123,10 +123,10 @@ impl us_socket_t {
             c::us_socket_local_address(self as *const _ as *mut _, buf.as_mut_ptr(), &mut length);
         }
         if length < 0 {
-            let errno = bun_sys::get_errno(length);
-            debug_assert!(errno != bun_sys::Errno::SUCCESS);
+            let errno = bun_errno::get_errno(length);
+            debug_assert!(errno != bun_errno::E::SUCCESS);
             // TODO(port): bun.errnoToZigErr — map errno to bun_core::Error
-            return Err(bun_sys::errno_to_err(errno));
+            return Err(bun_core::errno_to_err(errno));
         }
         debug_assert!(buf.len() >= length as usize);
         Ok(&buf[..usize::try_from(length).unwrap()])
@@ -141,10 +141,10 @@ impl us_socket_t {
             c::us_socket_remote_address(self as *const _ as *mut _, buf.as_mut_ptr(), &mut length);
         }
         if length < 0 {
-            let errno = bun_sys::get_errno(length);
-            debug_assert!(errno != bun_sys::Errno::SUCCESS);
+            let errno = bun_errno::get_errno(length);
+            debug_assert!(errno != bun_errno::E::SUCCESS);
             // TODO(port): bun.errnoToZigErr — map errno to bun_core::Error
-            return Err(bun_sys::errno_to_err(errno));
+            return Err(bun_core::errno_to_err(errno));
         }
         debug_assert!(buf.len() >= length as usize);
         Ok(&buf[..usize::try_from(length).unwrap()])

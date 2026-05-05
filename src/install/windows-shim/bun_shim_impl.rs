@@ -1269,7 +1269,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
 }
 
 #[cfg(not(feature = "shim_standalone"))]
-type CommandContext = bun_cli::command::Context;
+type CommandContext = bun_options_types::context::Context::Context;
 #[cfg(feature = "shim_standalone")]
 type CommandContext = (); // unused in standalone
 

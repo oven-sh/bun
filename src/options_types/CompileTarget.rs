@@ -288,7 +288,7 @@ impl CompileTarget {
                 let http_proxy: Option<bun_url::URL> = env.get_http_proxy_for(&url);
 
                 *async_http = bun_http::AsyncHTTP::init_sync(
-                    bun_http::Method::GET,
+                    bun_http_types::Method::GET,
                     url,
                     Default::default(),
                     b"",
@@ -296,7 +296,7 @@ impl CompileTarget {
                     b"",
                     http_proxy,
                     None,
-                    bun_http::FetchRedirect::Follow,
+                    bun_http_types::FetchRedirect::Follow,
                 );
                 async_http.client.progress_node = Some(progress);
                 async_http.client.flags.reject_unauthorized = env.get_tls_reject_unauthorized();

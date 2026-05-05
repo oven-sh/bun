@@ -669,7 +669,7 @@ impl<T> BabyList<T> {
                     bun_core::Output::note("borrowed BabyList created here:");
                     bun_crash_handler::dump_stack_trace(
                         trace.trace(),
-                        bun_crash_handler::DumpOptions {
+                        crate::dump::Options /* TODO(port): was crash_handler */ {
                             frame_count: 10,
                             stop_at_jsc_llint: true,
                         },

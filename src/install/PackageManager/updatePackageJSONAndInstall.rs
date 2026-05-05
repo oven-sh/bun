@@ -2,7 +2,7 @@ use core::fmt;
 
 use bstr::BStr;
 
-use bun_cli::{BuildCommand, Command, ShellCompletions};
+use bun_cli::{BuildCommand, ShellCompletions};
 use bun_core::{err, Error, Global, Output};
 use bun_fs::FileSystem;
 use bun_install::PackageNameHash;

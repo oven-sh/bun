@@ -1,7 +1,7 @@
 use core::ffi::{c_ushort, c_char};
 use core::marker::{PhantomData, PhantomPinned};
 
-use bun_jsc::{JsResult, VirtualMachine};
+
 use bun_str::String as BunString;
 
 // TODO(port): verify module path for H3 request opaque (h3.zig:19 — H3.Request = opaque{})

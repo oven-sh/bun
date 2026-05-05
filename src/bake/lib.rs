@@ -205,7 +205,7 @@ impl SplitBundlerOptions {
     ) -> JsResult<()> {
         let plugin = match self.plugin {
             Some(p) => p,
-            None => Plugin::create(global, bun_jsc::Target::Bun),
+            None => Plugin::create(global, bun_options::Target::Bun::Bun),
         };
         self.plugin = Some(plugin);
         let empty_object = JSValue::create_empty_object(global, 0);

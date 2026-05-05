@@ -11,7 +11,7 @@ use bun_sourcemap as SourceMap;
 use bun_options_types::{ImportRecord, ImportKind};
 use bun_bundler::options;
 use bun_bundler::analyze_transpiled_module;
-use bun_resolver::fs;
+
 use bun_js_parser as js_ast;
 use bun_js_parser::{Ast, B, Binding, E, Expr, G, Ref, S, Stmt, Symbol, Op};
 use bun_js_parser::Op::Level;

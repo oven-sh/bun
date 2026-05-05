@@ -7,7 +7,7 @@
 use core::mem::offset_of;
 
 use crate::BundleV2;
-use bun_jsc::{ConcurrentTask, Task};
+use bun_jsc::{Task};
 
 pub use bun_js_parser::Ref;
 pub use bun_js_parser::Index;

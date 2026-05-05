@@ -8,7 +8,7 @@ use std::io::Write as _;
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_collections::BabyList;
 use bun_core::fmt as bun_fmt;
-use bun_jsc::ConcurrentTask;
+
 use bun_logger::{self as logger, Loc, Log, Source};
 use bun_threading::ThreadPool as ThreadPoolLib;
 

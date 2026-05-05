@@ -1175,7 +1175,7 @@ pub trait DefineStore {
     fn get_or_put_value(&mut self, key: &[u8], value: Self::Value) -> Result<(), bun_core::Error>;
 }
 // TODO(port): DefineData / DefineDataInit / CallUnwrap come from bun_bundler::defines
-use bun_bundler::defines::{DefineData, DefineDataInit, CallUnwrap};
+use bun_options_types::defines::{DefineData, DefineDataInit, CallUnwrap};
 
 struct Parser<'a> {
     pos: usize,

@@ -144,7 +144,6 @@ pub enum OptionsFromJsError {
     #[error("InvalidOptions")]
     InvalidOptions,
     #[error("JSError")]
-    JsError(#[from] bun_jsc::JsError),
 }
 
 #[repr(u8)]
@@ -169,7 +168,6 @@ pub enum FamilyFromJsError {
     #[error("InvalidFamily")]
     InvalidFamily,
     #[error("JSError")]
-    JsError(#[from] bun_jsc::JsError),
 }
 
 impl Family {
@@ -213,7 +211,6 @@ pub enum SocketTypeFromJsError {
     #[error("InvalidSocketType")]
     InvalidSocketType,
     #[error("JSError")]
-    JsError(#[from] bun_jsc::JsError),
 }
 
 #[repr(u8)]
@@ -234,7 +231,6 @@ pub enum ProtocolFromJsError {
     #[error("InvalidProtocol")]
     InvalidProtocol,
     #[error("JSError")]
-    JsError(#[from] bun_jsc::JsError),
 }
 
 impl Protocol {
@@ -296,7 +292,6 @@ pub enum BackendFromJsError {
     #[error("InvalidBackend")]
     InvalidBackend,
     #[error("JSError")]
-    JsError(#[from] bun_jsc::JsError),
 }
 
 // TODO(port): std.net.Address — std::net is banned. Need a bun_sys (or bun_net)

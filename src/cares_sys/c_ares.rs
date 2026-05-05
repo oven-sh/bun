@@ -4,7 +4,7 @@ use core::ffi::{c_char, c_int, c_long, c_short, c_uint, c_ushort, c_void};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_sys::{iovec, sockaddr, sockaddr_in, sockaddr_in6, socklen_t, timeval, AF};
+use bun_sys::{iovec, sockaddr, sockaddr_in, sockaddr_in6, socklen_t, timeval};
 // TODO(port): confirm exact module paths for sockaddr/iovec/timeval/AF in bun_sys
 
 pub type ares_socklen_t = socklen_t;

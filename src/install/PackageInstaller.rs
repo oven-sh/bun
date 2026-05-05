@@ -1,6 +1,6 @@
 use core::sync::atomic::Ordering;
 
-use bun_cli::Command;
+
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::{Global, Output};
 use bun_fs::FileSystem;

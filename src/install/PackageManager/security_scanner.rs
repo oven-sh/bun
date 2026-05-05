@@ -6,7 +6,7 @@ use std::sync::Arc;
 use bstr::BStr;
 
 use bun_aio::Loop as AsyncLoop;
-use bun_cli::command::Context as CommandContext;
+use bun_options_types::context::Context::Context as CommandContext;
 use bun_collections::ArrayHashMap;
 use bun_core::{self, err, Error, Output};
 use bun_fs::{FileSystem, Path as FsPath};
@@ -14,7 +14,7 @@ use bun_install::{
     invalid_dependency_id, invalid_package_id, DependencyID, PackageID, PackageManager,
 };
 use bun_io::{BufferedReader, ReadState};
-use bun_jsc::{self as jsc, subprocess::StdioResult, AnyEventLoop};
+use bun_jsc::{self as jsc, subprocess::StdioResult};
 use bun_js_parser::Expr;
 use bun_logger as logger;
 use bun_spawn::{self as spawn, Process, Rusage, SpawnOptions, Status, Stdio};

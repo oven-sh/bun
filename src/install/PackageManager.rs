@@ -27,7 +27,7 @@ use bun_threading::ThreadPool;
 use bun_transpiler::{self as transpiler, Transpiler};
 use bun_url::URL;
 
-use bun_cli::{Arguments as BunArguments, Command, RunCommand};
+use bun_cli::{Arguments as BunArguments, RunCommand};
 
 use bun_install::{
     initialize_store, ArrayIdentityContext, Dependency, DependencyID, Features, FolderResolution,

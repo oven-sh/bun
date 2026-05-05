@@ -85,7 +85,7 @@ fn has_ptr(alloc: &dyn Allocator) -> bool {
         || vtable_of(alloc) == bun_alloc::c_allocator_vtable()
         || vtable_of(alloc) == bun_alloc::z_allocator_vtable()
         || MimallocArena::is_instance(alloc)
-        || bun_jsc::CachedBytecode::is_instance(alloc)
+        /* TODO(port): CachedBytecode hook */
         || bun_bundler::allocator_has_pointer(alloc)
         || heap_breakdown_zone_is_instance(alloc)
         || bun_str::String::is_wtf_allocator(alloc)

@@ -2,7 +2,7 @@ use core::sync::atomic::Ordering;
 
 use bun_core::{Global, Output, Progress};
 use bun_core::time::nano_timestamp;
-use bun_cli::Command;
+
 use bun_str::{strings, ZStr};
 use bun_semver::String as SemverString;
 use bun_fs::FileSystem;

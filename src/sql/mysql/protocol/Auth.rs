@@ -4,7 +4,7 @@ use core::ffi::{c_char, c_int};
 
 use bun_boringssl as boringssl;
 use bun_core::{self, err};
-use bun_jsc::VirtualMachine;
+
 use bun_sha::{SHA1, SHA256};
 
 use crate::shared::Data;

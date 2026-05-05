@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 
-use bun_jsc::JsResult;
+
 
 /// Offset into the input document.
 pub type OFF = u32;

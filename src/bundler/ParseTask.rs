@@ -12,7 +12,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export
 use bun_collections::BabyList;
 use bun_core::{self, err, Error as AnyError, FeatureFlags};
-use bun_jsc::{self as jsc, AnyEventLoop as EventLoop};
+use bun_jsc::{self as jsc};
 use bun_logger::{self as logger, Loc, Location, Log, Msg, Source};
 use bun_options_types::ImportRecord;
 use bun_output::{declare_scope, scoped_log};

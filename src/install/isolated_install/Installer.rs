@@ -9,7 +9,7 @@ use bun_str::{strings, ZStr};
 use bun_sys::{self as sys, Fd};
 use bun_threading::{Mutex, ThreadPool};
 
-use bun_cli::Command;
+
 use bun_semver::String as SemverString;
 
 use bun_install::{

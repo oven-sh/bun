@@ -11,7 +11,7 @@ use bun_bake::framework_router::{self as framework_router, FrameworkRouter, Opaq
 use bun_bake::PatternBuffer;
 use bun_bundler::options::{self as bundler_options, OutputFile, SourceMapOption};
 use bun_bundler::BundleV2;
-use bun_cli::Command;
+
 use bun_collections::{ArrayHashMap, AutoBitSet};
 use bun_core::{self as bun, Global, Output};
 use bun_dotenv as dotenv;
@@ -1435,9 +1435,9 @@ impl TypeAndFlags {
 // TODO(port): placeholder type aliases for cross-crate enums referenced above
 // (HotReload, OfflineMode, Macros, EnvBehavior, ImportKind, OutputKind).
 // Phase B should replace these with the real imports from bun_cli / bun_bundler::options.
-use bun_cli::HotReload;
-use bun_cli::Macros;
-use bun_cli::OfflineMode;
+
+
+
 use bun_bundler::options::EnvBehavior;
 use bun_bundler::options::OutputKind;
 use bun_options_types::ImportKind;

@@ -1105,7 +1105,7 @@ impl BunxCommand {
 
             #[cfg(windows)]
             windows: bun_core::SpawnWindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init(bun_jsc::MiniEventLoop::init_global(&this_transpiler.env, None)),
+                loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(&this_transpiler.env, None)),
             },
             ..Default::default()
         }) {

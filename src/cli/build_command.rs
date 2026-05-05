@@ -461,7 +461,7 @@ impl BuildCommand {
 
             let build_result = match BundleV2::generate_from_cli(
                 &mut this_transpiler,
-                bun_jsc::AnyEventLoop::init(),
+                bun_event_loop::AnyEventLoop::init(),
                 ctx.debug.hot_reload == Command::HotReload::Watch,
                 &mut reachable_file_count,
                 &mut minify_duration,

@@ -148,7 +148,7 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
         stdin: bun_core::Stdio::Inherit,
         #[cfg(windows)]
         windows: bun_core::WindowsSpawnOptions {
-            loop_: bun_jsc::EventLoopHandle::init(bun_jsc::MiniEventLoop::init_global(None, None)),
+            loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(None, None)),
         },
         ..Default::default()
     });
@@ -1345,7 +1345,7 @@ impl CreateCommand {
                 stdin: bun_core::Stdio::Inherit,
                 #[cfg(windows)]
                 windows: bun_core::WindowsSpawnOptions {
-                    loop_: bun_jsc::EventLoopHandle::init(bun_jsc::MiniEventLoop::init_global(None, None)),
+                    loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(None, None)),
                 },
                 ..Default::default()
             })?;

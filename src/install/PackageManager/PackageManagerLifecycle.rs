@@ -11,7 +11,7 @@ use bun_str::{strings, ZStr};
 use bun_sys as Syscall;
 use bun_threading::Mutex;
 
-use bun_cli::Command;
+
 use bun_fs::FileSystem;
 
 use bun_install::lockfile::{self, Lockfile, Package};

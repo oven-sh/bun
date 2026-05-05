@@ -1086,14 +1086,14 @@ impl<'a> ConfigIterator<'a> {
 
 static NODE_LINKER_MAP: phf::Map<
     &'static [u8],
-    bun_install::package_manager::options::NodeLinker,
+    bun_install_types::NodeLinker::options::NodeLinker,
 > = phf::phf_map! {
     // yarn
-    b"pnpm" => bun_install::package_manager::options::NodeLinker::Isolated,
-    b"node-modules" => bun_install::package_manager::options::NodeLinker::Hoisted,
+    b"pnpm" => bun_install_types::NodeLinker::options::NodeLinker::Isolated,
+    b"node-modules" => bun_install_types::NodeLinker::options::NodeLinker::Hoisted,
     // pnpm
-    b"isolated" => bun_install::package_manager::options::NodeLinker::Isolated,
-    b"hoisted" => bun_install::package_manager::options::NodeLinker::Hoisted,
+    b"isolated" => bun_install_types::NodeLinker::options::NodeLinker::Isolated,
+    b"hoisted" => bun_install_types::NodeLinker::options::NodeLinker::Hoisted,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1364,10 +1364,10 @@ pub fn load_npmrc(
         if let Some(install_strategy_str) = install_strategy_expr.as_string(bump) {
             if install_strategy_str == b"hoisted" {
                 install.node_linker =
-                    Some(bun_install::package_manager::options::NodeLinker::Hoisted);
+                    Some(bun_install_types::NodeLinker::options::NodeLinker::Hoisted);
             } else if install_strategy_str == b"linked" {
                 install.node_linker =
-                    Some(bun_install::package_manager::options::NodeLinker::Isolated);
+                    Some(bun_install_types::NodeLinker::options::NodeLinker::Isolated);
             } else if install_strategy_str == b"nested" {
                 // TODO
             } else if install_strategy_str == b"shallow" {

@@ -99,7 +99,7 @@ macro_rules! get_zone {
 // derive that expands `get_zone!` directly.
 fn get_zone_runtime(name: &'static str) -> &'static Zone {
     const _: () = assert!(ENABLED);
-    use bun_collections::StringHashMap;
+
     use std::sync::Mutex;
     static ZONES: OnceLock<Mutex<StringHashMap<&'static Zone>>> = OnceLock::new();
     let map = ZONES.get_or_init(|| Mutex::new(StringHashMap::default()));

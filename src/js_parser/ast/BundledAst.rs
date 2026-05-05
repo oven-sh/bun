@@ -9,7 +9,7 @@
 use std::io::Write as _;
 
 use bun_css::BundlerStyleSheet;
-use bun_http::MimeType;
+
 use bun_logger as logger;
 use bun_options_types::import_record;
 use bun_str::strings;

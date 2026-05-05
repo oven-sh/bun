@@ -5,7 +5,7 @@ use core::mem::size_of;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU16, Ordering};
 
-use bun_collections::HashMap;
+
 use bun_threading::Mutex;
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -56,7 +56,7 @@ use bun_js_parser::ast::BundledAst as JSAst;
 use bun_js_parser::ast::{UseDirective, ServerComponentBoundary};
 use bun_options_types::{ImportRecord, ImportKind};
 use bun_resolver::{self as _resolver, fs as Fs, Resolver, DataURL, is_package_path, NodeFallbackModules};
-use bun_jsc::{self as jsc, AnyEventLoop as EventLoop};
+use bun_jsc::{self as jsc};
 use bun_threading::ThreadPool as ThreadPoolLib;
 use bun_bake as bake;
 use bun_sourcemap as SourceMap;

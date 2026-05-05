@@ -247,10 +247,10 @@ impl WTFStringImplStruct {
             if !input.is_empty() {
                 // TODO(port): jsc.WebCore.encoding.byteLengthU8 lives in src/runtime/webcore/;
                 // referencing across crates here. Phase B: confirm path.
-                bun_runtime::webcore::encoding::byte_length_u8(
+                crate::encoding::byte_length_u8(
                     input.as_ptr(),
                     input.len(),
-                    bun_runtime::webcore::encoding::Encoding::Utf8,
+                    crate::encoding::Encoding::Utf8,
                 )
             } else {
                 0

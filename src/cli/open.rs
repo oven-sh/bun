@@ -56,7 +56,7 @@ pub fn open_url(url: &ZStr) {
             stdin: bun_runtime::process::Stdio::Inherit,
             #[cfg(windows)]
             windows: bun_runtime::process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init(bun_jsc::MiniEventLoop::init_global(None, None)),
+                loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(None, None)),
             },
             ..Default::default()
         }) {

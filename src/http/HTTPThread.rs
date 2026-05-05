@@ -7,7 +7,7 @@ use std::time::Instant;
 use bun_alloc::Arena; // MimallocArena
 use bun_collections::ArrayHashMap;
 use bun_core::{self, Global, Output};
-use bun_jsc::MiniEventLoop;
+
 use bun_str::{strings, ZStr};
 use bun_threading::{Mutex, UnboundedQueue};
 use bun_threading::thread_pool::Batch;

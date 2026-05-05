@@ -3,9 +3,9 @@ use bun_str::strings;
 const SPECIAL_CHARACTERS: &[u8] = b"|\\{}()[]^$+*?.-";
 
 // TODO(port): writer trait — Zig uses `*std.Io.Writer` (byte writer). Mapping to
-// `&mut impl bun_io::Write` per PORTING.md; Phase B may swap to the concrete
+// `&mut impl std::io::Write` per PORTING.md; Phase B may swap to the concrete
 // crate-local byte-writer trait once `bun_io` is wired.
-pub fn escape_reg_exp<W: bun_io::Write>(input: &[u8], writer: &mut W) -> Result<(), bun_io::Error> {
+pub fn escape_reg_exp<W: std::io::Write>(input: &[u8], writer: &mut W) -> Result<(), std::io::Error> {
     let mut remain = input;
 
     while let Some(i) = strings::index_of_any(remain, SPECIAL_CHARACTERS) {
@@ -40,10 +40,10 @@ pub fn escape_reg_exp<W: bun_io::Write>(input: &[u8], writer: &mut W) -> Result<
 }
 
 /// '*' becomes '.*' instead of '\\*'
-pub fn escape_reg_exp_for_package_name_matching<W: bun_io::Write>(
+pub fn escape_reg_exp_for_package_name_matching<W: std::io::Write>(
     input: &[u8],
     writer: &mut W,
-) -> Result<(), bun_io::Error> {
+) -> Result<(), std::io::Error> {
     let mut remain = input;
 
     while let Some(i) = strings::index_of_any(remain, SPECIAL_CHARACTERS) {
@@ -86,5 +86,5 @@ pub fn escape_reg_exp_for_package_name_matching<W: bun_io::Write>(
 //   source:     src/string/escapeRegExp.zig (81 lines)
 //   confidence: medium
 //   todos:      1
-//   notes:      byte-writer trait (`bun_io::Write`) is a placeholder; swap to the real crate trait in Phase B
+//   notes:      byte-writer trait (`std::io::Write`) is a placeholder; swap to the real crate trait in Phase B
 // ──────────────────────────────────────────────────────────────────────────

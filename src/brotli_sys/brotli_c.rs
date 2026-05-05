@@ -5,7 +5,7 @@
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
-use bun_str::ZStr;
+
 
 pub type brotli_alloc_func = Option<unsafe extern "C" fn(opaque: *mut c_void, size: usize) -> *mut c_void>;
 pub type brotli_free_func = Option<unsafe extern "C" fn(opaque: *mut c_void, address: *mut c_void)>;

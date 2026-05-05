@@ -3,7 +3,7 @@ use bun_collections::{HashMap, LinearFifo, StringHashMap};
 use bun_core::{Error, FeatureFlags, Global, Output};
 use bun_dotenv as dot_env;
 use bun_http_types::MimeType;
-use bun_install::PackageManager;
+
 use bun_interchange::{json5::JSON5Parser as JSON5, toml::TOML, yaml::YAML};
 use bun_js_parser::{self as js_ast, js_parser, runtime, Ref};
 use bun_js_printer as js_printer;

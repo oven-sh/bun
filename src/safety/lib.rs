@@ -1,9 +1,11 @@
 pub mod alloc;
 pub use alloc::CheckedAllocator;
 
+#[path = "CriticalSection.rs"]
 mod critical_section;
 pub use critical_section::CriticalSection;
 
+#[path = "ThreadLock.rs"]
 mod thread_lock;
 pub use thread_lock::ThreadLock;
 

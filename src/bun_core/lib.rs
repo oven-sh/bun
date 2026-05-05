@@ -117,6 +117,14 @@ pub const USE_MIMALLOC: bool = true;
 pub mod debug_allocator_data { #[inline] pub fn deinit_ok() -> bool { true } }
 
 /// ASAN poison/unpoison stubs (real impl wraps __asan_* intrinsics).
+/// Feature-flag stubs (real impl in env_var.rs / feature_flags.rs, gated).
+pub mod feature_flags {
+    pub const fn get(_: &str) -> bool { false }
+    pub const fn enabled(_: &str) -> bool { false }
+}
+pub use feature_flags as feature_flag;
+#[inline] pub fn linux_kernel_version() -> Version { Version { major: 0, minor: 0, patch: 0 } }
+
 pub mod asan {
     #[inline] pub unsafe fn poison(_: *const u8, _: usize) {}
     #[inline] pub unsafe fn unpoison(_: *const u8, _: usize) {}

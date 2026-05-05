@@ -87,7 +87,9 @@ pub type OSPathBuffer = WPathBuffer;
 #[cfg(not(windows))]
 pub type OSPathBuffer = PathBuffer;
 
+#[path = "Path.rs"]
 mod path;
+#[path = "EnvPath.rs"]
 mod env_path;
 mod path_buffer_pool;
 

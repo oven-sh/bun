@@ -806,6 +806,10 @@ fn flushLogs(this: *WebWorker, vm: *jsc.VirtualMachine) void {
         error.JSTerminated => @panic("unhandled exception"),
     };
     defer str.deref();
+    // Reset the log so the subsequent flushLogs() calls in spin() don't
+    // re-dispatch the same messages as duplicate error events when the
+    // worker terminates cooperatively through onUnhandledRejection.
+    vm.log.reset();
     bun.jsc.fromJSHostCallGeneric(vm.global, @src(), WebWorker__dispatchError, .{ vm.global, this.cpp_worker, str, err }) catch |e| {
         _ = vm.global.reportUncaughtException(vm.global.takeException(e).asException(vm.global.vm()).?);
     };
@@ -847,9 +851,34 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
         bun.outOfMemory();
     };
     jsc.markBinding(@src());
-    WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.cloneUTF8(array.written()), error_instance);
+    // Wrap in fromJSHostCallGeneric: for Node-kind workers,
+    // WebWorker__dispatchError -> dispatchErrorWithValue -> SerializedScriptValue::create
+    // opens a throw scope. Previously this was called immediately before the
+    // noreturn shutdown() so any pending exception died with the thread.
+    // Now that we return normally, unchecked exception state must be caught
+    // here or JSC's exception-scope validator asserts at the next safepoint.
+    //
+    // DON'T route the exception back through reportUncaughtException: this
+    // handler can be invoked from inside VirtualMachine.uncaughtException()
+    // (e.g. via Bun__reportUnhandledError for a sync throw in a timer),
+    // where is_handling_uncaught_exception is already true. Re-reporting
+    // would hit the re-entry guard that calls process.exit(7) — and in a
+    // worker that returns normally — then @panics. The original error was
+    // already dispatched to the parent; discard the pending exception.
+    bun.jsc.fromJSHostCallGeneric(globalObject, @src(), WebWorker__dispatchError, .{ globalObject, worker.cpp_worker, bun.String.cloneUTF8(array.written()), error_instance }) catch {
+        _ = globalObject.tryTakeException();
+    };
+    // Don't call shutdown() directly here — we're still inside the JS
+    // execution context (entryScope is active from handleRejectedPromises).
+    // Tearing down the VM now triggers a JSC assertion failure
+    // (!vm().entryScope in Heap::lastChanceToFinalize, called via
+    // WebWorker__teardownJSCVM -> collectNow). Set the Zig-level terminate
+    // flag and wake the loop so spin()'s while-loop breaks on its next
+    // hasRequestedTerminate() check and calls shutdown() after the JS call
+    // stack has unwound.
+    if (!worker.exit_called) vm.exit_handler.exit_code = 1;
     _ = worker.setRequestedTerminate();
-    worker.shutdown();
+    vm.eventLoop().wakeup();
 }
 
 /// Resolve a worker entry-point specifier to a path the module loader can

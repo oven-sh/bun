@@ -308,7 +308,6 @@ describe("Bun.Image", () => {
       expect({ w: a.w, h: a.h }).toEqual({ w: 4, h: 2 });
       expect({ w: a.w, h: a.h }).toEqual({ w: b.w, h: b.h });
     });
-
   });
 
   test("path string input reads from disk", async () => {

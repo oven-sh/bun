@@ -55,6 +55,8 @@ if (true) { // [!code ++]
 
 And finally, Bun detects the `else` branch is not reachable, and eliminates it.
 
+<Note>Full dead code elimination is only applied if the `--minify-syntax` flag is used.</Note>
+
 ```ts
 console.log("Production mode");
 ```

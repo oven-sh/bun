@@ -1437,7 +1437,7 @@ var require_wasi = __commonJS({
           path_open: wrap(
             (dirfd, _dirflags, pathPtr, pathLen, oflags, fsRightsBase, fsRightsInheriting, fsFlags, fdPtr) => {
               try {
-                CHECK_FD(dirfd, constants_1.WASI_RIGHT_PATH_OPEN);
+                const stats = CHECK_FD(dirfd, constants_1.WASI_RIGHT_PATH_OPEN);
                 fsRightsBase = BigInt(fsRightsBase);
                 fsRightsInheriting = BigInt(fsRightsInheriting);
                 const read =
@@ -1512,7 +1512,7 @@ var require_wasi = __commonJS({
                 if (p.startsWith("proc/")) {
                   throw new types_1.WASIError(constants_1.WASI_EBADF);
                 }
-                const fullUnresolved = path.resolve(p);
+                const fullUnresolved = path.resolve(stats.path, p);
                 let full;
                 try {
                   full = fs.realpathSync(fullUnresolved);

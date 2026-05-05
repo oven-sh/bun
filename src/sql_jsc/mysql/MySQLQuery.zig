@@ -316,6 +316,10 @@ pub inline fn getStatement(this: *const @This()) ?*MySQLStatement {
     return this.#statement;
 }
 
+pub inline fn getQueryString(this: *const @This()) bun.String {
+    return this.#query;
+}
+
 const debug = bun.Output.scoped(.MySQLQuery, .visible);
 
 const AnyMySQLError = @import("../../sql/mysql/protocol/AnyMySQLError.zig");

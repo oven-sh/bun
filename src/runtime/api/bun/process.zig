@@ -550,7 +550,17 @@ pub const Process = struct {
     pub fn kill(this: *Process, signal: u8) Maybe(void) {
         if (comptime Environment.isPosix) {
             switch (this.poller) {
-                .waiter_thread, .fd => {
+                .waiter_thread, .fd, .detached => {
+                    // `.detached` is the initial state after `initPosix` (before `watch()` sets up
+                    // `.fd` / `.waiter_thread`), as well as the state after `close()` / reaping. In
+                    // the initial case we still have a live pid that must be killable — e.g. an
+                    // already-aborted AbortSignal in `spawnSync` fires before `watchOrReap()`.
+                    // Guard against the post-reap case via `hasExited()` so we never signal a pid
+                    // that may have been recycled by the OS.
+                    if (this.poller == .detached and this.hasExited()) {
+                        return .{ .result = {} };
+                    }
+
                     const err = std.c.kill(this.pid, signal);
                     if (err != 0) {
                         const errno_ = bun.sys.getErrno(err);
@@ -560,7 +570,6 @@ pub const Process = struct {
                             return .{ .err = bun.sys.Error.fromCode(errno_, .kill) };
                     }
                 },
-                else => {},
             }
         } else if (comptime Environment.isWindows) {
             switch (this.poller) {

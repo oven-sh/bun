@@ -22,3 +22,4 @@ bitflags.workspace = true
 bun_mimalloc_sys.workspace = true
 bun_wyhash.workspace = true
 bumpalo.workspace = true
+typed-arena.workspace = true

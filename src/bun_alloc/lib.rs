@@ -1,13 +1,7 @@
 //! Port of `src/bun_alloc/bun_alloc.zig`.
 
-use core::ffi::c_void;
 use core::fmt::Write as _;
 use core::mem::size_of;
-use core::ptr::NonNull;
-use core::sync::atomic::{AtomicU16, Ordering};
-
-
-use parking_lot::Mutex;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports (thin — match Zig `pub const X = @import(...)` lines)
@@ -47,30 +41,43 @@ pub struct StdAllocator {
     pub vtable: &'static AllocatorVTable,
 }
 
-// PORTING.md: `MimallocArena` is superseded by bumpalo for AST crates.
+// PORTING.md §Allocators: AST crates use bumpalo; non-AST use Vec/Box (global mimalloc).
 pub type Arena = bumpalo::Bump;
-pub type MimallocArena = bumpalo::Bump;
+pub type MimallocArena = bumpalo::Bump; // legacy alias
+/// `bumpalo::collections::Vec<'bump, T>` — arena-backed Vec for AST crates.
+pub type ArenaVec<'bump, T> = bumpalo::collections::Vec<'bump, T>;
+/// `typed_arena::Arena<T>` — typed slab with stable addresses (AST node Store).
+pub type TypedArena<T> = typed_arena::Arena<T>;
 
-// ── B-1 gate ───────────────────────────────────────────────────────────────
-// These modules pull in higher-tier crates (bun_collections, bun_core, bun_ptr,
-// bun_runtime). Gated until B-2 makes those available; bodies preserved.
-// TODO(b2-blocked): allocator-vtable modules (NullableAllocator, MaxHeapAllocator,
-// BufferFallbackAllocator, maybe_owned, fallback, MimallocArena, allocation_scope,
-// LinuxMemFdAllocator) all model Zig's `std.mem.Allocator` interface as a Rust
-// trait + dyn vtable. They're blocked on settling the `Allocator` trait surface
-// (currently 14× E0277 GenericAllocator + 3× E0782 trait-vs-type). Once the
-// trait is fixed in this file's `pub trait Allocator { ... }` section (~L400),
-// all of these un-gate together. Per PORTING.md §Allocators, most call sites
-// drop the allocator param entirely (global mimalloc), so several of these
-// modules may be deletable rather than ported.
-#[cfg(any())] #[path = "MimallocArena.rs"]    pub mod mimalloc_arena;
-#[cfg(any())]                                 pub mod allocation_scope;
-#[cfg(any())] #[path = "NullableAllocator.rs"] pub mod nullable_allocator;
-#[cfg(any())] #[path = "LinuxMemFdAllocator.rs"] pub mod linux_mem_fd_allocator;
-#[cfg(any())]                                 pub mod maybe_owned;
-#[cfg(any())] #[path = "MaxHeapAllocator.rs"] pub mod max_heap_allocator;
+/// `bun.use_mimalloc` — always true in Rust (mimalloc is the global allocator).
+pub const USE_MIMALLOC: bool = true;
+
+// ── Allocator-vtable modules: per-module disposition (PORTING.md §Allocators) ──
+//
+// These modelled Zig's `std.mem.Allocator` vtable. With `#[global_allocator]`
+// + `Arena = bumpalo::Bump`, most are obsolete. Kept gated for the .zig↔.rs
+// diff pass; not on the un-gate path.
+//
+//   MimallocArena            → OBSOLETE: use `bun_alloc::Arena` (= bumpalo::Bump)
+//   NullableAllocator        → OBSOLETE: `Option<&Arena>` or just drop the param
+//   MaxHeapAllocator         → OBSOLETE: debug-only cap; if needed, custom GlobalAlloc wrapper
+//   BufferFallbackAllocator  → OBSOLETE: PORTING.md "StackFallbackAllocator → just use the heap"
+//   fallback                 → OBSOLETE: same (re-export module)
+//   maybe_owned              → OBSOLETE: use `std::borrow::Cow` / `bun_ptr::Owned`
+//   allocation_scope         → DEBUG-ONLY: leak tracker; TODO(b2): port over `mi_heap_*` if asan-equiv wanted
+//   LinuxMemFdAllocator      → MOVE TO bun_sys: not an allocator-vtable; it's a memfd-backed
+//                              shared buffer for Blob. TODO(b2): port at `bun_sys::memfd`.
+//   heap_breakdown           → DEBUG-ONLY (macOS malloc_zone_*); keep gated
+//   basic                    → SUPERSEDED: `impl GlobalAlloc for Mimalloc` above is the real impl
+//
+#[cfg(any())] #[path = "MimallocArena.rs"]           pub mod mimalloc_arena;
+#[cfg(any())]                                        pub mod allocation_scope;
+#[cfg(any())] #[path = "NullableAllocator.rs"]       pub mod nullable_allocator;
+#[cfg(any())] #[path = "LinuxMemFdAllocator.rs"]     pub mod linux_mem_fd_allocator;
+#[cfg(any())]                                        pub mod maybe_owned;
+#[cfg(any())] #[path = "MaxHeapAllocator.rs"]        pub mod max_heap_allocator;
 #[cfg(any())] #[path = "BufferFallbackAllocator.rs"] pub mod buffer_fallback_allocator;
-#[cfg(any())]                                 pub mod fallback;
+#[cfg(any())]                                        pub mod fallback;
 
 // Stub types so re-exports / downstream `use` resolve.
 pub struct AllocationScope;
@@ -106,9 +113,79 @@ pub mod stubs {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AllocError;
 
-/// The mimalloc-backed `#[global_allocator]` payload (see PORTING.md "Prereq for every crate").
-/// TODO(port): wire to `mi_malloc`/`mi_free` in Phase B.
+/// The mimalloc-backed `#[global_allocator]` payload.
+///
+/// Per PORTING.md "Prereq for every crate":
+/// `#[global_allocator] static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;`
+/// must be set at the binary root before any `Box`/`Rc`/`Arc`/`Vec` mapping is valid.
+///
+/// Mirrors `src/bun_alloc/basic.zig` `c_allocator` vtable, using mimalloc's
+/// `MI_MAX_ALIGN_SIZE` (16) fast-path: alignments ≤16 go through `mi_malloc`,
+/// larger through `mi_malloc_aligned`. `mi_free` handles both.
 pub struct Mimalloc;
+
+/// `#define MI_MAX_ALIGN_SIZE 16` — max alignment guaranteed by `mi_malloc`.
+const MI_MAX_ALIGN_SIZE: usize = 16;
+
+// SAFETY: mimalloc's allocator contract matches GlobalAlloc's:
+//   - `mi_malloc`/`mi_malloc_aligned` return null on failure or a ptr to ≥size
+//     bytes aligned to ≥layout.align() (when align > MI_MAX_ALIGN_SIZE we use
+//     the explicit aligned variant).
+//   - `mi_free` accepts any ptr returned by either alloc fn (mimalloc tracks
+//     alignment internally via the page metadata).
+//   - `mi_zalloc*` zero-fills.
+//   - `mi_realloc_aligned` preserves min(old_size, new_size) bytes.
+unsafe impl core::alloc::GlobalAlloc for Mimalloc {
+    #[inline]
+    unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
+        // PERF(port): mirrors basic.zig `must_use_aligned_alloc` branch.
+        unsafe {
+            if layout.align() <= MI_MAX_ALIGN_SIZE {
+                mimalloc::mi_malloc(layout.size())
+            } else {
+                mimalloc::mi_malloc_aligned(layout.size(), layout.align())
+            }
+        }
+        .cast()
+    }
+
+    #[inline]
+    unsafe fn alloc_zeroed(&self, layout: core::alloc::Layout) -> *mut u8 {
+        unsafe {
+            if layout.align() <= MI_MAX_ALIGN_SIZE {
+                mimalloc::mi_zalloc(layout.size())
+            } else {
+                mimalloc::mi_zalloc_aligned(layout.size(), layout.align())
+            }
+        }
+        .cast()
+    }
+
+    #[inline]
+    unsafe fn dealloc(&self, ptr: *mut u8, _layout: core::alloc::Layout) {
+        // mimalloc tracks size+alignment in page metadata; `mi_free` is universal.
+        unsafe { mimalloc::mi_free(ptr.cast()) }
+    }
+
+    #[inline]
+    unsafe fn realloc(&self, ptr: *mut u8, layout: core::alloc::Layout, new_size: usize) -> *mut u8 {
+        unsafe {
+            if layout.align() <= MI_MAX_ALIGN_SIZE {
+                mimalloc::mi_realloc(ptr.cast(), new_size)
+            } else {
+                mimalloc::mi_realloc_aligned(ptr.cast(), new_size, layout.align())
+            }
+        }
+        .cast()
+    }
+}
+
+/// `mi_usable_size` — actual allocated size for a mimalloc-owned ptr.
+#[inline]
+pub fn usable_size(ptr: *const u8) -> usize {
+    // SAFETY: `mi_usable_size` is null-safe (returns 0).
+    unsafe { mimalloc::mi_usable_size(ptr.cast()) }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // MOVE-IN: cycle-break landings (CYCLEBREAK.md §→alloc)
@@ -1396,112 +1473,52 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
 } // _bss_gated
 
 // ──────────────────────────────────────────────────────────────────────────
-// GenericAllocator interface
+// Allocator-trait surface — OBSOLETE per PORTING.md §Allocators
 // ──────────────────────────────────────────────────────────────────────────
+//
+// Zig's `std.mem.Allocator` / `GenericAllocator` interface threaded an allocator
+// param through every fn because Zig has no global allocator. Rust does
+// (`#[global_allocator] = Mimalloc` above), so per PORTING.md:
+//
+//   - Non-AST crates: DELETE the `allocator` param. `Box`/`Vec`/`String` use
+//     global mimalloc.
+//   - AST crates: thread `&'bump bumpalo::Bump` (= `Arena`) directly.
+//
+// The trait below is kept ONLY as an empty marker so downstream gated drafts
+// that say `&dyn bun_alloc::Allocator` still parse. Do not implement it; do not
+// add methods. Callers should be rewritten to drop the param entirely.
 
-/// `std.mem.Allocator` analogue. See PORTING.md §Allocators — most call sites should
-/// drop allocator params entirely and use the global mimalloc; this trait exists for
-/// the few places that thread a real arena/scope.
-pub trait Allocator {
-    // TODO(port): define alloc/dealloc/realloc to mirror std.mem.Allocator vtable in Phase B.
-}
+/// OBSOLETE marker. See module note. Kept so `&dyn Allocator` in gated Phase-A
+/// drafts parses; do not use in new code.
+pub trait Allocator {}
 
-/// Checks whether `allocator` is the default allocator.
-pub fn is_default(allocator: &dyn Allocator) -> bool {
-    // TODO(port): Zig compares vtable ptrs (`allocator.vtable == c_allocator.vtable`).
-    // Rust dyn trait vtable identity is not stable; Phase B: add `Allocator::is_default()`.
-    let _ = allocator;
+/// Checks whether `allocator` is the default allocator. With a global allocator
+/// this is vacuously true; the few Zig vtable-identity checks (WTFStringImpl,
+/// ExternalFreeFunctionAllocator) are now type-tag checks at the owner site.
+#[inline]
+pub fn is_default(_allocator: &dyn Allocator) -> bool {
     true
 }
 
-/// A type that behaves like a `std.mem.Allocator` source.
-///
-/// Generic allocators must support being moved. They cannot contain self-references, and they
-/// cannot serve allocations from a buffer that exists within the allocator itself (have your
-/// allocator type contain a pointer to the buffer instead).
-pub trait GenericAllocator: Sized {
-    /// Required. `fn allocator(self: Self) std.mem.Allocator;`
-    type Std: Allocator;
-    fn allocator(&self) -> Self::Std;
-
-    // Zig's optional `deinit` → implementors use `impl Drop` (PORTING.md: never expose
-    // `pub fn deinit(&mut self)`). No trait method needed.
-
-    /// Optional. Defining a borrowed type makes it clear who owns the allocator and prevents
-    /// `deinit` from being called twice.
-    type Borrowed: GenericAllocator;
-    fn borrow(&self) -> Self::Borrowed;
-
-    /// Optional. A type that behaves like `?Self`.
-    type Nullable;
-    fn init_nullable(allocator: Option<Self>) -> Self::Nullable;
-    fn unpack_nullable(allocator: Self::Nullable) -> Option<Self>;
-}
-
-/// Gets the `std.mem.Allocator` for a given generic allocator.
-///
-/// Zig special-cases `std.mem.Allocator` itself; in Rust, blanket-impl `GenericAllocator`
-/// for `&dyn Allocator` instead.
-pub fn as_std<A: GenericAllocator>(allocator: &A) -> A::Std {
-    allocator.allocator()
-}
-
-/// A borrowed version of an allocator.
-///
-/// Some allocators have a `deinit` method that would be invalid to call multiple times (e.g.,
-/// `AllocationScope` and `MimallocArena`).
-///
-/// If multiple structs or functions need access to the same allocator, we want to avoid simply
-/// passing the allocator by value, as this could easily lead to `deinit` being called multiple
-/// times if we forget who really owns the allocator.
-///
-/// Passing a pointer is not always a good approach, as this results in a performance penalty for
-/// zero-sized allocators, and adds another level of indirection in all cases.
-///
-/// This function allows allocators that have a concept of being "owned" to define a "borrowed"
-/// version of the allocator. If no such type is defined, it is assumed the allocator does not
-/// own any data, and `Borrowed(Allocator)` is simply the same as `Allocator`.
-pub type Borrowed<A> = <A as GenericAllocator>::Borrowed;
-
-/// Borrows an allocator. See `Borrowed` for the rationale.
-pub fn borrow<A: GenericAllocator>(allocator: &A) -> Borrowed<A> {
-    allocator.borrow()
-}
-
-/// A type that behaves like `?Allocator`. This will either be `Option<Allocator>` itself,
-/// or an optimized type that behaves like it.
-///
-/// Use `init_nullable` and `unpack_nullable` to work with the returned type.
-pub type Nullable<A> = <A as GenericAllocator>::Nullable;
-
-/// Creates a `Nullable<A>` from an `Option<A>`.
-pub fn init_nullable<A: GenericAllocator>(allocator: Option<A>) -> Nullable<A> {
-    A::init_nullable(allocator)
-}
-
-/// Turns a `Nullable<A>` back into an `Option<A>`.
-pub fn unpack_nullable<A: GenericAllocator>(allocator: Nullable<A>) -> Option<A> {
-    A::unpack_nullable(allocator)
-}
-
-/// The default allocator. This is a zero-sized type whose `allocator` method returns
-/// `bun.default_allocator`.
-///
-/// This type is a `GenericAllocator`; see `src/allocators.zig`.
+/// Legacy ZST naming `bun.default_allocator`. With `#[global_allocator]` set,
+/// this is just a unit marker.
 #[derive(Clone, Copy, Default)]
 pub struct DefaultAlloc;
+impl Allocator for DefaultAlloc {}
 
-// TODO(port): impl GenericAllocator for DefaultAlloc once `Allocator` trait is fleshed out.
-// Zig: `pub fn allocator(self) std.mem.Allocator { return c_allocator; }` and
-// `pub const deinit = void;` (sentinel meaning "no deinit").
+// `GenericAllocator` / `Borrowed<A>` / `Nullable<A>` are dropped — they modelled
+// Zig's allocator-borrowing discipline (avoid double-deinit), which Rust's
+// ownership already enforces. Drafts that referenced them are gated under
+// `#[cfg(any())]` and will be rewritten to drop the param when un-gated.
 
 // ──────────────────────────────────────────────────────────────────────────
 // `basic` module selection
 // ──────────────────────────────────────────────────────────────────────────
 
-// B-1: always use mimalloc-backed basic.rs (Zig's `bun.use_mimalloc` is always true).
-#[cfg(any())] #[path = "basic.rs"] pub mod basic; // gated until AllocatorVTable callers align
-#[cfg(any())] pub mod heap_breakdown; // macOS-only debug zones; needs StringHashMap + libc malloc_zone_*
+// `basic.zig` ported as `impl GlobalAlloc for Mimalloc` above (the real impl).
+// Draft kept for diff-pass only.
+#[cfg(any())] #[path = "basic.rs"] pub mod basic;
+#[cfg(any())] pub mod heap_breakdown; // DEBUG-ONLY (macOS malloc_zone_*); keep gated
 pub mod memory;
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -542,8 +542,9 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, co
         // a large HTTP-response burst under `Promise.all` where each response
         // drags a microtask chain of SDK middleware) doesn't starve timers
         // until the entire queue drains. `drainExpiredTimers` returns early
-        // when nothing is due (the common case), so the only per-task cost
-        // on the hot path is a single unlocked pointer peek. See #30273.
+        // when nothing is due (the common case): an unlocked pointer peek for
+        // an empty heap, or peek + `timespec.now()` for a future deadline.
+        // See #30273.
         //
         // The mechanism is platform-agnostic — on Windows, `onUVTimer` also
         // only fires inside `autoTick`'s `loop.tickWithTimeout`, which is

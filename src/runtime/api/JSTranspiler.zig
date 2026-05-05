@@ -504,7 +504,7 @@ pub const TransformTask = struct {
         this.transpiler.setLog(&this.log);
         this.log.msgs.allocator = bun.default_allocator;
         defer for (this.log.msgs.items) |*msg| {
-            msg.* = msg.clone(bun.default_allocator) catch msg.*;
+            msg.* = bun.handleOom(msg.clone(bun.default_allocator));
         };
 
         const jsx = if (this.tsconfig != null)
@@ -590,6 +590,7 @@ pub const TransformTask = struct {
     }
 
     pub fn deinit(this: *TransformTask) void {
+        for (this.log.msgs.items) |*msg| msg.deinit(bun.default_allocator);
         this.log.deinit();
         this.input_code.deinitAndUnprotect();
         this.output_code.deref();

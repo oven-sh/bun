@@ -356,34 +356,31 @@ it("setTimeout should not refresh after clearTimeout", done => {
   }, 100);
 });
 
-// https://github.com/oven-sh/bun/issues/30261
-// Without reporting the native size of the JSTimeout wrapper to JSC, a
-// workload that creates many short-lived timers looks like ~0 bytes of
-// memory pressure and GC is never scheduled. Timeout wrappers accumulate
-// until something else forces a collection. Creating 100 bursts of 100
-// timers each (10k total) should finish with the live Timeout count well
-// below the number created.
-it("setTimeout wrappers do not accumulate across bursts (#30261)", async () => {
+// Verify Timeout wrappers report their native size to JSC. Without this
+// wiring, vm.heap.extraMemorySize stays flat as timers are created, which
+// leaves the eden GC activity timer dark on otherwise-quiet workloads.
+// With it, each live JSTimeout contributes at least @sizeOf(TimeoutObject)
+// (floored to 512 bytes) to the accounting.
+//
+// Runs in a child process so the baseline isn't polluted by earlier tests
+// in this file (`extraMemorySize` accumulates across GCs for objects that
+// stay live).
+it("setTimeout reports native size to JSC heap (#30261)", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
         const { heapStats } = require("bun:jsc");
-        async function run() {
-          for (let burst = 0; burst < 100; burst++) {
-            const promises = [];
-            for (let i = 0; i < 100; i++) {
-              promises.push(new Promise((r) => setTimeout(r, 0)));
-            }
-            await Promise.all(promises);
-          }
-          // Give the last burst a tick to fire.
-          await new Promise((r) => setTimeout(r, 50));
-          const count = heapStats().objectTypeCounts?.Timeout ?? 0;
-          console.log(count);
-        }
-        run();
+        Bun.gc(true);
+        const baseline = heapStats().extraMemorySize;
+        const N = 2000;
+        const timers = [];
+        for (let i = 0; i < N; i++) timers.push(setTimeout(() => {}, 100_000));
+        Bun.gc(true);
+        const delta = heapStats().extraMemorySize - baseline;
+        timers.forEach(t => clearTimeout(t));
+        console.log(delta);
       `,
     ],
     env: bunEnv,
@@ -399,12 +396,11 @@ it("setTimeout wrappers do not accumulate across bursts (#30261)", async () => {
     .join("\n");
   expect(filteredStderr).toBe("");
 
-  const count = Number(stdout.trim());
-  // With the fix, the count stabilizes around ~200 (live during the last
-  // burst). Without the fix, it grows into the ~1000-2000 range across
-  // runs because eden GC is never scheduled by timer creation alone.
-  // 500 sits comfortably between the two populations.
-  expect(count).toBeLessThan(500);
+  const delta = Number(stdout.trim());
+  // With the fix: ~512 bytes × 2000 timers = ~1,024,000 bytes reported via
+  // visitChildren. Without it: a few KB from unrelated JSC-internal
+  // growth. 512,000 sits an order of magnitude above the noise floor.
+  expect(delta).toBeGreaterThan(512_000);
   expect(exitCode).toBe(0);
 });
 

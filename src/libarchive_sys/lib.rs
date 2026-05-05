@@ -1,3 +1,4 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
-// AUTOGEN: mod declarations only — real exports added in B-1.
-pub mod bindings;
+// B-1: gate Phase-A draft module; expose opaque FFI handles only. Body preserved for B-2.
+#[cfg(any())] pub mod bindings;
+#[repr(C)] pub struct Opaque { _p: [u8; 0], _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)> }

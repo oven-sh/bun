@@ -465,14 +465,16 @@ test("explicit test", () => {
     });
 
     test("explicit path still honors user-configured pathIgnorePatterns", () => {
-      // The bypass only skips built-in defaults — a user who writes
-      // `pathIgnorePatterns = ["**/build/**"]` meant it.
+      // The bypass only skips built-in defaults — a user who writes their
+      // own pattern meant it. Use a directory name that has no overlap
+      // with the defaults so a buggy implementation can't pass this just
+      // because the defaults happened to match the same path.
       const dir = tempDirWithFiles("path-ignore-explicit-honors-user", {
         "bunfig.toml": `
 [test]
-pathIgnorePatterns = ["**/build/**"]
+pathIgnorePatterns = ["**/user-ignored/**"]
 `,
-        "build/explicit.test.ts": `
+        "user-ignored/explicit.test.ts": `
 import { test, expect } from "bun:test";
 test("explicit test", () => {
   expect(1).toBe(1);
@@ -480,13 +482,14 @@ test("explicit test", () => {
 `,
       });
 
-      const result = Bun.spawnSync([bunExe(), "test", "./build/explicit.test.ts"], {
+      const result = Bun.spawnSync([bunExe(), "test", "./user-ignored/explicit.test.ts"], {
         cwd: dir,
         env: bunEnv,
         stdio: [null, null, "pipe"],
       });
 
       const stderr = result.stderr.toString("utf-8");
+      expect(stderr).not.toContain("explicit test");
       expect(stderr).not.toContain("1 pass");
       expect(result.exitCode).not.toBe(0);
     });

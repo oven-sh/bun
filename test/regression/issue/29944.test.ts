@@ -203,130 +203,134 @@ test("#29944 --filter honors saved hoist layout across workspaces", { timeout: 3
   });
 });
 
-test("#29944 --filter preserves deduped dep at root when winner is filtered workspace", { timeout: 30_000 }, async () => {
-  // Regression guard for a follow-up to #29944: when two workspaces depend
-  // on the *same* package version, `.resolvable`'s `hoistDependency` stores
-  // only the first edge's dep_id in the saved tree (the second returns
-  // `.hoisted` → no additional entry). If `--filter` excludes the workspace
-  // that won the saved slot, the dep_id's "owner" is the filtered workspace
-  // — but the *target* pkg_id is still reachable through the included
-  // workspace's dependency-graph edge. Pruning must not drop the saved
-  // entry at the root tree just because its owner is filtered out, or the
-  // included workspace ends up with nothing at `node_modules/<shared-dep>`.
-  type Pkg = {
-    name: string;
-    version: string;
-    dependencies?: Record<string, string>;
-  };
-  const packages: Pkg[] = [
-    { name: "shared-leaf", version: "1.0.0" },
-    { name: "shared-mid", version: "1.0.0", dependencies: { "shared-leaf": "1.0.0" } },
-  ];
+test(
+  "#29944 --filter preserves deduped dep at root when winner is filtered workspace",
+  { timeout: 30_000 },
+  async () => {
+    // Regression guard for a follow-up to #29944: when two workspaces depend
+    // on the *same* package version, `.resolvable`'s `hoistDependency` stores
+    // only the first edge's dep_id in the saved tree (the second returns
+    // `.hoisted` → no additional entry). If `--filter` excludes the workspace
+    // that won the saved slot, the dep_id's "owner" is the filtered workspace
+    // — but the *target* pkg_id is still reachable through the included
+    // workspace's dependency-graph edge. Pruning must not drop the saved
+    // entry at the root tree just because its owner is filtered out, or the
+    // included workspace ends up with nothing at `node_modules/<shared-dep>`.
+    type Pkg = {
+      name: string;
+      version: string;
+      dependencies?: Record<string, string>;
+    };
+    const packages: Pkg[] = [
+      { name: "shared-leaf", version: "1.0.0" },
+      { name: "shared-mid", version: "1.0.0", dependencies: { "shared-leaf": "1.0.0" } },
+    ];
 
-  type Tar = { tarball: Uint8Array; integrity: string };
-  const tars = new Map<string, Tar>();
-  for (const p of packages) {
-    tars.set(`${p.name}@${p.version}`, makeTarball(p));
-  }
+    type Tar = { tarball: Uint8Array; integrity: string };
+    const tars = new Map<string, Tar>();
+    for (const p of packages) {
+      tars.set(`${p.name}@${p.version}`, makeTarball(p));
+    }
 
-  await using server = Bun.serve({
-    port: 0,
-    hostname: "127.0.0.1",
-    fetch(req) {
-      const url = new URL(req.url);
-      for (const p of packages) {
-        if (url.pathname === `/${p.name}`) {
-          const versions: Record<string, object> = {};
-          for (const q of packages.filter(x => x.name === p.name)) {
-            const { integrity } = tars.get(`${q.name}@${q.version}`)!;
-            versions[q.version] = {
-              name: q.name,
-              version: q.version,
-              ...(q.dependencies ? { dependencies: q.dependencies } : {}),
-              dist: { integrity, tarball: `${url.origin}/${q.name}/-/${q.name}-${q.version}.tgz` },
-            };
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const url = new URL(req.url);
+        for (const p of packages) {
+          if (url.pathname === `/${p.name}`) {
+            const versions: Record<string, object> = {};
+            for (const q of packages.filter(x => x.name === p.name)) {
+              const { integrity } = tars.get(`${q.name}@${q.version}`)!;
+              versions[q.version] = {
+                name: q.name,
+                version: q.version,
+                ...(q.dependencies ? { dependencies: q.dependencies } : {}),
+                dist: { integrity, tarball: `${url.origin}/${q.name}/-/${q.name}-${q.version}.tgz` },
+              };
+            }
+            return Response.json({ name: p.name, versions, "dist-tags": { latest: p.version } });
           }
-          return Response.json({ name: p.name, versions, "dist-tags": { latest: p.version } });
+          const m = url.pathname.match(/^\/([^/]+)\/-\/\1-([^/]+)\.tgz$/);
+          if (m) {
+            const t = tars.get(`${m[1]}@${m[2]}`);
+            if (t) return new Response(t.tarball);
+          }
         }
-        const m = url.pathname.match(/^\/([^/]+)\/-\/\1-([^/]+)\.tgz$/);
-        if (m) {
-          const t = tars.get(`${m[1]}@${m[2]}`);
-          if (t) return new Response(t.tarball);
-        }
-      }
-      return new Response("not found", { status: 404 });
-    },
-  });
+        return new Response("not found", { status: 404 });
+      },
+    });
 
-  const registry = `http://127.0.0.1:${server.port}/`;
-  using dir = tempDir("issue-29944-dedup", {
-    "package.json": JSON.stringify({
-      name: "root",
-      private: true,
-      workspaces: ["apps/*"],
-    }),
-    "bunfig.toml": `[install]\nregistry = "${registry}"\ncache = "./.bun-cache"\nlinker = "hoisted"\n`,
-    // both apps depend on shared-mid@1.0.0 → shared-leaf@1.0.0. `DepSorter`
-    // is deterministic so one workspace wins the root hoist slot.
-    "apps/keeper/package.json": JSON.stringify({
-      name: "keeper",
-      version: "0.0.1",
-      dependencies: { "shared-mid": "1.0.0" },
-    }),
-    "apps/dropee/package.json": JSON.stringify({
-      name: "dropee",
-      version: "0.0.1",
-      dependencies: { "shared-mid": "1.0.0" },
-    }),
-  });
+    const registry = `http://127.0.0.1:${server.port}/`;
+    using dir = tempDir("issue-29944-dedup", {
+      "package.json": JSON.stringify({
+        name: "root",
+        private: true,
+        workspaces: ["apps/*"],
+      }),
+      "bunfig.toml": `[install]\nregistry = "${registry}"\ncache = "./.bun-cache"\nlinker = "hoisted"\n`,
+      // both apps depend on shared-mid@1.0.0 → shared-leaf@1.0.0. `DepSorter`
+      // is deterministic so one workspace wins the root hoist slot.
+      "apps/keeper/package.json": JSON.stringify({
+        name: "keeper",
+        version: "0.0.1",
+        dependencies: { "shared-mid": "1.0.0" },
+      }),
+      "apps/dropee/package.json": JSON.stringify({
+        name: "dropee",
+        version: "0.0.1",
+        dependencies: { "shared-mid": "1.0.0" },
+      }),
+    });
 
-  const root = String(dir);
+    const root = String(dir);
 
-  await using full = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: root,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [fullStdout, fullStderr, fullExit] = await Promise.all([full.stdout.text(), full.stderr.text(), full.exited]);
-  expect({ fullStdout, fullStderr, fullExit }).toMatchObject({ fullExit: 0 });
-
-  expect({
-    sharedMid: JSON.parse(await readFile(join(root, "node_modules/shared-mid/package.json"), "utf8")).version,
-    sharedLeaf: JSON.parse(await readFile(join(root, "node_modules/shared-leaf/package.json"), "utf8")).version,
-  }).toEqual({ sharedMid: "1.0.0", sharedLeaf: "1.0.0" });
-
-  await rm(join(root, "node_modules"), { recursive: true, force: true });
-
-  // Run both filter directions — whichever workspace *didn't* win the saved
-  // hoist slot is the regression direction. Iterating both makes the test
-  // independent of `DepSorter` tiebreaks between "keeper" and "dropee".
-  for (const filterName of ["keeper", "dropee"]) {
-    await rm(join(root, "node_modules"), { recursive: true, force: true });
-    await using filtered = Bun.spawn({
-      cmd: [bunExe(), "install", "--filter", filterName],
+    await using full = Bun.spawn({
+      cmd: [bunExe(), "install"],
       cwd: root,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [fStdout, fStderr, fExit] = await Promise.all([
-      filtered.stdout.text(),
-      filtered.stderr.text(),
-      filtered.exited,
-    ]);
-    expect({ filterName, fStdout, fStderr, fExit }).toMatchObject({ fExit: 0 });
+    const [fullStdout, fullStderr, fullExit] = await Promise.all([full.stdout.text(), full.stderr.text(), full.exited]);
+    expect({ fullStdout, fullStderr, fullExit }).toMatchObject({ fullExit: 0 });
+
     expect({
-      filterName,
-      filterLinkExists: existsSync(join(root, "node_modules", filterName)),
       sharedMid: JSON.parse(await readFile(join(root, "node_modules/shared-mid/package.json"), "utf8")).version,
       sharedLeaf: JSON.parse(await readFile(join(root, "node_modules/shared-leaf/package.json"), "utf8")).version,
-    }).toEqual({
-      filterName,
-      filterLinkExists: true,
-      sharedMid: "1.0.0",
-      sharedLeaf: "1.0.0",
-    });
-  }
-});
+    }).toEqual({ sharedMid: "1.0.0", sharedLeaf: "1.0.0" });
+
+    await rm(join(root, "node_modules"), { recursive: true, force: true });
+
+    // Run both filter directions — whichever workspace *didn't* win the saved
+    // hoist slot is the regression direction. Iterating both makes the test
+    // independent of `DepSorter` tiebreaks between "keeper" and "dropee".
+    for (const filterName of ["keeper", "dropee"]) {
+      await rm(join(root, "node_modules"), { recursive: true, force: true });
+      await using filtered = Bun.spawn({
+        cmd: [bunExe(), "install", "--filter", filterName],
+        cwd: root,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [fStdout, fStderr, fExit] = await Promise.all([
+        filtered.stdout.text(),
+        filtered.stderr.text(),
+        filtered.exited,
+      ]);
+      expect({ filterName, fStdout, fStderr, fExit }).toMatchObject({ fExit: 0 });
+      expect({
+        filterName,
+        filterLinkExists: existsSync(join(root, "node_modules", filterName)),
+        sharedMid: JSON.parse(await readFile(join(root, "node_modules/shared-mid/package.json"), "utf8")).version,
+        sharedLeaf: JSON.parse(await readFile(join(root, "node_modules/shared-leaf/package.json"), "utf8")).version,
+      }).toEqual({
+        filterName,
+        filterLinkExists: true,
+        sharedMid: "1.0.0",
+        sharedLeaf: "1.0.0",
+      });
+    }
+  },
+);

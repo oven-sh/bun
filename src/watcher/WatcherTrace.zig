@@ -107,6 +107,6 @@ pub fn deinit() void {
     }
 }
 
-const Watcher = @import("../Watcher.zig");
+const Watcher = @import("./Watcher.zig");
 const bun = @import("bun");
 const std = @import("std");

@@ -578,7 +578,7 @@ const stringZ = [:0]const u8;
 
 const std = @import("std");
 
-const Fs = @import("../fs.zig");
+const Fs = @import("../resolver/fs.zig");
 const FileSystem = Fs.FileSystem;
 
 const bun = @import("bun");

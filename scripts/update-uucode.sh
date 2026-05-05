@@ -13,7 +13,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-UUCODE_DIR="$BUN_ROOT/src/deps/uucode"
+UUCODE_DIR="$BUN_ROOT/src/unicode/uucode_lib"
 ZIG="$BUN_ROOT/vendor/zig/zig"
 
 if [ ! -x "$ZIG" ]; then
@@ -73,10 +73,10 @@ cd "$BUN_ROOT"
 
 echo ""
 echo "Done. Updated files:"
-echo "  src/deps/uucode/         (vendored library)"
+echo "  src/unicode/uucode_lib/         (vendored library)"
 echo "  src/string/immutable/grapheme_tables.zig (regenerated)"
 echo ""
 echo "Next steps:"
 echo "  1. bun bd test test/js/bun/util/stringWidth.test.ts"
-echo "  2. git add src/deps/uucode src/string/immutable/grapheme_tables.zig"
+echo "  2. git add src/unicode/uucode_lib src/string/immutable/grapheme_tables.zig"
 echo "  3. git commit -m 'Update uucode to <version>'"

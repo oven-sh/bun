@@ -157,7 +157,7 @@ table, an HWCAP test. Known patterns:
 | Dependency                            | Gate                                                        | Where                                      |
 | ------------------------------------- | ----------------------------------------------------------- | ------------------------------------------ |
 | simdutf                               | `set_best()` — CPUID first call, cached atomic ptr          | `vendor/` or WebKit's bundled copy         |
-| Highway (Bun)                         | `HWY_DYNAMIC_DISPATCH` → `hwy::SupportedTargets()`          | `src/bun.js/bindings/highway_strings.cpp`  |
+| Highway (Bun)                         | `HWY_DYNAMIC_DISPATCH` → `hwy::SupportedTargets()`          | `src/jsc/bindings/highway_strings.cpp`     |
 | BoringSSL                             | `OPENSSL_ia32cap_P` global, set at init                     | `vendor/boringssl/crypto/cpu_intel.c`      |
 | zstd                                  | `ZSTD_cpuid()`                                              | `vendor/zstd/lib/common/cpu.h`             |
 | libdeflate                            | `libdeflate_init_x86_cpu_features()` / `HWCAP_ASIMDDP`      | `vendor/libdeflate/lib/x86/cpu_features.c` |

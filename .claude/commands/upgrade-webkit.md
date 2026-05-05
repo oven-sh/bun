@@ -22,5 +22,5 @@ To do that:
 - delete the webkit-changes.md file
 
 Things to check for a successful upgrade:
-- Did JSType in vendor/WebKit/Source/JavaScriptCore have any recent changes? Does the enum values align with whats present in src/bun.js/bindings/JSType.zig?
+- Did JSType in vendor/WebKit/Source/JavaScriptCore have any recent changes? Does the enum values align with whats present in src/jsc/bindings/JSType.zig?
 - Were there any changes to the webcore code generator? If there are C++ compilation errors, check for differences in some of the generated code in like vendor/WebKit/source/WebCore/bindings/scripts/test/JS/

@@ -798,7 +798,7 @@ fn applyHeaders(_: *ClientSession, stream: *Stream, client: *HTTPClient) !Header
 const Stream = @import("./Stream.zig");
 const dispatch = @import("./dispatch.zig");
 const encode = @import("./encode.zig");
-const lshpack = @import("../../bun.js/api/bun/lshpack.zig");
+const lshpack = @import("../lshpack.zig");
 const std = @import("std");
 const wire = @import("../H2FrameParser.zig");
 

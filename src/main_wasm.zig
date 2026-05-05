@@ -649,8 +649,8 @@ comptime {
     _ = getTests;
 }
 
-const Define = @import("./defines.zig");
-const Options = @import("./options.zig");
+const Define = @import("./bundler/defines.zig");
+const Options = @import("./bundler/options.zig");
 const std = @import("std");
 
 const bun = @import("bun");

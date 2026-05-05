@@ -509,8 +509,8 @@ pub const TSConfigJSON = struct {
 
 const string = []const u8;
 
-const cache = @import("../cache.zig");
-const options = @import("../options.zig");
+const cache = @import("../bundler/cache.zig");
+const options = @import("../bundler/options.zig");
 const std = @import("std");
 
 const bun = @import("bun");

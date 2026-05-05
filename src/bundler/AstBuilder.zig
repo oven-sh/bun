@@ -349,10 +349,10 @@ pub const ParseTask = bun.bundle_v2.ParseTask;
 
 const string = []const u8;
 
-const options = @import("../options.zig");
+const options = @import("./options.zig");
 const std = @import("std");
 
-const Logger = @import("../logger.zig");
+const Logger = @import("../logger/logger.zig");
 const Loc = Logger.Loc;
 
 const bun = @import("bun");

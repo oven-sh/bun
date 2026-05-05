@@ -89,7 +89,7 @@ pub const CssColor = union(enum) {
 
     const This = @This();
 
-    pub const jsFunctionColor = @import("./color_js.zig").jsFunctionColor;
+    pub const jsFunctionColor = @import("../../css_jsc/color_js.zig").jsFunctionColor;
 
     pub fn isCompatible(this: *const CssColor, browsers: css.targets.Browsers) bool {
         return switch (this.*) {

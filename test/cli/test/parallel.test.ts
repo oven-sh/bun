@@ -98,7 +98,7 @@ test("--parallel surfaces failures and exits non-zero", async () => {
   expect(exitCode).toBe(1);
 });
 
-test("--parallel re-queues a file when its worker crashes mid-run", async () => {
+test("--parallel marks a file whose worker exits mid-run as failed (no retry)", async () => {
   using dir = tempDir("parallel-crash", {
     "a.test.js": `import {test,expect} from "bun:test"; test("a",()=>expect(1).toBe(1));`,
     "b.test.js": `import {test,expect} from "bun:test"; test("b",()=>expect(1).toBe(1));`,
@@ -114,13 +114,14 @@ test("--parallel re-queues a file when its worker crashes mid-run", async () => 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // good files still ran and passed
+  // good files still ran and passed in a fresh worker
   expect(stderr).toContain("a.test.js");
   expect(stderr).toContain("b.test.js");
-  // crashed file was retried then marked failed
-  expect(stderr).toContain("crashed running");
+  // crashed file is counted as a failure once — never retried, so an
+  // intermittent worker crash can't be masked by a passing second attempt.
+  expect(stderr).not.toContain("retrying");
   expect(stderr).toContain("boom.test.js");
-  expect(stderr).toContain("(crashed:");
+  expect(stderr).toContain("(worker crashed: exit code 7)");
   // summary counts the crash as one failure
   expect(stderr).toContain("Ran 3 tests across 3 files.");
   expect(exitCode).toBe(1);
@@ -735,11 +736,13 @@ test("--parallel: a test writing garbage to fd 3 does not hang the coordinator",
   expect(result).not.toBe("TIMEOUT");
   const [stdout, stderr, exitCode] = result as [string, string, number];
   expect(stdout).toContain("PARALLEL");
-  // ok.test.js's pass survives; bad.test.js's worker is treated as crashed once
-  // its IPC pipe is dropped, then retried. We don't assert exact counts (the
-  // retry may also corrupt fd 3) — only that the run completes deterministically.
+  // ok.test.js's pass survives; bad.test.js's worker is treated as crashed
+  // once its IPC pipe is dropped — no retry, so the run is deterministically
+  // 1 pass / 1 fail. The coordinator kill(9)s the hostile worker, which on
+  // POSIX surfaces as SIGKILL (non-panic → no whole-run abort).
+  expect(stderr).not.toContain("retrying");
   expect(stderr).toContain("Ran ");
-  expect([0, 1]).toContain(exitCode);
+  expect(exitCode).toBe(1);
 });
 
 test("--parallel --randomize without --seed is reproducible via the printed seed", async () => {

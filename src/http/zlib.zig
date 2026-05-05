@@ -27,7 +27,7 @@ pub fn decompress(compressed_data: []const u8, output: *MutableString, allocator
     reader.deinit();
 }
 
-const Zlib = @import("../zlib.zig");
+const Zlib = @import("../zlib/zlib.zig");
 const std = @import("std");
 
 const bun = @import("bun");

@@ -110,7 +110,7 @@ export const lolhtml: Dependency = {
     // We still list it for clarity.
     libs: ["lolhtml"],
     // No includes — bun's c-api binding header is checked into
-    // src/bun.js/bindings/, not read from the crate.
+    // src/jsc/bindings/, not read from the crate.
     includes: [],
   }),
 };

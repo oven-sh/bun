@@ -11,7 +11,9 @@ describe("Zstandard compression", async () => {
     {
       name: "large",
       data: Buffer.from(
-        (await Bun.file(path.join(__dirname, "..", "..", "..", "..", "src", "js_parser.zig")).text()).repeat(5),
+        (await Bun.file(path.join(__dirname, "..", "..", "..", "..", "src", "js_parser", "parser.zig")).text()).repeat(
+          5,
+        ),
       ),
     },
   ] as const;

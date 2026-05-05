@@ -1,6 +1,6 @@
 // @link "../deps/libarchive.a"
 
-pub const lib = @import("./libarchive-bindings.zig");
+pub const lib = @import("../libarchive_sys/bindings.zig");
 const Archive = lib.Archive;
 pub const Seek = enum(c_int) {
     set = std.posix.SEEK_SET,

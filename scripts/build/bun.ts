@@ -277,7 +277,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // mode where it fails on the pinned bun version (see cppAll docstring).
     // Scripts that emit undeclared .h also emit a .cpp/.h in cppAll, so they
     // still run. cxx transitively waits: cxx → PCH → deps+cppAll.
-    pchOut = pch(n, cfg, "src/bun.js/bindings/root-pch.h", {
+    pchOut = pch(n, cfg, "src/jsc/bindings/root-pch.h", {
       flags: cxxFlagsFull,
       implicitInputs: depHeaderSignal,
       orderOnlyInputs: codegen.cppAll,
@@ -309,8 +309,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   if (cfg.windows) {
     // rescle.h does `#define UNICODE` before including ATL; with PCH the
     // headers are already past in MBCS mode and ATL's TCHAR mismatches.
-    const rescle = resolve(cfg.cwd, "src/bun.js/bindings/windows/rescle.cpp");
-    const rescleBinding = resolve(cfg.cwd, "src/bun.js/bindings/windows/rescle-binding.cpp");
+    const rescle = resolve(cfg.cwd, "src/jsc/bindings/windows/rescle.cpp");
+    const rescleBinding = resolve(cfg.cwd, "src/jsc/bindings/windows/rescle-binding.cpp");
     cxxSources.push(rescle, rescleBinding);
     noPchSources.add(rescle);
     noPchSources.add(rescleBinding);

@@ -14,8 +14,8 @@ pub struct RowDescription {
 impl RowDescription {
     // PORT NOTE: out-param constructor (`this.* = .{...}`) reshaped to return `Result<Self, _>`.
     // TODO(port): narrow error set
-    pub fn decode_internal<Container>(
-        reader: NewReader<Container>,
+    pub fn decode_internal<Container: super::new_reader::ReaderContext>(
+        mut reader: NewReader<Container>,
     ) -> Result<Self, bun_core::Error> {
         let mut remaining_bytes = reader.length()?;
         remaining_bytes = remaining_bytes.saturating_sub(4);
@@ -28,7 +28,7 @@ impl RowDescription {
         // to `Vec::push` so `?` drops already-decoded elements automatically.
         let mut fields: Vec<FieldDescription> = Vec::with_capacity(field_count);
         for _ in 0..field_count {
-            fields.push(FieldDescription::decode_internal::<Container>(reader)?);
+            fields.push(FieldDescription::decode_internal::<Container>(&mut reader)?);
         }
 
         Ok(Self {

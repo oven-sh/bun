@@ -1,4 +1,4 @@
-use crate::postgres::types::int_types::Int32;
+use crate::postgres::types::int_types::int32;
 use crate::shared::Data;
 
 use super::new_reader::NewReader;
@@ -20,8 +20,8 @@ impl CopyFail {
     // PORT NOTE: Zig signature is `fn decodeInternal(this: *@This(), ...) !void` with
     // `this.* = .{...}` body — the out-param-constructor pattern. Reshaped to return
     // `Result<Self, _>` per PORTING.md (Rust has NRVO for error unions).
-    pub fn decode_internal<Container>(
-        reader: NewReader<Container>,
+    pub fn decode_internal<Container: super::new_reader::ReaderContext>(
+        mut reader: NewReader<Container>,
     ) -> Result<Self, bun_core::Error> {
         // TODO(port): narrow error set
         let _ = reader.int4()?;
@@ -36,7 +36,7 @@ impl CopyFail {
     // (e.g. `impl super::decoder_wrap::Decode for CopyFail`) where `decode` is the
     // trait's provided method. Phase B wires this once DecoderWrap.rs lands.
 
-    pub fn write_internal<Context>(
+    pub fn write_internal<Context: super::new_writer::WriterContext>(
         &self,
         writer: NewWriter<Context>,
     ) -> Result<(), bun_core::Error> {
@@ -48,9 +48,8 @@ impl CopyFail {
         // `std.mem.toBytes` reinterprets the Int32 (big-endian i32 newtype) as raw bytes.
         let mut header = [0u8; 5];
         header[0] = b'f';
-        // TODO(port): assumes `Int32::from(u32) -> Int32` and `Int32::to_bytes(self) -> [u8; 4]`
-        // exist on the ported int_types; std.mem.toBytes is a bytewise reinterpret.
-        header[1..5].copy_from_slice(&Int32::from(count).to_bytes());
+        // `int32(count)` returns big-endian `[u8; 4]` (mirrors std.mem.toBytes(Int32(count))).
+        header[1..5].copy_from_slice(&int32(count));
         writer.write(&header)?;
         writer.string(message)?;
         Ok(())

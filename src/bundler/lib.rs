@@ -5,13 +5,9 @@
 // so the crate compiles. Draft bodies are preserved on disk; un-gating happens
 // in B-2 as lower-tier crate surfaces solidify.
 
-#[cfg(any())]
 pub mod IndexStringMap;
-#[cfg(any())]
 pub mod PathToSourceIndexMap;
-#[cfg(any())]
 pub mod DeferredBatchTask;
-#[cfg(any())]
 pub mod Graph;
 #[cfg(any())]
 pub mod BundleThread;
@@ -27,11 +23,9 @@ pub mod OutputFile;
 pub mod cache;
 #[cfg(any())]
 pub mod ThreadPool;
-#[cfg(any())]
 pub mod entry_points;
 #[cfg(any())]
 pub mod AstBuilder;
-#[cfg(any())]
 pub mod analyze_transpiled_module;
 #[cfg(any())]
 pub mod linker;
@@ -43,7 +37,6 @@ pub mod barrel_imports;
 pub mod LinkerGraph;
 #[cfg(any())]
 pub mod Chunk;
-#[cfg(any())]
 #[path = "defines-table.rs"]
 pub mod defines_table;
 #[cfg(any())]
@@ -77,8 +70,7 @@ pub struct Chunk(());
 pub struct LinkerContext(());
 /// Stub: see gated `LinkerGraph` module.
 pub struct LinkerGraph(());
-/// Stub: see gated `Graph` module.
-pub struct Graph(());
+pub use Graph::Graph as GraphStruct;
 /// Stub: see gated `ParseTask` module.
 pub struct ParseTask(());
 /// Stub: see gated `entry_points` module.
@@ -87,12 +79,24 @@ pub struct EntryPoint(());
 pub struct Define(());
 /// Stub: see gated `cache` module.
 pub struct Cache(());
+/// Stub: see gated `ThreadPool` module.
+pub struct ThreadPool(());
+/// Stub: defined in gated `bundle_v2` module (`bundle_v2.zig:AdditionalFile`).
+pub enum AdditionalFile {
+    SourceIndex(u32),
+    OutputFile(u32),
+}
 
 // Re-export stub modules under their original names so `bun_bundler::options::X`
 // style paths resolve to *something* during B-1.
 pub mod options {
     pub use super::BundleOptions;
     pub type Options = super::BundleOptions;
+    // Type-only enums live in `bun_options_types` (lower tier); re-export here so
+    // intra-crate `crate::options::Loader` paths resolve while the full `options`
+    // module remains gated.
+    pub use bun_options_types::BundleEnums::{Loader, Target};
+    pub use super::OutputFile;
 }
 pub mod transpiler {
     pub use super::Transpiler;

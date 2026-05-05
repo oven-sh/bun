@@ -7,7 +7,7 @@ use super::encode_int::encode_length_int;
 use super::new_writer::{NewWriter, write_wrap};
 use bun_collections::StringHashMap;
 
-bun_output::declare_scope!(MySQLConnection, hidden);
+bun_core::declare_scope!(MySQLConnection, hidden);
 
 pub struct HandshakeResponse41 {
     pub capability_flags: Capabilities,
@@ -26,19 +26,19 @@ pub struct HandshakeResponse41 {
 // so no explicit `impl Drop` is needed.
 
 impl HandshakeResponse41 {
-    pub fn write_internal<Context>(
+    pub fn write_internal<Context: super::new_writer::WriterContext>(
         &mut self,
         mut writer: NewWriter<Context>,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         let mut packet = writer.start(self.sequence_id)?;
 
-        self.capability_flags.client_connect_attrs = self.connect_attrs.len() > 0;
+        self.capability_flags.CLIENT_CONNECT_ATTRS = self.connect_attrs.len() > 0;
 
         // Write client capabilities flags (4 bytes)
         let caps = self.capability_flags.to_int();
         writer.int4(caps)?;
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             MySQLConnection,
             "Client capabilities: [{}] 0x{:08x} sequence_id: {}",
             self.capability_flags,
@@ -60,9 +60,9 @@ impl HandshakeResponse41 {
 
         // Write auth response based on capabilities
         let auth_data = self.auth_response.slice();
-        if self.capability_flags.client_plugin_auth_lenenc_client_data {
+        if self.capability_flags.CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA {
             writer.write_length_encoded_string(auth_data)?;
-        } else if self.capability_flags.client_secure_connection {
+        } else if self.capability_flags.CLIENT_SECURE_CONNECTION {
             writer.int1(u8::try_from(auth_data.len()).unwrap())?;
             writer.write(auth_data)?;
         } else {
@@ -70,26 +70,26 @@ impl HandshakeResponse41 {
         }
 
         // Write database name if requested
-        if self.capability_flags.client_connect_with_db && self.database.slice().len() > 0 {
+        if self.capability_flags.CLIENT_CONNECT_WITH_DB && self.database.slice().len() > 0 {
             writer.write_z(self.database.slice())?;
         }
 
         // Write auth plugin name if supported
-        if self.capability_flags.client_plugin_auth {
+        if self.capability_flags.CLIENT_PLUGIN_AUTH {
             writer.write_z(self.auth_plugin_name.slice())?;
         }
 
         // Write connect attributes if enabled
-        if self.capability_flags.client_connect_attrs {
+        if self.capability_flags.CLIENT_CONNECT_ATTRS {
             let mut total_length: usize = 0;
             for (key, value) in self.connect_attrs.iter() {
-                total_length += encode_length_int(key.len()).len();
+                total_length += encode_length_int(key.len() as u64).len();
                 total_length += key.len();
-                total_length += encode_length_int(value.len()).len();
+                total_length += encode_length_int(value.len() as u64).len();
                 total_length += value.len();
             }
 
-            writer.write_length_encoded_int(total_length)?;
+            writer.write_length_encoded_int(total_length as u64)?;
 
             for (key, value) in self.connect_attrs.iter() {
                 writer.write_length_encoded_string(key)?;
@@ -97,7 +97,7 @@ impl HandshakeResponse41 {
             }
         }
 
-        if self.capability_flags.client_zstd_compression_algorithm {
+        if self.capability_flags.CLIENT_ZSTD_COMPRESSION_ALGORITHM {
             // writer.write_int::<u8>(self.zstd_compression_algorithm)?;
             debug_assert!(false, "zstd compression algorithm is not supported");
         }
@@ -109,11 +109,11 @@ impl HandshakeResponse41 {
     // TODO(port): Zig `pub const write = writeWrap(HandshakeResponse41, writeInternal).write;`
     // is a comptime-generated wrapper. Approximated here as a direct delegating method;
     // verify against the ported `write_wrap` signature in Phase B.
-    pub fn write<Context>(
+    pub fn write<Context: super::new_writer::WriterContext>(
         &mut self,
         writer: NewWriter<Context>,
     ) -> Result<(), bun_core::Error> {
-        write_wrap(self, Self::write_internal, writer)
+        self.write_internal(writer)
     }
 }
 

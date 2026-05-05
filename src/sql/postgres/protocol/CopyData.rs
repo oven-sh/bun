@@ -1,4 +1,4 @@
-use crate::postgres::types::int_types::Int32;
+use crate::postgres::types::int_types::int32;
 use crate::shared::Data;
 use super::decoder_wrap::DecoderWrap;
 use super::new_reader::NewReader;
@@ -13,8 +13,8 @@ pub struct CopyData {
 impl CopyData {
     // PORT NOTE: out-param constructor (`this.* = .{...}`) reshaped to return Self.
     // TODO(port): narrow error set
-    pub fn decode_internal<Container>(
-        reader: NewReader<Container>,
+    pub fn decode_internal<Container: super::new_reader::ReaderContext>(
+        mut reader: NewReader<Container>,
     ) -> Result<Self, bun_core::Error> {
         let length = reader.length()?;
 
@@ -27,24 +27,24 @@ impl CopyData {
     // Phase B decides macro vs trait-default-method. Placeholder delegates directly.
     // TODO(port): in-place init — DecoderWrap trait currently takes `&mut self`;
     // reconcile with the `-> Result<Self, _>` constructor reshape in Phase B.
-    pub fn decode<Container>(
+    pub fn decode<Container: super::new_reader::ReaderContext>(
         &mut self,
-        reader: NewReader<Container>,
+        mut reader: NewReader<Container>,
     ) -> Result<(), bun_core::Error> {
-        *self = DecoderWrap::decode(Self::decode_internal, reader)?;
+        *self = Self::decode_internal(reader)?;
         Ok(())
     }
 
     // TODO(port): narrow error set
-    pub fn write_internal<Context>(
+    pub fn write_internal<Context: super::new_writer::WriterContext>(
         &self,
         writer: NewWriter<Context>,
     ) -> Result<(), bun_core::Error> {
         let data = self.data.slice();
         let count: u32 =
             u32::try_from(core::mem::size_of::<u32>() + data.len() + 1).unwrap();
-        // Zig: [_]u8{'d'} ++ toBytes(Int32(count))
-        let count_bytes = to_bytes(Int32::from(count));
+        // Zig: [_]u8{'d'} ++ toBytes(Int32(count)) — `int32` returns big-endian [u8;4].
+        let count_bytes = int32(count);
         let header: [u8; 5] = [b'd', count_bytes[0], count_bytes[1], count_bytes[2], count_bytes[3]];
         writer.write(&header)?;
         writer.string(data)?;
@@ -54,20 +54,12 @@ impl CopyData {
     // Zig: pub const write = WriteWrap(@This(), writeInternal).write;
     // TODO(port): WriteWrap is a comptime type-generator that wraps write_internal;
     // Phase B decides macro vs trait-default-method. Placeholder delegates directly.
-    pub fn write<Context>(
+    pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: NewWriter<Context>,
     ) -> Result<(), bun_core::Error> {
-        WriteWrap::write(self, Self::write_internal, writer)
+        self.write_internal(writer)
     }
-}
-
-/// `std.mem.toBytes` — reinterpret a value as its raw byte array.
-#[inline]
-fn to_bytes<T: Copy, const N: usize>(value: T) -> [u8; N] {
-    // SAFETY: T is Copy/POD and N == size_of::<T>() at every call site (Int32 → 4 bytes).
-    debug_assert_eq!(core::mem::size_of::<T>(), N);
-    unsafe { core::mem::transmute_copy(&value) }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

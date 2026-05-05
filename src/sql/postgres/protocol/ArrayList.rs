@@ -1,5 +1,5 @@
 use crate::postgres::AnyPostgresError;
-use super::new_writer::NewWriter;
+use super::new_writer::{NewWriter, WriterContext};
 
 pub struct ArrayList<'a> {
     // TODO(port): lifetime — Zig `*std.array_list.Managed(u8)`; classified as BORROW_PARAM (mutable borrow of caller's buffer)
@@ -22,7 +22,40 @@ impl<'a> ArrayList<'a> {
     }
 }
 
-pub type Writer<'a> = NewWriter<ArrayList<'a>>;
+// PORT NOTE: Zig methods took `@This()` by value (a `*ArrayList(u8)` is Copy).
+// `WriterContext` requires `Copy`, so the context wraps a raw pointer to the
+// caller's `Vec<u8>` and the `'a` borrow is the safety invariant.
+#[derive(Clone, Copy)]
+pub struct ArrayListCtx<'a> {
+    array: *mut Vec<u8>,
+    _p: core::marker::PhantomData<&'a mut Vec<u8>>,
+}
+
+impl<'a> ArrayListCtx<'a> {
+    #[inline]
+    pub fn new(array: &'a mut Vec<u8>) -> Self {
+        Self { array: array as *mut Vec<u8>, _p: core::marker::PhantomData }
+    }
+}
+
+impl<'a> WriterContext for ArrayListCtx<'a> {
+    fn offset(self) -> usize {
+        // SAFETY: 'a guarantees the Vec outlives this ctx; no aliasing &mut held.
+        unsafe { (&*self.array).len() }
+    }
+    fn write(self, bytes: &[u8]) -> Result<(), AnyPostgresError> {
+        // SAFETY: same as above.
+        unsafe { (&mut *self.array).extend_from_slice(bytes) };
+        Ok(())
+    }
+    fn pwrite(self, bytes: &[u8], i: usize) -> Result<(), AnyPostgresError> {
+        // SAFETY: same as above.
+        unsafe { (&mut *self.array)[i..i + bytes.len()].copy_from_slice(bytes) };
+        Ok(())
+    }
+}
+
+pub type Writer<'a> = NewWriter<ArrayListCtx<'a>>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

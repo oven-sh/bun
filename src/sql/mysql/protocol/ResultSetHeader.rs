@@ -1,4 +1,4 @@
-use super::new_reader::{decoder_wrap, NewReader};
+use super::new_reader::{NewReader, ReaderContext};
 
 #[derive(Default)]
 pub struct ResultSetHeader {
@@ -6,7 +6,7 @@ pub struct ResultSetHeader {
 }
 
 impl ResultSetHeader {
-    pub fn decode_internal<Context>(&mut self, reader: NewReader<Context>) -> Result<(), bun_core::Error> {
+    pub fn decode_internal<Context: ReaderContext>(&mut self, reader: NewReader<Context>) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         // Field count (length encoded integer)
         self.field_count = reader.encoded_len_int()?;
@@ -16,8 +16,12 @@ impl ResultSetHeader {
     // TODO(port): `decoderWrap(ResultSetHeader, decodeInternal).decode` is a Zig comptime
     // type-function that wraps `decode_internal` over an anyopaque-backed reader. Phase B
     // should replace this with the trait/impl that `new_reader::decoder_wrap` exposes.
-    pub const DECODE: decoder_wrap::Decode<ResultSetHeader> =
-        decoder_wrap::<ResultSetHeader>(Self::decode_internal).decode;
+    pub fn decode<Context: ReaderContext>(
+        &mut self,
+        context: Context,
+    ) -> Result<(), bun_core::Error> {
+        self.decode_internal(NewReader { wrapped: context })
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

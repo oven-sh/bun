@@ -2,12 +2,12 @@ use super::new_writer::NewWriter;
 use super::portal_or_prepared_statement::PortalOrPreparedStatement;
 use super::write_wrap::WriteWrap;
 
-pub struct Describe {
-    pub p: PortalOrPreparedStatement,
+pub struct Describe<'a> {
+    pub p: PortalOrPreparedStatement<'a>,
 }
 
-impl Describe {
-    pub fn write_internal<Context>(
+impl<'a> Describe<'a> {
+    pub fn write_internal<Context: super::new_writer::WriterContext>(
         &self,
         writer: NewWriter<Context>,
     ) -> Result<(), bun_core::Error> {
@@ -26,8 +26,8 @@ impl Describe {
     // that produces a `.write` decl wrapping `write_internal`. Model in Phase B as a trait
     // (e.g. `impl WriteWrap for Describe { fn write_internal(...) }` providing default `write`),
     // or as a macro. Placeholder delegates through WriteWrap for now.
-    pub fn write<Context>(&self, writer: NewWriter<Context>) -> Result<(), bun_core::Error> {
-        WriteWrap::write(self, writer, Self::write_internal)
+    pub fn write<Context: super::new_writer::WriterContext>(&self, writer: NewWriter<Context>) -> Result<(), bun_core::Error> {
+        self.write_internal(writer)
     }
 }
 

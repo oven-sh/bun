@@ -1,4 +1,7 @@
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
+// NOTE: not `thiserror::Error` — that derive requires a per-variant `#[error("...")]`
+// attr. We hand-roll Display via `IntoStaticStr` so the message == the variant name
+// (matching Zig `@errorName`), and impl `std::error::Error` manually below.
+#[derive(strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Error {
     ConnectionClosed,
     ConnectionTimedOut,
@@ -39,6 +42,14 @@ pub enum Error {
     UnknownError,
     InvalidState,
 }
+
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(<&'static str>::from(*self))
+    }
+}
+
+impl std::error::Error for Error {}
 
 impl From<Error> for bun_core::Error {
     fn from(e: Error) -> Self {

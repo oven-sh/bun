@@ -1,4 +1,4 @@
-use super::new_reader::{decoder_wrap, NewReader};
+use super::new_reader::{NewReader, ReaderContext};
 
 pub struct StmtPrepareOKPacket {
     pub status: u8,
@@ -26,7 +26,7 @@ impl Default for StmtPrepareOKPacket {
 
 impl StmtPrepareOKPacket {
     // TODO(port): narrow error set
-    pub fn decode_internal<Context>(
+    pub fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
     ) -> Result<(), bun_core::Error> {
@@ -48,11 +48,11 @@ impl StmtPrepareOKPacket {
     // TODO(port): `pub const decode = decoderWrap(StmtPrepareOKPacket, decodeInternal).decode;`
     // decoder_wrap is a comptime type-generator in Zig; Phase B should expose the wrapped
     // entry point once NewReader/decoder_wrap are ported.
-    pub fn decode<Context>(
+    pub fn decode<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
     ) -> Result<(), bun_core::Error> {
-        decoder_wrap::<StmtPrepareOKPacket, _>(Self::decode_internal)(self, reader)
+        self.decode_internal(reader)
     }
 }
 

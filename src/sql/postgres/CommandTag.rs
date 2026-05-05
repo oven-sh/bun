@@ -1,6 +1,6 @@
-use bun_str::strings;
+use bun_string::strings;
 
-bun_output::declare_scope!(Postgres, visible);
+bun_core::declare_scope!(Postgres, visible);
 
 // TODO(port): lifetime — `Other` borrows from the input `tag` slice passed to `init`.
 pub enum CommandTag<'a> {
@@ -50,19 +50,18 @@ enum KnownCommand {
     Copy,
 }
 
-impl KnownCommand {
-    // Zig: bun.ComptimeEnumMap(KnownCommand) — phf over @tagName bytes.
-    pub static MAP: phf::Map<&'static [u8], KnownCommand> = phf::phf_map! {
-        b"INSERT" => KnownCommand::Insert,
-        b"DELETE" => KnownCommand::Delete,
-        b"UPDATE" => KnownCommand::Update,
-        b"MERGE"  => KnownCommand::Merge,
-        b"SELECT" => KnownCommand::Select,
-        b"MOVE"   => KnownCommand::Move,
-        b"FETCH"  => KnownCommand::Fetch,
-        b"COPY"   => KnownCommand::Copy,
-    };
-}
+// Zig: bun.ComptimeEnumMap(KnownCommand) — phf over @tagName bytes.
+// (associated `static` is not allowed in `impl`; lives at module scope.)
+static KNOWN_COMMAND_MAP: phf::Map<&'static [u8], KnownCommand> = phf::phf_map! {
+    b"INSERT" => KnownCommand::Insert,
+    b"DELETE" => KnownCommand::Delete,
+    b"UPDATE" => KnownCommand::Update,
+    b"MERGE"  => KnownCommand::Merge,
+    b"SELECT" => KnownCommand::Select,
+    b"MOVE"   => KnownCommand::Move,
+    b"FETCH"  => KnownCommand::Fetch,
+    b"COPY"   => KnownCommand::Copy,
+};
 
 impl<'a> CommandTag<'a> {
     pub fn init(tag: &'a [u8]) -> CommandTag<'a> {
@@ -70,7 +69,7 @@ impl<'a> CommandTag<'a> {
             return CommandTag::Other(tag);
         };
         let first_space_index = first_space_index as usize;
-        let Some(&cmd) = KnownCommand::MAP.get(&tag[0..first_space_index]) else {
+        let Some(&cmd) = KNOWN_COMMAND_MAP.get(&tag[0..first_space_index]) else {
             return CommandTag::Other(tag);
         };
 
@@ -86,10 +85,10 @@ impl<'a> CommandTag<'a> {
                     match parse_int_u64(remaining) {
                         Ok(n) => break 'brk n,
                         Err(err) => {
-                            bun_output::scoped_log!(
+                            bun_core::scoped_log!(
                                 Postgres,
                                 "CommandTag failed to parse number: {}",
-                                err.name()
+                                bstr::BStr::new(err.name())
                             );
                             return CommandTag::Other(tag);
                         }
@@ -100,10 +99,10 @@ impl<'a> CommandTag<'a> {
                     match parse_int_u64(after_tag) {
                         Ok(n) => break 'brk n,
                         Err(err) => {
-                            bun_output::scoped_log!(
+                            bun_core::scoped_log!(
                                 Postgres,
                                 "CommandTag failed to parse number: {}",
-                                err.name()
+                                bstr::BStr::new(err.name())
                             );
                             return CommandTag::Other(tag);
                         }

@@ -15,8 +15,8 @@ impl ParameterStatus {
     // PORT NOTE: reshaped from out-param `fn(this: *@This(), ...) !void` to
     // value-returning constructor per PORTING.md.
     // TODO(port): narrow error set
-    pub fn decode_internal<Container>(
-        reader: NewReader<Container>,
+    pub fn decode_internal<Container: super::new_reader::ReaderContext>(
+        mut reader: NewReader<Container>,
     ) -> Result<Self, bun_core::Error> {
         let length = reader.length()?;
         debug_assert!(length >= 4);
@@ -30,8 +30,8 @@ impl ParameterStatus {
     // Zig: `pub const decode = DecoderWrap(ParameterStatus, decodeInternal).decode;`
     // TODO(port): `DecoderWrap` is a comptime type-returning fn; Phase B should
     // expose this via whatever trait/wrapper `decoder_wrap` lands on.
-    pub fn decode<Container>(reader: NewReader<Container>) -> Result<Self, bun_core::Error> {
-        DecoderWrap::<ParameterStatus>::decode(reader)
+    pub fn decode<Container: super::new_reader::ReaderContext>(context: Container) -> Result<Self, bun_core::Error> {
+        Self::decode_internal(NewReader { wrapped: context })
     }
 }
 

@@ -3,14 +3,27 @@ use core::ptr::NonNull;
 use enumset::{EnumSet, EnumSetType};
 
 use bun_alloc as allocators;
-use bun_core::FeatureFlags;
+use bun_core::feature_flags as FeatureFlags;
 use bun_sys::Fd;
 
+#[allow(unused_imports)]
 use crate::fs;
 use crate::package_json::PackageJSON;
 use crate::tsconfig_json::TSConfigJSON;
 
-pub type Index = allocators::IndexType;
+// TODO(b2-blocked): bun_core::Generation — defined in top-level `bun.rs`, not yet
+// re-exported via bun_core. Mirroring the Zig `pub const Generation = u16;` locally.
+type Generation = u16;
+
+// TODO(b2-blocked): bun_alloc::IndexType — gated inside bun_alloc (BSS section).
+// Local mirror of `packed struct(u32) { index: u31, is_overflow: bool }` so the
+// DirInfo struct shape compiles. Replace with `bun_alloc::IndexType` once un-gated.
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub struct IndexType(u32);
+const NOT_FOUND: IndexType = IndexType(u32::MAX >> 1);
+
+pub type Index = IndexType;
 
 pub struct DirInfo {
     // These objects are immutable, so we can just point to the parent directory
@@ -54,8 +67,8 @@ pub struct DirInfo {
 impl Default for DirInfo {
     fn default() -> Self {
         Self {
-            parent: allocators::NOT_FOUND,
-            enclosing_browser_scope: allocators::NOT_FOUND,
+            parent: NOT_FOUND,
+            enclosing_browser_scope: NOT_FOUND,
             package_json_for_browser_field: None,
             enclosing_tsconfig_json: None,
             enclosing_package_json: None,
@@ -98,6 +111,8 @@ impl DirInfo {
     }
 
     pub fn get_file_descriptor(&self) -> Fd {
+        // TODO(b2-blocked): bun_resolver::fs::DirEntry::fd — gated until fs.rs lands.
+        #[cfg(any())]
         if FeatureFlags::STORE_FILE_DESCRIPTORS {
             if let Some(entries) = self.get_entries(0) {
                 return entries.fd;
@@ -106,7 +121,11 @@ impl DirInfo {
         Fd::INVALID
     }
 
-    pub fn get_entries(&self, generation: bun_core::Generation) -> Option<&mut fs::FileSystem::DirEntry> {
+    #[cfg(any())] // TODO(b2-blocked): bun_resolver::fs::DirEntry — return type gated until fs.rs lands.
+    pub fn get_entries(&self, generation: Generation) -> Option<&mut fs::DirEntry> {
+        // TODO(b2-blocked): bun_resolver::fs::FileSystem (RealFS::entries_at) — gated until fs.rs lands.
+        #[cfg(any())]
+        {
         let Some(entries_ptr) = fs::FileSystem::instance().fs.entries_at(self.entries, generation) else {
             return None;
         };
@@ -114,9 +133,16 @@ impl DirInfo {
             fs::EntriesOption::Entries(entries) => Some(entries),
             fs::EntriesOption::Err(_) => None,
         }
+        }
+        let _ = generation;
+        None
     }
 
-    pub fn get_entries_const(&self) -> Option<&fs::FileSystem::DirEntry> {
+    #[cfg(any())] // TODO(b2-blocked): bun_resolver::fs::DirEntry — return type gated until fs.rs lands.
+    pub fn get_entries_const(&self) -> Option<&fs::DirEntry> {
+        // TODO(b2-blocked): bun_resolver::fs::FileSystem — gated until fs.rs lands.
+        #[cfg(any())]
+        {
         let Some(entries_ptr) = fs::FileSystem::instance().fs.entries.at_index(self.entries) else {
             return None;
         };
@@ -124,14 +150,22 @@ impl DirInfo {
             fs::EntriesOption::Entries(entries) => Some(entries),
             fs::EntriesOption::Err(_) => None,
         }
+        }
+        None
     }
 
     pub fn get_parent(&self) -> Option<&mut DirInfo> {
-        HashMap::instance().at_index(self.parent)
+        // TODO(b2-blocked): bun_alloc::BSSMap::instance — per-type singleton not yet wired.
+        #[cfg(any())]
+        { return HashMap::instance().at_index(self.parent); }
+        None
     }
 
     pub fn get_enclosing_browser_scope(&self) -> Option<&mut DirInfo> {
-        HashMap::instance().at_index(self.enclosing_browser_scope)
+        // TODO(b2-blocked): bun_alloc::BSSMap::instance — per-type singleton not yet wired.
+        #[cfg(any())]
+        { return HashMap::instance().at_index(self.enclosing_browser_scope); }
+        None
     }
 }
 
@@ -170,7 +204,13 @@ impl DirInfo {
 // 2. Don't expect a provided key to exist after it's queried
 // 3. Store whether a directory has been queried and whether that query was successful.
 // 4. Allocate onto the https://en.wikipedia.org/wiki/.bss#BSS_in_C instead of the heap, so we can avoid memory leaks
-pub type HashMap = allocators::BSSMap<DirInfo, { fs::Preallocate::Counts::DIR_ENTRY }, false, 128, true>;
+//
+// PORT NOTE: Zig `BSSMap(DirInfo, COUNT, store_keys=false, est_key_len=128, rm_slash=true)`;
+// Rust splits the comptime branch — `store_keys=false` → `BSSMapInner<V, COUNT, RM_SLASH>`.
+// `est_key_len` is unused on the inner shape. COUNT mirrors `fs::preallocate::counts::DIR_ENTRY`.
+// TODO(b2-blocked): bun_alloc::BSSMapInner — gated inside bun_alloc.
+#[cfg(any())]
+pub type HashMap = allocators::BSSMapInner<DirInfo, 2048, true>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

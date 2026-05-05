@@ -1,11 +1,20 @@
-use bun_bundler::cache;
-use bun_bundler::options;
+// TODO(b2-blocked): bun_bundler::cache — higher-tier crate; usages gated below.
+// TODO(b2-blocked): bun_bundler::options — higher-tier crate; usages gated below.
 use bun_collections::ArrayHashMap;
 use bun_js_parser as js_ast;
 use bun_js_parser::lexer as js_lexer;
 use bun_logger as logger;
-use bun_str::strings;
+use bun_string::strings;
 use enumset::{EnumSet, EnumSetType};
+
+// TODO(b2-blocked): bun_bundler::options::jsx::Pragma — local opaque stand-in so the
+// struct field type-checks. Replace with the real Pragma once bun_bundler compiles.
+mod options {
+    pub mod jsx {
+        #[derive(Default, Clone)]
+        pub struct Pragma(());
+    }
+}
 
 // Heuristic: you probably don't have 100 of these
 // Probably like 5-10
@@ -106,6 +115,9 @@ impl TSConfigJSON {
     }
 
     pub fn merge_jsx(&self, current: options::jsx::Pragma) -> options::jsx::Pragma {
+        // TODO(b2-blocked): bun_bundler::options::jsx::Pragma
+        #[cfg(any())]
+        {
         let mut out = current;
 
         if self.jsx_flags.contains(JsxField::Factory) {
@@ -129,6 +141,8 @@ impl TSConfigJSON {
         }
 
         out
+        }
+        todo!("b2-blocked: bun_bundler::options::jsx::Pragma")
     }
 
     /// Support ${configDir}, but avoid allocating when possible.
@@ -147,10 +161,12 @@ impl TSConfigJSON {
         input: Box<[u8]>,
         source: &logger::Source,
     ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
+        // TODO(b2-blocked): bun_logger::fs::Path::source_dir
+        #[cfg(any())]
+        {
         const TEMPLATE: &[u8] = b"${configDir}";
         let mut remaining: &[u8] = &input;
-        // TODO(port): bun.StringBuilder — confirm crate path (count/allocate/append two-pass builder)
-        let mut string_builder = bun_str::StringBuilder::default();
+        let mut string_builder = bun_string::StringBuilder { len: 0, cap: 0, ptr: None };
         let config_dir = source.path.source_dir();
 
         // There's only one template variable we support, so we can keep this simple for now.
@@ -178,11 +194,18 @@ impl TSConfigJSON {
         // The extra null-byte here is unnecessary. But it's kind of nice in the debugger sometimes.
         let _ = string_builder.append_z(remaining);
 
-        let len = string_builder.len() - 1;
-        Ok(Box::from(&string_builder.allocated_slice()[..len]))
+        let written = string_builder.allocated_slice();
+        let len = string_builder.len - 1;
+        Ok(Box::from(&written[..len]))
         // PERF(port): Zig returned a sub-slice into the builder's single allocation; Rust copies once.
+        }
+        let _ = source;
+        Ok(input)
     }
 
+    // TODO(b2-blocked): bun_bundler::cache::Json + bun_js_parser::Expr full API.
+    // Signature uses an opaque `&mut ()` for the json_cache slot until bun_bundler::cache lands.
+    #[cfg(any())]
     pub fn parse(
         log: &mut logger::Log,
         source: &logger::Source,
@@ -485,7 +508,7 @@ impl TSConfigJSON {
                 if found_asterisk {
                     let r = source.range_of_string(loc);
                     let _ = log.add_range_warning_fmt(
-                        source,
+                        Some(source),
                         r,
                         format_args!(
                             "Invalid pattern \"{}\", must have at most one \"*\" character",
@@ -524,7 +547,7 @@ impl TSConfigJSON {
             if !js_lexer::is_identifier(text) {
                 let warn = source.range_of_string(loc);
                 let _ = log.add_range_warning_fmt(
-                    source,
+                    Some(source),
                     warn,
                     format_args!(
                         "Invalid JSX member expression: \"{}\"",
@@ -546,7 +569,7 @@ impl TSConfigJSON {
             if !js_lexer::is_identifier(part) {
                 let warn = source.range_of_string(loc);
                 let _ = log.add_range_warning_fmt(
-                    source,
+                    Some(source),
                     warn,
                     format_args!(
                         "Invalid JSX member expression: \"{}\"",
@@ -620,7 +643,7 @@ impl TSConfigJSON {
 
         let r = source.range_of_string(loc);
         let _ = log.add_range_warning_fmt(
-            source,
+            Some(source),
             r,
             format_args!(
                 "Non-relative path \"{}\" is not allowed when \"baseUrl\" is not set (did you forget a leading \"./\"?)",

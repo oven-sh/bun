@@ -1,5 +1,5 @@
 use crate::shared::Data;
-use super::new_reader::{decoder_wrap, NewReader};
+use super::new_reader::{NewReader, ReaderContext};
 
 pub struct ErrorPacket {
     pub header: u8,
@@ -35,7 +35,7 @@ pub struct MySQLErrorOptions {
 // `createMySQLError` lives in bun_sql_jsc::mysql::protocol::error_packet_jsc — *_jsc alias deleted.
 
 impl ErrorPacket {
-    pub fn decode_internal<Context>(
+    pub fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
     ) -> Result<(), bun_core::Error> {
@@ -74,11 +74,11 @@ impl ErrorPacket {
 // TODO(port): `decoderWrap(ErrorPacket, decodeInternal).decode` is a comptime
 // fn-to-type wrapper. Approximated here as a thin delegating fn; revisit once
 // `decoder_wrap` is ported in new_reader.rs.
-pub fn decode<Context>(
+pub fn decode<Context: ReaderContext>(
     this: &mut ErrorPacket,
     reader: NewReader<Context>,
 ) -> Result<(), bun_core::Error> {
-    decoder_wrap::<ErrorPacket, _>(this, ErrorPacket::decode_internal::<Context>, reader)
+    this.decode_internal(reader)
 }
 
 // `toJS` lives in bun_sql_jsc::mysql::protocol::error_packet_jsc — *_jsc alias deleted.

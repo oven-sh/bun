@@ -1,8 +1,8 @@
-use bun_sql::postgres::any_postgres_error::AnyPostgresError;
-use bun_sql::postgres::postgres_types::{self as types, Int4, Short};
-use bun_sql::postgres::protocol::decoder_wrap::DecoderWrap;
-use bun_sql::postgres::protocol::new_reader::NewReader;
-use bun_sql::shared::column_identifier::ColumnIdentifier;
+use crate::postgres::any_postgres_error::AnyPostgresError;
+use crate::postgres::postgres_types::{self as types, Int4, Short};
+use crate::postgres::protocol::decoder_wrap::DecoderWrap;
+use crate::postgres::protocol::new_reader::NewReader;
+use crate::shared::column_identifier::ColumnIdentifier;
 
 pub struct FieldDescription {
     /// JavaScriptCore treats numeric property names differently than string property names.
@@ -33,14 +33,15 @@ impl FieldDescription {
     }
 
     // PORT NOTE: reshaped out-param constructor (`this.* = .{...}`) into a value-returning fn.
-    pub fn decode_internal<Container>(
-        reader: NewReader<Container>,
+    pub fn decode_internal<Container: super::new_reader::ReaderContext>(
+        reader: &mut NewReader<Container>,
     ) -> Result<Self, AnyPostgresError> {
         let name = reader.read_z()?;
         // errdefer name.deinit() — deleted: `name` drops on `?` automatically.
 
         // Field name (null-terminated string)
-        let field_name = ColumnIdentifier::init(name)?;
+        let field_name =
+            ColumnIdentifier::init(name).map_err(|_| AnyPostgresError::OutOfMemory)?;
         // Table OID (4 bytes)
         // If the field can be identified as a column of a specific table, the object ID of the table; otherwise zero.
         let table_oid = reader.int4()?;

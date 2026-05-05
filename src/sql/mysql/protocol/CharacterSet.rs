@@ -237,6 +237,25 @@ pub enum CharacterSet {
 impl CharacterSet {
     pub const DEFAULT: CharacterSet = CharacterSet::utf8mb4_general_ci;
 
+    /// Safely construct from a raw protocol byte. Zig's `CharacterSet` is a
+    /// NON-exhaustive `enum(u8)` so `@enumFromInt` is defined for any byte;
+    /// this Rust enum is exhaustive, so unknown discriminants would be UB via
+    /// `transmute`. Unknown bytes fall back to `DEFAULT`.
+    /// TODO(b2): switch to `#[repr(transparent)] struct(u8)` newtype to keep
+    /// the unknown value (matching Zig semantics) instead of falling back.
+    pub const fn from_raw(b: u8) -> Self {
+        // Valid discriminants: 1-16, 18-99, 101-124, 128-151, 159-183, 192-215, 223-250.
+        if matches!(
+            b,
+            1..=16 | 18..=99 | 101..=124 | 128..=151 | 159..=183 | 192..=215 | 223..=250
+        ) {
+            // SAFETY: byte is verified above to be a listed `#[repr(u8)]` discriminant.
+            unsafe { core::mem::transmute::<u8, CharacterSet>(b) }
+        } else {
+            Self::DEFAULT
+        }
+    }
+
     pub fn label(self) -> &'static str {
         let n = self as u8;
         if n < 100 && n > 0 {

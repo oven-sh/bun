@@ -1,11 +1,11 @@
 use super::any_mysql_error;
 use super::command_type::CommandType;
-use super::new_reader::{decoder_wrap, NewReader};
+use super::new_reader::{NewReader, ReaderContext};
 use super::new_writer::{write_wrap, NewWriter};
 use super::super::mysql_param::Param;
 use super::super::mysql_types::{FieldType, Value};
 
-bun_output::declare_scope!(PreparedStatement, hidden);
+bun_core::declare_scope!(PreparedStatement, hidden);
 
 pub struct PrepareOK {
     pub status: u8,
@@ -116,7 +116,7 @@ impl Execute {
             if self.new_params_bind_flag {
                 // Write parameter types
                 for param_type in self.param_types.iter() {
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         PreparedStatement,
                         "New params bind flag {} unsigned? {}",
                         <&'static str>::from(param_type.r#type),

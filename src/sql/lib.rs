@@ -1,3 +1,235 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
-// AUTOGEN: mod declarations only — real exports added in B-1.
+// B-2: module tree wired in. Gated modules carry `#[cfg(any())]` until their
+// cross-crate deps land (see TODO(b2-blocked) markers inside).
 
+pub mod shared {
+    #[path = "SQLQueryResultMode.rs"]
+    pub mod sql_query_result_mode;
+    #[path = "ConnectionFlags.rs"]
+    pub mod connection_flags;
+    #[path = "Data.rs"]
+    pub mod data;
+    #[path = "ColumnIdentifier.rs"]
+    pub mod column_identifier;
+
+    pub use sql_query_result_mode::SQLQueryResultMode;
+    pub use connection_flags::ConnectionFlags;
+    pub use data::Data;
+    pub use column_identifier::ColumnIdentifier;
+}
+
+pub mod mysql {
+    #[path = "SSLMode.rs"]
+    pub mod ssl_mode;
+    #[path = "ConnectionState.rs"]
+    pub mod connection_state;
+    #[path = "TLSStatus.rs"]
+    pub mod tls_status;
+    #[path = "QueryStatus.rs"]
+    pub mod query_status;
+    #[path = "MySQLQueryResult.rs"]
+    pub mod mysql_query_result;
+    #[path = "StatusFlags.rs"]
+    pub mod status_flags;
+    #[path = "Capabilities.rs"]
+    pub mod capabilities;
+    #[path = "AuthMethod.rs"]
+    pub mod auth_method;
+    #[path = "MySQLTypes.rs"]
+    pub mod mysql_types;
+    #[path = "MySQLParam.rs"]
+    pub mod mysql_param;
+    #[path = "MySQLRequest.rs"]
+    pub mod mysql_request;
+
+    pub mod protocol {
+        #[path = "PacketType.rs"]
+        pub mod packet_type;
+        #[path = "CommandType.rs"]
+        pub mod command_type;
+        #[path = "CharacterSet.rs"]
+        pub mod character_set;
+        #[path = "AnyMySQLError.rs"]
+        pub mod any_mysql_error;
+        #[path = "PacketHeader.rs"]
+        pub mod packet_header;
+        #[path = "EncodeInt.rs"]
+        pub mod encode_int;
+
+        pub use character_set::CharacterSet;
+
+        #[path = "ResultSetHeader.rs"]
+        pub mod result_set_header;
+        #[path = "AuthSwitchResponse.rs"]
+        pub mod auth_switch_response;
+        #[path = "EOFPacket.rs"]
+        pub mod eof_packet;
+        #[path = "LocalInfileRequest.rs"]
+        pub mod local_infile_request;
+        #[path = "StmtPrepareOKPacket.rs"]
+        pub mod stmt_prepare_ok_packet;
+        #[path = "AuthSwitchRequest.rs"]
+        pub mod auth_switch_request;
+        #[path = "OKPacket.rs"]
+        pub mod ok_packet;
+        #[path = "SSLRequest.rs"]
+        pub mod ssl_request;
+        #[path = "ErrorPacket.rs"]
+        pub mod error_packet;
+        #[path = "StackReader.rs"]
+        pub mod stack_reader;
+        #[path = "HandshakeV10.rs"]
+        pub mod handshake_v10;
+        #[cfg(any())]
+        // TODO(b2-blocked): write_null_bitmap on NewWriter + ColumnFlags.unsigned field
+        // accessor — needs API alignment with column_definition41 / new_writer first.
+        #[path = "Query.rs"]
+        pub mod query;
+        #[path = "HandshakeResponse41.rs"]
+        pub mod handshake_response41;
+        #[path = "ColumnDefinition41.rs"]
+        pub mod column_definition41;
+        #[path = "NewWriter.rs"]
+        pub mod new_writer;
+        #[cfg(any())]
+        // TODO(b2-blocked): bun_sql_jsc::mysql::mysql_value::Value — `Value` was a *_jsc
+        // re-export deleted from MySQLTypes; param encoding needs the jsc-side type.
+        #[path = "PreparedStatement.rs"]
+        pub mod prepared_statement;
+        #[path = "NewReader.rs"]
+        pub mod new_reader;
+        #[cfg(any())]
+        // TODO(b2-blocked): bun_sha::SHA1 / bun_sha::SHA256 / bun_boringssl —
+        // crypto crates not in this tier's dep set.
+        #[path = "Auth.rs"]
+        pub mod auth;
+    }
+
+    pub use ssl_mode::SSLMode;
+    pub use connection_state::ConnectionState;
+    pub use tls_status::TLSStatus;
+    pub use query_status::Status as QueryStatus;
+    pub use mysql_query_result::MySQLQueryResult;
+    pub use status_flags::{StatusFlag, StatusFlags};
+    pub use capabilities::Capabilities;
+    pub use auth_method::AuthMethod;
+}
+
+pub mod postgres {
+    #[path = "SSLMode.rs"]
+    pub mod ssl_mode;
+    #[path = "Status.rs"]
+    pub mod status;
+    #[path = "TLSStatus.rs"]
+    pub mod tls_status;
+    #[path = "AnyPostgresError.rs"]
+    pub mod any_postgres_error;
+    #[path = "CommandTag.rs"]
+    pub mod command_tag;
+    #[path = "PostgresTypes.rs"]
+    pub mod postgres_types;
+    #[path = "PostgresProtocol.rs"]
+    pub mod postgres_protocol;
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_core::fmt::hex — debug-only hex formatter for scoped_log
+    #[path = "SocketMonitor.rs"]
+    pub mod socket_monitor;
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_sys::File::create — open-for-write+truncate not in bun_sys yet
+    #[path = "DebugSocketMonitorReader.rs"]
+    pub mod debug_socket_monitor_reader;
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_sys::File::create — open-for-write+truncate not in bun_sys yet
+    #[path = "DebugSocketMonitorWriter.rs"]
+    pub mod debug_socket_monitor_writer;
+
+    pub mod types {
+        #[path = "int_types.rs"]
+        pub mod int_types;
+        #[path = "Tag.rs"]
+        pub mod tag;
+    }
+
+    pub mod protocol {
+        #[path = "PortalOrPreparedStatement.rs"]
+        pub mod portal_or_prepared_statement;
+        #[path = "TransactionStatusIndicator.rs"]
+        pub mod transaction_status_indicator;
+        #[path = "FieldType.rs"]
+        pub mod field_type;
+        #[path = "zHelpers.rs"]
+        pub mod z_helpers;
+
+        #[path = "ArrayList.rs"]
+        pub mod array_list;
+        #[path = "DecoderWrap.rs"]
+        pub mod decoder_wrap;
+        #[path = "WriteWrap.rs"]
+        pub mod write_wrap;
+        #[path = "CopyInResponse.rs"]
+        pub mod copy_in_response;
+        #[path = "CopyOutResponse.rs"]
+        pub mod copy_out_response;
+        #[path = "ReadyForQuery.rs"]
+        pub mod ready_for_query;
+        #[path = "BackendKeyData.rs"]
+        pub mod backend_key_data;
+        #[path = "ParameterStatus.rs"]
+        pub mod parameter_status;
+        #[path = "NoticeResponse.rs"]
+        pub mod notice_response;
+        #[path = "NotificationResponse.rs"]
+        pub mod notification_response;
+        #[path = "SASLResponse.rs"]
+        pub mod sasl_response;
+        #[path = "CommandComplete.rs"]
+        pub mod command_complete;
+        #[path = "RowDescription.rs"]
+        pub mod row_description;
+        #[path = "DataRow.rs"]
+        pub mod data_row;
+        #[path = "PasswordMessage.rs"]
+        pub mod password_message;
+        #[path = "Execute.rs"]
+        pub mod execute;
+        #[path = "Close.rs"]
+        pub mod close;
+        #[path = "Describe.rs"]
+        pub mod describe;
+        #[path = "SASLInitialResponse.rs"]
+        pub mod sasl_initial_response;
+        #[path = "ParameterDescription.rs"]
+        pub mod parameter_description;
+        #[path = "NegotiateProtocolVersion.rs"]
+        pub mod negotiate_protocol_version;
+        #[path = "ErrorResponse.rs"]
+        pub mod error_response;
+        #[path = "CopyFail.rs"]
+        pub mod copy_fail;
+        #[path = "Parse.rs"]
+        pub mod parse;
+        #[path = "CopyData.rs"]
+        pub mod copy_data;
+        #[path = "StartupMessage.rs"]
+        pub mod startup_message;
+        #[path = "StackReader.rs"]
+        pub mod stack_reader;
+        #[path = "FieldDescription.rs"]
+        pub mod field_description;
+        #[path = "FieldMessage.rs"]
+        pub mod field_message;
+        #[path = "NewReader.rs"]
+        pub mod new_reader;
+        #[path = "NewWriter.rs"]
+        pub mod new_writer;
+        #[path = "Authentication.rs"]
+        pub mod authentication;
+    }
+
+    pub use ssl_mode::SSLMode;
+    pub use status::Status;
+    pub use tls_status::TLSStatus;
+    pub use any_postgres_error::{AnyPostgresError, PostgresErrorOptions};
+    pub use command_tag::CommandTag;
+    pub use types::tag::Tag;
+}

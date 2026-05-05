@@ -2,7 +2,7 @@ use crate::shared::Data;
 use super::decoder_wrap::DecoderWrap;
 use super::new_reader::NewReader;
 
-bun_output::declare_scope!(Postgres, hidden);
+bun_core::declare_scope!(Postgres, hidden);
 
 pub enum Authentication {
     Ok,
@@ -39,7 +39,7 @@ impl SASLContinue {
         // SAFETY: `i` points into `self.data`'s buffer, which is alive for `'self`.
         let i = unsafe { &*self.i };
         // TODO(port): std.fmt.parseInt(u32, _, 0) auto-detects radix from prefix (0x/0o/0b);
-        // Phase B should provide bun_str::strings::parse_int with the same semantics.
+        // Phase B should provide bun_string::strings::parse_int with the same semantics.
         let s = core::str::from_utf8(i).map_err(|_| bun_core::err!("InvalidCharacter"))?;
         s.parse::<u32>().map_err(|_| bun_core::err!("InvalidCharacter"))
     }
@@ -63,7 +63,7 @@ impl Drop for Authentication {
 
 impl Authentication {
     // PORT NOTE: reshaped from out-param `fn(this: *@This(), ...) !void` to `-> Result<Self, _>`.
-    pub fn decode_internal<Container>(
+    pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         reader: &mut NewReader<Container>,
     ) -> Result<Self, bun_core::Error> {
         // TODO(port): narrow error set
@@ -110,7 +110,7 @@ impl Authentication {
                 if message_length < 9 {
                     return Err(bun_core::err!("InvalidMessageLength"));
                 }
-                let bytes = reader.read(message_length - 8)?;
+                let bytes = reader.read((message_length - 8) as usize)?;
                 Ok(Authentication::GSSContinue { data: bytes })
             }
             9 => {
@@ -124,7 +124,7 @@ impl Authentication {
                 if message_length < 9 {
                     return Err(bun_core::err!("InvalidMessageLength"));
                 }
-                reader.skip(message_length - 8)?;
+                reader.skip((message_length - 8) as usize)?;
                 Ok(Authentication::SASL)
             }
 
@@ -132,7 +132,7 @@ impl Authentication {
                 if message_length < 9 {
                     return Err(bun_core::err!("InvalidMessageLength"));
                 }
-                let bytes = reader.bytes(message_length - 8)?;
+                let bytes = reader.bytes((message_length - 8) as usize)?;
                 // errdefer { bytes.deinit(); } — `Data: Drop` frees on `?` early-return.
 
                 let mut r: Option<*const [u8]> = None;
@@ -144,7 +144,7 @@ impl Authentication {
                     // resulting sub-slice raw pointers don't hold a borrow on `bytes`.
                     let slice: *const [u8] = bytes.slice();
                     // SAFETY: `slice` points into `bytes`, alive for this scope.
-                    let mut iter = bun_str::strings::split(unsafe { &*slice }, b",");
+                    let mut iter = bun_string::strings::split(unsafe { &*slice }, b",");
                     while let Some(item) = iter.next() {
                         if item.len() > 2 {
                             let key = item[0];
@@ -161,15 +161,15 @@ impl Authentication {
                 }
 
                 if r.is_none() {
-                    bun_output::scoped_log!(Postgres, "Missing r");
+                    bun_core::scoped_log!(Postgres, "Missing r");
                 }
 
                 if s.is_none() {
-                    bun_output::scoped_log!(Postgres, "Missing s");
+                    bun_core::scoped_log!(Postgres, "Missing s");
                 }
 
                 if i.is_none() {
-                    bun_output::scoped_log!(Postgres, "Missing i");
+                    bun_core::scoped_log!(Postgres, "Missing i");
                 }
 
                 let r = r.ok_or(bun_core::err!("InvalidMessage"))?;
@@ -202,8 +202,10 @@ impl Authentication {
     // DecoderWrap is a comptime type-generator that wraps `decode_internal` into a `decode`
     // entry point. Phase B should express this via a trait impl on `Authentication` rather
     // than a const fn alias.
-    pub fn decode<Container>(reader: &mut NewReader<Container>) -> Result<Self, bun_core::Error> {
-        DecoderWrap::<Authentication>::decode(reader)
+    pub fn decode<Container: super::new_reader::ReaderContext>(
+        context: Container,
+    ) -> Result<Self, bun_core::Error> {
+        Self::decode_internal(&mut NewReader { wrapped: context })
     }
 }
 

@@ -1,10 +1,10 @@
 use crate::mysql::mysql_types::{self as types, FieldType};
-use crate::mysql::protocol::new_reader::{decoder_wrap, NewReader};
+use crate::mysql::protocol::new_reader::{NewReader, ReaderContext};
 use crate::shared::column_identifier::ColumnIdentifier;
 use crate::shared::data::Data;
 use bstr::BStr;
 
-bun_output::declare_scope!(ColumnDefinition41, hidden);
+bun_core::declare_scope!(ColumnDefinition41, hidden);
 
 pub struct ColumnDefinition41 {
     pub catalog: Data,
@@ -80,40 +80,57 @@ impl ColumnFlags {
 
 impl ColumnDefinition41 {
     // TODO(port): narrow error set
-    pub fn decode_internal<Context>(
+    pub fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: &mut NewReader<Context>,
     ) -> Result<(), bun_core::Error> {
         // Length encoded strings
         self.catalog = reader.encode_len_string()?;
-        bun_output::scoped_log!(ColumnDefinition41, "catalog: {}", BStr::new(self.catalog.slice()));
+        bun_core::scoped_log!(ColumnDefinition41, "catalog: {}", BStr::new(self.catalog.slice()));
 
         self.schema = reader.encode_len_string()?;
-        bun_output::scoped_log!(ColumnDefinition41, "schema: {}", BStr::new(self.schema.slice()));
+        bun_core::scoped_log!(ColumnDefinition41, "schema: {}", BStr::new(self.schema.slice()));
 
         self.table = reader.encode_len_string()?;
-        bun_output::scoped_log!(ColumnDefinition41, "table: {}", BStr::new(self.table.slice()));
+        bun_core::scoped_log!(ColumnDefinition41, "table: {}", BStr::new(self.table.slice()));
 
         self.org_table = reader.encode_len_string()?;
-        bun_output::scoped_log!(ColumnDefinition41, "org_table: {}", BStr::new(self.org_table.slice()));
+        bun_core::scoped_log!(ColumnDefinition41, "org_table: {}", BStr::new(self.org_table.slice()));
 
         self.name = reader.encode_len_string()?;
-        bun_output::scoped_log!(ColumnDefinition41, "name: {}", BStr::new(self.name.slice()));
+        bun_core::scoped_log!(ColumnDefinition41, "name: {}", BStr::new(self.name.slice()));
 
         self.org_name = reader.encode_len_string()?;
-        bun_output::scoped_log!(ColumnDefinition41, "org_name: {}", BStr::new(self.org_name.slice()));
+        bun_core::scoped_log!(ColumnDefinition41, "org_name: {}", BStr::new(self.org_name.slice()));
 
         self.fixed_length_fields_length = reader.encoded_len_int()?;
         self.character_set = reader.int::<u16>()?;
         self.column_length = reader.int::<u32>()?;
-        self.column_type = FieldType::from_raw(reader.int::<u8>()?);
+        // PORT NOTE: Zig FieldType is a NON-exhaustive `enum(u8)` so `@enumFromInt` is
+        // defined for any byte. Rust `#[repr(u8)] enum` is exhaustive — transmuting an
+        // unlisted discriminant is immediate UB. Range-check the documented protocol gaps
+        // (0x14..=0xf4) and error instead. This diverges from Zig (which keeps the value)
+        // but is sound; if a new server sends an unknown type, we fail loudly here rather
+        // than silently invoke UB. TODO(b2): switch FieldType to `#[repr(transparent)]
+        // struct(u8)` newtype to match Zig's non-exhaustive semantics exactly.
+        let type_byte = reader.int::<u8>()?;
+        self.column_type = if matches!(type_byte, 0x00..=0x13 | 0xf5..=0xff) {
+            // SAFETY: byte is verified to be a listed discriminant of `#[repr(u8)] FieldType`.
+            unsafe { core::mem::transmute::<u8, FieldType>(type_byte) }
+        } else {
+            return Err(bun_core::err!("UnknownMySQLFieldType"));
+        };
         self.flags = ColumnFlags::from_int(reader.int::<u16>()?);
         self.decimals = reader.int::<u8>()?;
 
         // PORT NOTE: Zig called `name_or_index.deinit()` before reassigning; in Rust the
         // assignment below drops the previous value automatically.
         // PORT NOTE: reshaped for borrowck — Zig passed `this.name` by value; pass by ref here.
-        self.name_or_index = ColumnIdentifier::init(&self.name)?;
+        // PORT NOTE: `ColumnIdentifier::init` consumes its `Data` (Zig moved by-value
+        // and `errdefer name.deinit()`). We can't move `self.name` while `&mut self`
+        // is borrowed, so feed it a Temporary view of the same bytes.
+        let name_view = Data::Temporary(self.name.slice() as *const [u8]);
+        self.name_or_index = ColumnIdentifier::init(name_view)?;
 
         // https://mariadb.com/kb/en/result-set-packets/#column-definition-packet
         // According to mariadb, there seem to be extra 2 bytes at the end that is not being used
@@ -125,11 +142,11 @@ impl ColumnDefinition41 {
     // TODO(port): `decoderWrap(ColumnDefinition41, decodeInternal).decode` is a comptime
     // type-generator that produces a `.decode` wrapper. Phase B: express as a trait impl
     // (e.g. `impl Decode for ColumnDefinition41`) or a macro from `new_reader`.
-    pub fn decode<Context>(
+    pub fn decode<Context: ReaderContext>(
         &mut self,
         reader: &mut NewReader<Context>,
     ) -> Result<(), bun_core::Error> {
-        decoder_wrap::<Self, Context>(self, Self::decode_internal, reader)
+        self.decode_internal(reader)
     }
 }
 

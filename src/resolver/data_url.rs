@@ -1,4 +1,4 @@
-use bun_str::strings;
+use bun_string::strings;
 
 // https://github.com/Vexu/zuri/blob/master/src/zuri.zig#L61-L127
 pub struct PercentEncoding;
@@ -118,7 +118,7 @@ impl PercentEncoding {
 // PORT NOTE: `mime_type`/`data` are slices into the caller-provided `url` string.
 // Classified as BORROW_PARAM — struct gets a lifetime parameter.
 pub struct DataURL<'a> {
-    pub url: bun_str::String,
+    pub url: bun_string::String,
     pub mime_type: &'a [u8],
     pub data: &'a [u8],
     pub is_base64: bool,
@@ -140,7 +140,7 @@ impl<'a> DataURL<'a> {
             .ok_or(bun_core::err!("InvalidDataURL"))? as usize;
 
         let mut parsed = DataURL {
-            url: bun_str::String::empty(),
+            url: bun_string::String::empty(),
             mime_type: &url[b"data:".len()..comma],
             data: &url[comma + 1..url.len()],
             is_base64: false,
@@ -154,8 +154,8 @@ impl<'a> DataURL<'a> {
         Ok(parsed)
     }
 
-    pub fn decode_mime_type(&self) -> bun_http::MimeType {
-        bun_http::MimeType::init(self.mime_type, None, None)
+    pub fn decode_mime_type(&self) -> bun_http_types::MimeType::MimeType {
+        bun_http_types::MimeType::MimeType::init(self.mime_type, false, None)
     }
 
     /// Decodes the data from the data URL. Always returns an owned slice.
@@ -244,7 +244,8 @@ impl<'a> DataURL<'a> {
             trailing_start -= 1;
         }
 
-        if !bun_simdutf::validate::utf8(text) {
+        // TODO(b2-blocked): bun_simdutf_sys::validate::utf8 — crate not in deps; use std fallback.
+        if core::str::from_utf8(text).is_err() {
             return false;
         }
 
@@ -276,7 +277,7 @@ impl<'a> DataURL<'a> {
                 run_start = i + 1;
             }
 
-            i += strings::utf8_byte_sequence_length(first_byte) as usize;
+            i += strings::wtf8_byte_sequence_length(first_byte) as usize;
         }
 
         if run_start < text.len() {

@@ -5,9 +5,9 @@ pub struct CopyOutResponse;
 
 impl CopyOutResponse {
     // TODO(port): narrow error set
-    pub fn decode_internal<Container>(
+    pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         &mut self,
-        reader: NewReader<Container>,
+        mut reader: NewReader<Container>,
     ) -> Result<(), bun_core::Error> {
         let _ = reader;
         let _ = self;
@@ -19,9 +19,15 @@ impl CopyOutResponse {
 }
 
 // TODO(port): `DecoderWrap(CopyOutResponse, decodeInternal).decode` passes a fn as a
-// comptime param to a type-generator. In Rust this is a trait (`Decode`) with a blanket
-// impl that calls `decode_internal`. Phase B: wire the trait and delete this alias.
-pub use DecoderWrap::<CopyOutResponse>::decode;
+// comptime param to a type-generator. Direct delegate; revisit as trait impl.
+impl CopyOutResponse {
+    pub fn decode<Container: super::new_reader::ReaderContext>(
+        &mut self,
+        context: Container,
+    ) -> Result<(), bun_core::Error> {
+        self.decode_internal(NewReader { wrapped: context })
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

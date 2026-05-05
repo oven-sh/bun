@@ -1,7 +1,7 @@
 // OK Packet
 use crate::shared::Data;
 use crate::mysql::StatusFlags;
-use crate::mysql::protocol::new_reader::{NewReader, decoder_wrap};
+use crate::mysql::protocol::new_reader::{NewReader, ReaderContext};
 
 pub struct OKPacket {
     pub header: u8,
@@ -25,7 +25,7 @@ pub struct OKPacket {
 
 impl OKPacket {
     // TODO(port): narrow error set (InvalidOKPacket + reader errors)
-    pub fn decode_internal<Context>(
+    pub fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
     ) -> Result<(), bun_core::Error> {

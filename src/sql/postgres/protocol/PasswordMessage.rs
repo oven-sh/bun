@@ -19,7 +19,7 @@ impl Default for PasswordMessage {
 // implements `Drop`, so no explicit `Drop` impl is needed here.
 
 impl PasswordMessage {
-    pub fn write_internal<Context>(
+    pub fn write_internal<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
     ) -> Result<(), bun_core::Error> {
@@ -29,21 +29,19 @@ impl PasswordMessage {
         // Zig: `[_]u8{'p'} ++ toBytes(Int32(count))` — comptime array concat.
         let mut header = [0u8; 5];
         header[0] = b'p';
-        // SAFETY: Int32 is #[repr(transparent)] over i32; to_ne_bytes mirrors std.mem.toBytes.
-        header[1..5].copy_from_slice(&int32(count).to_bytes());
+        // `int32(count)` already returns the big-endian `[u8; 4]` (mirrors std.mem.toBytes(Int32(count))).
+        header[1..5].copy_from_slice(&int32(count));
         writer.write(&header)?;
         writer.string(password)?;
         Ok(())
     }
 
     // Zig: `pub const write = WriteWrap(@This(), writeInternal).write;`
-    pub fn write<Context>(
+    pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
     ) -> Result<(), bun_core::Error> {
-        WriteWrap::write(self, writer, Self::write_internal)
-        // TODO(port): WriteWrap is a comptime fn-returning-type wrapper in Zig; exact
-        // Rust shape (trait vs. free fn) depends on the ported WriteWrap signature.
+        self.write_internal(writer)
     }
 }
 

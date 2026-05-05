@@ -1,5 +1,5 @@
 use super::super::status_flags::StatusFlags;
-use super::new_reader::{decoder_wrap, NewReader};
+use super::new_reader::{NewReader, ReaderContext};
 
 pub struct EOFPacket {
     pub header: u8,
@@ -18,7 +18,7 @@ impl Default for EOFPacket {
 }
 
 impl EOFPacket {
-    pub fn decode_internal<Context>(&mut self, reader: NewReader<Context>) -> Result<(), bun_core::Error> {
+    pub fn decode_internal<Context: ReaderContext>(&mut self, reader: NewReader<Context>) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         self.header = reader.int::<u8>()?;
         if self.header != 0xfe {
@@ -32,8 +32,14 @@ impl EOFPacket {
 }
 
 // Zig: pub const decode = decoderWrap(EOFPacket, decodeInternal).decode;
-// TODO(port): decoder_wrap is a comptime type-generator in Zig; Phase B decides macro vs generic fn.
-decoder_wrap!(EOFPacket, decode_internal);
+impl EOFPacket {
+    pub fn decode<Context: ReaderContext>(
+        &mut self,
+        context: Context,
+    ) -> Result<(), bun_core::Error> {
+        self.decode_internal(NewReader { wrapped: context })
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

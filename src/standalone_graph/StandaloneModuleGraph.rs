@@ -11,12 +11,19 @@ use std::sync::Arc;
 use bun_collections::StringArrayHashMap;
 use bun_core::{self as bun, Environment, Error as BunError, Output, err};
 use bun_paths::{self as path, PathBuffer, WPathBuffer, OSPathBuffer, SEP_STR};
-use bun_str::{self as strings, String as BunString, ZStr, StringPointer};
+use bun_str::{strings, String as BunString, ZStr, StringPointer};
 use bun_sys::{self as Syscall, Fd, Stat};
-use bun_bundler::options::{self, Loader, Format, OutputFile, WindowsOptions};
+use bun_options_types::BundleEnums::{Loader, Format, WindowsOptions};
 use bun_sourcemap as SourceMap;
-use bun_webcore::Blob;
-use bun_schema::api as Schema;
+
+// TODO(b2-blocked): bun_webcore::Blob — `cached_blob` is only ever set from
+// `bun_runtime` (higher tier); model as opaque erased pointer here.
+/// Opaque stand-in for `bun_webcore::Blob`. Only stored as `NonNull<Blob>`.
+#[repr(C)]
+pub struct Blob {
+    _p: [u8; 0],
+    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+}
 
 pub struct StandaloneModuleGraph {
     pub bytes: &'static [u8],
@@ -40,37 +47,47 @@ pub const BASE_PATH: &str = "/$bunfs/";
 #[cfg(windows)]
 pub const BASE_PATH: &str = "B:\\~BUN\\";
 
-pub const BASE_PUBLIC_PATH: &str = target_base_public_path_current("");
+// TODO(port): Zig version takes `target: Environment.OperatingSystem` + `comptime suffix`
+// and concatenates at comptime. Rust cannot const-concat with a runtime enum branch
+// nor across a `const fn` boundary. Phase B: expose as a `macro_rules!` over
+// `const_format::concatcp!`. For now we materialize the two call-sites directly.
+#[cfg(windows)]
+pub const BASE_PUBLIC_PATH: &str = "B:/~BUN/";
+#[cfg(not(windows))]
+pub const BASE_PUBLIC_PATH: &str = "/$bunfs/";
 
-pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = target_base_public_path_current("root/");
+#[cfg(windows)]
+pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str =
+    const_format::concatcp!("B:/~BUN/", "root/");
+#[cfg(not(windows))]
+pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str =
+    const_format::concatcp!("/$bunfs/", "root/");
 
 // TODO(port): Zig used a nested `Instance` struct holding a static var. Model
-// as a module-level static; access is single-threaded at startup.
-static mut INSTANCE: Option<NonNull<StandaloneModuleGraph>> = None;
+// as a process-lifetime `OnceLock` (PORTING.md §Concurrency: never `static mut`).
+// `get()` returns `&'static mut` to match the Zig API; callers mutate
+// `wtf_string` / `cached_blob` lazily. Interior mutability via `UnsafeCell` on
+// those fields is the Phase-B follow-up.
+struct Instance(core::cell::UnsafeCell<StandaloneModuleGraph>);
+// SAFETY: the graph is populated once at startup before any worker threads;
+// post-init mutation is limited to per-`File` lazy fields guarded by `INIT_LOCK`.
+unsafe impl Sync for Instance {}
+unsafe impl Send for Instance {}
+
+static INSTANCE: std::sync::OnceLock<Instance> = std::sync::OnceLock::new();
 
 impl StandaloneModuleGraph {
     pub fn get() -> Option<&'static mut StandaloneModuleGraph> {
-        // SAFETY: INSTANCE is only mutated once at startup before any concurrent access.
-        unsafe { INSTANCE.map(|p| &mut *p.as_ptr()) }
+        // SAFETY: see `Instance` doc — single-init at startup; later writes
+        // only touch `File.{wtf_string,cached_blob}` under `INIT_LOCK`.
+        INSTANCE.get().map(|cell| unsafe { &mut *cell.0.get() })
     }
 
-    pub fn set(instance: &mut StandaloneModuleGraph) {
-        // SAFETY: called once at startup; instance lives for program lifetime.
-        unsafe { INSTANCE = Some(NonNull::from(instance)); }
+    pub fn set(instance: StandaloneModuleGraph) -> &'static mut StandaloneModuleGraph {
+        let _ = INSTANCE.set(Instance(core::cell::UnsafeCell::new(instance)));
+        // SAFETY: just set; uncontended at this point in startup.
+        unsafe { &mut *INSTANCE.get().unwrap().0.get() }
     }
-}
-
-// TODO(port): Zig version takes `target: Environment.OperatingSystem` + `comptime suffix`
-// and concatenates at comptime. Rust cannot const-concat with a runtime enum branch
-// without `const_format`. Provide the current-OS const variant + a runtime variant.
-#[cfg(windows)]
-const fn target_base_public_path_current(suffix: &'static str) -> &'static str {
-    // PERF(port): comptime string concat — uses const_format in Phase B
-    const_format::concatcp!("B:/~BUN/", suffix)
-}
-#[cfg(not(windows))]
-const fn target_base_public_path_current(suffix: &'static str) -> &'static str {
-    const_format::concatcp!("/$bunfs/", suffix)
 }
 
 // TODO(port): Zig `targetBasePublicPath(target, comptime suffix: [:0]const u8) [:0]const u8`
@@ -100,7 +117,9 @@ impl StandaloneModuleGraph {
     // TODO(port): interior mutability — Zig returns `*File` and callers mutate
     // `wtf_string` / `cached_blob`. Using `&mut self` here may force callers to
     // hold `&mut StandaloneModuleGraph`; Phase B may switch to `UnsafeCell` fields.
+    #[cfg(any())]
     pub fn entry_point(&mut self) -> &mut File {
+        // TODO(b2-blocked): bun_collections::StringArrayHashMap::values_mut (indexed)
         &mut self.files.values_mut()[self.entry_point_id as usize]
     }
 
@@ -123,26 +142,26 @@ impl StandaloneModuleGraph {
             let mut normalized_buf = PathBuffer::uninit();
             let input = strings::without_nt_prefix::<u8>(name);
             let normalized = path::platform_to_posix_buf::<u8>(input, &mut normalized_buf);
-            return self.files.get_ptr_mut(normalized);
+            return self.files.get_mut(normalized);
         }
         #[cfg(not(windows))]
         {
-            self.files.get_ptr_mut(name)
+            self.files.get_mut(name)
         }
     }
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct CompiledModuleGraphFile {
-    pub name: Schema::StringPointer,
-    pub contents: Schema::StringPointer,
-    pub sourcemap: Schema::StringPointer,
-    pub bytecode: Schema::StringPointer,
-    pub module_info: Schema::StringPointer,
+    pub name: StringPointer,
+    pub contents: StringPointer,
+    pub sourcemap: StringPointer,
+    pub bytecode: StringPointer,
+    pub module_info: StringPointer,
     /// The file path used when generating bytecode (e.g., "B:/~BUN/root/app.js").
     /// Must match exactly at runtime for bytecode cache hits.
-    pub bytecode_origin_path: Schema::StringPointer,
+    pub bytecode_origin_path: StringPointer,
     pub encoding: Encoding,
     pub loader: Loader,
     pub module_format: ModuleFormat,
@@ -280,20 +299,22 @@ impl File {
     }
 
     pub fn stat(&self) -> Stat {
-        // SAFETY: all-zero is a valid Stat (POD #[repr(C)]).
+        // SAFETY: all-zero is a valid `libc::stat` (POD `#[repr(C)]`).
         let mut result: Stat = unsafe { core::mem::zeroed() };
-        result.size = i64::try_from(self.contents.len()).unwrap();
-        result.mode = bun_sys::S::IFREG | 0o644;
+        result.st_size = self.contents.len() as _;
+        result.st_mode = libc::S_IFREG | 0o644;
         result
     }
 
     pub fn less_than_by_index(ctx: &[File], lhs_i: u32, rhs_i: u32) -> bool {
         let lhs = &ctx[lhs_i as usize];
         let rhs = &ctx[rhs_i as usize];
-        bun_str::strings::cmp_strings_asc((), lhs.name, rhs.name)
+        strings::cmp_strings_asc(&(), lhs.name, rhs.name)
     }
 
+    #[cfg(any())]
     pub fn to_wtf_string(&mut self) -> BunString {
+        // TODO(b2-blocked): bun_string::String::create_static_external
         if self.wtf_string.is_empty() {
             match self.encoding {
                 Encoding::Binary | Encoding::Utf8 => {
@@ -318,10 +339,15 @@ pub enum LazySourceMap {
 }
 
 /// It probably is not possible to run two decoding jobs on the same file
-static INIT_LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
+// PORTING.md §Concurrency: parking_lot::Mutex for const-init statics.
+static INIT_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
 impl LazySourceMap {
+    #[cfg(any())]
     pub fn load(&mut self) -> Option<Arc<SourceMap::ParsedSourceMap>> {
+        // TODO(b2-blocked): bun_sourcemap::ParsedSourceMap field shape
+        // (`ref_count`/`internal`/`input_line_count` ctor + UnderlyingProvider) —
+        // un-gate once ParsedSourceMap exposes a public `from_internal` builder.
         let _guard = INIT_LOCK.lock();
 
         match self {
@@ -344,15 +370,15 @@ impl LazySourceMap {
                     ..Default::default()
                 };
 
-                let source_files = serialized.source_file_names();
+                let source_files_count = serialized.source_files_count();
                 // TODO(port): Zig allocated a single `[]?[]u8` of len*2 and reinterpreted
                 // the first half as `[][]const u8` for file_names. Rust splits into two
                 // separate Vecs to avoid the punning.
-                let mut file_names: Vec<&'static [u8]> = Vec::with_capacity(source_files.len());
+                let mut file_names: Vec<&'static [u8]> = Vec::with_capacity(source_files_count);
                 let mut decompressed_contents_slice: Vec<Option<Vec<u8>>> =
-                    vec![None; source_files.len()];
-                for src in source_files {
-                    file_names.push(src.slice(serialized.bytes));
+                    vec![None; source_files_count];
+                for i in 0..source_files_count {
+                    file_names.push(serialized.source_file_name(i).slice(serialized.bytes));
                 }
 
                 let data = Box::new(SerializedSourceMapLoaded {
@@ -402,8 +428,11 @@ bitflags::bitflags! {
 const TRAILER: &[u8] = b"\n---- Bun! ----\n";
 
 impl StandaloneModuleGraph {
+    #[cfg(any())]
     pub fn from_bytes(raw_bytes: &'static mut [u8], offsets: Offsets) -> Result<StandaloneModuleGraph, BunError> {
-        // TODO(port): narrow error set
+        // TODO(b2-blocked): bun_collections::StringArrayHashMap::{put,reserve,lock_pointers,values_mut,get_ptr_mut}
+        // — current alias is `std::HashMap<Box<[u8]>, V>` which lacks the
+        // ordered/index API. Un-gate once collections lands the IndexMap shim.
         if raw_bytes.is_empty() {
             return Ok(StandaloneModuleGraph {
                 bytes: b"",
@@ -492,12 +521,13 @@ fn slice_to(bytes: &'static [u8], ptr: StringPointer) -> &'static [u8] {
 
 fn slice_to_z(bytes: &'static [u8], ptr: StringPointer) -> &'static ZStr {
     if ptr.length == 0 {
-        return ZStr::empty();
+        return ZStr::EMPTY;
     }
     // SAFETY: bytes[offset+length] == 0 was written by toBytes() (appendCountZ).
     unsafe { ZStr::from_raw(bytes.as_ptr().add(ptr.offset as usize), ptr.length as usize) }
 }
 
+#[cfg(any())]
 pub fn to_bytes(
     prefix: &[u8],
     output_files: &[OutputFile],
@@ -505,7 +535,7 @@ pub fn to_bytes(
     compile_exec_argv: &[u8],
     flags: Flags,
 ) -> Result<Vec<u8>, BunError> {
-    // TODO(port): narrow error set
+    // TODO(b2-blocked): bun_bundler::options::OutputFile / OutputValue / OutputKind / Side
     let _serialize_trace = bun_perf::trace("StandaloneModuleGraph.serialize");
 
     let mut entry_point_id: Option<usize> = None;
@@ -814,12 +844,16 @@ impl CompileResult {
     }
 }
 
+#[cfg(any())]
 pub fn inject(
     bytes: &[u8],
     self_exe: &ZStr,
     inject_options: InjectOptions,
     target: &CompileTarget,
 ) -> Fd {
+    // TODO(b2-blocked): bun_exe_format::{macho::MachoFile,pe::PEFile} write paths,
+    // bun_sys::{copy_file,clonefile,set_file_offset,ftruncate,File::read_to_end},
+    // bun_resolver::FileSystem::tmpname — un-gate once those land.
     let mut buf = PathBuffer::uninit();
     let mut zname: &ZStr = match bun_fs::FileSystem::tmpname(
         b"bun-build",
@@ -935,15 +969,18 @@ pub fn inject(
                                     zname.as_bytes(),
                                     &[0],
                                 ]);
-                                // SAFETY: trailing 0 byte appended above.
+                                // TODO(port): Zig leaked the concat buffer here. PORTING.md
+                                // §Forbidden bans `mem::forget`; hoist `zname_z` to an
+                                // outer `Option<Vec<u8>>` owner so it outlives the loop
+                                // and drops at fn exit. Do this when un-gating.
+                                // SAFETY: trailing 0 byte appended above; `zname_z` kept
+                                // alive via the hoisted owner described above.
                                 zname = unsafe {
                                     ZStr::from_raw(
                                         zname_z.as_ptr(),
                                         zname_z.len().saturating_sub(1),
                                     )
                                 };
-                                // TODO(port): zname_z leaks here intentionally (matches Zig).
-                                core::mem::forget(zname_z);
                                 continue;
                             }
                             match err.get_errno() {
@@ -1291,15 +1328,16 @@ pub fn inject(
     }
 }
 
-pub use bun_options_types::CompileTarget;
-// TODO(port): CompileTarget.os enum variants — using a placeholder name.
-use bun_options_types::CompileTargetOs;
+pub use bun_options_types::CompileTarget::CompileTarget;
+use bun_core::Environment::OperatingSystem as CompileTargetOs;
 
+#[cfg(any())]
 pub fn download(
     target: &CompileTarget,
     env: &mut bun_dotenv::Loader,
-) -> Result<Box<ZStr>, BunError> {
-    // TODO(port): narrow error set
+) -> Result<bun_core::ZBox, BunError> {
+    // TODO(b2-blocked): bun_options_types::CompileTarget::{exe_path,download_to_path}
+    // signature drift + bun_core::Output::err_generic.
     let mut exe_path_buf = PathBuffer::uninit();
     let mut version_str_buf = [0u8; 1024];
     // TODO(port): std.fmt.bufPrintZ — write into fixed buffer with NUL.
@@ -1346,7 +1384,9 @@ pub fn download(
     Ok(ZStr::from_bytes(dest_z.as_bytes()))
 }
 
+#[cfg(any())]
 pub fn to_executable(
+    // TODO(b2-blocked): bun_bundler::options::OutputFile (and inject/to_bytes above).
     target: &CompileTarget,
     output_files: &[OutputFile],
     root_dir: Fd, // TODO(port): was std.fs.Dir
@@ -1600,8 +1640,9 @@ pub fn to_executable(
 impl StandaloneModuleGraph {
     /// Loads the standalone module graph from the executable, allocates it on the heap,
     /// sets it globally, and returns the pointer.
+    #[cfg(any())]
     pub fn from_executable() -> Result<Option<&'static mut StandaloneModuleGraph>, BunError> {
-        // TODO(port): narrow error set
+        // TODO(b2-blocked): bun_collections::StringArrayHashMap (see from_bytes_alloc).
         #[cfg(target_os = "macos")]
         {
             let Some(macho_bytes) = macho::get_data() else { return Ok(None); };
@@ -1701,12 +1742,11 @@ impl StandaloneModuleGraph {
             // std.posix.madvise hits `unreachable` on unexpected errnos; this is a
             // best-effort hint, so call libc directly and just log on failure.
             // SAFETY: start..end covers a mapped range of the executable image.
-            let rc = unsafe { bun_sys::c::madvise(start as *mut core::ffi::c_void, end - start, bun_sys::c::MADV_DONTNEED) };
+            let rc = unsafe { libc::madvise(start as *mut core::ffi::c_void, end - start, libc::MADV_DONTNEED) };
             if rc != 0 {
-                // SAFETY: errno location is thread-local libc storage.
                 Output::debug_warn(format_args!(
                     "hintSourcePagesDontNeed: madvise failed errno={}",
-                    unsafe { *bun_sys::c::errno_location() }
+                    bun_sys::last_errno()
                 ));
                 return;
             }
@@ -1718,12 +1758,13 @@ impl StandaloneModuleGraph {
     }
 }
 
-/// Allocates a StandaloneModuleGraph on the heap, populates it from bytes, sets it globally, and returns the pointer.
+/// Allocates a StandaloneModuleGraph in the process-static `INSTANCE`,
+/// populates it from bytes, sets it globally, and returns the pointer.
+#[cfg(any())]
 fn from_bytes_alloc(raw_bytes: &'static mut [u8], offsets: Offsets) -> Result<&'static mut StandaloneModuleGraph, BunError> {
+    // TODO(b2-blocked): bun_collections::StringArrayHashMap (see from_bytes).
     let graph = StandaloneModuleGraph::from_bytes(raw_bytes, offsets)?;
-    let graph_ptr = Box::leak(Box::new(graph));
-    StandaloneModuleGraph::set(graph_ptr);
-    Ok(graph_ptr)
+    Ok(StandaloneModuleGraph::set(graph))
 }
 
 /// Source map serialization in the bundler is specially designed to be
@@ -1766,27 +1807,30 @@ impl SerializedSourceMap {
         Some(&self.bytes[start..][..head.map_bytes_length as usize])
     }
 
-    pub fn source_file_names(self) -> &'static [StringPointer] {
-        let head = self.header();
-        // SAFETY: bytes layout per Header doc; align(1) StringPointer slice.
-        unsafe {
-            core::slice::from_raw_parts(
-                self.bytes[size_of::<SerializedSourceMapHeader>()..].as_ptr() as *const StringPointer,
-                head.source_files_count as usize,
-            )
-        }
+    // PORT NOTE: Zig types these arrays as `[]align(1) const StringPointer` because the
+    // serialized byte buffer carries no alignment guarantee. Materializing a Rust
+    // `&[StringPointer]` would require `align_of::<StringPointer>() == 4` alignment
+    // (UB otherwise), so expose count + indexed unaligned reads instead.
+
+    pub fn source_files_count(self) -> usize {
+        self.header().source_files_count as usize
     }
 
-    fn compressed_source_files(self) -> &'static [StringPointer] {
-        let head = self.header();
-        // SAFETY: second contiguous StringPointer array follows the first.
-        unsafe {
-            core::slice::from_raw_parts(
-                (self.bytes[size_of::<SerializedSourceMapHeader>()..].as_ptr() as *const StringPointer)
-                    .add(head.source_files_count as usize),
-                head.source_files_count as usize,
-            )
-        }
+    fn string_pointers_base(self) -> *const StringPointer {
+        self.bytes[size_of::<SerializedSourceMapHeader>()..].as_ptr().cast()
+    }
+
+    pub fn source_file_name(self, index: usize) -> StringPointer {
+        debug_assert!(index < self.source_files_count());
+        // SAFETY: index bounds-checked; layout per Header doc; pointer may be misaligned.
+        unsafe { core::ptr::read_unaligned(self.string_pointers_base().add(index)) }
+    }
+
+    fn compressed_source_file(self, index: usize) -> StringPointer {
+        let count = self.source_files_count();
+        debug_assert!(index < count);
+        // SAFETY: second contiguous StringPointer array immediately follows the first.
+        unsafe { core::ptr::read_unaligned(self.string_pointers_base().add(count + index)) }
     }
 }
 
@@ -1802,39 +1846,40 @@ pub struct SerializedSourceMapLoaded {
 
 impl SerializedSourceMapLoaded {
     pub fn source_file_contents(&mut self, index: usize) -> Option<&[u8]> {
-        // PORT NOTE: reshaped for borrowck — check cache first, populate, then re-borrow.
-        if let Some(decompressed) = &self.decompressed_files[index] {
-            return if decompressed.is_empty() { None } else { Some(decompressed) };
-        }
+        // PORT NOTE: reshaped for borrowck — populate cache first, then borrow once.
+        if self.decompressed_files[index].is_none() {
+            let compressed_file = slice_to(self.map.bytes, self.map.compressed_source_file(index));
+            let size = bun_zstd::get_decompressed_size(compressed_file);
 
-        let compressed_codes = self.map.compressed_source_files();
-        let compressed_file = compressed_codes[index].slice(self.map.bytes);
-        let size = bun_zstd::get_decompressed_size(compressed_file);
-
-        let mut bytes = vec![0u8; size];
-        let result = bun_zstd::decompress(&mut bytes, compressed_file);
-
-        match result {
-            bun_zstd::Result::Err(err_msg) => {
-                Output::warn(format_args!("Source map decompression error: {}", bstr::BStr::new(err_msg)));
-                self.decompressed_files[index] = Some(Vec::new());
-                None
-            }
-            bun_zstd::Result::Success(n) => {
-                bytes.truncate(n);
-                self.decompressed_files[index] = Some(bytes);
-                self.decompressed_files[index].as_deref()
+            let mut bytes = vec![0u8; size];
+            match bun_zstd::decompress(&mut bytes, compressed_file) {
+                bun_zstd::Result::Err(err_msg) => {
+                    Output::warn(format_args!(
+                        "Source map decompression error: {}",
+                        bstr::BStr::new(err_msg.as_bytes())
+                    ));
+                    self.decompressed_files[index] = Some(Vec::new());
+                }
+                bun_zstd::Result::Success(n) => {
+                    bytes.truncate(n);
+                    self.decompressed_files[index] = Some(bytes);
+                }
             }
         }
+
+        let decompressed = self.decompressed_files[index].as_deref().unwrap();
+        if decompressed.is_empty() { None } else { Some(decompressed) }
     }
 }
 
+#[cfg(any())]
 pub fn serialize_json_source_map_for_standalone(
     header_list: &mut Vec<u8>,
     string_payload: &mut Vec<u8>,
     json_source: &[u8],
 ) -> Result<(), BunError> {
-    // TODO(port): narrow error set
+    // TODO(b2-blocked): bun_js_parser::Expr / bun_interchange::json::parse /
+    // bun_sourcemap::InternalSourceMap::from_vlq
     // PERF(port): was arena bulk-free (arena param dropped)
     let json_src = bun_logger::Source::init_path_string(b"sourcemap.json", json_source);
     let mut log = bun_logger::Log::new();

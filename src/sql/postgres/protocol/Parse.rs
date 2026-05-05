@@ -3,7 +3,7 @@ use core::mem::size_of;
 use super::new_writer::NewWriter;
 use super::write_wrap::WriteWrap;
 use super::z_helpers::z_count;
-use crate::postgres::postgres_types::{Int32, Int4};
+use crate::postgres::types::int_types::{int32, Int4};
 
 // PORT NOTE: Zig `deinit` is a no-op (`_ = this;`), so all three slice fields are
 // borrowed for the lifetime of the write. PORTING.md says "never put a lifetime
@@ -20,7 +20,7 @@ pub struct Parse<'a> {
 // Zig `pub fn deinit(this: *Parse) void { _ = this; }` — no-op, so no `Drop` impl.
 
 impl<'a> Parse<'a> {
-    pub fn write_internal<Context>(
+    pub fn write_internal<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
     ) -> Result<(), bun_core::Error> {
@@ -40,8 +40,7 @@ impl<'a> Parse<'a> {
         // is the PostgresTypes big-endian wrapper, so the on-wire layout matches.
         let mut header = [0u8; 1 + size_of::<u32>()];
         header[0] = b'P';
-        header[1..].copy_from_slice(&Int32::new(count).to_bytes());
-        // TODO(port): confirm `Int32::new` + `.to_bytes()` match Zig `Int32()` + `std.mem.toBytes`
+        header[1..].copy_from_slice(&int32(count));
         writer.write(&header)?;
         writer.string(self.name)?;
         writer.string(self.query)?;
@@ -56,11 +55,11 @@ impl<'a> Parse<'a> {
     // `WriteWrap` is a `fn(comptime T: type, comptime f) type` generic that adapts
     // `write_internal` to the public `write` entry point.
     // TODO(port): express `WriteWrap(@This(), writeInternal).write` once WriteWrap.rs lands
-    pub fn write<Context>(
+    pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
     ) -> Result<(), bun_core::Error> {
-        WriteWrap::write(self, writer, Self::write_internal)
+        self.write_internal(writer)
     }
 }
 

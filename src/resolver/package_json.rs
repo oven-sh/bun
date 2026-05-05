@@ -1,27 +1,41 @@
+#![allow(dead_code, unused_variables, unused_imports, unused_mut)]
 use core::ffi::c_void;
 use std::io::Write as _;
 
-use bun_collections::{ArrayHashMap, MultiArrayList, StringArrayHashMap, StringMap};
+use bun_collections::{ArrayHashMap, MultiArrayList, StringArrayHashMap};
 use bun_core::Output;
-use bun_glob as glob;
 use bun_js_parser::ast as js_ast;
 use bun_js_parser::lexer as js_lexer;
 use bun_logger as logger;
 use bun_paths::{self as resolve_path, PathBuffer, SEP_STR};
 use bun_semver as Semver;
 use bun_semver::String as SemverString;
-use bun_str::strings;
-use bun_wyhash::Wyhash;
+use bun_string::strings;
 
-use bun_bundler::options;
-use bun_install::dependency::Dependency;
-use bun_install::npm::{Architecture, OperatingSystem};
-use bun_install::{self as Install, PackageID};
-use bun_schema::api;
+use bun_options_types::BundleEnums::ModuleType;
 use bun_sys::Fd;
 
 use crate::fs;
-use crate::resolver;
+use crate as resolver;
+
+// ── B-2 local stand-ins for blocked higher-tier crate types ──────────────
+// TODO(b2-blocked): bun_install::dependency::Dependency
+#[derive(Default, Clone)] pub struct Dependency(());
+// TODO(b2-blocked): bun_install::npm::Architecture
+#[derive(Default, Clone, Copy)] pub struct Architecture(());
+// TODO(b2-blocked): bun_install::npm::OperatingSystem
+#[derive(Default, Clone, Copy)] pub struct OperatingSystem(());
+// TODO(b2-blocked): bun_install::PackageID
+pub type PackageID = u32;
+// TODO(b2-blocked): bun_collections::StringMap (array-backed string→string map)
+pub type StringMap = StringArrayHashMap<Box<[u8]>>;
+// TODO(b2-blocked): bun_collections::StringHashMapUnownedKey
+#[derive(Clone, Hash, PartialEq, Eq)]
+pub struct StringHashMapUnownedKey(u64);
+impl StringHashMapUnownedKey {
+    pub fn init(s: &[u8]) -> Self { Self(bun_wyhash::hash(s)) }
+}
+// TODO(b2-blocked): bun_glob::r#match — crate not in deps yet; gate usages.
 
 // Assume they're not going to have hundreds of main fields or browser map
 // so use an array-backed hash table instead of bucketed
@@ -44,11 +58,12 @@ pub struct DependencyMap {
 pub type DependencyHashMap = ArrayHashMap<SemverString, Dependency /* , SemverString::ArrayHashContext */>;
 // TODO(port): ArrayHashMap context param — Zig used String.ArrayHashContext with store_hash=false
 
+#[derive(Default)]
 pub struct PackageJSON {
     pub name: Box<[u8]>,
     pub source: logger::Source,
     pub main_fields: MainFieldMap,
-    pub module_type: options::ModuleType,
+    pub module_type: ModuleType,
     pub version: Box<[u8]>,
 
     pub scripts: Option<Box<ScriptsMap>>,
@@ -100,6 +115,8 @@ pub enum LoadFramework {
     Production,
 }
 
+// TODO(b2-blocked): bun_bundler::options::{Framework, RouteConfig}
+#[cfg(any())]
 pub struct FrameworkRouterPair<'a> {
     pub framework: &'a mut options::Framework,
     pub router: &'a mut options::RouteConfig,
@@ -127,6 +144,9 @@ impl PackageJSON {
     // TODO(port): TrivialNew/TrivialDeinit — use Box::new / Drop
 
     pub fn name_for_import(&self) -> Result<Box<[u8]>, bun_core::Error> {
+        // TODO(b2-blocked): bun_resolver::fs::FileSystem + bun_logger::fs::PathName::dir_with_trailing_slash
+        #[cfg(any())]
+        {
         // TODO(port): narrow error set
         if strings::index_of(&self.source.path.text, NODE_MODULES_PATH.as_bytes()).is_some() {
             Ok(Box::from(&*self.name))
@@ -144,6 +164,8 @@ impl PackageJSON {
 
             Ok(Box::from(&*self.name))
         }
+        }
+        Ok(Box::from(&*self.name))
     }
 
     /// Normalize path separators to forward slashes for glob matching
@@ -180,7 +202,7 @@ impl Default for SideEffects {
 }
 
 // TODO(port): std.HashMapUnmanaged with StringHashMapUnowned.Key/Adapter and 80% load factor
-pub type SideEffectsMap = bun_collections::HashMap<bun_collections::StringHashMapUnownedKey, ()>;
+pub type SideEffectsMap = bun_collections::HashMap<StringHashMapUnownedKey, ()>;
 
 pub type GlobList = Vec<Box<[u8]>>;
 
@@ -191,10 +213,13 @@ pub struct MixedPatterns {
 
 impl SideEffects {
     pub fn has_side_effects(&self, path: &[u8]) -> bool {
+        // TODO(b2-blocked): bun_glob::r#match
+        #[cfg(any())]
+        {
         match self {
             SideEffects::Unspecified => true,
             SideEffects::False => false,
-            SideEffects::Map(map) => map.contains_key(&bun_collections::StringHashMapUnownedKey::init(path)),
+            SideEffects::Map(map) => map.contains_key(&StringHashMapUnownedKey::init(path)),
             SideEffects::Glob(glob_list) => {
                 // Normalize path for cross-platform glob matching
                 let Ok(normalized_path) = PackageJSON::normalize_path_for_glob(path) else {
@@ -226,9 +251,15 @@ impl SideEffects {
                 false
             }
         }
+        }
+        let _ = path;
+        true
     }
 }
 
+// TODO(b2-blocked): bun_bundler::options + bun_js_parser::Expr full API + bun_install + bun_schema
+// — the heavy parse/load impl block. Gated whole until lower-tier crates land.
+#[cfg(any())]
 impl PackageJSON {
     fn load_define_defaults(
         env: &mut options::Env,
@@ -1206,7 +1237,7 @@ impl PackageJSON {
 
         hasher.final_() as u32
     }
-}
+} // end #[cfg(any())] impl PackageJSON
 
 #[inline]
 fn bytes_of<T>(v: &T) -> &[u8] {
@@ -1221,6 +1252,8 @@ pub struct ExportsMap {
 }
 
 impl ExportsMap {
+    // TODO(b2-blocked): bun_js_parser::Expr full API
+    #[cfg(any())]
     pub fn parse(
         source: &logger::Source,
         log: &mut logger::Log,
@@ -1249,6 +1282,8 @@ pub struct Visitor<'a> {
 }
 
 impl<'a> Visitor<'a> {
+    // TODO(b2-blocked): bun_js_parser::ExprData variants + bun_collections::MultiArrayList column accessors
+    #[cfg(any())]
     pub fn visit(&mut self, expr: js_ast::Expr) -> Entry {
         let mut first_token: logger::Range = logger::Range::NONE;
 
@@ -1413,7 +1448,9 @@ pub struct EntryDataMap {
     pub list: EntryDataMapList,
 }
 
-pub type EntryDataMapList = MultiArrayList<MapEntry>;
+// TODO(b2-blocked): bun_collections::MultiArrayList<MapEntry> — needs MultiArrayElement derive +
+// per-field column accessors. Using Vec<MapEntry> as a placeholder shape.
+pub type EntryDataMapList = Vec<MapEntry>;
 
 #[derive(Clone)]
 pub struct MapEntry {
@@ -1431,18 +1468,17 @@ pub enum MapEntryField {
 
 impl Entry {
     pub fn keys_start_with_dot(&self) -> bool {
-        matches!(&self.data, EntryData::Map(m) if m.list.len() > 0 && strings::starts_with_char(&m.list.items_key()[0], b'.'))
-        // TODO(port): MultiArrayList .items(.key) accessor
+        // TODO(b2-blocked): bun_collections::MultiArrayList column accessor; Vec placeholder.
+        matches!(&self.data, EntryData::Map(m) if !m.list.is_empty() && strings::starts_with_char(&m.list[0].key, b'.'))
     }
 
     pub fn value_for_key(&self, key_: &[u8]) -> Option<Entry> {
         match &self.data {
             EntryData::Map(m) => {
-                let slice = m.list.slice();
-                let keys = slice.items_key();
-                for (i, key) in keys.iter().enumerate() {
-                    if strings::eql(key, key_) {
-                        return Some(slice.items_value()[i].clone());
+                // TODO(b2-blocked): bun_collections::MultiArrayList column accessor; Vec placeholder.
+                for entry in m.list.iter() {
+                    if strings::eql(&entry.key, key_) {
+                        return Some(entry.value.clone());
                     }
                 }
 
@@ -1459,7 +1495,7 @@ pub struct ESModule<'a> {
     pub debug_logs: Option<&'a mut resolver::DebugLogs>,
     pub conditions: ConditionsMap,
     // allocator dropped — global mimalloc
-    pub module_type: &'a mut options::ModuleType,
+    pub module_type: &'a mut ModuleType,
 }
 
 #[derive(Clone)]
@@ -1539,14 +1575,16 @@ impl Status {
 }
 
 #[derive(Clone, Copy)]
-pub struct Package {
-    // TODO(port): lifetime — borrows from `specifier` / `subpath_buf`
-    pub name: &'static [u8],
-    pub version: &'static [u8],
-    pub subpath: &'static [u8],
+pub struct Package<'a> {
+    /// Borrows from the `specifier` argument to `Package::parse`.
+    pub name: &'a [u8],
+    /// Borrows from the `specifier` argument to `Package::parse`.
+    pub version: &'a [u8],
+    /// Borrows from the `subpath_buf` argument to `Package::parse`.
+    pub subpath: &'a [u8],
 }
 
-impl Default for Package {
+impl Default for Package<'_> {
     fn default() -> Self {
         Package { name: b"", version: b"", subpath: b"" }
     }
@@ -1559,7 +1597,9 @@ pub struct PackageExternal {
     pub subpath: Semver::String,
 }
 
-impl Package {
+// TODO(b2-blocked): bun_semver::string::Builder API surface (count/append_utf8_without_pool generics)
+#[cfg(any())]
+impl Package<'_> {
     pub fn count(self, builder: &mut Semver::string::Builder) {
         builder.count(self.name);
         builder.count(self.version);
@@ -1593,7 +1633,9 @@ impl Package {
 
         self
     }
+}
 
+impl<'a> Package<'a> {
     pub fn parse_name(specifier: &[u8]) -> Option<&[u8]> {
         let mut slash = strings::index_of_char_neg(specifier, b'/');
         if !strings::starts_with_char(specifier, b'@') {
@@ -1633,7 +1675,7 @@ impl Package {
         None
     }
 
-    pub fn parse(specifier: &'static [u8], subpath_buf: &'static mut [u8]) -> Option<Package> {
+    pub fn parse(specifier: &'a [u8], subpath_buf: &'a mut [u8]) -> Option<Package<'a>> {
         // TODO(port): lifetime — &'static is a placeholder; should be <'a>
         if specifier.is_empty() {
             return None;
@@ -1644,7 +1686,7 @@ impl Package {
             version: b"",
         };
 
-        if strings::starts_with(package.name, b".") || strings::index_any(package.name, b"\\%").is_some() {
+        if strings::starts_with(package.name, b".") || strings::index_any_comptime(package.name, b"\\%").is_some() {
             return None;
         }
 
@@ -1678,16 +1720,14 @@ impl Package {
         Some(package)
     }
 
-    pub fn parse_subpath(subpath: &mut &[u8], specifier: &[u8], subpath_buf: &mut [u8]) {
-        // TODO(port): lifetime — subpath borrows subpath_buf
+    pub fn parse_subpath(subpath: &mut &'a [u8], specifier: &[u8], subpath_buf: &'a mut [u8]) {
         if specifier.len() + 1 > subpath_buf.len() {
             *subpath = b"";
             return;
         }
         subpath_buf[0] = b'.';
         subpath_buf[1..1 + specifier.len()].copy_from_slice(specifier);
-        // SAFETY: subpath_buf outlives subpath at all call sites; Phase B will add proper lifetimes
-        *subpath = unsafe { core::slice::from_raw_parts(subpath_buf.as_ptr(), specifier.len() + 1) };
+        *subpath = &subpath_buf[..specifier.len() + 1];
     }
 }
 
@@ -1728,6 +1768,10 @@ thread_local! {
     };
 }
 
+// TODO(b2-blocked): bun_resolver::DebugLogs methods + bun_paths::join_abs_string_buf +
+// bun_string::strings::{index_any, last_index_of_char_with_offset, with_prefix_if_not_relative, ...}
+// — the ESModule resolution algorithm. Gated whole until those land.
+#[cfg(any())]
 impl<'a> ESModule<'a> {
     pub fn resolve(&self, package_url: &[u8], subpath: &[u8], exports: &Entry) -> Resolution {
         Self::finalize(self.resolve_exports(package_url, subpath, exports))
@@ -2497,14 +2541,14 @@ fn tl_static(s: &[u8]) -> &'static [u8] {
 }
 
 fn find_invalid_segment(path_: &[u8]) -> Option<&[u8]> {
-    let Some(slash) = strings::index_any(path_, b"/\\") else {
+    let Some(slash) = strings::index_any_comptime(path_, b"/\\") else {
         return Some(b"");
     };
     let mut path = &path_[slash + 1..];
 
     while !path.is_empty() {
         let mut segment = path;
-        if let Some(new_slash) = strings::index_any(path, b"/\\") {
+        if let Some(new_slash) = strings::index_any_comptime(path, b"/\\") {
             segment = &path[0..new_slash];
             path = &path[new_slash + 1..];
         } else {

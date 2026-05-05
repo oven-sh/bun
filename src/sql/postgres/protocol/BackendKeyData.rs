@@ -12,16 +12,16 @@ impl BackendKeyData {
     // DecoderWrap is a comptime type-generator wrapping `decode_internal` into a standard
     // `decode` entry point. Phase B: express as a trait impl or thin wrapper once
     // DecoderWrap's Rust shape is settled.
-    pub fn decode<Container>(reader: NewReader<Container>) -> Result<Self, bun_core::Error> {
-        DecoderWrap::<Self>::decode(reader, Self::decode_internal)
+    pub fn decode<Container: super::new_reader::ReaderContext>(context: Container) -> Result<Self, bun_core::Error> {
+        Self::decode_internal(NewReader { wrapped: context })
     }
 
     // TODO(port): narrow error set
-    pub fn decode_internal<Container>(
-        reader: NewReader<Container>,
+    pub fn decode_internal<Container: super::new_reader::ReaderContext>(
+        mut reader: NewReader<Container>,
     ) -> Result<Self, bun_core::Error> {
         if !reader.expect_int::<u32>(12)? {
-            return Err(bun_core::err!("InvalidBackendKeyData"));
+            return Err(crate::postgres::AnyPostgresError::InvalidBackendKeyData.into());
         }
 
         Ok(Self {

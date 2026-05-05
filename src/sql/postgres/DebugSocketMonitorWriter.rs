@@ -3,7 +3,7 @@ use std::sync::Once;
 
 use bun_sys::File;
 
-bun_output::declare_scope!(Postgres, visible);
+bun_core::declare_scope!(Postgres, visible);
 
 // Zig: `var file: std.fs.File = undefined;` — module-level mutable, initialized once by `load`.
 // SAFETY: written exactly once under `CHECK` (std::sync::Once) before `ENABLED` flips true;
@@ -41,7 +41,7 @@ pub fn load() {
         unsafe {
             FILE = Some(f);
         }
-        bun_output::scoped_log!(Postgres, "writing to {}", bstr::BStr::new(monitor));
+        bun_core::scoped_log!(Postgres, "writing to {}", bstr::BStr::new(monitor));
     }
 }
 

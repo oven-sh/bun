@@ -1,9 +1,8 @@
 use core::fmt;
 
-use bun_sha_hmac::sha::Hashers as Crypto;
-use bun_str::strings;
-// TODO(port): std.base64.standard_no_pad — confirm bun_base64 exposes a no-pad standard codec
-use bun_base64::standard_no_pad as base64;
+use bun_sha_hmac::sha as Crypto;
+use bun_string::strings;
+use bun_base64::zig_base64::STANDARD_NO_PAD as base64;
 
 // Digest lengths (bytes). Mirrors std.crypto.hash.* digest_length.
 const SHA1_DIGEST_LEN: usize = 20;
@@ -122,11 +121,18 @@ impl Integrity {
             };
         }
 
-        let input = bun_str::strings::trim_right(&buf[offset..], b"=");
+        let input = {
+            // std.mem.trimRight(u8, buf[offset..], "=")
+            let s = &buf[offset..];
+            let mut end = s.len();
+            while end > 0 && s[end - 1] == b'=' {
+                end -= 1;
+            }
+            &s[..end]
+        };
 
         // Check if the base64 input would decode to more bytes than we can handle
-        // TODO(port): confirm bun_base64 API shape for calc_size_for_slice / decode (no-pad)
-        let Ok(decoded_size) = base64::calc_size_for_slice(input) else {
+        let Ok(decoded_size) = base64.decoder.calc_size_for_slice(input) else {
             return Integrity {
                 tag: Tag::UNKNOWN,
                 ..Default::default()
@@ -140,7 +146,7 @@ impl Integrity {
             };
         }
 
-        if base64::decode(&mut out[0..expected_len], input).is_err() {
+        if base64.decoder.decode(&mut out[0..expected_len], input).is_err() {
             return Integrity {
                 tag: Tag::UNKNOWN,
                 ..Default::default()
@@ -156,12 +162,19 @@ impl Integrity {
 
     /// Compute a sha512 integrity hash from raw bytes (e.g. a downloaded tarball).
     pub fn for_bytes(bytes: &[u8]) -> Integrity {
-        const LEN: usize = SHA512_DIGEST_LEN;
-        let mut value: [u8; DIGEST_BUF_LEN] = EMPTY_DIGEST_BUF;
-        Crypto::SHA512::hash(bytes, (&mut value[0..LEN]).try_into().unwrap());
-        Integrity {
-            tag: Tag::SHA512,
-            value,
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_sha_hmac::sha::SHA512::hash
+            const LEN: usize = SHA512_DIGEST_LEN;
+            let mut value: [u8; DIGEST_BUF_LEN] = EMPTY_DIGEST_BUF;
+            Crypto::SHA512::hash(bytes, (&mut value[0..LEN]).try_into().unwrap(), None);
+            Integrity { tag: Tag::SHA512, value }
+        }
+        #[cfg(not(any()))]
+        {
+            // TODO(b2-blocked): bun_sha_hmac::sha::SHA512::hash
+            let _ = bytes;
+            todo!("b2-blocked: bun_sha_hmac::sha::SHA512::hash")
         }
     }
 
@@ -172,34 +185,44 @@ impl Integrity {
     }
 
     pub fn verify_by_tag(tag: Tag, bytes: &[u8], sum: &[u8]) -> bool {
-        let mut digest: [u8; DIGEST_BUF_LEN] = [0u8; DIGEST_BUF_LEN];
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_sha_hmac::sha::SHA1::hash (and SHA256/384/512)
+            let mut digest: [u8; DIGEST_BUF_LEN] = [0u8; DIGEST_BUF_LEN];
 
-        match tag {
-            Tag::SHA1 => {
-                const LEN: usize = SHA1_DIGEST_LEN;
-                let ptr: &mut [u8; LEN] = (&mut digest[0..LEN]).try_into().unwrap();
-                Crypto::SHA1::hash(bytes, ptr);
-                strings::eql_long(ptr, &sum[0..LEN], true)
+            match tag {
+                Tag::SHA1 => {
+                    const LEN: usize = SHA1_DIGEST_LEN;
+                    let ptr: &mut [u8; LEN] = (&mut digest[0..LEN]).try_into().unwrap();
+                    Crypto::SHA1::hash(bytes, ptr, None);
+                    strings::eql_long::<true>(ptr, &sum[0..LEN])
+                }
+                Tag::SHA512 => {
+                    const LEN: usize = SHA512_DIGEST_LEN;
+                    let ptr: &mut [u8; LEN] = (&mut digest[0..LEN]).try_into().unwrap();
+                    Crypto::SHA512::hash(bytes, ptr, None);
+                    strings::eql_long::<true>(ptr, &sum[0..LEN])
+                }
+                Tag::SHA256 => {
+                    const LEN: usize = SHA256_DIGEST_LEN;
+                    let ptr: &mut [u8; LEN] = (&mut digest[0..LEN]).try_into().unwrap();
+                    Crypto::SHA256::hash(bytes, ptr, None);
+                    strings::eql_long::<true>(ptr, &sum[0..LEN])
+                }
+                Tag::SHA384 => {
+                    const LEN: usize = SHA384_DIGEST_LEN;
+                    let ptr: &mut [u8; LEN] = (&mut digest[0..LEN]).try_into().unwrap();
+                    Crypto::SHA384::hash(bytes, ptr, None);
+                    strings::eql_long::<true>(ptr, &sum[0..LEN])
+                }
+                _ => false,
             }
-            Tag::SHA512 => {
-                const LEN: usize = SHA512_DIGEST_LEN;
-                let ptr: &mut [u8; LEN] = (&mut digest[0..LEN]).try_into().unwrap();
-                Crypto::SHA512::hash(bytes, ptr);
-                strings::eql_long(ptr, &sum[0..LEN], true)
-            }
-            Tag::SHA256 => {
-                const LEN: usize = SHA256_DIGEST_LEN;
-                let ptr: &mut [u8; LEN] = (&mut digest[0..LEN]).try_into().unwrap();
-                Crypto::SHA256::hash(bytes, ptr);
-                strings::eql_long(ptr, &sum[0..LEN], true)
-            }
-            Tag::SHA384 => {
-                const LEN: usize = SHA384_DIGEST_LEN;
-                let ptr: &mut [u8; LEN] = (&mut digest[0..LEN]).try_into().unwrap();
-                Crypto::SHA384::hash(bytes, ptr);
-                strings::eql_long(ptr, &sum[0..LEN], true)
-            }
-            _ => false,
+        }
+        #[cfg(not(any()))]
+        {
+            // TODO(b2-blocked): bun_sha_hmac::sha::SHA1::hash
+            let _ = (tag, bytes, sum);
+            todo!("b2-blocked: bun_sha_hmac::sha::SHA*::hash")
         }
     }
 }
@@ -217,8 +240,10 @@ impl fmt::Display for Integrity {
         let mut base64_buf = [0u8; 512];
         let bytes = self.slice();
 
-        // TODO(port): confirm bun_base64 no-pad encode API (returns &str over base64_buf)
-        f.write_str(base64::encode(&mut base64_buf, bytes))?;
+        // SAFETY: base64 alphabet is pure ASCII.
+        f.write_str(unsafe {
+            core::str::from_utf8_unchecked(base64.encoder.encode(&mut base64_buf, bytes))
+        })?;
 
         // consistentcy with yarn.lock
         match self.tag {
@@ -308,69 +333,86 @@ pub enum Hasher {
 
 impl Streaming {
     pub fn init(expected: Integrity, compute_if_missing: bool) -> Streaming {
-        Streaming {
-            expected,
-            hasher: match expected.tag {
-                Tag::SHA1 => Hasher::Sha1(Crypto::SHA1::init()),
-                Tag::SHA256 => Hasher::Sha256(Crypto::SHA256::init()),
-                Tag::SHA384 => Hasher::Sha384(Crypto::SHA384::init()),
-                Tag::SHA512 => Hasher::Sha512(Crypto::SHA512::init()),
-                _ => {
-                    if compute_if_missing {
-                        Hasher::Sha512(Crypto::SHA512::init())
-                    } else {
-                        Hasher::None
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_sha_hmac::sha::SHA1::init (and SHA256/384/512)
+            return Streaming {
+                expected,
+                hasher: match expected.tag {
+                    Tag::SHA1 => Hasher::Sha1(Crypto::SHA1::init()),
+                    Tag::SHA256 => Hasher::Sha256(Crypto::SHA256::init()),
+                    Tag::SHA384 => Hasher::Sha384(Crypto::SHA384::init()),
+                    Tag::SHA512 => Hasher::Sha512(Crypto::SHA512::init()),
+                    _ => {
+                        if compute_if_missing {
+                            Hasher::Sha512(Crypto::SHA512::init())
+                        } else {
+                            Hasher::None
+                        }
                     }
-                }
-            },
+                },
+            };
+        }
+        #[cfg(not(any()))]
+        {
+            // TODO(b2-blocked): bun_sha_hmac::sha::SHA1::init
+            let _ = (expected, compute_if_missing);
+            todo!("b2-blocked: bun_sha_hmac::sha::SHA*::init")
         }
     }
 
     pub fn update(&mut self, bytes: &[u8]) {
-        if bytes.is_empty() {
-            return;
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_sha_hmac::sha::SHA1::update (and SHA256/384/512)
+            if bytes.is_empty() {
+                return;
+            }
+            match &mut self.hasher {
+                Hasher::None => {}
+                Hasher::Sha1(h) => h.update(bytes),
+                Hasher::Sha256(h) => h.update(bytes),
+                Hasher::Sha384(h) => h.update(bytes),
+                Hasher::Sha512(h) => h.update(bytes),
+            }
         }
-        match &mut self.hasher {
-            Hasher::None => {}
-            Hasher::Sha1(h) => h.update(bytes),
-            Hasher::Sha256(h) => h.update(bytes),
-            Hasher::Sha384(h) => h.update(bytes),
-            Hasher::Sha512(h) => h.update(bytes),
+        #[cfg(not(any()))]
+        {
+            // TODO(b2-blocked): bun_sha_hmac::sha::SHA1::update
+            let _ = bytes;
+            todo!("b2-blocked: bun_sha_hmac::sha::SHA*::update")
         }
     }
 
     pub fn final_(&mut self) -> Integrity {
-        let mut out: [u8; DIGEST_BUF_LEN] = EMPTY_DIGEST_BUF;
-        match &mut self.hasher {
-            Hasher::None => Integrity::default(),
-            Hasher::Sha1(h) => {
-                h.final_((&mut out[0..SHA1_DIGEST_LEN]).try_into().unwrap());
-                Integrity {
-                    tag: Tag::SHA1,
-                    value: out,
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_sha_hmac::sha::SHA1::r#final (and SHA256/384/512)
+            let mut out: [u8; DIGEST_BUF_LEN] = EMPTY_DIGEST_BUF;
+            match &mut self.hasher {
+                Hasher::None => Integrity::default(),
+                Hasher::Sha1(h) => {
+                    h.r#final((&mut out[0..SHA1_DIGEST_LEN]).try_into().unwrap());
+                    Integrity { tag: Tag::SHA1, value: out }
+                }
+                Hasher::Sha256(h) => {
+                    h.r#final((&mut out[0..SHA256_DIGEST_LEN]).try_into().unwrap());
+                    Integrity { tag: Tag::SHA256, value: out }
+                }
+                Hasher::Sha384(h) => {
+                    h.r#final((&mut out[0..SHA384_DIGEST_LEN]).try_into().unwrap());
+                    Integrity { tag: Tag::SHA384, value: out }
+                }
+                Hasher::Sha512(h) => {
+                    h.r#final((&mut out[0..SHA512_DIGEST_LEN]).try_into().unwrap());
+                    Integrity { tag: Tag::SHA512, value: out }
                 }
             }
-            Hasher::Sha256(h) => {
-                h.final_((&mut out[0..SHA256_DIGEST_LEN]).try_into().unwrap());
-                Integrity {
-                    tag: Tag::SHA256,
-                    value: out,
-                }
-            }
-            Hasher::Sha384(h) => {
-                h.final_((&mut out[0..SHA384_DIGEST_LEN]).try_into().unwrap());
-                Integrity {
-                    tag: Tag::SHA384,
-                    value: out,
-                }
-            }
-            Hasher::Sha512(h) => {
-                h.final_((&mut out[0..SHA512_DIGEST_LEN]).try_into().unwrap());
-                Integrity {
-                    tag: Tag::SHA512,
-                    value: out,
-                }
-            }
+        }
+        #[cfg(not(any()))]
+        {
+            // TODO(b2-blocked): bun_sha_hmac::sha::SHA1::r#final
+            todo!("b2-blocked: bun_sha_hmac::sha::SHA*::r#final")
         }
     }
 
@@ -386,7 +428,7 @@ impl Streaming {
             return false;
         }
         let len = self.expected.tag.digest_len();
-        strings::eql_long(&computed.value[0..len], &self.expected.value[0..len], true)
+        strings::eql_long::<true>(&computed.value[0..len], &self.expected.value[0..len])
     }
 }
 

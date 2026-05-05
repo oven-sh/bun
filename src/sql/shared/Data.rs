@@ -1,5 +1,5 @@
 use bun_collections::{BabyList, BoundedArray};
-use bun_str::ZStr;
+use bun_string::ZStr;
 
 pub type InlineStorage = BoundedArray<u8, 15>;
 
@@ -14,8 +14,19 @@ pub enum Data {
     Empty,
 }
 
+impl Default for Data {
+    fn default() -> Self {
+        Data::Empty
+    }
+}
+
 impl Data {
     pub const EMPTY: Data = Data::Empty;
+
+    #[inline]
+    pub const fn empty() -> Data {
+        Data::Empty
+    }
 
     pub fn create(possibly_inline_bytes: &[u8]) -> Result<Data, bun_alloc::AllocError> {
         if possibly_inline_bytes.is_empty() {
@@ -23,11 +34,9 @@ impl Data {
         }
 
         if possibly_inline_bytes.len() <= 15 {
-            let mut inline_storage = InlineStorage::default();
-            // TODO(port): assumes `BoundedArray<u8, N>` exposes `buffer: [u8; N]` and `len` fields
-            inline_storage.buffer[..possibly_inline_bytes.len()]
-                .copy_from_slice(possibly_inline_bytes);
-            inline_storage.len = possibly_inline_bytes.len() as _;
+            // BoundedArray has private fields; build via from_slice (capacity is 15).
+            let inline_storage =
+                InlineStorage::from_slice(possibly_inline_bytes).expect("len <= 15 checked above");
             return Ok(Data::InlineStorage(inline_storage));
         }
         Ok(Data::Owned(BabyList::from_owned_slice(Box::<[u8]>::from(
@@ -43,7 +52,7 @@ impl Data {
                 let slice = unsafe { &*temporary };
                 Ok(BabyList::from_owned_slice(Box::<[u8]>::from(slice)))
             }
-            Data::Empty => Ok(BabyList::empty()),
+            Data::Empty => Ok(BabyList::default()),
             Data::InlineStorage(inline_storage) => Ok(BabyList::from_owned_slice(
                 Box::<[u8]>::from(inline_storage.as_slice()),
             )),
@@ -56,17 +65,21 @@ impl Data {
         match self {
             Data::Owned(owned) => {
                 // Zero bytes before deinit
-                // TODO(port): `bun.freeSensitive` — assumed `bun_alloc::free_sensitive`
-                bun_alloc::free_sensitive(owned.slice_mut());
-                owned.deinit();
+                // TODO(b2-blocked): bun_alloc::free_sensitive — Zig `bun.freeSensitive`
+                // zeroes the buffer (mimalloc secure-free). Fall back to a plain
+                // zero-fill until the lower-tier helper lands.
+                for b in owned.slice_mut() {
+                    *b = 0;
+                }
+                owned.clear_and_free();
             }
             Data::Temporary(_) => {}
             Data::Empty => {}
             Data::InlineStorage(_) => {}
         }
-        // Reset to Empty without running Drop on the (already freed) old value,
-        // so the caller's later Drop is a no-op instead of a double-free.
-        std::mem::forget(std::mem::replace(self, Data::Empty));
+        // After clear_and_free the BabyList is already in an empty (cap=0) state,
+        // so dropping it via the assignment below is a no-op — no double-free.
+        *self = Data::Empty;
     }
 
     pub fn slice(&self) -> &[u8] {
@@ -99,8 +112,9 @@ impl Data {
     pub fn slice_z(&self) -> &ZStr {
         match self {
             Data::Owned(owned) => {
+                let s = owned.slice();
                 // SAFETY: caller invariant — owned bytes are NUL-terminated at `len`
-                unsafe { ZStr::from_raw(owned.slice().as_ptr(), owned.len() as usize) }
+                unsafe { ZStr::from_raw(s.as_ptr(), s.len()) }
             }
             Data::Temporary(temporary) => {
                 // SAFETY: caller invariant — borrowed bytes are NUL-terminated at `len`
@@ -117,16 +131,9 @@ impl Data {
     }
 }
 
-impl Drop for Data {
-    fn drop(&mut self) {
-        match self {
-            Data::Owned(owned) => owned.clear_and_free(),
-            Data::Temporary(_) => {}
-            Data::Empty => {}
-            Data::InlineStorage(_) => {}
-        }
-    }
-}
+// PORT NOTE: Zig `deinit` freed `Owned`'s buffer. In Rust, `BabyList<T>: Drop`
+// already frees on drop, so an explicit `impl Drop for Data` is redundant (and
+// would prevent moving fields out in `to_owned`). The other variants own no heap.
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

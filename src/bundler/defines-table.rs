@@ -13,6 +13,7 @@
 //! these functions has any side effects. It only says something about
 //! referencing these function without calling them.
 
+#[cfg(any())]
 use crate::defines;
 use bun_js_parser as js_ast;
 
@@ -202,8 +203,11 @@ pub static GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING: &[&[&[u8]]] 
     // Haven't seen a bundle size improvement from adding more to this list yet.
 ];
 
-// TODO(port): const-init of `defines::IdentifierDefine` requires its fields (incl.
-// `js_ast::Expr::Data`) to be const-constructible; Phase B may need `LazyLock`.
+// TODO(b2-blocked): bun_js_parser::ast::expr::Data — `Expr::Data` is an opaque
+// stub (no `EUndefined`/`ENumber` variants) and `E::Number` is absent from the
+// js_parser B-1 surface, so const-init of `defines::IdentifierDefine` cannot
+// type-check yet. Re-gated alongside the still-gated `crate::defines` module.
+#[cfg(any())]
 static PURE_GLOBAL_IDENTIFIER_DEFINE: defines::IdentifierDefine = defines::IdentifierDefine {
     flags: defines::Flags {
         valueless: true,
@@ -214,6 +218,7 @@ static PURE_GLOBAL_IDENTIFIER_DEFINE: defines::IdentifierDefine = defines::Ident
     ..defines::IdentifierDefine::DEFAULT
 };
 
+#[cfg(any())]
 mod identifiers {
     use super::{defines, js_ast};
 
@@ -251,6 +256,9 @@ pub enum PureGlobalIdentifierValue {
 }
 
 impl PureGlobalIdentifierValue {
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_js_parser::ast::expr::Data — see note on
+    // `PURE_GLOBAL_IDENTIFIER_DEFINE` above.
     pub fn value(self) -> &'static defines::IdentifierDefine {
         match self {
             PureGlobalIdentifierValue::NaN => &identifiers::NAN,

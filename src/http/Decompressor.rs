@@ -1,14 +1,18 @@
-use bun_brotli::BrotliReaderArrayList;
-use bun_http_types::Encoding;
-use bun_str::MutableString;
-use bun_zlib::{self as zlib, ZlibReaderArrayList};
-use bun_zstd::ZstdReaderArrayList;
+use bun_http_types::Encoding::Encoding;
+use bun_string::MutableString;
 
+// TODO(b2-blocked): bun_zlib::ZlibReaderArrayList / bun_brotli::BrotliReaderArrayList /
+// bun_zstd::ZstdReaderArrayList all carry an `'a` borrow of the output `&mut Vec<u8>`,
+// so they cannot be stored in a long-lived enum without a lifetime param on
+// `Decompressor` (forbidden in Phase A). The Zig held them by value with the
+// `ArrayListUnmanaged` aliased into the reader; Phase B must reshape the lower-tier
+// reader types to take a raw `*mut Vec<u8>` (or own the buffer) before these
+// variants can be un-gated.
 #[derive(Default)]
 pub enum Decompressor {
-    Zlib(Box<ZlibReaderArrayList>),
-    Brotli(Box<BrotliReaderArrayList>),
-    Zstd(Box<ZstdReaderArrayList>),
+    #[cfg(any())] Zlib(Box<bun_zlib::ZlibReaderArrayList<'static>>),
+    #[cfg(any())] Brotli(Box<bun_brotli::BrotliReaderArrayList<'static>>),
+    #[cfg(any())] Zstd(Box<bun_zstd::ZstdReaderArrayList<'static>>),
     #[default]
     None,
 }
@@ -20,6 +24,9 @@ impl Decompressor {
     // `*self = Decompressor::None` (which drops the old reader).
 
     // TODO(port): narrow error set
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_zlib::ZlibReaderArrayList / bun_brotli::BrotliReaderArrayList /
+    // bun_zstd::ZstdReaderArrayList — see note on the gated enum variants above.
     pub fn update_buffers(
         &mut self,
         encoding: Encoding,
@@ -133,10 +140,11 @@ impl Decompressor {
 
     // TODO(port): narrow error set
     pub fn read_all(&mut self, is_done: bool) -> Result<(), bun_core::Error> {
+        let _ = is_done;
         match self {
-            Decompressor::Zlib(zlib) => zlib.read_all(is_done)?,
-            Decompressor::Brotli(brotli) => brotli.read_all(is_done)?,
-            Decompressor::Zstd(reader) => reader.read_all(is_done)?,
+            #[cfg(any())] Decompressor::Zlib(zlib) => zlib.read_all(is_done)?,
+            #[cfg(any())] Decompressor::Brotli(brotli) => brotli.read_all(is_done)?,
+            #[cfg(any())] Decompressor::Zstd(reader) => reader.read_all(is_done)?,
             Decompressor::None => {}
         }
         Ok(())

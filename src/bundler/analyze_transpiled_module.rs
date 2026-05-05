@@ -3,7 +3,7 @@ use core::mem::{offset_of, size_of, MaybeUninit};
 
 use bun_collections::ArrayHashMap;
 use bun_core::{self, err};
-use bun_str::strings;
+use bun_string::strings;
 use bun_wyhash;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -77,7 +77,7 @@ pub enum ModuleInfoError {
     BadModuleInfo,
 }
 impl From<ModuleInfoError> for bun_core::Error {
-    fn from(e: ModuleInfoError) -> Self {
+    fn from(_e: ModuleInfoError) -> Self {
         err!("BadModuleInfo")
     }
 }
@@ -226,6 +226,8 @@ impl ModuleInfoDeserialized {
         }
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_io::Write — bun_io exposes no `Write` trait yet.
     pub fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         // SAFETY: all raw slice fields are valid for the lifetime of `self`
@@ -295,7 +297,7 @@ impl<'a> StringContext<'a> {
     pub fn eql(&self, fetch_key: &[u8], item_key: StringMapKey, item_i: usize) -> bool {
         let start = item_key.0 as usize;
         let len = self.strings_lens[item_i] as usize;
-        strings::eql_long(fetch_key, &self.strings_buf[start..start + len], true)
+        strings::eql_long::<true>(fetch_key, &self.strings_buf[start..start + len])
     }
 }
 
@@ -460,11 +462,8 @@ impl ModuleInfo {
         &mut self,
         name: StringID,
     ) -> Result<bool, bun_alloc::AllocError> {
-        // TODO(port): ArrayHashMap fetchPut equivalent
-        if self.exported_names.fetch_put(name, ()).is_some() {
-            return Ok(true);
-        }
-        Ok(false)
+        // Zig `fetchPut` → std `HashMap::insert` (returns previous value).
+        Ok(self.exported_names.insert(name, ()).is_some())
     }
 
     pub fn create(is_typescript: bool) -> Box<ModuleInfo> {
@@ -502,26 +501,31 @@ impl ModuleInfo {
     pub fn str(&mut self, value: &[u8]) -> Result<StringID, bun_alloc::AllocError> {
         self.strings_buf.reserve(value.len());
         self.strings_lens.reserve(1);
-        // TODO(port): `ArrayHashMap::get_or_put_adapted` taking `StringContext`
-        // (hash by bytes, eql against stored offset+len). Placeholder uses a
-        // hypothetical adapted API; Phase B must wire the real one.
-        let gpres = self.strings_map.get_or_put_adapted(
-            value,
-            StringContext {
-                strings_buf: &self.strings_buf,
-                strings_lens: &self.strings_lens,
-            },
-        );
-        if gpres.found_existing {
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_collections::ArrayHashMap::get_or_put_adapted —
+            // adapted-context (hash by bytes, eql against stored offset+len) entry
+            // point not present on the B-1 stub (`std::collections::HashMap`).
+            let gpres = self.strings_map.get_or_put_adapted(
+                value,
+                StringContext {
+                    strings_buf: &self.strings_buf,
+                    strings_lens: &self.strings_lens,
+                },
+            );
+            if gpres.found_existing {
+                return Ok(StringID(u32::try_from(gpres.index).unwrap()));
+            }
+
+            *gpres.key_ptr = StringMapKey(self.strings_buf.len() as u32);
+            *gpres.value_ptr = ();
+            // PERF(port): was appendSliceAssumeCapacity / appendAssumeCapacity
+            self.strings_buf.extend_from_slice(value);
+            self.strings_lens.push(value.len() as u32);
             return Ok(StringID(u32::try_from(gpres.index).unwrap()));
         }
-
-        *gpres.key_ptr = StringMapKey(self.strings_buf.len() as u32);
-        *gpres.value_ptr = ();
-        // PERF(port): was appendSliceAssumeCapacity / appendAssumeCapacity
-        self.strings_buf.extend_from_slice(value);
-        self.strings_lens.push(value.len() as u32);
-        Ok(StringID(u32::try_from(gpres.index).unwrap()))
+        let _ = value;
+        unimplemented!("b2-blocked: ArrayHashMap::get_or_put_adapted")
     }
 
     pub fn request_module(
@@ -531,10 +535,9 @@ impl ModuleInfo {
     ) -> Result<(), bun_alloc::AllocError> {
         // jsc only records the attributes of the first import with the given
         // import_record_path. so only put if not exists.
-        let gpres = self.requested_modules.get_or_put(import_record_path);
-        if !gpres.found_existing {
-            *gpres.value_ptr = fetch_parameters;
-        }
+        self.requested_modules
+            .entry(import_record_path)
+            .or_insert(fetch_parameters);
         Ok(())
     }
 
@@ -550,10 +553,18 @@ impl ModuleInfo {
             }
         }
         // Replace in requested_modules keys (preserving insertion order)
+        #[cfg(any())]
         if let Some(idx) = self.requested_modules.get_index(&old_id) {
             self.requested_modules.keys_mut()[idx] = new_id;
             // TODO(port): ArrayHashMap::re_index() equivalent; `catch {}` discarded OOM.
             let _ = self.requested_modules.re_index();
+        }
+        // TODO(b2-blocked): bun_collections::ArrayHashMap::{get_index, keys_mut,
+        // re_index} — B-1 stub is std::HashMap (no insertion-order key slice).
+        // Fallback: remove+reinsert (loses insertion order; revisit once IndexMap
+        // backs ArrayHashMap).
+        if let Some(v) = self.requested_modules.remove(&old_id) {
+            self.requested_modules.insert(new_id, v);
         }
     }
 
@@ -576,7 +587,7 @@ impl ModuleInfo {
                 if k == RecordKind::IMPORT_INFO_SINGLE
                     || k == RecordKind::IMPORT_INFO_SINGLE_TYPE_SCRIPT
                 {
-                    local_name_to_module_name.put(
+                    local_name_to_module_name.insert(
                         self.buffer[i + 2],
                         Ip {
                             module_name: self.buffer[i],
@@ -586,7 +597,7 @@ impl ModuleInfo {
                         },
                     );
                 } else if k == RecordKind::IMPORT_INFO_NAMESPACE {
-                    local_name_to_module_name.put(
+                    local_name_to_module_name.insert(
                         self.buffer[i + 2],
                         Ip {
                             module_name: self.buffer[i],
@@ -629,11 +640,26 @@ impl ModuleInfo {
             }
         }
 
+        // TODO(b2-blocked): bun_collections::ArrayHashMap::{keys, values} as
+        // contiguous slices — B-1 stub is std::HashMap (no slice access). Once
+        // ArrayHashMap is backed by IndexMap/MultiArrayList, restore the direct
+        // raw-slice borrows of `requested_modules.{keys,values}()`.
+        #[cfg(any())]
+        let (rm_keys, rm_values): (*const [StringID], *const [FetchParameters]) = (
+            self.requested_modules.keys() as *const [StringID],
+            self.requested_modules.values() as *const [FetchParameters],
+        );
+        #[cfg(not(any()))]
+        let (rm_keys, rm_values): (*const [StringID], *const [FetchParameters]) = (
+            core::ptr::slice_from_raw_parts(core::ptr::NonNull::dangling().as_ptr(), 0),
+            core::ptr::slice_from_raw_parts(core::ptr::NonNull::dangling().as_ptr(), 0),
+        );
+
         self._deserialized.write(ModuleInfoDeserialized {
             strings_buf: self.strings_buf.as_slice() as *const [u8],
             strings_lens: self.strings_lens.as_slice() as *const [u32],
-            requested_modules_keys: self.requested_modules.keys() as *const [StringID],
-            requested_modules_values: self.requested_modules.values() as *const [FetchParameters],
+            requested_modules_keys: rm_keys,
+            requested_modules_values: rm_values,
             buffer: self.buffer.as_slice() as *const [StringID],
             record_kinds: self.record_kinds.as_slice() as *const [RecordKind],
             flags: self.flags,
@@ -679,8 +705,14 @@ pub extern "C" fn zig__ModuleInfoDeserialized__deinit(info: *mut ModuleInfoDeser
 pub extern "C" fn zig_log(msg: *const c_char) {
     // SAFETY: caller passes a NUL-terminated C string.
     let bytes = unsafe { CStr::from_ptr(msg) }.to_bytes();
-    let _ = bun_core::Output::error_writer().print_bytes_ln(bytes);
-    // TODO(port): exact equivalent of `errorWriter().print("{s}\n", .{span})`
+    #[cfg(any())]
+    {
+        let _ = bun_core::Output::error_writer().print_bytes_ln(bytes);
+    }
+    // TODO(b2-blocked): bun_core::Output::error_writer — returns `*mut io::Writer`
+    // with no `print_bytes_ln`; needs the `with_error_writer(|w| ...)` API per the
+    // TODO in output.rs.
+    let _ = bytes;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

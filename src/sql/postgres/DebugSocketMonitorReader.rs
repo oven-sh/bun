@@ -4,7 +4,7 @@ use std::sync::Once;
 use bun_core::env_var;
 use bun_sys::File;
 
-bun_output::declare_scope!(Postgres, visible);
+bun_core::declare_scope!(Postgres, visible);
 
 // TODO(port): Zig used a bare module-level `var file: std.fs.File = undefined;`.
 // Rust statics cannot be left uninitialized; wrap in Option and guard with CHECK/Once.
@@ -32,7 +32,7 @@ pub fn load() {
         unsafe {
             FILE = Some(f);
         }
-        bun_output::scoped_log!(Postgres, "duplicating reads to {}", bstr::BStr::new(monitor));
+        bun_core::scoped_log!(Postgres, "duplicating reads to {}", bstr::BStr::new(monitor));
     }
 }
 

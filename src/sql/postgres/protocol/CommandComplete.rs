@@ -21,9 +21,9 @@ impl CommandComplete {
     // `&mut self` here because the `DecoderWrap` trait's `decode_fn` currently
     // requires `&mut self` — revisit if Phase B reshapes DecoderWrap.
     // TODO(port): narrow error set
-    pub fn decode_internal<Container>(
+    pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         &mut self,
-        reader: NewReader<Container>,
+        mut reader: NewReader<Container>,
     ) -> Result<(), bun_core::Error> {
         let length = reader.length()?;
         debug_assert!(length >= 4);
@@ -33,11 +33,13 @@ impl CommandComplete {
         Ok(())
     }
 
-    pub const DECODE: DecoderWrap<CommandComplete, { Self::decode_internal }> =
-        DecoderWrap::DECODE;
-    // TODO(port): DecoderWrap(CommandComplete, decodeInternal).decode — Phase B
-    // should expose this as a trait impl or `pub fn decode` once DecoderWrap's
-    // Rust shape is settled.
+    // TODO(port): DecoderWrap(CommandComplete, decodeInternal).decode — direct delegate.
+    pub fn decode<Container: super::new_reader::ReaderContext>(
+        &mut self,
+        context: Container,
+    ) -> Result<(), bun_core::Error> {
+        self.decode_internal(NewReader { wrapped: context })
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

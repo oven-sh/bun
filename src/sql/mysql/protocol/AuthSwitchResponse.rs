@@ -1,7 +1,7 @@
 // Auth switch response packet
 
-use bun_sql::shared::Data;
-use bun_sql::mysql::protocol::new_writer::{NewWriter, write_wrap};
+use crate::shared::Data;
+use crate::mysql::protocol::new_writer::{NewWriter, write_wrap};
 
 #[derive(Default)]
 pub struct AuthSwitchResponse {
@@ -12,16 +12,23 @@ pub struct AuthSwitchResponse {
 // that automatically, so no explicit `impl Drop` is needed here.
 
 impl AuthSwitchResponse {
-    pub fn write_internal<C>(&self, writer: NewWriter<C>) -> Result<(), bun_core::Error> {
+    pub fn write_internal<C: super::new_writer::WriterContext>(
+        &self,
+        writer: NewWriter<C>,
+    ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         writer.write(self.auth_response.slice())?;
         Ok(())
     }
-}
 
-// TODO(port): `writeWrap(AuthSwitchResponse, writeInternal).write` is a comptime-generated
-// wrapper fn. Phase B: express as a macro or blanket-trait impl from new_writer.
-write_wrap!(AuthSwitchResponse, write_internal);
+    // Zig: `pub const write = writeWrap(AuthSwitchResponse, writeInternal).write;`
+    pub fn write<C: super::new_writer::WriterContext>(
+        &self,
+        context: C,
+    ) -> Result<(), bun_core::Error> {
+        self.write_internal(NewWriter { wrapped: context })
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

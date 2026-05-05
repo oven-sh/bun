@@ -3,7 +3,7 @@
 use crate::mysql::Capabilities;
 use crate::mysql::StatusFlags;
 use crate::mysql::protocol::CharacterSet;
-use crate::mysql::protocol::new_reader::{NewReader, decoder_wrap};
+use crate::mysql::protocol::new_reader::{NewReader, ReaderContext};
 use crate::shared::Data;
 
 pub struct HandshakeV10 {
@@ -39,7 +39,7 @@ impl Default for HandshakeV10 {
 
 impl HandshakeV10 {
     // TODO(port): narrow error set
-    pub fn decode_internal<Context>(
+    pub fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
     ) -> Result<(), bun_core::Error> {
@@ -65,7 +65,8 @@ impl HandshakeV10 {
         // Capability flags (lower 2 bytes)
         let capabilities_lower = reader.int::<u16>()?;
 
-        // Character set
+        // Character set — Zig uses non-exhaustive `enum(u8)` so any byte is valid;
+        // Rust enum is exhaustive, so route through the range-checked constructor.
         self.character_set = CharacterSet::from_raw(reader.int::<u8>()?);
 
         // Status flags
@@ -87,11 +88,11 @@ impl HandshakeV10 {
 
         // Auth plugin data part 2
         let remaining_auth_len = (auth_plugin_data_len - 8).max(13);
-        let auth_data_2 = reader.read(remaining_auth_len)?;
+        let auth_data_2 = reader.read(remaining_auth_len as usize)?;
         self.auth_plugin_data_part_2 = Box::<[u8]>::from(auth_data_2.slice());
 
         // Auth plugin name
-        if self.capability_flags.contains(Capabilities::CLIENT_PLUGIN_AUTH) {
+        if self.capability_flags.CLIENT_PLUGIN_AUTH {
             self.auth_plugin_name = reader.read_z()?;
         }
 

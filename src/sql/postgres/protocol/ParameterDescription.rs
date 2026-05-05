@@ -10,8 +10,8 @@ pub struct ParameterDescription {
 impl ParameterDescription {
     // TODO(port): narrow error set
     // PORT NOTE: out-param constructor (`this.* = .{...}`) reshaped to return Self.
-    pub fn decode_internal<Container>(
-        reader: NewReader<Container>,
+    pub fn decode_internal<Container: super::new_reader::ReaderContext>(
+        mut reader: NewReader<Container>,
     ) -> Result<Self, bun_core::Error> {
         let mut remaining_bytes = reader.length()?;
         remaining_bytes = remaining_bytes.saturating_sub(4);
@@ -32,10 +32,10 @@ impl ParameterDescription {
         Ok(Self { parameters })
     }
 
-    // TODO(port): DecoderWrap comptime fn-pointer wiring — Phase B decides whether this
-    // becomes a trait impl or an associated fn alias.
-    pub const DECODE: DecoderWrap<ParameterDescription> =
-        DecoderWrap::new(Self::decode_internal);
+    // TODO(port): DecoderWrap comptime fn-pointer wiring — direct delegate.
+    pub fn decode<Container: super::new_reader::ReaderContext>(context: Container) -> Result<Self, bun_core::Error> {
+        Self::decode_internal(NewReader { wrapped: context })
+    }
 }
 
 // workaround for zig compiler TODO

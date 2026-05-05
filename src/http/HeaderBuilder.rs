@@ -1,9 +1,7 @@
 use bun_alloc::AllocError;
-use bun_schema::api;
-use bun_str::StringBuilder;
+use bun_string::StringBuilder;
 
-use crate::headers::{Entry, EntryList};
-use crate::HttpClient;
+use crate::headers::{api, Entry, EntryList};
 
 #[derive(Default)]
 pub struct HeaderBuilder {
@@ -22,7 +20,7 @@ impl HeaderBuilder {
     pub fn allocate(&mut self) -> Result<(), AllocError> {
         self.content.allocate()?;
         // TODO(port): narrow error set
-        self.entries.ensure_total_capacity(self.header_count)?;
+        self.entries.ensure_total_capacity(self.header_count as usize)?;
         Ok(())
     }
 
@@ -40,7 +38,7 @@ impl HeaderBuilder {
         };
         let _ = self.content.append(value);
         // PERF(port): was assume_capacity
-        self.entries.push(Entry { name: name_ptr, value: value_ptr });
+        self.entries.append_assume_capacity(Entry { name: name_ptr, value: value_ptr });
     }
 
     pub fn append_fmt(&mut self, name: &[u8], args: core::fmt::Arguments<'_>) {
@@ -51,25 +49,29 @@ impl HeaderBuilder {
 
         let _ = self.content.append(name);
 
-        let value = self.content.fmt(args);
+        // PORT NOTE: reshaped for borrowck — `fmt` returns a borrow into the
+        // builder buffer; capture its length, then re-read `content.len`.
+        let value_len = self.content.fmt(args).len();
 
         let value_ptr = api::StringPointer {
-            offset: (self.content.len - value.len()) as u32,
-            length: value.len() as u32,
+            offset: (self.content.len - value_len) as u32,
+            length: value_len as u32,
         };
 
         // PERF(port): was assume_capacity
-        self.entries.push(Entry { name: name_ptr, value: value_ptr });
+        self.entries.append_assume_capacity(Entry { name: name_ptr, value: value_ptr });
     }
 
-    pub fn apply(&mut self, client: &mut HttpClient) {
+    #[cfg(any())]
+    // TODO(b2-blocked): crate::HTTPClient (struct fields gated in lib.rs _phase_a_draft)
+    pub fn apply(&mut self, client: &mut crate::HTTPClient) {
         client.header_entries = core::mem::take(&mut self.entries);
         // TODO(port): lifetime — header_buf borrows from self.content's allocation; in Zig this
         // is a non-owning slice into the StringBuilder's buffer. Phase B must decide whether
         // HttpClient takes ownership of the buffer or borrows it.
         // SAFETY: content.ptr was set by allocate() and exactly content.len bytes have been written.
         client.header_buf = unsafe {
-            core::slice::from_raw_parts(self.content.ptr.unwrap(), self.content.len)
+            core::slice::from_raw_parts(self.content.ptr.unwrap().as_ptr(), self.content.len)
         };
     }
 }

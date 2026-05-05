@@ -5,12 +5,20 @@ use bstr::BStr;
 use bun_core::fmt as bun_fmt;
 use bun_logger as logger;
 use bun_paths::{self, PathBuffer, MAX_PATH_BYTES};
-use bun_fs as Fs;
-use bun_str::strings;
+use bun_string::strings;
 use bun_wyhash::{self, Wyhash11};
 
 use crate::Transpiler;
 use bun_js_parser as js_ast;
+
+// TODO(b2-blocked): bun_resolver::fs (PathName, FileSystem) — `bun_resolver` is
+// not in this crate's dep set (tier-ordering). Local opaque stand-ins so struct
+// signatures resolve; bodies referencing the real API stay re-gated.
+mod Fs {
+    pub use bun_logger::fs::{Path, PathName};
+    /// Stub: real type lives in `bun_resolver::fs::FileSystem`.
+    pub struct FileSystem;
+}
 
 pub struct FallbackEntryPoint {
     pub code_buffer: [u8; 8192],
@@ -32,6 +40,11 @@ impl Default for FallbackEntryPoint {
 }
 
 impl FallbackEntryPoint {
+    #[cfg(any())]
+    // TODO(b2-blocked): crate::options::Framework / ClientCssInJs — `options`
+    // module is still gated; body also touched `bun_resolver::fs` and used a
+    // forbidden `Box::leak` fallback that must be retyped to `Cow<'static,[u8]>`
+    // (see PORTING.md §Forbidden) before un-gating.
     pub fn generate<TranspilerType>(
         entry: &mut FallbackEntryPoint,
         input_path: &[u8],
@@ -140,6 +153,10 @@ impl ClientEntryPoint {
         strings::starts_with(b"entry.", extname)
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_resolver::fs::FileSystem::instance / PathName field
+    // shape (`dir`/`base`/`ext` are `&[u8]` in resolver, `&str` in the local
+    // stub).
     pub fn generate_entry_point_path<'a>(
         outbuffer: &'a mut [u8],
         original_path: &Fs::PathName,
@@ -158,6 +175,9 @@ impl ClientEntryPoint {
         &outbuffer[..len + original_path.ext.len()]
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_resolver::fs::FileSystem::instance — see
+    // `generate_entry_point_path`.
     pub fn decode_entry_point_path<'a>(
         outbuffer: &'a mut [u8],
         original_path: &Fs::PathName,
@@ -176,6 +196,10 @@ impl ClientEntryPoint {
         &outbuffer[..len + original_ext.len()]
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): crate::options::Framework / ClientCssInJs — `options`
+    // module is still gated; body also depends on `bun_resolver::fs::PathName`
+    // accessor `dir_with_trailing_slash`.
     pub fn generate<TranspilerType>(
         entry: &mut ClientEntryPoint,
         transpiler: &mut TranspilerType,
@@ -310,7 +334,7 @@ impl ServerEntryPoint {
                      \x20     console.debug(`Started ${{server.development ? 'development ' : ''}}server: ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);\n\
                      \x20  }}\n\
                      }}\n",
-                    strings::format_escapes(path_to_use, strings::FormatEscapesOptions { quote_char: b'\'' }),
+                    strings::format_escapes(path_to_use, strings::QuoteEscapeFormatFlags { quote_char: b'\'', ..Default::default() }),
                 )
                 .map_err(|_| bun_core::err!("FormatError"))?;
                 break 'brk v;
@@ -335,7 +359,7 @@ impl ServerEntryPoint {
                  \x20  const server = Bun.serve(entryNamespace.default);\n\
                  \x20  console.debug(`Started ${{server.development ? 'development ' : ''}}server: ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);\n\
                  }}\n",
-                strings::format_escapes(path_to_use, strings::FormatEscapesOptions { quote_char: b'"' }),
+                strings::format_escapes(path_to_use, strings::QuoteEscapeFormatFlags { quote_char: b'"', ..Default::default() }),
             )
             .map_err(|_| bun_core::err!("FormatError"))?;
             v
@@ -372,6 +396,10 @@ impl Default for MacroEntryPoint {
 }
 
 impl MacroEntryPoint {
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_js_parser::Macro — `Macro` lives in *_jsc and was
+    // DELETED from the base crate per PORTING.md §Idiom map; needs the
+    // `NAMESPACE_WITH_COLON`/`NAMESPACE` constants re-homed.
     pub fn generate_id(entry_path: &[u8], function_name: &[u8], buf: &mut [u8], len: &mut u32) -> i32 {
         let mut hasher = Wyhash11::init(0);
         hasher.update(js_ast::Macro::NAMESPACE_WITH_COLON);
@@ -402,6 +430,9 @@ impl MacroEntryPoint {
         unsafe { core::mem::transmute::<u32, i32>(bun_wyhash::hash(specifier) as u32) }
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_js_parser::Macro + bun_resolver::fs::PathName —
+    // see `generate_id`.
     pub fn generate(
         entry: &mut MacroEntryPoint,
         _: &mut Transpiler,
@@ -495,8 +526,9 @@ pub trait TranspilerLike {
     fn options(&self) -> &crate::options::Options;
 }
 
-// TODO(port): `ClientCssInJs` lives in `bun_bundler::options::Framework`; placeholder
-// import path until options.rs is ported.
+// TODO(b2-blocked): crate::options::ClientCssInJs — lives in the still-gated
+// `options` module (`options.zig:Framework.ClientCssInJs`).
+#[cfg(any())]
 use crate::options::ClientCssInJs;
 
 // ──────────────────────────────────────────────────────────────────────────

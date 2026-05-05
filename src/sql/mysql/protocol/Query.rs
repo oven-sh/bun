@@ -3,7 +3,7 @@ use crate::mysql::protocol::command_type::CommandType;
 use crate::mysql::protocol::new_writer::{write_wrap, NewWriter};
 use crate::shared::data::Data;
 
-bun_output::declare_scope!(MySQLQuery, visible);
+bun_core::declare_scope!(MySQLQuery, visible);
 
 // TODO(port): lifetime param on struct (Phase B) — Execute is a transient
 // builder that borrows query/params/param_types from the caller for the
@@ -24,7 +24,7 @@ pub struct Execute<'a> {
 // TODO(port): verify caller of Execute handles Data cleanup after write.
 
 impl<'a> Execute<'a> {
-    pub fn write_internal<Context>(
+    pub fn write_internal<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
     ) -> Result<(), bun_core::Error> {
@@ -42,7 +42,7 @@ impl<'a> Execute<'a> {
             let mut param_name_buf = [0u8; 22];
             // Write parameter types
             for (param_type, i) in self.param_types.iter().zip(1usize..) {
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     MySQLQuery,
                     "New params bind flag {} unsigned? {}",
                     <&'static str>::from(param_type.r#type),
@@ -71,7 +71,7 @@ impl<'a> Execute<'a> {
                 }
 
                 let value = param.slice();
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     MySQLQuery,
                     "Write param type {} len {} hex {:02x?}",
                     <&'static str>::from(param_type.r#type),
@@ -94,11 +94,14 @@ impl<'a> Execute<'a> {
     // TODO(port): `writeWrap` is a comptime type-returning fn in NewWriter.zig that
     // wraps `write_internal` into a `write` entry point. Phase B should express this
     // as a trait impl or a thin wrapper once `new_writer::write_wrap` is ported.
-    pub fn write<Context>(
+    pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
     ) -> Result<(), bun_core::Error> {
-        write_wrap(self, Self::write_internal, writer)
+        // PORT NOTE: Zig's `writeWrap` constructs a `NewWriter` around a raw
+        // context and calls `write_internal`. Here `writer` is already wrapped,
+        // so forward directly — `write_wrap`'s only job (the wrapping) is done.
+        self.write_internal(writer)
     }
 }
 

@@ -9,7 +9,8 @@ use core::mem::offset_of;
 use crate::BundleV2;
 // CYCLEBREAK hot-dispatch: Task is `(tag: u8, ptr: *mut ())` owned by bun_event_loop;
 // runtime owns the match-loop. See PORTING.md §Dispatch.
-use bun_event_loop::{ConcurrentTask, Task};
+use bun_event_loop::ConcurrentTask::ConcurrentTask;
+use bun_event_loop::{Task, task_tag};
 
 pub use bun_js_parser::Ref;
 pub use bun_js_parser::Index;
@@ -32,13 +33,17 @@ impl DeferredBatchTask {
     }
 
     pub fn get_bundle_v2(&mut self) -> &mut BundleV2 {
+        #[cfg(any())]
         // SAFETY: `self` is always the `drain_defer_task` field of a live `BundleV2`;
         // this struct is never instantiated standalone.
         unsafe {
-            &mut *(self as *mut Self as *mut u8)
+            return &mut *(self as *mut Self as *mut u8)
                 .sub(offset_of!(BundleV2, drain_defer_task))
-                .cast::<BundleV2>()
+                .cast::<BundleV2>();
         }
+        // TODO(b2-blocked): crate::bundle_v2::BundleV2 (field `drain_defer_task`
+        // for offset_of) — bundle_v2 module is still gated.
+        unimplemented!("b2-blocked: BundleV2.drain_defer_task offset_of")
     }
 
     pub fn schedule(&mut self) {
@@ -47,18 +52,28 @@ impl DeferredBatchTask {
             debug_assert!(!self.running);
             self.running = false;
         }
-        // TODO(port): `Task::init(*mut DeferredBatchTask)` — Task is a tagged-pointer
-        // union over task payloads; verify the Rust constructor signature in Phase B.
-        let task = ConcurrentTask::create(Task::init(self as *mut Self));
-        self.get_bundle_v2()
-            .js_loop_for_plugins()
-            .enqueue_task_concurrent(task);
+        // PORTING.md §Dispatch: tag+ptr, not TaggedPointer. Tag constant lives in
+        // `bun_event_loop::task_tag::BundleV2DeferredBatchTask`.
+        let task = ConcurrentTask::create(Task::new(
+            task_tag::BundleV2DeferredBatchTask,
+            self as *mut Self as *mut (),
+        ));
+        #[cfg(any())]
+        {
+            self.get_bundle_v2()
+                .js_loop_for_plugins()
+                .enqueue_task_concurrent(task);
+        }
+        // TODO(b2-blocked): crate::bundle_v2::BundleV2::js_loop_for_plugins — bundle_v2
+        // module is still gated.
+        let _ = task;
     }
 
     pub fn run_on_js_thread(&mut self) {
         // PORT NOTE: reshaped for borrowck — Zig's `defer this.deinit()` only resets
         // the debug `running` flag; since nothing follows `drainDeferred`, ignoring
         // its error and resetting the flag afterwards is equivalent on both paths.
+        #[cfg(any())]
         {
             let bv2 = self.get_bundle_v2();
             let rejected = match &bv2.completion {
@@ -72,6 +87,8 @@ impl DeferredBatchTask {
                 .expect("plugins")
                 .drain_deferred(rejected);
         }
+        // TODO(b2-blocked): crate::bundle_v2::BundleV2 fields (`completion`, `plugins`)
+        // — bundle_v2 module is still gated.
         self.deinit();
     }
 

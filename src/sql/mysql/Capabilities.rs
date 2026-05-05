@@ -5,8 +5,7 @@
 // iteration for `toInt`/`fromInt`/`format`. We keep the same shape — a plain
 // struct of bools — and unroll the comptime loops explicitly. Field names stay
 // SCREAMING_SNAKE_CASE because `format` emits them verbatim.
-
-#![allow(non_snake_case, non_upper_case_globals)]
+// (non_snake_case / non_upper_case_globals allowed at crate root.)
 
 use core::fmt;
 

@@ -1,10 +1,10 @@
 use super::any_mysql_error::Error as AnyMySQLError;
 use super::encode_int::encode_length_int;
 use super::packet_header::PacketHeader;
-use bun_sql::mysql::mysql_types::{MySQLInt32, MySQLInt64};
-use bun_str::String as BunString;
+use crate::mysql::mysql_types::{MySQLInt32, MySQLInt64};
+use bun_string::String as BunString;
 
-bun_output::declare_scope!(NewWriter, hidden);
+bun_core::declare_scope!(NewWriter, hidden);
 
 /// Zig's `NewWriterWrap` passes `offsetFn`/`writeFn`/`pwriteFn` as comptime
 /// fn-pointer params. In Rust those become required methods on a trait that
@@ -33,7 +33,7 @@ impl<C: WriterContext> Packet<C> {
         // fix position for packet header
         let length = new_offset - self.offset - PacketHeader::SIZE;
         self.header.length = u32::try_from(length).unwrap();
-        bun_output::scoped_log!(NewWriter, "writing packet header: {}", self.header.length);
+        bun_core::scoped_log!(NewWriter, "writing packet header: {}", self.header.length);
         self.ctx.pwrite(&self.header.encode(), self.offset)
     }
 }
@@ -58,7 +58,7 @@ impl<C: WriterContext> NewWriterWrap<C> {
 
     pub fn start(self, sequence_id: u8) -> Result<Packet<C>, AnyMySQLError> {
         let o = self.wrapped.offset();
-        bun_output::scoped_log!(NewWriter, "starting packet: {}", o);
+        bun_core::scoped_log!(NewWriter, "starting packet: {}", o);
         self.write(&[0u8; PacketHeader::SIZE])?;
         Ok(Packet {
             header: PacketHeader { sequence_id, length: 0 },

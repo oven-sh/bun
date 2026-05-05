@@ -14,7 +14,7 @@ impl Default for ReadyForQuery {
 
 impl ReadyForQuery {
     // PORT NOTE: reshaped out-param constructor (`this.* = .{...}`) to return Self.
-    pub fn decode_internal<Container>(reader: NewReader<Container>) -> Result<Self, bun_core::Error> {
+    pub fn decode_internal<Container: super::new_reader::ReaderContext>(mut reader: NewReader<Container>) -> Result<Self, bun_core::Error> {
         // TODO(port): narrow error set
         let length = reader.length()?;
         debug_assert!(length >= 4);
@@ -27,8 +27,10 @@ impl ReadyForQuery {
     }
 
     // TODO(port): `DecoderWrap(ReadyForQuery, decodeInternal).decode` — Zig comptime type-generator
-    // wrapping decode_internal. Phase B: express via the Rust DecoderWrap trait/generic.
-    pub const decode: DecoderWrap<ReadyForQuery> = DecoderWrap::new(Self::decode_internal);
+    // wrapping decode_internal. Direct delegate; revisit as trait impl.
+    pub fn decode<Container: super::new_reader::ReaderContext>(context: Container) -> Result<Self, bun_core::Error> {
+        Self::decode_internal(NewReader { wrapped: context })
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 
 use bun_semver::{ExternalString, Version as SemverVersion};
-use bun_install::PackageNameHash;
+use crate::PackageNameHash;
 
 /// `extern struct { off: u32, len: u32 }` parameterized over the element type.
 /// The element type is phantom-only (storage is just two u32s).

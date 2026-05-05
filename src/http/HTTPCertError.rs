@@ -1,4 +1,4 @@
-use bun_str::ZStr;
+use bun_string::ZStr;
 
 pub struct HTTPCertError {
     pub error_no: i32,

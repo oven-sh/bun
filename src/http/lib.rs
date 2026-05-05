@@ -11,46 +11,46 @@
 // Un-gating happens in B-2.
 // ═══════════════════════════════════════════════════════════════════════
 
-// ── gated sub-modules (preserve draft .rs files, do not compile) ──
+// ── sub-modules (un-gated in B-2; remaining gates need higher-tier deps) ──
 #[cfg(any())] #[path = "AsyncHTTP.rs"]              pub mod async_http;
-#[cfg(any())] #[path = "CertificateInfo.rs"]        pub mod certificate_info;
-#[cfg(any())] #[path = "Decompressor.rs"]           pub mod decompressor;
+#[path = "CertificateInfo.rs"]                      pub mod certificate_info;
+#[path = "Decompressor.rs"]                         pub mod decompressor;
 #[cfg(any())] #[path = "H2Client.rs"]               pub mod h2_client;
-#[cfg(any())] #[path = "H2FrameParser.rs"]          pub mod h2_frame_parser;
+#[path = "H2FrameParser.rs"]                        pub mod h2_frame_parser;
 #[cfg(any())] #[path = "H3Client.rs"]               pub mod h3_client;
-#[cfg(any())] #[path = "HTTPCertError.rs"]          pub mod http_cert_error;
+#[path = "HTTPCertError.rs"]                        pub mod http_cert_error;
 #[cfg(any())] #[path = "HTTPContext.rs"]            pub mod http_context;
-#[cfg(any())] #[path = "HTTPRequestBody.rs"]        pub mod http_request_body;
+#[path = "HTTPRequestBody.rs"]                      pub mod http_request_body;
 #[cfg(any())] #[path = "HTTPThread.rs"]             pub mod http_thread;
-#[cfg(any())] #[path = "HeaderBuilder.rs"]          pub mod header_builder;
-#[cfg(any())] #[path = "HeaderValueIterator.rs"]    pub mod header_value_iterator;
-#[cfg(any())] #[path = "Headers.rs"]                pub mod headers;
-#[cfg(any())] #[path = "InitError.rs"]              pub mod init_error;
-#[cfg(any())] #[path = "InternalState.rs"]          pub mod internal_state;
+#[path = "HeaderBuilder.rs"]                        pub mod header_builder;
+#[path = "HeaderValueIterator.rs"]                  pub mod header_value_iterator;
+#[path = "Headers.rs"]                              pub mod headers;
+#[path = "InitError.rs"]                            pub mod init_error;
+#[path = "InternalState.rs"]                        pub mod internal_state;
 #[cfg(any())] #[path = "ProxyTunnel.rs"]            pub mod proxy_tunnel;
-#[cfg(any())] #[path = "SendFile.rs"]               pub mod send_file;
-#[cfg(any())] #[path = "Signals.rs"]                pub mod signals;
-#[cfg(any())] #[path = "ThreadSafeStreamBuffer.rs"] pub mod thread_safe_stream_buffer;
-#[cfg(any())] #[path = "lshpack.rs"]                pub mod lshpack;
-#[cfg(any())] #[path = "websocket.rs"]              pub mod websocket;
-#[cfg(any())] #[path = "websocket_http_client.rs"]  pub mod websocket_http_client;
-#[cfg(any())] #[path = "zlib.rs"]                   pub mod zlib;
+#[path = "SendFile.rs"]                             pub mod send_file;
+#[path = "Signals.rs"]                              pub mod signals;
+#[path = "ThreadSafeStreamBuffer.rs"]               pub mod thread_safe_stream_buffer;
+#[path = "lshpack.rs"]                              pub mod lshpack;
+#[path = "websocket.rs"]                            pub mod websocket;
+#[path = "websocket_http_client.rs"]                pub mod websocket_http_client;
+#[path = "zlib.rs"]                                 pub mod zlib;
 
 // ── minimal stub surface (opaque types; real impls gated below) ──
 // TODO(b1): expand as downstream crates need symbols.
 pub struct HTTPClient(());
 pub struct AsyncHTTP(());
 pub struct HTTPThread(());
-pub struct Signals(());
-pub struct InternalState(());
-pub struct HTTPRequestBody(());
-pub struct CertificateInfo(());
-pub struct HTTPCertError(());
-pub struct Headers(());
-pub struct HeaderBuilder(());
-pub struct Decompressor(());
-pub struct ThreadSafeStreamBuffer(());
-pub struct SendFile(());
+pub use signals::Signals;
+pub use internal_state::InternalState;
+pub use http_request_body::HTTPRequestBody;
+pub use certificate_info::CertificateInfo;
+pub use http_cert_error::HTTPCertError;
+pub use headers::Headers;
+pub use header_builder::HeaderBuilder;
+pub use decompressor::Decompressor;
+pub use thread_safe_stream_buffer::ThreadSafeStreamBuffer;
+pub use send_file::SendFile;
 pub struct ProxyTunnel(());
 pub struct SSLConfig(());
 pub struct SSLWrapper<T>(core::marker::PhantomData<T>);
@@ -64,8 +64,33 @@ pub enum HTTPVerboseLevel { #[default] None, Headers, Curl }
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub enum Protocol { #[default] Http1_1, Http2, Http3 }
 
-pub type InitError = ();
-pub type HeaderValueIterator = ();
+pub use init_error::InitError;
+pub use header_value_iterator::HeaderValueIterator;
+pub use bun_http_types::Encoding::Encoding;
+
+/// Zig: `pub const extremely_verbose = false;` — compile-time switch.
+pub const extremely_verbose: bool = false;
+
+/// Cloned response metadata (headers + url + status). Ownership transfers to
+/// the user once the headers phase completes.
+// PORT NOTE: extracted from the gated `_phase_a_draft` block so `InternalState`
+// can name it. The `picohttp::Response<'static>` borrows into `owned_buf`.
+pub struct HTTPResponseMetadata {
+    // TODO(port): borrows owned_buf — raw slice ptr to avoid a self-referential lifetime.
+    pub url: *const [u8],
+    pub owned_buf: Box<[u8]>,
+    pub response: bun_picohttp::Response<'static>,
+}
+
+impl Default for HTTPResponseMetadata {
+    fn default() -> Self {
+        Self {
+            url: b"" as *const [u8],
+            owned_buf: Box::default(),
+            response: bun_picohttp::Response::default(),
+        }
+    }
+}
 // TODO(b1): bun_http_types re-exports — verify these resolve in B-2.
 pub use bun_http_types::{ETag, FetchCacheMode, FetchRequestMode, MimeType, URLPath};
 

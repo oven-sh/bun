@@ -38,19 +38,22 @@ gated_mod!(pub mod package_installer = "PackageInstaller.rs";);
 gated_mod!(pub mod repository = "repository.rs";);
 gated_mod!(pub mod resolution = "resolution.rs";);
 gated_mod!(pub mod isolated_install = "isolated_install.rs";);
-gated_mod!(pub mod pnpm_matcher = "PnpmMatcher.rs";);
+#[path = "PnpmMatcher.rs"]
+pub mod pnpm_matcher;
 gated_mod!(pub mod postinstall_optimizer = "postinstall_optimizer.rs";);
-gated_mod!(pub mod external_slice = "ExternalSlice.rs";);
-gated_mod!(pub mod integrity = "integrity.rs";);
+#[path = "ExternalSlice.rs"]
+pub mod external_slice;
+pub mod integrity;
 gated_mod!(pub mod dependency = "dependency.rs";);
 gated_mod!(pub mod patch_install = "patch_install.rs";);
-gated_mod!(pub mod config_version = "ConfigVersion.rs";);
+#[path = "ConfigVersion.rs"]
+pub mod config_version;
 gated_mod!(pub mod hoisted_install = "hoisted_install.rs";);
 gated_mod!(pub mod hosted_git_info = "hosted_git_info.rs";);
 gated_mod!(pub mod migration = "migration.rs";);
-gated_mod!(pub mod padding_checker = "padding_checker.rs";);
+pub mod padding_checker;
 gated_mod!(pub mod pnpm = "pnpm.rs";);
-gated_mod!(pub mod versioned_url = "versioned_url.rs";);
+pub mod versioned_url;
 gated_mod!(pub mod yarn = "yarn.rs";);
 
 #[cfg(any())]
@@ -114,22 +117,7 @@ pub mod isolated_install {
     pub mod file_copier { pub struct FileCopier; }
 }
 #[cfg(not(any()))]
-pub mod pnpm_matcher { pub struct PnpmMatcher; }
-#[cfg(not(any()))]
 pub mod postinstall_optimizer { pub struct PostinstallOptimizer; }
-#[cfg(not(any()))]
-pub mod external_slice {
-    pub struct ExternalSlice<T>(core::marker::PhantomData<T>);
-    pub type ExternalPackageNameHashList = ();
-    pub type ExternalStringList = ();
-    pub type ExternalStringMap = ();
-    pub type VersionSlice = ();
-}
-#[cfg(not(any()))]
-pub mod integrity {
-    #[derive(Default, Clone, Copy)]
-    pub struct Integrity;
-}
 #[cfg(not(any()))]
 pub mod dependency {
     pub struct Dependency;
@@ -209,26 +197,21 @@ pub mod ShellCompletions {
         /// generic over the string type purely so it could accept both `[]const u8` and
         /// `[:0]const u8`; in Rust both coerce to `&[u8]`.
         pub fn from_env(shell: &[u8]) -> Shell {
-            #[cfg(any())]
+            use bun_string::strings;
+            let basename = bun_paths::basename(shell);
+            if strings::eql_comptime(basename, b"bash") {
+                Shell::Bash
+            } else if strings::eql_comptime(basename, b"zsh") {
+                Shell::Zsh
+            } else if strings::eql_comptime(basename, b"fish") {
+                Shell::Fish
+            } else if strings::eql_comptime(basename, b"pwsh")
+                || strings::eql_comptime(basename, b"powershell")
             {
-                use bun_str::strings;
-                let basename = bun_paths::basename(shell);
-                if strings::eql_comptime(basename, b"bash") {
-                    Shell::Bash
-                } else if strings::eql_comptime(basename, b"zsh") {
-                    Shell::Zsh
-                } else if strings::eql_comptime(basename, b"fish") {
-                    Shell::Fish
-                } else if strings::eql_comptime(basename, b"pwsh")
-                    || strings::eql_comptime(basename, b"powershell")
-                {
-                    Shell::Pwsh
-                } else {
-                    Shell::Unknown
-                }
+                Shell::Pwsh
+            } else {
+                Shell::Unknown
             }
-            #[cfg(not(any()))]
-            { let _ = shell; todo!("B-2: ShellCompletions::Shell::from_env") }
         }
     }
 }
@@ -247,7 +230,13 @@ pub struct RunCommand;
 pub static PRETEND_TO_BE_NODE: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
-#[cfg(any())] // TODO(b1): gated — depends on bun_bundler/bun_transpiler/bun_resolver/bun_bunfig/bun_schema/const_str/bun_c/bun_windows
+// TODO(b2-blocked): bun_transpiler::Transpiler
+// TODO(b2-blocked): bun_resolver::DirInfo
+// TODO(b2-blocked): bun_bunfig::Command::Context
+// TODO(b2-blocked): bun_core::self_exe_path / bun_core::argv
+// TODO(b2-blocked): bun_sys::symlink (Maybe<()> shape) / bun_sys::mkdir
+// TODO(b2-blocked): bun_errno::E::EXIST (was bun_c::EEXIST)
+#[cfg(any())]
 impl RunCommand {
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
@@ -764,18 +753,24 @@ pub static ALIGNMENT_BYTES_TO_REPEAT_BUFFER: [u8; 144] = [0u8; 144];
 pub fn initialize_store() {
     #[cfg(any())]
     {
+        // TODO(b2-blocked): bun_js_parser::ast::expr::Data::Store
+        use bun_js_parser as js_ast;
         if INITIALIZED_STORE.with(|c| c.get()) {
-            js_ast::Expr::Data::Store::reset();
-            js_ast::Stmt::Data::Store::reset();
+            js_ast::ast::expr::Data::Store::reset();
+            js_ast::ast::stmt::Data::Store::reset();
             return;
         }
 
         INITIALIZED_STORE.with(|c| c.set(true));
-        js_ast::Expr::Data::Store::create();
-        js_ast::Stmt::Data::Store::create();
+        js_ast::ast::expr::Data::Store::create();
+        js_ast::ast::stmt::Data::Store::create();
     }
     #[cfg(not(any()))]
-    { todo!("B-2: initialize_store") }
+    {
+        // TODO(b2-blocked): bun_js_parser::ast::expr::Data::Store
+        let _ = &INITIALIZED_STORE;
+        todo!("B-2: initialize_store")
+    }
 }
 
 /// The default store we use pre-allocates around 16 MB of memory per thread
@@ -784,6 +779,7 @@ pub fn initialize_store() {
 pub fn initialize_mini_store() {
     #[cfg(any())]
     {
+        // TODO(b2-blocked): bun_js_parser::ASTMemoryAllocator (fields stack_allocator/reset/push)
         use bun_alloc::Arena;
         use bun_js_parser as js_ast;
 
@@ -838,7 +834,10 @@ pub fn initialize_mini_store() {
         });
     }
     #[cfg(not(any()))]
-    { todo!("B-2: initialize_mini_store") }
+    {
+        // TODO(b2-blocked): bun_js_parser::ASTMemoryAllocator
+        todo!("B-2: initialize_mini_store")
+    }
 }
 
 pub type PackageID = u32;
@@ -1090,7 +1089,6 @@ impl core::fmt::Display for PackageManifestError {
     }
 }
 
-#[cfg(any())] // TODO(b1): bun_core::Error::from_name missing
 impl From<PackageManifestError> for bun_core::Error {
     fn from(e: PackageManifestError) -> Self {
         bun_core::Error::from_name(<&'static str>::from(e))

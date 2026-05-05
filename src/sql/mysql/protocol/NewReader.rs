@@ -11,7 +11,9 @@ use crate::shared::data::Data;
 /// reflection).
 pub trait ReaderContext: Copy {
     fn mark_message_start(self);
-    fn peek(self) -> &'static [u8]; // TODO(port): lifetime — Zig returns a borrow into the context's buffer; revisit as `&[u8]` with lifetime in Phase B
+    // `&self` (not `self`) so the returned borrow can be tied to the context's
+    // buffer lifetime; `Self: Copy` keeps the by-value call sites working.
+    fn peek(&self) -> &[u8];
     fn skip(self, count: isize);
     fn ensure_capacity(self, count: usize) -> bool;
     fn read(self, count: usize) -> Result<Data, AnyMySQLError>;
@@ -32,7 +34,8 @@ pub struct NewReader<C: ReaderContext> {
 }
 
 impl<C: ReaderContext> NewReader<C> {
-    pub type Ctx = C;
+    // PORT NOTE: Zig `pub const Ctx = Context` — in Rust the generic param `C` IS
+    // the name; inherent associated types are unstable, so callers name `C` directly.
 
     pub const IS_WRAPPED: bool = true;
 
@@ -58,8 +61,7 @@ impl<C: ReaderContext> NewReader<C> {
         );
     }
 
-    pub fn peek(self) -> &'static [u8] {
-        // TODO(port): lifetime — see ReaderContext::peek note
+    pub fn peek(&self) -> &[u8] {
         self.wrapped.peek()
     }
 
@@ -125,6 +127,21 @@ pub trait ReadableInt: Sized + Copy {
     /// Reinterpret `bytes[..SIZE]` as `Self` (native endian — matches `@bitCast`).
     fn from_ne_slice(bytes: &[u8]) -> Self;
 }
+
+macro_rules! impl_readable_int {
+    ($($t:ty),*) => {$(
+        impl ReadableInt for $t {
+            const SIZE: usize = core::mem::size_of::<$t>();
+            #[inline]
+            fn from_ne_slice(bytes: &[u8]) -> Self {
+                let mut buf = [0u8; core::mem::size_of::<$t>()];
+                buf.copy_from_slice(&bytes[..Self::SIZE]);
+                <$t>::from_ne_bytes(buf)
+            }
+        }
+    )*};
+}
+impl_readable_int!(u8, i8, u16, i16, u32, i32, u64, i64);
 
 /// Zig: `fn NewReader(comptime Context: type) type` — returned `Context` unchanged
 /// if it already had `is_wrapped`, else `NewReaderWrap(Context, Context.fn...)`.

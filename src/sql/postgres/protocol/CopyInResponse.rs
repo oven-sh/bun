@@ -4,9 +4,9 @@ use super::new_reader::NewReader;
 pub struct CopyInResponse;
 
 impl CopyInResponse {
-    pub fn decode_internal<Container>(
+    pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         &mut self,
-        reader: NewReader<Container>,
+        mut reader: NewReader<Container>,
     ) -> Result<(), bun_core::Error> {
         let _ = reader;
         let _ = self;
@@ -15,9 +15,13 @@ impl CopyInResponse {
     }
 
     // Zig: pub const decode = DecoderWrap(CopyInResponse, decodeInternal).decode;
-    // TODO(port): DecoderWrap is a Zig comptime type-generator that wraps decode_internal;
-    // Phase B should express this as a trait impl or macro from super::decoder_wrap.
-    pub const DECODE: DecoderWrap<CopyInResponse> = DecoderWrap::new(Self::decode_internal);
+    // Direct delegate; revisit as trait impl.
+    pub fn decode<Container: super::new_reader::ReaderContext>(
+        &mut self,
+        context: Container,
+    ) -> Result<(), bun_core::Error> {
+        self.decode_internal(NewReader { wrapped: context })
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

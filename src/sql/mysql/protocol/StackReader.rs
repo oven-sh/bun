@@ -1,9 +1,9 @@
 use core::cell::Cell;
 
-use bun_str::strings;
+use bun_string::strings;
 
 use super::any_mysql_error::Error as AnyMySQLError;
-use super::new_reader::NewReader;
+use super::new_reader::{NewReader, ReaderContext};
 use crate::shared::data::Data;
 
 // TODO(port): lifetime — `offset`/`message_start` are caller-owned `usize` on the
@@ -76,19 +76,32 @@ impl<'a> StackReader<'a> {
         }
 
         self.skip(isize::try_from(count).unwrap());
-        // TODO(port): Data is a union(enum) → Rust enum; `.temporary` variant holds a borrowed slice
-        Ok(Data::Temporary(&self.buffer[offset..self.offset.get()]))
+        // Data::Temporary stores a raw fat pointer (see shared/Data.rs).
+        Ok(Data::Temporary(
+            &self.buffer[offset..self.offset.get()] as *const [u8],
+        ))
     }
 
     pub fn read_z(&self) -> Result<Data, AnyMySQLError> {
         let remaining = self.peek();
         if let Some(zero) = strings::index_of_char(remaining, 0) {
+            let zero = zero as usize;
             self.skip(isize::try_from(zero + 1).unwrap());
-            return Ok(Data::Temporary(&remaining[0..zero as usize]));
+            return Ok(Data::Temporary(&remaining[0..zero] as *const [u8]));
         }
 
         Err(AnyMySQLError::ShortRead)
     }
+}
+
+impl<'a> ReaderContext for StackReader<'a> {
+    fn mark_message_start(self) { Self::mark_message_start(&self) }
+    fn peek(&self) -> &[u8] { Self::peek(self) }
+    fn skip(self, count: isize) { Self::skip(&self, count) }
+    fn ensure_capacity(self, count: usize) -> bool { Self::ensure_capacity(&self, count) }
+    fn read(self, count: usize) -> Result<Data, AnyMySQLError> { Self::read(&self, count) }
+    fn read_z(self) -> Result<Data, AnyMySQLError> { Self::read_z(&self) }
+    fn set_offset_from_start(self, offset: usize) { Self::set_offset_from_start(&self, offset) }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

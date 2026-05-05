@@ -1,25 +1,25 @@
 use super::new_writer::NewWriter;
 use super::portal_or_prepared_statement::PortalOrPreparedStatement;
 use super::write_wrap::WriteWrap;
-use bun_sql::postgres::types::int_types::Int4;
+use crate::postgres::types::int_types::Int4;
 
-pub struct Execute {
+pub struct Execute<'a> {
     pub max_rows: Int4,
-    pub p: PortalOrPreparedStatement,
+    pub p: PortalOrPreparedStatement<'a>,
 }
 
-impl Default for Execute {
+impl<'a> Default for Execute<'a> {
     fn default() -> Self {
         Self {
             max_rows: 0,
             // TODO(port): PortalOrPreparedStatement has no Zig default; callers must set `p`.
-            p: PortalOrPreparedStatement::default(),
+            p: PortalOrPreparedStatement::Portal(b""),
         }
     }
 }
 
-impl Execute {
-    pub fn write_internal<Context>(
+impl<'a> Execute<'a> {
+    pub fn write_internal<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
     ) -> Result<(), bun_core::Error> {
@@ -40,11 +40,11 @@ impl Execute {
     // TODO(port): WriteWrap is a comptime type-generator wrapping write_internal; in Rust this
     // should be a trait (e.g. `impl WriteWrap for Execute`) whose default `write` calls
     // `write_internal`. Stubbed as a direct delegate until WriteWrap.rs lands.
-    pub fn write<Context>(
+    pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
     ) -> Result<(), bun_core::Error> {
-        WriteWrap::write(self, writer, Self::write_internal)
+        self.write_internal(writer)
     }
 }
 

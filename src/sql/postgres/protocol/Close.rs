@@ -11,12 +11,12 @@ use super::write_wrap::WriteWrap;
 /// - 'S' to close a prepared statement; or 'P' to close a portal.
 /// String
 /// - The name of the prepared statement or portal to close (an empty string selects the unnamed prepared statement or portal).
-pub struct Close {
-    pub p: PortalOrPreparedStatement,
+pub struct Close<'a> {
+    pub p: PortalOrPreparedStatement<'a>,
 }
 
-impl Close {
-    fn write_internal<Context>(
+impl<'a> Close<'a> {
+    fn write_internal<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
     ) -> Result<(), bun_core::Error> {
@@ -41,11 +41,10 @@ impl Close {
     // Zig: `pub const write = WriteWrap(@This(), writeInternal);`
     // TODO(port): WriteWrap is a comptime fn-wrapper (super::write_wrap). Phase B should
     // resolve whether this becomes a trait impl or macro; for now forward directly.
-    pub fn write<Context>(
+    pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
     ) -> Result<(), bun_core::Error> {
-        let _ = WriteWrap::<Self>;
         self.write_internal(writer)
     }
 }

@@ -18,8 +18,8 @@ pub struct NotificationResponse {
 impl NotificationResponse {
     // PORT NOTE: reshaped from out-param `fn(this: *@This(), ...) !void` with `this.* = .{...}`
     // to a value-returning constructor (PORTING.md §Ground rules, out-param exception).
-    pub fn decode_internal<Container>(
-        reader: NewReader<Container>,
+    pub fn decode_internal<Container: super::new_reader::ReaderContext>(
+        mut reader: NewReader<Container>,
     ) -> Result<Self, bun_core::Error> {
         // TODO(port): narrow error set
         let length = reader.length()?;
@@ -27,15 +27,21 @@ impl NotificationResponse {
 
         Ok(Self {
             pid: reader.int4()?,
-            channel: reader.read_z()?.to_owned(),
-            payload: reader.read_z()?.to_owned(),
+            channel: reader
+                .read_z()?
+                .to_owned()
+                .map_err(|_| bun_core::err!(OutOfMemory))?,
+            payload: reader
+                .read_z()?
+                .to_owned()
+                .map_err(|_| bun_core::err!(OutOfMemory))?,
         })
     }
 
     // Zig: `pub const decode = DecoderWrap(NotificationResponse, decodeInternal).decode;`
-    // TODO(port): `DecoderWrap` is a comptime type-returning fn parameterized by (Type, fn).
-    // In Rust this becomes a trait impl or macro; Phase B wires the actual `decode` entry point.
-    pub const DECODE: DecoderWrap<NotificationResponse> = DecoderWrap::new();
+    pub fn decode<Container: super::new_reader::ReaderContext>(context: Container) -> Result<Self, bun_core::Error> {
+        Self::decode_internal(NewReader { wrapped: context })
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

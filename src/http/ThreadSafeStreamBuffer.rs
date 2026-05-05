@@ -37,10 +37,20 @@ impl Callback {
 
 impl Default for ThreadSafeStreamBuffer {
     fn default() -> Self {
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_io::StreamBuffer (real impl gated; T0/T1 stub is unit struct w/o Default)
+            return Self {
+                buffer: StreamBuffer::default(),
+                mutex: Mutex::default(),
+                // .initExactRefs(2) — 1 for main thread and 1 for http thread
+                ref_count: AtomicU32::new(2),
+                callback: None,
+            };
+        }
         Self {
-            buffer: StreamBuffer::default(),
+            buffer: StreamBuffer,
             mutex: Mutex::default(),
-            // .initExactRefs(2) — 1 for main thread and 1 for http thread
             ref_count: AtomicU32::new(2),
             callback: None,
         }
@@ -50,8 +60,7 @@ impl Default for ThreadSafeStreamBuffer {
 // `bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{})`
 // → intrusive atomic refcount; ref/deref provided by IntrusiveArc over the
 //   embedded `ref_count` field. `deref` drops + deallocates on 0.
-pub type StreamBufferRef = bun_ptr::IntrusiveArc<ThreadSafeStreamBuffer>;
-// TODO(port): wire `ref_count` field offset / destructor into IntrusiveArc impl
+// TODO(port): wire `ref_count` field offset / destructor into bun_ptr::IntrusiveArc impl
 
 impl ThreadSafeStreamBuffer {
     /// `bun.TrivialNew(@This())` — heap-allocate with the given field values.
@@ -100,9 +109,13 @@ impl ThreadSafeStreamBuffer {
     /// This is exclusively called from the http thread.
     /// Buffer should be acquired before calling this.
     pub fn report_drain(&self) {
-        if self.buffer.is_empty() {
-            if let Some(callback) = &self.callback {
-                callback.call();
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_io::StreamBuffer::is_empty
+            if self.buffer.is_empty() {
+                if let Some(callback) = &self.callback {
+                    callback.call();
+                }
             }
         }
     }

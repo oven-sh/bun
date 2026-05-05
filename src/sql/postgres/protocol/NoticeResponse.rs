@@ -12,8 +12,8 @@ pub struct NoticeResponse {
 // automatically, so no explicit Drop body is needed.
 
 impl NoticeResponse {
-    pub fn decode_internal<Container>(
-        reader: NewReader<Container>,
+    pub fn decode_internal<Container: super::new_reader::ReaderContext>(
+        mut reader: NewReader<Container>,
     ) -> Result<Self, bun_core::Error> {
         // TODO(port): narrow error set
         let mut remaining_bytes = reader.length()?;
@@ -30,8 +30,8 @@ impl NoticeResponse {
     // Zig: pub const decode = DecoderWrap(NoticeResponse, decodeInternal).decode;
     // TODO(port): DecoderWrap is a comptime type-generator; Phase B should expose
     // this via a trait impl or macro in decoder_wrap.rs.
-    pub fn decode<Container>(reader: NewReader<Container>) -> Result<Self, bun_core::Error> {
-        DecoderWrap::decode::<Self, Container>(Self::decode_internal, reader)
+    pub fn decode<Container: super::new_reader::ReaderContext>(context: Container) -> Result<Self, bun_core::Error> {
+        Self::decode_internal(NewReader { wrapped: context })
     }
 }
 

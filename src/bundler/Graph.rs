@@ -2,23 +2,21 @@ use core::ptr::NonNull;
 
 use bun_alloc::Arena as ThreadLocalArena;
 use bun_collections::{BabyList, MultiArrayList};
-use bun_js_parser::server_component_boundary;
+use bun_js_parser::ServerComponentBoundary;
 use bun_js_parser::BundledAst as JSAst;
 use bun_logger as logger;
-use bun_resolver as resolver;
 use enum_map::EnumMap;
 
 use crate::options;
-use crate::IndexStringMap;
-use crate::{AdditionalFile, BundleV2, PathToSourceIndexMap, ThreadPool};
+use crate::IndexStringMap::IndexStringMap;
+use crate::PathToSourceIndexMap::PathToSourceIndexMap;
+use crate::{AdditionalFile, BundleV2, ThreadPool};
 
 pub use bun_js_parser::Index;
 pub use bun_js_parser::Ref;
 
-// TODO(port): `bun.ast.Index.Int` is a nested `pub const Int = u32;` on the Zig
-// `Index` struct; Rust cannot hang a type alias off a struct, so the parser
-// crate should expose this as `bun_js_parser::index::Int` (or re-export `u32`).
-type IndexInt = bun_js_parser::index::Int;
+// `bun.ast.Index.Int` — the underlying integer repr of `Index`.
+type IndexInt = u32;
 
 pub struct Graph {
     // TODO(port): lifetime — no direct LIFETIMES.tsv row for Graph.pool, but row 170
@@ -65,7 +63,10 @@ pub struct Graph {
 
     /// When Server Components is enabled, this holds a list of all boundary
     /// files. This happens for all files with a "use <side>" directive.
-    pub server_component_boundaries: server_component_boundary::List,
+    // TODO(b2-blocked): bun_js_parser::server_component_boundary::List — stub
+    // surface only exposes the singular `ServerComponentBoundary`. Retyped to a
+    // Vec until the real `List` lands.
+    pub server_component_boundaries: Vec<ServerComponentBoundary>,
 
     /// Track HTML imports from server-side code
     /// Each entry represents a server file importing an HTML file that needs a client build
@@ -103,7 +104,7 @@ pub struct InputFile {
     pub source: logger::Source,
     pub secondary_path: Box<[u8]>,
     pub loader: options::Loader,
-    pub side_effects: resolver::SideEffects,
+    pub side_effects: SideEffects,
     // PORT NOTE: Zig stored `allocator: std.mem.Allocator = bun.default_allocator`
     // here so deinit could free `source`/`secondary_path` with the right alloc.
     // In Rust the owned fields (Box/Vec) carry their allocator; field dropped.
@@ -136,20 +137,39 @@ impl Graph {
     ///
     /// Returns true if there were more tasks queued.
     pub fn drain_deferred_tasks(&mut self, transpiler: &mut BundleV2) -> bool {
-        transpiler.thread_lock.assert_locked();
+        #[cfg(any())]
+        {
+            transpiler.thread_lock.assert_locked();
 
-        if self.deferred_pending > 0 {
-            self.pending_items += self.deferred_pending;
-            self.deferred_pending = 0;
+            if self.deferred_pending > 0 {
+                self.pending_items += self.deferred_pending;
+                self.deferred_pending = 0;
 
-            transpiler.drain_defer_task.init();
-            transpiler.drain_defer_task.schedule();
+                transpiler.drain_defer_task.init();
+                transpiler.drain_defer_task.schedule();
 
-            return true;
+                return true;
+            }
+
+            return false;
         }
-
-        false
+        // TODO(b2-blocked): crate::bundle_v2::BundleV2 fields (`thread_lock`,
+        // `drain_defer_task`) — bundle_v2 module is still gated.
+        let _ = transpiler;
+        unimplemented!("b2-blocked: BundleV2 fields")
     }
+}
+
+// TODO(b2-blocked): bun_resolver::SideEffects — `bun_resolver` is not in this
+// crate's dependency set (tier-ordering cycle with bundler per resolver
+// Cargo.toml). Local mirror of the public enum so `InputFile` compiles.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum SideEffects {
+    #[default]
+    HasSideEffects,
+    NoSideEffectsPackageJson,
+    NoSideEffectsEmptyAst,
+    NoSideEffectsPureData,
 }
 
 // ──────────────────────────────────────────────────────────────────────────

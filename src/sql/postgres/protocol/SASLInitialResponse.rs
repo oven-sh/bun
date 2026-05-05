@@ -1,7 +1,7 @@
-use bun_sql::shared::Data;
-use bun_sql::postgres::types::int_types::int32;
-use bun_sql::postgres::protocol::new_writer::NewWriter;
-use bun_sql::postgres::protocol::write_wrap::WriteWrap;
+use crate::shared::Data;
+use crate::postgres::types::int_types::int32;
+use crate::postgres::protocol::new_writer::NewWriter;
+use crate::postgres::protocol::write_wrap::WriteWrap;
 
 pub struct SASLInitialResponse {
     pub mechanism: Data,
@@ -11,8 +11,8 @@ pub struct SASLInitialResponse {
 impl Default for SASLInitialResponse {
     fn default() -> Self {
         Self {
-            mechanism: Data::empty(),
-            data: Data::empty(),
+            mechanism: Data::Empty,
+            data: Data::Empty,
         }
     }
 }
@@ -21,7 +21,7 @@ impl Default for SASLInitialResponse {
 // (No explicit `impl Drop` needed — see PORTING.md §Idiom map: deinit.)
 
 impl SASLInitialResponse {
-    pub fn write_internal<Context>(
+    pub fn write_internal<Context: super::new_writer::WriterContext>(
         &self,
         writer: NewWriter<Context>,
     ) -> Result<(), bun_core::Error> {

@@ -1,5 +1,7 @@
+#[allow(unused_imports)]
 use crate::fs;
 use crate::package_json::PackageJSON;
+#[allow(unused_imports)]
 use bun_logger as logger;
 
 pub const IMPORT_PATH: &[u8] = b"/bun-vfs$$/node_modules/";
@@ -9,12 +11,17 @@ pub const IMPORT_PATH: &[u8] = b"/bun-vfs$$/node_modules/";
 const _: () = assert!(IMPORT_PATH.len() % 8 == 0);
 
 pub struct FallbackModule {
-    pub path: fs::Path,
+    // TODO(b2-blocked): bun_resolver::fs::Path — gated until fs.rs lands; opaque placeholder.
+    pub path: (),
     pub package_json: &'static PackageJSON,
     pub code: fn() -> &'static str,
 }
 
-impl FallbackModule {
+// TODO(b2-blocked): bun_resolver::fs::Path const ctor + bun_logger::Source::init_path_string const ctor + bun_core::runtime_embed_file
+// PORT NOTE: macros cannot live inside an `impl` block (parse error); hoisted to a gated
+// inline module so `#[cfg(any())]` can suppress them.
+#[cfg(any())]
+mod __init_macros {
     // This workaround exists to allow bun_core::runtime_embed_file to work.
     // Using `include_str!` forces you to wait for the native build to finish in
     // debug builds, even when you only changed JS builtins.
@@ -83,6 +90,8 @@ impl FallbackModule {
     }
 
     // Re-exported under the type's namespace to mirror Zig's `FallbackModule.init(...)` callsites.
+    // (`pub use X as init` inside `impl FallbackModule` is a Rust parse error; callers must use
+    // `__fallback_module_init!(...)` directly.)
     pub use __fallback_module_init as init;
 }
 
@@ -91,6 +100,8 @@ impl FallbackModule {
 // intractable, fall back to a `once_cell::Lazy<bun_collections::StringHashMap<FallbackModule>>`
 // (or a plain `match` on `&[u8]`) and leave a PERF(port) marker. Do NOT use
 // `std::collections::HashMap` (SipHash + nondeterministic iteration).
+// TODO(b2-blocked): bun_resolver::fs::Path const ctor + bun_resolver::package_json::PackageJSON const literal
+#[cfg(any())]
 pub static MAP: phf::Map<&'static [u8], FallbackModule> = phf::phf_map! {
     b"assert"         => __fallback_module_init!("assert"),
     b"buffer"         => __fallback_module_init!("buffer"),
@@ -128,9 +139,12 @@ pub fn contents_from_path(path: &[u8]) -> Option<&'static [u8]> {
         .position(|&b| b == b'/')
         .unwrap_or(module_name.len())];
 
+    // TODO(b2-blocked): MAP gated above (const-fn ctors).
+    #[cfg(any())]
     if let Some(module) = MAP.get(module_name) {
         return Some((module.code)().as_bytes());
     }
+    let _ = module_name;
 
     None
 }

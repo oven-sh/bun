@@ -7,34 +7,35 @@ pub struct DecodedLengthInt {
 
 // Length-encoded integer encoding/decoding
 pub fn encode_length_int(value: u64) -> BoundedArray<u8, 9> {
-    let mut array: BoundedArray<u8, 9> = BoundedArray::default();
-    if value < 0xfb {
-        array.len = 1;
-        array.buffer[0] = u8::try_from(value).unwrap();
+    // BoundedArray's storage is private; build into a stack buffer then copy in.
+    let mut buf = [0u8; 9];
+    let len: usize = if value < 0xfb {
+        buf[0] = u8::try_from(value).unwrap();
+        1
     } else if value < 0xffff {
-        array.len = 3;
-        array.buffer[0] = 0xfc;
-        array.buffer[1] = u8::try_from(value & 0xff).unwrap();
-        array.buffer[2] = u8::try_from((value >> 8) & 0xff).unwrap();
+        buf[0] = 0xfc;
+        buf[1] = u8::try_from(value & 0xff).unwrap();
+        buf[2] = u8::try_from((value >> 8) & 0xff).unwrap();
+        3
     } else if value < 0xffffff {
-        array.len = 4;
-        array.buffer[0] = 0xfd;
-        array.buffer[1] = u8::try_from(value & 0xff).unwrap();
-        array.buffer[2] = u8::try_from((value >> 8) & 0xff).unwrap();
-        array.buffer[3] = u8::try_from((value >> 16) & 0xff).unwrap();
+        buf[0] = 0xfd;
+        buf[1] = u8::try_from(value & 0xff).unwrap();
+        buf[2] = u8::try_from((value >> 8) & 0xff).unwrap();
+        buf[3] = u8::try_from((value >> 16) & 0xff).unwrap();
+        4
     } else {
-        array.len = 9;
-        array.buffer[0] = 0xfe;
-        array.buffer[1] = u8::try_from(value & 0xff).unwrap();
-        array.buffer[2] = u8::try_from((value >> 8) & 0xff).unwrap();
-        array.buffer[3] = u8::try_from((value >> 16) & 0xff).unwrap();
-        array.buffer[4] = u8::try_from((value >> 24) & 0xff).unwrap();
-        array.buffer[5] = u8::try_from((value >> 32) & 0xff).unwrap();
-        array.buffer[6] = u8::try_from((value >> 40) & 0xff).unwrap();
-        array.buffer[7] = u8::try_from((value >> 48) & 0xff).unwrap();
-        array.buffer[8] = u8::try_from((value >> 56) & 0xff).unwrap();
-    }
-    array
+        buf[0] = 0xfe;
+        buf[1] = u8::try_from(value & 0xff).unwrap();
+        buf[2] = u8::try_from((value >> 8) & 0xff).unwrap();
+        buf[3] = u8::try_from((value >> 16) & 0xff).unwrap();
+        buf[4] = u8::try_from((value >> 24) & 0xff).unwrap();
+        buf[5] = u8::try_from((value >> 32) & 0xff).unwrap();
+        buf[6] = u8::try_from((value >> 40) & 0xff).unwrap();
+        buf[7] = u8::try_from((value >> 48) & 0xff).unwrap();
+        buf[8] = u8::try_from((value >> 56) & 0xff).unwrap();
+        9
+    };
+    BoundedArray::from_slice(&buf[..len]).expect("len <= 9")
 }
 
 pub fn decode_length_int(bytes: &[u8]) -> Option<DecodedLengthInt> {

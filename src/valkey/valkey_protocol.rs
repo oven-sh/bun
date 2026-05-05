@@ -2,7 +2,6 @@ use core::fmt;
 
 use bstr::BStr;
 
-// TODO(b1): thiserror not in deps — derive removed; add manual Display/Error impl in B-2.
 #[derive(strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RedisError {
     AuthenticationFailed,
@@ -34,6 +33,15 @@ pub enum RedisError {
     IdleTimeout,
     NestingDepthExceeded,
 }
+
+impl fmt::Display for RedisError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Mirrors Zig `@errorName(err)` — variant name as &'static str.
+        f.write_str(<&'static str>::from(*self))
+    }
+}
+
+impl std::error::Error for RedisError {}
 
 impl From<RedisError> for bun_core::Error {
     fn from(e: RedisError) -> Self {

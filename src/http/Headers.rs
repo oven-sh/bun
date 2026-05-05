@@ -1,11 +1,17 @@
-use bun_collections::MultiArrayList;
 use bun_picohttp as picohttp;
-use bun_schema::api;
-use bun_str::strings;
+use bun_core::strings;
 
-// TODO(b0): HeaderName arrives in bun_http_types via move-in (TYPE_ONLY from
-// bun_runtime::webcore::fetch_headers::HeaderName)
-use bun_http_types::HeaderName;
+// `bun.schema.api.StringPointer` lives in bun_http_types (inlined there to
+// avoid a cross-tier dep on options_types). Same #[repr(C)] u32×2 layout.
+pub(crate) mod api {
+    pub use bun_http_types::ETag::StringPointer;
+}
+
+// TODO(b2-blocked): bun_http_types::HeaderName — arrives via move-in (TYPE_ONLY
+// from bun_runtime::webcore::fetch_headers::HeaderName); not yet present in T3.
+#[derive(Copy, Clone)]
+pub struct HeaderName(());
+impl HeaderName { pub const ContentType: Self = Self(()); }
 
 // ──────────────────────── cycle-break vtables ────────────────────────
 // `FetchHeaders` and `blob::Any` live in bun_runtime (T6); http is T5. The
@@ -79,13 +85,10 @@ impl<'a> AnyBlobRef<'a> {
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct Entry {
-    pub name: api::StringPointer,
-    pub value: api::StringPointer,
-}
-
-pub type EntryList = MultiArrayList<Entry>;
+// PORT NOTE: `Entry` + its `MultiArrayElement` impl live in bun_http_types
+// (T3) because the column layout is shared with ETag matching. Re-export
+// here so callers can keep writing `headers::Entry` / `headers::EntryList`.
+pub use bun_http_types::ETag::{HeaderEntry as Entry, HeaderEntryList as EntryList};
 
 #[derive(Default)]
 pub struct Headers {
@@ -103,16 +106,16 @@ impl Headers {
     // deleted — to_fetch_headers lives as an extension-trait method in bun_http_jsc.
 
     pub fn get(&self, name: &[u8]) -> Option<&[u8]> {
-        let entries = self.entries.slice();
-        // TODO(port): MultiArrayList<Entry> column accessors — assuming .items_name()/.items_value()
-        let names = entries.items_name();
-        let values = entries.items_value();
-        for (i, name_ptr) in names.iter().enumerate() {
-            if strings::eql_case_insensitive_ascii(self.as_str(*name_ptr), name, true) {
-                return Some(self.as_str(values[i]));
+        // PORT NOTE: Zig used `.items(.name)` / `.items(.value)` column slices.
+        // The Rust `MultiArrayList` lacks typed column accessors yet, so iterate
+        // by index via `.get(i)` (gathers both fields; same result, slightly
+        // more loads). // PERF(port): was column-slice iteration.
+        for i in 0..self.entries.len() {
+            let entry = self.entries.get(i);
+            if strings::eql_case_insensitive_ascii(self.as_str(entry.name), name, true) {
+                return Some(self.as_str(entry.value));
             }
         }
-
         None
     }
 
@@ -134,10 +137,9 @@ impl Headers {
             offset,
             length: value.len() as u32,
         };
-        self.entries.append(Entry {
-            name: name_ptr,
-            value: value_ptr,
-        });
+        self.entries
+            .append(Entry { name: name_ptr, value: value_ptr })
+            .expect("OOM"); // Zig: `try` propagated to bun.handleOom — crash on OOM, don't drop.
     }
 
     pub fn get_content_disposition(&self) -> Option<&[u8]> {
@@ -167,31 +169,34 @@ impl Headers {
 
         let mut buf_len: usize = 0;
         for header in headers {
-            buf_len += header.name.len() + header.value.len();
+            buf_len += header.name().len() + header.value().len();
         }
-        result.entries.ensure_total_capacity(header_count);
-        // TODO(port): MultiArrayList::set_len — Zig wrote `result.entries.len = headers.len`
-        result.entries.set_len(headers.len());
+        result.entries.ensure_total_capacity(header_count).expect("OOM"); // Zig: bun.handleOom
         result.buf.reserve_exact(buf_len);
         // SAFETY: capacity reserved above; bytes are fully initialized by the copy loop below.
         unsafe { result.buf.set_len(buf_len) };
         let mut offset: u32 = 0;
-        for (i, header) in headers.iter().enumerate() {
+        for header in headers {
+            let name = header.name();
+            let value = header.value();
             let name_offset = offset;
-            result.buf[offset as usize..][..header.name.len()].copy_from_slice(&header.name);
-            offset += header.name.len() as u32;
+            result.buf[offset as usize..][..name.len()].copy_from_slice(name);
+            offset += name.len() as u32;
             let value_offset = offset;
-            result.buf[offset as usize..][..header.value.len()].copy_from_slice(&header.value);
-            offset += header.value.len() as u32;
+            result.buf[offset as usize..][..value.len()].copy_from_slice(value);
+            offset += value.len() as u32;
 
-            result.entries.set(i, Entry {
+            // PORT NOTE: Zig pre-set `entries.len = headers.len` then `set(i, ..)`.
+            // Rust `MultiArrayList` lacks `set_len`; capacity was reserved above
+            // so use `append_assume_capacity` which is equivalent.
+            result.entries.append_assume_capacity(Entry {
                 name: api::StringPointer {
                     offset: name_offset,
-                    length: header.name.len() as u32,
+                    length: name.len() as u32,
                 },
                 value: api::StringPointer {
                     offset: value_offset,
-                    length: header.value.len() as u32,
+                    length: value.len() as u32,
                 },
             });
         }
@@ -199,6 +204,10 @@ impl Headers {
     }
 
     // PORT NOTE: was `!Headers`; all fallible calls were bun.handleOom-wrapped allocations.
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_collections::MultiArrayList::set_len + dual-mut column
+    // accessors (`slice_mut().items_name_value_mut()`); also needs
+    // bun_http_types::HeaderName for `fast_has`.
     pub fn from(fetch_headers_ref: Option<FetchHeadersRef<'_>>, options: Options<'_>) -> Headers {
         let mut header_count: u32 = 0;
         let mut buf_len: u32 = 0;
@@ -259,6 +268,9 @@ impl Headers {
     }
 }
 
+// TODO(b2-blocked): bun_collections::MultiArrayList::clone — Zig `clone()` deep-copied
+// entries + buf; the Rust `MultiArrayList<T>` has no `Clone` yet.
+#[cfg(any())]
 impl Clone for Headers {
     fn clone(&self) -> Self {
         Headers {

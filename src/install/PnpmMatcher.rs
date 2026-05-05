@@ -6,7 +6,7 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 use bun_alloc::AllocError;
 use bun_js_parser::ast;
 use bun_logger as logger;
-use bun_str::{strings, String as BunString};
+use bun_string::{escape_reg_exp, strings, String as BunString};
 
 // FORWARD_DECL(b0): bun_jsc::RegularExpression — opaque heap-allocated JSC regex.
 // Stored as raw NonNull<()> (NOT Box<ZST> — Box over a zero-sized opaque is a dangling
@@ -80,13 +80,10 @@ pub enum Behavior {
     HasExcludeAndIncludeMatchers,
 }
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+#[derive(Debug, strum::IntoStaticStr)]
 pub enum FromExprError {
-    #[error("OutOfMemory")]
     OutOfMemory,
-    #[error("InvalidRegExp")]
     InvalidRegExp,
-    #[error("UnexpectedExpr")]
     UnexpectedExpr,
 }
 
@@ -116,6 +113,8 @@ impl From<FromExprError> for bun_core::Error {
 }
 
 impl PnpmMatcher {
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_js_parser::ast::expr::Data (EString/EArray variants, .data, .loc, .as_string_cloned)
     pub fn from_expr(
         expr: &ast::Expr,
         log: &mut logger::Log,
@@ -219,12 +218,23 @@ impl PnpmMatcher {
         })
     }
 
+    #[cfg(not(any()))]
+    pub fn from_expr(
+        expr: &ast::expr::Expr,
+        log: &mut logger::Log,
+        source: &logger::Source,
+    ) -> Result<PnpmMatcher, FromExprError> {
+        // TODO(b2-blocked): bun_js_parser::ast::expr::Data
+        let _ = (expr, log, source);
+        todo!("b2-blocked: bun_js_parser::ast::expr::Data")
+    }
+
     pub fn is_match(&self, name: &[u8]) -> bool {
         if self.matchers.is_empty() {
             return false;
         }
 
-        let name_str = BunString::from_bytes(name);
+        let name_str = BunString::borrow_utf8(name);
 
         match self.behavior {
             Behavior::AllMatchersInclude => {
@@ -277,11 +287,9 @@ impl PnpmMatcher {
     }
 }
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+#[derive(Debug, strum::IntoStaticStr)]
 pub enum CreateMatcherError {
-    #[error("OutOfMemory")]
     OutOfMemory,
-    #[error("InvalidRegExp")]
     InvalidRegExp,
 }
 
@@ -303,7 +311,7 @@ impl From<CreateMatcherError> for bun_core::Error {
 fn create_matcher(raw: &[u8], buf: &mut Vec<u8>) -> Result<Matcher, CreateMatcherError> {
     buf.clear();
 
-    let mut trimmed = strings::trim(raw, strings::WHITESPACE_CHARS);
+    let mut trimmed = strings::trim(raw, &strings::WHITESPACE_CHARS);
 
     let mut is_exclude = false;
     if strings::starts_with_char(trimmed, b'!') {
@@ -320,10 +328,11 @@ fn create_matcher(raw: &[u8], buf: &mut Vec<u8>) -> Result<Matcher, CreateMatche
 
     // Writer.Allocating can only fail with OutOfMemory; Vec::push aborts on OOM (global mimalloc).
     buf.push(b'^');
-    strings::escape_reg_exp_for_package_name_matching(trimmed, buf);
+    // io::Write on &mut Vec<u8> is infallible.
+    let _ = escape_reg_exp::escape_reg_exp_for_package_name_matching(trimmed, buf);
     buf.push(b'$');
 
-    // PERF(port): was inline jsc::RegularExpression::init — now indirect via REGEX_COMPILE_HOOK.
+    // PERF(port): was inline jsc::RegularExpression::init — now indirect via REGEX_VTABLE.
     let regex = compile_regex(BunString::clone_utf8(buf.as_slice()))
         .ok_or(CreateMatcherError::InvalidRegExp)?;
 

@@ -1,14 +1,14 @@
 use core::ptr::NonNull;
 
-use bun_core::{Error, FeatureFlags, Output};
-use bun_str::MutableString;
+use bun_core::{Error, Output};
+use bun_string::MutableString;
 
 use crate::{
     CertificateInfo, Decompressor, Encoding, HTTPRequestBody, HTTPResponseMetadata,
-    extremely_verbose, http_thread,
+    extremely_verbose,
 };
 
-bun_output::declare_scope!(HTTPInternalState, hidden);
+bun_core::declare_scope!(HTTPInternalState, hidden);
 
 // TODO: reduce the size of this struct
 // Many of these fields can be moved to a packed struct and use less space
@@ -18,7 +18,7 @@ pub struct InternalState {
     /// pending response is the temporary storage for the response headers, url and status code
     /// this uses shared_response_headers_buf to store the headers
     /// this will be turned None once the metadata is cloned
-    pub pending_response: Option<bun_picohttp::Response>,
+    pub pending_response: Option<bun_picohttp::Response<'static>>,
 
     /// This is the cloned metadata containing the response headers, url and status code after the .headers phase are received
     /// will be turned None once returned to the user (the ownership is transferred to the user)
@@ -30,7 +30,7 @@ pub struct InternalState {
     pub transfer_encoding: Encoding,
     pub encoding: Encoding,
     pub content_encoding_i: u8,
-    pub chunked_decoder: bun_picohttp::PhrChunkedDecoder,
+    pub chunked_decoder: bun_picohttp::phr_chunked_decoder,
     pub decompressor: Decompressor,
     pub stage: Stage,
     /// This is owned by the user and should not be freed here
@@ -80,22 +80,23 @@ impl Default for InternalStateFlags {
 impl Default for InternalState {
     fn default() -> Self {
         Self {
-            response_message_buffer: MutableString::default(),
+            response_message_buffer: MutableString::init_empty(),
             pending_response: None,
             cloned_metadata: None,
             flags: InternalStateFlags::new(),
             transfer_encoding: Encoding::Identity,
             encoding: Encoding::Identity,
             content_encoding_i: u8::MAX,
-            chunked_decoder: bun_picohttp::PhrChunkedDecoder::default(),
+            // SAFETY: phr_chunked_decoder is #[repr(C)] POD; all-zero is a valid initial state.
+            chunked_decoder: unsafe { core::mem::zeroed() },
             decompressor: Decompressor::None,
             stage: Stage::Pending,
             body_out_str: None,
-            compressed_body: MutableString::default(),
+            compressed_body: MutableString::init_empty(),
             content_length: None,
             total_body_received: 0,
             request_body: b"" as *const [u8],
-            original_request_body: HTTPRequestBody::Bytes(Box::default()),
+            original_request_body: HTTPRequestBody::Bytes(b""),
             request_sent_len: 0,
             fail: None,
             request_stage: HTTPStage::Pending,
@@ -114,8 +115,8 @@ impl InternalState {
         InternalState {
             original_request_body: body,
             request_body,
-            compressed_body: MutableString::default(),
-            response_message_buffer: MutableString::default(),
+            compressed_body: MutableString::init_empty(),
+            response_message_buffer: MutableString::init_empty(),
             body_out_str: Some(NonNull::from(body_out_str)),
             stage: Stage::Pending,
             pending_response: None,
@@ -129,8 +130,8 @@ impl InternalState {
 
     pub fn reset(&mut self) {
         // PORT NOTE: allocator param dropped (global mimalloc).
-        self.compressed_body = MutableString::default();
-        self.response_message_buffer = MutableString::default();
+        self.compressed_body = MutableString::init_empty();
+        self.response_message_buffer = MutableString::init_empty();
 
         let body_msg = self.body_out_str;
         if let Some(body) = body_msg {
@@ -151,9 +152,9 @@ impl InternalState {
         // original_request_body.deinit() → drops on assignment below
         *self = InternalState {
             body_out_str: body_msg,
-            compressed_body: MutableString::default(),
-            response_message_buffer: MutableString::default(),
-            original_request_body: HTTPRequestBody::Bytes(Box::default()),
+            compressed_body: MutableString::init_empty(),
+            response_message_buffer: MutableString::init_empty(),
+            original_request_body: HTTPRequestBody::Bytes(b""),
             request_body: b"" as *const [u8],
             certificate_info: None,
             flags: InternalStateFlags::new(),
@@ -185,6 +186,10 @@ impl InternalState {
     }
 
     // TODO(port): narrow error set
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_libdeflate::Decompressor (no `bun_libdeflate` crate; only
+    // `bun_libdeflate_sys`); also depends on crate::http_thread().deflater() (gated)
+    // and Decompressor::update_buffers (re-gated above).
     pub fn decompress_bytes(
         &mut self,
         buffer: &[u8],
@@ -324,6 +329,8 @@ impl InternalState {
     }
 
     // TODO(port): narrow error set
+    #[cfg(any())]
+    // TODO(b2-blocked): see decompress_bytes
     pub fn decompress(
         &mut self,
         buffer: &MutableString,
@@ -336,6 +343,8 @@ impl InternalState {
     }
 
     // TODO(port): narrow error set
+    #[cfg(any())]
+    // TODO(b2-blocked): see decompress_bytes
     pub fn process_body_buffer(
         &mut self,
         buffer: &MutableString,

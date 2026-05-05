@@ -1,7 +1,7 @@
-use bun_sql::postgres::any_postgres_error::AnyPostgresError;
-use bun_sql::postgres::protocol::new_reader::NewReader;
-use bun_sql::shared::data::Data;
-use bun_str::strings;
+use crate::postgres::any_postgres_error::AnyPostgresError;
+use crate::postgres::protocol::new_reader::{NewReader, ReaderContext};
+use crate::shared::data::Data;
+use bun_string::strings;
 
 // TODO(port): lifetime — `offset`/`message_start` are `*usize` fields not present in
 // LIFETIMES.tsv; classified here as BORROW_PARAM by inspection (struct is named
@@ -62,8 +62,8 @@ impl<'a> StackReader<'a> {
         // PORT NOTE: reshaped for borrowck — copy the &'a [u8] out before slicing so the
         // returned Data borrows 'a, not &mut self.
         let buffer: &'a [u8] = self.buffer;
-        // TODO(port): Data is a Zig union(enum); assuming Rust enum variant `Temporary(&[u8])`.
-        Ok(Data::Temporary(&buffer[offset..*self.offset]))
+        // Data::Temporary stores a raw fat pointer (see shared/Data.rs).
+        Ok(Data::Temporary(&buffer[offset..*self.offset] as *const [u8]))
     }
 
     pub fn read_z(&mut self) -> Result<Data, AnyPostgresError> {
@@ -74,11 +74,20 @@ impl<'a> StackReader<'a> {
         if let Some(zero) = strings::index_of_char(remaining, 0) {
             let zero = zero as usize;
             self.skip(zero + 1);
-            return Ok(Data::Temporary(&remaining[0..zero]));
+            return Ok(Data::Temporary(&remaining[0..zero] as *const [u8]));
         }
 
         Err(AnyPostgresError::ShortRead)
     }
+}
+
+impl<'a> ReaderContext for StackReader<'a> {
+    fn mark_message_start(&mut self) { Self::mark_message_start(self) }
+    fn peek(&self) -> &[u8] { Self::peek(self) }
+    fn skip(&mut self, count: usize) { Self::skip(self, count) }
+    fn ensure_length(&mut self, count: usize) -> bool { Self::ensure_length(self, count) }
+    fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> { Self::read(self, count) }
+    fn read_z(&mut self) -> Result<Data, AnyPostgresError> { Self::read_z(self) }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

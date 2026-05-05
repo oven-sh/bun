@@ -1,11 +1,11 @@
 // https://dev.mysql.com/doc/dev/mysql-server/8.4.6/page_protocol_connection_phase_packets_protocol_ssl_request.html
 // SSLRequest
 
-use bun_sql::mysql::Capabilities;
-use bun_sql::mysql::protocol::character_set::CharacterSet;
-use bun_sql::mysql::protocol::new_writer::{NewWriter, write_wrap};
+use crate::mysql::Capabilities;
+use crate::mysql::protocol::character_set::CharacterSet;
+use crate::mysql::protocol::new_writer::{NewWriter, write_wrap};
 
-bun_output::declare_scope!(MySQLConnection, hidden);
+bun_core::declare_scope!(MySQLConnection, hidden);
 
 pub struct SSLRequest {
     pub capability_flags: Capabilities,
@@ -32,7 +32,7 @@ impl SSLRequest {
     // Empty deinit → no Drop impl needed.
 
     // TODO(port): narrow error set
-    pub fn write_internal<Context>(
+    pub fn write_internal<Context: super::new_writer::WriterContext>(
         &mut self,
         writer: &mut NewWriter<Context>,
     ) -> Result<(), bun_core::Error> {
@@ -43,7 +43,7 @@ impl SSLRequest {
         // Write client capabilities flags (4 bytes)
         let caps = self.capability_flags.to_int();
         writer.int4(caps)?;
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             MySQLConnection,
             "Client capabilities: [{}] 0x{:08x}",
             self.capability_flags,

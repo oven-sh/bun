@@ -9,12 +9,12 @@
 // ──────────────────────────────────────────────────────────────────────────
 
 // Submodules: Phase-A drafts gated; not yet compiling.
-#[cfg(any())] pub mod data_url;
-#[cfg(any())] pub mod dir_info;
+pub mod data_url;
+pub mod dir_info;
 #[cfg(any())] pub mod fs;
-#[cfg(any())] pub mod node_fallbacks;
-#[cfg(any())] pub mod package_json;
-#[cfg(any())] pub mod tsconfig_json;
+pub mod node_fallbacks;
+pub mod package_json;
+pub mod tsconfig_json;
 
 // ── Stub surface ──────────────────────────────────────────────────────────
 // Opaque placeholder types. TODO(b1): replace with real ports in B-2.
@@ -23,14 +23,14 @@
 pub struct Resolver(());
 /// Stub for resolve `Result`.
 pub struct Result(());
-/// Stub for `DataURL`.
-pub struct DataURL(());
-/// Stub for `PackageJSON`.
-pub struct PackageJSON(());
-/// Stub for `TSConfigJSON`.
-pub struct TSConfigJSON(());
-/// Stub for `DirInfo`.
-pub struct DirInfo(());
+/// Re-export real `DataURL`.
+pub use data_url::DataURL;
+/// Re-export real `PackageJSON`.
+pub use package_json::PackageJSON;
+/// Re-export real `TSConfigJSON`.
+pub use tsconfig_json::TSConfigJSON;
+/// Re-export real `DirInfo`.
+pub use dir_info::DirInfo;
 /// Stub for filesystem `Path`.
 pub struct Path(());
 /// Stub for `PathPair`.
@@ -39,8 +39,8 @@ pub struct PathPair(());
 pub struct MatchResult(());
 /// Stub for `DebugLogs`.
 pub struct DebugLogs(());
-/// Stub for `GlobalCache` (re-export target missing).
-pub type GlobalCache = ();
+/// Re-export real `GlobalCache`.
+pub use bun_options_types::GlobalCache::GlobalCache;
 /// Stub for `RootPathPair`.
 pub struct RootPathPair(());
 /// Stub for `SideEffectsData`.
@@ -59,28 +59,29 @@ pub mod fs {
     pub type Entry = ();
     pub type DirEntry = ();
 }
-pub mod package_json {
-    pub type PackageJSON = super::PackageJSON;
-    pub type BrowserMap = ();
-    pub type ESModule = ();
-    pub type MainField = ();
-}
-pub mod tsconfig_json {
-    pub type TSConfigJSON = super::TSConfigJSON;
-}
-pub mod dir_info {
-    pub type DirInfo = super::DirInfo;
-}
-pub mod data_url {
-    pub type DataURL = super::DataURL;
-    pub type PercentEncoding = ();
-}
-pub mod node_fallbacks {
-    pub type FallbackModule = ();
+pub fn is_package_path(path: &[u8]) -> bool {
+    // Always check for posix absolute paths (starts with "/")
+    // But don't check window's style on posix
+    // For a more in depth explanation, look above where `isPackagePathNotAbsolute` is used.
+    !bun_paths::is_absolute(path) && is_package_path_not_absolute(path)
 }
 
-pub fn is_package_path(_path: &[u8]) -> bool { todo!("b1 stub: is_package_path") }
-pub fn is_package_path_not_absolute(_p: &[u8]) -> bool { todo!("b1 stub") }
+pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
+    if cfg!(debug_assertions) {
+        debug_assert!(!bun_paths::is_absolute(non_absolute_path));
+        debug_assert!(!non_absolute_path.starts_with(b"/"));
+    }
+
+    !non_absolute_path.starts_with(b"./")
+        && !non_absolute_path.starts_with(b"../")
+        && non_absolute_path != b"."
+        && non_absolute_path != b".."
+        && if cfg!(windows) {
+            !non_absolute_path.starts_with(b".\\") && !non_absolute_path.starts_with(b"..\\")
+        } else {
+            true
+        }
+}
 
 // TODO(b1): missing peer-crate symbols referenced by Phase-A body:
 //   bun_bundler::{cache, options} — crate does not compile

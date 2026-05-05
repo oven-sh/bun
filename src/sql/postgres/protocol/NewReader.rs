@@ -1,7 +1,7 @@
-use bun_sql::postgres::AnyPostgresError;
-use bun_sql::postgres::types::int_types::{PostgresInt32, PostgresShort};
-use bun_sql::shared::Data;
-use bun_str::String as BunString;
+use crate::postgres::AnyPostgresError;
+use crate::postgres::types::int_types::{PostgresInt32, PostgresShort};
+use crate::shared::Data;
+use bun_string::String as BunString;
 
 /// Trait capturing the methods `NewReaderWrap` expected as comptime fn params.
 /// Zig passed these as `comptime fn(ctx: Context) ...` arguments and `NewReader`
@@ -25,6 +25,21 @@ pub trait ProtocolInt: Sized + Copy + Eq {
     const SIZE: usize;
     fn from_be_slice(bytes: &[u8]) -> Self;
 }
+
+macro_rules! impl_protocol_int {
+    ($($t:ty),*) => {$(
+        impl ProtocolInt for $t {
+            const SIZE: usize = core::mem::size_of::<$t>();
+            #[inline]
+            fn from_be_slice(bytes: &[u8]) -> Self {
+                let mut buf = [0u8; core::mem::size_of::<$t>()];
+                buf.copy_from_slice(&bytes[..Self::SIZE]);
+                <$t>::from_be_bytes(buf)
+            }
+        }
+    )*};
+}
+impl_protocol_int!(u8, i8, u16, i16, u32, i32, u64, i64);
 
 // Zig: `fn NewReaderWrap(comptime Context: type, comptime markMessageStartFn_, ...) type { return struct { wrapped: Context, ... } }`
 // The fn-pointer params collapse into the `ReaderContext` trait bound.
@@ -114,9 +129,9 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
 
     pub fn length(&mut self) -> Result<PostgresInt32, AnyPostgresError> {
         let expected = self.int::<PostgresInt32>()?;
-        if expected > -1 {
-            self.ensure_capacity(usize::try_from(expected.saturating_sub(4)).unwrap())?;
-        }
+        // PORT NOTE: Zig `expected > -1` — `int4` is u32 so always nonnegative; preserved
+        // as the saturating sub guarding underflow when len < 4.
+        self.ensure_capacity(expected.saturating_sub(4) as usize)?;
 
         Ok(expected)
     }
@@ -127,12 +142,14 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
         self.read(count)
     }
 
+    #[cfg(any())]
     pub fn string(&mut self) -> Result<BunString, AnyPostgresError> {
         let result = self.read_z()?;
-        // TODO(port): Zig `borrowUTF8` borrows `result.slice()` then drops `result`
-        // via `defer result.deinit()` — that would dangle in Rust. Phase B must
-        // confirm whether `Data` here is always a borrow into the connection
-        // buffer (so the slice outlives `result`), or switch to an owning ctor.
+        // TODO(b2-blocked): bun_string::String::borrow_utf8 — Zig `borrowUTF8` borrows
+        // `result.slice()` then drops `result` via `defer result.deinit()`, which
+        // would dangle in Rust. The slice points into the connection buffer (Data is
+        // Temporary here), so the borrow outlives `result`, but `borrow_utf8`'s
+        // current signature can't express that. Re-enable once lifetime is settled.
         Ok(BunString::borrow_utf8(result.slice()))
     }
 }

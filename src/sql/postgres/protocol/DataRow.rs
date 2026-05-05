@@ -1,4 +1,4 @@
-use crate::postgres::protocol::NewReader;
+use crate::postgres::protocol::new_reader::{NewReader, ReaderContext};
 use crate::postgres::AnyPostgresError;
 use crate::shared::Data;
 
@@ -8,7 +8,7 @@ use crate::shared::Data;
 // `comptime ContextType: type, reader: NewReader(ContextType)` is the paired-param spelling of a
 // generic reader → `reader: &mut NewReader<R>`.
 // `comptime forEach: fn(...)` → `impl FnMut` (monomorphized, matches Zig comptime).
-pub fn decode<C: Copy, R>(
+pub fn decode<C: Copy, R: ReaderContext>(
     context: C,
     reader: &mut NewReader<R>,
     mut for_each: impl FnMut(C, u32, Option<&mut Data>) -> Result<bool, AnyPostgresError>,

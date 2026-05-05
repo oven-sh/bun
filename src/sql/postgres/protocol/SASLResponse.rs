@@ -12,7 +12,7 @@ pub struct SASLResponse {
 // (PORTING.md: delete deinit bodies that only free/deinit owned fields.)
 
 impl SASLResponse {
-    pub fn write_internal<Context>(
+    pub fn write_internal<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
     ) -> Result<(), bun_core::Error> {
@@ -22,7 +22,8 @@ impl SASLResponse {
         let mut header = [0u8; 5];
         header[0] = b'p';
         // std.mem.toBytes(Int32(count)) — Int32 byte-swaps to network order, then take native bytes
-        header[1..5].copy_from_slice(&int32(count).to_ne_bytes());
+        // `int32(count)` already returns the big-endian `[u8; 4]`.
+        header[1..5].copy_from_slice(&int32(count));
         writer.write(&header)?;
         writer.write(data)?;
         Ok(())
@@ -31,11 +32,11 @@ impl SASLResponse {
     // pub const write = WriteWrap(@This(), writeInternal).write;
     // TODO(port): WriteWrap is a type-generating fn that wraps write_internal; Phase B
     // wires this once WriteWrap's Rust shape (trait or macro) is settled.
-    pub fn write<Context>(
+    pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
     ) -> Result<(), bun_core::Error> {
-        WriteWrap::write(self, writer, Self::write_internal)
+        self.write_internal(writer)
     }
 }
 

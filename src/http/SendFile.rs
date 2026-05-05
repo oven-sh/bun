@@ -1,10 +1,8 @@
 use core::ptr;
 
-use bun_core::{self, FeatureFlags};
+use bun_core::feature_flags;
 use bun_sys::{self, Fd};
 use bun_url::URL;
-
-use crate::NewHTTPContext;
 
 pub struct SendFile {
     pub fd: Fd,
@@ -16,17 +14,21 @@ pub struct SendFile {
 impl SendFile {
     pub fn is_eligible(url: &URL) -> bool {
         // `if cfg!()` is fine here: both branches type-check (no platform-only items referenced).
-        if cfg!(windows) || !FeatureFlags::STREAMING_FILE_UPLOADS_FOR_HTTP_CLIENT {
+        if cfg!(windows) || !feature_flags::STREAMING_FILE_UPLOADS_FOR_HTTP_CLIENT {
             return false;
         }
         url.is_http() && url.href.len() > 0
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_sys::linux::sendfile / bun_sys::c::sendfile / bun_sys::Errno
+    // (raw sendfile FFI not yet exported from bun_sys; also depends on
+    // crate::NewHTTPContext::<false>::HTTPSocket which is gated in lib.rs)
     pub fn write(
         &mut self,
         // TODO(port): Zig `NewHTTPContext(false).HTTPSocket` — nested type of a type-returning fn.
         // Phase B: confirm whether this becomes `HTTPSocket<false>` or an associated type.
-        socket: NewHTTPContext::<false>::HTTPSocket,
+        socket: crate::NewHTTPContext::<false>::HTTPSocket,
     ) -> Status {
         // Zig u63 max == i64::MAX. Clamp `remain` so the signed sendfile count cannot overflow.
         let adjusted_count_temporary: u64 = (self.remain as u64).min(i64::MAX as u64);

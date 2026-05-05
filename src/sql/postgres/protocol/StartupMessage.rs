@@ -4,7 +4,7 @@ use crate::shared::Data;
 use super::new_writer::NewWriter;
 use super::write_wrap::WriteWrap;
 use super::z_helpers::z_field_count;
-use crate::postgres::types::int_types::{Int32, int4};
+use crate::postgres::types::int_types::{int32, int4};
 
 pub struct StartupMessage {
     pub user: Data,
@@ -17,14 +17,14 @@ impl Default for StartupMessage {
         Self {
             user: Data::default(),
             database: Data::default(),
-            options: Data::empty(),
+            options: Data::Empty,
         }
     }
 }
 
 impl StartupMessage {
     // TODO(port): narrow error set
-    pub fn write_internal<Context>(
+    pub fn write_internal<Context: super::new_writer::WriterContext>(
         &self,
         writer: NewWriter<Context>,
     ) -> Result<(), bun_core::Error> {
@@ -39,7 +39,7 @@ impl StartupMessage {
             + options.len()
             + 1;
 
-        let header = Int32::new(count as u32).to_bytes();
+        let header = int32(count as u32);
         writer.write(&header)?;
         writer.int4(196608)?;
 
@@ -68,11 +68,11 @@ impl StartupMessage {
     // TODO(port): `pub const write = WriteWrap(@This(), writeInternal).write;` —
     // WriteWrap is a comptime type-generator that wraps write_internal. Phase B
     // should express this as a trait impl or macro on WriteWrap.
-    pub fn write<Context>(
+    pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: NewWriter<Context>,
     ) -> Result<(), bun_core::Error> {
-        WriteWrap::write(self, writer, Self::write_internal)
+        self.write_internal(writer)
     }
 }
 

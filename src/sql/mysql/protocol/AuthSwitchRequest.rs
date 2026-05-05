@@ -1,7 +1,7 @@
-use bun_str::strings;
+use bun_string::strings;
 
 use crate::shared::Data;
-use super::new_reader::{NewReader, decoder_wrap};
+use super::new_reader::{NewReader, ReaderContext};
 
 pub struct AuthSwitchRequest {
     pub header: u8,
@@ -27,7 +27,7 @@ impl Default for AuthSwitchRequest {
 
 impl AuthSwitchRequest {
     // TODO(port): narrow error set (Zig: error.InvalidAuthSwitchRequest + reader errors)
-    pub fn decode_internal<Context>(
+    pub fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
     ) -> Result<(), bun_core::Error> {
@@ -43,21 +43,23 @@ impl AuthSwitchRequest {
         if let Some(zero) = strings::index_of_char(remaining_slice, 0) {
             let zero = zero as usize;
             // EOF String
-            self.plugin_name = Data::Temporary(&remaining_slice[0..zero]);
+            self.plugin_name = Data::Temporary(&remaining_slice[0..zero] as *const [u8]);
             // End Of The Packet String
-            self.plugin_data = Data::Temporary(&remaining_slice[zero + 1..]);
+            self.plugin_data = Data::Temporary(&remaining_slice[zero + 1..] as *const [u8]);
             return Ok(());
         }
         Err(bun_core::err!("InvalidAuthSwitchRequest"))
     }
 }
 
-// TODO(port): `decoderWrap(AuthSwitchRequest, decodeInternal).decode` — exact Rust shape
-// of `decoder_wrap` (macro vs generic fn) is decided in NewReader.rs; wire in Phase B.
-pub use self::__decode::decode;
-mod __decode {
-    use super::*;
-    decoder_wrap!(AuthSwitchRequest, decode_internal);
+// Zig: `pub const decode = decoderWrap(AuthSwitchRequest, decodeInternal).decode;`
+impl AuthSwitchRequest {
+    pub fn decode<Context: ReaderContext>(
+        &mut self,
+        context: Context,
+    ) -> Result<(), bun_core::Error> {
+        self.decode_internal(NewReader { wrapped: context })
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

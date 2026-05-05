@@ -58,8 +58,8 @@ impl HPACK {
         // SAFETY: FFI call into c-bindings.cpp; mi_malloc/mi_free are valid C-ABI fn pointers.
         let ptr = unsafe {
             lshpack_wrapper_init(
-                Some(bun_alloc::mi_malloc),
-                Some(bun_alloc::mi_free),
+                Some(bun_alloc::mimalloc::mi_malloc),
+                Some(bun_alloc::mimalloc::mi_free),
                 max_capacity as usize,
             )
         };

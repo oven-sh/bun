@@ -56,7 +56,7 @@
 //  varbit                                |  1562 |     1563
 //  numeric                               |  1700 |     1231
 
-use super::int_types::Short;
+use super::int_types::short as Short;
 
 // Zig: `enum(short) { ..., _ }` — non-exhaustive (any `short` value is a valid `Tag`).
 // A `#[repr(i16)] enum` cannot hold arbitrary values, so model as a transparent newtype
@@ -389,23 +389,25 @@ impl<T: Copy> PostgresBinarySingleDimensionArray<T> {
 unsafe fn byte_swap_same_size<T: Copy>(val: T) -> T {
     // SAFETY: T is Copy and size_of::<T>() ∈ {2,4,8}; transmute_copy is a same-size
     // bitcast to/from the matching uN, mirroring Zig `@bitCast(@byteSwap(@bitCast(val)))`.
-    match core::mem::size_of::<T>() {
-        4 => {
-            let bits: u32 = core::mem::transmute_copy(&val);
-            let swapped = bits.swap_bytes();
-            core::mem::transmute_copy(&swapped)
+    unsafe {
+        match core::mem::size_of::<T>() {
+            4 => {
+                let bits: u32 = core::mem::transmute_copy(&val);
+                let swapped = bits.swap_bytes();
+                core::mem::transmute_copy(&swapped)
+            }
+            8 => {
+                let bits: u64 = core::mem::transmute_copy(&val);
+                let swapped = bits.swap_bytes();
+                core::mem::transmute_copy(&swapped)
+            }
+            2 => {
+                let bits: u16 = core::mem::transmute_copy(&val);
+                let swapped = bits.swap_bytes();
+                core::mem::transmute_copy(&swapped)
+            }
+            _ => unreachable!(),
         }
-        8 => {
-            let bits: u64 = core::mem::transmute_copy(&val);
-            let swapped = bits.swap_bytes();
-            core::mem::transmute_copy(&swapped)
-        }
-        2 => {
-            let bits: u16 = core::mem::transmute_copy(&val);
-            let swapped = bits.swap_bytes();
-            core::mem::transmute_copy(&swapped)
-        }
-        _ => unreachable!(),
     }
 }
 

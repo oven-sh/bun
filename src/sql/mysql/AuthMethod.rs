@@ -1,5 +1,3 @@
-use crate::mysql::protocol::auth;
-
 // MySQL authentication methods
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum AuthMethod {
@@ -22,15 +20,22 @@ impl AuthMethod {
 
         let len = self.scramble_length();
 
-        match self {
-            AuthMethod::MysqlNativePassword => {
-                buf[..len].copy_from_slice(&auth::mysql_native_password::scramble(password, auth_data)?);
-            }
-            AuthMethod::CachingSha2Password => {
-                buf[..len].copy_from_slice(&auth::caching_sha2_password::scramble(password, auth_data)?);
-            }
-            AuthMethod::Sha256Password => {
-                buf[..len].copy_from_slice(&auth::caching_sha2_password::scramble(password, auth_data)?);
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): crate::mysql::protocol::auth — depends on
+            // bun_boringssl::{Sha1, Sha256, Rsa} which is not yet available at
+            // this tier. Re-enable once protocol::auth is un-gated.
+            use crate::mysql::protocol::auth;
+            match self {
+                AuthMethod::MysqlNativePassword => {
+                    buf[..len].copy_from_slice(&auth::mysql_native_password::scramble(password, auth_data)?);
+                }
+                AuthMethod::CachingSha2Password => {
+                    buf[..len].copy_from_slice(&auth::caching_sha2_password::scramble(password, auth_data)?);
+                }
+                AuthMethod::Sha256Password => {
+                    buf[..len].copy_from_slice(&auth::caching_sha2_password::scramble(password, auth_data)?);
+                }
             }
         }
 

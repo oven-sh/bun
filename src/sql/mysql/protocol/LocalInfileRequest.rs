@@ -1,5 +1,5 @@
 use crate::shared::Data;
-use super::new_reader::{NewReader, decoder_wrap};
+use super::new_reader::{NewReader, ReaderContext};
 
 pub struct LocalInfileRequest {
     pub filename: Data,
@@ -23,7 +23,7 @@ impl Default for LocalInfileRequest {
 
 impl LocalInfileRequest {
     // TODO(port): narrow error set
-    pub fn decode_internal<Context>(
+    pub fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
     ) -> Result<(), bun_core::Error> {
@@ -32,15 +32,18 @@ impl LocalInfileRequest {
             return Err(bun_core::err!("InvalidLocalInfileRequest"));
         }
 
-        self.filename = reader.read(self.packet_size - 1)?;
+        self.filename = reader.read((self.packet_size - 1) as usize)?;
         Ok(())
     }
 
     // Zig: `pub const decode = decoderWrap(LocalInfileRequest, decodeInternal).decode;`
     // TODO(port): `decoderWrap` is a comptime type-returning wrapper in NewReader.zig.
     // Phase B should express it as a trait/macro; for now forward through the helper.
-    pub fn decode(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
-        decoder_wrap::<Self, _>(self, Self::decode_internal, bytes)
+    pub fn decode<Context: ReaderContext>(
+        &mut self,
+        context: Context,
+    ) -> Result<(), bun_core::Error> {
+        self.decode_internal(NewReader { wrapped: context })
     }
 }
 

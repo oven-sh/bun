@@ -11,12 +11,21 @@ impl ConfigVersion {
     pub const CURRENT: ConfigVersion = ConfigVersion::V1;
 
     pub fn from_expr(expr: Expr) -> Option<ConfigVersion> {
-        // TODO(port): exact shape of `Expr::data` / `ENumber` variant in bun_js_parser
-        let bun_js_parser::ExprData::ENumber(e_number) = &expr.data else {
-            return None;
+        #[cfg(any())]
+        let version: f64 = {
+            // TODO(b2-blocked): bun_js_parser::ast::expr::Data (ENumber variant)
+            let bun_js_parser::ast::expr::Data::ENumber(e_number) = &expr.data else {
+                return None;
+            };
+            e_number.value
+        };
+        #[cfg(not(any()))]
+        let version: f64 = {
+            // TODO(b2-blocked): bun_js_parser::ast::expr::Data (ENumber variant)
+            let _ = expr;
+            todo!("b2-blocked: bun_js_parser::ast::expr::Data")
         };
 
-        let version: f64 = e_number.value;
         if version == 0.0 {
             return Some(ConfigVersion::V0);
         } else if version == 1.0 {

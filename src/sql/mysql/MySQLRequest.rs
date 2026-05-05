@@ -1,14 +1,14 @@
 use super::protocol::command_type::CommandType;
-use super::protocol::new_writer::NewWriter;
+use super::protocol::new_writer::{NewWriter, WriterContext};
 
-bun_output::declare_scope!(MySQLRequest, visible);
+bun_core::declare_scope!(MySQLRequest, visible);
 
-pub fn execute_query<Context>(
+pub fn execute_query<Context: WriterContext>(
     query: &[u8],
     mut writer: NewWriter<Context>,
 ) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
-    bun_output::scoped_log!(
+    bun_core::scoped_log!(
         MySQLRequest,
         "executeQuery len: {} {}",
         query.len(),
@@ -23,12 +23,12 @@ pub fn execute_query<Context>(
     Ok(())
 }
 
-pub fn prepare_request<Context>(
+pub fn prepare_request<Context: WriterContext>(
     query: &[u8],
     mut writer: NewWriter<Context>,
 ) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
-    bun_output::scoped_log!(MySQLRequest, "prepareRequest {}", bstr::BStr::new(query));
+    bun_core::scoped_log!(MySQLRequest, "prepareRequest {}", bstr::BStr::new(query));
     let mut packet = writer.start(0)?;
     writer.int1(CommandType::COM_STMT_PREPARE as u8)?;
     writer.write(query)?;

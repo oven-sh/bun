@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use crate::SendFile;
 use crate::ThreadSafeStreamBuffer;
 
@@ -12,16 +10,28 @@ pub enum HTTPRequestBody {
 }
 
 pub struct Stream {
-    pub buffer: Option<Arc<ThreadSafeStreamBuffer>>,
+    // PORT NOTE: ThreadSafeStreamBuffer carries an *intrusive* atomic refcount and
+    // is round-tripped as a raw pointer between the main thread and the HTTP
+    // thread, so per §Pointers we keep the intrusive form (raw `*mut T` + manual
+    // ref/deref) instead of `Arc<T>`.
+    pub buffer: Option<core::ptr::NonNull<ThreadSafeStreamBuffer>>,
     pub ended: bool,
 }
 
 impl Stream {
     pub fn detach(&mut self) {
         if let Some(buffer) = self.buffer.take() {
-            // Arc::drop decrements the refcount (matches `buffer.deref()`).
-            drop(buffer);
+            // matches Zig `buffer.deref()` — intrusive refcount decrement.
+            ThreadSafeStreamBuffer::deref(buffer.as_ptr());
         }
+    }
+}
+
+// Zig `deinit` calls `stream.detach()` to deref the intrusive count. The field
+// is `NonNull<T>`, not `Arc<T>`, so this MUST be explicit — no auto-Drop covers it.
+impl Drop for Stream {
+    fn drop(&mut self) {
+        self.detach();
     }
 }
 
@@ -29,10 +39,6 @@ impl HTTPRequestBody {
     pub fn is_stream(&self) -> bool {
         matches!(self, HTTPRequestBody::Stream(_))
     }
-
-    // PORT NOTE: Zig `deinit` only called `stream.detach()` (drops the Arc) and was a
-    // no-op for `.bytes` / `.sendfile`. Rust drops `Option<Arc<_>>` automatically, so
-    // no explicit `Drop` impl is needed.
 
     pub fn len(&self) -> usize {
         match self {

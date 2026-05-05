@@ -8,10 +8,10 @@ use bun_core::{self, err};
 use bun_sha::{SHA1, SHA256};
 
 use crate::shared::Data;
-use super::new_reader::{decoder_wrap, NewReader};
+use super::new_reader::{NewReader, ReaderContext};
 use super::new_writer::{write_wrap, NewWriter};
 
-bun_output::declare_scope!(Auth, hidden);
+bun_core::declare_scope!(Auth, hidden);
 
 pub mod mysql_native_password {
     use super::*;
@@ -123,12 +123,12 @@ pub mod caching_sha2_password {
         // explicit Drop impl needed here.
 
         // TODO(port): narrow error set
-        pub fn decode_internal<Context>(
+        pub fn decode_internal<Context: ReaderContext>(
             &mut self,
             reader: NewReader<Context>,
         ) -> Result<(), bun_core::Error> {
             let status: u8 = reader.int::<u8>()?;
-            bun_output::scoped_log!(Auth, "FastAuthStatus: {}", status);
+            bun_core::scoped_log!(Auth, "FastAuthStatus: {}", status);
             self.status = FastAuthStatus::from_raw(status);
 
             // Read remaining data if any
@@ -141,7 +141,7 @@ pub mod caching_sha2_password {
 
         // TODO(port): `pub const decode = decoderWrap(Response, decodeInternal).decode;`
         // — Phase B should confirm the decoder_wrap shape in new_reader.rs.
-        pub fn decode<Context>(
+        pub fn decode<Context: ReaderContext>(
             &mut self,
             reader: NewReader<Context>,
         ) -> Result<(), bun_core::Error> {
@@ -166,7 +166,7 @@ pub mod caching_sha2_password {
         // RSA encrypted value of XOR(password, seed) using server public key (RSA_PKCS1_OAEP_PADDING).
 
         // TODO(port): narrow error set
-        pub fn write_internal<Context>(
+        pub fn write_internal<Context: super::new_writer::WriterContext>(
             &self,
             writer: NewWriter<Context>,
         ) -> Result<(), bun_core::Error> {
@@ -237,7 +237,7 @@ pub mod caching_sha2_password {
                             boringssl::c::ERR_get_error(),
                             buf.as_mut_ptr() as *mut c_char,
                         );
-                        bun_output::scoped_log!(
+                        bun_core::scoped_log!(
                             Auth,
                             "Failed to read public key: {}",
                             bstr::BStr::new(core::ffi::CStr::from_ptr(s).to_bytes())
@@ -282,7 +282,7 @@ pub mod caching_sha2_password {
         }
 
         // TODO(port): `pub const write = writeWrap(EncryptedPassword, writeInternal).write;`
-        pub fn write<Context>(&self, writer: NewWriter<Context>) -> Result<(), bun_core::Error> {
+        pub fn write<Context: super::new_writer::WriterContext>(&self, writer: NewWriter<Context>) -> Result<(), bun_core::Error> {
             write_wrap(Self::write_internal, self, writer)
         }
     }
@@ -296,7 +296,7 @@ pub mod caching_sha2_password {
         // Zig `deinit` only freed `self.data` — Data's own Drop handles that.
 
         // TODO(port): narrow error set
-        pub fn decode_internal<Context>(
+        pub fn decode_internal<Context: ReaderContext>(
             &mut self,
             reader: NewReader<Context>,
         ) -> Result<(), bun_core::Error> {
@@ -309,7 +309,7 @@ pub mod caching_sha2_password {
         }
 
         // TODO(port): `pub const decode = decoderWrap(PublicKeyResponse, decodeInternal).decode;`
-        pub fn decode<Context>(
+        pub fn decode<Context: ReaderContext>(
             &mut self,
             reader: NewReader<Context>,
         ) -> Result<(), bun_core::Error> {
@@ -321,7 +321,7 @@ pub mod caching_sha2_password {
 
     impl PublicKeyRequest {
         // TODO(port): narrow error set
-        pub fn write_internal<Context>(
+        pub fn write_internal<Context: super::new_writer::WriterContext>(
             &self,
             writer: NewWriter<Context>,
         ) -> Result<(), bun_core::Error> {
@@ -330,7 +330,7 @@ pub mod caching_sha2_password {
         }
 
         // TODO(port): `pub const write = writeWrap(PublicKeyRequest, writeInternal).write;`
-        pub fn write<Context>(&self, writer: NewWriter<Context>) -> Result<(), bun_core::Error> {
+        pub fn write<Context: super::new_writer::WriterContext>(&self, writer: NewWriter<Context>) -> Result<(), bun_core::Error> {
             write_wrap(Self::write_internal, self, writer)
         }
     }

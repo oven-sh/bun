@@ -1,7 +1,7 @@
 use core::fmt;
 
-use bun_sql::postgres::protocol::field_message::FieldMessage;
-use bun_sql::postgres::protocol::new_reader::NewReader;
+use crate::postgres::protocol::field_message::FieldMessage;
+use crate::postgres::protocol::new_reader::NewReader;
 
 #[derive(Default)]
 pub struct ErrorResponse {
@@ -25,8 +25,8 @@ impl ErrorResponse {
     // PORT NOTE: reshaped from `(this: *@This(), ...) !void` out-param constructor
     // to `-> Result<Self, E>`; the Zig `remaining_bytes == 0` branch left `this.*`
     // at its default-init state, so we return `Self::default()` there.
-    pub fn decode_internal<Container>(
-        reader: NewReader<Container>,
+    pub fn decode_internal<Container: super::new_reader::ReaderContext>(
+        mut reader: NewReader<Container>,
     ) -> Result<Self, bun_core::Error> {
         // TODO(port): narrow error set
         let mut remaining_bytes = reader.length()?;
@@ -43,10 +43,11 @@ impl ErrorResponse {
         Ok(Self::default())
     }
 
-    pub fn decode<Container>(
-        reader: NewReader<Container>,
+    // Zig DecoderWrap takes a raw `context` and wraps it as `NewReader{.wrapped=context}`.
+    pub fn decode<Container: super::new_reader::ReaderContext>(
+        context: Container,
     ) -> Result<Self, bun_core::Error> {
-        Self::decode_internal(reader)
+        Self::decode_internal(NewReader { wrapped: context })
     }
     // TODO(port): DecoderWrap(ErrorResponse, decodeInternal).decode — Zig passes a
     // generic fn as a comptime value; Rust const generics cannot carry generic fn

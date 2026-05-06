@@ -534,7 +534,7 @@ impl Subprocess<'_> {
     pub fn constructor(
         global_object: &JSGlobalObject,
         _frame: &CallFrame,
-    ) -> JsResult<*mut Subprocess<'a>> {
+    ) -> JsResult<*mut Self> {
         Err(global_object.throw("Cannot construct Subprocess", &[]))
     }
 

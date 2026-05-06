@@ -4272,7 +4272,7 @@ impl Resolver {
         Self::set_channel_servers(this.get_channel_or_error(global_this)?, global_this, callframe)
     }
 
-    #[host_fn]
+    // FFI shim emitted by `export_host_fn!` below (JS2Native link name).
     pub fn new_resolver(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let resolver = Resolver::init(global_this.bun_vm());
 

@@ -70,10 +70,10 @@ impl<'a> Command<'a> {
     }
 
     pub fn byte_length(&self) -> usize {
-        // TODO(port): equivalent of std.fmt.count — needs a byte-counting Write sink in bun_io
-        let mut counter = bun_io::CountingWriter::default();
+        // Zig: std.fmt.count — DiscardingWriter is bun_io's byte-counting null sink.
+        let mut counter = bun_io::DiscardingWriter::default();
         self.write(&mut counter).expect("unreachable");
-        counter.count()
+        counter.count
     }
 
     pub fn serialize(&self) -> Result<Box<[u8]>, bun_core::Error> {

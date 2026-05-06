@@ -3006,7 +3006,7 @@ pub fn resolve_windows_t<'a, T: PathChar>(
             }
         } else if resolved_device_len == 0 {
             // cwd is limited to MAX_PATH_BYTES.
-            cwd_len = match get_cwd_t(&mut tmp_buf[..]) {
+            cwd_len = match super::_cwd::get_cwd_t(&mut tmp_buf[..]) {
                 Ok(r) => r.len(),
                 Err(e) => return Err(e),
             };
@@ -3083,7 +3083,7 @@ pub fn resolve_windows_t<'a, T: PathChar>(
                 path = &buf2[0..ep_len];
             } else {
                 // cwd is limited to MAX_PATH_BYTES.
-                cwd_len = match get_cwd_t(&mut tmp_buf[..]) {
+                cwd_len = match super::_cwd::get_cwd_t(&mut tmp_buf[..]) {
                     Ok(r) => r.len(),
                     Err(e) => return Err(e),
                 };

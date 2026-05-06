@@ -1244,12 +1244,12 @@ impl NodeHTTPResponse {
             break 'brk None;
         };
 
-        let string_or_buffer: jsc::node::StringOrBuffer = 'brk: {
+        let string_or_buffer: crate::node::StringOrBuffer = 'brk: {
             if input_value.is_undefined_or_null() {
-                break 'brk jsc::node::StringOrBuffer::empty();
+                break 'brk crate::node::StringOrBuffer::EMPTY;
             }
 
-            let mut encoding = jsc::node::Encoding::Utf8;
+            let mut encoding = crate::node::Encoding::Utf8;
             if !encoding_value.is_undefined_or_null() {
                 if !encoding_value.is_string() {
                     return global_object.throw_invalid_argument_type_value(
@@ -1259,7 +1259,7 @@ impl NodeHTTPResponse {
                     );
                 }
 
-                encoding = match jsc::node::Encoding::from_js(encoding_value, global_object)? {
+                encoding = match crate::node::Encoding::from_js(encoding_value, global_object)? {
                     Some(e) => e,
                     None => {
                         return global_object.throw_invalid_arguments("Invalid encoding");

@@ -2747,6 +2747,22 @@ pub fn statfs(path: &ZStr) -> Maybe<StatFS> {
 /// `crate::Timespec` (matching the Zig `bun.timespec` namespacing).
 pub use bun_core::Timespec;
 
+/// `bun.sys.selfProcessMemoryUsage()` — returns the resident set size of the
+/// current process in bytes, or `None` on failure. Thin wrapper around the
+/// C++ `getRSS` shim (lives in `src/jsc/bindings/memory.cpp`).
+pub fn self_process_memory_usage() -> Option<usize> {
+    // TODO(port): move to <area>_sys
+    unsafe extern "C" {
+        fn getRSS(rss: *mut usize) -> ::core::ffi::c_int;
+    }
+    let mut rss: usize = 0;
+    // SAFETY: FFI call; `rss` is a valid `*mut usize` for the duration of the call.
+    if unsafe { getRSS(&mut rss) } != 0 {
+        return None;
+    }
+    Some(rss)
+}
+
 /// `bun.sys.PosixStat` — uv-shaped stat struct (`src/sys/PosixStat.zig`).
 /// Re-exported here so dependents (`node_fs.rs`, `Stat.rs`) can spell
 /// `bun_sys::PosixStat` exactly as the Zig source spells `bun.sys.PosixStat`.

@@ -858,7 +858,9 @@ impl Drop for FSEventsLoop {
         // PORT NOTE: reshaped for borrowck — build Task (stores raw ptr) before re-borrowing &mut self
         let stop_task = Task::new(self, FSEventsLoop::_stop);
         self.enqueue_task_concurrent(stop_task);
-        self.thread.join();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
         let cf = CoreFoundation::get();
 
         // SAFETY: signal_source is a valid CF object until released here

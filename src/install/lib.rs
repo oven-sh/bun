@@ -613,6 +613,49 @@ pub mod package_manager {
     }
     pub use Options::LogLevel;
 
+    /// Stub: `PackageManager.WorkspacePackageJSONCache`
+    /// (src/install/PackageManager/WorkspacePackageJSONCache.zig). Real body
+    /// gated behind `package_manager_real` (`#![cfg(any())]` reconciler-6).
+    /// Surfaced for `bun_runtime::cli::pack_command` / `publish_command`.
+    pub mod workspace_package_json_cache {
+        use bun_collections::StringHashMap;
+        #[derive(Default)]
+        pub struct MapEntry {
+            pub root: bun_js_parser::Expr,
+            pub source: bun_logger::Source,
+            pub indentation: bun_js_printer::options::Indentation,
+        }
+        pub type Map = StringHashMap<MapEntry>;
+        #[derive(Clone, Copy)]
+        pub struct GetJSONOptions {
+            pub init_reset_store: bool,
+            pub guess_indentation: bool,
+        }
+        impl Default for GetJSONOptions {
+            fn default() -> Self { Self { init_reset_store: true, guess_indentation: false } }
+        }
+        pub enum GetResult<'a> {
+            Entry(&'a mut MapEntry),
+            ReadErr(bun_core::Error),
+            ParseErr(bun_core::Error),
+        }
+        #[derive(Default)]
+        pub struct WorkspacePackageJSONCache {
+            pub map: Map,
+        }
+        impl WorkspacePackageJSONCache {
+            pub fn get_with_path(
+                &mut self,
+                _log: &mut bun_logger::Log,
+                _abs_package_json_path: &[u8],
+                _opts: GetJSONOptions,
+            ) -> GetResult<'_> {
+                todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6)")
+            }
+        }
+    }
+    pub use workspace_package_json_cache::WorkspacePackageJSONCache;
+
     /// Stub: `WorkspaceFilter` (src/install/PackageManager.zig). Real body in
     /// gated `package_manager_real`. Variant payloads are owned glob patterns.
     pub enum WorkspaceFilter {

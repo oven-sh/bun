@@ -914,14 +914,17 @@ pub mod command {
                 return super::remove_command::RemoveCommand::exec(ctx);
             }
             Tag::LinkCommand => {
+                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
                 let ctx = unsafe { &mut *init(Tag::LinkCommand, log)? };
                 return super::link_command::LinkCommand::exec(ctx);
             }
             Tag::UnlinkCommand => {
+                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
                 let ctx = unsafe { &mut *init(Tag::UnlinkCommand, log)? };
                 return super::unlink_command::UnlinkCommand::exec(ctx);
             }
             Tag::TestCommand => {
+                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
                 let ctx = unsafe { &mut *init(Tag::TestCommand, log)? };
                 return super::test_command::TestCommand::exec(ctx);
             }

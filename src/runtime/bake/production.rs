@@ -575,7 +575,7 @@ pub fn build_with_vm(
         };
         router_types.push(fr::Type {
             abs_root: Box::from(strings::paths::without_trailing_slash_windows_path(
-                entry.abs_path.as_bytes(),
+                entry.abs_path,
             )),
             prefix: Box::from(fsr.prefix),
             ignore_underscores: fsr.ignore_underscores,

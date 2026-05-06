@@ -1743,6 +1743,7 @@ pub mod internal {
     }
 
     impl MacAsyncDNS {
+        #[cfg(target_os = "macos")]
         pub fn on_machport_change(this: *mut Request) {
             // SAFETY: `this` is the heap-allocated Request the FilePoll was registered with.
             unsafe {
@@ -1750,9 +1751,13 @@ pub mod internal {
                     (*this).libinfo.machport,
                     lib_info::getaddrinfo_async_handle_reply().unwrap(),
                 ) {
-                    libinfo_callback(sys::E::NOSYS as i32, ptr::null_mut(), this as *mut c_void);
+                    libinfo_callback(sys::E::ENOSYS as i32, ptr::null_mut(), this as *mut c_void);
                 }
             }
+        }
+        #[cfg(not(target_os = "macos"))]
+        pub fn on_machport_change(_this: *mut Request) {
+            // libinfo machport DNS is macOS-only.
         }
     }
 

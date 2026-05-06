@@ -659,7 +659,7 @@ fn cmd_save(repl: &mut Repl, args: &[u8]) -> ReplResult {
             return ReplResult::SkipEval;
         }
     };
-    let _close = scopeguard::guard((), |_| file.close());
+    let _close = scopeguard::guard((), |_| { let _ = file.close(); });
     match file.write_all(&content) {
         sys::Result::Ok(()) => {}
         sys::Result::Err(err) => {
@@ -801,7 +801,7 @@ impl<'a> Repl<'a> {
         }
 
         // Check for NO_COLOR
-        self.use_colors = !env_var::NO_COLOR.get();
+        self.use_colors = !env_var::NO_COLOR.get().unwrap_or(false);
 
         // Get terminal size
         // SAFETY: TERMINAL_SIZE is a process-global populated once during Output init.

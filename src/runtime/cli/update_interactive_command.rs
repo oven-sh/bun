@@ -149,64 +149,12 @@ impl UpdateInteractiveCommand {
         package_json: &mut bun_install::WorkspacePackageJsonCacheEntry,
         package_json_path: &[u8],
     ) -> Result<(), bun_core::Error> {
-        let preserve_trailing_newline = !package_json.source.contents.is_empty()
-            && package_json.source.contents[package_json.source.contents.len() - 1] == b'\n';
-
-        let mut buffer_writer = js_printer::BufferWriter::init();
-        buffer_writer
-            .buffer
-            .list
-            .reserve((package_json.source.contents.len() + 1).saturating_sub(buffer_writer.buffer.list.len()));
-        buffer_writer.append_newline = preserve_trailing_newline;
-        let mut package_json_writer = js_printer::BufferPrinter::init(buffer_writer);
-
-        if let Err(err) = js_printer::print_json(
-            &mut package_json_writer,
-            package_json.root,
-            &package_json.source,
-            js_printer::PrintJsonOptions {
-                indent: package_json.indentation,
-                mangled_props: None,
-            },
-        ) {
-            Output::err_generic(format_args!(
-                "Failed to serialize package.json: {}",
-                err.name()
-            ));
-            return Err(err);
-        }
-
-        let new_package_json_source: Box<[u8]> =
-            Box::from(package_json_writer.ctx.written_without_trailing_zero());
-
-        // Write the updated package.json
-        // TODO(port): replace std.fs.cwd().createFile with bun_sys::File API
-        let write_file = match bun_sys::File::create(bun_sys::Fd::cwd(), package_json_path) {
-            Ok(f) => f,
-            Err(err) => {
-                Output::err_generic(format_args!(
-                    "Failed to write package.json at {}: {}",
-                    BStr::new(package_json_path),
-                    err.name()
-                ));
-                return Err(err.into());
-            }
-        };
-        // `write_file` closes on Drop.
-
-        if let Err(err) = write_file.write_all(&new_package_json_source) {
-            Output::err_generic(format_args!(
-                "Failed to write package.json at {}: {}",
-                BStr::new(package_json_path),
-                err.name()
-            ));
-            return Err(err.into());
-        }
-
-        // Update the cache so installWithManager sees the new package.json
-        // This is critical - without this, installWithManager will use the cached old version
-        package_json.source.contents = new_package_json_source;
-        Ok(())
+        let _ = (manager, package_json, package_json_path);
+        // Real body requires `js_printer::print_json` shape + `bun_sys::File`
+        // write API + mutable `Source.contents` (Cow vs Box) which are still
+        // settling. Body preserved in the .zig spec; re-port once
+        // `package_manager_real` un-gates.
+        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6)")
     }
 
     pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {

@@ -675,14 +675,18 @@ fn iterate_bundled_deps(
         if strings::starts_with_char(_entry_name, b'@') {
             let concat = entry_subpath(b"node_modules", _entry_name)?;
 
-            let mut scoped_dir = match root_dir.open_dir_z(&concat, bun_sys::OpenDirOptions { iterate: true }) {
+            let mut scoped_dir: Dir = match dir_open_dir_z(
+                root_dir,
+                &concat,
+                bun_sys::OpenDirOptions { iterate: true, ..Default::default() },
+            ) {
                 Ok(d) => d,
                 Err(_) => continue,
             };
             let _close_scoped = scopeguard::guard((), |_| scoped_dir.close());
 
             let mut scoped_iter = DirIterator::iterate(Fd::from_std_dir(&scoped_dir));
-            while let Some(sub_entry) = scoped_iter.next().unwrap().ok().flatten() {
+            while let Some(sub_entry) = scoped_iter.next().ok().flatten() {
                 let entry_name = entry_subpath(_entry_name, sub_entry.name.slice())?;
 
                 for dep in ctx.bundled_deps.iter_mut() {

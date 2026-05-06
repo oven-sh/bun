@@ -1934,9 +1934,9 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
         if !args.options(b"--external").is_empty() {
             let ext_opts = args.options(b"--external");
-            let mut externals: Vec<&[u8]> = Vec::with_capacity(ext_opts.len());
+            let mut externals: Vec<Box<[u8]>> = Vec::with_capacity(ext_opts.len());
             for (_i, external) in ext_opts.iter().enumerate() {
-                externals.push(external);
+                externals.push(Box::<[u8]>::from(*external));
             }
             opts.external = externals;
         }
@@ -1945,15 +1945,15 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             Output::pretty_errorln(format_args!("<r><red>error<r>: --reject-unresolved and --allow-unresolved cannot be used together"));
             Global::crash();
         } else if args.flag(b"--reject-unresolved") {
-            ctx.bundler_options.allow_unresolved = Vec::new();
+            ctx.bundler_options.allow_unresolved = Some(Vec::new());
         } else if !args.options(b"--allow-unresolved").is_empty() {
             let raw = args.options(b"--allow-unresolved");
-            let mut allow: Vec<&[u8]> = Vec::with_capacity(raw.len());
+            let mut allow: Vec<Box<[u8]>> = Vec::with_capacity(raw.len());
             for (_i, val) in raw.iter().enumerate() {
                 // "<empty>" sentinel represents the empty-string pattern (for matching opaque specifiers)
-                allow.push(if *val == b"<empty>" { b"" } else { val });
+                allow.push(Box::<[u8]>::from(if *val == b"<empty>" { b"".as_slice() } else { *val }));
             }
-            ctx.bundler_options.allow_unresolved = allow;
+            ctx.bundler_options.allow_unresolved = Some(allow);
         }
 
         if let Some(packages) = args.option(b"--packages") {

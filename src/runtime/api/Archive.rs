@@ -915,14 +915,14 @@ pub type ExtractTask = AsyncTask<ExtractContext>;
 
 fn start_extract_task(
     global: &JSGlobalObject,
-    store: &Arc<BlobStore>,
+    store: &StoreRef,
     path: &[u8],
     glob_patterns: Option<Vec<Box<[u8]>>>,
 ) -> JsResult<JSValue> {
     let path_copy: Box<[u8]> = Box::from(path);
     // errdefer free(path_copy) — Drop handles it
 
-    let store = Arc::clone(store);
+    let store = store.clone();
     // errdefer store.deref() — Drop handles it
 
     let task = ExtractTask::create(
@@ -964,7 +964,7 @@ enum BlobResult {
 }
 
 struct BlobContext {
-    store: Arc<BlobStore>,
+    store: StoreRef,
     compress: Compression,
     output_type: BlobOutputType,
     result: BlobResult,
@@ -1014,11 +1014,11 @@ pub type BlobTask = AsyncTask<BlobContext>;
 
 fn start_blob_task(
     global: &JSGlobalObject,
-    store: &Arc<BlobStore>,
+    store: &StoreRef,
     compress: Compression,
     output_type: BlobOutputType,
 ) -> JsResult<JSValue> {
-    let store = Arc::clone(store);
+    let store = store.clone();
     // errdefer store.deref() — Drop handles it
 
     let task = BlobTask::create(

@@ -318,6 +318,13 @@ pub fn filter<'a>(
 /// inherited through every restart. The value is a short path, never
 /// the list itself, so there is no env size concern.
 pub const TRIGGER_FILE_ENV_VAR: &str = "BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE";
+// SAFETY: literal ends in NUL; len excludes it.
+const TRIGGER_FILE_ENV_VAR_Z: &ZStr = unsafe {
+    ZStr::from_raw(
+        b"BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE\0".as_ptr(),
+        TRIGGER_FILE_ENV_VAR.len(),
+    )
+};
 
 /// Make sure the trigger-file env var is set (generating a fresh temp
 /// path if this is the first process in the --watch chain) and wire up

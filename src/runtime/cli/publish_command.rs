@@ -146,238 +146,27 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         tarball_path: &[u8],
     ) -> Result<Context<'a, DIRECTORY_PUBLISH>, FromTarballError> {
         let mut abs_buf = PathBuffer::uninit();
-        let abs_tarball_path = join_abs_string_buf_z(
+        let abs_tarball_path = join_abs_string_buf_z::<path::platform::Auto>(
             FileSystem::instance().top_level_dir,
             &mut abs_buf,
             &[tarball_path],
-            path::Platform::Auto,
         );
 
-        let tarball_bytes = match File::read_from(Fd::INVALID, abs_tarball_path).unwrap() {
-            Ok(b) => b,
-            Err(e) => {
-                Output::err(e, format_args!("failed to read tarball: '{}'", bstr::BStr::new(tarball_path)));
-                Global::crash();
-            }
-        };
-
-        let mut maybe_package_json_contents: Option<Box<[u8]>> = None;
-
-        let mut iter = match Archive::Iterator::init(&tarball_bytes) {
+        let tarball_bytes = match File::read_from(Fd::cwd(), abs_tarball_path) {
+            bun_sys::Result::Ok(b) => b,
             bun_sys::Result::Err(e) => {
-                Output::err_generic(format_args!(
-                    "{}: {}",
-                    bstr::BStr::new(e.message),
-                    bstr::BStr::new(e.archive.error_string()),
-                ));
+                Output::err(e, "failed to read tarball: '{}'", (bstr::BStr::new(tarball_path),));
                 Global::crash();
             }
-            bun_sys::Result::Ok(res) => res,
         };
 
-        let mut unpacked_size: usize = 0;
-        let mut total_files: usize = 0;
-
-        Output::print(format_args!("\n"));
-
-        loop {
-            let next = match iter.next() {
-                bun_sys::Result::Err(e) => {
-                    Output::err_generic(format_args!(
-                        "{}: {}",
-                        bstr::BStr::new(e.message),
-                        bstr::BStr::new(e.archive.error_string()),
-                    ));
-                    Global::crash();
-                }
-                bun_sys::Result::Ok(res) => res,
-            };
-            let Some(next) = next else { break };
-
-            #[cfg(windows)]
-            let pathname = next.entry.pathname_w();
-            #[cfg(not(windows))]
-            let pathname = next.entry.pathname();
-
-            let size = next.entry.size();
-
-            unpacked_size += usize::try_from(size.max(0)).unwrap();
-            total_files += (next.kind == Archive::EntryKind::File) as usize;
-
-            // this is option `strip: 1` (npm expects a `package/` prefix for all paths)
-            if let Some(slash) = strings::index_of_any_t::<bun_paths::OSPathChar>(pathname, b"/\\") {
-                let stripped = &pathname[slash + 1..];
-                if stripped.is_empty() {
-                    continue;
-                }
-
-                Output::pretty(format_args!(
-                    "<b><cyan>packed<r> {} {}\n",
-                    bun_fmt::size(size, bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
-                    bun_fmt::fmt_os_path(stripped, Default::default()),
-                ));
-
-                if next.kind != Archive::EntryKind::File {
-                    continue;
-                }
-
-                if strings::index_of_any_t::<bun_paths::OSPathChar>(stripped, b"/\\").is_none() {
-                    // check for package.json, readme.md, ...
-                    let filename = &pathname[slash + 1..];
-
-                    if maybe_package_json_contents.is_none()
-                        && strings::eql_case_insensitive_t::<bun_paths::OSPathChar>(filename, b"package.json")
-                    {
-                        maybe_package_json_contents = Some(match next.read_entry_data(iter.archive)? {
-                            bun_sys::Result::Err(e) => {
-                                Output::err_generic(format_args!(
-                                    "{}: {}",
-                                    bstr::BStr::new(e.message),
-                                    bstr::BStr::new(e.archive.error_string()),
-                                ));
-                                Global::crash();
-                            }
-                            bun_sys::Result::Ok(bytes) => bytes,
-                        });
-                    }
-                }
-            } else {
-                Output::pretty(format_args!(
-                    "<b><cyan>packed<r> {} {}\n",
-                    bun_fmt::size(size, bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
-                    bun_fmt::fmt_os_path(pathname, Default::default()),
-                ));
-            }
-        }
-
-        match iter.deinit() {
-            bun_sys::Result::Err(e) => {
-                Output::err_generic(format_args!(
-                    "{}: {}",
-                    bstr::BStr::new(e.message),
-                    bstr::BStr::new(e.archive.error_string()),
-                ));
-                Global::crash();
-            }
-            bun_sys::Result::Ok(()) => {}
-        }
-
-        let package_json_contents = maybe_package_json_contents
-            .ok_or(FromTarballError::MissingPackageJSON)?;
-
-        let (package_name, package_version, mut json, json_source) = 'package_info: {
-            let source = logger::Source::init_path_string(b"package.json", &package_json_contents);
-            let json = match json_mod::parse_package_json_utf8(&source, manager.log) {
-                Ok(j) => j,
-                Err(e) => {
-                    if e == err!(OutOfMemory) {
-                        return Err(FromTarballError::OutOfMemory);
-                    }
-                    return Err(FromTarballError::InvalidPackageJSON);
-                }
-            };
-
-            if let Some(private) = json.get(b"private") {
-                if let Some(is_private) = private.as_bool() {
-                    if is_private {
-                        return Err(FromTarballError::PrivatePackage);
-                    }
-                }
-            }
-
-            if let Some(config) = json.get(b"publishConfig") {
-                if manager.options.publish_config.tag.is_empty() {
-                    if let Some(tag) = config.get_string_cloned(b"tag")? {
-                        manager.options.publish_config.tag = tag;
-                    }
-                }
-
-                if manager.options.publish_config.access.is_none() {
-                    if let Some(access) = config.get_string(b"access")? {
-                        manager.options.publish_config.access = Some(
-                            Access::from_str(access.0).unwrap_or_else(|| {
-                                Output::err_generic(format_args!(
-                                    "invalid `access` value: '{}'",
-                                    bstr::BStr::new(access.0),
-                                ));
-                                Global::crash();
-                            }),
-                        );
-                    }
-                }
-
-                // maybe otp
-            }
-
-            let name = json
-                .get_string_cloned(b"name")?
-                .ok_or(FromTarballError::MissingPackageName)?;
-            let is_scoped = Dependency::is_scoped_package_name(&name)?;
-
-            if let Some(access) = manager.options.publish_config.access {
-                if access == Access::Restricted && !is_scoped {
-                    return Err(FromTarballError::RestrictedUnscopedPackage);
-                }
-            }
-
-            let version = json
-                .get_string_cloned(b"version")?
-                .ok_or(FromTarballError::MissingPackageVersion)?;
-            if version.is_empty() {
-                return Err(FromTarballError::InvalidPackageVersion);
-            }
-
-            break 'package_info (name, version, json, source);
-        };
-
-        let mut shasum: SHA1Digest = Default::default();
-        let mut sha1 = sha::SHA1::init();
-        sha1.update(&tarball_bytes);
-        sha1.final_(&mut shasum);
-        drop(sha1);
-
-        let mut integrity: SHA512Digest = Default::default();
-        let mut sha512 = sha::SHA512::init();
-        sha512.update(&tarball_bytes);
-        sha512.final_(&mut integrity);
-        drop(sha512);
-
-        let normalized_pkg_info = PublishCommand::normalized_package(
-            manager,
-            &package_name,
-            &package_version,
-            &mut json,
-            &json_source,
-            shasum,
-            integrity,
-        )?;
-
-        Pack::Context::print_summary(
-            pack::Stats {
-                total_files,
-                unpacked_size,
-                packed_size: tarball_bytes.len(),
-            },
-            shasum,
-            integrity,
-            manager.options.log_level,
-        );
-
-        Ok(Context {
-            manager,
-            package_name,
-            package_version,
-            abs_tarball_path: ZStr::from_bytes(abs_tarball_path.as_bytes()),
-            tarball_bytes,
-            shasum,
-            integrity,
-            uses_workspaces: false,
-            command_ctx: ctx,
-            script_env: None,
-            normalized_pkg_info,
-            publish_script: None,
-            postpublish_script: None,
-        })
+        // TODO(port): Archive::Iterator / EntryKind / read_entry_data are not
+        // exposed by `bun_libarchive::lib` yet — the Zig `Archive.Iterator`
+        // wrapper has no Rust port. The package.json-extraction loop below
+        // (publish_command.zig:fromTarballPath) is gated until that surface
+        // lands.
+        let _ = (&ctx, &tarball_bytes, &abs_tarball_path, manager);
+        todo!("blocked_on: bun_libarchive::lib::Archive::Iterator + bun_install::PackageManager::log/publish_config (reconciler-6)")
     }
 
     /// `bun publish` without a tarball path. Automatically pack the current workspace and get

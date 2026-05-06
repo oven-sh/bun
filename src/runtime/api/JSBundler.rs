@@ -134,6 +134,53 @@ pub mod js_bundler {
         target.get_own(global, &BunString::static_str(property))
     }
 
+    /// `JSValue.getOwnObject` — local shim until `bun_jsc` grows it.
+    fn get_own_object(
+        target: JSValue,
+        global: &JSGlobalObject,
+        property: &'static str,
+    ) -> JsResult<Option<*mut JSObject>> {
+        match target.get_own_truthy(global, property)? {
+            Some(v) => Ok(v.get_object()),
+            None => Ok(None),
+        }
+    }
+
+    /// `JSValue.getOwnArray` — local shim until `bun_jsc` grows it.
+    fn get_own_array(
+        target: JSValue,
+        global: &JSGlobalObject,
+        property: &'static str,
+    ) -> JsResult<Option<JSValue>> {
+        match target.get_own_truthy(global, property)? {
+            Some(v) if v.is_cell() && v.js_type().is_array() => Ok(Some(v)),
+            _ => Ok(None),
+        }
+    }
+
+    /// `JSValue.getBooleanStrict` — local shim until `bun_jsc` grows it.
+    fn get_boolean_strict(
+        target: JSValue,
+        global: &JSGlobalObject,
+        property: &'static str,
+    ) -> JsResult<Option<bool>> {
+        match target.get(global, property)? {
+            Some(v) if v.is_boolean() => Ok(Some(v.to_boolean())),
+            _ => Ok(None),
+        }
+    }
+
+    /// `options::JSX::Runtime` → `api::JsxRuntime` (only the reverse `From`
+    /// exists upstream).
+    fn jsx_runtime_to_api(r: options::JSX::Runtime) -> api::JsxRuntime {
+        match r {
+            options::JSX::Runtime::_None => api::JsxRuntime::_none,
+            options::JSX::Runtime::Automatic => api::JsxRuntime::Automatic,
+            options::JSX::Runtime::Classic => api::JsxRuntime::Classic,
+            options::JSX::Runtime::Solid => api::JsxRuntime::Solid,
+        }
+    }
+
     /// A map of file paths to their in-memory contents.
     /// This allows bundling with virtual files that may not exist on disk.
     #[derive(Default)]

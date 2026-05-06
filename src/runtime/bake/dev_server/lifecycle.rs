@@ -253,7 +253,7 @@ pub(super) fn init_impl(options: Options<'_>) -> jsc::JsResult<Box<DevServer>> {
 
     // React-fast-refresh sentinel (must be `FileIndex(0)` on the client side).
     if let Some(rfr) = &dev.framework.react_fast_refresh {
-        let _ = dev.client_graph.insert_stale(rfr.import_source, false);
+        let _ = dev.client_graph.insert_stale(&rfr.import_source, false);
     }
 
     // configuration_hash_key — Wyhash of framework config; used as the

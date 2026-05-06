@@ -245,8 +245,10 @@ impl CronRegisterJob {
         }
         if let Some(proc) = self.process.take() {
             // SAFETY: `proc` is the intrusive-RC pointer returned by `to_process`.
-            unsafe { (*proc).detach() };
-            Process::deref(proc);
+            unsafe {
+                (*proc).detach();
+                (*proc).deref();
+            }
         }
         if self.err_msg.is_some() {
             Self::finish(self);

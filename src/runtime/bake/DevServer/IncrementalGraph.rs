@@ -1159,7 +1159,7 @@ impl IncrementalGraph<Server> {
                 self.owner()
                     .incremental_result
                     .client_components_added
-                    .push(file_index);
+                    .push(ig::FileIndex::init(file_index.get()));
             }
         } else {
             gop.value_ptr.kind = match content {

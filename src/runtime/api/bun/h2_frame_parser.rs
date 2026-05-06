@@ -1165,7 +1165,7 @@ enum StreamState {
 pub struct Stream {
     id: u32,
     state: StreamState,
-    js_context: Strong, // jsc.Strong.Optional
+    js_context: StrongOptional, // jsc.Strong.Optional
     wait_for_trailers: bool,
     close_after_drain: bool,
     end_after_headers: bool,
@@ -1316,7 +1316,7 @@ struct PendingFrame {
     len: u32,                // actually payload size
     offset: u32,             // offset into the buffer (if partial flush due to flow control)
     buffer: Vec<u8>,         // allocated buffer if len > 0
-    callback: Strong,        // JSCallback for done
+    callback: StrongOptional, // JSCallback for done
 }
 
 impl PendingFrame {

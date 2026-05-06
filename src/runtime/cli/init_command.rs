@@ -1533,25 +1533,26 @@ impl Template {
                 if did_create_agent_rule && create_claude_md {
                     'symlink_cursor_rule: {
                         create_claude_md = false;
-                        let _ = bun_sys::make_path(Fd::cwd(), b".cursor/rules");
-                        if bun_sys::symlinkat(
-                            Self::CURSOR_RULE_PATH_TO_CLAUDE_MD,
-                            Fd::cwd(),
-                            template_file.path,
-                        )
-                        .unwrap_result()
-                        .is_err()
-                        {
+                        let _ = bun_sys::make_path(bun_sys::Dir::cwd(), b".cursor/rules");
+                        // bun_sys::symlinkat takes &ZStr; build NUL-terminated copies.
+                        let mut target_z = Self::CURSOR_RULE_PATH_TO_CLAUDE_MD.to_vec();
+                        target_z.push(0);
+                        let mut dest_z = template_file.path.to_vec();
+                        dest_z.push(0);
+                        // SAFETY: NUL-terminated above.
+                        let target_zstr =
+                            unsafe { ZStr::from_raw(target_z.as_ptr(), target_z.len() - 1) };
+                        // SAFETY: NUL-terminated above.
+                        let dest_zstr =
+                            unsafe { ZStr::from_raw(dest_z.as_ptr(), dest_z.len() - 1) };
+                        if bun_sys::symlinkat(target_zstr, Fd::cwd(), dest_zstr).is_err() {
                             break 'symlink_cursor_rule;
                         }
-                        Output::prettyln(
-                            " + <r><d>{s} -\\> {s}<r>",
-                            format_args!(
-                                "{} {}",
-                                bstr::BStr::new(template_file.path),
-                                bstr::BStr::new(asset_path)
-                            ),
-                        );
+                        Output::prettyln(format_args!(
+                            " + <r><d>{} -\\> {}<r>",
+                            bstr::BStr::new(template_file.path),
+                            bstr::BStr::new(asset_path),
+                        ));
                         Output::flush();
                     }
                 }

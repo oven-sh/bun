@@ -2699,7 +2699,10 @@ where
             if stream_needs_deinit {
                 match &mut stream_ {
                     WebCore::streams::Result::OwnedAndDone(owned)
-                    | WebCore::streams::Result::Owned(owned) => owned.deinit(),
+                    | WebCore::streams::Result::Owned(owned) => {
+                        // BabyList::deinit → Drop in Rust.
+                        *owned = ByteList::default();
+                    }
                     _ => unreachable!(),
                 }
             }
@@ -2716,7 +2719,7 @@ where
         // uSockets will append and manage the buffer
         // so any write will buffer if the write fails
         // SAFETY: FFI handle
-        if unsafe { resp.write(chunk) } == uws::WriteResult::WantMore {
+        if matches!(unsafe { resp.write(chunk) }, uws::WriteResult::WantMore(_)) {
             if is_done {
                 this.end_stream(this.should_close_connection());
             }

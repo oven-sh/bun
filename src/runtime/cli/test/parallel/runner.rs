@@ -154,7 +154,8 @@ pub fn run_as_coordinator(
     // backrefs need raw pointers fixed up after the Vec is fully populated.
 
     let mut coord = Coordinator {
-        vm,
+        // SAFETY: see vm_ptr note above.
+        vm: unsafe { &*vm_ptr },
         reporter,
         files: sorted,
         // SAFETY: FileSystem singleton is initialized before any test runner code runs.

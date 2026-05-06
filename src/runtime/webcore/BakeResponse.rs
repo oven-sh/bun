@@ -157,7 +157,8 @@ pub fn construct_render(
     let vm = global_this.bun_vm();
 
     // Check if dev server async local_storage is set
-    let Some(async_local_storage) = vm.get_dev_server_async_local_storage()? else {
+    // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
+    let Some(async_local_storage) = unsafe { &mut *vm }.get_dev_server_async_local_storage()? else {
         return Err(global_this.throw_invalid_arguments(format_args!(
             "Response.render() is only available in the Bun dev server"
         )));
@@ -223,7 +224,7 @@ fn assert_streaming_disabled(
             global_this.throw_invalid_arguments(format_args!("store value must be an object"))
         );
     }
-    let Some(get_store_fn) = async_local_storage.get_property_value(global_this, b"getStore")?
+    let Some(get_store_fn) = async_local_storage.get(global_this, b"getStore")?
     else {
         return Err(global_this.throw_invalid_arguments(format_args!(
             "store value must have a \"getStore\" field"
@@ -235,7 +236,7 @@ fn assert_streaming_disabled(
         );
     }
     let store_value = get_store_fn.call(global_this, async_local_storage, &[])?;
-    let Some(streaming_val) = store_value.get_property_value(global_this, b"streaming")? else {
+    let Some(streaming_val) = store_value.get(global_this, b"streaming")? else {
         return Err(global_this.throw_invalid_arguments(format_args!(
             "store value must have a \"streaming\" field"
         )));

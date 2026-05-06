@@ -401,20 +401,23 @@ impl ReadableStream {
         };
         match &store.data {
             webcore::blob::store::Data::File(_) => {
-                let reader = NewSource::<FileReader>::new(NewSource {
+                let mut reader = NewSource::<FileReader>::new(NewSource {
                     global_this,
                     context: FileReader {
-                        event_loop: jsc::EventLoopHandle::init(global_this.bun_vm().event_loop()),
-                        start_offset: offset,
+                        // SAFETY: bun_vm()/event_loop() return non-null ptrs that outlive this call.
+                        event_loop: jsc::EventLoopHandle::init(unsafe {
+                            &*(*global_this.bun_vm()).event_loop()
+                        }),
+                        start_offset: Some(offset),
                         lazy: webcore::file_reader::Lazy::Blob(store.clone()),
                         ..Default::default()
                     },
                     ..Default::default()
                 });
-                store.r#ref();
+                store.ref_();
                 reader.to_readable_stream(global_this)
             }
-            _ => global_this.throw("Expected FileBlob"),
+            _ => Err(global_this.throw("Expected FileBlob")),
         }
     }
 

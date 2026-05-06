@@ -482,7 +482,7 @@ impl<'a> S3BlobStatTask<'a> {
                 this.promise.resolve(
                     global,
                     S3Stat::init(
-                        stat_result.size,
+                        stat_result.size as u64,
                         stat_result.etag,
                         stat_result.content_type,
                         stat_result.last_modified,

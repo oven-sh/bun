@@ -173,7 +173,7 @@ impl PostgresSQLConnection {
             && self.status == Status::Connected
         // and we need to be connected
         {
-            AutoFlusher::register_deferred_microtask_with_type_unchecked::<Self>(self, self.vm());
+            AutoFlusher::register_deferred_microtask_with_type_unchecked::<Self>(self, unsafe { self.vm() });
             self.auto_flusher.registered = true;
         }
     }
@@ -181,7 +181,7 @@ impl PostgresSQLConnection {
     fn unregister_auto_flusher(&mut self) {
         debug!("unregisterAutoFlusher registered: {}", self.auto_flusher.registered);
         if self.auto_flusher.registered {
-            AutoFlusher::unregister_deferred_microtask_with_type::<Self>(self, self.vm());
+            AutoFlusher::unregister_deferred_microtask_with_type::<Self>(self, unsafe { self.vm() });
             self.auto_flusher.registered = false;
         }
     }
@@ -196,7 +196,7 @@ impl PostgresSQLConnection {
 
     pub fn disable_connection_timeout(&mut self) {
         if self.timer.state == EventLoopTimer::State::ACTIVE {
-            self.vm().timer.remove(&mut self.timer);
+            unsafe { self.vm() }.timer.remove(&mut self.timer);
         }
         self.timer.state = EventLoopTimer::State::CANCELLED;
     }
@@ -208,14 +208,14 @@ impl PostgresSQLConnection {
         }
         let interval = self.get_timeout_interval();
         if self.timer.state == EventLoopTimer::State::ACTIVE {
-            self.vm().timer.remove(&mut self.timer);
+            unsafe { self.vm() }.timer.remove(&mut self.timer);
         }
         if interval == 0 {
             return;
         }
 
         self.timer.next = bun_core::timespec::ms_from_now(bun_core::timespec::Mode::AllowMockedTime, i64::from(interval));
-        self.vm().timer.insert(&mut self.timer);
+        unsafe { self.vm() }.timer.insert(&mut self.timer);
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -258,7 +258,7 @@ impl PostgresSQLConnection {
 
     pub fn setup_tls(&mut self) {
         debug!("setupTLS");
-        let tls_group = self.vm().rare_data().postgres_group(self.vm(), true);
+        let tls_group = unsafe { self.vm() }.rare_data().postgres_group(unsafe { self.vm() }, true);
         let Some(new_socket) = self.socket.socket_tcp().socket.connected.adopt_tls(
             tls_group,
             uws::SocketKind::PostgresTls,
@@ -288,7 +288,7 @@ impl PostgresSQLConnection {
 
         self.max_lifetime_timer.next =
             bun_core::timespec::ms_from_now(bun_core::timespec::Mode::AllowMockedTime, i64::from(self.max_lifetime_interval_ms));
-        self.vm().timer.insert(&mut self.max_lifetime_timer);
+        unsafe { self.vm() }.timer.insert(&mut self.max_lifetime_timer);
     }
 
     pub fn on_connection_timeout(&mut self) {
@@ -396,7 +396,7 @@ impl PostgresSQLConnection {
 
         self.status = status;
         self.reset_connection_timeout();
-        if self.vm().is_shutting_down() {
+        if unsafe { self.vm() }.is_shutting_down() {
             self.update_has_pending_activity();
             return;
         }
@@ -410,7 +410,7 @@ impl PostgresSQLConnection {
                 let js_value = self.js_value.get();
                 js_value.ensure_still_alive();
                 self.global().queue_microtask(on_connect, &[JSValue::NULL, js_value]);
-                self.poll_ref.unref(self.vm());
+                self.poll_ref.unref(unsafe { self.vm() });
             }
             _ => {}
         }
@@ -469,7 +469,7 @@ impl PostgresSQLConnection {
         // we defer the refAndClose so the on_close will be called first before we reject the pending requests
         let on_close_opt = self.consume_on_close_callback(self.global());
         if let Some(on_close) = on_close_opt {
-            let event_loop = self.vm().event_loop();
+            let event_loop = unsafe { self.vm() }.event_loop();
             event_loop.enter();
             let mut js_error = value.to_error().unwrap_or(value);
             if js_error.is_empty() {
@@ -512,7 +512,7 @@ impl PostgresSQLConnection {
     pub fn on_close(&mut self) {
         self.unregister_auto_flusher();
 
-        if self.vm().is_shutting_down() {
+        if unsafe { self.vm() }.is_shutting_down() {
             self.stop_timers();
             if self.status == Status::Failed {
                 self.update_has_pending_activity();
@@ -523,9 +523,9 @@ impl PostgresSQLConnection {
             self.clean_up_requests(None);
             self.update_has_pending_activity();
         } else {
-            let event_loop = self.vm().event_loop();
+            let event_loop = unsafe { self.vm() }.event_loop();
             event_loop.enter();
-            self.poll_ref.unref(self.vm());
+            self.poll_ref.unref(unsafe { self.vm() });
 
             self.fail(b"Connection closed", AnyPostgresError::ConnectionClosed);
             event_loop.exit();
@@ -571,7 +571,7 @@ impl PostgresSQLConnection {
     pub fn on_open(&mut self, socket: uws::AnySocket) {
         self.socket = socket;
 
-        self.poll_ref.r#ref(self.vm());
+        self.poll_ref.r#ref(unsafe { self.vm() });
         self.update_has_pending_activity();
 
         if matches!(self.tls_status, TLSStatus::MessageSent(_) | TLSStatus::Pending) {
@@ -640,11 +640,11 @@ impl PostgresSQLConnection {
 
     fn drain_internal(&mut self) {
         debug!("drainInternal");
-        if self.vm().is_shutting_down() {
+        if unsafe { self.vm() }.is_shutting_down() {
             return self.close();
         }
 
-        let event_loop = self.vm().event_loop();
+        let event_loop = unsafe { self.vm() }.event_loop();
         event_loop.enter();
 
         self.flush_data();
@@ -660,7 +660,7 @@ impl PostgresSQLConnection {
     pub fn on_data(&mut self, data: &[u8]) {
         self.r#ref();
         self.flags.is_processing_data = true;
-        let vm = self.vm();
+        let vm = unsafe { self.vm() };
 
         self.disable_connection_timeout();
         // PORT NOTE: Zig `defer { ... }` block expanded after the body below; cannot use scopeguard
@@ -1008,7 +1008,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_open(this: &mut PostgresSQLConnection, socket: Self::SocketType) {
-        if this.vm().is_shutting_down() {
+        if unsafe { this.vm() }.is_shutting_down() {
             #[cold]
             fn cold(this: &mut PostgresSQLConnection) { this.close(); }
             cold(this);
@@ -1018,7 +1018,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     fn on_handshake_(this: &mut PostgresSQLConnection, _: Self::SocketType, success: i32, ssl_error: uws::us_bun_verify_error_t) {
-        if this.vm().is_shutting_down() {
+        if unsafe { this.vm() }.is_shutting_down() {
             #[cold]
             fn cold(this: &mut PostgresSQLConnection) { this.close(); }
             cold(this);
@@ -1041,7 +1041,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_connect_error(this: &mut PostgresSQLConnection, _socket: Self::SocketType, _: i32) {
-        if this.vm().is_shutting_down() {
+        if unsafe { this.vm() }.is_shutting_down() {
             #[cold]
             fn cold(this: &mut PostgresSQLConnection) { this.close(); }
             cold(this);
@@ -1051,7 +1051,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_timeout(this: &mut PostgresSQLConnection, _socket: Self::SocketType) {
-        if this.vm().is_shutting_down() {
+        if unsafe { this.vm() }.is_shutting_down() {
             #[cold]
             fn cold(this: &mut PostgresSQLConnection) { this.close(); }
             cold(this);
@@ -1061,7 +1061,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_data(this: &mut PostgresSQLConnection, _socket: Self::SocketType, data: &[u8]) {
-        if this.vm().is_shutting_down() {
+        if unsafe { this.vm() }.is_shutting_down() {
             #[cold]
             fn cold(this: &mut PostgresSQLConnection) { this.close(); }
             cold(this);
@@ -1071,7 +1071,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_writable(this: &mut PostgresSQLConnection, _socket: Self::SocketType) {
-        if this.vm().is_shutting_down() {
+        if unsafe { this.vm() }.is_shutting_down() {
             #[cold]
             fn cold(this: &mut PostgresSQLConnection) { this.close(); }
             cold(this);
@@ -1084,14 +1084,14 @@ impl<const SSL: bool> SocketHandler<SSL> {
 impl PostgresSQLConnection {
     #[bun_jsc::host_fn(method)]
     pub fn do_ref(this: &mut Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        this.poll_ref.r#ref(this.vm());
+        this.poll_ref.r#ref(unsafe { this.vm() });
         this.update_has_pending_activity();
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn do_unref(this: &mut Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        this.poll_ref.unref(this.vm());
+        this.poll_ref.unref(unsafe { this.vm() });
         this.update_has_pending_activity();
         Ok(JSValue::UNDEFINED)
     }
@@ -1116,10 +1116,10 @@ impl PostgresSQLConnection {
 
     pub fn stop_timers(&mut self) {
         if self.timer.state == EventLoopTimer::State::ACTIVE {
-            self.vm().timer.remove(&mut self.timer);
+            unsafe { self.vm() }.timer.remove(&mut self.timer);
         }
         if self.max_lifetime_timer.state == EventLoopTimer::State::ACTIVE {
-            self.vm().timer.remove(&mut self.max_lifetime_timer);
+            unsafe { self.vm() }.timer.remove(&mut self.max_lifetime_timer);
         }
     }
 
@@ -1165,7 +1165,7 @@ impl PostgresSQLConnection {
                     let stmt = unsafe { &mut *stmt };
                     stmt.error_response = Some(PostgresSQLStatement::ErrorResponse::PostgresError(AnyPostgresError::ConnectionClosed));
                     stmt.status = PostgresSQLStatement::Status::Failed;
-                    if !self.vm().is_shutting_down() {
+                    if !unsafe { self.vm() }.is_shutting_down() {
                         if let Some(reason) = js_reason {
                             request.on_js_error(reason, self.global());
                         } else {
@@ -1181,7 +1181,7 @@ impl PostgresSQLConnection {
                 | PostgresSQLQuery::Status::Running
                 | PostgresSQLQuery::Status::PartialResponse => {
                     self.finish_request(request);
-                    if !self.vm().is_shutting_down() {
+                    if !unsafe { self.vm() }.is_shutting_down() {
                         if let Some(reason) = js_reason {
                             request.on_js_error(reason, self.global());
                         } else {
@@ -1205,7 +1205,7 @@ impl PostgresSQLConnection {
 
         if !self.socket.is_closed() {
             // event loop need to be alive to close the socket
-            self.poll_ref.r#ref(self.vm());
+            self.poll_ref.r#ref(unsafe { self.vm() });
             // will unref on socket close
             self.socket.close();
         }
@@ -1400,7 +1400,7 @@ impl PostgresSQLConnection {
         }
 
         while self.requests.readable_length() > offset && !self.flags.has_backpressure {
-            if self.vm().is_shutting_down() {
+            if unsafe { self.vm() }.is_shutting_down() {
                 self.close();
                 defer_cleanup!(self);
                 return;
@@ -2334,9 +2334,9 @@ impl PostgresSQLConnection {
         self.update_has_pending_activity();
         // TODO(port): Zig reads `pending_activity_count.raw` (non-atomic). Using Relaxed load.
         if self.pending_activity_count.load(Ordering::Relaxed) > 0 {
-            self.poll_ref.r#ref(self.vm());
+            self.poll_ref.r#ref(unsafe { self.vm() });
         } else {
-            self.poll_ref.unref(self.vm());
+            self.poll_ref.unref(unsafe { self.vm() });
         }
     }
 

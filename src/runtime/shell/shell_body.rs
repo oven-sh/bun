@@ -1260,10 +1260,9 @@ impl<'bump> Parser<'bump> {
             strpool: self.strpool,
             tokens: self.tokens,
             alloc: self.alloc,
-            // SAFETY: parent does not access self.jsobjs while the subparser is alive; the
-            // borrow is logically transferred and restored in continue_from_subparser.
-            jsobjs: unsafe { core::slice::from_raw_parts_mut(self.jsobjs.as_mut_ptr(), self.jsobjs.len()) },
-            // TODO(port): borrowck — jsobjs is shared between parent/sub; raw reborrow.
+            // PORT NOTE: reshaped for borrowck — Zig copies the slice value; we move the
+            // exclusive borrow into the subparser and restore it in continue_from_subparser.
+            jsobjs: core::mem::take(&mut self.jsobjs),
             current: self.current,
             errors: core::mem::replace(
                 &mut self.errors,
@@ -1283,6 +1282,7 @@ impl<'bump> Parser<'bump> {
             &mut subparser.errors,
             bumpalo::collections::Vec::new_in(self.alloc),
         );
+        self.jsobjs = core::mem::take(&mut subparser.jsobjs);
     }
 
     /// Main parse function
@@ -2720,10 +2720,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             word_start: self.word_start,
             j: self.j,
             delimit_quote: false,
-            string_refs: unsafe {
-                // SAFETY: parent doesn't use string_refs while sublexer is active; restored after.
-                core::slice::from_raw_parts_mut(self.string_refs.as_mut_ptr(), self.string_refs.len())
-            },
+            // PORT NOTE: reshaped for borrowck — move the exclusive borrow into the sublexer
+            // and restore it in continue_from_sublexer (avoids aliased &mut).
+            string_refs: core::mem::take(&mut self.string_refs),
             jsobjs_len: self.jsobjs_len,
         };
         sublexer.chars.state = CharState::Normal;
@@ -2744,6 +2743,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         self.word_start = sublexer.word_start;
         self.j = sublexer.j;
         self.delimit_quote = sublexer.delimit_quote;
+        self.string_refs = core::mem::take(&mut sublexer.string_refs);
     }
 
     fn make_snapshot(&self) -> BacktrackSnapshot<ENCODING> {
@@ -3014,6 +3014,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             } else {
                                 self.eat_subshell(SubShellKind::Backtick)?;
                             }
+                            fell_through = true;
                         }
                         // Command substitution/vars
                         c if c == b'$' as u32 => {
@@ -3208,6 +3209,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 fell_through = true;
                                 break 'escaped;
                             }
+                            fell_through = true;
                         }
                         // 2. State switchers
                         c if c == b'\'' as u32 => {
@@ -4253,7 +4255,13 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
                 }?;
                 match peeked {
                     // Backslash only applies to these characters
-                    c if matches!(c as u8, b'$' | b'`' | b'"' | b'\\' | b'\n' | b'#') => {
+                    c if c == b'$' as u32
+                        || c == b'`' as u32
+                        || c == b'"' as u32
+                        || c == b'\\' as u32
+                        || c == b'\n' as u32
+                        || c == b'#' as u32 =>
+                    {
                         char = peeked;
                     }
                     _ => return Some(InputChar { char, escaped: false }),

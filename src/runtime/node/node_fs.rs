@@ -4515,9 +4515,12 @@ impl NodeFS {
                             // PORTING.md §Forbidden bans `Vec::leak()`; round-trip through
                             // `into_boxed_slice()` so the allocation layout JSC frees with
                             // matches what we hand it (capacity == len).
-                            let owned = contents.to_vec().into_boxed_slice();
+                            let raw = Box::into_raw(contents.to_vec().into_boxed_slice());
+                            // SAFETY: ownership of the allocation is transferred to JSC; the
+                            // ArrayBuffer finalizer reconstructs the Box and frees it
+                            // (PORTING.md:348 — `Box::into_raw`/`from_raw` across FFI).
                             Maybe::Ok(ret::ReadFileWithOptions::Buffer(
-                                Buffer::from_bytes(Box::leak(owned), bun_jsc::JSType::Uint8Array),
+                                Buffer::from_bytes(unsafe { &mut *raw }, bun_jsc::JSType::Uint8Array),
                             ))
                         } else if string_type == ReadFileStringType::Default {
                             Maybe::Ok(ret::ReadFileWithOptions::String(contents.to_vec().into_boxed_slice()))
@@ -4595,9 +4598,13 @@ impl NodeFS {
                     // to the `Buffer::from_bytes(dupe)` branch which Zig also uses
                     // when `this.vm == null`.
                     // TODO(port-jsc): re-introduce the create_buffer fast-path.
-                    let dup = temporary_read_buffer_before_stat_call.to_vec().into_boxed_slice();
+                    let raw = Box::into_raw(
+                        temporary_read_buffer_before_stat_call.to_vec().into_boxed_slice(),
+                    );
+                    // SAFETY: ownership transferred to JSC; freed via ArrayBuffer finalizer
+                    // (PORTING.md:348 — `Box::into_raw`/`from_raw` across FFI).
                     Maybe::Ok(ret::ReadFileWithOptions::Buffer(
-                        Buffer::from_bytes(Box::leak(dup), bun_jsc::JSType::Uint8Array),
+                        Buffer::from_bytes(unsafe { &mut *raw }, bun_jsc::JSType::Uint8Array),
                     ))
                 }
                 _ => {
@@ -4728,9 +4735,11 @@ impl NodeFS {
         match args.encoding {
             Encoding::Buffer => {
                 buf.truncate(final_len);
-                let owned = buf.into_boxed_slice();
+                let raw = Box::into_raw(buf.into_boxed_slice());
+                // SAFETY: ownership transferred to JSC; freed via ArrayBuffer finalizer
+                // (PORTING.md:348 — `Box::into_raw`/`from_raw` across FFI).
                 Maybe::Ok(ret::ReadFileWithOptions::Buffer(
-                    Buffer::from_bytes(Box::leak(owned), bun_jsc::JSType::Uint8Array),
+                    Buffer::from_bytes(unsafe { &mut *raw }, bun_jsc::JSType::Uint8Array),
                 ))
             }
             _ => {

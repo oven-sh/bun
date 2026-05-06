@@ -3632,31 +3632,37 @@ impl<'a> LinkerContext<'a> {
         let all_export_stmts_len = needs_exports_variable as usize
             + (!properties.is_empty()) as usize
             + force_include_exports_for_entry_point as usize;
-        // PORT NOTE: borrowck — slicing `stmts.head` while holding
-        // `all_export_stmts`; we go through raw pointers and re-seat
-        // `stmts.head` first so the two `&mut [Stmt]` don't overlap.
-        let head_ptr: *mut [Stmt] = stmts.head;
-        // SAFETY: `head_ptr` is the freshly-allocated batch buffer of length
-        // `stmts_count` (>= `all_export_stmts_len`); the two slices are disjoint.
-        let all_export_stmts: &mut [Stmt] = unsafe { &mut (*head_ptr)[..all_export_stmts_len] };
-        stmts.head = unsafe { &mut (*head_ptr)[all_export_stmts_len..] };
-        let mut remaining_stmts: &mut [Stmt] = all_export_stmts;
+        // PORT NOTE: the trailing `all_export_stmts_len` slots of `stmts_slab`
+        // (after the per-export `eat1`s above) are filled below in the order
+        // {var exports={}, __export(...), module.exports=__toCommonJS(...)}.
+        let all_export_stmts_base = stmts_head;
+        macro_rules! emit_export_stmt {
+            ($value:expr) => {{
+                // SAFETY: `stmts_head < stmts_count` (counts above guarantee
+                // exactly `all_export_stmts_len` slots remain).
+                unsafe { (*stmts_slab)[stmts_head].write($value) };
+                stmts_head += 1;
+            }};
+        }
 
         // Prefix this part with "var exports = {}" if this isn't a CommonJS entry point
         if needs_exports_variable {
-            let decls = allocator.alloc_slice_fill_iter(core::iter::once(G::Decl {
-                binding: Binding::alloc(allocator, B::Identifier { r#ref: exports_ref }, loc),
-                value: Some(Expr::allocate(allocator, E::Object::default(), loc)),
-            }));
-            remaining_stmts[0] = Stmt::allocate(
+            emit_export_stmt!(Stmt::allocate(
                 allocator,
                 S::Local {
-                    decls: G::Decl::List::from_owned_slice(decls),
+                    decls: G::DeclList::from_slice(&[G::Decl {
+                        binding: Binding::alloc(
+                            allocator,
+                            bun_js_parser::ast::b::Identifier { ref_: exports_ref },
+                            loc,
+                        ),
+                        value: Some(Expr::allocate(allocator, E::Object::default(), loc)),
+                    }])
+                    .expect("OOM"),
                     ..Default::default()
                 },
                 loc,
-            );
-            remaining_stmts = &mut remaining_stmts[1..];
+            ));
             declared_symbols
                 .append(DeclaredSymbol { ref_: exports_ref, is_top_level: true })
                 .expect("unreachable");
@@ -3666,25 +3672,30 @@ impl<'a> LinkerContext<'a> {
         let mut export_ref = Ref::NONE;
         if !properties.is_empty() {
             export_ref = self.runtime_function(b"__export");
-            let args = allocator.alloc_slice_fill_iter([
-                Expr::init_identifier(exports_ref, loc),
-                Expr::allocate(
-                    allocator,
-                    E::Object {
-                        properties: G::Property::List::move_from_list(&mut properties),
-                        ..Default::default()
-                    },
-                    loc,
-                ),
-            ].into_iter());
-            remaining_stmts[0] = Stmt::allocate(
+            // PORT NOTE: `bumpalo::Vec` → `BabyList` via the global heap;
+            // `G::PropertyList` is `BabyList<Property>` and currently has no
+            // arena-backed `move_from_list`, so re-own. PERF(port).
+            let mut owned_props: Vec<G::Property> = Vec::with_capacity(properties.len());
+            owned_props.extend(properties.drain(..));
+            emit_export_stmt!(Stmt::allocate(
                 allocator,
                 S::SExpr {
                     value: Expr::allocate(
                         allocator,
                         E::Call {
                             target: Expr::init_identifier(export_ref, loc),
-                            args: bun_js_parser::ExprNodeList::from_slice(args).expect("OOM"),
+                            args: bun_js_parser::ExprNodeList::from_slice(&[
+                                Expr::init_identifier(exports_ref, loc),
+                                Expr::allocate(
+                                    allocator,
+                                    E::Object {
+                                        properties: G::PropertyList::move_from_list(owned_props),
+                                        ..Default::default()
+                                    },
+                                    loc,
+                                ),
+                            ])
+                            .expect("OOM"),
                             ..Default::default()
                         },
                         loc,
@@ -3692,8 +3703,7 @@ impl<'a> LinkerContext<'a> {
                     ..Default::default()
                 },
                 loc,
-            );
-            remaining_stmts = &mut remaining_stmts[1..];
+            ));
             // Make sure this file depends on the "__export" symbol
             let parts = self.top_level_symbols_to_parts_for_runtime(export_ref);
             ns_export_dependencies
@@ -3717,15 +3727,11 @@ impl<'a> LinkerContext<'a> {
         // access to the exports object and should NOT see the "__esModule" flag.
         if force_include_exports_for_entry_point {
             let to_common_js_ref = self.runtime_function(b"__toCommonJS");
-
-            let call_args = allocator.alloc_slice_fill_iter(
-                core::iter::once(Expr::init_identifier(exports_ref, Loc::EMPTY)),
-            );
-            remaining_stmts[0] = Stmt::assign(
+            emit_export_stmt!(Stmt::assign(
                 Expr::allocate(
                     allocator,
                     E::Dot {
-                        name: b"exports" as *const [u8],
+                        name: b"exports",
                         name_loc: Loc::EMPTY,
                         target: Expr::init_identifier(self.unbound_module_ref, Loc::EMPTY),
                         ..Default::default()
@@ -3736,17 +3742,19 @@ impl<'a> LinkerContext<'a> {
                     allocator,
                     E::Call {
                         target: Expr::init_identifier(to_common_js_ref, Loc::EMPTY),
-                        args: bun_js_parser::ExprNodeList::from_slice(call_args).expect("OOM"),
+                        args: bun_js_parser::ExprNodeList::from_slice(&[Expr::init_identifier(
+                            exports_ref,
+                            Loc::EMPTY,
+                        )])
+                        .expect("OOM"),
                         ..Default::default()
                     },
                     Loc::EMPTY,
                 ),
-            );
-            remaining_stmts = &mut remaining_stmts[1..];
+            ));
         }
 
-        debug_assert!(remaining_stmts.is_empty()); // all must be used
-        let _ = remaining_stmts;
+        debug_assert_eq!(stmts_head - all_export_stmts_base, all_export_stmts_len); // all must be used
 
         // No need to generate a part if it'll be empty
         if all_export_stmts_len > 0 {
@@ -3758,9 +3766,15 @@ impl<'a> LinkerContext<'a> {
             self.graph.ast.items_parts_mut()[id as usize].slice_mut()
                 [js_ast::NAMESPACE_EXPORT_PART_INDEX as usize] = Part {
                 stmts: if self.options.output_format != Format::InternalBakeDev {
-                    // SAFETY: `head_ptr` borrows the worker arena which outlives
-                    // the link pass; the prefix slice is disjoint from `stmts.head`.
-                    unsafe { &mut (*head_ptr)[..all_export_stmts_len] as *mut [Stmt] }
+                    // SAFETY: the `[all_export_stmts_base..stmts_head]` window
+                    // of `stmts_slab` is fully initialized above; the worker
+                    // arena outlives the link pass.
+                    unsafe {
+                        core::slice::from_raw_parts_mut(
+                            (*stmts_slab)[all_export_stmts_base].as_mut_ptr(),
+                            all_export_stmts_len,
+                        ) as *mut [Stmt]
+                    }
                 } else {
                     &mut [] as *mut [Stmt]
                 },
@@ -3843,10 +3857,10 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: `part.stmts` is a non-empty arena slice (checked above).
         let stmt: &Stmt = unsafe { &(*part.stmts)[0] };
         let stmt_loc = stmt.loc;
-        let js_ast::Stmt::Data::SLazyExport(lazy) = &stmt.data else {
+        let bun_js_parser::ast::stmt::Data::SLazyExport(lazy) = stmt.data else {
             panic!("Internal error: expected top-level lazy export statement");
         };
-        let expr = Expr { data: (**lazy).clone(), loc: stmt_loc };
+        let expr = Expr { data: *lazy, loc: stmt_loc };
 
         match exports_kind {
             ExportsKind::Cjs => {
@@ -3856,13 +3870,13 @@ impl<'a> LinkerContext<'a> {
                         Expr::init(
                             E::Dot {
                                 target: Expr::init_identifier(module_ref, stmt_loc),
-                                name: b"exports" as *const [u8],
+                                name: b"exports",
                                 name_loc: stmt_loc,
                                 ..Default::default()
                             },
                             stmt_loc,
                         ),
-                        expr.clone(),
+                        expr,
                     );
                 }
                 self.graph.generate_symbol_import_and_use(
@@ -3874,14 +3888,14 @@ impl<'a> LinkerContext<'a> {
                 )?;
 
                 // If this is a .napi addon and it's not node, we need to generate a require() call to the runtime
-                if matches!(expr.data, js_ast::Expr::Data::ECall(ref c)
-                    if matches!(c.target.data, js_ast::Expr::Data::ERequireCallTarget(_)))
+                if matches!(expr.data, bun_js_parser::ast::expr::Data::ECall(c)
+                    if matches!(c.target.data, bun_js_parser::ast::expr::Data::ERequireCallTarget(_)))
                     // if it's commonjs, use require()
                     && self.options.output_format != Format::Cjs
                 {
                     self.graph.generate_runtime_symbol_import_and_use(
                         source_index,
-                        Index::part(1u32),
+                        crate::Index::part(1u32),
                         b"__require",
                         1,
                     )?;
@@ -3894,11 +3908,11 @@ impl<'a> LinkerContext<'a> {
                 // the unused tail back to the arena (matches Zig `.len = 0`).
                 part.stmts = &mut [] as *mut [Stmt];
 
-                if let js_ast::Expr::Data::EObject(e_object) = &expr.data {
+                if let bun_js_parser::ast::expr::Data::EObject(e_object) = expr.data {
                     for property_ in e_object.properties.slice() {
                         let property: &G::Property = property_;
                         let Some(key) = property.key.as_ref() else { continue };
-                        let js_ast::Expr::Data::EString(key_str) = &key.data else { continue };
+                        let bun_js_parser::ast::expr::Data::EString(key_str) = key.data else { continue };
                         if property.value.is_none()
                             || key_str.eql_comptime(b"default")
                             || key_str.eql_comptime(b"__esModule")
@@ -3931,13 +3945,13 @@ impl<'a> LinkerContext<'a> {
                             Stmt::alloc(
                                 S::Local {
                                     is_export: true,
-                                    decls: G::Decl::List::from_slice(&[G::Decl {
+                                    decls: G::DeclList::from_slice(&[G::Decl {
                                         binding: Binding::alloc(
                                             alloc,
-                                            B::Identifier { r#ref: generated.0 },
+                                            bun_js_parser::ast::b::Identifier { ref_: generated.0 },
                                             expr.loc,
                                         ),
-                                        value: property.value.clone(),
+                                        value: property.value,
                                     }])?,
                                     ..Default::default()
                                 },
@@ -3972,7 +3986,7 @@ impl<'a> LinkerContext<'a> {
                     let alloc = self.allocator();
                     let new_stmts = alloc.alloc_slice_fill_iter(core::iter::once(Stmt::alloc(
                         S::ExportDefault {
-                            default_name: js_ast::LocRef { r#ref: generated.0, loc: stmt_loc },
+                            default_name: js_ast::LocRef { ref_: Some(generated.0), loc: stmt_loc },
                             value: js_ast::StmtOrExpr::Expr(expr),
                         },
                         stmt_loc,

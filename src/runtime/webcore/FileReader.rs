@@ -317,11 +317,11 @@ impl FileReader {
     pub fn loop_(&self) -> *mut bun_uws_sys::Loop {
         #[cfg(windows)]
         {
-            self.event_loop().loop_().uv_loop
+            self.event_loop().r#loop().uv_loop
         }
         #[cfg(not(windows))]
         {
-            self.event_loop().loop_()
+            self.event_loop().r#loop()
         }
     }
 

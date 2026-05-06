@@ -525,50 +525,53 @@ pub mod random {
         if max_value.is_undefined() || max_value.is_callable() {
             callback = max_value;
             max_value = min_value;
-            min_value = JSValue::js_number(0);
+            min_value = JSValue::js_number(0.0);
             min_specified = false;
         }
 
         if !callback.is_undefined() {
-            let _ = validators::validate_function(global, "callback", callback)?;
+            let _ = validators::validate_function(global, b"callback", callback)?;
         }
 
         if !min_value.is_safe_integer() {
-            return global.throw_invalid_argument_type_value2("min", "a safe integer", min_value);
+            return Err(global.throw_invalid_argument_type_value2("min", "a safe integer", min_value));
         }
         if !max_value.is_safe_integer() {
-            return global.throw_invalid_argument_type_value2("max", "a safe integer", max_value);
+            return Err(global.throw_invalid_argument_type_value2("max", "a safe integer", max_value));
         }
 
         let min: i64 = min_value.as_number().trunc() as i64;
         let max: i64 = max_value.as_number().trunc() as i64;
 
         if max <= min {
-            return global
-                .err_out_of_range(format_args!(
+            return Err(validators::throw_range_error(
+                global,
+                format_args!(
                     "The value of \"max\" is out of range. It must be greater than the value of \"min\" ({}). Received {}",
                     min, max
-                ))
-                .throw();
+                ),
+            ));
         }
 
         if max - min > MAX_RANGE {
             if min_specified {
-                return global
-                    .err_out_of_range(format_args!(
+                return Err(validators::throw_range_error(
+                    global,
+                    format_args!(
                         "The value of \"max - min\" is out of range. It must be <= {}. Received {}",
                         MAX_RANGE,
                         max - min
-                    ))
-                    .throw();
+                    ),
+                ));
             }
-            return global
-                .err_out_of_range(format_args!(
+            return Err(validators::throw_range_error(
+                global,
+                format_args!(
                     "The value of \"max\" is out of range. It must be <= {}. Received {}",
                     MAX_RANGE,
                     max - min
-                ))
-                .throw();
+                ),
+            ));
         }
 
         // Zig: `std.crypto.random.intRangeLessThan(i64, min, max)` — port of

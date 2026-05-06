@@ -703,14 +703,16 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
     // these things are leaked because we are going to exit
     // When --workspaces is set, we want to match all workspace packages
     // Otherwise use the provided filters
-    let mut filters_to_use = ctx.filters;
-    if ctx.workspaces {
+    // PORT NOTE: `FilterSet::init` takes `&[&[u8]]`; ctx.filters is
+    // `Vec<Box<[u8]>>` so build a borrowed-slice view.
+    let filters_to_use: Vec<&[u8]> = if ctx.workspaces {
         // Use "*" as filter to match all packages in the workspace
-        filters_to_use = &[b"*"];
-        // TODO(port): slice-of-slices type for filters
-    }
+        vec![b"*".as_slice()]
+    } else {
+        ctx.filters.iter().map(|f| f.as_ref()).collect()
+    };
 
-    let mut filter_instance =
+    let filter_instance =
         FilterArg::FilterSet::init(&filters_to_use, fsinstance.top_level_dir)?;
     let mut patterns: Vec<Box<[u8]>> = Vec::new();
 

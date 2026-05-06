@@ -59,7 +59,8 @@ impl TextEncoderStreamEncoder {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = frame.arguments_old(1);
+        let arguments = frame.arguments_old::<1>();
+        let arguments = arguments.slice();
         if arguments.is_empty() {
             return global.throw_not_enough_arguments(
                 "TextEncoderStreamEncoder.encode",

@@ -47,12 +47,15 @@ pub fn to_be_greater_than_or_equal(
     if !value.is_big_int() && !other_value.is_big_int() {
         pass = value.as_number() >= other_value.as_number();
     } else if value.is_big_int() {
-        pass = match value.as_big_int_compare(other_value, global) {
+        // UFCS: the inherent `JSValue::as_big_int_compare(global, other)` shadows the
+        // `JSValueTestExt` trait method which keeps the Phase-A `(other, global)` order
+        // and returns `BigIntCompare`. Call the trait method explicitly.
+        pass = match JSValueTestExt::as_big_int_compare(value, other_value, global) {
             BigIntCompare::GreaterThan | BigIntCompare::Equal => true,
             _ => pass,
         };
     } else {
-        pass = match other_value.as_big_int_compare(value, global) {
+        pass = match JSValueTestExt::as_big_int_compare(other_value, value, global) {
             BigIntCompare::LessThan | BigIntCompare::Equal => true,
             _ => pass,
         };

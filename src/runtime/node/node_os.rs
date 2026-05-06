@@ -445,7 +445,7 @@ unsafe extern "C" {
 }
 
 #[cfg(target_os = "macos")]
-fn cpus_impl_darwin(global_this: &JSGlobalObject) -> Result<JSValue, bun_core::Error> {
+fn cpus_impl_darwin(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
     // Fetch the CPU info structure
     let mut num_cpus: c::natural_t = 0;
     let mut info: *mut c::processor_cpu_load_info = core::ptr::null_mut();

@@ -520,7 +520,8 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
                 return sys::Result::Err(err);
             }
             sys::Result::Ok(()) => {
-                self.enable_keeping_process_alive(self.parent().event_loop());
+                let event_loop = self.parent().event_loop();
+                self.enable_keeping_process_alive(event_loop);
             }
         }
 

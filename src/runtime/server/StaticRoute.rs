@@ -250,28 +250,33 @@ impl StaticRoute {
     }
 
     // HEAD requests have no body.
-    pub fn on_head_request(&self, req: AnyRequest, resp: AnyResponse) {
+    /// # Safety
+    /// `this` must point to a live heap-allocated `StaticRoute` produced by one of
+    /// the constructors (write provenance intact). Mirrors Zig `*StaticRoute` receiver.
+    pub unsafe fn on_head_request(this: *mut Self, req: AnyRequest, resp: AnyResponse) {
         // Check If-None-Match for HEAD requests with 200 status
-        if self.status_code == 200 {
-            if self.render_304_not_modified_if_none_match(req, resp) {
+        if (*this).status_code == 200 {
+            if Self::render_304_not_modified_if_none_match(this, req, resp) {
                 return;
             }
         }
 
         // Continue with normal HEAD request handling
         req.set_yield(false);
-        self.on_head(resp);
+        Self::on_head(this, resp);
     }
 
-    pub fn on_head(&self, resp: AnyResponse) {
-        debug_assert!(self.server.is_some());
-        self.ref_();
-        if let Some(server) = self.server {
+    /// # Safety
+    /// See [`on_head_request`].
+    pub unsafe fn on_head(this: *mut Self, resp: AnyResponse) {
+        debug_assert!((*this).server.is_some());
+        (*this).ref_();
+        if let Some(server) = (*this).server {
             server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
         }
-        resp.corked(|| self.render_metadata_and_end(resp));
-        self.on_response_complete(resp);
+        resp.corked(|| (*this).render_metadata_and_end(resp));
+        Self::on_response_complete(this, resp);
     }
 
     fn render_metadata_and_end(&self, resp: AnyResponse) {

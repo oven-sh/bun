@@ -364,10 +364,12 @@ pub trait HasWorkPoolTask {
 
 #[cfg(windows)]
 pub struct HardLinkWindowsInstallTask {
+    /// Layout: `[src .. , 0, dest .. , 0]`. `src` and `dest` are reconstructed
+    /// on demand from `src_len` instead of storing self-referential pointers
+    /// (which would be invalidated when this `Box<[u16]>` is moved into `Self`
+    /// and again whenever `&mut self` reasserts uniqueness over it).
     bytes: Box<[u16]>,
-    // SAFETY: src/dest are slices into `bytes`; self-referential — kept as raw ptrs.
-    src: *mut bun_str::WStr,
-    dest: *mut bun_str::WStr,
+    src_len: usize,
     basename: u16,
     task: WorkPoolTask,
     err: Option<bun_core::Error>,

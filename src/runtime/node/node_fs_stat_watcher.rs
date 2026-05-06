@@ -433,7 +433,8 @@ impl StatWatcher {
         this_ref.this_value.finalize();
         this_ref.closed = true;
         this_ref.scheduler.deref();
-        this_ref.deref(); // but don't deinit until the scheduler drops its reference
+        // SAFETY: `this` is the m_ctx payload raw ptr; we own the JS-side ref being released.
+        unsafe { Self::deref(this) }; // but don't deinit until the scheduler drops its reference
     }
 
     pub fn initial_stat_success_on_main_thread(this: *mut StatWatcher) {

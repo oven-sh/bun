@@ -2587,7 +2587,7 @@ type PollsMap = ArrayHashMap<c_ares::ares_socket_t, *mut PollType>;
 
 #[bun_jsc::JsClass]
 pub struct Resolver {
-    pub ref_count: bun_ptr::IntrusiveRcField, // bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
+    pub ref_count: bun_ptr::RefCount<Resolver>, // bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
     pub channel: Option<*mut c_ares::Channel>, // FFI
     pub vm: *const VirtualMachine, // JSC_BORROW (BACKREF — VirtualMachine outlives the resolver)
     pub polls: PollsMap,

@@ -666,11 +666,13 @@ impl<'a> BunTest<'a> {
             collection: Collection::init(bun_test_root),
             execution: Execution::Execution::init(),
             reporter,
-            result_queue: ResultQueue::new(),
+            result_queue: ResultQueue::init(),
             default_concurrent,
             first_last,
             extra_execution_entries: Vec::new(),
-            timer: EventLoopTimer { next: Timespec::EPOCH, tag: EventLoopTimerTag::BunTest, ..Default::default() },
+            // PORT NOTE: `EventLoopTimer` has no `Default`; `init_paused` sets
+            // `next = EPOCH, state = PENDING` (matches Zig's zero-init).
+            timer: EventLoopTimer::init_paused(EventLoopTimerTag::BunTest),
             wants_wakeup: false,
         }
     }
@@ -707,8 +709,8 @@ impl<'a> BunTest<'a> {
                     group_index: self.execution.group_index,
                     entry_data: Some(EntryData {
                         sequence_index: active_sequence_index,
-                        entry: active_entry as *const (),
-                        remaining_repeat_count: sequence.remaining_repeat_count,
+                        entry: active_entry.as_ptr() as *const (),
+                        remaining_repeat_count: sequence.remaining_repeat_count as i64,
                     }),
                 }
             }
@@ -724,7 +726,7 @@ impl<'a> BunTest<'a> {
         bun_ptr::IntrusiveRc::new(RefData {
             buntest_weak: Rc::downgrade(this_strong),
             phase,
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
         })
     }
 
@@ -748,7 +750,7 @@ impl<'a> BunTest<'a> {
         // so scope-exit drop is a silent no-op. Decrement the intrusive count explicitly so
         // (a) RefData::destructor frees the box + Weak<BunTest>, and (b) a paired done() callback
         // observes has_one_ref()==true on its turn instead of hanging.
-        let refdata = scopeguard::guard(refdata, |r| bun_ptr::IntrusiveRc::deref(&r));
+        let refdata = scopeguard::guard(refdata, |r: RefDataPtr| r.deref());
         let has_one_ref = refdata.has_one_ref();
         let Some(this_strong) = refdata.buntest_weak.upgrade() else {
             bun_core::scoped_log!(bun_test_group, "bunTestThenOrCatch -> the BunTest is no longer active");
@@ -808,7 +810,8 @@ impl<'a> BunTest<'a> {
         } else {
             // error is only reported for the first done() call
             if was_error {
-                let _ = global_this.bun_vm().uncaught_exception(global_this, value, false);
+                // SAFETY: bun_vm() returns the live per-thread VM.
+                let _ = unsafe { &mut *global_this.bun_vm() }.uncaught_exception(global_this, value, false);
             }
         }
         this.called = true;

@@ -2312,7 +2312,7 @@ impl Example {
                 refresher.refresh();
 
                 if log.errors > 0 {
-                    log.print(Output::error_writer())?;
+                    let _ = log.print(Output::error_writer() as *mut _);
                     Global::exit(1);
                 } else {
                     Output::pretty_errorln(format_args!(
@@ -2328,7 +2328,7 @@ impl Example {
             progress.end();
             refresher.refresh();
 
-            log.print(Output::error_writer())?;
+            let _ = log.print(Output::error_writer() as *mut _);
             Global::exit(1);
         }
 
@@ -2478,7 +2478,7 @@ impl Example {
             Ok(e) => e,
             Err(err) => {
                 if log.errors > 0 {
-                    log.print(Output::error_writer())?;
+                    let _ = log.print(Output::error_writer() as *mut _);
                     Global::exit(1);
                 } else {
                     Output::pretty_errorln(format_args!(
@@ -2491,17 +2491,17 @@ impl Example {
         };
 
         if log.errors > 0 {
-            log.print(Output::error_writer())?;
+            let _ = log.print(Output::error_writer() as *mut _);
             Global::exit(1);
         }
 
         if let Some(q) = examples_object.as_property(b"examples") {
             if q.expr.data.is_e_object() {
-                let count = q.expr.data.e_object().unwrap().properties.len();
+                let count = q.expr.data.e_object().unwrap().properties.len as usize;
 
                 let mut list: Box<[Example]> = (0..count).map(|_| Example::default()).collect();
                 for (i, property) in q.expr.data.e_object().unwrap().properties.slice().iter().enumerate() {
-                    let name = property.key.unwrap().data.e_string().data;
+                    let name = property.key.unwrap().data.e_string().unwrap().data;
                     list[i] = Example {
                         name: if let Some(slash) = bun_str::strings::index_of_char(name, b'/') {
                             &name[slash + 1..]
@@ -2516,6 +2516,7 @@ impl Example {
                             .expr
                             .data
                             .e_string()
+                            .unwrap()
                             .data,
                         description: property
                             .value
@@ -2525,6 +2526,7 @@ impl Example {
                             .expr
                             .data
                             .e_string()
+                            .unwrap()
                             .data,
                         local: false,
                     };

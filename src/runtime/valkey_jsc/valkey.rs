@@ -1181,35 +1181,42 @@ impl ValkeyClient {
         // First send HELLO command for RESP3 protocol
         debug!("Sending HELLO 3 command");
 
-        let mut hello_args_buf: [&[u8]; 4] = [b"3", b"AUTH", b"", b""];
-        let hello_args: &[&[u8]];
+        // Scope the HELLO arg slices so the `&self.username` / `&self.password`
+        // borrows end before any `&mut self` call below. The write itself targets
+        // `self.write_buffer` directly (disjoint field) via `WriteBufWriter`.
+        let hello_write_result = {
+            let mut hello_args_buf: [&[u8]; 4] = [b"3", b"AUTH", b"", b""];
+            let hello_args: &[&[u8]];
 
-        if !self.username.is_empty() || !self.password.is_empty() {
-            hello_args_buf[0] = b"3";
-            hello_args_buf[1] = b"AUTH";
+            if !self.username.is_empty() || !self.password.is_empty() {
+                hello_args_buf[0] = b"3";
+                hello_args_buf[1] = b"AUTH";
 
-            if !self.username.is_empty() {
-                hello_args_buf[2] = &self.username;
-                hello_args_buf[3] = &self.password;
+                if !self.username.is_empty() {
+                    hello_args_buf[2] = &self.username;
+                    hello_args_buf[3] = &self.password;
+                } else {
+                    hello_args_buf[2] = b"default";
+                    hello_args_buf[3] = &self.password;
+                }
+
+                hello_args = &hello_args_buf[0..4];
             } else {
-                hello_args_buf[2] = b"default";
-                hello_args_buf[3] = &self.password;
+                hello_args = &hello_args_buf[0..1];
             }
 
-            hello_args = &hello_args_buf[0..4];
-        } else {
-            hello_args = &hello_args_buf[0..1];
-        }
+            // Format and send the HELLO command without adding to command queue
+            // We'll handle this response specially in handleResponse
+            let hello_cmd = Command {
+                command: b"HELLO",
+                args: Args::Raw(hello_args),
+                meta: command::Meta::default(),
+            };
 
-        // Format and send the HELLO command without adding to command queue
-        // We'll handle this response specially in handleResponse
-        let hello_cmd = Command {
-            command: b"HELLO",
-            args: Args::Raw(hello_args),
-            meta: command::Meta::default(),
+            hello_cmd.write(&mut WriteBufWriter(&mut self.write_buffer))
         };
 
-        if let Err(_err) = hello_cmd.write(self.writer()) {
+        if let Err(_err) = hello_write_result {
             self.fail(b"Failed to write HELLO command", RedisError::OutOfMemory)?;
             return Ok(());
         }
@@ -1558,6 +1565,19 @@ impl bun_io::Write for ValkeyClient {
         self.write_buffer
             .write(buf)
             .map_err(|_| bun_core::Error::OUT_OF_MEMORY)
+    }
+}
+
+/// Newtype around `&mut OffsetByteList` so `Command::write` can target the
+/// write buffer directly when other `&self` field borrows (username/password)
+/// are still live — Rust's split-borrow rules permit `&self.username` +
+/// `&mut self.write_buffer`, but not `&self.username` + `&mut self`.
+struct WriteBufWriter<'a>(&'a mut OffsetByteList);
+
+impl bun_io::Write for WriteBufWriter<'_> {
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
+        self.0.write(buf).map_err(|_| bun_core::Error::OUT_OF_MEMORY)
     }
 }
 

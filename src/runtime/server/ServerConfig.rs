@@ -527,18 +527,18 @@ fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
             .unwrap_or(remaining.len());
         let route_name = &remaining[..end];
         if !route_name.is_empty() && route_name[0].is_ascii_digit() {
-            return global.throw_todo(
+            return Err(global.throw_todo(
                 "Route parameter names cannot start with a number.\n\n\
                  If you run into this, please file an issue and we will add support for it.",
-            );
+            ));
         }
 
-        let entry = duped_route_names.get_or_put(route_name);
+        let entry = bun_core::handle_oom(duped_route_names.get_or_put(route_name));
         if entry.found_existing {
-            return global.throw_todo(
+            return Err(global.throw_todo(
                 "Support for duplicate route parameter names is not yet implemented.\n\n\
                  If you run into this, please file an issue and we will add support for it.",
-            );
+            ));
         }
 
         remaining = &remaining[end..];
@@ -559,22 +559,9 @@ fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<J
     Ok(None)
 }
 
-#[derive(Clone, Copy)]
-pub struct FromJSOptions {
-    pub allow_bake_config: bool,
-    pub is_fetch_required: bool,
-    pub has_user_routes: bool,
-}
-
-impl Default for FromJSOptions {
-    fn default() -> Self {
-        Self {
-            allow_bake_config: true,
-            is_fetch_required: true,
-            has_user_routes: false,
-        }
-    }
-}
+// `FromJSOptions` lives at module scope (super::FromJSOptions) — re-export for
+// callers that reach it via `_gated_from_js::FromJSOptions`.
+pub use super::FromJSOptions;
 
 impl ServerConfig {
     pub fn from_js(
@@ -583,7 +570,8 @@ impl ServerConfig {
         opts: FromJSOptions,
     ) -> JsResult<ServerConfig> {
         let vm = arguments.vm;
-        let env = &vm.transpiler.env;
+        // SAFETY: `vm.transpiler.env` is the long-lived dotenv loader owned by the VM.
+        let env = unsafe { &*vm.transpiler.env };
 
         let mut args = ServerConfig {
             address: Address::Tcp {
@@ -658,11 +646,11 @@ impl ServerConfig {
         // SSLConfig drops automatically when `args` drops on error path.
 
         let Some(arg) = arguments.next() else {
-            return global.throw_invalid_arguments("Bun.serve expects an object", &[]);
+            return Err(global.throw_invalid_arguments("Bun.serve expects an object"));
         };
 
         if !arg.is_object() {
-            return global.throw_invalid_arguments("Bun.serve expects an object", &[]);
+            return Err(global.throw_invalid_arguments("Bun.serve expects an object"));
         }
 
         // "development" impacts other settings like bake.

@@ -277,11 +277,14 @@ impl CookieMap {
         todo!("blocked_on: webcore::cookie_map::CookieMap::deref")
     }
     /// Serialize Set-Cookie headers onto the response handle.
-    pub fn write(
+    // PORT NOTE: generic over the response kind/handle so this opaque shim
+    // does not pull in bun_uws; the real cookie_map::CookieMap::write takes
+    // (ctx, ssl_enabled: bool, resp: *uws.AnyResponse).
+    pub fn write<K, R>(
         &mut self,
         _global: &bun_jsc::JSGlobalObject,
-        _ssl: bool,
-        _resp: *mut core::ffi::c_void,
+        _kind: K,
+        _resp: R,
     ) -> bun_jsc::JsResult<()> {
         todo!("blocked_on: webcore::cookie_map::CookieMap::write")
     }

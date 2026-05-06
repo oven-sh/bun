@@ -611,10 +611,12 @@ impl PublishCommand {
                 // PORT NOTE: bump-owned `&ZStr` — leak a heap copy so the spawned thread
                 // (which outlives `bump`) can borrow it `'static`.
                 let auth_url_str: &'static ZStr = {
-                    let b = bun_str::ZBox::from_bytes(auth_url_str.as_bytes());
-                    // SAFETY: `ZBox` owns a NUL-terminated buffer; leaking it yields a
-                    // `'static` view safe for the detached thread.
-                    unsafe { ZStr::from_raw(Box::leak(b.into_inner_boxed_slice()).as_ptr(), auth_url_str.len()) }
+                    let mut v = auth_url_str.as_bytes().to_vec();
+                    v.push(0);
+                    let len = v.len() - 1;
+                    let leaked = Box::leak(v.into_boxed_slice());
+                    // SAFETY: leaked is NUL-terminated; `'static` view safe for the detached thread.
+                    unsafe { ZStr::from_raw(leaked.as_ptr(), len) }
                 };
 
                 // important to clone because it belongs to `response_buf`, and `response_buf` will be
@@ -639,7 +641,7 @@ impl PublishCommand {
                 let bottom_left = if Output::enable_ansi_colors_stdout() { "└" } else { "|" };
                 let bottom_right = if Output::enable_ansi_colors_stdout() { "┘" } else { "|" };
 
-                let width = (PADDING * 2) + auth_url_str.len();
+                let width: usize = (PADDING * 2) + auth_url_str.len();
 
                 for _ in 0..OFFSET { Output::print(format_args!(" ")); }
                 Output::print(format_args!("{}", top_left));

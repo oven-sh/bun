@@ -3020,7 +3020,9 @@ impl Blob {
                 let sink = webcore::FileSink::init(
                     fd,
                     // SAFETY: self.global_this stored from a live &JSGlobalObject; VM outlives this task.
-                    unsafe { (*(*self.global_this).bun_vm()).event_loop() },
+                    jsc::EventLoopHandle::init(
+                        unsafe { (*(*self.global_this).bun_vm()).event_loop() } as *mut (),
+                    ),
                 );
                 // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
                 unsafe { (*sink).writer.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)) };
@@ -3053,7 +3055,9 @@ impl Blob {
                 let sink = webcore::FileSink::init(
                     Fd::INVALID,
                     // SAFETY: self.global_this stored from a live &JSGlobalObject; VM outlives this task.
-                    unsafe { (*(*self.global_this).bun_vm()).event_loop() },
+                    jsc::EventLoopHandle::init(
+                        unsafe { (*(*self.global_this).bun_vm()).event_loop() } as *mut (),
+                    ),
                 );
 
                 let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike {
@@ -3196,7 +3200,9 @@ impl Blob {
             let mut sink = webcore::FileSink::init(
                 bun_sys::Fd::INVALID,
                 // SAFETY: self.global_this stored from a live &JSGlobalObject; VM outlives this task.
-                unsafe { (*(*self.global_this).bun_vm()).event_loop() },
+                jsc::EventLoopHandle::init(
+                    unsafe { (*(*self.global_this).bun_vm()).event_loop() } as *mut (),
+                ),
             );
 
             let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike {

@@ -195,24 +195,25 @@ unsafe fn process_mut(p: &core::mem::ManuallyDrop<std::sync::Arc<Process>>) -> &
 
 /// `MaxBuf` owner vtable for `Subprocess` — routes max-buffer-exceeded
 /// notifications back to `Subprocess::on_max_buffer`.
+unsafe fn subprocess_maxbuf_on_overflow(owner: NonNull<()>, this: NonNull<MaxBuf>) {
+    // SAFETY: `owner` was set from a live `*mut Subprocess<'static>` in
+    // `MaxBuf::create_for_subprocess` below; the subprocess clears the
+    // maxbuf slot before drop. Determine which slot (`stdout` / `stderr`)
+    // overflowed, drop that slot, then notify.
+    unsafe {
+        let sp = &mut *owner.cast::<SubprocessT<'static>>().as_ptr();
+        let kind = if sp.stdout_maxbuf == Some(this) {
+            MaxBuf::remove_from_subprocess(&mut sp.stdout_maxbuf);
+            bun_io::max_buf::Kind::Stdout
+        } else {
+            MaxBuf::remove_from_subprocess(&mut sp.stderr_maxbuf);
+            bun_io::max_buf::Kind::Stderr
+        };
+        sp.on_max_buffer(kind);
+    }
+}
 static SUBPROCESS_MAXBUF_VTABLE: MaxBufOwnerVTable = MaxBufOwnerVTable {
-    on_overflow: |owner: NonNull<()>, this: NonNull<MaxBuf>| {
-        // SAFETY: `owner` was set from a live `*mut Subprocess<'static>` in
-        // `MaxBuf::create_for_subprocess` below; the subprocess clears the
-        // maxbuf slot before drop. Determine which slot (`stdout` / `stderr`)
-        // overflowed, drop that slot, then notify.
-        unsafe {
-            let sp = &mut *owner.cast::<SubprocessT<'static>>().as_ptr();
-            let kind = if sp.stdout_maxbuf == Some(this) {
-                MaxBuf::remove_from_subprocess(&mut sp.stdout_maxbuf);
-                bun_io::max_buf::Kind::Stdout
-            } else {
-                MaxBuf::remove_from_subprocess(&mut sp.stderr_maxbuf);
-                bun_io::max_buf::Kind::Stderr
-            };
-            sp.on_max_buffer(kind);
-        }
-    },
+    on_overflow: subprocess_maxbuf_on_overflow,
 };
 
 bun_output::declare_scope!(Subprocess, hidden);

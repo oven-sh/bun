@@ -1893,6 +1893,40 @@ impl bun_ptr::RefCounted for Terminal {
     }
 }
 
+// `bun.io.BufferedReader.init(@This())` — vtable parent. Terminal declares
+// `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` (Terminal.zig).
+impl BufferedReaderParent for Terminal {
+    const HAS_ON_READ_CHUNK: bool = true;
+
+    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {
+        // SAFETY: `this` is the BACKREF set via `reader.set_parent`; the
+        // BufferedReader vtable thunk never materializes `&mut Terminal`, so
+        // this is the unique access path for the callback's duration.
+        unsafe { &mut *this }.on_read_chunk(chunk, has_more)
+    }
+    unsafe fn on_reader_done(this: *mut Self) {
+        // SAFETY: see on_read_chunk; tail-position (reader done with self).
+        unsafe { &mut *this }.on_reader_done()
+    }
+    unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
+        // SAFETY: see on_read_chunk; tail-position.
+        unsafe { &mut *this }.on_reader_error(err)
+    }
+    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+        // SAFETY: see on_read_chunk; shared-only read of event_loop_handle.
+        unsafe { (*this).event_loop_handle.r#loop().cast() }
+    }
+    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
+        // CYCLEBREAK: bun_io::EventLoopHandle is opaque `*mut c_void`; pass the
+        // address of the stored bun_jsc::EventLoopHandle so the FilePoll vtable
+        // (registered by bun_runtime::init) can recover it.
+        // SAFETY: see on_read_chunk; shared-only read.
+        bun_io::EventLoopHandle(
+            unsafe { &raw const (*this).event_loop_handle } as *mut core::ffi::c_void,
+        )
+    }
+}
+
 // `bun.io.StreamingWriter(@This(), struct { onClose, onWritable, onError, onWrite })`
 // → trait impl on `Terminal`. All methods take `*mut Self` because the writer
 // is an intrusive *field of* the parent — see PipeWriter.rs PosixStreamingWriterParent.

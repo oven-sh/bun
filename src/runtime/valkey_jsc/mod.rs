@@ -285,6 +285,13 @@ pub mod js_valkey {
     }
 
     impl JSValkeyClient {
+        /// Spec js_valkey.zig `isSubscriber` — true once any (P)SUBSCRIBE has
+        /// been sent and not fully unsubscribed.
+        #[inline]
+        pub fn is_subscriber(&self) -> bool {
+            self._subscription_ctx.is_subscriber
+        }
+
         /// Spec js_valkey.zig `onConnectionTimeout` — fail the connect promise
         /// and tear down. Body in the gated `_jsc_gated` draft.
         pub fn on_connection_timeout(&mut self) {

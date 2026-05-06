@@ -1091,7 +1091,7 @@ enum WriteData {
     Store(StoreRef),
 }
 
-struct WriteContext {
+pub struct WriteContext {
     data: WriteData,
     path: ZBox,
     compress: Compression,

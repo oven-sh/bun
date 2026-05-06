@@ -867,7 +867,10 @@ pub mod exports {
 unsafe extern "C" {
     // TODO(port): callconv(jsc.conv) — actual ABI is sysv64 on Windows-x64, C elsewhere
     fn BUN__createJSS3File(global: *const JSGlobalObject, callframe: *const CallFrame) -> JSValue;
-    fn BUN__createJSS3FileUnsafely(global: *const JSGlobalObject, blob: *mut Blob) -> JSValue;
+    fn BUN__createJSS3FileUnsafely(
+        global: *const JSGlobalObject,
+        blob: *mut core::ffi::c_void,
+    ) -> JSValue;
 }
 
 #[bun_jsc::host_fn]

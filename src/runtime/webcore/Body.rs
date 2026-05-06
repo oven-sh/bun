@@ -1443,7 +1443,7 @@ use super::*;
 use crate::webcore::sink::ArrayBufferSink;
 
 // https://github.com/WebKit/webkit/blob/main/Source/WebCore/Modules/fetch/FetchBody.cpp#L45
-pub fn extract<'a>(global_this: &'a JSGlobalObject, value: JSValue) -> JsResult<Body<'a>> {
+pub fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Body> {
     let mut body = Body { value: Value::Null };
 
     body.value = Value::from_js(global_this, value)?;

@@ -12,7 +12,9 @@ use crate::node::fs as node_fs;
 use crate::webcore::Blob;
 use crate::webcore::blob::{SizeType, Store, store};
 use bun_str as strings;
-use bun_sys::{self, Fd, Mode, Stat, windows::libuv};
+use bun_sys::{self, Fd, Mode, Stat};
+#[cfg(windows)]
+use bun_sys::windows::libuv;
 
 // ───────────────────────────────────────────────────────────────────────────
 // CopyFile (POSIX, blocking off-thread)

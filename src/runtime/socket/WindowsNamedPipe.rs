@@ -356,21 +356,11 @@ impl WindowsNamedPipe {
         handlers: Handlers,
         vm: &'static VirtualMachine,
     ) -> WindowsNamedPipe {
-        #[cfg(unix)]
-        {
-            // Zig: `if (Environment.isPosix) @compileError(...)` — Zig only emits
-            // this if the function body is reachable. In Rust, callers are already
-            // cfg(windows)-gated; convert to a debug-only runtime guard so POSIX
-            // builds compile.
-            unreachable!("WindowsNamedPipe is not supported on POSIX systems");
-        }
-        #[cfg(windows)]
+        // Zig: `if (Environment.isPosix) @compileError(...)` — the whole fn is
+        // now `#[cfg(windows)]`-gated so POSIX builds never see `uv::Pipe`.
         WindowsNamedPipe {
             vm,
-            #[cfg(windows)]
             pipe: Some(pipe),
-            #[cfg(not(windows))]
-            pipe: (),
             wrapper: None,
             handlers,
             // defaults:

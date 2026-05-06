@@ -2864,22 +2864,19 @@ impl Resolver {
     /// `Box::into_raw` (see `init`). If this call may drop the last reference,
     /// the caller must not hold any live `&`/`&mut` borrow of `*this`.
     pub unsafe fn deref(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live; `ref_count` uses interior
-        // mutability so a shared read is sufficient for the decrement.
-        if unsafe { (*this).ref_count.deref() } {
-            // SAFETY: last ref; `this` was `Box::into_raw`'d in `init`.
-            unsafe { Self::deinit(this) };
-        }
+        // SAFETY: caller contract — `this` is live; `RefCount::deref` invokes
+        // `RefCounted::destructor` (→ `Self::deinit`) on the 1→0 transition.
+        unsafe { bun_ptr::RefCount::<Self>::deref(this) };
     }
 
     pub fn setup(vm: &VirtualMachine) -> Self {
         Self {
-            ref_count: bun_ptr::IntrusiveRcField::init(),
+            ref_count: bun_ptr::RefCount::init(),
             channel: None,
             vm: vm as *const VirtualMachine,
             polls: PollsMap::new(),
             options: c_ares::ChannelOptions::default(),
-            event_loop_timer: EventLoopTimer { next: bun::timespec::EPOCH, tag: EventLoopTimer::Tag::DNSResolver, ..Default::default() },
+            event_loop_timer: EventLoopTimer { next: bun::timespec::EPOCH, tag: EventLoopTimerTag::DNSResolver, ..Default::default() },
             pending_host_cache_cares: PendingCache::empty(),
             pending_host_cache_native: PendingCache::empty(),
             pending_srv_cache_cares: HiveArray::empty(),

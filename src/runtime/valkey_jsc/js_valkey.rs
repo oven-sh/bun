@@ -1843,7 +1843,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // Handle socket timeout
     }
 
-    pub fn on_data(this: &mut JSValkeyClient, socket: Self::SocketType, data: &[u8]) {
+    pub fn on_data(this: &mut JSValkeyClient, socket: SocketType<SSL>, data: &[u8]) {
         // Ensure the socket pointer is updated.
         this.client.socket = Self::_socket(socket);
 
@@ -1853,7 +1853,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.update_poll_ref();
     }
 
-    pub fn on_writable(this: &mut JSValkeyClient, socket: Self::SocketType) {
+    pub fn on_writable(this: &mut JSValkeyClient, socket: SocketType<SSL>) {
         this.client.socket = Self::_socket(socket);
         this.ref_();
         let _d = scopeguard::guard((), |_| this.deref());

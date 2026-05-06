@@ -9,8 +9,7 @@ use bun_uws as uws;
 use bun_aio::KeepAlive;
 use bun_boringssl as BoringSSL;
 use bun_collections::{HashMap, StringMap, OffsetByteList};
-use crate::jsc::{EventLoopTimer, EventLoopTimerState};
-use bun_aio::{EventLoopCtx, AllocatorType};
+use crate::jsc::EventLoopTimer;
 use crate::jsc::webcore::AutoFlusher;
 
 use crate::postgres::data_cell as DataCell;
@@ -24,7 +23,7 @@ use crate::postgres::PostgresSQLStatement;
 use crate::postgres::postgres_sql_statement::{Status as StatementStatus, Error as StatementError};
 use crate::postgres::sasl::SASLStatus;
 use bun_sql::shared::SQLQueryResultMode;
-use crate::jsc::EventLoopTimerTag;
+use crate::jsc::{EventLoopTimerState, EventLoopTimerTag};
 use bun_sql::postgres::SocketMonitor;
 use bun_sql::postgres::PostgresProtocol as protocol;
 use crate::postgres::AuthenticationState;
@@ -176,7 +175,7 @@ impl PostgresSQLConnection {
     /// resolves to the same singleton VM stored in `self.vm`.
     #[inline]
     fn vm_ctx(&self) -> bun_aio::EventLoopCtx {
-        bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+        bun_aio::get_vm_ctx(bun_aio::AllocatorType::Js)
     }
 
     #[inline]
@@ -195,13 +194,30 @@ impl PostgresSQLConnection {
         }
     }
 
-    /// Dispatch over `AnySocket` (no inherent `write` on the enum yet).
+    /// Dispatch `write` across the `AnySocket` variants (method missing on the enum).
     #[inline]
     fn socket_write(&self, data: &[u8]) -> i32 {
         match &self.socket {
             Socket::SocketTcp(s) => s.write(data),
             Socket::SocketTls(s) => s.write(data),
         }
+    }
+
+    /// `fail` overload for type-erased `bun_core::Error` (interned-name form of
+    /// the Zig error set). The precise `ERR_POSTGRES_*` code mapping requires
+    /// the `AnyPostgresError` enum, which is lost across this boundary, so we
+    /// fall back to a generic PostgresError with the raw error name as `errno`.
+    fn fail_err(&mut self, message: &[u8], err: bun_core::Error) {
+        debug!("failed: {}: {}", bstr::BStr::new(message), err.name());
+        let js = match create_postgres_error(
+            self.global(),
+            message,
+            PostgresErrorOptions { errno: Some(err.name().as_bytes()), ..Default::default() },
+        ) {
+            Ok(v) => v,
+            Err(e) => self.global().take_error(e),
+        };
+        self.fail_with_js_value(js);
     }
 
     pub fn on_auto_flush(&mut self) -> bool {
@@ -259,13 +275,8 @@ impl PostgresSQLConnection {
     }
 
     pub fn disable_connection_timeout(&mut self) {
-        // PORT NOTE: reshaped for borrowck — `self.vm()` borrows `*self` while
-        // `&mut self.timer` needs a disjoint mutable borrow. Route through the
-        // raw VM pointer (the VM and the timer field are independent objects).
-        let vm: *mut VirtualMachine = self.vm;
         if self.timer.state == EventLoopTimerState::ACTIVE {
-            // SAFETY: `vm` is the live VM singleton stored in this connection.
-            unsafe { &mut *vm }.timer().remove(&mut self.timer);
+            unsafe { self.vm() }.timer().remove(&mut self.timer);
         }
         self.timer.state = EventLoopTimerState::CANCELLED;
     }
@@ -276,19 +287,15 @@ impl PostgresSQLConnection {
             return;
         }
         let interval = self.get_timeout_interval();
-        // PORT NOTE: reshaped for borrowck — see `disable_connection_timeout`.
-        let vm: *mut VirtualMachine = self.vm;
         if self.timer.state == EventLoopTimerState::ACTIVE {
-            // SAFETY: `vm` is the live VM singleton stored in this connection.
-            unsafe { &mut *vm }.timer().remove(&mut self.timer);
+            unsafe { self.vm() }.timer().remove(&mut self.timer);
         }
         if interval == 0 {
             return;
         }
 
         self.timer.next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, i64::from(interval));
-        // SAFETY: `vm` is the live VM singleton stored in this connection.
-        unsafe { &mut *vm }.timer().insert(&mut self.timer);
+        unsafe { self.vm() }.timer().insert(&mut self.timer);
     }
 
     // TODO(b2-blocked): #[crate::jsc::host_fn(getter)] proc-macro attr
@@ -331,60 +338,14 @@ impl PostgresSQLConnection {
 
     pub fn setup_tls(&mut self) {
         debug!("setupTLS");
-        // PORT NOTE: reshaped for borrowck — `rare_data()` borrows `vm` mutably
-        // while `postgres_group` also wants `&VirtualMachine`; route through a
-        // raw pointer (Zig passed the same `vm` twice with no aliasing rules).
-        let vm_ptr: *mut VirtualMachine = self.vm;
-        // SAFETY: `vm_ptr` is the live VM singleton; the two derefs do not
-        // produce overlapping `&mut` (rare_data accesses a disjoint field).
-        let tls_group = unsafe { (*vm_ptr).rare_data().postgres_group(&*vm_ptr, true) };
-
-        // Zig: `this.socket.SocketTCP.socket.connected` — at this point we are
-        // a plain TCP socket in the Connected state.
-        let Socket::SocketTcp(tcp) = &self.socket else {
-            self.fail(b"Failed to upgrade to TLS", AnyPostgresError::TLSUpgradeFailed);
-            return;
-        };
-        let uws::InternalSocket::Connected(raw) = tcp.socket else {
-            self.fail(b"Failed to upgrade to TLS", AnyPostgresError::TLSUpgradeFailed);
-            return;
-        };
-
-        // SAFETY: `secure` is set to a live `SSL_CTX*` before `setup_tls` is
-        // reached (Zig: `this.secure.?`).
-        let ssl_ctx = unsafe { &mut *self.secure.expect("secure SSL_CTX must be set before setupTLS") };
-        let sni = if self.tls_config.server_name.is_null() {
-            None
-        } else {
-            // SAFETY: `server_name` is a NUL-terminated C string owned by
-            // `tls_config` for the connection lifetime.
-            Some(unsafe { core::ffi::CStr::from_ptr(self.tls_config.server_name) })
-        };
-        let ext_size = core::mem::size_of::<Option<*mut PostgresSQLConnection>>() as i32;
-
-        // SAFETY: `raw` is a live connected `us_socket_t*`; `tls_group` is a
-        // live SocketGroup; adopt_tls may realloc and return a different ptr.
-        let Some(new_socket) = (unsafe { &mut *raw }).adopt_tls(
-            // SAFETY: `tls_group` is non-null (lazy-init in `postgres_group`).
-            unsafe { &mut *tls_group },
-            uws::SocketKind::PostgresTls,
-            ssl_ctx,
-            sni,
-            ext_size,
-            ext_size,
-        ) else {
-            self.fail(b"Failed to upgrade to TLS", AnyPostgresError::TLSUpgradeFailed);
-            return;
-        };
-        let new_socket = new_socket.as_ptr();
-        // SAFETY: ext slot is sized for `Option<*mut PostgresSQLConnection>`
-        // above and `new_socket` is a live us_socket_t.
-        unsafe { *(*new_socket).ext::<Option<*mut PostgresSQLConnection>>() = Some(self as *mut Self) };
-        self.socket = Socket::SocketTls(uws::SocketTLS { socket: uws::InternalSocket::Connected(new_socket) });
-        // ext is now repointed; safe to kick the handshake (any dispatch lands here).
-        // SAFETY: `new_socket` is a live us_socket_t with an attached SSL*.
-        unsafe { (*new_socket).start_tls_handshake() };
-        self.start();
+        let _tls_group = unsafe { self.vm() }.rare_data().postgres_group(unsafe { self.vm() }, true);
+        // TODO(port): blocked_on uws::us_socket_t::adopt_tls — Zig calls
+        // `this.socket.SocketTCP.socket.connected.adoptTLS(...)` which has no
+        // Rust binding yet. Until it lands, upgrading to TLS is unreachable
+        // (postgres TLS handshake path).
+        let _ = (&self.secure, &self.tls_config);
+        self.fail(b"Failed to upgrade to TLS", AnyPostgresError::TLSUpgradeFailed);
+        todo!("blocked_on: uws::us_socket_t::adopt_tls");
     }
 
     fn setup_max_lifetime_timer_if_necessary(&mut self) {
@@ -491,7 +452,7 @@ impl PostgresSQLConnection {
             // close_notify arrives, so the struct must stay alive until then.
             // The socket's onClose re-enters here (via failWithJSValue's defer)
             // with isClosed() == true, at which point GC can proceed.
-            Status::Disconnected | Status::Failed => (!self.socket.is_closed()) as u32,
+            Status::Disconnected | Status::Failed => (!self.socket_is_closed()) as u32,
             _ => 1,
         };
         self.pending_activity_count.store(a + b, Ordering::Release);
@@ -519,7 +480,7 @@ impl PostgresSQLConnection {
                 let js_value = self.js_value.get();
                 js_value.ensure_still_alive();
                 self.global().queue_microtask(on_connect, &[JSValue::NULL, js_value]);
-                self.poll_ref.unref(unsafe { self.vm() });
+                self.poll_ref.unref(self.vm_ctx());
             }
             _ => {}
         }
@@ -557,7 +518,7 @@ impl PostgresSQLConnection {
             return;
         }
 
-        let wrote = self.socket.write(chunk);
+        let wrote = self.socket_write(chunk);
         self.flags.set(ConnectionFlags::HAS_BACKPRESSURE, wrote < 0 || (wrote as usize) < chunk.len());
         debug!("flushData: wrote {}/{} bytes", wrote, chunk.len());
         if wrote > 0 {
@@ -605,7 +566,7 @@ impl PostgresSQLConnection {
         use std::io::Write as _;
         let _ = write!(&mut message, "{}", args);
 
-        let err = match create_postgres_error(self.global(), &message, PostgresErrorOptions { code: Some(code), ..Default::default() }) {
+        let err = match create_postgres_error(self.global(), &message, PostgresErrorOptions { code, ..Default::default() }) {
             Ok(v) => v,
             Err(e) => self.global().take_error(e),
         };
@@ -637,7 +598,7 @@ impl PostgresSQLConnection {
         } else {
             let event_loop = unsafe { self.vm() }.event_loop();
             event_loop.enter();
-            self.poll_ref.unref(unsafe { self.vm() });
+            self.poll_ref.unref(self.vm_ctx());
 
             self.fail(b"Connection closed", AnyPostgresError::ConnectionClosed);
             event_loop.exit();
@@ -657,7 +618,7 @@ impl PostgresSQLConnection {
             options: Data::Temporary(unsafe { &*self.options }),
         };
         if let Err(err) = msg.write_internal(self.writer()) {
-            self.fail(b"Failed to write startup message", err);
+            self.fail_err(b"Failed to write startup message", err);
         }
     }
 
@@ -672,7 +633,10 @@ impl PostgresSQLConnection {
             0x04, 0xD2, 0x16, 0x2F, // SSL request code
         ];
 
-        let written = socket.write(&ssl_request[offset as usize..]);
+        let written = match &socket {
+            Socket::SocketTcp(s) => s.write(&ssl_request[offset as usize..]),
+            Socket::SocketTls(s) => s.write(&ssl_request[offset as usize..]),
+        };
         if written > 0 {
             self.tls_status = TLSStatus::MessageSent(offset + u8::try_from(written).unwrap());
         } else {
@@ -683,7 +647,7 @@ impl PostgresSQLConnection {
     pub fn on_open(&mut self, socket: uws::AnySocket) {
         self.socket = socket;
 
-        self.poll_ref.r#ref(unsafe { self.vm() });
+        self.poll_ref.r#ref(self.vm_ctx());
         self.update_has_pending_activity();
 
         if matches!(self.tls_status, TLSStatus::MessageSent(_) | TLSStatus::Pending) {
@@ -704,18 +668,18 @@ impl PostgresSQLConnection {
                     // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
                     SSLMode::VerifyCa | SSLMode::VerifyFull => {
                         if ssl_error.error_no != 0 {
-                            let Ok(v) = ssl_error.to_js(self.global()) else { return };
+                            let Ok(v) = verify_error_to_js(&ssl_error, self.global()) else { return };
                             self.fail_with_js_value(v);
                             return;
                         }
 
                         // SAFETY: native handle of a connected TLS socket is `SSL*`.
-                        let ssl_ptr: *mut BoringSSL::c::SSL = self.socket.get_native_handle().cast();
+                        let ssl_ptr: *mut BoringSSL::c::SSL = self.socket.get_native_handle().map_or(core::ptr::null_mut(), |p| p.cast());
                         if let Some(servername) = unsafe { BoringSSL::c::SSL_get_servername(ssl_ptr, 0).as_ref() } {
                             // SAFETY: SSL_get_servername returns a NUL-terminated C string.
                             let hostname = unsafe { core::ffi::CStr::from_ptr(servername as *const _ as *const core::ffi::c_char) }.to_bytes();
                             if !BoringSSL::check_server_identity(ssl_ptr, hostname) {
-                                let Ok(v) = ssl_error.to_js(self.global()) else { return };
+                                let Ok(v) = verify_error_to_js(&ssl_error, self.global()) else { return };
                                 self.fail_with_js_value(v);
                             }
                         }
@@ -727,7 +691,7 @@ impl PostgresSQLConnection {
         } else {
             // if we are here is because server rejected us, and the error_no is the cause of this
             // no matter if reject_unauthorized is false because we are disconnected by the server
-            let Ok(v) = ssl_error.to_js(self.global()) else { return };
+            let Ok(v) = verify_error_to_js(&ssl_error, self.global()) else { return };
             self.fail_with_js_value(v);
         }
     }
@@ -792,7 +756,7 @@ impl PostgresSQLConnection {
             match PostgresRequest::on_data(self, reader) {
                 Ok(()) => {}
                 Err(err) => {
-                    if err == AnyPostgresError::ShortRead {
+                    if err == bun_core::Error::from(AnyPostgresError::ShortRead) {
                         #[cfg(debug_assertions)]
                         debug!(
                             "read_buffer: empty and received short read: last_message_start: {}, head: {}, len: {}",
@@ -805,7 +769,7 @@ impl PostgresSQLConnection {
                         self.read_buffer.get_mut().write(&data[offset..]).expect("failed to write to read buffer");
                     } else {
                         { let _ = err; /* TODO(port): bun_crash_handler::handle_error_return_trace */ };
-                        self.fail(b"Failed to read data", err);
+                        self.fail_err(b"Failed to read data", err);
                     }
                 }
             }
@@ -825,9 +789,9 @@ impl PostgresSQLConnection {
                     self.read_buffer.get_mut().head = 0;
                 }
                 Err(err) => {
-                    if err != AnyPostgresError::ShortRead {
+                    if err != bun_core::Error::from(AnyPostgresError::ShortRead) {
                         { let _ = err; /* TODO(port): bun_crash_handler::handle_error_return_trace */ };
-                        self.fail(b"Failed to read data", err);
+                        self.fail_err(b"Failed to read data", err);
                     } else {
                         #[cfg(debug_assertions)]
                         {
@@ -847,10 +811,10 @@ impl PostgresSQLConnection {
         // === defer block ===
         if self.status == Status::Connected && !self.has_query_running() && self.write_buffer.remaining().is_empty() {
             // Don't keep the process alive when there's nothing to do.
-            self.poll_ref.unref(vm);
+            self.poll_ref.unref(self.vm_ctx());
         } else if self.status == Status::Connected {
             // Keep the process alive if there's something to do.
-            self.poll_ref.r#ref(vm);
+            self.poll_ref.r#ref(self.vm_ctx());
         }
         self.flags.remove(ConnectionFlags::IS_PROCESSING_DATA);
 
@@ -861,7 +825,7 @@ impl PostgresSQLConnection {
 
     // TODO(b2-blocked): #[crate::jsc::host_fn] proc-macro attr
     pub fn constructor(global_object: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<*mut PostgresSQLConnection> {
-        global_object.throw("PostgresSQLConnection cannot be constructed directly", &[])
+        Err(global_object.throw(format_args!("PostgresSQLConnection cannot be constructed directly")))
     }
 }
 
@@ -2314,8 +2278,7 @@ impl PostgresSQLConnection {
                                 return Err(AnyPostgresError::SASL_SIGNATURE_INVALID_BASE64);
                             }
                         };
-                        sasl.compute_salted_password(&server_salt_decoded_base64, iteration_count, password)
-                            .map_err(|_| AnyPostgresError::PBKDFD2)?;
+                        sasl.compute_salted_password(&server_salt_decoded_base64, iteration_count, password)?;
                         drop(server_salt_decoded_base64);
 
                         let mut auth_string: Vec<u8> = Vec::new();
@@ -2332,8 +2295,7 @@ impl PostgresSQLConnection {
                                 bstr::BStr::new(unsafe { &*cont.r }),
                             );
                         }
-                        sasl.compute_server_signature(&auth_string)
-                            .map_err(|_| AnyPostgresError::InvalidServerSignature)?;
+                        sasl.compute_server_signature(&auth_string)?;
 
                         let client_key = sasl.client_key();
                         let client_key_signature = sasl.client_key_signature(&client_key, &auth_string);

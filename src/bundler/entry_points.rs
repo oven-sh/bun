@@ -440,15 +440,16 @@ impl MacroEntryPoint {
         } else {
             import_path.dir_with_trailing_slash()
         };
-        entry.code_buffer[..macro_label_.len()].copy_from_slice(macro_label_);
-        // TODO(port): self-referential — `macro_label` and `code` borrow `entry.code_buffer` and
-        // are stored into `entry.source`. Phase B: raw-ptr slice or restructure.
-        let macro_label = &entry.code_buffer[..macro_label_.len()];
+        // PORT NOTE: reshaped for borrowck — capture the label length, write the
+        // body via a scoped &mut borrow, then re-borrow `code_buffer` immutably
+        // for the (label, code) slices passed to `init_path_string`.
+        let label_len = macro_label_.len();
+        entry.code_buffer[..label_len].copy_from_slice(macro_label_);
 
-        let code: &[u8] = 'brk: {
+        let code_len: usize = 'brk: {
             if import_path.base == b"bun" {
                 let mut cursor =
-                    std::io::Cursor::new(&mut entry.code_buffer[macro_label.len()..]);
+                    std::io::Cursor::new(&mut entry.code_buffer[label_len..]);
                 write!(
                     &mut cursor,
                     "//Auto-generated file\n\
@@ -470,11 +471,10 @@ impl MacroEntryPoint {
                     macro_id,
                 )
                 .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
-                let n = cursor.position() as usize;
-                break 'brk &entry.code_buffer[macro_label.len()..macro_label.len() + n];
+                break 'brk cursor.position() as usize;
             }
 
-            let mut cursor = std::io::Cursor::new(&mut entry.code_buffer[macro_label.len()..]);
+            let mut cursor = std::io::Cursor::new(&mut entry.code_buffer[label_len..]);
             write!(
                 &mut cursor,
                 "//Auto-generated file\n\
@@ -500,12 +500,16 @@ impl MacroEntryPoint {
                 BStr::new(function_name),
             )
             .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
-            let n = cursor.position() as usize;
-            &entry.code_buffer[macro_label.len()..macro_label.len() + n]
+            cursor.position() as usize
         };
 
+        // TODO(port): self-referential — `macro_label`/`code` borrow `entry.code_buffer`
+        // and are stored into `entry.source` (lifetime erased via `IntoStr`). Phase B:
+        // raw-ptr slice or restructure so Source owns its bytes.
+        let macro_label: &[u8] = &entry.code_buffer[..label_len];
+        let code: &[u8] = &entry.code_buffer[label_len..label_len + code_len];
         entry.source = logger::Source::init_path_string(macro_label, code);
-        entry.source.path.text = macro_label;
+        // `Path::init` already set `text = macro_label`; only override namespace.
         entry.source.path.namespace = js_ast::Macro::NAMESPACE;
         Ok(())
     }

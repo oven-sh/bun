@@ -698,133 +698,165 @@ mod __phase_a_body {
                     graph: parent.standalone_module_graph,
                 },
             )?;
-            // SAFETY: init_worker returns a valid heap-allocated VM ptr.
-            let vm_ref = unsafe { &mut *vm };
-            vm_ref.allocator = allocator;
-            vm_ref.arena = self.arena.as_mut().unwrap() as *mut _;
+            // Pre-publish init: the VM is not yet visible to the parent thread,
+            // so a scoped `&mut VirtualMachine` is safe here. The borrow MUST
+            // end before the publish below — once `self.vm` is published under
+            // `vm_lock`, `notify_need_termination` / `terminate_all_and_wait`
+            // may concurrently dereference the same pointer on another thread,
+            // and a still-live `&mut VirtualMachine` would be aliased-&mut UB.
+            {
+                // SAFETY: init_worker returns a valid heap-allocated VM ptr;
+                // not yet published, so this `&mut` is exclusive.
+                let vm_ref = unsafe { &mut *vm };
+                vm_ref.allocator = allocator;
+                // SAFETY: arena initialised above; worker-thread only field.
+                vm_ref.arena = unsafe { (*self.arena.get()).as_mut().unwrap() as *mut _ };
 
-            let s = scopeguard::ScopeGuard::into_inner(temp_proxy_guard);
-            vm_ref.proxy_env_storage = core::mem::take(s);
+                let s = scopeguard::ScopeGuard::into_inner(temp_proxy_guard);
+                vm_ref.proxy_env_storage = core::mem::take(s);
 
-            vm_ref.is_main_thread = false;
-            jsc::VirtualMachine::set_is_main_thread_vm(false);
-            vm_ref.on_unhandled_rejection = on_unhandled_rejection;
+                vm_ref.is_main_thread = false;
+                jsc::VirtualMachine::set_is_main_thread_vm(false);
+                vm_ref.on_unhandled_rejection = on_unhandled_rejection;
+            }
 
             self.vm_lock.lock();
-            self.vm = vm;
+            // SAFETY: vm_lock held; this is the publish point.
+            unsafe { *self.vm.get() = vm };
             self.vm_lock.unlock();
 
-            let b = &mut vm_ref.transpiler;
-            b.resolver.env_loader = b.env;
+            // Post-publish: do NOT re-form `&mut VirtualMachine`. Field/method
+            // access goes through the raw `*mut` so any autoref is scoped to the
+            // single expression. The parent-thread readers likewise never bind
+            // `&VirtualMachine` (see `terminate_all_and_wait`).
+            // SAFETY: `vm` is a valid heap-allocated VM ptr (checked above).
+            unsafe {
+                let b = &mut (*vm).transpiler;
+                b.resolver.env_loader = b.env;
 
-            if let Some(graph) = parent.standalone_module_graph {
-                bun_runtime::bun_js::apply_standalone_runtime_flags(b, graph);
+                if let Some(graph) = parent.standalone_module_graph {
+                    bun_runtime::bun_js::apply_standalone_runtime_flags(b, graph);
+                }
             }
 
             if self.has_requested_terminate() {
                 return Ok(());
             }
 
-            if b.configure_defines().is_err() {
-                vm_ref.exit_handler.exit_code = 1;
-                let _ = self.set_requested_terminate();
-                return Ok(());
-            }
+            // SAFETY: see post-publish note above.
+            unsafe {
+                if (*vm).transpiler.configure_defines().is_err() {
+                    (*vm).exit_handler.exit_code = 1;
+                    let _ = self.set_requested_terminate();
+                    return Ok(());
+                }
 
-            vm_ref.load_extra_env_and_source_code_printer();
+                (*vm).load_extra_env_and_source_code_printer();
+            }
             Ok(())
         }
 
         /// Phase 2: load the entry point, dispatch 'online', run the event loop.
         /// Runs inside `holdAPILock`. Always ends by calling `shutdown()`.
-        fn spin(&mut self) -> ! {
+        fn spin(&self) -> ! {
             log!("[{}] spin start", self.execution_context_id);
-            debug_assert!(self.status == Status::Start);
+            debug_assert!(self.status.get() == Status::Start);
             self.set_status(Status::Starting);
 
-            // SAFETY: vm published in start_vm; non-null past this point.
-            let vm = unsafe { &mut *self.vm };
+            // SAFETY: vm published in start_vm; non-null past this point. Kept
+            // as a raw `*mut VirtualMachine` — do NOT bind a long-lived
+            // `&mut VirtualMachine`: while the event loop runs, the parent /
+            // main thread may dereference the same pointer under `vm_lock`
+            // (`notify_need_termination`, `terminate_all_and_wait`). The lock
+            // serialises only the pointer LOAD, not a Rust reference lifetime,
+            // so a long-lived `&mut` here would be aliased-&mut UB. Per-use
+            // `(*vm)` derefs keep any autoref scoped to the single expression.
+            let vm: *mut VirtualMachine = unsafe { *self.vm.get() };
 
             if self.has_requested_terminate() {
-                self.flush_logs(vm);
+                self.flush_logs(unsafe { &mut *vm });
                 self.shutdown();
             }
 
-            vm.preload = &self.preloads;
+            unsafe { (*vm).preload = &self.preloads };
 
             let mut resolve_error = BunString::empty();
             let path = match resolve_entry_point_specifier(
-                vm,
+                unsafe { &*vm },
                 &self.unresolved_specifier,
                 &mut resolve_error,
-                vm.log,
+                unsafe { (*vm).log },
             ) {
                 Some(p) => p,
                 None => {
-                    vm.exit_handler.exit_code = 1;
-                    if vm.log.errors == 0 && !resolve_error.is_empty() {
+                    unsafe { (*vm).exit_handler.exit_code = 1 };
+                    if unsafe { (*vm).log.errors } == 0 && !resolve_error.is_empty() {
                         let err = resolve_error.to_utf8();
-                        vm.log.add_error(None, logger::Loc::Empty, err.as_slice());
+                        unsafe { (*vm).log.add_error(None, logger::Loc::Empty, err.as_slice()) };
                     }
                     resolve_error.deref();
-                    self.flush_logs(vm);
+                    self.flush_logs(unsafe { &mut *vm });
                     self.shutdown();
                 }
             };
             resolve_error.deref();
 
             if self.has_requested_terminate() {
-                self.flush_logs(vm);
+                self.flush_logs(unsafe { &mut *vm });
                 self.shutdown();
             }
 
-            let promise = match vm.load_entry_point_for_web_worker(path) {
+            let promise = match unsafe { (*vm).load_entry_point_for_web_worker(path) } {
                 Ok(p) => p,
                 Err(_) => {
                     if !self.exit_called.load(Ordering::Relaxed) {
-                        vm.exit_handler.exit_code = 1;
+                        unsafe { (*vm).exit_handler.exit_code = 1 };
                     }
-                    self.flush_logs(vm);
+                    self.flush_logs(unsafe { &mut *vm });
                     self.shutdown();
                 }
             };
 
             if promise.status() == jsc::PromiseStatus::Rejected {
-                let handled = vm.uncaught_exception(vm.global, promise.result(vm.jsc_vm), true);
+                let handled = unsafe {
+                    (*vm).uncaught_exception((*vm).global, promise.result((*vm).jsc_vm), true)
+                };
                 if !handled {
-                    vm.exit_handler.exit_code = 1;
+                    unsafe { (*vm).exit_handler.exit_code = 1 };
                     self.shutdown();
                 }
             } else {
-                let _ = promise.result(vm.jsc_vm);
+                let _ = promise.result(unsafe { (*vm).jsc_vm });
             }
 
-            self.flush_logs(vm);
+            self.flush_logs(unsafe { &mut *vm });
             log!("[{}] event loop start", self.execution_context_id);
             // SAFETY: cpp_worker valid for the lifetime of this struct;
-            // `vm.global` is the live `*mut JSGlobalObject` published in start_vm.
+            // `(*vm).global` is the live `*mut JSGlobalObject` published in start_vm.
             unsafe {
-                WebWorker__dispatchOnline(self.cpp_worker, vm.global);
-                WebWorker__fireEarlyMessages(self.cpp_worker, vm.global);
+                WebWorker__dispatchOnline(self.cpp_worker, (*vm).global);
+                WebWorker__fireEarlyMessages(self.cpp_worker, (*vm).global);
             }
             self.set_status(Status::Running);
 
-            if vm.is_event_loop_alive() || vm.event_loop().tick_concurrent_with_count() > 0 {
-                vm.global.vm().release_weak_refs();
-                let _ = vm.arena_gc();
-                let _ = vm.global.vm().run_gc(false);
-            }
-
-            vm.tick();
-
-            while vm.is_event_loop_alive() {
-                vm.tick();
-                if self.has_requested_terminate() {
-                    break;
+            unsafe {
+                if (*vm).is_event_loop_alive() || (*vm).event_loop().tick_concurrent_with_count() > 0 {
+                    (*vm).global.vm().release_weak_refs();
+                    let _ = (*vm).arena_gc();
+                    let _ = (*vm).global.vm().run_gc(false);
                 }
-                vm.event_loop().auto_tick_active();
-                if self.has_requested_terminate() {
-                    break;
+
+                (*vm).tick();
+
+                while (*vm).is_event_loop_alive() {
+                    (*vm).tick();
+                    if self.has_requested_terminate() {
+                        break;
+                    }
+                    (*vm).event_loop().auto_tick_active();
+                    if self.has_requested_terminate() {
+                        break;
+                    }
                 }
             }
 
@@ -839,27 +871,29 @@ mod __phase_a_body {
             );
 
             if !self.has_requested_terminate() {
-                vm.on_before_exit();
+                unsafe { (*vm).on_before_exit() };
             }
 
-            self.flush_logs(vm);
+            self.flush_logs(unsafe { &mut *vm });
             self.shutdown();
         }
 
         /// Phase 3: run exit handlers, tear down the JSC VM, post the close
         /// event, free the arena, exit the thread.
-        fn shutdown(&mut self) -> ! {
+        fn shutdown(&self) -> ! {
             jsc::mark_binding(core::panic::Location::caller());
             self.set_status(Status::Terminated);
             bun_analytics::Features::workers_terminated().fetch_add(1, Ordering::Relaxed);
             log!("[{}] shutdown", self.execution_context_id);
 
             let cpp_worker = self.cpp_worker;
-            let mut arena = self.arena.take();
+            // SAFETY: worker-thread only field; no other thread reads `arena`.
+            let mut arena = unsafe { (*self.arena.get()).take() };
 
             // 1. Unpublish vm
             self.vm_lock.lock();
-            let vm_ptr = core::mem::replace(&mut self.vm, core::ptr::null_mut());
+            // SAFETY: vm_lock held; this is the unpublish point.
+            let vm_ptr = unsafe { core::ptr::replace(self.vm.get(), core::ptr::null_mut()) };
             self.vm_lock.unlock();
             let mut loop_: Option<*mut bun_uws::Loop> = None;
             if !vm_ptr.is_null() {
@@ -871,7 +905,8 @@ mod __phase_a_body {
             let mut exit_code: i32 = 0;
             let mut global_object: Option<*const JSGlobalObject> = None;
             if !vm_ptr.is_null() {
-                // SAFETY: vm_ptr valid; sole owner.
+                // SAFETY: vm_ptr valid; unpublished above under vm_lock, so no
+                // other thread can dereference it now — `&mut` is exclusive.
                 let vm = unsafe { &mut *vm_ptr };
                 vm.jsc_vm.clear_has_termination_request();
                 vm.is_shutting_down = true;
@@ -890,7 +925,7 @@ mod __phase_a_body {
                 unsafe { WebWorker__teardownJSCVM(global) };
             }
 
-            live_workers::unregister(self as *mut _);
+            live_workers::unregister(self as *const WebWorker as *mut WebWorker);
 
             // 4. Post close task to parent
             // SAFETY: cpp_worker valid (snapshot taken above).
@@ -955,8 +990,9 @@ mod __phase_a_body {
     }
 
     extern "C" fn opaque_spin_trampoline(ctx: *mut c_void) {
-        // SAFETY: ctx is `*mut WebWorker` passed from thread_main via holdAPILock.
-        let this = unsafe { &mut *(ctx as *mut WebWorker) };
+        // SAFETY: ctx is `*const WebWorker` passed from thread_main via
+        // holdAPILock. `&WebWorker` (not `&mut`) — see worker-thread `&self` note.
+        let this = unsafe { &*(ctx as *const WebWorker) };
         this.spin();
     }
 

@@ -133,28 +133,44 @@ impl Mv {
                     let maybe_fd: Option<bun_sys::Fd> = match result.unwrap() {
                         Ok(fd) => fd,
                         Err(e) => {
-                            // TODO(b2-blocked): bun_sys::Error::get_errno —
-                            // distinguish ENOENT (rename to new path: ok if
-                            // exactly one source) from other errors.
-                            let n_sources = {
-                                let me = Self::state_mut(interp, cmd);
-                                me.args.target_idx - me.args.sources_start
+                            // Spec mv.zig:228-247 — only ENOENT (rename to a
+                            // new path) is acceptable, and only with exactly
+                            // one source. Any other errno (EACCES, ELOOP, …)
+                            // is reported and fails regardless of source count.
+                            let target = match &Self::state_mut(interp, cmd).state {
+                                MvState::CheckTarget(t) => t.target.clone(),
+                                _ => unreachable!(),
                             };
-                            if n_sources == 1 {
-                                None
-                            } else {
-                                let target = match &Self::state_mut(interp, cmd).state {
-                                    MvState::CheckTarget(t) => t.target.clone(),
-                                    _ => unreachable!(),
+                            if e.get_errno() == bun_sys::E::ENOENT {
+                                let n_sources = {
+                                    let me = Self::state_mut(interp, cmd);
+                                    me.args.target_idx - me.args.sources_start
                                 };
-                                let _ = e;
+                                if n_sources == 1 {
+                                    None
+                                } else {
+                                    let buf = Builtin::fmt_error_arena(
+                                        interp,
+                                        cmd,
+                                        Some(Kind::Mv),
+                                        format_args!(
+                                            "{}: No such file or directory\n",
+                                            bstr::BStr::new(&target)
+                                        ),
+                                    )
+                                    .to_vec();
+                                    return Self::write_failing_error(interp, cmd, &buf, 1);
+                                }
+                            } else {
+                                let msg = e.msg().unwrap_or(b"unknown error");
                                 let buf = Builtin::fmt_error_arena(
                                     interp,
                                     cmd,
                                     Some(Kind::Mv),
                                     format_args!(
-                                        "{}: No such file or directory\n",
-                                        bstr::BStr::new(&target)
+                                        "{}: {}\n",
+                                        bstr::BStr::new(&target),
+                                        bstr::BStr::new(msg)
                                     ),
                                 )
                                 .to_vec();
@@ -209,6 +225,7 @@ impl Mv {
                         }
                         tasks.push(Box::new(ShellMvBatchedTask {
                             cmd,
+                            idx: i,
                             sources: srcs,
                             target: target.clone(),
                             target_fd: maybe_fd,
@@ -305,8 +322,11 @@ impl Mv {
                     MvState::Executing { err, .. } => err.take().unwrap(),
                     _ => unreachable!(),
                 };
+                // Spec mv.zig:374 — `writeFailingError(buf, err.errno)`: the
+                // failing rename's errno becomes the shell exit code.
+                let exit_code = e.errno as ExitCode;
                 let buf = Builtin::task_error_to_string(interp, cmd, Kind::Mv, &e).to_vec();
-                Self::write_failing_error(interp, cmd, &buf, 1).run(interp);
+                Self::write_failing_error(interp, cmd, &buf, exit_code).run(interp);
                 return;
             }
             Self::state_mut(interp, cmd).state = MvState::Done;

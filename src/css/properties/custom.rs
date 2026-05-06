@@ -397,8 +397,16 @@ impl TokenList {
                     dest.write_dashed_ident(v, true)?;
                     has_whitespace = false;
                 }
-                TokenOrValue::AnimationName(v) => {
-                    v.to_css(dest)?;
+                TokenOrValue::AnimationName(_v) => {
+                    // blocked_on: properties::animation un-gate — `AnimationName`
+                    // is currently a `prop_value_stub!` unit struct
+                    // (properties/mod.rs:100) with no `to_css`. No
+                    // `TokenOrValue::AnimationName` is ever constructed while
+                    // that gate holds, so this arm is unreachable in practice.
+                    #[cfg(any())]
+                    {
+                        _v.to_css(dest)?;
+                    }
                     has_whitespace = false;
                 }
                 TokenOrValue::Token(token) => match token {

@@ -4165,12 +4165,14 @@ pub struct Tokenizer<'a> {
 const FORM_FEED_BYTE: u8 = 0x0C;
 const REPLACEMENT_CHAR: u32 = 0xFFFD;
 const REPLACEMENT_CHAR_UNICODE: [u8; 3] = [0xEF, 0xBF, 0xBD];
-/// UTF-8 encoding of U+FFFD (replacement character) — used by `serializer`
-/// where Zig called `bun.strings.encodeUTF8Comptime(0xFFD)`. The Zig literal
-/// is `0xFFD` (sic — likely a typo for `0xFFFD`); Phase B should confirm.
+/// UTF-8 encoding of U+0FFD — used by `serializer` where Zig called
+/// `bun.strings.encodeUTF8Comptime(0xFFD)` (css_parser.zig:6747, :6937). The
+/// Zig literal is `0xFFD` (sic — likely a typo for `0xFFFD`), but the spec is
+/// ground truth: encode 0x0FFD → [0xE0, 0xBF, 0xBD] to byte-match. Phase B
+/// should confirm whether the spec itself needs fixing to 0xFFFD.
 // TODO(port): verify upstream — Zig wrote 0xFFD, comment says "replacement
-// character" which is U+FFFD. Preserving the spec intent (FFFD).
-const REPLACEMENT_CHAR_UTF8: &[u8] = &[0xEF, 0xBF, 0xBD];
+// character" which is U+FFFD. Byte-matching the spec (0x0FFD) for now.
+const REPLACEMENT_CHAR_UTF8: &[u8] = &[0xE0, 0xBF, 0xBD];
 const MAX_ONE_B: u32 = 0x80;
 const MAX_TWO_B: u32 = 0x800;
 const MAX_THREE_B: u32 = 0x10000;

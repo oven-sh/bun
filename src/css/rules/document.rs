@@ -29,13 +29,13 @@ impl<R> MozDocumentRule<R> {
     }
 }
 
-// blocked_on: DeepClone trait derive.
-#[cfg(any())]
 impl<R> MozDocumentRule<R> {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // TODO(port): css.implementDeepClone uses @typeInfo field reflection — map to a
-        // DeepClone trait/derive in Phase B. For now defer to the crate helper.
-        crate::implement_deep_clone(self, bump)
+    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    where
+        R: crate::generics::DeepClone<'bump>,
+    {
+        // PORT NOTE: `css.implementDeepClone` field-walk.
+        Self { rules: self.rules.deep_clone(bump), loc: self.loc }
     }
 }
 

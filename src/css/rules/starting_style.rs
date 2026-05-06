@@ -27,12 +27,13 @@ impl<R> StartingStyleRule<R> {
     }
 }
 
-// blocked_on: DeepClone derive.
-#[cfg(any())]
 impl<R> StartingStyleRule<R> {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // TODO(port): css.implementDeepClone uses @typeInfo field reflection — replace with a DeepClone trait/derive in Phase B
-        crate::implement_deep_clone(self, bump)
+    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    where
+        R: crate::generics::DeepClone<'bump>,
+    {
+        // PORT NOTE: `css.implementDeepClone` field-walk.
+        Self { rules: self.rules.deep_clone(bump), loc: self.loc }
     }
 }
 

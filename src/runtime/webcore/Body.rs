@@ -572,7 +572,12 @@ impl ValueError {
             // with their Drop deref). Zig did `var v = this.*; v.ref();` (bitwise copy
             // + one bump) — `.clone()` alone is the Rust equivalent. An extra `.ref_()`
             // here would leak +1 per dupe.
-            ValueError::SystemError(e) => ValueError::SystemError(e.clone()),
+            ValueError::SystemError(_e) => {
+                // SystemError lacks `Clone` in bun_jsc; Zig did `var v = this.*; v.ref();`
+                // (bitwise copy + bump). Bitwise copy of a non-Copy upstream struct is
+                // not expressible safely in Rust without `Clone`.
+                todo!("blocked_on: bun_jsc::SystemError::Clone")
+            }
             ValueError::Message(m) => ValueError::Message(m.clone()),
             ValueError::TypeError(m) => ValueError::TypeError(m.clone()),
             ValueError::JSValue(js_ref) => {
@@ -666,12 +671,14 @@ impl Value {
     
     pub fn to_blob_if_possible(&mut self) {
         if let Value::WTFStringImpl(str) = self {
-            if let Some(bytes) = str.to_utf8_if_needed() {
+            // SAFETY: `**str` derefs Arc → `*mut WTFStringImplStruct`; the pointee is
+            // a live WTF::StringImpl kept alive by the intrusive refcount.
+            if let Some(bytes) = unsafe { (***str).to_utf8_if_needed() } {
                 // PORT NOTE: reshaped for borrowck — take str out before reassigning *self.
                 let _str = core::mem::replace(self, Value::Null);
                 // _str dropped at end of scope (deref via Arc Drop / intrusive deref).
                 *self = Value::InternalBlob(InternalBlob {
-                    bytes: Vec::from(bytes.slice()),
+                    bytes: bytes.slice().to_vec(),
                     // TODO(port): Zig used fromOwnedSlice on @constCast(bytes.slice()); ownership
                     // semantics depend on toUTF8IfNeeded contract — verify in Phase B.
                     was_string: true,
@@ -687,7 +694,7 @@ impl Value {
             *self = match blob {
                 AnyBlob::Blob(b) => Value::Blob(b),
                 AnyBlob::InternalBlob(b) => Value::InternalBlob(b),
-                AnyBlob::WTFStringImpl(s) => Value::WTFStringImpl(s),
+                AnyBlob::WTFStringImpl(s) => Value::WTFStringImpl(std::sync::Arc::new(s)),
                 // AnyBlob::InlineBlob(b) => Value::InlineBlob(b),
             };
         }
@@ -699,7 +706,7 @@ impl Value {
         match self {
             Value::Blob(b) => b.get_size_for_bindings() as blob::SizeType,
             Value::InternalBlob(b) => b.slice_const().len() as blob::SizeType,
-            Value::WTFStringImpl(s) => s.utf8_byte_length() as blob::SizeType,
+            Value::WTFStringImpl(s) => unsafe { (***s).utf8_byte_length() } as blob::SizeType,
             Value::Locked(l) => l.size_hint(),
             // Value::InlineBlob(b) => b.slice_const().len() as blob::SizeType,
             _ => 0,
@@ -736,6 +743,13 @@ impl Value {
         }
     }
 
+    /// Shorthand constructor for the `Blob` variant (mirrors Zig
+    /// `Body.Value{ .Blob = ... }` field-init syntax used by callers).
+    #[inline]
+    pub fn blob(b: Blob) -> Value {
+        Value::Blob(b)
+    }
+
     pub fn create_blob_value(data: Vec<u8>, was_string: bool) -> Value {
         // if (data.len <= InlineBlob.available_bytes) {
         //     var _blob = InlineBlob{
@@ -761,11 +775,11 @@ impl Value {
     // `.to_readable_stream()` need the real ByteStream port to land.
     
     pub fn to_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        jsc::mark_binding(core::panic::Location::caller());
+        jsc::mark_binding();
 
         match self {
-            Value::Used => Ok(ReadableStream::used(global_this)),
-            Value::Empty => Ok(ReadableStream::empty(global_this)),
+            Value::Used => ReadableStream::used(global_this),
+            Value::Empty => ReadableStream::empty(global_this),
             Value::Null => Ok(JSValue::NULL),
             Value::InternalBlob(_) | Value::Blob(_) | Value::WTFStringImpl(_) => {
                 let mut blob = self.use_();
@@ -786,7 +800,7 @@ impl Value {
                     return Ok(readable.value);
                 }
                 if locked.promise.is_some() || !locked.action.is_none() {
-                    return Ok(ReadableStream::used(global_this));
+                    return ReadableStream::used(global_this);
                 }
                 let mut drain_result = DrainResult::EstimatedSize(0);
 
@@ -796,40 +810,24 @@ impl Value {
 
                 if matches!(drain_result, DrainResult::Empty | DrainResult::Aborted) {
                     *self = Value::Null;
-                    return Ok(ReadableStream::empty(global_this));
+                    return ReadableStream::empty(global_this);
                 }
 
-                let reader = ByteStream::Source::new(ByteStream::SourceInit {
-                    // TODO(port): `context: undefined` — Phase B should confirm Source::new zero-inits.
-                    context: Default::default(),
-                    global_this,
-                });
-
-                if let Some(on_cancelled) = locked.on_stream_cancelled {
-                    if let Some(task) = locked.task {
-                        reader.cancel_handler = Some(on_cancelled);
-                        reader.cancel_ctx = Some(task);
-                    }
-                }
-
-                reader.context.setup();
-
-                match &drain_result {
-                    DrainResult::EstimatedSize(estimated_size) => {
-                        reader.context.high_water_mark = *estimated_size as blob::SizeType;
-                        reader.context.size_hint = *estimated_size as blob::SizeType;
-                    }
-                    DrainResult::Owned(owned) => {
-                        reader.context.buffer = owned.list;
-                        reader.context.size_hint = owned.size_hint as blob::SizeType;
-                    }
-                    _ => {}
-                }
-
+                // TODO(b2-blocked): `ByteStream::Source` (`NewSource<ByteStream>`) requires
+                // the full `NewSource { context, cancelled, ref_count, ... }` field set and
+                // `SourceContext` codegen externs to be wired. The Zig path:
+                //   var reader = ByteStream.Source.new(.{ .context = undefined, .globalThis = ... });
+                //   reader.context.setup(); reader.toReadableStream(...);
+                // is not yet expressible against the current `readable_stream::NewSource` shape.
+                let _ = (&locked.on_stream_cancelled, &locked.task, &drain_result);
+                let _: &ByteStream;
+                todo!("blocked_on: webcore::byte_stream::Source / readable_stream::NewSource<ByteStream>");
+                #[allow(unreachable_code)]
+                {
                 locked.readable = webcore::readable_stream::Strong::init(
                     ReadableStream {
-                        ptr: webcore::readable_stream::Source::Bytes(&mut reader.context),
-                        value: reader.to_readable_stream(global_this)?,
+                        ptr: webcore::readable_stream::Source::Invalid,
+                        value: JSValue::ZERO,
                     },
                     global_this,
                 );
@@ -843,10 +841,11 @@ impl Value {
                 }
 
                 Ok(locked.readable.get(global_this).unwrap().value)
+                }
             }
             Value::Error(_) => {
                 // TODO: handle error properly
-                Ok(ReadableStream::empty(global_this))
+                ReadableStream::empty(global_this)
             }
         }
     }

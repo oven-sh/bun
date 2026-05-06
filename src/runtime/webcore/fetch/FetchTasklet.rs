@@ -841,8 +841,8 @@ impl FetchTasklet {
                         }
                     };
                     let hostname = BunString::clone_utf8(&certificate_info.hostname);
-                    let _hostname_guard = scopeguard::guard((), |_| hostname.deref_());
-                    let js_hostname = match hostname.to_js(global_object) {
+                    let _hostname_guard = scopeguard::guard((), |_| hostname.deref());
+                    let js_hostname: JSValue = match hostname.to_js(global_object) {
                         Ok(v) => v,
                         Err(e) => {
                             match e {

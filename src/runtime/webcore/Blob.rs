@@ -5468,6 +5468,45 @@ impl Any {
 // Internal (InternalBlob)
 // ──────────────────────────────────────────────────────────────────────────
 
+// PORT NOTE: `bun_str::ZigString` lacks the JSC-side methods (`to_js`,
+// `to_external_value`, `with_encoding`) — those live as inherent methods on
+// `bun_jsc::zig_string::ZigString` (a `repr(C)`-identical local twin). We
+// can't add inherent impls cross-crate, so shim via a local extension trait
+// that round-trips through the FFI surface directly.
+unsafe extern "C" {
+    fn ZigString__toValueGC(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
+    fn ZigString__toExternalValue(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
+}
+pub(crate) trait ZigStringBlobExt {
+    fn to_js(&self, global: &JSGlobalObject) -> JSValue;
+    fn to_external_value(&self, global: &JSGlobalObject) -> JSValue;
+    fn with_encoding(self) -> Self;
+    fn to_json_object(&self, global: &JSGlobalObject) -> JSValue;
+}
+impl ZigStringBlobExt for ZigString {
+    #[inline]
+    fn to_js(&self, global: &JSGlobalObject) -> JSValue {
+        if self.is_globally_allocated() {
+            return self.to_external_value(global);
+        }
+        // SAFETY: `self` is `#[repr(C)] (ptr,len)`; `global` is live.
+        unsafe { ZigString__toValueGC(self, global) }
+    }
+    #[inline]
+    fn to_external_value(&self, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: see `to_js`.
+        unsafe { ZigString__toExternalValue(self, global) }
+    }
+    #[inline]
+    fn with_encoding(mut self) -> Self {
+        self.set_output_encoding();
+        self
+    }
+    fn to_json_object(&self, _global: &JSGlobalObject) -> JSValue {
+        todo!("blocked_on: bun_jsc::zig_string::ZigString::to_json_object")
+    }
+}
+
 /// A single-use Blob backed by an allocation of memory.
 pub struct Internal {
     pub bytes: Vec<u8>,
@@ -5491,7 +5530,7 @@ impl Internal {
         let bytes_without_bom = strings::without_utf8_bom(&self.bytes);
         if let Some(out) = strings::to_utf16_alloc(bytes_without_bom, false, false).unwrap_or(Some(Vec::new())) {
             // TODO(port): Zig used `catch &[_]u16{}` to swallow alloc errors into empty.
-            let return_value = ZigString::to_external_u16(out.as_ptr(), out.len(), global_this);
+            let return_value = jsc::zig_string::to_external_u16(out.as_ptr(), out.len(), global_this);
             return_value.ensure_still_alive();
             self.bytes = Vec::new();
             return Ok(return_value);
@@ -5499,7 +5538,7 @@ impl Internal {
             // If there was a UTF8 BOM, we clone it
             let out = BunString::clone_latin1(&self.bytes[3..]);
             self.bytes = Vec::new();
-            return out.to_js(global_this);
+            return jsc::StringJsc::to_js(&out, global_this);
         } else {
             let mut str = ZigString::init(&self.to_owned_slice());
             str.mark_global();
@@ -5675,7 +5714,8 @@ pub extern "C" fn JSDOMFile__hasInstance(
 ) -> bool {
     jsc::mark_binding();
     let Some(blob) = value.as_::<Blob>() else { return false };
-    blob.is_jsdom_file
+    // SAFETY: `as_::<Blob>` returns a live `*mut Blob` rooted by `value`.
+    unsafe { (*blob).is_jsdom_file }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -5798,12 +5838,14 @@ pub trait FileOpener: Sized {
                 bun_sys::Result::Err(err) => {
                     // TODO(port): @hasField(This, "mkdirp_if_not_exists") — optional
                     // mkdir-retry hook via MkdirpTarget. Phase B: add a default-noop method.
-                    if err.errno == bun_sys::E::NOENT as _ {
+                    if err.get_errno() == bun_sys::E::ENOENT {
                         // mkdir_if_not_exists(self, err, path, path_string.slice()) → Retry
                         // (only if Self: MkdirpTarget)
                     }
-                    self.set_errno(bun_core::errno_to_zig_err(err.errno));
-                    self.set_system_error(err.with_path(path_string.slice()).to_system_error());
+                    self.set_errno(bun_core::errno_to_zig_err(err.errno as i32));
+                    self.set_system_error(jsc::SysErrorJsc::to_system_error(
+                        &err.with_path(path_string.slice()),
+                    ));
                     self.set_opened_fd(Fd::INVALID);
                     break;
                 }
@@ -5846,20 +5888,11 @@ pub trait FileCloser: Sized {
     #[cfg(windows)]
     fn loop_(&self) -> *mut bun_uv_sys::uv_loop_t;
 
-    fn schedule_close(request: &mut bun_io::Request) -> bun_io::Action {
-        // SAFETY: request is the io_request field of Self.
-        let this: &mut Self = unsafe {
-            &mut *(request as *mut _ as *mut u8)
-                .sub(core::mem::offset_of!(Self, io_request))
-                .cast::<Self>()
-        };
-        bun_io::Action::Close(bun_io::CloseAction {
-            ctx: this as *mut Self as *mut c_void,
-            fd: this.opened_fd(),
-            on_done: Self::on_io_request_closed as _,
-            poll: this.io_poll(),
-            tag: Self::IO_TAG,
-        })
+    fn schedule_close(_request: &mut bun_io::Request) -> bun_io::Action {
+        // TODO(port): Zig used `@fieldParentPtr("io_request", request)` — Rust
+        // `offset_of!` can't name fields on a trait `Self`. Implementors must
+        // override this with a concrete container_of recovery + CloseAction.
+        todo!("blocked_on: container_of(Self, io_request) in trait default")
     }
 
     fn on_io_request_closed(this: &mut Self) {
@@ -5871,16 +5904,12 @@ pub trait FileCloser: Sized {
         bun_jsc::WorkPool::schedule(this.task());
     }
 
-    unsafe fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
+    unsafe fn on_close_io_request(_task: *mut bun_jsc::WorkPoolTask) {
         debug!("onCloseIORequest()");
-        // SAFETY: task is the `task` field of Self.
-        let this: &mut Self = unsafe {
-            &mut *(task as *mut _ as *mut u8)
-                .sub(core::mem::offset_of!(Self, task))
-                .cast::<Self>()
-        };
-        this.set_close_after_io(false);
-        this.update();
+        // TODO(port): Zig used `@fieldParentPtr("task", task)` — Rust
+        // `offset_of!` can't name fields on a trait `Self`. Implementors must
+        // override this with a concrete container_of recovery.
+        todo!("blocked_on: container_of(Self, task) in trait default")
     }
 
     fn do_close(&mut self, is_allowed_to_close_fd: bool) -> bool {
@@ -5904,7 +5933,10 @@ pub trait FileCloser: Sized {
             #[cfg(windows)]
             bun_aio::Closer::close(self.opened_fd(), self.loop_());
             #[cfg(not(windows))]
-            let _ = self.opened_fd().close_allowing_bad_file_descriptor(None);
+            {
+                use bun_sys::FdExt as _;
+                let _ = self.opened_fd().close_allowing_bad_file_descriptor(None);
+            }
             self.set_opened_fd(Fd::INVALID);
         }
 

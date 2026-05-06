@@ -1402,12 +1402,13 @@ impl UDPSocket {
             return JSValue::UNDEFINED;
         }
         // SAFETY: !closed implies socket is Some and valid.
-        JSValue::js_number(unsafe { (*this.socket.unwrap()).bound_port() })
+        JSValue::js_number(unsafe { (*this.socket.unwrap()).bound_port() } as f64)
     }
 
     fn create_sock_addr(global_this: &JSGlobalObject, address_bytes: &[u8], port: u16) -> JSValue {
-        let Ok(mut sockaddr) = SocketAddress::init(address_bytes, port) else {
-            return JSValue::UNDEFINED;
+        let mut sockaddr: SocketAddress = match SocketAddress::init(address_bytes, port) {
+            Ok(sa) => sa,
+            Err(_) => return JSValue::UNDEFINED,
         };
         sockaddr.into_dto(global_this).unwrap_or(JSValue::UNDEFINED)
     }

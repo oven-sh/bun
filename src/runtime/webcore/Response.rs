@@ -1048,7 +1048,7 @@ impl Response {
                     // result drops at scope exit
                     let headers = response.get_or_create_headers(global_this)?;
                     response.redirected = true;
-                    headers.put(FetchHeaders::HTTPHeaderName::Location, &result.url, global_this)?;
+                    headers.put(HTTPHeaderName::Location, &result.url, global_this)?;
                     return Ok(Box::into_raw(Box::new(response)));
                 }
             }

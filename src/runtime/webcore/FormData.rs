@@ -414,7 +414,7 @@ pub fn to_js_from_multipart_data(
     }
 
     {
-        let mut wrap = Wrapper { global, form };
+        let mut wrap = Wrapper { global, form: form as *mut DOMFormData };
 
         if let Err(e) = for_each_multipart_entry(input, boundary, &mut wrap, Wrapper::on_entry) {
             scoped_log!(FormData, "failed to parse multipart data");

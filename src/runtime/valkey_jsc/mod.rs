@@ -304,7 +304,7 @@ pub mod js_valkey {
             _global: &JSGlobalObject,
             _this_value: JSValue,
             _command: &super::valkey_command_body::Command<'_>,
-        ) -> Result<&'static bun_jsc::JSPromise, RedisError> {
+        ) -> Result<*mut bun_jsc::JSPromise, RedisError> {
             todo!("blocked_on: crate::valkey_jsc::js_valkey_body::JSValkeyClient::send")
         }
 

@@ -1933,7 +1933,7 @@ pub fn init(
             .load(unsafe { &mut *ctx.log }, env, Some(cli), ctx.install.as_deref(), subcommand)?;
     }
 
-    let mut ca: Vec<Box<ZStr>> = Vec::new();
+    let mut ca: Vec<ZBox> = Vec::new();
     {
         // SAFETY: singleton fully initialized; main thread, no workers yet. Shared
         // borrow suffices — `options.ca` is only read here.
@@ -1942,32 +1942,32 @@ pub fn init(
             ca = Vec::with_capacity(options.ca.len());
             debug_assert_eq!(ca.capacity(), options.ca.len());
             for s in options.ca.iter() {
-                ca.push(ZStr::dupe_z(s)?);
+                ca.push(ZBox::from_bytes(s));
             }
         }
     }
 
-    let mut abs_ca_file_name: Box<ZStr> = ZStr::EMPTY_BOX; // TODO(port): empty ZStr
+    let mut abs_ca_file_name: ZBox = ZBox::from_bytes(b"");
     {
         // SAFETY: as above; shared read of `options.ca_file_name`.
         let options = unsafe { &(*manager_ptr).options };
         if !options.ca_file_name.is_empty() {
             // resolve with original cwd
             if bun_paths::is_absolute(&options.ca_file_name) {
-                abs_ca_file_name = ZStr::dupe_z(&options.ca_file_name)?;
+                abs_ca_file_name = ZBox::from_bytes(&options.ca_file_name);
             } else {
                 let mut path_buf = PathBuffer::uninit();
                 abs_ca_file_name =
-                    ZStr::dupe_z(resolve_path::join_abs_string_buf::<platform::Auto>(
+                    ZBox::from_bytes(resolve_path::join_abs_string_buf::<platform::Auto>(
                         &original_cwd_clone,
                         &mut path_buf,
                         &[&options.ca_file_name],
-                    ))?;
+                    ));
             }
         }
     }
 
-    AsyncHTTP::max_simultaneous_requests().store(
+    http::async_http::MAX_SIMULTANEOUS_REQUESTS.store(
         'brk: {
             if let Some(network_concurrency) = cli.network_concurrency {
                 break 'brk network_concurrency.max(1);

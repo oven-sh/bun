@@ -2424,25 +2424,12 @@ impl<'a> bun_semver::StringBuilder for StringBuilder<'a> {
     }
 }
 
-impl<'a> crate::dependency::StringBuilderLike for StringBuilder<'a> {
-    #[inline]
-    fn count(&mut self, s: &[u8]) {
-        StringBuilder::count(self, s)
-    }
-    #[inline]
-    fn append_string(&mut self, s: &[u8]) -> SemverString {
-        StringBuilder::append::<SemverString>(self, s)
-    }
-    #[inline]
-    fn lockfile(&self) -> &crate::lockfile::Lockfile {
-        // `crate::lockfile::Lockfile` re-exports `lockfile_real::Lockfile`,
-        // so this is the same type; cast through pointer to satisfy the
-        // separate-path nominal typing during the staged port.
-        unsafe { &*(self.lockfile as *const Lockfile as *const crate::lockfile::Lockfile) }
-    }
-}
+// `crate::dependency::StringBuilderLike` impl lives in `dependency.rs` next to
+// the trait definition (it needs `string_bytes()` access to the lockfile
+// buffers). `package::scripts` now takes `&mut StringBuilder<'_>` concretely,
+// so no adapter trait is needed there either.
 
-impl<'a> crate::bin::StringBuilder for StringBuilder<'a> {
+impl<'a> crate::bin_real::StringBuilder for StringBuilder<'a> {
     #[inline]
     fn count(&mut self, s: &[u8]) {
         StringBuilder::count(self, s)
@@ -2454,17 +2441,6 @@ impl<'a> crate::bin::StringBuilder for StringBuilder<'a> {
     #[inline]
     fn append_external_string(&mut self, s: &[u8]) -> ExternalString {
         StringBuilder::append::<ExternalString>(self, s)
-    }
-}
-
-impl<'a> crate::lockfile_real::package::scripts::LockfileStringBuilderLike for StringBuilder<'a> {
-    #[inline]
-    fn count(&mut self, s: &[u8]) {
-        StringBuilder::count(self, s)
-    }
-    #[inline]
-    fn append_string(&mut self, s: &[u8]) -> SemverString {
-        StringBuilder::append::<SemverString>(self, s)
     }
 }
 

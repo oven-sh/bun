@@ -1365,8 +1365,8 @@ pub fn indexOfNotChar(slice: []const u8, char: u8) ?u32 {
 }
 
 const invalid_char: u8 = 0xff;
-const hex_table: [255]u8 = brk: {
-    var values: [255]u8 = [_]u8{invalid_char} ** 255;
+const hex_table: [256]u8 = brk: {
+    var values: [256]u8 = [_]u8{invalid_char} ** 256;
     values['0'] = 0;
     values['1'] = 1;
     values['2'] = 2;

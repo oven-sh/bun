@@ -819,12 +819,12 @@ fn printEnhancedAuditReport(
     return 0;
 }
 
-const libdeflate = @import("../deps/libdeflate.zig");
+const libdeflate = @import("../libdeflate_sys/libdeflate.zig");
 const std = @import("std");
 const AuditLevel = @import("../install/PackageManager/CommandLineArguments.zig").AuditLevel;
-const Command = @import("../cli.zig").Command;
+const Command = @import("./cli.zig").Command;
 const PackageManager = @import("../install/install.zig").PackageManager;
-const URL = @import("../url.zig").URL;
+const URL = @import("../url/url.zig").URL;
 
 const bun = @import("bun");
 const Global = bun.Global;

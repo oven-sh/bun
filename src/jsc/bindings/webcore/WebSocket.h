@@ -1,0 +1,357 @@
+/*
+ * Copyright (C) 2011 Google Inc.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *
+ *     * Redistributions of source code must retain the above copyright
+ * notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above
+ * copyright notice, this list of conditions and the following disclaimer
+ * in the documentation and/or other materials provided with the
+ * distribution.
+ *     * Neither the name of Google Inc. nor the names of its
+ * contributors may be used to endorse or promote products derived from
+ * this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#pragma once
+
+#include "WebSocketDeflate.h"
+#include "ContextDestructionObserver.h"
+#include "EventTarget.h"
+#include "ExceptionOr.h"
+#include <wtf/URL.h>
+#include <wtf/HashSet.h>
+#include <wtf/Lock.h>
+#include "FetchHeaders.h"
+#include "WebSocketErrorCode.h"
+
+namespace WebCore {
+class JSBlob;
+}
+
+namespace uWS {
+template<bool, bool, typename>
+struct WebSocket;
+}
+
+namespace JSC {
+class ArrayBuffer;
+class ArrayBufferView;
+}
+
+extern "C" void Bun__WebSocket__freeSSLConfig(void* sslConfig);
+
+namespace WebCore {
+
+class Blob;
+
+// Move-only owning handle for the Zig heap-allocated SSLConfig returned by
+// Bun__WebSocket__parseSSLConfig. The SSLConfig holds duped cert/key/CA
+// strings, so every exception / early-return path between parsing and the
+// Zig upgrade client taking ownership must free it. Wrapping the raw `void*`
+// in this RAII type lets normal C++ destruction handle all of those paths
+// without ad-hoc scope guards or manual frees at each call site.
+class WebSocketSSLConfigPtr {
+    WTF_MAKE_NONCOPYABLE(WebSocketSSLConfigPtr);
+
+public:
+    WebSocketSSLConfigPtr() = default;
+    explicit WebSocketSSLConfigPtr(void* ptr)
+        : m_ptr(ptr)
+    {
+    }
+    WebSocketSSLConfigPtr(WebSocketSSLConfigPtr&& other)
+        : m_ptr(std::exchange(other.m_ptr, nullptr))
+    {
+    }
+    WebSocketSSLConfigPtr& operator=(WebSocketSSLConfigPtr&& other)
+    {
+        if (this != &other) {
+            reset();
+            m_ptr = std::exchange(other.m_ptr, nullptr);
+        }
+        return *this;
+    }
+    ~WebSocketSSLConfigPtr() { reset(); }
+
+    explicit operator bool() const { return m_ptr != nullptr; }
+
+    // Transfer ownership out to the Zig upgrade client; after this the
+    // destructor is a no-op.
+    void* release() { return std::exchange(m_ptr, nullptr); }
+
+private:
+    void reset()
+    {
+        if (m_ptr) {
+            Bun__WebSocket__freeSSLConfig(m_ptr);
+            m_ptr = nullptr;
+        }
+    }
+
+    void* m_ptr { nullptr };
+};
+
+class WebSocket final : public RefCounted<WebSocket>, public EventTargetWithInlineData, public ContextDestructionObserver {
+    WTF_MAKE_TZONE_ALLOCATED(WebSocket);
+
+public:
+    static ASCIILiteral subprotocolSeparator();
+
+    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url);
+    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const String& protocol);
+    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols);
+    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
+    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized);
+    // With proxy support
+    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate);
+    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate);
+    ~WebSocket();
+
+    enum State {
+        CONNECTING = 0,
+        OPEN = 1,
+        CLOSING = 2,
+        CLOSED = 3,
+    };
+
+    enum Opcode : unsigned char {
+        Continue = 0x0,
+        Text = 0x1,
+        Binary = 0x2,
+        Close = 0x8,
+        Ping = 0x9,
+        Pong = 0xA,
+    };
+
+    enum CleanStatus {
+        NotClean = 0,
+        Clean = 1,
+    };
+
+    // Tracks the connection type for both the upgrade client and the connected websocket.
+    // This replaces separate m_isSecure and m_proxyIsHTTPS bools.
+    enum class ConnectionType : uint8_t {
+        Plain, // ws:// direct connection
+        TLS, // wss:// direct connection
+        ProxyPlain, // ws:// or wss:// through HTTP proxy (plain socket to proxy)
+        ProxyTLS // ws:// or wss:// through HTTPS proxy (TLS socket to proxy)
+    };
+
+    ExceptionOr<void> connect(const String& url);
+    ExceptionOr<void> connect(const String& url, const String& protocol);
+    ExceptionOr<void> connect(const String& url, const Vector<String>& protocols);
+    ExceptionOr<void> connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
+    // Internal connect with proxy config (used by create() with proxy support)
+    ExceptionOr<void> connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, std::optional<struct ProxyConfig>&&);
+
+    ExceptionOr<void> send(const String& message);
+    ExceptionOr<void> send(JSC::ArrayBuffer&);
+    ExceptionOr<void> send(JSC::ArrayBufferView&);
+    ExceptionOr<void> send(JSBlob*);
+
+    ExceptionOr<void> ping();
+    ExceptionOr<void> ping(const String& message);
+    ExceptionOr<void> ping(JSC::ArrayBuffer&);
+    ExceptionOr<void> ping(JSC::ArrayBufferView&);
+    ExceptionOr<void> ping(JSBlob*);
+
+    ExceptionOr<void> pong();
+    ExceptionOr<void> pong(const String& message);
+    ExceptionOr<void> pong(JSC::ArrayBuffer&);
+    ExceptionOr<void> pong(JSC::ArrayBufferView&);
+    ExceptionOr<void> pong(JSBlob*);
+
+    ExceptionOr<void> close(std::optional<unsigned short> code, const String& reason);
+    ExceptionOr<void> terminate();
+
+    void setProtocol(const String& protocol);
+
+    const URL& url() const;
+    State readyState() const;
+    unsigned bufferedAmount() const;
+
+    String protocol() const;
+    String extensions() const;
+
+    String binaryType() const;
+    ExceptionOr<void> setBinaryType(const String&);
+
+    ScriptExecutionContext* scriptExecutionContext() const final;
+
+    using RefCounted::deref;
+    using RefCounted::ref;
+    void didConnect();
+    void disablePendingActivity();
+    void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason);
+    void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params, void* customSSLCtx);
+    void didConnectWithTunnel(void* tunnel, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params);
+    void didFailWithErrorCode(Bun::WebSocketErrorCode code);
+
+    void didReceiveMessage(String&& message);
+    void didReceiveData(const char* data, size_t length);
+    void didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData);
+
+    void updateHasPendingActivity();
+    bool hasPendingActivity() const
+    {
+        return m_hasPendingActivity.load();
+    }
+
+    void setRejectUnauthorized(bool rejectUnauthorized)
+    {
+        m_rejectUnauthorized = rejectUnauthorized;
+    }
+
+    // Controls the upgrade client's `Sec-WebSocket-Extensions:
+    // permessage-deflate; client_max_window_bits` offer. Disabling this (via
+    // `perMessageDeflate: false` in ws options) matches the behavior of the
+    // npm `ws` package and prevents compression being negotiated at all.
+    void setOfferPerMessageDeflate(bool offer)
+    {
+        m_offerPerMessageDeflate = offer;
+    }
+
+    bool offerPerMessageDeflate() const
+    {
+        return m_offerPerMessageDeflate;
+    }
+
+    // C++-only callback mode. When set, didConnect/didReceiveMessage/
+    // didClose call these function pointers directly instead of building
+    // Event objects and going through dispatchEvent. Fires synchronously
+    // from the socket's onData — no event-loop tick deferral, no JSValue
+    // allocation. Used when a C++ subsystem owns the socket lifecycle
+    // end-to-end (e.g. CDP::Transport connecting to an existing Chrome
+    // instance over ws://, where every message is handled by C++ JSON
+    // parsing and JS only sees the final settled promise).
+    //
+    // onMessage gets text frames only — binary frames are dropped (the
+    // only current consumer speaks JSON). If a consumer needs binary,
+    // add onBinary alongside. onClose fires for both clean and abrupt
+    // close; the error-code-to-string mapping is the caller's job.
+    struct NativeCallbacks {
+        void* ctx = nullptr;
+        void (*onOpen)(void* ctx) = nullptr;
+        void (*onMessage)(void* ctx, std::span<const char> utf8) = nullptr;
+        void (*onClose)(void* ctx, unsigned short code) = nullptr;
+    };
+    void setNativeCallbacks(NativeCallbacks cb) { m_native = cb; }
+    bool hasNativeCallbacks() const { return m_native.onMessage != nullptr; }
+
+    // Public wrapper for the native-callback consumer to send text frames.
+    // Bypasses the ExceptionOr<> wrapping — the caller has already checked
+    // m_state == OPEN (onOpen fired), and there's no JS caller to surface
+    // an exception to. Same underlying write path as send(String).
+    void sendTextNative(const String& message)
+    {
+        if (m_state != OPEN) return;
+        sendWebSocketString(message, Opcode::Text);
+    }
+
+    bool rejectUnauthorized() const
+    {
+        return m_rejectUnauthorized;
+    }
+
+    void incPendingActivityCount()
+    {
+        ASSERT(m_pendingActivityCount < std::numeric_limits<size_t>::max());
+        m_pendingActivityCount++;
+        ref();
+        updateHasPendingActivity();
+    }
+
+    void decPendingActivityCount()
+    {
+        ASSERT(m_pendingActivityCount > 0);
+        m_pendingActivityCount--;
+        updateHasPendingActivity();
+        deref();
+    }
+
+    size_t memoryCost() const;
+
+private:
+    typedef union AnyWebSocket {
+        WebSocketClient* client;
+        WebSocketClientTLS* clientSSL;
+    } AnyWebSocket;
+    enum ConnectedWebSocketKind {
+        None,
+        Client,
+        ClientSSL,
+    };
+
+    std::atomic<bool> m_hasPendingActivity { true };
+
+    explicit WebSocket(ScriptExecutionContext&);
+    explicit WebSocket(ScriptExecutionContext&, const String& url);
+
+    EventTargetInterface eventTargetInterface() const final;
+
+    void refEventTarget() final { ref(); }
+    void derefEventTarget() final { deref(); }
+
+    void didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, bool isConnectionError = false);
+    void didUpdateBufferedAmount(unsigned bufferedAmount);
+    void didStartClosingHandshake();
+    void failConnectingWebSocket();
+
+    void sendWebSocketString(const String& message, const Opcode opcode);
+    void sendWebSocketData(const char* data, size_t length, const Opcode opcode);
+    void setExtensionsFromDeflateParams(const PerMessageDeflateParams* deflate_params);
+
+    enum class BinaryType { Blob,
+        ArrayBuffer,
+        // non-standard:
+        NodeBuffer };
+
+    State m_state { CONNECTING };
+    URL m_url;
+    unsigned m_bufferedAmount { 0 };
+    unsigned m_bufferedAmountAfterClose { 0 };
+    // In browsers, the default is Blob, however most applications
+    // immediately change the default to ArrayBuffer.
+    //
+    // And since we know the typical usage is to override the default,
+    // we set NodeBuffer as the default to match the default of ServerWebSocket.
+    BinaryType m_binaryType { BinaryType::NodeBuffer };
+    String m_subprotocol;
+    String m_extensions;
+    void* m_upgradeClient { nullptr };
+    ConnectionType m_connectionType { ConnectionType::Plain };
+    bool m_rejectUnauthorized { false };
+    // Default matches pre-existing behavior: advertise permessage-deflate in the upgrade
+    // request. Set to false by ws.WebSocket callers passing `perMessageDeflate: false`.
+    bool m_offerPerMessageDeflate { true };
+    AnyWebSocket m_connectedWebSocket { nullptr };
+    ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };
+    size_t m_pendingActivityCount { 0 };
+
+    // TLS options (Zig heap SSLConfig — ownership is released to the Zig
+    // upgrade client in connect(); freed by ~WebSocketSSLConfigPtr otherwise).
+    WebSocketSSLConfigPtr m_sslConfig;
+
+    bool m_dispatchedErrorEvent { false };
+
+    NativeCallbacks m_native;
+    // RefPtr<PendingActivity<WebSocket>> m_pendingActivity;
+};
+
+} // namespace WebCore

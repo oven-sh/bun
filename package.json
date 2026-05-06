@@ -53,7 +53,7 @@
     "build:release:local": "bun scripts/build.ts --profile=release-local --build-dir=build/release-local",
     "run:linux": "docker run --rm  -v \"$PWD:/root/bun/\" -w /root/bun ghcr.io/oven-sh/bun-development-docker-image",
     "css-properties": "bun run src/css/properties/generate_properties.ts",
-    "uv-posix-stubs": "bun run src/bun.js/bindings/libuv/generate_uv_posix_stubs.ts",
+    "uv-posix-stubs": "bun run src/jsc/bindings/libuv/generate_uv_posix_stubs.ts",
     "bump": "bun ./scripts/bump.ts",
     "jsc:build": "bun scripts/build.ts --profile=release-local --build-dir=build/release-local --target=WebKit",
     "jsc:build:debug": "bun scripts/build.ts --profile=debug-local --build-dir=build/debug-local --target=WebKit",

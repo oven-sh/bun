@@ -179,7 +179,7 @@ const ReplRunner = struct {
     }
 };
 
-const Repl = @import("../repl.zig");
+const Repl = @import("./repl.zig");
 
 const bun = @import("bun");
 const Global = bun.Global;

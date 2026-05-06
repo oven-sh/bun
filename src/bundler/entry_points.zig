@@ -364,7 +364,7 @@ pub const MacroEntryPoint = struct {
 
 const string = []const u8;
 
-const Fs = @import("../fs.zig");
+const Fs = @import("../resolver/fs.zig");
 const std = @import("std");
 
 const bun = @import("bun");

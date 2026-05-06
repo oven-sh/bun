@@ -31,11 +31,7 @@ pub fn Err(comptime T: type) type {
             @compileError("format not implemented for " ++ @typeName(T));
         }
 
-        pub fn toErrorInstance(this: *const @This(), globalThis: *bun.jsc.JSGlobalObject) !bun.jsc.JSValue {
-            var str = try bun.String.createFormat("{f}", .{this.kind});
-            defer str.deref();
-            return str.toErrorInstance(globalThis);
-        }
+        pub const toErrorInstance = @import("../css_jsc/error_jsc.zig").toErrorInstance;
 
         pub fn fromParseError(err: ParseError(ParserError), filename: []const u8) Err(ParserError) {
             if (T != ParserError) {

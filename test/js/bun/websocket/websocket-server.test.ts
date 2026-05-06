@@ -1136,7 +1136,9 @@ it("server.upgrade() with Sec-WebSocket-Protocol in options.headers does not use
   // the value passed to resp.upgrade(), so the expected response protocol is
   // `part`, not the combined "part, tail".
   const expected = JSON.stringify({ status: 101, protocol: part, custom: "hello" });
-  expect({ stdout: stdout.trim(), stderr: stderr.split("\n", 3).join("\n").trim() }).toEqual({
+  // Don't truncate stderr — when this previously crashed on Windows ci_assert
+  // builds the panic line was past line 3, leaving "" and a misleading diff.
+  expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({
     stdout: expected,
     stderr: "",
   });

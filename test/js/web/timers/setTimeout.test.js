@@ -246,6 +246,54 @@ it("setTimeout -> unref doesn't keep event loop alive forever", () => {
   expect(stdout.toString()).toBe("");
 });
 
+it("setTimeout -> fire -> unref -> ref does not keep the event loop alive", async () => {
+  // After a one-shot timer has fired it is destroyed; calling .unref() then .ref()
+  // must not leak an event-loop ref. Previously this would hang forever.
+  const src = `
+    const t = setTimeout(() => {}, 1);
+    setTimeout(() => {
+      t.unref();
+      t.ref();
+      console.log("destroyed=" + t._destroyed);
+    }, 20);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 4_000,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("destroyed=true\n");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
+it("setImmediate -> fire -> unref -> ref does not keep the event loop alive", async () => {
+  const src = `
+    const im = setImmediate(() => {});
+    setTimeout(() => {
+      im.unref();
+      im.ref();
+      console.log("destroyed=" + im._destroyed);
+    }, 20);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 4_000,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("destroyed=true\n");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
 it("setTimeout should refresh N times", done => {
   let count = 0;
   let timer = setTimeout(() => {
@@ -366,6 +414,25 @@ it("Returning a Promise in setTimeout (unref'd) doesnt keep the event loop alive
 it("setTimeout canceling with unref, close, _idleTimeout, and _onTimeout", () => {
   expect([path.join(import.meta.dir, "timers-fixture-unref.js"), "setTimeout"]).toRun();
 });
+
+for (const mode of ["clear", "refresh", "repeat"]) {
+  it(`setTimeout doesn't leak when ${mode} is called inside its own callback`, async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-clear-in-callback-leak-fixture.js"), mode],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const filteredStderr = stderr
+      .split("\n")
+      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+      .join("\n");
+    expect(filteredStderr).toBe("");
+    expect(stdout).toContain("delta:");
+    expect(exitCode).toBe(0);
+  }, 90_000);
+}
 
 it("setTimeout does not leak a pending exception when emitting a timeout warning throws", async () => {
   // The out-of-range timeout warning queues a process.nextTick, which reads process._exiting.

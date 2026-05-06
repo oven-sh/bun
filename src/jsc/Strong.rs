@@ -54,6 +54,9 @@ impl Drop for Strong {
 /// Holds a strong reference to a JS value, protecting it from garbage
 /// collection. When not holding a value, the strong may still be allocated.
 // PORT NOTE: field renamed from `impl` (Rust keyword) to `handle`.
+// `#[repr(transparent)]` matches the Zig layout (`?*Impl` — single nullable
+// pointer) so it stays FFI-safe when embedded in `extern "C"` structs.
+#[repr(transparent)]
 pub struct Optional {
     handle: Option<NonNull<Impl>>,
 }

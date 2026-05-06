@@ -730,6 +730,38 @@ impl JSValue {
         if global.has_exception() { Err(JsError::Thrown) } else { Ok(()) }
     }
 
+    /// `JSValue.push` (JSValue.zig:404) — append to an array-typed JS value.
+    pub fn push(self, global: &JSGlobalObject, out: JSValue) -> JsResult<()> {
+        // SAFETY: `global` is live; FFI may set an exception.
+        unsafe { JSC__JSValue__push(self, global, out) };
+        if global.has_exception() { Err(JsError::Thrown) } else { Ok(()) }
+    }
+
+    /// `JSValue.getOptionalInt` (JSValue.zig:1896) — typed integer property
+    /// fetch with `validateIntegerRange` clamping. Returns `None` if the
+    /// property is absent.
+    pub fn get_optional_int<T: bun_core::Integer>(
+        self,
+        global: &JSGlobalObject,
+        property_name: &'static str,
+    ) -> JsResult<Option<T>> {
+        let Some(value) = self.get(global, property_name)? else {
+            return Ok(None);
+        };
+        let min: i128 = T::MIN_I128.max(i128::from(crate::MIN_SAFE_INTEGER));
+        let max: i128 = T::MAX_I128.min(i128::from(crate::MAX_SAFE_INTEGER));
+        Ok(Some(global.validate_integer_range::<T>(
+            value,
+            T::ZERO,
+            crate::IntegerRange {
+                min,
+                max,
+                field_name: property_name.as_bytes(),
+                always_allow_zero: false,
+            },
+        )?))
+    }
+
     pub fn array_iterator<'a>(self, global: &'a JSGlobalObject) -> JsResult<JSArrayIterator<'a>> {
         JSArrayIterator::init(self, global)
     }

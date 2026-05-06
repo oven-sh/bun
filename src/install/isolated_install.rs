@@ -1706,18 +1706,19 @@ pub fn install_isolated_packages(
                             continue;
                         }
 
-                        let entry_path_save = entry_path.save();
-                        let _restore_entry = scopeguard::guard((), |_| entry_path_save.restore());
-                        // TODO(port): defer save.restore() pattern — verify RAII guard semantics
-
+                        // PORT NOTE: reshaped for borrowck — Zig `save()/restore()`
+                        // holds `*Path`; capture lengths and truncate manually so
+                        // the paths stay unborrowed across the loop body.
+                        let entry_path_save = entry_path.len();
                         entry_path.append(entry.name.slice());
 
-                        let rename_path_save = rename_path.save();
-                        let _restore_rename = scopeguard::guard((), |_| rename_path_save.restore());
-
+                        let rename_path_save = rename_path.len();
                         rename_path.append(entry.name.slice());
 
                         let _ = sys::renameat(Fd::cwd(), entry_path.slice_z(), Fd::cwd(), rename_path.slice_z()).unwrap();
+
+                        rename_path.set_length(rename_path_save);
+                        entry_path.set_length(entry_path_save);
                     }
 
                     // 3

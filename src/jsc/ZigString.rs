@@ -1028,19 +1028,22 @@ impl Slice {
             if NullableAllocator::is_default(a) {
                 let len = self.len as usize;
                 self.allocator = NullableAllocator::null();
-                // SAFETY: ptr/len were produced by Box::leak / default allocator.
+                // SAFETY: ptr/len were produced by Box::into_raw / default allocator.
                 let owned = unsafe { Box::from_raw(slice::from_raw_parts_mut(self.ptr as *mut u8, len)) };
                 self.ptr = b"".as_ptr();
                 self.len = 0;
                 return Ok(owned);
             }
         }
-        let owned = self.to_owned()?;
+        let mut owned = self.to_owned()?;
         // self drops here, freeing original
         let len = owned.len as usize;
         let ptr = owned.ptr as *mut u8;
-        core::mem::forget(owned);
-        // SAFETY: to_owned() leaked a Box<[u8]> via default allocator.
+        // Disarm `owned`'s Drop (ownership moves into the returned Box).
+        owned.allocator = NullableAllocator::null();
+        owned.ptr = b"".as_ptr();
+        owned.len = 0;
+        // SAFETY: to_owned() produced a default-allocator Box<[u8]>; reconstruct it.
         Ok(unsafe { Box::from_raw(slice::from_raw_parts_mut(ptr, len)) })
     }
 

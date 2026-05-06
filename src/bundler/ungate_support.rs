@@ -207,10 +207,16 @@ pub mod bun_css {
 
 /// `bundle_v2.zig:PartRange`.
 ///
-/// PORT NOTE: re-exported from `bundle_v2` so `Chunk.rs`
+/// PORT NOTE: defined here (not in `bundle_v2`) so `Chunk.rs`
 /// (`parts_in_chunk_in_order: Box<[PartRange]>`) and the `bundle_v2.rs`
-/// `compute_chunks` body that fills it agree on a single type.
-pub use crate::bundle_v2::PartRange;
+/// `compute_chunks` body that fills it (via `crate::ungate_support::PartRange`)
+/// agree on a single nominal type.
+#[derive(Clone, Copy, Default)]
+pub struct PartRange {
+    pub source_index: Index,
+    pub part_index_begin: u32,
+    pub part_index_end: u32,
+}
 
 /// `bundle_v2.zig:StableRef` — `packed struct(u96)`.
 #[repr(C, packed)]

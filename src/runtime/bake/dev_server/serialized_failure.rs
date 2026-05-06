@@ -39,7 +39,7 @@ impl SerializedFailure {
     /// from `data` (Zig: `std.mem.bytesAsValue(Owner.Packed, data[0..4]).decode()`).
     pub fn get_owner(&self) -> Owner {
         let raw = u32::from_le_bytes(self.data[0..4].try_into().unwrap());
-        Packed(raw).decode()
+        Packed::from_bits(raw).decode()
     }
 
     /// `SerializedFailure.deinit` — releases `data`. The dev-server owns the

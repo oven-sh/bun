@@ -24,7 +24,6 @@ use core::ffi::c_void;
 use core::ptr;
 
 use bun_string::immutable::Appender as _;
-use bun_bundler::RuntimeTranspilerCacheExt as _;
 
 use bun_jsc::module_loader::{
     FetchBuiltinResult, FetchFlags, LoaderHooks, ModuleLoader, TranspileArgs, TranspileExtra,

@@ -4167,5 +4167,5 @@ pub use spawn_process_body::sync;
 //   source:     src/runtime/api/bun/process.zig (2927 lines)
 //   confidence: low
 //   todos:      48
-//   notes:      B-2 un-gate: structs (Process/Status/Poller/SpawnOptions/SpawnResult) + pure accessors real; ProcessExitHandler converted to §Dispatch vtable (cold path). spawn_process bodies / waiter-thread loop / sync runner re-gated on sibling `spawn` posix_spawn wrappers + bun_aio FilePoll method surface. PollerWindows must become #[repr(C)] for offset_of.
+//   notes:      B-2 un-gate: Process impl (init_posix/on_exit/watch/watch_or_reap/rewatch/close/kill/enable+disable_keeping_event_loop_alive), PollerPosix impl, PosixSpawnResult::to_process now real. PollerPosix::Fd holds NonNull<FilePoll> (hive slot). EventLoopHandle→EventLoopCtx bridged via local event_loop_handle_to_ctx (Js arm uses GET_VM_CTX_HOOK). WaiterThread::append stubbed (body still gated on UnboundedQueue/ConcurrentTask). sync runner / waiter-thread loop body remain gated. PollerWindows must become #[repr(C)] for offset_of.
 // ──────────────────────────────────────────────────────────────────────────

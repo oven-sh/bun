@@ -294,10 +294,113 @@ impl Store {
         Ok(())
     }
 
-    pub fn from_array_list(list: Vec<u8>) -> Result<Box<Store>, bun_core::Error> {
+    pub fn from_array_list(list: Vec<u8>) -> Result<StoreRef, bun_core::Error> {
         Ok(Store::init(list))
     }
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// StoreRef — intrusive-refcounted handle
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Owning handle to a heap `Store`, refcounted via the *intrusive*
+/// `Store::ref_count` field. Mirrors Zig's `*Store` with `.ref()`/`.deref()`.
+///
+/// This replaces the Phase-A `Arc<Store>` placeholder. `Arc` was a UAF hazard:
+/// `Store::deref()` (reachable from `Store::external` and other FFI callbacks)
+/// frees via `Box::from_raw` when the intrusive count hits zero, but `Arc`
+/// owns the allocation itself — so either the Arc would free an already-freed
+/// box, or the intrusive count and Arc strong count would silently diverge
+/// (`has_one_ref()` lying). One refcount, one deallocation path.
+pub struct StoreRef {
+    ptr: NonNull<Store>,
+}
+
+impl StoreRef {
+    /// Adopt an existing +1 (e.g. a raw `*Store` whose refcount was already
+    /// bumped for us). Does **not** increment.
+    ///
+    /// # Safety
+    /// `ptr` must be a live `Store` allocated by `Store::new`/`Box::new`, and
+    /// the caller transfers one outstanding reference into the returned handle.
+    #[inline]
+    pub unsafe fn adopt(ptr: NonNull<Store>) -> Self {
+        Self { ptr }
+    }
+
+    /// Wrap a raw `*Store`, incrementing its intrusive refcount.
+    ///
+    /// # Safety
+    /// `ptr` must be a live `Store` allocated by `Store::new`/`Box::new`.
+    #[inline]
+    pub unsafe fn retained(ptr: NonNull<Store>) -> Self {
+        // SAFETY: caller contract.
+        unsafe { ptr.as_ref() }.ref_();
+        Self { ptr }
+    }
+
+    #[inline]
+    pub fn as_ptr(&self) -> *mut Store {
+        self.ptr.as_ptr()
+    }
+
+    /// Leak the held +1 and return the raw pointer. Pair with a later
+    /// `Store::deref()` (typically via `Store::external` / an FFI deallocator).
+    #[inline]
+    pub fn into_raw(self) -> *mut Store {
+        let p = self.ptr.as_ptr();
+        core::mem::forget(self);
+        p
+    }
+}
+
+impl From<Box<Store>> for StoreRef {
+    #[inline]
+    fn from(b: Box<Store>) -> Self {
+        // `Store::new` initializes `ref_count` to 1 — adopt that +1.
+        // SAFETY: Box::into_raw never returns null.
+        Self { ptr: unsafe { NonNull::new_unchecked(Box::into_raw(b)) } }
+    }
+}
+
+impl Clone for StoreRef {
+    #[inline]
+    fn clone(&self) -> Self {
+        // SAFETY: invariant — `ptr` is live while any `StoreRef` exists.
+        unsafe { self.ptr.as_ref() }.ref_();
+        Self { ptr: self.ptr }
+    }
+}
+
+impl Drop for StoreRef {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: invariant — `ptr` is live; `deref()` frees on last ref.
+        unsafe { self.ptr.as_ref() }.deref();
+    }
+}
+
+impl core::ops::Deref for StoreRef {
+    type Target = Store;
+    #[inline]
+    fn deref(&self) -> &Store {
+        // SAFETY: invariant — `ptr` is live while any `StoreRef` exists.
+        unsafe { self.ptr.as_ref() }
+    }
+}
+
+impl PartialEq for StoreRef {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.ptr == other.ptr
+    }
+}
+impl Eq for StoreRef {}
+
+// Store's refcount is atomic and its payload is either immutable-after-init or
+// guarded by callers; matches Zig's cross-thread `*Store` usage.
+unsafe impl Send for StoreRef {}
+unsafe impl Sync for StoreRef {}
 
 impl Drop for Store {
     fn drop(&mut self) {
@@ -478,10 +581,7 @@ impl S3 {
     ) -> JsResult<JSValue> {
         struct Wrapper {
             promise: bun_jsc::JSPromiseStrong,
-            // LIFETIMES.tsv: SHARED → Arc<Store>
-            // TODO(port): Store is intrusively refcounted (ref_count: AtomicU32) and crosses
-            // FFI; Phase B should reconcile Arc<Store> vs bun_ptr::IntrusiveArc<Store>.
-            store: Arc<Store>,
+            store: StoreRef,
             // LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject — but this struct is heap-allocated
             // and passed through *anyopaque to an async callback, so a borrowed reference
             // cannot be expressed without a lifetime that outlives the constructing frame.

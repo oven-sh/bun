@@ -86,7 +86,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
             StmtData::SDebugger(_) => {
                 p.cur_scope().is_after_const_local_prefix = was_after_after_const_local_prefix;
-                if p.define.drop_debugger {
+                // blocked_on: crate::defines::Define (the one P borrows) lacks `drop_debugger`;
+                //   it's on `defines_full_draft::Define` only. Hard-code false until unified.
+                #[allow(clippy::overly_complex_bool_expr)]
+                if false /* p.define.drop_debugger */ {
                     return Ok(());
                 }
                 stmts.push(*stmt);
@@ -169,9 +172,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     ) -> Result<(), Error> {
         // "module.exports = value"
         // Zig: p.@"module.exports"(stmt.loc) — mapped to `module_exports`
-        let lhs = p.module_exports(stmt.loc);
+        // blocked_on: P::module_exports is in the #[cfg(any())] heavy impl block (P.rs:5422).
         let rhs = p.visit_expr(data.value);
-        stmts.push(Stmt::assign(lhs, rhs));
+        let _ = rhs;
+        todo!("s_export_equals: P::module_exports gated");
+        stmts.push(Stmt::assign(/* p.module_exports(stmt.loc) */ Expr::default(), rhs));
         p.record_usage(p.module_ref);
         Ok(())
     }
@@ -463,21 +468,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         if p.options.features.react_fast_refresh {
             if let Some(hook) = react_hook_data.as_mut() {
-                stmts.push(p.get_react_refresh_hook_signal_decl(hook.signature_cb));
-                stmts.push(p.s(
-                    S::SExpr {
-                        value: p.get_react_refresh_hook_signal_init(
-                            hook,
-                            Expr::init_identifier(name_ref, logger::Loc::EMPTY),
-                        ),
-                        ..Default::default()
-                    },
-                    logger::Loc::EMPTY,
-                ));
+                // blocked_on: get_react_refresh_hook_signal_{decl,init} in #[cfg(any())] block (P.rs:5422)
+                //   AND hook_ctx_storage save/restore (see above). `react_hook_data` is never
+                //   populated until that lands, so this arm is unreachable; kept for shape.
+                let _ = hook.signature_cb;
+                todo!("s_function: react_refresh hook signal emit");
             }
 
             if core::ptr::eq(p.current_scope, p.module_scope) {
-                p.handle_react_refresh_register(stmts, original_name, name_ref, ReactRefreshExportKind::Named)?;
+                // blocked_on: handle_react_refresh_register in #[cfg(any())] block (P.rs:5422).
+                let _ = (original_name, ReactRefreshExportKind::Named);
+                todo!("s_function: handle_react_refresh_register");
             }
         }
 
@@ -639,11 +640,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         _ => break 'try_register,
                     }
                     let id = match decl.binding.data {
-                        js_ast::binding::B::BIdentifier(b) => b.r#ref,
+                        // SAFETY: arena-owned B::Identifier ptr, valid for 'a.
+                        js_ast::binding::Data::BIdentifier(b) => unsafe { (*b).r#ref },
                         _ => break 'try_register,
                     };
                     let original_name = unsafe { arena_str(p.symbols[id.inner_index() as usize].original_name) };
-                    p.handle_react_refresh_register(stmts, original_name, id, ReactRefreshExportKind::Named)?;
+                    // blocked_on: handle_react_refresh_register in #[cfg(any())] block (P.rs:5422).
+                    let _ = (original_name, id, ReactRefreshExportKind::Named);
+                    todo!("s_local: handle_react_refresh_register");
                 }
             }
         }

@@ -2191,30 +2191,21 @@ impl<'a> NodeJSPathName<'a> {
             dir = b"";
         }
 
-        // SAFETY: all returned slices borrow `path_`; see TODO(port) on struct lifetime
-        unsafe {
-            NodeJSPathName {
-                dir: core::mem::transmute(dir),
-                base: core::mem::transmute(base),
-                ext: core::mem::transmute(ext),
-                filename: core::mem::transmute(filename),
-            }
-        }
+        NodeJSPathName { dir, base, ext, filename }
     }
 }
 
 #[derive(Clone, Copy)]
-pub struct PathName {
-    pub base: &'static [u8],
-    pub dir: &'static [u8],
+pub struct PathName<'a> {
+    pub base: &'a [u8],
+    pub dir: &'a [u8],
     /// includes the leading .
     /// extensionless files report ""
-    pub ext: &'static [u8],
-    pub filename: &'static [u8],
+    pub ext: &'a [u8],
+    pub filename: &'a [u8],
 }
-// TODO(port): lifetime — all four fields borrow the input path; struct should be PathName<'a>
 
-impl PathName {
+impl<'a> PathName<'a> {
     pub fn find_extname(path_: &[u8]) -> &[u8] {
         let mut start: usize = 0;
         if let Some(i) = last_index_of_sep(path_) {
@@ -2294,7 +2285,7 @@ impl PathName {
         unsafe { core::slice::from_raw_parts(self.dir.as_ptr(), self.dir.len() + extend) }
     }
 
-    pub fn init(path_: &[u8]) -> PathName {
+    pub fn init(path_: &'a [u8]) -> PathName<'a> {
         #[cfg(windows)]
         if cfg!(debug_assertions) {
             // This path is likely incorrect. I think it may be *possible*
@@ -2351,15 +2342,7 @@ impl PathName {
 
         let filename = if !dir.is_empty() { &path_[dir.len() + 1..] } else { path_ };
 
-        // SAFETY: all returned slices borrow `path_`; see TODO(port) on struct lifetime
-        unsafe {
-            PathName {
-                dir: core::mem::transmute(dir),
-                base: core::mem::transmute(base),
-                ext: core::mem::transmute(ext),
-                filename: core::mem::transmute(filename),
-            }
-        }
+        PathName { dir, base, ext, filename }
     }
 }
 

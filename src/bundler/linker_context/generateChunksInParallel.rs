@@ -475,7 +475,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     if c.options.metafile {
         for chunk in chunks.iter_mut() {
             chunk.metafile_chunk_json =
-                LinkerContext::MetafileBuilder::generate_chunk_json(c, chunk, chunks)
+                metafile_builder::generate_chunk_json(c, chunk, chunks)
                     .unwrap_or_default();
         }
     }
@@ -640,7 +640,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             });
 
             match chunk.content.sourcemap(c.options.source_maps) {
-                tag @ (SourceMapMode::External | SourceMapMode::Linked) => {
+                tag @ (SourceMapOption::External | SourceMapOption::Linked) => {
                     let output_source_map = chunk
                         .output_source_map
                         .finalize(&code_result.shifts)

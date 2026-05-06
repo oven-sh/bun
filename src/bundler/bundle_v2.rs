@@ -1017,10 +1017,10 @@ pub mod api {
                 { self.map.get(specifier).map(|b| b.as_ref()) }
                 #[cfg(windows)]
                 {
-                    let buf = bun_paths::path_buffer_pool::get();
-                    let normalized = bun_paths::path_to_posix_buf(specifier, &mut *buf);
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let normalized = bun_paths::resolve_path::path_to_posix_buf(specifier, &mut **buf);
                     let r = self.map.get(normalized).map(|b| b.as_ref());
-                    bun_paths::path_buffer_pool::put(buf);
+                    drop(buf);
                     r
                 }
             }
@@ -1030,10 +1030,10 @@ pub mod api {
             /// can build a `Resolver::Result` around it.
             pub fn resolve(&self, _source_file: &[u8], specifier: &[u8]) -> Option<bun_resolver::Result> {
                 if self.map.is_empty() { return None; }
-                let key = self.map.get_key(specifier)?;
+                let entry = self.map.get_entry(specifier)?;
                 Some(bun_resolver::Result {
                     path_pair: bun_resolver::PathPair {
-                        primary: bun_fs::Path::init(key.clone()),
+                        primary: crate::ungate_support::bun_fs::Path::init(entry.key.clone()),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -1117,7 +1117,7 @@ pub mod api {
             /// actual `runOnJSThread` body (which calls into the C++ plugin)
             /// is owned by T6; here we hand the boxed `Resolve` to it.
             pub fn dispatch(&mut self) {
-                let hook = crate::dispatch::PLUGIN_RESOLVE_HOOK
+                let hook = super::super::dispatch::PLUGIN_RESOLVE_HOOK
                     .load(core::sync::atomic::Ordering::Acquire);
                 if !hook.is_null() {
                     // SAFETY: hook was registered by runtime with matching sig.

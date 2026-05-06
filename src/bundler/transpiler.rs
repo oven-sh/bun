@@ -1096,7 +1096,7 @@ impl<'a> Transpiler<'a> {
 
         if source.contents.is_empty()
             || (source.contents.len() < 33
-                && strings::trim(source.contents, b"\n\r ").is_empty())
+                && strings::trim(&source.contents, b"\n\r ").is_empty())
         {
             if !loader.handles_empty_file() {
                 return Some(ParseResult::empty_with(
@@ -1749,7 +1749,7 @@ impl<'a> Transpiler<'a> {
             // TODO: use lazy export AST
             options::Loader::Text => {
                 let expr = js_ast::Expr::init(
-                    js_ast::E::EString::init(source.contents),
+                    js_ast::E::EString::init(&source.contents),
                     logger::Loc::EMPTY,
                 );
                 let stmt = js_ast::Stmt::alloc(
@@ -1780,7 +1780,7 @@ impl<'a> Transpiler<'a> {
                 });
             }
             options::Loader::Md => {
-                let html: &'static [u8] = match bun_md::root::render_to_html(source.contents) {
+                let html: &'static [u8] = match bun_md::root::render_to_html(&source.contents) {
                     // Spec transpiler.zig:1162 allocates the rendered HTML via
                     // `allocator` (the per-parse arena), so it is freed with the
                     // arena. Arena-copy the heap `Box<[u8]>` and let it drop;
@@ -3325,7 +3325,7 @@ impl<'a> Transpiler<'a> {
 
         if source.contents.is_empty()
             || (source.contents.len() < 33
-                && strings::trim(source.contents, b"\n\r ").is_empty())
+                && strings::trim(&source.contents, b"\n\r ").is_empty())
         {
             if !loader.handles_empty_file() {
                 return Some(ParseResult {

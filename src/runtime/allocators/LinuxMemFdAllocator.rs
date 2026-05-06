@@ -290,15 +290,26 @@ impl crate::Allocator for LinuxMemFdAllocator {
     }
 
     fn free(&self, buf: &mut [u8], _alignment: usize, _ret_addr: usize) {
-        // Zig: `defer self.deref();` — runs after munmap regardless of result.
-        let guard = scopeguard::guard((), |_| self.deref());
+        // Zig: `var self: *Self = @ptrCast(@alignCast(ptr)); defer self.deref();`
+        // — runs after munmap regardless of result.
+        //
+        // PORT NOTE: the trait hands us `&self`, but Zig's vtable passes a raw
+        // `*anyopaque`. `deref` may free the allocation, so it must operate on
+        // a raw `*mut Self`, not a live `&self` borrow. Derive the raw pointer
+        // up front and do not touch `self` afterwards.
+        // TODO(port): `crate::Allocator::free` should expose the raw data ptr
+        // (matching Zig's `*anyopaque`) so this cast retains Box provenance.
+        let this = self as *const Self as *mut Self;
         match sys::munmap(buf) {
             Ok(()) => {}
             Err(err) => {
                 bun_core::output::debug_warn!("Failed to munmap memfd: {}", err);
             }
         }
-        drop(guard);
+        // SAFETY: `this` points to a Box-allocated `Self` (see
+        // `IntrusiveArc::new`); we own one ref via the allocator vtable's
+        // data pointer. `self` is not accessed after this call.
+        unsafe { Self::deref(this) };
     }
 
     // resize/remap: Zig used `std.mem.Allocator.noResize` / `noRemap`.

@@ -228,8 +228,9 @@ impl WebSocketProxyTunnel {
     /// SSLWrapper callback: Called before TLS handshake starts
     fn on_open(this: *mut WebSocketProxyTunnel) {
         // SAFETY: ctx pointer set in `start`; SSLWrapper guarantees it is live during callbacks.
+        let _guard = unsafe { Self::ref_scope(this) };
+        // SAFETY: ref_scope holds a ref; `this` is live for the rest of this scope.
         let this = unsafe { &mut *this };
-        let _guard = this.ref_scope();
 
         bun_output::scoped_log!(WebSocketProxyTunnel, "onOpen");
         // Configure SNI with hostname
@@ -250,8 +251,9 @@ impl WebSocketProxyTunnel {
     /// SSLWrapper callback: Called with decrypted data from the network
     fn on_data(this: *mut WebSocketProxyTunnel, decrypted_data: &[u8]) {
         // SAFETY: ctx pointer set in `start`; SSLWrapper guarantees it is live during callbacks.
+        let _guard = unsafe { Self::ref_scope(this) };
+        // SAFETY: ref_scope holds a ref; `this` is live for the rest of this scope.
         let this = unsafe { &mut *this };
-        let _guard = this.ref_scope();
 
         bun_output::scoped_log!(WebSocketProxyTunnel, "onData: {} bytes", decrypted_data.len());
         if decrypted_data.is_empty() {

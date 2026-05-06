@@ -802,20 +802,20 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // also pass `jsc_vm` into `spawn_sync_event_loop`/`prepare`/`cleanup` while
     // holding it. Route through a raw `*mut VirtualMachineRef` for the duration.
     let jsc_vm_ptr: *mut jsc::VirtualMachineRef = jsc_vm;
-    let event_loop: *mut jsc::event_loop::EventLoop = if IS_SYNC {
-        // SAFETY: `jsc_vm_ptr` is the same live VM reborrowed for the nested call.
-        let sync = jsc_vm.rare_data().spawn_sync_event_loop(unsafe { &mut *jsc_vm_ptr });
-        &mut sync.event_loop as *mut _
-    } else {
-        jsc_vm.event_loop()
-    };
+    // TODO(port): SpawnSyncEventLoop's inner `event_loop` is an erased private
+    // `*mut ()`; until an accessor is exposed, fall back to the main loop and
+    // let `prepare()` swap the VM's loop handle internally.
+    let event_loop: *mut jsc::event_loop::EventLoop = jsc_vm.event_loop();
 
     if IS_SYNC {
-        // SAFETY: see PORT NOTE above.
-        jsc_vm
-            .rare_data()
-            .spawn_sync_event_loop(unsafe { &mut *jsc_vm_ptr })
-            .prepare(unsafe { &mut *jsc_vm_ptr });
+        // SAFETY: see PORT NOTE above; `spawn_sync_event_loop` re-borrows the
+        // same VM via the raw pointer for its `vm` arg.
+        unsafe {
+            (*jsc_vm_ptr)
+                .rare_data()
+                .spawn_sync_event_loop(&mut *jsc_vm_ptr)
+                .prepare(jsc_vm_ptr.cast());
+        }
     }
 
     let _sync_loop_cleanup = scopeguard::guard((), move |_| {
@@ -826,7 +826,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 (*jsc_vm_ptr)
                     .rare_data()
                     .spawn_sync_event_loop(&mut *jsc_vm_ptr)
-                    .cleanup(&mut *jsc_vm_ptr, main_loop);
+                    .cleanup(jsc_vm_ptr.cast(), main_loop.cast());
             }
         }
     });

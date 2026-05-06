@@ -800,7 +800,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // `config.ssl_config.server_name` CString; valid + NUL-terminated.
                 let server_name = unsafe { core::ffi::CStr::from_ptr(name_ptr) };
                 // SAFETY: app is the live handle just stored in self.app.
-                if unsafe { (*app).add_server_name_with_options(server_name, ssl_options) }.is_err() {
+                if unsafe { (*app).add_server_name_with_options(server_name, to_sys_socket_options(ssl_options)) }.is_err() {
                     if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
                         let _ = global.throw(format_args!(
                             "Failed to add serverName: {}",

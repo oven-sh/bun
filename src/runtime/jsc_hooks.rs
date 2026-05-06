@@ -3488,13 +3488,13 @@ unsafe fn resolve_hook(
                 specifier_utf8.slice(),
                 source_utf8.slice(),
                 err,
-                import_kind,
+                import_kind.into(),
             ));
             logger::Msg {
                 data: logger::range_data(None, logger::Range::NONE, printed.clone()),
                 metadata: logger::Metadata::Resolve(logger::MetadataResolve {
                     specifier: logger::BabyString::r#in(&printed, specifier_utf8.slice()),
-                    import_kind,
+                    import_kind: import_kind.into(),
                     err,
                 }),
                 ..Default::default()

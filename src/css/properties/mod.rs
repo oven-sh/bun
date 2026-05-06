@@ -77,9 +77,12 @@ macro_rules! handler_stub {
 // PropertyHandlerContext surface remain internally ``-gated
 // inside each leaf file (same pattern as `font.rs`).
 pub mod align;
-gated_prop!(animation, {
-    prop_value_stub!(AnimationName);
-});
+// `animation`: un-gated — real AnimationName / Animation / AnimationIterationCount /
+// AnimationDirection / AnimationPlayState / AnimationFillMode / AnimationTimeline /
+// Scroller / ScrollAxis / ViewTimeline / AnimationRangeStart / AnimationRangeEnd /
+// AnimationRange / TimelineRangeName / AnimationComposition / AnimationHandler
+// live in `animation.rs`.
+pub mod animation;
 pub mod background;
 pub mod border;
 // `border_image`: un-gated — real BorderImage / BorderImageSlice /

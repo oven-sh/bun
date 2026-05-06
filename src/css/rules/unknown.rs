@@ -56,30 +56,10 @@ impl UnknownAtRule {
     }
 }
 
-// blocked_on: properties::custom::TokenList::to_css — its body is ``
-// gated on Token::to_css + TokenOrValue payload serializers. Thin wrapper here
-// so the blocker is named at the actual choke point instead of a generic
-// "un-gate rules/unknown.rs" shim; once `TokenList::to_css` un-gates, the
-// `#[cfg]` flips and this becomes a passthrough.
-#[inline]
-fn token_list_to_css(
-    list: &TokenList,
-    dest: &mut Printer,
-    is_custom_property: bool,
-) -> Result<(), PrintErr> {
-    
-    return list.to_css(dest, is_custom_property);
-    #[cfg(any())]
-    {
-        let _ = (list, dest, is_custom_property);
-        todo!("blocked_on: properties::custom::TokenList::to_css — Token::to_css un-gate")
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/css/rules/unknown.zig (52 lines)
 //   confidence: high
-//   todos:      1
+//   todos:      0
 //   notes:      `name` field laundered as &'static [u8] until crate-wide 'bump thread; inherent deep_clone real (field-walk port of css.implementDeepClone)
 // ──────────────────────────────────────────────────────────────────────────

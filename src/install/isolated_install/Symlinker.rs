@@ -66,7 +66,7 @@ impl Symlinker {
                 };
             }
             Strategy::ExpectExisting => {
-                let mut current_link_buf = bun_paths::path_buffer_pool().get();
+                let mut current_link_buf = bun_paths::path_buffer_pool::get();
                 let mut current_link: &[u8] =
                     match bun_sys::readlink(self.dest.slice_z(), &mut current_link_buf) {
                         Ok(res) => res,

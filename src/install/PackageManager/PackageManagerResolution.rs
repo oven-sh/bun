@@ -17,12 +17,12 @@ use crate::{
 // ──────────────────────────────────────────────────────────────────────────
 
 #[inline]
-pub fn format_later_version_in_cache(
-    this: &mut PackageManager,
+pub fn format_later_version_in_cache<'a>(
+    this: &'a mut PackageManager,
     package_name: &[u8],
     name_hash: PackageNameHash,
     resolution: Resolution,
-) -> Option<semver::version::Formatter> {
+) -> Option<semver::version::Formatter<'a, u64>> {
     this.format_later_version_in_cache(package_name, name_hash, resolution)
 }
 
@@ -47,7 +47,7 @@ pub fn get_installed_versions_from_disk_cache(
 pub fn resolve_from_disk_cache(
     this: &mut PackageManager,
     package_name: &[u8],
-    version: Dependency::Version,
+    version: crate::dependency::Version,
 ) -> Option<PackageID> {
     this.resolve_from_disk_cache(package_name, version)
 }
@@ -77,7 +77,7 @@ impl PackageManager {
         package_name: &[u8],
         name_hash: PackageNameHash,
         resolution: Resolution,
-    ) -> Option<semver::version::Formatter> {
+    ) -> Option<semver::version::Formatter<'_, u64>> {
         match resolution.tag {
             Resolution::Tag::Npm => {
                 if resolution.value.npm.version.tag.has_pre() {

@@ -307,6 +307,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         if idx == u32::MAX {
             return;
         }
+        // SAFETY: same as above — `session` is live; set_registry_index writes a Cell<u32>.
         unsafe { (*session).set_registry_index(u32::MAX) };
         let list = &mut self.active_h2_sessions;
         debug_assert!(

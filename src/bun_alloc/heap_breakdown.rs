@@ -104,7 +104,7 @@ pub(crate) use get_zone;
 // stable Rust without a proc-macro. Phase B may replace with a `#[heap_label]`
 // derive that expands `get_zone!` directly.
 fn get_zone_runtime(name: &str) -> &'static Zone {
-    const _: () = assert!(ENABLED);
+    debug_assert!(ENABLED, "heap_breakdown::get_zone_runtime called with ENABLED=false");
 
     use std::collections::HashMap;
     use std::sync::Mutex;

@@ -85,12 +85,11 @@ pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     fn impl_(global_: &JSGlobalObject, frame_: &CallFrame) -> JsResult<JSValue> {
         let arguments_ = frame_.arguments_old(1).slice();
         let ex = arguments_[0];
-        // SAFETY: FFI call into C++; global pointer is valid for the call.
+        // SAFETY: FFI call into C++; `global_` is a live JSGlobalObject* for the duration
+        // of the call. Passed as `*const` — mutation happens behind the FFI boundary, so
+        // no Rust `&mut` is ever materialized (matches ipc.rs / JSValue.rs convention).
         unsafe {
-            Process__emitErrorEvent(
-                global_ as *const _ as *mut JSGlobalObject,
-                ex.to_error().unwrap_or(ex),
-            );
+            Process__emitErrorEvent(global_, ex.to_error().unwrap_or(ex));
         }
         Ok(JSValue::UNDEFINED)
     }

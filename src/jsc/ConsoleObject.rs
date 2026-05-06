@@ -3906,13 +3906,13 @@ pub mod formatter {
 
                 if let Some(empty) = empty_start.take() {
                     if empty > 0 {
-                        self.print_comma::<C>(writer.ctx).expect("unreachable");
+                        writer.print_comma::<C>();
                         if !self.single_line
-                            && (self.ordered_properties || self.good_time_for_a_new_line())
+                            && (self.ordered_properties || writer.good_time_for_a_new_line(self.indent))
                         {
                             writer.write_all(b"\n");
                             was_good_time = true;
-                            self.write_indent(writer.ctx).expect("unreachable");
+                            writer.write_indent(self.indent);
                         } else {
                             writer.space();
                         }
@@ -3925,8 +3925,9 @@ pub mod formatter {
                             format_args!("{}empty item{}", pf!("<r><d>"), pf!("<r>")),
                         );
                     } else {
-                        self.estimated_line_length +=
-                            bun_core::fmt::fast_digit_count(empty_count) as usize;
+                        writer.add_for_new_line(
+                            bun_core::fmt::fast_digit_count(empty_count) as usize,
+                        );
                         writer.pretty::<C>(
                             " x empty items".len(),
                             format_args!(
@@ -3941,17 +3942,23 @@ pub mod formatter {
 
                 if !js_type.is_arguments() {
                     drop(writer);
+                    // Hoist field reads before `formatter: self` reborrows the
+                    // whole `*self` (struct-literal field order is not eval
+                    // order in the borrow checker's eyes once `self` is moved).
+                    let always_newline = !self.single_line
+                        && (self.always_newline_scope || self.good_time_for_a_new_line());
+                    let single_line = self.single_line;
+                    let global_this = self.global_this;
                     let mut iter = PropertyIteratorCtx::<C> {
                         formatter: self,
                         writer: writer_,
-                        always_newline: !self.single_line
-                            && (self.always_newline_scope || self.good_time_for_a_new_line()),
-                        single_line: self.single_line,
+                        always_newline,
+                        single_line,
                         parent: value,
                         i: i as usize,
                     };
                     value.for_each_property_non_indexed(
-                        self.global_this,
+                        global_this,
                         &mut iter as *mut _ as *mut c_void,
                         PropertyIteratorCtx::<C>::for_each,
                     )?;
@@ -3967,17 +3974,17 @@ pub mod formatter {
             }
 
             if !self.single_line
-                && (self.ordered_properties || was_good_time || self.good_time_for_a_new_line())
+                && (self.ordered_properties || was_good_time || writer.good_time_for_a_new_line(self.indent))
             {
-                self.reset_line();
+                writer.reset_line(self.indent);
                 writer.write_all(b"\n");
-                let _ = self.write_indent(writer.ctx);
+                writer.write_indent(self.indent);
                 writer.write_all(b"]");
-                self.reset_line();
-                self.add_for_new_line(1);
+                writer.reset_line(self.indent);
+                writer.add_for_new_line(1);
             } else {
                 writer.write_all(b" ]");
-                self.add_for_new_line(2);
+                writer.add_for_new_line(2);
             }
             if writer.failed {
                 self.failed = true;

@@ -93,25 +93,25 @@ impl InitCommand {
         let colors = Output::enable_ansi_colors_stdout();
         // PERF(port): Zig builds `choices` at comptime via `bun.meta.EnumFields` +
         // `Output.prettyFmt(e.fmt(), colors_comptime)`. We build it at runtime once.
-        let choices: Vec<&'static str> = (0..C::COUNT)
+        let choices: Vec<Output::PrettyBuf> = (0..C::COUNT)
             .map(|i| {
                 let e = C::from_index(i);
-                Output::pretty_fmt(e.fmt(), colors)
+                Output::pretty_fmt_rt(e.fmt(), colors)
             })
             .collect();
 
         // Print the question prompt
-        Output::prettyln(
-            "<r><cyan>?<r> {s}<d> - Press return to submit.<r>",
-            format_args!("{}", bstr::BStr::new(label)),
-        );
+        Output::prettyln(format_args!(
+            "<r><cyan>?<r> {}<d> - Press return to submit.<r>",
+            bstr::BStr::new(label),
+        ));
 
         if colors {
-            Output::print("\x1b[?25l", format_args!("")); // hide cursor
+            Output::print(format_args!("\x1b[?25l")); // hide cursor
         }
         let _show_cursor = scopeguard::guard((), move |_| {
             if colors {
-                Output::print("\x1b[?25h", format_args!("")); // show cursor
+                Output::print(format_args!("\x1b[?25h")); // show cursor
             }
         });
 

@@ -2147,8 +2147,16 @@ impl Function {
         self.print_source_code(&mut source_code)?;
 
         source_code.push(0);
+        // SAFETY: `TCC_OPTIONS` is a static `&'static str`; the trailing NUL
+        // is not required by `Config::options` (NonNull<ZStr> derefs len-only),
+        // but we route through `zstr!` for correctness.
+        let tcc_options: &'static ZStr = if cfg!(debug_assertions) {
+            zstr!(b"-std=c11 -nostdlib -Wl,--export-all-symbols -g")
+        } else {
+            zstr!(b"-std=c11 -nostdlib -Wl,--export-all-symbols")
+        };
         let state = match TCC::State::init::<Function, false>(TCC::Config {
-            options: Some(NonNull::from(ZStr::from_static(Self::TCC_OPTIONS.as_bytes()))),
+            options: Some(NonNull::from(tcc_options)),
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
                 ctx: Some(self as *mut Function),
@@ -2170,9 +2178,9 @@ impl Function {
             // SAFETY: this_ptr is &mut self for the duration of compile()
             let this = unsafe { &mut *this_ptr };
             if matches!(this.step, Step::Failed { .. }) {
-                if let Some(mut s) = this.state.take() {
+                if let Some(s) = this.state.take() {
                     // SAFETY: we own the state
-                    unsafe { s.as_mut().deinit() };
+                    unsafe { TCC::State::destroy(s.as_ptr()) };
                 }
             }
         });
@@ -2181,7 +2189,7 @@ impl Function {
 
         if let Some(env) = napi_env {
             if state
-                .add_symbol(b"Bun__thisFFIModuleNapiEnv", env as *const _ as *const c_void)
+                .add_symbol(zstr!(b"Bun__thisFFIModuleNapiEnv"), env as *const _ as *const c_void)
                 .is_err()
             {
                 self.fail(b"Failed to add NAPI env symbol");

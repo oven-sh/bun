@@ -745,7 +745,8 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
 
     // Collect script names from positionals + passthrough
     // For RunCommand: positionals[0] is "run", skip it. For AutoCommand: no "run" prefix.
-    let mut script_names: Vec<&[u8]> = Vec::new();
+    // PORT NOTE: cloned to owned so the &mut ctx borrow below doesn't conflict.
+    let mut script_names: Vec<Box<[u8]>> = Vec::new();
 
     let mut positionals: &[Box<[u8]>] = &ctx.positionals;
     if !positionals.is_empty()
@@ -755,12 +756,12 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
     }
     for pos in positionals {
         if !pos.is_empty() {
-            script_names.push(&**pos);
+            script_names.push(pos.clone());
         }
     }
     for pt in &ctx.passthrough {
         if !pt.is_empty() {
-            script_names.push(&**pt);
+            script_names.push(pt.clone());
         }
     }
 

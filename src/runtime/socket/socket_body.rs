@@ -1973,9 +1973,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             let _ = global.throw_range_error(
                 i64::try_from(byte_offset).unwrap(),
                 jsc::RangeErrorOptions {
-                    field_name: "byteOffset",
+                    field_name: b"byteOffset",
                     min: 0,
                     max: i64::try_from(bytes.len()).unwrap(),
+                    msg: b"",
                 },
             );
             return WriteResult::Fail;
@@ -1987,9 +1988,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             let _ = global.throw_range_error(
                 i64::try_from(byte_length).unwrap(),
                 jsc::RangeErrorOptions {
-                    field_name: "byteLength",
+                    field_name: b"byteLength",
                     min: 0,
                     max: i64::try_from(bytes.len()).unwrap(),
+                    msg: b"",
                 },
             );
             return WriteResult::Fail;
@@ -2080,8 +2082,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                     // SAFETY: overlapping copy within the same buffer.
                     unsafe {
                         core::ptr::copy(
-                            self.buffered_data_for_node_net.ptr.add(written),
-                            self.buffered_data_for_node_net.ptr,
+                            self.buffered_data_for_node_net.ptr.as_ptr().add(written),
+                            self.buffered_data_for_node_net.ptr.as_ptr(),
                             remaining_len,
                         );
                     }
@@ -2140,8 +2142,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        let args = callframe.arguments_old(1);
-        if args.len() > 0 && args.ptr()[0].to_boolean() {
+        let args = callframe.arguments_old::<1>();
+        if args.len > 0 && args.ptr[0].to_boolean() {
             this.socket.shutdown_read();
         } else {
             this.socket.shutdown();

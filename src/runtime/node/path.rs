@@ -3379,7 +3379,7 @@ pub fn resolve_windows_t<'a, T: PathChar>(
                 // SAFETY: handles overlap.
                 unsafe {
                     core::ptr::copy(
-                        path.as_ptr().add(root_end),
+                        path_ptr.add(root_end),
                         buf2.as_mut_ptr(),
                         slice_len,
                     );

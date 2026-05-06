@@ -1374,9 +1374,9 @@ pub fn uptime(global: &JSGlobalObject) -> JsResult<f64> {
                 code: BunString::static_("ERR_SYSTEM_ERROR"),
                 errno: err,
                 syscall: BunString::static_("uv_uptime"),
-                ..Default::default()
+                ..system_error_default()
             };
-            return global.throw_value(sys_err.to_error_instance(global));
+            return Err(global.throw_value(sys_err.to_error_instance(global)));
         }
         return Ok(uptime_value);
     }
@@ -1414,24 +1414,24 @@ pub fn user_info(global_this: &JSGlobalObject, options: gen_::UserInfoOptions) -
     let home = homedir(global_this)?;
     let home = scopeguard::guard(home, |h| h.deref());
 
-    result.put(global_this, ZigString::static_("homedir"), home.to_js(global_this)?);
+    result.put(global_this, b"homedir", home.to_js(global_this)?);
 
     #[cfg(windows)]
     {
-        result.put(global_this, ZigString::static_("username"), ZigString::init(env_var::USER.get().unwrap_or(b"unknown")).with_encoding().to_js(global_this));
-        result.put(global_this, ZigString::static_("uid"), JSValue::js_number(-1));
-        result.put(global_this, ZigString::static_("gid"), JSValue::js_number(-1));
-        result.put(global_this, ZigString::static_("shell"), JSValue::NULL);
+        result.put(global_this, b"username", ZigString::init(env_var::USER.get().unwrap_or(b"unknown")).with_encoding().to_js(global_this));
+        result.put(global_this, b"uid", JSValue::js_number(-1.0));
+        result.put(global_this, b"gid", JSValue::js_number(-1.0));
+        result.put(global_this, b"shell", JSValue::NULL);
     }
     #[cfg(not(windows))]
     {
         let username = env_var::USER.get().unwrap_or(b"unknown");
 
-        result.put(global_this, ZigString::static_("username"), ZigString::init(username).with_encoding().to_js(global_this));
-        result.put(global_this, ZigString::static_("shell"), ZigString::init(env_var::SHELL.get().unwrap_or(b"unknown")).with_encoding().to_js(global_this));
+        result.put(global_this, b"username", ZigString::init(username).with_encoding().to_js(global_this));
+        result.put(global_this, b"shell", ZigString::init(env_var::SHELL.get().unwrap_or(b"unknown")).with_encoding().to_js(global_this));
         // SAFETY: pure FFI getters
-        result.put(global_this, ZigString::static_("uid"), JSValue::js_number(unsafe { libc::getuid() }));
-        result.put(global_this, ZigString::static_("gid"), JSValue::js_number(unsafe { libc::getgid() }));
+        result.put(global_this, b"uid", JSValue::js_number(unsafe { libc::getuid() } as f64));
+        result.put(global_this, b"gid", JSValue::js_number(unsafe { libc::getgid() } as f64));
     }
 
     Ok(result)

@@ -922,8 +922,16 @@ mod _gated_from_js {
                 global,
                 match elem {
                     jsc::generated::SSLConfigSingleFile::String(val) => SingleFile::String(val.get()),
-                    jsc::generated::SSLConfigSingleFile::Buffer(val) => SingleFile::Buffer(val.get()),
-                    jsc::generated::SSLConfigSingleFile::File(val) => SingleFile::File(val.get()),
+                    // SAFETY: see `handle_file` above — non-null GenVal pointers
+                    // valid for the lifetime of `generated`.
+                    jsc::generated::SSLConfigSingleFile::Buffer(val) => {
+                        SingleFile::Buffer(unsafe { &mut *val.get() })
+                    }
+                    // SAFETY: opaque `bun_jsc::WebCore::Blob` is layout-identical
+                    // to `crate::webcore::Blob`.
+                    jsc::generated::SSLConfigSingleFile::File(val) => {
+                        SingleFile::File(unsafe { &mut *(val.get() as *mut crate::webcore::Blob) })
+                    }
                 },
             )?);
         }

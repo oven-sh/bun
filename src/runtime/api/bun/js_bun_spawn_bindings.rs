@@ -1017,8 +1017,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     }));
     // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
     let subprocess = unsafe { &mut *subprocess_ptr };
-    // SAFETY: subprocess_ptr is non-null (just boxed).
-    let subprocess_nn = unsafe { NonNull::new_unchecked(subprocess_ptr) };
+    // SAFETY: subprocess_ptr is non-null (just boxed). Erase the borrow lifetime
+    // to 'static for the intrusive back-pointer (PipeReader stores it as raw NonNull).
+    let subprocess_nn: NonNull<SubprocessT<'static>> =
+        unsafe { NonNull::new_unchecked(subprocess_ptr.cast()) };
 
     // Address-dependent fields, filled now that `subprocess` has a stable address.
     // PORT NOTE: pass the raw `*mut SubprocessT` captured above instead of the

@@ -2386,7 +2386,7 @@ impl Element {
 
     fn content_handler(
         &mut self,
-        callback: fn(*mut lolhtml::Element, &[u8], bool) -> Result<(), lolhtml::Error>,
+        callback: unsafe fn(*mut lolhtml::Element, &[u8], bool) -> Result<(), lolhtml::Error>,
         this_object: JSValue,
         global_object: &JSGlobalObject,
         content: ZigString,
@@ -2397,11 +2397,13 @@ impl Element {
         }
         let content_slice = content.to_slice();
 
-        if callback(
+        // SAFETY: self.element is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
+        if unsafe { callback(
             self.element,
             content_slice.slice(),
             content_options.map_or(false, |o| o.html),
-        )
+        ) }
         .is_err()
         {
             return create_lolhtml_error(global_object);
@@ -2486,7 +2488,7 @@ impl Element {
         // SAFETY: self.element is non-null (checked above) and valid for the
         // duration of the lol-html callback that owns it.
         if unsafe { lolhtml::Element::set_tag_name(self.element, text.slice()) }.is_err() {
-            return global.throw_value(create_lolhtml_error(global));
+            return Err(global.throw_value(create_lolhtml_error(global)));
         }
         Ok(true)
     }

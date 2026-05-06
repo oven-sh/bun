@@ -725,7 +725,7 @@ impl MatchedRoute {
         if client_framework_enabled {
             bun_object::get_public_path_with_asset_prefix(
                 Transpiler::entry_points::ClientEntryPoint::generate_entry_point_path(
-                    &mut entry_point_tempbuf,
+                    &mut entry_point_tempbuf[..],
                     &Fs::PathName::init(file_path),
                 ),
                 top_level_dir,
@@ -798,7 +798,7 @@ impl MatchedRoute {
                 b"",
                 route.pathname_without_leading_slash(),
                 route.name,
-                route.params,
+                &this.params_list_holder,
             );
             this.param_map = QueryStringMap::init_with_scanner(scanner)?;
         }
@@ -822,7 +822,7 @@ impl MatchedRoute {
                     route.query_string,
                     route.pathname_without_leading_slash(),
                     route.name,
-                    route.params,
+                    &this.params_list_holder,
                 );
                 this.query_string_map = QueryStringMap::init_with_scanner(scanner)?;
             } else {

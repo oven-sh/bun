@@ -436,7 +436,7 @@ impl SocketConfig {
                     // TODO(port): bun.URL.parse — confirm crate path
                     Some(p) => p,
                     None => {
-                        return global.throw_invalid_arguments(format_args!("Missing \"port\""));
+                        return Err(global.throw_invalid_arguments(format_args!("Missing \"port\"")));
                     }
                 },
             });
@@ -445,7 +445,7 @@ impl SocketConfig {
             result.reuse_port = generated.reuse_port;
             result.ipv6_only = generated.ipv6_only;
         } else {
-            return global.throw_invalid_arguments(format_args!("Expected either \"hostname\" or \"unix\""));
+            return Err(global.throw_invalid_arguments(format_args!("Expected either \"hostname\" or \"unix\"")));
         }
         Ok(result)
     }

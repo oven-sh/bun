@@ -1563,12 +1563,14 @@ impl DevServer<'_> {
             weakly_referenced_by_requestcontext: false,
             handler: match kind {
                 deferred_request::HandlerKind::BundledHtmlPage => 'brk: {
+                    // PORT NOTE: `on_aborted<U: 'static>` rejects `DeferredRequest<'_>`;
+                    // erase to `c_void` and cast back inside the trampoline.
                     resp.on_aborted(
-                        |p: *mut DeferredRequest<'_>, r: AnyResponse| {
-                            // SAFETY: p is the &mut deferred.data registered below
-                            unsafe { &mut *p }.on_abort(r)
+                        |p: *mut c_void, r: AnyResponse| {
+                            // SAFETY: p is the &mut deferred.data registered below; lifetime erased
+                            unsafe { &mut *(p as *mut DeferredRequest<'static>) }.on_abort(r)
                         },
-                        &mut deferred.data as *mut DeferredRequest<'_>,
+                        &mut deferred.data as *mut _ as *mut c_void,
                     );
                     break 'brk Handler::BundledHtmlPage(ResponseAndMethod { response: resp, method });
                 }
@@ -4202,8 +4204,8 @@ impl DevServer<'_> {
                 r,
                 &crate::webcore::blob::Any::from_array_list(buf),
                 crate::server::static_route::InitFromBytesOptions {
-                    mime_type: &MimeType::HTML,
-                    server: self.server.unwrap(),
+                    mime_type: Some(&MimeType::HTML),
+                    server: self.server,
                     status_code: 500,
                     ..Default::default()
                 },
@@ -4425,7 +4427,7 @@ impl DevServer<'_> {
         };
         debug_assert!(dev.magic == Magic::Valid);
         dev.emit_memory_visualizer_message();
-        timer.state = crate::timer::event_loop_timer::State::FIRED;
+        timer.state = bun_event_loop::EventLoopTimer::State::FIRED;
         // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
         let _ = (timer, dev.vm);
         todo!("blocked_on: bun_jsc::VirtualMachine::timer (field is `()` placeholder)");

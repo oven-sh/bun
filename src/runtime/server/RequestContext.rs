@@ -765,19 +765,27 @@ where
         }
 
         let mut message: Vec<u8> = Vec::new();
-        let _ = write!(&mut message, "{}", Output::pretty_fmt(fmt, false));
+        let _ = write!(&mut message, "{}", Output::pretty_fmt::<false>(fmt));
+        // SAFETY: VirtualMachine::get() returns the live VM raw ptr.
+        let cwd = unsafe { (*(*VirtualMachine::get()).transpiler.fs).top_level_dir.clone() };
         let fallback_container = Box::new(Api::FallbackMessageContainer {
-            message: message.into_boxed_slice(),
+            message: Some(message.into_boxed_slice()),
             router: None,
             reason: Some(Api::FallbackStep::fetch_event_handler),
-            cwd: VirtualMachine::get().transpiler.fs.top_level_dir.clone(),
-            problems: Api::Problems {
+            cwd,
+            problems: Some(Api::Problems {
                 // TODO(port): @intFromError(err) — bun_core::Error is NonZeroU16
-                code: err.code() as u16,
-                name: err.name(),
+                code: u16::from(err.0),
+                name: err.name().as_bytes().to_vec().into_boxed_slice(),
                 exceptions: exceptions.to_vec(),
-                build: log.to_api().expect("unreachable"),
-            },
+                build: {
+                    let _ = log.to_api().expect("unreachable");
+                    // `log.to_api()` returns `bun_logger::api::Log`; the
+                    // schema crate has its own `api::Log`. Shim until the
+                    // two crates share a single type.
+                    todo!("blocked_on: bun_logger::api::Log vs bun_options_types::schema::api::Log")
+                },
+            }),
         });
 
         // TODO(port): `if (comptime fmt.len > 0)` — fmt::Arguments has no const len; always print.

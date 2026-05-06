@@ -2026,15 +2026,18 @@ impl IncrementalGraph<Server> {
 
         debug_log!("Insert stale: {}", bstr::BStr::new(abs_path));
         let gop = self.bundled_files.get_or_put(Box::<[u8]>::from(abs_path))?;
-        let file_index = FileIndex::init(u32::try_from(gop.index).unwrap());
+        let gop_index = gop.index;
+        let found_existing = gop.found_existing;
+        let file_index = FileIndex::init(u32::try_from(gop_index).unwrap());
+        drop(gop);
 
-        if !gop.found_existing {
+        if !found_existing {
             self.first_dep.push(OptionalEdgeIndex::NONE);
             self.first_import.push(OptionalEdgeIndex::NONE);
         }
 
         // .client => @compileError("not implemented: use receiveChunk")
-        *gop.value_ptr = ServerFile {
+        self.bundled_files.values_mut()[gop_index] = ServerFile {
             is_rsc: false,
             is_ssr: false,
             is_route: false,

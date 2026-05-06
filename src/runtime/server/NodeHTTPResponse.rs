@@ -1101,11 +1101,13 @@ pub fn Bun__NodeHTTPRequest__onReject(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JSValue {
-    let arguments = callframe.arguments_old(2);
-    let err = arguments[0];
-    let this: &mut NodeHTTPResponse = arguments[1].as_::<NodeHTTPResponse>().unwrap();
+    let arguments = callframe.arguments_old::<2>();
+    let err = arguments.ptr[0];
+    // SAFETY: arguments[1] is the JSNodeHTTPResponse cell from the reject callback.
+    let this: &mut NodeHTTPResponse =
+        unsafe { &mut *arguments.ptr[1].as_::<NodeHTTPResponse>().unwrap() };
     this.promise.deinit();
-    this.maybe_stop_reading_body(global_object.bun_vm(), arguments[1]);
+    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1]);
 
     // defer this.deref(); — moved to tail.
 

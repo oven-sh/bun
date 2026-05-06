@@ -4758,7 +4758,7 @@ pub fn handle_template_value(
                 let _guard = scopeguard::guard((), |_| bunstr.deref());
 
                 // Check for null bytes in shell argument (security: prevent null byte injection)
-                if bunstr.index_of_ascii_char(0).is_some() {
+                if bunstr_index_of_ascii_char(&bunstr, 0).is_some() {
                     return Err(global
                         .err(jsc::ErrorCode::INVALID_ARG_VALUE, format_args!(
                             "The shell argument must be a string without null bytes. Received \"{}\"",
@@ -4776,7 +4776,8 @@ pub fn handle_template_value(
             }
         }
 
-        if template_value.is_primitive() {
+        // Spec `JSValue.isPrimitive()` — `!isObject()` (covers number/bool/null/undef/symbol).
+        if !template_value.is_object() {
             if !builder.append_js_value_str::<true>(template_value)? {
                 return Err(global.throw(format_args!(
                     "Shell script string contains invalid UTF-16"
@@ -4785,7 +4786,13 @@ pub fn handle_template_value(
             return Ok(());
         }
 
-        if template_value.implements_to_string(global)? {
+        if {
+            // blocked_on: bun_jsc::JSValue::implements_to_string
+            let _ = global;
+            todo!("blocked_on: bun_jsc::JSValue::implements_to_string");
+            #[allow(unreachable_code)]
+            false
+        } {
             if !builder.append_js_value_str::<true>(template_value)? {
                 return Err(global.throw(format_args!(
                     "Shell script string contains invalid UTF-16"

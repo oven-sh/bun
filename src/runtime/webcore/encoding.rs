@@ -328,8 +328,6 @@ pub fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding) -> Bun
             let out_len = bun_base64::url_safe_encode_len(&input);
             let (out, chars) = BunString::create_uninitialized_latin1(out_len);
             if !out.is_dead() {
-                // SAFETY: chars is a writable buffer of `out_len` bytes.
-                let chars = unsafe { slice::from_raw_parts_mut(chars, out_len) };
                 let _ = bun_base64::encode_url_safe(chars, &input);
             }
             out
@@ -381,8 +379,6 @@ pub fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
             if str.is_dead() {
                 return str;
             }
-            // SAFETY: chars is a writable buffer of `input.len()` bytes.
-            let chars = unsafe { slice::from_raw_parts_mut(chars, input.len()) };
             strings::copy_latin1_into_ascii(chars, input);
             str
         }
@@ -391,8 +387,6 @@ pub fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
             if str.is_dead() {
                 return str;
             }
-            // SAFETY: chars is a writable buffer of `input.len()` bytes.
-            let chars = unsafe { slice::from_raw_parts_mut(chars, input.len()) };
             chars.copy_from_slice(input);
             str
         }

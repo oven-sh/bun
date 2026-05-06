@@ -5058,15 +5058,16 @@ impl H2FrameParser {
         }
 
         // we iterate twice, because pseudo headers must be sent first, but can appear anywhere in the headers object
-        let mut iter = bun_jsc::JSPropertyIterator::init(
-            global_object,
-            headers_obj,
-            bun_jsc::JSPropertyIteratorOptions { skip_empty_name: false, include_value: true },
-        )?;
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
 
         for ignore_pseudo_headers in 0..2usize {
-            iter.reset();
+            // PORT NOTE: `bun_jsc::JSPropertyIterator` (runtime-options variant) lacks `.reset()`;
+            // re-initialize per pass instead — same observable property walk as the Zig two-pass loop.
+            let mut iter = bun_jsc::JSPropertyIterator::init(
+                global_object,
+                headers_obj,
+                bun_jsc::JSPropertyIteratorOptions::new(false, true),
+            )?;
 
             while let Some(header_name) = iter.next()? {
                 if header_name.length() == 0 {

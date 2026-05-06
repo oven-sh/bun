@@ -4311,11 +4311,29 @@ impl Resolver {
         let r = unsafe { c_ares::ares_get_servers_ports(channel, &mut servers) };
         if r != c_ares::ARES_SUCCESS {
             let err = c_ares::Error::get(r).unwrap();
-            return global_this.throw_value(global_this.create_error_instance(
+            return Err(global_this.throw_value(global_this.create_error_instance(
                 format_args!("ares_get_servers_ports error: {}", err.label()),
-            ));
+            )));
         }
         let _free = scopeguard::guard((), |_| unsafe { c_ares::ares_free_data(servers.cast()) });
+
+        // PORT NOTE: `struct_ares_addr_port_node.addr` is a private field upstream
+        // (`bun_cares_sys`). Mirror the `#[repr(C)]` layout locally to obtain a
+        // `*const c_void` to the address union without touching the upstream crate.
+        // The union is `{ in_addr (4B, align 4), ares_in6_addr (16B, align 1) }` →
+        // size 16, align 4; matches `[u32; 4]` here.
+        #[repr(C)]
+        struct AddrPortNodeShadow {
+            next: *mut c_void,
+            family: c_int,
+            addr: [u32; 4],
+            udp_port: c_int,
+            tcp_port: c_int,
+        }
+        debug_assert_eq!(
+            core::mem::size_of::<AddrPortNodeShadow>(),
+            core::mem::size_of::<c_ares::struct_ares_addr_port_node>(),
+        );
 
         let values = JSValue::create_empty_array(global_this, 0)?;
 

@@ -1764,7 +1764,7 @@ impl AsyncReaddirRecursiveTask {
             pending_err: None,
             pending_err_mutex: bun_threading::Mutex::default(),
         });
-        task.r#ref.ref_(vm);
+        task.r#ref.ref_(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
         task.args.to_thread_safe();
         task.tracker.did_schedule(global_object);
         let promise = task.promise.value();
@@ -1790,8 +1790,8 @@ impl AsyncReaddirRecursiveTask {
                         {
                             let _lock = self.pending_err_mutex.lock();
                             if self.pending_err.is_none() {
-                                let err_path = if !err.path().is_empty() { err.path() } else { self.args.path.slice() };
-                                self.pending_err = Some(err.with_path(Box::<[u8]>::from(err_path)));
+                                let err_path: &[u8] = if !err.path.is_empty() { &err.path[..] } else { self.args.path.slice() };
+                                self.pending_err = Some(err.with_path(err_path));
                             }
                         }
                         if self.subtask_count.fetch_sub(1, Ordering::Relaxed) == 1 {
@@ -1817,7 +1817,8 @@ impl AsyncReaddirRecursiveTask {
             &mut *((task as *mut u8).sub(offset_of!(Self, task)).cast::<Self>())
         };
         let mut buf = PathBuffer::uninit();
-        this.perform_work(this.root_path.slice_assume_z(), &mut buf, true);
+        let root_path = this.root_path;
+        this.perform_work(root_path.slice_assume_z(), &mut buf, true);
     }
 
     pub fn write_results<T: IntoResultListEntry>(&mut self, result: &mut Vec<T>) {
@@ -1892,7 +1893,7 @@ impl AsyncReaddirRecursiveTask {
         // `bun_vm()` returns the raw `*mut VirtualMachine`; `bun_vm_concurrently`
         // (which only skips the JS-thread assert) is not on the lib.rs surface
         // yet, so deref the pointer directly — safe to call from any thread.
-        let vm = unsafe { &mut *unsafe { &*self.global_object }.bun_vm() };
+        let vm = unsafe { &mut *(*self.global_object).bun_vm() };
         vm.enqueue_task_concurrent(ConcurrentTask::create(Task::init(self as *mut Self)));
     }
 

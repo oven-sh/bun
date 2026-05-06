@@ -1976,9 +1976,9 @@ pub struct ThreadSafeFunction {
 }
 
 pub enum TsfnCallback {
-    Js(Strong::Optional),
+    Js(StrongOptional),
     C {
-        js: Strong::Optional,
+        js: StrongOptional,
         napi_threadsafe_function_call_js: napi_threadsafe_function_call_js,
     },
 }

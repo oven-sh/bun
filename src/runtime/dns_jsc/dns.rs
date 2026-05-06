@@ -371,7 +371,7 @@ pub mod lib_uv_backend {
                             (*request).cache.pos_in_pending(),
                             &*(*request).head.global_this,
                             rc.int(),
-                            GetAddrInfo::Result::Any::Addrinfo(ptr::null_mut()),
+                            GetAddrInfoResultAny::Addrinfo(ptr::null_mut()),
                         );
                         return Ok(promise);
                     }
@@ -393,21 +393,21 @@ pub mod lib_uv_backend {
 // normalizeDNSName
 // ──────────────────────────────────────────────────────────────────────────
 
-pub fn normalize_dns_name<'a>(name: &'a [u8], backend: &mut GetAddrInfo::Backend) -> &'a [u8] {
-    if *backend == GetAddrInfo::Backend::CAres {
+pub fn normalize_dns_name<'a>(name: &'a [u8], backend: &mut GetAddrInfoBackend) -> &'a [u8] {
+    if *backend == GetAddrInfoBackend::CAres {
         // https://github.com/c-ares/c-ares/issues/477
         if name.ends_with(b".localhost") {
-            *backend = GetAddrInfo::Backend::System;
+            *backend = GetAddrInfoBackend::System;
             return b"localhost";
         } else if name.ends_with(b".local") {
-            *backend = GetAddrInfo::Backend::System;
+            *backend = GetAddrInfoBackend::System;
             // https://github.com/c-ares/c-ares/pull/463
         } else if strings::is_ipv6_address(name) {
-            *backend = GetAddrInfo::Backend::System;
+            *backend = GetAddrInfoBackend::System;
         }
         // getaddrinfo() is inconsistent with ares_getaddrinfo() when using localhost
         else if name == b"localhost" {
-            *backend = GetAddrInfo::Backend::System;
+            *backend = GetAddrInfoBackend::System;
         }
     }
 
@@ -509,7 +509,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
                 // SAFETY: resolver is a live intrusive-RC m_ctx; clone_from_raw bumps the embedded ref_count.
                 resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::clone_from_raw(r) }),
                 global_this: global_this as *const JSGlobalObject,
-                promise: JSPromise::Strong::init(global_this),
+                promise: JSPromiseStrong::init(global_this),
                 poll_ref,
                 allocated: false,
                 next: None,
@@ -619,7 +619,7 @@ impl GetHostByAddrInfoRequest {
                 // SAFETY: resolver is a live intrusive-RC m_ctx; clone_from_raw bumps the embedded ref_count.
                 resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::clone_from_raw(r) }),
                 global_this: global_this as *const JSGlobalObject,
-                promise: JSPromise::Strong::init(global_this),
+                promise: JSPromiseStrong::init(global_this),
                 poll_ref,
                 allocated: false,
                 next: None,
@@ -681,7 +681,7 @@ impl GetHostByAddrInfoRequest {
 
 pub struct CAresNameInfo {
     pub global_this: *const JSGlobalObject, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
-    pub promise: JSPromise::Strong,
+    pub promise: JSPromiseStrong,
     pub poll_ref: KeepAlive,
     pub allocated: bool,
     pub next: Option<NonNull<CAresNameInfo>>, // INTRUSIVE
@@ -694,7 +694,7 @@ impl CAresNameInfo {
         poll_ref.ref_(global_this.bun_vm());
         Box::into_raw(Box::new(Self {
             global_this: global_this as *const JSGlobalObject,
-            promise: JSPromise::Strong::init(global_this),
+            promise: JSPromiseStrong::init(global_this),
             poll_ref,
             allocated: true,
             next: None,
@@ -818,7 +818,7 @@ impl GetNameInfoRequest {
             cache: CacheConfig::default(),
             head: CAresNameInfo {
                 global_this: global_this as *const JSGlobalObject,
-                promise: JSPromise::Strong::init(global_this),
+                promise: JSPromiseStrong::init(global_this),
                 poll_ref,
                 allocated: false,
                 next: None,
@@ -953,7 +953,7 @@ pub mod get_addr_info_request {
     /// Non-Windows libc backend (worker-thread blocking getaddrinfo).
     #[cfg(not(windows))]
     pub enum LibcBackend {
-        Success(GetAddrInfo::Result::List),
+        Success(GetAddrInfoResultList),
         Err(i32),
         Query(GetAddrInfo),
     }
@@ -1005,7 +1005,7 @@ pub mod get_addr_info_request {
             // https://github.com/ziglang/zig/pull/14242
             let _free = scopeguard::guard(addrinfo, |a| unsafe { libc::freeaddrinfo(a) });
 
-            *self = LibcBackend::Success(GetAddrInfo::Result::to_list(addrinfo));
+            *self = LibcBackend::Success(GetAddrInfoResult::to_list(addrinfo));
         }
     }
 
@@ -1070,7 +1070,7 @@ impl GetAddrInfoRequest {
                 // SAFETY: resolver is a live intrusive-RC m_ctx; clone_from_raw bumps the embedded ref_count.
                 resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::clone_from_raw(r) }),
                 global_this: global_this as *const JSGlobalObject,
-                promise: JSPromise::Strong::init(global_this),
+                promise: JSPromiseStrong::init(global_this),
                 poll_ref,
                 allocated: false,
                 next: None,
@@ -1123,7 +1123,7 @@ impl GetAddrInfoRequest {
                         (*this).cache.pos_in_pending(),
                         &*(*this).head.global_this,
                         status,
-                        GetAddrInfo::Result::Any::Addrinfo(addr_info),
+                        GetAddrInfoResultAny::Addrinfo(addr_info),
                     );
                     return;
                 }
@@ -1154,7 +1154,7 @@ impl GetAddrInfoRequest {
         unsafe {
             match &(*this).backend {
                 get_addr_info_request::Backend::Libc(get_addr_info_request::LibcBackend::Success(result)) => {
-                    let any = GetAddrInfo::Result::Any::List(result.clone());
+                    let any = GetAddrInfoResultAny::List(result.clone());
                     let _free = scopeguard::guard((), |_| any.deinit());
                     if let Some(resolver) = (*this).resolver_for_caching {
                         // if (this.cache.entry_cache and result != null and result.?.node != null) {
@@ -1236,7 +1236,7 @@ impl GetAddrInfoRequest {
                         (*this).cache.pos_in_pending(),
                         &*(*this).head.global_this,
                         retcode,
-                        GetAddrInfo::Result::Any::Addrinfo((*uv_info).addrinfo),
+                        GetAddrInfoResultAny::Addrinfo((*uv_info).addrinfo),
                     );
                     return;
                 }
@@ -1261,7 +1261,7 @@ impl GetAddrInfoRequest {
 pub struct CAresReverse {
     pub resolver: Option<bun_ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
     pub global_this: *const JSGlobalObject, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
-    pub promise: JSPromise::Strong,
+    pub promise: JSPromiseStrong,
     pub poll_ref: KeepAlive,
     pub allocated: bool,
     pub next: Option<NonNull<CAresReverse>>, // INTRUSIVE
@@ -1276,7 +1276,7 @@ impl CAresReverse {
             // SAFETY: resolver is a live intrusive-RC m_ctx; clone_from_raw bumps the embedded ref_count.
             resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::clone_from_raw(r) }),
             global_this: global_this as *const JSGlobalObject,
-            promise: JSPromise::Strong::init(global_this),
+            promise: JSPromiseStrong::init(global_this),
             poll_ref,
             allocated: true,
             next: None,
@@ -1352,7 +1352,7 @@ impl Drop for CAresReverse {
 pub struct CAresLookup<T: CAresRecordType> {
     pub resolver: Option<bun_ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
     pub global_this: *const JSGlobalObject, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
-    pub promise: JSPromise::Strong,
+    pub promise: JSPromiseStrong,
     pub poll_ref: KeepAlive,
     pub allocated: bool,
     pub next: Option<NonNull<CAresLookup<T>>>, // INTRUSIVE
@@ -1373,7 +1373,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
             // SAFETY: resolver is a live intrusive-RC m_ctx; clone_from_raw bumps the embedded ref_count.
             resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::clone_from_raw(r) }),
             global_this: global_this as *const JSGlobalObject,
-            promise: JSPromise::Strong::init(global_this),
+            promise: JSPromiseStrong::init(global_this),
             poll_ref,
             allocated: true,
             next: None,
@@ -1465,7 +1465,7 @@ pub trait CAresRecordTypeExt: CAresRecordType {
 pub struct DNSLookup {
     pub resolver: Option<bun_ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
     pub global_this: *const JSGlobalObject, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
-    pub promise: JSPromise::Strong,
+    pub promise: JSPromiseStrong,
     pub allocated: bool,
     pub next: Option<NonNull<DNSLookup>>, // INTRUSIVE
     pub poll_ref: KeepAlive,
@@ -1483,7 +1483,7 @@ impl DNSLookup {
             resolver: Some(unsafe { bun_ptr::IntrusiveRc::clone_from_raw(resolver) }),
             global_this: global_this as *const JSGlobalObject,
             poll_ref,
-            promise: JSPromise::Strong::init(global_this),
+            promise: JSPromiseStrong::init(global_this),
             allocated: true,
             next: None,
         }))
@@ -1492,7 +1492,7 @@ impl DNSLookup {
     /// SAFETY: `this` must be a live node — either the inline head of a `*Request`
     /// (allocated == false; owner drops it) or a Boxed tail node (allocated == true;
     /// freed via `Self::destroy`). No `&mut` may alias `*this` across this call.
-    pub unsafe fn on_complete_native(this: *mut Self, result: GetAddrInfo::Result::Any) {
+    pub unsafe fn on_complete_native(this: *mut Self, result: GetAddrInfoResultAny) {
         bun_output::scoped_log!(DNSLookup, "onCompleteNative");
         // SAFETY: JSGlobalObject outlives the request.
         let array = result.to_js(&*(*this).global_this).unwrap_or(JSValue::ZERO).unwrap(); // TODO: properly propagate exception upwards
@@ -1509,7 +1509,7 @@ impl DNSLookup {
             Self::destroy(this);
             return;
         }
-        Self::on_complete_native(this, GetAddrInfo::Result::Any::Addrinfo(result));
+        Self::on_complete_native(this, GetAddrInfoResultAny::Addrinfo(result));
     }
 
     /// SAFETY: see `on_complete_native`.
@@ -3213,7 +3213,7 @@ impl Resolver {
         index: u8,
         global_object: &JSGlobalObject,
         err: i32,
-        result: GetAddrInfo::Result::Any,
+        result: GetAddrInfoResultAny,
     ) {
         bun_output::scoped_log!(DNSResolver, "drainPendingHostNative");
         let key = self.get_key_host(index, PendingCacheField::PendingHostCacheNative);
@@ -3753,7 +3753,7 @@ impl Resolver {
             return global_this.throw_invalid_argument_type("lookup", "hostname", "non-empty string");
         }
 
-        let mut options = GetAddrInfo::Options::default();
+        let mut options = GetAddrInfoOptions::default();
         let mut port: u16 = 0;
 
         if arguments.len() > 1 && arguments.ptr[1].is_object() {
@@ -3763,7 +3763,7 @@ impl Resolver {
                 port = port_value.to_port_number(global_this)?;
             }
 
-            options = match GetAddrInfo::Options::from_js(options_object, global_this) {
+            options = match GetAddrInfoOptions::from_js(options_object, global_this) {
                 Ok(o) => o,
                 Err(err) => {
                     return match err {
@@ -3795,7 +3795,7 @@ impl Resolver {
         &mut self,
         name: &[u8],
         port: u16,
-        options: GetAddrInfo::Options,
+        options: GetAddrInfoOptions,
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
         // The system backends copy the hostname into a fixed `bun.PathBuffer` on the
@@ -3803,7 +3803,7 @@ impl Resolver {
         // index past that buffer. RFC 1035 caps hostnames at 253 octets and NI_MAXHOST
         // is 1025, so this never rejects a name that could have resolved.
         if name.len() >= MAX_PATH_BYTES {
-            let mut promise = JSPromise::Strong::init(global_this);
+            let mut promise = JSPromiseStrong::init(global_this);
             let promise_value = promise.value();
             c_ares::Error::ENOTFOUND
                 .to_deferred("getaddrinfo", Some(name), &mut promise)
@@ -3818,12 +3818,12 @@ impl Resolver {
         let query = GetAddrInfo { options: opts, port, name: normalized.into() };
 
         Ok(match opts.backend {
-            GetAddrInfo::Backend::CAres => self.c_ares_lookup_with_normalized_name(query, global_this)?,
-            GetAddrInfo::Backend::Libc => {
+            GetAddrInfoBackend::CAres => self.c_ares_lookup_with_normalized_name(query, global_this)?,
+            GetAddrInfoBackend::Libc => {
                 #[cfg(windows)] { lib_uv_backend::lookup(self, query, global_this)? }
                 #[cfg(not(windows))] { lib_c::lookup(self, query, global_this) }
             }
-            GetAddrInfo::Backend::System => {
+            GetAddrInfoBackend::System => {
                 #[cfg(target_os = "macos")] { lib_info::lookup(self, query, global_this) }
                 #[cfg(windows)] { lib_uv_backend::lookup(self, query, global_this)? }
                 #[cfg(all(not(target_os = "macos"), not(windows)))] { lib_c::lookup(self, query, global_this) }

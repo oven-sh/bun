@@ -117,8 +117,8 @@ fn generate_compile_result_for_css_chunk_impl(
     // `c.mangled_props` is `ArrayHashMap<bun_js_parser::Ref, Box<[u8]>>`. Both `Ref`s are
     // newtype-`u64` and `Box<[u8]>`/`*const [u8]` are both `(ptr, len)` fat ptrs — same
     // layout, used read-only by the printer.
-    let local_names: &bun_css::LocalsResultsMap = unsafe {
-        &*(&c.mangled_props as *const _ as *const bun_css::LocalsResultsMap)
+    let local_names: &crate::bun_css::LocalsResultsMap = unsafe {
+        &*(&c.mangled_props as *const _ as *const crate::bun_css::LocalsResultsMap)
     };
     // SAFETY: parse_graph is a backref into BundleV2.graph, valid for the bundle lifetime.
     let parse_graph = unsafe { &*c.parse_graph };

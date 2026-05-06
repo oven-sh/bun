@@ -31,7 +31,28 @@ macro_rules! debug {
 // list, never `clear_retaining_capacity`).
 #[inline(always)]
 unsafe fn bitwise_copy<T>(src: &T) -> T {
-    core::ptr::read(src)
+    unsafe { core::ptr::read(src) }
+}
+
+/// `ImportRecord.path` is `bun_paths::fs::Path<'static>`; `CssImportOrderKind::ExternalPath`
+/// holds `crate::bun_fs::Path<'static>` (= `bun_resolver::fs::Path`). Both are field-identical
+/// ports of the same Zig `Fs.Path` struct (CYCLEBREAK TYPE_ONLY mirrors). Re-construct
+/// field-by-field rather than transmute non-`repr(C)` structs.
+#[inline]
+fn fs_path_from_import_record(p: &bun_paths::fs::Path<'static>) -> bun_fs::Path<'static> {
+    bun_fs::Path {
+        pretty: p.pretty,
+        text: p.text,
+        namespace: p.namespace,
+        name: bun_fs::PathName {
+            base: p.name.base,
+            dir: p.name.dir,
+            ext: p.name.ext,
+            filename: p.name.filename,
+        },
+        is_disabled: p.is_disabled,
+        is_symlink: p.is_symlink,
+    }
 }
 
 /// Zig: `order.len = wip_order.len; @memcpy(order.slice(), wip_order.slice());
@@ -40,11 +61,13 @@ unsafe fn bitwise_copy<T>(src: &T) -> T {
 #[inline]
 unsafe fn memcpy_and_reset(order: &mut BabyList<CssImportOrder>, wip: &mut BabyList<CssImportOrder>) {
     debug_assert!(order.cap >= wip.len);
-    core::ptr::copy_nonoverlapping(
-        wip.ptr.as_ptr() as *const CssImportOrder,
-        order.ptr.as_ptr(),
-        wip.len as usize,
-    );
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            wip.ptr.as_ptr() as *const CssImportOrder,
+            order.ptr.as_ptr(),
+            wip.len as usize,
+        );
+    }
     order.len = wip.len;
     // PORT NOTE: do not Drop the moved-from entries — they were bitwise-moved.
     wip.len = 0;

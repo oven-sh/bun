@@ -122,12 +122,27 @@ pub enum CssRule<R> {
     Custom(R),
 }
 
+// SAFETY: the CSS AST contains `SmallList<T, N>` (raw `*mut T`) and
+// `bumpalo::collections::Vec<'bump, T>` (raw `NonNull<T>` + `&Bump`) deep in
+// leaf rule payloads, both of which suppress the auto-traits. Those containers
+// uniquely own their storage exactly like `Vec<T>`, and post-parse the tree is
+// shared read-only across the bundler thread pool (mirrors Zig, which freely
+// hands the arena-backed AST between threads). Thread-safety therefore follows
+// `R`'s auto-traits.
+unsafe impl<R: Send> Send for CssRule<R> {}
+unsafe impl<R: Sync> Sync for CssRule<R> {}
+
 /// Zig: pub fn CssRuleList(comptime AtRule: type) type { return struct { ... } }
 pub struct CssRuleList<R> {
     // PERF(port): was `bumpalo::collections::Vec<'bump, CssRule<'bump, R>>`;
     // arena threading restored when leaf rules un-gate.
     pub v: Vec<CssRule<R>>,
 }
+
+// SAFETY: see `CssRule` Send/Sync note above — `CssRuleList` is just a `Vec`
+// of `CssRule<R>`, so its auto-traits follow `CssRule<R>`'s.
+unsafe impl<R: Send> Send for CssRuleList<R> {}
+unsafe impl<R: Sync> Sync for CssRuleList<R> {}
 
 impl<R> Default for CssRuleList<R> {
     fn default() -> Self {

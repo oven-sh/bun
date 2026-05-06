@@ -2501,13 +2501,10 @@ fn print_string_pretty(
     signature: &str,
     args: fmt::Arguments<'_>,
 ) -> JsResult<JSValue> {
-    use std::io::Write;
-    let mut buf = bun_str::MutableString::init_2048()?;
-    let mut writer = buf.writer();
     // TODO(port): Output.prettyFmt comptime color rewriting on `signature ++ "\n\n{f}\n"`.
-    writer.write_all(signature.as_bytes())?;
-    write!(writer, "{}", args)?;
-    bun_str::String::create_utf8_for_js(global_this, buf.slice())
+    // PERF(port): Zig used a stack-fallback MutableString; profile in Phase B.
+    let buf = format!("{signature}{args}");
+    bun_str::String::create_utf8_for_js(global_this, buf.as_bytes())
 }
 
 #[bun_jsc::JsClass]

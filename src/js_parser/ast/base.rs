@@ -126,6 +126,23 @@ impl Default for Index {
     }
 }
 
+// Bridge to the move-in copy in `bun_options_types::BundleEnums::Index` —
+// both are `#[repr(transparent)]` u32 newtypes for the same Zig `bun.ast.Index`.
+// Lets bundler call sites that still spell `js_ast::Index` flow into APIs
+// typed at `crate::Index` until the two unify (Phase B-3).
+impl From<Index> for bun_options_types::BundleEnums::Index {
+    #[inline]
+    fn from(i: Index) -> Self {
+        Self { value: i.value }
+    }
+}
+impl From<bun_options_types::BundleEnums::Index> for Index {
+    #[inline]
+    fn from(i: bun_options_types::BundleEnums::Index) -> Self {
+        Self { value: i.value }
+    }
+}
+
 /// Compat shim for callers that wrote `<Index as IndexExt>::Int` (Zig's
 /// `Index.Int` nested-decl pattern). Prefer the module-level `IndexInt`.
 pub trait IndexExt {

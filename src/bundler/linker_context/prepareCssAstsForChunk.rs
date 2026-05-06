@@ -180,7 +180,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                         bun_core::handle_oom(entry.condition_import_records.append(
                             ImportRecord {
                                 kind: ImportKind::At,
-                                path: p.clone(),
+                                path: import_record_path_from_fs(p),
                                 range: Range::default(),
                                 tag: ImportRecordTag::None,
                                 loader: None,
@@ -290,7 +290,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
 
                     bun_core::handle_oom(entry.condition_import_records.append(ImportRecord {
                         kind: ImportKind::At,
-                        path: p.clone(),
+                        path: import_record_path_from_fs(p),
                         range: Range::NONE,
                         tag: ImportRecordTag::None,
                         loader: None,
@@ -427,6 +427,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
     }
 }
 
+#[cfg(feature = "css")]
 fn wrap_rules_with_conditions(
     ast: &mut BundlerStyleSheet,
     temp_bump: &Bump,

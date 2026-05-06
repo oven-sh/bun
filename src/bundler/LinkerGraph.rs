@@ -262,8 +262,12 @@ impl LinkerGraph {
         part_index: u32,
         ref_: Ref,
         use_count: u32,
-        source_index_to_import_from: Index,
+        // PORT NOTE: callers are split between `crate::Index` (options_types)
+        // and the structurally identical `js_ast::Index` until the two newtypes
+        // unify (Phase B-3). Accept either via `Into` and normalize once.
+        source_index_to_import_from: impl Into<Index>,
     ) -> Result<(), bun_alloc::AllocError> {
+        let source_index_to_import_from: Index = source_index_to_import_from.into();
         if use_count == 0 {
             return Ok(());
         }

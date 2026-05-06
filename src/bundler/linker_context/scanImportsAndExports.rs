@@ -200,7 +200,7 @@ pub fn scan_imports_and_exports(
                 // is still gated upstream (`bun_css`); the validation body is
                 // preserved verbatim under `__css_validation` below and un-gates
                 // with `bun_css::BundlerStyleSheet`.
-                 // blocked_on(phase-c): __css_validation body type-mismatches; not on -e/run path
+                #[cfg(feature = "css")]
                 __css_validation::validate_css_import_composes(
                     this,
                     id,
@@ -208,6 +208,10 @@ pub fn scan_imports_and_exports(
                     import_records_list,
                     input_files,
                 );
+                #[cfg(not(feature = "css"))]
+                {
+                    let _ = (&input_files, &css_asts);
+                }
 
                 continue;
             }
@@ -1332,7 +1336,7 @@ impl ExportStarContext {
                             ImportData {
                                 data: ImportTracker {
                                     import_ref: name.ref_,
-                                    source_index: js_ast::Index::source(other_source_index as usize),
+                                    source_index: Index::source(other_source_index),
                                     ..Default::default()
                                 },
                                 ..Default::default()
@@ -1346,7 +1350,7 @@ impl ExportStarContext {
                         .potentially_ambiguous_export_star_refs
                         .append(ImportData {
                             data: ImportTracker {
-                                source_index: js_ast::Index::source(other_source_index as usize),
+                                source_index: Index::source(other_source_index),
                                 import_ref: name.ref_,
                                 name_loc: name.alias_loc,
                             },
@@ -1374,6 +1378,7 @@ impl ExportStarContext {
 // the Phase-A draft; un-gates with `feature = "css"` once `BundlerStyleSheet`
 // is real.
 // ──────────────────────────────────────────────────────────────────────────
+#[cfg(feature = "css")]
 mod __css_validation {
     use super::*;
     use bun_collections::{ArrayHashMap, StringArrayHashMap};

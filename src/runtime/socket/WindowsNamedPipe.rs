@@ -524,55 +524,44 @@ impl WindowsNamedPipe {
         bun_sys::Result::Ok(())
     }
 
+    #[cfg(windows)]
     pub fn connect(
         &mut self,
         path: &[u8],
-        ssl_options: Option<SslConfig>,
+        ssl_options: Option<SSLConfig>,
         owned_ctx: Option<*mut boringssl::SSL_CTX>,
     ) -> bun_sys::Result<()> {
-        #[cfg(windows)]
         debug_assert!(self.pipe.is_some());
         self.flags.set_disconnected(true);
         // ref because we are connecting
-        #[cfg(windows)]
-        {
-            let _ = self.pipe.as_mut().unwrap().r#ref();
-        }
+        let _ = self.pipe.as_mut().unwrap().r#ref();
 
         if let Some(result) = self.init_tls_wrapper(ssl_options, owned_ctx) {
             if result.is_err() {
                 return result;
             }
         }
-        #[cfg(windows)]
-        {
-            let init_result = self
-                .pipe
-                .as_mut()
-                .unwrap()
-                .init(self.vm.uv_loop(), false);
-            if init_result.is_err() {
-                return init_result;
-            }
+        let init_result = self
+            .pipe
+            .as_mut()
+            .unwrap()
+            .init(self.vm.uv_loop(), false);
+        if init_result.is_err() {
+            return init_result;
+        }
 
-            self.connect_req.data = self as *mut _ as *mut c_void;
-            let result = self.pipe.as_mut().unwrap().connect(
-                &mut self.connect_req,
-                path,
-                self,
-                Self::on_connect,
-            );
-            if result.as_err().is_some() {
-                return result;
-            }
-            self.r#ref();
+        self.connect_req.data = self as *mut _ as *mut c_void;
+        let result = self.pipe.as_mut().unwrap().connect(
+            &mut self.connect_req,
+            path,
+            self,
+            Self::on_connect,
+        );
+        if result.as_err().is_some() {
             return result;
         }
-        #[cfg(not(windows))]
-        {
-            let _ = path;
-            bun_sys::Result::Ok(())
-        }
+        self.r#ref();
+        result
     }
 
     /// Set up the in-process SSL wrapper for `connect`/`open`. Prefers a prebuilt
@@ -584,7 +573,7 @@ impl WindowsNamedPipe {
     /// Returns null when neither input requested TLS.
     fn init_tls_wrapper(
         &mut self,
-        ssl_options: Option<SslConfig>,
+        ssl_options: Option<SSLConfig>,
         owned_ctx: Option<*mut boringssl::SSL_CTX>,
     ) -> Option<bun_sys::Result<()>> {
         let handlers = WrapperType::Handlers {

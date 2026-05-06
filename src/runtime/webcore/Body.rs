@@ -2108,10 +2108,10 @@ impl<'a> ValueBufferer<'a> {
         // SAFETY: signal.ptr is *anyopaque in Zig; passing &mut as **c_void.
         let signal_ptr = &mut signal.ptr as *mut _ as *mut *mut c_void;
 
-        let buffer_stream_ptr: *mut ArrayBufferSink::JSSink = &mut *buffer_stream;
+        let buffer_stream_ptr: *mut ArrayBufferJSSink = &mut *buffer_stream;
         self.js_sink = Some(buffer_stream);
 
-        let assignment_result: JSValue = ArrayBufferSink::JSSink::assign_to_stream(
+        let assignment_result: JSValue = ArrayBufferJSSink::assign_to_stream(
             global_this,
             stream.value,
             buffer_stream_ptr,

@@ -5234,7 +5234,7 @@ struct UnrefSourceMapRequest {
     body: uws::BodyReaderMixin<Self>, // TODO(port): BodyReaderMixin(@This(), "body", runWithBody, finalize)
 }
 
-impl uws::BodyReaderHandler for UnrefSourceMapRequest {
+impl uws::body_reader_mixin::BodyReaderHandler for UnrefSourceMapRequest {
     const MIXIN_OFFSET: usize = offset_of!(UnrefSourceMapRequest, body);
     fn on_body(&mut self, body: &[u8], resp: AnyResponse) -> Result<(), bun_core::Error> {
         Self::run_with_body(self, body, resp)
@@ -5247,7 +5247,7 @@ impl uws::BodyReaderHandler for UnrefSourceMapRequest {
 impl UnrefSourceMapRequest {
     fn run<R>(dev: &mut DevServer, _: &mut Request, resp: &mut R)
     where
-        R: uws::ResponseLike,
+        R: uws::body_reader_mixin::BodyResponse,
     {
         let ctx = Box::new(UnrefSourceMapRequest {
             dev: dev as *mut DevServer<'_> as *mut DevServer<'static>,

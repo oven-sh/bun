@@ -854,6 +854,7 @@ impl TryWith {
 // CopyFileWindows (libuv async)
 // ───────────────────────────────────────────────────────────────────────────
 
+#[cfg(windows)]
 pub struct CopyFileWindows<'a> {
     pub destination_file_store: Arc<Store>,
     pub source_file_store: Arc<Store>,

@@ -268,9 +268,12 @@ to_css_shim!(generic:
     StyleRule,
 );
 
-/// Shim: `MediaRule::minify` is gated in `media.rs` on `MediaList::never_matches`.
-/// Until that un-gates, recurse into the nested list and report empty — the
-/// `never_matches` short-circuit is an optimization, not a correctness gate.
+/// Shim: `MediaRule::minify` is gated in `media.rs` until that file's full
+/// `to_css` body un-gates. Recurse into the nested list and report whether the
+/// rule should be dropped. NOTE: `never_matches()` is a *drop condition*, not
+/// merely an optimization — omitting it diverges output (e.g. `@media not all
+/// { a{color:red} }` must be removed). `MediaList::never_matches` is un-gated,
+/// so call it here to match the spec (`media.zig:19-23`).
 impl<R> media::MediaRule<R> {
     pub fn minify(
         &mut self,
@@ -278,7 +281,7 @@ impl<R> media::MediaRule<R> {
         parent_is_unused: bool,
     ) -> Result<bool, MinifyErr> {
         self.rules.minify(context, parent_is_unused)?;
-        Ok(self.rules.v.is_empty())
+        Ok(self.rules.v.is_empty() || self.query.never_matches())
     }
 }
 
@@ -310,10 +313,12 @@ impl<R> CssRule<R> {
             CssRule::Unknown(x) => x.to_css(dest),
             // Zig: `.custom => |x| x.toCss(dest) catch return dest.addFmtError()`.
             // The custom-at-rule type is opaque here; the only in-tree `R`
-            // (`DefaultAtRule`) errors unconditionally. A trait bound
-            // (`R: ToCss`) would cascade through every `CssRuleList<R>` user,
-            // so until a second concrete `R` exists this arm is a no-op.
-            CssRule::Custom(_x) => Ok(()),
+            // (`DefaultAtRule`) has a `toCss` that errors unconditionally. A
+            // trait bound (`R: ToCss`) would cascade through every
+            // `CssRuleList<R>` user, so until a second concrete `R` exists,
+            // surface the same fmt error the spec does instead of silently
+            // succeeding (PORTING.md §Forbidden: silent no-op).
+            CssRule::Custom(_x) => Err(dest.add_fmt_error()),
             CssRule::Ignored => Ok(()),
         }
     }
@@ -517,7 +522,11 @@ impl<R> CssRuleList<R> {
             return css::implement_deep_clone(self, bump);
         }
         let _ = bump;
-        Self::default()
+        // Returning `Self::default()` here would silently drop every nested
+        // rule (data loss) — PORTING.md §Forbidden: silent no-op. All current
+        // callers are `#[cfg(any())]`-gated, so panic loudly if one un-gates
+        // before the DeepClone derive lands.
+        todo!("blocked_on: CssRule::deep_clone — crate-wide DeepClone derive")
     }
 }
 

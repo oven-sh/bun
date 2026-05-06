@@ -2623,23 +2623,54 @@ pub struct AddErrorOptions<'a> {
 /// the Zig side still calls it `addErrorOpts`.
 pub type ErrorOpts<'a> = AddErrorOptions<'a>;
 
+/// Call-site helper that mirrors Zig `allocPrint`: rewrites `<red>..<r>` markup
+/// in the *literal* format string via `bun_core::pretty_fmt!` (compile-time),
+/// then formats. Expands to a `fmt::Arguments` so it drops in wherever a
+/// pre-built `fmt::Arguments` was previously passed to `alloc_print`.
+///
+/// Callers that build messages with markup must use this (or `alloc_print!`) so
+/// the tags are converted/stripped; passing a raw `format_args!` through the
+/// function form below leaves the markup verbatim.
+#[macro_export]
+macro_rules! pretty_format_args {
+    ($fmt:literal $(, $arg:expr)* $(,)?) => {{
+        if ::bun_core::Output::ENABLE_ANSI_COLORS_STDERR
+            .load(::core::sync::atomic::Ordering::Relaxed)
+        {
+            ::core::format_args!(::bun_core::pretty_fmt!($fmt, true) $(, $arg)*)
+        } else {
+            ::core::format_args!(::bun_core::pretty_fmt!($fmt, false) $(, $arg)*)
+        }
+    }};
+}
+
+/// `alloc_print!(fmt, args..)` — owned-buffer form of `pretty_format_args!`.
+#[macro_export]
+macro_rules! alloc_print {
+    ($fmt:literal $(, $arg:expr)* $(,)?) => {
+        $crate::alloc_print($crate::pretty_format_args!($fmt $(, $arg)*))
+    };
+}
+
 #[inline]
 pub fn alloc_print(args: fmt::Arguments<'_>) -> Result<Cow<'static, [u8]>, AllocError> {
-    // TODO(port): Zig `allocPrint` runs `Output.prettyFmt(fmt, enable_ansi_colors)`
-    // at comptime to rewrite `<red>..<r>` markup in the format string before
-    // formatting. With `fmt::Arguments` the format string is opaque; Phase B
-    // needs a `pretty_format_args!` macro that does the rewrite at the callsite.
-    // For now, render args verbatim and pass through `Output::pretty_runtime`.
+    // Zig `allocPrint` runs `Output.prettyFmt(fmt, enable_ansi_colors)` at
+    // comptime over the format string before formatting. With `fmt::Arguments`
+    // the format string is opaque, so callers that need markup conversion must
+    // go through `pretty_format_args!` / `alloc_print!` above (which do the
+    // rewrite at the macro call site). For `fmt::Arguments` that arrive here
+    // without that rewrite, fall back to a runtime pass over the rendered
+    // bytes so `<r>/<red>/…` never leak into user-visible output.
     use std::io::Write;
     let mut v = Vec::new();
-    // TODO(b2-blocked): bun_core::Output::pretty_fmt (runtime fn taking fmt::Arguments)
-    #[cfg(any())]
-    if Output::ENABLE_ANSI_COLORS_STDERR.load(core::sync::atomic::Ordering::Relaxed) {
-        let _ = write!(&mut v, "{}", Output::pretty_fmt::<true>(args));
-    } else {
-        let _ = write!(&mut v, "{}", Output::pretty_fmt::<false>(args));
-    }
     let _ = write!(&mut v, "{}", args);
+    // Runtime markup pass — only if any `<` is present (cheap fast-path; the
+    // overwhelming majority of `add_*_fmt` messages are plain text).
+    if v.contains(&b'<') {
+        let enable = Output::ENABLE_ANSI_COLORS_STDERR
+            .load(core::sync::atomic::Ordering::Relaxed);
+        v = Output::pretty_fmt_runtime(&v, enable);
+    }
     // Zig returns an allocator-owned slice that the Log takes ownership of via
     // `Data.text` and frees in `Data.deinit`. `Cow::Owned` gives the same
     // ownership: `Data` (via `Drop`) frees it.

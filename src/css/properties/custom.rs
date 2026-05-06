@@ -1179,6 +1179,92 @@ impl TokenOrValue {
     }
 }
 
+// ─── Clone / Debug shims ───────────────────────────────────────────────────
+// `selectors::parser::PseudoElement` / `PseudoClass` derive `Clone` over a
+// `TokenList` payload, and `media_query::MediaFeatureValue` derives
+// `Debug + Clone` over an `EnvironmentVariable` payload. The leaf value types
+// (`Url`, `CustomIdent`, …) don't all `#[derive(Clone)]` yet, so hand-roll
+// the structural clone here. PORT NOTE: Zig had no `Clone` distinction —
+// shallow struct copy was implicit; arena-slice payloads (`*const [u8]`) are
+// `Copy`, and the only owning fields are `Vec<TokenOrValue>` / `Vec<i32>`.
+
+impl Clone for TokenList {
+    fn clone(&self) -> Self {
+        TokenList { v: self.v.clone() }
+    }
+}
+
+impl Clone for TokenOrValue {
+    fn clone(&self) -> Self {
+        match self {
+            TokenOrValue::Token(t) => TokenOrValue::Token(t.clone()),
+            TokenOrValue::Color(c) => TokenOrValue::Color(c.clone()),
+            TokenOrValue::UnresolvedColor(c) => TokenOrValue::UnresolvedColor(c.clone()),
+            // `Url` has no `#[derive(Clone)]` but both fields are `Copy`.
+            TokenOrValue::Url(u) => TokenOrValue::Url(Url {
+                import_record_idx: u.import_record_idx,
+                loc: u.loc,
+            }),
+            TokenOrValue::Var(v) => TokenOrValue::Var(v.clone()),
+            TokenOrValue::Env(e) => TokenOrValue::Env(e.clone()),
+            TokenOrValue::Function(f) => TokenOrValue::Function(f.clone()),
+            TokenOrValue::Length(v) => TokenOrValue::Length(*v),
+            TokenOrValue::Angle(v) => TokenOrValue::Angle(*v),
+            TokenOrValue::Time(v) => TokenOrValue::Time(*v),
+            TokenOrValue::Resolution(v) => TokenOrValue::Resolution(*v),
+            TokenOrValue::DashedIdent(v) => TokenOrValue::DashedIdent(*v),
+            TokenOrValue::AnimationName(v) => TokenOrValue::AnimationName(v.clone()),
+        }
+    }
+}
+
+impl Clone for UnresolvedColor {
+    fn clone(&self) -> Self {
+        match self {
+            UnresolvedColor::RGB { r, g, b, alpha } => {
+                UnresolvedColor::RGB { r: *r, g: *g, b: *b, alpha: alpha.clone() }
+            }
+            UnresolvedColor::HSL { h, s, l, alpha } => {
+                UnresolvedColor::HSL { h: *h, s: *s, l: *l, alpha: alpha.clone() }
+            }
+            UnresolvedColor::LightDark { light, dark } => {
+                UnresolvedColor::LightDark { light: light.clone(), dark: dark.clone() }
+            }
+        }
+    }
+}
+
+impl Clone for Variable {
+    fn clone(&self) -> Self {
+        Variable { name: self.name, fallback: self.fallback.clone() }
+    }
+}
+
+impl Clone for EnvironmentVariable {
+    fn clone(&self) -> Self {
+        EnvironmentVariable {
+            name: self.name,
+            indices: self.indices.clone(),
+            fallback: self.fallback.clone(),
+        }
+    }
+}
+
+impl Clone for Function {
+    fn clone(&self) -> Self {
+        Function { name: self.name, arguments: self.arguments.clone() }
+    }
+}
+
+impl core::fmt::Debug for EnvironmentVariable {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // Minimal — `media_query::MediaFeatureValue` derives `Debug`.
+        f.debug_struct("EnvironmentVariable")
+            .field("indices", &self.indices)
+            .finish_non_exhaustive()
+    }
+}
+
 /// A known property with an unparsed value.
 ///
 /// This type is used when the value of a known property could not

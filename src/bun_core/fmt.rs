@@ -2193,6 +2193,33 @@ pub fn format_ip<'a>(address: &impl Display, into: &'a mut [u8]) -> Result<&'a m
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// count (std.fmt.count)
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Port of `std.fmt.count`: number of bytes the formatted args would produce.
+///
+/// Zig drives a `Writer.Discarding` (64-byte scratch buffer that drops writes
+/// and tallies length); Rust's `fmt::Arguments` plugs into the same shape via
+/// a `fmt::Write` impl that only sums `s.len()`. No allocation, no UTF-8
+/// validation beyond what the formatter already did.
+#[inline]
+pub fn count(args: fmt::Arguments<'_>) -> usize {
+    struct Discarding(usize);
+    impl fmt::Write for Discarding {
+        #[inline]
+        fn write_str(&mut self, s: &str) -> fmt::Result {
+            self.0 += s.len();
+            Ok(())
+        }
+    }
+    let mut w = Discarding(0);
+    // Infallible: our `write_str` never errors, mirroring Zig's
+    // `error.WriteFailed => unreachable`.
+    let _ = fmt::write(&mut w, args);
+    w.0
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // fastDigitCount
 // https://lemire.me/blog/2021/06/03/computing-the-number-of-digits-of-an-integer-even-faster/
 // ───────────────────────────────────────────────────────────────────────────

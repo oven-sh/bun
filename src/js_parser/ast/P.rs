@@ -7352,7 +7352,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             binary_expression_stack: BumpVec::new_in(allocator),
             binary_expression_simplify_stack: BumpVec::new_in(allocator),
             ref_to_ts_namespace_member: Default::default(),
-            ts_namespace: RecentlyVisitedTSNamespace::default(),
+            ts_namespace: RecentlyVisitedTSNamespace { expr: null_expr_data(), map: None },
             top_level_enums: BumpVec::new_in(allocator),
             scopes_in_order_for_enum: Default::default(),
             will_wrap_module_in_try_catch_for_using: false,

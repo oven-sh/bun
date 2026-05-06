@@ -972,8 +972,11 @@ pub extern "C" fn PostgresSQLConnection__createInstance(
 // TODO(b2-blocked): #[crate::jsc::host_fn] proc-macro attr
 pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM via raw ptr,
-    // no other live borrow in this scope.
-    let vm = unsafe { &mut *global_object.bun_vm() };
+    // no other live borrow in this scope. Use the SQL-local opaque [`VirtualMachine`]
+    // (via `JSGlobalObjectSqlExt::sql_vm_ptr`) so `rare_data()` resolves to the
+    // sql_jsc shim with the runtime-bool `postgres_group(vm, ssl)` signature.
+    let vm_ptr = global_object.sql_vm_ptr();
+    let vm = unsafe { &mut *vm_ptr };
     let arguments = callframe.arguments();
     let hostname_str = arguments[0].to_bun_string(global_object)?;
     let port = arguments[1].coerce::<i32>(global_object)?;
@@ -1186,7 +1189,12 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         // Postgres always opens plain TCP first (SSLRequest happens in-band),
         // so even `ssl_mode != .disable` lands in the TCP group; `setupTLS()`
         // adopts into `postgres_tls_group` after the server's `S`.
-        let group = vm.rare_data().postgres_group(vm, false);
+        // PORT NOTE: reshaped for borrowck — `rare_data()` borrows `*vm_ptr`
+        // mutably and `postgres_group` needs a `&VirtualMachine`; route both
+        // through the raw singleton pointer (cf. `setup_tls`).
+        // SAFETY: `vm_ptr` is the live VM singleton; the two derefs do not
+        // overlap (rare_data() returns a disjoint `*mut RareData`).
+        let group = unsafe { (*vm_ptr).rare_data().postgres_group(&*vm_ptr, false) };
         // SAFETY: `postgres_group` returns a non-null heap `*mut SocketGroup`
         // owned by RareData; converting to `&mut` for the connect call only.
         let group = unsafe { &mut *group };
@@ -1202,7 +1210,7 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
             Ok(s) => s,
             Err(err) => {
                 PostgresSQLConnection::deinit(ptr);
-                return global_object.throw_error(err.into(), "failed to connect to postgresql");
+                return Err(global_object.throw_error(err.into(), "failed to connect to postgresql"));
             }
         });
     }

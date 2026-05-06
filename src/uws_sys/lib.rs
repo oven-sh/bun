@@ -162,11 +162,6 @@ impl UpgradedDuplex {
 #[path = "BodyReaderMixin.rs"]  pub mod body_reader_mixin;
 #[path = "quic.rs"]             pub mod quic;
 
-// TODO(b2-blocked): `socket.rs` (NewSocketHandler / InternalSocket / AnySocket)
-// dispatches to `UpgradedDuplex` / `WindowsNamedPipe` instance methods that
-// live in higher-tier crates. Stubbed here so downstream `bun_uws` paths
-// resolve; bodies un-gate once those wrappers move down.
-
 #[path = "socket.rs"]
 pub mod socket;
 

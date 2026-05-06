@@ -890,16 +890,24 @@ impl Run {
     /// `process.on('beforeExit')`, then re-run the loop if the listener
     /// scheduled new work, re-dispatching until quiescent.
     fn on_before_exit(vm: &mut VirtualMachine) {
-        vm.exit_handler.dispatch_on_before_exit();
+        // PORT NOTE: `ExitHandler::dispatch_on_before_exit` takes the raw VM
+        // pointer (not `&mut self`) because the FFI it calls re-enters
+        // `VirtualMachine::get()` — see `ExitHandler::dispatch_on_exit` doc.
+        let vm_ptr = vm as *mut VirtualMachine;
+        // SAFETY: `vm_ptr` is the live per-thread VM (we just took its address).
+        unsafe { ExitHandler::dispatch_on_before_exit(vm_ptr) };
         let mut dispatch = false;
         loop {
             while vm.is_event_loop_alive() {
                 vm.tick();
-                vm.event_loop().auto_tick_active();
+                // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
+                // accessed here (no live `&mut EventLoop` overlaps).
+                unsafe { (*vm.event_loop()).auto_tick_active() };
                 dispatch = true;
             }
             if dispatch {
-                vm.exit_handler.dispatch_on_before_exit();
+                // SAFETY: `vm_ptr` is the live per-thread VM.
+                unsafe { ExitHandler::dispatch_on_before_exit(vm_ptr) };
                 dispatch = false;
                 if vm.is_event_loop_alive() {
                     continue;
@@ -914,7 +922,9 @@ impl Run {
     fn on_exit(vm: &mut VirtualMachine) {
         // TODO(b2-blocked): `cpu_profiler_config` / `heap_profiler_config`
         // stop-and-write — `CPUProfiler`/`HeapProfiler` are gated siblings.
-        vm.exit_handler.dispatch_on_exit();
+        // PORT NOTE: see `on_before_exit` re: raw-ptr signature.
+        // SAFETY: `vm` is the live per-thread VM (we just took its address).
+        unsafe { ExitHandler::dispatch_on_exit(vm as *mut VirtualMachine) };
         vm.is_shutting_down = true;
 
         // Make sure we run new cleanup hooks introduced by running cleanup hooks.
@@ -992,8 +1002,11 @@ impl Run {
                     // un-gated to thread the bool back here.
                     if vm.hot_reload != 0 {
                         // TODO(b2-blocked): `add_main_to_watcher_if_needed()` — gated.
-                        vm.event_loop().tick();
-                        vm.event_loop().tick_possibly_forever();
+                        // SAFETY: `event_loop` is a self-pointer into this VM;
+                        // uniquely accessed here.
+                        unsafe { (*vm.event_loop()).tick() };
+                        // SAFETY: as above.
+                        unsafe { (*vm.event_loop()).tick_possibly_forever() };
                     } else {
                         vm.exit_handler.exit_code = 1;
                         Run::on_exit(vm);
@@ -1043,7 +1056,8 @@ impl Run {
         }
 
         // don't run the GC if we don't actually need to
-        if vm.is_event_loop_alive() || vm.event_loop().tick_concurrent_with_count() > 0 {
+        // SAFETY: `event_loop` is a self-pointer into this VM; uniquely accessed.
+        if vm.is_event_loop_alive() || unsafe { (*vm.event_loop()).tick_concurrent_with_count() } > 0 {
             vm.global().vm().release_weak_refs();
             // TODO(b2-blocked): `vm.arena.gc()` — `bun_alloc::Arena::gc` not yet
             // wired through the `Option<NonNull<Arena>>` field.
@@ -1063,15 +1077,20 @@ impl Run {
             loop {
                 while vm.is_event_loop_alive() {
                     vm.tick();
-                    vm.event_loop().auto_tick_active();
+                    // SAFETY: `event_loop` is a self-pointer into this VM;
+                    // uniquely accessed here.
+                    unsafe { (*vm.event_loop()).auto_tick_active() };
                 }
                 Run::on_before_exit(vm);
-                vm.event_loop().tick_possibly_forever();
+                // SAFETY: as above.
+                unsafe { (*vm.event_loop()).tick_possibly_forever() };
             }
         } else {
             while vm.is_event_loop_alive() {
                 vm.tick();
-                vm.event_loop().auto_tick_active();
+                // SAFETY: `event_loop` is a self-pointer into this VM;
+                // uniquely accessed here.
+                unsafe { (*vm.event_loop()).auto_tick_active() };
             }
 
             if self.eval_and_print {

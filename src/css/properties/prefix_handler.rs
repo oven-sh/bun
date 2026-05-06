@@ -2,8 +2,7 @@
 use crate as css;
 use crate::css_properties::custom::UnparsedProperty;
 use crate::prefixes::Feature;
-use crate::Property;
-use crate::PropertyIdTag;
+use crate::css_properties::{Property, PropertyIdTag};
 use crate::VendorPrefix;
 
 /// *NOTE* The struct field names must match their corresponding variants in `Property`!

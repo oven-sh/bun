@@ -1011,9 +1011,7 @@ impl TransformHandler {
     }
 }
 
-#[cfg(any())] // blocked_on: PropertyHandlerContext::allocator field (context.rs dropped it; box_shadow.rs etc. need it too)
-
-#[cfg(any())] // blocked_on: Property variant payloads + prefixes::Feature method names
+#[cfg(any())] // blocked_on: PropertyHandlerContext::allocator field (context.rs dropped it; box_shadow.rs et al. need it too)
 impl TransformHandler {
     pub fn handle_property(
         &mut self,

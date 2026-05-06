@@ -27,7 +27,10 @@ bun_base64.workspace = true
 bun_boringssl.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
-bun_bundler.workspace = true
+# default-features=false drops bundler's `css` feature so `cargo check -p bun_jsc`
+# typechecks while a concurrent agent has src/css/ mid-edit. bun_jsc only uses
+# bun_bundler::{options, transpiler::ParseResult, Transpiler}, none css-gated.
+bun_bundler = { workspace = true, default-features = false }
 bun_clap.workspace = true
 bun_collections.workspace = true
 bun_dotenv.workspace = true

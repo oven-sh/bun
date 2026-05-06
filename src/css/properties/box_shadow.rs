@@ -6,9 +6,9 @@ use crate::PrintErr;
 use crate::css_values::color::CssColor;
 use crate::css_values::length::Length;
 use crate::VendorPrefix;
-use crate::Property;
+use crate::css_properties::Property;
 use crate::prefixes::Feature;
-use crate::ColorFallbackKind;
+use crate::css_values::color::ColorFallbackKind;
 use bun_alloc::Arena; // bumpalo::Bump re-export (CSS is an AST crate)
 
 /// A value for the [box-shadow](https://drafts.csswg.org/css-backgrounds/#box-shadow) property.

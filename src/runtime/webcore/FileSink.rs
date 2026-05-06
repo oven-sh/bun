@@ -620,6 +620,11 @@ impl FileSink {
     /// vtable can recover it.
     #[inline]
     fn io_evtloop(&self) -> bun_io::EventLoopHandle {
+        // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
+        // type-erasure; the vtable consumers treat the pointee as read-only
+        // (`*const bun_jsc::EventLoopHandle`) to recover the loop pointer and
+        // never write through it. The `as *mut` is an erasure cast, not a
+        // mutability claim — the field itself is never mutated via this path.
         bun_io::EventLoopHandle(&self.event_loop_handle as *const _ as *mut c_void)
     }
 

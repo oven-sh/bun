@@ -220,13 +220,20 @@ impl ImportRule {
         // SAFETY: ImportConditions is #[repr(C)] with fields {layer, supports, media}
         // laid out identically to the {layer, supports, media} field run of ImportRule
         // (also #[repr(C)]). The Zig code relies on this same layout pun via @ptrCast.
+        // The pointer is derived from `self` (not `&self.layer`) so its provenance
+        // covers all three fields — going through a field reference would narrow
+        // provenance to just `layer` and make sibling-field reads UB under SB.
         // TODO(port): replace with an actual `conditions: ImportConditions` field on ImportRule
-        unsafe { &*(&self.layer as *const Option<Layer> as *const ImportConditions) }
+        let base = self as *const Self as *const u8;
+        unsafe { &*(base.add(core::mem::offset_of!(Self, layer)) as *const ImportConditions) }
     }
 
     pub fn conditions_mut(&mut self) -> &mut ImportConditions {
-        // SAFETY: see `conditions()` above.
-        unsafe { &mut *(&mut self.layer as *mut Option<Layer> as *mut ImportConditions) }
+        // SAFETY: see `conditions()` above. Derived from `&mut self` (full-struct
+        // provenance) via byte offset so the returned `&mut ImportConditions` may
+        // legally write `supports` and `media`, not just `layer`.
+        let base = self as *mut Self as *mut u8;
+        unsafe { &mut *(base.add(core::mem::offset_of!(Self, layer)) as *mut ImportConditions) }
     }
 
     /// The `import_records` here is preserved from esbuild in the case that we do need it, it doesn't seem necessary now

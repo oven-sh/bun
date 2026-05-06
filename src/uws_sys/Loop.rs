@@ -468,11 +468,11 @@ impl WindowsLoop {
     }
 
     // TODO(port): see PosixLoop::add_post_handler — same trampoline-synthesis limitation.
-    pub fn add_post_handler<'a>(
-        &'a mut self,
+    pub fn add_post_handler(
+        &mut self,
         ctx: *mut c_void,
         callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
-    ) -> Handler<'a> {
+    ) -> Handler {
         // SAFETY: self is a valid loop pointer
         unsafe { c::uws_loop_addPostHandler(self, ctx, callback) };
         Handler {
@@ -482,11 +482,11 @@ impl WindowsLoop {
         }
     }
 
-    pub fn add_pre_handler<'a>(
-        &'a mut self,
+    pub fn add_pre_handler(
+        &mut self,
         ctx: *mut c_void,
         callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
-    ) -> Handler<'a> {
+    ) -> Handler {
         // SAFETY: self is a valid loop pointer
         unsafe { c::uws_loop_addPreHandler(self, ctx, callback) };
         Handler {

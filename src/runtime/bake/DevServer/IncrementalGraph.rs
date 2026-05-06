@@ -57,7 +57,7 @@ type CssAssetId = u64;
 // The server's incremental graph does not store previously bundled code because there is
 // only one instance of the server. Instead, it stores which module graphs it is a part of.
 // This makes sure that recompilation knows what bundler options to use.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct ServerFile {
     /// Is this file built for the Server graph.
     pub is_rsc: bool,

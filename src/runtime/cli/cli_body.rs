@@ -1387,6 +1387,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
         }
     }
 
+    /// Local shim for `bun_install::PackageManager::CommandLineArguments::print_help`.
+    /// The real impl lives in `bun_install` behind the `package_manager_real`
+    /// gate (`#![cfg(any())]` reconciler-6) and isn't re-exported on the
+    /// public stub yet.
+    fn pm_print_help(_subcommand: bun_install::Subcommand) {
+        todo!("blocked_on: bun_install::package_manager::CommandLineArguments::print_help")
+    }
+
     fn bun_eval_print(ctx: Context) -> Result<(), bun_core::Error> {
         // Spec: `bun.pathLiteral("/[eval]")` — `/` on POSIX, `\` on Windows.
         let trigger: &[u8] = if cfg!(windows) { b"\\[eval]" } else { b"/[eval]" };

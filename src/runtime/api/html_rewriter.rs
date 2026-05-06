@@ -857,8 +857,9 @@ impl BufferOutputSink {
             // SAFETY: sink.response is the heap Response allocated in init() and
             // kept alive by sink.response_value (Strong root).
             let sink_body_value = unsafe { (*sink.response).get_body_value() };
+            let sink_ptr_usize = sink as *mut _ as usize;
             if matches!(sink_body_value, webcore::body::Value::Locked(l)
-                if l.task as usize == sink as *mut _ as usize && l.promise.is_none())
+                if l.task.map_or(0, |p| p as usize) == sink_ptr_usize && l.promise.is_none())
             {
                 if let webcore::body::Value::Locked(l) = sink_body_value {
                     l.readable.deinit();
@@ -867,11 +868,11 @@ impl BufferOutputSink {
                 // is there a pending promise?
                 // we will need to reject it
             } else if matches!(sink_body_value, webcore::body::Value::Locked(l)
-                if l.task as usize == sink as *mut _ as usize && l.promise.is_some())
+                if l.task.map_or(0, |p| p as usize) == sink_ptr_usize && l.promise.is_some())
             {
                 if let webcore::body::Value::Locked(l) = sink_body_value {
                     l.on_receive_value = None;
-                    l.task = core::ptr::null_mut();
+                    l.task = None;
                 }
             }
             if is_async {

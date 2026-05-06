@@ -976,7 +976,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             has_result: AtomicBool::new(false),
             // SAFETY: all-zero is a valid Maybe<ret::Cp>; written before read
             result: core::cell::UnsafeCell::new(unsafe { core::mem::zeroed() }),
-            evtloop: EventLoopHandle::Js(vm.event_loop),
+            evtloop: EventLoopHandle::init(vm.event_loop.cast()),
             task: WorkPoolTask { callback: Self::work_pool_callback },
             r#ref: KeepAlive::default(),
             tracker: AsyncTaskTracker::init(vm),
@@ -1078,7 +1078,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         // Count reached zero ⇒ exclusive access. `this` carries mutable
         // provenance from `Box::leak`, so the enqueued callback may safely
         // form `&mut *this` on the JS thread.
-        if matches!(this_ref.evtloop, EventLoopHandle::Js(_)) {
+        if matches!(this_ref.evtloop, EventLoopHandle::Js { .. }) {
             // PORT NOTE: `ConcurrentTask::from_callback` expects `fn(*mut T) -> JsResult<()>`;
             // Zig accepted `fn(*T) JSError!void` directly. Adapt the signature inline.
             this_ref.evtloop.enqueue_task_concurrent(ConcurrentTask::from_callback(
@@ -1225,7 +1225,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
                 }
             };
 
-            if !sys::S::ISDIR(stat_.mode) {
+            if !sys::S::ISDIR(stat_.st_mode as _) {
                 // This is the only file, there is no point in dispatching subtasks
                 let r = nodefs._copy_single_file_sync(
                     src,
@@ -5747,7 +5747,7 @@ impl NodeFS {
                     return Maybe::Err(err.with_path(&self.sync_error_buf[..sd]));
                 }
             };
-            if !sys::S::ISDIR(stat_.mode) {
+            if !sys::S::ISDIR(stat_.st_mode as _) {
                 let r = self._copy_single_file_sync(
                     src, dest,
                     constants::Copyfile::from_raw(if cp_flags.error_on_exist || !cp_flags.force { constants::COPYFILE_EXCL } else { 0i32 }),

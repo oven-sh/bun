@@ -20,49 +20,12 @@ use bun_resolver::fs as Fs;
 use bun_str::{strings, ZStr, ZigString};
 use bun_sys::{self, Fd};
 
-#[cfg(feature = "tinycc")]
+// `bun_tcc_sys` is an un-gated workspace crate (B-2) and is now a direct dep of
+// `bun_runtime`, so import it unconditionally. The `feature = "tinycc"` flag
+// (wired by build.rs in Phase C) only governs *runtime availability* via the
+// early-return guards in the host-fns below — type resolution for
+// `TCC::{Config, ConfigErr, OutputFormat, State}` must succeed regardless.
 use bun_tcc_sys as TCC;
-#[cfg(not(feature = "tinycc"))]
-mod TCC {
-    //! Local shim mirroring `bun_tcc_sys` while that crate is not yet a dep of
-    //! `bun_runtime`. Shapes match `src/tcc_sys/tcc.rs` so call sites compile;
-    //! bodies `todo!()` until the `tinycc` feature is wired (Phase C).
-    use core::ffi::c_char;
-    use core::ptr::NonNull;
-    use bun_core::ZStr;
-
-    #[repr(i32)]
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-    pub enum OutputFormat {
-        #[default]
-        Memory = 1,
-    }
-
-    pub struct ConfigErr<ErrCtx> {
-        pub ctx: Option<*mut ErrCtx>,
-        pub handler: unsafe extern "C" fn(*mut ErrCtx, *const c_char),
-    }
-
-    pub struct Config<ErrCtx> {
-        pub options: Option<NonNull<ZStr>>,
-        pub output_type: OutputFormat,
-        pub err: ConfigErr<ErrCtx>,
-    }
-
-    #[repr(C)]
-    pub struct State {
-        _p: [u8; 0],
-        _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-    }
-    impl State {
-        pub fn init<ErrCtx, const VALIDATE_OPTIONS: bool>(
-            _config: Config<ErrCtx>,
-        ) -> Result<NonNull<State>, bun_core::Error> {
-            todo!("blocked_on: bun_tcc_sys::State::init")
-        }
-        pub fn deinit(&mut self) {}
-    }
-}
 
 bun_output::declare_scope!(TCC, visible);
 

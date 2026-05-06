@@ -1379,16 +1379,15 @@ impl RunCommand {
         // SAFETY: `configure_env_for_run` returned `Ok`, so the slot is
         // fully initialized via `MaybeUninit::write`.
         let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
-        // TODO(b2-blocked): `configure_path_for_run` — bun-node fake-exe
-        // creation + PATH stitching; preserved in phase_a_draft.
-        
+        let force_using_bun = ctx.debug.run_in_bun;
+        let mut original_path: &[u8] = b"";
         Self::configure_path_for_run(
             ctx,
             root_dir_info,
             &mut this_transpiler,
-            None,
+            Some(&mut original_path),
             unsafe { (*root_dir_info).abs_path },
-            ctx.debug.run_in_bun,
+            force_using_bun,
         )?;
         // SAFETY: `Transpiler::init` always sets `env`.
         let env_loader: &mut DotEnv::Loader<'static> = unsafe { &mut *this_transpiler.env };
@@ -1518,14 +1517,46 @@ impl RunCommand {
         }
 
         // ── node_modules/.bin / system $PATH fallback ───────────────────────
-        // TODO(b2-blocked): `which()` over the stitched PATH +
-        // `run_binary_without_bunx_path` — needs Transpiler.env. See
-        // phase_a_draft `BunXFastPath` + `path_for_which` block.
-        
+        // Zig: run_command.zig:1890-1912 — search the prepended `.bin` dirs
+        // (PATH minus ORIGINAL_PATH) unless `--bun` was passed, in which case
+        // search the whole stitched PATH.
+        // TODO(b2-blocked): Windows `BunXFastPath::try_launch` precedes this
+        // in the .zig spec; preserved in phase_a_draft.
         {
-            let path_for_which = /* … */ b"";
-            if let Some(dest) = which(&mut path_buf, path_for_which, top_level_dir, target_name) {
-                Self::run_binary_without_bunx_path(/* … */)?;
+            // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
+            let fs = unsafe { &mut *this_transpiler.fs };
+            let top_level_dir = fs.top_level_dir;
+            let path = env_loader.get(b"PATH").unwrap_or(b"");
+            let mut path_for_which = path;
+            if !force_using_bun {
+                if original_path.len() < path.len() {
+                    path_for_which = &path[..path.len() - (original_path.len() + 1)];
+                } else {
+                    path_for_which = b"";
+                }
+            }
+
+            if !path_for_which.is_empty() {
+                let mut path_buf = PathBuffer::uninit();
+                if let Some(destination) =
+                    which(&mut path_buf, path_for_which, top_level_dir, target_name)
+                {
+                    let out = destination.as_bytes();
+                    // PORT NOTE: `ctx.passthrough` is `Vec<Box<[u8]>>` but
+                    // `run_binary_without_bunx_path` takes `&[&[u8]]`.
+                    let passthrough: Vec<&[u8]> =
+                        ctx.passthrough.iter().map(|b| b.as_ref()).collect();
+                    let stored = fs.dirname_store.append(out)?;
+                    Self::run_binary_without_bunx_path(
+                        ctx,
+                        stored,
+                        destination.as_ptr() as *const c_char,
+                        top_level_dir,
+                        env_loader,
+                        &passthrough,
+                        Some(target_name),
+                    )?;
+                }
             }
         }
 

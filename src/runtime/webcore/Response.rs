@@ -141,13 +141,18 @@ pub use js::from_js_direct;
 // not yet wired for Response). Mirrors the Blob.rs pattern — bind the
 // generated C++ shims by link-name and wrap.
 const _: () = {
+    // PORT NOTE: extern signatures use opaque `*mut c_void` and cast at the
+    // wrapper boundary — `Response` transitively contains `body::Value` (a
+    // Rust-layout enum), which is correctly flagged as not-FFI-safe when
+    // named directly. The C++ side treats this pointer as opaque (it never
+    // touches the Rust struct layout), so the cast is sound.
     unsafe extern "C" {
         #[link_name = "Response__fromJS"]
-        fn __from_js(value: bun_jsc::JSValue) -> *mut Response;
+        fn __from_js(value: bun_jsc::JSValue) -> *mut core::ffi::c_void;
         #[link_name = "Response__fromJSDirect"]
-        fn __from_js_direct(value: bun_jsc::JSValue) -> *mut Response;
+        fn __from_js_direct(value: bun_jsc::JSValue) -> *mut core::ffi::c_void;
         #[link_name = "Response__create"]
-        fn __create(global: *const bun_jsc::JSGlobalObject, ptr: *mut Response) -> bun_jsc::JSValue;
+        fn __create(global: *const bun_jsc::JSGlobalObject, ptr: *mut core::ffi::c_void) -> bun_jsc::JSValue;
         #[link_name = "Response__getConstructor"]
         fn __get_constructor(global: *const bun_jsc::JSGlobalObject) -> bun_jsc::JSValue;
     }
@@ -155,19 +160,19 @@ const _: () = {
     impl bun_jsc::JsClass for Response {
         fn from_js(value: bun_jsc::JSValue) -> Option<*mut Self> {
             // SAFETY: pure FFI downcast; returns null on type mismatch.
-            let p = unsafe { __from_js(value) };
+            let p = unsafe { __from_js(value) }.cast::<Response>();
             if p.is_null() { None } else { Some(p) }
         }
         fn from_js_direct(value: bun_jsc::JSValue) -> Option<*mut Self> {
             // SAFETY: pure FFI downcast (exact-structure check); null on miss.
-            let p = unsafe { __from_js_direct(value) };
+            let p = unsafe { __from_js_direct(value) }.cast::<Response>();
             if p.is_null() { None } else { Some(p) }
         }
         fn to_js(self, global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
             let ptr = Box::into_raw(Box::new(self));
             // SAFETY: `global` is live; ownership of `ptr` transfers to the
             // C++ wrapper (freed via `ResponseClass__finalize`).
-            unsafe { __create(global, ptr) }
+            unsafe { __create(global, ptr.cast()) }
         }
         fn get_constructor(global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
             // SAFETY: `global` is a live JSC global; C++ reads its cached

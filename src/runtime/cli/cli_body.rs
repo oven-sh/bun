@@ -568,10 +568,8 @@ pub mod command {
             x if x == RootCommandMatcher::case(b"repl") => Tag::ReplCommand,
 
             x if x == RootCommandMatcher::case(b"i") || x == RootCommandMatcher::case(b"install") => 'brk: {
-                for arg in args_iter.buf {
-                    if !arg.as_bytes().is_empty()
-                        && (arg.as_bytes() == b"-g" || arg.as_bytes() == b"--global")
-                    {
+                for arg in args_iter.buf.iter() {
+                    if !arg.is_empty() && (arg == b"-g" || arg == b"--global") {
                         break 'brk Tag::AddCommand;
                     }
                 }

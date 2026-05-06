@@ -4437,7 +4437,7 @@ pub mod sync {
         for i in 0..2 {
             let _ = drain_fd(&mut out_fds_to_wait_for[i], &mut out_fds[i], &mut out[i]);
         }
-        Some(Maybe::Result(child_status.unwrap()))
+        Some(Maybe::Ok(child_status.unwrap()))
     }
 
     /// Non-blocking drain of `fd` into `bytes`. Closes and invalidates both
@@ -4451,7 +4451,7 @@ pub mod sync {
         }
         loop {
             if bytes.try_reserve(16384).is_err() {
-                return Some(bun_sys::Error::from_code(bun_sys::E::NOMEM, bun_sys::Tag::recv));
+                return Some(bun_sys::Error::from_code(bun_sys::E::ENOMEM, bun_sys::Tag::recv));
             }
             let spare = bytes.spare_capacity_mut();
             // SAFETY: recvNonBlock writes into uninit bytes; we extend len by bytes_read

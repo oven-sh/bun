@@ -695,18 +695,18 @@ impl SourceMapStore {
                     .weak_refs
                     .unget(&[item])
                     .expect("unreachable"); // there is enough space since the last item was just removed.
-                store.weak_ref_sweep_timer.state = EventLoopTimer::State::FIRED;
-                store.owner().vm.timer.update(
-                    &mut store.weak_ref_sweep_timer,
-                    &bun_core::Timespec { sec: item.expire + 1, nsec: 0 },
-                );
-                // TODO(port): borrowck — overlapping &mut (owner() vs field).
-                store.owner().emit_memory_visualizer_message_if_needed();
-                return;
+                store.weak_ref_sweep_timer.state = EventLoopTimerState::FIRED;
+                let _ = bun_core::Timespec { sec: item.expire + 1, nsec: 0 };
+                todo!("blocked_on: bun_jsc::VirtualMachine::timer.update");
+                #[allow(unreachable_code)]
+                {
+                    store.owner().emit_memory_visualizer_message_if_needed();
+                    return;
+                }
             }
         }
 
-        store.weak_ref_sweep_timer.state = EventLoopTimer::State::CANCELLED;
+        store.weak_ref_sweep_timer.state = EventLoopTimerState::CANCELLED;
         store.owner().emit_memory_visualizer_message_if_needed();
     }
 }

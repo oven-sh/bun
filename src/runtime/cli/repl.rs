@@ -1629,11 +1629,13 @@ impl<'a> Repl<'a> {
         // which the REPL transform passes through intact.
 
         // Initialize macro context from transpiler (required for import processing)
+        // PORT NOTE: Zig spec mutates `vm.transpiler` (`*Transpiler`) here; `vm`
+        // is `&VirtualMachine` in this port, so go through `vm_mut` (see its
+        // SAFETY comment) to lazily seed the macro context.
         if vm.transpiler.macro_context.is_none() {
-            // TODO(port): vm is &VirtualMachine (immutable borrow); Zig mutates here. Phase B: interior mutability or &mut.
-            vm.transpiler.macro_context = Some(bun_js_parser::ast::Macro::MacroContext::init(&vm.transpiler));
+            vm_mut(vm).transpiler.macro_context = Some(bun_js_parser::ast::Macro::MacroContext::init(&mut vm_mut(vm).transpiler));
         }
-        opts.macro_context = vm.transpiler.macro_context.as_ref();
+        opts.macro_context = vm_mut(vm).transpiler.macro_context.as_mut();
 
         // Create log for errors
         let mut log = bun_logger::Log::init();

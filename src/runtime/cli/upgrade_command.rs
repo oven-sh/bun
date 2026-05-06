@@ -1,7 +1,9 @@
 use core::ffi::c_char;
+use core::ptr::NonNull;
 use std::cell::Cell;
 use std::io::Write as _;
 
+use bumpalo::Bump;
 use bun_core::{self, Environment, Global, Output, Progress, env_var, fmt as bun_fmt};
 use bun_core::Global::SyncCStr;
 use bun_str::MutableString;
@@ -16,11 +18,20 @@ use bun_sys as sys;
 use bun_logger as logger;
 use bun_js_parser as js_ast;
 use bun_interchange::json as JSON;
-use bun_http::{self as HTTP, Headers};
+use bun_http::{self as HTTP, headers};
 use bun_jsc::{self as jsc, JSGlobalObject, CallFrame, JSValue, JsResult};
 use bun_string::ZigString;
 
 use crate::cli::Command;
+
+// PORT NOTE: `bun.argv` is an `Argv` newtype (not `&[&[u8]]`), so
+// `strings::contains_any` can't take it directly. Local helper that scans the
+// process argv for an exact match — same semantics as Zig's
+// `strings.containsAny(bun.argv, ..)`.
+#[inline]
+fn argv_contains(target: &[u8]) -> bool {
+    bun_core::argv().iter().any(|a| a == target)
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 

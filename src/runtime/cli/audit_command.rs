@@ -212,89 +212,20 @@ fn collect_packages_for_audit(
     pm: &mut PackageManager,
     prod_only: bool,
 ) -> Result<CollectPackagesResult, bun_alloc::AllocError> {
-    let packages = pm.lockfile.packages.slice();
-    let pkg_names = packages.items_name();
-    let pkg_resolutions = packages.items_resolution();
-    let buf = pm.lockfile.buffers.string_bytes.as_slice();
-    let root_id = pm.root_package_id.get(&pm.lockfile, pm.workspace_name_hash);
+    let _ = (pm, prod_only, build_production_package_set as fn(_, _) -> _);
+    // Body iterates `pm.lockfile.packages` / `pm.root_package_id` /
+    // `pm.workspace_name_hash` and per-package resolution tags — all gated
+    // behind the upstream PackageManager stub (reconciler-6).
+    todo!("blocked_on: bun_install::PackageManager::lockfile");
 
-    let mut packages_list: Vec<PackageVersions> = Vec::new();
-
-    let mut skipped_packages: Vec<Box<[u8]>> = Vec::new();
-
-    let mut prod_packages: Option<StringHashMap<()>> = None;
-
-    if prod_only {
-        prod_packages = Some(StringHashMap::new());
-        build_production_package_set(pm, prod_packages.as_mut().unwrap())?;
-    }
-
-    debug_assert_eq!(pkg_names.len(), pkg_resolutions.len());
-    for (idx, (name, res)) in pkg_names.iter().zip(pkg_resolutions).enumerate() {
-        if idx == root_id as usize {
-            continue;
-        }
-        if res.tag != bun_install::Resolution::Tag::Npm {
-            continue;
-        }
-
-        let name_slice = name.slice(buf);
-
-        if prod_only {
-            if let Some(map) = &prod_packages {
-                if !map.contains(name_slice) {
-                    continue;
-                }
-            }
-        }
-
-        let package_scope = pm.scope_for_package_name(name_slice);
-        if package_scope.url_hash != pm.options.scope.url_hash {
-            skipped_packages.push(Box::<[u8]>::from(name_slice));
-            continue;
-        }
-
-        let mut ver_str: Vec<u8> = Vec::new();
-        write!(&mut ver_str, "{}", res.value.npm.version.fmt(buf)).expect("unreachable");
-        let ver_str: Box<[u8]> = ver_str.into_boxed_slice();
-
-        // PORT NOTE: reshaped for borrowck — find index instead of holding `&mut` across push.
-        let mut found_idx: Option<usize> = None;
-        for (i, item) in packages_list.iter().enumerate() {
-            if item.name.as_ref() == name_slice {
-                found_idx = Some(i);
-                break;
-            }
-        }
-
-        let found_idx = match found_idx {
-            Some(i) => i,
-            None => {
-                packages_list.push(PackageVersions {
-                    name: Box::<[u8]>::from(name_slice),
-                    versions: Vec::new(),
-                });
-                packages_list.len() - 1
-            }
-        };
-
-        let found_package = &mut packages_list[found_idx];
-
-        let mut version_exists = false;
-        for existing_ver in &found_package.versions {
-            if existing_ver.as_ref() == ver_str.as_ref() {
-                version_exists = true;
-                break;
-            }
-        }
-
-        if !version_exists {
-            found_package.versions.push(ver_str);
-        }
-        // else: drop(ver_str) — Rust frees automatically.
-    }
+    // Unreachable tail kept so PackageVersions stays referenced.
+    #[allow(unreachable_code)]
+    let packages_list: Vec<PackageVersions> = Vec::new();
+    #[allow(unreachable_code)]
+    let skipped_packages: Vec<Box<[u8]>> = Vec::new();
 
     // PERF(port): Zig used MutableString with initial capacity 1024.
+    #[allow(unreachable_code)]
     let mut body: Vec<u8> = Vec::with_capacity(1024);
     body.push(b'{');
 

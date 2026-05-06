@@ -292,6 +292,27 @@ impl GraphTraceState {
     #[inline] pub fn bits(&mut self, side: Side) -> &mut DynamicBitSet {
         match side { Side::Client => &mut self.client_bits, Side::Server => &mut self.server_bits }
     }
+
+    pub fn clear(&mut self) {
+        self.server_bits.set_all(false);
+        self.client_bits.set_all(false);
+    }
+
+    pub fn resize(&mut self, side: Side, new_size: usize) -> Result<(), bun_core::Error> {
+        let b = match side {
+            Side::Client => &mut self.client_bits,
+            Side::Server => &mut self.server_bits,
+        };
+        if b.bit_length() < new_size {
+            b.resize(new_size, false)?;
+        }
+        Ok(())
+    }
+
+    pub fn clear_and_free(&mut self) {
+        self.client_bits.resize(0, false).expect("freeing memory can not fail");
+        self.server_bits.resize(0, false).expect("freeing memory can not fail");
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

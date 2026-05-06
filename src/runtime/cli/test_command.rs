@@ -1321,10 +1321,11 @@ impl CommandLineReporter {
             bun_sys::Result::Ok(f) => f,
         };
         let _close = scopeguard::guard((), |_| { file.close(); });
-        let buf = vec![0u8; 64 * 1024].into_boxed_slice();
-        // TODO(port): file.writer().adaptToNewApi(buf) — buffered writer adapter
-        let mut buffered = file.writer().adapt_to_new_api(buf);
-        let writer = &mut buffered.new_interface;
+        // TODO(port): file.writer().adaptToNewApi(buf) — Zig's buffered writer adapter
+        // not present on `bun_sys::File`; buffer in a Vec (impl `bun_io::Write`) and
+        // write through in one shot below.
+        let mut buffered: Vec<u8> = Vec::with_capacity(64 * 1024);
+        let writer = &mut buffered;
 
         for entry in byte_ranges.iter_mut() {
             if !opts.ignore_patterns.is_empty() {
@@ -1347,7 +1348,10 @@ impl CommandLineReporter {
             }
             drop(report);
         }
-        writer.flush()?;
+        match file.write_all(&buffered) {
+            bun_sys::Result::Ok(()) => {}
+            bun_sys::Result::Err(e) => return Err(bun_core::Error::from(e)),
+        }
         Ok(())
     }
 

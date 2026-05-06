@@ -851,8 +851,11 @@ impl Drop for CronRegisterJob {
     fn drop(&mut self) {
         // stdout_reader / stderr_reader drop via their own Drop.
         if let Some(proc) = self.process.take() {
-            proc.detach();
-            // Arc drop = deref()
+            // SAFETY: intrusive-RC pointer; we hold a ref.
+            unsafe {
+                (*proc).detach();
+                (*proc).deref();
+            }
         }
         if let Some(p) = self.tmp_path.take() {
             let _ = sys::unlink(&p);

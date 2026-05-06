@@ -706,19 +706,19 @@ impl CreateCommand {
 
         {
             // TODO(port): std.fs.openDirAbsolute — use bun_sys
-            let parent_dir = bun_sys::Dir::open_absolute(destination, Default::default())?;
+            let parent_dir = bun_sys::Dir::from_fd(bun_sys::open_dir_absolute(destination)?);
             #[cfg(windows)]
             {
                 let _ = parent_dir.copy_file(b"gitignore", &parent_dir, b".gitignore", Default::default());
             }
             #[cfg(not(windows))]
             {
-                let _ = bun_sys::linkat(parent_dir.fd(), b"gitignore", parent_dir.fd(), b".gitignore", 0);
+                let _ = bun_sys::linkat(parent_dir.fd(), bun_core::zstr!("gitignore"), parent_dir.fd(), bun_core::zstr!(".gitignore"));
             }
 
-            let _ = bun_sys::unlinkat(parent_dir.fd(), b"gitignore", 0);
-            let _ = bun_sys::unlinkat(parent_dir.fd(), b".npmignore", 0);
-            // parent_dir dropped here -> closed
+            let _ = bun_sys::unlinkat(parent_dir.fd(), bun_core::zstr!("gitignore"));
+            let _ = bun_sys::unlinkat(parent_dir.fd(), bun_core::zstr!(".npmignore"));
+            parent_dir.close();
         }
 
         let mut start_command: &[u8] = b"bun dev";

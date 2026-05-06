@@ -4179,30 +4179,30 @@ impl H2FrameParser {
     #[bun_jsc::host_fn(method)]
     pub fn rst_stream(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         bun_output::scoped_log!(H2FrameParser, "rstStream");
-        let args_list = callframe.arguments_old(2);
-        if args_list.len() < 2 {
-            return global_object.throw("Expected stream and code arguments");
+        let args_list = callframe.arguments_old::<2>();
+        if args_list.len < 2 {
+            return Err(global_object.throw("Expected stream and code arguments"));
         }
         let stream_arg = args_list.ptr[0];
         let error_arg = args_list.ptr[1];
 
         if !stream_arg.is_number() {
-            return global_object.throw("Invalid stream id");
+            return Err(global_object.throw("Invalid stream id"));
         }
 
-        let stream_id = stream_arg.to_u32();
+        let stream_id = stream_arg.to_int32() as u32;
         if stream_id == 0 || stream_id > MAX_STREAM_ID {
-            return global_object.throw("Invalid stream id");
+            return Err(global_object.throw("Invalid stream id"));
         }
 
         let Some(stream) = this.streams.get(&stream_id).copied() else {
-            return global_object.throw("Invalid stream id");
+            return Err(global_object.throw("Invalid stream id"));
         };
         if !error_arg.is_number() {
-            return global_object.throw("Invalid ErrorCode");
+            return Err(global_object.throw("Invalid ErrorCode"));
         }
 
-        let error_code = error_arg.to_u32();
+        let error_code = error_arg.to_int32() as u32;
 
         // SAFETY: stream is a *mut Stream from self.streams; valid while the map entry exists
         this.end_stream(unsafe { &mut *stream }, ErrorCode(error_code));

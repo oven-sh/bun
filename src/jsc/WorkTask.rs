@@ -43,9 +43,14 @@ impl<'a, Context: WorkTaskContext> WorkTask<'a, Context> {
     type TaskType = WorkPoolTask;
 
     pub fn create_on_js_thread(global_this: &'a JSGlobalObject, value: &'a Context) -> *mut Self {
-        let vm = global_this.bun_vm();
+        // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the
+        // VirtualMachine outlives every WorkTask scheduled on it.
+        let vm = unsafe { &mut *global_this.bun_vm() };
+        // SAFETY: `event_loop()` returns a stable self-pointer into the VM that
+        // lives for the program (`'static` per field decl above).
+        let event_loop = unsafe { &*vm.event_loop() };
         let mut this = Box::new(Self {
-            event_loop: vm.event_loop(),
+            event_loop,
             ctx: value,
             global_this,
             task: WorkPoolTask {

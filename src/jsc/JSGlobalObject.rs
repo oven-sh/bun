@@ -1225,7 +1225,7 @@ impl JSGlobalObject {
     /// Throw an error from within the Bun runtime.
     ///
     /// The set of errors accepted by `err()` is defined in `ErrorCode.ts`.
-    pub fn err<'a>(&'a self, code: JscError, args: Arguments<'a>) -> ErrorBuilder<'a> {
+    pub fn err<'a>(&'a self, code: JscError, args: Arguments<'a>) -> ErrorBuilder<'a, Self> {
         // TODO(port): Zig `ERR` returns a comptime-monomorphized `ErrorBuilder(code, fmt, @TypeOf(args))`.
         // The Rust ErrorBuilder carries the code + Arguments at runtime.
         ErrorBuilder { global: self, code, args }

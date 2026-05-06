@@ -30,54 +30,56 @@ pub fn version_to_js(
     );
 
     // PORT NOTE: `dependency::Version` in Zig is `struct { tag: Tag, value: Value /* bare union */ }`.
-    // The bun_install stub models `Value` as a struct-of-fields (not a Rust union),
-    // so the per-tag field reads below are safe plain field accesses. If the real
-    // un-gated `dependency.rs` switches to a Rust enum, rewrite as a single `match`.
+    // The Rust port keeps `Value` as a `#[repr(C)] union` (discriminant in `Version.tag`),
+    // so each per-arm read is tag-guarded and wrapped in an `unsafe` block.
     match dep.tag {
         Tag::DistTag => {
-            let v = &dep.value.dist_tag;
+            // SAFETY: tag-guarded union access (tag == DistTag)
+            let v = unsafe { &dep.value.dist_tag };
             object.put(global, b"name", semver_string_to_js(&v.name, buf, global)?);
             object.put(global, b"tag", semver_string_to_js(&v.tag, buf, global)?);
         }
         Tag::Folder => {
-            let v = &dep.value.folder;
+            // SAFETY: tag-guarded union access (tag == Folder)
+            let v = unsafe { &dep.value.folder };
             object.put(global, b"folder", semver_string_to_js(v, buf, global)?);
         }
         Tag::Git => {
-            let v = &dep.value.git;
+            // SAFETY: tag-guarded union access (tag == Git)
+            let v = unsafe { &*dep.value.git };
             object.put(global, b"owner", semver_string_to_js(&v.owner, buf, global)?);
             object.put(global, b"repo", semver_string_to_js(&v.repo, buf, global)?);
             object.put(global, b"ref", semver_string_to_js(&v.committish, buf, global)?);
         }
         Tag::Github => {
-            let v = &dep.value.github;
+            // SAFETY: tag-guarded union access (tag == Github)
+            let v = unsafe { &*dep.value.github };
             object.put(global, b"owner", semver_string_to_js(&v.owner, buf, global)?);
             object.put(global, b"repo", semver_string_to_js(&v.repo, buf, global)?);
             object.put(global, b"ref", semver_string_to_js(&v.committish, buf, global)?);
         }
         Tag::Npm => {
-            let v = &dep.value.npm;
+            // SAFETY: tag-guarded union access (tag == Npm)
+            let v = unsafe { &*dep.value.npm };
             object.put(global, b"name", semver_string_to_js(&v.name, buf, global)?);
-            // TODO(b2-blocked): bun_install::dependency::NpmInfo::version
-            // (bun_semver::query::Group field — not yet on the stub).
-            #[cfg(any())]
-            {
-                let version_str =
-                    BunString::create_format(format_args!("{}", v.version.fmt(buf)));
-                object.put(global, b"version", version_str.to_js(global)?);
-            }
+            let version_str =
+                BunString::create_format(format_args!("{}", v.version.fmt(buf)));
+            object.put(global, b"version", version_str.to_js(global)?);
             object.put(global, b"alias", JSValue::js_boolean(v.is_alias));
         }
         Tag::Symlink => {
-            let v = &dep.value.symlink;
+            // SAFETY: tag-guarded union access (tag == Symlink)
+            let v = unsafe { &dep.value.symlink };
             object.put(global, b"path", semver_string_to_js(v, buf, global)?);
         }
         Tag::Workspace => {
-            let v = &dep.value.workspace;
+            // SAFETY: tag-guarded union access (tag == Workspace)
+            let v = unsafe { &dep.value.workspace };
             object.put(global, b"name", semver_string_to_js(v, buf, global)?);
         }
         Tag::Tarball => {
-            let v = &dep.value.tarball;
+            // SAFETY: tag-guarded union access (tag == Tarball)
+            let v = unsafe { &dep.value.tarball };
             object.put(global, b"name", semver_string_to_js(&v.package_name, buf, global)?);
             match &v.uri {
                 dependency::tarball::Uri::Local(local) => {
@@ -114,17 +116,11 @@ pub fn tag_infer_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     BunString::static_(<&'static str>::from(tag).as_bytes()).to_js(global)
 }
 
-/// Local helper for `log.toJS(global, msg)` while `bun_logger_jsc` still stubs
-/// its own JSC types (concurrent B-2 — its `JSGlobalObject` ≠ `bun_jsc::JSGlobalObject`).
-// TODO(b2-blocked): bun_logger_jsc::log_to_js (typed against bun_jsc)
-pub(crate) fn log_to_js(_log: &bun_logger::Log, global: &JSGlobalObject, msg: &[u8]) -> JsResult<JSValue> {
-    #[cfg(any())]
-    {
-        return bun_logger_jsc::log_to_js(_log, global, msg);
-    }
-    // Fallback: throw a plain error with the summary message until logger_jsc
-    // is wired against bun_jsc types.
-    Err(global.throw(format_args!("{}", bstr::BStr::new(msg))))
+/// Local helper for `log.toJS(global, msg)` — thin re-export now that
+/// `bun_logger_jsc` is typed against the real `bun_jsc` surface.
+#[inline]
+pub(crate) fn log_to_js(log: &bun_logger::Log, global: &JSGlobalObject, msg: &[u8]) -> JsResult<JSValue> {
+    bun_logger_jsc::log_to_js(log, global, msg)
 }
 
 // TODO(port): proc-macro — `#[bun_jsc::host_fn]` ABI wrapper.

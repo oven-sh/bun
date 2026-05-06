@@ -248,25 +248,13 @@ pub mod namespaces {
 impl UUID5 {
     /// Generate a UUID v5 from a namespace UUID and name data
     pub fn init(namespace: &[u8; 16], name: &[u8]) -> UUID5 {
-        #[allow(unused_mut)]
-        let mut hash: [u8; 20] = {
-            #[cfg(any())]
-            {
-                // TODO(b2-blocked): bun_sha::SHA1 — `bun_sha_hmac` crate is not in
-                // this tier's dep-graph. Wire up once the dep is added to Cargo.toml.
-                let mut sha1_hasher = bun_sha::SHA1::init();
-                sha1_hasher.update(namespace);
-                sha1_hasher.update(name);
-                let mut hash = [0u8; 20];
-                sha1_hasher.final_(&mut hash);
-                hash
-            }
-            #[cfg(not(any()))]
-            {
-                // TODO(b2-blocked): bun_sha::SHA1
-                let _ = (namespace, name);
-                todo!("UUID5::init — bun_sha::SHA1 not in dep-graph at this tier")
-            }
+        let hash: [u8; 20] = {
+            let mut sha1_hasher = bun_sha_hmac::SHA1::init();
+            sha1_hasher.update(namespace);
+            sha1_hasher.update(name);
+            let mut hash = [0u8; 20];
+            sha1_hasher.r#final(&mut hash);
+            hash
         };
 
         // Take first 16 bytes of the hash

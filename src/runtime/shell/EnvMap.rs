@@ -1,38 +1,46 @@
-use bun_collections::ArrayHashMap;
+use bun_collections::array_hash_map::{self, ArrayHashContext, ArrayHashMap, Iter};
+
 use crate::shell::EnvStr;
 
 pub struct EnvMap {
     map: MapType,
 }
 
-// TODO(port): bun_collections::ArrayHashMap needs a custom-context generic param
-// matching Zig's `std.ArrayHashMap(K, V, Context, store_hash=true)`.
-pub type Iterator<'a> = bun_collections::array_hash_map::Iterator<'a, EnvStr, EnvStr>;
+// PORT NOTE: Zig used `std.ArrayHashMap(K, V, Context, store_hash=true)`.
+// `bun_collections::ArrayHashMap` already takes a `C: ArrayHashContext<K>` param.
+pub type Iterator<'a> = Iter<'a, EnvStr, EnvStr>;
 
 type MapType = ArrayHashMap<EnvStr, EnvStr, EnvMapContext>;
 
+#[derive(Default)]
 struct EnvMapContext;
 
-impl bun_collections::array_hash_map::Context<EnvStr> for EnvMapContext {
+impl ArrayHashContext<EnvStr> for EnvMapContext {
     fn hash(&self, s: &EnvStr) -> u32 {
         #[cfg(windows)]
         {
-            return bun_core::CaseInsensitiveAsciiStringContext::hash(s.slice());
+            // Zig: `bun.CaseInsensitiveASCIIStringContext.hash(undefined, s.slice())`.
+            return <array_hash_map::CaseInsensitiveAsciiStringContext as ArrayHashContext<[u8]>>::hash(
+                &array_hash_map::CaseInsensitiveAsciiStringContext::default(),
+                s.slice(),
+            );
         }
         #[cfg(not(windows))]
         {
-            bun_collections::array_hash_map::hash_string(s.slice())
+            array_hash_map::hash_string(s.slice())
         }
     }
 
     fn eql(&self, a: &EnvStr, b: &EnvStr, _b_index: usize) -> bool {
         #[cfg(windows)]
         {
-            return bun_core::CaseInsensitiveAsciiStringContext::eql(a.slice(), b.slice());
+            // Zig: `bun.CaseInsensitiveASCIIStringContext.eql` → `eqlCaseInsensitiveASCIIICheckLength`.
+            // Must be length-checked: "PATH" must NOT match "PATHEXT".
+            return bun_str::strings::eql_case_insensitive_asciii_check_length(a.slice(), b.slice());
         }
         #[cfg(not(windows))]
         {
-            bun_collections::array_hash_map::eql_string(a.slice(), b.slice())
+            a.slice() == b.slice()
         }
     }
 }
@@ -55,15 +63,16 @@ impl EnvMap {
     }
 
     pub fn init_with_capacity(cap: usize) -> EnvMap {
-        let mut map = MapType::new();
-        map.ensure_total_capacity(cap);
-        EnvMap { map }
+        EnvMap {
+            map: MapType::with_capacity(cap),
+        }
     }
 
     /// NOTE: This will `.ref()` value, so you should `defer value.deref()` it
     /// before handing it to this function!!!
     pub fn insert(&mut self, key: EnvStr, val: EnvStr) {
-        let result = self.map.get_or_put(key);
+        // PORT NOTE: `bun.handleOom` → `.expect("OOM")` (abort-on-OOM is the Rust default).
+        let result = self.map.get_or_put(key).expect("OOM");
         if !result.found_existing {
             key.ref_();
         } else {
@@ -79,50 +88,44 @@ impl EnvMap {
 
     pub fn clear_retaining_capacity(&mut self) {
         self.deref_strings();
-        self.map.clear();
+        self.map.clear_retaining_capacity();
     }
 
     pub fn ensure_total_capacity(&mut self, new_capacity: usize) {
-        self.map.ensure_total_capacity(new_capacity);
+        self.map.ensure_total_capacity(new_capacity).expect("OOM");
     }
 
     /// NOTE: Make sure you deref the string when done!
-    pub fn get(&mut self, key: EnvStr) -> Option<EnvStr> {
-        let Some(val) = self.map.get(key) else { return None };
+    pub fn get(&self, key: EnvStr) -> Option<EnvStr> {
+        let val = *self.map.get(&key)?;
         val.ref_();
         Some(val)
     }
 
-    pub fn clone(&mut self) -> EnvMap {
-        let mut new = EnvMap {
-            map: self.map.clone(),
+    pub fn clone(&self) -> EnvMap {
+        let new = EnvMap {
+            map: self.map.clone().expect("OOM"),
         };
         new.ref_strings();
         new
     }
 
     // PORT NOTE: allocator param dropped (global mimalloc); identical to `clone` now.
-    pub fn clone_with_allocator(&mut self) -> EnvMap {
-        let mut new = EnvMap {
-            map: self.map.clone(),
-        };
-        new.ref_strings();
-        new
+    pub fn clone_with_allocator(&self) -> EnvMap {
+        self.clone()
     }
 
-    fn ref_strings(&mut self) {
-        let mut iter = self.map.iterator();
-        while let Some(entry) = iter.next() {
-            entry.key_ptr.ref_();
-            entry.value_ptr.ref_();
+    fn ref_strings(&self) {
+        for (key, value) in self.map.keys().iter().zip(self.map.values()) {
+            key.ref_();
+            value.ref_();
         }
     }
 
-    fn deref_strings(&mut self) {
-        let mut iter = self.map.iterator();
-        while let Some(entry) = iter.next() {
-            entry.key_ptr.deref();
-            entry.value_ptr.deref();
+    fn deref_strings(&self) {
+        for (key, value) in self.map.keys().iter().zip(self.map.values()) {
+            key.deref();
+            value.deref();
         }
     }
 }
@@ -138,6 +141,6 @@ impl Drop for EnvMap {
 // PORT STATUS
 //   source:     src/shell/EnvMap.zig (119 lines)
 //   confidence: medium
-//   todos:      1
-//   notes:      ArrayHashMap needs custom Context param (Windows case-insensitive); allocator params dropped per §Allocators
+//   todos:      0
+//   notes:      ArrayHashMap with custom Context (Windows case-insensitive); allocator params dropped per §Allocators
 // ──────────────────────────────────────────────────────────────────────────

@@ -82,7 +82,7 @@ pub fn js_parse_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
     // PORT NOTE: Zig used `ZigString.Slice.mut()` to get a mutable view; the Rust
     // `ZigStringSlice` is read-only, so own a mutable copy via `into_vec()`.
     let mut as_utf8 = npa_str.to_utf8().into_vec();
-    let parsed = match hgi::parse_url(as_utf8.as_mut_slice()) {
+    let mut parsed = match hgi::parse_url(as_utf8.as_mut_slice()) {
         Ok(p) => p,
         Err(err) => {
             return Err(go.throw(format_args!(
@@ -92,15 +92,9 @@ pub fn js_parse_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
         }
     };
 
-    // TODO(b2-blocked): bun_install::hosted_git_info::ParsedUrl::url (typed as
-    // `Box<dyn Any>` placeholder in the bun_install stub — needs `bun_jsc::URL`
-    // routing in Phase B). Re-gate just the `.href()` access.
-    #[cfg(any())]
-    {
-        return parsed.url.href().to_js(go);
-    }
-    let _ = parsed;
-    todo!("hosted_git_info_jsc::js_parse_url — ParsedUrl.url.href()")
+    // `parsed.url` is `Box<WhatwgUrl>` (C++-owned WTF::URL); `href()` yields a
+    // `bun_string::String`. `defer parsed.url.deinit()` deleted — Box Drop frees.
+    parsed.url.href().to_js(go)
 }
 
 pub fn js_from_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {

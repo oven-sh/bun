@@ -55,6 +55,10 @@ pub struct ResolveMessage {
 #[path = "api/cron_parser.rs"]
 pub mod cron_parser;
 
+// ─── un-gated re-exports (targets compile) ───────────────────────────────────
+pub use crate::image as Image;
+pub use crate::shell as Shell;
+
 // ─── gated re-exports (target modules not yet declared / lower-tier missing) ─
 #[cfg(any())]
 mod _gated_reexports {
@@ -85,8 +89,6 @@ mod _gated_reexports {
     pub use crate::api::filesystem_router::FileSystemRouter;
     pub use crate::api::archive as Archive;
     pub use crate::api::glob as Glob;
-    // TODO(b2-blocked): crate::image (module not declared)
-    pub use crate::image as Image;
     pub use crate::api::bun::h2_frame_parser::H2FrameParser;
     pub use crate::api::js_bundler::JSBundler;
     pub use crate::api::js_transpiler as JSTranspiler;
@@ -96,8 +98,6 @@ mod _gated_reexports {
     // TODO(b2-blocked): bun_sql_jsc (not in deps)
     pub use bun_sql_jsc::postgres as Postgres;
     pub use bun_sql_jsc::mysql as MySQL;
-    // TODO(b2-blocked): bun_shell (no such workspace crate; shell lives in bun_runtime)
-    pub use bun_shell as Shell;
     // TODO(b2-blocked): crate::valkey_jsc (module not declared)
     pub use crate::valkey_jsc::js_valkey::JSValkeyClient as Valkey;
     pub use crate::node::net::block_list as BlockList;

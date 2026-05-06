@@ -29,22 +29,8 @@ pub mod shared {
     #[path = "QueryBindingIterator.rs"]
     pub mod query_binding_iterator;
 
-    // TODO(b2-blocked): bun_string::wtf::{RefPtr,StringImpl}
-    // TODO(b2-blocked): bun_jsc (compile error — Counters/Debug)
-    #[cfg(any())]
     #[path = "SQLDataCell.rs"]
     pub mod sql_data_cell;
-    #[cfg(not(any()))]
-    pub mod sql_data_cell {
-        #[derive(Default)]
-        pub struct SQLDataCell(());
-        #[derive(Default, Clone, Copy)]
-        pub struct Flags {
-            pub has_duplicate_columns: bool,
-            pub has_named_columns: bool,
-            pub has_indexed_columns: bool,
-        }
-    }
 
     pub use cached_structure::CachedStructure;
     pub use sql_data_cell::SQLDataCell;

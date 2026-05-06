@@ -6,11 +6,10 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
 pub struct IniTestingAPIs;
 
 impl IniTestingAPIs {
-    // TODO(b2-blocked): bun_jsc::JSPropertyIterator::next (full iterator surface)
-    // TODO(b2-blocked): bun_jsc::VirtualMachine::transpiler (field on stub VM)
+    // TODO(b2-blocked): bun_bundler::Transpiler — opaque `Transpiler(())`; needs `.env`
+    // TODO(b2-blocked): bun_ini::load_npmrc (real signature — currently shadow stub `fn()`)
     // TODO(b2-blocked): bun_api::BunInstall
-    // TODO(b2-blocked): bun_ini::load_npmrc (real signature — currently stubbed `fn()`)
-    // TODO(b2-blocked): bun_logger_jsc::log_to_js (typed against bun_jsc)
+    // TODO(b2-blocked): bun_dotenv::Loader / Map (init + HashTable surface)
     #[cfg(any())]
     pub fn load_npmrc_from_js(
         global: &JSGlobalObject,
@@ -140,9 +139,8 @@ impl IniTestingAPIs {
         .to_js())
     }
 
-    // TODO(b2-blocked): bun_jsc::VirtualMachine::transpiler (field on stub VM)
-    // TODO(b2-blocked): bun_ini::Parser::parse (Arena param + `out` Expr accessors gated)
-    // TODO(b2-blocked): bun_js_parser_jsc::Expr::to_js (parser.out is js_parser::Expr)
+    // TODO(b2-blocked): bun_bundler::Transpiler — opaque `Transpiler(())`; needs `.env`
+    // TODO(b2-blocked): bun_js_parser_jsc::ExprJsc::to_js (parser.out is js_parser::Expr)
     #[cfg(any())]
     pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> bun_jsc::JsResult<JSValue> {
         use bun_ini::Parser;

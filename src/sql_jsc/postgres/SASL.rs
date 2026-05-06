@@ -66,20 +66,32 @@ impl SASL {
         connection: &mut PostgresSQLConnection,
     ) -> Result<(), bun_core::Error> {
         // Zig: `jsc.API.Bun.Crypto.EVP.pbkdf2` (src/runtime/api/crypto.zig).
-        use bun_runtime::crypto::EVP;
-        self.salted_password_created = true;
-        if EVP::pbkdf2(
-            &mut self.salted_password_bytes,
-            &connection.password,
-            salt_bytes,
-            iteration_count,
-            EVP::Algorithm::Sha256,
-        )
-        .is_none()
+        #[cfg(any())]
         {
-            return Err(bun_core::err!("PBKDFD2"));
+            // TODO(b2-blocked): bun_runtime::crypto::EVP::pbkdf2 — bun_runtime
+            // currently fails to compile (concurrent B-2 work). Re-enable the
+            // `bun_runtime` dep in Cargo.toml and drop this gate once green.
+            use bun_runtime::crypto::EVP;
+            self.salted_password_created = true;
+            if EVP::pbkdf2(
+                &mut self.salted_password_bytes,
+                &connection.password,
+                salt_bytes,
+                iteration_count,
+                EVP::Algorithm::Sha256,
+            )
+            .is_none()
+            {
+                return Err(bun_core::err!("PBKDFD2"));
+            }
+            return Ok(());
         }
-        Ok(())
+        #[cfg(not(any()))]
+        {
+            let _ = (salt_bytes, iteration_count, connection);
+            self.salted_password_created = true;
+            unimplemented!("b2-blocked: bun_runtime::crypto::EVP::pbkdf2")
+        }
     }
 
     pub fn salted_password(&self) -> &[u8] {

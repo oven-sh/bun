@@ -1,4 +1,4 @@
-use bun_jsc::{JSGlobalObject, VirtualMachine};
+use crate::jsc::{virtual_machine::VirtualMachine, JSGlobalObject};
 
 // TODO(port): move to runtime_sys
 unsafe extern "C" {
@@ -21,8 +21,14 @@ impl Identifier {
 
     /// Returns `None` if the context referred to by `self` no longer exists
     pub fn bun_vm(self) -> Option<&'static VirtualMachine> {
-        // concurrently because we expect these identifiers are mostly used by off-thread tasks
-        self.global_object()?.bun_vm_concurrently()
+        #[cfg(any())]
+        {
+            // concurrently because we expect these identifiers are mostly used by off-thread tasks
+            return self.global_object()?.bun_vm_concurrently();
+        }
+        // TODO(b2-blocked): bun_jsc::JSGlobalObject::bun_vm_concurrently
+        let _ = self;
+        None
     }
 
     pub fn valid(self) -> bool {

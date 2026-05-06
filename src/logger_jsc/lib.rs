@@ -16,37 +16,36 @@ use bun_jsc::{
 };
 
 pub fn msg_from_js(global_object: &JSGlobalObject, file: &'static [u8], err: JSValue) -> JsResult<Msg> {
-    // TODO(b2-blocked): bun_jsc::zig_exception::Holder::zig_exception
-    // TODO(b2-blocked): bun_jsc::ZigException (field surface — `.message`)
-    // bun_jsc's Track-A `zig_exception::Holder` stub only exposes `init()`; the
-    // real `Holder::zig_exception()` accessor and `ZigException { message, .. }`
-    // fields are still gated behind `_gated::zig_exception` in bun_jsc/lib.rs.
-    // `bun_logger::Data.text` is now `Cow<'static, [u8]>`, so the prior
-    // `Box::leak` hazard is gone — this is purely a lower-tier API gap.
-    #[cfg(any())]
-    {
-        let mut zig_exception_holder = jsc::zig_exception::Holder::init();
-        if let Some(value) = err.to_error() {
-            value.to_zig_exception(global_object, zig_exception_holder.zig_exception());
-        } else {
-            zig_exception_holder.zig_exception().message = err.to_bun_string(global_object)?;
-        }
+    let mut zig_exception_holder = jsc::zig_exception::Holder::init();
 
-        return Ok(Msg {
-            data: Data {
-                text: Cow::Owned(
-                    zig_exception_holder
-                        .zig_exception()
-                        .message
-                        .to_owned_slice()?,
-                ),
-                location: Some(Location { file, line: 0, column: 0, ..Default::default() }),
-            },
-            ..Default::default()
-        });
-    }
-    let _ = (global_object, file, err);
-    todo!("logger_jsc::msg_from_js — blocked on bun_jsc::zig_exception::Holder::zig_exception / ZigException field surface")
+    let message: bun_string::String = match err.to_error() {
+        Some(value) => {
+            // TODO(b2-blocked): bun_jsc::ZigException field surface (`.message`).
+            // `bun_jsc::zig_exception::Holder::{init, zig_exception}` are now
+            // un-gated, but `bun_jsc::ZigException` itself is still an opaque
+            // `stub_ty!` (layout = `usize`) — the real `#[repr(C)]` struct with
+            // `pub message: bun_string::String` lives in bun_jsc's `_gated`
+            // module. Both the `to_zig_exception` FFI write and the `.message`
+            // read are unsound against the stub layout, so this arm stays
+            // re-gated until bun_jsc un-gates `ZigException.rs`.
+            #[cfg(any())]
+            {
+                value.to_zig_exception(global_object, zig_exception_holder.zig_exception());
+                zig_exception_holder.zig_exception().message
+            }
+            let _ = (value, &mut zig_exception_holder);
+            todo!("logger_jsc::msg_from_js (Error branch) — blocked on bun_jsc::ZigException field surface")
+        }
+        None => err.to_bun_string(global_object)?,
+    };
+
+    Ok(Msg {
+        data: Data {
+            text: Cow::Owned(message.to_owned_slice()),
+            location: Some(Location { file, line: 0, column: 0, ..Default::default() }),
+        },
+        ..Default::default()
+    })
 }
 
 pub fn msg_to_js(this: Msg, global_object: &JSGlobalObject) -> JsResult<JSValue> {
@@ -124,11 +123,12 @@ pub fn log_to_js_array(this: &Log, global: &JSGlobalObject) -> JsResult<JSValue>
 //   source:     src/logger_jsc/logger_jsc.zig (93 lines)
 //   confidence: medium
 //   todos:      see TODO(b2-blocked) markers
-//   notes:      B-2 un-gated (5/6). Now compiles against real `bun_jsc`
-//               (Track-A stub surface) — local shadow types removed.
-//               `msg_from_js` remains re-gated: bun_jsc's `zig_exception::Holder`
-//               stub lacks `zig_exception()` and `ZigException` is an opaque
-//               `stub_ty!` with no `.message` field. The `Data.text` lifetime
-//               blocker is resolved (`Cow<'static, [u8]>`); only the lower-tier
-//               API gap remains.
+//   notes:      B-2 un-gated (5/6). Compiles against real `bun_jsc` (Track-A
+//               stub surface) — local shadow types removed. `msg_from_js` is
+//               now live for the non-Error path; only the `err.to_error()`
+//               arm stays re-gated: bun_jsc's `ZigException` is still an
+//               opaque `stub_ty!` (no `.message` field, wrong FFI layout).
+//               `Holder::{init, zig_exception}` are available. The
+//               `Data.text` lifetime blocker is resolved
+//               (`Cow<'static, [u8]>`); only the lower-tier API gap remains.
 // ──────────────────────────────────────────────────────────────────────────

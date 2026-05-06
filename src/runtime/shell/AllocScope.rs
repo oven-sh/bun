@@ -15,16 +15,20 @@ pub struct AllocScope {
 
 impl AllocScope {
     pub fn begin_scope(alloc: &dyn Allocator) -> AllocScope {
+        #[cfg(any())]
         #[cfg(debug_assertions)]
         {
+            // TODO(b2-blocked): bun_alloc::AllocationScope::init
             return AllocScope {
                 __scope: AllocationScope::init(alloc),
             };
         }
-        #[cfg(not(debug_assertions))]
-        {
-            let _ = alloc;
-            AllocScope { __scope: () }
+        let _ = alloc;
+        AllocScope {
+            #[cfg(debug_assertions)]
+            __scope: AllocationScope,
+            #[cfg(not(debug_assertions))]
+            __scope: (),
         }
     }
 
@@ -37,27 +41,25 @@ impl AllocScope {
     pub fn leak_slice<T>(&mut self, memory: &[T]) {
         // Zig: `_ = @typeInfo(@TypeOf(memory)).pointer;` — compile-time assert that
         // `memory` is a pointer/slice. Enforced here by the `&[T]` parameter type.
+        #[cfg(any())]
         #[cfg(debug_assertions)]
         {
+            // TODO(b2-blocked): bun_alloc::AllocationScope::track_external_free
             if let Err(err) = self.__scope.track_external_free(memory, None) {
                 panic!("invalid free: {}", err.name());
             }
         }
-        #[cfg(not(debug_assertions))]
-        {
-            let _ = memory;
-        }
+        let _ = memory;
     }
 
     pub fn assert_in_scope<T>(&mut self, memory: &[T]) {
+        #[cfg(any())]
         #[cfg(debug_assertions)]
         {
+            // TODO(b2-blocked): bun_alloc::AllocationScope::assert_owned
             self.__scope.assert_owned(memory);
         }
-        #[cfg(not(debug_assertions))]
-        {
-            let _ = memory;
-        }
+        let _ = memory;
     }
 
     #[inline]
@@ -65,14 +67,17 @@ impl AllocScope {
         // TODO(port): under the global-mimalloc model (`#[global_allocator]`), callers
         // use `Box`/`Vec` directly and this accessor may be obsolete. Kept for structural
         // parity; Phase B should decide whether `AllocScope` survives at all.
-        #[cfg(debug_assertions)]
+        #[cfg(any())]
         {
-            return self.__scope.allocator();
-        }
-        #[cfg(not(debug_assertions))]
-        {
+            #[cfg(debug_assertions)]
+            {
+                // TODO(b2-blocked): bun_alloc::AllocationScope::allocator
+                return self.__scope.allocator();
+            }
+            // TODO(b2-blocked): bun_alloc::default_allocator
             bun_alloc::default_allocator()
         }
+        unimplemented!("AllocScope::allocator: blocked on bun_alloc::AllocationScope::allocator")
     }
 }
 

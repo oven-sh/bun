@@ -96,17 +96,9 @@ impl TestingAPIs {
         };
 
         let mut str: Vec<u8> = Vec::new();
-        #[cfg(any())]
         {
-            // TODO(b2-blocked): bun_patch::json_fmt — no JSON `Display` adapter for
-            //   `PatchFile` yet (Zig: `std.json.fmt(patchfile, .{})`).
             use std::io::Write as _;
             write!(&mut str, "{}", bun_patch::json_fmt(&patchfile)).expect("unreachable");
-        }
-        #[cfg(not(any()))]
-        {
-            let _ = &patchfile;
-            todo!("TestingAPIs::parse: blocked on bun_patch::json_fmt (PatchFile JSON Display)");
         }
         let outstr = BunString::borrow_utf8(&str);
         let js = outstr.to_js(global)?;
@@ -194,8 +186,8 @@ impl Drop for ApplyArgs {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/patch_jsc/testing.zig (147 lines)
-//   confidence: medium (bodies un-gated; one gate remains on bun_patch::json_fmt)
-//   todos:      bun_jsc::host_fn proc-macro; bun_patch::json_fmt
+//   confidence: medium (all bodies un-gated and compiling)
+//   todos:      bun_jsc::host_fn proc-macro
 //   notes:      ApplyArgs reshaped to own Vec<u8> + reparse (avoids
 //               self-reference forbidden by PORTING.md §Pointers/§Forbidden).
 // ──────────────────────────────────────────────────────────────────────────

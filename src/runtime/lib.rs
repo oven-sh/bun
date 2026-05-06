@@ -36,6 +36,18 @@ pub mod jsc {
         }
     }
     pub use virtual_machine::VirtualMachine as VirtualMachineRef;
+    pub mod debugger {
+        /// `bun.jsc.Debugger.Id` — `enum(i32) { _ }` newtype.
+        #[repr(transparent)]
+        #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+        pub struct DebuggerId(pub i32);
+        impl DebuggerId {
+            #[inline]
+            pub fn get(self) -> i32 {
+                self.0
+            }
+        }
+    }
 }
 
 // ─── un-gated in B-2 (heavy submodules re-gated inside each file) ────────

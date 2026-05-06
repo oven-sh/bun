@@ -1,22 +1,21 @@
 use core::cell::Cell;
+use core::mem::{ManuallyDrop, MaybeUninit};
 
 use bun_collections::StringHashMap;
-use bun_jsc::{JSGlobalObject, JSObject, JSValue};
-use bun_jsc::object::ExternColumnIdentifier;
-use bun_str::String;
+use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSObject, JSValue};
 
 use crate::shared::CachedStructure;
-use crate::shared::SQLDataCell;
+use crate::shared::sql_data_cell::Flags as DataCellFlags;
 use crate::mysql::protocol::Signature;
 
-use bun_sql::mysql::protocol::ColumnDefinition41;
-use bun_sql::mysql::protocol::column_definition41::{ColumnFlags, NameOrIndex};
-use bun_sql::mysql::protocol::ErrorPacket;
-use bun_sql::mysql::MySQLTypes as types;
+use bun_sql::mysql::mysql_types as types;
+use bun_sql::mysql::protocol::column_definition41::{ColumnDefinition41, ColumnFlags};
+use bun_sql::mysql::protocol::error_packet::ErrorPacket;
+use bun_sql::shared::ColumnIdentifier;
 
-pub use bun_sql::mysql::MySQLParam::Param;
+pub use bun_sql::mysql::mysql_param::Param;
 
-bun_output::declare_scope!(MySQLStatement, hidden);
+bun_core::declare_scope!(MySQLStatement, hidden);
 
 // `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` → intrusive single-thread refcount.
 // Shared ownership is expressed as `bun_ptr::IntrusiveRc<MySQLStatement>`; the
@@ -36,7 +35,7 @@ pub struct MySQLStatement {
     pub status: Status,
     pub error_response: ErrorPacket,
     pub execution_flags: ExecutionFlags,
-    pub fields_flags: SQLDataCell::Flags,
+    pub fields_flags: DataCellFlags,
     pub result_count: u64,
 }
 
@@ -55,9 +54,9 @@ impl Default for MySQLStatement {
             // constructor in Phase B.
             signature: Signature::default(),
             status: Status::Parsing,
-            error_response: ErrorPacket { error_code: 0, ..Default::default() },
+            error_response: ErrorPacket::default(),
             execution_flags: ExecutionFlags::default(),
-            fields_flags: SQLDataCell::Flags::default(),
+            fields_flags: DataCellFlags::default(),
             result_count: 0,
         }
     }
@@ -109,47 +108,46 @@ impl MySQLStatement {
 
         let mut seen_numbers: Vec<u32> = Vec::new();
         // TODO(port): StringHashMap key lifetime — Zig stores borrowed `name.slice()` pointers
-        // that outlive the map (columns outlive this function). In Rust this needs either
-        // `StringHashMap<'a, ()>` borrowing from `self.columns` or owned keys; using owned
-        // `Vec<u8>` keys here for now.
+        // that outlive the map (columns outlive this function). The Rust StringHashMap clones
+        // into owned `Box<[u8]>` keys; fine for a transient dedup set.
         let mut seen_fields: StringHashMap<()> = StringHashMap::default();
         seen_fields.reserve(self.columns.len());
 
         // iterate backwards
         let mut remaining = self.columns.len();
-        let mut flags = SQLDataCell::Flags::default();
+        let mut flags = DataCellFlags::default();
         while remaining > 0 {
             remaining -= 1;
             let field: &mut ColumnDefinition41 = &mut self.columns[remaining];
             match &field.name_or_index {
-                NameOrIndex::Name(name) => {
+                ColumnIdentifier::Name(name) => {
                     // PORT NOTE: reshaped for borrowck — compute `found_existing` before
                     // mutating `field.name_or_index`.
-                    let found_existing = {
-                        let entry = seen_fields.get_or_put(name.slice());
-                        entry.found_existing
-                    };
+                    let found_existing = seen_fields
+                        .get_or_put(name.slice())
+                        .expect("OOM")
+                        .found_existing;
                     if found_existing {
                         // Zig: field.name_or_index.deinit(); — Drop on assignment handles this.
-                        field.name_or_index = NameOrIndex::Duplicate;
-                        flags.has_duplicate_columns = true;
+                        field.name_or_index = ColumnIdentifier::Duplicate;
+                        flags.insert(DataCellFlags::HAS_DUPLICATE_COLUMNS);
                     }
 
-                    flags.has_named_columns = true;
+                    flags.insert(DataCellFlags::HAS_NAMED_COLUMNS);
                 }
-                NameOrIndex::Index(index) => {
+                ColumnIdentifier::Index(index) => {
                     let index = *index;
                     if seen_numbers.iter().any(|&n| n == index) {
-                        field.name_or_index = NameOrIndex::Duplicate;
-                        flags.has_duplicate_columns = true;
+                        field.name_or_index = ColumnIdentifier::Duplicate;
+                        flags.insert(DataCellFlags::HAS_DUPLICATE_COLUMNS);
                     } else {
                         seen_numbers.push(index);
                     }
 
-                    flags.has_indexed_columns = true;
+                    flags.insert(DataCellFlags::HAS_INDEXED_COLUMNS);
                 }
-                NameOrIndex::Duplicate => {
-                    flags.has_duplicate_columns = true;
+                ColumnIdentifier::Duplicate => {
+                    flags.insert(DataCellFlags::HAS_DUPLICATE_COLUMNS);
                 }
             }
         }
@@ -167,55 +165,73 @@ impl MySQLStatement {
         self.check_for_duplicate_fields();
 
         // lets avoid most allocations
-        // TODO(port): requires `ExternColumnIdentifier: Copy` (Zig: `.{ .tag = 0, .value = .{ .index = 0 } }` x70)
-        let mut stack_ids: [ExternColumnIdentifier; 70] = [ExternColumnIdentifier::default(); 70];
+        // SAFETY: `[MaybeUninit<T>; N]` is always sound to `assume_init` — every
+        // element is itself `MaybeUninit` and thus has no validity invariant.
+        let mut stack_ids: [MaybeUninit<ExternColumnIdentifier>; 70] =
+            unsafe { MaybeUninit::uninit().assume_init() };
         // lets de duplicate the fields early
         let mut non_duplicated_count = self.columns.len();
         for column in &self.columns {
-            if matches!(column.name_or_index, NameOrIndex::Duplicate) {
+            if matches!(column.name_or_index, ColumnIdentifier::Duplicate) {
                 non_duplicated_count -= 1;
             }
         }
 
-        let max_inline = JSObject::max_inline_capacity();
-        let mut heap_ids: Vec<ExternColumnIdentifier>;
-        let ids: &mut [ExternColumnIdentifier] = if non_duplicated_count <= max_inline {
+        let max_inline = JSObject::max_inline_capacity() as usize;
+        // PORT NOTE: see PostgresSQLStatement::structure for the same reshape.
+        let mut heap_ids: Vec<ExternColumnIdentifier> = Vec::new();
+        let ids: &mut [MaybeUninit<ExternColumnIdentifier>] = if non_duplicated_count <= max_inline {
             &mut stack_ids[..non_duplicated_count]
         } else {
-            heap_ids = vec![ExternColumnIdentifier::default(); non_duplicated_count];
-            &mut heap_ids[..]
+            heap_ids = Vec::with_capacity(non_duplicated_count);
+            // SAFETY: spare capacity treated as MaybeUninit; fully initialized below.
+            unsafe {
+                core::slice::from_raw_parts_mut(
+                    heap_ids.as_mut_ptr().cast::<MaybeUninit<ExternColumnIdentifier>>(),
+                    non_duplicated_count,
+                )
+            }
         };
 
         let mut i: usize = 0;
         for column in &self.columns {
-            if matches!(column.name_or_index, NameOrIndex::Duplicate) {
+            if matches!(column.name_or_index, ColumnIdentifier::Duplicate) {
                 continue;
             }
 
-            let id: &mut ExternColumnIdentifier = &mut ids[i];
+            let mut out = ExternColumnIdentifier::default();
             match &column.name_or_index {
-                NameOrIndex::Name(name) => {
-                    id.value.name = String::create_atom_if_possible(name.slice());
+                ColumnIdentifier::Name(name) => {
+                    out.value.name = ManuallyDrop::new(
+                        bun_string::String::create_atom_if_possible(name.slice()),
+                    );
                 }
-                NameOrIndex::Index(index) => {
-                    id.value.index = *index;
+                ColumnIdentifier::Index(index) => {
+                    out.value.index = *index;
                 }
-                NameOrIndex::Duplicate => unreachable!(),
+                ColumnIdentifier::Duplicate => unreachable!(),
             }
-
-            id.tag = match column.name_or_index {
-                NameOrIndex::Name(_) => 2,
-                NameOrIndex::Index(_) => 1,
-                NameOrIndex::Duplicate => 0,
+            out.tag = match column.name_or_index {
+                ColumnIdentifier::Name(_) => 2,
+                ColumnIdentifier::Index(_) => 1,
+                ColumnIdentifier::Duplicate => 0,
             };
-
+            ids[i].write(out);
             i += 1;
         }
 
+        // SAFETY: every element in ids[0..i] (== ids[..]) was written above.
+        let ids: &mut [ExternColumnIdentifier] =
+            unsafe { core::slice::from_raw_parts_mut(ids.as_mut_ptr().cast(), ids.len()) };
+
         if non_duplicated_count > max_inline {
-            // TODO(port): ownership transfer of heap `ids` to CachedStructure — Zig passes the
+            // SAFETY: `heap_ids` has capacity `non_duplicated_count` and every slot
+            // in [0..non_duplicated_count] was initialized in the loop above.
+            unsafe { heap_ids.set_len(non_duplicated_count) };
+            // Ownership transfer of heap `ids` to CachedStructure — Zig passes the
             // allocated slice and CachedStructure becomes responsible for freeing it.
-            self.cached_structure.set(global_object, None, Some(ids));
+            self.cached_structure
+                .set(global_object, None, Some(heap_ids.into_boxed_slice()));
         } else {
             self.cached_structure.set(
                 global_object,
@@ -235,7 +251,7 @@ impl MySQLStatement {
 
 impl Drop for MySQLStatement {
     fn drop(&mut self) {
-        bun_output::scoped_log!(MySQLStatement, "MySQLStatement deinit");
+        bun_core::scoped_log!(MySQLStatement, "MySQLStatement deinit");
         // Zig deinit body:
         //   - per-column deinit + free(columns)  → Vec<ColumnDefinition41> Drop
         //   - free(params)                       → Vec<Param> Drop
@@ -256,6 +272,6 @@ struct ParamUnused {
 // PORT STATUS
 //   source:     src/sql_jsc/mysql/MySQLStatement.zig (185 lines)
 //   confidence: medium
-//   todos:      4
-//   notes:      IntrusiveRc refcount; ExecutionFlags as bitflags w/ non-zero Default; StringHashMap key lifetime + CachedStructure ids ownership need Phase B review; structure() returns &CachedStructure instead of by-value.
+//   todos:      2
+//   notes:      IntrusiveRc refcount; ExecutionFlags as bitflags w/ non-zero Default; structure() returns &CachedStructure instead of by-value; DataCellFlags via bitflags insert().
 // ──────────────────────────────────────────────────────────────────────────

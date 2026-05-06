@@ -10,6 +10,12 @@ use core::fmt;
 pub mod nodejs_error_code;
 pub use nodejs_error_code::Code as ErrorCode;
 
+#[path = "node/assert/myers_diff.rs"]
+pub mod myers_diff_impl;
+pub mod assert {
+    pub use super::myers_diff_impl as myers_diff;
+}
+
 // ─── submodule re-exports ─────────────────────────────────────────────────
 // All `node/` subdir modules depend heavily on `bun_jsc` (currently broken
 // under concurrent B-2 work) — gated until the lower tier is green.

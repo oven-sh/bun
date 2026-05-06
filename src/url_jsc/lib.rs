@@ -30,25 +30,15 @@ pub fn url_from_js(
     }
     let owned = href.to_owned_slice().into_boxed_slice();
     href.deref();
-    // TODO(b2-blocked): bun_url::OwnedURL::from_href — `OwnedURL { href }` field
-    // is private; needs a pub bytes-ctor (mirror of `URL::from_string`'s tail).
-    #[cfg(any())]
-    {
-        return Ok(OwnedURL::from_href(owned));
-    }
-    #[allow(unreachable_code)]
-    {
-        let _ = owned;
-        todo!("b2-blocked: bun_url::OwnedURL::from_href")
-    }
+    Ok(OwnedURL::from_href(owned))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/url_jsc/url_jsc.zig (16 lines)
-//   confidence: medium
+//   confidence: high
 //   todos:      2
 //   notes:      allocator param dropped; return type OwnedURL (no 'static lie);
-//               bun_jsc now wired (JSValue/JSGlobalObject/href_from_js
-//               un-gated); body tail re-gated on bun_url::OwnedURL::from_href.
+//               bun_jsc wired (JSValue/JSGlobalObject/href_from_js); body
+//               fully un-gated via bun_url::OwnedURL::from_href.
 // ──────────────────────────────────────────────────────────────────────────

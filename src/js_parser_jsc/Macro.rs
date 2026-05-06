@@ -21,11 +21,8 @@ use bun_jsc::{
 use bun_jsc::VirtualMachine::VirtualMachine;
 use crate::expr_jsc::ExprJsc;
 // PORT NOTE: Zig referenced these via `bun.jsc.API.{BuildMessage,ResolveMessage}`.
-// The stub structs live in `bun_jsc`, but lack `JsClass` impls so
-// `value.as_::<ResolveMessage>()` cannot dispatch yet.
-// TODO(b2-blocked): bun_jsc::ResolveMessage (JsClass impl)
-// TODO(b2-blocked): bun_jsc::BuildMessage (JsClass impl)
-#[cfg(any())]
+// The stub structs live in `bun_jsc`; `JsClass` impls are still pending so
+// `value.as_::<ResolveMessage>()` (in `coerce`) remains gated.
 use bun_jsc::{BuildMessage, ResolveMessage};
 // TODO(b2-blocked): bun_resolver::Result (real fields — currently opaque stub)
 use bun_resolver::Result as ResolveResult;
@@ -414,13 +411,19 @@ pub struct Run<'a> {
 }
 
 impl<'a> Run<'a> {
+    // PORT NOTE: reshaped from by-value `Macro<'a>` + tied `'a` on every borrow
+    // to independent elided lifetimes. The body only ever stores `&macro_` in
+    // `Run`, and the tied form made the Bun__startMacro trampoline (which
+    // round-trips state through a `*mut c_void` threadlocal) inexpressible
+    // under borrowck. Phase B reviewers: diff against Macro.zig:run_async —
+    // semantics identical.
     pub fn run_async(
-        macro_: Macro<'a>,
-        log: &'a mut Log,
-        function_name: &'a [u8],
+        macro_: &Macro<'_>,
+        log: &mut Log,
+        function_name: &[u8],
         caller: Expr,
         args: &mut MarkedArgumentBuffer,
-        source: &'a Source,
+        source: &Source,
         id: i32,
     ) -> Result<Expr, MacroError> {
         // TODO(b2-blocked): bun_jsc::VirtualMachine::VirtualMachine (macros / global fields)
@@ -784,11 +787,6 @@ impl Runner {
         id: i32,
         javascript_object: JSValue,
     ) -> Result<Expr, MacroError> {
-        // TODO(b2-blocked): bun_jsc::VirtualMachine::VirtualMachine (global field)
-        // TODO(b2-blocked): bun_jsc::MarkedArgumentBuffer (owning ctor — current API is scoped-closure only)
-        // TODO(b2-blocked): bun_core::Output::prettyln
-        #[cfg(any())]
-        {
         if cfg!(debug_assertions) {
             Output::prettyln(format_args!(
                 "<r><d>[macro]<r> call <d><b>{}<r>",
@@ -796,99 +794,98 @@ impl Runner {
             ));
         }
 
-        EXCEPTION_HOLDER.with_borrow_mut(|h| *h = ZigException::Holder::init());
+        EXCEPTION_HOLDER.with_borrow_mut(|h| *h = zig_exception::Holder::init());
         // PORT NOTE: Zig used a heap `[]JSValue` + manual protect()/unprotect() to keep
         // arguments alive across `to_js` calls. In Rust we use MarkedArgumentBuffer, which
         // is registered with the VM as a GC root, so the protect/unprotect/free dance is
-        // subsumed by its Drop. Do NOT use Vec<JSValue> here — heap storage is not stack-scanned.
-        let mut js_args = MarkedArgumentBuffer::new();
+        // subsumed by its scope. Do NOT use Vec<JSValue> here — heap storage is not
+        // stack-scanned.
+        // PORT NOTE: reshaped for borrowck — `MarkedArgumentBuffer` has no owning
+        // constructor (the C++ type is non-movable), so the entire body runs inside
+        // the scoped `MarkedArgumentBuffer::new` closure.
+        MarkedArgumentBuffer::new(|js_args: &mut MarkedArgumentBuffer| -> Result<Expr, MacroError> {
+            let global_object = VirtualMachine::get().global();
 
-        let global_object = VirtualMachine::get().global;
-
-        match &caller.data {
-            js_ast::ExprData::ECall(call) => {
-                let call_args: &[Expr] = call.args.slice();
-                for in_ in call_args {
-                    let value = in_.to_js(global_object)?;
-                    js_args.append(value);
+            match &caller.data {
+                js_ast::ExprData::ECall(call) => {
+                    let call_args: &[Expr] = call.args.slice();
+                    for in_ in call_args {
+                        let value = in_.to_js(global_object)?;
+                        js_args.append(value);
+                    }
+                }
+                js_ast::ExprData::ETemplate(_) => {
+                    todo!("support template literals in macros");
+                }
+                _ => {
+                    panic!("Unexpected caller type");
                 }
             }
-            js_ast::ExprData::ETemplate(_) => {
-                todo!("support template literals in macros");
+
+            if !javascript_object.is_empty() {
+                js_args.append(javascript_object);
             }
-            _ => {
-                panic!("Unexpected caller type");
+
+            // TODO(port): Zig stashes the call args + result in threadlocals so the
+            // `extern "C" fn()` trampoline (no userdata) can reach them, then calls
+            // `Bun__startMacro(&call, global)`. Threadlocal `Result<Expr, MacroError>`
+            // and borrowed args don't fit `Cell`/`RefCell` cleanly; Phase B should
+            // either (a) change Bun__startMacro to take a `*mut c_void` userdata, or
+            // (b) box the state and round-trip through a threadlocal `*mut c_void`.
+            thread_local! {
+                static CALL_STATE: Cell<*mut c_void> = const { Cell::new(core::ptr::null_mut()) };
             }
-        }
 
-        if !javascript_object.is_empty() {
-            js_args.append(javascript_object);
-        }
+            struct CallData<'c> {
+                macro_: &'c Macro<'c>,
+                log: &'c mut Log,
+                function_name: &'c [u8],
+                caller: Expr,
+                js_args: &'c mut MarkedArgumentBuffer,
+                source: &'c Source,
+                id: i32,
+                result: Result<Expr, MacroError>,
+            }
 
-        // TODO(port): Zig stashes the call args + result in threadlocals so the
-        // `extern "C" fn()` trampoline (no userdata) can reach them, then calls
-        // `Bun__startMacro(&call, global)`. Threadlocal `Result<Expr, MacroError>`
-        // and borrowed args don't fit `Cell`/`RefCell` cleanly; Phase B should
-        // either (a) change Bun__startMacro to take a `*mut c_void` userdata, or
-        // (b) box the state and round-trip through a threadlocal `*mut c_void`.
-        thread_local! {
-            static CALL_STATE: Cell<*mut c_void> = const { Cell::new(core::ptr::null_mut()) };
-        }
-
-        struct CallData<'c> {
-            macro_: Macro<'c>,
-            log: &'c mut Log,
-            function_name: &'c [u8],
-            caller: Expr,
-            js_args: &'c mut MarkedArgumentBuffer,
-            source: &'c Source,
-            id: i32,
-            result: Result<Expr, MacroError>,
-        }
-
-        extern "C" fn call() {
-            CALL_STATE.with(|s| {
-                let state = unsafe {
+            extern "C" fn call() {
+                CALL_STATE.with(|s| {
                     // SAFETY: set immediately before Bun__startMacro below; cleared after.
-                    &mut *(s.get() as *mut CallData<'_>)
-                };
-                state.result = Run::run_async(
-                    state.macro_,
-                    state.log,
-                    state.function_name,
-                    state.caller,
-                    state.js_args,
-                    state.source,
-                    state.id,
+                    let state = unsafe { &mut *(s.get() as *mut CallData<'_>) };
+                    state.result = Run::run_async(
+                        state.macro_,
+                        state.log,
+                        state.function_name,
+                        state.caller,
+                        state.js_args,
+                        state.source,
+                        state.id,
+                    );
+                });
+            }
+
+            let mut data = CallData {
+                macro_: &macro_,
+                log,
+                function_name,
+                caller,
+                js_args,
+                source,
+                id,
+                result: Err(MacroError::MacroFailed),
+            };
+
+            jsc::mark_binding(core::panic::Location::caller());
+            CALL_STATE.with(|s| s.set(&mut data as *mut _ as *mut c_void));
+            unsafe {
+                // SAFETY: `call` only reads CALL_STATE which we just set; global is valid.
+                Bun__startMacro(
+                    call as *const c_void,
+                    VirtualMachine::get().global() as *const _ as *mut c_void,
                 );
-            });
-        }
-
-        let mut data = CallData {
-            macro_,
-            log,
-            function_name,
-            caller,
-            js_args: &mut js_args,
-            source,
-            id,
-            result: Err(MacroError::MacroFailed),
-        };
-
-        jsc::mark_binding(core::panic::Location::caller());
-        CALL_STATE.with(|s| s.set(&mut data as *mut _ as *mut c_void));
-        unsafe {
-            // SAFETY: `call` only reads CALL_STATE which we just set; global is valid.
-            Bun__startMacro(
-                call as *const c_void,
-                VirtualMachine::get().global as *const _ as *mut c_void,
-            );
-        }
-        CALL_STATE.with(|s| s.set(core::ptr::null_mut()));
-        return data.result;
-        }
-        let _ = (macro_, log, function_name, source, id, javascript_object);
-        Ok(caller)
+            }
+            CALL_STATE.with(|s| s.set(core::ptr::null_mut()));
+            data.result
+        })
     }
 }
 

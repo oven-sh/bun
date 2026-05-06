@@ -42,26 +42,21 @@ impl H2TestingAPIs {
     // TODO(port): once a `#[bun_jsc::host_fn]` proc-macro lands, annotate this so the
     // extern "C" thunk is emitted (currently no proc-macro crate exists).
     pub fn live_counts(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_http::h2_client — module is `#[cfg(any())]`-gated in bun_http/lib.rs
-            use bun_http::h2_client;
-            let obj = JSValue::create_empty_object(global, 2);
-            obj.put(
-                global,
-                b"sessions",
-                JSValue::js_number_from_uint64(h2_client::live_sessions.load(Ordering::Relaxed)),
-            );
-            obj.put(
-                global,
-                b"streams",
-                JSValue::js_number_from_uint64(h2_client::live_streams.load(Ordering::Relaxed)),
-            );
-            return Ok(obj);
-        }
-        // TODO(b2-blocked): bun_http::h2_client
-        let _ = global;
-        todo!("H2TestingAPIs::live_counts — blocked on bun_http::h2_client un-gate")
+        use bun_http::h2_client;
+        let obj = JSValue::create_empty_object(global, 2);
+        // PORT NOTE: Zig `.jsNumber(i32)` → `js_number_from_int32`; h2 atomics
+        // are `AtomicI32` (signed) so no widening.
+        obj.put(
+            global,
+            b"sessions",
+            JSValue::js_number_from_int32(h2_client::live_sessions.load(Ordering::Relaxed)),
+        );
+        obj.put(
+            global,
+            b"streams",
+            JSValue::js_number_from_int32(h2_client::live_streams.load(Ordering::Relaxed)),
+        );
+        Ok(obj)
     }
 }
 
@@ -74,26 +69,20 @@ impl H3TestingAPIs {
     // TODO(port): once a `#[bun_jsc::host_fn]` proc-macro lands, annotate this so the
     // extern "C" thunk is emitted (currently no proc-macro crate exists).
     pub fn quic_live_counts(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_http::h3_client — module is `#[cfg(any())]`-gated in bun_http/lib.rs
-            use bun_http::h3_client;
-            let obj = JSValue::create_empty_object(global, 2);
-            obj.put(
-                global,
-                b"sessions",
-                JSValue::js_number_from_uint64(h3_client::live_sessions.load(Ordering::Relaxed)),
-            );
-            obj.put(
-                global,
-                b"streams",
-                JSValue::js_number_from_uint64(h3_client::live_streams.load(Ordering::Relaxed)),
-            );
-            return Ok(obj);
-        }
-        // TODO(b2-blocked): bun_http::h3_client
-        let _ = global;
-        todo!("H3TestingAPIs::quic_live_counts — blocked on bun_http::h3_client un-gate")
+        use bun_http::h3_client;
+        let obj = JSValue::create_empty_object(global, 2);
+        // PORT NOTE: h3 atomics are `AtomicU32`; widen to u64 for `js_number_from_uint64`.
+        obj.put(
+            global,
+            b"sessions",
+            JSValue::js_number_from_uint64(u64::from(h3_client::live_sessions.load(Ordering::Relaxed))),
+        );
+        obj.put(
+            global,
+            b"streams",
+            JSValue::js_number_from_uint64(u64::from(h3_client::live_streams.load(Ordering::Relaxed))),
+        );
+        Ok(obj)
     }
 }
 

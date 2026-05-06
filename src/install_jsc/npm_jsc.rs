@@ -99,15 +99,11 @@ impl ManifestBindings {
         todo!("npm_jsc::ManifestBindings::generate — gated on bun_jsc::host_fn proc-macro")
     }
 
-    // TODO(b2-blocked): bun_install::npm::PackageManifest (stub is unit struct —
-    //   needs `name()`, `versions`, `string_buf`)
-    // TODO(b2-blocked): bun_sys::File::open_at / bun_sys::Fd::cwd
-    #[cfg(any())]
     pub fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         use std::io::Write as _;
         use bstr::BStr;
         use bun_jsc::JsError;
-        use bun_string::{strings, String as BunString, ZigString};
+        use bun_string::{strings, String as BunString};
         use bun_install::npm;
 
         let args = frame.arguments_old::<2>();
@@ -124,21 +120,29 @@ impl ManifestBindings {
         let registry_str = args[1].to_bun_string(global)?;
         let registry = registry_str.to_utf8();
 
-        // TODO(port): Zig used `std.fs.cwd().openFile`; replaced with bun_sys per
-        // §Allocators/FFI rules (std::fs banned). Verify exact bun_sys API in Phase B.
-        let manifest_file = match bun_sys::File::open_at(bun_sys::Fd::cwd(), manifest_filename.slice()) {
-            Ok(f) => f,
+        // PORT NOTE: Zig used `std.fs.cwd().openFile`; PORTING.md bans std::fs, so go
+        // through bun_sys (read-only open).
+        let manifest_file = match bun_sys::openat_a(
+            bun_sys::Fd::cwd(),
+            manifest_filename.slice(),
+            bun_sys::O::RDONLY,
+            0,
+        ) {
+            Ok(fd) => bun_sys::File::from_fd(fd),
             Err(err) => {
-                return global.throw(format_args!(
+                return Err(global.throw(format_args!(
                     "failed to open manifest file \"{}\": {}",
                     BStr::new(manifest_filename.slice()),
-                    err.name(),
-                ));
+                    BStr::new(err.name()),
+                )));
             }
         };
+        // `defer manifest_file.close()` — closed at fn return.
+        let manifest_file = scopeguard::guard(manifest_file, |f| { let _ = bun_sys::close(f.handle); });
 
-        // TODO(port): npm::registry::Scope / inline URL struct — field types borrow from
-        // `registry` slice; Phase B must reconcile lifetimes with the actual struct defs.
+        // PORT NOTE: stub `npm::registry::{Scope, Url}` borrow from `registry` slice;
+        // when the gated `npm.rs` un-gates, `Scope::url` becomes `bun_url::URL` and
+        // these field literals will need to switch types.
         let scope = npm::registry::Scope {
             url_hash: npm::registry::Scope::hash(strings::without_trailing_slash(registry.slice())),
             url: npm::registry::Url {
@@ -162,23 +166,25 @@ impl ManifestBindings {
             ..Default::default()
         };
 
-        // TODO(port): verify module path for PackageManifest::Serializer in bun_install
         let maybe_package_manifest = match npm::package_manifest::Serializer::load_by_file(
             &scope,
             // PORT NOTE: Zig wrapped std.fs.File via `bun.sys.File.from(...)`; we already
             // opened a bun_sys::File above, so pass directly.
-            manifest_file,
+            &*manifest_file,
         ) {
             Ok(m) => m,
             Err(err) => {
-                return global.throw(format_args!("failed to load manifest file: {}", err.name()));
+                return Err(global.throw(format_args!(
+                    "failed to load manifest file: {}",
+                    BStr::new(err.name())
+                )));
             }
         };
 
         let package_manifest: npm::PackageManifest = match maybe_package_manifest {
             Some(m) => m,
             None => {
-                return global.throw(format_args!("manifest is invalid "));
+                return Err(global.throw(format_args!("manifest is invalid ")));
             }
         };
 
@@ -186,33 +192,40 @@ impl ManifestBindings {
 
         // TODO: we can add more information. for now just versions is fine
 
-        write!(
-            &mut buf,
-            "{{\"name\":\"{}\",\"versions\":[",
-            BStr::new(package_manifest.name()),
-        )
-        .map_err(|_| JsError::OutOfMemory)?;
+        // TODO(b2-blocked): bun_install::npm::PackageManifest — stub exposes only
+        // `pkg: NpmPackage`; needs `name()`, `versions`, `string_buf` (gated `npm.rs`).
+        #[cfg(any())]
+        {
+            write!(
+                &mut buf,
+                "{{\"name\":\"{}\",\"versions\":[",
+                BStr::new(package_manifest.name()),
+            )
+            .map_err(|_| JsError::OutOfMemory)?;
 
-        for (i, version) in package_manifest.versions.iter().enumerate() {
-            if i == package_manifest.versions.len() - 1 {
-                write!(
-                    &mut buf,
-                    "\"{}\"]}}",
-                    version.fmt(package_manifest.string_buf),
-                )
-                .map_err(|_| JsError::OutOfMemory)?;
-            } else {
-                write!(
-                    &mut buf,
-                    "\"{}\",",
-                    version.fmt(package_manifest.string_buf),
-                )
-                .map_err(|_| JsError::OutOfMemory)?;
+            for (i, version) in package_manifest.versions.iter().enumerate() {
+                if i == package_manifest.versions.len() - 1 {
+                    write!(
+                        &mut buf,
+                        "\"{}\"]}}",
+                        version.fmt(&package_manifest.string_buf),
+                    )
+                    .map_err(|_| JsError::OutOfMemory)?;
+                } else {
+                    write!(
+                        &mut buf,
+                        "\"{}\",",
+                        version.fmt(&package_manifest.string_buf),
+                    )
+                    .map_err(|_| JsError::OutOfMemory)?;
+                }
             }
         }
+        #[cfg(not(any()))]
+        let _ = (&package_manifest, JsError::OutOfMemory);
 
-        let result = BunString::borrow_utf8(&buf);
-        result.to_js_by_parse_json(global)
+        let mut result = BunString::borrow_utf8(&buf);
+        bun_jsc::bun_string_jsc::to_js_by_parse_json(&mut result, global)
     }
 }
 

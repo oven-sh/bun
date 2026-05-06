@@ -13,6 +13,18 @@ mod shell_body;
 // ─── compiling submodules ────────────────────────────────────────────────────
 #[path = "util.rs"]
 pub mod util;
+#[path = "RefCountedStr.rs"]
+pub mod ref_counted_str;
+#[path = "EnvStr.rs"]
+pub mod env_str;
+#[path = "EnvMap.rs"]
+pub mod env_map;
+#[path = "AllocScope.rs"]
+pub mod alloc_scope;
+
+pub use env_map::EnvMap;
+pub use env_str::EnvStr;
+pub use ref_counted_str::RefCountedStr;
 
 pub const SUBSHELL_TODO_ERROR: &str =
     "Subshells are not implemented, please open GitHub issue!";
@@ -23,8 +35,6 @@ pub const SUBSHELL_TODO_ERROR: &str =
 // TODO(b2-blocked): bun_glob::GlobWalker
 pub struct Interpreter(());
 pub struct ParsedShellScript(());
-pub struct EnvMap(());
-pub struct EnvStr(());
 pub type ExitCode = u32;
 pub struct Subprocess(());
 

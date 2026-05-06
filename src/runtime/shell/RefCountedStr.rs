@@ -1,12 +1,10 @@
 use core::cell::Cell;
 use core::ptr;
 
-use bun_output;
-
-bun_output::declare_scope!(RefCountedEnvStr, hidden);
+bun_core::declare_scope!(RefCountedEnvStr, hidden);
 
 pub struct RefCountedStr {
-    refcount: Cell<u32>,
+    pub(super) refcount: Cell<u32>,
     len: u32,
     ptr: *const u8,
 }
@@ -16,7 +14,7 @@ impl RefCountedStr {
     // with `bun.default_allocator` and transfers ownership of it. In Rust we accept a
     // `Box<[u8]>` (global mimalloc) and decompose it into raw ptr+len to match field layout.
     pub fn init(slice: Box<[u8]>) -> *mut RefCountedStr {
-        bun_output::scoped_log!(RefCountedEnvStr, "init: {}", bstr::BStr::new(&*slice));
+        bun_core::scoped_log!(RefCountedEnvStr, "init: {}", bstr::BStr::new(&*slice));
         let len = u32::try_from(slice.len()).unwrap();
         let ptr = Box::into_raw(slice) as *const u8;
         // bun.handleOom(bun.default_allocator.create(...)) → Box::new (aborts on OOM)
@@ -57,7 +55,7 @@ impl RefCountedStr {
     unsafe fn deinit(this: *mut RefCountedStr) {
         // SAFETY: refcount just reached 0; `this` is uniquely owned and was Box-allocated in `init`.
         unsafe {
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 RefCountedEnvStr,
                 "deinit: {}",
                 bstr::BStr::new((*this).byte_slice())

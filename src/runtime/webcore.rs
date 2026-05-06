@@ -73,6 +73,9 @@ pub use crate::jsc::FetchHeaders;
 pub mod encoding_label;
 pub use encoding_label::EncodingLabel;
 
+#[path = "webcore/ScriptExecutionContext.rs"]
+pub mod script_execution_context;
+
 #[doc(hidden)]
 #[path = "webcore/s3/multipart_options.rs"]
 pub mod multipart_options_impl;

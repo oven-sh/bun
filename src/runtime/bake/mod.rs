@@ -34,6 +34,28 @@ pub struct SplitBundlerOptions(());
 pub struct StringRefList(());
 pub mod dev_server {
     pub struct DevServer(());
+    /// `DevServer.ConsoleLog.Kind` — `enum(u8) { log = 'l', err = 'e' }` (see
+    /// `src/runtime/bake/DevServer.zig`). Discriminants MUST match Zig because
+    /// `kind as u8` is sent across FFI to
+    /// `InspectorBunFrontendDevServerAgent__notifyConsoleLog`.
+    #[repr(u8)]
+    #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+    pub enum ConsoleLogKind {
+        Log = b'l',
+        Err = b'e',
+    }
+    pub mod route_bundle {
+        /// `DevServer.RouteBundle.Index` — `enum(i32) { _ }` newtype.
+        #[repr(transparent)]
+        #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+        pub struct Index(pub i32);
+        impl Index {
+            #[inline]
+            pub fn get(self) -> i32 {
+                self.0
+            }
+        }
+    }
 }
 pub mod framework_router {
     pub struct FrameworkRouter(());

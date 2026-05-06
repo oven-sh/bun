@@ -46,18 +46,8 @@ pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
 #[path = "mysql/MySQLContext.rs"]
 pub mod my_sql_context;
 
-// TODO(b2-blocked): bun_jsc::object::ExternColumnIdentifier
-// TODO(b2-blocked): bun_jsc::JSObject::{max_inline_capacity,create_structure}
-// TODO(b2-blocked): bun_output::{declare_scope!,scoped_log!}
-// TODO(b2-blocked): bun_string::String::create_atom_if_possible
-#[cfg(any())]
 #[path = "mysql/MySQLStatement.rs"]
 pub mod my_sql_statement;
-#[cfg(not(any()))]
-pub mod my_sql_statement {
-    pub struct MySQLStatement(());
-    pub use bun_sql::mysql::mysql_param::Param;
-}
 
 // TODO(b2-blocked): bun_output::{declare_scope!,scoped_log!}
 // TODO(b2-blocked): bun_core::feature_flag

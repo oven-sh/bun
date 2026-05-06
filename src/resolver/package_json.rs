@@ -1495,8 +1495,11 @@ pub struct ESModule<'a> {
 #[derive(Clone)]
 pub struct Resolution {
     pub status: Status,
-    // TODO(port): lifetime — points into threadlocal PathBuffer or input slices
-    pub path: &'static [u8],
+    // PORT NOTE: Zig returned slices into threadlocal PathBuffers / the package.json source
+    // buffer. In Rust the source-buffer case (`EntryData::String(Box<[u8]>)`) is owned by a
+    // possibly-temporary `Entry`, so borrowing would dangle. Copy out into an owned buffer.
+    // PERF(port): Phase B — thread a real `'a` lifetime once `EntryData::String` is `&'a [u8]`.
+    pub path: Box<[u8]>,
     pub debug: ResolutionDebug,
 }
 
@@ -1504,7 +1507,7 @@ impl Default for Resolution {
     fn default() -> Self {
         Resolution {
             status: Status::Undefined,
-            path: b"",
+            path: Box::default(),
             debug: ResolutionDebug::default(),
         }
     }
@@ -1791,8 +1794,10 @@ fn replace(input: &[u8], needle: &[u8], replacement: &[u8], output: &mut [u8]) -
 
 #[derive(Clone, Default)]
 pub struct ReverseResolution {
-    // TODO(port): lifetime — borrows threadlocal buffer or input
-    pub subpath: &'static [u8],
+    // PORT NOTE: Zig returned slices into threadlocal PathBuffers / the package.json source
+    // buffer. Copy out into an owned buffer (see `Resolution.path` note above).
+    // PERF(port): Phase B — thread a real `'a` lifetime once `EntryData::String` is `&'a [u8]`.
+    pub subpath: Box<[u8]>,
     pub token: logger::Range,
 }
 
@@ -1874,7 +1879,7 @@ impl<'a> ESModule<'a> {
         let resolved_path_buf_percent: &mut PathBuffer =
             unsafe { &mut (*module_bufs()).resolved_path_buf_percent };
         // TODO(port): std.io.fixedBufferStream + PercentEncoding.decode
-        let len = match bun_url::PercentEncoding::decode_into(&mut resolved_path_buf_percent.0, result.path) {
+        let len = match bun_url::PercentEncoding::decode_into(&mut resolved_path_buf_percent.0, &result.path) {
             Ok(n) => n,
             Err(_) => {
                 return Resolution {
@@ -1915,9 +1920,9 @@ impl<'a> ESModule<'a> {
             };
         }
 
-        // TODO(port): lifetime — resolved_path borrows threadlocal buffer
-        // SAFETY: resolved_path borrows the threadlocal resolved_path_buf_percent which lives for the thread lifetime
-        result.path = unsafe { core::mem::transmute::<&[u8], &'static [u8]>(resolved_path) };
+        // PORT NOTE: Zig returned a slice into the threadlocal resolved_path_buf_percent.
+        // Copy out — see `Resolution.path` note. PERF(port): avoid alloc in Phase B.
+        result.path = Box::<[u8]>::from(resolved_path);
         result
     }
 
@@ -2125,7 +2130,7 @@ impl<'a> ESModule<'a> {
                         dedent!();
 
                         return Resolution {
-                            path: tl_static(str),
+                            path: Box::<[u8]>::from(str),
                             status: Status::InvalidModuleSpecifier,
                             debug: ResolutionDebug { token: target.first_token, ..Default::default() },
                         };
@@ -2157,7 +2162,7 @@ impl<'a> ESModule<'a> {
                             }
                             dedent!();
                             return Resolution {
-                                path: tl_static(result),
+                                path: Box::<[u8]>::from(result),
                                 status: Status::PackageResolve,
                                 debug: ResolutionDebug { token: target.first_token, ..Default::default() },
                             };
@@ -2171,7 +2176,7 @@ impl<'a> ESModule<'a> {
                                     bstr::BStr::new(result)
                                 ));
                             }
-                            let path = tl_static(result);
+                            let path = Box::<[u8]>::from(result);
                             dedent!();
                             return Resolution {
                                 path,
@@ -2182,7 +2187,7 @@ impl<'a> ESModule<'a> {
                     }
                     dedent!();
                     return Resolution {
-                        path: tl_static(str),
+                        path: Box::<[u8]>::from(str),
                         status: Status::InvalidPackageTarget,
                         debug: ResolutionDebug { token: target.first_token, ..Default::default() },
                     };
@@ -2200,7 +2205,7 @@ impl<'a> ESModule<'a> {
                     }
                     dedent!();
                     return Resolution {
-                        path: tl_static(str),
+                        path: Box::<[u8]>::from(str),
                         status: Status::InvalidPackageTarget,
                         debug: ResolutionDebug { token: target.first_token, ..Default::default() },
                     };
@@ -2222,7 +2227,7 @@ impl<'a> ESModule<'a> {
                     }
                     dedent!();
                     return Resolution {
-                        path: tl_static(str),
+                        path: Box::<[u8]>::from(str),
                         status: Status::InvalidModuleSpecifier,
                         debug: ResolutionDebug { token: target.first_token, ..Default::default() },
                     };
@@ -2251,7 +2256,7 @@ impl<'a> ESModule<'a> {
                     };
                     dedent!();
                     return Resolution {
-                        path: tl_static(result),
+                        path: Box::<[u8]>::from(result),
                         status,
                         debug: ResolutionDebug { token: target.first_token, ..Default::default() },
                     };
@@ -2266,7 +2271,7 @@ impl<'a> ESModule<'a> {
                             bstr::BStr::new(result)
                         ));
                     }
-                    let path = tl_static(result);
+                    let path = Box::<[u8]>::from(result);
                     dedent!();
                     return Resolution {
                         path,
@@ -2360,7 +2365,7 @@ impl<'a> ESModule<'a> {
                     };
 
                     return Resolution {
-                        path: b"",
+                        path: Box::default(),
                         status: Status::UndefinedNoConditionsMatch,
                         debug: ResolutionDebug {
                             token: target.first_token,
@@ -2370,7 +2375,7 @@ impl<'a> ESModule<'a> {
                 }
 
                 return Resolution {
-                    path: b"",
+                    path: Box::default(),
                     status: Status::UndefinedNoConditionsMatch,
                     debug: ResolutionDebug { token: target.first_token, ..Default::default() },
                 };
@@ -2382,7 +2387,7 @@ impl<'a> ESModule<'a> {
                     }
 
                     return Resolution {
-                        path: b"",
+                        path: Box::default(),
                         status: Status::Null,
                         debug: ResolutionDebug { token: target.first_token, ..Default::default() },
                     };
@@ -2408,7 +2413,7 @@ impl<'a> ESModule<'a> {
                     return result;
                 }
 
-                return Resolution { path: b"", status: last_exception, debug: last_debug };
+                return Resolution { path: Box::default(), status: last_exception, debug: last_debug };
             }
             EntryData::Null => {
                 if let Some(log) = self.debug_logs.as_deref_mut() {
@@ -2416,7 +2421,7 @@ impl<'a> ESModule<'a> {
                 }
 
                 return Resolution {
-                    path: b"",
+                    path: Box::default(),
                     status: Status::Null,
                     debug: ResolutionDebug { token: target.first_token, ..Default::default() },
                 };
@@ -2499,7 +2504,7 @@ impl<'a> ESModule<'a> {
                 match kind {
                     ReverseKind::Exact => {
                         if strings::eql(query, str) {
-                            return Some(ReverseResolution { subpath: tl_static(str), token: target.first_token });
+                            return Some(ReverseResolution { subpath: Box::<[u8]>::from(str), token: target.first_token });
                         }
                     }
                     ReverseKind::Prefix => {
@@ -2513,7 +2518,7 @@ impl<'a> ESModule<'a> {
                                 buf_len - w.len()
                             };
                             return Some(ReverseResolution {
-                                subpath: tl_static(&buf[..n]),
+                                subpath: Box::<[u8]>::from(&buf[..n]),
                                 token: target.first_token,
                             });
                         }
@@ -2525,7 +2530,7 @@ impl<'a> ESModule<'a> {
                             // Handle the case of no "*"
                             if strings::eql(query, str) {
                                 return Some(ReverseResolution {
-                                    subpath: tl_static(key_without_trailing_star),
+                                    subpath: Box::<[u8]>::from(key_without_trailing_star),
                                     token: target.first_token,
                                 });
                             }
@@ -2549,7 +2554,7 @@ impl<'a> ESModule<'a> {
                                     buf_len - w.len()
                                 };
                                 return Some(ReverseResolution {
-                                    subpath: tl_static(&buf[..n]),
+                                    subpath: Box::<[u8]>::from(&buf[..n]),
                                     token: target.first_token,
                                 });
                             }
@@ -2588,14 +2593,6 @@ impl<'a> ESModule<'a> {
 
         None
     }
-}
-
-// TODO(port): lifetime — helper to launder threadlocal-buffer slices as 'static for Resolution.path.
-// Phase B: replace with proper lifetimes on Resolution / ReverseResolution.
-#[inline]
-fn tl_static(s: &[u8]) -> &'static [u8] {
-    // SAFETY: caller guarantees `s` borrows a threadlocal PathBuffer or long-lived source buffer
-    unsafe { core::mem::transmute::<&[u8], &'static [u8]>(s) }
 }
 
 fn find_invalid_segment(path_: &[u8]) -> Option<&[u8]> {
@@ -2642,5 +2639,5 @@ fn find_invalid_segment(path_: &[u8]) -> Option<&[u8]> {
 //   source:     src/resolver/package_json.zig (2186 lines)
 //   confidence: medium
 //   todos:      41
-//   notes:      Heavy use of threadlocal PathBuffer slices and source-buffer-borrowed strings; used &'static [u8] + tl_static() as placeholder — Phase B must add proper lifetimes. ESModule mutates module_type/debug_logs through &self (Zig *const) — needs Cell/&mut reshape. MultiArrayList column accessors stubbed.
+//   notes:      Heavy use of threadlocal PathBuffer slices and source-buffer-borrowed strings; Resolution.path / ReverseResolution.subpath are owned Box<[u8]> copies (PERF(port): Phase B should thread real lifetimes once EntryData::String is &'a [u8]). ESModule mutates module_type/debug_logs through &self (Zig *const) — needs Cell/&mut reshape. MultiArrayList column accessors stubbed.
 // ──────────────────────────────────────────────────────────────────────────

@@ -14,14 +14,10 @@ pub fn target_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Optio
     if !value.is_string() {
         return Err(global.throw_invalid_arguments(format_args!("target must be a string")));
     }
-    // TODO(port): ComptimeStringMap::from_js bridge (extension trait over phf::Map)
-    #[cfg(any())]
-    {
-        return options::Target::MAP.from_js(global, value);
-    }
-    // TODO(b2-blocked): bun_jsc::ComptimeStringMapExt::from_js
-    let _ = value;
-    unreachable!("b2-blocked: bun_jsc::ComptimeStringMapExt::from_js")
+    // PORT NOTE: `ComptimeStringMap.fromJS` inlined — checked `is_string()` above so
+    // `to_slice_or_null` (no coercion) is equivalent to `bun.String.fromJS` here.
+    let s = value.to_slice_or_null(global)?;
+    Ok(options::Target::MAP.get(s.slice()).copied())
 }
 
 pub fn format_from_js(global: &JSGlobalObject, format: JSValue) -> JsResult<Option<Format>> {
@@ -33,19 +29,15 @@ pub fn format_from_js(global: &JSGlobalObject, format: JSValue) -> JsResult<Opti
         return Err(global.throw_invalid_arguments(format_args!("format must be a string")));
     }
 
-    // TODO(port): ComptimeStringMap::from_js bridge (extension trait over phf::Map)
-    #[cfg(any())]
-    {
-        let Some(v) = Format::MAP.from_js(global, format)? else {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Invalid format - must be esm, cjs, or iife"
-            )));
-        };
-        return Ok(Some(v));
-    }
-    // TODO(b2-blocked): bun_jsc::ComptimeStringMapExt::from_js
-    let _ = format;
-    unreachable!("b2-blocked: bun_jsc::ComptimeStringMapExt::from_js")
+    // PORT NOTE: `ComptimeStringMap.fromJS` inlined — checked `is_string()` above so
+    // `to_slice_or_null` (no coercion) is equivalent to `bun.String.fromJS` here.
+    let s = format.to_slice_or_null(global)?;
+    let Some(v) = Format::MAP.get(s.slice()).copied() else {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Invalid format - must be esm, cjs, or iife"
+        )));
+    };
+    Ok(Some(v))
 }
 
 pub fn loader_from_js(global: &JSGlobalObject, loader: JSValue) -> JsResult<Option<options::Loader>> {
@@ -110,7 +102,7 @@ pub fn compile_target_from_slice(
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bundler_jsc/options_jsc.zig (70 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      Target/Format MAP.from_js needs ComptimeStringMap→phf extension trait in bun_jsc
+//   confidence: high
+//   todos:      0
+//   notes:      ComptimeStringMap.fromJS inlined as phf::Map::get over to_slice_or_null
 // ──────────────────────────────────────────────────────────────────────────

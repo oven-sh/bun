@@ -1,9 +1,10 @@
-use core::ffi::{c_char, c_uint};
+use core::ffi::{c_uint, CStr};
 
 use bun_alloc::AllocError;
 use bun_boringssl_sys as boringssl;
-use bun_jsc::JSGlobalObject;
 use bun_str::{self as bstr, strings, String as BunString, ZigString};
+
+use crate::jsc::JSGlobalObject;
 use enum_map::{Enum, EnumMap};
 use phf::phf_map;
 use strum::IntoStaticStr;
@@ -98,12 +99,38 @@ impl Algorithm {
         }
     }
 
+    /// NUL-terminated tag name, equivalent to Zig's `@tagName(algorithm)` (which yields
+    /// `[:0]const u8`). Needed for `EVP_get_digestbyname` which reads a C string.
+    pub fn tag_cstr(self) -> &'static CStr {
+        match self {
+            Algorithm::Blake2b256 => c"blake2b256",
+            Algorithm::Blake2b512 => c"blake2b512",
+            Algorithm::Blake2s256 => c"blake2s256",
+            Algorithm::Md4 => c"md4",
+            Algorithm::Md5 => c"md5",
+            Algorithm::Ripemd160 => c"ripemd160",
+            Algorithm::Sha1 => c"sha1",
+            Algorithm::Sha224 => c"sha224",
+            Algorithm::Sha256 => c"sha256",
+            Algorithm::Sha384 => c"sha384",
+            Algorithm::Sha512 => c"sha512",
+            Algorithm::Sha512_224 => c"sha512-224",
+            Algorithm::Sha512_256 => c"sha512-256",
+            Algorithm::Sha3_224 => c"sha3-224",
+            Algorithm::Sha3_256 => c"sha3-256",
+            Algorithm::Sha3_384 => c"sha3-384",
+            Algorithm::Sha3_512 => c"sha3-512",
+            Algorithm::Shake128 => c"shake128",
+            Algorithm::Shake256 => c"shake256",
+        }
+    }
+
     // TODO(port): Zig built this at comptime via a labeled block iterating EnumArray.
     // bun_str::String is not const-constructible; use a lazy static in Phase B.
     pub fn names() -> &'static EnumMap<Algorithm, BunString> {
         static NAMES: std::sync::OnceLock<EnumMap<Algorithm, BunString>> = std::sync::OnceLock::new();
         NAMES.get_or_init(|| {
-            EnumMap::from_fn(|key: Algorithm| BunString::init(<&'static str>::from(key)))
+            EnumMap::from_fn(|key: Algorithm| BunString::static_(<&'static str>::from(key).as_bytes()))
         })
     }
 
@@ -189,7 +216,7 @@ impl EVP {
         // SAFETY: input/output point to valid slices of the given lengths; outsize bounded by output.len().
         if unsafe {
             boringssl::EVP_Digest(
-                input.as_ptr(),
+                input.as_ptr().cast(),
                 input.len(),
                 output.as_mut_ptr(),
                 &mut outsize,
@@ -223,7 +250,7 @@ impl EVP {
         // initialized; input.as_ptr() is valid for input.len() bytes.
         unsafe {
             boringssl::ERR_clear_error();
-            let _ = boringssl::EVP_DigestUpdate(&mut self.ctx, input.as_ptr(), input.len());
+            let _ = boringssl::EVP_DigestUpdate(&mut self.ctx, input.as_ptr().cast(), input.len());
         }
     }
 
@@ -248,18 +275,28 @@ impl EVP {
     pub fn by_name_and_engine(engine: *mut boringssl::ENGINE, name: &[u8]) -> Option<EVP> {
         // TODO(port): phf custom hasher — Zig used getWithEql(name, eqlCaseInsensitiveASCIIIgnoreLength).
         // Phase B: either lowercase `name` before lookup or switch to a case-insensitive phf.
-        if let Some(&algorithm) = Algorithm::MAP.get(strings::to_lower_ascii_stack(name).as_ref()) {
+        // Stack-lowercase: longest key in MAP is 11 bytes ("sha-512/256" / "blake2b256");
+        // 32 is comfortable headroom.
+        let mut buf = [0u8; 32];
+        let lookup_key: &[u8] = if name.len() <= buf.len() {
+            for (i, &b) in name.iter().enumerate() {
+                buf[i] = b.to_ascii_lowercase();
+            }
+            &buf[..name.len()]
+        } else {
+            name
+        };
+        if let Some(&algorithm) = Algorithm::MAP.get(lookup_key) {
             if let Some(md) = algorithm.md() {
                 return Some(EVP::init(algorithm, md, engine));
             }
 
-            // TODO(port): @tagName in Zig yields a NUL-terminated slice; strum's &'static str is not.
-            // Phase B: provide Algorithm::tag_name_cstr() -> &'static CStr.
-            let tag: &'static str = algorithm.into();
+            // PORT NOTE: Zig's `@tagName(algorithm)` is `[:0]const u8` (NUL-terminated).
+            // strum's `<&'static str>::from(algorithm)` is NOT NUL-terminated, so use the
+            // explicit `tag_cstr()` table for the C-string FFI.
             // SAFETY: FFI into BoringSSL; EVP_get_digestbyname expects a NUL-terminated
-            // C string. See TODO above — strum's &'static str is NOT NUL-terminated, so this
-            // is currently unsound and must be fixed in Phase B.
-            let md = unsafe { boringssl::EVP_get_digestbyname(tag.as_ptr() as *const c_char) };
+            // C string, which `tag_cstr()` guarantees.
+            let md = unsafe { boringssl::EVP_get_digestbyname(algorithm.tag_cstr().as_ptr()) };
             if !md.is_null() {
                 return Some(EVP::init(algorithm, md, engine));
             }
@@ -269,8 +306,15 @@ impl EVP {
     }
 
     pub fn by_name(name: ZigString, global: &JSGlobalObject) -> Option<EVP> {
-        let name_str = name.to_slice();
-        Self::by_name_and_engine(global.bun_vm().rare_data().boring_engine(), name_str.slice())
+        #[cfg(any())]
+        {
+            let name_str = name.to_slice();
+            return Self::by_name_and_engine(global.bun_vm().rare_data().boring_engine(), name_str.slice());
+        }
+        // TODO(b2-blocked): bun_jsc::JSGlobalObject::bun_vm
+        // TODO(b2-blocked): bun_jsc::VirtualMachine::rare_data
+        let _ = (name, global);
+        None
     }
 }
 
@@ -286,8 +330,14 @@ impl Drop for EVP {
 }
 
 pub type Digest = [u8; boringssl::EVP_MAX_MD_SIZE as usize];
-pub use super::pbkdf2 as PBKDF2;
-pub use super::pbkdf2::pbkdf2;
+
+// PORT NOTE: Zig nests `PBKDF2`/`pbkdf2` inside the `EVP` struct; the
+// `crypto::EVP` re-export (module alias) lets `crypto::EVP::pbkdf2` resolve
+// through this module. The `pbkdf2` submodule is gated (blocked on bun_jsc
+// arg-parsing surface), so re-export the standalone helper from the parent
+// stub for now.
+// TODO(b2-blocked): bun_jsc — un-gate `super::pbkdf2` and swap to `pub use super::pbkdf2 as PBKDF2;`.
+pub use super::pbkdf2;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -683,8 +683,14 @@ impl Tag {
         }
 
         if strings::starts_with_windows_drive_letter_t(dependency)
-            // PORT NOTE: Zig `bun.path.isSepAny` — bun_paths re-export pending; inlined.
-            && matches!(dependency[2], b'/' | b'\\')
+            // PORT NOTE: Zig `std.fs.path.isSep` — platform-native separator only
+            // (`/` on POSIX, `/` or `\` on Windows). NOT `isSepAny`.
+            && {
+                #[cfg(windows)]
+                { matches!(dependency[2], b'/' | b'\\') }
+                #[cfg(not(windows))]
+                { dependency[2] == b'/' }
+            }
         {
             if is_tarball(dependency) {
                 return Tag::Tarball;

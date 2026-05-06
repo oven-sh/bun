@@ -1,19 +1,20 @@
 use core::cell::Cell;
-use core::mem::MaybeUninit;
+use core::mem::{ManuallyDrop, MaybeUninit};
 
 use bun_collections::StringHashMap;
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, JSObject};
-use bun_str::String;
+use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSObject, JSValue, JsResult};
 
 use crate::shared::cached_structure::CachedStructure as PostgresCachedStructure;
+use crate::shared::sql_data_cell::Flags as DataCellFlags;
+use crate::postgres::error_jsc::postgres_error_to_js;
 use crate::postgres::signature::Signature;
-use crate::postgres::data_cell::{self, SQLDataCell as DataCell};
 
+use bun_sql::postgres::any_postgres_error::AnyPostgresError;
 use bun_sql::postgres::postgres_protocol as protocol;
-use bun_sql::postgres::any_postgres_error::{AnyPostgresError, postgres_error_to_js};
 use bun_sql::postgres::postgres_types::int4;
+use bun_sql::shared::ColumnIdentifier;
 
-bun_output::declare_scope!(Postgres, visible);
+bun_core::declare_scope!(Postgres, visible);
 
 // `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive single-thread refcount.
 // Ported as an embedded `Cell<u32>` driven by `bun_ptr::IntrusiveRc<PostgresSQLStatement>`;
@@ -27,7 +28,7 @@ pub struct PostgresSQLStatement {
     pub status: Status,
     pub error_response: Option<Error>,
     pub needs_duplicate_check: bool,
-    pub fields_flags: data_cell::Flags,
+    pub fields_flags: DataCellFlags,
 }
 
 impl Default for PostgresSQLStatement {
@@ -43,7 +44,7 @@ impl Default for PostgresSQLStatement {
             status: Status::Pending,
             error_response: None,
             needs_duplicate_check: true,
-            fields_flags: data_cell::Flags::default(),
+            fields_flags: DataCellFlags::default(),
         }
     }
 }
@@ -59,8 +60,20 @@ impl Error {
 
     pub fn to_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
-            Error::Protocol(err) => err.to_js(global_object),
-            Error::PostgresError(err) => postgres_error_to_js(global_object, None, *err),
+            Error::Protocol(err) => {
+                #[cfg(any())]
+                {
+                    // TODO(b2-blocked): bun_sql::postgres::PostgresErrorOptions<'a>
+                    // (lifetime param) — error_response_jsc::to_js is gated on it.
+                    return Ok(crate::postgres::protocol::error_response_jsc::to_js(err, global_object));
+                }
+                #[cfg(not(any()))]
+                {
+                    let _ = err;
+                    unimplemented!("b2-blocked: error_response_jsc::to_js (PostgresErrorOptions<'a>)")
+                }
+            }
+            Error::PostgresError(err) => Ok(postgres_error_to_js(global_object, None, *err)),
         }
     }
 }
@@ -92,35 +105,41 @@ impl PostgresSQLStatement {
 
         // iterate backwards
         let mut remaining = self.fields.len();
-        let mut flags = data_cell::Flags::default();
+        let mut flags = DataCellFlags::default();
         while remaining > 0 {
             remaining -= 1;
             let field: &mut protocol::FieldDescription = &mut self.fields[remaining];
-            match &mut field.name_or_index {
-                protocol::NameOrIndex::Name(name) => {
-                    // TODO(port): Zig `getOrPut` keys on the borrowed slice; StringHashMap may
-                    // need an owned key here. Preserve the "found_existing" semantics.
-                    let seen = seen_fields.get_or_put(name.slice());
-                    if seen.found_existing {
-                        field.name_or_index = protocol::NameOrIndex::Duplicate;
-                        flags.has_duplicate_columns = true;
+            match &field.name_or_index {
+                ColumnIdentifier::Name(name) => {
+                    // PORT NOTE: reshaped for borrowck — compute `found_existing`
+                    // before mutating `field.name_or_index`.
+                    // TODO(port): Zig `getOrPut` keys on the borrowed slice;
+                    // StringHashMap clones to an owned `Box<[u8]>` key. Fine for
+                    // a transient dedup set; revisit if profiling flags it.
+                    let found_existing = seen_fields
+                        .get_or_put(name.slice())
+                        .expect("OOM")
+                        .found_existing;
+                    if found_existing {
+                        field.name_or_index = ColumnIdentifier::Duplicate;
+                        flags.insert(DataCellFlags::HAS_DUPLICATE_COLUMNS);
                     }
 
-                    flags.has_named_columns = true;
+                    flags.insert(DataCellFlags::HAS_NAMED_COLUMNS);
                 }
-                protocol::NameOrIndex::Index(index) => {
+                ColumnIdentifier::Index(index) => {
                     let index = *index;
-                    if seen_numbers.iter().position(|&n| n == index).is_some() {
-                        field.name_or_index = protocol::NameOrIndex::Duplicate;
-                        flags.has_duplicate_columns = true;
+                    if seen_numbers.iter().any(|&n| n == index) {
+                        field.name_or_index = ColumnIdentifier::Duplicate;
+                        flags.insert(DataCellFlags::HAS_DUPLICATE_COLUMNS);
                     } else {
                         seen_numbers.push(index);
                     }
 
-                    flags.has_indexed_columns = true;
+                    flags.insert(DataCellFlags::HAS_INDEXED_COLUMNS);
                 }
-                protocol::NameOrIndex::Duplicate => {
-                    flags.has_duplicate_columns = true;
+                ColumnIdentifier::Duplicate => {
+                    flags.insert(DataCellFlags::HAS_DUPLICATE_COLUMNS);
                 }
             }
         }
@@ -128,82 +147,89 @@ impl PostgresSQLStatement {
         self.fields_flags = flags;
     }
 
+    // PORT NOTE: Zig returns `CachedStructure` by value (struct copy). Returning
+    // `&CachedStructure` here to avoid moving out of `self` (CachedStructure owns
+    // a `Box<[ExternColumnIdentifier]>` and a `StrongOptional`, neither `Copy`).
     pub fn structure(
         &mut self,
         owner: JSValue,
         global_object: &JSGlobalObject,
-    ) -> PostgresCachedStructure {
+    ) -> &PostgresCachedStructure {
         if self.cached_structure.has() {
-            return self.cached_structure;
+            return &self.cached_structure;
         }
         self.check_for_duplicate_fields();
 
         // lets avoid most allocations
-        // SAFETY: ExternColumnIdentifier is #[repr(C)] POD; we only read indices we've written.
-        let mut stack_ids: [MaybeUninit<JSObject::ExternColumnIdentifier>; 70] =
+        // SAFETY: `[MaybeUninit<T>; N]` is always sound to `assume_init` — every
+        // element is itself `MaybeUninit` and thus has no validity invariant.
+        let mut stack_ids: [MaybeUninit<ExternColumnIdentifier>; 70] =
             unsafe { MaybeUninit::uninit().assume_init() };
         // lets de duplicate the fields early
         let mut non_duplicated_count = self.fields.len();
         for field in &self.fields {
-            if matches!(field.name_or_index, protocol::NameOrIndex::Duplicate) {
+            if matches!(field.name_or_index, ColumnIdentifier::Duplicate) {
                 non_duplicated_count -= 1;
             }
         }
 
-        let mut heap_ids: Vec<JSObject::ExternColumnIdentifier>;
-        let ids: &mut [MaybeUninit<JSObject::ExternColumnIdentifier>] =
-            if non_duplicated_count <= JSObject::max_inline_capacity() {
-                &mut stack_ids[0..non_duplicated_count]
-            } else {
-                heap_ids = Vec::with_capacity(non_duplicated_count);
-                // SAFETY: we treat the spare capacity as MaybeUninit and fully initialize
-                // [0..non_duplicated_count] below before any read.
-                unsafe { heap_ids.set_len(non_duplicated_count) };
-                // TODO(port): expose this as a proper boxed slice once ExternColumnIdentifier
-                // ownership is settled; Zig hands ownership to `cached_structure.set`.
-                // SAFETY: heap_ids has capacity == non_duplicated_count and len was set above;
-                // reinterpreting as [MaybeUninit<T>] is sound for any T.
-                unsafe {
-                    core::slice::from_raw_parts_mut(
-                        heap_ids.as_mut_ptr().cast::<MaybeUninit<JSObject::ExternColumnIdentifier>>(),
-                        non_duplicated_count,
-                    )
-                }
-            };
+        let max_inline = JSObject::max_inline_capacity() as usize;
+        // PORT NOTE: initialized to empty so the `> max_inline` branch below can
+        // unconditionally `into_boxed_slice()` it; in the `<= max_inline` branch
+        // it stays empty and is never read.
+        let mut heap_ids: Vec<ExternColumnIdentifier> = Vec::new();
+        let ids: &mut [MaybeUninit<ExternColumnIdentifier>] = if non_duplicated_count <= max_inline {
+            &mut stack_ids[0..non_duplicated_count]
+        } else {
+            heap_ids = Vec::with_capacity(non_duplicated_count);
+            // SAFETY: we treat the spare capacity as MaybeUninit and fully
+            // initialize [0..non_duplicated_count] below before any read.
+            unsafe {
+                core::slice::from_raw_parts_mut(
+                    heap_ids.as_mut_ptr().cast::<MaybeUninit<ExternColumnIdentifier>>(),
+                    non_duplicated_count,
+                )
+            }
+        };
 
         let mut i: usize = 0;
         for field in &self.fields {
-            if matches!(field.name_or_index, protocol::NameOrIndex::Duplicate) {
+            if matches!(field.name_or_index, ColumnIdentifier::Duplicate) {
                 continue;
             }
 
-            let id = &mut ids[i];
-            let mut out = JSObject::ExternColumnIdentifier::default();
+            let mut out = ExternColumnIdentifier::default();
             match &field.name_or_index {
-                protocol::NameOrIndex::Name(name) => {
-                    out.value.name = String::create_atom_if_possible(name.slice());
+                ColumnIdentifier::Name(name) => {
+                    out.value.name =
+                        ManuallyDrop::new(bun_string::String::create_atom_if_possible(name.slice()));
                 }
-                protocol::NameOrIndex::Index(index) => {
+                ColumnIdentifier::Index(index) => {
                     out.value.index = *index;
                 }
-                protocol::NameOrIndex::Duplicate => unreachable!(),
+                ColumnIdentifier::Duplicate => unreachable!(),
             }
             out.tag = match field.name_or_index {
-                protocol::NameOrIndex::Name(_) => 2,
-                protocol::NameOrIndex::Index(_) => 1,
-                protocol::NameOrIndex::Duplicate => 0,
+                ColumnIdentifier::Name(_) => 2,
+                ColumnIdentifier::Index(_) => 1,
+                ColumnIdentifier::Duplicate => 0,
             };
-            id.write(out);
+            ids[i].write(out);
             i += 1;
         }
 
         // SAFETY: every element in ids[0..i] (== ids[..]) was written above.
-        let ids: &mut [JSObject::ExternColumnIdentifier] = unsafe {
-            core::slice::from_raw_parts_mut(ids.as_mut_ptr().cast(), ids.len())
-        };
+        let ids: &mut [ExternColumnIdentifier] =
+            unsafe { core::slice::from_raw_parts_mut(ids.as_mut_ptr().cast(), ids.len()) };
 
-        if non_duplicated_count > JSObject::max_inline_capacity() {
-            self.cached_structure.set(global_object, None, Some(ids));
+        if non_duplicated_count > max_inline {
+            // SAFETY: `heap_ids` has capacity `non_duplicated_count` and every
+            // slot in [0..non_duplicated_count] was initialized in the loop above.
+            unsafe { heap_ids.set_len(non_duplicated_count) };
+            // Ownership transfer of heap `ids` to CachedStructure (Zig: cached_structure
+            // becomes responsible for freeing the alloc'd slice).
+            self.cached_structure
+                .set(global_object, None, Some(heap_ids.into_boxed_slice()));
         } else {
             self.cached_structure.set(
                 global_object,
@@ -217,13 +243,13 @@ impl PostgresSQLStatement {
             );
         }
 
-        self.cached_structure
+        &self.cached_structure
     }
 }
 
 impl Drop for PostgresSQLStatement {
     fn drop(&mut self) {
-        bun_output::scoped_log!(Postgres, "PostgresSQLStatement deinit");
+        bun_core::scoped_log!(Postgres, "PostgresSQLStatement deinit");
 
         debug_assert_eq!(self.ref_count.get(), 0, "ref_count.assertNoRefs()");
 
@@ -239,6 +265,6 @@ impl Drop for PostgresSQLStatement {
 // PORT STATUS
 //   source:     src/sql_jsc/postgres/PostgresSQLStatement.zig (182 lines)
 //   confidence: medium
-//   todos:      3
-//   notes:      IntrusiveRc owns dealloc; structure() heap-ids ownership handoff to cached_structure.set needs Phase B review
+//   todos:      2
+//   notes:      IntrusiveRc owns dealloc; structure() returns &CachedStructure (not by-value); Error::Protocol arm gated on PostgresErrorOptions<'a>; DataCellFlags via bitflags insert()
 // ──────────────────────────────────────────────────────────────────────────

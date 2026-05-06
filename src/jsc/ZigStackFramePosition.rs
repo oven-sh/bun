@@ -26,12 +26,9 @@ impl ZigStackFramePosition {
     }
 
     // TODO(port): narrow error set
-    // TODO(port): `reader: anytype` — bound by whatever trait provides `read_value::<i32>()`
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_analytics::Reader — schema reader trait not yet ported
     pub fn decode<R>(reader: &mut R) -> Result<Self, bun_core::Error>
     where
-        R: ?Sized, // TODO(port): add proper Reader trait bound
+        R: ?Sized + bun_analytics::Reader,
     {
         Ok(Self {
             line: Ordinal::from_zero_based(reader.read_value::<i32>()?),
@@ -42,12 +39,9 @@ impl ZigStackFramePosition {
         })
     }
 
-    // TODO(port): `writer: anytype` — bound by whatever trait provides `write_int(i32)`
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_analytics::Writer — schema writer trait not yet ported
     pub fn encode<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
     where
-        W: ?Sized, // TODO(port): add proper Writer trait bound
+        W: ?Sized + bun_analytics::Writer,
     {
         writer.write_int(self.line.zero_based())?;
         writer.write_int(self.column.zero_based())?;

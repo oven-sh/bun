@@ -1,11 +1,9 @@
 use core::cell::UnsafeCell;
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
-use std::sync::Arc;
 
 use bun_collections::bit_set::DynamicBitSet;
 use bun_collections::BabyList;
-use bun_core::pretty_fmt; // TODO(port): comptime ANSI tag expander macro (Output.prettyFmt)
 use bun_jsc::{bun_string_jsc, JSGlobalObject, JSValue, VM};
 use bun_logger::Loc;
 use bun_sourcemap::{
@@ -112,12 +110,15 @@ impl Report {
 // Report::deinit only freed owned containers; Rust drops Bitset/BabyList/Vec fields automatically.
 // Note: source_url is NOT freed, matching the Zig deinit (caller owns it).
 
-// TODO(b2-blocked): bun_io::Write — `text`/`lcov` formatters are written against a
-// byte-oriented `bun_io::Write` trait + `bun_io::Result` that the io crate has not
-// surfaced yet. The bodies are preserved verbatim for un-gating once that lands.
-#[cfg(any())]
 pub mod text {
     use super::*;
+    // PORT NOTE: Zig `Output.prettyFmt(fmt, comptime bool)` is a comptime string
+    // rewrite. The `pretty_fmt!` macro only accepts literal `true`/`false` today,
+    // so call the runtime rewriter for the `ENABLE_COLORS` const-generic sites.
+    // PERF(port): runtime `pretty_fmt` allocates a small Vec per call — profile in
+    // Phase B; if hot, hoist into `const` once the proc-macro lands.
+    use bun_core::output::pretty_fmt;
+    use bun_io::Write as _;
 
     pub fn write_format_with_values<const ENABLE_COLORS: bool>(
         filename: &[u8],
@@ -130,9 +131,9 @@ pub mod text {
     ) -> bun_io::Result<()> {
         if ENABLE_COLORS {
             if failed {
-                writer.write_all(pretty_fmt!("<r><b><red>", true).as_bytes())?;
+                writer.write_all(&pretty_fmt("<r><b><red>", true))?;
             } else {
-                writer.write_all(pretty_fmt!("<r><b><green>", true).as_bytes())?;
+                writer.write_all(&pretty_fmt("<r><b><green>", true))?;
             }
         }
 
@@ -141,40 +142,37 @@ pub mod text {
         }
 
         writer.write_all(filename)?;
-        // TODO(port): splatByteAll — write N spaces without intermediate allocation
-        write!(
-            writer,
-            "{:1$}",
-            "",
-            max_filename_length - filename.len() + usize::from(!indent_name)
+        writer.splat_byte_all(
+            b' ',
+            max_filename_length - filename.len() + usize::from(!indent_name),
         )?;
-        writer.write_all(pretty_fmt!("<r><d> | <r>", ENABLE_COLORS).as_bytes())?;
+        writer.write_all(&pretty_fmt("<r><d> | <r>", ENABLE_COLORS))?;
 
         if ENABLE_COLORS {
             if vals.functions < failing.functions {
-                writer.write_all(pretty_fmt!("<b><red>", true).as_bytes())?;
+                writer.write_all(&pretty_fmt("<b><red>", true))?;
             } else {
-                writer.write_all(pretty_fmt!("<b><green>", true).as_bytes())?;
+                writer.write_all(&pretty_fmt("<b><green>", true))?;
             }
         }
 
         write!(writer, "{:>7.2}", vals.functions * 100.0)?;
-        // writer.write_all(pretty_fmt!("<r><d> | <r>", ENABLE_COLORS).as_bytes())?;
+        // writer.write_all(&pretty_fmt("<r><d> | <r>", ENABLE_COLORS))?;
         // if ENABLE_COLORS {
         //     // if vals.stmts < failing.stmts {
-        //     writer.write_all(pretty_fmt!("<d>", true).as_bytes())?;
+        //     writer.write_all(&pretty_fmt("<d>", true))?;
         //     // } else {
-        //     //     writer.write_all(pretty_fmt!("<d>", true).as_bytes())?;
+        //     //     writer.write_all(&pretty_fmt("<d>", true))?;
         //     // }
         // }
         // write!(writer, "{:>8.2}", vals.stmts * 100.0)?;
-        writer.write_all(pretty_fmt!("<r><d> | <r>", ENABLE_COLORS).as_bytes())?;
+        writer.write_all(&pretty_fmt("<r><d> | <r>", ENABLE_COLORS))?;
 
         if ENABLE_COLORS {
             if vals.lines < failing.lines {
-                writer.write_all(pretty_fmt!("<b><red>", true).as_bytes())?;
+                writer.write_all(&pretty_fmt("<b><red>", true))?;
             } else {
-                writer.write_all(pretty_fmt!("<b><green>", true).as_bytes())?;
+                writer.write_all(&pretty_fmt("<b><green>", true))?;
             }
         }
 
@@ -202,7 +200,7 @@ pub mod text {
 
         let mut filename = report.source_url.slice();
         if !base_path.is_empty() {
-            filename = bun_paths::relative(base_path, filename);
+            filename = bun_paths::resolve_path::relative(base_path, filename);
         }
 
         write_format_with_values::<ENABLE_COLORS>(
@@ -215,18 +213,27 @@ pub mod text {
             true,
         )?;
 
-        writer.write_all(pretty_fmt!("<r><d> | <r>", ENABLE_COLORS).as_bytes())?;
+        writer.write_all(&pretty_fmt("<r><d> | <r>", ENABLE_COLORS))?;
 
-        let mut executable_lines_that_havent_been_executed = report.lines_which_have_executed.clone();
+        let mut executable_lines_that_havent_been_executed = report
+            .lines_which_have_executed
+            .clone()
+            .unwrap_or_else(|_| bun_alloc::out_of_memory());
         executable_lines_that_havent_been_executed.toggle_all();
 
         // This sets statements in executed scopes
         executable_lines_that_havent_been_executed.set_intersection(&report.executable_lines);
 
-        let mut iter = executable_lines_that_havent_been_executed.iter_set();
+        let mut iter = executable_lines_that_havent_been_executed.iterator::<true, true>();
         let mut start_of_line_range: usize = 0;
         let mut prev_line: usize = 0;
         let mut is_first = true;
+
+        // PORT NOTE: `concat!(pretty_fmt!(..), "{}")` requires a literal; split into a
+        // prefix `write_all` + plain `write!` so the const-generic `ENABLE_COLORS` can
+        // route through the runtime rewriter.
+        let red = pretty_fmt("<red>", ENABLE_COLORS);
+        let comma = pretty_fmt("<r><d>,<r>", ENABLE_COLORS);
 
         while let Some(next_line) = iter.next() {
             if next_line == (prev_line + 1) {
@@ -241,22 +248,15 @@ pub mod text {
             if is_first {
                 is_first = false;
             } else {
-                write!(writer, "{}", pretty_fmt!("<r><d>,<r>", ENABLE_COLORS))?;
+                writer.write_all(&comma)?;
             }
 
             if start_of_line_range == prev_line {
-                write!(
-                    writer,
-                    concat!(pretty_fmt!("<red>", ENABLE_COLORS), "{}"),
-                    start_of_line_range + 1
-                )?;
+                writer.write_all(&red)?;
+                write!(writer, "{}", start_of_line_range + 1)?;
             } else {
-                write!(
-                    writer,
-                    concat!(pretty_fmt!("<red>", ENABLE_COLORS), "{}-{}"),
-                    start_of_line_range + 1,
-                    prev_line + 1
-                )?;
+                writer.write_all(&red)?;
+                write!(writer, "{}-{}", start_of_line_range + 1, prev_line + 1)?;
             }
 
             prev_line = next_line;
@@ -270,32 +270,24 @@ pub mod text {
                     is_first = false;
                 }
             } else {
-                write!(writer, "{}", pretty_fmt!("<r><d>,<r>", ENABLE_COLORS))?;
+                writer.write_all(&comma)?;
             }
 
             if start_of_line_range == prev_line {
-                write!(
-                    writer,
-                    concat!(pretty_fmt!("<red>", ENABLE_COLORS), "{}"),
-                    start_of_line_range + 1
-                )?;
+                writer.write_all(&red)?;
+                write!(writer, "{}", start_of_line_range + 1)?;
             } else {
-                write!(
-                    writer,
-                    concat!(pretty_fmt!("<red>", ENABLE_COLORS), "{}-{}"),
-                    start_of_line_range + 1,
-                    prev_line + 1
-                )?;
+                writer.write_all(&red)?;
+                write!(writer, "{}-{}", start_of_line_range + 1, prev_line + 1)?;
             }
         }
         Ok(())
     }
 }
 
-// TODO(b2-blocked): bun_io::Write
-#[cfg(any())]
 pub mod lcov {
     use super::*;
+    use bun_io::Write as _;
 
     pub fn write_format(
         report: &Report,
@@ -304,7 +296,7 @@ pub mod lcov {
     ) -> bun_io::Result<()> {
         let mut filename = report.source_url.slice();
         if !base_path.is_empty() {
-            filename = bun_paths::relative(base_path, filename);
+            filename = bun_paths::resolve_path::relative(base_path, filename);
         }
 
         // TN: test name
@@ -326,15 +318,16 @@ pub mod lcov {
 
         // ** Track all executable lines **
         // Executable lines that were not hit should be marked as 0
-        let executable_lines = report.executable_lines.clone();
-        let iter = executable_lines.iter_set();
+        // PORT NOTE: Zig cloned the bitset before iterating; `DynamicBitSet::iterator`
+        // borrows `&self` so the clone is unnecessary.
+        let mut iter = report.executable_lines.iterator::<true, true>();
 
         // ** Branch coverage not supported yet, since JSC does not support those yet. ** //
         // BRDA: line, block, (expressions,count)+
         // BRF: branches found
         // BRH: branches hit
         let line_hits = report.line_hits.slice();
-        for line in iter {
+        while let Some(line) = iter.next() {
             // DA: line number, hit count
             write!(writer, "DA:{},{}\n", line + 1, line_hits[line])?;
         }
@@ -476,19 +469,22 @@ impl ByteRangeMapping {
 
         let mut executable_lines: Bitset = Bitset::default();
         let mut lines_which_have_executed: Bitset = Bitset::default();
-        // TODO(b2-blocked): bun_jsc::SavedSourceMap::get — stub `SavedSourceMap` (and
-        // stub `VirtualMachine.source_mappings`) have no `get(&[u8]) -> Option<Arc<_>>`
-        // yet; the lookup is re-gated to `None` so the rest of this body type-checks
-        // against the real `bun_sourcemap`/`bun_collections` surface today.
-        #[cfg(any())]
-        let parsed_mappings_: Option<Arc<ParsedSourceMap>> =
-            bun_jsc::VirtualMachine::get().source_mappings().get(source_url.slice());
-        #[cfg(not(any()))]
-        let parsed_mappings_: Option<Arc<ParsedSourceMap>> = {
-            let _ = source_url.slice();
-            None
-        };
-        // `parsed_mappings_` is refcounted; Drop on the Arc handles deref().
+        // PORT NOTE: `SavedSourceMap::get` returns `Option<*mut ParsedSourceMap>` with a
+        // +1 intrusive ref (Zig: `defer if (parsed_mappings_) |p| p.deref()`).
+        let parsed_mappings_: Option<*mut ParsedSourceMap> =
+            bun_jsc::VirtualMachine::VirtualMachine::get()
+                .source_mappings()
+                .get(source_url.slice());
+        // TODO(port): `ParsedSourceMap` is intrusively refcounted (`ref_count: AtomicU32`)
+        // but does not yet impl `bun_ptr::AnyRefCounted`; once it does, wrap in
+        // `RefPtr::from_raw` so the +1 from `get()` is released on scope exit.
+        let _parsed_mappings_guard = scopeguard::guard(parsed_mappings_, |p| {
+            if let Some(_ptr) = p {
+                // TODO(b2-blocked): bun_sourcemap::ParsedSourceMap::deref — intrusive
+                // ref-count release; stub `SavedSourceMap::get` returns `None` today so
+                // this is unreachable until the real impl un-gates.
+            }
+        });
         let mut line_hits = LinesHits::default();
 
         let mut functions: Vec<Block> = Vec::new();
@@ -600,7 +596,11 @@ impl ByteRangeMapping {
                     functions_which_have_executed.set(i);
                 }
             }
-        } else if let Some(parsed_mapping) = parsed_mappings_.as_deref() {
+        } else if let Some(parsed_mapping) =
+            // SAFETY: pointer was returned by `SavedSourceMap::get` with a +1 ref and
+            // is valid until the guard above releases it at scope exit.
+            parsed_mappings_.map(|p| unsafe { &*p })
+        {
             line_count = (parsed_mapping.input_line_count as u32) + 1;
             executable_lines = Bitset::init_empty(line_count as usize)?;
             lines_which_have_executed = Bitset::init_empty(line_count as usize)?;
@@ -854,10 +854,6 @@ pub extern "C" fn ByteRangeMapping__findExecutedLines(
     // PORT NOTE: std.Io.Writer.Allocating → Vec<u8> byte buffer (bun_io::Write target).
     let mut buf: Vec<u8> = Vec::new();
 
-    // TODO(b2-blocked): bun_io::Write — `text::write_format::<false>` is gated on the
-    // byte-oriented `bun_io::Write` trait; re-gate just this call so the rest of the
-    // body type-checks against real `bun_jsc`/`bun_sourcemap` surface.
-    #[cfg(any())]
     if text::write_format::<false>(
         &report,
         source_url.utf8_byte_length(),
@@ -869,7 +865,6 @@ pub extern "C" fn ByteRangeMapping__findExecutedLines(
     {
         return global_this.throw_out_of_memory_value();
     }
-    let _ = (&report, source_url.utf8_byte_length(), &mut coverage_fraction);
 
     // flush is a no-op for Vec<u8> writer.
 
@@ -906,11 +901,12 @@ pub struct Block {
 // PORT STATUS
 //   source:     src/sourcemap_jsc/CodeCoverage.zig (741 lines)
 //   confidence: medium
-//   todos:      4 (text/lcov mods + 2 narrow re-gates)
-//   notes:      generate_report_from_blocks/findExecutedLines bodies un-gated and
-//               type-check against real bun_sourcemap/bun_collections; only the
-//               SavedSourceMap lookup and text::write_format call remain gated.
-//               text/lcov writers stay gated on bun_io::Write (also need
-//               DynamicBitSet::iter_set + const-generic-bool pretty_fmt!).
-//               threadlocal map uses Box owned by thread-local (no leak).
+//   todos:      0 cfg-gates; 1 deref TODO (ParsedSourceMap intrusive refcount release)
+//   notes:      All four prior gates un-gated. text/lcov writers compile against
+//               bun_io::Write; const-generic ENABLE_COLORS routes through runtime
+//               `bun_core::output::pretty_fmt` (PERF(port) — revisit once proc-macro
+//               lands). DynamicBitSet iteration via `iterator::<true,true>()`.
+//               SavedSourceMap lookup wired to stub `bun_jsc::VirtualMachine::
+//               source_mappings().get()`. threadlocal map uses Box owned by
+//               thread-local (no leak).
 // ──────────────────────────────────────────────────────────────────────────

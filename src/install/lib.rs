@@ -1347,12 +1347,20 @@ impl<'a> fmt::Display for StorePathFormatter<'a> {
         //     return;
         // }
 
-        for &c in self.str {
-            match c {
-                b'/' => f.write_str("+")?,
-                b'\\' => f.write_str("+")?,
-                _ => write!(f, "{}", bstr::BStr::new(core::slice::from_ref(&c)))?,
+        use bstr::ByteSlice as _;
+        // Walk in maximal runs between separators so multi-byte UTF-8 sequences
+        // are emitted intact (Zig's `writer.writeByte(c)` writes raw bytes; emitting
+        // each byte individually through bstr::BStr would hex-escape continuation bytes).
+        let mut rest = self.str;
+        while let Some(i) = rest.iter().position(|&c| c == b'/' || c == b'\\') {
+            if i > 0 {
+                f.write_str(&bstr::BStr::new(&rest[..i]).to_str_lossy())?;
             }
+            f.write_str("+")?;
+            rest = &rest[i + 1..];
+        }
+        if !rest.is_empty() {
+            f.write_str(&bstr::BStr::new(rest).to_str_lossy())?;
         }
         Ok(())
     }

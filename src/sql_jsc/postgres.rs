@@ -65,16 +65,8 @@ pub mod command_tag_jsc;
 #[path = "postgres/error_jsc.rs"]
 pub mod error_jsc;
 
-// TODO(b2-blocked): bun_jsc::JsResult + bun_jsc::JSObject::{ExternColumnIdentifier,max_inline_capacity,create_structure}
-// TODO(b2-blocked): bun_output::{declare_scope!,scoped_log!}
-// TODO(b2-blocked): bun_collections::StringHashMap::get_or_put
-#[cfg(any())]
 #[path = "postgres/PostgresSQLStatement.rs"]
 pub mod postgres_sql_statement;
-#[cfg(not(any()))]
-pub mod postgres_sql_statement {
-    pub struct PostgresSQLStatement(());
-}
 pub use postgres_sql_statement::PostgresSQLStatement;
 
 // TODO(b2-blocked): bun_jsc::host_fn proc-macro + JSValue/CallFrame method surface
@@ -117,18 +109,12 @@ pub mod types {
     #[path = "bool.rs"]
     pub mod r#bool;
 
-    // TODO(b2-blocked): bun_jsc::JSValue::create_buffer (needs `&mut [u8]`;
-    // `Data::slice()` is `&[u8]` — ownership transfer reshape pending)
-    #[cfg(any())]
     #[path = "bytea.rs"]
     pub mod bytea;
 
     #[path = "date.rs"]
     pub mod date;
 
-    // TODO(b2-blocked): bun_jsc::JSValue::parse signature mismatch + upstream
-    // Zig body looks broken (`.AnyPostgresError()` on a JSValue)
-    #[cfg(any())]
     #[path = "json.rs"]
     pub mod json;
 
@@ -148,10 +134,6 @@ pub mod protocol {
     #[path = "error_response_jsc.rs"]
     pub mod error_response_jsc;
 
-    // TODO(b2-blocked): bun_core::StringBuilder
-    // TODO(b2-blocked): bun_string::ZigString::to_js
-    // TODO(b2-blocked): bun_sql::postgres::protocol::NoticeResponse
-    #[cfg(any())]
     #[path = "notice_response_jsc.rs"]
     pub mod notice_response_jsc;
 }

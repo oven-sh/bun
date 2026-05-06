@@ -168,7 +168,9 @@ impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY
         L::line_eq::<CHECK_COMMA_DISPARITY>(a, b)
     }
 
-    pub type LineType = L;
+    // PORT NOTE: Zig `pub const LineType = L;` would be an inherent associated
+    // type in Rust, which is unstable (rust#8995). Dropped — callers spell `L`
+    // directly via the `Differ<L, ..>` generic param.
 
     /// Compute the shortest edit path (diff) between two sets of lines.
     ///

@@ -9,9 +9,9 @@
 
 use core::ffi::c_void;
 
-use crate::interpreter::RefCountedStr;
+use super::ref_counted_str::RefCountedStr;
 
-bun_output::declare_scope!(EnvStr, hidden);
+bun_core::declare_scope!(EnvStrLog, hidden);
 
 /// Packed `u128` layout (Zig `packed struct(u128)`, LSB-first):
 /// - bits  0..48  : `ptr` (u48)
@@ -104,17 +104,23 @@ impl EnvStr {
 
         // PORT NOTE: Zig left `len` defaulted to 0 here (only `ptr` + `tag` set); the slice
         // length is recovered via RefCountedStr::byte_slice(). Preserve that.
+        // PORT NOTE: Zig handed the borrowed slice to RefCountedStr which assumed ownership
+        // of its backing allocation. Rust cannot transfer ownership through `&[u8]`, so we
+        // dupe here; Phase B should revisit `init_ref_counted`'s ownership contract (likely
+        // change the param to `Box<[u8]>`).
         Self::pack(
-            to_ptr(RefCountedStr::init(str) as *const c_void),
+            to_ptr(RefCountedStr::init(Box::<[u8]>::from(str)) as *const c_void),
             Tag::Refcounted,
             0,
         )
     }
 
-    pub fn slice(self) -> &[u8] {
-        // TODO(port): lifetime — the returned slice borrows either external memory (Tag::Slice)
-        // or the RefCountedStr buffer; neither is tied to `self` (which is Copy). Phase B should
-        // decide whether to return `*const [u8]` or thread a lifetime.
+    pub fn slice(&self) -> &[u8] {
+        // PORT NOTE: the returned slice borrows either external memory (Tag::Slice) or the
+        // RefCountedStr buffer. Tying the return lifetime to `&self` prevents the caller from
+        // conjuring `&'static [u8]` (PORTING.md §Forbidden: lifetime-extension via raw-pointer
+        // deref). `EnvStr` is still `Copy`, so this is a best-effort bound — the caller is
+        // responsible for keeping the backing storage alive (same contract as Zig's `slice()`).
         match self.tag() {
             Tag::Empty => b"",
             Tag::Slice => self.cast_slice(),
@@ -130,7 +136,7 @@ impl EnvStr {
         let divisor: usize = 'brk: {
             if let Some(refc) = self.as_ref_counted() {
                 // SAFETY: as_ref_counted returned a live *mut RefCountedStr
-                break 'brk unsafe { (*refc).refcount } as usize;
+                break 'brk unsafe { (*refc).refcount.get() } as usize;
             }
             break 'brk 1;
         };
@@ -154,7 +160,7 @@ impl EnvStr {
     pub fn deref(self) {
         if let Some(refc) = self.as_ref_counted() {
             // SAFETY: as_ref_counted returned a live *mut RefCountedStr
-            unsafe { (*refc).deref() };
+            unsafe { RefCountedStr::deref(refc) };
         }
     }
 
@@ -167,9 +173,10 @@ impl EnvStr {
     }
 
     #[inline]
-    fn cast_slice(self) -> &[u8] {
+    fn cast_slice(&self) -> &[u8] {
         // SAFETY: tag == Slice guarantees `ptr` was derived from a valid `[*]const u8` of
         // length `len` whose lifetime is managed elsewhere (caller contract of init_slice).
+        // The returned borrow is tied to `&self` so callers cannot pick `'static`.
         // TODO(port): strict-provenance — ptr was round-tripped through an integer.
         unsafe { core::slice::from_raw_parts(self.ptr() as usize as *const u8, self.len()) }
     }

@@ -51,7 +51,6 @@ pub mod any_request_context;
 #[cfg(any())]
 #[path = "RequestContext.rs"]
 pub mod request_context;
-#[cfg(any())]
 #[path = "InspectorBunFrontendDevServerAgent.rs"]
 pub mod inspector_bun_frontend_dev_server_agent;
 

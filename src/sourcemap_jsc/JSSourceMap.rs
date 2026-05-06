@@ -75,9 +75,12 @@ fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 
     let source_url = source_url_slice.slice();
 
-    // TODO(b2-blocked): bun_jsc::SavedSourceMap::get — stub `SavedSourceMap` has no
-    // `get(&[u8]) -> Option<Arc<ParsedSourceMap>>` yet.
-    // TODO(b2-blocked): bun_jsc::JsClass — `to_js` codegen accessor.
+    // TODO(b2-blocked): bun_jsc::JsClass — `to_js` codegen accessor not yet emitted by
+    // generate-classes.ts for Rust. The `SavedSourceMap` lookup itself now type-checks
+    // (`bun_jsc::VirtualMachine::source_mappings().get(&[u8]) -> Option<*mut ParsedSourceMap>`),
+    // but `JSSourceMap.sourcemap` is currently `Arc<ParsedSourceMap>` whereas the
+    // intrusive-refcount contract returns `*mut ParsedSourceMap`; reconciling that
+    // (likely `bun_ptr::RefPtr<ParsedSourceMap>`) is the same Phase-B JsClass pass.
     #[cfg(any())]
     {
         let vm = global.bun_vm();

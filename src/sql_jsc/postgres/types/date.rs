@@ -24,18 +24,9 @@ pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<i64> 
     } else if value.is_number() {
         value.as_number()
     } else if value.is_string() {
-        // Zig: `catch @panic("unreachable")` → .expect; `defer str.deref()` → Drop on bun_str::String.
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_string::String::parse_date (jsc-side ext method)
-            let str = value.to_bun_string(global_object).expect("unreachable");
-            str.parse_date(global_object)?
-        }
-        #[cfg(not(any()))]
-        {
-            let _ = value.to_bun_string(global_object);
-            unimplemented!("b2-blocked: bun_string::String::parse_date")
-        }
+        // Zig: `catch @panic("unreachable")` → .expect; `defer str.deref()` → Drop on bun_string::String.
+        let mut str = value.to_bun_string(global_object).expect("unreachable");
+        crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)?
     } else {
         return Ok(0);
     };

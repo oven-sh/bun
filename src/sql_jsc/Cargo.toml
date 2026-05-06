@@ -28,7 +28,11 @@ bun_collections.workspace = true
 # bun_jsc.workspace = true
 bun_ptr.workspace = true
 bun_sha_hmac.workspace = true
-bun_runtime.workspace = true
+# TODO(b2-blocked): bun_runtime fails to compile (concurrent B-2 work —
+# `strings::to_lower_ascii_stack` missing in EVP.rs). The only consumer here
+# is `postgres::sasl::SASL::compute_salted_password` (PBKDF2), whose body is
+# gated until bun_runtime is green again.
+# bun_runtime.workspace = true
 bun_sql.workspace = true
 bun_string.workspace = true
 bun_uws.workspace = true

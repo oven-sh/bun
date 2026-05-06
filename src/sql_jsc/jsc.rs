@@ -92,6 +92,7 @@ impl JSValue {
         (self.0 & NUMBER_TAG) != 0
     }
     pub fn is_any_int(self) -> bool { unimplemented!("b2-blocked: bun_jsc::JSValue::is_any_int") }
+    pub fn is_any_error(self) -> bool { unimplemented!("b2-blocked: bun_jsc::JSValue::is_any_error") }
     pub fn is_string(self) -> bool { self.is_cell() && self.js_type().is_string_like() }
     pub fn is_date(self) -> bool { self.is_cell() && self.js_type() == JSType::JSDate }
 
@@ -110,6 +111,16 @@ impl JSValue {
     }
     pub fn create_buffer(global: &JSGlobalObject, slice: &mut [u8]) -> JSValue {
         unimplemented!("b2-blocked: bun_jsc::JSValue::create_buffer")
+    }
+    /// `JSValue.createBuffer(global, slice, null)` — Zig passes a `[]const u8` and
+    /// `null` allocator, meaning the C++ side copies. The owning variant above takes
+    /// `&mut [u8]`; this is the copying overload (mirrors `array_buffer::create_buffer`).
+    pub fn create_buffer_copy(global: &JSGlobalObject, slice: &[u8]) -> JSValue {
+        unimplemented!("b2-blocked: bun_jsc::array_buffer::create_buffer (copying)")
+    }
+    /// `JSValue.parse(jsString, global)` — wraps `JSC__JSValue__parseJSON`.
+    pub fn parse_json(string: JSValue, global: &JSGlobalObject) -> JSValue {
+        unimplemented!("b2-blocked: bun_jsc::JSValue::parse (JSON)")
     }
     pub fn from_date_string(global: &JSGlobalObject, s: *const core::ffi::c_char) -> JSValue {
         unimplemented!("b2-blocked: bun_jsc::JSValue::from_date_string")
@@ -173,6 +184,35 @@ impl JSGlobalObject {
     pub fn ERR_INVALID_ARG_TYPE(&self, args: core::fmt::Arguments<'_>) -> JSValue {
         let _ = args; unimplemented!("b2-blocked: bun_jsc::JSGlobalObject::ERR_INVALID_ARG_TYPE")
     }
+    /// `globalThis.bunVM()` — returns the per-thread Bun VirtualMachine.
+    pub fn bun_vm(&self) -> &mut VirtualMachine {
+        unimplemented!("b2-blocked: bun_jsc::JSGlobalObject::bun_vm")
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// VirtualMachine / RareData (subset; mirrors src/jsc/VirtualMachine.rs +
+// src/jsc/rare_data.rs). Only the SQL-touching fields are surfaced here so
+// `MySQLContext::init` / `PostgresSQLContext::init` type-check.
+// ──────────────────────────────────────────────────────────────────────────
+
+pub struct VirtualMachine {
+    _opaque: [u8; 0],
+    _m: PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+}
+impl VirtualMachine {
+    pub fn rare_data(&mut self) -> &mut RareData {
+        unimplemented!("b2-blocked: bun_jsc::VirtualMachine::rare_data")
+    }
+    pub fn global(&self) -> &JSGlobalObject {
+        unimplemented!("b2-blocked: bun_jsc::VirtualMachine::global")
+    }
+}
+
+/// Mirrors `bun_jsc::rare_data::RareData` — only SQL fields surfaced.
+pub struct RareData {
+    pub mysql_context: crate::mysql::MySQLContext,
+    pub postgresql_context: crate::postgres::PostgresSQLContext,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -195,6 +235,16 @@ impl JSObject {
     }
     pub fn max_inline_capacity() -> core::ffi::c_uint {
         unimplemented!("b2-blocked: bun_jsc::JSObject::max_inline_capacity")
+    }
+    /// `JSC.JSObject.createStructure` — wraps `JSC__createStructure` (mirrors
+    /// src/jsc/JSObject.rs:153 / src/jsc/lib.rs:1308).
+    pub fn create_structure(
+        global: &JSGlobalObject,
+        owner: JSValue,
+        length: u32,
+        names: *mut ExternColumnIdentifier,
+    ) -> JSValue {
+        unimplemented!("b2-blocked: bun_jsc::JSObject::create_structure")
     }
 }
 
@@ -303,6 +353,17 @@ pub mod bun_string_jsc {
         let _ = (this, global);
         unimplemented!("b2-blocked: bun_jsc::bun_string_jsc::to_js")
     }
+    /// `bun.String.parseDate` — parse a date string via JSC, returning the
+    /// Unix-epoch ms as f64 (mirrors src/jsc/bun_string_jsc.rs:149).
+    pub fn parse_date(this: &mut bun_string::String, global: &JSGlobalObject) -> JsResult<f64> {
+        let _ = (this, global);
+        unimplemented!("b2-blocked: bun_jsc::bun_string_jsc::parse_date")
+    }
+    /// `ZigString.toJS` — wraps `Zig::toJSStringValue`.
+    pub fn zig_string_to_js(this: bun_string::ZigString, global: &JSGlobalObject) -> JSValue {
+        let _ = (this, global);
+        unimplemented!("b2-blocked: bun_jsc::bun_string_jsc::zig_string_to_js")
+    }
 }
 
 /// `bun_jsc::StringJsc` — extension trait for `bun_string::String` providing
@@ -313,5 +374,16 @@ pub trait StringJsc {
 impl StringJsc for bun_string::String {
     fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_string_jsc::to_js(self, global)
+    }
+}
+
+/// `bun_jsc::ZigStringJsc` — extension trait for `bun_string::ZigString` providing
+/// JSC-aware `.to_js()` (mirrors src/jsc/bun_string_jsc.rs).
+pub trait ZigStringJsc {
+    fn to_js(self, global: &JSGlobalObject) -> JSValue;
+}
+impl ZigStringJsc for bun_string::ZigString {
+    fn to_js(self, global: &JSGlobalObject) -> JSValue {
+        bun_string_jsc::zig_string_to_js(self, global)
     }
 }

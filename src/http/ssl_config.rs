@@ -502,8 +502,7 @@ pub mod global_registry {
                 }
             }
             if let Some(idx) = found_slot {
-                let (slot_key, slot_weak) = map.get_index_mut(idx).unwrap();
-                if let Some(existing) = slot_weak.upgrade() {
+                if let Some(existing) = map.get_index_mut(idx).unwrap().1.upgrade() {
                     // Existing config is still alive; dispose the new duplicate.
                     dispose_new = Some(new_shared);
                     SharedPtr(existing)
@@ -513,11 +512,17 @@ pub mod global_registry {
                     // still intact (fields not yet freed). Replace the
                     // slot; the dying config's `remove()` will
                     // pointer-mismatch and no-op when it runs.
-                    dispose_old_weak = Some(core::mem::replace(
-                        slot_weak,
-                        new_shared.clone_weak(),
-                    ));
-                    *slot_key = ConfigKey(new_ptr);
+                    //
+                    // NOTE: cannot mutate the key in-place — `ArrayHashMap`
+                    // stores a parallel `hashes[idx]` derived from the key
+                    // (pointer address) which `get_index_mut` does NOT
+                    // refresh. Remove the stale slot and re-insert so the
+                    // new pointer's hash is stored and `remove(new_ptr)`
+                    // can find it later. (Zig's MapContext is content-
+                    // hashed so in-place key replacement is safe there.)
+                    let (_, old_weak) = map.swap_remove_at(idx);
+                    dispose_old_weak = Some(old_weak);
+                    map.insert(ConfigKey(new_ptr), new_shared.clone_weak());
                     new_shared
                 }
             } else {

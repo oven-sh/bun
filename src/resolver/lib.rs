@@ -3648,7 +3648,7 @@ impl<'a> Resolver<'a> {
         }
 
         let abs_esm_path: &[u8] = match self.fs.abs_buf_checked(
-            &[abs_package_path, strings::without_leading_path_separator(esm_resolution.path)],
+            &[abs_package_path, strings::without_leading_path_separator(&esm_resolution.path)],
             bufs!(esm_absolute_package_path_joined),
         ) {
             Some(p) => p,
@@ -4547,7 +4547,7 @@ impl<'a> Resolver<'a> {
             //     }
             //
             if self.opts.mark_builtins_as_external || self.opts.target.is_bun() {
-                if let Some(alias) = bun_options_types::module_loader::HardcodedModule::Alias::get(esm_resolution.path, self.opts.target, Default::default()) {
+                if let Some(alias) = bun_options_types::module_loader::HardcodedModule::Alias::get(&esm_resolution.path, self.opts.target, Default::default()) {
                     return MatchResultUnion::Success(MatchResult {
                         path_pair: PathPair { primary: Fs::Path::init(alias.path), secondary: None },
                         is_external: true,
@@ -4556,7 +4556,7 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            return self.load_node_modules(esm_resolution.path, kind, dir_info, global_cache, true);
+            return self.load_node_modules(&esm_resolution.path, kind, dir_info, global_cache, true);
         }
 
         if let Some(result) = self.handle_esm_resolution(esm_resolution, package_json.source.path.name.dir(), kind, package_json, b"") {

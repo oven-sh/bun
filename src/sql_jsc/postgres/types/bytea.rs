@@ -1,10 +1,10 @@
-use bun_jsc::{JSGlobalObject, JSValue};
+use crate::jsc::{JSGlobalObject, JSValue};
 use bun_sql::postgres::AnyPostgresError;
-use bun_sql::postgres::types::int_types::short;
+use bun_sql::postgres::types::int_types::Short;
 use bun_sql::shared::Data;
 
-pub const TO: short = 17;
-pub const FROM: [short; 1] = [17];
+pub const TO: Short = 17;
+pub const FROM: [Short; 1] = [17];
 
 // PORT NOTE: reshaped `value: *Data` + `defer value.deinit()` → owned `Data`;
 // Drop at scope exit replaces the explicit deinit.
@@ -14,7 +14,10 @@ pub fn to_js(
 ) -> Result<JSValue, AnyPostgresError> {
     // var slice = value.slice()[@min(1, value.len)..];
     // _ = slice;
-    Ok(JSValue::create_buffer(global, value.slice(), None))
+    //
+    // Zig passed `null` allocator → C++ copies; map to the copying overload
+    // (`create_buffer_copy` takes `&[u8]`).
+    Ok(JSValue::create_buffer_copy(global, value.slice()))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -22,5 +25,5 @@ pub fn to_js(
 //   source:     src/sql_jsc/postgres/types/bytea.zig (23 lines)
 //   confidence: high
 //   todos:      0
-//   notes:      TO const typed as `short` to match FROM; verify against sibling type modules.
+//   notes:      TO const typed as `Short` to match FROM; verify against sibling type modules.
 // ──────────────────────────────────────────────────────────────────────────

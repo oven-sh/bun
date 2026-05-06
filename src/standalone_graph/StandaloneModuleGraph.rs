@@ -1499,10 +1499,11 @@ pub fn to_executable(
     };
 
     let mut fd = inject(&bytes, &self_exe, &windows_options, target);
-    // TODO(port): errdefer — Zig's `defer if (fd != invalid) fd.close()` reads `fd` at
-    // scope exit after later reassignments. A scopeguard closure capturing `fd` by value
-    // would not observe those writes; capturing by `&mut` conflicts with later uses.
-    // Explicit close calls are inserted at every early-return below (matches Zig behavior).
+    // PORT NOTE: Zig's `defer if (fd != invalid) fd.close()` reads `fd` at scope exit
+    // after later reassignments. A scopeguard closure capturing `fd` by value would not
+    // observe those writes; capturing by `&mut` conflicts with later uses. Explicit
+    // `if fd != Fd::INVALID { fd.close(); }` calls are inserted at every return below
+    // (both error and success paths) to match Zig behavior.
     debug_assert!(fd.kind() == bun_sys::FdKind::System);
 
     #[cfg(unix)]
@@ -1518,6 +1519,7 @@ pub fn to_executable(
         let temp_path = match bun_sys::get_fd_path(fd, &mut temp_buf) {
             Ok(p) => p,
             Err(e) => {
+                if fd != Fd::INVALID { fd.close(); }
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "Failed to get temp file path: {}", e.name()
                 )));
@@ -1531,6 +1533,7 @@ pub fn to_executable(
         let cwd_path = match bun_sys::getcwd(&mut cwd_buf) {
             Ok(p) => p,
             Err(e) => {
+                if fd != Fd::INVALID { fd.close(); }
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "Failed to get current directory: {}", e.name()
                 )));
@@ -1625,6 +1628,7 @@ pub fn to_executable(
         let temp_location: Vec<u8> = match bun_sys::get_fd_path(fd, &mut buf2) {
             Ok(p) => p.to_vec(),
             Err(e) => {
+                if fd != Fd::INVALID { fd.close(); }
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "failed to get path for fd: {}", e
                 )));
@@ -1665,7 +1669,7 @@ pub fn to_executable(
             }
         }
 
-        let _ = fd;
+        if fd != Fd::INVALID { fd.close(); }
         Ok(CompileResult::Success)
     }
 }

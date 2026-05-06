@@ -1,7 +1,7 @@
 use core::marker::{PhantomData, PhantomPinned};
 
 use bun_str::String as BunString;
-use bun_jsc::{self as jsc, debugger::DebuggerId};
+use crate::jsc::{self, debugger::DebuggerId};
 use crate::bake::dev_server;
 
 /// Opaque C++ handle for the inspector frontend dev-server agent.
@@ -246,10 +246,15 @@ impl BunFrontendDevServerAgent {
 pub extern "C" fn Bun__InspectorBunFrontendDevServerAgent__setEnabled(
     agent: *mut InspectorBunFrontendDevServerAgentHandle,
 ) {
-    // TODO(port): VirtualMachine::get() / debugger field shape — verify in Phase B.
-    if let Some(debugger) = jsc::VirtualMachine::get().debugger.as_mut() {
-        debugger.frontend_dev_server_agent.handle = if agent.is_null() { None } else { Some(agent) };
+    #[cfg(any())]
+    {
+        // TODO(port): VirtualMachine::get() / debugger field shape — verify in Phase B.
+        if let Some(debugger) = jsc::VirtualMachine::get().debugger.as_mut() {
+            debugger.frontend_dev_server_agent.handle = if agent.is_null() { None } else { Some(agent) };
+        }
     }
+    // TODO(b2-blocked): bun_jsc::VirtualMachine::get
+    let _ = agent;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

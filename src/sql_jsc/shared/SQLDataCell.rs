@@ -1,11 +1,11 @@
-use core::mem::ManuallyDrop;
 use core::ptr;
 use core::slice;
 
-use bun_jsc::{ExceptionValidationScope, JSGlobalObject, JSType, JSValue, JsError, JsResult};
-use bun_jsc::js_object::ExternColumnIdentifier;
+use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSType, JSValue, JsError, JsResult};
 use bun_sql::shared::Data;
-use bun_str::wtf::{RefPtr, StringImpl as WTFStringImpl};
+// `?bun.WTF.StringImpl` in Zig is a nullable thin pointer; the Rust port
+// re-exports it as `WTFStringImpl = *mut WTFStringImplStruct`.
+use bun_string::wtf::{WTFStringImpl, WTFStringImplStruct};
 
 // PORT NOTE: This entire type is `extern struct` in Zig and is passed by pointer
 // across FFI to C++ (`JSC__constructObjectFromDataCell`). Field layout is
@@ -61,9 +61,10 @@ pub enum Tag {
 #[repr(C)]
 pub union Value {
     pub null: u8,
-    // LIFETIMES.tsv: SHARED → Option<RefPtr<WTFStringImpl>>; wrapped in
-    // ManuallyDrop because this is a #[repr(C)] union and deinit() derefs by tag.
-    pub string: ManuallyDrop<Option<RefPtr<WTFStringImpl>>>,
+    // LIFETIMES.tsv: SHARED → conceptually `Option<RefPtr<WTFStringImpl>>`.
+    // Kept as a raw thin pointer (`*mut WTFStringImplStruct`) because this
+    // is a `#[repr(C)] union` crossing FFI; `deinit()` derefs by tag.
+    pub string: WTFStringImpl,
     pub float8: f64,
     pub int4: i32,
     pub int8: i64,
@@ -71,9 +72,9 @@ pub union Value {
     pub date: f64,
     pub date_with_time_zone: f64,
     pub bytea: [usize; 2],
-    // LIFETIMES.tsv: SHARED → Option<RefPtr<WTFStringImpl>>
-    pub json: ManuallyDrop<Option<RefPtr<WTFStringImpl>>>,
-    pub array: ManuallyDrop<Array>,
+    // LIFETIMES.tsv: SHARED — same rationale as `string`.
+    pub json: WTFStringImpl,
+    pub array: Array,
     pub typed_array: TypedArray,
     pub raw: Raw,
     pub uint4: u32,
@@ -81,6 +82,7 @@ pub union Value {
 }
 
 #[repr(C)]
+#[derive(Copy, Clone)]
 pub struct Array {
     // LIFETIMES.tsv: OWNED → Vec<SQLDataCell>. Kept as raw ptr/len/cap because
     // C++ reads these three fields directly across FFI; reconstructed as Vec in
@@ -190,12 +192,20 @@ impl SQLDataCell {
 
         match self.tag {
             Tag::String => {
-                // SAFETY: tag == String ⇒ `string` is the active union field.
-                unsafe { ManuallyDrop::drop(&mut self.value.string) };
+                // SAFETY: tag == String ⇒ `string` is the active union field;
+                // non-null ⇒ points to a live WTF::StringImpl.
+                let p = unsafe { self.value.string };
+                if !p.is_null() {
+                    unsafe { (*p).deref() };
+                }
             }
             Tag::Json => {
-                // SAFETY: tag == Json ⇒ `json` is the active union field.
-                unsafe { ManuallyDrop::drop(&mut self.value.json) };
+                // SAFETY: tag == Json ⇒ `json` is the active union field;
+                // non-null ⇒ points to a live WTF::StringImpl.
+                let p = unsafe { self.value.json };
+                if !p.is_null() {
+                    unsafe { (*p).deref() };
+                }
             }
             Tag::Bytea => {
                 // SAFETY: tag == Bytea ⇒ `bytea` is the active union field.
@@ -214,7 +224,7 @@ impl SQLDataCell {
             }
             Tag::Array => {
                 // SAFETY: tag == Array ⇒ `array` is the active union field.
-                let array = unsafe { &mut *self.value.array };
+                let array = unsafe { &mut self.value.array };
                 for cell in array.slice() {
                     cell.deinit();
                 }
@@ -275,51 +285,28 @@ impl SQLDataCell {
         names_count: u32,
     ) -> JsResult<JSValue> {
         let names_ptr = names_ptr.unwrap_or(ptr::null_mut());
-        // TODO(port): bun.Environment.ci_assert — map to a cargo feature or
-        // bun_core::Environment::CI_ASSERT const.
-        #[cfg(feature = "ci_assert")]
-        {
-            // PORT NOTE: out-param ctor `scope.init(global, @src())` reshaped to
-            // value-returning `new`; `defer scope.deinit()` → Drop.
-            let scope = ExceptionValidationScope::new(global_object /* TODO(port): @src() */);
-            // SAFETY: forwarding to C++ with caller-provided buffers.
-            let value = unsafe {
-                JSC__constructObjectFromDataCell(
-                    global_object,
-                    encoded_array_value,
-                    encoded_structure_value,
-                    cells,
-                    count,
-                    flags,
-                    result_mode,
-                    names_ptr,
-                    names_count,
-                )
-            };
-            scope.assert_exception_presence_matches(value.is_empty());
-            return if value.is_empty() { Err(JsError::Thrown) } else { Ok(value) };
+        // TODO(port): bun.Environment.ci_assert — when set, wrap this call in
+        // `ExceptionValidationScope` and `assert_exception_presence_matches`.
+        // TODO(b2-blocked): bun_jsc::ExceptionValidationScope (ci_assert path)
+
+        // SAFETY: forwarding to C++ with caller-provided buffers.
+        let value = unsafe {
+            JSC__constructObjectFromDataCell(
+                global_object,
+                encoded_array_value,
+                encoded_structure_value,
+                cells,
+                count,
+                flags,
+                result_mode,
+                names_ptr,
+                names_count,
+            )
+        };
+        if value.is_empty() {
+            return Err(JsError::Thrown);
         }
-        #[cfg(not(feature = "ci_assert"))]
-        {
-            // SAFETY: forwarding to C++ with caller-provided buffers.
-            let value = unsafe {
-                JSC__constructObjectFromDataCell(
-                    global_object,
-                    encoded_array_value,
-                    encoded_structure_value,
-                    cells,
-                    count,
-                    flags,
-                    result_mode,
-                    names_ptr,
-                    names_count,
-                )
-            };
-            if value.is_empty() {
-                return Err(JsError::Thrown);
-            }
-            Ok(value)
-        }
+        Ok(value)
     }
 }
 

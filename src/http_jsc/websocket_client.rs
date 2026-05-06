@@ -31,10 +31,19 @@ use self::websocket_deflate::WebSocketDeflate;
 use self::websocket_proxy_tunnel::WebSocketProxyTunnel;
 
 // ─── Submodules ──────────────────────────────────────────────────────────
-// Real Phase-A drafts are gated until lower-tier surfaces (NewSocketHandler
-// methods, RareData::ws_client_group, KeepAlive::ref, RefPtr::from_raw, etc.)
-// land. Stubs below provide just the types referenced by `WebSocket<SSL>`'s
-// field layout so the struct compiles.
+// `cpp_websocket` + `websocket_proxy` are un-gated. The remaining three real
+// Phase-A drafts stay gated:
+//   - websocket_deflate:       blocked on bun_jsc::RareData::websocket_deflate
+//                              accessor + bun_zlib/bun_libdeflate_sys/thiserror
+//                              workspace deps; also `PerMessageDeflate<'a>` ↔
+//                              `WebSocketDeflate` lifetime reconcile.
+//   - websocket_proxy_tunnel:  blocked on bun_runtime::socket::ssl_wrapper::
+//                              SslWrapper + bun_runtime::api::server_config::
+//                              SslConfig (higher-tier; dep cycle).
+//   - websocket_upgrade_client: blocked on bun_runtime::api::server_config::
+//                              SSLConfig (dep cycle) + bun_picohttp +
+//                              bun_boringssl::c::SSL_get_servername.
+// Stubs below provide the type+method surface `WebSocket<SSL>` references.
 #[path = "websocket_client/CppWebSocket.rs"]                        pub mod cpp_websocket;
 #[cfg(any())] #[path = "websocket_client/WebSocketDeflate.rs"]      pub mod websocket_deflate;
 #[path = "websocket_client/WebSocketProxy.rs"]                      pub mod websocket_proxy;
@@ -46,7 +55,27 @@ pub mod websocket_deflate {
     /// Stub for `WebSocketDeflate` (real impl gated above).
     /// PORT NOTE: real module names this `PerMessageDeflate<'a>`; the parent
     /// draft references `WebSocketDeflate` — reconcile on un-gate.
-    pub struct WebSocketDeflate { _priv: () }
+    pub struct WebSocketDeflate {
+        // TODO(b2-blocked): real field is `&'a mut RareData` (zlib pool).
+        pub rare_data: RareData,
+    }
+    impl WebSocketDeflate {
+        pub fn init(
+            _params: Params,
+            _rare: &mut bun_jsc::rare_data::RareData,
+        ) -> Result<alloc::boxed::Box<Self>, Error> {
+            // TODO(b2-blocked): self::websocket_deflate (real module gated above)
+            todo!("WebSocketDeflate::init — gated")
+        }
+        pub fn compress(&mut self, _input: &[u8], _out: &mut alloc::vec::Vec<u8>) -> Result<(), Error> {
+            // TODO(b2-blocked): self::websocket_deflate
+            todo!("WebSocketDeflate::compress — gated")
+        }
+        pub fn decompress(&mut self, _input: &[u8], _out: &mut alloc::vec::Vec<u8>) -> Result<(), Error> {
+            // TODO(b2-blocked): self::websocket_deflate
+            todo!("WebSocketDeflate::decompress — gated")
+        }
+    }
     /// Layout-compatible with the real `Params` (repr(C), 4×u8) so the
     /// `extern "C"` decls in `CppWebSocket.rs` are FFI-safe while gated.
     #[repr(C)]
@@ -58,16 +87,43 @@ pub mod websocket_deflate {
         pub client_no_context_takeover: u8,
     }
     pub struct RareData { _priv: () }
+    impl RareData {
+        pub fn array_list(&mut self) -> alloc::vec::Vec<u8> {
+            // TODO(b2-blocked): self::websocket_deflate — pooled output buffer
+            alloc::vec::Vec::new()
+        }
+    }
     #[derive(Copy, Clone, Debug)]
     pub enum Error { InflateFailed, TooLarge, OutOfMemory }
+    extern crate alloc;
 }
 #[cfg(not(any()))]
 pub mod websocket_proxy_tunnel {
     /// Stub for `WebSocketProxyTunnel` (real impl gated above).
     pub struct WebSocketProxyTunnel { _priv: () }
     impl WebSocketProxyTunnel {
-        pub fn shutdown(&mut self) { unreachable!("stub") }
-        pub fn deref(&self) { unreachable!("stub") }
+        pub fn shutdown(&self) {
+            // TODO(b2-blocked): self::websocket_proxy_tunnel (real module gated above)
+            todo!("WebSocketProxyTunnel::shutdown — gated")
+        }
+        pub fn clear_connected_websocket(&self) {
+            // TODO(b2-blocked): self::websocket_proxy_tunnel
+            todo!("WebSocketProxyTunnel::clear_connected_websocket — gated")
+        }
+        pub fn write(&self, _data: &[u8]) -> Result<usize, bun_core::Error> {
+            // TODO(b2-blocked): self::websocket_proxy_tunnel
+            todo!("WebSocketProxyTunnel::write — gated")
+        }
+        pub fn has_backpressure(&self) -> bool {
+            // TODO(b2-blocked): self::websocket_proxy_tunnel
+            todo!("WebSocketProxyTunnel::has_backpressure — gated")
+        }
+        // PORT NOTE: `WebSocketProxy.rs` calls `(*tunnel.as_ptr()).deref()` on
+        // the raw intrusive count directly (Zig `tunnel.deref()`).
+        pub fn deref(&self) {
+            // SAFETY: forwards to the AnyRefCounted impl below.
+            unsafe { <Self as bun_ptr::AnyRefCounted>::rc_deref_with_context(self as *const _ as *mut _, ()) }
+        }
     }
     // Minimal `AnyRefCounted` so `Option<IntrusiveArc<WebSocketProxyTunnel>>`
     // type-checks in `WebSocket<SSL>`'s field layout. Real impl uses an
@@ -166,12 +222,6 @@ pub struct WebSocket<const SSL: bool> {
 // IntrusiveRc wiring: ref/deref forward to ref_count; final deref calls deinit()
 // TODO(port): bun.ptr.RefCount → bun_ptr::IntrusiveRc<WebSocket<SSL>>; the
 // destructor callback is `deinit` (drops self + bun.destroy).
-// TODO(b2-blocked): bun_uws::NewSocketHandler::{close,detach,write,is_closed,
-// is_shutdown,is_established,get_native_handle,shutdown_read,detached,adopt_group}
-// — `deinit` (and the entire method surface below) bottoms out on the socket
-// handler API which is currently a bare `{ socket: InternalSocket }` stub in
-// bun_uws. Re-gated until that surface lands.
-#[cfg(any())]
 impl<const SSL: bool> WebSocket<SSL> {
     #[inline]
     pub fn r#ref(&self) {
@@ -188,20 +238,22 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 }
 
-// TODO(b2-blocked): bun_uws::NewSocketHandler::{close,write,is_closed,is_shutdown,
-//   is_established,get_native_handle,shutdown_read,detach,detached,adopt_group}
-// TODO(b2-blocked): bun_uws::CloseKind / bun_uws::DispatchKind
-// TODO(b2-blocked): bun_jsc::rare_data::RareData::{ws_client_group,entropy_slice}
-// TODO(b2-blocked): bun_jsc::JSGlobalObject::queue_microtask_callback
-// TODO(b2-blocked): bun_aio::KeepAlive::{ref,unref}
-// TODO(b2-blocked): bun_ptr::RefPtr::from_raw
-// TODO(b2-blocked): bun_string::ZigString::{from16_slice,utf16_slice_aligned}
-// TODO(b2-blocked): bun_jsc::fetch_headers (gated module in bun_jsc)
-// The entire method surface is re-gated as a unit because every non-trivial
-// path touches `self.tcp.<method>()`. Splitting per-fn would gate ~40 bodies
-// for the same blocker; revisit once `NewSocketHandler` grows its API.
-#[cfg(any())]
 impl<const SSL: bool> WebSocket<SSL> {
+    /// `bun_aio::KeepAlive::{ref,unref}` take an erased `EventLoopCtx` (manual
+    /// vtable to break the T3→T6 cycle); in Zig the VM was passed directly.
+    /// `bun_jsc` doesn't yet provide a `VirtualMachine → EventLoopCtx` adapter,
+    /// so this is body-gated until that lands.
+    #[inline]
+    fn vm_loop_ctx(global_this: &JSGlobalObject) -> bun_aio::EventLoopCtx {
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_jsc::virtual_machine::VirtualMachine::event_loop_ctx
+            return global_this.bun_vm().event_loop_ctx();
+        }
+        let _ = global_this;
+        todo!("WebSocket::vm_loop_ctx — blocked on bun_jsc::VirtualMachine → EventLoopCtx adapter")
+    }
+
     fn should_compress(&self, data_len: usize, opcode: Opcode) -> bool {
         // Check if compression is available
         if self.deflate.is_none() {
@@ -235,7 +287,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     pub fn clear_data(&mut self) {
         log!("clearData");
-        self.poll_ref.unref(self.global_this.bun_vm());
+        self.poll_ref.unref(Self::vm_loop_ctx(self.global_this));
         self.clear_receive_buffers(true);
         self.clear_send_buffers(true);
         self.ping_received = false;
@@ -257,8 +309,12 @@ impl<const SSL: bool> WebSocket<SSL> {
             // Detach the websocket from the tunnel before shutdown so the
             // tunnel's onClose callback doesn't dispatch a spurious 1006
             // after we've already handled a clean close.
-            tunnel.clear_connected_websocket();
-            tunnel.shutdown();
+            // PORT NOTE: `RefPtr<T>` has no `Deref` (intentional — explicit
+            // ref-count tracking); reach the inner via `.data`.
+            // SAFETY: `tunnel` holds a live ref.
+            let inner = unsafe { tunnel.data.as_ref() };
+            inner.clear_connected_websocket();
+            inner.shutdown();
             // tunnel.deref() → IntrusiveArc::drop decrements the embedded refcount
             drop(tunnel);
             // Release the I/O-layer ref taken in init_with_tunnel() — the
@@ -279,7 +335,13 @@ impl<const SSL: bool> WebSocket<SSL> {
         // clear_data() may drop the tunnel's I/O-layer ref; keep `this`
         // alive until we've finished closing the socket below.
         this.r#ref();
-        let _guard = scopeguard::guard((), |_| this.deref());
+        // PORT NOTE: reshaped for borrowck — `scopeguard` capturing `&this`
+        // would freeze it for the whole scope. Capture a raw ptr instead;
+        // the ref taken on the line above guarantees `this` outlives the guard.
+        let _guard = scopeguard::guard(this as *const Self, |p| {
+            // SAFETY: `p` is `this`, kept alive by the `r#ref()` above.
+            unsafe { (*p).deref() }
+        });
 
         let had_tunnel = this.proxy_tunnel.is_some();
         this.clear_data();
@@ -308,7 +370,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         if let Some(ws) = self.outgoing_websocket.take() {
             log!("fail ({})", <&'static str>::from(code));
             // SAFETY: ws is a valid CppWebSocket* held by us
-            unsafe { ws.as_ref().did_abrupt_close(code) };
+            unsafe { (*ws.as_ptr()).did_abrupt_close(code) };
             self.deref();
         }
 
@@ -350,16 +412,25 @@ impl<const SSL: bool> WebSocket<SSL> {
 
                 // Check server identity
                 // SAFETY: native handle of an SSL socket is an SSL*
-                let ssl_ptr = socket.get_native_handle() as *mut boringssl::c::SSL;
-                // SAFETY: ssl_ptr is valid for the lifetime of the socket
-                if let Some(servername) = unsafe { boringssl::c::SSL_get_servername(ssl_ptr, 0).as_ref() } {
-                    // SAFETY: servername is a NUL-terminated C string
-                    let hostname = unsafe { core::ffi::CStr::from_ptr(servername as *const _ as *const core::ffi::c_char) }.to_bytes();
-                    if !boringssl::check_server_identity(ssl_ptr, hostname) {
-                        self.outgoing_websocket = None;
-                        ws_ref.did_abrupt_close(ErrorCode::FailedToConnect);
+                let ssl_ptr: *mut boringssl::c::SSL = socket
+                    .get_native_handle()
+                    .map_or(core::ptr::null_mut(), |p| p.cast());
+                #[cfg(any())]
+                {
+                    // TODO(b2-blocked): bun_boringssl::c::SSL_get_servername — not
+                    // exported from bun_boringssl_sys yet.
+                    // SAFETY: ssl_ptr is valid for the lifetime of the socket
+                    if let Some(servername) = unsafe { boringssl::c::SSL_get_servername(ssl_ptr, 0).as_ref() } {
+                        // SAFETY: servername is a NUL-terminated C string
+                        let hostname = unsafe { core::ffi::CStr::from_ptr(servername as *const _ as *const core::ffi::c_char) }.to_bytes();
+                        // SAFETY: ssl_ptr is non-null (Connected SSL socket).
+                        if !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname) {
+                            self.outgoing_websocket = None;
+                            ws_ref.did_abrupt_close(ErrorCode::FailedToConnect);
+                        }
                     }
                 }
+                let _ = ssl_ptr;
             }
             // If reject_unauthorized is false, we accept the connection regardless of SSL errors
         }
@@ -383,12 +454,14 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn clear_receive_buffers(&mut self, free: bool) {
-        self.receive_buffer.head = 0;
-        self.receive_buffer.count = 0;
+        // PORT NOTE: Zig poked `head = 0; count = 0` directly; LinearFifo's
+        // fields are private in Rust so discard everything readable instead
+        // (same observable state — empty, head realigned to 0).
+        self.receive_buffer.discard(self.receive_buffer.readable_length());
 
         if free {
             // TODO(port): LinearFifo::deinit → Drop semantics; reset to fresh state
-            self.receive_buffer = LinearFifo::new();
+            self.receive_buffer = LinearFifo::<u8, DynamicBuffer<u8>>::init();
         }
 
         self.receive_pending_chunk_len = 0;
@@ -396,10 +469,11 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn clear_send_buffers(&mut self, free: bool) {
-        self.send_buffer.head = 0;
-        self.send_buffer.count = 0;
+        // PORT NOTE: see clear_receive_buffers — discard instead of poking
+        // private `head`/`count`.
+        self.send_buffer.discard(self.send_buffer.readable_length());
         if free {
-            self.send_buffer = LinearFifo::new();
+            self.send_buffer = LinearFifo::<u8, DynamicBuffer<u8>>::init();
         }
     }
 
@@ -457,6 +531,13 @@ impl<const SSL: bool> WebSocket<SSL> {
                     outstring.mark_global();
                     jsc::mark_binding!();
                     out.did_receive_text(false, &outstring);
+                    // Ownership of the UTF-16 buffer transfers to C++: with
+                    // `clone=false` and the global tag set, `Zig::toString`
+                    // adopts the allocation into a `WTF::ExternalStringImpl`
+                    // which `mi_free`s it later. Dropping the Vec here would
+                    // be a UAF + double-free. Mirrors websocket_client.zig
+                    // which never frees `utf16` locally.
+                    core::mem::forget(utf16);
                 } else {
                     outstring = ZigString::init(data);
                     jsc::mark_binding!();
@@ -526,7 +607,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // did all the data fit in the buffer?
         // we can avoid copying & allocating a temporary buffer
         if is_final && data.len() == left_in_fragment && self.receive_pending_chunk_len == 0 {
-            if self.receive_buffer.count == 0 {
+            if self.receive_buffer.readable_length() == 0 {
                 self.dispatch_data(data, kind);
                 self.message_is_compressed = false;
                 return data.len();
@@ -577,13 +658,21 @@ impl<const SSL: bool> WebSocket<SSL> {
         data.len()
     }
 
-    pub fn handle_data(&mut self, socket: Socket<SSL>, data_: &[u8]) {
+    // PORT NOTE: `socket` taken by ref — `NewSocketHandler<SSL>` is not `Copy`
+    // in Rust (Zig passed by value). Dispatch-table thunks own the value and
+    // pass `&socket`; internal callers pass `&self.tcp` via raw-ptr reborrow.
+    pub fn handle_data(&mut self, socket: &Socket<SSL>, data_: &[u8]) {
         // after receiving close we should ignore the data
         if self.close_received {
             return;
         }
         self.r#ref();
-        let _guard = scopeguard::guard((), |_| self.deref());
+        // PORT NOTE: reshaped for borrowck — capture a raw ptr so `self` stays
+        // mutably borrowable below. The ref taken above keeps `self` alive.
+        let _guard = scopeguard::guard(self as *const Self, |p| {
+            // SAFETY: `p` is `self`, kept alive by the `r#ref()` above.
+            unsafe { (*p).deref() }
+        });
         // TODO(port): scopeguard captures &self while &mut self is used below;
         // Phase B: convert to manual ref/deref at exit points or use raw ptr in guard.
 
@@ -867,7 +956,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                     self.ping_received = false;
 
                     // we need to send all pongs to pass autobahn tests
-                    let _ = self.send_pong(socket);
+                    let _ = self.send_pong(&socket);
                     if data.is_empty() {
                         break;
                     }
@@ -979,7 +1068,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                             }
                             let mut buf: [u8; 125] = [0; 125];
                             buf[..ping_len - 2].copy_from_slice(&close_data[2..ping_len]);
-                            self.send_close_with_body(socket, code, Some(&mut buf), ping_len - 2);
+                            self.send_close_with_body(&socket, code, Some(&mut buf), ping_len - 2);
                         } else {
                             self.send_close();
                         }
@@ -1012,13 +1101,20 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     pub fn send_close(&mut self) {
-        self.send_close_with_body(self.tcp, 1000, None, 0);
+        // PORT NOTE: reshaped for borrowck — `&mut self` + `&self.tcp` overlap.
+        let tcp: *const Socket<SSL> = &self.tcp;
+        // SAFETY: `tcp` points into `*self`; `send_close_with_body` only reads
+        // the socket handle (no aliasing write to `self.tcp`).
+        self.send_close_with_body(unsafe { &*tcp }, 1000, None, 0);
     }
 
-    fn enqueue_encoded_bytes(&mut self, socket: Socket<SSL>, bytes: &[u8]) -> bool {
+    // PORT NOTE: `socket` taken by ref — `NewSocketHandler<SSL>` is not `Copy`
+    // in Rust (Zig passed by value). All write paths only call `&self` methods.
+    fn enqueue_encoded_bytes(&mut self, socket: &Socket<SSL>, bytes: &[u8]) -> bool {
         // For tunnel mode, write through the tunnel instead of direct socket
         if let Some(tunnel) = &self.proxy_tunnel {
-            let wrote = match tunnel.write(bytes) {
+            // SAFETY: `tunnel` holds a live ref (RefPtr has no `Deref`).
+            let wrote = match unsafe { tunnel.data.as_ref() }.write(bytes) {
                 Ok(w) => w,
                 Err(_) => {
                     self.terminate(ErrorCode::FailedToWrite);
@@ -1194,7 +1290,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         let wrote: usize = if let Some(tunnel) = &self.proxy_tunnel {
             // In tunnel mode, route through the tunnel's TLS layer
             // instead of the detached raw socket.
-            match tunnel.write(out_buf) {
+            // SAFETY: `tunnel` holds a live ref (RefPtr has no `Deref`).
+            match unsafe { tunnel.data.as_ref() }.write(out_buf) {
                 Ok(w) => w,
                 Err(_) => {
                     self.terminate(ErrorCode::FailedToWrite);
@@ -1219,7 +1316,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         true
     }
 
-    fn send_pong(&mut self, socket: Socket<SSL>) -> bool {
+    fn send_pong(&mut self, socket: &Socket<SSL>) -> bool {
         if !self.has_tcp() {
             self.dispatch_abrupt_close(ErrorCode::Ended);
             return false;
@@ -1262,7 +1359,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     fn send_close_with_body(
         &mut self,
-        socket: Socket<SSL>,
+        socket: &Socket<SSL>,
         code: u16,
         body: Option<&mut [u8; 125]>,
         body_len: usize,
@@ -1294,16 +1391,19 @@ impl<const SSL: bool> WebSocket<SSL> {
         // mask_buf at [2..6]
         final_body_bytes[6..8].copy_from_slice(&code.to_be_bytes());
 
-        let mut reason = bun_str::String::empty();
+        let mut reason = bun_string::String::empty();
         if let Some(data) = body {
             if body_len > 0 {
                 let body_slice = &data[..body_len];
                 // close is always utf8
-                if !strings::is_valid_utf8(body_slice) {
+                // TODO(b2-blocked): bun_string::strings::is_valid_utf8 — lives in
+                // the gated `unicode_draft` module (simdutf-backed). Fall back
+                // to std until it un-gates. PERF(port): was simdutf — profile.
+                if core::str::from_utf8(body_slice).is_err() {
                     self.terminate(ErrorCode::InvalidUtf8);
                     return;
                 }
-                reason = bun_str::String::clone_utf8(body_slice);
+                reason = bun_string::String::clone_utf8(body_slice);
                 final_body_bytes[8..][..body_len].copy_from_slice(body_slice);
             }
         }
@@ -1324,12 +1424,20 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    pub fn is_same_socket(&self, socket: Socket<SSL>) -> bool {
-        socket.socket.eq(&self.tcp.socket)
+    pub fn is_same_socket(&self, socket: &Socket<SSL>) -> bool {
+        // PORT NOTE: Zig `socket.socket.eq(this.tcp.socket)` — `InternalSocket`
+        // has no `PartialEq` in bun_uws yet. Compare the connected raw handle,
+        // which is the only variant the WS client ever holds.
+        match (&socket.socket, &self.tcp.socket) {
+            (uws::InternalSocket::Connected(a), uws::InternalSocket::Connected(b)) => core::ptr::eq(*a, *b),
+            (uws::InternalSocket::Detached, uws::InternalSocket::Detached) => true,
+            // TODO(port): once bun_uws::InternalSocket impls PartialEq, replace with `==`.
+            _ => false,
+        }
     }
 
     pub fn handle_end(&mut self, socket: Socket<SSL>) {
-        debug_assert!(self.is_same_socket(socket));
+        debug_assert!(self.is_same_socket(&socket));
         self.terminate(ErrorCode::Ended);
     }
 
@@ -1337,7 +1445,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         if self.close_received {
             return;
         }
-        debug_assert!(self.is_same_socket(socket));
+        debug_assert!(self.is_same_socket(&socket));
         let send_buf_ptr = self.send_buffer.readable_slice(0).as_ptr();
         let send_buf_len = self.send_buffer.readable_slice(0).len();
         if send_buf_len == 0 {
@@ -1358,11 +1466,12 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     pub fn has_backpressure(&self) -> bool {
-        if self.send_buffer.count > 0 {
+        if self.send_buffer.readable_length() > 0 {
             return true;
         }
         if let Some(tunnel) = &self.proxy_tunnel {
-            return tunnel.has_backpressure();
+            // SAFETY: `tunnel` holds a live ref (RefPtr has no `Deref`).
+            return unsafe { tunnel.data.as_ref() }.has_backpressure();
         }
         false
     }
@@ -1374,7 +1483,13 @@ impl<const SSL: bool> WebSocket<SSL> {
         // onClose → ws.fail() → cancel() → clear_data() and free `this`
         // before the catch block in enqueue_encoded_bytes/send_buffer runs.
         this.r#ref();
-        let _guard = scopeguard::guard((), |_| this.deref());
+        // PORT NOTE: reshaped for borrowck — `scopeguard` capturing `&this`
+        // would freeze it for the whole scope. Capture a raw ptr instead;
+        // the ref taken on the line above guarantees `this` outlives the guard.
+        let _guard = scopeguard::guard(this as *const Self, |p| {
+            // SAFETY: `p` is `this`, kept alive by the `r#ref()` above.
+            unsafe { (*p).deref() }
+        });
         // TODO(port): scopeguard borrowck — see handle_data note
 
         if !this.has_tcp() || op > 0xF {
@@ -1392,7 +1507,11 @@ impl<const SSL: bool> WebSocket<SSL> {
         if !this.has_backpressure() && frame_size < STACK_FRAME_SIZE {
             let mut inline_buf = [0u8; STACK_FRAME_SIZE];
             bytes.copy(this.global_this, &mut inline_buf[..frame_size], slice.len(), opcode);
-            let _ = this.enqueue_encoded_bytes(this.tcp, &inline_buf[..frame_size]);
+            // PORT NOTE: reshaped for borrowck — `&mut this` + `&this.tcp` overlap.
+            let tcp: *const Socket<SSL> = &this.tcp;
+            // SAFETY: `tcp` points into `*this`; `enqueue_encoded_bytes` only
+            // reads the socket handle (no aliasing write to `this.tcp`).
+            let _ = this.enqueue_encoded_bytes(unsafe { &*tcp }, &inline_buf[..frame_size]);
             return;
         }
 
@@ -1412,7 +1531,13 @@ impl<const SSL: bool> WebSocket<SSL> {
         let this = unsafe { &mut *this };
         // See write_binary_data() — tunnel.write() can re-enter fail().
         this.r#ref();
-        let _guard = scopeguard::guard((), |_| this.deref());
+        // PORT NOTE: reshaped for borrowck — `scopeguard` capturing `&this`
+        // would freeze it for the whole scope. Capture a raw ptr instead;
+        // the ref taken on the line above guarantees `this` outlives the guard.
+        let _guard = scopeguard::guard(this as *const Self, |p| {
+            // SAFETY: `p` is `this`, kept alive by the `r#ref()` above.
+            unsafe { (*p).deref() }
+        });
         // TODO(port): scopeguard borrowck
 
         if !this.has_tcp() || op > 0xF {
@@ -1423,8 +1548,13 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: op <= 0xF checked above
         let opcode: Opcode = unsafe { core::mem::transmute::<u8, Opcode>(op) };
 
+        #[cfg(any())]
         // Cast the JSValue to a Blob
-        if let Some(blob) = blob_value.as_::<bun_jsc::fetch_headers::FetchHeaders::Blob>() {
+        // TODO(b2-blocked): bun_jsc::webcore::Blob — `jsc.WebCore.Blob` lives in
+        // a higher-tier crate (`bun_runtime::webcore`) and would create a dep
+        // cycle. Needs a `bun_jsc`-level opaque `Blob` + `JSValue::as_<Blob>()`
+        // shim before this body can compile.
+        if let Some(blob) = blob_value.as_::<bun_jsc::webcore::Blob>() {
             // Get the shared view of the blob data
             let data = blob.shared_view();
             if data.is_empty() {
@@ -1442,7 +1572,11 @@ impl<const SSL: bool> WebSocket<SSL> {
             if !this.has_backpressure() && frame_size < STACK_FRAME_SIZE {
                 let mut inline_buf = [0u8; STACK_FRAME_SIZE];
                 bytes.copy(this.global_this, &mut inline_buf[..frame_size], data.len(), opcode);
-                let _ = this.enqueue_encoded_bytes(this.tcp, &inline_buf[..frame_size]);
+                // PORT NOTE: reshaped for borrowck — `&mut this` + `&this.tcp` overlap.
+            let tcp: *const Socket<SSL> = &this.tcp;
+            // SAFETY: `tcp` points into `*this`; `enqueue_encoded_bytes` only
+            // reads the socket handle (no aliasing write to `this.tcp`).
+            let _ = this.enqueue_encoded_bytes(unsafe { &*tcp }, &inline_buf[..frame_size]);
                 return;
             }
 
@@ -1451,6 +1585,9 @@ impl<const SSL: bool> WebSocket<SSL> {
             // Invalid blob, close connection
             this.dispatch_abrupt_close(ErrorCode::Ended);
         }
+        // TODO(b2-blocked): bun_jsc::webcore::Blob — see above.
+        let _ = (blob_value, opcode);
+        this.dispatch_abrupt_close(ErrorCode::Ended);
     }
 
     pub extern "C" fn write_string(this: *mut Self, str_: *const ZigString, op: u8) {
@@ -1458,7 +1595,13 @@ impl<const SSL: bool> WebSocket<SSL> {
         let this = unsafe { &mut *this };
         // See write_binary_data() — tunnel.write() can re-enter fail().
         this.r#ref();
-        let _guard = scopeguard::guard((), |_| this.deref());
+        // PORT NOTE: reshaped for borrowck — `scopeguard` capturing `&this`
+        // would freeze it for the whole scope. Capture a raw ptr instead;
+        // the ref taken on the line above guarantees `this` outlives the guard.
+        let _guard = scopeguard::guard(this as *const Self, |p| {
+            // SAFETY: `p` is `this`, kept alive by the `r#ref()` above.
+            unsafe { (*p).deref() }
+        });
         // TODO(port): scopeguard borrowck
 
         // SAFETY: str_ is a valid pointer from C++
@@ -1467,7 +1610,12 @@ impl<const SSL: bool> WebSocket<SSL> {
             this.dispatch_abrupt_close(ErrorCode::Ended);
             return;
         }
-        let tcp = this.tcp;
+        // PORT NOTE: reshaped for borrowck — Zig copied `this.tcp` by value;
+        // `NewSocketHandler` is not `Copy` in Rust, so hold a raw ptr instead.
+        let tcp: *const Socket<SSL> = &this.tcp;
+        // SAFETY: `tcp` points into `*this`; downstream callees only read the
+        // socket handle (no aliasing write to `this.tcp` on this path).
+        let tcp: &Socket<SSL> = unsafe { &*tcp };
 
         // Note: 0 is valid
 
@@ -1513,21 +1661,21 @@ impl<const SSL: bool> WebSocket<SSL> {
         let Some(out) = self.outgoing_websocket.take() else {
             return;
         };
-        self.poll_ref.unref(self.global_this.bun_vm());
+        self.poll_ref.unref(Self::vm_loop_ctx(self.global_this));
         jsc::mark_binding!();
         // SAFETY: out is a valid CppWebSocket*
-        unsafe { out.as_ref().did_abrupt_close(code) };
+        unsafe { (*out.as_ptr()).did_abrupt_close(code) };
         self.deref();
     }
 
-    fn dispatch_close(&mut self, code: u16, reason: &mut bun_str::String) {
+    fn dispatch_close(&mut self, code: u16, reason: &mut bun_string::String) {
         let Some(out) = self.outgoing_websocket.take() else {
             return;
         };
-        self.poll_ref.unref(self.global_this.bun_vm());
+        self.poll_ref.unref(Self::vm_loop_ctx(self.global_this));
         jsc::mark_binding!();
         // SAFETY: out is a valid CppWebSocket*
-        unsafe { out.as_ref().did_close(code, reason) };
+        unsafe { (*out.as_ptr()).did_close(code, reason) };
         self.deref();
     }
 
@@ -1539,13 +1687,24 @@ impl<const SSL: bool> WebSocket<SSL> {
         // onClose → ws.fail() → cancel() → clear_data() and free `this`
         // before send_close_with_body's own clear_data/dispatch_close run.
         this.r#ref();
-        let _guard = scopeguard::guard((), |_| this.deref());
+        // PORT NOTE: reshaped for borrowck — `scopeguard` capturing `&this`
+        // would freeze it for the whole scope. Capture a raw ptr instead;
+        // the ref taken on the line above guarantees `this` outlives the guard.
+        let _guard = scopeguard::guard(this as *const Self, |p| {
+            // SAFETY: `p` is `this`, kept alive by the `r#ref()` above.
+            unsafe { (*p).deref() }
+        });
         // TODO(port): scopeguard borrowck
 
         if !this.has_tcp() {
             return;
         }
-        let tcp = this.tcp;
+        // PORT NOTE: reshaped for borrowck — Zig copied `this.tcp` by value;
+        // `NewSocketHandler` is not `Copy` in Rust, so hold a raw ptr instead.
+        let tcp: *const Socket<SSL> = &this.tcp;
+        // SAFETY: `tcp` points into `*this`; downstream callees only read the
+        // socket handle (no aliasing write to `this.tcp` on this path).
+        let tcp: &Socket<SSL> = unsafe { &*tcp };
         let mut close_reason_buf = [0u8; 128];
         // SAFETY: reason is null or a valid *const ZigString from C++
         if let Some(str) = unsafe { reason.as_ref() } {
@@ -1553,7 +1712,22 @@ impl<const SSL: bool> WebSocket<SSL> {
                 // Zig: FixedBufferAllocator + allocPrint → write into fixed buf
                 use std::io::Write;
                 let mut cursor = std::io::Cursor::new(&mut close_reason_buf[..]);
-                if write!(cursor, "{}", str).is_err() {
+                #[cfg(any())]
+                {
+                    // TODO(b2-blocked): bun_string::ZigString: core::fmt::Display
+                    // — Zig's `{f}` formatter handles 8-bit/16-bit/UTF-8; the
+                    // Rust `ZigString` has no `Display` impl yet.
+                    if write!(cursor, "{}", str).is_err() {
+                        break 'inner;
+                    }
+                }
+                // Fallback: 8-bit path only (covers the common close-reason case).
+                // 16-bit reasons fall through to the no-body close below.
+                if str.is_16bit() {
+                    let _ = cursor;
+                    break 'inner;
+                }
+                if cursor.write_all(str.slice()).is_err() {
                     break 'inner;
                 }
                 let wrote_len = cursor.position() as usize;
@@ -1594,15 +1768,18 @@ impl<const SSL: bool> WebSocket<SSL> {
             receive_frame: 0,
             receive_body_remain: 0,
             receive_pending_chunk_len: 0,
-            receive_buffer: LinearFifo::new(),
-            send_buffer: LinearFifo::new(),
+            receive_buffer: LinearFifo::<u8, DynamicBuffer<u8>>::init(),
+            send_buffer: LinearFifo::<u8, DynamicBuffer<u8>>::init(),
             global_this,
             poll_ref: KeepAlive::init(),
             header_fragment: None,
             payload_length_frame_bytes: [0u8; 8],
             payload_length_frame_len: 0,
             initial_data_handler: None,
-            event_loop: vm.event_loop(),
+            // PORT NOTE: reshaped for borrowck — `vm.event_loop()` returns a
+            // `&'static`-tied borrow that would lock `vm` for the rest of the
+            // fn; re-derive from `global_this` so `vm` stays usable below.
+            event_loop: global_this.bun_vm().event_loop(),
             deflate: None,
             receiving_compressed: false,
             message_is_compressed: false,
@@ -1623,13 +1800,21 @@ impl<const SSL: bool> WebSocket<SSL> {
             }
         }
 
+        // PORT NOTE: Zig `adoptGroup(tcp, group, kind, "tcp", ws)` reflected on
+        // the field name; Rust port takes a closure to write the new socket.
+        let group = {
+            // PORT NOTE: reshaped for borrowck — `rare_data()` borrows `vm`
+            // mutably and `ws_client_group` also wants `&mut vm`.
+            let vm_ptr: *mut _ = vm;
+            // SAFETY: `vm` is the thread-local VM; both borrows are sequential.
+            unsafe { (*vm_ptr).rare_data().ws_client_group::<SSL>(&mut *vm_ptr) }
+        };
         if !Socket::<SSL>::adopt_group(
             tcp,
-            vm.rare_data().ws_client_group(vm, SSL),
+            group,
             if SSL { uws::DispatchKind::WsClientTls } else { uws::DispatchKind::WsClient },
-            // TODO(port): Zig passes (WebSocket, "tcp", ws) for @fieldParentPtr-style adoption.
-            // Phase B: bun_uws::adopt_group needs offset_of!(WebSocket<SSL>, tcp) + ws ptr.
-            ws_ref,
+            ws,
+            |owner, sock| owner.tcp = sock,
         ) {
             ws_ref.deref();
             return core::ptr::null_mut();
@@ -1637,23 +1822,31 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         ws_ref.send_buffer.ensure_total_capacity(2048);
         ws_ref.receive_buffer.ensure_total_capacity(2048);
-        ws_ref.poll_ref.r#ref(global_this.bun_vm());
+        ws_ref.poll_ref.r#ref(Self::vm_loop_ctx(global_this));
 
-        // SAFETY: buffered_data/len from C++; caller guarantees validity
-        let buffered_slice: &mut [u8] =
-            unsafe { core::slice::from_raw_parts_mut(buffered_data, buffered_data_len) };
-        if !buffered_slice.is_empty() {
+        if buffered_data_len > 0 {
+            // SAFETY: buffered_data/len from C++; caller guarantees validity.
+            // The upgrade client allocated this buffer via `bun.default_allocator`
+            // (mimalloc) and transfers ownership to us — Zig's
+            // `InitialDataHandler.deinit` frees it with `bun.default_allocator.free`.
+            // The Rust global allocator is also mimalloc, so `Box::from_raw`
+            // adopts the original allocation (no copy) and `Drop` will `mi_free` it.
+            let buffered_slice: Box<[u8]> = unsafe {
+                Box::from_raw(core::slice::from_raw_parts_mut(buffered_data, buffered_data_len))
+            };
             let initial_data = Box::into_raw(Box::new(InitialDataHandler::<SSL> {
                 adopted: NonNull::new(ws),
-                slice: Box::from(&*buffered_slice),
-                // TODO(port): Zig hands ownership of `buffered_slice` (allocator-owned) to
-                // InitialDataHandler which frees it. Here we copy; Phase B should take ownership
-                // without copy if the C++ side allocated with mimalloc.
+                slice: buffered_slice,
                 ws: outgoing,
             }));
 
             // Use a higher-priority callback for the initial onData handler
-            global_this.queue_microtask_callback(initial_data, InitialDataHandler::<SSL>::handle);
+            // PORT NOTE: `queue_microtask_callback` takes an erased
+            // `(*mut c_void, unsafe extern "C" fn(*mut c_void))`; cast both.
+            global_this.queue_microtask_callback(
+                initial_data.cast::<c_void>(),
+                InitialDataHandler::<SSL>::handle,
+            );
 
             // We need to ref the outgoing websocket so that it doesn't get finalized
             // before the initial data handler is called
@@ -1684,7 +1877,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         // TODO(port): LIFETIMES.tsv row for proxy_tunnel says Arc — update to
         // IntrusiveArc in Phase B (pointer crosses FFI; Arc header is wrong).
         let tunnel_owned: IntrusiveArc<WebSocketProxyTunnel> = unsafe {
-            IntrusiveArc::from_raw(tunnel_ptr as *mut WebSocketProxyTunnel).retained()
+            // PORT NOTE: Zig `tunnel.ref()` then store — `RefPtr::init_ref`
+            // bumps the intrusive count and returns an owning handle.
+            IntrusiveArc::init_ref(tunnel_ptr as *mut WebSocketProxyTunnel)
         };
 
         // ref_count starts at 1: this is the I/O-layer ref, owned by the
@@ -1709,15 +1904,18 @@ impl<const SSL: bool> WebSocket<SSL> {
             receive_frame: 0,
             receive_body_remain: 0,
             receive_pending_chunk_len: 0,
-            receive_buffer: LinearFifo::new(),
-            send_buffer: LinearFifo::new(),
+            receive_buffer: LinearFifo::<u8, DynamicBuffer<u8>>::init(),
+            send_buffer: LinearFifo::<u8, DynamicBuffer<u8>>::init(),
             global_this,
             poll_ref: KeepAlive::init(),
             header_fragment: None,
             payload_length_frame_bytes: [0u8; 8],
             payload_length_frame_len: 0,
             initial_data_handler: None,
-            event_loop: vm.event_loop(),
+            // PORT NOTE: reshaped for borrowck — `vm.event_loop()` returns a
+            // `&'static`-tied borrow that would lock `vm` for the rest of the
+            // fn; re-derive from `global_this` so `vm` stays usable below.
+            event_loop: global_this.bun_vm().event_loop(),
             deflate: None,
             receiving_compressed: false,
             message_is_compressed: false,
@@ -1736,19 +1934,25 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         ws_ref.send_buffer.ensure_total_capacity(2048);
         ws_ref.receive_buffer.ensure_total_capacity(2048);
-        ws_ref.poll_ref.r#ref(global_this.bun_vm());
+        ws_ref.poll_ref.r#ref(Self::vm_loop_ctx(global_this));
 
-        // SAFETY: buffered_data/len from C++; caller guarantees validity
-        let buffered_slice: &mut [u8] =
-            unsafe { core::slice::from_raw_parts_mut(buffered_data, buffered_data_len) };
-        if !buffered_slice.is_empty() {
+        if buffered_data_len > 0 {
+            // SAFETY: see `init()` — adopt the C++ mimalloc-owned buffer
+            // directly so it is freed (not leaked) when the handler drops.
+            let buffered_slice: Box<[u8]> = unsafe {
+                Box::from_raw(core::slice::from_raw_parts_mut(buffered_data, buffered_data_len))
+            };
             let initial_data = Box::into_raw(Box::new(InitialDataHandler::<SSL> {
                 adopted: NonNull::new(ws),
-                slice: Box::from(&*buffered_slice),
-                // TODO(port): see init() — ownership of buffered_slice
+                slice: buffered_slice,
                 ws: outgoing,
             }));
-            global_this.queue_microtask_callback(initial_data, InitialDataHandler::<SSL>::handle);
+            // PORT NOTE: `queue_microtask_callback` takes an erased
+            // `(*mut c_void, unsafe extern "C" fn(*mut c_void))`; cast both.
+            global_this.queue_microtask_callback(
+                initial_data.cast::<c_void>(),
+                InitialDataHandler::<SSL>::handle,
+            );
             // SAFETY: outgoing is a valid CppWebSocket*
             unsafe { (*outgoing).r#ref() };
         }
@@ -1763,7 +1967,11 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub fn handle_tunnel_data(&mut self, data: &[u8]) {
         // Process the decrypted data as if it came from the socket
         // has_tcp() now returns true for tunnel mode, so this will work correctly
-        self.handle_data(self.tcp, data);
+        // PORT NOTE: reshaped for borrowck — `&mut self` + `&self.tcp` overlap.
+        let tcp: *const Socket<SSL> = &self.tcp;
+        // SAFETY: `tcp` points into `*self`; in tunnel mode `self.tcp` is
+        // `Detached` and `handle_data` never writes it.
+        self.handle_data(unsafe { &*tcp }, data);
     }
 
     /// Called by the WebSocketProxyTunnel when the underlying socket drains.
@@ -1776,7 +1984,12 @@ impl<const SSL: bool> WebSocket<SSL> {
         // (see write_binary_data). The tunnel ref-guards itself in
         // on_writable() but not this struct.
         self.r#ref();
-        let _guard = scopeguard::guard((), |_| self.deref());
+        // PORT NOTE: reshaped for borrowck — capture a raw ptr so `self` stays
+        // mutably borrowable below. The ref taken above keeps `self` alive.
+        let _guard = scopeguard::guard(self as *const Self, |p| {
+            // SAFETY: `p` is `self`, kept alive by the `r#ref()` above.
+            unsafe { (*p).deref() }
+        });
         // TODO(port): scopeguard borrowck
 
         let send_buf_ptr = self.send_buffer.readable_slice(0).as_ptr();
@@ -1797,7 +2010,13 @@ impl<const SSL: bool> WebSocket<SSL> {
         // below drops the C++ ref; keep `this` alive until we've finished
         // the tcp close check.
         this.r#ref();
-        let _guard = scopeguard::guard((), |_| this.deref());
+        // PORT NOTE: reshaped for borrowck — `scopeguard` capturing `&this`
+        // would freeze it for the whole scope. Capture a raw ptr instead;
+        // the ref taken on the line above guarantees `this` outlives the guard.
+        let _guard = scopeguard::guard(this as *const Self, |p| {
+            // SAFETY: `p` is `this`, kept alive by the `r#ref()` above.
+            unsafe { (*p).deref() }
+        });
         // TODO(port): scopeguard borrowck
 
         this.clear_data();
@@ -1834,8 +2053,12 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: called from C++ with a valid pointer
         let this = unsafe { &*this };
         let mut cost: usize = size_of::<Self>();
-        cost += this.send_buffer.buf_len();
-        cost += this.receive_buffer.buf_len();
+        // PORT NOTE: Zig read `buf.len` (allocated capacity). LinearFifo's
+        // `buf_len()` is private; `readable_length()` (live bytes) is the
+        // closest public surface. PERF(port): under-reports — add a public
+        // `capacity()` to LinearFifo in Phase B and switch back.
+        cost += this.send_buffer.readable_length();
+        cost += this.receive_buffer.readable_length();
         // This is under-estimated a little, as we don't include usockets context.
         cost
     }
@@ -1920,8 +2143,10 @@ macro_rules! export_websocket_client {
     };
 }
 
-// TODO(b2-blocked): bun_uws::NewSocketHandler — shims forward to the gated
-// impl block above; un-gate together.
+// TODO(b2-blocked): `paste` crate — `#[no_mangle]` ident concat needs
+// `paste::paste!`, which is not in the workspace dependency set yet. The
+// underlying `WebSocket::<SSL>::*` fns the shims forward to are un-gated and
+// compile; only the C-ABI symbol names are pending.
 #[cfg(any())] export_websocket_client!(false, "WebSocketClient");
 #[cfg(any())] export_websocket_client!(true, "WebSocketClientTLS");
 
@@ -1940,35 +2165,35 @@ impl<const SSL: bool> InitialDataHandler<SSL> {
     // TODO(port): jsc::AnyTask::new wrapper — Phase B wires queue_microtask_callback signature.
 
     pub fn handle_without_deinit(&mut self) {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_uws::NewSocketHandler::is_closed +
-            // WebSocket::handle_data (gated impl block above)
-            let Some(this_socket_ptr) = self.adopted.take() else {
-                return;
-            };
-            // SAFETY: adopted points to a live WebSocket (backref, no ref taken)
-            let this_socket = unsafe { &mut *this_socket_ptr.as_ptr() };
-            this_socket.initial_data_handler = None;
-            let ws = self.ws;
-            // defer ws.unref() → scopeguard
-            let _guard = scopeguard::guard((), |_| {
-                // SAFETY: ws is a valid CppWebSocket* (ref taken in init())
-                unsafe { (*ws).unref() };
-            });
+        let Some(this_socket_ptr) = self.adopted.take() else {
+            return;
+        };
+        // SAFETY: adopted points to a live WebSocket (backref, no ref taken)
+        let this_socket = unsafe { &mut *this_socket_ptr.as_ptr() };
+        this_socket.initial_data_handler = None;
+        let ws = self.ws;
+        // defer ws.unref() → scopeguard
+        let _guard = scopeguard::guard((), |_| {
+            // SAFETY: ws is a valid CppWebSocket* (ref taken in init())
+            unsafe { (*ws).unref() };
+        });
 
-            // For tunnel mode, tcp is detached but connection is still active through the tunnel
-            let is_connected = !this_socket.tcp.is_closed() || this_socket.proxy_tunnel.is_some();
-            if this_socket.outgoing_websocket.is_some() && is_connected {
-                this_socket.handle_data(this_socket.tcp, &self.slice);
-            }
+        // For tunnel mode, tcp is detached but connection is still active through the tunnel
+        let is_connected = !this_socket.tcp.is_closed() || this_socket.proxy_tunnel.is_some();
+        if this_socket.outgoing_websocket.is_some() && is_connected {
+            // PORT NOTE: reshaped for borrowck — `&mut this_socket` + `&this_socket.tcp` overlap.
+            let tcp: *const Socket<SSL> = &this_socket.tcp;
+            // SAFETY: `tcp` points into `*this_socket`; `handle_data` only reads
+            // the socket handle (no aliasing write to `this_socket.tcp`).
+            this_socket.handle_data(unsafe { &*tcp }, &self.slice);
         }
-        // TODO(b2-blocked): bun_uws::NewSocketHandler::is_closed
-        todo!("InitialDataHandler::handle_without_deinit — blocked on bun_uws::NewSocketHandler")
     }
 
-    pub fn handle(this: *mut Self) {
-        // SAFETY: called from microtask queue with valid pointer
+    /// `extern "C"` thunk shape for `JSGlobalObject::queue_microtask_callback`.
+    pub unsafe extern "C" fn handle(this: *mut c_void) {
+        let this = this.cast::<Self>();
+        // SAFETY: called from microtask queue with the pointer we passed in
+        // (Box::into_raw in init()/init_with_tunnel()).
         let this_ref = unsafe { &mut *this };
         this_ref.handle_without_deinit();
         // deinit: free slice + destroy self
@@ -2037,16 +2262,8 @@ impl Mask {
         output: &mut [u8],
         input: &[u8],
     ) {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_jsc::rare_data::RareData::entropy_slice — stub
-            // RareData in bun_jsc/lib.rs has no `entropy_slice`; real impl is in
-            // gated rare_data.rs.
-            let entropy = global_this.bun_vm().rare_data().entropy_slice(4);
-            mask_buf.copy_from_slice(&entropy[..4]);
-        }
-        // TODO(b2-blocked): bun_jsc::rare_data::RareData::entropy_slice
-        let _ = global_this;
+        let entropy = global_this.bun_vm().rare_data().entropy_slice(4);
+        mask_buf.copy_from_slice(&entropy[..4]);
         let mask = *mask_buf;
 
         let skip_mask = u32::from_ne_bytes(mask) == 0;
@@ -2057,14 +2274,8 @@ impl Mask {
     /// PORT NOTE: Zig's `fill` allowed output==input; Rust borrowck forbids
     /// `&mut [u8]` + `&[u8]` aliasing. Callers that masked in-place use this.
     pub fn fill_in_place(global_this: &JSGlobalObject, mask_buf: &mut [u8; 4], buf: &mut [u8]) {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_jsc::rare_data::RareData::entropy_slice
-            let entropy = global_this.bun_vm().rare_data().entropy_slice(4);
-            mask_buf.copy_from_slice(&entropy[..4]);
-        }
-        // TODO(b2-blocked): bun_jsc::rare_data::RareData::entropy_slice
-        let _ = global_this;
+        let entropy = global_this.bun_vm().rare_data().entropy_slice(4);
+        mask_buf.copy_from_slice(&entropy[..4]);
         let mask = *mask_buf;
 
         let skip_mask = u32::from_ne_bytes(mask) == 0;

@@ -13,9 +13,8 @@ pub mod password_object;
 pub mod crypto_hasher;
 #[path = "HMAC.rs"]
 pub mod hmac;
-#[cfg(any())]
 #[path = "EVP.rs"]
-pub mod evp_draft;
+pub mod evp;
 #[cfg(any())]
 #[path = "PBKDF2.rs"]
 pub mod pbkdf2;
@@ -44,67 +43,45 @@ pub mod crypto_hasher {
     macro_rules! stub_hasher { ($($n:ident),*) => { $(pub struct $n;)* } }
     stub_hasher!(MD4, MD5, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256);
 }
-pub mod evp {
+/// For usage in Rust (`src/runtime/crypto/PBKDF2.zig` `pub fn pbkdf2`).
+///
+/// Returns `Some(output)` on success, `None` on BoringSSL error.
+// PORT NOTE: Zig nests `pbkdf2`/`Algorithm` inside the `EVP` struct. Stable
+// Rust has no inherent associated types, so callers reach them via the
+// `evp` module re-exported as `EVP` (see `pub use evp as EVP` below) —
+// `EVP::pbkdf2(..)` / `EVP::Algorithm::Sha256` resolve through the module.
+pub fn pbkdf2<'a>(
+    output: &'a mut [u8],
+    password: &[u8],
+    salt: &[u8],
+    iteration_count: u32,
+    algorithm: evp::Algorithm,
+) -> Option<&'a [u8]> {
+    use bun_boringssl_sys as boringssl;
     use core::ffi::c_uint;
 
-    use bun_boringssl_sys as boringssl;
-    use boringssl::EVP_MD;
-
-    pub struct EVP;
-    #[derive(Copy, Clone, Eq, PartialEq)]
-    pub enum Algorithm {
-        // TODO(b2-blocked): bun_jsc — full variant list (+ from_js) lives in gated EVP.rs draft.
-        Sha256,
+    output.fill(0);
+    // SAFETY: FFI into BoringSSL; ERR_clear_error has no preconditions.
+    unsafe { boringssl::ERR_clear_error() };
+    let digest = algorithm.md()?;
+    // SAFETY: password/salt/output are valid for the given lengths; digest is a
+    // static EVP_MD singleton returned by BoringSSL above.
+    let rc = unsafe {
+        boringssl::PKCS5_PBKDF2_HMAC(
+            if password.is_empty() { core::ptr::null() } else { password.as_ptr() },
+            password.len(),
+            salt.as_ptr(),
+            salt.len(),
+            iteration_count as c_uint,
+            digest,
+            output.len(),
+            output.as_mut_ptr(),
+        )
+    };
+    if rc <= 0 {
+        return None;
     }
-
-    impl Algorithm {
-        pub fn md(self) -> Option<*const EVP_MD> {
-            // SAFETY: BoringSSL digest accessor fns are thread-safe and return static singletons.
-            unsafe {
-                match self {
-                    Algorithm::Sha256 => Some(boringssl::EVP_sha256()),
-                }
-            }
-        }
-    }
-
-    /// For usage in Rust (`src/runtime/crypto/PBKDF2.zig` `pub fn pbkdf2`).
-    ///
-    /// Returns `Some(output)` on success, `None` on BoringSSL error.
-    // PORT NOTE: Zig nests `pbkdf2`/`Algorithm` inside the `EVP` struct. Stable
-    // Rust has no inherent associated types, so callers reach them via the
-    // `evp` module re-exported as `EVP` (see `pub use evp as EVP` below) —
-    // `EVP::pbkdf2(..)` / `EVP::Algorithm::Sha256` resolve through the module.
-    pub fn pbkdf2<'a>(
-        output: &'a mut [u8],
-        password: &[u8],
-        salt: &[u8],
-        iteration_count: u32,
-        algorithm: Algorithm,
-    ) -> Option<&'a [u8]> {
-        output.fill(0);
-        // SAFETY: FFI into BoringSSL; ERR_clear_error has no preconditions.
-        unsafe { boringssl::ERR_clear_error() };
-        let digest = algorithm.md()?;
-        // SAFETY: password/salt/output are valid for the given lengths; digest is a
-        // static EVP_MD singleton returned by BoringSSL above.
-        let rc = unsafe {
-            boringssl::PKCS5_PBKDF2_HMAC(
-                if password.is_empty() { core::ptr::null() } else { password.as_ptr() },
-                password.len(),
-                salt.as_ptr(),
-                salt.len(),
-                iteration_count as c_uint,
-                digest,
-                output.len(),
-                output.as_mut_ptr(),
-            )
-        };
-        if rc <= 0 {
-            return None;
-        }
-        Some(output)
-    }
+    Some(output)
 }
 
 pub use password_object::PasswordObject;

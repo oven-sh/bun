@@ -134,24 +134,56 @@ impl Default for Compression {
     }
 }
 
-// TODO(port): #[bun_jsc::JsClass] derive — wire when codegen lands.
+// TODO(port): #[bun_jsc::JsClass] derive — hand-written until the proc-macro
+// grows `no_finalize`/`no_construct` knobs Archive needs (custom `finalize`).
 pub struct Archive {
     /// The underlying data for the archive - uses Blob.Store for thread-safe ref counting
     store: StoreRef,
     /// Compression settings for this archive
     compress: Compression,
 }
-impl bun_jsc::JsClass for Archive {
-    fn from_js(_value: JSValue) -> Option<*mut Self> {
-        todo!("blocked_on: bun_jsc::Codegen::JSArchive")
+
+// `jsc.Codegen.JSArchive` — what the `#[bun_jsc::JsClass]` derive would emit.
+// Symbol names match generate-classes.ts (`${typeName}__fromJS` / `__create`).
+const _: () = {
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    unsafe extern "sysv64" {
+        #[link_name = "Archive__fromJS"]
+        fn __from_js(value: JSValue) -> *mut Archive;
+        #[link_name = "Archive__fromJSDirect"]
+        fn __from_js_direct(value: JSValue) -> *mut Archive;
+        #[link_name = "Archive__create"]
+        fn __create(global: *mut JSGlobalObject, ptr: *mut Archive) -> JSValue;
     }
-    fn from_js_direct(_value: JSValue) -> Option<*mut Self> {
-        todo!("blocked_on: bun_jsc::Codegen::JSArchive")
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    unsafe extern "C" {
+        #[link_name = "Archive__fromJS"]
+        fn __from_js(value: JSValue) -> *mut Archive;
+        #[link_name = "Archive__fromJSDirect"]
+        fn __from_js_direct(value: JSValue) -> *mut Archive;
+        #[link_name = "Archive__create"]
+        fn __create(global: *mut JSGlobalObject, ptr: *mut Archive) -> JSValue;
     }
-    fn to_js(_this: *mut Self, _global: &JSGlobalObject) -> JSValue {
-        todo!("blocked_on: bun_jsc::Codegen::JSArchive")
+
+    impl bun_jsc::JsClass for Archive {
+        fn from_js(value: JSValue) -> Option<*mut Self> {
+            // SAFETY: pure FFI downcast; returns null on type mismatch.
+            let p = unsafe { __from_js(value) };
+            if p.is_null() { None } else { Some(p) }
+        }
+        fn from_js_direct(value: JSValue) -> Option<*mut Self> {
+            // SAFETY: pure FFI downcast (exact-structure check); null on miss.
+            let p = unsafe { __from_js_direct(value) };
+            if p.is_null() { None } else { Some(p) }
+        }
+        fn to_js(self, global: &JSGlobalObject) -> JSValue {
+            let ptr = Box::into_raw(Box::new(self));
+            // SAFETY: `global` is live; ownership of `ptr` transfers to the
+            // C++ wrapper (freed via `ArchiveClass__finalize` → `finalize()`).
+            unsafe { __create(global as *const _ as *mut _, ptr) }
+        }
     }
-}
+};
 
 impl Archive {
     pub fn finalize(this: *mut Self) {
@@ -165,19 +197,49 @@ impl Archive {
     /// Pretty-print for console.log
     pub fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
         &self,
-        _formatter: &mut F,
-        _writer: &mut W,
+        formatter: &mut F,
+        writer: &mut W,
     ) -> Result<(), bun_core::Error>
     where
-        // TODO(port): narrow to the actual ConsoleObject.Formatter trait once ported
         F: bun_jsc::ConsoleFormatter,
         W: core::fmt::Write,
     {
-        // TODO(port): ConsoleFormatter trait surface (indent_add / write_indent /
-        // print_as / reset_line) is not stable yet; restore body once it lands.
-        let _ = self.store.shared_view();
-        let _ = count_files_in_archive;
-        todo!("blocked_on: bun_jsc::ConsoleFormatter")
+        let data = self.store.shared_view();
+
+        write!(
+            writer,
+            "{}",
+            Output::pretty_fmt_args::<ENABLE_ANSI_COLORS>(format_args!(
+                "Archive ({}) {{\n",
+                bun_core::fmt::size(data.len(), bun_core::fmt::SizeFormatterOptions::default()),
+            )),
+        )?;
+
+        {
+            formatter.indent_inc();
+            // `defer formatter.indent -|= 1;`
+            // PORT NOTE: reshaped for borrowck — scopeguard cannot reborrow
+            // `formatter` while it is also borrowed for the body; decrement
+            // after the block instead.
+
+            formatter.write_indent(writer)?;
+            writer.write_str(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>files<d>:<r> "))?;
+            formatter
+                .print_as::<W, ENABLE_ANSI_COLORS>(
+                    jsc::FormatTag::Double,
+                    writer,
+                    JSValue::js_number(f64::from(count_files_in_archive(data))),
+                    jsc::JSType::NumberObject,
+                )
+                .map_err(|_| bun_core::err!("JSError"))?;
+
+            formatter.indent_dec();
+        }
+        writer.write_str("\n")?;
+        formatter.write_indent(writer)?;
+        writer.write_str("}")?;
+        formatter.reset_line();
+        Ok(())
     }
 }
 
@@ -315,10 +377,11 @@ fn create_archive(data: Vec<u8>, compress: Compression) -> Box<Archive> {
     Box::new(Archive { store, compress })
 }
 
-/// `JSValue::as_::<Blob>()` shim — Blob does not yet implement `JsClass`.
-// TODO(port): drop once `#[bun_jsc::JsClass]` lands on `webcore::Blob`.
-fn blob_from_js(_value: JSValue) -> Option<*mut Blob> {
-    todo!("blocked_on: bun_runtime::webcore::Blob: JsClass")
+/// `JSValue::as_::<Blob>()` shim — kept as a free fn so the call sites read
+/// the same as the Zig (`jsc.WebCore.Blob.fromJS(value)`).
+#[inline]
+fn blob_from_js(value: JSValue) -> Option<*mut Blob> {
+    <Blob as bun_jsc::JsClass>::from_js(value)
 }
 
 /// Shared helper that builds tarball bytes from a JS object

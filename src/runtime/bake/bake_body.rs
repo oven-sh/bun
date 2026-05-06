@@ -1117,7 +1117,7 @@ impl Framework {
         log: &mut logger::Log,
         mode: Mode,
         renderer: Graph,
-        out: &mut bun_bundler::Transpiler,
+        out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler>,
         bundler_options: &BuildConfigSubset,
     ) -> Result<(), bun_core::Error> {
         let source_map: bun_bundler::options::SourceMapOption = match mode {

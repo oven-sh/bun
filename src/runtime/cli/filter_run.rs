@@ -175,7 +175,7 @@ impl<'a> ProcessHandle<'a> {
         let _ = state.process_exit(self);
     }
 
-    pub fn event_loop(&self) -> &'static MiniEventLoop {
+    pub fn event_loop(&self) -> &'static MiniEventLoop<'static> {
         // SAFETY: state backref valid.
         unsafe { (*self.state).event_loop }
     }

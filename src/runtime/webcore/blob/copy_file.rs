@@ -1020,6 +1020,7 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
     }
 }
 
+#[cfg(windows)]
 extern "C" fn on_write(req: *mut libuv::fs_t) {
     // SAFETY: req points to CopyFileWindows.io_request
     let this: &mut CopyFileWindows = unsafe {

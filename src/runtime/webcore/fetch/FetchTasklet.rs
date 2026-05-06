@@ -41,7 +41,7 @@ pub struct FetchTasklet {
     /// buffer used to stream response to JS
     pub scheduled_response_buffer: MutableString,
     /// response weak ref we need this to track the response JS lifetime
-    pub response: jsc::Weak<FetchTasklet>,
+    pub response: jsc::Weak<'static, FetchTasklet>,
     /// native response ref if we still need it when JS is discarted
     pub native_response: Option<Arc<Response>>,
     pub ignore_data: bool,

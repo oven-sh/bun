@@ -4353,25 +4353,53 @@ impl Resolver {
 }
 
 // ───────── JS host-fn FFI exports (Zig: comptime { @export(...) }) ─────────
-// The #[host_fn] attribute emits the JSC-ABI shim; here we export them by name.
-bun_jsc::export_host_fn!(Resolver::global_resolve, "Bun__DNS__resolve");
-bun_jsc::export_host_fn!(Resolver::global_lookup, "Bun__DNS__lookup");
-bun_jsc::export_host_fn!(Resolver::global_resolve_txt, "Bun__DNS__resolveTxt");
-bun_jsc::export_host_fn!(Resolver::global_resolve_soa, "Bun__DNS__resolveSoa");
-bun_jsc::export_host_fn!(Resolver::global_resolve_mx, "Bun__DNS__resolveMx");
-bun_jsc::export_host_fn!(Resolver::global_resolve_naptr, "Bun__DNS__resolveNaptr");
-bun_jsc::export_host_fn!(Resolver::global_resolve_srv, "Bun__DNS__resolveSrv");
-bun_jsc::export_host_fn!(Resolver::global_resolve_caa, "Bun__DNS__resolveCaa");
-bun_jsc::export_host_fn!(Resolver::global_resolve_ns, "Bun__DNS__resolveNs");
-bun_jsc::export_host_fn!(Resolver::global_resolve_ptr, "Bun__DNS__resolvePtr");
-bun_jsc::export_host_fn!(Resolver::global_resolve_cname, "Bun__DNS__resolveCname");
-bun_jsc::export_host_fn!(Resolver::global_resolve_any, "Bun__DNS__resolveAny");
-bun_jsc::export_host_fn!(Resolver::get_global_servers, "Bun__DNS__getServers");
-bun_jsc::export_host_fn!(Resolver::set_global_servers, "Bun__DNS__setServers");
-bun_jsc::export_host_fn!(Resolver::global_reverse, "Bun__DNS__reverse");
-bun_jsc::export_host_fn!(Resolver::global_lookup_service, "Bun__DNS__lookupService");
-bun_jsc::export_host_fn!(internal::prefetch_from_js, "Bun__DNS__prefetch");
-bun_jsc::export_host_fn!(internal::get_dns_cache_stats, "Bun__DNS__getCacheStats");
+// The #[host_fn] attribute emits the JSC-ABI shim under the Rust function name;
+// re-export each under its `Bun__DNS__*` link name. Mirrors the proc-macro's
+// shim body (see `bun_jsc_macros::host_fn`, `HostFnKind::Free`).
+macro_rules! export_host_fn {
+    ($scope:ident :: $f:ident, $name:literal) => {
+        const _: () = {
+            #[cfg(all(windows, target_arch = "x86_64"))]
+            #[unsafe(export_name = $name)]
+            pub unsafe extern "sysv64" fn __shim(
+                g: *mut ::bun_jsc::JSGlobalObject,
+                f: *mut ::bun_jsc::CallFrame,
+            ) -> ::bun_jsc::JSValue {
+                // SAFETY: JSC guarantees both pointers are live for the call.
+                let g = unsafe { &*g };
+                ::bun_jsc::__macro_support::host_fn_result(g, $scope::$f(g, unsafe { &*f }))
+            }
+            #[cfg(not(all(windows, target_arch = "x86_64")))]
+            #[unsafe(export_name = $name)]
+            pub unsafe extern "C" fn __shim(
+                g: *mut ::bun_jsc::JSGlobalObject,
+                f: *mut ::bun_jsc::CallFrame,
+            ) -> ::bun_jsc::JSValue {
+                // SAFETY: JSC guarantees both pointers are live for the call.
+                let g = unsafe { &*g };
+                ::bun_jsc::__macro_support::host_fn_result(g, $scope::$f(g, unsafe { &*f }))
+            }
+        };
+    };
+}
+export_host_fn!(Resolver::global_resolve, "Bun__DNS__resolve");
+export_host_fn!(Resolver::global_lookup, "Bun__DNS__lookup");
+export_host_fn!(Resolver::global_resolve_txt, "Bun__DNS__resolveTxt");
+export_host_fn!(Resolver::global_resolve_soa, "Bun__DNS__resolveSoa");
+export_host_fn!(Resolver::global_resolve_mx, "Bun__DNS__resolveMx");
+export_host_fn!(Resolver::global_resolve_naptr, "Bun__DNS__resolveNaptr");
+export_host_fn!(Resolver::global_resolve_srv, "Bun__DNS__resolveSrv");
+export_host_fn!(Resolver::global_resolve_caa, "Bun__DNS__resolveCaa");
+export_host_fn!(Resolver::global_resolve_ns, "Bun__DNS__resolveNs");
+export_host_fn!(Resolver::global_resolve_ptr, "Bun__DNS__resolvePtr");
+export_host_fn!(Resolver::global_resolve_cname, "Bun__DNS__resolveCname");
+export_host_fn!(Resolver::global_resolve_any, "Bun__DNS__resolveAny");
+export_host_fn!(Resolver::get_global_servers, "Bun__DNS__getServers");
+export_host_fn!(Resolver::set_global_servers, "Bun__DNS__setServers");
+export_host_fn!(Resolver::global_reverse, "Bun__DNS__reverse");
+export_host_fn!(Resolver::global_lookup_service, "Bun__DNS__lookupService");
+export_host_fn!(internal::prefetch_from_js, "Bun__DNS__prefetch");
+export_host_fn!(internal::get_dns_cache_stats, "Bun__DNS__getCacheStats");
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

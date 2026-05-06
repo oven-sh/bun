@@ -267,11 +267,7 @@ impl HttpThread {
 
     pub fn deflater(&mut self) -> &mut LibdeflateState {
         if self.lazy_libdeflater.is_none() {
-            unsafe extern "C" {
-                fn libdeflate_alloc_decompressor() -> *mut c_void;
-            }
-            // SAFETY: libdeflate is linked; allocator returns null on OOM.
-            let decompressor = unsafe { libdeflate_alloc_decompressor() };
+            let decompressor = bun_libdeflate_sys::libdeflate::Decompressor::alloc();
             if decompressor.is_null() {
                 bun_core::out_of_memory();
             }

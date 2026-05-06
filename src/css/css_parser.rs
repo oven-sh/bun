@@ -2256,7 +2256,7 @@ pub type BundlerLayerBlockRule = css_rules::layer::LayerBlockRule<BundlerAtRule>
 pub type BundlerSupportsRule = css_rules::supports::SupportsRule<BundlerAtRule>;
 pub type BundlerMediaRule = css_rules::media::MediaRule<BundlerAtRule>;
  // blocked_on: printer.rs PrintResult<R> generic
-pub type BundlerPrintResult = css_printer::PrintResult<BundlerAtRule>;
+pub type BundlerPrintResult = PrintResult<BundlerAtRule>;
 
 pub struct BundlerTailwindState {
     pub source: Box<[u8]>,
@@ -2540,12 +2540,7 @@ impl<AtRule> StyleSheet<AtRule> {
             panic!("TODO: Handle");
         }
 
-        return Ok(());
-        }
-        #[cfg(any())] {
-        let _ = (options, extra);
-        todo!("StyleSheet::minify — gated on rules::CssRuleList::minify + MinifyContext field set")
-        }
+        Ok(())
     }
 
     pub fn to_css_with_writer<'a>(
@@ -2559,7 +2554,6 @@ impl<AtRule> StyleSheet<AtRule> {
     ) -> PrintResult<ToCssResultInternal> {
         // blocked_on: PrinterOptions: Copy (printer.rs) — Zig passed by value
         // twice; here `options` is moved into Printer::new then re-read.
-         {
         let mut printer = Printer::new(
             allocator,
             bumpalo::collections::Vec::new_in(allocator),
@@ -2569,17 +2563,12 @@ impl<AtRule> StyleSheet<AtRule> {
             local_names,
             symbols,
         );
-        return match self.to_css_with_writer_impl(&mut printer, options) {
+        match self.to_css_with_writer_impl(&mut printer, options) {
             Ok(result) => Ok(result),
             Err(_) => {
                 debug_assert!(printer.error_kind.is_some());
                 Err(printer.error_kind.unwrap())
             }
-        };
-        }
-        #[cfg(any())] {
-        let _ = (allocator, writer, options, import_info, local_names, symbols);
-        todo!("StyleSheet::to_css_with_writer — gated on PrinterOptions: Copy + to_css_with_writer_impl")
         }
     }
 
@@ -2603,7 +2592,6 @@ impl<AtRule> StyleSheet<AtRule> {
         // blocked_on: CssRuleList::to_css (rules/mod.rs), CssModule::new sources
         // arg type (`&Vec<String>` vs `&Vec<Box<[u8]>>`), printer.dependencies
         // BumpVec→Vec conversion / 'bump threading.
-         {
         if let Some(config) = &self.options.css_modules {
             let mut references = CssModuleReferences::default();
             printer.css_module = Some(CssModule::new(config, &self.sources, _project_root, &mut references));
@@ -2630,11 +2618,6 @@ impl<AtRule> StyleSheet<AtRule> {
                 references: None,
             });
         }
-        }
-        #[cfg(any())] {
-        let _ = printer;
-        todo!("StyleSheet::to_css_with_writer_impl — gated on rules::CssRuleList::to_css")
-        }
     }
 
     pub fn to_css<'a>(
@@ -2650,7 +2633,6 @@ impl<AtRule> StyleSheet<AtRule> {
         // TODO(port): writer adapter — Zig used std.Io.Writer.Allocating; here we
         // route through bun_io::Write over Vec<u8> until 'bump dest threads.
         // blocked_on: bun_io::Write impl for Vec<u8> / dest ownership reshape.
-         {
         let mut dest: Vec<u8> = Vec::with_capacity(1);
         let result = self.to_css_with_writer(allocator, &mut dest, options, import_info, local_names, symbols)?;
         return Ok(ToCssResult {
@@ -2659,11 +2641,6 @@ impl<AtRule> StyleSheet<AtRule> {
             exports: result.exports,
             references: result.references,
         });
-        }
-        #[cfg(any())] {
-        let _ = (allocator, options, import_info, local_names, symbols);
-        todo!("StyleSheet::to_css — gated on to_css_with_writer dest adapter")
-        }
     }
 
     pub fn parse(

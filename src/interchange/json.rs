@@ -140,6 +140,10 @@ impl<
         WAS_ORIGINALLY_MACRO,
         GUESS_INDENTATION,
     >
+where
+    // `json_lexer::Lexer` requires `'bump: 'a` (escape-decoded identifiers
+    // are bump-alloc'd but stored in `&'a` fields).
+    'bump: 'a,
 {
     /// Runtime `JSONOptions` reconstructed from the 8 const-generic flags —
     /// `crate::json_lexer::Lexer` carries the options at runtime (see struct
@@ -465,7 +469,10 @@ const PKG_JSON_OPTS: js_lexer::JSONOptions = if LEXER_DEBUGGER_WORKAROUND {
     }
 };
 
-impl<'a, 'bump> PackageJSONVersionChecker<'a, 'bump> {
+impl<'a, 'bump> PackageJSONVersionChecker<'a, 'bump>
+where
+    'bump: 'a,
+{
     pub fn init(
         bump: &'bump Bump,
         source: &'a logger::Source,

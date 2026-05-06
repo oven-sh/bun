@@ -15,7 +15,9 @@ use css_values::ident::DashedIdent;
 
 pub use css::Error;
 
-pub type PrintResult<T> = Result<T, PrintErr>;
+// Local alias for `PrintErr!T` return shapes (Zig: `PrintErr!void`). Kept private
+// — the spec-level `PrintResult<T> = Maybe<T, PrinterError>` lives in css_parser.
+type PrintResult<T> = Result<T, PrintErr>;
 
 // TODO(port): move to <area>_sys / clarify which Write trait. Zig used *std.Io.Writer
 // (byte-oriented: writeAll/writeByte/print/splatByteAll). Using a local dyn trait alias.

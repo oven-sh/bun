@@ -253,10 +253,17 @@ impl InternalState {
                         body_out_str
                             .list
                             .reserve_exact((estimated_size as usize).saturating_sub(body_out_str.list.len()));
-                        // TODO(port): need spare-capacity slice access on MutableString.list (allocatedSlice equivalent)
-                        let result = deflater
-                            .decompressor
-                            .decompress(buffer, body_out_str.list.allocated_slice_mut(), bun_libdeflate::Encoding::Gzip);
+                        // SAFETY: write into the full allocated capacity (Zig allocatedSlice equiv).
+                        // Bytes past `len` are uninitialized; libdeflate writes them as output.
+                        let allocated = unsafe {
+                            core::slice::from_raw_parts_mut(
+                                body_out_str.list.as_mut_ptr(),
+                                body_out_str.list.capacity(),
+                            )
+                        };
+                        // SAFETY: decompressor was returned by libdeflate_alloc_decompressor.
+                        let result = unsafe { &mut *deflater.decompressor }
+                            .decompress(buffer, allocated, bun_libdeflate::Encoding::Gzip);
 
                         if result.status == bun_libdeflate::Status::Success {
                             // SAFETY: decompress wrote `result.written` initialized bytes into the allocated slice
@@ -268,7 +275,8 @@ impl InternalState {
                     }
                 }
 
-                let result = deflater.decompressor.decompress(
+                // SAFETY: decompressor was returned by libdeflate_alloc_decompressor.
+                let result = unsafe { &mut *deflater.decompressor }.decompress(
                     buffer,
                     &mut deflater.shared_buffer,
                     match self.encoding {
@@ -324,10 +332,10 @@ impl InternalState {
 
             if let Err(err) = self.decompressor.read_all(self.is_done()) {
                 if self.is_done() || err != bun_core::err!("ShortRead") {
-                    Output::pretty_errorln(format_args!(
+                    Output::pretty_errorln(
                         "<r><red>Decompression error: {}<r>",
-                        bstr::BStr::new(err.name())
-                    ));
+                        (bstr::BStr::new(err.name()),),
+                    );
                     Output::flush();
                     self.compressed_body.reset();
                     return Err(err);
@@ -378,10 +386,10 @@ impl InternalState {
                 if !body_out_str.owns(buffer.list.as_slice()) {
                     if let Err(err) = body_out_str.append(buffer.list.as_slice()) {
                         let err: Error = err.into();
-                        Output::pretty_errorln(format_args!(
+                        Output::pretty_errorln(
                             "<r><red>Failed to append to body buffer: {}<r>",
-                            bstr::BStr::new(err.name())
-                        ));
+                            (bstr::BStr::new(err.name()),),
+                        );
                         Output::flush();
                         return Err(err.into());
                     }

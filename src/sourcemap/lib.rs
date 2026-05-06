@@ -6,14 +6,9 @@
 //! gates. `SerializedSourceMap`, `SourceMapPieces::finalize`,
 //! `append_source_mapping_url_remote`, `Chunk::print_source_map_contents*`,
 //! `ParsedSourceMap::write_vlqs`/`format_vlqs`, and `VLQ::write_to` are live.
-//! `get_source_map_impl`, `find_source_mapping_url_{u8,u16}`, and the
-//! `SourceProvider` impls for `SourceProviderMap` / `DevServerSourceProvider`
-//! are now live. Remaining `` fn-body gates are tagged
-//! `TODO(b2-blocked)` on missing lower-tier surface (bun_logger::fs::Path::pretty,
-//! bun_logger::Source `'static` contents lifetime).
-//!
-//! The `_phase_a_draft` block below preserves only `parse_json` for the next
-//! pass.
+//! `get_source_map_impl`, `find_source_mapping_url_{u8,u16}`, `parse_json`,
+//! and the `SourceProvider` impls for `SourceProviderMap` /
+//! `DevServerSourceProvider` are now live.
 
 // ── crate aliases ─────────────────────────────────────────────────────────
 // TODO(b1): Phase-A draft used `bun_str`; the workspace crate is `bun_string`.
@@ -1381,236 +1376,16 @@ pub fn append_source_mapping_url_remote<W: bun_io::Write + ?Sized>(
     asset_prefix_path: &[u8],
     writer: &mut W,
 ) -> bun_io::Result<()> {
-    // TODO(b2-blocked): bun_logger::fs::Path::pretty — minimal `fs::Path` shim
-    // in bun_logger lacks the `pretty` field (Zig `bun.fs.Path.pretty`).
-    
-    {
-        writer.write_all(b"\n//# sourceMappingURL=")?;
-        writer.write_all(bun_str::strings::without_trailing_slash(origin.href))?;
-        if !asset_prefix_path.is_empty() {
-            writer.write_all(asset_prefix_path)?;
-        }
-        if !source.path.pretty.is_empty() && source.path.pretty[0] != b'/' {
-            writer.write_all(b"/")?;
-        }
-        writer.write_all(source.path.pretty)?;
-        writer.write_all(b".map")?;
-        return Ok(());
+    writer.write_all(b"\n//# sourceMappingURL=")?;
+    writer.write_all(bun_str::strings::without_trailing_slash(origin.href))?;
+    if !asset_prefix_path.is_empty() {
+        writer.write_all(asset_prefix_path)?;
     }
-    #[cfg(any())]
-    {
-        let _ = (origin, source, asset_prefix_path, writer);
-        todo!("B-2: append_source_mapping_url_remote — blocked on bun_logger::fs::Path::pretty")
+    if !source.path.pretty.is_empty() && source.path.pretty[0] != b'/' {
+        writer.write_all(b"/")?;
     }
+    writer.write_all(source.path.pretty)?;
+    writer.write_all(b".map")?;
+    Ok(())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Phase-A draft body — preserved, gated off. Only `parse_json` remains;
-// everything else has been lifted out and is live above.
-//   TODO(b2-blocked): bun_logger::Source — `contents: &'static [u8]` rejects
-//     the non-static `source` arg; needs `'source` lifetime threading (or
-//     `Cow<'static, [u8]>`). PORTING.md §Forbidden bars lifetime-extend here.
-//   (bun_interchange::json::parse and bun_logger::js_ast::Expr accessors are
-//    now available — body below targets that surface.)
-// ──────────────────────────────────────────────────────────────────────────
-
-mod _phase_a_draft {
-use super::*;
-use bun_alloc::Arena;
-use bun_logger::js_ast::{Expr as AstExpr, Stmt as AstStmt};
-use crate::mapping::SourceMap as SourceMapLog;
-use std::sync::Arc;
-
-/// Parses a JSON source-map
-///
-/// `source` must be in UTF-8 and can be freed after this call.
-/// The mappings are owned by the global allocator.
-/// Temporary allocations are made to the `arena` allocator, which
-/// should be an arena allocator (caller is assumed to call `reset`).
-pub fn parse_json(
-    arena: &Arena,
-    source: &[u8],
-    hint: ParseUrlResultHint,
-) -> Result<ParseUrl, bun_core::Error> {
-    // TODO(port): narrow error set
-    let json_src = logger::Source::init_path_string("sourcemap.json", source);
-    let mut log = logger::Log::init();
-    // `defer log.deinit()` → Drop
-
-    // the allocator given to the JS parser is not respected for all parts
-    // of the parse, so we need to remember to reset the ast store
-    AstExpr::data_store_reset();
-    AstStmt::data_store_reset();
-    let _store_reset = scopeguard::guard((), |_| {
-        // the allocator given to the JS parser is not respected for all parts
-        // of the parse, so we need to remember to reset the ast store
-        AstExpr::data_store_reset();
-        AstStmt::data_store_reset();
-    });
-    bun_core::scoped_log!(SourceMapLog, "parse (JSON, {} bytes)", source.len());
-    let json = match bun_interchange::json::parse::<false>(&json_src, &mut log, arena) {
-        Ok(j) => j,
-        Err(_) => return Err(bun_core::err!("InvalidJSON")),
-    };
-
-    if let Some(version) = json.get(b"version") {
-        match version.data.as_e_number() {
-            Some(n) if n.value == 3.0 => {}
-            _ => return Err(bun_core::err!("UnsupportedVersion")),
-        }
-    }
-
-    let Some(mappings_str) = json.get(b"mappings") else {
-        return Err(bun_core::err!("UnsupportedVersion"));
-    };
-
-    if !mappings_str.data.is_e_string() {
-        return Err(bun_core::err!("InvalidSourceMap"));
-    }
-
-    let sources_content = match json
-        .get(b"sourcesContent")
-        .ok_or(bun_core::err!("InvalidSourceMap"))?
-        .data
-        .as_e_array()
-    {
-        Some(arr) => arr,
-        None => return Err(bun_core::err!("InvalidSourceMap")),
-    };
-
-    let sources_paths = match json
-        .get(b"sources")
-        .ok_or(bun_core::err!("InvalidSourceMap"))?
-        .data
-        .as_e_array()
-    {
-        Some(arr) => arr,
-        None => return Err(bun_core::err!("InvalidSourceMap")),
-    };
-
-    if sources_content.items.len != sources_paths.items.len {
-        return Err(bun_core::err!("InvalidSourceMap"));
-    }
-
-    let source_only = matches!(hint, ParseUrlResultHint::SourceOnly(_));
-
-    // PORT NOTE: reshaped for borrowck — Zig used a counted index `i` with
-    // errdefer freeing the prefix; Rust `Vec<Box<[u8]>>` drops automatically.
-    let source_paths_slice: Option<Vec<Box<[u8]>>> = if !source_only {
-        let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_content.items.len as usize);
-        for item in sources_paths.items.slice() {
-            let Some(s) = item.data.as_e_string() else {
-                return Err(bun_core::err!("InvalidSourceMap"));
-            };
-            // TODO(port): e_string.string(alloc) — exact API TBD
-            let s = s.string(arena)?;
-            v.push(Box::<[u8]>::from(s));
-        }
-        Some(v)
-    } else {
-        None
-    };
-
-    let map: Option<Arc<ParsedSourceMap>> = if !source_only {
-        let mut map_data = match mapping::parse(
-            mappings_str.data.as_e_string().unwrap().slice(arena),
-            None,
-            i32::MAX,
-            i32::MAX as usize,
-            mapping::ParseOptions {
-                allow_names: matches!(
-                    hint,
-                    ParseUrlResultHint::All { include_names: true, .. }
-                ),
-                sort: true,
-            },
-        ) {
-            ParseResult::Success(x) => x,
-            ParseResult::Fail(fail) => return Err(fail.err),
-        };
-
-        if let ParseUrlResultHint::All { include_names: true, .. } = hint {
-            if matches!(map_data.mappings.r#impl, mapping::ListValue::WithNames(_)) {
-                if let Some(names) = json.get(b"names") {
-                    if let Some(arr) = names.data.as_e_array() {
-                        let mut names_list: Vec<bun_semver::String> =
-                            Vec::with_capacity(arr.items.len as usize);
-                        let mut names_buffer: Vec<u8> = Vec::new();
-
-                        for item in arr.items.slice() {
-                            let Some(estr) = item.data.as_e_string() else {
-                                return Err(bun_core::err!("InvalidSourceMap"));
-                            };
-
-                            let str = estr.string(arena)?;
-
-                            // PERF(port): was assume_capacity
-                            names_list.push(bun_semver::String::init_append_if_needed(
-                                &mut names_buffer,
-                                str,
-                            )?);
-                        }
-
-                        map_data.mappings.names = names_list.into_boxed_slice();
-                        map_data.mappings.names_buffer =
-                            bun_collections::BabyList::move_from_list(names_buffer);
-                    }
-                }
-            }
-        }
-
-        let mut psm = map_data;
-        psm.external_source_names = source_paths_slice.unwrap();
-        // TODO(port): ParsedSourceMap is ThreadSafeRefCount in Zig; LIFETIMES.tsv
-        // says Arc. Phase B: confirm whether intrusive Arc is required for FFI.
-        Some(Arc::new(psm))
-    } else {
-        None
-    };
-    // errdefer if (map) |m| m.deref(); → Arc drops on `?`
-
-    let (found_mapping, source_index): (Option<Mapping>, Option<u32>) = match hint {
-        ParseUrlResultHint::SourceOnly(index) => (None, Some(index)),
-        ParseUrlResultHint::All { line, column, .. } => 'brk: {
-            let Some(m) = map
-                .as_ref()
-                .unwrap()
-                .find_mapping(Ordinal::from_zero_based(line), Ordinal::from_zero_based(column))
-            else {
-                break 'brk (None, None);
-            };
-            let idx = u32::try_from(m.source_index).ok();
-            (Some(m), idx)
-        }
-        ParseUrlResultHint::MappingsOnly => (None, None),
-    };
-
-    let content_slice: Option<Box<[u8]>> = if !matches!(hint, ParseUrlResultHint::MappingsOnly)
-        && source_index.is_some()
-        && (source_index.unwrap() as usize) < sources_content.items.len as usize
-    {
-        'content: {
-            let item = &sources_content.items.slice()[source_index.unwrap() as usize];
-            let Some(estr) = item.data.as_e_string() else {
-                break 'content None;
-            };
-
-            // bun.handleOom(...) → panic on OOM, do not propagate
-            let str = estr.string(arena).expect("OOM");
-            if str.is_empty() {
-                break 'content None;
-            }
-
-            Some(Box::<[u8]>::from(str))
-        }
-    } else {
-        None
-    };
-
-    Ok(ParseUrl {
-        map,
-        mapping: found_mapping,
-        source_contents: content_slice,
-    })
-}
-} // mod _phase_a_draft

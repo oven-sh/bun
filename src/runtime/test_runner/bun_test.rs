@@ -1120,7 +1120,9 @@ impl<'a> BunTest<'a> {
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
-        let result: JSValue = match vm.event_loop().run_callback_with_result_and_forcefully_drain_microtasks(
+        // SAFETY: `vm` is the live per-thread VM; `event_loop()` returns its
+        // owning EventLoop pointer (non-null after VM init).
+        let result: JSValue = match unsafe { &mut *(*vm).event_loop() }.run_callback_with_result_and_forcefully_drain_microtasks(
             cfg_callback,
             global_this,
             JSValue::UNDEFINED,

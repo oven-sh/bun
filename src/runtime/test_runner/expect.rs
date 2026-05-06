@@ -502,25 +502,26 @@ impl Expect {
     ) -> bool {
         // SAFETY: called from C++ with valid pointers
         let global_this = unsafe { &*global_this };
-        let flags: Flags = 'flags: {
+        // SAFETY: `from_js` returns the live `m_ctx` payload owned by `instance_value`.
+        let flags: Flags = 'flags: unsafe {
             if let Some(instance) = ExpectCustomAsymmetricMatcher::from_js(instance_value) {
-                break 'flags instance.flags;
+                break 'flags (*instance).flags;
             } else if let Some(instance) = ExpectAny::from_js(instance_value) {
                 // SAFETY: any_constructor_type is a valid out-ptr provided by C++ caller
-                unsafe { *any_constructor_type = instance.flags.asymmetric_matcher_constructor_type() as u8 };
-                break 'flags instance.flags;
+                *any_constructor_type = (*instance).flags.asymmetric_matcher_constructor_type() as u8;
+                break 'flags (*instance).flags;
             } else if let Some(instance) = ExpectAnything::from_js(instance_value) {
-                break 'flags instance.flags;
+                break 'flags (*instance).flags;
             } else if let Some(instance) = ExpectStringMatching::from_js(instance_value) {
-                break 'flags instance.flags;
+                break 'flags (*instance).flags;
             } else if let Some(instance) = ExpectCloseTo::from_js(instance_value) {
-                break 'flags instance.flags;
+                break 'flags (*instance).flags;
             } else if let Some(instance) = ExpectObjectContaining::from_js(instance_value) {
-                break 'flags instance.flags;
+                break 'flags (*instance).flags;
             } else if let Some(instance) = ExpectStringContaining::from_js(instance_value) {
-                break 'flags instance.flags;
+                break 'flags (*instance).flags;
             } else if let Some(instance) = ExpectArrayContaining::from_js(instance_value) {
-                break 'flags instance.flags;
+                break 'flags (*instance).flags;
             } else {
                 break 'flags Flags::default();
             }
@@ -557,6 +558,8 @@ impl Expect {
         let mut length: usize = 0;
         let mut curr_scope = execution_entry.base.parent;
         while let Some(scope) = curr_scope {
+            // SAFETY: `parent` is a live `*mut DescribeScope` owned by the BunTest arena.
+            let scope = unsafe { &*scope };
             if let Some(name) = scope.base.name.as_deref() {
                 if !name.is_empty() {
                     length += name.len() + 1;

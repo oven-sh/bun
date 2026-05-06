@@ -1602,7 +1602,7 @@ fn write_file_with_empty_source_to_destination(
             impl Wrapper {
                 fn resolve(result: S3UploadResult, opaque_this: *mut c_void) -> jsc::JsTerminatedResult<()> {
                     // SAFETY: opaque_this was Box::into_raw'd in the caller below.
-                    let this = unsafe { Box::from_raw(opaque_this.cast::<Wrapper>()) };
+                    let mut this = unsafe { Box::from_raw(opaque_this.cast::<Wrapper>()) };
                     let global = unsafe { &*this.global };
                     match result {
                         S3UploadResult::Success => this.promise.resolve(global, JSValue::js_number(0.0))?,
@@ -4825,7 +4825,7 @@ impl Blob {
             };
         }
 
-        let joined = joiner.done();
+        let joined: Vec<u8> = joiner.done().expect("oom").into_vec();
 
         if !could_have_non_ascii {
             return Ok(Blob::init_with_all_ascii(joined, global, true));

@@ -512,6 +512,19 @@ impl JSValueBooleanStrictExt for JSValue {
     }
 }
 
+/// Local shim: `AnyRoute::from_js` lives on the `server_body::AnyRoute` enum,
+/// which is a distinct type from `crate::server::AnyRoute` (the one
+/// `StaticRouteEntry` carries). Until the two enums unify, parse via this stub.
+#[inline]
+fn any_route_from_js(
+    _global: &JSGlobalObject,
+    _path: &[u8],
+    _argument: JSValue,
+    _init_ctx: &mut super::super::server_body::ServerInitContext,
+) -> JsResult<Option<AnyRoute>> {
+    todo!("blocked_on: crate::server::AnyRoute unification with server_body::AnyRoute::from_js")
+}
+
 fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
     // Already validated by the caller
     debug_assert!(!path.is_empty() && path[0] == b'/');
@@ -825,12 +838,12 @@ impl ServerConfig {
                                     ),
                                 });
                             } else if let Some(html_route) =
-                                AnyRoute::from_js(global, &path, function, &mut *init_ctx)?
+                                any_route_from_js(global, &path, function, &mut *init_ctx)?
                             {
                                 let mut method_set = http_method::Set::empty();
                                 method_set.insert(method);
 
-                                args.static_routes.push(StaticRouteEntry {
+                                init_ctx.user_routes.push(StaticRouteEntry {
                                     path: Box::<[u8]>::from(&*path),
                                     route: html_route,
                                     method: http_method::Optional::Method(method_set),

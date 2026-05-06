@@ -349,7 +349,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut force_http3 = false;
     let mut force_http1 = false;
 
-    if arguments.len() == 0 {
+    if arguments.len == 0 {
         let err = ctx.to_type_error(jsc::ErrorCode::MISSING_ARGS, FETCH_ERROR_NO_ARGS);
         return Ok(
             JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -362,7 +362,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut headers: Option<Headers> = None;
     let mut method = Method::GET;
 
-    let mut args = jsc::CallFrame::ArgumentsSlice::init(vm, arguments.slice());
+    let mut args = jsc::ArgumentsSlice::init(vm, arguments.slice());
 
     let mut url = ZigURL::default();
     let first_arg = args.next_eat().unwrap();

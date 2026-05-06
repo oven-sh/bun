@@ -1454,12 +1454,12 @@ pub fn pack<const FOR_PUBLISH: bool>(
             Output::err(err, "failed to read package.json: {}", format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())));
             Global::crash();
         }
-        bun_install::GetJsonResult::ParseErr(err) => {
+        WorkspacePackageJSONCache::GetResult::ParseErr(err) => {
             Output::err(err, "failed to parse package.json: {}", format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())));
             let _ = manager.log.print(Output::error_writer());
             Global::crash();
         }
-        bun_install::GetJsonResult::Entry(entry) => entry,
+        WorkspacePackageJSONCache::GetResult::Entry(entry) => entry,
     };
 
     if FOR_PUBLISH {

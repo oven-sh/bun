@@ -1098,7 +1098,7 @@ pub fn timing_safe_equal(global: &JSGlobalObject, call_frame: &CallFrame) -> JsR
 
     Ok(JSValue::from(
         // SAFETY: l and r are valid slices of equal length; CRYPTO_memcmp reads exactly len bytes.
-        unsafe { boringssl::CRYPTO_memcmp(l.as_ptr().cast(), r.as_ptr().cast(), l.len()) } == 0,
+        unsafe { boringssl::c::CRYPTO_memcmp(l.as_ptr().cast(), r.as_ptr().cast(), l.len()) } == 0,
     ))
 }
 

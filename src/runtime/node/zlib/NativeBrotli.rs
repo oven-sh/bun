@@ -493,6 +493,8 @@ mod js {
 use bun_jsc::ErrorCode;
 } // mod _impl
 
+pub use _impl::NativeBrotli;
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/node/zlib/NativeBrotli.zig (282 lines)

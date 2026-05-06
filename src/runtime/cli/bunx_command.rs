@@ -750,7 +750,7 @@ impl BunxCommand {
         // If this format changes, please update cache clearing code in package_manager_command.zig
         #[cfg(unix)]
         // SAFETY: getuid() is always safe to call (no preconditions, never fails)
-        let uid = unsafe { bun_sys::c::getuid() };
+        let uid = unsafe { libc::getuid() };
         #[cfg(windows)]
         let uid = bun_sys::windows::user_unique_id();
 

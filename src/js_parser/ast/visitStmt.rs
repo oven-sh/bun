@@ -1,3 +1,39 @@
+#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
+use bun_core::Error;
+use bun_logger as logger;
+use crate::parser::{
+    statement_cares_about_scope, JsxT, PrependTempRefsOpts, ReactRefresh, Ref, RelocateVars,
+    SideEffects, StmtsKind,
+};
+use crate::ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt};
+use crate::ast::G::Decl;
+use crate::ast::p::P;
+use crate::lexer as js_lexer;
+use bun_string::strings;
+use bumpalo::collections::Vec as BumpVec;
+
+// `ListManaged(Stmt)` in the parser is arena-backed (`p.allocator`).
+type StmtList<'bump> = BumpVec<'bump, Stmt>;
+
+// Zig: `pub fn VisitStmt(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
+// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// a direct `impl P` block. The 30+ per-variant `s_*` helpers are private; only
+// `visit_and_append_stmt` is surfaced. Full draft body preserved under #[cfg(any())] mod _draft below.
+
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+    pub fn visit_and_append_stmt(
+        &mut self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+    ) -> Result<(), Error> {
+        let _ = (stmts, stmt);
+        todo!("b2-ast-E: visit_and_append_stmt body")
+    }
+}
+
+#[cfg(any())] // TODO(b2-ast-E): full draft body — apply mixin→impl-P recipe per-method
+#[allow(warnings)]
+mod _draft {
 use core::marker::PhantomData;
 
 use bun_core::Error;
@@ -2044,3 +2080,4 @@ impl<
 //   todos:      19
 //   notes:      `defer`/scopeguard sites need borrowck reshaping; `inline else` dispatch expanded by hand; StmtList<'bump> = bumpalo Vec — thread `'bump` through signatures in Phase B; `s_export_from` mirrors Zig's dead `j == 0 && items.len > 0` branch bug-for-bug
 // ──────────────────────────────────────────────────────────────────────────
+} // end mod _draft

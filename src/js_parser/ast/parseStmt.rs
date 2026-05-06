@@ -1,3 +1,40 @@
+#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
+use bun_core::{self, err};
+use bun_logger as logger;
+use bun_string::strings;
+
+use crate::ast as js_ast;
+use crate::ast::p::P;
+use crate::lexer as js_lexer;
+
+use js_ast::{Binding, Expr, LocRef, Stmt, Symbol, G, S};
+use js_ast::op::Level;
+use js_lexer::T;
+use G::Decl;
+
+use crate::parser::{
+    DeferredTsDecorators, JsxT, ParseStatementOptions, ParsedPath, Ref, StmtList, TypeScript,
+};
+use bun_options_types::ImportKind;
+
+// TODO(port): narrow error set
+type Result<T> = core::result::Result<T, bun_core::Error>;
+
+// Zig: `pub fn ParseStmt(comptime ts, comptime jsx, comptime scan_only) type { return struct {...} }`
+// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// a direct `impl P` block. The 25+ per-token `t_*` helpers are private; only `parse_stmt` is
+// surfaced. Full draft body preserved under #[cfg(any())] mod _draft below.
+
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+    pub fn parse_stmt(&mut self, opts: &mut ParseStatementOptions) -> Result<Stmt> {
+        let _ = opts;
+        todo!("b2-ast-E: parse_stmt body")
+    }
+}
+
+#[cfg(any())] // TODO(b2-ast-E): full draft body — apply mixin→impl-P recipe per-method
+#[allow(warnings)]
+mod _draft {
 use bun_core::{self, err};
 use bun_logger as logger;
 use bun_string::strings;
@@ -1768,3 +1805,4 @@ use js_ast::Scope;
 //   todos:      8
 //   notes:      const-generic ZST mirrors Zig comptime type-generator; `defer p.popScope()` → scopeguard (borrowck TBD); `t_if` keeps raw *mut S::If into arena; Stmt::Data/Expr::Data variant paths and LexicalDecl/AllowAwait/ImportTag/Scope::Kind import paths are placeholders for Phase B.
 // ──────────────────────────────────────────────────────────────────────────
+} // end mod _draft

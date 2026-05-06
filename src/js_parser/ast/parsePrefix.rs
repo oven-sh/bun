@@ -1,3 +1,38 @@
+#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
+use crate::ast::{self as js_ast, Expr, ExprNodeList, B, E, G};
+use crate::ast::G::{Arg, Property};
+use crate::ast::op::Level;
+use crate::ast::p::P;
+use crate::lexer::T;
+use crate::parser::{
+    AsyncPrefixExpression, DeferredErrors, FnOrArrowDataParse, JsxT, ParenExprOpts,
+    ParseClassOptions, PropertyOpts, TypeParameterFlag, TypeScript,
+};
+use bun_logger as logger;
+
+// TODO(port): narrow error set — Zig used `anyerror!Expr` throughout
+type PResult<T> = core::result::Result<T, bun_core::Error>;
+
+// Zig: `fn ParsePrefix(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
+// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// a direct `impl P` block. The 30+ per-token `t_*` helpers are private; only `parse_prefix` is
+// surfaced. Full draft body preserved under #[cfg(any())] mod _draft below.
+
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+    pub fn parse_prefix(
+        &mut self,
+        level: Level,
+        errors: Option<&mut DeferredErrors>,
+        flags: js_ast::expr::EFlags,
+    ) -> PResult<Expr> {
+        let _ = (level, errors, flags);
+        todo!("b2-ast-E: parse_prefix body")
+    }
+}
+
+#[cfg(any())] // TODO(b2-ast-E): full draft body — apply mixin→impl-P recipe per-method
+#[allow(warnings)]
+mod _draft {
 use crate::js_ast::{self, Expr, ExprNodeList, B, E, G};
 use crate::js_ast::G::{Arg, Property};
 use crate::js_ast::Op::Level;
@@ -1035,3 +1070,4 @@ use crate::SkipTypeParametersResult;
 //   todos:      6
 //   notes:      inherent associated type `P` is unstable; t_new/t_open_bracket/t_open_brace reshaped from in-place unusedCapacitySlice writes; t_slash defer-reset uses scopeguard for error-path parity
 // ──────────────────────────────────────────────────────────────────────────
+} // end mod _draft

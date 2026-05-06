@@ -260,19 +260,19 @@ pub use known_global::KnownGlobal;
 //      `js_ast::symbol::Kind`, `crate::Prefill` → `crate::parser::prefill`, etc.
 //   4. gate fn bodies that hit deeper blockers (Lexer snapshot, BabyList::len method,
 //      E::String rope ops, Scope adapted-API)
-#[cfg(any())] #[path = "parseTypescript.rs"] pub mod parse_typescript;
-#[cfg(any())] #[path = "ImportScanner.rs"] pub mod import_scanner;
-#[cfg(any())] #[path = "ConvertESMExportsForHmr.rs"] pub mod convert_esm_exports_for_hmr;
-#[cfg(any())] #[path = "visitBinaryExpression.rs"] pub mod visit_binary_expression;
-#[cfg(any())] #[path = "parseProperty.rs"] pub mod parse_property;
-#[cfg(any())] #[path = "maybe.rs"] pub mod maybe;
-#[cfg(any())] #[path = "SideEffects.rs"] pub mod side_effects;
-#[cfg(any())] #[path = "parsePrefix.rs"] pub mod parse_prefix;
-#[cfg(any())] #[path = "skipTypescript.rs"] pub mod skip_typescript;
-#[cfg(any())] #[path = "parseSuffix.rs"] pub mod parse_suffix;
-#[cfg(any())] #[path = "parseStmt.rs"] pub mod parse_stmt;
-#[cfg(any())] #[path = "parse.rs"] pub mod parse;
-#[cfg(any())] #[path = "visit.rs"] pub mod visit;
-#[cfg(any())] #[path = "visitStmt.rs"] pub mod visit_stmt;
-#[cfg(any())] #[path = "lowerDecorators.rs"] pub mod lower_decorators;
-#[cfg(any())] #[path = "visitExpr.rs"] pub mod visit_expr;
+#[path = "parseTypescript.rs"] pub mod parse_typescript;
+#[path = "ImportScanner.rs"] pub mod import_scanner;
+#[path = "ConvertESMExportsForHmr.rs"] pub mod convert_esm_exports_for_hmr;
+#[path = "visitBinaryExpression.rs"] pub mod visit_binary_expression;
+#[path = "parseProperty.rs"] pub mod parse_property;
+#[path = "maybe.rs"] pub mod maybe;
+#[path = "SideEffects.rs"] pub mod side_effects;
+#[path = "parsePrefix.rs"] pub mod parse_prefix;
+#[path = "skipTypescript.rs"] pub mod skip_typescript;
+#[path = "parseSuffix.rs"] pub mod parse_suffix;
+#[path = "parseStmt.rs"] pub mod parse_stmt;
+#[path = "parse.rs"] pub mod parse;
+#[path = "visit.rs"] pub mod visit;
+#[path = "visitStmt.rs"] pub mod visit_stmt;
+#[path = "lowerDecorators.rs"] pub mod lower_decorators;
+#[path = "visitExpr.rs"] pub mod visit_expr;

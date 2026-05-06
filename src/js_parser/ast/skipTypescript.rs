@@ -1,3 +1,123 @@
+#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
+use bun_core::{self, err, Error};
+use bun_logger as logger;
+use crate::parser::{JsxT, ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag};
+use crate::ast::{self as js_ast, Op};
+use crate::ast::op::Level;
+use crate::ast::p::P;
+use crate::lexer::T;
+use crate::ast::TypeScript::Metadata;
+
+// Zig: `fn SkipTypescript(comptime ts, comptime jsx, comptime scan_only) type { return struct {...} }`
+// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// a direct `impl P` block. Full draft body preserved under #[cfg(any())] mod _draft below.
+
+// TODO(b2-ast-E): SkipTypeOptions::Bitset path — verify against TypeScript.rs
+pub type SkipTypeOptionsBitset = u8;
+
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+    #[inline]
+    pub fn skip_typescript_return_type(&mut self) -> Result<(), Error> {
+        todo!("b2-ast-E: skip_typescript_return_type")
+    }
+    #[inline]
+    pub fn skip_typescript_return_type_with_metadata(&mut self) -> Result<Metadata, Error> {
+        todo!("b2-ast-E: skip_typescript_return_type_with_metadata")
+    }
+    #[inline]
+    pub fn skip_type_script_type(&mut self, level: Level) -> Result<(), Error> {
+        let _ = level;
+        todo!("b2-ast-E: skip_type_script_type")
+    }
+    #[inline]
+    pub fn skip_type_script_type_with_metadata(&mut self, level: Level) -> Result<Metadata, Error> {
+        let _ = level;
+        todo!("b2-ast-E: skip_type_script_type_with_metadata")
+    }
+    pub fn skip_type_script_binding(&mut self) -> Result<(), Error> {
+        todo!("b2-ast-E: skip_type_script_binding")
+    }
+    pub fn skip_typescript_fn_args(&mut self) -> Result<(), Error> {
+        todo!("b2-ast-E: skip_typescript_fn_args")
+    }
+    pub fn skip_type_script_paren_or_fn_type<const GET_METADATA: bool>(
+        &mut self,
+        result_out: Option<&mut Metadata>,
+    ) -> Result<(), Error> {
+        let _ = result_out;
+        todo!("b2-ast-E: skip_type_script_paren_or_fn_type")
+    }
+    pub fn skip_type_script_type_with_opts<const GET_METADATA: bool>(
+        &mut self,
+        level: Level,
+        opts: SkipTypeOptionsBitset,
+        result_out: Option<&mut Metadata>,
+    ) -> Result<(), Error> {
+        let _ = (level, opts, result_out);
+        todo!("b2-ast-E: skip_type_script_type_with_opts")
+    }
+    pub fn skip_type_script_object_type(&mut self) -> Result<(), Error> {
+        todo!("b2-ast-E: skip_type_script_object_type")
+    }
+    pub fn skip_type_script_type_parameters(
+        &mut self,
+        flags: TypeParameterFlag,
+    ) -> Result<SkipTypeParameterResult, Error> {
+        let _ = flags;
+        todo!("b2-ast-E: skip_type_script_type_parameters")
+    }
+    pub fn skip_type_script_type_stmt(&mut self, opts: &mut ParseStatementOptions) -> Result<(), Error> {
+        let _ = opts;
+        todo!("b2-ast-E: skip_type_script_type_stmt")
+    }
+    pub fn skip_type_script_interface_stmt(&mut self, opts: &mut ParseStatementOptions) -> Result<(), Error> {
+        let _ = opts;
+        todo!("b2-ast-E: skip_type_script_interface_stmt")
+    }
+    pub fn skip_type_script_type_arguments<const IS_INSIDE_JSX_ELEMENT: bool>(
+        &mut self,
+    ) -> Result<bool, Error> {
+        todo!("b2-ast-E: skip_type_script_type_arguments")
+    }
+    pub fn skip_type_script_type_parameters_then_open_paren_with_backtracking(
+        &mut self,
+    ) -> Result<SkipTypeParameterResult, Error> {
+        todo!("b2-ast-E: skip_type_script_type_parameters_then_open_paren_with_backtracking")
+    }
+    pub fn skip_type_script_constraint_of_infer_type_with_backtracking(&mut self) -> Result<bool, Error> {
+        todo!("b2-ast-E: skip_type_script_constraint_of_infer_type_with_backtracking")
+    }
+    pub fn skip_type_script_arrow_args_with_backtracking(&mut self) -> Result<bool, Error> {
+        todo!("b2-ast-E: skip_type_script_arrow_args_with_backtracking")
+    }
+    pub fn skip_type_script_type_arguments_with_backtracking(&mut self) -> Result<bool, Error> {
+        todo!("b2-ast-E: skip_type_script_type_arguments_with_backtracking")
+    }
+    pub fn skip_type_script_arrow_return_type_with_backtracking(&mut self) -> Result<(), Error> {
+        todo!("b2-ast-E: skip_type_script_arrow_return_type_with_backtracking")
+    }
+    pub fn try_skip_type_script_type_parameters_then_open_paren_with_backtracking(
+        &mut self,
+    ) -> SkipTypeParameterResult {
+        todo!("b2-ast-E: try_skip_type_script_type_parameters_then_open_paren_with_backtracking")
+    }
+    pub fn try_skip_type_script_type_arguments_with_backtracking(&mut self) -> bool {
+        todo!("b2-ast-E: try_skip_type_script_type_arguments_with_backtracking")
+    }
+    pub fn try_skip_type_script_arrow_return_type_with_backtracking(&mut self) -> bool {
+        todo!("b2-ast-E: try_skip_type_script_arrow_return_type_with_backtracking")
+    }
+    pub fn try_skip_type_script_arrow_args_with_backtracking(&mut self) -> bool {
+        todo!("b2-ast-E: try_skip_type_script_arrow_args_with_backtracking")
+    }
+    pub fn try_skip_type_script_constraint_of_infer_type_with_backtracking(&mut self) -> bool {
+        todo!("b2-ast-E: try_skip_type_script_constraint_of_infer_type_with_backtracking")
+    }
+}
+
+#[cfg(any())] // TODO(b2-ast-E): full draft body — apply mixin→impl-P recipe per-method
+#[allow(warnings)]
+mod _draft {
 use bun_core::{self, err, Error};
 use bun_logger as logger;
 use crate::{
@@ -1533,3 +1653,4 @@ impl<
 //   todos:      8
 //   notes:      Zig type-returning fn collapsed into inherent impl on P<TS,JSX,SCAN_ONLY>; `comptime get_metadata` → const generic + Option<&mut Metadata>; Backtracking comptime reflection split into 3 concrete closure helpers; borrowck reshaping needed in TDot arm (find_symbol vs result borrow).
 // ──────────────────────────────────────────────────────────────────────────
+} // end mod _draft

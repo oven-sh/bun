@@ -1,48 +1,42 @@
+#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
 use bun_core::{self, err};
 use bun_logger as logger;
 use bun_string::strings;
 
-use crate::{
-    self as js_parser, AwaitOrYield, DeferredErrors, FnOrArrowDataParse, JSXTransformType,
-    NewParser_, ParseStatementOptions, PropertyOpts, TypeScript,
+use crate::parser::{
+    AwaitOrYield, DeferredErrors, FnOrArrowDataParse, JsxT, ParseStatementOptions, PropertyOpts,
+    TypeScript,
 };
 use crate::ast as js_ast;
 use js_ast::{
     E, Expr, ExprNodeList, Flags, Stmt, Symbol,
     G::{self, Property},
 };
+use crate::ast::p::P;
 use crate::lexer as js_lexer;
-use js_lexer::{PropertyModifierKeyword, T};
+use js_lexer::T;
 
-// TODO(port): exact paths for these enums (Phase B import fix)
-use js_ast::Scope::Kind as ScopeKind;
-use js_ast::Op::Level;
+use js_ast::scope::Kind as ScopeKind;
+use js_ast::op::Level;
 
-// PORT NOTE: Zig defines `fn ParseProperty(comptime ts, comptime jsx, comptime scan_only) type`
-// returning a struct of methods that take `p: *P`. In Rust this becomes an inherent
-// `impl` block on the parser type with the same const-generic parameters; the
-// `usingnamespace` mixin at the call site is replaced by these methods being directly
-// callable on `P`.
-type P<const PARSER_FEATURE__TYPESCRIPT: bool, const PARSER_FEATURE__JSX: JSXTransformType, const PARSER_FEATURE__SCAN_ONLY: bool> =
-    NewParser_<PARSER_FEATURE__TYPESCRIPT, PARSER_FEATURE__JSX, PARSER_FEATURE__SCAN_ONLY>;
+// Zig: `fn ParseProperty(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
+// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// a direct `impl P` block.
 
-impl<
-        const PARSER_FEATURE__TYPESCRIPT: bool,
-        const PARSER_FEATURE__JSX: JSXTransformType,
-        const PARSER_FEATURE__SCAN_ONLY: bool,
-    > P<PARSER_FEATURE__TYPESCRIPT, PARSER_FEATURE__JSX, PARSER_FEATURE__SCAN_ONLY>
-{
-    // const is_typescript_enabled = P.is_typescript_enabled;
-    // (referenced below as Self::IS_TYPESCRIPT_ENABLED)
-
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     fn parse_method_expression(
-        p: &mut Self,
-        kind: Property::Kind,
+        &mut self,
+        kind: G::PropertyKind,
         opts: &mut PropertyOpts,
         is_computed: bool,
         key: &mut Expr,
         key_range: logger::Range,
     ) -> Result<Option<G::Property>, bun_core::Error> {
+        let p = self;
+        let _ = (kind, opts, is_computed, key, key_range);
+        todo!("b2-ast-E: parse_method_expression body");
+        #[cfg(any())] // TODO(b2-ast-E): body — Flags::Property bitflags, G::Fn/FnBody shapes, FnOrArrowDataParse field set
+        {
         if p.lexer.token == T::TOpenParen && kind != Property::Kind::Get && kind != Property::Kind::Set {
             // markSyntaxFeature object extensions
         }
@@ -207,14 +201,20 @@ impl<
             ts_metadata: TypeScript::Metadata::MFunction,
             ..Default::default()
         }))
+        } // end #[cfg(any())]
     }
 
     pub fn parse_property(
-        p: &mut Self,
-        kind_: Property::Kind,
+        &mut self,
+        kind_: G::PropertyKind,
         opts: &mut PropertyOpts,
         errors_: Option<&mut DeferredErrors>,
     ) -> Result<Option<G::Property>, bun_core::Error> {
+        let p = self;
+        let _ = (kind_, opts, errors_);
+        todo!("b2-ast-E: parse_property body");
+        #[cfg(any())] // TODO(b2-ast-E): body — PropertyModifierKeyword path, Expr::Data variants, Flags::Property bitflags, opts struct fields
+        {
         let mut kind = kind_;
         let mut errors = errors_;
         // This while loop exists to conserve stack space by reducing (but not completely eliminating) recursion.
@@ -751,6 +751,7 @@ impl<
             )?;
             return Ok(Some(property));
         }
+        } // end #[cfg(any())]
     }
 }
 

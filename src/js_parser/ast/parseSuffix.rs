@@ -1,3 +1,33 @@
+#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
+use bun_core::{err, Error};
+use crate::ast::{self as js_ast, E, Expr, Op, OptionalChain};
+use crate::ast::op::Level;
+use crate::ast::expr::EFlags;
+use crate::ast::p::P;
+use crate::lexer::T;
+use crate::parser::{DeferredErrors, JsxT, SideEffects};
+
+// Zig: `fn ParseSuffix(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
+// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// a direct `impl P` block. The 50+ per-token `t_*` helpers are private; only `parse_suffix` is
+// surfaced. Full draft body preserved under #[cfg(any())] mod _draft below.
+
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+    pub fn parse_suffix(
+        &mut self,
+        _left: Expr,
+        level: Level,
+        errors: Option<&mut DeferredErrors>,
+        flags: EFlags,
+    ) -> Result<Expr, Error> {
+        let _ = (_left, level, errors, flags);
+        todo!("b2-ast-E: parse_suffix body")
+    }
+}
+
+#[cfg(any())] // TODO(b2-ast-E): full draft body — apply mixin→impl-P recipe per-method
+#[allow(warnings)]
+mod _draft {
 use bun_core::{err, Error};
 use crate::ast::{self as js_ast, E, Expr, Op, OptionalChain};
 use crate::ast::op::Level;
@@ -1558,3 +1588,4 @@ enum Continuation {
 //   todos:      5
 //   notes:      Const-generic mixin over NewParser_; @field/@tagName dispatch expanded to explicit match arms; Zig stack-local-aliasing workaround dropped (mutate `left` directly); E::Template head ctor + E::If arena payload accessor need Phase-B wiring.
 // ──────────────────────────────────────────────────────────────────────────
+} // end mod _draft

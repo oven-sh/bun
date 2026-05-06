@@ -1,3 +1,41 @@
+#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
+//! Lowering for TC39 standard ES decorators.
+//! Extracted from P.zig to reduce duplication via shared helpers.
+
+use bun_logger as logger;
+
+use crate::ast::{self as js_ast, B, E, Expr, ExprNodeList, Flags, G, S, Stmt, Symbol};
+use crate::ast::g::{Arg, Decl, Property};
+use crate::ast::p::P;
+use crate::parser::{JsxT, Ref, ARGUMENTS_STR as arguments_str};
+
+// Zig: `pub fn LowerDecorators(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
+// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// a direct `impl P` block. Full draft body preserved under #[cfg(any())] mod _draft below.
+
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+    pub fn lower_standard_decorators_stmt(
+        &mut self,
+        stmt: Stmt,
+        stmts: &mut bumpalo::collections::Vec<'a, Stmt>,
+    ) {
+        let _ = (stmt, stmts);
+        todo!("b2-ast-E: lower_standard_decorators_stmt body")
+    }
+    pub fn lower_standard_decorators_expr(
+        &mut self,
+        class: &mut G::Class,
+        loc: logger::Loc,
+        name_from_context: Option<&'a [u8]>,
+    ) -> Expr {
+        let _ = (class, loc, name_from_context);
+        todo!("b2-ast-E: lower_standard_decorators_expr body")
+    }
+}
+
+#[cfg(any())] // TODO(b2-ast-E): full draft body — apply mixin→impl-P recipe per-method
+#[allow(warnings)]
+mod _draft {
 //! Lowering for TC39 standard ES decorators.
 //! Extracted from P.zig to reduce duplication via shared helpers.
 
@@ -2056,3 +2094,4 @@ impl<
 //   todos:      8
 //   notes:      heavy borrowck reshaping needed in lower_impl (overlapping &mut p / class.properties iteration); arena slice handoffs (`p.alloc()`) are placeholders pending NewParser_ port; ExprData/StmtData variant names are guessed from .e_*/.s_* tags
 // ──────────────────────────────────────────────────────────────────────────
+} // end mod _draft

@@ -1,3 +1,36 @@
+#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
+use bun_logger as logger;
+use bun_string::strings;
+
+use crate::ast as js_ast;
+use crate::ast::{E, Expr, ExprNodeIndex, ExprNodeList, G, Scope, Stmt, Symbol, B};
+use crate::ast::G::Property;
+use crate::ast::p::P;
+use crate::lexer as js_lexer;
+use crate::parser::{
+    float_to_int32, ExprIn, FnOrArrowDataVisit, IdentifierOpts, JsxT, PrependTempRefsOpts,
+    ReactRefresh, Ref, SideEffects, ThenCatchChain, TransposeState, VisitArgsOpts,
+};
+
+// Zig: `pub fn VisitExpr(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
+// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// a direct `impl P` block. The 25+ per-variant `e_*` helpers are private; only `visit_expr` /
+// `visit_expr_in_out` are surfaced. Full draft body preserved under #[cfg(any())] mod _draft below.
+
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+    pub fn visit_expr(&mut self, expr: Expr) -> Expr {
+        let _ = &expr;
+        expr // TODO(b2-ast-E): visit_expr body
+    }
+    pub fn visit_expr_in_out(&mut self, expr: Expr, in_: ExprIn) -> Expr {
+        let _ = in_;
+        expr // TODO(b2-ast-E): visit_expr_in_out body
+    }
+}
+
+#[cfg(any())] // TODO(b2-ast-E): full draft body — apply mixin→impl-P recipe per-method
+#[allow(warnings)]
+mod _draft {
 use core::ffi::c_void;
 use std::io::Write as _;
 
@@ -2590,3 +2623,4 @@ static JSX_CHILDREN_KEY_DATA: Expr::Data = Expr::Data::EString(&Prefill::String:
 //   todos:      13
 //   notes:      Const-generic type-generator + arena-backed Expr::Data accessors (e_dot()/e_string()/...) assumed; hook_ctx_storage self-borrow and BinaryExpressionVisitor type need Phase-B reshaping.
 // ──────────────────────────────────────────────────────────────────────────
+} // end mod _draft

@@ -1,34 +1,30 @@
+#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
 use core::cmp::Ordering;
 
 use crate::ast::{self as js_ast, E, Expr, ExprData, ExprTag, Op, Symbol};
-use crate::{
-    fold_string_addition, float_to_int32, ExprIn, JSXTransformType, NewParser_, Prefill,
-    SideEffects, StringAdditionKind,
-};
+use crate::ast::p::P;
+use crate::parser::{float_to_int32, prefill, ExprIn, JsxT, SideEffects};
 use bun_logger as logger;
 
 // PORT NOTE: The Zig `CreateBinaryExpressionVisitor(comptime ts, comptime jsx, comptime scan_only) type`
 // returned an anonymous namespace struct whose only public item was `BinaryExpressionVisitor`.
-// In Rust the outer wrapper is flattened away: `BinaryExpressionVisitor` carries the const
-// generics directly, and `P` is a module-level type alias parameterized the same way.
+// Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so `BinaryExpressionVisitor` carries
+// the parser generics directly.
 // Phase B diff readers should map:
 //   Zig: CreateBinaryExpressionVisitor(TS, JSX, SCAN).BinaryExpressionVisitor
-//   Rust: BinaryExpressionVisitor<'arena, TS, JSX, SCAN>
-
-type P<const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: bool> =
-    NewParser_<TYPESCRIPT, JSX, SCAN_ONLY>;
+//   Rust: BinaryExpressionVisitor<'arena, TS, J, SCAN>
 
 /// Try to optimize "typeof x === 'undefined'" to "typeof x > 'u'" or similar
 /// Returns the optimized expression if successful, None otherwise
-fn try_optimize_typeof_undefined<
-    const TYPESCRIPT: bool,
-    const JSX: JSXTransformType,
-    const SCAN_ONLY: bool,
->(
+fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>(
     e_: &mut E::Binary,
-    p: &mut P<TYPESCRIPT, JSX, SCAN_ONLY>,
-    replacement_op: js_ast::Op::Code,
+    p: &mut P<'a, TYPESCRIPT, J, SCAN_ONLY>,
+    replacement_op: js_ast::op::Code,
 ) -> Option<Expr> {
+    let _ = (e_, p, replacement_op);
+    todo!("b2-ast-E: try_optimize_typeof_undefined body");
+    #[cfg(any())] // TODO(b2-ast-E): body — E::String::eql_comptime, ExprData variant payloads
+    {
     // Check if this is a typeof comparison with "undefined"
     let (typeof_expr, string_expr, flip_comparison) = 'exprs: {
         // Try left side as typeof, right side as string
@@ -73,14 +69,10 @@ fn try_optimize_typeof_undefined<
         },
         e_.left.loc,
     ))
+    } // end #[cfg(any())]
 }
 
-pub struct BinaryExpressionVisitor<
-    'arena,
-    const TYPESCRIPT: bool,
-    const JSX: JSXTransformType,
-    const SCAN_ONLY: bool,
-> {
+pub struct BinaryExpressionVisitor<'arena> {
     pub e: &'arena mut E::Binary,
     pub loc: logger::Loc,
     // PORT NOTE: Zig field name `in` is a Rust keyword; renamed to `in_`.
@@ -93,13 +85,15 @@ pub struct BinaryExpressionVisitor<
     pub is_stmt_expr: bool, // = false (set by caller / Default)
 }
 
-impl<'arena, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: bool>
-    BinaryExpressionVisitor<'arena, TYPESCRIPT, JSX, SCAN_ONLY>
-{
-    pub fn visit_right_and_finish(
+impl<'arena> BinaryExpressionVisitor<'arena> {
+    pub fn visit_right_and_finish<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>(
         v: &mut Self,
-        p: &mut P<TYPESCRIPT, JSX, SCAN_ONLY>,
+        p: &mut P<'a, TYPESCRIPT, J, SCAN_ONLY>,
     ) -> Expr {
+        let _ = (v, p);
+        todo!("b2-ast-E: visit_right_and_finish body");
+        #[cfg(any())] // TODO(b2-ast-E): body — fold_string_addition, SideEffects::to_boolean, ExprData payload deref, fmod extern
+        {
         let e_ = &mut *v.e;
         // PORT NOTE: reshaped for borrowck — Zig compared `e_ == p.call_target.e_binary` (ptr eq).
         let is_call_target = matches!(p.call_target, ExprData::EBinary(ptr) if core::ptr::eq(ptr, e_));
@@ -648,12 +642,17 @@ impl<'arena, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONL
         }
 
         Expr { loc: v.loc, data: ExprData::EBinary(e_) }
+        } // end #[cfg(any())]
     }
 
-    pub fn check_and_prepare(
+    pub fn check_and_prepare<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>(
         v: &mut Self,
-        p: &mut P<TYPESCRIPT, JSX, SCAN_ONLY>,
+        p: &mut P<'a, TYPESCRIPT, J, SCAN_ONLY>,
     ) -> Option<Expr> {
+        let _ = (v, p);
+        todo!("b2-ast-E: check_and_prepare body");
+        #[cfg(any())] // TODO(b2-ast-E): body — Symbol::is_kind_private, find_symbol, ExprData::EBinary ptr-eq
+        {
         let e_ = &mut *v.e;
         match &e_.left.data {
             // Special-case private identifiers
@@ -706,6 +705,7 @@ impl<'arena, const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONL
         };
 
         None
+        } // end #[cfg(any())]
     }
 }
 

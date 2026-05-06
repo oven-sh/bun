@@ -1,3 +1,106 @@
+#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
+//! AST visitor pass: visits statements, expressions, bindings, function bodies,
+//! classes, and declarations. This is the second pass after parsing.
+
+use bumpalo::collections::Vec as BumpVec;
+use crate::ast as js_ast;
+use crate::ast::{
+    AssignTarget, Binding, BindingNodeIndex, Expr, ExprData, ExprNodeList, LocRef, Scope, Stmt,
+    StmtData, StmtNodeIndex, Symbol, B, E, G, S,
+};
+use crate::ast::G::{Arg, Decl, Property};
+use crate::ast::p::P;
+use crate::lexer as js_lexer;
+use crate::parser::{
+    is_eval_or_arguments, ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap,
+    JsxT, PrependTempRefsOpts, Ref, RuntimeFeatures, SideEffects, StmtsKind, StringVoidMap,
+    TempRef, VisitArgsOpts,
+};
+use bun_logger as logger;
+
+// In the AST crate, ListManaged is arena-backed.
+type ListManaged<'bump, T> = BumpVec<'bump, T>;
+
+// Zig: `pub fn Visit(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
+// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// a direct `impl P` block. Full draft body preserved under #[cfg(any())] mod _draft below.
+
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+    pub fn visit_stmts_and_prepend_temp_refs(
+        &mut self,
+        stmts: &mut ListManaged<'a, Stmt>,
+        opts: PrependTempRefsOpts,
+    ) -> Result<(), bun_core::Error> {
+        let _ = (stmts, opts);
+        todo!("b2-ast-E: visit_stmts_and_prepend_temp_refs")
+    }
+    pub fn record_declared_symbol(&mut self, r#ref: Ref) {
+        let _ = r#ref;
+    }
+    pub fn visit_func(&mut self, func: &mut G::Fn, open_parens_loc: logger::Loc) {
+        let _ = (func, open_parens_loc);
+    }
+    pub fn visit_args(&mut self, args: &mut [G::Arg], opts: VisitArgsOpts) {
+        let _ = (args, opts);
+    }
+    pub fn visit_ts_decorators(&mut self, decs: ExprNodeList) -> ExprNodeList {
+        decs
+    }
+    pub fn visit_decls<const IS_POSSIBLY_DECL_TO_REMOVE: bool>(
+        &mut self,
+        decls: &mut G::DeclList,
+        was_const: bool,
+    ) {
+        let _ = (decls, was_const);
+    }
+    pub fn visit_binding_and_expr_for_macro(
+        &mut self,
+        binding: Binding,
+        expr: &mut Option<Expr>,
+    ) {
+        let _ = (binding, expr);
+    }
+    pub fn visit_decl(&mut self, decl: &mut G::Decl) {
+        let _ = decl;
+    }
+    pub fn visit_for_loop_init(&mut self, stmt: Stmt, is_in_or_of: bool) -> Stmt {
+        let _ = is_in_or_of;
+        stmt
+    }
+    pub fn visit_binding(&mut self, binding: BindingNodeIndex, duplicate_arg_check: Option<&mut StringVoidMap>) {
+        let _ = (binding, duplicate_arg_check);
+    }
+    pub fn visit_loop_body(&mut self, stmt: Stmt) -> Stmt {
+        stmt
+    }
+    pub fn visit_single_stmt_block(&mut self, stmt: Stmt) -> Stmt {
+        stmt
+    }
+    pub fn visit_single_stmt(&mut self, stmt: Stmt, kind: StmtsKind) -> Stmt {
+        let _ = kind;
+        stmt
+    }
+    pub fn visit_class(&mut self, class: &mut G::Class) {
+        let _ = class;
+    }
+    pub fn visit_stmts(
+        &mut self,
+        stmts: &mut ListManaged<'a, Stmt>,
+        kind: StmtsKind,
+    ) -> Result<(), bun_core::Error> {
+        let _ = (stmts, kind);
+        todo!("b2-ast-E: visit_stmts")
+    }
+}
+
+pub fn fn_body_contains_use_strict(body: &[Stmt]) -> Option<logger::Loc> {
+    let _ = body;
+    None
+}
+
+#[cfg(any())] // TODO(b2-ast-E): full draft body — apply mixin→impl-P recipe per-method
+#[allow(warnings)]
+mod _draft {
 //! Port of src/js_parser/ast/visit.zig
 //!
 //! AST visitor pass: visits statements, expressions, bindings, function bodies,
@@ -1878,3 +1981,4 @@ use crate::StrictModeFeature;
 //   todos:      26
 //   notes:      Mixin pattern (Visit returns struct of methods on P) ported as ZST + assoc fns; many `defer` state-restores done manually (need scopeguard on error paths); tagged-union payload mutability (`&mut` through StmtData/ExprData) needs Phase B reshape; `'bump` lifetime threading is approximate.
 // ──────────────────────────────────────────────────────────────────────────
+} // end mod _draft

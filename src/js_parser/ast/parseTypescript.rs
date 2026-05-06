@@ -1,45 +1,32 @@
+#![allow(unused_imports, unused_variables, dead_code)]
 use bun_core::{err, Error};
-use crate::js_ast::{
-    self, B, Decl, DeclList, E, EnumValue, Expr, ExprEFlags, ExprNodeIndex, ExprNodeList, G,
-    LocRef, S, Stmt, TSNamespaceMember, TSNamespaceMemberData,
+use crate::ast::{
+    self as js_ast, B, E, EnumValue, Expr, ExprNodeIndex, ExprNodeList, G, LocRef, S, Stmt,
+    TSNamespaceMember,
 };
-use crate::js_lexer::{self, T};
-use crate::{
-    JSXTransformType, Level, NewParser, ParseStatementOptions, Ref, ScopeKind, ScopeOrder,
-    SymbolKind,
-};
+use crate::ast::p::P;
+use crate::lexer::{self as js_lexer, T};
+use crate::parser::{JsxT, ParseStatementOptions, Ref, ScopeOrder};
+use crate::ast::op::Level;
 use bun_logger as logger;
 use bun_string::strings;
 use bumpalo::collections::Vec as BumpVec;
 
 // Zig: `pub fn ParseTypescript(comptime ...) type { return struct { ... } }`
-// → zero-sized struct with const-generic params; nested fns become associated fns.
-pub struct ParseTypescript<
-    const PARSER_FEATURE_TYPESCRIPT: bool,
-    const PARSER_FEATURE_JSX: JSXTransformType,
-    const PARSER_FEATURE_SCAN_ONLY: bool,
->;
+// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// a direct `impl P` block.
 
-// TODO(port): Rust cannot bind a local `type P = NewParser<..>` alias inside an impl that
-// references the impl's const generics; the full `NewParser<..>` path is spelled out per fn.
-impl<
-        const PARSER_FEATURE_TYPESCRIPT: bool,
-        const PARSER_FEATURE_JSX: JSXTransformType,
-        const PARSER_FEATURE_SCAN_ONLY: bool,
-    > ParseTypescript<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>
-{
-    const IS_TYPESCRIPT_ENABLED: bool =
-        NewParser::<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>::IS_TYPESCRIPT_ENABLED;
-
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     // TODO(port): narrow error set
-    pub fn parse_type_script_decorators<'bump>(
-        p: &mut NewParser<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
-    ) -> Result<&'bump [ExprNodeIndex], Error> {
+    pub fn parse_type_script_decorators(&mut self) -> Result<ExprNodeList, Error> {
+        #[cfg(any())] // TODO(b2-ast-E): body — ExprEFlags path, p.allocator vs p.bump, parse_expr_with_flags signature
+        {
+        let p = self;
         if !Self::IS_TYPESCRIPT_ENABLED && !p.options.features.standard_decorators {
             return Ok(&[]);
         }
 
-        let mut decorators: BumpVec<'bump, ExprNodeIndex> = BumpVec::new_in(p.allocator);
+        let mut decorators: BumpVec<'_, ExprNodeIndex> = BumpVec::new_in(p.allocator);
         while p.lexer.token == T::TAt {
             p.lexer.next()?;
 
@@ -50,7 +37,7 @@ impl<
                 //   @Identifier.member(args)
                 //   @(Expression)
                 // PERF(port): was ensureUnusedCapacity + unusedCapacitySlice — profile in Phase B
-                decorators.push(Self::parse_standard_decorator(p)?);
+                decorators.push(p.parse_standard_decorator()?);
             } else {
                 // Parse a new/call expression with "exprFlagTSDecorator" so we ignore
                 // EIndex expressions, since they may be part of a computed property:
@@ -67,6 +54,8 @@ impl<
         }
 
         Ok(decorators.into_bump_slice())
+        }
+        todo!("b2-ast-E: parse_type_script_decorators body")
     }
 
     /// Parse a standard (TC39) decorator expression following the `@` token.
@@ -77,9 +66,10 @@ impl<
     ///   @ DecoratorCallExpression
     ///   @ DecoratorParenthesizedExpression
     // TODO(port): narrow error set
-    pub fn parse_standard_decorator(
-        p: &mut NewParser<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
-    ) -> Result<ExprNodeIndex, Error> {
+    pub fn parse_standard_decorator(&mut self) -> Result<ExprNodeIndex, Error> {
+        #[cfg(any())] // TODO(b2-ast-E): body — E::Identifier/E::Dot/E::Call struct shapes, skip_type_script_type_arguments arity
+        {
+        let p = self;
         let loc = p.lexer.loc();
 
         // @(Expression) — parenthesized, any expression allowed
@@ -162,13 +152,19 @@ impl<
         }
 
         Ok(expr)
+        }
+        todo!("b2-ast-E: parse_standard_decorator body")
     }
 
     pub fn parse_type_script_namespace_stmt(
-        p: &mut NewParser<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         loc: logger::Loc,
         opts: &mut ParseStatementOptions,
     ) -> Result<Stmt, Error> {
+        let _ = (loc, opts);
+        #[cfg(any())] // TODO(b2-ast-E): body — TSNamespaceMemberData/ScopeKind paths, current_scope deref, exported_members map API
+        {
+        let p = self;
         // "namespace foo {}";
         let name_loc = p.lexer.loc();
         let name_text = p.lexer.identifier;
@@ -204,7 +200,7 @@ impl<
                 is_typescript_declare: opts.is_typescript_declare,
                 ..ParseStatementOptions::default()
             };
-            stmts.push(Self::parse_type_script_namespace_stmt(p, dot_loc, &mut _opts)?);
+            stmts.push(p.parse_type_script_namespace_stmt(dot_loc, &mut _opts)?);
         } else if opts.is_typescript_declare && p.lexer.token != T::TOpenBrace {
             p.lexer.expect_or_insert_semicolon()?;
         } else {
@@ -406,15 +402,21 @@ impl<
             },
             loc,
         ))
+        }
+        todo!("b2-ast-E: parse_type_script_namespace_stmt body")
     }
 
     pub fn parse_type_script_import_equals_stmt(
-        p: &mut NewParser<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         loc: logger::Loc,
         opts: &mut ParseStatementOptions,
         default_name_loc: logger::Loc,
-        default_name: &[u8],
+        default_name: &'a [u8],
     ) -> Result<Stmt, Error> {
+        let _ = (loc, opts, default_name_loc, default_name);
+        #[cfg(any())] // TODO(b2-ast-E): body — E::Call/E::Dot struct shapes, DeclList::from_owned_slice, p.b/p.s arg shapes
+        {
+        let p = self;
         p.lexer.expect(T::TEquals)?;
 
         let kind = js_ast::LocalKind::KConst;
@@ -489,13 +491,19 @@ impl<
             },
             loc,
         ))
+        }
+        todo!("b2-ast-E: parse_type_script_import_equals_stmt body")
     }
 
     pub fn parse_typescript_enum_stmt(
-        p: &mut NewParser<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         loc: logger::Loc,
         opts: &mut ParseStatementOptions,
     ) -> Result<Stmt, Error> {
+        let _ = (loc, opts);
+        #[cfg(any())] // TODO(b2-ast-E): body — EnumValue field shapes, scopes_in_order_for_enum, TSNamespaceMemberData
+        {
+        let p = self;
         p.lexer.expect(T::TEnum)?;
         let name_loc = p.lexer.loc();
         let name_text = p.lexer.identifier;
@@ -679,6 +687,8 @@ impl<
             },
             loc,
         ))
+        }
+        todo!("b2-ast-E: parse_typescript_enum_stmt body")
     }
 }
 
@@ -687,5 +697,5 @@ impl<
 //   source:     src/js_parser/ast/parseTypescript.zig (549 lines)
 //   confidence: medium
 //   todos:      7
-//   notes:      const-generic mixin over NewParser; arena (bumpalo) threaded via p.allocator; Stmt::Data variant names + E/S struct-init shapes are guesses for Phase B to fix.
+//   notes:      mixin→impl-P converted; bodies gated (Stmt::Data paths, TSNamespaceMemberData, E struct shapes vs round-A types)
 // ──────────────────────────────────────────────────────────────────────────

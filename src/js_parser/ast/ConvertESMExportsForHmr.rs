@@ -1,10 +1,12 @@
+#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
 use bumpalo::collections::Vec as BumpVec;
 use bun_alloc::AllocError;
 use bun_collections::StringArrayHashMap;
 use bun_logger as logger;
 
 use crate::ast::{self as js_ast, Binding, Expr, Stmt, B, E, G, S};
-use crate::{ReactRefresh, Ref};
+use crate::ast::p::P;
+use crate::parser::{JsxT, ReactRefresh, Ref};
 
 pub struct ConvertESMExportsForHmr<'a> {
     pub last_part: &'a mut js_ast::Part,
@@ -31,11 +33,18 @@ pub struct DeduplicatedImportResult {
 }
 
 impl<'a> ConvertESMExportsForHmr<'a> {
-    // TODO(port): `p: anytype` is the generic parser `P`. Phase B should add a trait
-    // bound covering: symbols, allocator(), options, generate_temp_ref, current_scope,
-    // import_records, symbol_uses, hmr_api_ref, module_ref, react_refresh, source,
-    // import_records_for_current_part, declared_symbols.
-    pub fn convert_stmt<P>(&mut self, p: &mut P, stmt: Stmt) -> Result<(), AllocError> {
+    // PORT NOTE: round-E un-gate — `<P>` unbounded generic → concrete `P<'p, TS, J, SCAN>`.
+    // TODO(b2-ast-E): Zig `p: anytype` also accepts AstBuilder; add `ParserLike` trait bound
+    //   when bundle_v2 lands.
+    pub fn convert_stmt<'p, const TS: bool, J: JsxT, const SCAN: bool>(
+        &mut self,
+        p: &mut P<'p, TS, J, SCAN>,
+        stmt: Stmt,
+    ) -> Result<(), AllocError> {
+        let _ = (p, stmt);
+        todo!("b2-ast-E: convert_stmt body");
+        #[cfg(any())] // TODO(b2-ast-E): body — StmtData variant matching, S::Import shape, E::Dot/Object struct-init, get_or_put map API
+        {
         let new_stmt = match stmt.data {
             js_ast::StmtData::SLocal(st) => 'stmt: {
                 if !st.is_export {
@@ -362,13 +371,14 @@ impl<'a> ConvertESMExportsForHmr<'a> {
 
         self.stmts.push(new_stmt);
         Ok(())
+        } // end #[cfg(any())]
     }
 
     /// Deduplicates imports, returning a previously used Ref and import record
     /// index if present.
-    fn deduplicated_import<P>(
+    fn deduplicated_import<'p, const TS: bool, J: JsxT, const SCAN: bool>(
         &mut self,
-        p: &mut P,
+        p: &mut P<'p, TS, J, SCAN>,
         import_record_index: u32,
         namespace_ref: Ref,
         items: &'a mut [js_ast::ClauseItem],
@@ -376,6 +386,10 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         default_name: Option<js_ast::LocRef>,
         loc: logger::Loc,
     ) -> Result<DeduplicatedImportResult, AllocError> {
+        let _ = (p, import_record_index, namespace_ref, items, star_name_loc, default_name, loc);
+        todo!("b2-ast-E: deduplicated_import body");
+        #[cfg(any())] // TODO(b2-ast-E): body — import_records.items access, get_or_put API, S::Import struct-init
+        {
         let ir = &mut p.import_records.items[import_record_index as usize];
         let gop = self.imports_seen.get_or_put(ir.path.text)?;
         if gop.found_existing {
@@ -459,13 +473,18 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             stmt_index: u32::try_from(self.stmts.len() - 1).unwrap(),
         };
         Ok(DeduplicatedImportResult { namespace_ref, import_record_index })
+        } // end #[cfg(any())]
     }
 
-    fn visit_binding_to_export<P>(
+    fn visit_binding_to_export<'p, const TS: bool, J: JsxT, const SCAN: bool>(
         &mut self,
-        p: &mut P,
+        p: &mut P<'p, TS, J, SCAN>,
         binding: Binding,
     ) -> Result<(), AllocError> {
+        let _ = (p, binding);
+        todo!("b2-ast-E: visit_binding_to_export body");
+        #[cfg(any())] // TODO(b2-ast-E): body — BindingData variant names
+        {
         match binding.data {
             js_ast::BindingData::BMissing => {}
             js_ast::BindingData::BIdentifier(id) => {
@@ -483,16 +502,21 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             }
         }
         Ok(())
+        } // end #[cfg(any())]
     }
 
-    fn visit_ref_to_export<P>(
+    fn visit_ref_to_export<'p, const TS: bool, J: JsxT, const SCAN: bool>(
         &mut self,
-        p: &mut P,
+        p: &mut P<'p, TS, J, SCAN>,
         ref_: Ref,
         export_symbol_name: Option<&[u8]>,
         loc: logger::Loc,
         is_live_binding_source: bool,
     ) -> Result<(), AllocError> {
+        let _ = (p, ref_, export_symbol_name, loc, is_live_binding_source);
+        todo!("b2-ast-E: visit_ref_to_export body");
+        #[cfg(any())] // TODO(b2-ast-E): body — symbol::Kind path, E::ImportIdentifier shape, G::Property struct-init
+        {
         let symbol = p.symbols.items[ref_.inner_index()];
         let id = if symbol.kind == js_ast::SymbolKind::Import {
             Expr::init(E::ImportIdentifier { ref_, ..Default::default() }, loc)
@@ -563,13 +587,18 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             });
         }
         Ok(())
+        } // end #[cfg(any())]
     }
 
-    pub fn finalize<P>(
+    pub fn finalize<'p, const TS: bool, J: JsxT, const SCAN: bool>(
         &mut self,
-        p: &mut P,
+        p: &mut P<'p, TS, J, SCAN>,
         all_parts: &mut [js_ast::Part],
     ) -> Result<(), AllocError> {
+        let _ = (p, all_parts);
+        todo!("b2-ast-E: finalize body");
+        #[cfg(any())] // TODO(b2-ast-E): body — G::Property::List, PartTag, append_list/append_slice, SymbolUse map API
+        {
         if !self.export_star_props.is_empty() {
             if self.export_props.is_empty() {
                 core::mem::swap(&mut self.export_props, &mut self.export_star_props);
@@ -698,6 +727,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         self.last_part.stmts = core::mem::take(&mut self.stmts).into_bump_slice_mut();
         self.last_part.tag = js_ast::PartTag::None;
         Ok(())
+        } // end #[cfg(any())]
     }
 }
 

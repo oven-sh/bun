@@ -1,42 +1,28 @@
-use core::marker::PhantomData;
-use std::io::Write as _;
-
-use bun_core::FeatureFlags;
-use bun_core::fmt as bun_fmt;
+#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
 use bun_logger as logger;
 use bun_string::strings;
 
-use crate::ast::{self as js_ast, B, Binding, E, Expr, Flags, G, LocRef, S, Stmt};
+use crate::ast::{self as js_ast, B, Binding, E, Expr, Flags, G, LocRef, S, Stmt, Symbol};
 use crate::ast::G::{Decl, Property};
+use crate::ast::p::P;
 use crate::lexer as js_lexer;
-use crate::{
-    self as js_parser, IdentifierOpts, JSXTransformType, NewParser_, RelocateVars, SideEffects,
-};
+use crate::parser::{self as js_parser, IdentifierOpts, JsxT, RelocateVars, RelocateVarsMode, SideEffects};
 
-// MOVE_DOWN: was bun_jsc::URL → bun_url (T2)
-use bun_url::URL as JscURL;
+// Zig: `pub fn AstMaybe(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
+// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// a direct `impl P` block.
 
-/// Type alias mirroring `const P = js_parser.NewParser_(ts, jsx, scan_only);`
-type P<const TYPESCRIPT: bool, const JSX: JSXTransformType, const SCAN_ONLY: bool> =
-    NewParser_<TYPESCRIPT, JSX, SCAN_ONLY>;
-
-pub struct AstMaybe<
-    const PARSER_FEATURE__TYPESCRIPT: bool,
-    const PARSER_FEATURE__JSX: JSXTransformType,
-    const PARSER_FEATURE__SCAN_ONLY: bool,
->(PhantomData<()>);
-
-impl<
-        const PARSER_FEATURE__TYPESCRIPT: bool,
-        const PARSER_FEATURE__JSX: JSXTransformType,
-        const PARSER_FEATURE__SCAN_ONLY: bool,
-    > AstMaybe<PARSER_FEATURE__TYPESCRIPT, PARSER_FEATURE__JSX, PARSER_FEATURE__SCAN_ONLY>
-{
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     pub fn maybe_relocate_vars_to_top_level(
-        p: &mut P<PARSER_FEATURE__TYPESCRIPT, PARSER_FEATURE__JSX, PARSER_FEATURE__SCAN_ONLY>,
+        &mut self,
         decls: &[G::Decl],
-        mode: RelocateVars::Mode,
+        mode: RelocateVarsMode,
     ) -> RelocateVars {
+        let p = self;
+        let _ = (decls, mode);
+        todo!("b2-ast-E: maybe_relocate_vars_to_top_level body");
+        #[cfg(any())] // TODO(b2-ast-E): body — Scope parent walk, S::SExpr struct shape, kind_stops_hoisting
+        {
         // Only do this when the scope is not already top-level and when we're not inside a function.
         if p.current_scope == p.module_scope {
             return RelocateVars { ok: false, ..Default::default() };
@@ -76,19 +62,25 @@ impl<
             stmt: p.s(S::SExpr { value }, value.loc),
             ok: true,
         }
+        } // end #[cfg(any())]
     }
 
     // EDot nodes represent a property access. This function may return an
     // expression to replace the property access with. It assumes that the
     // target of the EDot expression has already been visited.
     pub fn maybe_rewrite_property_access(
-        p: &mut P<PARSER_FEATURE__TYPESCRIPT, PARSER_FEATURE__JSX, PARSER_FEATURE__SCAN_ONLY>,
+        &mut self,
         loc: logger::Loc,
         target: js_ast::Expr,
         name: &[u8],
         name_loc: logger::Loc,
         identifier_opts: IdentifierOpts,
     ) -> Option<Expr> {
+        let p = self;
+        let _ = (loc, target, name, name_loc, identifier_opts);
+        todo!("b2-ast-E: maybe_rewrite_property_access body");
+        #[cfg(any())] // TODO(b2-ast-E): body — Expr::Data variant accessors, import_items_for_namespace, ts_namespace, JscURL dep
+        {
         // Zig labeled switch with `continue :sw` → loop + match with mutable scrutinee.
         let mut sw_data = target.data;
         'sw: loop {
@@ -726,15 +718,21 @@ impl<
         }
 
         None
+        } // end #[cfg(any())]
     }
 
     fn maybe_rewrite_property_access_for_namespace(
-        p: &mut P<PARSER_FEATURE__TYPESCRIPT, PARSER_FEATURE__JSX, PARSER_FEATURE__SCAN_ONLY>,
+        &mut self,
         name: &[u8],
         target: &Expr,
         loc: logger::Loc,
         name_loc: logger::Loc,
     ) -> Option<Expr> {
+        let p = self;
+        let _ = (name, target, loc, name_loc);
+        todo!("b2-ast-E: maybe_rewrite_property_access_for_namespace body");
+        #[cfg(any())] // TODO(b2-ast-E): body — TSNamespaceMemberData variants, ts_namespace field, E::Dot/Number shapes
+        {
         if let Some(value) = p.ts_namespace.map.unwrap().get(name) {
             match value.data {
                 js_ast::TSNamespaceMemberData::EnumNumber(num) => {
@@ -798,12 +796,15 @@ impl<
         }
 
         None
+        } // end #[cfg(any())]
     }
 
-    pub fn check_if_defined_helper(
-        p: &mut P<PARSER_FEATURE__TYPESCRIPT, PARSER_FEATURE__JSX, PARSER_FEATURE__SCAN_ONLY>,
-        expr: Expr,
-    ) -> Result<Expr, bun_core::Error> {
+    pub fn check_if_defined_helper(&mut self, expr: Expr) -> Result<Expr, bun_core::Error> {
+        let p = self;
+        let _ = expr;
+        todo!("b2-ast-E: check_if_defined_helper body");
+        #[cfg(any())] // TODO(b2-ast-E): body — E::Binary/Unary/String struct shapes
+        {
         // TODO(port): narrow error set
         Ok(p.new_expr(
             E::Binary {
@@ -826,12 +827,15 @@ impl<
             },
             logger::Loc::EMPTY,
         ))
+        } // end #[cfg(any())]
     }
 
-    pub fn maybe_defined_helper(
-        p: &mut P<PARSER_FEATURE__TYPESCRIPT, PARSER_FEATURE__JSX, PARSER_FEATURE__SCAN_ONLY>,
-        identifier_expr: Expr,
-    ) -> Result<Expr, bun_core::Error> {
+    pub fn maybe_defined_helper(&mut self, identifier_expr: Expr) -> Result<Expr, bun_core::Error> {
+        let p = self;
+        let _ = identifier_expr;
+        todo!("b2-ast-E: maybe_defined_helper body");
+        #[cfg(any())] // TODO(b2-ast-E): body — E::If struct shape, find_symbol
+        {
         // TODO(port): narrow error set
         Ok(p.new_expr(
             E::If {
@@ -846,12 +850,13 @@ impl<
             },
             logger::Loc::EMPTY,
         ))
+        } // end #[cfg(any())]
     }
 
-    pub fn maybe_comma_spread_error(
-        p: &mut P<PARSER_FEATURE__TYPESCRIPT, PARSER_FEATURE__JSX, PARSER_FEATURE__SCAN_ONLY>,
-        _comma_after_spread: Option<logger::Loc>,
-    ) {
+    pub fn maybe_comma_spread_error(&mut self, _comma_after_spread: Option<logger::Loc>) {
+        let p = self;
+        #[cfg(any())] // TODO(b2-ast-E): body — log.add_range_error signature (&[u8] vs &str)
+        {
         let Some(comma_after_spread) = _comma_after_spread else { return };
         if comma_after_spread.start == -1 {
             return;
@@ -864,10 +869,9 @@ impl<
                 b"Unexpected \",\" after rest pattern",
             )
             .expect("unreachable");
+        } // end #[cfg(any())]
     }
 }
-
-use crate::ast::Symbol;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

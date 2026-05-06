@@ -1,3 +1,102 @@
+#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
+use crate::ast::{self, Binding, E, Expr, ExprData, G, Op, Stmt, StmtData};
+use crate::ast::p::P;
+use crate::parser::JsxT;
+use bumpalo::Bump;
+
+// PORT NOTE: round-E un-gate. SideEffects in Zig is an enum with associated fns that
+// take `p: anytype`. Round-E converts the unbounded `<P>` generic to concrete
+// `P<'a, TS, J, SCAN>`. Method bodies gated; the `Result` type and enum surface are real.
+
+#[repr(u8)] // Zig: enum(u1) — Rust has no u1 repr; u8 is the smallest
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum SideEffects {
+    #[default]
+    CouldHaveSideEffects,
+    NoSideEffects,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Result {
+    pub side_effects: SideEffects,
+    pub ok: bool,
+    pub value: bool,
+}
+
+impl Default for Result {
+    fn default() -> Self {
+        Self { side_effects: SideEffects::CouldHaveSideEffects, ok: false, value: false }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct BinaryExpressionSimplifyVisitor {
+    // ARENA: points into the AST store (see LIFETIMES.tsv)
+    pub bin: *const E::Binary,
+}
+
+impl SideEffects {
+    pub fn can_change_strict_to_loose(lhs: &ExprData, rhs: &ExprData) -> bool {
+        let _ = (lhs, rhs);
+        todo!("b2-ast-E: can_change_strict_to_loose")
+    }
+    pub fn simplify_boolean<'a, const TS: bool, J: JsxT, const SCAN: bool>(
+        p: &P<'a, TS, J, SCAN>,
+        expr: Expr,
+    ) -> Expr {
+        let _ = p;
+        expr
+    }
+    pub fn to_number(data: &ExprData) -> Option<f64> {
+        let _ = data;
+        None // TODO(b2-ast-E): forward to Expr::Data::to_number
+    }
+    pub fn typeof_(data: &ExprData) -> Option<&'static [u8]> {
+        let _ = data;
+        None
+    }
+    pub fn is_primitive_to_reorder(data: &ExprData) -> bool {
+        let _ = data;
+        false
+    }
+    pub fn simplify_unused_expr<'a, const TS: bool, J: JsxT, const SCAN: bool>(
+        p: &mut P<'a, TS, J, SCAN>,
+        expr: Expr,
+    ) -> Option<Expr> {
+        let _ = p;
+        Some(expr)
+    }
+    pub fn should_keep_stmt_in_dead_control_flow(stmt: Stmt, bump: &Bump) -> bool {
+        let _ = (stmt, bump);
+        true
+    }
+    pub fn is_primitive_with_side_effects(data: &ExprData) -> bool {
+        let _ = data;
+        false
+    }
+    pub fn to_type_of(data: &ExprData) -> Option<&'static [u8]> {
+        let _ = data;
+        None
+    }
+    pub fn to_null_or_undefined<'a, const TS: bool, J: JsxT, const SCAN: bool>(
+        p: &P<'a, TS, J, SCAN>,
+        exp: &ExprData,
+    ) -> Result {
+        let _ = (p, exp);
+        Result::default()
+    }
+    pub fn to_boolean<'a, const TS: bool, J: JsxT, const SCAN: bool>(
+        p: &P<'a, TS, J, SCAN>,
+        exp: &ExprData,
+    ) -> Result {
+        let _ = (p, exp);
+        Result::default()
+    }
+}
+
+#[cfg(any())] // TODO(b2-ast-E): full draft body — apply mixin→impl-P recipe per-method
+#[allow(warnings)]
+mod _draft {
 use crate::ast::{self, Binding, BindingData, E, Expr, ExprData, G, Op, Stmt, StmtData};
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export
 // TODO(port): narrow these imports once crate layout is fixed in Phase B
@@ -1014,3 +1113,4 @@ impl SideEffects {
 //   todos:      5
 //   notes:      `p: anytype` → unbounded `<P>`; ExprData/StmtData variant names + payload mutability (arena refs) need Phase-B reconciliation; e_object/e_array reshaped to index loops for borrowck; find_identifiers/decls now bumpalo-backed per §Allocators
 // ──────────────────────────────────────────────────────────────────────────
+} // end mod _draft

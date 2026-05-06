@@ -1,5 +1,8 @@
+#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
 use crate::ast::{self as js_ast, Binding, Expr, G, LocRef, S, Stmt, Symbol};
-use crate::{ConvertESMExportsForHmr, ImportItemForNamespaceMap, Ref};
+use crate::ast::p::P;
+use crate::ast::convert_esm_exports_for_hmr::ConvertESMExportsForHmr;
+use crate::parser::{ImportItemForNamespaceMap, JsxT, Ref};
 use bun_logger as logger;
 use bun_options_types::ImportRecord;
 use bun_string::strings;
@@ -15,15 +18,18 @@ pub struct ImportScanner<'a> {
 
 impl<'a> ImportScanner<'a> {
     // TODO(port): narrow error set
-    // TODO(port): `P` needs a trait bound exposing the parser fields/methods used
-    //   below (allocator, import_records, symbols, ts_use_counts, options,
-    //   import_items_for_namespace, named_imports, declared_symbols,
-    //   import_records_for_current_part, export_star_import_records, log, source,
-    //   recordExport, recordExportedBinding, ignoreUsage, panic, s, callRuntime,
-    //   module_exports) plus associated consts PARSER_FEATURES_TYPESCRIPT and
-    //   IS_AST_BUILDER (for the `P != bun.bundle_v2.AstBuilder` comptime check).
-    pub fn scan<P, const HOT_MODULE_RELOADING_TRANSFORMATIONS: bool>(
-        p: &mut P,
+    // PORT NOTE: round-E un-gate — `<P>` unbounded generic → concrete `P<'a, TS, J, SCAN>`.
+    // TODO(b2-ast-E): the Zig also accepts `bun.bundle_v2.AstBuilder` as P (comptime
+    //   `P != AstBuilder` check). Round-E only handles the parser P; AstBuilder path
+    //   needs a `ParserLike` trait or a separate monomorphization.
+    pub fn scan<
+        'p,
+        const TYPESCRIPT: bool,
+        J: JsxT,
+        const SCAN_ONLY: bool,
+        const HOT_MODULE_RELOADING_TRANSFORMATIONS: bool,
+    >(
+        p: &mut P<'p, TYPESCRIPT, J, SCAN_ONLY>,
         stmts: &'a mut [Stmt],
         will_transform_to_common_js: bool,
         // PORT NOTE: Zig used `if (comptime_bool) *T else void` for this param's
@@ -35,6 +41,10 @@ impl<'a> ImportScanner<'a> {
             HOT_MODULE_RELOADING_TRANSFORMATIONS,
             hot_module_reloading_context.is_some()
         );
+        let _ = (p, stmts, will_transform_to_common_js, hot_module_reloading_context);
+        todo!("b2-ast-E: ImportScanner::scan body");
+        #[cfg(any())] // TODO(b2-ast-E): body — Stmt copy semantics, S::Import field paths, p.import_records mut access, named_imports map API
+        {
 
         let mut scanner = ImportScanner::default();
         let mut stmts_end: usize = 0;
@@ -695,6 +705,7 @@ impl<'a> ImportScanner<'a> {
         }
 
         Ok(scanner)
+        } // end #[cfg(any())]
     }
 }
 

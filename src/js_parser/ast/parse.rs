@@ -1,3 +1,157 @@
+#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
+use core::mem;
+
+use bumpalo::collections::Vec as BumpVec;
+
+use bun_core::{err, Error};
+use bun_logger as logger;
+use bun_string::strings;
+
+use crate::ast as js_ast;
+use crate::ast::{
+    Binding, Expr, ExprNodeIndex, ExprNodeList, Flags, LocRef, Stmt, Symbol, B, E, G, S,
+};
+use crate::ast::op::Level;
+use crate::ast::expr::EFlags;
+use crate::ast::p::P;
+use crate::lexer::{self as js_lexer, T};
+use crate::parser::{
+    AwaitOrYield, DeferredArrowArgErrors, DeferredErrors, ExprListLoc, ExprOrLetStmt,
+    FnOrArrowDataParse, JsxT, LocList, ParenExprOpts, ParseBindingOptions, ParseClassOptions,
+    ParseStatementOptions, ParsedPath, PropertyOpts, StmtList, TypeScript,
+};
+
+// Zig: `pub fn Parse(comptime ts, comptime jsx, comptime scan) type { return struct { ... } }`
+// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// a direct `impl P` block. Full draft body preserved under #[cfg(any())] mod _draft below.
+
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+    pub fn parse_expr_or_bindings(
+        &mut self,
+        errors: &mut DeferredErrors,
+    ) -> Result<Expr, Error> {
+        let _ = errors;
+        todo!("b2-ast-E: parse_expr_or_bindings")
+    }
+    pub fn parse_expr(&mut self, level: Level) -> Result<Expr, Error> {
+        let _ = level;
+        todo!("b2-ast-E: parse_expr")
+    }
+    pub fn parse_expr_with_flags(&mut self, level: Level, flags: EFlags) -> Result<Expr, Error> {
+        let _ = (level, flags);
+        todo!("b2-ast-E: parse_expr_with_flags")
+    }
+    pub fn parse_expr_common(
+        &mut self,
+        level: Level,
+        errors: Option<&mut DeferredErrors>,
+        flags: EFlags,
+    ) -> Result<Expr, Error> {
+        let _ = (level, errors, flags);
+        todo!("b2-ast-E: parse_expr_common")
+    }
+    pub fn parse_yield_expr(&mut self, loc: logger::Loc) -> Result<Expr, Error> {
+        let _ = loc;
+        todo!("b2-ast-E: parse_yield_expr")
+    }
+    pub fn parse_class(
+        &mut self,
+        class_keyword: logger::Range,
+        name: Option<js_ast::LocRef>,
+        class_opts: ParseClassOptions,
+    ) -> Result<G::Class, Error> {
+        let _ = (class_keyword, name, class_opts);
+        todo!("b2-ast-E: parse_class")
+    }
+    pub fn parse_template_parts(
+        &mut self,
+        _include_raw: bool,
+    ) -> Result<(&'a [E::TemplatePart], logger::Loc), Error> {
+        todo!("b2-ast-E: parse_template_parts")
+    }
+    pub fn parse_string_literal(&mut self) -> Result<Expr, Error> {
+        todo!("b2-ast-E: parse_string_literal")
+    }
+    pub fn parse_call_args(&mut self) -> Result<ExprListLoc, Error> {
+        todo!("b2-ast-E: parse_call_args")
+    }
+    pub fn parse_jsx_prop_value_identifier(
+        &mut self,
+        previous_string_with_backslash_loc: &mut logger::Loc,
+    ) -> Result<Expr, Error> {
+        let _ = previous_string_with_backslash_loc;
+        todo!("b2-ast-E: parse_jsx_prop_value_identifier")
+    }
+    pub fn parse_paren_expr(
+        &mut self,
+        loc: logger::Loc,
+        level: Level,
+        opts: ParenExprOpts,
+    ) -> Result<Expr, Error> {
+        let _ = (loc, level, opts);
+        todo!("b2-ast-E: parse_paren_expr")
+    }
+    pub fn parse_label_name(&mut self) -> Result<Option<js_ast::LocRef>, Error> {
+        todo!("b2-ast-E: parse_label_name")
+    }
+    pub fn parse_class_stmt(
+        &mut self,
+        loc: logger::Loc,
+        opts: &mut ParseStatementOptions,
+    ) -> Result<Stmt, Error> {
+        let _ = (loc, opts);
+        todo!("b2-ast-E: parse_class_stmt")
+    }
+    pub fn parse_clause_alias(&mut self, kind: &'static str) -> Result<&'a [u8], Error> {
+        let _ = kind;
+        todo!("b2-ast-E: parse_clause_alias")
+    }
+    pub fn parse_expr_or_let_stmt(
+        &mut self,
+        opts: &mut ParseStatementOptions,
+    ) -> Result<ExprOrLetStmt<'a>, Error> {
+        let _ = opts;
+        todo!("b2-ast-E: parse_expr_or_let_stmt")
+    }
+    pub fn parse_binding(&mut self, opts: ParseBindingOptions) -> Result<Binding, Error> {
+        let _ = opts;
+        todo!("b2-ast-E: parse_binding")
+    }
+    pub fn parse_property_binding(&mut self) -> Result<B::Property, Error> {
+        todo!("b2-ast-E: parse_property_binding")
+    }
+    pub fn parse_and_declare_decls(
+        &mut self,
+        kind: js_ast::symbol::Kind,
+        opts: &mut ParseStatementOptions,
+    ) -> Result<G::DeclList, Error> {
+        let _ = (kind, opts);
+        todo!("b2-ast-E: parse_and_declare_decls")
+    }
+    pub fn parse_path(&mut self) -> Result<ParsedPath<'a>, Error> {
+        todo!("b2-ast-E: parse_path")
+    }
+    pub fn parse_stmts_up_to(
+        &mut self,
+        end: T,
+        opts: &mut ParseStatementOptions,
+    ) -> Result<StmtList<'a>, Error> {
+        let _ = (end, opts);
+        todo!("b2-ast-E: parse_stmts_up_to")
+    }
+    pub fn parse_async_prefix_expr(
+        &mut self,
+        async_range: logger::Range,
+        level: Level,
+    ) -> Result<Expr, Error> {
+        let _ = (async_range, level);
+        todo!("b2-ast-E: parse_async_prefix_expr")
+    }
+}
+
+#[cfg(any())] // TODO(b2-ast-E): full draft body — apply mixin→impl-P recipe per-method
+#[allow(warnings)]
+mod _draft {
 use core::mem;
 
 use bumpalo::collections::Vec as BumpVec;
@@ -1771,3 +1925,4 @@ impl<
 //   todos:      23
 //   notes:      comptime mixin → ZST + const-generics; sibling re-exports left as TODOs (Phase B should make all parse fns inherent on NewParser_); 'bump lifetimes on return slices need wiring; defer/errdefer state-restore on &mut p needs scopeguard pattern
 // ──────────────────────────────────────────────────────────────────────────
+} // end mod _draft

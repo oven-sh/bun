@@ -4,54 +4,84 @@ use bun_sql::mysql::protocol::error_packet::MySQLErrorOptions;
 
 use super::error_packet_jsc::create_mysql_error;
 
+/// Coerces the assorted error types callers thread through (`AnyMySQLError`
+/// enum or the interned `bun_core::Error`) into the Zig-style error *name*
+/// that the match below keys on. In Zig both are the same `error.Foo` value;
+/// in Rust we bridge them via name string.
+pub trait IntoAnyMySQLError: Copy {
+    fn mysql_error_name(self) -> &'static str;
+}
+
+impl IntoAnyMySQLError for Error {
+    #[inline]
+    fn mysql_error_name(self) -> &'static str {
+        <&'static str>::from(self)
+    }
+}
+
+impl IntoAnyMySQLError for bun_core::Error {
+    #[inline]
+    fn mysql_error_name(self) -> &'static str {
+        self.name()
+    }
+}
+
 pub fn mysql_error_to_js(
     global_object: &JSGlobalObject,
-    message: Option<&[u8]>,
-    err: Error,
+    // Zig: `?[]const u8` — every Rust caller passes a concrete byte-ish value
+    // (`&str`, `&[u8]`, `&[u8; N]`, `&Vec<u8>`), so accept `AsRef<[u8]>` and
+    // fall back to the error name only when the message is empty.
+    message: impl AsRef<[u8]>,
+    err: impl IntoAnyMySQLError,
 ) -> JSValue {
-    let msg: &[u8] = message.unwrap_or_else(|| <&'static str>::from(err).as_bytes());
-    let code: &'static [u8] = match err {
-        Error::ConnectionClosed => b"ERR_MYSQL_CONNECTION_CLOSED",
-        Error::Overflow => b"ERR_MYSQL_OVERFLOW",
-        Error::AuthenticationFailed => b"ERR_MYSQL_AUTHENTICATION_FAILED",
-        Error::UnsupportedAuthPlugin => b"ERR_MYSQL_UNSUPPORTED_AUTH_PLUGIN",
-        Error::UnsupportedProtocolVersion => b"ERR_MYSQL_UNSUPPORTED_PROTOCOL_VERSION",
-        Error::LocalInfileNotSupported => b"ERR_MYSQL_LOCAL_INFILE_NOT_SUPPORTED",
-        Error::WrongNumberOfParametersProvided => b"ERR_MYSQL_WRONG_NUMBER_OF_PARAMETERS_PROVIDED",
-        Error::UnsupportedColumnType => b"ERR_MYSQL_UNSUPPORTED_COLUMN_TYPE",
-        Error::InvalidLocalInfileRequest => b"ERR_MYSQL_INVALID_LOCAL_INFILE_REQUEST",
-        Error::InvalidAuthSwitchRequest => b"ERR_MYSQL_INVALID_AUTH_SWITCH_REQUEST",
-        Error::InvalidQueryBinding => b"ERR_MYSQL_INVALID_QUERY_BINDING",
-        Error::InvalidResultRow => b"ERR_MYSQL_INVALID_RESULT_ROW",
-        Error::InvalidBinaryValue => b"ERR_MYSQL_INVALID_BINARY_VALUE",
-        Error::InvalidEncodedInteger => b"ERR_MYSQL_INVALID_ENCODED_INTEGER",
-        Error::InvalidEncodedLength => b"ERR_MYSQL_INVALID_ENCODED_LENGTH",
-        Error::InvalidPrepareOKPacket => b"ERR_MYSQL_INVALID_PREPARE_OK_PACKET",
-        Error::InvalidOKPacket => b"ERR_MYSQL_INVALID_OK_PACKET",
-        Error::InvalidEOFPacket => b"ERR_MYSQL_INVALID_EOF_PACKET",
-        Error::InvalidErrorPacket => b"ERR_MYSQL_INVALID_ERROR_PACKET",
-        Error::UnexpectedPacket => b"ERR_MYSQL_UNEXPECTED_PACKET",
-        Error::ConnectionTimedOut => b"ERR_MYSQL_CONNECTION_TIMEOUT",
-        Error::IdleTimeout => b"ERR_MYSQL_IDLE_TIMEOUT",
-        Error::LifetimeTimeout => b"ERR_MYSQL_LIFETIME_TIMEOUT",
-        Error::PasswordRequired => b"ERR_MYSQL_PASSWORD_REQUIRED",
-        Error::MissingAuthData => b"ERR_MYSQL_MISSING_AUTH_DATA",
-        Error::FailedToEncryptPassword => b"ERR_MYSQL_FAILED_TO_ENCRYPT_PASSWORD",
-        Error::InvalidPublicKey => b"ERR_MYSQL_INVALID_PUBLIC_KEY",
-        Error::UnknownError => b"ERR_MYSQL_UNKNOWN_ERROR",
-        Error::InvalidState => b"ERR_MYSQL_INVALID_STATE",
-        Error::JSError => {
+    let name = err.mysql_error_name();
+    let msg_ref = message.as_ref();
+    let msg: &[u8] = if msg_ref.is_empty() { name.as_bytes() } else { msg_ref };
+
+    let code: &'static [u8] = match name {
+        "ConnectionClosed" => b"ERR_MYSQL_CONNECTION_CLOSED",
+        "Overflow" => b"ERR_MYSQL_OVERFLOW",
+        "AuthenticationFailed" => b"ERR_MYSQL_AUTHENTICATION_FAILED",
+        "UnsupportedAuthPlugin" => b"ERR_MYSQL_UNSUPPORTED_AUTH_PLUGIN",
+        "UnsupportedProtocolVersion" => b"ERR_MYSQL_UNSUPPORTED_PROTOCOL_VERSION",
+        "LocalInfileNotSupported" => b"ERR_MYSQL_LOCAL_INFILE_NOT_SUPPORTED",
+        "WrongNumberOfParametersProvided" => b"ERR_MYSQL_WRONG_NUMBER_OF_PARAMETERS_PROVIDED",
+        "UnsupportedColumnType" => b"ERR_MYSQL_UNSUPPORTED_COLUMN_TYPE",
+        "InvalidLocalInfileRequest" => b"ERR_MYSQL_INVALID_LOCAL_INFILE_REQUEST",
+        "InvalidAuthSwitchRequest" => b"ERR_MYSQL_INVALID_AUTH_SWITCH_REQUEST",
+        "InvalidQueryBinding" => b"ERR_MYSQL_INVALID_QUERY_BINDING",
+        "InvalidResultRow" => b"ERR_MYSQL_INVALID_RESULT_ROW",
+        "InvalidBinaryValue" => b"ERR_MYSQL_INVALID_BINARY_VALUE",
+        "InvalidEncodedInteger" => b"ERR_MYSQL_INVALID_ENCODED_INTEGER",
+        "InvalidEncodedLength" => b"ERR_MYSQL_INVALID_ENCODED_LENGTH",
+        "InvalidPrepareOKPacket" => b"ERR_MYSQL_INVALID_PREPARE_OK_PACKET",
+        "InvalidOKPacket" => b"ERR_MYSQL_INVALID_OK_PACKET",
+        "InvalidEOFPacket" => b"ERR_MYSQL_INVALID_EOF_PACKET",
+        "InvalidErrorPacket" => b"ERR_MYSQL_INVALID_ERROR_PACKET",
+        "UnexpectedPacket" => b"ERR_MYSQL_UNEXPECTED_PACKET",
+        "ConnectionTimedOut" => b"ERR_MYSQL_CONNECTION_TIMEOUT",
+        "IdleTimeout" => b"ERR_MYSQL_IDLE_TIMEOUT",
+        "LifetimeTimeout" => b"ERR_MYSQL_LIFETIME_TIMEOUT",
+        "PasswordRequired" => b"ERR_MYSQL_PASSWORD_REQUIRED",
+        "MissingAuthData" => b"ERR_MYSQL_MISSING_AUTH_DATA",
+        "FailedToEncryptPassword" => b"ERR_MYSQL_FAILED_TO_ENCRYPT_PASSWORD",
+        "InvalidPublicKey" => b"ERR_MYSQL_INVALID_PUBLIC_KEY",
+        "InvalidState" => b"ERR_MYSQL_INVALID_STATE",
+        "JSError" => {
             return global_object.take_exception(JsError::Thrown);
         }
-        Error::JSTerminated => {
+        "JSTerminated" => {
             return global_object.take_exception(JsError::Terminated);
         }
-        Error::OutOfMemory => {
+        "OutOfMemory" => {
             return global_object.create_out_of_memory_error();
         }
-        Error::ShortRead => {
+        "ShortRead" => {
             unreachable!("Assertion failed: ShortRead should be handled by the caller in mysql");
         }
+        // "UnknownError" + any name not in the AnyMySQLError set (possible when
+        // the caller hands us a raw `bun_core::Error`).
+        _ => b"ERR_MYSQL_UNKNOWN_ERROR",
     };
 
     create_mysql_error(
@@ -71,5 +101,6 @@ pub fn mysql_error_to_js(
 //   source:     src/sql_jsc/mysql/protocol/any_mysql_error_jsc.zig (60 lines)
 //   confidence: medium
 //   todos:      0
-//   notes:      take_exception arg is JsError (matches bun_jsc surface)
+//   notes:      generic over AsRef<[u8]> / IntoAnyMySQLError to bridge
+//               &str|&[u8]|&Vec<u8> messages and bun_core::Error callers
 // ──────────────────────────────────────────────────────────────────────────

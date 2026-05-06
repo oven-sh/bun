@@ -815,21 +815,21 @@ pub fn from_bytes(
     use types::Tag as T;
     match oid {
         // TODO: .int2_array, .float8_array
-        T::Int4Array => {
+        T::int4_array => {
             if binary {
-                from_bytes_typed_array::<i32>(T::Int4Array, bytes)
+                from_bytes_typed_array::<i32>(T::int4_array, bytes)
             } else {
-                parse_array(bytes, bigint, T::Int4Array, global_object, None, false)
+                parse_array(bytes, bigint, T::int4_array, global_object, None, false)
             }
         }
-        T::Float4Array => {
+        T::float4_array => {
             if binary {
-                from_bytes_typed_array::<f32>(T::Float4Array, bytes)
+                from_bytes_typed_array::<f32>(T::float4_array, bytes)
             } else {
-                parse_array(bytes, bigint, T::Float4Array, global_object, None, false)
+                parse_array(bytes, bigint, T::float4_array, global_object, None, false)
             }
         }
-        T::Int2 => {
+        T::int2 => {
             if binary {
                 Ok(SQLDataCell {
                     tag: Tag::Int4,
@@ -844,7 +844,7 @@ pub fn from_bytes(
                 })
             }
         }
-        T::Cid | T::Xid | T::Oid => {
+        T::cid | T::xid | T::oid => {
             if binary {
                 Ok(SQLDataCell {
                     tag: Tag::Uint4,

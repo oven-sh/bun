@@ -198,7 +198,13 @@ impl Assets {
             );
         } else {
             self.refs[file_index] += 1;
-            let mut contents_mut = *contents;
+            // Zig: `var contents_mut = contents.*; contents_mut.detach();`
+            // Ownership of `*contents` was transferred to this function (see param doc),
+            // so the bitwise copy + detach is the release path. `Any` is not `Copy` in
+            // Rust, hence the explicit `ptr::read`. SAFETY: caller promised ownership;
+            // `*contents` is treated as logically moved-from after this and never read
+            // again by the caller.
+            let mut contents_mut = unsafe { core::ptr::read(contents) };
             contents_mut.detach();
         }
         let entry = EntryIndex::init(u32::try_from(file_index).unwrap());

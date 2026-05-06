@@ -284,7 +284,9 @@ impl PipeReader {
 
         match &self.state {
             State::Pending => {
-                let stream = ReadableStream::from_pipe(global_object, self, &mut self.reader);
+                // PORT NOTE: `_parent` is unused in `from_pipe` (Zig `anytype` discard); pass the
+                // raw ptr instead of `self` so borrowck allows `&mut self.reader` alongside it.
+                let stream = ReadableStream::from_pipe(global_object, this_ptr, &mut self.reader);
                 self.state = State::Done(Vec::new());
                 stream
             }

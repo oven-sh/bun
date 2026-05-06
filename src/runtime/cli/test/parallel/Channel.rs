@@ -27,7 +27,7 @@ use bun_uws as uws;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 
-use super::frame::{self, Frame};
+use super::frame;
 
 /// The Zig version is `fn Channel(comptime Owner: type, comptime owner_field:
 /// []const u8) type`. Rust cannot take a field-name string as a const generic,

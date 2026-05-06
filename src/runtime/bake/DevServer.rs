@@ -182,7 +182,7 @@ pub struct CurrentBundle<'a> {
     /// Information BundleV2 needs to finalize the bundle
     pub start_data: bundler::bundle_v2::__phase_a_draft::DevServerInput,
     /// Started when the bundle was queued
-    pub timer: Instant, // TODO(port): std.time.Timer â Instant; .read() becomes .elapsed()
+    pub timer: Instant, // TODO(port): std.time.Timer → Instant; .read() becomes .elapsed()
     /// If any files in this bundle were due to hot-reloading, some extra work
     /// must be done to inform clients to reload routes. When this is false,
     /// all entry points do not have bundles yet.
@@ -251,7 +251,7 @@ pub struct DevServer<'a> {
     /// may have changed. Populated by applyBarrelOptimization.
     pub barrel_files_with_deferrals: ArrayHashMap<Box<[u8]>, ()>,
     /// Accumulated barrel export requests across all builds. Maps barrel file
-    /// path â set of export names that have been requested. This ensures that
+    /// path → set of export names that have been requested. This ensures that
     /// when a barrel is re-parsed in an incremental build, exports requested
     /// by non-stale files (from previous builds) are still kept.
     pub barrel_needed_exports: ArrayHashMap<Box<[u8]>, StringHashMap<()>>,
@@ -323,7 +323,7 @@ pub struct DevServer<'a> {
 
     // Debugging
     #[cfg(feature = "bake_debugging_features")]
-    pub dump_dir: Option<sys::Dir>, // TODO(port): std.fs.Dir â bun_sys equivalent
+    pub dump_dir: Option<sys::Dir>, // TODO(port): std.fs.Dir → bun_sys equivalent
     #[cfg(not(feature = "bake_debugging_features"))]
     pub dump_dir: (),
     /// Reference count to number of active sockets with the incremental_visualizer enabled.
@@ -544,7 +544,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         Err(err) => return Err(global.throw_error(err, generic_action)),
     };
 
-    // `.bun_watcher = undefined` â `Watcher.init(DevServer, dev, fs, ...)`
+    // `.bun_watcher = undefined` → `Watcher.init(DevServer, dev, fs, ...)`
     // SAFETY: `Watcher::init` only stores `p` as an opaque `*mut ()` ctx; it does
     // not dereference it until `start()` spawns the watcher thread, by which point
     // every `DevServer` field is initialized (`assume_init` below precedes
@@ -562,7 +562,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // errdefer dev.bun_watcher.deinit(false) — handled by `Drop for Watcher` when
     // `dev_uninit` is dropped on an error path after `assume_init()`.
 
-    // `.watcher_atomics = undefined` â `WatcherAtomics.init(dev)`
+    // `.watcher_atomics = undefined` → `WatcherAtomics.init(dev)`
     // SAFETY: `WatcherAtomics::init` / `HotReloadEvent::init_empty` only store `p`
     // as `*const DevServer` for later `concurrent_task.from(dev)`; not dereferenced
     // during construction.
@@ -573,7 +573,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // This causes a memory leak, but the allocator is otherwise used on multiple threads.
     // (allocator param dropped — global mimalloc)
 
-    // `.server_transpiler/.client_transpiler/.ssr_transpiler = undefined` â
+    // `.server_transpiler/.client_transpiler/.ssr_transpiler = undefined` →
     // `Framework.initTranspiler(..., &dev.X_transpiler, ...)`.
     //
     // SAFETY: `init_transpiler` writes the slot via `MaybeUninit::write` (see
@@ -631,7 +631,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         }
     }
 
-    // ââ every field is now written âââââââââââââââââââââââââââââââââââââââââââ
+    // ── every field is now written ───────────────────────────────────────────
     // SAFETY: all fields of `*p` were written exactly once above via
     // `addr_of_mut!().write()` / `copy_nonoverlapping`; no field remains uninit.
     let mut dev: Box<DevServer> = unsafe { dev_uninit.assume_init() };
@@ -1060,7 +1060,7 @@ impl DevServer<'_> {
                 app.$method($path, self as *mut _, wrap_generic_request_handler::<_, SSL>($handler));
             };
         }
-        // TODO(port): comptime string concat â const_format::concatcp!
+        // TODO(port): comptime string concat → const_format::concatcp!
         route!(get, const_format::concatcp!(CLIENT_PREFIX, "/:route"), on_js_request);
         route!(get, const_format::concatcp!(ASSET_PREFIX, "/:asset"), on_asset_request);
         route!(get, const_format::concatcp!(INTERNAL_PREFIX, "/src/*"), on_src_request);
@@ -1431,7 +1431,13 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                                     .as_ref()
                                     .unwrap()
                                     .get_or_load_plugins(
-                                        crate::server::ServePluginsCallback::DevServer(dev),
+                                        crate::server::ServePluginsCallback::DevServer(
+                                            // SAFETY: dev_server_body::DevServer<'_> and dev_server::DevServer
+                                            // are duplicate Phase-A/keystone shapes pending unification; the
+                                            // callee only stores the pointer for plugin-resolution callback.
+                                            // TODO(port): blocked_on: dev_server_body::DevServer unification
+                                            unsafe { &*(dev as *mut _ as *const crate::bake::dev_server::DevServer) },
+                                        ),
                                     )
                                 {
                                     crate::server::GetOrStartLoadResult::Pending => {
@@ -4150,7 +4156,7 @@ impl DevServer<'_> {
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
 
         // TODO(port): switch (kind) { inline else => |k| std.fmt.comptimePrint(...) }
-        // â const_format would need const enum-dependent string; using match on runtime kind.
+        // → const_format would need const enum-dependent string; using match on runtime kind.
         let page_title = match kind {
             ErrorPageKind::Bundler => "Build Failed",
             ErrorPageKind::Evaluation | ErrorPageKind::Runtime => "Runtime Error",
@@ -4329,43 +4335,12 @@ impl IncrementalResult {
 }
 
 /// Used during an incremental update to determine what "HMR roots"
-/// are affected.
-pub struct GraphTraceState {
-    pub client_bits: DynamicBitSet,
-    pub server_bits: DynamicBitSet,
-}
+/// are affected. Re-exported from the keystone `dev_server` module so that
+/// `HotUpdateContext.gts` and `IncrementalGraph::trace_dependencies` agree on
+/// a single type (the body-local duplicate caused E0308).
+pub use crate::bake::dev_server::GraphTraceState;
 
-impl GraphTraceState {
-    pub fn bits(&mut self, side: bake::Side) -> &mut DynamicBitSet {
-        match side {
-            bake::Side::Client => &mut self.client_bits,
-            bake::Side::Server => &mut self.server_bits,
-        }
-    }
-
-    pub fn clear(&mut self) {
-        self.server_bits.set_all(false);
-        self.client_bits.set_all(false);
-    }
-
-    pub fn resize(&mut self, side: bake::Side, new_size: usize) -> Result<(), bun_core::Error> {
-        let b = match side {
-            bake::Side::Client => &mut self.client_bits,
-            bake::Side::Server => &mut self.server_bits,
-        };
-        if b.bit_length() < new_size {
-            b.resize(new_size, false)?;
-        }
-        Ok(())
-    }
-
-    pub fn clear_and_free(&mut self) {
-        self.client_bits.resize(0, false).expect("freeing memory can not fail");
-        self.server_bits.resize(0, false).expect("freeing memory can not fail");
-    }
-}
-
-// GraphTraceState::deinit â Drop on DynamicBitSet (allocator param dropped)
+// GraphTraceState::deinit → Drop on DynamicBitSet (allocator param dropped)
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum TraceImportGoal {
@@ -5020,7 +4995,7 @@ impl DevServer<'_> {
     }
 }
 
-// TODO(port): packed struct(u32) with non-bool fields â repr(transparent) + manual accessors
+// TODO(port): packed struct(u32) with non-bool fields → repr(transparent) + manual accessors
 #[repr(transparent)]
 #[derive(Copy, Clone)]
 struct SafeFileId(u32);
@@ -5313,7 +5288,7 @@ impl<'a> HTMLRouter<'a> {
     }
 }
 
-// HTMLRouter::deinit â Drop on map
+// HTMLRouter::deinit → Drop on map
 
 impl DevServer<'_> {
     pub fn put_or_overwrite_asset(
@@ -5867,10 +5842,10 @@ use crate::bake::dev_server::incremental_graph;
 type DebuggerId = jsc::debugger::DebuggerId;
 type BunFrontendDevServerAgent = jsc::debugger::BunFrontendDevServerAgent;
 
-// ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bake/DevServer.zig (4783 lines)
 //   confidence: low
 //   todos:      76
 //   notes:      Heavy borrowck reshaping needed in Phase B: init() late-init fields now use Box<MaybeUninit<DevServer>> + addr_of_mut!().write() per field; DevServer/HTMLRouter/PromiseResponse now carry `<'a>` per LIFETIMES.tsv but impl blocks still need the param threaded; many scopeguard closures capture &mut dev across other &mut borrows; finalize_bundle has self-referential ptrs into dev. ensure_route_is_bundled uses trait pattern for Zig comptime Ctx duck-typing. Several `anytype` params (set_routes, on_request, on_src_request) bound by placeholder traits.
-// ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ──────────────────────────────────────────────────────────────────────────

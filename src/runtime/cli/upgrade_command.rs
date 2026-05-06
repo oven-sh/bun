@@ -565,16 +565,16 @@ impl UpgradeCommand {
         let use_canary: bool = 'brk: {
             let default_use_canary = Environment::IS_CANARY;
 
-            if default_use_canary && strings::contains_any(bun_core::argv(), b"--stable") {
+            if default_use_canary && argv_contains(b"--stable") {
                 break 'brk false;
             }
 
             break 'brk (env_loader.map.get(b"BUN_CANARY").unwrap_or(b"0") == b"1")
-                || strings::contains_any(bun_core::argv(), b"--canary")
+                || argv_contains(b"--canary")
                 || default_use_canary;
         };
 
-        let use_profile = strings::contains_any(bun_core::argv(), b"--profile");
+        let use_profile = argv_contains(b"--profile");
 
         let mut version: Version = if !use_canary {
             let mut refresher = Progress::Progress::default();

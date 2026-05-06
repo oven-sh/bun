@@ -749,7 +749,7 @@ impl CreateCommand {
                     break 'process_package_json;
                 }
 
-                let mut properties_list: Vec<js_ast::G::Property> =
+                let mut properties_list: Vec<logger::js_ast::G::Property> =
                     package_json_expr.data.e_object_mut().unwrap().properties.slice().to_vec();
                 // PORT NOTE: Zig used fromOwnedSlice; here we copy into Vec for mutation.
 

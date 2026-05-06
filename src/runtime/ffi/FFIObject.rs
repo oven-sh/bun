@@ -371,7 +371,7 @@ pub mod reader {
         // SAFETY: JIT-validated address.
         let value = unsafe { (addr as *const u64).read_unaligned() };
         // SAFETY: global is non-null, JS thread.
-        JSValue::from_uint64_no_truncate(unsafe { &*global }, value)
+        from_uint64_no_truncate(unsafe { &*global }, value)
     }
     #[bun_jsc::host_call]
     pub extern fn i64_without_type_checks(global: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
@@ -407,9 +407,10 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
     }
 
     let Some(array_buffer) = value.as_array_buffer(global_this) else {
+        // PORT NOTE: `JSType` derives `Debug` only; Zig used `@tagName`.
         return global_this.to_invalid_arguments(format_args!(
-            "Expected ArrayBufferView but received {}",
-            <&'static str>::from(value.js_type())
+            "Expected ArrayBufferView but received {:?}",
+            value.js_type()
         ));
     };
 

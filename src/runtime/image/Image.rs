@@ -905,12 +905,15 @@ impl Image {
                     self.last_width = i32::try_from(w).unwrap();
                     self.last_height = i32::try_from(h).unwrap();
                     let obj = JSValue::create_empty_object(global, 3);
-                    obj.put(global, ZigString::static_(b"width"), JSValue::js_number(w));
-                    obj.put(global, ZigString::static_(b"height"), JSValue::js_number(h));
+                    obj.put(global, b"width", JSValue::js_number(f64::from(w)));
+                    obj.put(global, b"height", JSValue::js_number(f64::from(h)));
                     obj.put(
                         global,
-                        ZigString::static_(b"format"),
-                        ZigString::init(<&'static str>::from(p.format).as_bytes()).to_js(global),
+                        b"format",
+                        jsc::bun_string_jsc::create_utf8_for_js(
+                            global,
+                            format_name(p.format).as_bytes(),
+                        )?,
                     );
                     return Ok(JSPromise::resolved_promise_value(global, obj));
                 }
@@ -969,10 +972,10 @@ impl Image {
         // option space isn't accidentally squatted.
         if args.len() > 0 && !args[0].is_undefined_or_null() {
             let s = args[0].to_bun_string(global)?;
-            if !s.eql(b"dataurl") {
-                return global.throw_invalid_arguments(
+            if !s.eql_utf8(b"dataurl") {
+                return Err(global.throw_invalid_arguments(
                     "Image.placeholder(): only \"dataurl\" is supported",
-                );
+                ));
             }
         }
         self.schedule(global, cf.this(), Kind::Placeholder, Deliver::DataUrl)
@@ -988,9 +991,9 @@ impl Image {
     pub fn do_write(&mut self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let args = cf.arguments();
         if args.len() < 1 || args[0].is_undefined_or_null() {
-            return global.throw_invalid_arguments(
+            return Err(global.throw_invalid_arguments(
                 "Image.write(dest): expected a path, Bun.file, Bun.s3 or fd",
-            );
+            ));
         }
 
         let mut output = self.pipeline.output;

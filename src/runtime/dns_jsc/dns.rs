@@ -823,16 +823,19 @@ impl CAresNameInfo {
     /// SAFETY: `this` must point at a live node; if `(*this).allocated`, it must be the
     /// exact pointer returned by `Box::into_raw` in `init()`.
     pub unsafe fn destroy(this: *mut Self) {
-        if (*this).allocated {
-            drop(Box::from_raw(this));
+        // SAFETY: see fn contract — `this` is a live node; if `allocated`, it is
+        // the exact pointer returned by `Box::into_raw` in `init()`.
+        unsafe {
+            if (*this).allocated {
+                drop(Box::from_raw(this));
+            }
         }
     }
 }
 
 impl Drop for CAresNameInfo {
     fn drop(&mut self) {
-        // SAFETY: JSGlobalObject outlives the request.
-        self.poll_ref.unref(unsafe { &*self.global_this }.bun_vm());
+        self.poll_ref.unref(js_event_loop_ctx());
         // self.name freed by Box<[u8]> Drop
     }
 }

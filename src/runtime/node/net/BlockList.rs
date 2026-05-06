@@ -278,10 +278,12 @@ impl BlockList {
         }
         let address_val;
         let address: &sockaddr = if let Some(sa) = address_js.as_::<SocketAddress>() {
-            &sa._addr
+            // SAFETY: `as_` returns a live `*mut SocketAddress` (m_ctx payload);
+            // borrow is valid for the duration of this call (no GC yield).
+            unsafe { &(*sa)._addr }
         } else {
-            validators::validate_string(global, address_js, "address")?;
-            validators::validate_string(global, family_js, "family")?;
+            validators::validate_string(global, address_js, format_args!("address"))?;
+            validators::validate_string(global, family_js, format_args!("family"))?;
             match SocketAddress::init_from_addr_family(global, address_js, family_js) {
                 Ok(sa) => {
                     address_val = sa._addr;
@@ -289,7 +291,7 @@ impl BlockList {
                 }
                 Err(err) => {
                     debug_assert!(err == bun_jsc::JsError::Thrown);
-                    global.clear_exception();
+                    clear_exception(global);
                     return Ok(JSValue::FALSE);
                 }
             }
@@ -321,19 +323,23 @@ impl BlockList {
                                 }
                             }
                             let one: u32 = 1;
-                            let mask_addr =
+                            let mask_addr: u32 =
                                 ((one << (*prefix as u32)) - 1) << (32 - *prefix as u32);
-                            let ip_net: u32 = ip_addr.swap_bytes() & mask_addr;
-                            let subnet_net: u32 = subnet_addr.swap_bytes() & mask_addr;
+                            let ip_net: u32 = u32::swap_bytes(ip_addr) & mask_addr;
+                            let subnet_net: u32 = u32::swap_bytes(subnet_addr) & mask_addr;
                             if ip_net == subnet_net {
                                 return Ok(JSValue::TRUE);
                             }
                         }
                     }
-                    if address.sin.family == AF_INET6 && network.sin.family == AF_INET6 {
-                        // SAFETY: `sin6.addr` is `[u8; 16]`; all-bytes valid for u128.
-                        let ip_addr: u128 = u128::from_ne_bytes(address.sin6.addr);
-                        let subnet_addr: u128 = u128::from_ne_bytes(network.sin6.addr);
+                    // SAFETY: `sin.family` is at the same offset for both union variants.
+                    if unsafe { address.sin.family } == AF_INET6 as inet::sa_family_t
+                        && unsafe { network.sin.family } == AF_INET6 as inet::sa_family_t
+                    {
+                        // SAFETY: family == INET6 guarantees `sin6` variant is active;
+                        // `sin6.addr` is `[u8; 16]`, all-bytes valid for u128.
+                        let ip_addr: u128 = u128::from_ne_bytes(unsafe { address.sin6.addr });
+                        let subnet_addr: u128 = u128::from_ne_bytes(unsafe { network.sin6.addr });
                         if *prefix == 128 {
                             if ip_addr == subnet_addr {
                                 return Ok(JSValue::TRUE);

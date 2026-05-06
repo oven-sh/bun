@@ -1210,11 +1210,13 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(allow_unresolved_val) = config.get_own(global_this, "allowUnresolved")? {
+            if let Some(allow_unresolved_val) = get_own_str(config, global_this, "allowUnresolved")? {
                 if !allow_unresolved_val.is_undefined() && !allow_unresolved_val.is_null() {
-                    if !allow_unresolved_val.js_type_loose().is_array() {
+                    if !(allow_unresolved_val.is_cell()
+                        && allow_unresolved_val.js_type().is_array())
+                    {
                         return Err(global_this
-                    .throw_invalid_arguments("allowUnresolved must be an array"));
+                            .throw_invalid_arguments("allowUnresolved must be an array"));
                     }
                     this.allow_unresolved = Some(StringSet::default());
                     if allow_unresolved_val.get_length(global_this)? > 0 {

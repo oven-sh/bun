@@ -1141,29 +1141,36 @@ pub fn timing_safe_equal(global: &JSGlobalObject, call_frame: &CallFrame) -> JsR
     let [l_value, r_value] = call_frame.arguments_as_array::<2>();
 
     let Some(l_buf) = l_value.as_array_buffer(global) else {
-        return global
-            .err_invalid_arg_type(format_args!(
-                "The \"buf1\" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView."
-            ))
-            .throw();
+        return Err(global
+            .err(
+                ErrorCode::INVALID_ARG_TYPE,
+                format_args!(
+                    "The \"buf1\" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView."
+                ),
+            )
+            .throw());
     };
     let l = l_buf.byte_slice();
 
     let Some(r_buf) = r_value.as_array_buffer(global) else {
-        return global
-            .err_invalid_arg_type(format_args!(
-                "The \"buf2\" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView."
-            ))
-            .throw();
+        return Err(global
+            .err(
+                ErrorCode::INVALID_ARG_TYPE,
+                format_args!(
+                    "The \"buf2\" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView."
+                ),
+            )
+            .throw());
     };
     let r = r_buf.byte_slice();
 
     if l.len() != r.len() {
-        return global
-            .err_crypto_timing_safe_equal_length(format_args!(
-                "Input buffers must have the same byte length"
-            ))
-            .throw();
+        return Err(global
+            .err(
+                ErrorCode::CRYPTO_TIMING_SAFE_EQUAL_LENGTH,
+                format_args!("Input buffers must have the same byte length"),
+            )
+            .throw());
     }
 
     Ok(JSValue::from(
@@ -1179,7 +1186,7 @@ pub fn secure_heap_used(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> 
 
 #[bun_jsc::host_fn]
 pub fn get_fips(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-    Ok(JSValue::js_number(0))
+    Ok(JSValue::js_number(0.0))
 }
 
 #[bun_jsc::host_fn]

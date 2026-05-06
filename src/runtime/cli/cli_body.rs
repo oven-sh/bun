@@ -1123,7 +1123,7 @@ pub mod command {
   <b><green>bun init<r> <cyan>--react=tailwind<r> <blue>my-app<r>
 ";
 
-                Output::pretty(INTRO_TEXT, format_args!(""));
+                Output::pretty(format_args!("{}", INTRO_TEXT));
                 Output::flush();
             }
 
@@ -1196,7 +1196,7 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
 Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
 ";
 
-                Output::pretty(INTRO_TEXT, format_args!(""));
+                Output::pretty(format_args!("{}", INTRO_TEXT));
                 Output::flush();
                 Output::pretty("\n\n<b>Flags:<r>", format_args!(""));
                 Output::flush();
@@ -1234,7 +1234,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
 Learn more: <magenta>https://bun.com/docs/cli/bun-create<r>
 ";
 
-                Output::pretty(INTRO_TEXT, format_args!(""));
+                Output::pretty(format_args!("{}", INTRO_TEXT));
                 Output::pretty("\n\n", format_args!(""));
                 Output::pretty(OUTRO_TEXT, format_args!(""));
                 Output::flush();
@@ -1273,7 +1273,7 @@ Full documentation is available at <magenta>https://bun.com/docs/installation#up
                     )
                 };
 
-                Output::pretty(INTRO_TEXT, format_args!(""));
+                Output::pretty(format_args!("{}", INTRO_TEXT));
                 Output::pretty("\n\n", format_args!(""));
                 Output::flush();
                 Output::pretty(OUTRO_TEXT, format_args!("{}{}{}", args.0, args.1, args.2));
@@ -1286,7 +1286,7 @@ Full documentation is available at <magenta>https://bun.com/docs/installation#up
   Open a Bun REPL
 ";
 
-                Output::pretty(INTRO_TEXT, format_args!(""));
+                Output::pretty(format_args!("{}", INTRO_TEXT));
                 Output::flush();
             }
 
@@ -1357,7 +1357,7 @@ Execute a shell script directly from Bun.
 Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>
 ";
 
-                Output::pretty(INTRO_TEXT, format_args!(""));
+                Output::pretty(format_args!("{}", INTRO_TEXT));
                 Output::flush();
             }
             Tag::WhyCommand => {
@@ -1380,7 +1380,7 @@ Explain why a package is installed
 Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
 ";
 
-                Output::pretty(INTRO_TEXT, format_args!(""));
+                Output::pretty(format_args!("{}", INTRO_TEXT));
                 Output::flush();
             }
             _ => {

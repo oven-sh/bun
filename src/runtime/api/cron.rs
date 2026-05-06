@@ -1544,20 +1544,25 @@ impl CronJob {
                     this_ref.ref_();
                     this_ref.pending_ref = true;
                     js::pending_promise_set_cached(js_this, this_ref.global, result);
-                    if result
-                        .then(this_ref.global, this, on_promise_resolve, on_promise_reject)
-                        .is_err()
-                    {
-                        js::pending_promise_set_cached(js_this, this_ref.global, JSValue::UNDEFINED);
-                        Self::release_pending_ref(this);
-                        Self::schedule_next(this, vm);
-                    }
+                    // PORT NOTE: Zig's `then()` returned `!void` (TopExceptionScope);
+                    // the Rust port returns `()` and lets the surrounding scope
+                    // observe termination — drop the `.is_err()` branch.
+                    result.then(
+                        this_ref.global,
+                        this,
+                        Bun__CronJob__onPromiseResolve,
+                        Bun__CronJob__onPromiseReject,
+                    );
                     return;
                 }
                 jsc::js_promise::Status::Fulfilled => {}
                 jsc::js_promise::Status::Rejected => {
                     promise.set_handled(this_ref.global.vm());
-                    vm.unhandled_rejection(vm.global, promise.result(this_ref.global.vm()), result);
+                    let reason = promise.result(this_ref.global.vm());
+                    // SAFETY: `vm.global` is live; `&mut` derived for the call only.
+                    let global_ref = unsafe { &*vm.global };
+                    unsafe { &mut *(vm as *const VirtualMachine as *mut VirtualMachine) }
+                        .unhandled_rejection(global_ref, reason, result);
                 }
             }
         }

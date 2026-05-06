@@ -249,7 +249,7 @@ impl HTMLRewriter {
     pub fn finalize_without_destroy(&mut self) {
         // context: Rc drop happens via field drop; builder needs explicit FFI deinit.
         // SAFETY: builder was created by Builder::init() and not yet freed.
-        unsafe { lolhtml::HTMLRewriter::Builder::deinit(self.builder) };
+        unsafe { lolhtml::HTMLRewriterBuilder::destroy(self.builder) };
         // TODO(port): Zig calls context.deref() here explicitly; with Rc the
         // drop happens when HTMLRewriter is dropped. If finalize_without_destroy
         // is called without immediate drop, we'd want to swap context to a

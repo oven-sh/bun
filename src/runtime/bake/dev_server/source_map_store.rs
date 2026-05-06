@@ -71,6 +71,17 @@ impl SourceMapStore {
         todo!("blocked_on: SourceMapStore::remove_or_upgrade_weak_ref")
     }
 
+    /// Spec DevServer/SourceMapStore.zig `sweepWeakRefs` — pop expired
+    /// weak-refs, decrement, reschedule. Called from the high-tier
+    /// `EventLoopTimer` dispatch with the raw `*EventLoopTimer` (Zig recovers
+    /// the store via `@fieldParentPtr("weak_ref_sweep_timer", t)`).
+    pub fn sweep_weak_refs(
+        _t: *mut EventLoopTimer,
+        _now: &bun_event_loop::EventLoopTimer::Timespec,
+    ) {
+        todo!("blocked_on: SourceMapStore::sweep_weak_refs body un-gate")
+    }
+
     /// Full body in gated `../DevServer/SourceMapStore.rs` draft.
     pub fn put_or_increment_ref_count(
         &mut self,

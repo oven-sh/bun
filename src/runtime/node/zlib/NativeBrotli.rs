@@ -469,7 +469,7 @@ impl Context {
     }
 }
 
-fn code_for_error(err: c::BrotliDecoderErrorCode2) -> &'static ZStr {
+fn code_for_error(err: c::BrotliDecoderErrorCode2) -> *const core::ffi::c_char {
     // Zig: `inline for (std.meta.fieldNames(E), std.enums.values(E)) |n, v|
     //          if (err == v) return "ERR_BROTLI_DECODER_" ++ n;`
     // TODO(port): comptime reflection over enum variants. Generate a static
@@ -477,6 +477,23 @@ fn code_for_error(err: c::BrotliDecoderErrorCode2) -> &'static ZStr {
     // variant to const_format::concatcp!("ERR_BROTLI_DECODER_", name, "\0").
     let _ = err;
     unreachable!("ERR_BROTLI_DECODER_* table not yet generated")
+}
+
+/// Placeholder for `WorkPoolTask.callback` — overwritten before scheduling
+/// (see `CompressionStream::write` in node_zlib_binding.rs). Zig: `.callback = undefined`.
+unsafe fn noop_task_callback(_task: *mut WorkPoolTask) {}
+
+/// Local shim for `JSValue::withAsyncContextIfNeeded` (not yet on `bun_jsc::JSValue`).
+/// Wraps a callback so it restores the current AsyncLocalStorage context when invoked.
+fn with_async_context_if_needed(callback: JSValue, global: &JSGlobalObject) -> JSValue {
+    unsafe extern "C" {
+        fn AsyncContextFrame__withAsyncContextIfNeeded(
+            global: *mut JSGlobalObject,
+            callback: JSValue,
+        ) -> JSValue;
+    }
+    // SAFETY: FFI to JSC binding; global is a valid live JSGlobalObject.
+    unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global.as_ptr(), callback) }
 }
 
 // Codegen accessor namespace (JSNativeBrotli generated bindings).
@@ -492,8 +509,6 @@ mod js {
     }
 }
 
-// TODO(port): ErrorCode enum location (globalThis.ERR namespace).
-use bun_jsc::ErrorCode;
 } // mod _impl
 
 pub use _impl::NativeBrotli;

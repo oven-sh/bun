@@ -650,7 +650,7 @@ fn add_script_configs(
 
         if let Some(pc) = pre_content {
             let mut cmd_buf: Vec<u8> = Vec::with_capacity(pc.len() + 1);
-            RunCommand::replace_package_manager_run(&mut cmd_buf, pc.as_bytes())?;
+            RunCommand::replace_package_manager_run(&mut cmd_buf, pc)?;
             cmd_buf.push(0);
             configs.push(ScriptConfig {
                 label: label.clone(),
@@ -663,7 +663,7 @@ fn add_script_configs(
         // Main script
         {
             let mut cmd_buf: Vec<u8> = Vec::with_capacity(content.len() + 1);
-            RunCommand::replace_package_manager_run(&mut cmd_buf, content.as_bytes())?;
+            RunCommand::replace_package_manager_run(&mut cmd_buf, content)?;
             cmd_buf.push(0);
             configs.push(ScriptConfig {
                 label: label.clone(),
@@ -675,7 +675,7 @@ fn add_script_configs(
 
         if let Some(pc) = post_content {
             let mut cmd_buf: Vec<u8> = Vec::with_capacity(pc.len() + 1);
-            RunCommand::replace_package_manager_run(&mut cmd_buf, pc.as_bytes())?;
+            RunCommand::replace_package_manager_run(&mut cmd_buf, pc)?;
             cmd_buf.push(0);
             configs.push(ScriptConfig {
                 label,

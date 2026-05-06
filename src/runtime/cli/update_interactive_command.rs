@@ -938,8 +938,9 @@ impl UpdateInteractiveCommand {
                         } else {
                             &pkg.update_version
                         };
-                        let diff = update_full.which_version_is_different(
-                            &current_full,
+                        let diff = semver::Version::which_version_is_different(
+                            update_full,
+                            current_full,
                             target_ver_str,
                             &pkg.current_version,
                         );
@@ -996,9 +997,9 @@ impl UpdateInteractiveCommand {
                         Self::truncate_with_ellipsis(&pkg.name, available_name_width, false);
 
                     let uses_default_registry = pkg.manager.options.scope.url_hash
-                        == bun_install::npm::Registry::DEFAULT_URL_HASH
+                        == *bun_install::npm::Registry::DEFAULT_URL_HASH
                         && pkg.manager.scope_for_package_name(&pkg.name).url_hash
-                            == bun_install::npm::Registry::DEFAULT_URL_HASH;
+                            == *bun_install::npm::Registry::DEFAULT_URL_HASH;
                     let package_url: Box<[u8]> = if Output::enable_ansi_colors_stdout()
                         && uses_default_registry
                     {

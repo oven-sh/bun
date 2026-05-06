@@ -1373,6 +1373,17 @@ pub struct ServerAllConnectionsClosedTask {
     pub tracker: jsc::AsyncTaskTracker,
 }
 
+impl ServerAllConnectionsClosedTask {
+    /// Spec server.zig `runFromJSThread` — resolve the `server.stop()` promise
+    /// once uws reports all sockets closed, then `bun.destroy(self)`.
+    pub fn run_from_js_thread(
+        _this: *mut Self,
+        _vm: &mut jsc::VirtualMachine,
+    ) -> Result<(), jsc::JsTerminated> {
+        todo!("blocked_on: ServerAllConnectionsClosedTask::run_from_js_thread body")
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/server/server.zig (5193 lines)

@@ -309,7 +309,7 @@ impl Worker {
     }
 
     /// `Channel` owner callback: a decoded frame arrived.
-    pub fn on_channel_frame(&mut self, kind: Frame::Kind, rd: &mut Frame::Reader) {
+    pub fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
         // SAFETY: coord backref valid; mutation — see field TODO.
         unsafe { (*(self.coord as *mut Coordinator<'static>)).on_frame(self, kind, rd) };
     }
@@ -321,14 +321,32 @@ impl Worker {
         if self.ipc.is_attached() {
             // Corrupt frame path — kill the worker so onWorkerExit accounts for
             // the in-flight file and the slot can respawn.
-            if let Some(p) = &self.process {
-                let _ = p.kill(9);
+            if let Some(p) = self.process {
+                // SAFETY: `p` is the live intrusive-refcounted *mut Process.
+                let _ = unsafe { (*p).kill(9) };
             }
         }
         // SAFETY: coord backref valid; mutation — see field TODO.
         unsafe { (*(self.coord as *mut Coordinator<'static>)).try_reap(self) };
     }
 }
+
+/// `ProcessExitHandler` vtable entry — recovers `&mut Worker` from the erased
+/// owner pointer registered via `set_exit_handler` (Zig: `setExitHandler(this)`).
+unsafe fn worker_on_process_exit(
+    owner: *mut (),
+    process: *mut Process,
+    status: Status,
+    rusage: *const Rusage,
+) {
+    // SAFETY: `owner` is the `*mut Worker` stored in `set_exit_handler`;
+    // `process`/`rusage` are non-null per `ProcessExitHandler::call`.
+    unsafe { (*(owner as *mut Worker)).on_process_exit(&*process, status, &*rusage) };
+}
+
+static WORKER_EXIT_VTABLE: ProcessExitVTable = ProcessExitVTable {
+    on_process_exit: worker_on_process_exit,
+};
 
 impl ChannelOwner for Worker {
     /// `offset_of!(Worker, ipc)` — recovers `&mut Worker` from `&mut Channel<Worker>`

@@ -120,12 +120,12 @@ fn throw_range_error_min_max<V: bun_core::fmt::OutOfRangeValue>(
 pub fn validate_integer(
     global_this: &JSGlobalObject,
     value: JSValue,
-    name: &[u8],
+    name: &str,
     min_value: Option<i64>,
     max_value: Option<i64>,
 ) -> JsResult<i64> {
     if !value.is_number() {
-        return Err(throw_invalid_argument_type_value(global_this, name, b"number", value));
+        return Err(throw_invalid_argument_type_value(global_this, name, "number", value));
     }
 
     if !value.is_any_int() {
@@ -160,7 +160,7 @@ pub fn validate_integer(
 pub fn validate_integer_or_big_int(
     global_this: &JSGlobalObject,
     value: JSValue,
-    name: &[u8],
+    name: &str,
     min_value: Option<i64>,
     max_value: Option<i64>,
 ) -> JsResult<i64> {

@@ -1395,9 +1395,12 @@ pub fn pack<const FOR_PUBLISH: bool>(
 ) -> Result<PackReturn<'static, FOR_PUBLISH>, PackError<FOR_PUBLISH>> {
     let manager = &mut *ctx.manager;
     let log_level = manager.options.log_level;
-    let mut json = match manager.workspace_package_json_cache.get_with_path(
-        &mut manager.log,
-        abs_package_json_path,
+    let bump = pack_bump();
+    // PORT NOTE: `manager.workspace_package_json_cache` / `manager.log` are not on
+    // the upstream `PackageManager` stub yet — routed via `pm_*` shims.
+    let mut json = match pm_workspace_cache(manager).get_with_path(
+        pm_log(manager),
+        abs_package_json_path.as_bytes(),
         WorkspacePackageJSONCache::GetJSONOptions { guess_indentation: true, ..Default::default() },
     ) {
         WorkspacePackageJSONCache::GetResult::ReadErr(err) => {
@@ -1406,43 +1409,33 @@ pub fn pack<const FOR_PUBLISH: bool>(
         }
         WorkspacePackageJSONCache::GetResult::ParseErr(err) => {
             Output::err(err, "failed to parse package.json: {}", format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())));
-            let _ = manager.log.print(Output::error_writer());
+            let _ = pm_log(manager).print(Output::error_writer());
             Global::crash();
         }
         WorkspacePackageJSONCache::GetResult::Entry(entry) => entry,
     };
 
     if FOR_PUBLISH {
-        if let Some(config) = json.root.get(b"publishConfig") {
-            if manager.options.publish_config.tag.is_empty() {
-                if let Some(tag) = config.get_string_cloned(b"tag")? {
-                    manager.options.publish_config.tag = tag;
-                }
-            }
-            if manager.options.publish_config.access.is_none() {
-                if let Some(access) = config.get_string(b"access")? {
-                    match PackageManager::Options::Access::from_str(access.0) {
-                        Some(a) => manager.options.publish_config.access = Some(a),
-                        None => {
-                            Output::err_generic("invalid `access` value: '{}'", format_args!("{}", bstr::BStr::new(access.0)));
-                            Global::crash();
-                        }
-                    }
-                }
-            }
+        if let Some(_config) = json.root.get(b"publishConfig") {
+            // PORT NOTE: `PublishConfigStub` only carries `auth_type`; `tag`/`access`
+            // live on the gated real `PackageManagerOptions`. Body deferred.
+            todo!("blocked_on: bun_install::PublishConfigStub::tag/access");
         }
 
         // maybe otp
     }
 
     let mut package_name_expr: Expr = json.root.get(b"name").ok_or(PackError::MissingPackageName)?;
-    let mut package_name = package_name_expr.as_string_cloned()?.ok_or(PackError::InvalidPackageName)?;
+    let mut package_name = package_name_expr.as_string_cloned(bump)?.ok_or(PackError::InvalidPackageName)?;
     if FOR_PUBLISH {
-        let is_scoped = Dependency::is_scoped_package_name(&package_name)?;
-        if let Some(access) = manager.options.publish_config.access {
-            if access == PackageManager::Options::Access::Restricted && !is_scoped {
-                return Err(PackError::RestrictedUnscopedPackage);
-            }
+        let is_scoped = bun_install::dependency::is_scoped_package_name(package_name)
+            .map_err(|_| PackError::InvalidPackageName)?;
+        // PORT NOTE: `publish_config.access` not on stub — see `PublishConfigStub`.
+        let _ = is_scoped;
+        todo!("blocked_on: bun_install::PublishConfigStub::access");
+        #[allow(unreachable_code)]
+        if false && !is_scoped {
+            return Err(PackError::RestrictedUnscopedPackage);
         }
     }
     // defer if (!for_publish) free(package_name) — handled by Drop
@@ -1451,7 +1444,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
     }
 
     let mut package_version_expr: Expr = json.root.get(b"version").ok_or(PackError::MissingPackageVersion)?;
-    let mut package_version = package_version_expr.as_string_cloned()?.ok_or(PackError::InvalidPackageVersion)?;
+    let mut package_version = package_version_expr.as_string_cloned(bump)?.ok_or(PackError::InvalidPackageVersion)?;
     if package_version.is_empty() {
         return Err(PackError::InvalidPackageVersion);
     }
@@ -1466,12 +1459,15 @@ pub fn pack<const FOR_PUBLISH: bool>(
         }
     }
 
-    let mut this_transpiler = bun_bundler::Transpiler::default(); // TODO(port): undefined init
+    // PORT NOTE: `Transpiler` has no `Default`; Zig used `var t: Transpiler = undefined;`
+    // and `configure_env_for_run` writes the whole struct (out-param constructor).
+    let mut this_transpiler: core::mem::MaybeUninit<bun_bundler::Transpiler<'static>> =
+        core::mem::MaybeUninit::uninit();
 
     if let Err(err) = RunCommand::configure_env_for_run(
-        &ctx.command_ctx,
+        &mut *ctx.command_ctx,
         &mut this_transpiler,
-        &manager.env,
+        Some(pm_env(manager)),
         manager.options.log_level != LogLevel::Silent,
         false,
     ) {
@@ -1485,7 +1481,12 @@ pub fn pack<const FOR_PUBLISH: bool>(
     let abs_workspace_path: &[u8] = strings::without_trailing_slash(
         strings::without_suffix_comptime(abs_package_json_path.as_bytes(), b"package.json"),
     );
-    manager.env.map.put(b"npm_command", b"pack")?;
+    // SAFETY: `configure_env_for_run` fully initialized `this_transpiler`.
+    let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
+    // SAFETY: `Transpiler::init` always sets `env` (singleton or leaked).
+    let transpiler_env: &bun_dotenv::Loader<'_> = unsafe { &*this_transpiler.env };
+    // PORT NOTE: `manager.env` not on stub — defer the npm_command put.
+    let _ = pm_env(manager); // blocked_on: bun_install::PackageManager::env
 
     let (postpack_script, publish_script, postpublish_script, ran_scripts): (
         Option<Box<[u8]>>,
@@ -1494,7 +1495,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         bool,
     ) = 'post_scripts: {
         // --ignore-scripts
-        if !manager.options.do_.run_scripts {
+        if !pm_run_scripts(manager) {
             break 'post_scripts (None, None, None, false);
         }
 
@@ -1510,14 +1511,14 @@ pub fn pack<const FOR_PUBLISH: bool>(
 
         if FOR_PUBLISH {
             if let Some(prepublish_only_script_str) = scripts.expr.get(b"prepublishOnly") {
-                if let Some(prepublish_only) = prepublish_only_script_str.as_string() {
+                if let Some(prepublish_only) = prepublish_only_script_str.as_string(bump) {
                     did_run_scripts = true;
                     run_lifecycle_script(
                         ctx,
                         prepublish_only,
                         b"prepublishOnly",
                         abs_workspace_path,
-                        &this_transpiler.env,
+                        transpiler_env,
                         manager.options.log_level == LogLevel::Silent,
                     )?;
                 }
@@ -1525,28 +1526,28 @@ pub fn pack<const FOR_PUBLISH: bool>(
         }
 
         if let Some(prepack_script) = scripts.expr.get(b"prepack") {
-            if let Some(prepack_script_str) = prepack_script.as_string() {
+            if let Some(prepack_script_str) = prepack_script.as_string(bump) {
                 did_run_scripts = true;
                 run_lifecycle_script(
                     ctx,
                     prepack_script_str,
                     b"prepack",
                     abs_workspace_path,
-                    &this_transpiler.env,
+                    transpiler_env,
                     manager.options.log_level == LogLevel::Silent,
                 )?;
             }
         }
 
         if let Some(prepare_script) = scripts.expr.get(b"prepare") {
-            if let Some(prepare_script_str) = prepare_script.as_string() {
+            if let Some(prepare_script_str) = prepare_script.as_string(bump) {
                 did_run_scripts = true;
                 run_lifecycle_script(
                     ctx,
                     prepare_script_str,
                     b"prepare",
                     abs_workspace_path,
-                    &this_transpiler.env,
+                    transpiler_env,
                     manager.options.log_level == LogLevel::Silent,
                 )?;
             }

@@ -1100,14 +1100,20 @@ impl Subprocess<'_> {
         let mut did_update_has_pending_activity = false;
 
         // SAFETY: `jsc_vm` is the live VM; `event_loop()` returns its owned EventLoop.
-        let event_loop = unsafe { &mut *(*jsc_vm).event_loop() };
+        // Kept as raw `*mut` so the scopeguard closure and the body can both call
+        // `&mut`-taking methods without tripping borrowck.
+        let event_loop = unsafe { (*jsc_vm).event_loop() };
 
         if !is_sync {
             if !this_jsvalue.is_empty() {
                 if let Some(promise) = Self::consume_exited_promise(this_jsvalue, global_this) {
-                    event_loop.enter();
+                    // SAFETY: event_loop points into the live VM.
+                    unsafe { (*event_loop).enter() };
                     // defer loop.exit() — handled below
-                    let _exit_guard = scopeguard::guard((), |_| event_loop.exit());
+                    let _exit_guard = scopeguard::guard((), |_| {
+                        // SAFETY: event_loop points into the live VM.
+                        unsafe { (*event_loop).exit() }
+                    });
 
                     if !did_update_has_pending_activity {
                         self.update_has_pending_activity();
@@ -1116,38 +1122,24 @@ impl Subprocess<'_> {
 
                     match status {
                         Status::Exited(exited) => {
-                            let _ = promise
+                            promise
                                 .as_any_promise()
                                 .unwrap()
-                                .resolve(global_this, JSValue::js_number(exited.code));
+                                .resolve(global_this, JSValue::js_number(exited.code as f64));
                             // TODO: properly propagate exception upwards
                         }
                         Status::Err(err) => {
-                            match err.to_js(global_this) {
-                                Ok(js_err) => {
-                                    let _ = promise
-                                        .as_any_promise()
-                                        .unwrap()
-                                        .reject_with_async_stack(global_this, js_err);
-                                    // TODO: properly propagate exception upwards
-                                }
-                                Err(_) => {
-                                    // Zig: `catch return` — fall through to deferred cleanup.
-                                    // Defer LIFO: loop.exit() runs FIRST, then the outer defers.
-                                    drop(_exit_guard);
-                                    if !did_update_has_pending_activity {
-                                        self.update_has_pending_activity();
-                                    }
-                                    self.disconnect_ipc(true);
-                                    self.deref();
-                                    return;
-                                }
-                            }
+                            let js_err = err.to_js(global_this);
+                            promise
+                                .as_any_promise()
+                                .unwrap()
+                                .reject_with_async_stack(global_this, js_err);
+                            // TODO: properly propagate exception upwards
                         }
                         Status::Signaled(signaled) => {
-                            let _ = promise.as_any_promise().unwrap().resolve(
+                            promise.as_any_promise().unwrap().resolve(
                                 global_this,
-                                JSValue::js_number(128u32.wrapping_add(signaled as u32)),
+                                JSValue::js_number(128u32.wrapping_add(signaled as u32) as f64),
                             );
                             // TODO: properly propagate exception upwards
                         }
@@ -1161,17 +1153,7 @@ impl Subprocess<'_> {
 
                 if let Some(callback) = Self::consume_on_exit_callback(this_jsvalue, global_this) {
                     let waitpid_value: JSValue = if let Status::Err(err) = &status {
-                        match err.to_js(global_this) {
-                            Ok(v) => v,
-                            Err(_) => {
-                                if !did_update_has_pending_activity {
-                                    self.update_has_pending_activity();
-                                }
-                                self.disconnect_ipc(true);
-                                self.deref();
-                                return;
-                            }
-                        }
+                        err.to_js(global_this)
                     } else {
                         JSValue::UNDEFINED
                     };
@@ -1185,8 +1167,8 @@ impl Subprocess<'_> {
 
                     let args = [
                         this_value,
-                        self.get_exit_code(global_this),
-                        self.get_signal_code(global_this),
+                        Self::get_exit_code(self, global_this),
+                        Self::get_signal_code(self, global_this),
                         waitpid_value,
                     ];
 
@@ -1195,7 +1177,8 @@ impl Subprocess<'_> {
                         did_update_has_pending_activity = true;
                     }
 
-                    event_loop.run_callback(callback, global_this, this_value, &args);
+                    // SAFETY: event_loop points into the live VM.
+                    unsafe { (*event_loop).run_callback(callback, global_this, this_value, &args) };
                 }
             }
         }

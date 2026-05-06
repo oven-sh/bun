@@ -116,16 +116,17 @@ impl NativeZstd {
             stream: Context::default(),
             write_result: None,
             poll_ref: CountedKeepAlive::default(),
-            this_value: Strong::empty(),
+            this_value: StrongOptional::empty(),
             write_in_progress: false,
             pending_close: false,
             pending_reset: false,
             closed: false,
-            // TODO(port): WorkPoolTask { callback: undefined } — callback is set later by CompressionStream
-            task: WorkPoolTask::default(),
+            // WorkPoolTask { callback: undefined } — callback is overwritten by
+            // CompressionStream::write before scheduling; placeholder here.
+            task: WorkPoolTask { node: Default::default(), callback: unset_task_callback },
         });
         // SAFETY: mode_int is range-checked to 10..=11 above; NodeMode is #[repr(u8)].
-        ptr.stream.mode = unsafe { NodeMode::from_raw(u8::try_from(mode_int).unwrap()) };
+        ptr.stream.mode = unsafe { mem::transmute::<u8, NodeMode>(u8::try_from(mode_int).unwrap()) };
         Ok(ptr)
     }
 
@@ -147,9 +148,9 @@ impl NativeZstd {
         let arguments = frame.arguments_as_array::<4>();
         let this_value = frame.this();
         if frame.arguments_count() != 4 {
-            return global
+            return Err(global
                 .err(jsc::ErrorCode::MISSING_ARGS, format_args!("init(initParamsArray, pledgedSrcSize, writeState, processCallback)"))
-                .throw();
+                .throw());
         }
 
         let init_params_array_value = arguments[0];

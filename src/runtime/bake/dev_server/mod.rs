@@ -499,11 +499,11 @@ pub struct HmrSocket {
 }
 
 impl HmrSocket {
-    /// `subscriptions` is a packed bitset of `HmrTopic` discriminants;
-    /// test the bit for a given topic.
+    /// `subscriptions` is a packed `HmrTopicBits` value; test the bit for a
+    /// given topic.
     #[inline]
     pub fn is_subscribed(&self, topic: HmrTopic) -> bool {
-        (self.subscriptions & (1u8 << (topic as u8))) != 0
+        (self.subscriptions & topic.as_bit().bits()) != 0
     }
 }
 

@@ -930,7 +930,7 @@ impl BunxCommand {
                             }
                             #[cfg(not(windows))]
                             {
-                                let stat = match bun_sys::stat(destination).unwrap_result() {
+                                let stat = match bun_sys::stat(destination) {
                                     Ok(s) => s,
                                     Err(_) => break 'is_stale true,
                                 };
@@ -942,10 +942,10 @@ impl BunxCommand {
                             bun_output::scoped_log!(bunx, "found stale binary: {}", BStr::new(out));
                             do_cache_bust = true;
                             if opts.no_install {
-                                Output::warn(
+                                Output::warn(format_args!(
                                     "Using a stale installation of <b>{}<r> because --no-install was passed. Run `bunx` without --no-install to use a fresh binary.",
-                                    format_args!("{}", BStr::new(&update_request.name)),
-                                );
+                                    BStr::new(&update_request.name),
+                                ));
                             } else {
                                 break 'try_run_existing;
                             }
@@ -953,25 +953,21 @@ impl BunxCommand {
                     }
 
                     bun_output::scoped_log!(bunx, "running existing binary: {}", BStr::new(destination.as_bytes()));
-                    Run::run_binary(
-                        ctx,
-                        this_transpiler.fs.dirname_store.append(out)?,
-                        destination,
-                        this_transpiler.fs.top_level_dir,
-                        &this_transpiler.env,
-                        passthrough,
-                        None,
-                    )?;
-                    // runBinary is noreturn
-                    unreachable!();
+                    let _stored = fs.dirname_store.append(out)?;
+                    let _ = (&ctx, destination, top_level_dir, &env_loader, passthrough);
+                    // TODO(port): `run_binary` lives only in run_command's
+                    // `phase_a_draft` impl. Once promoted:
+                    //   Run::run_binary(ctx, _stored, destination, top_level_dir,
+                    //                   env_loader, passthrough, None)?;
+                    todo!("blocked_on: RunCommand::run_binary");
                 }
 
                 // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
                 // BUT: Skip this if --package was used, as the user explicitly specified the binary name
-                let root_dir_fd = root_dir_info.get_file_descriptor();
+                let root_dir_fd = root_dir_info_ref.get_file_descriptor();
                 debug_assert!(root_dir_fd.is_valid());
                 if opts.binary_name.is_none() {
-                    match Self::get_bin_name(&mut this_transpiler, root_dir_fd, bunx_cache_dir, result_package_name) {
+                    match Self::get_bin_name(this_transpiler, root_dir_fd, bunx_cache_dir, result_package_name) {
                         Ok(package_name_for_bin) => {
                             // if we check the bin name and its actually the same, we don't need to check $PATH here again
                             if !strings::eql_long(&package_name_for_bin, initial_bin_name, true) {

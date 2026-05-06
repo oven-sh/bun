@@ -1038,12 +1038,9 @@ impl<'a> Parser<'a> {
                 // lifted via `Expr::from` first. Gate until the From-bridge is verified.
                 
                 {
+                    let _ = &expr;
                     self.ctx.debug.macros = MacroOptions::Map(
-                        bun_resolver::package_json::PackageJSON::parse_macros_json(
-                            bun_js_parser::ast::Expr::from(expr),
-                            self.log,
-                            self.source,
-                        ),
+                        todo!("blocked_on: bun_resolver::package_json::MacroMap vs bun_options_types::Context::MacroMap"),
                     );
                 }
             }
@@ -1187,6 +1184,7 @@ impl Bunfig {
 
 mod phase_a_draft {
     use super::*;
+    #[allow(unused_imports)]
     use bun_install::{self, PackageManager, PnpmMatcher};
     use bun_url::URL;
     use std::io::Write as _;

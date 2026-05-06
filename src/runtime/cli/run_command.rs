@@ -890,7 +890,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         
         {
             let b = &mut vm.transpiler;
-            b.options.install = ctx.install.as_deref();
+            // PORT NOTE: `Transpiler<'static>` requires a `'static` borrow but
+            // `ctx` is `&'_ mut ContextData`. The `BunInstall` box is process-
+            // lifetime in practice (CLI parse-once, never freed — Zig stored
+            // the raw pointer); erase the borrow lifetime via raw-pointer
+            // round-trip per PORTING.md §process-lifetime borrows.
+            b.options.install = ctx
+                .install
+                .as_deref()
+                .map(|p| unsafe { &*(p as *const api::BunInstall) });
             b.resolver.opts.global_cache = ctx.debug.global_cache;
             // … see phase_a_draft / src/bun.js.rs for the full list.
         }

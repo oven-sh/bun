@@ -193,16 +193,16 @@ impl PmPkgCommand {
         {
             Ok(r) => r,
             Err(e) => {
-                Output::err_generic(format_args!("Failed to parse package.json: {}", e.name()));
+                Output::err_generic("Failed to parse package.json: {s}", (e.name(),));
                 Global::exit(1);
             }
         };
 
         Ok(PackageJson {
-            root: result.root,
+            root: result.root.into(),
             contents,
             source,
-            indentation: result.indentation,
+            indentation: convert_indentation(result.indentation),
         })
     }
 

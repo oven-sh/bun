@@ -42,12 +42,9 @@ impl InitCommand {
     ) -> Result<Vec<u8>, Error> {
         // TODO(port): Zig returns `[:0]const u8` (NUL-terminated, length-carrying).
         // We return `Vec<u8>` here and NUL-terminate at the call sites that need it.
-        Output::pretty(label, format_args!(""));
+        Output::pretty(format_args!("{}", label));
         if !default.is_empty() {
-            Output::pretty(
-                "<d>({s}):<r> ",
-                format_args!("{}", bstr::BStr::new(default)),
-            );
+            Output::pretty(format_args!("<d>({}):<r> ", bstr::BStr::new(default)));
         }
 
         Output::flush();

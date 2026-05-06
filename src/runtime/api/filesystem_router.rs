@@ -366,7 +366,9 @@ impl FileSystemRouter {
         let this_value = callframe.this();
 
         let mut arena = Box::new(ArenaAllocator::new());
-        let allocator = arena.allocator();
+        // Zig `arena.allocator()` → `std.mem.Allocator`; with `bumpalo::Bump` the arena
+        // *is* the allocator handle, so borrow it directly.
+        let allocator = &*arena;
         let vm = global_this.bun_vm();
 
         let orig_log = vm.transpiler.resolver.log;

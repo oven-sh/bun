@@ -455,7 +455,7 @@ pub fn to_throw(
             format_args!(
                 "{}{}",
                 expected_value.to_fmt(&mut formatter),
-                result.to_fmt(&mut formatter),
+                result.to_fmt(&mut formatter2),
             ),
         );
     }

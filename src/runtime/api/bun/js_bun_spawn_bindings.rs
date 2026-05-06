@@ -1459,21 +1459,24 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // PORT NOTE: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
         // captured above) instead of the live `&mut subprocess`, which would
         // alias with the `&mut subprocess.stdout` borrow held by `pipe`.
-        if let Err(err) = pipe.start(subprocess_nn, event_loop_nn) {
+        // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
+        if let Err(err) = unsafe { (*pipe.data.as_ptr()).start(subprocess_nn, event_loop_nn) } {
             let _ = subprocess.try_kill(subprocess.kill_signal);
             let _ = global_this.throw_value(err.to_js(global_this));
             return Err(JsError::Thrown);
         }
         if (IS_SYNC || !lazy) && matches!(subprocess.stdout, Readable::Pipe(_)) {
             if let Readable::Pipe(pipe) = &mut subprocess.stdout {
-                pipe.read_all();
+                // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
+                unsafe { (*pipe.data.as_ptr()).read_all() };
             }
         }
     }
 
     if let Readable::Pipe(pipe) = &mut subprocess.stderr {
         // PORT NOTE: see stdout arm above — avoid aliased &mut.
-        if let Err(err) = pipe.start(subprocess_nn, event_loop_nn) {
+        // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
+        if let Err(err) = unsafe { (*pipe.data.as_ptr()).start(subprocess_nn, event_loop_nn) } {
             let _ = subprocess.try_kill(subprocess.kill_signal);
             let _ = global_this.throw_value(err.to_js(global_this));
             return Err(JsError::Thrown);
@@ -1481,7 +1484,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
         if (IS_SYNC || !lazy) && matches!(subprocess.stderr, Readable::Pipe(_)) {
             if let Readable::Pipe(pipe) = &mut subprocess.stderr {
-                pipe.read_all();
+                // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
+                unsafe { (*pipe.data.as_ptr()).read_all() };
             }
         }
     }

@@ -809,7 +809,6 @@ fn print_source_at_address(
         Err(e) => return Err(e),
     };
 
-    // TODO(port): module.getSymbolAtAddress(debug_info.allocator, address)
     let symbol_info: SymbolInfo = match get_symbol_at_address(module, address) {
         Ok(s) => s,
         Err(e) if e == err!("MissingDebugInfo") || e == err!("InvalidDebugInfo") => {

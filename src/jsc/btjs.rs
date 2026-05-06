@@ -873,7 +873,6 @@ fn print_unknown_source(
     if !cfg!(debug_assertions) {
         unreachable!();
     }
-    // TODO(port): debug_info.getModuleNameForAddress(address)
     let module_name = get_module_name_for_address(debug_info, address);
     print_line_info(
         out_stream,
@@ -1048,7 +1047,6 @@ fn print_last_unwind_error(
     if !zig_std_debug::HAVE_UCONTEXT {
         return;
     }
-    // TODO(port): it.getLastError()
     if let Some(unwind_error) = stack_iterator_get_last_error(it) {
         let _ = print_unwind_error(
             debug_info,

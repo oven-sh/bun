@@ -1,5 +1,6 @@
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
+use core::ptr::NonNull;
 
 use bun_collections::{ArrayHashMap, HashMap};
 use bun_core::{err, Error, Output};
@@ -46,7 +47,7 @@ pub struct MacroContext<'a> {
     pub javascript_object: JSValue,
 }
 
-pub type MacroMap<'a> = ArrayHashMap<i32, Macro<'a>>;
+pub type MacroMap = ArrayHashMap<i32, Macro>;
 
 impl<'a> MacroContext<'a> {
     pub fn get_remap(&self, path: &[u8]) -> Option<&MacroRemapEntry> {

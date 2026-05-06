@@ -638,6 +638,7 @@ pub fn crash_handler(
                                 // SAFETY: GetCurrentThreadId is an infallible Win32 call with no pointer/precondition requirements
                                 if write!(writer, "(thread {})", unsafe { bun_sys::c::GetCurrentThreadId() }).is_err() { abort(); }
                             }
+                            }
                         }
                         #[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]
                         { /* no-op */ }

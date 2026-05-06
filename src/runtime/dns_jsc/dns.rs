@@ -3313,15 +3313,32 @@ impl Resolver {
         }
     }
 
-    pub fn get_or_put_into_resolve_pending_cache<R>(
+    pub fn get_or_put_into_resolve_pending_cache<R: HasPendingCacheKey>(
         &mut self,
         key: &R::PendingCacheKey,
         field: PendingCacheField,
     ) -> LookupCacheHit<R> {
-        // TODO(port): Zig used `@field(this, field)` over a comptime string. We dispatch
-        // on `field` to the matching HiveArray; the body is identical across all R.
-        // Phase B: implement via macro per record type or trait `HasPendingCacheKey`.
-        unimplemented!("dispatch on field in Phase B")
+        // PORT NOTE: Zig used `@field(this, field)` over a comptime string. We dispatch via
+        // `HasPendingCacheKey::pending_cache`; the body is identical across all `R`.
+        let cache = R::pending_cache(self, field);
+        let mut inflight_iter = cache.used.iter_set();
+
+        while let Some(index) = inflight_iter.next() {
+            // SAFETY: `used` bit is set ⇒ slot was initialized.
+            let entry = unsafe { &mut *cache.buffer[index].as_mut_ptr() };
+            if R::key_hash(entry) == R::key_hash(key) && R::key_len(entry) == R::key_len(key) {
+                return LookupCacheHit::Inflight(entry as *mut _);
+            }
+        }
+
+        if let Some(new) = cache.get() {
+            // SAFETY: `new` is a freshly-claimed (uninitialized) slot inside `cache.buffer`;
+            // write `{hash, len}` now, `lookup` is filled by `*Request::init` once allocated.
+            unsafe { R::key_write_hash_len(new, R::key_hash(key), R::key_len(key)) };
+            return LookupCacheHit::New(new);
+        }
+
+        LookupCacheHit::Disabled
     }
 
     pub fn get_or_put_into_pending_cache(

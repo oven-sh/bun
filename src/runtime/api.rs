@@ -74,6 +74,8 @@ pub mod js_bundler;
 pub mod bun_object;
 #[path = "api/HashObject.rs"]
 pub mod hash_object;
+#[path = "api/NativePromiseContext.rs"]
+pub mod native_promise_context;
 
 // ─── api/bun/ core (process / spawn / pty / h2) ──────────────────────────────
 // `#[path]` is relative to the dir containing this file (`src/runtime/`); the

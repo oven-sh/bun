@@ -294,7 +294,7 @@ Join our Discord community:      <blue>https://bun.com/discord<r>
                 Output::pretty(
                     const_format::concatcp!(
                         "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>(",
-                        Global::PACKAGE_JSON_VERSION_WITH_REVISION,
+                        Global::package_json_version_with_revision,
                         ")<r>\n\n",
                         CLI_HELPTEXT_FMT,
                     ),

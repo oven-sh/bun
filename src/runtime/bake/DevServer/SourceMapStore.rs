@@ -22,7 +22,14 @@ use crate::timer::EventLoopTimer;
 
 // PORT NOTE: Zig `mapLog = DevServer.mapLog` — reuse DevServer's existing scope so
 // `BUN_DEBUG_<scope>=1` enables both call sites; do NOT re-declare a new scope here.
-use crate::bake::dev_server_body::map_log;
+// The `map_log!` macro from dev_server_body expands `SourceMapStore` as the scope ident,
+// which collides with this module's own `struct SourceMapStore`. Alias the static and
+// re-declare the macro locally so the scope ident resolves to the logger, not the struct.
+#[allow(unused_imports)]
+use crate::bake::dev_server_body::SourceMapStore as MAP_LOG_SCOPE;
+macro_rules! map_log {
+    ($($t:tt)*) => { bun_output::scoped_log!(MAP_LOG_SCOPE, $($t)*) };
+}
 
 /// See `SourceId` for what the content of u64 is.
 #[repr(transparent)]

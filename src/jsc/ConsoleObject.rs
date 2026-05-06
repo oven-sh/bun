@@ -4800,7 +4800,7 @@ pub mod formatter {
 
             if self.format_buffer_as_text
                 && js_type == jsc::JSType::Uint8Array
-                && strings::is_valid_utf8(slice)
+                && bun_string::immutable::is_valid_utf8(slice)
             {
                 if C {
                     writer.write_all(pfmt!("<r><green>", true).as_bytes());
@@ -4812,17 +4812,19 @@ pub mod formatter {
                 return Ok(());
             }
 
+            // PORT NOTE: `ArrayBuffer.typed_array_type` is `JSType` in the Rust
+            // port (see array_buffer.rs), not the C-API `TypedArrayType` enum.
             writer.write_all(
-                if array_buffer.typed_array_type == jsc::TypedArrayType::Uint8Array
+                if array_buffer.typed_array_type == jsc::JSType::Uint8Array
                     && array_buffer.value.is_buffer(self.global_this)
                 {
                     b"Buffer"
-                } else if array_buffer.typed_array_type == jsc::TypedArrayType::ArrayBuffer
+                } else if array_buffer.typed_array_type == jsc::JSType::ArrayBuffer
                     && array_buffer.shared
                 {
                     b"SharedArrayBuffer"
                 } else {
-                    <&'static str>::from(array_buffer.typed_array_type).as_bytes()
+                    typed_array_type_name(array_buffer.typed_array_type)
                 },
             );
             if slice.is_empty() {

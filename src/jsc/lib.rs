@@ -753,6 +753,16 @@ impl VM {
         // `UnsafeCell`); `callback` is a valid C fn pointer.
         unsafe { JSC__VM__holdAPILock(self.as_mut_ptr(), ctx, callback) }
     }
+
+    /// Spec `VM.zig` `executionForbidden` — wraps `JSC__VM__executionForbidden`.
+    #[inline]
+    pub fn execution_forbidden(&self) -> bool {
+        extern "C" {
+            fn JSC__VM__executionForbidden(vm: *mut VM) -> bool;
+        }
+        // SAFETY: `self` is a live opaque JSC VM handle.
+        unsafe { JSC__VM__executionForbidden(self.as_mut_ptr()) }
+    }
 }
 impl JSGlobalObject {
     /// Raw `*mut JSGlobalObject` for FFI. See [`VM::as_mut_ptr`] for the

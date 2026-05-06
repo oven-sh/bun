@@ -8,7 +8,7 @@ use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_core::Output;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, RegularExpression, ZigString,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, RegularExpression,
 };
 use bun_logger as logger;
 use bun_str as strings;
@@ -18,7 +18,7 @@ use super::expect::{Expect, ExpectTypeOf};
 use super::scope_functions::{self, create_bound, strings as scope_strings, Mode as ScopeKind};
 use super::snapshot::Snapshots;
 use super::timers::fake_timers;
-use bun_test::js_fns::{GenericHook, GenericHookTag};
+use bun_test::js_fns::generic_hook;
 use bun_test::{BaseScopeCfg, RefDataValue, ScopeMode};
 
 #[derive(Default)]

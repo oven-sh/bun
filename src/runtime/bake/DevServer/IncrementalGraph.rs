@@ -102,10 +102,10 @@ pub enum Content {
 
 pub struct ClientFile {
     pub content: Content,
-    pub source_map: PackedMap::Shared,
+    pub source_map: PackedMapShared,
     /// This should always be None if `source_map` is `Some`, since HTML files do not have
     /// source maps.
-    pub html_route_bundle_index: Option<RouteBundle::Index>,
+    pub html_route_bundle_index: Option<RouteBundleIndex>,
     /// If the file has an error, the failure can be looked up in the `.failures` map.
     pub failed: bool,
     /// For JS files, this is a component root; the server contains a matching file.
@@ -119,7 +119,7 @@ impl Default for ClientFile {
     fn default() -> Self {
         Self {
             content: Content::Unknown,
-            source_map: PackedMap::Shared::None,
+            source_map: PackedMapShared::None,
             html_route_bundle_index: None,
             failed: false,
             is_hmr_root: false,
@@ -148,13 +148,11 @@ impl ClientFilePacked {
 }
 
 impl ClientFile {
-    pub type Packed = ClientFilePacked;
-
     pub fn pack(&self) -> ClientFilePacked {
         // HTML files should not have source maps
         debug_assert!(
             self.html_route_bundle_index.is_none()
-                || !matches!(self.source_map, PackedMap::Shared::Some(_))
+                || !matches!(self.source_map, PackedMapShared::Some(_))
         );
         // TODO(port): see `ClientFilePacked` comment — currently identity. The Zig
         // implementation switches over `std.meta.activeTag(self.content)` and
@@ -342,7 +340,7 @@ pub struct IncrementalGraph<S: GraphSide> {
 
 pub struct CurrentChunkSourceMapData {
     pub file_index: FileIndex,
-    pub source_map: PackedMap::Shared,
+    pub source_map: PackedMapShared,
 }
 
 // If this data structure is not clear, see `DirectoryWatchStore.Dep`
@@ -815,7 +813,7 @@ impl IncrementalGraph<Client> {
         self.bundled_files.values()[index.get() as usize].unpack()
     }
 
-    pub fn html_route_bundle_index(&self, index: FileIndex) -> RouteBundle::Index {
+    pub fn html_route_bundle_index(&self, index: FileIndex) -> RouteBundleIndex {
         self.get_file_by_index(index).html_route_bundle_index.unwrap()
     }
 
@@ -937,7 +935,7 @@ impl IncrementalGraph<Client> {
 
         *ctx.get_cached_index(Side::Client, index) = Some(file_index).into();
 
-        let mut html_route_bundle_index: Option<RouteBundle::Index> = None;
+        let mut html_route_bundle_index: Option<RouteBundleIndex> = None;
         let mut is_special_framework_file = false;
 
         if gop.found_existing {
@@ -1000,13 +998,13 @@ impl IncrementalGraph<Client> {
                 }
             },
             source_map: match &mut content {
-                ReceiveChunkContent::Css(_) => PackedMap::Shared::None,
+                ReceiveChunkContent::Css(_) => PackedMapShared::None,
                 ReceiveChunkContent::Js { code, source_map } => 'blk: {
                     // Insert new source map or patch existing empty source map.
                     if let Some(source_map) = source_map {
                         debug_assert!(html_route_bundle_index.is_none()); // suspect behind #17956
                         if source_map.chunk.buffer.len() > 0 {
-                            break 'blk PackedMap::Shared::Some(PackedMap::new_non_empty(
+                            break 'blk PackedMapShared::Some(PackedMap::new_non_empty(
                                 &mut source_map.chunk,
                                 source_map.escaped_source.take().unwrap(),
                             ));
@@ -1017,7 +1015,7 @@ impl IncrementalGraph<Client> {
                     // Must precompute this. Otherwise, source maps won't have
                     // the info needed to concatenate VLQ mappings.
                     let _ = code;
-                    PackedMap::Shared::LineCount(LineCount::init(code_line_count))
+                    PackedMapShared::LineCount(LineCount::init(code_line_count))
                 },
             },
             html_route_bundle_index,
@@ -1191,7 +1189,7 @@ impl IncrementalGraph<Server> {
                             let Some(escaped_source) = source_map.escaped_source.take() else {
                                 break 'append_empty;
                             };
-                            let packed_map = PackedMap::Shared::Some(PackedMap::new_non_empty(
+                            let packed_map = PackedMapShared::Some(PackedMap::new_non_empty(
                                 &mut source_map.chunk,
                                 escaped_source,
                             ));
@@ -1214,7 +1212,7 @@ impl IncrementalGraph<Server> {
                 let count: u32 = u32::try_from(strings::count_char(last, b'\n')).unwrap();
                 self.current_chunk_source_maps.push(CurrentChunkSourceMapData {
                     file_index,
-                    source_map: PackedMap::Shared::LineCount(LineCount::init(count)),
+                    source_map: PackedMapShared::LineCount(LineCount::init(count)),
                 });
             }
         }
@@ -2433,7 +2431,7 @@ impl IncrementalGraph<Client> {
 
         let mut file_paths: Vec<*const [u8]> =
             Vec::with_capacity(self.current_chunk_parts.len());
-        let mut contained_maps: MultiArrayList<PackedMap::Shared> = MultiArrayList::default();
+        let mut contained_maps: MultiArrayList<PackedMapShared> = MultiArrayList::default();
         contained_maps.ensure_total_capacity(self.current_chunk_parts.len())?;
 
         let mut overlapping_memory_cost: usize = 0;
@@ -2544,7 +2542,7 @@ impl IncrementalGraph<Server> {
 
         let mut file_paths: Vec<*const [u8]> =
             Vec::with_capacity(self.current_chunk_parts.len());
-        let mut contained_maps: MultiArrayList<PackedMap::Shared> = MultiArrayList::default();
+        let mut contained_maps: MultiArrayList<PackedMapShared> = MultiArrayList::default();
         contained_maps.ensure_total_capacity(self.current_chunk_parts.len())?;
 
         let mut overlapping_memory_cost: u32 = 0;

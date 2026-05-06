@@ -14,7 +14,7 @@ use bun_resolver::{DirInfo, Resolver};
 use bun_str::strings;
 use bun_wyhash;
 
-use crate::dev_server::RouteBundleIndexOptional;
+use crate::bake::dev_server::route_bundle::IndexOptional as RouteBundleIndexOptional;
 
 /// Metadata for route files is specified out of line, either in DevServer where
 /// it is an IncrementalGraph(.server).FileIndex or the production build context

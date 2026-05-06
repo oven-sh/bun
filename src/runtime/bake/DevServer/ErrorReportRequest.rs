@@ -416,12 +416,12 @@ pub fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<SourceMapStore:
     }
     let after_host = &source_url[strings::without_trailing_slash(browser_url).len()..];
     // TODO(port): `client_prefix ++ "/"` is comptime string concat in Zig.
-    if !(after_host.starts_with(client_prefix.as_bytes())
-        && after_host.get(client_prefix.len()) == Some(&b'/'))
+    if !(after_host.starts_with(CLIENT_PREFIX.as_bytes())
+        && after_host.get(CLIENT_PREFIX.len()) == Some(&b'/'))
     {
         return None;
     }
-    let after_prefix = &after_host[client_prefix.len() + 1..];
+    let after_prefix = &after_host[CLIENT_PREFIX.len() + 1..];
     // Extract the ID
     if !after_prefix.ends_with(b".js") {
         return None;

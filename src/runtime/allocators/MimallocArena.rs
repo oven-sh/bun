@@ -223,8 +223,9 @@ impl MimallocArena {
     /// In v3, `mi_malloc`/`mi_free` are already thread-local-fast — there is no
     /// per-thread default heap to cache. Route through the global vtable.
     pub fn get_thread_local_default() -> ZigAllocator {
-        #[cfg(feature = "asan")]
-        { return crate::default_allocator(); }
+        // TODO(port): under ASAN the Zig spec returns `bun.default_allocator`. The Rust
+        // `bun_alloc::default_allocator()` is a `&dyn Allocator`, not a `StdAllocator`
+        // — wire this up once ASAN builds define a vtable-backed default.
         ZigAllocator { ptr: ptr::null_mut(), vtable: &GLOBAL_MIMALLOC_VTABLE }
     }
 

@@ -5,7 +5,7 @@ use bun_core::{self as bun, Global, Output};
 use bun_logger as logger;
 use bun_str::{strings, ZStr};
 use bun_clap as clap;
-use bun_schema::api;
+use bun_options_types::schema::api;
 use bun_sys::File;
 
 bun_output::declare_scope!(CLI, hidden);
@@ -20,7 +20,7 @@ pub static mut Bun__Node__ProcessTitle: Option<&'static [u8]> = None;
 pub mod cli {
     use super::*;
 
-    pub use bun_options_types::compile_target::CompileTarget;
+    pub use bun_options_types::CompileTarget::CompileTarget;
 
     // TODO(port): Zig `var log_: logger.Log = undefined;` — process-global, init in start()
     pub static mut LOG_: core::mem::MaybeUninit<logger::Log> = core::mem::MaybeUninit::uninit();

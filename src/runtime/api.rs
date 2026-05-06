@@ -144,6 +144,10 @@ pub mod bun_x509;
 pub mod bun {
     pub use super::bun_process as process;
     pub use super::bun_spawn as spawn;
+    pub use super::bun_subprocess as subprocess;
+    pub use super::bun_secure_context as secure_context;
+    pub use super::bun_ssl_context_cache as ssl_context_cache;
+    pub use super::bun_x509 as x509;
     pub use spawn::posix_spawn;
     pub use process::{
         Dup2, Exited, ExtraPipe, PidFdType, PidT, Poller, PosixSpawnOptions, PosixSpawnResult,

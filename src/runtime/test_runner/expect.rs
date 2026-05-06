@@ -2,9 +2,10 @@ use core::fmt;
 
 use bun_core::Output;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsError, JsResult, ZigString,
+    CallFrame, JSGlobalObject, JSValue, JsError, JsResult,
     ConsoleObject, JSFunction, JSPropertyIterator, JSArrayIterator, JSString,
 };
+use bun_str::ZigString;
 use bun_jsc::js_promise;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_str::strings;

@@ -1218,23 +1218,25 @@ impl core::fmt::Display for EnvMapIterValue {
 }
 
 impl<'a> EnvMapIter<'a> {
-    pub fn init(map: &'a DotEnvMap) -> EnvMapIter<'a> {
-        EnvMapIter {
-            map,
-            iter: map.iter(),
-        }
+    pub fn init(_map: &'a DotEnvMap) -> EnvMapIter<'a> {
+        // TODO(port): `DotEnvMap::iterator()` takes `&mut self` but the shell
+        // only ever holds a shared `&DotEnvMap` here. The sole caller
+        // (`fill_env_from_process`) was already dead under Zig lazy
+        // compilation (type-mismatched call to `fill_env`).
+        todo!("blocked_on: bun_dotenv::Map::iterator(&mut self) needs shared variant")
     }
 
     pub fn len(&self) -> usize {
-        self.map.map.unmanaged.entries.len()
-        // TODO(port): map.map.unmanaged.entries — depends on bun_dotenv internals.
+        // TODO(port): map.map.unmanaged.entries — bun_dotenv internals not
+        // exposed; dead code (see `init`).
+        0
     }
 
     pub fn next(&mut self) -> Result<Option<EnvMapIterEntry<'a>>, bun_alloc::AllocError> {
         let Some(entry) = self.iter.next() else {
             return Ok(None);
         };
-        let value_bytes = entry.value_ptr.value.as_slice();
+        let value_bytes: &[u8] = &entry.value_ptr.value;
         let mut value = vec![0u8; value_bytes.len() + 1];
         value[..value_bytes.len()].copy_from_slice(value_bytes);
         value[value_bytes.len()] = 0;
@@ -1243,11 +1245,9 @@ impl<'a> EnvMapIter<'a> {
         // TODO(port): leaked Vec — Zig used arena alloc; revisit ownership.
         Ok(Some(EnvMapIterEntry {
             key: EnvMapIterKey {
-                val: entry.key_ptr.as_slice(),
+                val: &entry.key_ptr[..],
             },
-            value: EnvMapIterValue {
-                val: zstr,
-            },
+            value: EnvMapIterValue { val: zstr },
         }))
     }
 }

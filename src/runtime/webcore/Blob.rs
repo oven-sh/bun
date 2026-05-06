@@ -2589,108 +2589,73 @@ pub fn to_stream_with_offset(
     )
 }
 
-// Zig doesn't let you pass a function with a comptime argument to a runtime-known function.
-// In Rust we monomorphize via const-generic Lifetime.
-// TODO(port): lifetime_wrap should produce a fn(&mut Blob, &JSGlobalObject) -> JSValue
-// that calls jsc::to_js_host_call(global, F, (this, global, LIFETIME)). Phase B.
-fn lifetime_wrap<const L: Lifetime>(
-    f: fn(&mut Blob, &JSGlobalObject, Lifetime) -> JsResult<JSValue>,
-) -> impl Fn(&mut Blob, &JSGlobalObject) -> JSValue {
-    move |this, global| jsc::to_js_host_call(global, |t, g| f(t, g, L), (this, global))
-}
+// Zig doesn't let you pass a function with a comptime argument to a
+// runtime-known function. In Rust the comptime `Lifetime` collapses to a
+// captured constant inside `JSPromise::wrap`'s `FnOnce(&JSGlobalObject)`, so
+// the dedicated `lifetimeWrap` helper from Zig is folded into each call site.
 
 impl Blob {
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn get_text(&mut self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        self.get_text_clone(global_this)
+        Ok(self.get_text_clone(global_this)?)
     }
 
     pub fn get_text_clone(&mut self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated> {
         let _store = self.store.clone(); // hold a ref across the call
-        Ok(JSPromise::wrap(
-            global_object,
-            lifetime_wrap::<{ Lifetime::Clone }>(Self::to_string),
-            (self, global_object),
-        ))
+        JSPromise::wrap(global_object, |g| self.to_string(g, Lifetime::Clone))
     }
 
-    pub fn get_text_transfer(&mut self, global_object: &JSGlobalObject) -> JSValue {
+    pub fn get_text_transfer(&mut self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated> {
         let _store = self.store.clone();
-        JSPromise::wrap(
-            global_object,
-            lifetime_wrap::<{ Lifetime::Transfer }>(Self::to_string),
-            (self, global_object),
-        )
+        JSPromise::wrap(global_object, |g| self.to_string(g, Lifetime::Transfer))
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn get_json(&mut self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        self.get_json_share(global_this)
+        Ok(self.get_json_share(global_this)?)
     }
 
     pub fn get_json_share(&mut self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated> {
         let _store = self.store.clone();
-        Ok(JSPromise::wrap(
-            global_object,
-            lifetime_wrap::<{ Lifetime::Share }>(Self::to_json),
-            (self, global_object),
-        ))
+        JSPromise::wrap(global_object, |g| self.to_json(g, Lifetime::Share))
     }
 
-    pub fn get_array_buffer_transfer(&mut self, global_this: &JSGlobalObject) -> JSValue {
+    pub fn get_array_buffer_transfer(&mut self, global_this: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated> {
         let _store = self.store.clone();
-        JSPromise::wrap(
-            global_this,
-            lifetime_wrap::<{ Lifetime::Transfer }>(Self::to_array_buffer),
-            (self, global_this),
-        )
+        JSPromise::wrap(global_this, |g| self.to_array_buffer(g, Lifetime::Transfer))
     }
 
     pub fn get_array_buffer_clone(&mut self, global_this: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated> {
         let _store = self.store.clone();
-        Ok(JSPromise::wrap(
-            global_this,
-            lifetime_wrap::<{ Lifetime::Clone }>(Self::to_array_buffer),
-            (self, global_this),
-        ))
+        JSPromise::wrap(global_this, |g| self.to_array_buffer(g, Lifetime::Clone))
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn get_array_buffer(&mut self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        self.get_array_buffer_clone(global_this)
+        Ok(self.get_array_buffer_clone(global_this)?)
     }
 
     pub fn get_bytes_clone(&mut self, global_this: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated> {
         let _store = self.store.clone();
-        Ok(JSPromise::wrap(
-            global_this,
-            lifetime_wrap::<{ Lifetime::Clone }>(Self::to_uint8_array),
-            (self, global_this),
-        ))
+        JSPromise::wrap(global_this, |g| self.to_uint8_array(g, Lifetime::Clone))
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn get_bytes(&mut self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        self.get_bytes_clone(global_this)
+        Ok(self.get_bytes_clone(global_this)?)
     }
 
-    pub fn get_bytes_transfer(&mut self, global_this: &JSGlobalObject) -> JSValue {
+    pub fn get_bytes_transfer(&mut self, global_this: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated> {
         let _store = self.store.clone();
-        JSPromise::wrap(
-            global_this,
-            lifetime_wrap::<{ Lifetime::Transfer }>(Self::to_uint8_array),
-            (self, global_this),
-        )
+        JSPromise::wrap(global_this, |g| self.to_uint8_array(g, Lifetime::Transfer))
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn get_form_data(&mut self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         let _store = self.store.clone();
-        Ok(JSPromise::wrap(
-            global_this,
-            lifetime_wrap::<{ Lifetime::Temporary }>(Self::to_form_data),
-            (self, global_this),
-        ))
+        Ok(JSPromise::wrap(global_this, |g| {
+            self.to_form_data(g, Lifetime::Temporary).map_err(Into::into)
+        })?)
     }
 
     fn get_exists_sync(&mut self) -> JSValue {

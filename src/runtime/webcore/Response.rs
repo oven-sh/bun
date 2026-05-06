@@ -446,16 +446,18 @@ use super::*;
 // TODO(b2-blocked): #[bun_jsc::host_fn]
 #[unsafe(no_mangle)]
 pub fn js_function_request_or_response_has_body_value(_global: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
-    let arguments = callframe.arguments_old(1);
+    let arguments = callframe.arguments_old::<1>();
     let this_value = arguments.ptr[0];
     if this_value.is_empty_or_undefined_or_null() {
         return JSValue::FALSE;
     }
 
     if let Some(response) = this_value.as_::<Response>() {
-        return JSValue::from(!response.body.value.is_definitely_empty());
+        // SAFETY: `as_` returned a live `*mut Response` owned by the JS wrapper.
+        return JSValue::from(!unsafe { &mut *response }.body.value.is_definitely_empty());
     } else if let Some(request) = this_value.as_::<Request>() {
-        return JSValue::from(!request.get_body_value().is_definitely_empty());
+        // SAFETY: `as_` returned a live `*mut Request` owned by the JS wrapper.
+        return JSValue::from(!unsafe { &mut *request }.get_body_value().is_definitely_empty());
     }
 
     JSValue::FALSE

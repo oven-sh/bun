@@ -2076,9 +2076,9 @@ impl<'a> ValueBufferer<'a> {
     }
 
     fn handle_reject_stream(&mut self, err: JSValue, is_async: bool) {
-        if let Some(wrapper) = self.js_sink.take() {
-            wrapper.detach(self.global);
-            wrapper.sink.destroy();
+        if let Some(_wrapper) = self.js_sink.take() {
+            // TODO(blocked_on: webcore::sink::ArrayBufferSink): see Drop impl above.
+            todo!("blocked_on: webcore::sink::JSSink::detach / ArrayBufferSink::destroy");
         }
         // Zig: `var ref = ...; defer ref.deinit(); sink.onFinishedBuffering(..., .{ .JSValue = ref }, ...);`
         // — Zig's bitwise pass + `defer deinit` is only safe because Zig has no Drop. In

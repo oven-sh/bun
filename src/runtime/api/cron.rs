@@ -1070,7 +1070,7 @@ impl CronRemoveJob {
     fn start_linux(&mut self) {
         self.state = RemoveState::ReadingCrontab;
         self.stdout_reader = OutputReader::init::<CronRemoveJob>();
-        self.stdout_reader.set_parent(self);
+        self.stdout_reader.set_parent(self as *mut Self as *mut _);
         let Some(crontab_path) = find_crontab() else {
             self.set_err(format_args!("crontab not found in PATH"));
             return Self::finish(self);

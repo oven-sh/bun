@@ -101,32 +101,32 @@ impl PBKDF2 {
         let [arg0, arg1, arg2, arg3, arg4, arg5] = call_frame.arguments_as_array::<6>();
 
         if !arg3.is_number() {
-            return global_this.throw_invalid_argument_type_value("keylen", "number", arg3);
+            return Err(global_this.throw_invalid_argument_type_value("keylen", "number", arg3));
         }
 
         let keylen_num = arg3.as_number();
 
         if keylen_num.is_infinite() || keylen_num.is_nan() {
-            return global_this.throw_range_error(
+            return Err(global_this.throw_range_error(
                 keylen_num,
                 bun_jsc::RangeErrorOptions {
-                    field_name: "keylen",
-                    msg: Some("an integer"),
+                    field_name: b"keylen",
+                    msg: b"an integer",
                     ..Default::default()
                 },
-            );
+            ));
         }
 
         if keylen_num < 0.0 || keylen_num > i32::MAX as f64 {
-            return global_this.throw_range_error(
+            return Err(global_this.throw_range_error(
                 keylen_num,
                 bun_jsc::RangeErrorOptions {
-                    field_name: "keylen",
-                    min: Some(0),
-                    max: Some(i32::MAX as i64),
+                    field_name: b"keylen",
+                    min: 0,
+                    max: i32::MAX as i64,
                     ..Default::default()
                 },
-            );
+            ));
         }
 
         let keylen: i32 = keylen_num as i32;

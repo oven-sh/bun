@@ -5,7 +5,6 @@
 //! undefined.
 
 use core::cell::Cell;
-use core::ffi::c_int;
 
 // TODO(port): move externs to <area>_sys crate
 

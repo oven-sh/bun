@@ -2689,9 +2689,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         };
 
         self.listener = Some(socket);
-        self.vm.event_loop_handle = Some(AsyncLoop::get());
+        self.vm_mut().event_loop_handle = Some(AsyncLoop::get());
         if !SSL {
-            self.vm.add_listening_socket_for_watch_mode(unsafe { &*socket }.socket().fd());
+            self.vm_mut().add_listening_socket_for_watch_mode(unsafe { &mut *socket }.socket::<SSL>().fd());
         }
     }
 
@@ -2709,7 +2709,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.h3_listener = socket;
         if let Some(s) = socket {
             let mut buf = Vec::new();
-            match write!(&mut buf, "h3=\":{}\"; ma=86400", unsafe { &*s }.get_local_port()) {
+            match write!(&mut buf, "h3=\":{}\"; ma=86400", unsafe { &mut *s }.get_local_port()) {
                 Ok(_) => {
                     buf.push(0);
                     // SAFETY: NUL terminator just written
@@ -2817,19 +2817,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
         let global = unsafe { &*self.global_this };
         let this_object: JSValue = self.js_value.try_get().unwrap_or(JSValue::UNDEFINED);
-        let vm = self.vm;
+        // SAFETY: per-thread singleton VM; reborrow exclusively for the call sites below.
+        let vm = self.vm as *const _ as *mut jsc::virtual_machine::VirtualMachine;
 
         let mut node_http_response: Option<*mut NodeHTTPResponse> = None;
         let mut is_async = false;
-        let _nhr_guard = scopeguard::guard((), |_| {
-            if !is_async {
-                if let Some(node_response) = node_http_response {
-                    // SAFETY: node_response was returned by NodeHTTPServer__onRequest_* with a ref;
-                    // synchronous path drops that ref here (intrusive refcount)
-                    unsafe { &mut *node_response }.deref();
-                }
-            }
-        });
+        // PORT NOTE: Zig used `defer` for cleanup. There are no early returns
+        // between here and the end of this fn, so the scopeguards have been
+        // flattened to explicit cleanup at the bottom (avoids borrowck conflicts
+        // from closure-captured `&mut` state).
 
         let on_node_http_request_fn = if SSL {
             NodeHTTPServer__onRequest_https
@@ -2867,12 +2863,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let mut strong_promise = StrongOptional::empty();
         let mut needs_to_drain = true;
 
-        let _drain_guard = scopeguard::guard((), |_| {
-            if needs_to_drain {
-                vm.drain_microtasks();
-            }
-        });
-        let _sp_guard = scopeguard::guard((), |_| strong_promise.deinit());
         let http_result: HTTPResult = 'brk: {
             if let Some(err) = result.to_error() {
                 break 'brk HTTPResult::Exception(err);
@@ -2882,7 +2872,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 if promise.status() == jsc::js_promise::Status::Pending {
                     strong_promise.set(global, result);
                     needs_to_drain = false;
-                    vm.drain_microtasks();
+                    // SAFETY: see `vm` decl above — singleton VM.
+                    unsafe { &mut *vm }.drain_microtasks();
                 }
 
                 match promise.status() {
@@ -2936,7 +2927,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         match &http_result {
             HTTPResult::Exception(err) | HTTPResult::Rejection(err) => {
-                let _ = vm.uncaught_exception(global, *err, matches!(http_result, HTTPResult::Rejection(_)));
+                // SAFETY: see `vm` decl above — singleton VM.
+                let _ = unsafe { &mut *vm }.uncaught_exception(global, *err, matches!(http_result, HTTPResult::Rejection(_)));
 
                 if let Some(node_response) = node_http_response {
                     let node_response = unsafe { &mut *node_response };

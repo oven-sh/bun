@@ -737,7 +737,7 @@ impl S3 {
                 opaque_self: *mut c_void,
             ) -> Result<(), bun_jsc::JsTerminated> {
                 // SAFETY: opaque_self was created via Box::into_raw(Wrapper::new(..)) below.
-                let self_ = unsafe { Box::from_raw(opaque_self as *mut Wrapper) };
+                let mut self_ = unsafe { Box::from_raw(opaque_self as *mut Wrapper) };
                 // `defer self.deinit()` → Box drops at scope exit.
                 // SAFETY: global was a valid &JSGlobalObject when the wrapper was created and
                 // the VM keeps it alive for the duration of the async op.
@@ -747,15 +747,15 @@ impl S3 {
                         self_.promise.resolve(global_object, JSValue::TRUE)?;
                     }
                     S3DeleteResult::NotFound(err) | S3DeleteResult::Failure(err) => {
-                        self_.promise.reject(
+                        // Split borrows: `reject` takes `&mut promise`, so
+                        // compute the error (which reads `promise.get()`) first.
+                        let err_val = err.to_js_with_async_stack(
                             global_object,
-                            err.to_js_with_async_stack(
-                                global_object,
-                                self_.store.get_path(),
-                                // SAFETY: sole `&mut JSPromise` borrow; consumed immediately.
-                                unsafe { self_.promise.get() },
-                            ),
-                        )?;
+                            self_.store.get_path(),
+                            // SAFETY: sole `&mut JSPromise` borrow; consumed immediately.
+                            unsafe { self_.promise.get() },
+                        );
+                        self_.promise.reject(global_object, err_val)?;
                     }
                 }
                 Ok(())
@@ -823,7 +823,7 @@ impl S3 {
                 opaque_self: *mut c_void,
             ) -> Result<(), bun_jsc::JsTerminated> {
                 // SAFETY: opaque_self was created via Box::into_raw below.
-                let self_ = unsafe { Box::from_raw(opaque_self as *mut Wrapper) };
+                let mut self_ = unsafe { Box::from_raw(opaque_self as *mut Wrapper) };
                 // `defer self.deinit()` → Box drops at scope exit.
                 // SAFETY: global was a valid &JSGlobalObject when the wrapper was created.
                 let global_object = unsafe { &*self_.global };
@@ -842,15 +842,15 @@ impl S3 {
                     }
 
                     S3ListObjectsResult::NotFound(err) | S3ListObjectsResult::Failure(err) => {
-                        self_.promise.reject(
+                        // Split borrows: `reject` takes `&mut promise`, so
+                        // compute the error (which reads `promise.get()`) first.
+                        let err_val = err.to_js_with_async_stack(
                             global_object,
-                            err.to_js_with_async_stack(
-                                global_object,
-                                self_.store.get_path(),
-                                // SAFETY: sole `&mut JSPromise` borrow; consumed immediately.
-                                unsafe { self_.promise.get() },
-                            ),
-                        )?;
+                            self_.store.get_path(),
+                            // SAFETY: sole `&mut JSPromise` borrow; consumed immediately.
+                            unsafe { self_.promise.get() },
+                        );
+                        self_.promise.reject(global_object, err_val)?;
                     }
                 }
                 Ok(())

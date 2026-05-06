@@ -175,7 +175,12 @@ pub fn delete(
 
 pub fn list_objects(
     this: &S3Credentials,
-    list_options: S3ListObjectsOptions,
+    // PORT NOTE: Zig took `S3ListObjectsOptions` by-value (implicit struct
+    // copy at the call site). The Rust struct owns `Utf8Slice`s and is not
+    // `Clone`, but this fn only reads fields synchronously to build the
+    // search-params string — borrow instead so the caller (Store::S3::
+    // list_objects) can retain ownership in its async Wrapper for `Drop`.
+    list_options: &S3ListObjectsOptions,
     callback: fn(S3ListObjectsResult, *mut c_void) -> JsTerminatedResult<()>,
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,

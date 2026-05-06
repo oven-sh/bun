@@ -133,8 +133,8 @@ pub fn post_process_css_chunk(
     chunk.isolated_hash = c.generate_isolated_hash(chunk);
     // chunk.flags.is_executable = is_executable;
 
-    if c.options.source_maps != crate::options::SourceMapOption::None {
-        let can_have_shifts = matches!(chunk.intermediate_output, IntermediateOutput::Pieces { .. });
+    if c.options.source_maps != options::SourceMapOption::None {
+        let can_have_shifts = matches!(chunk.intermediate_output, IntermediateOutput::Pieces(_));
         chunk.output_source_map = c.generate_source_map_for_chunk(
             chunk.isolated_hash,
             worker,

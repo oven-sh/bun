@@ -1318,8 +1318,8 @@ impl Location {
                 } else {
                     1
                 },
-                line_text: Some(bun_string::strings::trim_left(full_line, b"\n\r")),
                 // TODO(port): lifetime — `line_text` here borrows from `source.contents`
+                line_text: Some(bun_string::strings::trim_left(full_line, b"\n\r").into_str()),
                 offset: usize::try_from(r.loc.start.max(0)).unwrap(),
             });
         }

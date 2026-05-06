@@ -1825,7 +1825,9 @@ pub type EnvMap = std::collections::HashMap<String, String>;
 #[macro_export]
 macro_rules! syslog {
     ($fmt:literal $(, $arg:expr)* $(,)?) => {
-        if cfg!(feature = "debug_logs") && $crate::fd::SYS.is_visible() {
+        // Gate on `debug_assertions` (== `Environment::ENABLE_LOGS`) — matches
+        // bun_core::scoped_log!; there is no `debug_logs` Cargo feature.
+        if cfg!(debug_assertions) && $crate::fd::SYS.is_visible() {
             $crate::fd::SYS.log(
                 ::core::format_args!($fmt $(, $arg)*),
             );

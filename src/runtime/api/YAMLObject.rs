@@ -375,7 +375,8 @@ impl Stringifier {
             return Ok(());
         }
 
-        #[cfg(feature = "ci_assert")]
+        // PORT NOTE: `bun.Environment.ci_assert` → `cfg!(debug_assertions)` (closest analogue).
+        #[cfg(debug_assertions)]
         {
             bun_core::assert_with_location(unwrapped.is_object(), core::panic::Location::caller());
         }

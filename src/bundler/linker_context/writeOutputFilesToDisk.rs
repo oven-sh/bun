@@ -635,7 +635,7 @@ pub fn write_output_files_to_disk(
                     c.log
                         .add_sys_error(
                             &e,
-                            format_args!("writing file {}", quote(&src.src_path.text)),
+                            format_args!("writing file {}", quote(src.src_path.text)),
                         )
                         .expect("unreachable");
                     return Err(err!("WriteFailed"));

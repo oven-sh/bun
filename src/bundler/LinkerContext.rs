@@ -647,29 +647,35 @@ impl<'a> LinkerContext<'a> {
     pub fn tree_shaking_and_code_splitting(&mut self) -> Result<(), AllocError> {
         let _trace = bun::perf::trace("Bundler.treeShakingAndCodeSplitting");
 
-        // PORT NOTE: reshaped for borrowck — these slices alias into self.graph; Zig held them
-        // simultaneously. In Rust we may need to refetch per-call or use raw pointers.
-        let parts = self.graph.ast.items_parts_mut();
-        let import_records = self.graph.ast.items_import_records();
-        let css_reprs = self.graph.ast.items_css();
+        // PORT NOTE: reshaped for borrowck — these slices alias into self.graph;
+        // Zig held them simultaneously. The SoA columns are physically disjoint
+        // and the underlying slabs don't reallocate during tree-shaking, so we
+        // cache raw column base pointers and reborrow at each recursive call.
+        let parts: *mut [BabyList<Part>] = self.graph.ast.items_parts_mut();
+        let import_records: *const [BabyList<ImportRecord>] = self.graph.ast.items_import_records();
+        let css_reprs: *const [Option<*mut core::ffi::c_void>] = self.graph.ast.items_css();
         // SAFETY: parse_graph backref
-        let side_effects = unsafe { (*self.parse_graph).input_files.items_side_effects() };
-        let entry_point_kinds = self.graph.files.items_entry_point_kind();
-        let entry_points = self.graph.entry_points.items_source_index();
-        let distances = self.graph.files.items_distance_from_entry_point_mut();
+        let side_effects: *const [SideEffects] = unsafe { (*self.parse_graph).input_files.items_side_effects() };
+        let entry_point_kinds: *const [EntryPoint::Kind] = self.graph.files.items_entry_point_kind();
+        let entry_points: *const [crate::IndexInt] = self.graph.entry_points.items_source_index();
+        let distances: *mut [u32] = self.graph.files.items_distance_from_entry_point_mut();
+        let entry_points_len = unsafe { (*entry_points).len() };
 
         {
             let _trace2 = bun::perf::trace("Bundler.markFileLiveForTreeShaking");
 
             // Tree shaking: Each entry point marks all files reachable from itself
-            for &entry_point in entry_points {
+            for i in 0..entry_points_len {
+                // SAFETY: see block comment above — disjoint SoA columns,
+                // stable slabs; reborrow per recursive call.
+                let entry_point = unsafe { (*entry_points)[i] };
                 self.mark_file_live_for_tree_shaking(
                     entry_point,
-                    side_effects,
-                    parts,
-                    import_records,
-                    entry_point_kinds,
-                    css_reprs,
+                    unsafe { &*side_effects },
+                    unsafe { &mut *parts },
+                    unsafe { &*import_records },
+                    unsafe { &*entry_point_kinds },
+                    unsafe { &*css_reprs },
                 );
             }
         }
@@ -677,31 +683,34 @@ impl<'a> LinkerContext<'a> {
         {
             let _trace2 = bun::perf::trace("Bundler.markFileReachableForCodeSplitting");
 
-            let file_entry_bits: &mut [AutoBitSet] = self.graph.files.items_entry_bits_mut();
+            let file_entry_bits: *mut [AutoBitSet] = self.graph.files.items_entry_bits_mut();
             // AutoBitSet needs to be initialized if it is dynamic
-            if AutoBitSet::needs_dynamic(entry_points.len()) {
-                for bits in file_entry_bits.iter_mut() {
-                    *bits = AutoBitSet::init_empty(self.allocator(), entry_points.len())?;
+            // SAFETY: sole writer to `file_entry_bits` for this init pass.
+            if AutoBitSet::needs_dynamic(entry_points_len) {
+                for bits in unsafe { (&mut *file_entry_bits).iter_mut() } {
+                    *bits = AutoBitSet::init_empty(entry_points_len)?;
                 }
-            } else if !file_entry_bits.is_empty() {
+            } else if unsafe { !(*file_entry_bits).is_empty() } {
                 // assert that the tag is correct
-                debug_assert!(matches!(file_entry_bits[0], AutoBitSet::Static(_)));
+                debug_assert!(matches!(unsafe { &(*file_entry_bits)[0] }, AutoBitSet::Static(_)));
             }
 
             // Code splitting: Determine which entry points can reach which files. This
             // has to happen after tree shaking because there is an implicit dependency
             // between live parts within the same file. All liveness has to be computed
             // first before determining which entry points can reach which files.
-            for (i, &entry_point) in entry_points.iter().enumerate() {
+            for i in 0..entry_points_len {
+                // SAFETY: see block comment above.
+                let entry_point = unsafe { (*entry_points)[i] };
                 self.mark_file_reachable_for_code_splitting(
                     entry_point,
                     i,
-                    distances,
+                    unsafe { &mut *distances },
                     0,
-                    parts,
-                    import_records,
-                    file_entry_bits,
-                    css_reprs,
+                    unsafe { &*parts },
+                    unsafe { &*import_records },
+                    unsafe { &mut *file_entry_bits },
+                    unsafe { &*css_reprs },
                 );
             }
         }

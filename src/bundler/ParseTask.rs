@@ -903,7 +903,7 @@ fn get_ast(
             );
 
             return Ok(JSAst::init(
-                js_parser::new_lazy_export_ast(bump, &transpiler.options.define, opts, log, root, source, b"")?
+                js_parser::new_lazy_export_ast(bump, &mut transpiler.options.define, opts, log, root, source, b"")?
                     .unwrap(),
             ));
         }
@@ -918,15 +918,15 @@ fn get_ast(
                 return Err(err!("ParserError"));
             }
 
-            let mut buf = bumpalo::collections::Vec::new_in(bump);
+            let mut buf = bumpalo::collections::String::new_in(bump);
             write!(
                 &mut buf,
                 "{}A{:08}",
-                bun_core::fmt::hex_int_lower(unique_key_prefix),
-                source.index.get()
+                bun_core::fmt::hex_int_lower::<16>(unique_key_prefix),
+                source.index.0
             )
             .expect("unreachable");
-            let unique_key = buf.into_bump_slice();
+            let unique_key = leak_static(buf.into_bump_str().as_bytes());
             // This injects the following code:
             //
             // require(unique_key)
@@ -945,7 +945,8 @@ fn get_ast(
                         data: ast::ExprData::ERequireCallTarget,
                         loc: Loc { start: 0 },
                     },
-                    args: BabyList::<Expr>::from_owned_slice(require_args),
+                    // SAFETY: bump-owned slice; never grown via this BabyList.
+                    args: unsafe { BabyList::<Expr>::from_bump_slice(require_args) },
                     ..Default::default()
                 },
                 Loc { start: 0 },
@@ -953,16 +954,16 @@ fn get_ast(
 
             *unique_key_for_additional_file = FileLoaderHash {
                 key: unique_key,
-                content_hash: ContentHasher::run(source.contents),
+                content_hash: ContentHasher::run(&source.contents),
             };
             return Ok(JSAst::init(
-                js_parser::new_lazy_export_ast(bump, &transpiler.options.define, opts, log, root, source, b"")?
+                js_parser::new_lazy_export_ast(bump, &mut transpiler.options.define, opts, log, root, source, b"")?
                     .unwrap(),
             ));
         }
         Loader::Html => {
             let mut scanner = HTMLScanner::init(bump, log, source);
-            scanner.scan(source.contents)?;
+            scanner.scan(&source.contents)?;
 
             // Reuse existing code for creating the AST
             // because it handles the various Ref and other structs we

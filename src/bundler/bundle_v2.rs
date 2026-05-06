@@ -2025,7 +2025,7 @@ impl<'a> BundleV2<'a> {
             }
         };
 
-        if resolve_result.flags.is_external {
+        if resolve_result.flags.is_external() {
             return;
         }
 
@@ -2446,7 +2446,7 @@ impl<'a> BundleV2<'a> {
         debug_assert_eq!(files.set.keys().len(), files.set.values().len());
         for (abs_path, flags) in files.set.keys().iter().zip(files.set.values().iter()) {
             // Ensure we have the proper conditions set for client-side entrypoints.
-            let transpiler = if flags.client && !flags.server && !flags.ssr {
+            let transpiler = if flags.client() && !flags.server()() && !flags.ssr()() {
                 self.transpiler_for_target(Target::Browser)
             } else {
                 &mut *self.transpiler
@@ -2454,9 +2454,9 @@ impl<'a> BundleV2<'a> {
 
             struct TargetCheck { should_dispatch: bool, target: options::Target }
             let targets_to_check = [
-                TargetCheck { should_dispatch: flags.client, target: Target::Browser },
-                TargetCheck { should_dispatch: flags.server, target: self.transpiler.options.target },
-                TargetCheck { should_dispatch: flags.ssr, target: Target::BakeServerComponentsSsr },
+                TargetCheck { should_dispatch: flags.client(), target: Target::Browser },
+                TargetCheck { should_dispatch: flags.server(), target: self.transpiler.options.target },
+                TargetCheck { should_dispatch: flags.ssr(), target: Target::BakeServerComponentsSsr },
             ];
 
             let mut any_plugin_matched = false;
@@ -2479,7 +2479,7 @@ impl<'a> BundleV2<'a> {
                     let dev = self.dev_server.expect("unreachable");
                     dev.handle_parse_task_failure(
                         err,
-                        if flags.client { bake::Graph::Client } else { bake::Graph::Server },
+                        if flags.client() { bake::Graph::Client } else { bake::Graph::Server },
                         abs_path,
                         transpiler.log,
                         self,
@@ -2489,16 +2489,16 @@ impl<'a> BundleV2<'a> {
                 }
             };
 
-            if flags.client {
+            if flags.client() {
                 'brk: {
                     let Some(source_index) = self.enqueue_entry_item(resolved.clone(), true, Target::Browser)? else { break 'brk };
-                    if flags.css {
+                    if flags.css() {
                         css_data.put_no_clobber(Index::init(source_index), CssEntryPointMeta { imported_on_server: false })?;
                     }
                 }
             }
-            if flags.server { let _ = self.enqueue_entry_item(resolved.clone(), true, self.transpiler.options.target)?; }
-            if flags.ssr { let _ = self.enqueue_entry_item(resolved, true, Target::BakeServerComponentsSsr)?; }
+            if flags.server() { let _ = self.enqueue_entry_item(resolved.clone(), true, self.transpiler.options.target)?; }
+            if flags.ssr() { let _ = self.enqueue_entry_item(resolved, true, Target::BakeServerComponentsSsr)?; }
         }
         Ok(())
     }
@@ -4582,8 +4582,8 @@ impl<'a> BundleV2<'a> {
                 }
             };
 
-            if resolve_result.flags.is_external {
-                if resolve_result.flags.is_external_and_rewrite_import_path
+            if resolve_result.flags.is_external() {
+                if resolve_result.flags.is_external_and_rewrite_import_path()
                     && !strings::eql_long(&resolve_result.path_pair.primary.text, &import_record.path.text, true)
                 {
                     import_record.path = resolve_result.path_pair.primary.clone();

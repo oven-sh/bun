@@ -34,14 +34,25 @@ use std::io::Write;
 use bstr::BStr;
 use bun_collections::{DynamicBitSet, StringHashMap};
 use bun_core::fmt as bfmt;
-// TODO(port): exact crate path for StringJoiner — assumed bun_core
-use bun_core::StringJoiner;
-// TODO(port): JSON value type/location — Zig used std.json.Value; mapped to bun_interchange::json
-use bun_interchange::json::{self, Value as JsonValue};
-use bun_paths;
-use bun_str::strings;
+use bun_string::string_joiner::StringJoiner;
+use bun_string::strings;
+
+use bun_js_parser::ExportsKind;
+use bun_options_types::import_record::Flags as ImportRecordFlags;
+use bun_options_types::ImportKind;
+
+use crate::chunk::Content as ChunkContent;
+use crate::options::Loader;
+use crate::Graph::InputFileListExt as _;
+use crate::ungate_support::js_meta::JSMetaListExt as _;
+use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
 
 use crate::{Chunk, Index, LinkerContext};
+
+#[inline]
+fn fmt_size(bytes: u64) -> bfmt::SizeFormatter {
+    bfmt::size(bytes as usize, Default::default())
+}
 
 /// Generates the JSON fragment for a single output chunk.
 /// Called during parallel chunk generation in postProcessJSChunk/postProcessCSSChunk.
@@ -51,15 +62,15 @@ pub fn generate_chunk_json(
     chunk: &Chunk,
     chunks: &[Chunk],
 ) -> Result<Box<[u8]>, bun_core::Error> {
-    // TODO(port): narrow error set (Zig: only OOM from ArrayList writer)
     let mut json: Vec<u8> = Vec::new();
     // errdefer json.deinit() — handled by Drop on early return
 
-    // TODO(port): MultiArrayList column accessor API (`.items(.source)`)
-    let sources = c.parse_graph.input_files.items().source;
+    // SAFETY: parse_graph backref into BundleV2, valid for self's lifetime.
+    let parse_graph = unsafe { &*c.parse_graph };
+    let sources = parse_graph.input_files.items_source();
 
     // Start chunk entry: "path/to/output.js": {
-    write_json_string(&mut json, &chunk.final_rel_path)?;
+    write_json_string(&mut json, chunk.final_rel_path)?;
     json.extend_from_slice(b": {");
 
     // Write bytes
@@ -69,14 +80,15 @@ pub fn generate_chunk_json(
     // Write inputs for this output (bytesInOutput is pre-computed during chunk generation)
     json.extend_from_slice(b",\n      \"inputs\": {");
     let mut first_chunk_input = true;
-    let mut chunk_iter = chunk.files_with_parts_in_chunk.iter();
-    while let Some(entry) = chunk_iter.next() {
-        let file_source_index = *entry.key();
-        let bytes_in_output = *entry.value();
+    let chunk_keys = chunk.files_with_parts_in_chunk.keys();
+    let chunk_values = chunk.files_with_parts_in_chunk.values();
+    for (file_source_index, bytes_in_output) in chunk_keys.iter().zip(chunk_values.iter()) {
+        let file_source_index = *file_source_index;
+        let bytes_in_output = *bytes_in_output;
         if file_source_index as usize >= sources.len() {
             continue;
         }
-        if file_source_index == Index::runtime().get() {
+        if file_source_index == Index::RUNTIME.get() {
             continue;
         }
 
@@ -84,7 +96,7 @@ pub fn generate_chunk_json(
         if file_source.path.text.is_empty() {
             continue;
         }
-        let file_path = &file_source.path.pretty;
+        let file_path = file_source.path.pretty;
         if file_path.is_empty() {
             continue;
         }
@@ -120,7 +132,7 @@ pub fn generate_chunk_json(
 
         let imported_chunk = &chunks[cross_import.chunk_index as usize];
         json.extend_from_slice(b"\n        {\n          \"path\": ");
-        write_json_string(&mut json, &imported_chunk.final_rel_path)?;
+        write_json_string(&mut json, imported_chunk.final_rel_path)?;
         json.extend_from_slice(b",\n          \"kind\": ");
         write_json_string(&mut json, cross_import.import_kind.label())?;
         json.extend_from_slice(b"\n        }");
@@ -130,12 +142,12 @@ pub fn generate_chunk_json(
     // Write exports and entry point if applicable
     // Use sorted_and_filtered_export_aliases for deterministic output and to exclude internal exports
     json.extend_from_slice(b",\n      \"exports\": [");
-    if chunk.entry_point.is_entry_point {
-        let entry_source_index = chunk.entry_point.source_index;
+    if chunk.entry_point.is_entry_point() {
+        let entry_source_index = chunk.entry_point.source_index();
         // Use sources.len as the authoritative bounds check
         if (entry_source_index as usize) < sources.len() {
             let sorted_exports =
-                &c.graph.meta.items().sorted_and_filtered_export_aliases[entry_source_index as usize];
+                &c.graph.meta.items_sorted_and_filtered_export_aliases()[entry_source_index as usize];
             let mut first_export = true;
             for alias in sorted_exports.iter() {
                 if !first_export {
@@ -153,20 +165,19 @@ pub fn generate_chunk_json(
     json.extend_from_slice(b"]");
 
     // Write entry point path
-    if chunk.entry_point.is_entry_point {
-        let entry_source_index = chunk.entry_point.source_index;
+    if chunk.entry_point.is_entry_point() {
+        let entry_source_index = chunk.entry_point.source_index();
         if (entry_source_index as usize) < sources.len() {
             let entry_source = &sources[entry_source_index as usize];
             if !entry_source.path.text.is_empty() && !entry_source.path.pretty.is_empty() {
                 json.extend_from_slice(b",\n      \"entryPoint\": ");
-                write_json_string(&mut json, &entry_source.path.pretty)?;
+                write_json_string(&mut json, entry_source.path.pretty)?;
             }
         }
     }
 
     // Write cssBundle if this JS chunk has associated CSS
-    // TODO(port): Chunk.content tagged-union shape — assumed Rust enum `ChunkContent::Javascript { css_chunks, .. }`
-    if let crate::ChunkContent::Javascript(js) = &chunk.content {
+    if let ChunkContent::Javascript(js) = &chunk.content {
         let css_chunks = &js.css_chunks;
         if !css_chunks.is_empty() {
             // Get the first CSS chunk path
@@ -175,7 +186,7 @@ pub fn generate_chunk_json(
                 let css_chunk = &chunks[css_chunk_index as usize];
                 if !css_chunk.final_rel_path.is_empty() {
                     json.extend_from_slice(b",\n      \"cssBundle\": ");
-                    write_json_string(&mut json, &css_chunk.final_rel_path)?;
+                    write_json_string(&mut json, css_chunk.final_rel_path)?;
                 }
             }
         }
@@ -194,7 +205,6 @@ pub fn generate(
     c: &mut LinkerContext,
     chunks: &mut [Chunk],
 ) -> Result<Box<[u8]>, bun_core::Error> {
-    // TODO(port): narrow error set
     // Use StringJoiner so we can use breakOutputIntoPieces to resolve chunk references
     let mut j = StringJoiner::default();
     // errdefer j.deinit() — handled by Drop
@@ -203,20 +213,19 @@ pub fn generate(
 
     // Collect all input files that are reachable
     let mut first_input = true;
-    // TODO(port): MultiArrayList column accessor API
-    let sources = c.parse_graph.input_files.items().source;
-    let loaders = c.parse_graph.input_files.items().loader;
-    let import_records_list = c.parse_graph.ast.items().import_records;
+    // SAFETY: parse_graph backref into BundleV2, valid for self's lifetime.
+    let parse_graph = unsafe { &*c.parse_graph };
+    let sources = parse_graph.input_files.items_source();
+    let loaders = parse_graph.input_files.items_loader();
+    let import_records_list = parse_graph.ast.items_import_records();
 
     // Iterate through all files in chunks to collect unique source indices
-    let mut seen_sources = DynamicBitSet::init_empty(sources.len());
+    let mut seen_sources = DynamicBitSet::init_empty(sources.len())?;
     // defer seen_sources.deinit() — handled by Drop
 
     // Mark all files that appear in chunks
     for chunk in chunks.iter() {
-        let mut iter = chunk.files_with_parts_in_chunk.iter();
-        while let Some(entry) = iter.next() {
-            let source_index = *entry.key();
+        for &source_index in chunk.files_with_parts_in_chunk.keys() {
             if (source_index as usize) < sources.len() {
                 seen_sources.set(source_index as usize);
             }
@@ -236,7 +245,7 @@ pub fn generate(
         }
 
         // Skip runtime and other special files
-        if source_index == Index::runtime().get() {
+        if source_index == Index::RUNTIME.get() {
             continue;
         }
 
@@ -245,7 +254,7 @@ pub fn generate(
             continue;
         }
 
-        let path = &source.path.pretty;
+        let path = source.path.pretty;
         if path.is_empty() {
             continue;
         }
@@ -258,13 +267,13 @@ pub fn generate(
         j.push_static(b"\n    ");
         {
             let mut buf: Vec<u8> = Vec::new();
-            write!(buf, "{}", bfmt::format_json_string_utf8(path))?;
-            j.push(buf.into_boxed_slice());
+            write!(buf, "{}", bfmt::format_json_string_utf8(path, Default::default()))?;
+            j.push_owned(buf.into_boxed_slice());
         }
         {
             let mut buf: Vec<u8> = Vec::new();
             write!(buf, ": {{\n      \"bytes\": {}", source.contents.len())?;
-            j.push(buf.into_boxed_slice());
+            j.push_owned(buf.into_boxed_slice());
         }
 
         // Write imports
@@ -273,7 +282,7 @@ pub fn generate(
             let import_records = &import_records_list[source_index as usize];
             let mut first_import = true;
             for record in import_records.slice() {
-                if record.kind == bun_options_types::ImportKind::Internal {
+                if record.kind == ImportKind::Internal {
                     continue;
                 }
 
@@ -287,30 +296,41 @@ pub fn generate(
                 // by breakOutputIntoPieces and code() below
                 {
                     let mut buf: Vec<u8> = Vec::new();
-                    write!(buf, "{}", bfmt::format_json_string_utf8(&record.path.text))?;
-                    j.push(buf.into_boxed_slice());
+                    write!(
+                        buf,
+                        "{}",
+                        bfmt::format_json_string_utf8(record.path.text, Default::default())
+                    )?;
+                    j.push_owned(buf.into_boxed_slice());
                 }
                 j.push_static(b",\n          \"kind\": \"");
                 j.push_static(record.kind.label());
                 j.push_static(b"\"");
 
                 // Add "original" field if different from path
-                if !record.original_path.is_empty() && record.original_path[..] != record.path.text[..] {
+                if !record.original_path.is_empty() && record.original_path != record.path.text {
                     j.push_static(b",\n          \"original\": ");
                     let mut buf: Vec<u8> = Vec::new();
-                    write!(buf, "{}", bfmt::format_json_string_utf8(&record.original_path))?;
-                    j.push(buf.into_boxed_slice());
+                    write!(
+                        buf,
+                        "{}",
+                        bfmt::format_json_string_utf8(record.original_path, Default::default())
+                    )?;
+                    j.push_owned(buf.into_boxed_slice());
                 }
 
                 // Add "external": true for external imports
-                if record.flags.is_external_without_side_effects() || !record.source_index.is_valid() {
+                if record.flags.contains(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS)
+                    || !record.source_index.is_valid()
+                {
                     j.push_static(b",\n          \"external\": true");
                 }
 
                 // Add "with" for import attributes (json, toml, text loaders)
-                if record.source_index.is_valid() && (record.source_index.get() as usize) < loaders.len() {
+                if record.source_index.is_valid()
+                    && (record.source_index.get() as usize) < loaders.len()
+                {
                     let loader = loaders[record.source_index.get() as usize];
-                    use crate::options::Loader;
                     let with_type: Option<&'static [u8]> = match loader {
                         Loader::Json => Some(b"json"),
                         Loader::Toml => Some(b"toml"),
@@ -331,14 +351,14 @@ pub fn generate(
 
         // Write format based on exports_kind (esm vs cjs detection)
         let loader = loaders[source_index as usize];
-        use crate::options::Loader;
         let format: Option<&'static [u8]> = match loader {
             Loader::Js | Loader::Jsx | Loader::Ts | Loader::Tsx => 'blk: {
-                let exports_kind = c.graph.ast.items().exports_kind;
+                let exports_kind = c.graph.ast.items_exports_kind();
                 if (source_index as usize) < exports_kind.len() {
-                    use bun_js_parser::ExportsKind;
                     break 'blk match exports_kind[source_index as usize] {
-                        ExportsKind::Cjs | ExportsKind::EsmWithDynamicFallbackFromCjs => Some(b"cjs" as &[u8]),
+                        ExportsKind::Cjs | ExportsKind::EsmWithDynamicFallbackFromCjs => {
+                            Some(b"cjs" as &[u8])
+                        }
                         ExportsKind::Esm | ExportsKind::EsmWithDynamicFallback => Some(b"esm"),
                         ExportsKind::None => None, // Unknown format, don't emit
                     };
@@ -373,28 +393,36 @@ pub fn generate(
         first_output = false;
 
         j.push_static(b"\n    ");
-        // TODO(port): metafile_chunk_json ownership — Zig pushes a borrowed slice; assuming push_static borrows
-        j.push_static(&chunk.metafile_chunk_json);
+        // PORT NOTE: Zig pushes a borrowed slice; push_static borrows for the
+        // lifetime of the joiner (chunk.metafile_chunk_json is &'static [u8]).
+        j.push_static(chunk.metafile_chunk_json);
     }
 
     j.push_static(b"\n  }\n}\n");
 
     // If no chunks, there are no chunk references to resolve, so just return the joined string
     if chunks.is_empty() {
-        return Ok(j.done());
+        return Ok(j.done()?);
     }
 
     // Break output into pieces and resolve chunk references to final paths
-    let mut intermediate = c.break_output_into_pieces(&mut j, u32::try_from(chunks.len()).unwrap())?;
+    let alloc = c.allocator();
+    let mut intermediate =
+        c.break_output_into_pieces(alloc, &mut j, u32::try_from(chunks.len()).unwrap())?;
 
-    // Get final output with all chunk references resolved
+    // Get final output with all chunk references resolved.
+    // PORT NOTE: Zig passes `&chunks[0]` as the dummy chunk and `chunks` as the
+    // full slice (aliased). Rust forbids aliased &mut, so use a fresh dummy
+    // chunk — `code()` does not read it for the metafile path.
+    let mut dummy_chunk = Chunk::default();
     let code_result = intermediate.code(
-        &c.parse_graph,
+        None,
+        parse_graph,
         &c.graph,
         b"", // no import prefix for metafile
-        &chunks[0], // dummy chunk, not used for metafile
+        &mut dummy_chunk,
         chunks,
-        None, // no display size
+        None,  // no display size
         false, // not force absolute path
         false, // no source map shifts
     )?;
@@ -403,7 +431,283 @@ pub fn generate(
 }
 
 fn write_json_string(writer: &mut impl Write, str: &[u8]) -> std::io::Result<()> {
-    write!(writer, "{}", bfmt::format_json_string_utf8(str))
+    write!(writer, "{}", bfmt::format_json_string_utf8(str, Default::default()))
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Minimal `std.json.Value`-shaped tree for `generate_markdown`.
+//
+// PORT NOTE: Zig's `generateMarkdown` re-parses the metafile JSON via
+// `std.json.parseFromSlice(std.json.Value, …)` — a generic dynamic-tree parse.
+// The Rust crates available here (`bun_interchange::json`) only expose an
+// AST-expr parser, so a small self-contained Value/parser is provided below
+// covering exactly the subset the metafile format uses.
+// ──────────────────────────────────────────────────────────────────────────
+
+enum JsonValue {
+    Null,
+    Bool(bool),
+    Integer(i64),
+    Float(f64),
+    String(Box<[u8]>),
+    Array(Vec<JsonValue>),
+    Object(JsonObject),
+}
+
+#[derive(Default)]
+struct JsonObject {
+    entries: Vec<(Box<[u8]>, JsonValue)>,
+}
+
+impl JsonObject {
+    fn get(&self, key: &[u8]) -> Option<&JsonValue> {
+        self.entries.iter().find(|(k, _)| &k[..] == key).map(|(_, v)| v)
+    }
+    fn contains(&self, key: &[u8]) -> bool {
+        self.entries.iter().any(|(k, _)| &k[..] == key)
+    }
+    fn count(&self) -> usize {
+        self.entries.len()
+    }
+    fn iter(&self) -> impl Iterator<Item = (&[u8], &JsonValue)> {
+        self.entries.iter().map(|(k, v)| (&k[..], v))
+    }
+}
+
+struct JsonParser<'a> {
+    input: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> JsonParser<'a> {
+    fn parse(input: &'a [u8]) -> Result<JsonValue, ()> {
+        let mut p = JsonParser { input, pos: 0 };
+        p.skip_ws();
+        let v = p.parse_value()?;
+        p.skip_ws();
+        if p.pos != p.input.len() {
+            return Err(());
+        }
+        Ok(v)
+    }
+
+    fn skip_ws(&mut self) {
+        while self.pos < self.input.len()
+            && matches!(self.input[self.pos], b' ' | b'\t' | b'\n' | b'\r')
+        {
+            self.pos += 1;
+        }
+    }
+
+    fn peek(&self) -> Option<u8> {
+        self.input.get(self.pos).copied()
+    }
+
+    fn expect(&mut self, c: u8) -> Result<(), ()> {
+        if self.peek() == Some(c) {
+            self.pos += 1;
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    fn parse_value(&mut self) -> Result<JsonValue, ()> {
+        match self.peek().ok_or(())? {
+            b'{' => self.parse_object(),
+            b'[' => self.parse_array(),
+            b'"' => Ok(JsonValue::String(self.parse_string()?)),
+            b't' => {
+                if self.input[self.pos..].starts_with(b"true") {
+                    self.pos += 4;
+                    Ok(JsonValue::Bool(true))
+                } else {
+                    Err(())
+                }
+            }
+            b'f' => {
+                if self.input[self.pos..].starts_with(b"false") {
+                    self.pos += 5;
+                    Ok(JsonValue::Bool(false))
+                } else {
+                    Err(())
+                }
+            }
+            b'n' => {
+                if self.input[self.pos..].starts_with(b"null") {
+                    self.pos += 4;
+                    Ok(JsonValue::Null)
+                } else {
+                    Err(())
+                }
+            }
+            b'-' | b'0'..=b'9' => self.parse_number(),
+            _ => Err(()),
+        }
+    }
+
+    fn parse_object(&mut self) -> Result<JsonValue, ()> {
+        self.expect(b'{')?;
+        let mut obj = JsonObject::default();
+        self.skip_ws();
+        if self.peek() == Some(b'}') {
+            self.pos += 1;
+            return Ok(JsonValue::Object(obj));
+        }
+        loop {
+            self.skip_ws();
+            let key = self.parse_string()?;
+            self.skip_ws();
+            self.expect(b':')?;
+            self.skip_ws();
+            let val = self.parse_value()?;
+            obj.entries.push((key, val));
+            self.skip_ws();
+            match self.peek() {
+                Some(b',') => {
+                    self.pos += 1;
+                }
+                Some(b'}') => {
+                    self.pos += 1;
+                    return Ok(JsonValue::Object(obj));
+                }
+                _ => return Err(()),
+            }
+        }
+    }
+
+    fn parse_array(&mut self) -> Result<JsonValue, ()> {
+        self.expect(b'[')?;
+        let mut arr = Vec::new();
+        self.skip_ws();
+        if self.peek() == Some(b']') {
+            self.pos += 1;
+            return Ok(JsonValue::Array(arr));
+        }
+        loop {
+            self.skip_ws();
+            arr.push(self.parse_value()?);
+            self.skip_ws();
+            match self.peek() {
+                Some(b',') => {
+                    self.pos += 1;
+                }
+                Some(b']') => {
+                    self.pos += 1;
+                    return Ok(JsonValue::Array(arr));
+                }
+                _ => return Err(()),
+            }
+        }
+    }
+
+    fn parse_string(&mut self) -> Result<Box<[u8]>, ()> {
+        self.expect(b'"')?;
+        let mut out: Vec<u8> = Vec::new();
+        while let Some(c) = self.peek() {
+            self.pos += 1;
+            match c {
+                b'"' => return Ok(out.into_boxed_slice()),
+                b'\\' => {
+                    let esc = self.peek().ok_or(())?;
+                    self.pos += 1;
+                    match esc {
+                        b'"' => out.push(b'"'),
+                        b'\\' => out.push(b'\\'),
+                        b'/' => out.push(b'/'),
+                        b'b' => out.push(0x08),
+                        b'f' => out.push(0x0C),
+                        b'n' => out.push(b'\n'),
+                        b'r' => out.push(b'\r'),
+                        b't' => out.push(b'\t'),
+                        b'u' => {
+                            if self.pos + 4 > self.input.len() {
+                                return Err(());
+                            }
+                            let hex = &self.input[self.pos..self.pos + 4];
+                            self.pos += 4;
+                            let mut cp: u32 = 0;
+                            for &h in hex {
+                                cp = cp * 16
+                                    + match h {
+                                        b'0'..=b'9' => (h - b'0') as u32,
+                                        b'a'..=b'f' => (h - b'a' + 10) as u32,
+                                        b'A'..=b'F' => (h - b'A' + 10) as u32,
+                                        _ => return Err(()),
+                                    };
+                            }
+                            // Handle surrogate pair
+                            if (0xD800..=0xDBFF).contains(&cp) {
+                                if self.input[self.pos..].starts_with(b"\\u")
+                                    && self.pos + 6 <= self.input.len()
+                                {
+                                    let hex2 = &self.input[self.pos + 2..self.pos + 6];
+                                    let mut lo: u32 = 0;
+                                    for &h in hex2 {
+                                        lo = lo * 16
+                                            + match h {
+                                                b'0'..=b'9' => (h - b'0') as u32,
+                                                b'a'..=b'f' => (h - b'a' + 10) as u32,
+                                                b'A'..=b'F' => (h - b'A' + 10) as u32,
+                                                _ => return Err(()),
+                                            };
+                                    }
+                                    if (0xDC00..=0xDFFF).contains(&lo) {
+                                        self.pos += 6;
+                                        cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                                    }
+                                }
+                            }
+                            match char::from_u32(cp) {
+                                Some(ch) => {
+                                    let mut buf = [0u8; 4];
+                                    out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+                                }
+                                None => out.extend_from_slice(b"\xEF\xBF\xBD"),
+                            }
+                        }
+                        _ => return Err(()),
+                    }
+                }
+                _ => out.push(c),
+            }
+        }
+        Err(())
+    }
+
+    fn parse_number(&mut self) -> Result<JsonValue, ()> {
+        let start = self.pos;
+        if self.peek() == Some(b'-') {
+            self.pos += 1;
+        }
+        while matches!(self.peek(), Some(b'0'..=b'9')) {
+            self.pos += 1;
+        }
+        let mut is_float = false;
+        if self.peek() == Some(b'.') {
+            is_float = true;
+            self.pos += 1;
+            while matches!(self.peek(), Some(b'0'..=b'9')) {
+                self.pos += 1;
+            }
+        }
+        if matches!(self.peek(), Some(b'e' | b'E')) {
+            is_float = true;
+            self.pos += 1;
+            if matches!(self.peek(), Some(b'+' | b'-')) {
+                self.pos += 1;
+            }
+            while matches!(self.peek(), Some(b'0'..=b'9')) {
+                self.pos += 1;
+            }
+        }
+        let s = core::str::from_utf8(&self.input[start..self.pos]).map_err(|_| ())?;
+        if is_float {
+            Ok(JsonValue::Float(s.parse::<f64>().map_err(|_| ())?))
+        } else {
+            Ok(JsonValue::Integer(s.parse::<i64>().map_err(|_| ())?))
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -440,17 +744,14 @@ struct PathOnly<'a> {
 /// Designed to help diagnose bundle bloat, dependency chains, and entry point analysis.
 /// The caller is responsible for freeing the returned slice.
 pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Error> {
-    // TODO(port): JSON parsing API — Zig used std.json.parseFromSlice(std.json.Value, ...).
-    // Mapped to bun_interchange::json::parse_from_slice returning a parsed tree with .value().
-    let parsed = match json::parse_from_slice(metafile_json) {
-        Ok(p) => p,
-        Err(_) => return Err(bun_core::err!("InvalidJSON")),
+    let root = match JsonParser::parse(metafile_json) {
+        Ok(v) => v,
+        Err(_) => return Err(bun_core::err!(InvalidJSON)),
     };
     // defer parsed.deinit() — handled by Drop
 
-    let root = parsed.value();
-    let JsonValue::Object(root_obj) = root else {
-        return Err(bun_core::err!("InvalidJSON"));
+    let JsonValue::Object(root_obj) = &root else {
+        return Err(bun_core::err!(InvalidJSON));
     };
 
     let mut md: Vec<u8> = Vec::new();
@@ -458,14 +759,14 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
 
     // Get inputs and outputs
     let Some(inputs) = root_obj.get(b"inputs") else {
-        return Err(bun_core::err!("InvalidJSON"));
+        return Err(bun_core::err!(InvalidJSON));
     };
     let Some(outputs) = root_obj.get(b"outputs") else {
-        return Err(bun_core::err!("InvalidJSON"));
+        return Err(bun_core::err!(InvalidJSON));
     };
 
     let (JsonValue::Object(inputs_obj), JsonValue::Object(outputs_obj)) = (inputs, outputs) else {
-        return Err(bun_core::err!("InvalidJSON"));
+        return Err(bun_core::err!(InvalidJSON));
     };
 
     // Header
@@ -509,7 +810,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
                         if let Some(bio) = mi_obj.get(b"bytesInOutput") {
                             if let JsonValue::Integer(bio_int) = bio {
                                 let bytes_val: u64 = u64::try_from(*bio_int).unwrap();
-                                let gop = bytes_in_output.get_or_put(module_path);
+                                let gop = bytes_in_output.get_or_put(module_path)?;
                                 if gop.found_existing {
                                     *gop.value_ptr += bytes_val;
                                 } else {
@@ -553,11 +854,11 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
         if let Some(format) = input_obj.get(b"format") {
             if let JsonValue::String(format_str) = format {
                 info.format = format_str;
-                if format_str == b"esm" {
+                if &format_str[..] == b"esm" {
                     esm_count += 1;
-                } else if format_str == b"cjs" {
+                } else if &format_str[..] == b"cjs" {
                     cjs_count += 1;
-                } else if format_str == b"json" {
+                } else if &format_str[..] == b"json" {
                     json_count += 1;
                 }
             }
@@ -580,6 +881,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
                                 // Try to find the matching input key for this import
                                 // The import path may be absolute while input keys are relative
                                 // Or it may be a relative path like "../utils/logger.js"
+                                let target: &[u8] = target;
 
                                 // First, try exact match
                                 let mut matched_key: Option<&[u8]> = None;
@@ -619,7 +921,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
                                 }
 
                                 if let Some(key) = matched_key {
-                                    let gop = imported_by.get_or_put(key);
+                                    let gop = imported_by.get_or_put(key)?;
                                     if !gop.found_existing {
                                         *gop.value_ptr = Vec::new();
                                     }
@@ -656,7 +958,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
     // Summary table
     md.extend_from_slice(b"| Metric | Value |\n");
     md.extend_from_slice(b"|--------|-------|\n");
-    write!(md, "| Total output size | {} |\n", bfmt::size(total_output_bytes))?;
+    write!(md, "| Total output size | {} |\n", fmt_size(total_output_bytes))?;
     write!(md, "| Input modules | {} |\n", inputs_obj.count())?;
     if entry_point_count > 0 {
         write!(md, "| Entry points | {} |\n", entry_point_count)?;
@@ -669,7 +971,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
             md,
             "| node_modules contribution | {} files ({}) |\n",
             node_modules_count,
-            bfmt::size(node_modules_bytes)
+            fmt_size(node_modules_bytes)
         )?;
     }
     if esm_count > 0 {
@@ -711,7 +1013,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
         write!(
             md,
             "| {} | {:.1}% | `{}` | {} |\n",
-            bfmt::size(info.bytes_in_output),
+            fmt_size(info.bytes_in_output),
             pct,
             BStr::new(info.path),
             BStr::new(if !info.format.is_empty() { info.format } else { b"-" }),
@@ -748,7 +1050,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
 
         if let Some(bytes) = output.get(b"bytes") {
             if let JsonValue::Integer(bytes_int) = bytes {
-                write!(md, "**Bundle size**: {}\n", bfmt::size(u64::try_from(*bytes_int).unwrap()))?;
+                write!(md, "**Bundle size**: {}\n", fmt_size(u64::try_from(*bytes_int).unwrap()))?;
             }
         }
 
@@ -803,7 +1105,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
                                                     md,
                                                     "- `{}` ({}, {})\n",
                                                     BStr::new(path_str),
-                                                    bfmt::size(u64::try_from(*bytes_int).unwrap()),
+                                                    fmt_size(u64::try_from(*bytes_int).unwrap()),
                                                     BStr::new(kind_str),
                                                 )?;
                                                 continue;
@@ -850,7 +1152,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
                         if i >= max_modules {
                             break;
                         }
-                        write!(md, "| {} | `{}` |\n", bfmt::size(ms.bytes), BStr::new(ms.path))?;
+                        write!(md, "| {} | `{}` |\n", fmt_size(ms.bytes), BStr::new(ms.path))?;
                     }
                     if module_sizes.len() > max_modules {
                         write!(md, "\n*...and {} more modules*\n", module_sizes.len() - max_modules)?;
@@ -934,7 +1236,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
         // Show bytes contributed to output
         if let Some(contrib) = bytes_in_output.get(input_path) {
             if *contrib > 0 {
-                write!(md, "- **Output contribution**: {}\n", bfmt::size(*contrib))?;
+                write!(md, "- **Output contribution**: {}\n", fmt_size(*contrib))?;
             }
         }
 
@@ -996,7 +1298,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
 
                             // Get output contribution of imported file if available
                             let imported_contrib: Option<u64> = if !is_external {
-                                bytes_in_output.get(path_str).copied()
+                                bytes_in_output.get(&path_str[..]).copied()
                             } else {
                                 None
                             };
@@ -1026,7 +1328,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
                                             "  - `{}` ({}, contributes {}, specifier: `{}`)\n",
                                             BStr::new(path_str),
                                             BStr::new(kind_str),
-                                            bfmt::size(contrib),
+                                            fmt_size(contrib),
                                             BStr::new(orig)
                                         )?;
                                     } else {
@@ -1035,7 +1337,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
                                             "  - `{}` ({}, contributes {})\n",
                                             BStr::new(path_str),
                                             BStr::new(kind_str),
-                                            bfmt::size(contrib)
+                                            fmt_size(contrib)
                                         )?;
                                     }
                                 } else {
@@ -1231,6 +1533,9 @@ fn strip_parent_refs(path: &[u8]) -> &[u8] {
 // PORT STATUS
 //   source:     src/bundler/linker_context/MetafileBuilder.zig (1085 lines)
 //   confidence: medium
-//   todos:      7
-//   notes:      JSON Value API (bun_interchange::json), MultiArrayList .items() column accessors, StringJoiner crate path, and StringHashMap get_or_put API are assumed — Phase B must wire these. Allocator params dropped (output buffers, not arena AST nodes). Local helper structs carry <'a> tied to parsed JSON.
+//   notes:      JSON re-parse uses an in-module `std.json.Value`-shaped tree
+//               (no `serde_json` dep in this crate). MultiArrayList SoA
+//               accessors via derive-generated `*ListExt` traits. Aliased
+//               `&chunks[0]` / `chunks` arg to `code()` replaced with a
+//               fresh dummy `Chunk` to avoid aliased-&mut UB.
 // ──────────────────────────────────────────────────────────────────────────

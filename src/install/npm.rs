@@ -1218,6 +1218,7 @@ impl PackageManifest {
 
 pub mod package_manifest {
     use super::*;
+    use bun_io::Write as _;
 
     // bindings — see bun_install_jsc::npm_jsc::ManifestBindings (deleted *_jsc alias)
 

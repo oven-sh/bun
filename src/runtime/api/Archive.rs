@@ -767,7 +767,7 @@ impl<C: TaskContext> AsyncTask<C> {
         // SAFETY: raw was just produced by Box::into_raw; not yet shared.
         // TODO(port): KeepAlive::ref_ now takes EventLoopCtx; pass once VM→ctx bridge stabilizes.
         let _ = unsafe { &mut (*raw).keep_alive };
-        // todo!("blocked_on: bun_aio::KeepAlive::ref_(EventLoopCtx) — VM bridge")
+        // TODO(port): bun_aio::KeepAlive::ref_(EventLoopCtx) — VM bridge
         Ok(raw)
     }
 

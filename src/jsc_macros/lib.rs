@@ -564,6 +564,7 @@ fn js_class_hooks(args: &JsClassArgs, strukt: &ItemStruct) -> TokenStream2 {
     let from_js_lit = LitStr::new(&from_js_sym, Span::call_site());
     let from_js_direct_lit = LitStr::new(&from_js_direct_sym, Span::call_site());
     let create_lit = LitStr::new(&create_sym, Span::call_site());
+    let get_ctor_lit = LitStr::new(&get_ctor_sym, Span::call_site());
 
     let trait_impl = quote! {
         const _: () = {
@@ -578,6 +579,8 @@ fn js_class_hooks(args: &JsClassArgs, strukt: &ItemStruct) -> TokenStream2 {
                     global: *mut ::bun_jsc::JSGlobalObject,
                     ptr: *mut #rust_ty,
                 ) -> ::bun_jsc::JSValue;
+                #[link_name = #get_ctor_lit]
+                fn __get_constructor(global: *mut ::bun_jsc::JSGlobalObject) -> ::bun_jsc::JSValue;
             }
             #[cfg(not(all(windows, target_arch = "x86_64")))]
             unsafe extern "C" {
@@ -590,6 +593,8 @@ fn js_class_hooks(args: &JsClassArgs, strukt: &ItemStruct) -> TokenStream2 {
                     global: *mut ::bun_jsc::JSGlobalObject,
                     ptr: *mut #rust_ty,
                 ) -> ::bun_jsc::JSValue;
+                #[link_name = #get_ctor_lit]
+                fn __get_constructor(global: *mut ::bun_jsc::JSGlobalObject) -> ::bun_jsc::JSValue;
             }
 
             impl ::bun_jsc::JsClass for #rust_ty {
@@ -608,6 +613,11 @@ fn js_class_hooks(args: &JsClassArgs, strukt: &ItemStruct) -> TokenStream2 {
                     // SAFETY: pure FFI downcast; returns null on type mismatch.
                     let p = unsafe { __from_js_direct(value) };
                     if p.is_null() { None } else { Some(p) }
+                }
+                fn get_constructor(global: &::bun_jsc::JSGlobalObject) -> ::bun_jsc::JSValue {
+                    // SAFETY: `global` is live; C++ side returns the cached
+                    // constructor (`WebCore::clientSubspaceFor*`-registered).
+                    unsafe { __get_constructor(global as *const _ as *mut _) }
                 }
             }
         };

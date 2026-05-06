@@ -355,14 +355,16 @@ impl MySQLConnection {
         };
 
         let js_connection = self.get_js_connection();
-        // SAFETY: ext storage was sized for `Option<*mut JSMySQLConnection>` above.
-        unsafe { *new_socket.as_ptr().ext::<Option<*mut JSMySQLConnection>>() = Some(js_connection) };
+        let new_socket = new_socket.as_ptr();
+        // SAFETY: ext storage was sized for `Option<*mut JSMySQLConnection>` above
+        // and `new_socket` is a live us_socket_t.
+        unsafe { *(*new_socket).ext::<Option<*mut JSMySQLConnection>>() = Some(js_connection) };
         self.socket = Socket::SocketTls(uws::SocketTLS {
-            socket: uws::InternalSocket::Connected(new_socket.as_ptr()),
+            socket: uws::InternalSocket::Connected(new_socket),
         });
         // ext is now repointed; safe to kick the handshake (any dispatch lands here).
         // SAFETY: `new_socket` is a live us_socket_t with an attached SSL*.
-        unsafe { (*new_socket.as_ptr()).start_tls_handshake() };
+        unsafe { (*new_socket).start_tls_handshake() };
         Ok(())
     }
 

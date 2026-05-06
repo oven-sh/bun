@@ -193,25 +193,32 @@ pub enum State {
     Html(*mut StaticRoute),
 }
 
-impl Drop for State {
-    fn drop(&mut self) {
-        match self {
+// PORT NOTE: Zig's `State.deinit` is *only* invoked from `Route.deinit` and the
+// dev-mode reset in `onAnyRequest`; ordinary `this.state = ...` overwrites in
+// `onComplete`/`onPluginsResolved`/etc. do NOT run it. Mapping it to `impl Drop`
+// would fire on every assignment — in particular `on_complete`'s
+// `self.state = State::Err/Html` would spuriously cancel and double-deref the
+// completion task (whose matching deref is the caller's `defer this.deref()` in
+// `JSBundleCompletionTask.onComplete`). So `deinit` stays an explicit method.
+impl State {
+    pub fn deinit(&mut self) {
+        match mem::replace(self, State::Pending) {
             State::Err(_log) => {
                 // Log drops itself
             }
             State::Building(Some(c)) => {
-                // SAFETY: `*c` was produced by `create_and_schedule_completion_task`
+                // SAFETY: `c` was produced by `create_and_schedule_completion_task`
                 // (Box::into_raw, refcount ≥ 1) and we hold one of those refs.
                 unsafe {
-                    (**c).cancelled = true;
-                    RefCount::<JSBundleCompletionTask>::deref(*c);
+                    (*c).cancelled = true;
+                    RefCount::<JSBundleCompletionTask>::deref(c);
                 }
             }
             State::Building(None) => {}
             State::Html(html) => {
-                // SAFETY: `*html` was produced by `StaticRoute::clone` (Box::into_raw,
+                // SAFETY: `html` was produced by `StaticRoute::clone` (Box::into_raw,
                 // refcount == 1) or via `ref_()`; this drops our ref.
-                unsafe { StaticRoute::deref_(*html) };
+                unsafe { StaticRoute::deref_(html) };
             }
             State::Pending => {}
         }

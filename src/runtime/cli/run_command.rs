@@ -2475,27 +2475,38 @@ impl RunCommand {
         }
 
         if log_errors {
-            let default_loader = Self::default_loader_for(target_name);
-            if default_loader.map(Loader::is_javascript_like_or_json).unwrap_or(false)
-                || (!target_name.is_empty()
-                    && (target_name[0] == b'.'
-                        || target_name[0] == b'/'
-                        || paths::is_absolute(target_name)))
-            {
-                pretty_errorln!(
-                    "<r><red>error<r><d>:<r> <b>Module not found \"<b>{}<r>\"",
-                    bstr::BStr::new(target_name),
+            if let Some((path, loader)) = resolved_to_unrunnable_file {
+                bun_core::pretty_error!(
+                    "<r><red>error<r><d>:<r> <b>Cannot run \"{}\"<r>\n",
+                    bstr::BStr::new(&path),
                 );
-            } else if !paths::extension(target_name).is_empty() {
-                pretty_errorln!(
-                    "<r><red>error<r><d>:<r> <b>File not found \"<b>{}<r>\"",
-                    bstr::BStr::new(target_name),
+                bun_core::pretty_error!(
+                    "<r><d>note<r><d>:<r> Bun cannot run {} files directly\n",
+                    <&'static str>::from(loader),
                 );
             } else {
-                pretty_errorln!(
-                    "<r><red>error<r><d>:<r> <b>Script not found \"<b>{}<r>\"",
-                    bstr::BStr::new(target_name),
-                );
+                let default_loader = Self::default_loader_for(target_name);
+                if default_loader.map(Loader::is_javascript_like_or_json).unwrap_or(false)
+                    || (!target_name.is_empty()
+                        && (target_name[0] == b'.'
+                            || target_name[0] == b'/'
+                            || paths::is_absolute(target_name)))
+                {
+                    pretty_errorln!(
+                        "<r><red>error<r><d>:<r> <b>Module not found \"<b>{}<r>\"",
+                        bstr::BStr::new(target_name),
+                    );
+                } else if !paths::extension(target_name).is_empty() {
+                    pretty_errorln!(
+                        "<r><red>error<r><d>:<r> <b>File not found \"<b>{}<r>\"",
+                        bstr::BStr::new(target_name),
+                    );
+                } else {
+                    pretty_errorln!(
+                        "<r><red>error<r><d>:<r> <b>Script not found \"<b>{}<r>\"",
+                        bstr::BStr::new(target_name),
+                    );
+                }
             }
             Global::exit(1);
         }

@@ -1169,3 +1169,21 @@ impl Drop for Bytes {
 //   todos:      13
 //   notes:      Store is intrusively refcounted + crosses FFI; `StoreRef` (NonNull<Store> + ref_/deref) is the canonical handle. Bytes collapsed to Vec<u8> per TSV.
 // ──────────────────────────────────────────────────────────────────────────
+
+/// `array_buffer.zig:BlobArrayBuffer_deallocator` — JSC `ArrayBuffer` external
+/// deallocator callback for buffers backed by a `Blob.Store`. C++ stashes a
+/// `*mut Store` as the deallocator context; this releases that ref.
+///
+/// LAYERING: lives here (next to `Store`) rather than in `bun_jsc::array_buffer`
+/// because `Store` is a `bun_runtime` type and `bun_jsc` cannot depend on it.
+/// The symbol name is the only contract C++ observes.
+#[unsafe(no_mangle)]
+pub extern "C" fn BlobArrayBuffer_deallocator(
+    _bytes: *mut core::ffi::c_void,
+    blob: *mut core::ffi::c_void,
+) {
+    // SAFETY: `blob` is the non-null `*mut Store` C++ stashed as deallocator
+    // context (originating from `Box::into_raw` / `StoreRef::into_raw`); it
+    // owns one outstanding reference being released here.
+    unsafe { Store::deref(NonNull::new_unchecked(blob.cast::<Store>())) };
+}

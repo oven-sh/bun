@@ -1445,16 +1445,11 @@ pub mod js_bundler {
 
     impl LoadJsExt for Load {
         fn dispatch_js(&mut self) {
-            // SAFETY: upstream reserves `js_task: [usize; 2]` as erased
-            // `jsc::AnyTask` storage; `AnyTask` is two pointer-sized fields.
-            let js_task = unsafe {
-                &mut *(self.js_task.as_mut_ptr() as *mut AnyTask)
-            };
-            *js_task = AnyTask {
+            self.js_task = AnyTask {
                 ctx: core::ptr::NonNull::new(self as *mut Self as *mut c_void),
                 callback: load_run_on_js_thread_wrap,
             };
-            let concurrent_task = ConcurrentTask::create(js_task.task());
+            let concurrent_task = ConcurrentTask::create(self.js_task.task());
             // SAFETY: bv2 backref is valid
             unsafe {
                 (*self.bv2)
@@ -1967,14 +1962,14 @@ pub mod js_bundler {
         match which.as_int32() {
             0 => {
                 let resolve = unsafe { &mut *(ctx as *mut Resolve) };
-                let msg = Plugin::msg_from_js(plugin, &resolve.import_record.source_file, exception);
+                let msg = plugin_msg_from_js(plugin, &resolve.import_record.source_file, exception);
                 resolve.value = ResolveValue::Err(msg);
                 // SAFETY: bv2 backref is valid
                 unsafe { (*resolve.bv2).on_resolve_async(resolve) };
             }
             1 => {
                 let load = unsafe { &mut *(ctx as *mut Load) };
-                let msg = Plugin::msg_from_js(plugin, &load.path, exception);
+                let msg = plugin_msg_from_js(plugin, &load.path, exception);
                 load.value = LoadValue::Err(msg);
                 // SAFETY: bv2 backref is valid
                 unsafe { (*load.bv2).on_load_async(load) };

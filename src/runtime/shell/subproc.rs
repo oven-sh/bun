@@ -1482,17 +1482,22 @@ impl CapturedWriter {
             self.parent().buffered_output.len()
         );
         // `dead == false` ⇒ writer.is_some() (set in PipeReader::create).
-        let writer = self.writer.clone().expect("CapturedWriter live without writer");
-        let y = writer.enqueue(self, None, chunk);
-        self.parent().run_yield(y);
+        let _writer = self.writer.clone().expect("CapturedWriter live without writer");
+        let _ = chunk;
+        // TODO(port): `IOWriter::enqueue` now takes a `ChildPtr {node, tag}`
+        // (NodeId-arena port) but `CapturedWriter` lives inside a `PipeReader`
+        // with no NodeId. The dispatch back to `on_iowriter_chunk` needs a
+        // dedicated `WriterTag::SubprocCapture` arm carrying the
+        // `*mut CapturedWriter`. Tracked separately.
+        todo!("blocked_on: shell::io_writer::ChildPtr variant for CapturedWriter")
     }
 
     pub fn get_buffer(&self) -> &[u8] {
         let p = self.parent();
-        if self.written >= p.reader.buffer().len() {
+        if self.written >= p.reader._buffer.len() {
             return b"";
         }
-        &p.reader.buffer()[self.written..]
+        &p.reader._buffer[self.written..]
     }
 
     pub fn r#loop(&self) -> *mut AsyncLoop {

@@ -463,33 +463,6 @@ pub enum Data {
     S3(S3),
 }
 
-impl Data {
-    /// Zig: `store.data.file` payload accessor. Panics if not `.File`.
-    #[inline]
-    pub fn as_file(&self) -> &File {
-        match self { Self::File(f) => f, _ => unreachable!("Data::as_file on non-file store") }
-    }
-    /// Mutable counterpart of [`as_file`].
-    #[inline]
-    pub fn as_file_mut(&mut self) -> &mut File {
-        match self { Self::File(f) => f, _ => unreachable!("Data::as_file_mut on non-file store") }
-    }
-    /// Zig: `store.data.s3` payload accessor. Panics if not `.S3`.
-    #[inline]
-    pub fn as_s3(&self) -> &S3 {
-        match self { Self::S3(s) => s, _ => unreachable!("Data::as_s3 on non-s3 store") }
-    }
-    #[inline]
-    pub fn as_s3_mut(&mut self) -> &mut S3 {
-        match self { Self::S3(s) => s, _ => unreachable!("Data::as_s3_mut on non-s3 store") }
-    }
-    /// Zig: `store.data.bytes` payload accessor. Panics if not `.Bytes`.
-    #[inline]
-    pub fn as_bytes(&self) -> &Bytes {
-        match self { Self::Bytes(b) => b, _ => unreachable!("Data::as_bytes on non-bytes store") }
-    }
-}
-
 /// Discriminant-only tag for `Data` (Zig: `std.meta.Tag(Store.Data)`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DataTag {

@@ -394,7 +394,7 @@ impl<'a> Snapshots<'a> {
             // Runs on every exit of the loop body (continue, fall-through, AND `?` early-return).
             let mut log = scopeguard::guard(logger::Log::init(), |log| {
                 if log.errors > 0 {
-                    let _ = log.print(bun_output::error_writer());
+                    let _ = log.print(bun_output::error_writer() as *mut bun_core::io::Writer);
                     success.set(false);
                 }
             });

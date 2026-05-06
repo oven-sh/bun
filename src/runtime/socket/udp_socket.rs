@@ -1335,8 +1335,9 @@ impl UDPSocket {
 
     #[bun_jsc::host_fn(method)]
     pub fn ref_(this: &mut Self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        let _ = global_this;
         if !this.closed {
-            this.poll_ref.ref_(global_this.bun_vm());
+            this.poll_ref.ref_(vm_ctx());
         }
 
         Ok(JSValue::UNDEFINED)
@@ -1344,7 +1345,8 @@ impl UDPSocket {
 
     #[bun_jsc::host_fn(method)]
     pub fn unref(this: &mut Self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        this.poll_ref.unref(global_this.bun_vm());
+        let _ = global_this;
+        this.poll_ref.unref(vm_ctx());
 
         Ok(JSValue::UNDEFINED)
     }

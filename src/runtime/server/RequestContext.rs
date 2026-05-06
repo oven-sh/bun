@@ -3635,7 +3635,9 @@ where
     Self: NativePromiseContext::NativePromiseContextType,
 {
     fn on_pipe(&mut self, stream: WebCore::streams::Result) {
-        Self::on_pipe(self, stream)
+        // Forward to the inherent associated fn (not method-dispatched to avoid
+        // recursing into this trait impl).
+        RequestContext::on_pipe(self, stream)
     }
 }
 

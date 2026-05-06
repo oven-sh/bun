@@ -2677,13 +2677,13 @@ impl Blob {
         // If there's no store that means it's empty and we just return true
         let Some(store) = &self.store else { return JSValue::TRUE };
 
-        if matches!(store.data, Store::Data::Bytes(_)) {
+        if matches!(store.data, store::Data::Bytes(_)) {
             // Bytes will never error
             return JSValue::TRUE;
         }
 
         // We say regular files and pipes exist.
-        let file = store.data.as_file();
+        let store::Data::File(file) = &store.data else { return JSValue::FALSE };
         JSValue::from(bun_sys::S::ISREG(file.mode) || bun_sys::S::ISFIFO(file.mode))
     }
 
@@ -2720,28 +2720,17 @@ impl S3BlobDownloadTask {
         });
         let global = unsafe { &*this.global_this };
         match result {
-            crate::webcore::__s3_client::S3DownloadResult::Success(response) => {
-                let bytes = response.body.list.items;
+            crate::webcore::__s3_client::S3DownloadResult::Success(mut response) => {
+                let bytes = &mut response.body.list[..];
                 if this.blob.size == MAX_SIZE {
                     this.blob.size = bytes.len() as SizeType;
                 }
-                // SAFETY: sole `&mut JSPromise` borrow; coerced to `*mut` immediately.
-                jsc::AnyPromise::Normal(unsafe { this.promise.get() }).wrap(
-                    global,
-                    S3BlobDownloadTask::call_handler,
-                    (this, bytes),
-                )?;
+                let value = JSPromise::wrap(global, |g| Ok(this.call_handler(bytes)))?;
+                this.promise.resolve(global, value)?;
             }
             crate::webcore::__s3_client::S3DownloadResult::NotFound(err) | crate::webcore::__s3_client::S3DownloadResult::Failure(err) => {
-                this.promise.reject(
-                    global,
-                    err.to_js_with_async_stack(
-                        global,
-                        this.blob.store.as_ref().unwrap().get_path(),
-                        // SAFETY: sole `&mut JSPromise` borrow; consumed immediately.
-                        unsafe { this.promise.get() },
-                    ),
-                )?;
+                let _ = (err, &this.blob);
+                todo!("blocked_on: bun_s3::S3Error::to_js_with_async_stack");
             }
         }
         Ok(())
@@ -2757,7 +2746,7 @@ impl S3BlobDownloadTask {
         // outliving the source can't dangle.
         let this = Box::into_raw(Box::new(S3BlobDownloadTask {
             global_this: global_this,
-            blob: blob.dupe(),
+            blob: Blob::dupe(blob),
             promise: jsc::JSPromiseStrong::init(global_this),
             poll_ref: bun_aio::KeepAlive::default(),
             handler,
@@ -2765,26 +2754,39 @@ impl S3BlobDownloadTask {
         // SAFETY: just allocated.
         let this_ref = unsafe { &mut *this };
         let promise = this_ref.promise.value();
-        let env = global_this.bun_vm().transpiler.env;
-        let s3_store = this_ref.blob.store.as_ref().unwrap().data.as_s3();
+        // SAFETY: bun_vm() never returns null for a Bun-owned global.
+        let env = unsafe { &(*global_this.bun_vm()).transpiler.env };
+        let store::Data::S3(s3_store) = &this_ref.blob.store.as_ref().unwrap().data else {
+            unreachable!("S3BlobDownloadTask::init on non-S3 blob")
+        };
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
 
-        this_ref.poll_ref.ref_(global_this.bun_vm());
+        todo!("blocked_on: bun_aio::KeepAlive::ref_(EventLoopCtx) from VirtualMachine");
+        #[allow(unreachable_code)]
         let proxy = env.get_http_proxy(true, None, None).map(|p| p.href);
+
+        // Adapter: S3 download callback ABI takes `*mut c_void` context — cast
+        // back to the boxed task.
+        fn s3_cb(
+            result: crate::webcore::__s3_client::S3DownloadResult<'_>,
+            ctx: *mut c_void,
+        ) -> Result<(), jsc::JsTerminated> {
+            S3BlobDownloadTask::on_s3_download_resolved(result, ctx as *mut S3BlobDownloadTask)
+        }
 
         if blob.offset > 0 {
             let len: Option<usize> = if blob.size != MAX_SIZE { Some(usize::try_from(blob.size).unwrap()) } else { None };
             let offset: usize = usize::try_from(blob.offset).unwrap();
             crate::webcore::__s3_client::download_slice(
                 credentials, path, offset, len,
-                Self::on_s3_download_resolved as _, this as *mut c_void,
+                s3_cb, this as *mut c_void,
                 proxy, s3_store.request_payer,
             )?;
         } else if blob.size == MAX_SIZE {
             crate::webcore::__s3_client::download(
                 credentials, path,
-                Self::on_s3_download_resolved as _, this as *mut c_void,
+                s3_cb, this as *mut c_void,
                 proxy, s3_store.request_payer,
             )?;
         } else {
@@ -2792,7 +2794,7 @@ impl S3BlobDownloadTask {
             let offset: usize = usize::try_from(blob.offset).unwrap();
             crate::webcore::__s3_client::download_slice(
                 credentials, path, offset, Some(len),
-                Self::on_s3_download_resolved as _, this as *mut c_void,
+                s3_cb, this as *mut c_void,
                 proxy, s3_store.request_payer,
             )?;
         }
@@ -2802,9 +2804,8 @@ impl S3BlobDownloadTask {
 
 impl Drop for S3BlobDownloadTask {
     fn drop(&mut self) {
-        self.blob.deinit();
-        // SAFETY: global_this is valid for the lifetime of the task.
-        self.poll_ref.unref(unsafe { (*self.global_this).bun_vm() });
+        Blob::deinit(&mut self.blob);
+        todo!("blocked_on: bun_aio::KeepAlive::unref(EventLoopCtx) from VirtualMachine");
         // promise: Drop handles deinit.
     }
 }
@@ -2816,20 +2817,21 @@ impl Drop for S3BlobDownloadTask {
 impl Blob {
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn do_write(&mut self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(3);
-        let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), arguments.slice());
+        let arguments = callframe.arguments_old::<3>();
+        // SAFETY: bun_vm() never returns null for a Bun-owned global.
+        let mut args = jsc::ArgumentsSlice::init(unsafe { &*global_this.bun_vm() }, arguments.slice());
 
         validate_writable_blob(global_this, self)?;
 
         let Some(data) = args.next_eat() else {
-            return global_this.throw_invalid_arguments(
+            return Err(global_this.throw_invalid_arguments(
                 "blob.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write",
-            );
+            ));
         };
         if data.is_empty_or_undefined_or_null() {
-            return global_this.throw_invalid_arguments(
+            return Err(global_this.throw_invalid_arguments(
                 "blob.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write",
-            );
+            ));
         }
         let mut mkdirp_if_not_exists: Option<bool> = None;
         let options = args.next_eat();
@@ -2837,14 +2839,14 @@ impl Blob {
             if options_object.is_object() {
                 if let Some(create_directory) = options_object.get_truthy(global_this, "createPath")? {
                     if !create_directory.is_boolean() {
-                        return global_this.throw_invalid_argument_type("write", "options.createPath", "boolean");
+                        return Err(global_this.throw_invalid_argument_type("write", "options.createPath", "boolean"));
                     }
                     mkdirp_if_not_exists = Some(create_directory.to_boolean());
                 }
                 if let Some(content_type) = options_object.get_truthy(global_this, "type")? {
                     // override the content type
                     if !content_type.is_string() {
-                        return global_this.throw_invalid_argument_type("write", "options.type", "string");
+                        return Err(global_this.throw_invalid_argument_type("write", "options.type", "string"));
                     }
                     let content_type_str = content_type.to_slice(global_this)?;
                     let slice = content_type_str.slice();
@@ -2856,7 +2858,8 @@ impl Blob {
                         }
                         self.content_type_was_set = true;
 
-                        if let Some(mime) = global_this.bun_vm().mime_type(slice) {
+                        // SAFETY: bun_vm() never returns null for a Bun-owned global.
+                        if let Some(mime) = unsafe { (*global_this.bun_vm()).mime_type(slice) } {
                             self.content_type = mime.value as *const [u8];
                         } else {
                             let mut buf = vec![0u8; slice.len()];
@@ -2867,10 +2870,10 @@ impl Blob {
                     }
                 }
             } else if !options_object.is_empty_or_undefined_or_null() {
-                return global_this.throw_invalid_argument_type("write", "options", "object");
+                return Err(global_this.throw_invalid_argument_type("write", "options", "object"));
             }
         }
-        let mut blob_internal = PathOrBlob::Blob(self.clone()); // TODO(port): Zig copies struct by value
+        let mut blob_internal = PathOrBlob::Blob(self.dupe()); // TODO(port): Zig copies struct by value
         write_file_internal(
             global_this,
             &mut blob_internal,
@@ -2881,16 +2884,17 @@ impl Blob {
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn do_unlink(&mut self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(1);
-        let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), arguments.slice());
+        let arguments = callframe.arguments_old::<1>();
+        // SAFETY: bun_vm() never returns null for a Bun-owned global.
+        let mut args = jsc::ArgumentsSlice::init(unsafe { &*global_this.bun_vm() }, arguments.slice());
 
         validate_writable_blob(global_this, self)?;
 
         let store = self.store.as_ref().unwrap();
         match &store.data {
-            Store::Data::S3(s3) => s3.unlink(store.clone(), global_this, args.next_eat()),
-            Store::Data::File(file) => Ok(file.unlink(global_this)),
-            _ => unreachable!(), // validate_writable_blob should have caught this
+            store::Data::S3(s3) => s3.unlink(store.clone(), global_this, args.next_eat()),
+            store::Data::File(file) => file.unlink(global_this),
+            store::Data::Bytes(_) => unreachable!(), // validate_writable_blob should have caught this
         }
     }
 
@@ -2898,7 +2902,7 @@ impl Blob {
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn get_exists(&mut self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         if self.is_s3() {
-            return Ok(crate::webcore::s3_file::S3BlobStatTask::exists(global_this, self));
+            return crate::webcore::s3_file::S3BlobStatTask::exists(global_this, self);
         }
         Ok(JSPromise::resolved_promise_value(global_this, self.get_exists_sync()))
     }
@@ -2929,16 +2933,16 @@ pub fn on_file_stream_resolve_request_stream(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let args = callframe.arguments_old(2);
+    let args = callframe.arguments_old::<2>();
     // SAFETY: last arg is a promise-ptr created by FileStreamWrapper::new in pipe_readable_stream_to_blob.
-    let this = unsafe {
-        Box::from_raw(args.ptr()[args.len() - 1].as_promise_ptr::<FileStreamWrapper>())
+    let mut this: Box<FileStreamWrapper> = unsafe {
+        Box::from_raw(args.ptr[args.len - 1].as_number() as usize as *mut FileStreamWrapper)
     };
     let mut strong = core::mem::take(&mut this.readable_stream_ref);
     if let Some(stream) = strong.get(global_this) {
         stream.done(global_this);
     }
-    this.promise.resolve(global_this, JSValue::js_number(0))?;
+    this.promise.resolve(global_this, JSValue::js_number(0.0))?;
     Ok(JSValue::UNDEFINED)
 }
 
@@ -2947,18 +2951,18 @@ pub fn on_file_stream_reject_request_stream(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let args = callframe.arguments_old(2);
+    let args = callframe.arguments_old::<2>();
     // PORT NOTE: Zig defers `this.sink.deref()` here but does NOT call `this.deinit()`
     // (leaks the wrapper). We take ownership via Box so Drop runs `sink.deref()`
     // and frees the wrapper — same observable effect on the sink, fixes the leak.
-    let this = unsafe {
-        Box::from_raw(args.ptr()[args.len() - 1].as_promise_ptr::<FileStreamWrapper>())
+    let mut this: Box<FileStreamWrapper> = unsafe {
+        Box::from_raw(args.ptr[args.len - 1].as_number() as usize as *mut FileStreamWrapper)
     };
-    let err = args.ptr()[0];
+    let err = args.ptr[0];
 
     let mut strong = core::mem::take(&mut this.readable_stream_ref);
 
-    this.promise.reject(global_this, err)?;
+    this.promise.reject(global_this, Ok(err))?;
 
     if let Some(stream) = strong.get(global_this) {
         stream.cancel(global_this);
@@ -2985,7 +2989,7 @@ impl Blob {
         };
 
         if self.is_s3() {
-            let s3 = store.data.as_s3();
+            let store::Data::S3(s3) = &store.data else { unreachable!() };
             let aws_options = match s3.get_credentials_with_options(extra_options, global_this) {
                 Ok(o) => o,
                 Err(err) => {
@@ -2997,10 +3001,11 @@ impl Blob {
             };
 
             let path = s3.path();
-            let proxy = global_this.bun_vm().transpiler.env.get_http_proxy(true, None, None);
+            // SAFETY: bun_vm() never returns null for a Bun-owned global.
+            let proxy = unsafe { (*global_this.bun_vm()).transpiler.env.get_http_proxy(true, None, None) };
             let proxy_url = proxy.map(|p| p.href);
 
-            return Ok(crate::webcore::__s3_client::upload_stream(
+            return crate::webcore::__s3_client::upload_stream(
                 if extra_options.is_some() { aws_options.credentials.dupe() } else { s3.get_credentials() },
                 path,
                 readable_stream,
@@ -3015,10 +3020,10 @@ impl Blob {
                 aws_options.request_payer,
                 None,
                 core::ptr::null_mut(),
-            ));
+            );
         }
 
-        if !matches!(store.data, Store::Data::File(_)) {
+        if !matches!(store.data, store::Data::File(_)) {
             return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                 global_this,
                 global_this.create_error_instance("Blob is read-only"),
@@ -3265,15 +3270,18 @@ impl Blob {
                 }
             }
 
-            match sink.start(stream_start) {
+            // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink; sole owner here.
+            match unsafe { (*sink).start(stream_start) } {
                 bun_sys::Result::Err(err) => {
-                    drop(sink);
+                    // SAFETY: release the +1 ref from `init`.
+                    unsafe { webcore::FileSink::deref(sink) };
                     return global_this.throw_value(err.to_js(global_this)?);
                 }
                 _ => {}
             }
 
-            return Ok(sink.to_js(global_this));
+            // SAFETY: sink is live; `to_js` transfers ownership to the JS wrapper.
+            return Ok(unsafe { (*sink).to_js(global_this) });
         }
         #[cfg(windows)]
         unreachable!()
@@ -3938,19 +3946,9 @@ impl Blob {
         Self::try_create(bytes_, global_this, was_string).expect("oom")
     }
 
-    // PORT NOTE: non-generic `init_with_store(StoreRef, ...)` removed — duplicate of the
-    // generic `init_with_store<S: Into<StoreRef>>` below (E0034). All `StoreRef` callers
-    // resolve to the generic via the reflexive `Into` impl.
-
-    pub fn init_empty(global_this: &JSGlobalObject) -> Blob {
-        Blob {
-            size: 0,
-            store: None,
-            content_type: b"" as &'static [u8] as *const [u8],
-            global_this: global_this,
-            ..Default::default()
-        }
-    }
+    // PORT NOTE: non-generic `init_with_store(StoreRef, ...)` / `init_empty` removed —
+    // duplicates of the generic `init_with_store<S: Into<StoreRef>>` / `init_empty` below
+    // (E0592). All `StoreRef` callers resolve to the generic via the reflexive `Into` impl.
 
     // Transferring doesn't change the reference count
     // It is a move

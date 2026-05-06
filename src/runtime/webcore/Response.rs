@@ -925,11 +925,10 @@ impl Response {
         match status_code {
             301 | 302 | 303 | 307 | 308 => Ok(u16::try_from(status_code).unwrap()),
             _ => {
-                let err = global_this.create_range_error_instance(
-                    "Failed to execute 'redirect' on 'Response': Invalid status code",
-                    &[],
-                );
-                global_this.throw_value(err)
+                let err = global_this.create_range_error_instance(format_args!(
+                    "Failed to execute 'redirect' on 'Response': Invalid status code"
+                ));
+                Err(global_this.throw_value(err))
             }
         }
     }
@@ -943,11 +942,12 @@ impl Response {
     }
 
     pub fn construct_redirect_impl(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Response> {
-        let args_list = callframe.arguments_old(4);
+        let args_list = callframe.arguments_old::<4>();
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
-        let mut args = bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), &args_list.ptr[0..args_list.len]);
+        // SAFETY: see `construct_json`.
+        let mut args = bun_jsc::ArgumentsSlice::init(unsafe { &*global_this.bun_vm() }, &args_list.ptr[0..args_list.len]);
 
-        let mut url_string_slice = ZigString::Slice::empty();
+        let mut url_string_slice = ZigStringSlice::empty();
         // url_string_slice drops at scope exit
         let mut response: Response = 'brk: {
             let mut response = Response {

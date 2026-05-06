@@ -708,28 +708,30 @@ impl FetchTasklet {
         let dispatch_cleanup = |this: &mut FetchTasklet| {
             bun_output::scoped_log!(FetchTasklet, "onProgressUpdate: promise_value is not null");
             tracker.did_dispatch(global_this);
-            this.promise.deinit();
+            this.promise = jsc::JSPromiseStrong::empty();
         };
 
         let success = self.result.is_success();
         let result = if success {
-            Strong::create(self.on_resolve(), global_this)
+            StrongOptional::create(self.on_resolve(), global_this)
         } else {
             // in this case we wanna a jsc.Strong.Optional so we just convert it
             let mut value = self.on_reject();
             let err_js = value.to_js(global_this);
-            if let Some(sink) = self.sink.as_ref() {
-                sink.cancel(err_js);
+            if let Some(sink) = self.sink {
+                // SAFETY: sink alive while self.sink is Some
+                unsafe { (*sink).cancel(err_js) };
             }
-            // TODO(port): Zig accessed value.JSValue (the Strong inside the union) directly
-            value.into_strong()
+            // PORT NOTE: Zig accessed value.JSValue (the Strong inside the union) directly
+            // after `to_js`; here `to_js` already consumed/converted, so wrap the result.
+            StrongOptional::create(err_js, global_this)
         };
 
         promise_value.ensure_still_alive();
 
         struct Holder {
-            held: Strong,
-            promise: Strong,
+            held: StrongOptional,
+            promise: jsc::JSPromiseStrong,
             global_object: &'static JSGlobalObject,
             task: AnyTask,
         }
@@ -739,12 +741,12 @@ impl FetchTasklet {
                 // SAFETY: allocated via Box::into_raw below; consumed once
                 let mut self_ = unsafe { Box::from_raw(self_) };
                 // resolve the promise
-                let prom = self_.promise.swap().as_any_promise().unwrap();
+                let prom = self_.promise.value_or_empty().as_any_promise().unwrap();
                 let res = self_.held.swap();
                 res.ensure_still_alive();
                 let r = prom.resolve(self_.global_object, res);
                 self_.held.deinit();
-                self_.promise.deinit();
+                self_.promise = jsc::JSPromiseStrong::empty();
                 drop(self_);
                 r
             }
@@ -753,31 +755,32 @@ impl FetchTasklet {
                 // SAFETY: allocated via Box::into_raw below; consumed once
                 let mut self_ = unsafe { Box::from_raw(self_) };
                 // reject the promise
-                let prom = self_.promise.swap().as_any_promise().unwrap();
+                let prom = self_.promise.value_or_empty().as_any_promise().unwrap();
                 let res = self_.held.swap();
                 res.ensure_still_alive();
                 let r = prom.reject_with_async_stack(self_.global_object, res);
                 self_.held.deinit();
-                self_.promise.deinit();
+                self_.promise = jsc::JSPromiseStrong::empty();
                 drop(self_);
                 r
             }
         }
 
         // PORT NOTE: Zig `AnyTask.New(Holder, cb)` monomorphized a `*anyopaque -> void` shim
-        // per (Type, Callback). Rust `AnyTask` stores `fn(*mut c_void) -> JsResult<()>`; write
-        // the type-erased shims by hand and convert `JsTerminated` → `JsError` via `From`.
-        fn resolve_erased(p: *mut c_void) -> JsResult<()> {
-            Holder::resolve(p as *mut Holder).map_err(Into::into)
+        // per (Type, Callback). Rust `AnyTask` stores `fn(*mut c_void) -> bun_event_loop::JsResult<()>`
+        // (cycle-broken erased error); write the type-erased shims by hand and erase the
+        // `JsTerminated` payload to `*mut ()`.
+        fn resolve_erased(p: *mut c_void) -> ElJsResult<()> {
+            Holder::resolve(p as *mut Holder).map_err(|_| core::ptr::null_mut())
         }
-        fn reject_erased(p: *mut c_void) -> JsResult<()> {
-            Holder::reject(p as *mut Holder).map_err(Into::into)
+        fn reject_erased(p: *mut c_void) -> ElJsResult<()> {
+            Holder::reject(p as *mut Holder).map_err(|_| core::ptr::null_mut())
         }
 
         let holder = Box::into_raw(Box::new(Holder {
             held: result,
             // we need the promise to be alive until the task is done
-            promise: core::mem::replace(&mut self.promise.strong, Strong::EMPTY),
+            promise: self.promise.take(),
             global_object: global_this,
             task: AnyTask::default(),
         }));
@@ -787,7 +790,7 @@ impl FetchTasklet {
                 ctx: core::ptr::NonNull::new(holder as *mut c_void),
                 callback: if success { resolve_erased } else { reject_erased },
             };
-            vm.enqueue_task(Task::init(&mut (*holder).task));
+            (*vm.event_loop()).enqueue_task(Task::init(&mut (*holder).task));
         }
 
         dispatch_cleanup(self);

@@ -982,7 +982,7 @@ pub struct AsyncFSTask<R, A, const F: NodeFSFunctionEnum> {
     pub tracker: AsyncTaskTracker,
 }
 
-impl<R, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, F> {
+impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, F> {
     /// NewAsyncFSTask supports cancelable operations via AbortSignal,
     /// so long as a "signal" field exists. The task wrapper will ensure
     /// a promise rejection happens if signaled, but if `function` is

@@ -125,7 +125,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         &mut self,
         abs_path: &[u8],
         is_ssr: bool,
-    ) -> Result<FileIndex, bun_alloc::AllocError> {
+    ) -> Result<FileIndex<SIDE>, bun_alloc::AllocError> {
         let gop = self.bundled_files.get_or_put(abs_path)?;
         let idx = gop.index;
         if !gop.found_existing {

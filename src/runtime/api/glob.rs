@@ -186,7 +186,12 @@ impl WalkTaskErr {
     }
 }
 
-pub type AsyncGlobWalkTask<'a> = ConcurrentPromiseTask<WalkTask<'a>>;
+// TODO(port): `ConcurrentPromiseTask` is currently a zero-generic `stub_ty!`
+// placeholder in `src/jsc/event_loop.rs`. Restore `<WalkTask<'a>>` once the
+// real generic task type is ported. The `'a` lifetime is kept so downstream
+// `AsyncGlobWalkTask<'a>` mentions stay shape-stable.
+#[allow(unused_lifetimes)]
+pub type AsyncGlobWalkTask<'a> = ConcurrentPromiseTask;
 
 impl<'a> WalkTask<'a> {
     pub fn create(

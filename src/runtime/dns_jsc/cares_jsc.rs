@@ -632,15 +632,15 @@ impl ErrorDeferred {
         let message = if let Some(hostname) = &self.hostname {
             bstr::String::create_format(format_args!(
                 "{} {} {}",
-                bstr::BStr::new(self.syscall),
-                bstr::BStr::new(&code[4..]),
+                BStr::new(self.syscall),
+                BStr::new(&code[4..]),
                 hostname
             ))
         } else {
             bstr::String::create_format(format_args!(
                 "{} {}",
-                bstr::BStr::new(self.syscall),
-                bstr::BStr::new(&code[4..])
+                BStr::new(self.syscall),
+                BStr::new(&code[4..])
             ))
         };
         let system_error = SystemError {
@@ -712,8 +712,8 @@ pub fn error_to_js_with_syscall(
         syscall: bstr::String::static_(syscall),
         message: bstr::String::create_format(format_args!(
             "{} {}",
-            bstr::BStr::new(syscall),
-            bstr::BStr::new(&code[4..])
+            BStr::new(syscall),
+            BStr::new(&code[4..])
         )),
         ..Default::default()
     }
@@ -734,9 +734,9 @@ pub fn error_to_js_with_syscall_and_hostname(
         code: bstr::String::static_(&code[4..]),
         message: bstr::String::create_format(format_args!(
             "{} {} {}",
-            bstr::BStr::new(syscall),
-            bstr::BStr::new(&code[4..]),
-            bstr::BStr::new(hostname)
+            BStr::new(syscall),
+            BStr::new(&code[4..]),
+            BStr::new(hostname)
         )),
         syscall: bstr::String::static_(syscall),
         hostname: bstr::String::clone_utf8(hostname),

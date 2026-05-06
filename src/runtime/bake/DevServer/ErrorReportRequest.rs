@@ -162,7 +162,7 @@ impl ErrorReportRequest {
         // HMR chunks use this too, but currently do not host their JS code.
         let mut parsed_source_maps: ArrayHashMap<
             SourceMapStore::Key,
-            Option<SourceMapStore::GetResult>,
+            Option<GetResult<'_>>,
         > = ArrayHashMap::default();
         parsed_source_maps.reserve(4);
         // Drop of GetResult handles cleanup; the Zig `defer for ... v.deinit()`

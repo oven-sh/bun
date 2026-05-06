@@ -1073,16 +1073,11 @@ where
         changed_files: &[bun_watcher::ChangedFilePath],
         watchlist: &bun_watcher::WatchList,
     ) {
-        // PORT NOTE: the inherent `on_file_update` below was ported with
-        // slightly different param mutability (`&[WatchEvent]`, `&mut [Option<&mut ZStr>]`,
-        // by-value `WatchList`). Bridge the shapes here; Phase B should
-        // converge the inherent fn's signature onto this one and drop the cast.
-        // SAFETY: `ChangedFilePath = Option<&'static ZStr>`; the inherent fn
-        // never writes through `changed_files`, only reads — the `&mut` in its
-        // signature is a porting artifact.
-        let changed: *const [bun_watcher::ChangedFilePath] = changed_files;
-        let changed = unsafe { &mut *(changed as *mut [Option<&mut ZStr>]) };
-        Self::on_file_update(self, events, changed, *watchlist);
+        // TODO(port): the inherent `on_file_update` was drafted with
+        // `(&[WatchEvent], &mut [Option<&mut ZStr>], WatchList)`; the watcher
+        // crate has since fixed its callback shape to this signature. Phase B
+        // should retype the inherent fn to match and drop this trampoline.
+        Self::on_file_update(self, events, changed_files, watchlist);
     }
 
     fn on_error(&mut self, err: bun_sys::Error) {

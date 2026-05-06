@@ -1867,6 +1867,7 @@ pub mod defines_full_draft {
             J::EUndefined(_) => expr::Data::EUndefined(E::Undefined {}),
             J::EMissing(_) => expr::Data::EMissing(E::Missing {}),
             J::EString(s) => {
+                // SAFETY: `s` is a live arena `StoreRef` from `parse_env_json`.
                 let src = unsafe { &*s.as_ptr() };
                 let item = bump.alloc(E::String {
                     data: src.data,
@@ -1876,27 +1877,26 @@ pub mod defines_full_draft {
                 expr::Data::EString(StoreRef::from_bump(item))
             }
             J::EArray(a) => {
+                // SAFETY: `a` is a live arena `StoreRef` from `parse_env_json`.
                 let src = unsafe { &*a.as_ptr() };
-                let mut items = bun_collections::BabyList::<expr::Expr>::with_capacity(
-                    bump,
-                    src.items.len() as usize,
-                )?;
-                for it in src.items.as_slice() {
-                    items.push(
-                        bump,
-                        expr::Expr { loc: it.loc, data: json_data_to_expr_data(it.data, bump)? },
-                    )?;
+                let mut items =
+                    bun_collections::BabyList::<expr::Expr>::init_capacity(src.items.len() as usize)?;
+                for it in src.items.slice() {
+                    items.append(expr::Expr {
+                        loc: it.loc,
+                        data: json_data_to_expr_data(it.data, bump)?,
+                    })?;
                 }
                 let item = bump.alloc(E::Array { items, ..Default::default() });
                 expr::Data::EArray(StoreRef::from_bump(item))
             }
             J::EObject(o) => {
+                // SAFETY: `o` is a live arena `StoreRef` from `parse_env_json`.
                 let src = unsafe { &*o.as_ptr() };
-                let mut properties = bun_collections::BabyList::<G::Property>::with_capacity(
-                    bump,
+                let mut properties = bun_collections::BabyList::<G::Property>::init_capacity(
                     src.properties.len() as usize,
                 )?;
-                for prop in src.properties.as_slice() {
+                for prop in src.properties.slice() {
                     let key = match &prop.key {
                         Some(k) => Some(expr::Expr {
                             loc: k.loc,
@@ -1911,7 +1911,7 @@ pub mod defines_full_draft {
                         }),
                         None => None,
                     };
-                    properties.push(bump, G::Property { key, value, ..Default::default() })?;
+                    properties.append(G::Property { key, value, ..Default::default() })?;
                 }
                 let item = bump.alloc(E::Object { properties, ..Default::default() });
                 expr::Data::EObject(StoreRef::from_bump(item))

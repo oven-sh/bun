@@ -357,6 +357,7 @@ impl JSType {
     pub fn is_string_like(self) -> bool { unimplemented!("b2-blocked: bun_jsc::JSType::is_string_like") }
     pub fn is_object(self) -> bool { unimplemented!("b2-blocked: bun_jsc::JSType::is_object") }
     pub fn is_typed_array_or_array_buffer(self) -> bool { unimplemented!("b2-blocked: bun_jsc::JSType") }
+    pub fn is_array_buffer_like(self) -> bool { unimplemented!("b2-blocked: bun_jsc::JSType::is_array_buffer_like") }
     pub fn is_array_like(self) -> bool { unimplemented!("b2-blocked: bun_jsc::JSType::is_array_like") }
     pub fn is_indexable(self) -> bool { unimplemented!("b2-blocked: bun_jsc::JSType::is_indexable") }
 }
@@ -613,6 +614,65 @@ pub mod api {
 
 pub mod webcore {
     pub use super::AutoFlusher;
+
+    /// Opaque handle to `bun_runtime::webcore::Blob`. Signature-compatible
+    /// with `bun_jsc::WebCore::Blob`; bodies stubbed until `bun_runtime` is a
+    /// dependency again (see Cargo.toml b2-blocked note).
+    #[repr(C)]
+    pub struct Blob { _opaque: [u8; 0] }
+    impl Blob {
+        pub fn needs_to_read_file(&self) -> bool {
+            unimplemented!("b2-blocked: bun_runtime::webcore::Blob::needs_to_read_file")
+        }
+        pub fn shared_view(&self) -> &[u8] {
+            unimplemented!("b2-blocked: bun_runtime::webcore::Blob::shared_view")
+        }
+    }
+    impl super::JsClass for Blob {
+        fn from_js(_value: super::JSValue) -> Option<*mut Self> {
+            unimplemented!("b2-blocked: bun_jsc::WebCore::Blob::from_js")
+        }
+    }
+}
+
+/// `bun_jsc::JsClass` — generic downcast trait backing `JSValue::as_<T>()`.
+/// Mirrors src/jsc/lib.rs:2367.
+pub trait JsClass {
+    fn from_js(value: JSValue) -> Option<*mut Self>;
+}
+
+/// `bun_jsc::IntegerRange` (src/jsc/JSGlobalObject.rs:1463) — comptime-range
+/// options for `validate_integer_range` / `validate_big_int_range`.
+#[derive(Clone, Copy)]
+pub struct IntegerRange {
+    pub min: i128,
+    pub max: i128,
+    pub field_name: &'static [u8],
+    pub always_allow_zero: bool,
+}
+impl Default for IntegerRange {
+    fn default() -> Self {
+        Self { min: i128::MIN, max: i128::MAX, field_name: b"", always_allow_zero: false }
+    }
+}
+
+impl JSGlobalObject {
+    pub fn validate_integer_range<T: bun_core::Integer>(
+        &self,
+        _value: JSValue,
+        _default: T,
+        _range: IntegerRange,
+    ) -> JsResult<T> {
+        unimplemented!("b2-blocked: bun_jsc::JSGlobalObject::validate_integer_range")
+    }
+    pub fn validate_big_int_range<T: bun_core::Integer>(
+        &self,
+        _value: JSValue,
+        _default: T,
+        _range: IntegerRange,
+    ) -> JsResult<T> {
+        unimplemented!("b2-blocked: bun_jsc::JSGlobalObject::validate_big_int_range")
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -829,6 +889,15 @@ impl JSValue {
     }
     pub fn coerce<T>(self, _global: &JSGlobalObject) -> JsResult<T> {
         unimplemented!("b2-blocked: bun_jsc::JSValue::coerce")
+    }
+    pub fn json_stringify_fast(self, _global: &JSGlobalObject, _out: &mut bun_string::String) -> JsResult<()> {
+        unimplemented!("b2-blocked: bun_jsc::JSValue::json_stringify_fast")
+    }
+    /// Generic downcast (`as(comptime T)` in Zig). Dispatches via [`JsClass::from_js`].
+    #[inline]
+    pub fn as_<T: JsClass>(self) -> Option<*mut T> {
+        if !self.is_cell() { return None; }
+        T::from_js(self)
     }
     pub fn to_int32(self) -> i32 {
         unimplemented!("b2-blocked: bun_jsc::JSValue::to_int32")

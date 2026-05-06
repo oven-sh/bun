@@ -307,7 +307,7 @@ mod _gated {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Stub surface (B-1): opaque newtypes / `todo!()` fns for every public symbol
+// Stub surface (B-1): opaque newtypes / placeholder fns for every public symbol
 // that lib.rs previously re-exported from a gated module. Downstream crates
 // type-check against these; bodies are filled in B-2.
 // ──────────────────────────────────────────────────────────────────────────

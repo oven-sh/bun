@@ -1280,19 +1280,20 @@ impl ExportStarContext {
                 // ES6 export star statements ignore exports named "default"
                 // SAFETY: alias points into the named_exports key storage which
                 // is not mutated in this loop.
-                if unsafe { &*alias } == b"default" {
+                let alias_slice: &[u8] = unsafe { &*alias };
+                if alias_slice == b"default" {
                     continue;
                 }
 
                 // This export star is shadowed if any file in the stack has a matching real named export
                 for prev in &self.source_index_stack[0..stack_end_pos] {
-                    if col_ref!(self.named_exports)[*prev as usize].contains(unsafe { &*alias }) {
+                    if col_ref!(self.named_exports)[*prev as usize].contains(alias_slice) {
                         continue 'next_export;
                     }
                 }
 
                 let gop = col!(resolved_exports)[target_id]
-                    .get_or_put(unsafe { &*alias })
+                    .get_or_put(alias_slice)
                     .expect("oom");
                 if !gop.found_existing {
                     // Initialize the re-export

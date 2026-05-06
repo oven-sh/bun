@@ -2464,7 +2464,7 @@ impl Example {
         // proxy URL borrows from the env loader's leaked map — erase to
         // `'static` for `AsyncHTTP::init_sync` (same as `fetch_from_github`).
         let http_proxy: Option<URL<'static>> = env_loader
-            .get_http_proxy_for(unsafe { URL_.as_ref().unwrap() })
+            .get_http_proxy_for(unsafe { (*(&raw const URL_)).as_ref().unwrap() })
             .map(|u| unsafe { core::mem::transmute::<URL<'_>, URL<'static>>(u) });
 
         let mutable = Box::leak(Box::new(MutableString::init(2048)?));
@@ -2472,7 +2472,7 @@ impl Example {
         let async_http: &mut HTTP::AsyncHTTP = Box::leak(Box::new(HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
             // SAFETY: single-threaded CLI access to static URL_ (set just above)
-            unsafe { URL_.clone() }.unwrap(),
+            unsafe { (*(&raw const URL_)).clone() }.unwrap(),
             Default::default(),
             b"",
             mutable,

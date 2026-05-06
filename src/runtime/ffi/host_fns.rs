@@ -329,8 +329,10 @@ impl FFI {
 
         // SAFETY: `global` is a live opaque JSC handle (ZST; interior owned by
         // C++). `lib` is a freshly-leaked `Box<FFI>`; ownership transfers to
-        // the JS wrapper (freed in `FFI::finalize`).
-        let js_object = unsafe { FFI__create(global, lib) };
+        // the JS wrapper (freed in `FFI::finalize`). Passed as opaque `*mut
+        // c_void` since C++ stores it as `void* m_ctx` and `FFI` is not
+        // `#[repr(C)]`.
+        let js_object = unsafe { FFI__create(global, lib.cast::<c_void>()) };
         // SAFETY: `global` as above. `js_object` is the wrapper just created;
         // `obj` is rooted by `protect()` for the call duration.
         unsafe { FFIPrototype__symbolsValueSetCachedValue(js_object, global, obj) };

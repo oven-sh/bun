@@ -1245,7 +1245,7 @@ impl JSValkeyClient {
                 let field_str = field_js.to_bun_string(global)?;
                 // PERF(port): was assume_capacity
                 args.push(field_str.to_utf8());
-                drop(field_str);
+                field_str.deref();
 
                 let Some(value_js) = iter.next()? else {
                     return Err(global.throw(format_args!(

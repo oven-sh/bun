@@ -5659,6 +5659,12 @@ pub mod fs {
             // SAFETY: `self` is an erased `&bun_resolver::fs::DirEntry`.
             unsafe { (vtable().dir_entry_has_comptime_query)(self, query_lower) }
         }
+        /// Zig: `dir_entry.fd` (fs.zig:121) — cached open directory fd, or
+        /// `bun.invalid_fd` when the resolver did not retain it.
+        #[inline] pub fn fd(&self) -> super::Fd {
+            // SAFETY: `self` is an erased `&bun_resolver::fs::DirEntry`.
+            unsafe { (vtable().dir_entry_fd)(self) }
+        }
         /// Accessor for the underlying `EntryMap`. Real field is
         /// `bun_resolver::fs::DirEntry.data`; opaque here.
         #[inline] pub fn data(&self) -> *const () {

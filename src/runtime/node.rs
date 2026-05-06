@@ -539,80 +539,125 @@ impl<R> Maybe<R, bun_css::BasicParseError> {
 }
 
 // ─── to_js: comptime @typeInfo dispatch → trait ───────────────────────────
-// Gated: bun_jsc broken; JSValue/ArrayBuffer have no methods on stub.
 
-mod _gated_to_js {
-    use super::*;
-    use bun_jsc::{ArrayBuffer, JSGlobalObject, JSValue, JsResult};
+impl<R, E> Maybe<R, E>
+where
+    R: MaybeToJs,
+    E: MaybeToJs,
+{
+    pub fn to_js(
+        self,
+        global_object: &bun_jsc::JSGlobalObject,
+    ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
+        match self {
+            Maybe::Result(r) => r.maybe_to_js(global_object),
+            Maybe::Err(e) => e.maybe_to_js(global_object),
+        }
+    }
+}
 
-    impl<R, E> Maybe<R, E>
-    where
-        R: MaybeToJs,
-        E: MaybeToJs,
-    {
-        pub fn to_js(self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-            match self {
-                Maybe::Result(r) => r.maybe_to_js(global_object),
-                Maybe::Err(e) => e.maybe_to_js(global_object),
+/// Replaces the Zig `switch (ReturnType) { ... @typeInfo ... }` reflection in
+/// `Maybe.toJS`. Each concrete `R`/`E` opts in by implementing this trait;
+/// the Zig comptime `@typeInfo` arms map to per-type impls below.
+pub trait MaybeToJs {
+    fn maybe_to_js(
+        self,
+        global_object: &bun_jsc::JSGlobalObject,
+    ) -> bun_jsc::JsResult<bun_jsc::JSValue>;
+}
+
+impl MaybeToJs for bun_jsc::JSValue {
+    fn maybe_to_js(
+        self,
+        _global_object: &bun_jsc::JSGlobalObject,
+    ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
+        Ok(self)
+    }
+}
+
+impl MaybeToJs for () {
+    fn maybe_to_js(
+        self,
+        _global_object: &bun_jsc::JSGlobalObject,
+    ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
+        Ok(bun_jsc::JSValue::UNDEFINED)
+    }
+}
+
+impl MaybeToJs for bool {
+    fn maybe_to_js(
+        self,
+        _global_object: &bun_jsc::JSGlobalObject,
+    ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
+        Ok(bun_jsc::JSValue::js_boolean(self))
+    }
+}
+
+impl MaybeToJs for bun_jsc::ArrayBuffer {
+    fn maybe_to_js(
+        self,
+        global_object: &bun_jsc::JSGlobalObject,
+    ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
+        self.to_js(global_object)
+    }
+}
+
+impl MaybeToJs for Vec<u8> {
+    fn maybe_to_js(
+        self,
+        global_object: &bun_jsc::JSGlobalObject,
+    ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
+        // PORT NOTE: ownership transfers to JSC (freed via
+        // `MarkedArrayBuffer_deallocator` → `mi_free`); see
+        // `Maybe::to_array_buffer` above for the full rationale.
+        let bytes: &mut [u8] = Vec::leak(self);
+        bun_jsc::ArrayBuffer::from_bytes(bytes, bun_jsc::JSType::ArrayBuffer).to_js(global_object)
+    }
+}
+
+// `.int, .float` arm — `JSValue.jsNumber(r)`.
+macro_rules! impl_maybe_to_js_number {
+    ($($t:ty),* $(,)?) => {$(
+        impl MaybeToJs for $t {
+            #[inline]
+            fn maybe_to_js(
+                self,
+                _global_object: &bun_jsc::JSGlobalObject,
+            ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
+                Ok(bun_jsc::JSValue::from(self))
             }
         }
-    }
-
-    /// Replaces the Zig `switch (ReturnType) { ... @typeInfo ... }` reflection in
-    /// `Maybe.toJS`. Each concrete `R`/`E` opts in by implementing this trait.
-    // TODO(port): proc-macro / blanket impls for numeric & struct types may be
-    // preferable in Phase B; the explicit impls below cover the arms the Zig
-    // `switch` handled directly.
-    pub trait MaybeToJs {
-        fn maybe_to_js(self, global_object: &JSGlobalObject) -> JsResult<JSValue>;
-    }
-
-    impl MaybeToJs for JSValue {
-        fn maybe_to_js(self, _global_object: &JSGlobalObject) -> JsResult<JSValue> {
-            Ok(self)
-        }
-    }
-
-    impl MaybeToJs for () {
-        fn maybe_to_js(self, _global_object: &JSGlobalObject) -> JsResult<JSValue> {
-            // TODO(b2-blocked): bun_jsc::JSValue::UNDEFINED
-            Ok(JSValue::UNDEFINED)
-        }
-    }
-
-    impl MaybeToJs for bool {
-        fn maybe_to_js(self, _global_object: &JSGlobalObject) -> JsResult<JSValue> {
-            // TODO(b2-blocked): bun_jsc::JSValue::from(bool)
-            Ok(JSValue::from(self))
-        }
-    }
-
-    impl MaybeToJs for ArrayBuffer {
-        fn maybe_to_js(self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-            // TODO(b2-blocked): bun_jsc::ArrayBuffer::to_js
-            self.to_js(global_object)
-        }
-    }
-
-    impl MaybeToJs for Vec<u8> {
-        fn maybe_to_js(self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-            // PORT NOTE: ownership transfers to JSC (freed via
-            // `MarkedArrayBuffer_deallocator` → `mi_free`); see
-            // `Maybe::to_array_buffer` above for the full rationale.
-            let bytes: &mut [u8] = Vec::leak(self);
-            ArrayBuffer::from_bytes(bytes, bun_jsc::JSType::ArrayBuffer).to_js(global_object)
-        }
-    }
-
-    // TODO(port): the Zig fallback arms dispatched on `@typeInfo(ReturnType)`:
-    //   .int/.float          => JSValue.jsNumber(r)
-    //   .struct/.enum/.opaque/.union => r.toJS(globalObject)
-    //   .pointer (zig string) => ZigString.init(..).withEncoding().toJS(..)
-    //   .pointer (other)     => r.toJS(globalObject)
-    // In Rust these become per-type `MaybeToJs` impls (or a blanket
-    // `impl<T: jsc::ToJs> MaybeToJs for T`). Phase B should add the blanket impl
-    // once `jsc::ToJs` exists; left intentionally un-generated here.
+    )*};
 }
+impl_maybe_to_js_number!(i32, u32, f64, u64, usize);
+
+// `.pointer` (zig string) arm — `ZigString.init(..).withEncoding().toJS(..)`.
+impl MaybeToJs for &[u8] {
+    fn maybe_to_js(
+        self,
+        global_object: &bun_jsc::JSGlobalObject,
+    ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
+        Ok(bun_jsc::ZigString::init(self)
+            .with_encoding()
+            .to_js(global_object))
+    }
+}
+
+// `.err => |e| e.toJS(globalObject)` arm for the canonical `bun_sys::Error`.
+impl MaybeToJs for bun_sys::Error {
+    fn maybe_to_js(
+        self,
+        global_object: &bun_jsc::JSGlobalObject,
+    ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
+        use bun_jsc::SysErrorJsc as _;
+        Ok(self.to_js(global_object))
+    }
+}
+
+// PORT NOTE: the Zig `.@"struct" / .@"enum" / .@"opaque" / .@"union"` and
+// non-string `.pointer` arms forwarded to `r.toJS(globalObject)`. In Rust each
+// such `R` implements `MaybeToJs` directly at its definition site (no blanket
+// `@typeInfo` reflection available); add per-type impls alongside the type.
 
 // ─── Display ──────────────────────────────────────────────────────────────
 

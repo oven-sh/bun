@@ -36,7 +36,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     fn t_function(
         p: &mut Self,
-        opts: &mut ParseStatementOptions,
+        opts: &mut ParseStatementOptions<'a>,
         loc: logger::Loc,
     ) -> Result<Stmt> {
         p.lexer.next()?;
@@ -45,7 +45,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     fn t_enum(
         p: &mut Self,
-        opts: &mut ParseStatementOptions,
+        opts: &mut ParseStatementOptions<'a>,
         loc: logger::Loc,
     ) -> Result<Stmt> {
         if !Self::IS_TYPESCRIPT_ENABLED {
@@ -110,7 +110,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     fn t_class(
         p: &mut Self,
-        opts: &mut ParseStatementOptions,
+        opts: &mut ParseStatementOptions<'a>,
         loc: logger::Loc,
     ) -> Result<Stmt> {
         if opts.lexical_decl != LexicalDecl::AllowAll {
@@ -122,7 +122,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     fn t_var(
         p: &mut Self,
-        opts: &mut ParseStatementOptions,
+        opts: &mut ParseStatementOptions<'a>,
         loc: logger::Loc,
     ) -> Result<Stmt> {
         p.lexer.next()?;
@@ -141,7 +141,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     fn t_const(
         p: &mut Self,
-        opts: &mut ParseStatementOptions,
+        opts: &mut ParseStatementOptions<'a>,
         loc: logger::Loc,
     ) -> Result<Stmt> {
         if opts.lexical_decl != LexicalDecl::AllowAll {
@@ -1413,7 +1413,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     import_record_index: u32::MAX,
                     default_name: Some(LocRef {
                         loc: p.lexer.loc(),
-                        ref_: p.store_name_in_ref(default_name)?,
+                        ref_: Some(p.store_name_in_ref(default_name)?),
                     }),
                     ..Default::default()
                 };
@@ -1572,7 +1572,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // Parse a labeled statement
                         p.lexer.next()?;
 
-                        let _name = LocRef { loc: expr.loc, ref_: ident.ref_ };
+                        let _name = LocRef { loc: expr.loc, ref_: Some(ident.ref_) };
                         let mut nested_opts = ParseStatementOptions::default();
 
                         match opts.lexical_decl {
@@ -1700,7 +1700,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     js_ast::StmtData::SLocal(local) => {
                                         let mut _decls =
                                             bumpalo::collections::Vec::<G::Decl>::with_capacity_in(
-                                                local.decls.len() as usize,
+                                                local.decls.len as usize,
                                                 p.allocator,
                                             );
                                         for decl in local.decls.slice() {
@@ -1717,7 +1717,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     _ => {}
                                 }
 
-                                if decls.len() > 0 {
+                                if decls.len > 0 {
                                     return Ok(p.s(
                                         S::Local {
                                             kind: js_ast::LocalKind::KVar,

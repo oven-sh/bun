@@ -255,6 +255,9 @@ pub use self::zig_error_type::ZigErrorType;
 pub use self::errorable::Errorable;
 pub use self::zig_stack_frame_position::ZigStackFramePosition;
 
+#[path = "GarbageCollectionController.rs"]
+pub mod garbage_collection_controller;
+
 #[rustfmt::skip]
 mod _gated {
     #![cfg(any())]
@@ -284,7 +287,6 @@ mod _gated {
     #[path = "CppTask.rs"] pub mod cpp_task;
     #[path = "EventLoopHandle.rs"] pub mod event_loop_handle;
     #[path = "FFI.rs"] pub mod ffi;
-    #[path = "GarbageCollectionController.rs"] pub mod garbage_collection_controller;
     #[path = "HTTPServerAgent.rs"] pub mod http_server_agent;
     #[path = "JSCScheduler.rs"] pub mod jsc_scheduler;
     #[path = "JSONLineBuffer.rs"] pub mod json_line_buffer;

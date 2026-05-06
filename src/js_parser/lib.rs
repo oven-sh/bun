@@ -1905,7 +1905,14 @@ pub mod defines_full_draft {
                         data: json_data_to_expr_data(it.data, bump)?,
                     })?;
                 }
-                let item = bump.alloc(E::Array { items, ..Default::default() });
+                let item = bump.alloc(E::Array {
+                    items,
+                    comma_after_spread: src.comma_after_spread,
+                    is_single_line: src.is_single_line,
+                    is_parenthesized: src.is_parenthesized,
+                    was_originally_macro: src.was_originally_macro,
+                    close_bracket_loc: src.close_bracket_loc,
+                });
                 expr::Data::EArray(StoreRef::from_bump(item))
             }
             J::EObject(o) => {
@@ -1931,7 +1938,14 @@ pub mod defines_full_draft {
                     };
                     properties.append(G::Property { key, value, ..Default::default() })?;
                 }
-                let item = bump.alloc(E::Object { properties, ..Default::default() });
+                let item = bump.alloc(E::Object {
+                    properties,
+                    comma_after_spread: src.comma_after_spread,
+                    is_single_line: src.is_single_line,
+                    is_parenthesized: src.is_parenthesized,
+                    was_originally_macro: src.was_originally_macro,
+                    close_brace_loc: src.close_brace_loc,
+                });
                 expr::Data::EObject(StoreRef::from_bump(item))
             }
         })

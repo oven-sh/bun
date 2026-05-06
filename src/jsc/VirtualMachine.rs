@@ -227,8 +227,7 @@ pub struct VirtualMachine {
 
     pub module_loader: ModuleLoader::ModuleLoader,
 
-    // TODO(b2-cycle): `gc_controller` is `GarbageCollectionController` (gated sibling).
-    pub gc_controller: (),
+    pub gc_controller: crate::GarbageCollectionController,
     // BACKREF — WebWorker owns the VM. Real type: `*const bun_runtime::webcore::WebWorker`.
     pub worker: Option<*const c_void>,
     // TODO(b2-cycle): `ipc` is `Option<IPCInstanceUnion>` — depends on ipc.rs (gated sibling).

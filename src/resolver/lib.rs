@@ -3921,17 +3921,24 @@ impl PendingResolution {
 
     // deinit → Drop (frees dependency + string_buf; both have Drop)
 
-    // TODO(b2-blocked): Package::copy → PackageExternal needs a string-builder/arena;
-    // wire once Semver::String::Builder is threaded through here. Gated alongside
-    // its sole (auto-install) caller so the live symbol carries no `unimplemented!()`.
-    
     pub fn init(
-        esm: crate::package_json::Package,
+        esm: crate::package_json::Package<'_>,
         dependency: Dependency::Version,
         resolution_id: Install::PackageID,
     ) -> core::result::Result<PendingResolution, bun_core::Error> {
-        let _ = (esm, dependency, resolution_id);
-        unimplemented!("PendingResolution::init (Phase B — Package::copy)")
+        // PORT NOTE: Zig body called `try esm.copy(allocator)` and left `string_buf`
+        // / `tag` defaulted; that fn was never compiled (Zig lazy-analyzes unreferenced
+        // fns). `Package::copy` is the count→allocate→clone Builder dance the live
+        // call sites open-code, so thread the freshly-allocated buffer into
+        // `string_buf` here so `Drop` frees what backs the cloned `esm` strings.
+        let (esm, string_buf) = esm.copy()?;
+        Ok(PendingResolution {
+            esm,
+            dependency,
+            resolution_id,
+            string_buf,
+            ..PendingResolution::default()
+        })
     }
 }
 

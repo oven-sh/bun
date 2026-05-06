@@ -39,11 +39,11 @@ crate::stub_ty!(
     ConcurrentCppTask,
     ConcurrentPromiseTask,
     CppTask,
-    GarbageCollectionController,
     PosixSignalHandle,
     PosixSignalTask,
     WorkTask,
 );
+pub use crate::garbage_collection_controller::GarbageCollectionController;
 
 #[allow(non_upper_case_globals)]
 bun_core::declare_scope!(EventLoop, hidden);
@@ -578,7 +578,8 @@ impl EventLoop {
     }
 
     pub fn process_gc_timer(&mut self) {
-        // TODO(b2-cycle): GarbageCollectionController::process_gc_timer — gated sibling.
+        // SAFETY: vm() returns the live owning VM; gc_controller is embedded.
+        unsafe { (*self.vm()).gc_controller.process_gc_timer() };
     }
 
     pub fn tick(&mut self) {
@@ -733,7 +734,14 @@ impl EventLoop {
             }
             // SAFETY: `vm` is the live owning VM.
             unsafe { (*vm).event_loop_handle = Some(Async::Loop::get()) };
-            // TODO(b2-cycle): gc_controller.init(vm) — gated sibling.
+            // PORT NOTE: reshaped for borrowck — Zig passes `vm.gc_controller` and
+            // `vm` simultaneously; route through raw addr_of to avoid stacked-borrow
+            // aliasing of the embedded field with its parent.
+            // SAFETY: `vm` is the live owning VM; gc_controller is embedded.
+            unsafe {
+                let gc: *mut GarbageCollectionController = core::ptr::addr_of_mut!((*vm).gc_controller);
+                (*gc).init(&mut *vm);
+            }
         }
         #[cfg(windows)]
         {
@@ -747,7 +755,8 @@ impl EventLoop {
 
     /// Asynchronously run the garbage collector and track how much memory is now allocated
     pub fn perform_gc(&mut self) {
-        // TODO(b2-cycle): GarbageCollectionController::perform_gc — gated sibling.
+        // SAFETY: vm() returns the live owning VM; gc_controller is embedded.
+        unsafe { (*self.vm()).gc_controller.perform_gc() };
     }
 
     /// `eventLoop().autoTick()` — bounces through `VirtualMachine::auto_tick`,

@@ -19,7 +19,6 @@
 //! thread-safe. Each VirtualMachine instance should have its own controller.
 
 use core::ffi::c_int;
-#[allow(unused_imports)]
 use core::mem::offset_of;
 
 #[allow(unused_imports)]
@@ -140,16 +139,29 @@ impl GarbageCollectionController {
     }
 
     pub fn bun_vm(&mut self) -> &mut VirtualMachine {
-         // TODO(b2-blocked): VirtualMachine.gc_controller field is `()` placeholder; offset_of! invalid until real type wired
-        {
-            // SAFETY: self is the `gc_controller` field embedded in a VirtualMachine
-            return unsafe {
-                &mut *(self as *mut Self as *mut u8)
-                    .sub(offset_of!(VirtualMachine, gc_controller))
-                    .cast::<VirtualMachine>()
-            };
+        // SAFETY: self is the `gc_controller` field embedded in a VirtualMachine
+        // (Zig: `@alignCast(@fieldParentPtr("gc_controller", this))`).
+        unsafe {
+            &mut *(self as *mut Self as *mut u8)
+                .sub(offset_of!(VirtualMachine, gc_controller))
+                .cast::<VirtualMachine>()
         }
-        todo!("bun_vm — blocked on VirtualMachine.gc_controller field type")
+    }
+
+    /// Explicit teardown (Zig `deinit`). Idempotent — `Drop` forwards here.
+    /// Kept as an inherent method because callers (web_worker, VM exit path)
+    /// need to release the uws timers before the owning VM storage is freed.
+    pub fn deinit(&mut self) {
+        // SAFETY: timers were created via uws::Timer::create_fallthrough; close::<true>
+        // frees the fallthrough timer. `take()` ensures we close at most once.
+        unsafe {
+            if let Some(t) = self.gc_timer.take() {
+                uws::Timer::close::<true>(t.as_ptr());
+            }
+            if let Some(t) = self.gc_repeating_timer.take() {
+                uws::Timer::close::<true>(t.as_ptr());
+            }
+        }
     }
 
     // We want to always run GC once in awhile
@@ -253,15 +265,7 @@ impl GarbageCollectionController {
 
 impl Drop for GarbageCollectionController {
     fn drop(&mut self) {
-        // SAFETY: timers are non-null after init(); close::<true> frees the uws fallthrough timer
-        unsafe {
-            if let Some(t) = self.gc_timer {
-                uws::Timer::close::<true>(t.as_ptr());
-            }
-            if let Some(t) = self.gc_repeating_timer {
-                uws::Timer::close::<true>(t.as_ptr());
-            }
-        }
+        self.deinit();
     }
 }
 

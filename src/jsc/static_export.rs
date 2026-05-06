@@ -28,17 +28,18 @@ impl<T, P> StaticExport<T, P> {
 
     // Zig: `comptime "wrap" ++ this.symbol_name`
     // PORT NOTE: const string concatenation over a *field* is not expressible
-    // in stable Rust. `StaticExport` instances are process-lifetime singletons
-    // describing C `@export` symbols (never freed in Zig either), so we leak the
-    // prefixed name — same precedent as `bun_alloc::heap_breakdown::named_allocator`.
-    // Callers with a literal in hand should prefer `const_format::concatcp!("wrap", SYM)`
-    // directly; Phase B replaces this whole mechanism with `#[no_mangle]` + proc-macro.
+    // in stable Rust. Return an owned `String` so the caller controls the
+    // lifetime — `Box::leak` is forbidden per docs/PORTING.md (it would leak a
+    // fresh allocation on every call, whereas the Zig original is a single
+    // comptime-interned constant). Callers holding a literal should prefer
+    // `const_format::concatcp!("wrap", SYM)` to recover the comptime semantics;
+    // Phase B replaces this whole mechanism with `#[no_mangle]` + proc-macro.
     // PERF(port): was comptime `++` (zero-cost) — profile in Phase B
-    pub fn wrapped_name(&self) -> &'static str {
+    pub fn wrapped_name(&self) -> String {
         let mut s = String::with_capacity(4 + self.symbol_name.len());
         s.push_str("wrap");
         s.push_str(self.symbol_name);
-        Box::leak(s.into_boxed_str())
+        s
     }
 }
 

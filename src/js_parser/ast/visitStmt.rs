@@ -513,7 +513,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         S::Local {
                             kind: S::Kind::KConst,
                             decls: G::DeclList::from_slice(&[G::Decl {
-                                binding: Binding::alloc(B::Identifier { r#ref: temp_id }, stmt.loc),
+                                binding: Binding::alloc(p.allocator, B::Identifier { r#ref: temp_id }, stmt.loc),
                                 value: Some(value_expr),
                             }])
                             .expect("oom"),
@@ -552,12 +552,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         S::Local { decls, ..Default::default() },
                         stmt.loc,
                     ));
-                    let items = p.allocator.alloc_slice_copy(&[js_ast::ClauseItem {
+                    let items = core::slice::from_mut(p.allocator.alloc(js_ast::ClauseItem {
                         alias: b"default" as *const [u8],
                         alias_loc: data.default_name.loc,
                         name: data.default_name,
                         ..Default::default()
-                    }]);
+                    }));
                     // PERF(port): was assume_capacity
                     stmts.push(p.s(
                         S::ExportClause { items: items as *mut [_], is_single_line: false },
@@ -689,6 +689,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                             kind: S::Kind::KConst,
                                             decls: G::DeclList::from_slice(&[G::Decl {
                                                 binding: Binding::alloc(
+                                                    p.allocator,
                                                     B::Identifier { r#ref: ref_to_use },
                                                     stmt.loc,
                                                 ),
@@ -779,7 +780,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         }
 
                         // We only inject a name into classes when there is a decorator
-                        if class.class.has_decorators() {
+                        if class.class.has_decorators {
                             if class.class.class_name.is_none()
                                 || class.class.class_name.unwrap().ref_.is_none()
                             {
@@ -1201,7 +1202,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         {
             let r = js_lexer::range_of_identifier(p.source, stmt.loc);
             p.log
-                .add_range_error(Some(p.source), r, "Cannot use \"break\" here".into())
+                .add_range_error(Some(p.source), r, b"Cannot use \"break\" here")
                 .expect("unreachable");
         }
 
@@ -1230,7 +1231,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         } else if !p.fn_or_arrow_data_visit.is_inside_loop {
             let r = js_lexer::range_of_identifier(p.source, stmt.loc);
             p.log
-                .add_range_error(Some(p.source), r, "Cannot use \"continue\" here".into())
+                .add_range_error(Some(p.source), r, b"Cannot use \"continue\" here")
                 .expect("unreachable");
         }
 
@@ -1310,7 +1311,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             };
                             let bin: &mut E::Binary = &mut *bin_ref;
                             if bin.op == js_ast::OpCode::BinAssign
-                                && matches!(bin.left.data, js_ast::ExprData::ECommonJSExportIdentifier(_))
+                                && matches!(bin.left.data, js_ast::ExprData::ECommonjsExportIdentifier(_))
                             {
                                 // last entry's value
                                 let key: &'a [u8] = as_static(unsafe {
@@ -1325,7 +1326,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                                 let mut decls = G::DeclList::init_capacity(1).expect("oom");
                                 let ref_ = match bin.left.data {
-                                    js_ast::ExprData::ECommonJSExportIdentifier(id) => id.ref_,
+                                    js_ast::ExprData::ECommonjsExportIdentifier(id) => id.ref_,
                                     _ => unreachable!(),
                                 };
                                 decls
@@ -1506,7 +1507,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         data.test_ = SideEffects::simplify_boolean(p, data.test_);
         let result = SideEffects::to_boolean(p, &data.test_.data);
-        if result.ok && result.side_effects == SideEffects::SideEffects::NoSideEffects {
+        if result.ok && result.side_effects == SideEffects::NoSideEffects {
             data.test_ = p.new_expr(E::Boolean { value: result.value }, data.test_.loc);
         }
 
@@ -1570,7 +1571,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if data.no.is_none()
                         || !SideEffects::should_keep_stmt_in_dead_control_flow(data.no.unwrap(), p.allocator)
                     {
-                        if effects.side_effects == SideEffects::SideEffects::CouldHaveSideEffects {
+                        if effects.side_effects == SideEffects::CouldHaveSideEffects {
                             // Keep the condition if it could have side effects (but is still known to be truthy)
                             if let Some(test_) = SideEffects::simplify_unused_expr(p, data.test_) {
                                 stmts.push(p.s(S::SExpr { value: test_, ..Default::default() }, test_.loc));
@@ -1584,7 +1585,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 } else {
                     // The test is falsy
                     if !SideEffects::should_keep_stmt_in_dead_control_flow(data.yes, p.allocator) {
-                        if effects.side_effects == SideEffects::SideEffects::CouldHaveSideEffects {
+                        if effects.side_effects == SideEffects::CouldHaveSideEffects {
                             // Keep the condition if it could have side effects (but is still known to be truthy)
                             if let Some(test_) = SideEffects::simplify_unused_expr(p, data.test_) {
                                 stmts.push(p.s(S::SExpr { value: test_, ..Default::default() }, test_.loc));
@@ -1643,7 +1644,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             data.test_ = Some(SideEffects::simplify_boolean(p, visited));
 
             let result = SideEffects::to_boolean(p, &data.test_.unwrap().data);
-            if result.ok && result.value && result.side_effects == SideEffects::SideEffects::NoSideEffects {
+            if result.ok && result.value && result.side_effects == SideEffects::NoSideEffects {
                 data.test_ = None;
             }
         }

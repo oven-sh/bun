@@ -137,11 +137,42 @@ impl FdExt for Fd {
             }
             #[cfg(windows)]
             {
-                // TODO(b2-windows): libuv uv_fs_close + NtClose paths once
-                // bun_libuv_sys/bun_windows_sys are real. For now this arm is
-                // unreachable in posix-only check builds.
-                let _ = self;
-                todo!("FdExt::close_allowing_standard_io on Windows")
+                use sys::windows::{libuv as uv, Win32Error, NTSTATUS};
+                match self.decode_windows() {
+                    DecodeWindows::Uv(file_number) => {
+                        let mut req = uv::fs_t::uninitialized();
+                        // SAFETY: synchronous libuv fs call (cb = None); req lives on the
+                        // stack for the duration. fs_t::Drop calls uv_fs_req_cleanup.
+                        let rc = unsafe {
+                            uv::uv_fs_close(uv::Loop::get(), &mut req, file_number, None)
+                        };
+                        if let Some(errno) = rc.errno() {
+                            Some(sys::Error {
+                                errno,
+                                syscall: sys::Tag::close,
+                                fd: self,
+                                from_libuv: true,
+                                ..Default::default()
+                            })
+                        } else {
+                            None
+                        }
+                    }
+                    DecodeWindows::Windows(handle) => {
+                        // SAFETY: handle is a valid NT HANDLE per decode_windows().
+                        match unsafe { bun_windows_sys::ntdll::NtClose(handle) } {
+                            NTSTATUS::SUCCESS => None,
+                            rc => Some(sys::Error {
+                                errno: Win32Error::from_nt_status(rc)
+                                    .to_system_errno()
+                                    .map_or(1, |e| e as _),
+                                syscall: sys::Tag::CloseHandle,
+                                fd: self,
+                                ..Default::default()
+                            }),
+                        }
+                    }
+                }
             }
         };
 

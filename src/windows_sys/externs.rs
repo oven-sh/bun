@@ -269,9 +269,11 @@ pub mod ntdll {
             Length: ULONG,
             FileInformationClass: FILE_INFORMATION_CLASS,
         ) -> NTSTATUS;
+        pub fn NtClose(Handle: HANDLE) -> NTSTATUS;
     }
     pub use super::RtlNtStatusToDosError;
 }
+pub use ntdll::NtClose;
 
 /// `std.os.windows.user32` (subset placeholder; Phase B fills as needed).
 pub mod user32 {}

@@ -1766,6 +1766,20 @@ impl<'a> Package<'a> {
         }
     }
 
+    /// Allocate a fresh string buffer and clone `name`/`version`/`subpath`
+    /// into it as offset-encoded `Semver::String`s. Mirrors the inline
+    /// `count` → `allocate` → `clone` Builder dance the resolver does at the
+    /// auto-install pending sites (resolver.zig), exposed as the `esm.copy`
+    /// helper that `PendingResolution::init` expects.
+    pub fn copy(self) -> Result<(PackageExternal, Vec<u8>), bun_core::Error> {
+        let mut builder = Semver::semver_string::Builder::default();
+        self.count(&mut builder);
+        builder.allocate()?;
+        let cloned = self.clone(&mut builder);
+        let string_buf = builder.ptr.take().map(|b| b.into_vec()).unwrap_or_default();
+        Ok((cloned, string_buf))
+    }
+
     pub fn with_auto_version(self) -> Package<'a> {
         if self.version.is_empty() {
             return Package {

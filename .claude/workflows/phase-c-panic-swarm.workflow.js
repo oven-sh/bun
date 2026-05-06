@@ -117,7 +117,7 @@ Return {linked: bool, errors_fixed: N, regated: [crate/module], notes}.`,
           agent(
             `Run ONE command against bun-rs and report result. Repo /root/bun-5.
 
-${c.setup ? `Setup: \`${c.setup}\`\n` : ""}Run: \`RUST_BACKTRACE=1 timeout 30 ./target/debug/bun-rs ${c.cmd.map(a => `'${a}'`).join(" ")} 2>&1\`
+${c.setup ? `Setup: \`${c.setup}\`\n` : ""}Run: \`RUST_BACKTRACE=1 timeout 2 ./target/debug/bun-rs ${c.cmd.map(a => `'${a}'`).join(" ")} 2>&1\`
 
 Capture stdout+stderr (first 4000 chars). Extract panic location (regex \`panicked at '?([^']*)'?, ?([^:]+:[0-9]+:[0-9]+)\` or \`panicked at ([^:]+:[0-9]+:[0-9]+)\` — return file:line:col). If "not yet implemented" or "todo", panic_loc = the file:line. passed = exit==0 && ${c.expect_exact !== undefined ? `stdout.trim() === ${JSON.stringify(c.expect_exact)}` : `stdout.includes(${JSON.stringify(c.expect_contains)})`}.
 
@@ -171,7 +171,7 @@ ${(u.sample.stderr || u.sample.stdout || "").slice(0, 3000)}
 - If it's a missing extern symbol → add to phase_c_exports.rs or find the real C export.
 - If output is wrong but no panic → trace and fix the logic.
 
-Read the .zig spec for the function. Reproduce locally first: \`RUST_BACKTRACE=full timeout 30 ./target/debug/bun-rs '${u.sample.name === "help" ? "--help" : u.cmds[0]}'\`. After fix: \`cargo build -p bun_bin && <re-run cmd>\` to verify. Commit.
+Read the .zig spec for the function. Reproduce locally first: \`RUST_BACKTRACE=full timeout 2 ./target/debug/bun-rs '${u.sample.name === "help" ? "--help" : u.cmds[0]}'\`. After fix: \`cargo build -p bun_bin && <re-run cmd>\` to verify. Commit.
 
 ${HARD_RULES}
 

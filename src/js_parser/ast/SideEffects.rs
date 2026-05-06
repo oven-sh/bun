@@ -851,7 +851,9 @@ impl SideEffects {
                 }
             }
             ExprData::EString(e) => Result {
-                value: e.len() > 0,
+                // Zig: `e.isPresent()` — open-coded to dodge an ambiguous inherent
+                // `len()` while E.rs's duplicate `impl EString` blocks are being merged.
+                value: e.rope_len > 0 || !e.data.is_empty(),
                 side_effects: SideEffects::NoSideEffects,
                 ok: true,
             },

@@ -6,15 +6,17 @@
 //!
 //! This is sometimes abbreviated as SCB
 
-use bun_collections::{ArrayHashMap, MultiArrayList};
+use bun_collections::array_hash_map::ArrayHashAdapter;
 use bun_collections::multi_array_list;
-// TODO(b2-blocked): bun_collections::DynamicBitSet — use Vec<bool> or ArrayBitSet for now
-type DynamicBitSet = Vec<bool>;
+use bun_collections::{ArrayHashMap, DynamicBitSetUnmanaged, MultiArrayList};
 
-use super::base::{Index, IndexInt};
+use super::base::IndexInt;
 use super::use_directive::UseDirective;
 
-#[derive(Clone, Copy)]
+// `#[derive(MultiArrayElement)]` generates `ServerComponentBoundaryField` +
+// `ServerComponentBoundary{Slice,List}Ext` (`source_index()`,
+// `items_reference_source_index()`, …) used by the bundler.
+#[derive(Clone, Copy, bun_collections::MultiArrayElement)]
 pub struct ServerComponentBoundary {
     pub use_directive: UseDirective,
 
@@ -47,14 +49,8 @@ pub struct List {
 // Zig: `std.ArrayHashMapUnmanaged(void, void, struct {}, true)` — a keyless
 // array-hash-map used purely as an index table; all lookups go through the
 // `Adapter` which hashes/compares against `list.items(.source_index)`.
-// TODO(port): `bun_collections::ArrayHashMap` needs an "adapted" entry API
-// (getOrPutAdapted / getIndexAdapted) that accepts an external hasher+eq.
 type Map = ArrayHashMap<(), ()>;
 
-// TODO(port): hand-roll MultiArrayElement for ServerComponentBoundary (4 fields).
-// Until then the MultiArrayList<SCB> append/slice methods don't resolve, so the
-// impl blocks below stay gated. The struct/List/Slice types themselves are real.
- // TODO(b2-blocked): MultiArrayElement derive + ArrayHashMap::*_adapted (track-A)
 impl List {
     /// Can only be called on the bundler thread.
     pub fn put(
@@ -71,10 +67,11 @@ impl List {
             ssr_source_index,
         })?;
         // PORT NOTE: reshaped for borrowck — Zig built `Adapter` from
-        // `m.list.slice()` while also borrowing `m.map` mutably.
+        // `m.list.slice()` while also borrowing `m.map` mutably. Here we hand
+        // the adapter just the `source_index` column it needs.
         let gop = self.map.get_or_put_adapted(
             source_index,
-            Adapter { list: self.list.slice() },
+            Adapter { source_indices: self.list.items_source_index() },
         )?;
         debug_assert!(!gop.found_existing);
         Ok(())
@@ -83,8 +80,8 @@ impl List {
     /// Can only be called on the bundler thread.
     pub fn get_index(&self, real_source_index: IndexInt) -> Option<usize> {
         self.map.get_index_adapted(
-            real_source_index,
-            Adapter { list: self.list.slice() },
+            &real_source_index,
+            Adapter { source_indices: self.list.items_source_index() },
         )
     }
 
@@ -95,62 +92,64 @@ impl List {
     }
 }
 
-// TODO(b2-blocked): Slice<SCB> needs MultiArrayElement; gate the whole struct since it's
-// only useful with the gated impls below.
-
 pub struct Slice<'a> {
     pub list: multi_array_list::Slice<ServerComponentBoundary>,
     pub map: &'a Map,
 }
 
-
- // TODO(b2-blocked): MultiArrayElement + ArrayHashMap::*_adapted (track-A)
 impl<'a> Slice<'a> {
     pub fn get_index(&self, real_source_index: IndexInt) -> Option<usize> {
         self.map.get_index_adapted(
-            real_source_index,
-            Adapter { list: self.list },
+            &real_source_index,
+            Adapter { source_indices: self.list.source_index() },
         )
     }
 
     pub fn get_reference_source_index(&self, real_source_index: IndexInt) -> Option<u32> {
         let i = self.map.get_index_adapted(
-            real_source_index,
-            Adapter { list: self.list },
+            &real_source_index,
+            Adapter { source_indices: self.list.source_index() },
         )?;
-        debug_assert!(self.list.capacity() > 0); // optimize MultiArrayList.Slice.items
-        Some(self.list.items().reference_source_index[i])
+        // Zig: `bun.unsafeAssert(l.list.capacity > 0)` — optimization hint for
+        // `MultiArrayList.Slice.items`. The Rust `items()` already short-circuits
+        // on `capacity == 0`, so the assert is dropped.
+        Some(self.list.reference_source_index()[i])
     }
 
-    pub fn bit_set(&self, input_file_count: usize) -> Result<DynamicBitSet, bun_alloc::AllocError> {
-        let mut scb_bitset = DynamicBitSet::init_empty(input_file_count)?;
-        for &source_index in self.list.items().source_index {
+    pub fn bit_set(
+        &self,
+        input_file_count: usize,
+    ) -> Result<DynamicBitSetUnmanaged, bun_alloc::AllocError> {
+        let mut scb_bitset = DynamicBitSetUnmanaged::init_empty(input_file_count)?;
+        for &source_index in self.list.source_index() {
             scb_bitset.set(source_index as usize);
         }
         Ok(scb_bitset)
     }
 }
 
- // TODO(b2-blocked): MultiArrayElement bound (see file-top note)
-pub struct Adapter {
-    pub list: multi_array_list::Slice<ServerComponentBoundary>,
+// PORT NOTE: Zig stored the full `MultiArrayList.Slice` and called
+// `.items(.source_index)` on each compare. The Rust `Slice<T>` is not `Copy`,
+// so we cache just the `source_index` column the adapter actually needs.
+pub struct Adapter<'a> {
+    pub source_indices: &'a [IndexInt],
 }
 
- // TODO(b2-blocked): bun_wyhash::hash_int + Slice<SCB>::items() (track-A)
-impl Adapter {
-    pub fn hash(&self, key: IndexInt) -> u32 {
-        bun_wyhash::hash_int(key as u32)
+impl<'a> ArrayHashAdapter<IndexInt, ()> for Adapter<'a> {
+    #[inline]
+    fn hash(&self, key: &IndexInt) -> u32 {
+        bun_wyhash::hash_int(*key)
     }
-    pub fn eql(&self, a: IndexInt, _: (), b_index: usize) -> bool {
-        debug_assert!(self.list.capacity() > 0);
-        a == self.list.items().source_index[b_index]
+    #[inline]
+    fn eql(&self, a: &IndexInt, _b: &(), b_index: usize) -> bool {
+        *a == self.source_indices[b_index]
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/js_parser/ast/ServerComponentBoundary.zig (121 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      ArrayHashMap<(),()> + Adapter pattern needs adapted-lookup API in bun_collections; MultiArrayList Slice/items() shape assumed
+//   confidence: high
+//   todos:      0
+//   notes:      ArrayHashMap<(),()> + ArrayHashAdapter for adapted lookups; MultiArrayElement derived
 // ──────────────────────────────────────────────────────────────────────────

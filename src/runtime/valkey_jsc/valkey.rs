@@ -914,7 +914,7 @@ impl ValkeyClient {
                         }
                         protocol::SubscriptionPushMessage::Unsubscribe => {
                             self.on_valkey_unsubscribe()?;
-                            p.remove_subscription();
+                            self.parent().remove_subscription();
 
                             // For UNSUBSCRIBE responses, only resolve the promise if we have one
                             // Additional channel confirmations from multi-channel UNSUBSCRIBE commands don't need promise pairs

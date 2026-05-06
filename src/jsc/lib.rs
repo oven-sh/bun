@@ -1936,7 +1936,7 @@ pub use self::event_loop::{
     EventLoopKind, EventLoopTask, EventLoopTaskPtr, GarbageCollectionController, JsTerminated,
     JsTerminatedResult,
     JsVM, ManagedTask, MiniEventLoop, MiniVM, PosixSignalHandle, PosixSignalTask, Task, WorkPool,
-    WorkPoolTask, WorkTask,
+    WorkPoolTask, WorkTask, WorkTaskContext,
 };
 #[cfg(unix)]
 pub type PlatformEventLoop = bun_uws::Loop;

@@ -100,33 +100,60 @@ impl JSGlobalObjectDnsExt for JSGlobalObject {
     }
 }
 
-/// `JSValue::to_port_number` shim — upstream method is cfg-gated.
+/// `JSValue::to_port_number` — local trait extension (the inherent method
+/// has not yet landed on `bun_jsc::JSValue`; ported here from
+/// `JSValue.zig::toPortNumber`).
 pub(crate) trait JSValueDnsExt {
     fn to_port_number(self, global: &JSGlobalObject) -> JsResult<u16>;
 }
 impl JSValueDnsExt for JSValue {
     fn to_port_number(self, global: &JSGlobalObject) -> JsResult<u16> {
-        let _ = global;
-        // TODO(port): match Node's `validatePort` semantics once
-        // bun_jsc::JSValue::coerce_to_int32 lands at this tier.
-        todo!("blocked_on: bun_jsc::JSValue::to_port_number")
+        if self.is_number() {
+            let double = self.to_number(global)?;
+            if double.is_nan() {
+                return Err(jsc::ErrorCode::SOCKET_BAD_PORT
+                    .throw(global, format_args!("Invalid port number")));
+            }
+            let port = self.to_int64();
+            if (0..=65535).contains(&port) {
+                return Ok(port.max(0) as u16);
+            }
+            return Err(jsc::ErrorCode::SOCKET_BAD_PORT
+                .throw(global, format_args!("Port number out of range: {port}")));
+        }
+        Err(jsc::ErrorCode::SOCKET_BAD_PORT
+            .throw(global, format_args!("Invalid port number")))
     }
 }
 
-/// Helper: fetch the per-VM global DNS resolver. Splits the double `&mut`
-/// borrow (`rare_data()` + `global_dns_resolver(vm)`) via raw pointers since
-/// `bun_vm()` already returns `*mut VirtualMachine`.
+/// Helper: fetch the per-VM global DNS resolver (port of
+/// `RareData::globalDNSResolver`). The slot itself lives in `bun_jsc::RareData`
+/// as a type-erased `Option<NonNull<c_void>>` to break the
+/// `bun_jsc → bun_runtime` dependency cycle; this function owns the lazy init
+/// and the cast back to `*mut GlobalData`.
 #[inline]
 pub(crate) fn global_resolver_mut(global_this: &JSGlobalObject) -> &mut Resolver {
     let vm_ptr = global_this.bun_vm();
     // SAFETY: `bun_vm()` returns the live VM back-ptr; RareData is owned by it
-    // and outlives this call. The two `&mut *vm_ptr` derefs are sequenced.
-    let _ = vm_ptr;
-    // TODO(port): blocked_on bun_jsc::RareData::global_dns_resolver — upstream
-    // returns a stub `high_tier::dns::Resolver`, not this crate's `Resolver`.
-    // Until the cycle-break vtable lands and `RareData` carries the real
-    // `dns_jsc::Resolver`, this accessor cannot resolve.
-    todo!("blocked_on: bun_jsc::RareData::global_dns_resolver")
+    // and outlives this call.
+    let vm = unsafe { &mut *vm_ptr };
+    let slot = vm.rare_data().global_dns_data_slot();
+    let data: *mut GlobalData = match *slot {
+        Some(nn) => nn.as_ptr().cast::<GlobalData>(),
+        None => {
+            // SAFETY: re-derive `&VirtualMachine` from `vm_ptr` rather than
+            // reborrowing through `vm` (still mutably borrowed via `slot`).
+            let gd = Box::into_raw(GlobalData::init(unsafe { &*vm_ptr }));
+            // SAFETY: `gd` was just `Box::into_raw`'d (non-null).
+            *slot = Some(unsafe { NonNull::new_unchecked(gd.cast::<c_void>()) });
+            // SAFETY: `gd` points to a live, freshly-allocated GlobalData.
+            unsafe { (*gd).resolver.ref_() }; // live forever
+            gd
+        }
+    };
+    // SAFETY: `data` is the heap allocation owned by the RareData slot; it
+    // outlives every caller (freed only at VM teardown).
+    unsafe { &mut (*data).resolver }
 }
 
 /// Send-wrapper for raw pointers handed to the threaded work pool. The DNS

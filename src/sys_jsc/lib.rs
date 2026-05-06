@@ -28,9 +28,16 @@ pub use error_jsc::ErrorJsc;
 pub use fd_jsc::FdJsc;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Crate-local JSC type shims (bun_jsc is not yet a usable dependency).
-// These are layout-compatible with bun_jsc's B-1 stub_ty! opaque newtypes so
-// downstream callers can switch to `bun_jsc::*` without signature churn.
+// Crate-local JSC handle types. `bun_jsc` is not yet a usable dependency
+// (transitive deps `bun_spawn`/`bun_logger`/`bun_bundler` fail to compile),
+// and there is NO dependency cycle here — `bun_jsc → bun_sys` and
+// `bun_sys_jsc → bun_jsc` are both acyclic — so the layering fix is simply
+// "fix those crates" (out of this file's scope), not "extract a types crate".
+//
+// These are `#[repr(transparent)]` over the same encoded word / pointer ABI
+// as `bun_jsc`'s definitions, with REAL method bodies calling the identical
+// `JSC__*` / `Bun__*` C++ symbols, so downstream callers can switch to
+// `bun_jsc::*` without signature or ABI churn.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Stand-in for `bun_jsc::JSValue` (`#[repr(transparent)] i64`, `Copy`, `!Send`).

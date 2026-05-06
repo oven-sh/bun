@@ -21,12 +21,16 @@ pub trait VersionInt:
 {
     const ZERO: Self;
     const MAX: Self;
+    /// Zig: `_tag_padding: [if (IntType == u32) 4 else 0]u8` — explicit zeroed
+    /// padding so lockfile byte-serialization is deterministic.
+    type TagPadding: Copy + Default + 'static;
     fn parse_ascii(s: &[u8]) -> Option<Self>;
 }
 
 impl VersionInt for u64 {
     const ZERO: Self = 0;
     const MAX: Self = u64::MAX;
+    type TagPadding = [u8; 0];
     fn parse_ascii(s: &[u8]) -> Option<Self> {
         core::str::from_utf8(s).ok()?.parse().ok()
     }
@@ -35,6 +39,7 @@ impl VersionInt for u64 {
 impl VersionInt for u32 {
     const ZERO: Self = 0;
     const MAX: Self = u32::MAX;
+    type TagPadding = [u8; 4];
     fn parse_ascii(s: &[u8]) -> Option<Self> {
         core::str::from_utf8(s).ok()?.parse().ok()
     }
@@ -50,11 +55,11 @@ pub struct VersionType<T: VersionInt> {
     pub major: T,
     pub minor: T,
     pub patch: T,
-    // TODO(port): Zig has `_tag_padding: [if (IntType == u32) 4 else 0]u8` to
-    // guarantee zeroed padding bytes for lockfile serialization. #[repr(C)]
-    // inserts the same 4 bytes of alignment padding for T=u32, but they are
-    // uninitialized. Phase B: add explicit zeroed padding via associated const
-    // (see padding_checker.zig).
+    // Zig: `_tag_padding: [if (IntType == u32) 4 else 0]u8 = .{0} ** ...` —
+    // explicit zeroed bytes so the alignment gap before `tag` is deterministic
+    // for lockfile serialization (see padding_checker.zig).
+    #[doc(hidden)]
+    pub _tag_padding: T::TagPadding,
     pub tag: Tag,
 }
 
@@ -64,6 +69,7 @@ impl<T: VersionInt> Default for VersionType<T> {
             major: T::ZERO,
             minor: T::ZERO,
             patch: T::ZERO,
+            _tag_padding: Default::default(),
             tag: Tag::default(),
         }
     }
@@ -75,6 +81,7 @@ impl VersionType<u32> {
             major: u64::from(self.major),
             minor: u64::from(self.minor),
             patch: u64::from(self.patch),
+            _tag_padding: [],
             tag: Tag {
                 pre: self.tag.pre,
                 build: self.tag.build,
@@ -106,6 +113,7 @@ impl<T: VersionInt> VersionType<T> {
             major: self.major,
             minor: self.minor,
             patch: self.patch,
+            _tag_padding: Default::default(),
             tag: self.tag.clone_into(slice, buf),
         }
     }
@@ -172,8 +180,6 @@ impl<T: VersionInt> VersionType<T> {
         }
     }
 
-    // TODO(port): `comptime StringBuilder: type` — Phase B should define a
-    // `StringBuilder` trait with `count(&[u8])` and `append<T>(&[u8]) -> T`.
     pub fn count<B>(&self, buf: &[u8], builder: &mut B)
     where
         B: crate::StringBuilder,
@@ -943,6 +949,7 @@ impl<T: VersionInt> Partial<T> {
             major: self.major.unwrap_or(T::ZERO),
             minor: self.minor.unwrap_or(T::ZERO),
             patch: self.patch.unwrap_or(T::ZERO),
+            _tag_padding: Default::default(),
             tag: self.tag,
         }
     }
@@ -952,6 +959,7 @@ impl<T: VersionInt> Partial<T> {
             major: self.major.unwrap_or(T::MAX),
             minor: self.minor.unwrap_or(T::MAX),
             patch: self.patch.unwrap_or(T::MAX),
+            _tag_padding: Default::default(),
             tag: self.tag,
         }
     }

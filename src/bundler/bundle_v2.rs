@@ -3536,7 +3536,7 @@ impl<'a> BundleV2<'a> {
                             ..Default::default()
                         }).expect("unreachable");
                         let task = Box::new(ParseTask {
-                            ctx: this,
+                            ctx: (this as *mut BundleV2).cast::<BundleV2<'static>>(),
                             path,
                             // unknown at this point:
                             contents_or_fd: parse_task::ContentsOrFd::Fd {

@@ -65,8 +65,8 @@ impl BunStringSpawnExt for BunString {
 }
 
 // ── AbortSignal local extension ─────────────────────────────────────────────
-// `bun_jsc::AbortSignal` is an opaque `stub_ty!` (the real impl in
-// directly so call sites keep the Zig-spec spelling.
+// `WebCore::AbortSignal` is a C++-owned type; wrap the FFI accessors directly
+// so call sites keep the Zig-spec spelling.
 unsafe extern "C" {
     fn WebCore__AbortSignal__fromJS(value: JSValue) -> *mut WebCore::AbortSignal;
     fn WebCore__AbortSignal__ref(this: *mut WebCore::AbortSignal) -> *mut WebCore::AbortSignal;
@@ -1515,19 +1515,32 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     if matches!(subprocess.stdin, Writable::Pipe(_)) && promise_for_stream == JSValue::ZERO {
-        // TODO(port): borrowck — Zig passes `&subprocess.stdin` while holding
-        // `.pipe`. `streams::Signal::init` requires `T: SignalHandler`; that
-        // impl for `Writable<'_>` is gated. Leave the FileSink's signal unset
-        // until the trait impl lands.
-        // todo!("blocked_on: webcore::streams::SignalHandler for Writable<'_>")
+        // PORT NOTE: Zig writes `subprocess.stdin.pipe.signal =
+        // Signal.init(&subprocess.stdin)` — a self-referential store. Capture
+        // the field address via `addr_of_mut!` (no intermediate `&mut` is
+        // formed) and route through `init_with_type` so borrowck never sees the
+        // alias; the vtable only dereferences this pointer later on the JS
+        // thread, after the local `subprocess` borrow has ended.
+        let stdin_ptr: *mut Writable<'_> = core::ptr::addr_of_mut!(subprocess.stdin);
+        // SAFETY: `stdin_ptr` is the stable boxed address of `subprocess.stdin`
+        // (Subprocess was `Box::into_raw`'d above) and was just confirmed to be
+        // the `Pipe` variant; the signal's stored back-pointer remains valid for
+        // the lifetime of the FileSink, which is owned by this same field.
+        unsafe {
+            if let Writable::Pipe(pipe) = &mut *stdin_ptr {
+                (*pipe.as_ptr()).signal =
+                    WebCore::streams::Signal::init_with_type::<Writable<'_>>(stdin_ptr);
+            }
+        }
     }
 
     let out = if !IS_SYNC {
-        // SAFETY: `__create` (JsClass::to_js) takes ownership of a *new* Box; we
-        // already boxed via `Box::into_raw` above. Route through the raw ptr
-        // path instead so the existing allocation is wrapped (Zig's
-        // `subprocess.toJS(globalThis)` did not re-allocate).
-        todo!("blocked_on: bun_jsc::JsClass::to_js_ptr for pre-boxed Subprocess")
+        // SAFETY: `subprocess_ptr` came from `Box::into_raw` above and has not
+        // yet been wrapped; ownership transfers to the C++ JS cell (released via
+        // `SubprocessClass__finalize`). Zig's `subprocess.toJS(globalThis)` did
+        // not re-allocate, so use the raw-ptr entrypoint instead of the
+        // by-value `JsClass::to_js` (which would re-box).
+        unsafe { SubprocessT::to_js_from_ptr(subprocess_ptr, global_this) }
     } else {
         JSValue::ZERO
     };

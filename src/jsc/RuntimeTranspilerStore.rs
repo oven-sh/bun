@@ -418,17 +418,27 @@ impl TranspilerJob {
     }
 
     pub fn dispatch_to_main_thread(&mut self) {
-         // TODO(b2-blocked): VirtualMachine.transpiler_store, UnboundedQueue::push, ConcurrentTask::create_from, EventLoop::enqueue_task_concurrent
-        {
-        // SAFETY: vm outlives the job (BACKREF — VM owns the store).
-        let vm = unsafe { &*self.vm };
-        let transpiler_store = &vm.transpiler_store;
-        transpiler_store.queue.push(self);
+        let vm = self.vm;
+        // SAFETY: `vm` outlives the job (BACKREF — VM owns the store that owns
+        // this job). Take a raw pointer to the store rather than `&`/`&mut`
+        // because (a) `queue.push` is `&self` (atomic), and (b) `create_from`
+        // needs a `*mut RuntimeTranspilerStore`, but no aliasing `&mut` is
+        // ever formed — the JS thread is the only mutator of the non-atomic
+        // store fields.
+        let transpiler_store: *mut RuntimeTranspilerStore =
+            unsafe { core::ptr::addr_of_mut!((*vm).transpiler_store) };
+        // SAFETY: `transpiler_store` points into the live VM; `queue` is an
+        // `UnboundedQueue` whose `push` only does atomic CAS on its head and
+        // writes `self.next` (which the worker thread exclusively owns here).
+        unsafe { (*transpiler_store).queue.push(self as *mut TranspilerJob) };
         // Another thread may free `self` at any time after .push, so we cannot use it any more.
-        unsafe { &mut *vm.event_loop() }
-            .enqueue_task_concurrent(ConcurrentTask::create_from(transpiler_store));
-        } // end
-        todo!("blocked_on: VirtualMachine.transpiler_store / UnboundedQueue");
+        // SAFETY: `vm.event_loop()` returns the live event-loop self-pointer
+        // (set during VM init); `enqueue_task_concurrent` is `&self` and only
+        // touches atomic queue state + wakeup.
+        unsafe {
+            (*(*vm).event_loop())
+                .enqueue_task_concurrent(ConcurrentTask::create_from(transpiler_store));
+        }
     }
 
     pub fn run_from_js_thread(&mut self) -> JsResult<()> {

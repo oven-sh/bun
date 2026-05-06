@@ -260,13 +260,11 @@ impl Error {
     }
 
     pub fn msg(&self) -> Option<&'static [u8]> {
-        if let Some((code, system_errno)) = self.get_error_code_tag_name() {
-            if let Some(label) = Some(coreutils_error_map::COREUTILS_ERROR_MAP[system_errno]) {
-                return Some(label.as_bytes());
-            }
-            return Some(code.as_bytes());
-        }
-        None
+        let (_code, system_errno) = self.get_error_code_tag_name()?;
+        // PORT NOTE: Zig wraps this in `if (map.get(e)) |label|` with a `return code`
+        // fallback, but both error maps are `initFull("unknown error")` so `.get()`
+        // never returns null; the fallback is dead code in Zig too.
+        Some(coreutils_error_map::COREUTILS_ERROR_MAP[system_errno].as_bytes())
     }
 
     /// Simpler formatting which does not allocate a message
@@ -281,9 +279,10 @@ impl Error {
         // errno label
         if let Some((code, system_errno)) = self.get_error_code_tag_name() {
             err.code = BunString::static_(code.as_bytes());
-            if let Some(label) = Some(coreutils_error_map::COREUTILS_ERROR_MAP[system_errno]) {
-                err.message = BunString::static_(label.as_bytes());
-            }
+            // PORT NOTE: map is total (`initFull("unknown error")`); Zig's optional
+            // unwrap on `.get()` is never null.
+            let label = coreutils_error_map::COREUTILS_ERROR_MAP[system_errno];
+            err.message = BunString::static_(label.as_bytes());
         }
 
         if !self.path.is_empty() {
@@ -325,7 +324,9 @@ impl Error {
         if let Some((code, system_errno)) = self.get_error_code_tag_name() {
             maybe_code = Some(code);
             err.code = BunString::static_(code.as_bytes());
-            label = Some(libuv_error_map::LIBUV_ERROR_MAP[system_errno]).filter(|s| !s.is_empty());
+            // PORT NOTE: map is total (`initFull("unknown error")`); Zig's `.get()`
+            // never returns null, so `label` is always Some past this point.
+            label = Some(libuv_error_map::LIBUV_ERROR_MAP[system_errno]);
         }
 
         // format taken from Node.js 'exceptions.cc'

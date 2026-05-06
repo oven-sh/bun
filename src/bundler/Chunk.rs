@@ -5,7 +5,8 @@ use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMap, AutoBitSet, BabyList};
 use bun_core::{FeatureFlags, Output};
 use bun_options_types::{ImportKind, ImportRecord};
-use bun_js_parser::{Index, Ref, Stmt};
+use bun_js_parser::{Ref, Stmt};
+use crate::Index;
 use bun_sourcemap as source_map;
 use bun_string::{strings, string_joiner::StringJoiner};
 
@@ -97,6 +98,15 @@ impl Default for Content {
         Content::Javascript(JavaScriptChunk::default())
     }
 }
+
+// SAFETY: `Chunk` is processed across the bundler thread pool (see
+// `computeCrossChunkDependencies`, `generateChunksInParallel`). Raw-pointer
+// fields (`OutputPiece.data_ptr`, `Layers::Borrowed`, `StringJoiner` nodes,
+// `ChunkRenamer` arena) point into bundler-arena storage that outlives the
+// pool join and is only mutated by the owning task. Zig has no Send/Sync
+// distinction; mirror `InputFile`'s blanket impls (bundle_v2.rs).
+unsafe impl Send for Chunk {}
+unsafe impl Sync for Chunk {}
 
 impl Default for Chunk {
     fn default() -> Self {

@@ -73,6 +73,14 @@ pub struct LinkerGraph {
     pub ts_enums: js_ast::ast::ast::TsEnumsMap,
 }
 
+// SAFETY: `LinkerGraph` is shared read-mostly across worker threads during
+// linking (matches Zig, which has no Send/Sync). The raw pointers inside
+// (`bump`, `MultiArrayList` columns, `BitSet` storage, AST arenas) are owned by
+// `BundleV2` and are not mutated through `&LinkerGraph` while a worker pool is
+// running; per-chunk writes go through disjoint slices the linker hands out.
+unsafe impl Send for LinkerGraph {}
+unsafe impl Sync for LinkerGraph {}
+
 impl LinkerGraph {
     /// `&Arena` accessor — `bump` is a raw backref into `BundleV2`.
     #[inline]
@@ -178,7 +186,7 @@ impl LinkerGraph {
             entry_point_part_index.get(),
             ref_,
             count,
-            js_ast::Index::RUNTIME,
+            Index::RUNTIME,
         )
     }
 
@@ -254,7 +262,7 @@ impl LinkerGraph {
         part_index: u32,
         ref_: Ref,
         use_count: u32,
-        source_index_to_import_from: js_ast::Index,
+        source_index_to_import_from: Index,
     ) -> Result<(), bun_alloc::AllocError> {
         if use_count == 0 {
             return Ok(());
@@ -300,11 +308,7 @@ impl LinkerGraph {
                 ref_,
                 js_meta::ImportToBind {
                     data: ImportTracker {
-                        // PORT NOTE: `ImportTracker.source_index` is the
-                        // `bun_options_types` `Index` newtype; the parameter is
-                        // the structurally identical `bun_js_parser::Index`.
-                        // Phase B-3 unifies them.
-                        source_index: Index::init(source_index_to_import_from.get()),
+                        source_index: source_index_to_import_from,
                         import_ref: ref_,
                         ..Default::default()
                     },
@@ -330,7 +334,10 @@ impl LinkerGraph {
         debug_assert_eq!(part_ids.len(), new_dependencies.len());
         for (part_id, dependency) in part_ids.iter().zip(new_dependencies.iter_mut()) {
             *dependency = Dependency {
-                source_index: source_index_to_import_from,
+                // PORT NOTE: `Dependency.source_index` is the structurally
+                // identical `bun_js_parser::Index`; convert by value until the
+                // two `Index` newtypes unify (Phase B-3).
+                source_index: js_ast::Index::init(source_index_to_import_from.get()),
                 part_index: *part_id, // @truncate (already u32)
             };
         }
@@ -355,7 +362,7 @@ impl LinkerGraph {
 impl LinkerGraph {
     pub fn load(
         &mut self,
-        entry_points: &[js_ast::Index],
+        entry_points: &[Index],
         sources: &[Logger::Source],
         server_component_boundaries: server_component_boundary::List,
         dynamic_import_entry_points: &[index::Int],

@@ -103,12 +103,32 @@ fn generate_compile_result_for_css_chunk_impl(
     };
     let css_import = css_content
         .imports_in_chunk_in_order
-        .at(imports_in_chunk_index);
+        .at(imports_in_chunk_index as usize);
     let css: &BundlerStyleSheet = &css_content.asts[imports_in_chunk_index as usize];
     // const symbols: []const Symbol.List = c.graph.ast.items(.symbols);
-    let symbols = &c.graph.symbols;
+    // CYCLEBREAK: `to_css_with_writer` takes `&bun_logger::symbol::Map`, but
+    // `c.graph.symbols` is `bun_js_parser::ast::symbol::Map`. Both are
+    // `{ symbols_for_source: NestedList }` (`UnsafeCell<T>` is `repr(transparent)`),
+    // so layouts match — bridge by pointer cast.
+    let symbols: &bun_logger::symbol::Map = unsafe {
+        &*(&c.graph.symbols as *const _ as *const bun_logger::symbol::Map)
+    };
+    // CYCLEBREAK: `LocalsResultsMap` = `ArrayHashMap<bun_logger::Ref, *const [u8]>`;
+    // `c.mangled_props` is `ArrayHashMap<bun_js_parser::Ref, Box<[u8]>>`. Both `Ref`s are
+    // newtype-`u64` and `Box<[u8]>`/`*const [u8]` are both `(ptr, len)` fat ptrs — same
+    // layout, used read-only by the printer.
+    let local_names: &bun_css::LocalsResultsMap = unsafe {
+        &*(&c.mangled_props as *const _ as *const bun_css::LocalsResultsMap)
+    };
     // SAFETY: parse_graph is a backref into BundleV2.graph, valid for the bundle lifetime.
     let parse_graph = unsafe { &*c.parse_graph };
+    // SAFETY: `Box<[u8]>` and `&[u8]` are both `(ptr, len)` fat pointers with identical
+    // layout; the column slice is reinterpreted read-only for the duration of `to_css`.
+    let unique_keys: &[&[u8]] = unsafe {
+        core::mem::transmute::<&[Box<[u8]>], &[&[u8]]>(
+            parse_graph.input_files.items_unique_key_for_additional_file(),
+        )
+    };
 
     match &css_import.kind {
         CssImportOrderKind::Layers(_) => {

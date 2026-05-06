@@ -147,7 +147,7 @@ pub fn to_have_nth_returned_with(
             "\n\nCall {}:\nExpected: <green>{}<r>\nReceived: <red>{}<r>",
             n,
             expected.to_fmt(&mut formatter),
-            nth_return_value.to_fmt(&mut formatter),
+            nth_return_value.to_fmt(&mut formatter2),
         ),
     )
 }

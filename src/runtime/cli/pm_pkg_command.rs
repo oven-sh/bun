@@ -169,7 +169,7 @@ impl PmPkgCommand {
             }
         };
 
-        let source = Source::init_path_string(path, &contents);
+        let source = Source::init_path_string(path, &contents[..]);
         // Zig passes the global allocator; leak an arena so the returned Expr
         // (which may reference arena-owned nodes) outlives this frame. CLI is
         // one-shot, so the leak is intentional.

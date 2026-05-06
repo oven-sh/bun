@@ -94,11 +94,16 @@ enum BunSocket {
     // because attach/detach are managed by attachNativeCallback/detachNativeCallback.
     Tls(*mut TLSSocket),
     // LIFETIMES.tsv: SHARED (evidence: socket.ref()/deref() in attach/detachNativeSocket).
-    // Intrusive refcount, *T crosses FFI → IntrusiveArc per PORTING.md §Pointers.
-    TlsWriteonly(bun_ptr::IntrusiveArc<TLSSocket>),
+    // Intrusive refcount, *T crosses FFI. `NewSocket<SSL>` does not implement
+    // `bun_ptr::RefCounted` (it carries a hand-rolled `ref_()/deref()` pair on a
+    // `Cell<u32>`), so `IntrusiveArc` cannot be used. Store the raw pointer and
+    // manage the ref by hand in `set_native_socket_from_js` / `detach_native_socket`,
+    // matching the Zig (`*TLSSocket` for both variants).
+    TlsWriteonly(*mut TLSSocket),
     Tcp(*mut TCPSocket),
-    // LIFETIMES.tsv: SHARED — intrusive refcount, *T crosses FFI → IntrusiveArc.
-    TcpWriteonly(bun_ptr::IntrusiveArc<TCPSocket>),
+    // LIFETIMES.tsv: SHARED — intrusive refcount, *T crosses FFI. Raw pointer for
+    // the same reason as `TlsWriteonly`.
+    TcpWriteonly(*mut TCPSocket),
 }
 
 // TODO(port): move to <area>_sys

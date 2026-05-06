@@ -680,14 +680,17 @@ pub mod bun_object {
     pub use super::set_main;
     // --- Setters ---
 
-    pub const fn lazy_property_callback_name(base_name: &str) -> &'static str {
-        // TODO(port): comptime string concat — replaced by macro `${concat(..)}` above.
-        const_format::concatcp!("BunObject_lazyPropCb_", base_name)
+    // PORT NOTE: Zig's `lazyPropertyCallbackName`/`callbackName` were comptime
+    // string concats used only at `comptime @export` sites. The export names
+    // are now spelled out verbatim in the `export_*!` macro invocations above,
+    // so the runtime variant just leaks the formatted name (no callers on the
+    // hot path).
+    pub fn lazy_property_callback_name(base_name: &str) -> &'static str {
+        Box::leak(format!("BunObject_lazyPropCb_{base_name}").into_boxed_str())
     }
 
-    pub const fn callback_name(base_name: &str) -> &'static str {
-        // TODO(port): comptime string concat — replaced by macro `${concat(..)}` above.
-        const_format::concatcp!("BunObject_callback_", base_name)
+    pub fn callback_name(base_name: &str) -> &'static str {
+        Box::leak(format!("BunObject_callback_{base_name}").into_boxed_str())
     }
 
     // type LazyPropertyCallback = extern "C" fn(*mut JSGlobalObject, *mut JSObject) -> JSValue

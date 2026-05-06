@@ -708,9 +708,9 @@ impl sockaddr {
     pub fn v6(
         port_: inet::in_port_t,
         addr: [u8; 16],
-        /// set to 0 if you don't care
+        // set to 0 if you don't care
         flowinfo: u32,
-        /// set to 0 if you don't care
+        // set to 0 if you don't care
         scope_id: u32,
     ) -> sockaddr {
         sockaddr {

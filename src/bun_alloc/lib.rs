@@ -594,6 +594,7 @@ unsafe extern "C" {
 /// `AllocatorVTable` and the `WTFStringImplStruct` layout) so the
 /// `is_wtf_allocator` vtable-identity check is a local pointer compare — no
 /// upward dependency on `bun_string` and no runtime fn-ptr hook.
+#[allow(non_snake_case)] // Zig namespace `bun.String.StringImplAllocator`
 pub mod StringImplAllocator {
     use super::{Alignment, AllocatorVTable, WTFStringImpl, WTFStringImplStruct};
 

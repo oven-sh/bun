@@ -266,10 +266,20 @@ impl MarkedArgumentBuffer {
 }
 
 impl JSGlobalObject {
-    /// SAFETY: returns `&mut VirtualMachine` derived from `&self`; two calls
-    /// alias the same VM. Caller must not hold another live `&mut` to it.
-    pub unsafe fn bun_vm(&self) -> &mut VirtualMachine {
+    /// Shared accessor — mirrors `src/jsc/JSGlobalObject.rs:943`. Returning
+    /// `&mut` here would let two calls alias the singleton VM (UB under Stacked
+    /// Borrows); mutation goes through [`Self::bun_vm_ptr`] instead.
+    pub fn bun_vm(&self) -> &VirtualMachine {
         unimplemented!("b2-blocked: bun_jsc::JSGlobalObject::bun_vm")
+    }
+    /// Raw-pointer variant of [`Self::bun_vm`] (mirrors
+    /// `src/jsc/JSGlobalObject.rs:939`). Returns the FFI `*mut VirtualMachine`
+    /// directly so callers that need to mutate VM fields don't launder
+    /// provenance through `&VirtualMachine -> *mut` (UB to write through).
+    /// Callers form a short-lived `&mut *p` at the use site.
+    #[inline]
+    pub fn bun_vm_ptr(&self) -> *mut VirtualMachine {
+        unimplemented!("b2-blocked: bun_jsc::JSGlobalObject::bun_vm_ptr")
     }
 }
 

@@ -124,7 +124,7 @@ pub enum ParseTaskStage {
 /// The information returned to the Bundler thread when a parse finishes.
 pub struct Result {
     pub task: EventLoop::Task,
-    pub ctx: *const BundleV2<'static>, // BACKREF (LIFETIMES.tsv)
+    pub ctx: *mut BundleV2<'static>, // BACKREF (LIFETIMES.tsv) — Zig `*BundleV2` is mutable; written through in `on_complete`.
     pub value: ResultValue,
     pub watcher_data: WatcherData,
     /// This is used for native onBeforeParsePlugins to store

@@ -8611,7 +8611,8 @@ impl<'a> Resolver<'a> {
             if !self.opts.preserve_symlinks {
                 if let Some(parent_entries) = parent_.get_entries(self.generation) {
                     // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton; outlives the resolver.
-                    let parent_entries = unsafe { &mut *parent_entries };
+                    // Read-only `.get()` lookup — shared borrow only.
+                    let parent_entries = unsafe { &*parent_entries };
                     if let Some(lookup) = parent_entries.get(base) {
                         // SAFETY: entries_ptr is a slot in the BSSMap-backed entries singleton.
                         let entries_fd = unsafe { &*entries_ptr }.fd;

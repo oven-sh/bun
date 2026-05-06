@@ -15,8 +15,9 @@
 // are ABI-identical.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod jsc_stub {
+    extern crate alloc;
+
     use core::ffi::c_void;
-    use core::marker::PhantomData;
 
     use bun_string::{String as BunString, ZigString, ZigStringSlice};
 

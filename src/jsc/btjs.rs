@@ -751,13 +751,12 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
 
     let tty_config = tty::detect_config_stdout();
 
-    // TODO(port): std.debug.ThreadContext / getContext / StackIterator
-    let mut context: ThreadContext = unsafe { core::mem::zeroed() }; // SAFETY: Zig used `= undefined`
+    // SAFETY: Zig used `= undefined`; getcontext fully initializes.
+    let mut context: ThreadContext = unsafe { core::mem::zeroed() };
     let has_context = get_context(&mut context);
 
     #[allow(unused_mut)]
     let mut it: StackIterator = (if has_context && !cfg!(windows) {
-        // TODO(port): StackIterator.initWithContext(null, debug_info, &context) catch null
         stack_iterator_init_with_context(None, debug_info, &mut context).ok()
     } else {
         None

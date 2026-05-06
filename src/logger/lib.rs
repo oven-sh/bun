@@ -1461,14 +1461,6 @@ impl Data {
             _ => D,
         };
 
-        // PORT NOTE: Zig `Output.prettyFmt::<C>("<b>{d}<r>", .{x})` rewrote
-        // `<tag>`s comptime. Until the `pretty_fmt!` proc-macro lands the tags
-        // are emitted manually via this helper.
-        #[inline(always)]
-        fn ansi<const C: bool>(to: &mut impl fmt::Write, code: &str) -> fmt::Result {
-            if C { to.write_str(code) } else { Ok(()) }
-        }
-
         if let Some(location) = &self.location {
             if let Some(line_text_) = location.line_text {
                 let line_text_right_trimmed =

@@ -1853,9 +1853,12 @@ impl ExpectStatic {
     }
 }
 
-// TODO(port): trait stub for createAsymmetricMatcherWithFlags generic
+// Trait used by `create_asymmetric_matcher_with_flags` to dispatch to the
+// per-matcher inherent `call()` and post-hoc patch `flags`. The trait method is
+// named `invoke` (not `call`) to avoid E0034 ambiguity with each matcher's
+// inherent `fn call`.
 pub trait AsymmetricMatcherClass {
-    fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue>;
+    fn invoke(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue>;
     fn from_js_ptr(value: JSValue) -> Option<*mut Self>;
     fn flags_mut(&mut self) -> &mut Flags;
 }
@@ -1865,7 +1868,7 @@ macro_rules! impl_asymmetric_matcher_class {
         $(
             impl AsymmetricMatcherClass for $t {
                 #[inline]
-                fn call(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+                fn invoke(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
                     <$t>::call(g, f)
                 }
                 #[inline]

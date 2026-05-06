@@ -638,7 +638,7 @@ pub fn get_ephemeral_key_info(this: &mut This, global: &JSGlobalObject, _frame: 
                 // SAFETY: raw_key is a non-null EVP_PKEY of type EVP_PKEY_EC (checked just above).
                 let ec = unsafe { ffi::EVP_PKEY_get1_EC_KEY(raw_key) };
                 // SAFETY: ec is the EC_KEY returned for an EC pkey; EC_KEY_get0_group on it is valid.
-                let nid = unsafe { boringssl::EC_GROUP_get_curve_name(boringssl::EC_KEY_get0_group(ec)) };
+                let nid = unsafe { ffi::EC_GROUP_get_curve_name(boringssl::EC_KEY_get0_group(ec)) };
                 // SAFETY: OBJ_nid2sn is safe to call with any nid; returns null if unknown.
                 let nid_str = unsafe { ffi::OBJ_nid2sn(nid) };
                 if !nid_str.is_null() {

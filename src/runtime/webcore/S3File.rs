@@ -38,7 +38,7 @@ where
     // TODO(port): Formatter trait — needs write_indent / print_comma / indent / reset_line
     F: bun_jsc::ConsoleFormatter,
 {
-    writer.write_str(Output::pretty_fmt!("<r>S3Ref<r>", ENABLE_ANSI_COLORS))?;
+    writer.write_str(pfmt!("<r>S3Ref<r>", ENABLE_ANSI_COLORS))?;
     let credentials = s3.get_credentials();
     // detect virtual host style bucket name
     let bucket_name: &[u8] = if credentials.virtual_hosted_style && !credentials.endpoint.is_empty() {

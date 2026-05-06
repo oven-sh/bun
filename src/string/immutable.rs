@@ -38,7 +38,8 @@ pub use unicode_draft::{
     allocate_latin1_into_utf8, copy_cp1252_into_utf16, copy_latin1_into_ascii,
     copy_latin1_into_utf16, copy_latin1_into_utf8_stop_on_non_ascii, copy_u16_into_u8,
     copy_utf16_into_utf8_impl, element_length_cp1252_into_utf16, element_length_utf8_into_utf16,
-    to_utf16_alloc_maybe_buffered, u16_is_lead, u16_is_trail, BOM,
+    to_utf16_alloc_maybe_buffered, to_utf8_list_with_type_bun, u16_is_lead, u16_is_trail,
+    wtf8_sequence, BOM,
 };
 
 mod escape_reg_exp { pub use crate::escape_reg_exp::*; }

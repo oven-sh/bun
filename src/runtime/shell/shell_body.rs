@@ -404,7 +404,8 @@ impl<'a> GlobalMini<'a> {
 
     #[inline]
     pub fn enqueue_task_concurrent_wait_pid<T: 'static>(self, task: T) {
-        let anytask = Box::new(jsc::AnyTaskWithExtraContext::default());
+        // `AnyTaskWithExtraContext` is a *module* re-export in bun_jsc; the type lives inside it.
+        let anytask = Box::new(jsc::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default());
         // TODO(port): .from(task, "runFromMainThreadMini") — comptime field name lookup
         let anytask = Box::leak(anytask).from(task, "runFromMainThreadMini");
         self.mini.enqueue_task_concurrent(anytask);

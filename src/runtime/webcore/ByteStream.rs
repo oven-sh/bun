@@ -38,7 +38,7 @@ impl Default for ByteStream {
             pending: streams::Pending { result: streams::Result::Done, ..Default::default() },
             done: false,
             pending_buffer: core::ptr::slice_from_raw_parts_mut(core::ptr::NonNull::<u8>::dangling().as_ptr(), 0),
-            pending_value: Strong::empty(),
+            pending_value: StrongOptional::empty(),
             offset: 0,
             high_water_mark: 0,
             pipe: Pipe::default(),
@@ -101,7 +101,7 @@ impl ByteStream {
 
         if self.has_received_last_chunk {
             let buffer = core::mem::take(&mut self.buffer);
-            return streams::Start::OwnedAndDone(ByteList::from_vec(buffer));
+            return streams::Start::OwnedAndDone(ByteList::move_from_list(buffer));
         }
 
         if self.high_water_mark == 0 {

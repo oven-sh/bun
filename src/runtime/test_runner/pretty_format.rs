@@ -2070,16 +2070,17 @@ impl<'a> Formatter<'a> {
                     writer.print(format_args!("\n{} {{\n", set_name));
                     {
                         self.indent += 1;
+                        let global = self.global_this;
                         let mut iter = SetIterator::<W, ENABLE_ANSI_COLORS> {
                             formatter: self,
                             writer: writer.ctx,
                         };
-                        // TODO(port): borrowck conflict — iter borrows self & writer.ctx mutably.
                         let result = value.for_each(
-                            self.global_this,
+                            global,
                             &mut iter as *mut _ as *mut c_void,
                             SetIterator::<W, ENABLE_ANSI_COLORS>::for_each,
                         );
+                        drop(iter);
                         self.indent = self.indent.saturating_sub(1);
                         result?;
                     }

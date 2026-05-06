@@ -555,7 +555,10 @@ impl Subprocess<'_> {
                     else {
                         unreachable!()
                     };
-                    if let PipeReader::State::Done(done) = &mut pipe.state {
+                    // SAFETY: `pipe` is the sole RefPtr we just moved out of `*out`;
+                    // mutator-thread-only access to PipeReader state.
+                    let pipe_state = unsafe { &mut (*pipe.data.as_ptr()).state };
+                    if let PipeReader::State::Done(done) = pipe_state {
                         let taken = core::mem::take(done);
                         *out = Readable::Buffer(readable::CowString::init_owned(
                             taken.into_boxed_slice(),

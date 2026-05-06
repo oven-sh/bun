@@ -3958,9 +3958,8 @@ impl RunCommand {
             // the backing bytes and gets freed by `defer collector.deinit()`
             // when this function returns, which would leave out_map with
             // dangling keys that emitImage() would later hash-compare.
-            let key: Box<[u8]> = Box::from(d.url);
-            if out_map.put(key, path.into_boxed_slice()).is_err() {
-                Self::unlink_staged_path(&path);
+            // PORT NOTE: `StringHashMap::put` takes `&[u8]` and boxes internally.
+            if out_map.put(d.url, path.into_boxed_slice()).is_err() {
                 // TODO(port): path moved above; reorder for borrowck in Phase B
                 continue;
             }

@@ -1274,7 +1274,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSValue::ZERO);
     }
 
-    if proxy.is_some() && unix_socket_path.length() > 0 {
+    if proxy.is_some() && !unix_socket_path.slice().is_empty() {
         is_error = true;
         let err = ctx.to_type_error(jsc::ErrorCode::INVALID_ARG_VALUE, FETCH_ERROR_PROXY_UNIX);
         return Ok(

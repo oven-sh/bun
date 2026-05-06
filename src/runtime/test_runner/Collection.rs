@@ -112,7 +112,7 @@ impl Collection {
                 // SAFETY: borrow points into root_scope's tree which outlives every QueuedDescribe
                 // stored in self; 'static is a Phase-A placeholder (see TODO above).
                 active_scope: unsafe { core::mem::transmute::<&DescribeScope, &'static DescribeScope>(active_scope) },
-                callback: Strong::new(cb),
+                callback: DeprecatedStrong::init(cb),
                 // SAFETY: borrow points into root_scope's tree which outlives every QueuedDescribe
                 // stored in self; 'static is a Phase-A placeholder (see TODO above).
                 new_scope: unsafe { core::mem::transmute::<&DescribeScope, &'static DescribeScope>(new_scope) },

@@ -558,7 +558,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             return Ok(JSValue::ZERO);
                         }
 
-                        match SSLConfig::from_js(vm, global_this, tls) {
+                        // SAFETY: `vm` is the live thread-local VM pointer from `VirtualMachine::get()`.
+                        match SSLConfig::from_js(unsafe { &*vm }, global_this, tls) {
                             Err(_) => {
                                 is_error = true;
                                 return Ok(JSValue::ZERO);

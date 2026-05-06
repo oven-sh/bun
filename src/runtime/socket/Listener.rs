@@ -536,7 +536,8 @@ impl Listener {
         // re-parse. Bun.listen({tls}) callers may still pass a raw options dict.
         let sni_ctx: *mut boring_sys::SSL_CTX = if let Some(sc) = SecureContext::from_js(tls) {
             sc.borrow()
-        } else if let Some(ssl_config) = SSLConfig::from_js(VirtualMachine::get(), global, tls)? {
+        // SAFETY: `VirtualMachine::get()` returns the live thread-local VM.
+        } else if let Some(ssl_config) = SSLConfig::from_js(unsafe { &*VirtualMachine::get() }, global, tls)? {
             let mut cfg = ssl_config;
             // PORT NOTE: `defer cfg.deinit()` — handled by Drop on SSLConfig
             let mut create_err = uws::create_bun_socket_error_t::none;

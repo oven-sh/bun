@@ -381,10 +381,10 @@ impl Execution {
                 let Some((sequence_ptr, group_ptr)) =
                     this.get_current_and_valid_execution_sequence(&data)
                 else {
-                    group_log::log(
+                    group_log::log(format_args!(
                         "runOneCompleted: the data is outdated, invalid, or did not know the sequence",
-                    );
-                    return Ok(StepResult::Waiting { timeout: None });
+                    ));
+                    return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
                 };
                 let sequence_index = match &data {
                     RefDataValue::Execution { entry_data: Some(ed), .. } => ed.sequence_index,

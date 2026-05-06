@@ -1,6 +1,6 @@
 //! Tested in test/js/bun/test/printing/diffexample.test.ts. If modified, the snapshots will need to be updated.
 
-use std::io::Write;
+use std::fmt::Write;
 
 use bstr::BStr;
 

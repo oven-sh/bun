@@ -228,7 +228,7 @@ impl<'a> UpgradedDuplex<'a> {
 
                     host_fn::set_function_data(data_callback, self as *mut Self as *mut c_void);
 
-                    self.on_data_callback = Strong::create(data_callback, global);
+                    self.on_data_callback = StrongOptional::create(data_callback, global);
                     data_callback
                 }
             };

@@ -1755,7 +1755,6 @@ impl FFI {
         {
             let _ = global.throw(
                 "bun:ffi linkSymbols() is not available in this build (TinyCC is disabled)",
-                &[],
             );
             return JSValue::ZERO;
         }

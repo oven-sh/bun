@@ -1789,8 +1789,8 @@ impl Dirent {
     }
 
     pub fn deref(&self) {
-        self.name.deref_count();
-        self.path.deref_count();
+        self.name.deref();
+        self.path.deref();
     }
 }
 

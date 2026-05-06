@@ -1358,11 +1358,12 @@ type IndexInt = u32; // Index.Int
 
 /// This assigns a concise, predictable, and unique `.pretty` attribute to a Path.
 /// DevServer relies on pretty paths for identifying modules, so they must be unique.
-pub fn generic_path_with_pretty_initialized(    path: Fs::Path,
+pub fn generic_path_with_pretty_initialized<'a>(
+    path: Fs::Path<'a>,
     target: options::Target,
     top_level_dir: &[u8],
-    bump: &bun_alloc::Arena,
-) -> Result<Fs::Path, Error> {
+    bump: &'a bun_alloc::Arena,
+) -> Result<Fs::Path<'a>, Error> {
     // TODO(port): narrow error set
     let mut buf = bun_paths::path_buffer_pool::get();
 

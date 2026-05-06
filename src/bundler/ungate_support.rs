@@ -822,6 +822,11 @@ pub use js_meta::{
 // ──────────────────────────────────────────────────────────────────────────
 pub use crate::Graph::InputFileListExt as InputFileListExtMut;
 
+/// Re-exports of the `#[derive(MultiArrayElement)]`-generated SoA accessor
+/// traits so callers can `use crate::ungate_support::FooListExt as _;` without
+/// reaching into the defining submodule.
+pub use entry_point::{EntryPointListExt, EntryPointSliceExt, EntryPointField};
+
 /// `bundle_v2.zig` aliased `EventLoop = bun.jsc.AnyEventLoop`; the bundler only
 /// stores it on `LinkerContext.loop` (already typed there as
 /// `Option<NonNull<()>>` — erased handle) and calls `.tick(...)` from

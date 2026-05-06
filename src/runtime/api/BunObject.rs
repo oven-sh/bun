@@ -142,20 +142,171 @@ pub extern "C" fn Bun__reportError(global_object: *mut JSGlobalObject, err: JSVa
     let _ = VirtualMachine::get().uncaught_exception(unsafe { &*global_object }, err, false);
 }
 
-// Lazy-property getters whose target modules are un-gated in `crate::api`
-// (the rest — `hash`, `TOML`, `unsafe`, `semver`, `CSRF`, `Transpiler`,
-// `FileSystemRouter`, … — wait on their sibling `mod` declarations).
-// TODO(b2-blocked): crate::api::{hash_object,toml_object,unsafe_object,
-// json5_object,yaml_object,csrf_jsc} — un-gate these getters once api.rs
-// declares the modules.
+// ─── un-gated host-fn bodies (B-2, round 3) ─────────────────────────────────
+// `Bun.indexOfLine` / `Bun.allocUnsafe` are self-contained against the bun_jsc
+// stub surface; the lazy-property getters below fan out to sibling api/*
+// modules whose `create()` is already un-gated.
+
+use bun_jsc::JSObject;
+use bun_str::strings;
+
+#[bun_jsc::host_fn(export = "BunObject_callback_indexOfLine")]
+pub fn index_of_line(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let arguments_ = callframe.arguments_old::<2>();
+    let arguments = arguments_.slice();
+    if arguments.is_empty() {
+        return Ok(JSValue::js_number_from_int32(-1));
+    }
+
+    let Some(buffer) = arguments[0].as_array_buffer(global_this) else {
+        return Ok(JSValue::js_number_from_int32(-1));
+    };
+
+    let mut offset: usize = 0;
+    if arguments.len() > 1 {
+        offset = arguments[1].coerce_to_int64(global_this)?.max(0) as usize;
+    }
+
+    let bytes = buffer.byte_slice();
+    let mut current_offset = offset;
+    let end = bytes.len() as u32;
+
+    while current_offset < end as usize {
+        if let Some(i) = strings::index_of_newline_or_non_ascii(bytes, current_offset as u32) {
+            let byte = bytes[i as usize];
+            if byte > 0x7F {
+                current_offset += (strings::wtf8_byte_sequence_length(byte) as usize).max(1);
+                continue;
+            }
+
+            if byte == b'\n' {
+                return Ok(JSValue::from(i));
+            }
+
+            current_offset = i as usize + 1;
+        } else {
+            break;
+        }
+    }
+
+    Ok(JSValue::js_number_from_int32(-1))
+}
+
+// `Bun.allocUnsafe(size)` — wraps the C++ `JSC__JSValue__createUninitializedUint8Array`
+// directly; the bun_jsc helper for these (`is_uint32_as_any_int` /
+// `to_uint64_no_truncate` / `create_uninitialized_uint8_array`) lives in the
+// still-gated `JSValue.rs`.
+unsafe extern "C" {
+    fn JSC__JSValue__isUInt32AsAnyInt(this: JSValue) -> bool;
+    fn JSC__JSValue__toUInt64NoTruncate(this: JSValue) -> u64;
+    fn JSC__JSValue__createUninitializedUint8Array(
+        global: *const JSGlobalObject,
+        len: usize,
+    ) -> JSValue;
+}
+
+#[bun_jsc::host_fn(export = "BunObject_callback_allocUnsafe")]
+pub fn alloc_unsafe(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let arguments = callframe.arguments_old::<1>();
+    let size = arguments.ptr[0];
+    // SAFETY: pure FFI predicate; C++ handles any tagged JSValue.
+    if !unsafe { JSC__JSValue__isUInt32AsAnyInt(size) } {
+        return Err(
+            global_this.throw_invalid_arguments(format_args!("Expected a positive number"))
+        );
+    }
+    // SAFETY: `size` is now known to encode a non-negative integer (per the
+    // predicate above); `global_this` is a live borrow.
+    Ok(unsafe {
+        JSC__JSValue__createUninitializedUint8Array(
+            global_this,
+            JSC__JSValue__toUInt64NoTruncate(size) as usize,
+        )
+    })
+}
+
+// ─── lazy-property getters (un-gated targets only) ──────────────────────────
+// Zig: `toJSLazyPropertyCallback(wrapped)` emits a `callconv(jsc.conv)` shim
+// that calls `bun.jsc.toJSHostCall(global, @src(), wrapped, .{global, object})`
+// and `@export`s it as `BunObject_lazyPropCb_<name>`. The getter bodies here
+// are infallible (return `JSValue` directly), so the shim is a straight call.
+//
+// `lazy_prop!` expands one shim per (export-name, body) pair. Ident concat via
+// `${concat()}` would need `#![feature(macro_metavar_expr_concat)]` at the
+// crate root (out of scope for this file), so the export symbol is supplied
+// verbatim instead.
+macro_rules! lazy_prop {
+    ($( $sym:ident => |$g:ident, $obj:ident| $body:expr ),* $(,)?) => {
+        $(
+            #[unsafe(no_mangle)]
+            pub extern "C" fn $sym(
+                global: *mut JSGlobalObject,
+                object: *mut JSObject,
+            ) -> JSValue {
+                // SAFETY: JSC always passes live `global` / `object` pointers
+                // to lazy-property callbacks (BunObject.cpp).
+                let $g: &JSGlobalObject = unsafe { &*global };
+                #[allow(unused_variables)]
+                let $obj: &JSObject = unsafe { &*object };
+                bun_jsc::host_fn::to_js_host_call($g, (|| -> JsResult<JSValue> { Ok($body) })())
+            }
+        )*
+    };
+}
+
+pub fn get_hash_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    crate::api::hash_object::create(global_this)
+}
+
+pub fn get_jsonc_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    crate::api::jsonc_object::create(global_this)
+}
+
+pub fn get_markdown_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    crate::api::markdown_object::create(global_this)
+}
+
+pub fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    use bun_core::Output;
+    JSValue::js_boolean(Output::enable_ansi_colors_stdout() || Output::enable_ansi_colors_stderr())
+}
+
+pub fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    // SAFETY: `transpiler.fs` is the process-lifetime resolver FileSystem
+    // singleton (set during VM init, never freed); see get_public_path_* above.
+    let fs = unsafe { &*VirtualMachine::get().transpiler.fs };
+    // PORT NOTE: Zig used `ZigString.init(..).toJS()`; that helper is gated in
+    // bun_jsc, so route through the un-gated `BunString__createUTF8ForJS` FFI.
+    bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, &fs.top_level_dir)
+        .unwrap_or(JSValue::ZERO)
+}
+
+pub fn get_origin(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, VirtualMachine::get().origin.origin)
+        .unwrap_or(JSValue::ZERO)
+}
+
+pub fn get_argv(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    crate::node::process::get_argv(global_this)
+}
+
+lazy_prop! {
+    BunObject_lazyPropCb_hash            => |g, _o| get_hash_object(g, _o),
+    BunObject_lazyPropCb_JSONC           => |g, _o| get_jsonc_object(g, _o),
+    BunObject_lazyPropCb_markdown        => |g, _o| get_markdown_object(g, _o),
+    BunObject_lazyPropCb_enableANSIColors => |g, _o| enable_ansi_colors(g, _o),
+    BunObject_lazyPropCb_cwd             => |g, _o| get_cwd(g, _o),
+    BunObject_lazyPropCb_origin          => |g, _o| get_origin(g, _o),
+    BunObject_lazyPropCb_argv            => |g, _o| get_argv(g, _o),
+}
 
 // ─── host-fn bodies (the `Bun.*` surface proper) ────────────────────────────
-// ~60 `#[bun_jsc::host_fn]` entry points + lazy-getter shims. Every body
-// touches `JSGlobalObject`/`CallFrame` and most fan out to sibling api/*
-// modules that are themselves gated. Preserved verbatim.
+// Remaining `#[bun_jsc::host_fn]` entry points + lazy-getter shims that fan
+// out to still-gated targets (`webcore::Blob::construct_bun_file`, server
+// `init/listen`, JSZlib/JSZstd, env-map FFI, …). Preserved verbatim.
 // TODO(b2-blocked): bun_gen codegen crate + sibling api/* mod declarations
-// (HashObject/FFIObject/Subprocess/webcore::Blob/jsc::api::*). bun_jsc itself
-// is un-gated now — remaining blockers are the fan-out targets.
+// (FFIObject/Subprocess/webcore::Blob/jsc::api::*). bun_jsc itself is
+// un-gated now — remaining blockers are the fan-out targets.
 #[cfg(any())]
 #[allow(dead_code)]
 mod _jsc_gated {

@@ -114,25 +114,55 @@ impl Default for JSONOptions {
 ///
 /// `Lexer` (below) is the default instantiation (`NewLexer(.{})`).
 ///
-/// `JSONOptions` derives `ConstParamTy` (nightly `adt_const_params`), and
-/// `generic_const_exprs` lets each field project into a `const bool` slot, so
-/// callers write `NewLexer<'a, { JSONOptions { is_json: true, ..JSONOptions::DEFAULT } }>`
-/// instead of spelling out eight positional bools.
-// TODO(port): nightly-2025-12-10 rejects field access (`J.is_json`) inside
-// generic-const expressions even with `generic_const_exprs` enabled. The alias
-// is currently unused (callers spell out `LexerType<..bools..>` directly), so
-// gate it until the feature stabilizes or a `const fn` projection lands.
-#[cfg(any())]
-pub type NewLexer<'a, const J: JSONOptions> = LexerType<
+/// nightly-2025-12-10 rejects field projection (`J.is_json`) on a
+/// `const J: JSONOptions` parameter inside a generic-const expression
+/// ("overly complex generic constant"), even with `generic_const_exprs`.
+/// The Zig comptime-struct param is therefore modeled as a *type* parameter
+/// implementing [`JsonOptionsT`], whose associated consts *are* accepted in
+/// const-argument position under `generic_const_exprs`. Callers define a ZST
+/// per option set and `impl JsonOptionsT for It { const IS_JSON: bool = true; … }`.
+pub trait JsonOptionsT {
+    const IS_JSON: bool = false;
+    const ALLOW_COMMENTS: bool = false;
+    const ALLOW_TRAILING_COMMAS: bool = false;
+    const IGNORE_LEADING_ESCAPE_SEQUENCES: bool = false;
+    const IGNORE_TRAILING_ESCAPE_SEQUENCES: bool = false;
+    const JSON_WARN_DUPLICATE_KEYS: bool = true;
+    const WAS_ORIGINALLY_MACRO: bool = false;
+    const GUESS_INDENTATION: bool = false;
+
+    /// Reify as a value (mirrors the Zig `json_options` local).
+    const OPTIONS: JSONOptions = JSONOptions {
+        is_json: Self::IS_JSON,
+        allow_comments: Self::ALLOW_COMMENTS,
+        allow_trailing_commas: Self::ALLOW_TRAILING_COMMAS,
+        ignore_leading_escape_sequences: Self::IGNORE_LEADING_ESCAPE_SEQUENCES,
+        ignore_trailing_escape_sequences: Self::IGNORE_TRAILING_ESCAPE_SEQUENCES,
+        json_warn_duplicate_keys: Self::JSON_WARN_DUPLICATE_KEYS,
+        was_originally_macro: Self::WAS_ORIGINALLY_MACRO,
+        guess_indentation: Self::GUESS_INDENTATION,
+    };
+}
+
+/// `JSONOptions{}` — the default (non-JSON, JS-mode) option set.
+pub struct DefaultJsonOptions;
+impl JsonOptionsT for DefaultJsonOptions {}
+
+// The `J: JsonOptionsT` bound on a type alias triggers the `type_alias_bounds`
+// lint (bounds on aliases aren't enforced at use sites), but the bound is
+// load-bearing here: the const expressions below need it in scope to resolve
+// `<J as JsonOptionsT>::*`. Silence the lint locally.
+#[allow(type_alias_bounds)]
+pub type NewLexer<'a, J: JsonOptionsT = DefaultJsonOptions> = LexerType<
     'a,
-    { J.is_json },
-    { J.allow_comments },
-    { J.allow_trailing_commas },
-    { J.ignore_leading_escape_sequences },
-    { J.ignore_trailing_escape_sequences },
-    { J.json_warn_duplicate_keys },
-    { J.was_originally_macro },
-    { J.guess_indentation },
+    { <J as JsonOptionsT>::IS_JSON },
+    { <J as JsonOptionsT>::ALLOW_COMMENTS },
+    { <J as JsonOptionsT>::ALLOW_TRAILING_COMMAS },
+    { <J as JsonOptionsT>::IGNORE_LEADING_ESCAPE_SEQUENCES },
+    { <J as JsonOptionsT>::IGNORE_TRAILING_ESCAPE_SEQUENCES },
+    { <J as JsonOptionsT>::JSON_WARN_DUPLICATE_KEYS },
+    { <J as JsonOptionsT>::WAS_ORIGINALLY_MACRO },
+    { <J as JsonOptionsT>::GUESS_INDENTATION },
 >;
 
 // TODO(b1): `thiserror` not in this crate's deps; hand-roll Display/Error.
@@ -3895,8 +3925,7 @@ lexer_impl_header! {
 // No explicit `impl Drop` needed.
 
 /// `pub const Lexer = NewLexer(.{});`
-pub type Lexer<'a> =
-    LexerType<'a, false, false, false, false, false, true, false, false>;
+pub type Lexer<'a> = NewLexer<'a, DefaultJsonOptions>;
 
 #[inline]
 pub fn is_identifier_start(codepoint: i32) -> bool {

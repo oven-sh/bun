@@ -7,10 +7,12 @@
 //! as raw `*const [T]` / `*mut [T]` here. Phase B threads a crate-wide
 //! `'bump` and rewrites these to `&'bump [T]` / `&'bump mut [T]`.
 
-// `lexer::NewLexer<const J: JSONOptions>` projects struct fields of a
-// const-generic into eight `const bool` slots (Zig: `NewLexer(comptime
-// json_options)`). Pinned nightly — enable directly instead of inlining the
-// eight bools at every instantiation site.
+// `lexer::NewLexer<J: JsonOptionsT>` projects trait associated consts into
+// eight `const bool` slots (Zig: `NewLexer(comptime json_options)`). Field
+// access on a `const J: JSONOptions` param is rejected by nightly-2025-12-10
+// ("overly complex generic constant"); assoc-const projection on a *type*
+// param works under `generic_const_exprs`. `adt_const_params` keeps
+// `JSONOptions: ConstParamTy` for value-level reification.
 #![feature(adt_const_params, generic_const_exprs)]
 #![allow(incomplete_features)]
 

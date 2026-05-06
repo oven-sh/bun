@@ -24,8 +24,8 @@ use crate::SmallList;
 pub use crate::{PrintErr, Printer};
 
 use crate::selector::parser::{
-    compute_specificity, Combinator, GenericComponent, SelectorFlags, SpecificityAndFlags,
-    ValidSelectorImpl,
+    compute_specificity, Combinator, GenericComponent, SelectorFlags, SelectorImpl as ValidSelectorImpl,
+    SpecificityAndFlags,
 };
 
 /// Top-level SelectorBuilder struct. This should be stack-allocated by the

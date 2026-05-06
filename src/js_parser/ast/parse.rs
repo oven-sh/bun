@@ -26,28 +26,41 @@ use crate::parser::{
 // a direct `impl P` block. Full draft body preserved under #[cfg(any())] mod _draft below.
 
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+    // Zig: `inline fn parseExprOrBindings(p, level, errors: ?*DeferredErrors, expr: *Expr) !void`
+    #[inline]
     pub fn parse_expr_or_bindings(
         &mut self,
-        errors: &mut DeferredErrors,
-    ) -> Result<Expr, Error> {
-        let _ = errors;
-        todo!("b2-ast-E: parse_expr_or_bindings")
+        level: Level,
+        errors: Option<&mut DeferredErrors>,
+        expr: &mut Expr,
+    ) -> Result<(), Error> {
+        self.parse_expr_common(level, errors, EFlags::None, expr)
     }
+    // Zig: `inline fn parseExpr(p, level) !Expr`
+    #[inline]
     pub fn parse_expr(&mut self, level: Level) -> Result<Expr, Error> {
-        let _ = level;
-        todo!("b2-ast-E: parse_expr")
+        let mut expr = Expr::EMPTY;
+        self.parse_expr_common(level, None, EFlags::None, &mut expr)?;
+        Ok(expr)
     }
-    pub fn parse_expr_with_flags(&mut self, level: Level, flags: EFlags) -> Result<Expr, Error> {
-        let _ = (level, flags);
-        todo!("b2-ast-E: parse_expr_with_flags")
+    // Zig: `inline fn parseExprWithFlags(p, level, flags, expr: *Expr) !void`
+    #[inline]
+    pub fn parse_expr_with_flags(
+        &mut self,
+        level: Level,
+        flags: EFlags,
+        expr: &mut Expr,
+    ) -> Result<(), Error> {
+        self.parse_expr_common(level, None, flags, expr)
     }
     pub fn parse_expr_common(
         &mut self,
         level: Level,
         errors: Option<&mut DeferredErrors>,
         flags: EFlags,
-    ) -> Result<Expr, Error> {
-        let _ = (level, errors, flags);
+        expr: &mut Expr,
+    ) -> Result<(), Error> {
+        let _ = (level, errors, flags, expr);
         todo!("b2-ast-E: parse_expr_common")
     }
     pub fn parse_yield_expr(&mut self, loc: logger::Loc) -> Result<Expr, Error> {

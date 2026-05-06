@@ -160,7 +160,7 @@ pub struct LoaderHooks {
     pub get_hardcoded_module: unsafe fn(
         jsc_vm: *mut VirtualMachine,
         specifier: &bun_string::String,
-        hardcoded: HardcodedModule,
+        hardcoded: bun_resolve_builtins::Module,
         out: *mut ResolvedSource,
     ) -> bool,
     /// `Bun__transpileFile` body — needs `options.getLoaderAndVirtualSource`,
@@ -325,8 +325,8 @@ pub extern "C" fn Bun__resolveAndFetchBuiltinModule(
     let Some(alias) = bun_aliases_get(spec_utf8.slice()) else {
         return false;
     };
-    let Some(&hardcoded) = HardcodedModule::MAP.get(alias.path.as_bytes()) else {
-        bun_core::debug_assert!(false);
+    let Some(&hardcoded) = bun_resolve_builtins::Module::MAP.get(alias.path.as_bytes()) else {
+        debug_assert!(false);
         return false;
     };
     let Some(hooks) = loader_hooks() else {

@@ -5,11 +5,12 @@ use core::fmt;
 
 use bun_css as css;
 use bun_css::css_values::ident::{CustomIdent, Ident};
-use bun_css::selector::impl_ as impl_;
 use bun_css::selector::serialize;
 use bun_css::{CSSStringFns, IdentFns, Parser as CssParser, ParserOptions, PrintErr, Printer, SmallList, Token, TokenList};
-use bun_str::strings;
-use bun_wyhash::Wyhash;
+use bun_string::strings;
+use bun_wyhash::Wyhash11 as Wyhash;
+
+use super::impl_;
 
 use super::builder as selector_builder;
 use super::builder::SelectorBuilder;
@@ -49,19 +50,25 @@ pub fn valid_selector_impl<T: SelectorImpl>() {
 
 /// The `SelectorImpl` shape (Zig validated via `ValidSelectorImpl`). Phase B: this trait
 /// lives in `bun_css::selector::impl_` and is implemented by `impl_::Selectors`.
+// PORT NOTE: `PartialEq + Clone` bounds dropped — the concrete assoc types
+// (`values::ident::{Ident,IdentOrRef}`, `*const [u8]`) implement structural
+// equality via the `CssEql` protocol (`generics::implement_eql`), not
+// `core::cmp::PartialEq`. Every `eql`/`deep_clone`/`hash` callsite in this
+// module forwards through `css::implement_*` which bound on `CssEql`/
+// `DeepClone`/`CssHash`, so the std bounds were never load-bearing.
 pub trait SelectorImpl: Sized {
     type ExtraMatchingData;
-    type AttrValue: PartialEq + Clone;
-    type Identifier: PartialEq + Clone;
-    type LocalIdentifier: PartialEq + Clone;
-    type LocalName: PartialEq + Clone;
-    type NamespaceUrl: PartialEq + Clone;
-    type NamespacePrefix: PartialEq + Clone;
+    type AttrValue;
+    type Identifier;
+    type LocalIdentifier;
+    type LocalName;
+    type NamespaceUrl;
+    type NamespacePrefix;
     type BorrowedNamespaceUrl;
     type BorrowedLocalName;
-    type NonTSPseudoClass: PartialEq + Clone;
-    type VendorPrefix: PartialEq + Clone;
-    type PseudoElement: PartialEq + Clone;
+    type NonTSPseudoClass;
+    type VendorPrefix;
+    type PseudoElement;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -433,7 +440,7 @@ fn parse_selector<Impl: SelectorImpl>(
                 Err(_) => break 'outer_loop,
             };
             match tok {
-                Token::Whitespace => {
+                Token::Whitespace(_) => {
                     any_whitespace = true;
                     continue;
                 }
@@ -1008,7 +1015,7 @@ impl WebKitScrollbarPseudoElement {
 
 pub struct SelectorParser<'a> {
     pub is_nesting_allowed: bool,
-    pub options: &'a ParserOptions,
+    pub options: &'a ParserOptions<'a>,
     // `allocator: Allocator` dropped — arena threaded via `input.allocator()` in Zig.
     // PERF(port): was arena bulk-free — Phase B re-threads `&'bump Bump`.
 }

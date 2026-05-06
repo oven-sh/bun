@@ -100,7 +100,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 p.lexer.expect(T::TIdentifier)?;
             }
 
-            let name = p.lexer.identifier;
+            // TODO(port): `E::Dot::name` is `&'static [u8]` (arena-owned slice
+            // placeholder); lexer hands back `&'a [u8]`. Phase B threads `'a`
+            // through E.* — until then, erase the lifetime here.
+            // SAFETY: identifier slice borrows the source text, which outlives
+            // every AST node produced from it.
+            let name: &'static [u8] =
+                unsafe { core::mem::transmute::<&[u8], &'static [u8]>(p.lexer.identifier) };
             let name_loc = p.lexer.loc();
             p.lexer.next()?;
 
@@ -236,7 +242,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if !p.lexer.is_identifier_or_keyword() {
                         p.lexer.expect(T::TIdentifier)?;
                     }
-                    let name = p.lexer.identifier;
+                    // SAFETY/TODO(port): see lifetime-erase note above on `E::Dot::name`.
+                    let name: &'static [u8] = unsafe {
+                        core::mem::transmute::<&[u8], &'static [u8]>(p.lexer.identifier)
+                    };
                     let name_loc = p.lexer.loc();
                     p.lexer.next()?;
 
@@ -281,7 +290,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 .expect("unreachable");
         }
         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
-        let head = p.lexer.raw_template_contents();
+        // SAFETY/TODO(port): `TemplateContents::Raw` stores `&'static [u8]`;
+        // erase the `'a` source-text lifetime until Phase B threads it.
+        let head: &'static [u8] = unsafe {
+            core::mem::transmute::<&[u8], &'static [u8]>(p.lexer.raw_template_contents())
+        };
         p.lexer.next()?;
 
         let loc = left.loc;
@@ -314,7 +327,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 .expect("unreachable");
         }
         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
-        let head = p.lexer.raw_template_contents();
+        // SAFETY/TODO(port): see lifetime-erase note above on TemplateContents::Raw.
+        let head: &'static [u8] = unsafe {
+            core::mem::transmute::<&[u8], &'static [u8]>(p.lexer.raw_template_contents())
+        };
         let (parts, _tail_loc) = p.parse_template_parts(true)?;
         let tag = *left;
         let loc = left.loc;
@@ -452,7 +468,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // condition ? yes : no
         //             ^
-        p.parse_expr_with_flags(Level::Comma, EFlags::None, &mut e_if.yes)?;
+        e_if.yes = p.parse_expr_with_flags(Level::Comma, EFlags::None)?;
 
         p.allow_in = old_allow_in;
 
@@ -462,7 +478,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // condition ? yes : no
         //                   ^
-        p.parse_expr_with_flags(Level::Comma, EFlags::None, &mut e_if.no)?;
+        e_if.no = p.parse_expr_with_flags(Level::Comma, EFlags::None)?;
 
         // condition ? yes : no
         //                     ^

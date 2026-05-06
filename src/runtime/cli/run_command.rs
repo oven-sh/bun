@@ -258,7 +258,7 @@ impl Run {
             .map(|p| unsafe { &mut *p.as_ptr() });
         this.run_error_handler(value, list);
         // SAFETY: single-threaded JS; `RUN` is the static that owns `this.vm`.
-        unsafe { RUN.any_unhandled = true };
+        unsafe { (*(&raw mut RUN)).any_unhandled = true };
     }
 
     /// Inlined `VirtualMachine.onBeforeExit` (gated upstream): dispatch
@@ -316,6 +316,7 @@ impl Run {
     /// `Run.start` — load the entry point, run the event loop until idle,
     /// fire `beforeExit`/`exit`, then `globalExit`. Called under the JSC API
     /// lock via `hold_api_lock`.
+    #[allow(unused_assignments)] // `printed_…` writes before `global_exit` are intentional Zig-shape.
     fn start(&mut self) -> ! {
         // PORT NOTE: deref the raw VM pointer once instead of going through a
         // `&mut self` accessor so `self.{any_unhandled,entry_path,…}` stay
@@ -374,28 +375,16 @@ impl Run {
                 // SAFETY: `vm.jsc_vm` set in `init`.
                 let _ = promise.result(unsafe { &mut *vm.jsc_vm });
 
-                // SAFETY: `vm.log` set in `init`.
-                if let Some(log) = vm.log {
-                    let log = unsafe { &mut *log.as_ptr() };
-                    if !log.msgs.is_empty() {
-                        dump_build_error(vm);
-                        // SAFETY: re-borrow after `dump_build_error` (which only reads).
-                        unsafe { (*vm.log.unwrap().as_ptr()).msgs.clear() };
-                    }
+                if log_has_msgs(vm) {
+                    dump_build_error(vm);
+                    log_clear_msgs(vm);
                 }
             }
             Err(err) => {
-                let mut printed = false;
-                if let Some(log) = vm.log {
-                    // SAFETY: `vm.log` set in `init`.
-                    if unsafe { !(*log.as_ptr()).msgs.is_empty() } {
-                        dump_build_error(vm);
-                        // SAFETY: re-borrow; `dump_build_error` only reads.
-                        unsafe { (*vm.log.unwrap().as_ptr()).msgs.clear() };
-                        printed = true;
-                    }
-                }
-                if !printed {
+                if log_has_msgs(vm) {
+                    dump_build_error(vm);
+                    log_clear_msgs(vm);
+                } else {
                     pretty_errorln!(
                         "Error occurred loading entry point: {}",
                         bstr::BStr::new(err.name()),
@@ -456,12 +445,9 @@ impl Run {
             Run::on_before_exit(vm);
         }
 
-        if let Some(log) = vm.log {
-            // SAFETY: `vm.log` set in `init`.
-            if unsafe { !(*log.as_ptr()).msgs.is_empty() } {
-                dump_build_error(vm);
-                Output::flush();
-            }
+        if log_has_msgs(vm) {
+            dump_build_error(vm);
+            Output::flush();
         }
 
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
@@ -481,6 +467,24 @@ impl Run {
         // DCE `#[no_mangle] extern "C"` symbols the way Zig does, so the
         // anti-DCE shims are unnecessary here.
         Run::global_exit(vm);
+    }
+}
+
+#[inline]
+fn log_has_msgs(vm: &VirtualMachine) -> bool {
+    match vm.log {
+        // SAFETY: `vm.log` is a process-lifetime `&mut Log` written once in
+        // `VirtualMachine::init`; never freed, single-threaded CLI.
+        Some(p) => unsafe { !(*p.as_ptr()).msgs.is_empty() },
+        None => false,
+    }
+}
+
+#[inline]
+fn log_clear_msgs(vm: &mut VirtualMachine) {
+    if let Some(p) = vm.log {
+        // SAFETY: see `log_has_msgs`.
+        unsafe { (*p.as_ptr()).msgs.clear() };
     }
 }
 

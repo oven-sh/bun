@@ -141,17 +141,49 @@ impl AnyRoute {
     }
 
     pub fn ref_(&self) {
-        // PERF(port): was inline switch — Rc::clone is the ref(); callers that
-        // need an owned handle should `.clone()` instead. Kept for API parity.
-        // TODO(port): audit call sites once Rc shape is final.
+        match self {
+            // Rc variants: callers that need an owned handle should `.clone()`
+            // the Rc — this entry point exists for API parity with the Zig
+            // `inline switch` and is a no-op for them (clone/drop is the ref/deref).
+            AnyRoute::Static(_) | AnyRoute::File(_) => {}
+            AnyRoute::Html(_p) => {
+                // TODO(port): bump intrusive refcount once
+                // `impl bun_ptr::RefCounted for html_bundle::Route` lands —
+                // `unsafe { bun_ptr::IntrusiveRc::<html_bundle::Route>::ref_raw(*_p) }`.
+                // Without this the HTMLBundle route may be freed while still
+                // registered with uws (use-after-free) or leak.
+            }
+            AnyRoute::FrameworkRouter(_) => {}
+        }
     }
     pub fn deref_(&self) {
-        // Rc drop is the deref(); see ref_().
+        match self {
+            AnyRoute::Static(_) | AnyRoute::File(_) => {}
+            AnyRoute::Html(_p) => {
+                // TODO(port): `unsafe { bun_ptr::IntrusiveRc::<html_bundle::Route>::deref_raw(*_p) }`
+                // once `impl RefCounted for html_bundle::Route` lands. See ref_().
+            }
+            AnyRoute::FrameworkRouter(_) => {}
+        }
     }
 
-    pub fn set_server(&self, _server: Option<AnyServer>) {
-        // TODO(b2-blocked): StaticRoute/FileRoute/html_bundle::Route need
-        // interior-mutable `server` cells before this can write through `&Rc`.
+    pub fn set_server(&self, server: Option<AnyServer>) {
+        match self {
+            AnyRoute::Static(r) => r.server.set(server),
+            AnyRoute::File(_r) => {
+                // TODO(port): `_r.server.set(server)` — FileRoute.server Cell
+                // exists but is private; expose a `pub fn set_server` (or make
+                // the field `pub(super)`) in FileRoute.rs so the route learns
+                // its owning server before `on_pending_request()` fires.
+            }
+            AnyRoute::Html(_p) => {
+                // TODO(port): `unsafe { (**_p).server.set(server) }` —
+                // html_bundle::Route.server Cell exists but is private; expose
+                // a setter so the route can call back into the server.
+                let _ = server;
+            }
+            AnyRoute::FrameworkRouter(_) => {} // Zig: no-op (server.zig:51-58).
+        }
     }
 
     // from_js / from_options / html_route_from_js stay gated (JS callback bodies).
@@ -647,9 +679,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
         }
         // TODO(b2-blocked): per-method "/*" complement fill when a
-        // method-specific user route exists for "/*" (server_body.rs:3460-3486)
-        // — needs http::Method::Set; the any-covered fast path above handles
-        // the common case.
+        // method-specific user route exists for "/*" (server_body.rs:3460-3486,
+        // server.zig:2962-2976) — needs `bun_http::Method::Set`. The spec
+        // tracks a `Method.Set` of "/*" coverage and registers per-method
+        // complement handlers; this stub tracks only `star_covered_by_user_any`
+        // and falls back to `app.any("/*", …)`. Dispatch is currently
+        // equivalent because uWS routes the method-specific tree before `*`
+        // (HttpRouter.h:255-277), BUT un-gating §5 (static routes) without
+        // fixing this WILL clobber any static `.any` "/*" route via
+        // `HttpRouter.h:283 remove(methods[0], pattern, priority)`.
 
         if self.config.on_node_http_request.is_some() {
             // SAFETY: app is a live uws handle.
@@ -1124,13 +1162,34 @@ pub struct AnyServer {
     pub ptr: *mut (),
 }
 
-/// Dispatch over the four `NewServer` monomorphizations.
+/// Dispatch over the four `NewServer` monomorphizations (shared `&` borrow).
 /// Mirrors Zig's `inline switch (ptr.tag()) { inline else => |s| s.method() }`.
+/// Read-only accessors MUST use this form so holding the returned reference
+/// while calling another dispatch method does not materialize an aliasing
+/// `&mut NewServer` (Stacked-Borrows UB).
 macro_rules! any_server_dispatch {
     ($self:expr, |$s:ident| $body:expr) => {{
         let this = $self;
         // SAFETY: ptr was produced by `AnyServer::from` for the matching tag
         // and is non-null while the server is alive.
+        match this.tag {
+            AnyServerTag::HTTPServer => { let $s = unsafe { &*this.ptr.cast::<HTTPServer>() }; $body }
+            AnyServerTag::HTTPSServer => { let $s = unsafe { &*this.ptr.cast::<HTTPSServer>() }; $body }
+            AnyServerTag::DebugHTTPServer => { let $s = unsafe { &*this.ptr.cast::<DebugHTTPServer>() }; $body }
+            AnyServerTag::DebugHTTPSServer => { let $s = unsafe { &*this.ptr.cast::<DebugHTTPSServer>() }; $body }
+        }
+    }};
+}
+
+/// Dispatch over the four `NewServer` monomorphizations (exclusive `&mut`
+/// borrow). Only for callers that mutate server state — never use this for
+/// read-only accessors (see `any_server_dispatch!`).
+macro_rules! any_server_dispatch_mut {
+    ($self:expr, |$s:ident| $body:expr) => {{
+        let this = $self;
+        // SAFETY: ptr was produced by `AnyServer::from` for the matching tag
+        // and is non-null while the server is alive. Caller upholds that no
+        // other reference into the same `NewServer` is live for this scope.
         match this.tag {
             AnyServerTag::HTTPServer => { let $s = unsafe { &mut *this.ptr.cast::<HTTPServer>() }; $body }
             AnyServerTag::HTTPSServer => { let $s = unsafe { &mut *this.ptr.cast::<HTTPSServer>() }; $body }
@@ -1176,8 +1235,8 @@ impl AnyServer {
         any_server_dispatch!(self, |s| s.inspector_server_id)
     }
 
-    pub fn set_inspector_server_id(&self, id: jsc::DebuggerId) {
-        any_server_dispatch!(self, |s| {
+    pub fn set_inspector_server_id(&mut self, id: jsc::DebuggerId) {
+        any_server_dispatch_mut!(self, |s| {
             s.inspector_server_id = id;
             // TODO(b2-blocked): dev_server.inspector_server_id = id once DevServer is real.
         })
@@ -1187,24 +1246,24 @@ impl AnyServer {
         any_server_dispatch!(self, |s| s.plugins.as_deref())
     }
 
-    pub fn on_pending_request(&self) {
-        any_server_dispatch!(self, |s| s.on_pending_request())
+    pub fn on_pending_request(&mut self) {
+        any_server_dispatch_mut!(self, |s| s.on_pending_request())
     }
 
-    pub fn on_request_complete(&self) {
-        any_server_dispatch!(self, |s| s.on_request_complete())
+    pub fn on_request_complete(&mut self) {
+        any_server_dispatch_mut!(self, |s| s.on_request_complete())
     }
 
-    pub fn on_static_request_complete(&self) {
-        any_server_dispatch!(self, |s| s.on_static_request_complete())
+    pub fn on_static_request_complete(&mut self) {
+        any_server_dispatch_mut!(self, |s| s.on_static_request_complete())
     }
 
     pub fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> {
         any_server_dispatch!(self, |s| s.dev_server.as_deref())
     }
 
-    pub fn stop(&self, abrupt: bool) {
-        any_server_dispatch!(self, |s| s.stop(abrupt))
+    pub fn stop(&mut self, abrupt: bool) {
+        any_server_dispatch_mut!(self, |s| s.stop(abrupt))
     }
 
     pub fn num_subscribers(&self, topic: &[u8]) -> u32 {
@@ -1215,8 +1274,8 @@ impl AnyServer {
         })
     }
 
-    pub fn web_socket_handler(&self) -> Option<&mut WebSocketServerHandler> {
-        any_server_dispatch!(self, |s| s.config.websocket.as_mut().map(|ws| &mut ws.handler))
+    pub fn web_socket_handler(&mut self) -> Option<&mut WebSocketServerHandler> {
+        any_server_dispatch_mut!(self, |s| s.config.websocket.as_mut().map(|ws| &mut ws.handler))
     }
 }
 

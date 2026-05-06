@@ -4090,7 +4090,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Output::panic(format_args!("{}\n{}{}", fmt, args, bstr::BStr::new(&panic_buffer[..written])));
     }
 
-    #[cfg(any())] // round-D: heavy body, depends on parse_*/visit_*/ImportScanner/full E surface
     pub fn jsx_strings_to_member_expression(
         &mut self,
         loc: logger::Loc,
@@ -4101,13 +4100,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let value = self.handle_identifier(
             loc,
             E::Identifier {
-                r#ref: result.r#ref,
+                ref_: result.r#ref,
                 must_keep_due_to_with_stmt: result.is_inside_with_scope,
                 can_be_removed_if_unused: true,
                 ..Default::default()
             },
             Some(parts[0]),
-            IdentifierOpts { was_originally_identifier: true, ..Default::default() },
+            IdentifierOpts::new().with_was_originally_identifier(true),
         );
         if parts.len() > 1 {
             return Ok(self.member_expression(loc, value, &parts[1..]));
@@ -4116,7 +4115,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(value)
     }
 
-    #[cfg(any())] // round-D: needs MaybeRewritePropertyAccessOpts (visit-phase opts)
     fn member_expression(&mut self, loc: logger::Loc, initial_value: Expr, parts: &[&'a [u8]]) -> Expr {
         let mut value = initial_value;
 
@@ -4126,20 +4124,20 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 value,
                 part,
                 loc,
-                crate::MaybeRewritePropertyAccessOpts {
-                    is_call_target: false,
-                    assign_target: js_ast::AssignTarget::None,
-                    // is_template_tag: false,
-                    is_delete_target: false,
-                    ..Default::default()
-                },
+                // Zig: `.{ .is_call_target = false, .assign_target = .none, .is_delete_target = false }`
+                // — all defaults on the packed-u8 IdentifierOpts.
+                IdentifierOpts::default(),
             ) {
                 value = rewrote;
             } else {
+                // TODO(port): E::Dot.name is `&'static [u8]` pending 'bump threading.
+                // SAFETY: part is arena-owned ('a) and outlives every Expr.
+                let name: &'static [u8] =
+                    unsafe { core::mem::transmute::<&'a [u8], &'static [u8]>(*part) };
                 value = self.new_expr(
                     E::Dot {
                         target: value,
-                        name: part,
+                        name,
                         name_loc: loc,
                         can_be_removed_if_unused: self.options.features.dead_code_elimination,
                         ..Default::default()

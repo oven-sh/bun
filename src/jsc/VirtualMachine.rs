@@ -383,16 +383,22 @@ impl ExitHandler {
         vm.exit_handler.exit_code = code;
     }
 
-    pub fn dispatch_on_exit(&mut self) {
-        // SAFETY: self points to VirtualMachine.exit_handler
-        let vm: &mut VirtualMachine = unsafe {
-            &mut *((self as *mut Self as *mut u8)
-                .sub(offset_of!(VirtualMachine, exit_handler))
-                .cast::<VirtualMachine>())
-        };
+    /// PORT NOTE: spec calls `this.exit_handler.dispatchOnExit()` from a
+    /// `*VirtualMachine`. Taking `&mut self: ExitHandler` and recovering the
+    /// parent via `@fieldParentPtr` is sound in Zig but in Rust would (a) form
+    /// a `&mut VirtualMachine` aliased with the live `&mut ExitHandler`, and
+    /// (b) escape the provenance of `&mut self` (which only covers the
+    /// `ExitHandler` field). Callers pass the raw VM pointer instead.
+    ///
+    /// # Safety
+    /// `vm` must point to the live per-thread `VirtualMachine`.
+    pub unsafe fn dispatch_on_exit(vm: *mut VirtualMachine) {
+        // SAFETY: per fn contract — per-field raw deref, no `&mut VM` formed.
+        let exit_code = unsafe { (*vm).exit_handler.exit_code };
         // SAFETY: extern "C" FFI; vm.global valid for VM lifetime
-        unsafe { Process__dispatchOnExit(vm.global, self.exit_code) };
-        if vm.is_main_thread() {
+        unsafe { Process__dispatchOnExit((*vm).global, exit_code) };
+        // SAFETY: per fn contract — per-field raw deref.
+        if unsafe { (*vm).worker.is_none() } {
             // SAFETY: extern "C" FFI; main-thread-only termination hooks
             unsafe { Bun__closeAllSQLiteDatabasesForTermination() };
             // SAFETY: extern "C" FFI; main-thread-only termination hooks
@@ -400,17 +406,18 @@ impl ExitHandler {
         }
     }
 
-    pub fn dispatch_on_before_exit(&mut self) {
-        // SAFETY: self points to VirtualMachine.exit_handler
-        let vm: &mut VirtualMachine = unsafe {
-            &mut *((self as *mut Self as *mut u8)
-                .sub(offset_of!(VirtualMachine, exit_handler))
-                .cast::<VirtualMachine>())
-        };
-        // SAFETY: extern "C" FFI; vm.global valid for VM lifetime
-        let global = unsafe { &*vm.global };
+    /// See [`dispatch_on_exit`] for the `&mut self → *mut VirtualMachine`
+    /// signature change.
+    ///
+    /// # Safety
+    /// `vm` must point to the live per-thread `VirtualMachine`.
+    pub unsafe fn dispatch_on_before_exit(vm: *mut VirtualMachine) {
+        // SAFETY: per fn contract — per-field raw deref, no `&mut VM` formed.
+        let exit_code = unsafe { (*vm).exit_handler.exit_code };
+        // SAFETY: per fn contract; vm.global valid for VM lifetime.
+        let global = unsafe { &*(*vm).global };
         let _ = jsc::from_js_host_call_generic(global, || unsafe {
-            Process__dispatchOnBeforeExit(vm.global, self.exit_code)
+            Process__dispatchOnBeforeExit((*vm).global, exit_code)
         });
     }
 }

@@ -136,13 +136,17 @@ impl Decompressor {
                 // PORT NOTE: Zig `reader.list = body_out_str.list` aliased the
                 // ArrayListUnmanaged header by value. The Rust reader keeps a
                 // `&mut Vec<u8>` instead; re-seat it in case the response buffer
-                // was swapped between chunks.
+                // was swapped between chunks. After re-seating, derive
+                // `next_out`/`avail_out` from `reader.list_ptr` (NOT
+                // `body_out_str.list`) — taking a fresh `&mut body_out_str.list`
+                // would invalidate the just-stored `&'static mut` under stacked
+                // borrows.
                 // SAFETY: see module-level note on lifetime erasure.
                 reader.list_ptr = unsafe { erase_mut(&mut body_out_str.list) };
                 // SAFETY: `initial <= len <= capacity`; the offset is within the
                 // allocation and `read_all` only writes into `[initial, capacity)`.
-                reader.zlib.next_out = unsafe { body_out_str.list.as_mut_ptr().add(initial) };
-                reader.zlib.avail_out = (body_out_str.list.capacity() - initial) as u32;
+                reader.zlib.next_out = unsafe { reader.list_ptr.as_mut_ptr().add(initial) };
+                reader.zlib.avail_out = (reader.list_ptr.capacity() - initial) as u32;
                 // we reset the total out so we can track how much we decompressed this time
                 reader.zlib.total_out = initial as _;
             }

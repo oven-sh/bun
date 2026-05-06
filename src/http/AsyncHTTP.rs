@@ -759,20 +759,11 @@ impl AsyncHTTP {
                 (*this).state.store(State::Fail, Ordering::Relaxed);
             }
 
-            {
-                let tracker = crate::socket_async_http_abort_tracker();
-                if tracker.count() > 0 {
-                    bun_core::scoped_log!(
-                        AsyncHTTP,
-                        "bun.http.socket_async_http_abort_tracker count: {}",
-                        tracker.count()
-                    );
-                }
-                // PORT NOTE: Zig also did `tracker.shrinkAndFree(count)` when
-                // `capacity()>10_000 && count()<100`. `bun_collections::ArrayHashMap`
-                // does not yet expose `capacity()`/`shrink_and_free()`.
-                // TODO(port): wire `bun_collections::ArrayHashMap::shrink_and_free` once it exists.
-            }
+            // PORT NOTE: Zig logged `socket_async_http_abort_tracker.count()` here
+            // and did `tracker.shrinkAndFree(count)` when `capacity()>10_000 &&
+            // count()<100`. `bun_collections::ArrayHashMap` does not yet expose
+            // `capacity()`/`shrink_and_free()`.
+            // TODO(port): wire `bun_collections::ArrayHashMap::{capacity,shrink_and_free}` once they exist and call them under the same guard.
 
             let has_more = result.has_more;
             if has_more {

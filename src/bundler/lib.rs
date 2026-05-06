@@ -386,6 +386,16 @@ pub mod dispatch {
         /// `dev.barrel_needed_exports.getOrPut(path)` etc. Opaque body lives in
         /// bun_runtime; bundler only registers.
         pub register_barrel_export: unsafe fn(*mut (), &[u8], &[u8]),
+        /// `&mut dev.barrel_needed_exports` — read by `barrel_imports::
+        /// apply_barrel_optimization` to seed needed records from prior builds.
+        pub barrel_needed_exports: unsafe fn(
+            *mut (),
+        )
+            -> *mut bun_collections::StringHashMap<bun_collections::StringHashMap<()>>,
+        /// `dev.barrel_files_with_deferrals.getOrPut(path)` + key dupe — see
+        /// `barrel_imports::apply_barrel_optimization`.
+        pub register_barrel_with_deferrals:
+            unsafe fn(*mut (), path: &[u8]) -> Result<(), bun_core::Error>,
         // ── full slot set (finalize_bundle, handle_parse_task_failure,
         //    put_or_overwrite_asset, …) stays in the gated bundle_v2.rs draft
         //    until BundleV2/DevServerOutput types are real here.

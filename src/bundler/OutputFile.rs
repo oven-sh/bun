@@ -404,9 +404,6 @@ impl OutputFile {
         }
     }
 
-    
-    // TODO(b2-blocked): bun_sys::write_file_with_path_buffer / make_path /
-    // move_file_z / openat / copy_file — high-level fs surface not yet exported.
     // TODO(port): narrow error set
     pub fn write_to_disk(&self, root_dir: Fd, root_dir_path: &[u8]) -> Result<(), Error> {
         match &self.value {
@@ -418,18 +415,18 @@ impl OutputFile {
                 let mut rel_path: &[u8] = &self.dest_path;
                 if self.dest_path.len() > root_dir_path.len() {
                     rel_path = resolve_path::relative(root_dir_path, &self.dest_path);
-                    if let Some(parent) = bun_paths::dirname(rel_path) {
-                        if parent.len() > root_dir_path.len() {
-                            // TODO(port): Zig `root_dir.makePath(parent)` (std.fs.Dir).
-                            bun_sys::make_path(root_dir, parent)?;
-                        }
+                    // Zig: `std.fs.path.dirname` returns `null` when there's no
+                    // separator; the Rust port returns `b""` instead.
+                    let parent = resolve_path::dirname::<platform::Auto>(rel_path);
+                    if !parent.is_empty() && parent.len() > root_dir_path.len() {
+                        // Zig `root_dir.makePath(parent)` (std.fs.Dir).
+                        bun_sys::make_path(bun_sys::Dir::from_fd(root_dir), parent)?;
                     }
                 }
 
                 let mut path_buf = PathBuffer::uninit();
                 // CYCLEBREAK MOVE_DOWN: NodeFS::write_file_with_path_buffer → bun_sys.
-                // TODO(b0): bun_sys::write_file_with_path_buffer arrives from move-in.
-                bun_sys::write_file_with_path_buffer(
+                let _ = bun_sys::write_file_with_path_buffer(
                     &mut path_buf,
                     bun_sys::WriteFileArgs {
                         data: bun_sys::WriteFileData::Buffer {
@@ -440,12 +437,9 @@ impl OutputFile {
                         encoding: bun_sys::WriteFileEncoding::Buffer,
                         mode: if self.is_executable { 0o755 } else { 0o644 },
                         dirfd: root_dir,
-                        file: bun_sys::PathOrFileDescriptor::Path(
-                            bun_str::PathString::init(rel_path),
-                        ),
+                        file: bun_sys::PathOrFileDescriptor::Path(PathString::init(rel_path)),
                     },
-                )
-                .unwrap()?;
+                )?;
             }
             Value::Move(value) => {
                 self.move_to(root_dir_path, &value.pathname, root_dir)?;

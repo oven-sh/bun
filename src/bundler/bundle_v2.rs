@@ -2974,7 +2974,7 @@ impl<'a> BundleV2<'a> {
 
         // Generate metafile if requested (CLI writes files in build_command.zig)
         let metafile: Option<Box<[u8]>> = if this.linker.options.metafile {
-            match LinkerContext::MetafileBuilder::generate(&mut this.linker, chunks) {
+            match crate::linker_context::metafile_builder::MetafileBuilder::generate(&mut this.linker, chunks) {
                 Ok(m) => Some(m),
                 Err(err) => {
                     Output::warn(format_args!("Failed to generate metafile: {}", err.name()));
@@ -3560,19 +3560,21 @@ impl<'a> BundleV2<'a> {
         // TODO(port): defer block — graph.ast/input_files/entry_points/entry_point_original_names deinit
         // In Rust these are dropped automatically; arena-backed slices are bulk-freed.
 
-        if self.graph.pool.workers_assignments.count() > 0 {
-            {
-                self.graph.pool.workers_assignments_lock.lock();
-                let _unlock = scopeguard::guard((), |_| self.graph.pool.workers_assignments_lock.unlock());
-                for worker in self.graph.pool.workers_assignments.values() {
-                    worker.deinit_soon();
+        // bundle_v2.zig:1426-1437 — worker-assignment teardown.
+        let pool = unsafe { self.graph.pool.as_mut() };
+        {
+            let mut assignments = pool.workers_assignments.lock();
+            if assignments.count() > 0 {
+                for worker in assignments.values() {
+                    // SAFETY: worker ptrs are live until `deinit_soon`.
+                    unsafe { (**worker).deinit_soon() };
                 }
-                self.graph.pool.workers_assignments.clear();
+                assignments.clear();
+                // SAFETY: worker_pool is live for the bundle lifetime.
+                unsafe { (*pool.worker_pool).wake_for_idle_events() };
             }
-
-            self.graph.pool.worker_pool.wake_for_idle_events();
         }
-        self.graph.pool.deinit();
+        pool.deinit();
 
         for free in self.free_list.drain(..) {
             drop(free);
@@ -3633,7 +3635,7 @@ impl<'a> BundleV2<'a> {
 
         // Generate metafile if requested
         let metafile: Option<Box<[u8]>> = if self.linker.options.metafile {
-            match LinkerContext::MetafileBuilder::generate(&mut self.linker, chunks) {
+            match crate::linker_context::metafile_builder::MetafileBuilder::generate(&mut self.linker, chunks) {
                 Ok(m) => Some(m),
                 Err(err) => {
                     Output::warn(format_args!("Failed to generate metafile: {}", err.name()));
@@ -3646,7 +3648,7 @@ impl<'a> BundleV2<'a> {
 
         // Generate markdown if metafile was generated and path specified
         let metafile_markdown: Option<Box<[u8]>> = if !self.linker.options.metafile_markdown_path.is_empty() && metafile.is_some() {
-            match LinkerContext::MetafileBuilder::generate_markdown(metafile.as_ref().unwrap()) {
+            match crate::linker_context::metafile_builder::MetafileBuilder::generate_markdown(metafile.as_ref().unwrap()) {
                 Ok(m) => Some(m),
                 Err(err) => {
                     Output::warn(format_args!("Failed to generate metafile markdown: {}", err.name()));
@@ -4917,12 +4919,10 @@ impl<'a> BundleV2<'a> {
                 parse_task::ResultValue::Success(val) => val.source.index.0,
             };
             let loader: Loader = graph.input_files.items_loader()[source as usize];
-            if !loader.should_copy_for_bundling() {
-                this.finalizers.push(parse_result.external);
-            } else {
-                graph.input_files.items_allocator_mut()[source as usize] =
-                    ExternalFreeFunctionAllocator::create(parse_result.external.function.unwrap(), parse_result.external.ctx.unwrap());
-            }
+            // PORT NOTE: `InputFile.allocator` column dropped in the Rust port;
+            // stash the finalizer regardless so plugin-owned bytes are freed.
+            let _ = loader;
+            this.finalizers.push(core::mem::take(&mut parse_result.external));
         }
 
         // defer bun.default_allocator.destroy(parse_result) — caller owns Box and drops at end
@@ -4951,27 +4951,11 @@ impl<'a> BundleV2<'a> {
         }
 
         // To minimize contention, watchers are appended on the bundle thread.
-        if let Some(watcher) = this.bun_watcher {
-            if parse_result.watcher_data.fd != bun_sys::Fd::INVALID {
-                let source = match &parse_result.value {
-                    parse_task::ResultValue::Empty(data) => &graph.input_files.items_source()[data.source_index.get() as usize],
-                    parse_task::ResultValue::Err(data) => &graph.input_files.items_source()[data.source_index.get() as usize],
-                    parse_task::ResultValue::Success(val) => &val.source,
-                };
-                if this.should_add_watcher(&source.path.text) {
-                    // SAFETY: bun_watcher NonNull is valid while bundle is running
-                    let _ = unsafe { watcher.as_ref() }.add_file(
-                        parse_result.watcher_data.fd,
-                        &source.path.text,
-                        bun_wyhash::hash32(&source.path.text),
-                        graph.input_files.items_loader()[source.index.0 as usize],
-                        parse_result.watcher_data.dir_fd,
-                        None,
-                        cfg!(windows),
-                    );
-                }
-            }
-        }
+        // CYCLEBREAK GENUINE: `bun_watcher` is an opaque `Option<NonNull<()>>`;
+        // `add_file` lives in T6 (`bun_runtime::hot_reloader`). The dispatch
+        // hook for it lands with the WatcherVTable; until then we drop the fd
+        // bookkeeping (the fd is closed by the worker on Result drop).
+        let _ = this.bun_watcher;
 
         match &mut parse_result.value {
             parse_task::ResultValue::Empty(empty_result) => {

@@ -1591,13 +1591,10 @@ impl<'a> LinkerContext<'a> {
                 stmts.inside_wrapper_prefix.append_non_dependency(
                     Stmt::alloc(
                         S::Local {
-                            decls: BabyList::<G::Decl>::from_slice(
-                                alloc,
-                                &[G::Decl {
-                                    binding: Binding::alloc(alloc, js_ast::ast::b::Identifier { r#ref: namespace_ref }, loc),
-                                    value: Some(Expr::init(E::RequireString { import_record_index, ..Default::default() }, loc)),
-                                }],
-                            )?,
+                            decls: BabyList::<G::Decl>::from_slice(&[G::Decl {
+                                binding: Binding::alloc(alloc, js_ast::ast::b::Identifier { r#ref: namespace_ref }, loc),
+                                value: Some(Expr::init(E::RequireString { import_record_index, ..Default::default() }, loc)),
+                            }])?,
                             ..Default::default()
                         },
                         loc,

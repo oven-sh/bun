@@ -398,10 +398,16 @@ impl LazySourceMap {
                 let mut decompressed_contents_slice: Vec<Option<Vec<u8>>> =
                     vec![None; source_files_count];
                 for i in 0..source_files_count {
-                    file_names.push(Box::from(slice_to(
-                        serialized.bytes,
-                        serialized.source_file_name(i),
-                    )));
+                    // SAFETY: `serialized.bytes` is a 'static read-only sourcemap subrange
+                    // (disjoint from bytecode); StringPointer offsets were serialized by
+                    // `to_bytes` and are in-bounds.
+                    file_names.push(Box::from(unsafe {
+                        slice_to(
+                            serialized.bytes.as_ptr(),
+                            serialized.bytes.len(),
+                            serialized.source_file_name(i),
+                        )
+                    }));
                 }
 
                 let data = Box::new(SerializedSourceMapLoaded {
@@ -557,11 +563,22 @@ impl StandaloneModuleGraph {
     }
 }
 
-fn slice_to(bytes: &'static [u8], ptr: StringPointer) -> &'static [u8] {
+/// Read-only subslice helper. Builds a `&'static [u8]` over the *subrange only* so no
+/// shared reference ever spans the writable bytecode/module_info regions of the same
+/// allocation (which would be invalidated by JSC's in-place writes).
+///
+/// SAFETY: caller guarantees `base[..len]` is a live 'static allocation and
+/// `[ptr.offset, ptr.offset + ptr.length)` is in-bounds and never written through a
+/// `*mut` alias for the lifetime of the returned reference.
+unsafe fn slice_to(base: *const u8, len: usize, ptr: StringPointer) -> &'static [u8] {
     if ptr.length == 0 {
         return b"";
     }
-    &bytes[ptr.offset as usize..][..ptr.length as usize]
+    let off = ptr.offset as usize;
+    let n = ptr.length as usize;
+    debug_assert!(off.checked_add(n).is_some_and(|end| end <= len));
+    let _ = len;
+    unsafe { core::slice::from_raw_parts(base.add(off), n) }
 }
 
 /// Mutable-subslice helper for `from_bytes`. Derives a `*mut [u8]` directly from the raw
@@ -578,12 +595,17 @@ unsafe fn slice_to_mut(base: *mut u8, len: usize, ptr: StringPointer) -> *mut [u
     core::ptr::slice_from_raw_parts_mut(unsafe { base.add(off) }, n)
 }
 
-fn slice_to_z(bytes: &'static [u8], ptr: StringPointer) -> &'static ZStr {
+/// SAFETY: as `slice_to`, plus `base[ptr.offset + ptr.length] == 0` (written by
+/// `to_bytes` via `appendCountZ`).
+unsafe fn slice_to_z(base: *const u8, len: usize, ptr: StringPointer) -> &'static ZStr {
     if ptr.length == 0 {
         return ZStr::EMPTY;
     }
-    // SAFETY: bytes[offset+length] == 0 was written by toBytes() (appendCountZ).
-    unsafe { ZStr::from_raw(bytes.as_ptr().add(ptr.offset as usize), ptr.length as usize) }
+    let off = ptr.offset as usize;
+    let n = ptr.length as usize;
+    debug_assert!(off.checked_add(n).is_some_and(|end| end < len));
+    let _ = len;
+    unsafe { ZStr::from_raw(base.add(off), n) }
 }
 
 pub fn to_bytes(
@@ -1949,7 +1971,15 @@ impl SerializedSourceMapLoaded {
     pub fn source_file_contents(&mut self, index: usize) -> Option<&[u8]> {
         // PORT NOTE: reshaped for borrowck — populate cache first, then borrow once.
         if self.decompressed_files[index].is_none() {
-            let compressed_file = slice_to(self.map.bytes, self.map.compressed_source_file(index));
+            // SAFETY: `self.map.bytes` is a 'static read-only sourcemap subrange (disjoint
+            // from bytecode); StringPointer was serialized by `to_bytes` and is in-bounds.
+            let compressed_file = unsafe {
+                slice_to(
+                    self.map.bytes.as_ptr(),
+                    self.map.bytes.len(),
+                    self.map.compressed_source_file(index),
+                )
+            };
             let size = bun_zstd::get_decompressed_size(compressed_file);
 
             let mut bytes = vec![0u8; size];

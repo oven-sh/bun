@@ -1,14 +1,16 @@
 use bun_alloc::{AllocError, Arena as Bump};
-use bun_js_parser as js_ast;
-use bun_js_parser::{
-    B, Binding, BindingData, E, Expr, ExprNodeList, FnBody, G, S, Stmt, StmtData,
+use bun_js_parser::ast as js_ast;
+use bun_js_parser::ast::{
+    Binding, Expr, ExprNodeList, Stmt, StmtData,
     BundledAst as JSAst,
+    B, E, G, S,
 };
-use bun_logger::{self as Logger, Loc};
+use bun_js_parser::ArrayBinding;
+use bun_logger::Loc;
 use bun_options_types::{ImportRecordTag, Loader};
+use bun_options_types::import_record::Flags as ImportRecordFlags;
 
-use crate::bundle_v2::LinkerContext;
-use crate::bundle_v2::linker_context::{StmtList, StmtListKind};
+use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 
 /// For CommonJS, all statements are copied `inside_wrapper_suffix` and this returns.
 /// The conversion logic is completely different for format .internal_bake_dev
@@ -50,10 +52,9 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
     // TODO(port): narrow error set
     let hmr_api_ref = ast.wrapper_ref;
     let hmr_api_id = Expr::init_identifier(hmr_api_ref, Loc::EMPTY);
-    let mut esm_decls: bumpalo::collections::Vec<'bump, B::ArrayItem> =
+    let mut esm_decls: bumpalo::collections::Vec<'bump, ArrayBinding> =
         bumpalo::collections::Vec::new_in(bump);
-    let mut esm_callbacks: bumpalo::collections::Vec<'bump, Expr> =
-        bumpalo::collections::Vec::new_in(bump);
+    let mut esm_callbacks: Vec<Expr> = Vec::new();
 
     for record in ast.import_records.slice_mut() {
         if record.path.is_disabled {
@@ -78,12 +79,12 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
     for stmt in part_stmts {
         match &stmt.data {
             StmtData::SImport(st) => {
-                let record = ast.import_records.mut_(st.import_record_index);
+                let record = ast.import_records.mut_(st.import_record_index as usize);
                 if record.path.is_disabled {
                     continue;
                 }
 
-                if record.flags.is_unused {
+                if record.flags.contains(ImportRecordFlags::IS_UNUSED) {
                     // Barrel optimization: this import was deferred (unused submodule).
                     // Don't add to dep array, but declare the namespace ref as an
                     // empty object so body code referencing it doesn't throw.
@@ -91,21 +92,18 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                     {
                         stmts.inside_wrapper_prefix.append_non_dependency(Stmt::alloc(
                             S::Local {
-                                kind: S::LocalKind::Var,
-                                decls: G::DeclList::from_slice(
-                                    bump,
-                                    &[G::Decl {
-                                        binding: Binding::alloc(
-                                            bump,
-                                            B::Identifier { ref_: st.namespace_ref },
-                                            stmt.loc,
-                                        ),
-                                        value: Some(Expr::init(
-                                            E::Object::default(),
-                                            stmt.loc,
-                                        )),
-                                    }],
-                                )?,
+                                kind: js_ast::LocalKind::KVar,
+                                decls: G::DeclList::from_slice(&[G::Decl {
+                                    binding: Binding::alloc(
+                                        bump,
+                                        B::Identifier { r#ref: st.namespace_ref },
+                                        stmt.loc,
+                                    ),
+                                    value: Some(Expr::init(
+                                        E::Object::default(),
+                                        stmt.loc,
+                                    )),
+                                }])?,
                                 ..Default::default()
                             },
                             stmt.loc,
@@ -138,19 +136,17 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                     },
                                     stmt.loc,
                                 ),
-                                args: ExprNodeList::from_owned_slice(bump.alloc_slice_copy(&[
-                                    Expr::init(
-                                        E::String {
-                                            data: if record.tag == ImportRecordTag::Runtime {
-                                                b"bun:wrap"
-                                            } else {
-                                                record.path.pretty
-                                            },
-                                            ..Default::default()
+                                args: ExprNodeList::from_slice(&[Expr::init(
+                                    E::String {
+                                        data: if record.tag == ImportRecordTag::Runtime {
+                                            b"bun:wrap"
+                                        } else {
+                                            record.path.pretty
                                         },
-                                        record.range.loc,
-                                    ),
-                                ])),
+                                        ..Default::default()
+                                    },
+                                    record.range.loc,
+                                )])?,
                                 ..Default::default()
                             },
                             stmt.loc,
@@ -159,18 +155,15 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                         // var namespace = ...;
                         stmts.inside_wrapper_prefix.append_non_dependency(Stmt::alloc(
                             S::Local {
-                                kind: S::LocalKind::Var, // remove a tdz
-                                decls: G::DeclList::from_slice(
-                                    bump,
-                                    &[G::Decl {
-                                        binding: Binding::alloc(
-                                            bump,
-                                            B::Identifier { ref_: st.namespace_ref },
-                                            st.star_name_loc.unwrap_or(stmt.loc),
-                                        ),
-                                        value: Some(call),
-                                    }],
-                                )?,
+                                kind: js_ast::LocalKind::KVar, // remove a tdz
+                                decls: G::DeclList::from_slice(&[G::Decl {
+                                    binding: Binding::alloc(
+                                        bump,
+                                        B::Identifier { r#ref: st.namespace_ref },
+                                        st.star_name_loc.unwrap_or(stmt.loc),
+                                    ),
+                                    value: Some(call),
+                                }])?,
                                 ..Default::default()
                             },
                             stmt.loc,
@@ -179,32 +172,38 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                 } else {
                     let loc = st.star_name_loc.unwrap_or(stmt.loc);
                     if is_bare_import {
-                        esm_decls.push(B::ArrayItem {
-                            binding: Binding { data: BindingData::BMissing, loc: Loc::EMPTY },
-                            ..Default::default()
+                        esm_decls.push(ArrayBinding {
+                            binding: Binding { data: B::B::BMissing(B::Missing {}), loc: Loc::EMPTY },
+                            default_value: None,
                         });
                         // PERF(port): was assume_capacity-adjacent (arena append)
                         esm_callbacks.push(Expr::init(E::Arrow::NOOP_RETURN_UNDEFINED, Loc::EMPTY));
                     } else {
                         let binding =
-                            Binding::alloc(bump, B::Identifier { ref_: st.namespace_ref }, loc);
-                        esm_decls.push(B::ArrayItem { binding, ..Default::default() });
+                            Binding::alloc(bump, B::Identifier { r#ref: st.namespace_ref }, loc);
+                        esm_decls.push(ArrayBinding { binding, default_value: None });
+                        // SAFETY: arena-owned slice — `E::Arrow.args` is `&'static [G::Arg]`
+                        // pending Phase-B arena-lifetime threading; erase the bump lifetime
+                        // (the slice lives in the same arena as the `Arrow` node).
+                        let arrow_args: &'static [G::Arg] = unsafe {
+                            &*(core::slice::from_ref(bump.alloc(G::Arg {
+                                binding: Binding::alloc(
+                                    bump,
+                                    B::Identifier { r#ref: ast.module_ref },
+                                    Loc::EMPTY,
+                                ),
+                                ..Default::default()
+                            })) as *const [G::Arg])
+                        };
                         esm_callbacks.push(Expr::init(
                             E::Arrow {
-                                args: bump.alloc_slice_copy(&[G::Arg {
-                                    binding: Binding::alloc(
-                                        bump,
-                                        B::Identifier { ref_: ast.module_ref },
-                                        Loc::EMPTY,
-                                    ),
-                                    ..Default::default()
-                                }]),
+                                args: arrow_args,
                                 prefer_expr: true,
-                                body: FnBody::init_return_expr(
+                                body: G::FnBody::init_return_expr(
                                     bump,
                                     Expr::init(
                                         E::Binary {
-                                            op: E::BinaryOp::BinAssign,
+                                            op: js_ast::OpCode::BinAssign,
                                             left: Expr::init_identifier(
                                                 st.namespace_ref,
                                                 Loc::EMPTY,
@@ -223,10 +222,10 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                         ));
                     }
 
-                    stmts.append(StmtListKind::OutsideWrapperPrefix, *stmt)?;
+                    stmts.append(StmtListWhich::OutsideWrapperPrefix, *stmt)?;
                 }
             }
-            _ => stmts.append(StmtListKind::InsideWrapperSuffix, *stmt)?,
+            _ => stmts.append(StmtListWhich::InsideWrapperSuffix, *stmt)?,
         }
     }
 
@@ -234,30 +233,27 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
         // var ...;
         stmts.inside_wrapper_prefix.append_non_dependency(Stmt::alloc(
             S::Local {
-                kind: S::LocalKind::Var, // remove a tdz
-                decls: G::DeclList::from_slice(
-                    bump,
-                    &[G::Decl {
-                        binding: Binding::alloc(
-                            bump,
-                            B::Array {
-                                items: esm_decls.into_bump_slice(),
-                                is_single_line: true,
-                                ..Default::default()
-                            },
-                            Loc::EMPTY,
-                        ),
-                        value: Some(Expr::init(
-                            E::Dot {
-                                target: hmr_api_id,
-                                name: b"imports",
-                                name_loc: Loc::EMPTY,
-                                ..Default::default()
-                            },
-                            Loc::EMPTY,
-                        )),
-                    }],
-                )?,
+                kind: js_ast::LocalKind::KVar, // remove a tdz
+                decls: G::DeclList::from_slice(&[G::Decl {
+                    binding: Binding::alloc(
+                        bump,
+                        B::Array {
+                            items: esm_decls.into_bump_slice_mut() as *mut [ArrayBinding],
+                            has_spread: false,
+                            is_single_line: true,
+                        },
+                        Loc::EMPTY,
+                    ),
+                    value: Some(Expr::init(
+                        E::Dot {
+                            target: hmr_api_id,
+                            name: b"imports",
+                            name_loc: Loc::EMPTY,
+                            ..Default::default()
+                        },
+                        Loc::EMPTY,
+                    )),
+                }])?,
                 ..Default::default()
             },
             Loc::EMPTY,
@@ -269,7 +265,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
             S::SExpr {
                 value: Expr::init(
                     E::Binary {
-                        op: E::BinaryOp::BinAssign,
+                        op: js_ast::OpCode::BinAssign,
                         left: Expr::init(
                             E::Dot {
                                 target: hmr_api_id,
@@ -281,7 +277,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                         ),
                         right: Expr::init(
                             E::Array {
-                                items: ExprNodeList::move_from_list(&mut esm_callbacks),
+                                items: ExprNodeList::move_from_list(esm_callbacks),
                                 is_single_line: callbacks_len <= 2,
                                 ..Default::default()
                             },
@@ -299,14 +295,14 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
     Ok(())
 }
 
-pub use crate::bundle_v2::DeferredBatchTask;
-pub use crate::bundle_v2::ThreadPool;
-pub use crate::bundle_v2::ParseTask;
+pub use crate::DeferredBatchTask::DeferredBatchTask;
+pub use crate::ThreadPool;
+pub use crate::ParseTask;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bundler/linker_context/convertStmtsForChunkForDevServer.zig (192 lines)
 //   confidence: medium
-//   todos:      2
-//   notes:      AST node init-struct shapes (E::*/S::*/B::*) and MultiArrayList column accessors are guessed; arena allocator threaded as &'bump Bump.
+//   todos:      1
+//   notes:      MultiArrayList column accessors (`input_files.items().loader/source`) follow sibling-file convention; arena allocator threaded as &'bump Bump; `E::Arrow.args` lifetime erased pending Phase-B 'bump threading.
 // ──────────────────────────────────────────────────────────────────────────

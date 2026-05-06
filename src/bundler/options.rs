@@ -2051,8 +2051,13 @@ impl<'a> BundleOptions<'a> {
     pub fn load_defines(
         &mut self,
         loader_: Option<&mut DotEnv::Loader>,
-        env: Option<&Env>,
     ) -> Result<(), bun_core::Error> {
+        // PORT NOTE: spec `loadDefines(..., env: ?*const options.Env)` had its
+        // sole caller pass `&this.options.env` (transpiler.zig:334). Forwarding
+        // that as `Option<&Env>` forced the caller into an aliased-`&mut` UB
+        // raw-pointer dance under Stacked Borrows. Dropped the param and read
+        // `&self.env` here instead — disjoint from the `self.define` /
+        // `self.defines_loaded` writes below, so borrowck splits it cleanly.
         if self.defines_loaded {
             return Ok(());
         }
@@ -2082,7 +2087,7 @@ impl<'a> BundleOptions<'a> {
             self.transform_options.define.clone(),
             self.target,
             loader_,
-            env,
+            Some(&self.env),
             node_env.as_deref(),
             // TODO(port): &self.drop is Box<[Box<[u8]>]>, callee wants &[&[u8]]
             &self.drop.iter().map(|s| s.as_ref()).collect::<Vec<_>>(),

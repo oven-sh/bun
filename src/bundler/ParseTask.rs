@@ -2377,7 +2377,9 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
 
     let result = Box::new(Result {
         ctx: this.ctx,
-        task: Default::default(),
+        // SAFETY: Zig leaves `.task = undefined`; consumer overwrites before read.
+        // `ConcurrentTask` is POD with no NonNull/NonZero fields.
+        task: unsafe { core::mem::zeroed() },
         value,
         external: this.external_free_function,
         watcher_data: match this.contents_or_fd {
@@ -2387,22 +2389,36 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
     });
     let result = Box::into_raw(result);
 
+    // PORT NOTE: Zig matched `worker.ctx.loop().*` on `EventLoopHandle::{js,mini}`.
+    // `LinkerContext.r#loop` is currently CYCLEBREAK-erased to `Option<NonNull<()>>`
+    // (LinkerContext.rs:43); the discriminant lives in T6. Until that un-erases to
+    // `bun_event_loop::EventLoopHandle`, treat the erased pointer as a
+    // `MiniEventLoop` (the CLI is the only path that reaches here without a JS VM).
+    // TODO(port): re-expand to `Js`/`Mini` match once `linker.r#loop` is
+    // `bun_event_loop::EventLoopHandle`.
     // SAFETY: worker.ctx backref valid.
-    match unsafe { &*worker.ctx }.loop_() {
-        EventLoop::Js(jsc_event_loop) => {
-            jsc_event_loop
-                .enqueue_task_concurrent(bun_event_loop::ConcurrentTask::from_callback(result, on_complete));
-        }
-        EventLoop::Mini(mini) => {
-            mini.enqueue_task_concurrent_with_extra_ctx::<Result, BundleV2>(
+    let r#loop = unsafe { (*worker.ctx).linker.r#loop };
+    worker.unget();
+    if let Some(mini) = r#loop {
+        let mini = mini.cast::<bun_event_loop::MiniEventLoop>();
+        // SAFETY: erased BACKREF to a live MiniEventLoop for the bundle pass.
+        unsafe {
+            (*mini.as_ptr()).enqueue_task_concurrent_with_extra_ctx::<Result, BundleV2<'static>>(
                 result,
-                BundleV2::on_parse_task_complete,
+                on_complete_mini,
                 offset_of!(Result, task),
-                // TODO(port): Zig passed `.task` (field name) for the comptime
-                // offset; using offset_of! here. Phase B: verify signature.
             );
         }
+    } else {
+        // No event loop registered (e.g., synchronous CLI bundling) — run inline.
+        on_complete(result);
     }
+}
+
+fn on_complete_mini(result: *mut Result, ctx: *mut BundleV2<'static>) {
+    // SAFETY: callback contract — `result` was Box::into_raw'd above; `ctx` is
+    // the BACKREF stashed in `result.ctx` (Zig passed `BundleV2` as ParentContext).
+    BundleV2::on_parse_task_complete(unsafe { &mut *result }, unsafe { &mut *ctx });
 }
 
 pub fn on_complete(result: *mut Result) {

@@ -458,7 +458,7 @@ impl<'a> Task<'a> {
                 if pt.callback.apply.logger.errors > 0 {
                     // TODO(port): `defer pt.callback.apply.logger.deinit()`
                     // this.log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "failed to apply patch: {}", .{e}) catch unreachable;
-                    let _ = pt.callback.apply.logger.print(Output::error_writer());
+                    let _ = pt.callback.apply.logger.print(Output::error_writer() as *mut _);
                 }
             }
         }

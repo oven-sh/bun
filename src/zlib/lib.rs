@@ -394,8 +394,10 @@ impl ZlibAllocator {
     pub unsafe extern "C" fn free(_: *mut c_void, data: *mut c_void) {
         if bun_alloc::heap_breakdown::ENABLED {
             let zone = bun_alloc::get_zone!("zlib");
-            // SAFETY: data was allocated by malloc_zone_calloc above.
-            unsafe { bun_alloc::heap_breakdown::malloc_zone_free(zone as *const _ as *mut _, data) };
+            // SAFETY: `data` was allocated by `malloc_zone_calloc` on this same
+            // zone in `alloc` above. The method derives its `*mut Zone` through
+            // `UnsafeCell` (see `Zone::as_mut_ptr`).
+            unsafe { zone.malloc_zone_free(data) };
             return;
         }
 

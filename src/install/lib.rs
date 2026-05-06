@@ -561,9 +561,13 @@ pub mod bin {
 /// Stub: `lockfile.rs` — type surface for `dependency.rs` / `npm.rs`.
 pub mod lockfile {
     pub use bun_semver::StringBuilder;
-    use crate::{Dependency, PackageID, PackageNameHash};
+    use crate::{Dependency, DependencyID, PackageID, PackageNameHash};
     use crate::external_slice::ExternalSlice;
     use crate::resolution::Resolution;
+
+    pub type DependencyIDSlice = ExternalSlice<DependencyID>;
+    pub type DependencyIDList = Vec<DependencyID>;
+    pub use crate::lockfile_real::DepSorter;
 
     #[derive(Default)] pub struct Lockfile {
         pub buffers: Buffers,

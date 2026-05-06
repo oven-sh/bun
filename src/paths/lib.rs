@@ -306,6 +306,31 @@ pub mod resolve_path;
 pub use resolve_path::{Platform, PlatformT, platform};
 #[path = "Path.rs"] pub mod path;
 pub use path::{AbsPath, RelPath, Path, AutoAbsPath, AutoRelPath, options as path_options, PathUnit};
+
+/// Zig: `bun.Dirname` namespace — width-generic `std.fs.path.dirname`
+/// (POSIX `/` on Unix, disk-designator-aware on Windows). Backed by
+/// `path::dirname_generic`.
+#[allow(non_snake_case)]
+pub mod Dirname {
+    use super::path::{dirname_generic, PathUnit};
+
+    #[inline]
+    pub fn dirname<U: PathUnit>(p: &[U]) -> Option<&[U]> {
+        dirname_generic(p)
+    }
+
+    #[inline]
+    pub fn dirname_u16(p: &[u16]) -> Option<&[u16]> {
+        dirname_generic(p)
+    }
+}
+
+/// Convenience: `std.fs.path.dirname` for `u8` paths (returns `None` for
+/// root / no-parent). Prefer `Dirname::dirname::<T>` for width-generic use.
+#[inline]
+pub fn dirname(p: &[u8]) -> Option<&[u8]> {
+    path::dirname_generic(p)
+}
 #[path = "EnvPath.rs"] pub mod env_path;
 pub use env_path::{EnvPath, EnvPathInput, PathComponentBuilder};
 

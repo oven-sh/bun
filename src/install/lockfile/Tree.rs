@@ -1001,9 +1001,10 @@ pub struct FillItem {
     pub hoist_root_id: Id,
 }
 
-// TODO(port): bun.LinearFifo(FillItem, .Dynamic) — std.fifo.LinearFifo wrapper.
-// Mapped to bun_collections::LinearFifo<T> (dynamic, heap-backed ring buffer).
-pub type TreeFiller = bun_collections::LinearFifo<FillItem>;
+// bun.LinearFifo(FillItem, .Dynamic) — std.fifo.LinearFifo wrapper.
+// Mapped to bun_collections::LinearFifo<T, DynamicBuffer<T>> (dynamic, heap-backed ring buffer).
+pub type TreeFiller =
+    bun_collections::LinearFifo<FillItem, bun_collections::linear_fifo::DynamicBuffer<FillItem>>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

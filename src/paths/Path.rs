@@ -444,7 +444,7 @@ fn basename_windows<U: PathUnit>(path: &[U]) -> &[U] {
 /// Width-generic `bun.Dirname.dirname` (Zig: `src/bun.zig:2520`).
 /// Platform-split: POSIX is `std.fs.path.dirnamePosix` (only `/`); Windows is
 /// `dirnameWindows` with disk-designator handling.
-fn dirname_generic<U: PathUnit>(path: &[U]) -> Option<&[U]> {
+pub fn dirname_generic<U: PathUnit>(path: &[U]) -> Option<&[U]> {
     #[cfg(not(windows))]
     return dirname_posix(path);
     #[cfg(windows)]

@@ -169,6 +169,15 @@ impl Write for Vec<u8> {
     }
 }
 
+/// Growable string sink. Zig: `MutableString.writer()`.
+impl Write for bun_string::MutableString {
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> Result<()> {
+        self.append(buf)?;
+        Ok(())
+    }
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // IntLe — little-endian integer encoding helper
 // ════════════════════════════════════════════════════════════════════════════

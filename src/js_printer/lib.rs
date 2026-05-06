@@ -44,13 +44,8 @@ pub enum Encoding { Ascii, Utf8, Latin1, Utf16 }
 pub trait Write {
     fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error>;
 }
-impl Write for MutableString {
-    fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
-        self.append(bytes)?;
-        Ok(())
-    }
-}
-/// Blanket bridge: any `bun_io::Write` (incl. `Vec<u8>`, `&mut dyn bun_io::Write`)
+/// Blanket bridge: any `bun_io::Write` (incl. `Vec<u8>`, `MutableString`,
+/// `&mut dyn bun_io::Write`)
 /// satisfies the printer's local `Write`. This replaces the former explicit
 /// `impl Write for Vec<u8>` to avoid overlap.
 impl<T: bun_io::Write + ?Sized> Write for T {

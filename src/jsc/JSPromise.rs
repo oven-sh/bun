@@ -9,6 +9,7 @@ use crate::{JSGlobalObject, JSValue, JsError, JsResult, VM};
 use crate::strong::Optional as JscStrong;
 use crate::weak::{Weak as JscWeak, WeakRefType};
 use crate::{JsTerminated, TopExceptionScope};
+use crate::top_exception_scope::SourceLocation;
 use crate::virtual_machine::VirtualMachine;
 
 /// Opaque handle to a `JSC::JSPromise` cell. Always used by reference; never

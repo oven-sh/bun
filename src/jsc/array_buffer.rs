@@ -760,23 +760,42 @@ pub enum TypedArrayType {
 }
 
 impl TypedArrayType {
-    pub fn to_c(self) -> jsc_c::JSTypedArrayType {
-        use jsc_c::JSTypedArrayType::*;
+    /// Maps to JSC's C-API `JSTypedArrayType` enum (declared in
+    /// `<JavaScriptCore/JSTypedArray.h>`). Returned as `c_uint` to match the
+    /// C ABI directly — the gated `javascript_core_c_api` module isn't on the
+    /// link path yet, so we encode the discriminants here. Keep in sync with
+    /// `JSTypedArrayType` in JavaScriptCore/API/JSTypedArray.h.
+    pub fn to_c(self) -> c_uint {
+        // JSTypedArrayType discriminants (declaration order in the C header):
+        const INT8: c_uint = 0;
+        const INT16: c_uint = 1;
+        const INT32: c_uint = 2;
+        const UINT8: c_uint = 3;
+        const UINT8_CLAMPED: c_uint = 4;
+        const UINT16: c_uint = 5;
+        const UINT32: c_uint = 6;
+        const FLOAT32: c_uint = 7;
+        const FLOAT64: c_uint = 8;
+        #[allow(dead_code)]
+        const ARRAY_BUFFER: c_uint = 9;
+        const NONE: c_uint = 10;
+        const BIG_INT64: c_uint = 11;
+        const BIG_UINT64: c_uint = 12;
         match self {
-            TypedArrayType::TypeNone => kJSTypedArrayTypeNone,
-            TypedArrayType::TypeInt8 => kJSTypedArrayTypeInt8Array,
-            TypedArrayType::TypeInt16 => kJSTypedArrayTypeInt16Array,
-            TypedArrayType::TypeInt32 => kJSTypedArrayTypeInt32Array,
-            TypedArrayType::TypeUint8 => kJSTypedArrayTypeUint8Array,
-            TypedArrayType::TypeUint8Clamped => kJSTypedArrayTypeUint8ClampedArray,
-            TypedArrayType::TypeUint16 => kJSTypedArrayTypeUint16Array,
-            TypedArrayType::TypeUint32 => kJSTypedArrayTypeUint32Array,
-            TypedArrayType::TypeFloat16 => kJSTypedArrayTypeNone,
-            TypedArrayType::TypeFloat32 => kJSTypedArrayTypeFloat32Array,
-            TypedArrayType::TypeFloat64 => kJSTypedArrayTypeFloat64Array,
-            TypedArrayType::TypeBigInt64 => kJSTypedArrayTypeBigInt64Array,
-            TypedArrayType::TypeBigUint64 => kJSTypedArrayTypeBigUint64Array,
-            TypedArrayType::TypeDataView => kJSTypedArrayTypeNone,
+            TypedArrayType::TypeNone => NONE,
+            TypedArrayType::TypeInt8 => INT8,
+            TypedArrayType::TypeInt16 => INT16,
+            TypedArrayType::TypeInt32 => INT32,
+            TypedArrayType::TypeUint8 => UINT8,
+            TypedArrayType::TypeUint8Clamped => UINT8_CLAMPED,
+            TypedArrayType::TypeUint16 => UINT16,
+            TypedArrayType::TypeUint32 => UINT32,
+            TypedArrayType::TypeFloat16 => NONE,
+            TypedArrayType::TypeFloat32 => FLOAT32,
+            TypedArrayType::TypeFloat64 => FLOAT64,
+            TypedArrayType::TypeBigInt64 => BIG_INT64,
+            TypedArrayType::TypeBigUint64 => BIG_UINT64,
+            TypedArrayType::TypeDataView => NONE,
         }
     }
 

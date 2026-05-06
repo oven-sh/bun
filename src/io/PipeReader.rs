@@ -642,7 +642,7 @@ impl PosixBufferedReader {
                     sys::Result::Ok(bytes_read) => {
                         if let Some(l) = parent.maxbuf {
                             // SAFETY: live until `remove_from_pipereader`.
-                            unsafe { (*l.as_ptr()).on_read_bytes(bytes_read as u64) };
+                            unsafe { MaxBuf::on_read_bytes(l, bytes_read as u64) };
                         }
 
                         if bytes_read == 0 {
@@ -688,7 +688,7 @@ impl PosixBufferedReader {
                         sys::Result::Ok(bytes_read) => {
                             if let Some(l) = parent.maxbuf {
                                 // SAFETY: live until `remove_from_pipereader`.
-                                unsafe { (*l.as_ptr()).on_read_bytes(bytes_read as u64) };
+                                unsafe { MaxBuf::on_read_bytes(l, bytes_read as u64) };
                             }
                             parent._offset += bytes_read;
                             // SAFETY: bytes_read bytes were just initialized by the syscall.
@@ -810,7 +810,7 @@ impl PosixBufferedReader {
                         sys::Result::Ok(bytes_read) => {
                             if let Some(l) = parent.maxbuf {
                                 // SAFETY: live until `remove_from_pipereader`.
-                                unsafe { (*l.as_ptr()).on_read_bytes(bytes_read as u64) };
+                                unsafe { MaxBuf::on_read_bytes(l, bytes_read as u64) };
                             }
                             parent._offset += bytes_read;
                             head_start += bytes_read;
@@ -904,7 +904,7 @@ impl PosixBufferedReader {
                     }
                     if let Some(l) = parent.maxbuf {
                         // SAFETY: live until `remove_from_pipereader`; see MaxBuf ownership note.
-                        unsafe { (*l.as_ptr()).on_read_bytes(bytes_read as u64) };
+                        unsafe { MaxBuf::on_read_bytes(l, bytes_read as u64) };
                     }
                     parent._offset += bytes_read;
 
@@ -943,7 +943,7 @@ impl PosixBufferedReader {
                 sys::Result::Ok(bytes_read) => {
                     if let Some(l) = parent.maxbuf {
                         // SAFETY: live until `remove_from_pipereader`; see MaxBuf ownership note.
-                        unsafe { (*l.as_ptr()).on_read_bytes(bytes_read as u64) };
+                        unsafe { MaxBuf::on_read_bytes(l, bytes_read as u64) };
                     }
                     parent._offset += bytes_read;
                     // SAFETY: bytes_read bytes initialized by sys_fn.

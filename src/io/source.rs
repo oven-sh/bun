@@ -162,10 +162,16 @@ impl File {
         self.state = FileState::Closing;
         // SAFETY: self is heap-allocated (Box<File>) and outlives the close callback,
         // which frees it in on_close_complete.
+        // Derive the fs_t pointer from the whole `*mut File` (fs is the first
+        // #[repr(C)] field, offset 0) so the pointer carries full-struct
+        // provenance — `on_close_complete` recovers `*mut File` via `from_fs`
+        // and reads/frees bytes outside the `fs` field. `&mut self.fs` would
+        // narrow provenance to the field under SB/TB and make that UB.
         unsafe {
+            let fs_ptr = (self as *mut File).cast::<uv::fs_t>();
             uv::uv_fs_close(
                 uv::Loop::get(),
-                &mut self.fs,
+                fs_ptr,
                 self.file,
                 Some(Self::on_close_complete),
             );
@@ -216,10 +222,11 @@ impl Source {
         }
     }
 
-    pub fn to_stream(&self) -> *mut uv::uv_stream_t {
+    pub fn to_stream(&mut self) -> *mut uv::uv_stream_t {
         match self {
-            Source::Pipe(pipe) => pipe.as_stream(),
-            // SAFETY: uv_tty_t embeds uv_stream_t as its first member.
+            // SAFETY: uv::Pipe / uv::uv_tty_t embed uv_stream_t as their first member.
+            // `&mut self` so the returned `*mut` carries write provenance (Zig: `toStream` returns `*uv.uv_stream_t`).
+            Source::Pipe(pipe) => (pipe.as_mut() as *mut Pipe).cast(),
             Source::Tty(tty) => tty.as_ptr().cast(),
             Source::SyncFile(_) | Source::File(_) => unreachable!(),
         }

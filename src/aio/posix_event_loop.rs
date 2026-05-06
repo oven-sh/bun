@@ -1622,25 +1622,25 @@ pub extern "C" fn Bun__internal_dispatch_ready_poll(loop_: *mut Loop, tagged_poi
         return;
     }
 
-    // SAFETY: `loop_` is the live uws loop. The ready event lives inside
-    // `loop_.ready_polls`, so passing both `&mut Loop` and a `&Event` borrowed
-    // from that same array would alias. Copy the event onto the stack via
-    // raw-pointer read first (Zig `&loop.ready_polls[i]` freely aliases `*Loop`;
-    // Rust does not), then hand the handler a fresh `&mut *loop_` plus a borrow
-    // of the disjoint local copy.
+    // SAFETY: `loop_` is the live uws loop. Do *not* materialize `&mut *loop_`
+    // here — `on_update` (via `ON_POLL_DISPATCH`) re-enters the loop and conjures
+    // a fresh `&mut Loop` through `EventLoopCtx::platform_event_loop()`; a
+    // protected `&mut Loop` spanning that call would be SB-UB. Read the index and
+    // event via raw `(*loop_)` place access only (event is POD), then hand the
+    // handler a borrow of the disjoint stack copy.
     let idx = unsafe { usize::try_from((*loop_).current_ready_poll).unwrap() };
 
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     {
         // SAFETY: idx in bounds per loop contract; event is POD.
         let ev = unsafe { ptr::read(ptr::addr_of!((*loop_).ready_polls[idx])) };
-        file_poll.on_kqueue_event(unsafe { &mut *loop_ }, &ev);
+        file_poll.on_kqueue_event(&ev);
     }
     #[cfg(target_os = "linux")]
     {
         // SAFETY: idx in bounds per loop contract; event is POD.
         let ev = unsafe { ptr::read(ptr::addr_of!((*loop_).ready_polls[idx])) };
-        file_poll.on_epoll_event(unsafe { &mut *loop_ }, &ev);
+        file_poll.on_epoll_event(&ev);
     }
 }
 

@@ -31,6 +31,7 @@ pub mod napi;
 pub mod api;
 pub mod timer;
 pub mod dispatch;
+pub mod jsc_hooks;
 
 // ─── un-gated in B-2 round 3 (each subdir owns a real `mod.rs`; heavy bodies
 //     re-gated *inside* those files) ────────────────────────────────────────

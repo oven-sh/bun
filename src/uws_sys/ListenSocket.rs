@@ -132,5 +132,5 @@ unsafe extern "C" {
 //   source:     src/uws_sys/ListenSocket.zig (69 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      socket() uses crate::socket::NewSocketHandler (no upward dep); add_server_name's anytype→Option<&U> may need adjustment per call sites.
+//   notes:      socket() uses crate::socket::NewSocketHandler (no upward dep); add_server_name takes *mut c_void userdata (avoids const→mut UB on round-trip).
 // ──────────────────────────────────────────────────────────────────────────

@@ -2896,9 +2896,11 @@ impl Resolver {
     // ───────────── timer / pending bookkeeping ─────────────
 
     pub fn check_timeouts(&mut self, now: &bun::timespec, vm: &VirtualMachine) {
-        let _g = scopeguard::guard((), |_| {
+        let this: *mut Self = self;
+        let _g = scopeguard::guard((), move |_| {
             vm.timer.increment_timer_ref(-1);
-            self.deref();
+            // SAFETY: `this` derived from `&mut self`; Resolver is heap-allocated via `init`.
+            unsafe { Self::deref(this) };
         });
 
         self.event_loop_timer.state = EventLoopTimer::State::PENDING;
@@ -2956,9 +2958,13 @@ impl Resolver {
         }
 
         // Normally checkTimeouts does this, so we have to be sure to do it ourself if we cancel the timer
-        let _g = scopeguard::guard((), |_| {
-            self.vm().timer.increment_timer_ref(-1);
-            self.deref();
+        let this: *mut Self = self;
+        let _g = scopeguard::guard((), move |_| {
+            // SAFETY: `this` derived from `&mut self`; Resolver is heap-allocated via `init`.
+            unsafe {
+                (*this).vm().timer.increment_timer_ref(-1);
+                Self::deref(this);
+            }
         });
 
         self.vm().timer.remove(&mut self.event_loop_timer);

@@ -1149,19 +1149,19 @@ fn throw_not_enough_arguments(
 
 // ─── Local JsClass shims (codegen `*__fromJS` not yet emitted) ───────────────
 unsafe extern "C" {
-    fn Request__fromJS(value: JSValue, global: *const JSGlobalObject) -> *mut Request;
-    fn NodeHTTPResponse__fromJS(value: JSValue, global: *const JSGlobalObject) -> *mut NodeHTTPResponse;
+    fn Request__fromJS(value: JSValue) -> *mut Request;
+    fn NodeHTTPResponse__fromJS(value: JSValue) -> *mut NodeHTTPResponse;
 }
 #[inline]
-fn request_from_js(value: JSValue, global: &JSGlobalObject) -> Option<*mut Request> {
+fn request_from_js(value: JSValue, _global: &JSGlobalObject) -> Option<*mut Request> {
     // SAFETY: FFI call into generated class binding
-    let p = unsafe { Request__fromJS(value, global) };
+    let p = unsafe { Request__fromJS(value) };
     if p.is_null() { None } else { Some(p) }
 }
 #[inline]
-fn node_http_response_from_js(value: JSValue, global: &JSGlobalObject) -> Option<*mut NodeHTTPResponse> {
+fn node_http_response_from_js(value: JSValue, _global: &JSGlobalObject) -> Option<*mut NodeHTTPResponse> {
     // SAFETY: FFI call into generated class binding
-    let p = unsafe { NodeHTTPResponse__fromJS(value, global) };
+    let p = unsafe { NodeHTTPResponse__fromJS(value) };
     if p.is_null() { None } else { Some(p) }
 }
 #[inline]

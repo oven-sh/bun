@@ -451,7 +451,7 @@ impl InitCommand {
         let mut package_json_contents: MutableString = MutableString::init_empty();
         initialize_store();
         // Arena for JSON parse / Expr building (Zig used the AST store).
-        let bump = bumpalo::Bump::new();
+        let bump = bun_alloc::Arena::new();
         'read_package_json: {
             if let Some(pkg) = package_json_file.as_ref() {
                 let size: u64 = 'brk: {

@@ -5517,7 +5517,7 @@ impl<'a> EnsureRouteCtx for PromiseEnsureRouteBundledCtx<'a> {
     fn dev(&mut self) -> &mut DevServer {
         // SAFETY: lifetime erased to satisfy the trait's invariant signature;
         // borrow does not outlive `self`.
-        unsafe { core::mem::transmute::<&mut DevServer<'a>, &mut DevServer<'_>>(&mut *self.dev) }
+        unsafe { ::core::mem::transmute::<&mut DevServer<'a>, &mut DevServer<'_>>(&mut *self.dev) }
     }
     fn route_bundle_index(&self) -> route_bundle::Index {
         self.route_bundle_index

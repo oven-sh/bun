@@ -18,7 +18,7 @@ use bun_jsc::{
     JsResult, Task,
 };
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::abort_signal::AbortSignal;
+use bun_jsc::AbortSignal;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_event_loop::ConcurrentTask::ConcurrentTask as ConcurrentTaskItem;
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;

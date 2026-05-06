@@ -13,8 +13,6 @@ export const meta = {
 const MAX_ROUNDS = (args && args.max_rounds) || 6;
 const MAX_FILES = (args && args.max_files) || 250;
 const PREFIX_RE = (args && args.prefix) || ""; // shard regex e.g. "src/runtime/"
-||||||| Stash base
-const PREFIX = (args && args.prefix) || ""; // shard by path prefix, e.g. "src/runtime/" or "src/jsc/|src/js_"
 
 const SURVEY_S = {
   type: "object",

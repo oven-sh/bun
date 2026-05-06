@@ -270,7 +270,10 @@ impl ShellSubprocess {
                     if matches!(pipe.state, PipeReaderState::Done(_)) {
                         // Move the done buffer out of the pipe state.
                         // TODO(port): Arc<PipeReader> needs interior mutability to take state.
-                        let buf = pipe.take_done_buffer();
+                        // SAFETY: raw-ptr write through the Arc allocation; see
+                        // PipeReader::take_done_buffer. `pipe` is the sole strong ref here.
+                        let buf =
+                            unsafe { PipeReader::take_done_buffer(Arc::as_ptr(&pipe).cast_mut()) };
                         *out = Readable::Buffer(buf);
                     } else {
                         *out = Readable::Ignore;

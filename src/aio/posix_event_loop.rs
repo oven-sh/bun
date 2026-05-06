@@ -1609,21 +1609,25 @@ pub extern "C" fn Bun__internal_dispatch_ready_poll(loop_: *mut Loop, tagged_poi
         return;
     }
 
-    // SAFETY: loop_ is the live uws loop; current_ready_poll indexes into ready_polls.
-    let loop_ref = unsafe { &mut *loop_ };
-    let idx = usize::try_from(loop_ref.current_ready_poll).unwrap();
+    // SAFETY: `loop_` is the live uws loop. The ready event lives inside
+    // `loop_.ready_polls`, so passing both `&mut Loop` and a `&Event` borrowed
+    // from that same array would alias. Copy the event onto the stack via
+    // raw-pointer read first (Zig `&loop.ready_polls[i]` freely aliases `*Loop`;
+    // Rust does not), then hand the handler a fresh `&mut *loop_` plus a borrow
+    // of the disjoint local copy.
+    let idx = unsafe { usize::try_from((*loop_).current_ready_poll).unwrap() };
 
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     {
-        let ev = &loop_ref.ready_polls[idx] as *const _;
-        // SAFETY: idx in bounds per loop contract.
-        file_poll.on_kqueue_event(loop_ref, unsafe { &*ev });
+        // SAFETY: idx in bounds per loop contract; event is POD.
+        let ev = unsafe { ptr::read(ptr::addr_of!((*loop_).ready_polls[idx])) };
+        file_poll.on_kqueue_event(unsafe { &mut *loop_ }, &ev);
     }
     #[cfg(target_os = "linux")]
     {
-        let ev = &loop_ref.ready_polls[idx] as *const _;
-        // SAFETY: idx in bounds per loop contract.
-        file_poll.on_epoll_event(loop_ref, unsafe { &*ev });
+        // SAFETY: idx in bounds per loop contract; event is POD.
+        let ev = unsafe { ptr::read(ptr::addr_of!((*loop_).ready_polls[idx])) };
+        file_poll.on_epoll_event(unsafe { &mut *loop_ }, &ev);
     }
 }
 
@@ -1673,10 +1677,9 @@ impl LinuxWaker {
     }
 
     pub fn wait(&self) {
-        let mut bytes: usize = 0;
-        // SAFETY: usize is 8 bytes on supported targets; reinterpret as [u8; 8].
-        let buf = unsafe { &mut *(&mut bytes as *mut usize as *mut [u8; 8]) };
-        let _ = bun_sys::read(self.fd, buf);
+        // eventfd counter is 8 bytes; the value is discarded.
+        let mut buf = [0u8; 8];
+        let _ = bun_sys::read(self.fd, &mut buf);
     }
 
     pub fn wake(&self) {

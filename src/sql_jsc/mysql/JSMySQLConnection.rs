@@ -46,7 +46,7 @@ pub struct JSMySQLConnection {
     // TODO(port): lifetime — JSC_BORROW rust_type is `&JSGlobalObject`; struct lifetime deferred to Phase B
     global_object: &'static JSGlobalObject,
     // LIFETIMES.tsv: STATIC — globalObject.bunVM() singleton
-    vm: &'static VirtualMachine,
+    vm: *mut VirtualMachine,
     poll_ref: KeepAlive,
 
     // pub(crate): MySQLRequestQueue::advance projects `connection.queue` via
@@ -151,7 +151,9 @@ impl JSMySQLConnection {
     fn vm_mut(&self) -> &'static mut VirtualMachine {
         // Explicit `'static` so the return does not reborrow `*self` — callers
         // pair this with `&mut self.timer` in the same expression.
-        unsafe { &mut *(self.vm as *const VirtualMachine as *mut VirtualMachine) }
+        // SAFETY: vm is a process-lifetime singleton (per docs/PORTING.md);
+        // stored as *mut to preserve write provenance.
+        unsafe { &mut *self.vm }
     }
 
     pub fn on_auto_flush(&mut self) -> bool {
@@ -571,7 +573,7 @@ impl JSMySQLConnection {
             // m_ctx payload (they own the heap that holds the JS wrapper).
             // Lifetime-extend the param refs via raw-ptr roundtrip.
             global_object: unsafe { &*(global_object as *const JSGlobalObject) },
-            vm: unsafe { &*(vm as *const VirtualMachine) },
+            vm,
             poll_ref: KeepAlive::default(),
             connection: my_sql_connection::MySQLConnection::init(
                 database,

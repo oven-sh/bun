@@ -1,5 +1,6 @@
 use crate::jsc::{CallFrame, JSGlobalObject, JSGlobalObjectSqlExt, JSValue, StrongOptional};
 
+#[repr(C)]
 #[derive(Default)]
 pub struct MySQLContext {
     // Zig: `Strong.Optional = .empty` → `StrongOptional::empty()` (Default).

@@ -1247,7 +1247,8 @@ impl Drop for CronRemoveJob {
 pub struct CronJob {
     // bun.ptr.RefCount(...) intrusive — keep raw count for IntrusiveRc compat.
     ref_count: Cell<u32>,
-    event_loop_timer: EventLoopTimer,
+    // pub: `dispatch::container_of!(CronJob, event_loop_timer)` needs `offset_of!` visibility.
+    pub event_loop_timer: EventLoopTimer,
     // LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject
     global: &'static JSGlobalObject,
     parsed: CronExpression,

@@ -1801,19 +1801,61 @@ impl<'a> LinkerContext<'a> {
         // back via `defer writer.* = printer.ctx;`. `BufferWriter` isn't
         // `Clone`/`Default` in Rust; move it through `mem::replace` with a
         // freshly-initialized writer instead.
-        let printer =
+        let mut printer =
             js_printer::BufferPrinter::init(core::mem::replace(writer, js_printer::BufferWriter::init()));
+
+        // PORT NOTE: Zig's `ast.toAST()` bitwise-copies every field of
+        // `*const BundledAst` into a stack `Ast` that is never deinit'd. The
+        // Rust collections aren't `Copy`, so mirror the Zig shallow copy via
+        // `ptr::read` + `ManuallyDrop` (the resulting `Ast` aliases `ast`'s
+        // storage; dropping it would double-free).
+        // SAFETY: `ast` is a valid `&BundledAst` for the duration of this call;
+        // the read is a bitwise copy whose result is never dropped.
+        let printer_ast =
+            core::mem::ManuallyDrop::new(unsafe { core::ptr::read(ast) }.to_ast());
+
+        // PORT NOTE: `print_with_writer<'a>` requires `Renamer<'a,'a>` (the
+        // printer struct stores it with a single lifetime), but `Renamer`'s
+        // `'src` is invariant behind `&mut`, so the caller's `Renamer<'r,'src>`
+        // cannot unify with the local `'a` picked from `alloc`/`mangled_props`.
+        // Zig threads it as a raw pointer (no lifetimes). Rebind via a
+        // lifetime-only transmute — sound because the renamer's borrowed data
+        // (symbol map, source) strictly outlives this call.
+        // SAFETY: lifetime-only erase; layout identical across instantiations.
+        let r: renamer::Renamer<'_, '_> =
+            unsafe { core::mem::transmute::<renamer::Renamer<'_, '_>, renamer::Renamer<'_, '_>>(r) };
 
         let enable_source_maps = self.options.source_maps != SourceMapOption::None && !source_index.is_runtime();
         // PERF(port): was comptime bool dispatch — profile in Phase B
-        // PORT NOTE: `print_with_writer<_, true/false>` ties `Renamer<'r,'src>`,
-        // `&Bump`, `&Ast`, `&self` lifetimes invariantly together; the inputs
-        // here come from disjoint borrows (`&mut self`, `r`, `alloc`, `ast`).
-        // The Zig original threads raw pointers, so the actual lifetimes are
-        // all "outlive this call". Body un-gates once `print_with_writer`
-        // relaxes its variance or `BundledAst::to_ast` is borrow-based.
-        let _ = (printer, alloc, ast, source, print_options, r, parts_to_print, enable_source_maps);
-        todo!("blocked_on: js_printer::print_with_writer lifetime variance")
+        let result = if enable_source_maps {
+            js_printer::print_with_writer::<&mut js_printer::BufferPrinter, true>(
+                &mut printer,
+                alloc,
+                ast.target,
+                &printer_ast,
+                source,
+                print_options,
+                ast.import_records.slice(),
+                parts_to_print,
+                r,
+            )
+        } else {
+            js_printer::print_with_writer::<&mut js_printer::BufferPrinter, false>(
+                &mut printer,
+                alloc,
+                ast.target,
+                &printer_ast,
+                source,
+                print_options,
+                ast.import_records.slice(),
+                parts_to_print,
+                r,
+            )
+        };
+
+        // `defer writer.* = printer.ctx;`
+        *writer = printer.ctx;
+        result
     }
 
     pub fn require_or_import_meta_for_source(

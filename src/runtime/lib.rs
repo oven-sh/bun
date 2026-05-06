@@ -70,8 +70,6 @@ pub use cli::{
     shell_completions, add_completions,
 };
 
-// Additional subdirectories present under src/runtime/ but not yet wired:
-// webview.
-// These remain un-declared (blocked on bun_jsc method surface).
+pub mod webview;
 
 

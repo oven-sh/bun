@@ -785,31 +785,111 @@ pub fn upload_stream(
                 return Ok(bun_jsc::JSPromise::rejected_promise(global_this, js_err).to_js());
             }
         }
-        ReadableStreamPtr::File(_stream) => {
-            // TODO(port): FileReader.pending early-err check — same as Bytes arm above once
-            // `FileReader` exposes a compatible `.pending` field.
+        ReadableStreamPtr::File(stream) => {
+            // SAFETY: stream is a live `*mut FileReader` from a JS-owned readable stream.
+            let stream = unsafe { &mut **stream };
+            if matches!(stream.pending.result, crate::webcore::streams::StreamResult::Err(_)) {
+                // we got an error, fail early
+                let err = match core::mem::replace(
+                    &mut stream.pending.result,
+                    crate::webcore::streams::StreamResult::Done,
+                ) {
+                    crate::webcore::streams::StreamResult::Err(err) => err,
+                    _ => unreachable!(),
+                };
+                stream.pending = crate::webcore::streams::Pending {
+                    result: crate::webcore::streams::StreamResult::Done,
+                    ..Default::default()
+                };
+                let (js_err, was_strong) = err.to_js_weak(global_this);
+                if was_strong == crate::webcore::streams::WasStrong::Strong {
+                    js_err.unprotect();
+                }
+                js_err.ensure_still_alive();
+                return Ok(bun_jsc::JSPromise::rejected_promise(global_this, js_err).to_js());
+            }
         }
         _ => {}
     }
 
-    let _ = (
-        this,
-        path,
+    // Thunks adapting typed callbacks to the erased `*mut c_void` signatures stored on
+    // MultiPartUpload (Zig used `@ptrCast` on the fn ptrs directly).
+    fn resolve_thunk(result: S3UploadResult, ctx: *mut c_void) -> JsTerminatedResult<()> {
+        // SAFETY: ctx was set to `*mut S3UploadStreamWrapper` below.
+        S3UploadStreamWrapper::resolve(result, unsafe { &mut *(ctx as *mut S3UploadStreamWrapper) })
+    }
+    fn on_writable_thunk(task: *mut MultiPartUpload, ctx: *mut c_void, flushed: u64) {
+        // SAFETY: task is the live MultiPartUpload; ctx is the wrapper set as callback_context.
+        S3UploadStreamWrapper::on_writable(
+            unsafe { &mut *task },
+            unsafe { &mut *(ctx as *mut S3UploadStreamWrapper) },
+            flushed,
+        );
+    }
+
+    // ref the credentials — `IntrusiveRc::init_ref` bumps the intrusive count and wraps.
+    // SAFETY: `this` points to a live heap-allocated `S3Credentials` (intrusive-refcounted).
+    let credentials = unsafe { bun_ptr::IntrusiveRc::init_ref(this as *mut S3Credentials) };
+    // SAFETY (JSC_BORROW): see `writable_stream` for rationale.
+    let global_static: &'static JSGlobalObject =
+        unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global_this) };
+    let task_ptr: *mut MultiPartUpload = Box::into_raw(Box::new(MultiPartUpload {
+        queue: None,
+        available: IntegerBitSet::init_full(),
+        current_part_number: 0,
+        ref_count: core::cell::Cell::new(2), // +1 for the stream ctx (only deinit after task and context ended)
+        ended: false,
         options,
         acl,
         storage_class,
-        content_type,
-        content_disposition,
-        content_encoding,
-        proxy_url,
         request_payer,
+        credentials,
+        poll_ref: KeepAlive::init(),
+        vm: VirtualMachine::get(),
+        global_this: global_static,
+        buffered: StreamBuffer::default(),
+        path: Box::<[u8]>::from(path),
+        proxy: if !proxy_url.is_empty() { Box::<[u8]>::from(proxy_url) } else { Box::default() },
+        content_type: content_type.map(Box::<[u8]>::from),
+        content_disposition: content_disposition.map(Box::<[u8]>::from),
+        content_encoding: content_encoding.map(Box::<[u8]>::from),
+        upload_id: Box::default(),
+        uploadid_buffer: MutableString::default(),
+        multipart_etags: Vec::new(),
+        multipart_upload_list: Vec::new(),
+        state: MultiPartUploadState::WaitStreamCheck,
+        callback: resolve_thunk,
+        on_writable: None, // assigned below after ctx exists
+        callback_context: core::ptr::null_mut(), // assigned below
+    }));
+    // SAFETY: freshly Box::into_raw'd; exclusive access here.
+    let task = unsafe { &mut *task_ptr };
+
+    task.poll_ref.ref_(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
+
+    let ctx_ptr: *mut S3UploadStreamWrapper = Box::into_raw(Box::new(S3UploadStreamWrapper {
+        ref_count: core::cell::Cell::new(2), // +1 for the stream sink (only deinit after both sink and task ended)
+        sink: None,
         callback,
         callback_context,
-    );
-    // TODO(port): MultiPartUpload struct-literal init requires `Arc<S3Credentials>` (we have
-    // `&mut S3Credentials`) and has no Default. Port body once `MultiPartUpload::new`-style
-    // constructor exists.
-    todo!("blocked_on: bun_s3::MultiPartUpload literal init (Arc<S3Credentials> from &mut)")
+        path: &*task.path as *const [u8],
+        task: task_ptr,
+        end_promise: bun_jsc::JSPromiseStrong::init(global_this),
+        global: global_static,
+    }));
+    // SAFETY: freshly Box::into_raw'd; exclusive access here.
+    let ctx = unsafe { &mut *ctx_ptr };
+    // +1 because the ctx refs the sink
+    ctx.sink = Some(ResumableSink::init_exact_refs(
+        global_static,
+        readable_stream,
+        ctx_ptr,
+        2,
+    ));
+    task.callback_context = ctx_ptr as *mut c_void;
+    task.on_writable = Some(on_writable_thunk);
+    task.continue_stream();
+    Ok(ctx.end_promise.value())
 }
 
 } // mod _upload_stream_gated
@@ -1100,22 +1180,54 @@ pub fn readable_stream(
         }
     }
 
-    let _ = (
+    // SAFETY (JSC_BORROW): `global_this` outlives the wrapper (it owns the JS heap that
+    // owns the readable stream which keeps the wrapper reachable via cancel_ctx); store as
+    // `'static` for the heap-allocated wrapper, matching the Zig pointer field.
+    let global_static: &'static JSGlobalObject =
+        unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global_this) };
+
+    let reader_box = crate::webcore::byte_stream::Source::new(
+        crate::webcore::readable_stream::NewSource {
+            context: ByteStream::default(),
+            global_this: global_this as *const JSGlobalObject,
+            ..Default::default()
+        },
+    );
+    // Ownership of the heap-allocated NewSource transfers to the JS wrapper (m_ctx) via
+    // `to_readable_stream()`/`to_js()`; the wrapper's finalize() reclaims it.
+    let reader: *mut crate::webcore::byte_stream::Source = Box::into_raw(reader_box);
+    // SAFETY: freshly Box::into_raw'd; exclusive access until handed to JS below.
+    let reader_mut = unsafe { &mut *reader };
+
+    reader_mut.context.setup();
+    let readable_value = reader_mut.to_readable_stream(global_this)?;
+
+    let wrapper = S3DownloadStreamWrapper::new(S3DownloadStreamWrapper {
+        readable_stream_ref: ReadableStreamStrong::init(
+            ReadableStream {
+                ptr: ReadableStreamPtr::Bytes(&mut reader_mut.context as *mut ByteStream),
+                value: readable_value,
+            },
+            global_this,
+        ),
+        path: Box::<[u8]>::from(path),
+        global: global_static,
+    });
+
+    reader_mut.cancel_handler = Some(S3DownloadStreamWrapper::on_stream_cancelled);
+    reader_mut.cancel_ctx = Some(wrapper as *mut c_void);
+
+    download_stream(
         this,
         path,
         offset,
         size,
         proxy_url,
         request_payer,
-        global_this,
-        S3DownloadStreamWrapper::opaque_callback as fn(_, _, _, _),
-        S3DownloadStreamWrapper::on_stream_cancelled as fn(_),
-        S3DownloadStreamWrapper::new as fn(_) -> _,
+        S3DownloadStreamWrapper::opaque_callback,
+        wrapper as *mut c_void,
     );
-    // TODO(port): `ByteStream::Source` (NewSource<ByteStream>) literal init + `setup()` /
-    // `to_readable_stream()` need a heap-allocated NewSource via the codegen wrapper. Un-gate
-    // once `webcore::byte_stream::Source::new` semantics are settled.
-    todo!("blocked_on: webcore::byte_stream::Source::new (NewSource<ByteStream> heap init)")
+    Ok(readable_value)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

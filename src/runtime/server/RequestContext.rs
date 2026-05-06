@@ -303,15 +303,10 @@ mod shim {
         r.detach_readable_stream(g)
     }
     #[inline] pub fn signal_aborted(s: &Arc<AbortSignal>) -> bool {
-        let _ = s;
-        // `bun_jsc::AbortSignal` is currently a `stub_ty!` opaque; the real
-        // impl with `aborted()` lives in `bun_jsc::abort_signal` but isn't
-        // re-exported as the canonical type yet.
-        todo!("blocked_on: bun_jsc::AbortSignal::aborted")
+        s.aborted()
     }
     #[inline] pub fn signal_fire(s: &Arc<AbortSignal>, g: &JSGlobalObject, r: jsc::CommonAbortReason) {
-        let _ = (s, g, r);
-        todo!("blocked_on: bun_jsc::AbortSignal::signal")
+        s.signal(g, r)
     }
     #[inline] pub fn signal_unref(s: &Arc<AbortSignal>) {
         s.pending_activity_unref()
@@ -783,17 +778,15 @@ where
             reason: Some(Api::FallbackStep::fetch_event_handler),
             cwd: Some(cwd.to_vec().into_boxed_slice()),
             problems: Some(Api::Problems {
-                // TODO(port): @intFromError(err) — bun_core::Error wraps a
-                // private NonZeroU16; no public accessor yet.
-                code: { let _ = err; todo!("blocked_on: bun_core::Error::code") },
+                // Zig: `@truncate(@intFromError(err))`.
+                code: err.as_u16(),
                 name: err.name().as_bytes().to_vec().into_boxed_slice(),
                 exceptions: exceptions.to_vec(),
                 build: {
-                    let _ = log.to_api().expect("unreachable");
-                    // `log.to_api()` returns `bun_logger::api::Log`; the
-                    // schema crate has its own `api::Log`. Shim until the
-                    // two crates share a single type.
-                    todo!("blocked_on: bun_logger::api::Log vs bun_options_types::schema::api::Log")
+                    // `log.to_api()` returns `bun_logger::api::Log`; the schema
+                    // crate has its own `api::Log` (msgs omitted). Map fields.
+                    let api_log = log.to_api().expect("unreachable");
+                    Api::Log { warnings: api_log.warnings, errors: api_log.errors }
                 },
             }),
         });
@@ -3539,8 +3532,12 @@ where
         // `AnyResponse::get_remote_socket_info` returns the uws_sys
         // borrowed-slice variant; convert to the owned `bun_uws::SocketAddress`.
         // SAFETY: FFI handle
-        let _ = resp;
-        todo!("blocked_on: bun_uws_sys::SocketAddress -> bun_uws::SocketAddress conversion")
+        let info = unsafe { resp.get_remote_socket_info()? };
+        Some(uws::SocketAddress {
+            ip: info.ip.to_vec().into_boxed_slice(),
+            port: info.port,
+            is_ipv6: info.is_ipv6,
+        })
     }
 
     pub fn set_timeout(&mut self, seconds: c_uint) -> bool {

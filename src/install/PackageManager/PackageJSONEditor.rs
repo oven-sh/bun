@@ -21,7 +21,7 @@ const DEPENDENCY_GROUPS: &[(&[u8], Behavior)] = &[
     (b"peerDependencies", Behavior::PEER),
 ];
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct EditOptions {
     pub exact_versions: bool,
     pub add_trusted_dependencies: bool,
@@ -52,12 +52,11 @@ fn copy_property(p: &G::Property) -> G::Property {
 }
 
 pub fn edit_patched_dependencies(
-    manager: &mut PackageManager,
+    _manager: &mut PackageManager,
     package_json: &mut Expr,
     patch_key: &[u8],
     patchfile_path: &[u8],
 ) -> Result<(), bun_alloc::AllocError> {
-    let _ = manager;
     let bump = bun_alloc::Arena::new();
     // const pkg_to_patch = manager.
     let mut patched_dependencies = E::Object::default();
@@ -210,7 +209,8 @@ pub fn edit_trusted_dependencies(
             logger::Loc::EMPTY,
         );
     } else if needs_new_trusted_dependencies_list {
-        let old_props = package_json.data.e_object().unwrap().properties.slice();
+        let obj = package_json.data.e_object().unwrap();
+        let old_props = obj.properties.slice();
         let mut root_properties: Vec<G::Property> = Vec::with_capacity(old_props.len() + 1);
         for p in old_props {
             root_properties.push(copy_property(p));
@@ -240,7 +240,7 @@ pub fn edit_trusted_dependencies(
 pub fn edit_update_no_args(
     manager: &mut PackageManager,
     current_package_json: &mut Expr,
-    options: &EditOptions,
+    options: EditOptions,
 ) -> Result<(), bun_alloc::AllocError> {
     // using data store is going to result in undefined memory issues as
     // the store is cleared in some workspace situations. the solution
@@ -510,11 +510,11 @@ pub fn edit_update_no_args(
 /// if options.add_trusted_dependencies is true, gets list from PackageManager.trusted_deps_to_add_to_package_json
 pub fn edit(
     manager: &mut PackageManager,
-    // TODO(port): Zig `*[]UpdateRequest` — mutable slice whose len is shrunk in-place; using Vec for now
-    updates: &mut Vec<UpdateRequest>,
+    // Zig `*[]UpdateRequest` — pointer-to-slice whose `.len` is shrunk in place.
+    updates: &mut &mut [UpdateRequest],
     current_package_json: &mut Expr,
     dependency_list: &[u8],
-    options: &EditOptions,
+    options: EditOptions,
 ) -> Result<(), bun_alloc::AllocError> {
     // using data store is going to result in undefined memory issues as
     // the store is cleared in some workspace situations. the solution
@@ -656,7 +656,8 @@ pub fn edit(
                                             if i < last {
                                                 updates.swap(i, last);
                                             }
-                                            updates.truncate(last);
+                                            // Zig: `updates.*.len -= 1;` — shrink the slice header.
+                                            *updates = &mut core::mem::take(updates)[..last];
                                             remaining -= 1;
                                             continue 'loop_;
                                         }

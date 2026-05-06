@@ -28,11 +28,12 @@ use bun_core::zstr;
 use crate::bun_json as JSON;
 
 use crate::{
-    self as Install, dependency, dependency::Dependency, npm as Npm, resolution,
-    resolution::Resolution, DependencyID, ExternalSlice, Features, PackageID, PackageInstall,
+    self as Install, dependency, dependency::Dependency, npm as Npm,
+    DependencyID, ExternalSlice, Features, PackageID, PackageInstall,
     PackageManager, PackageNameAndVersionHash, PackageNameHash, TruncatedPackageNameHash,
     initialize_store, invalid_dependency_id, invalid_package_id,
 };
+use crate::resolution_real::{self as resolution, Resolution};
 use crate::config_version::ConfigVersion;
 use crate::package_manager::WorkspaceFilter;
 use crate::package_manager_real::{Options as PackageManagerOptions, options::LogLevel, populate_manifest_cache};
@@ -516,7 +517,7 @@ impl Lockfile {
             match File::openat(dir, b"bun.lock", sys::O::RDONLY, 0) {
                 Ok(f) => break 'file f,
                 Err(text_open_err) => {
-                    if text_open_err.errno != sys::SystemErrno::ENOENT {
+                    if text_open_err.get_errno() != sys::E::ENOENT {
                         return LoadResult::Err(LoadResultErr {
                             step: LoadStep::OpenFile,
                             value: BunError::from(text_open_err),
@@ -530,7 +531,7 @@ impl Lockfile {
                     match File::openat(dir, b"bun.lockb", sys::O::RDONLY, 0) {
                         Ok(f) => break 'file f,
                         Err(binary_open_err) => {
-                            if binary_open_err.errno != sys::SystemErrno::ENOENT {
+                            if binary_open_err.get_errno() != sys::E::ENOENT {
                                 return LoadResult::Err(LoadResultErr {
                                     step: LoadStep::OpenFile,
                                     value: BunError::from(binary_open_err),

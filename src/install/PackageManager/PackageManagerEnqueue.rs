@@ -1,3 +1,4 @@
+use core::mem::ManuallyDrop;
 use core::sync::atomic::Ordering;
 
 use bun_core::{fmt as bun_fmt, Output};
@@ -11,8 +12,8 @@ use bun_sys::Fd;
 
 use bun_install::{
     self as install, invalid_package_id, Behavior, Dependency, DependencyID, ExtractTarball,
-    Features, Integrity, Npm, PackageID, PackageNameHash, PatchTask, Repository,
-    Resolution, TaskCallbackContext,
+    Features, Integrity, Npm, PackageID, PackageNameHash, PatchTask, PatchTaskCalcHashContext,
+    Repository, Resolution, TaskCallbackContext,
 };
 use crate::_folder_resolver::{
     self as FolderResolution, FolderResolution as FolderResolutionValue, GlobalOrRelative,
@@ -34,6 +35,16 @@ use crate::package_manager_real::{
     PackageManager, SuccessFn, TaskCallbackList,
 };
 use crate::package_manager_task as Task;
+
+// PORT NOTE: until the stub/real type-unification (reconciler-6) lands, several
+// pool slots (`Task::package_manager`, `ExtractTarball::package_manager`,
+// `PatchTask::new_*`) are typed against `crate::PackageManager` (the lib.rs
+// stub singleton), not `package_manager_real::PackageManager`. Both refer to
+// the same install-phase global state in Zig; route through the singleton.
+#[inline]
+fn pm_stub() -> *const crate::PackageManager {
+    crate::PackageManager::get() as *const _
+}
 
 // PORT NOTE: Zig accesses `PackageManager.verbose_install` (a `pub var`); the
 // Rust port stores it as a process-global. The associated fn lives on the real
@@ -158,7 +169,7 @@ pub fn enqueue_dependency_list(
             let log = unsafe { &mut *this.log };
             if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
                 log
-                    .add_warning_with_note(None, logger::Loc::default(), err.name().into(), note_args)
+                    .add_warning_with_note(None, logger::Loc::default(), err.name().as_bytes(), note_args)
                     .expect("unreachable");
             } else {
                 log
@@ -196,18 +207,26 @@ pub fn enqueue_tarball_for_download(
         return Ok(());
     }
 
-    if let Some(task) = run_tasks::generate_network_task_for_tarball(this,
+    let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
+        .behavior
+        .is_required();
+    let package = this.lockfile.packages.get(package_id);
+    if let Some(task) = run_tasks::generate_network_task_for_tarball(
+        this,
         task_id,
         url,
-        this.lockfile.buffers.dependencies[dependency_id as usize]
-            .behavior
-            .is_required(),
+        is_required,
         dependency_id,
-        this.lockfile.packages.get(package_id),
+        package,
         patch_name_and_version_hash,
         crate::network_task::Authorization::NoAuthorization,
     )? {
-        task.schedule(&mut this.network_tarball_batch);
+        // PORT NOTE: reshaped for borrowck — `task: &mut NetworkTask` borrows
+        // `*this` (pool slot); reborrow as raw so `this.network_tarball_batch`
+        // is reachable.
+        let task: *mut NetworkTask = task;
+        // SAFETY: `task` is the unique handle to a freshly-vended pool slot.
+        unsafe { (*task).schedule(&mut this.network_tarball_batch) };
         if this.network_tarball_batch.len > 0 {
             let _ = this.schedule_tasks();
         }
@@ -239,7 +258,7 @@ pub fn enqueue_tarball_for_reading(
 
     let integrity = this.lockfile.packages.items_meta()[package_id as usize].integrity;
 
-    this.task_batch.push(ThreadPool::Batch::from(enqueue_local_tarball(
+    let task = enqueue_local_tarball(
         this,
         task_id,
         dependency_id,
@@ -247,7 +266,8 @@ pub fn enqueue_tarball_for_reading(
         path,
         *resolution,
         integrity,
-    )));
+    );
+    this.task_batch.push(ThreadPool::Batch::from(task));
 }
 
 pub fn enqueue_git_for_checkout(
@@ -274,18 +294,18 @@ pub fn enqueue_git_for_checkout(
         return;
     }
 
-    if let Some(repo_fd) = this.git_repositories.get(&clone_id) {
-        let batch = ThreadPool::Batch::from(enqueue_git_checkout(
+    if let Some(repo_fd) = this.git_repositories.get(&clone_id).copied() {
+        let task = enqueue_git_checkout(
             this,
             checkout_id,
-            *repo_fd,
+            repo_fd,
             dependency_id,
             alias,
             *resolution,
             resolved,
             patch_name_and_version_hash,
-        ));
-        this.task_batch.push(batch);
+        );
+        this.task_batch.push(ThreadPool::Batch::from(task));
     } else {
         let clone_queue = this.task_queue.get_or_put(clone_id).expect("unreachable");
         if !clone_queue.found_existing {
@@ -300,8 +320,8 @@ pub fn enqueue_git_for_checkout(
             return;
         }
 
-        let dep = this.lockfile.buffers.dependencies[dependency_id as usize];
-        this.task_batch.push(ThreadPool::Batch::from(enqueue_git_clone(
+        let dep = this.lockfile.buffers.dependencies[dependency_id as usize].clone();
+        let task = enqueue_git_clone(
             this,
             clone_id,
             alias,
@@ -310,7 +330,8 @@ pub fn enqueue_git_for_checkout(
             &dep,
             resolution,
             None,
-        )));
+        );
+        this.task_batch.push(ThreadPool::Batch::from(task));
     }
 }
 

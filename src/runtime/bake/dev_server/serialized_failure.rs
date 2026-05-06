@@ -13,7 +13,7 @@ pub use super::serialized_failure_body::{Owner, Packed, PackedKind};
 
 /// `SerializedFailure.Owner` — `packed struct(u32)` (1-bit side + 31-bit idx).
 #[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default)]
 pub struct OwnerPacked(pub u32);
 impl OwnerPacked {
     #[inline] pub fn new(side: Side, file: FileIndex) -> Self {
@@ -28,6 +28,12 @@ impl OwnerPacked {
 
 /// Stored in `dev.bundling_failures` keyed by its `OwnerPacked` (custom hash
 /// ctx in Zig: `ArrayHashContextViaOwner`).
+///
+/// PERF(port): Zig's `SerializedFailure` is a slice header (`data: []u8`) and
+/// gets shallow-copied between `bundling_failures` and the `failures_added`/
+/// `failures_removed` lists. The Rust port owns `data` as `Box<[u8]>`, so
+/// `Clone` deep-copies — profile in Phase B if this shows up.
+#[derive(Clone, Default)]
 pub struct SerializedFailure {
     pub owner: OwnerPacked,
     /// Wire-format bytes (length-prefixed; see `hmr-runtime-error.ts`).

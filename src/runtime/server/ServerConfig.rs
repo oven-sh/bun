@@ -599,14 +599,10 @@ fn any_route_from_js(
     Ok(BodyAnyRoute::from_js(global, path, argument, init_ctx)?.map(|r| match r {
         BodyAnyRoute::Static(rc) => AnyRoute::Static(rc),
         BodyAnyRoute::File(rc) => AnyRoute::File(rc),
-        // RefPtr<Route> → *const Route: leak the RefPtr's strong ref into the
-        // raw pointer. `AnyRoute::deref_` (mod.rs) decrements via the intrusive
-        // refcount, so the count is balanced.
-        BodyAnyRoute::Html(refptr) => {
-            let raw = refptr.data.as_ptr() as *const _;
-            core::mem::forget(refptr);
-            AnyRoute::Html(raw)
-        }
+        // RefPtr<Route> → *const Route: transfer the strong ref into the raw
+        // pointer via `into_raw()`. `AnyRoute::deref_` (mod.rs) decrements via
+        // the intrusive refcount, so the count stays balanced.
+        BodyAnyRoute::Html(refptr) => AnyRoute::Html(refptr.into_raw() as *const _),
         BodyAnyRoute::FrameworkRouter(idx) => AnyRoute::FrameworkRouter(idx.get()),
     }))
 }
@@ -991,16 +987,87 @@ impl ServerConfig {
                 || !init_ctx.framework_router_list.is_empty()
             {
                 if args.development.is_hmr_enabled() {
-                    // TODO(b2-blocked): bake::Framework::auto, bake::BuildConfigSubset
-                    // {env, env_prefix, define} fields, and ServerInitContext.arena
-                    // are not yet ported. The Zig body constructs `bake.UserOptions`
-                    // from the resolved framework + transform_options here.
-                    let _ = core::mem::replace(
-                        &mut init_ctx.js_string_allocations,
-                        crate::bake::StringRefList::EMPTY,
+                    use crate::bake::bake_body as bb;
+                    use bun_schema::api::DotEnvBehavior;
+
+                    // PORT NOTE: Zig threaded `init_ctx.arena` from
+                    // `ServerInitContext`; the Rust `ServerInitContext` dropped
+                    // that field, so the arena is created here and moved into
+                    // `UserOptions` (same lifetime: lives until `args.bake`
+                    // is dropped).
+                    let arena = bun_alloc::Arena::new();
+
+                    let root = bb::arena_dupe_z(
+                        &arena,
+                        bun_paths::fs::FileSystem::instance().top_level_dir(),
                     );
-                    let _ = &vm.transpiler.options.transform_options;
-                    todo!("blocked_on: crate::bake::Framework::auto + BuildConfigSubset.{{env,env_prefix,define}}");
+
+                    // Convert `crate::bake::FileSystemRouterType` (Cow-backed)
+                    // into `bake_body::FileSystemRouterType` (`&'static` slices)
+                    // by duping every string into the arena. Phase-A type
+                    // duplication; remove once the two structs unify.
+                    let router_types: Vec<bb::FileSystemRouterType> =
+                        core::mem::take(&mut init_ctx.framework_router_list)
+                            .into_iter()
+                            .map(|t| convert_file_system_router_type(&arena, t))
+                            .collect();
+
+                    // SAFETY: `bun_vm()` returns the live VM for this global;
+                    // we need `&mut Resolver` for `Framework::auto`.
+                    let resolver =
+                        unsafe { &mut (*global.bun_vm()).transpiler.resolver };
+                    let framework = bb::Framework::auto(&arena, resolver, router_types)
+                        .map_err(|e| {
+                            global.throw_error(e, "Framework::auto")
+                        })?;
+
+                    let mut user_options = crate::bake::UserOptions {
+                        arena,
+                        allocations: core::mem::replace(
+                            &mut init_ctx.js_string_allocations,
+                            crate::bake::StringRefList::EMPTY,
+                        ),
+                        root,
+                        framework,
+                        bundler_options: bb::SplitBundlerOptions::default(),
+                    };
+
+                    let o = &vm.transpiler.options.transform_options;
+
+                    match o.serve_env_behavior {
+                        DotEnvBehavior::prefix => {
+                            // PORT NOTE: `serve_env_prefix` is `Option<Box<[u8]>>`
+                            // owned by the long-lived `transform_options`; dupe
+                            // into the arena so the `&'static [u8]` field is
+                            // backed by `UserOptions.arena`.
+                            user_options.bundler_options.client.env_prefix = o
+                                .serve_env_prefix
+                                .as_deref()
+                                .map(|p| {
+                                    bb::arena_dupe_z(&user_options.arena, p)
+                                        .as_bytes()
+                                });
+                            user_options.bundler_options.client.env =
+                                DotEnvBehavior::prefix;
+                        }
+                        DotEnvBehavior::load_all => {
+                            user_options.bundler_options.client.env =
+                                DotEnvBehavior::load_all;
+                        }
+                        DotEnvBehavior::disable => {
+                            user_options.bundler_options.client.env =
+                                DotEnvBehavior::disable;
+                        }
+                        _ => {}
+                    }
+
+                    if let Some(define) = &o.serve_define {
+                        user_options.bundler_options.client.define = define.clone();
+                        user_options.bundler_options.server.define = define.clone();
+                        user_options.bundler_options.ssr.define = define.clone();
+                    }
+
+                    args.bake = Some(user_options);
                 } else {
                     if !init_ctx.framework_router_list.is_empty() {
                         return Err(global.throw_invalid_arguments(

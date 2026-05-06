@@ -1885,6 +1885,11 @@ pub mod fs {
     /// can strip/transcode without duplicating the detect tables here.
     pub use super::fs_full::BOM;
 
+    /// Re-export `StatHash` from the full `fs.rs` port so `bun_runtime::server::FileRoute`
+    /// can hash mtimes/sizes without inlining the formatter (Zig: `bun.fs.StatHash`).
+    pub use super::fs_full::stat_hash;
+    pub use super::fs_full::stat_hash::StatHash;
+
     /// Re-export `ModKey` from the full `fs.rs` port so `linker::get_mod_key`
     /// can hash files without depending on `fs_full::RealFS` (a distinct type
     /// from this inline `RealFS`).

@@ -1133,6 +1133,29 @@ impl Framework {
         Ok(framework)
     }
 
+    /// Project the fields the bundler reads into the lower-tier
+    /// `bun_bundler::bake_types::Framework` view. Spec bake.zig stores the
+    /// `bake.Framework` pointer directly on `BundleOptions.framework`; in the
+    /// Rust port the bundler crate cannot name `bun_runtime::bake::Framework`
+    /// (CYCLEBREAK), so it carries a TYPE_ONLY subset that we populate here.
+    fn as_bundler_view(&self) -> bun_bundler::bake_types::Framework {
+        use bun_bundler::bake_types as bt;
+        let mut built_in_modules = bun_collections::StringArrayHashMap::new();
+        for (k, v) in self.built_in_modules.iter() {
+            let bv = match *v {
+                BuiltInModule::Import(p) => bt::BuiltInModule::Import(p.into()),
+                BuiltInModule::Code(c) => bt::BuiltInModule::Code(c.into()),
+            };
+            bun_core::handle_oom(built_in_modules.put(k, bv));
+        }
+        let server_components = self.server_components.as_ref().map(|sc| bt::ServerComponents {
+            separate_ssr_graph: sc.separate_ssr_graph,
+            server_runtime_import: sc.server_runtime_import.into(),
+            server_register_client_reference: sc.server_register_client_reference.into(),
+        });
+        bt::Framework::new(built_in_modules, server_components, self.is_built_in_react)
+    }
+
     pub fn init_transpiler<'a>(
         &mut self,
         arena: &'a Arena,

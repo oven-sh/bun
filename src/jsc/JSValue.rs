@@ -214,6 +214,25 @@ impl JSValue {
         // SAFETY: pure FFI predicate.
         unsafe { JSC__JSValue__isTerminationException(self) }
     }
+    /// `JSValue.isException(vm)` (JSValue.zig:1169) — true if this value is a
+    /// `JSC::Exception` cell.
+    #[inline] pub fn is_exception(self, vm: *mut crate::VM) -> bool {
+        // SAFETY: pure FFI predicate; `vm` is the live JSC VM.
+        unsafe { JSC__JSValue__isException(self, vm) }
+    }
+    /// `JSValue.asException(vm)` (JSValue.zig:1174) — cast to `*mut Exception`
+    /// if `is_exception`, else null. The returned pointer borrows the GC cell;
+    /// callers must keep `self` alive (the only callsite —
+    /// `runErrorHandler` — holds it on the stack).
+    #[inline] pub fn as_exception(self, vm: *mut crate::VM) -> Option<*mut crate::Exception> {
+        if self.is_exception(vm) {
+            // SAFETY: `is_exception` proved the cell is a `JSC::Exception`;
+            // the encoded value is the cell pointer (Zig `uncheckedPtrCast`).
+            Some(self.0 as *mut crate::Exception)
+        } else {
+            None
+        }
+    }
     #[inline] pub fn is_falsey(self) -> bool { !self.to_boolean() }
     #[inline] pub fn is_truthy(self) -> bool { self.to_boolean() }
 
@@ -974,6 +993,7 @@ unsafe extern "C" {
     fn JSC__JSValue__getOwnByValue(this: JSValue, global: *const JSGlobalObject, key: JSValue) -> JSValue;
     fn JSC__JSValue__put(this: JSValue, global: *const JSGlobalObject, key: *const bun_string::ZigString, value: JSValue);
     fn JSC__JSValue__putIndex(this: JSValue, global: *const JSGlobalObject, i: u32, value: JSValue);
+    fn JSC__JSValue__push(this: JSValue, global: *const JSGlobalObject, value: JSValue);
     fn JSC__JSValue__putToPropertyKey(target: JSValue, global: *const JSGlobalObject, key: JSValue, value: JSValue);
     fn JSC__JSValue__toStringOrNull(this: JSValue, global: *const JSGlobalObject) -> *mut JSString;
     fn JSC__JSValue__asString(this: JSValue) -> *mut JSString;
@@ -989,6 +1009,7 @@ unsafe extern "C" {
     fn JSC__JSValue__toZigString(this: JSValue, out: *mut bun_string::ZigString, global: *const JSGlobalObject);
     fn JSC__JSValue__getIfPropertyExistsImpl(target: JSValue, global: *const JSGlobalObject, ptr: *const u8, len: usize) -> JSValue;
     fn JSC__JSValue__isTerminationException(this: JSValue) -> bool;
+    fn JSC__JSValue__isException(this: JSValue, vm: *mut crate::VM) -> bool;
     fn Bun__JSValue__call(
         global: *const JSGlobalObject,
         function: JSValue,

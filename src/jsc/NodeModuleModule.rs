@@ -1,18 +1,31 @@
-use bun_bundler::options::Loader;
+use bun_bundler::options::{Loader, DEFAULT_LOADERS};
+use bun_options_types::schema::api;
 use crate::{
     self as jsc, ErrorableString, JSArray, JSGlobalObject, JSValue, JsError, JsResult, Strong,
     StringJsc, VirtualMachineRef as VirtualMachine,
 };
 use bun_string::{strings, String as BunString};
 
-// `bun.schema.api.Loader` — bindgen-emitted enum from `src/api/schema.zig`.
-// Mirrored as a transparent `u8` until `bun_api::schema` is reachable from
-// this tier; only equality with `none` (= 0) is observed below.
+// `bun.schema.api.Loader` — bindgen-emitted enum from `src/options_types/schema.zig`.
+// Mirrored as a transparent `u8` because the schema enum is *open* in Zig
+// (`enum(u8) { …, _ }`) and the FFI caller may hand us discriminants outside
+// the closed Rust `api::Loader` set; transmuting an unknown tag would be UB.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct ApiLoader(pub u8);
 impl ApiLoader {
-    pub const NONE: Self = Self(0);
+    /// schema.zig:326 — `_none = 254`.
+    pub const NONE: Self = Self(api::Loader::_none as u8);
+
+    /// Reconstruct the closed schema enum. Only valid when `self != NONE` is
+    /// already established and the C++ caller honoured the `BunLoaderType`
+    /// contract (headers-handwritten.h keeps the discriminants in sync).
+    fn to_schema(self) -> api::Loader {
+        debug_assert_ne!(self, Self::NONE);
+        // SAFETY: `api::Loader` is `#[repr(u8)]` and the C++ caller passes a
+        // valid `BunLoaderType` discriminant per headers-handwritten.h.
+        unsafe { core::mem::transmute::<u8, api::Loader>(self.0) }
+    }
 }
 
 // Zig: `export const NodeModuleModule__findPath = jsc.host_fn.wrap3(findPath);`
@@ -105,15 +118,28 @@ fn find_path_inner(
     errorable.unwrap().ok()
 }
 
-pub fn _stat(_path: &[u8]) -> i32 {
-    // TODO(port): `bun_sys::exists_at_type` is gated in `lib_draft_b1.rs`.
-    // Spec: 0 = file, 1 = directory, -1 = anything else.
-    todo!("phase-d: NodeModuleModule::_stat — bun_sys::exists_at_type")
+pub fn _stat(path: &[u8]) -> i32 {
+    // PERF(port): Zig passed the slice straight through; `exists_at_type`
+    // takes a `&ZStr`, so we copy into a NUL-terminated heap buffer here.
+    let zpath = bun_core::ZBox::from_bytes(path);
+    match bun_sys::exists_at_type(bun_sys::Fd::cwd(), &zpath) {
+        Ok(bun_sys::ExistsAtType::File) => 0, // Returns 0 for files.
+        Ok(bun_sys::ExistsAtType::Directory) => 1, // Returns 1 for directories.
+        Err(_) => -1, // Returns a negative integer for any other kind of strings.
+    }
 }
 
 pub enum CustomLoader {
     Loader(Loader),
     Custom(Strong),
+}
+
+impl Default for CustomLoader {
+    /// Placeholder for `StringArrayHashMap::get_or_put` — overwritten
+    /// immediately when `!found_existing`.
+    fn default() -> Self {
+        CustomLoader::Loader(Loader::default())
+    }
 }
 
 // TODO(port): move to jsc_sys
@@ -126,24 +152,72 @@ unsafe extern "C" {
 
 // Memory management is complicated because JSValues are stored in gc-visitable
 // WriteBarriers in C++ but the hash map for extensions is in Zig for flexibility.
-//
-// PORT NOTE (phase-d): `vm.commonjs_custom_extensions` is currently typed as
-// `StringArrayHashMap<()>` in the Phase-B `VirtualMachine` layout (see
-// VirtualMachine.rs:259). The full body — which stores `CustomLoader` values
-// and re-publishes `list.keys()` into `vm.transpiler.resolver.opts` — is
-// blocked on that field becoming `StringArrayHashMap<CustomLoader>`. Until
-// then the export forwards to a `todo!()` so the C++ symbol links.
 fn on_require_extension_modify(
-    _global: &JSGlobalObject,
-    _str: &[u8],
-    _loader: ApiLoader,
-    _value: JSValue,
-) {
-    todo!("phase-d: NodeModuleModule onRequireExtensionModify — vm.commonjs_custom_extensions value type")
+    global: &JSGlobalObject,
+    str: &[u8],
+    loader: ApiLoader,
+    value: JSValue,
+) -> Result<(), bun_alloc::AllocError> {
+    // SAFETY: `bun_vm_ptr` returns the live `*mut VirtualMachine` for this
+    // global; we are on the JS thread so a `&mut` view is sound for this scope.
+    let vm = unsafe { &mut *global.bun_vm_ptr() };
+    let is_built_in = DEFAULT_LOADERS.get(str).is_some();
+
+    let gop = vm.commonjs_custom_extensions.get_or_put(str)?;
+    if !gop.found_existing {
+        // `gop.key_ptr` already owns a duped `Box<[u8]>` (StringArrayHashMap
+        // boxes the key on insert), so the Zig `dupe` is implicit.
+        if is_built_in {
+            vm.has_mutated_built_in_extensions += 1;
+        }
+
+        *gop.value_ptr = if loader != ApiLoader::NONE {
+            CustomLoader::Loader(Loader::from_api(loader.to_schema()))
+        } else {
+            CustomLoader::Custom(Strong::create(value, global))
+        };
+    } else if loader != ApiLoader::NONE {
+        // Replacing with a built-in loader: drop any held Strong via assignment.
+        *gop.value_ptr = CustomLoader::Loader(Loader::from_api(loader.to_schema()));
+    } else {
+        match gop.value_ptr {
+            CustomLoader::Loader(_) => {
+                *gop.value_ptr = CustomLoader::Custom(Strong::create(value, global));
+            }
+            CustomLoader::Custom(strong) => strong.set(global, value),
+        }
+    }
+
+    // Zig `defer vm.transpiler.resolver.opts.extra_cjs_extensions = list.keys()`.
+    // PERF(port): Zig aliased the map's key storage directly; the resolver's
+    // `extra_cjs_extensions` is owned `Box<[Box<[u8]>]>` here, so we clone.
+    vm.transpiler.resolver.opts.extra_cjs_extensions =
+        vm.commonjs_custom_extensions.keys().to_vec().into_boxed_slice();
+    Ok(())
 }
 
-fn on_require_extension_modify_non_function(_global: &JSGlobalObject, _str: &[u8]) {
-    todo!("phase-d: NodeModuleModule onRequireExtensionModifyNonFunction — vm.commonjs_custom_extensions value type")
+fn on_require_extension_modify_non_function(
+    global: &JSGlobalObject,
+    str: &[u8],
+) -> Result<(), bun_alloc::AllocError> {
+    // SAFETY: see `on_require_extension_modify`.
+    let vm = unsafe { &mut *global.bun_vm_ptr() };
+    let is_built_in = DEFAULT_LOADERS.get(str).is_some();
+
+    if let Some(prev) = vm.commonjs_custom_extensions.fetch_swap_remove(str) {
+        // `prev.key: Box<[u8]>` — freed on drop (Zig: `allocator.free(prev.key)`).
+        if is_built_in {
+            vm.has_mutated_built_in_extensions -= 1;
+        }
+        // `prev.value` drops here; `Strong`'s `Drop` impl is the Zig `deinit`.
+        drop(prev);
+    }
+
+    // Zig `defer vm.transpiler.resolver.opts.extra_cjs_extensions = list.keys()`.
+    // PERF(port): see `on_require_extension_modify`.
+    vm.transpiler.resolver.opts.extra_cjs_extensions =
+        vm.commonjs_custom_extensions.keys().to_vec().into_boxed_slice();
+    Ok(())
 }
 
 pub fn find_longest_registered_extension<'a>(
@@ -157,9 +231,10 @@ pub fn find_longest_registered_extension<'a>(
         if i == 0 {
             continue;
         }
-        let _ext = &basename[i..];
-        // TODO(port): `vm.commonjs_custom_extensions.get(ext)` once value type lands.
-        let _ = vm;
+        let ext = &basename[i..];
+        if let Some(value) = vm.commonjs_custom_extensions.get(ext) {
+            return Some(value);
+        }
     }
     None
 }
@@ -175,7 +250,9 @@ pub extern "C" fn NodeModuleModule__onRequireExtensionModify(
     // SAFETY: C++ caller guarantees non-null global and str for the call's duration
     let global = unsafe { &*global };
     let str_slice = unsafe { &*str }.to_utf8();
-    on_require_extension_modify(global, str_slice.slice(), loader, value);
+    if on_require_extension_modify(global, str_slice.slice(), loader, value).is_err() {
+        bun_core::out_of_memory();
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -187,13 +264,14 @@ pub extern "C" fn NodeModuleModule__onRequireExtensionModifyNonFunction(
     // SAFETY: C++ caller guarantees non-null global and str for the call's duration
     let global = unsafe { &*global };
     let str_slice = unsafe { &*str }.to_utf8();
-    on_require_extension_modify_non_function(global, str_slice.slice());
+    if on_require_extension_modify_non_function(global, str_slice.slice()).is_err() {
+        bun_core::out_of_memory();
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/NodeModuleModule.zig (196 lines)
-//   confidence: low
-//   todos:      8
-//   notes:      onRequireExtensionModify bodies blocked on vm.commonjs_custom_extensions value-type port; _stat blocked on bun_sys::exists_at_type un-gating; ApiLoader mirrored locally
+//   confidence: high
+//   todos:      0
 // ──────────────────────────────────────────────────────────────────────────

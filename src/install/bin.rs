@@ -12,7 +12,7 @@ use bun_str::{strings, w, ZStr};
 use bun_sys::{self as sys, Fd, FdExt as _, Mode};
 
 use crate::bun_json;
-use crate::bun_json::ExprAccessors as _;
+use crate::bun_json::ExprAccessors;
 use crate::dependency::Dependency;
 use crate::install::{self as Install, DependencyID, ExternalStringList};
 use crate::windows_shim::BinLinkingShim as WinBinLinkingShim;
@@ -194,11 +194,15 @@ impl Bin {
             bun_json::ExprData::EObject(obj) => match obj.properties.len as usize {
                 0 => {}
                 1 => {
-                    let Some(bin_name) = obj.properties.slice()[0].key.as_ref().unwrap().as_string()
+                    // PORT NOTE: `Expr` has an inherent `as_string(&Bump)` that shadows
+                    // the no-arg `ExprAccessors::as_string`; call the trait via UFCS.
+                    let Some(bin_name) =
+                        ExprAccessors::as_string(obj.properties.slice()[0].key.as_ref().unwrap())
                     else {
                         return Ok(Bin::default());
                     };
-                    let Some(value) = obj.properties.slice()[0].value.as_ref().unwrap().as_string()
+                    let Some(value) =
+                        ExprAccessors::as_string(obj.properties.slice()[0].value.as_ref().unwrap())
                     else {
                         return Ok(Bin::default());
                     };
@@ -222,10 +226,10 @@ impl Bin {
                     for bin_prop in obj.properties.slice() {
                         let key = bin_prop.key.as_ref().unwrap();
                         let value = bin_prop.value.as_ref().unwrap();
-                        let Some(key_str) = key.as_string() else {
+                        let Some(key_str) = ExprAccessors::as_string(key) else {
                             return Ok(Bin::default());
                         };
-                        let Some(value_str) = value.as_string() else {
+                        let Some(value_str) = ExprAccessors::as_string(value) else {
                             return Ok(Bin::default());
                         };
                         extern_strings.push(buf.append_external(key_str)?);
@@ -266,7 +270,7 @@ impl Bin {
         bin_expr: bun_json::Expr,
         buf: &mut bun_semver::string::Buf,
     ) -> Result<Bin, AllocError> {
-        if let Some(bin_str) = bin_expr.as_string() {
+        if let Some(bin_str) = ExprAccessors::as_string(&bin_expr) {
             return Ok(Bin {
                 tag: Tag::Dir,
                 _padding_tag: [0; 3],
@@ -548,7 +552,8 @@ impl<'a> NamesIterator<'a> {
         }
         if self.dir_iterator.is_none() {
             // SAFETY: tag == Dir checked by caller
-            let mut target = unsafe { self.bin.value.dir }.slice(self.string_buffer);
+            let dir_str = unsafe { self.bin.value.dir };
+            let mut target = dir_str.slice(self.string_buffer);
             if strings::has_prefix(target, b"./") || strings::has_prefix(target, b".\\") {
                 target = &target[2..];
             }
@@ -602,8 +607,8 @@ impl<'a> NamesIterator<'a> {
                 self.i += 1;
                 self.done = true;
                 // SAFETY: tag == NamedFile
-                let base =
-                    path::basename(unsafe { self.bin.value.named_file }[0].slice(self.string_buffer));
+                let named = unsafe { self.bin.value.named_file };
+                let base = path::basename(named[0].slice(self.string_buffer));
                 if strings::has_prefix(base, b"./") || strings::has_prefix(base, b".\\") {
                     return Ok(Some(strings::copy(&mut self.buf[..], &base[2..])));
                 }
@@ -883,7 +888,9 @@ impl<'a> Linker<'a> {
             else {
                 return;
             };
-            let _close = scopeguard::guard((), |_| bin_for_reading.close());
+            let _close = scopeguard::guard((), |_| {
+                let _ = bin_for_reading.close();
+            });
 
             let Ok(read) = bin_for_reading.read_all(&mut shebang_buf) else {
                 return;
@@ -960,7 +967,7 @@ impl<'a> Linker<'a> {
         let Ok(original_stat) = sys::fstatat(Fd::cwd(), abs_target) else {
             return;
         };
-        let original_mode: Mode = Mode::try_from(original_stat.mode).unwrap();
+        let original_mode: Mode = original_stat.st_mode as Mode;
 
         // Create temporary file path
         let mut tmppath_buf = [0u8; MAX_PATH_BYTES];
@@ -983,7 +990,9 @@ impl<'a> Linker<'a> {
             ) else {
                 return;
             };
-            let _close = scopeguard::guard((), |_| tmpfile.close());
+            let _close = scopeguard::guard((), |_| {
+                let _ = tmpfile.close();
+            });
 
             // Write the corrected shebang (without \r)
             if tmpfile
@@ -1007,7 +1016,7 @@ impl<'a> Linker<'a> {
             if sys::fchmodat(
                 Fd::cwd(),
                 tmppath,
-                Mode::try_from(original_stat.mode & 0o777).unwrap(),
+                (original_stat.st_mode & 0o777) as Mode,
                 0,
             )
             .is_err()

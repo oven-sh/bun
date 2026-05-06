@@ -255,8 +255,8 @@ pub struct VirtualMachine {
     pub channel_ref_should_ignore_one_disconnect_event_listener: bool,
 
     /// A set of extensions that exist in the require.extensions map.
-    // TODO(b2-cycle): `node_module_module::CustomLoader` — gated sibling.
-    pub commonjs_custom_extensions: bun_collections::StringArrayHashMap<()>,
+    pub commonjs_custom_extensions:
+        bun_collections::StringArrayHashMap<crate::node_module_module::CustomLoader>,
     pub has_mutated_built_in_extensions: u32,
 
     pub initial_script_execution_context_identifier: i32,

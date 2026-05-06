@@ -953,34 +953,99 @@ pub struct DirectoryWatchStore {
     pub dependencies_free_list: Vec<u32>,
 }
 impl DirectoryWatchStore {
-    /// Full body in gated `../DevServer/DirectoryWatchStore.rs` draft.
+    /// `@fieldParentPtr("directory_watchers", self)` — recover `*mut DevServer`.
+    /// Returns a raw ptr (not `&mut DevServer`) because `&mut self` is live;
+    /// callers must scope their borrow of fields disjoint from
+    /// `directory_watchers` to avoid aliasing UB.
+    #[inline]
+    fn owner(&mut self) -> *mut DevServer {
+        // SAFETY: `DirectoryWatchStore` is only ever the `directory_watchers`
+        // field of a heap-allocated `DevServer` (never moved post-init).
+        unsafe {
+            (self as *mut Self)
+                .cast::<u8>()
+                .sub(core::mem::offset_of!(DevServer, directory_watchers))
+                .cast::<DevServer>()
+        }
+    }
+
+    /// `DirectoryWatchStore.freeDependencyIndex` — DirectoryWatchStore.zig.
     pub fn free_dependency_index(&mut self, index: u32) {
-        // PORT NOTE: minimal port of DirectoryWatchStore.zig:freeDependencyIndex —
-        // skips the `dep = .{}` reset (Dep has no Default yet); free-list bookkeeping only.
+        // Zero out the slot so DevServer.deinit/memoryCost — which iterate
+        // `dependencies` without consulting the free list — do not touch the
+        // freed allocation or stale borrowed pointers.
+        self.dependencies[index as usize] = directory_watch_store::Dep::default();
         if index as usize == self.dependencies.len() - 1 {
             self.dependencies.truncate(self.dependencies.len() - 1);
         } else {
             self.dependencies_free_list.push(index);
         }
     }
-    /// Full body in gated `../DevServer/DirectoryWatchStore.rs` draft.
-    pub fn free_entry(&mut self, _entry_index: usize) {
-        todo!("blocked_on: dev_server::DirectoryWatchStore::free_entry body un-gate")
+
+    /// `DirectoryWatchStore.freeEntry` — DirectoryWatchStore.zig:206.
+    /// Expects dependency list to be already freed.
+    pub fn free_entry(&mut self, entry_index: usize) {
+        let entry = self.watches.values()[entry_index];
+
+        bun_core::scoped_log!(DevServer, "DirectoryWatchStore.freeEntry({}, {:?})", entry_index, entry.dir);
+
+        // SAFETY: owner() returns a *mut DevServer; `bun_watcher` is a disjoint
+        // field from `directory_watchers` so this does not alias `&mut self`.
+        unsafe {
+            (*self.owner()).bun_watcher.remove_at_index(
+                bun_watcher::WatchItemKind::File,
+                entry.watch_index,
+                0,
+                &[],
+            );
+        }
+
+        // Zig: alloc.free(store.watches.keys()[entry_index]) — Box key drops on swap_remove_at.
+        let _ = self.watches.swap_remove_at(entry_index);
+
+        if entry.dir_fd_owned {
+            entry.dir.close();
+        }
+
+        if self.watches.len() == 0 {
+            // Every remaining dependency slot must be in the free list.
+            debug_assert_eq!(self.dependencies.len(), self.dependencies_free_list.len());
+            self.dependencies.clear();
+            self.dependencies_free_list.clear();
+        }
     }
 }
 pub mod directory_watch_store {
     /// `DirectoryWatchStore.Entry` — per-watched-directory state.
+    #[derive(Copy, Clone)]
     pub struct Entry {
+        /// The directory handle the watch is placed on.
+        pub dir: bun_sys::Fd,
+        pub dir_fd_owned: bool,
         /// `Dep.Index` — head of the singly-linked dep chain for this dir.
         pub first_dep: u32,
-        // TODO(b2-blocked): `dir: Watcher.Index` / `dir_fd_on_mac` field — gated
-        // on `bun_watcher::Index` un-gate.
+        /// To pass to `Watcher.remove`.
+        pub watch_index: u16,
     }
     /// `DirectoryWatchStore.Dep` — one resolution-failure to retry on dir change.
     pub struct Dep {
-        pub specifier: Box<[u8]>,
-        pub source_file_path: super::incremental_graph::FileIndex,
         pub next: Option<u32>,
+        /// The file used. BORROWED slice into `IncrementalGraph.bundled_files`
+        /// key storage; compared by *pointer identity* (Zig: `dep.source_file_path.ptr == file_path.ptr`).
+        // SAFETY: lifetime tied to `IncrementalGraph` key storage; cleared via
+        // `removeDependenciesForFile` before the graph frees the key.
+        pub source_file_path: *const [u8],
+        /// The specifier that failed. Allocated memory.
+        pub specifier: Box<[u8]>,
+    }
+    impl Default for Dep {
+        fn default() -> Self {
+            Dep {
+                next: None,
+                source_file_path: &[] as *const [u8],
+                specifier: Box::default(),
+            }
+        }
     }
 }
 
@@ -1367,7 +1432,47 @@ impl DevServer {
     }
 }
 impl DirectoryWatchStore {
-    pub fn remove_dependencies_for_file(&mut self, _file_path: &[u8]) {
-        todo!("blocked_on: dev_server::DirectoryWatchStore::remove_dependencies_for_file body un-gate")
+    /// `DirectoryWatchStore.removeDependenciesForFile` — DirectoryWatchStore.zig:233.
+    /// Removes all dependencies whose `source_file_path` is the exact slice
+    /// `file_path`, compared by *pointer identity* since the slice is shared
+    /// with `IncrementalGraph.bundled_files`. Called before IncrementalGraph
+    /// frees a file's key string so no `Dep` is left holding a dangling pointer.
+    pub fn remove_dependencies_for_file(&mut self, file_path: &[u8]) {
+        if self.watches.count() == 0 {
+            return;
+        }
+
+        bun_core::scoped_log!(
+            DevServer,
+            "DirectoryWatchStore.removeDependenciesForFile({:?})",
+            bstr::BStr::new(file_path),
+        );
+
+        // Iterate in reverse since `free_entry` uses `swap_remove_at`.
+        let mut watch_index = self.watches.count();
+        while watch_index > 0 {
+            watch_index -= 1;
+            // PORT NOTE: reshaped for borrowck — cannot hold &mut entry across
+            // self.free_dependency_index(); walk by index and re-borrow.
+            let mut new_chain: Option<u32> = None;
+            let mut it: Option<u32> = Some(self.watches.values()[watch_index].first_dep);
+            while let Some(index) = it {
+                let dep_next = self.dependencies[index as usize].next;
+                let dep_ptr = self.dependencies[index as usize].source_file_path;
+                it = dep_next;
+                // SAFETY: `source_file_path` is a raw fat ptr stored for identity comparison only.
+                if unsafe { (*dep_ptr).as_ptr() } == file_path.as_ptr() {
+                    self.free_dependency_index(index);
+                } else {
+                    self.dependencies[index as usize].next = new_chain;
+                    new_chain = Some(index);
+                }
+            }
+            if let Some(new_first_dep) = new_chain {
+                self.watches.values_mut()[watch_index].first_dep = new_first_dep;
+            } else {
+                self.free_entry(watch_index);
+            }
+        }
     }
 }

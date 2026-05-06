@@ -1233,14 +1233,22 @@ To create a project with the official Next.js scaffolding tool, run\n\
     }
 
     fn bun_info(log: &mut logger::Log) -> Result<(), bun_core::Error> {
-        // SAFETY: single-threaded startup.
-        let _ctx = unsafe { &mut *init(Tag::InfoCommand, log)? };
+        use bun_install::package_manager_real::{CommandLineArguments, Subcommand as PmSubcommand};
+        use bun_install::{PackageManager, Subcommand};
 
-        // Find non-flag arguments starting from argv[2] (after "bun info").
+        // Parse arguments manually since the standard flow doesn't work for standalone commands
+        let cli = CommandLineArguments::parse(PmSubcommand::Info)?;
+        let json_output = cli.json_output;
+        // SAFETY: single-threaded startup.
+        let ctx = unsafe { &mut *init(Tag::InfoCommand, log)? };
+        let (pm, _) = PackageManager::init(ctx, cli, Subcommand::Info)?;
+
+        // Handle arguments correctly for standalone info command
         let mut package_name: &[u8] = b"";
         let mut property_path: Option<&[u8]> = None;
-        let mut found_package = false;
 
+        // Find non-flag arguments starting from argv[2] (after "bun info").
+        let mut found_package = false;
         let argv = bun::argv();
         for arg in argv.iter().skip(2) {
             // Skip flags
@@ -1256,12 +1264,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
             }
         }
 
-        let _ = (package_name, property_path);
-        // PORT NOTE: `bun_install::PackageManager::CommandLineArguments::parse`,
-        // `PackageManager::init`, and `Subcommand::Info` are gated behind
-        // bun_install crate. Wire `pm_view_command::view(pm, package_name,
-        // property_path, cli.json_output)` once un-gated.
-        todo!("blocked_on: bun_install::PackageManager::init / CommandLineArguments::parse / Subcommand::Info")
+        super::pm_view_command::view(pm, package_name, property_path, json_output)
     }
 
     /// Per-tag clap param table. Runtime dispatch (was const-generic in Zig;

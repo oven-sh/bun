@@ -955,11 +955,9 @@ unsafe fn fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()
             BunTest::bun_test_timeout_callback(strong, &now_core, unsafe { &*vm });
         }
         EventLoopTimerTag::CronJob => {
-            // `crate::api::cron::CronJob` is currently an opaque `struct CronJob(())`
-            // (real type lives in `_jsc_gated`); no `event_loop_timer` field /
-            // `on_timer_fire` to recover yet.
-            let _ = core::marker::PhantomData::<CronJob>;
-            todo!("blocked_on: crate::api::cron::CronJob::on_timer_fire");
+            let container = container_of!(CronJob, event_loop_timer);
+            // SAFETY: per fn contract.
+            CronJob::on_timer_fire(container, unsafe { &*vm });
         }
     }
 }

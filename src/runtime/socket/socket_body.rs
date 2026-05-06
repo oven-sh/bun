@@ -2739,16 +2739,17 @@ impl<const SSL: bool> NewSocket<SSL> {
             // Per-VM weak cache: `tls:true` and `{servername}`-only hit
             // the same CTX as `Bun.connect`; an inline CA dedupes across
             // every upgradeTLS that names it.
-            // TODO(port): `RareData::ssl_ctx_cache()` returns the upstream
-            // `high_tier::SSLContextCache` opaque stub — the real
-            // `runtime::api::bun::SSLContextCache::get_or_create` can't be
-            // reached until rare_data swaps in the concrete type.
-            let _ = (cfg as *mut SSLConfig, &mut create_err);
-            *owned_ctx = match {
-                todo!("blocked_on: bun_jsc::rare_data::SSLContextCache::get_or_create");
-                #[allow(unreachable_code)]
-                None::<*mut SSL_CTX>
-            } {
+            // PORT NOTE: `bun_jsc::rare_data::RareData::ssl_ctx_cache()` returns
+            // the high-tier opaque ZST stub (cycle-break); the concrete
+            // `SSLContextCache` lives on this thread's `RuntimeState`.
+            let cache = {
+                let state = crate::jsc_hooks::runtime_state();
+                debug_assert!(!state.is_null(), "RuntimeState not installed");
+                // SAFETY: per-thread `RuntimeState` boxed by `init_runtime_state`;
+                // stable address for the VM's lifetime, JS-thread-only access.
+                unsafe { &mut (*state).ssl_ctx_cache }
+            };
+            *owned_ctx = match cache.get_or_create(cfg, &mut create_err) {
                 Some(c) => Some(c as *mut SSL_CTX),
                 None => {
                     // us_ssl_ctx_from_options only sets *err for the CA/cipher

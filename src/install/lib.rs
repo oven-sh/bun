@@ -2308,6 +2308,18 @@ impl PackageManager {
     // impl block below alongside `cached_git_folder_name` / `cached_github_folder_name`
     // (de-duplicated to resolve E0034).
 
+    /// Port of `PackageManager.init` (src/install/PackageManager.zig:568).
+    /// Real body lives in `package_manager_real::init`; that impl types against
+    /// the real `package_manager_real::PackageManager`, so the stub forwards
+    /// once the two structs unify.
+    pub fn init(
+        _ctx: package_manager_real::Command::Context<'_>,
+        _cli: package_manager_real::CommandLineArguments,
+        _subcommand: Subcommand,
+    ) -> Result<(&'static mut PackageManager, Box<[u8]>), bun_core::Error> {
+        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) - PackageManager::init")
+    }
+
     /// Port of `PackageManager.ensureTempNodeGypScript`
     /// (src/install/PackageManager.zig:451). Real body in
     /// `package_manager_real::PackageManager::ensure_temp_node_gyp_script`.
@@ -2329,6 +2341,12 @@ impl PackageManager {
 #[derive(Default)] pub struct PackageManagerOptionsStub {
     /// Zig: `Options.max_concurrent_lifecycle_scripts: usize`.
     pub max_concurrent_lifecycle_scripts: usize,
+    /// Zig: `Options.top_only: bool = false` — `bun why --top`.
+    pub top_only: bool,
+    /// Zig: `Options.depth: ?usize = null` — `bun why --depth N`.
+    pub depth: Option<usize>,
+    /// Zig: `Options.positionals: []const []const u8` — bare CLI args.
+    pub positionals: Vec<Box<[u8]>>,
     pub log_level: package_manager::Options::LogLevel,
     pub enable: PackageManagerEnableStub,
     /// Zig: `Options.cpu: Npm.Architecture = Npm.Architecture.current`.
@@ -2645,8 +2663,41 @@ impl<E: Default, R: Default, M: Default, D: Default> Default for RunTasksCallbac
 
 static mut PACKAGE_MANAGER_INSTANCE: *mut PackageManager = core::ptr::null_mut();
 
+/// Stub: `PackageManager.CommandLineArguments`
+/// (src/install/PackageManager/CommandLineArguments.zig). Only the fields
+/// read by `bun_runtime::cli::why_command` / `package_manager_command` are
+/// surfaced; real shape lives in `package_manager_real::CommandLineArguments`.
+#[derive(Default)]
+pub struct CommandLineArguments {
+    pub positionals: Vec<Box<[u8]>>,
+    pub top_only: bool,
+    pub depth: Option<usize>,
+}
+impl CommandLineArguments {
+    /// Port of `CommandLineArguments.parse`
+    /// (src/install/PackageManager/CommandLineArguments.zig). Real body in
+    /// `package_manager_real::command_line_arguments::CommandLineArguments::parse`;
+    /// the stub forwards once the two `Subcommand` enums unify (reconciler-6).
+    pub fn parse(_subcommand: Subcommand) -> Result<Self, bun_core::Error> {
+        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) -- stub CommandLineArguments::parse")
+    }
+}
+
 impl PackageManager {
     pub fn verbose_install() -> bool { false }
+
+    /// Port of `PackageManager.init` (src/install/PackageManager.zig:568).
+    /// Real body in `package_manager_real::init`; that impl returns
+    /// `*mut package_manager_real::PackageManager`, so this stub bridges until
+    /// the two struct shapes unify (reconciler-6). Generic over `Ctx` to avoid
+    /// the `bun_runtime::command::Context` upward dep.
+    pub fn init<Ctx>(
+        _ctx: Ctx,
+        _cli: CommandLineArguments,
+        _subcommand: Subcommand,
+    ) -> Result<(*mut PackageManager, Box<[u8]>), bun_core::Error> {
+        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) -- stub PackageManager::init")
+    }
 
     /// Port of `resolution.formatLaterVersionInCache`
     /// (src/install/PackageManager/PackageManagerResolution.zig). Real body in

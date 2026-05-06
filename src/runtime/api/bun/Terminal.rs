@@ -630,6 +630,31 @@ impl Terminal {
         self.slave_fd
     }
 
+    /// `flags.closed` — read by `Bun.spawn` arg validation.
+    #[inline]
+    pub fn is_closed(&self) -> bool {
+        self.flags.contains(Flags::CLOSED)
+    }
+
+    /// `flags.inline_spawned` — read by `Bun.spawn` to reject reuse of an
+    /// inline-created terminal.
+    #[inline]
+    pub fn is_inline_spawned(&self) -> bool {
+        self.flags.contains(Flags::INLINE_SPAWNED)
+    }
+
+    /// Spawn-side error-path teardown for a terminal created via
+    /// `create_from_spawn` whose subprocess never started. Downgrades the
+    /// JSRef so the wrapper is GC-eligible, marks `finalized` so
+    /// `on_reader_done` skips the JS exit callback, and runs `close_internal`.
+    /// Mirrors the `defer { terminal_info.? }` block in
+    /// `js_bun_spawn_bindings.zig`.
+    pub fn abandon_from_spawn(&mut self) {
+        self.this_value.downgrade();
+        self.flags.insert(Flags::FINALIZED);
+        self.close_internal();
+    }
+
     /// Windows: get the ConPTY handle to pass to uv_spawn via
     /// uv_process_options_t.pseudoconsole.
     #[cfg(windows)]

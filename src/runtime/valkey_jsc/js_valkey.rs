@@ -17,7 +17,7 @@ use super::js_valkey_functions as fns;
 use super::valkey;
 use super::valkey_command_body as command;
 use super::valkey_command_body::Command;
-use bun_jsc::URL;
+use bun_jsc::url::URL;
 use bun_valkey::valkey_protocol as protocol;
 use super::protocol_jsc;
 
@@ -35,26 +35,6 @@ fn vm_event_loop_ctx() -> bun_aio::EventLoopCtx {
     bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
 }
 
-/// `JSValue::push` — appends to an array-typed JS value (Zig `JSValue.push`).
-trait JsValueArrayPush {
-    fn push(self, global: &JSGlobalObject, value: JSValue) -> JsResult<()>;
-}
-impl JsValueArrayPush for JSValue {
-    fn push(self, _global: &JSGlobalObject, _value: JSValue) -> JsResult<()> {
-        todo!("blocked_on: bun_jsc::JSValue::push")
-    }
-}
-
-/// `JSValue::getOptionalInt` — typed integer property fetch.
-trait JsValueGetOptionalInt {
-    fn get_optional_int<T>(self, global: &JSGlobalObject, name: &'static str) -> JsResult<Option<T>>;
-}
-impl JsValueGetOptionalInt for JSValue {
-    fn get_optional_int<T>(self, _global: &JSGlobalObject, _name: &'static str) -> JsResult<Option<T>> {
-        todo!("blocked_on: bun_jsc::JSValue::get_optional_int")
-    }
-}
-
 /// `AnySocket::isClosed` — dispatches to the inner handler.
 trait AnySocketIsClosed {
     fn is_closed(&self) -> bool;
@@ -66,43 +46,6 @@ impl AnySocketIsClosed for uws::AnySocket {
             uws::AnySocket::SocketTcp(s) => s.is_closed(),
             uws::AnySocket::SocketTls(s) => s.is_closed(),
         }
-    }
-}
-
-/// `bun_jsc::URL` is a `stub_ty!` opaque in lib.rs (the real impl in
-/// `URL.rs` is `cfg(any())`-gated). Shim the surface used here.
-trait UrlShim {
-    fn from_string(str: BunString) -> Option<NonNull<URL>>;
-    fn from_utf8(input: &[u8]) -> Option<NonNull<URL>>;
-    fn protocol(&self) -> BunString;
-    fn username(&self) -> BunString;
-    fn password(&self) -> BunString;
-    fn host(&self) -> BunString;
-    fn pathname(&self) -> BunString;
-    fn port(&self) -> u32;
-}
-impl UrlShim for URL {
-    fn from_string(_str: BunString) -> Option<NonNull<URL>> {
-        todo!("blocked_on: bun_jsc::URL::from_string")
-    }
-    fn from_utf8(_input: &[u8]) -> Option<NonNull<URL>> {
-        todo!("blocked_on: bun_jsc::URL::from_utf8")
-    }
-    fn protocol(&self) -> BunString { todo!("blocked_on: bun_jsc::URL::protocol") }
-    fn username(&self) -> BunString { todo!("blocked_on: bun_jsc::URL::username") }
-    fn password(&self) -> BunString { todo!("blocked_on: bun_jsc::URL::password") }
-    fn host(&self) -> BunString { todo!("blocked_on: bun_jsc::URL::host") }
-    fn pathname(&self) -> BunString { todo!("blocked_on: bun_jsc::URL::pathname") }
-    fn port(&self) -> u32 { todo!("blocked_on: bun_jsc::URL::port") }
-}
-
-/// `JSGlobalObject::queueMicrotask(fn, args)` — JS-callback variant.
-trait GlobalQueueMicrotask {
-    fn queue_microtask(&self, function: JSValue, args: &[JSValue]);
-}
-impl GlobalQueueMicrotask for JSGlobalObject {
-    fn queue_microtask(&self, _function: JSValue, _args: &[JSValue]) {
-        todo!("blocked_on: bun_jsc::JSGlobalObject::queue_microtask(JSValue, &[JSValue])")
     }
 }
 

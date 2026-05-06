@@ -33,7 +33,7 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     }
 
     if output
-        .write_all(if has_message { b" [Enter] " } else { b"Alert [Enter] " })
+        .write_all(if has_message { b" [Enter] " as &[u8] } else { b"Alert [Enter] " })
         .is_err()
     {
         // 1. If we cannot show simple dialogs for this, then return.
@@ -86,7 +86,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     //    and ask the user to respond with a positive or negative
     //    response.
     if output
-        .write_all(if has_message { b" [y/N] " } else { b"Confirm [y/N] " })
+        .write_all(if has_message { b" [y/N] " as &[u8] } else { b"Confirm [y/N] " })
         .is_err()
     {
         // 1. If we cannot show simple dialogs for this, then return false.
@@ -259,7 +259,7 @@ pub mod prompt {
         //    abort. The response must be defaulted to the value given by
         //    default.
         if output
-            .write_all(if has_message { b" " } else { b"Prompt " })
+            .write_all(if has_message { b" " as &[u8] } else { b"Prompt " })
             .is_err()
         {
             // 1. If we cannot show simple dialogs for this, then return false.
@@ -299,7 +299,7 @@ pub mod prompt {
             if let Some(mode) = original_mode {
                 // SAFETY: FFI call; handle is the process's stdin console handle.
                 unsafe {
-                    let _ = bun_windows_sys::externs::SetConsoleMode(bun_sys::Fd::stdin().native(), mode);
+                    let _ = bun_sys::windows::SetConsoleMode(bun_sys::Fd::stdin().native(), mode);
                 }
             }
         });

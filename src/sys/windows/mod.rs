@@ -4015,6 +4015,8 @@ pub use bun_windows_sys::externs::GetCommandLineW;
 pub use bun_windows_sys::externs::CreateDirectoryW;
 pub use bun_windows_sys::externs::SetEndOfFile;
 pub use bun_windows_sys::externs::GetProcessTimes;
+pub use bun_windows_sys::externs::GetConsoleMode;
+pub use bun_windows_sys::externs::SetConsoleMode;
 
 #[derive(Default)]
 pub struct UpdateStdioModeFlagsOpts {

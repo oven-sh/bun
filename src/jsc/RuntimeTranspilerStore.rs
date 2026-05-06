@@ -8,6 +8,8 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_aio::KeepAlive;
 use bun_bundler::options::{self, Loader, ModuleType};
+use bun_collections::HiveArrayFallback;
+use bun_event_loop::{Taskable, TaskTag, task_tag};
 use bun_js_parser::ast as js_ast;
 use bun_js_printer as js_printer;
 use bun_logger as logger;
@@ -16,12 +18,15 @@ use bun_resolver::fs as Fs;
 use bun_resolver::package_json::PackageJSON;
 use bun_string::{strings, String};
 use bun_sys::Fd;
+use bun_threading::UnboundedQueue;
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 use crate::{
     JSGlobalObject, JSInternalPromise, JSValue, JsResult,
     ResolvedSource, RuntimeTranspilerCache,
 };
+use crate::async_module::AsyncModule;
+use crate::resolved_source_tag::ResolvedSourceTag;
 use crate::strong::Optional as StrongOptional;
 use crate::event_loop::{ConcurrentTask, EventLoop};
 use crate::virtual_machine::VirtualMachine;

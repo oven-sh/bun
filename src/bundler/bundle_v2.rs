@@ -1205,6 +1205,29 @@ pub(crate) fn logger_path_to_paths(p: &Logger::fs::Path) -> bun_paths::fs::Path<
     // SAFETY: see `fs_path_to_logger` — identical layout.
     unsafe { core::mem::transmute::<Logger::fs::Path, bun_paths::fs::Path<'static>>(p.clone()) }
 }
+#[inline]
+pub(crate) fn fs_path_from_logger(p: &Logger::fs::Path) -> Fs::Path<'static> {
+    Fs::Path {
+        pretty: p.pretty,
+        text: p.text,
+        namespace: p.namespace,
+        name: Fs::PathName { base: p.name.base, dir: p.name.dir, ext: p.name.ext, filename: p.name.filename },
+        is_disabled: p.is_disabled,
+        is_symlink: p.is_symlink,
+    }
+}
+/// PORT NOTE: `Logger::Source` is `!Clone`; manual field-by-field dup for the
+/// few sites (server-component boundary handling) that need a value copy.
+#[inline]
+fn dup_source(s: &Logger::Source) -> Logger::Source {
+    Logger::Source {
+        path: s.path.clone(),
+        contents: s.contents.clone(),
+        contents_is_recycled: s.contents_is_recycled,
+        identifier_name: s.identifier_name.clone(),
+        index: s.index,
+    }
+}
 
 struct EscapedNamespace<'a>(&'a [u8]);
 impl core::fmt::Display for EscapedNamespace<'_> {

@@ -789,10 +789,28 @@ pub use _impl::{CompressionContext, CompressionStreamImpl};
 /// (`global_this`, `stream`, `write_result`, `poll_ref`, `this_value`,
 /// `write_in_progress`, `pending_close`, `pending_reset`, `closed`, `task`,
 /// `ref_count`), so the macro can stamp the impls uniformly.
+///
+/// `$type_name` is the C++-side class name (matches `.classes.ts`); the macro
+/// emits a `pub mod js { … }` with the cached-property accessors
+/// (`writeCallback` / `errorCallback` / `dictionary`) wired to the
+/// `${TypeName}Prototype__${prop}{Get,Set}CachedValue` extern symbols.
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __impl_compression_stream {
-    ($native:ty, $ctx:ty) => {
+    ($native:ident, $ctx:ty, $type_name:literal) => {
+        // Tag for the event-loop dispatcher (bun_runtime::dispatch::run_task).
+        impl ::bun_event_loop::Taskable for $native {
+            const TAG: ::bun_event_loop::TaskTag = ::bun_event_loop::task_tag::$native;
+        }
+
+        /// `T.js.*` — cached-property accessors emitted by
+        /// `generate-classes.ts` for `values: ["writeCallback",
+        /// "errorCallback", "dictionary"]`.
+        #[allow(unused)]
+        pub mod js {
+            ::bun_jsc::codegen_cached_accessors!($type_name; writeCallback, errorCallback, dictionary);
+        }
+
         impl $crate::node::node_zlib_binding::CompressionContext for $ctx {
             #[inline] fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) { Self::set_buffers(self, in_, out) }
             #[inline] fn set_flush(&mut self, flush: i32) { Self::set_flush(self, flush) }
@@ -834,25 +852,26 @@ macro_rules! __impl_compression_stream {
                 let n = self.ref_count.get() - 1;
                 self.ref_count.set(n);
                 if n == 0 {
-                    // TODO(port): blocked_on: bun_ptr::IntrusiveRc — invoke
-                    // `Self::deinit` and free the Box. Deferred until the
-                    // refcount wrapper lands; the JSC finalizer path keeps the
-                    // payload alive in the meantime.
+                    // Zig: `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
+                    // → calls `deinit(this)` then `bun.destroy(this)`. The
+                    // per-type `Self::deinit(*mut Self)` does both (closes the
+                    // stream and `Box::from_raw`s the payload).
+                    // SAFETY: refcount hit zero ⇒ `&self` is the last live
+                    // reference; `self` was `Box::into_raw`'d at construction.
+                    // We never materialize a `&mut` here — `deinit` takes the
+                    // raw `*mut Self` and is responsible for freeing it.
+                    Self::deinit(self as *const Self as *mut Self);
                 }
             }
 
-            // Per-class `T.js.*` cached-property accessors are emitted by
-            // `generate-classes.ts`; the Rust codegen path is not yet wired.
-            // TODO(port): blocked_on: bun_jsc::codegen::js — replace with the
-            // generated `JSNative{Zlib,Brotli,Zstd}::*_get_cached` once available.
-            #[inline] fn write_callback_get_cached(_this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {
-                todo!("blocked_on: bun_jsc::codegen::JSNative*::writeCallbackGetCached")
+            #[inline] fn write_callback_get_cached(this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {
+                js::write_callback_get_cached(this_value)
             }
-            #[inline] fn error_callback_get_cached(_this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {
-                todo!("blocked_on: bun_jsc::codegen::JSNative*::errorCallbackGetCached")
+            #[inline] fn error_callback_get_cached(this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {
+                js::error_callback_get_cached(this_value)
             }
-            #[inline] fn error_callback_set_cached(_this_value: ::bun_jsc::JSValue, _global: &::bun_jsc::JSGlobalObject, _cb: ::bun_jsc::JSValue) {
-                // generated: JSNative*.errorCallbackSetCached — no-op until codegen lands.
+            #[inline] fn error_callback_set_cached(this_value: ::bun_jsc::JSValue, global: &::bun_jsc::JSGlobalObject, cb: ::bun_jsc::JSValue) {
+                js::error_callback_set_cached(this_value, global, cb)
             }
         }
     };
@@ -861,11 +880,11 @@ macro_rules! __impl_compression_stream {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/node/node_zlib_binding.zig (396 lines)
-//   confidence: medium
-//   todos:      3
+//   confidence: high
+//   todos:      0
 //   notes:      CompressionStream is a Zig mixin (usingnamespace pattern) — Rust
 //               port routes field access through the CompressionStreamImpl trait;
-//               Native{Zlib,Brotli,Zstd} must impl it. host_fn attrs were dropped
-//               (the macro can't handle `&mut T` self); per-class wrapper shims
-//               will be needed when codegen wires these up.
+//               Native{Zlib,Brotli,Zstd} must impl it (and Taskable). host_fn
+//               attrs were dropped (the macro can't handle `&mut T` self);
+//               per-class wrapper shims will be needed when codegen wires up.
 // ──────────────────────────────────────────────────────────────────────────

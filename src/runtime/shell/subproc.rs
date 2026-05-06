@@ -1014,21 +1014,11 @@ impl Readable {
         }
     }
 
-    pub fn to_slice(&mut self) -> Option<&[u8]> {
-        match self {
-            Readable::Fd(_) => None,
-            Readable::Pipe(_pipe) => {
-                // TODO(port): Zig path mutates `pipe.buffer.fifo.close_on_empty_read`
-                // (a pre-IOReader-rewrite field) and reads all — that field no
-                // longer exists on `PosixBufferedReader`. The shell never calls
-                // `to_slice` on a live pipe; covered by `buffered_output`.
-                todo!("blocked_on: bun_io::PosixBufferedReader fifo field (legacy)")
-            }
-            Readable::Buffer(buf) => Some(buf),
-            Readable::Memfd(_) => panic!("TODO"),
-            _ => None,
-        }
-    }
+    // PORT NOTE: `Readable::toSlice` from the Zig spec is intentionally **not**
+    // ported. Its `.pipe` arm writes `this.pipe.buffer.fifo.close_on_empty_read`,
+    // a field that does not exist on `PipeReader` (pre-BufferedReader-rewrite
+    // leftover) — the function is dead under Zig's lazy compilation and has no
+    // callers. Subprocess output is read via `PipeReader::buffered_output`.
 
     #[allow(clippy::too_many_arguments)]
     pub fn init(

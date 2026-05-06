@@ -1813,7 +1813,11 @@ pub struct BundleOptions<'a> {
     pub target: Target,
     pub main_fields: Box<[Box<[u8]>]>,
     /// TODO: remove this in favor accessing bundler.log
-    pub log: &'a mut logger::Log,
+    /// PORT NOTE: raw `*mut` (not `&'a mut`) — Zig aliases the same `*Log`
+    /// into `Transpiler.log` / `Resolver.log` / `Linker.log`. A stored
+    /// `&'a mut` here would assert uniqueness for `'a` and make every access
+    /// through those sibling raw pointers UB under stacked borrows.
+    pub log: *mut logger::Log,
     pub external: ExternalModules,
     pub allow_unresolved: AllowUnresolved,
     pub entry_points: Box<[Box<[u8]>]>,
@@ -1989,7 +1993,10 @@ impl<'a> BundleOptions<'a> {
         };
         // PORT NOTE: reshaped for borrowck — node_env computed before passing self.log
         self.define = defines_from_transform_options(
-            self.log,
+            // SAFETY: `self.log` is the per-Transpiler `*mut Log` (Zig
+            // `*logger.Log`); aliased into `Transpiler.log` / `Resolver.log`
+            // but no other `&mut` is live across this call.
+            unsafe { &mut *self.log },
             self.transform_options.define.clone(),
             self.target,
             loader_,
@@ -2009,7 +2016,7 @@ impl<'a> BundleOptions<'a> {
 
     pub fn from_api(
         fs: &mut Fs::FileSystem,
-        log: &'a mut logger::Log,
+        log: *mut logger::Log,
         transform: api::TransformOptions,
     ) -> Result<BundleOptions<'a>, bun_core::Error> {
         

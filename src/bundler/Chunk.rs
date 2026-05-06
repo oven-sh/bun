@@ -1123,6 +1123,33 @@ impl Layers {
             Layers::Owned(b) => b,
         }
     }
+
+    /// Zig: `Chunk.CssImportOrder.Layers.borrow(ptr)` — Cow::Borrowed.
+    #[inline]
+    pub fn borrow(p: *const BabyList<bun_css::LayerName>) -> Self {
+        Layers::Borrowed(p)
+    }
+
+    /// Zig: `bun.ptr.Cow.replace` — drop owned (arena-backed, so no-op) and
+    /// install a fresh owned value.
+    #[inline]
+    pub fn replace(&mut self, new: BabyList<bun_css::LayerName>) {
+        *self = Layers::Owned(new);
+    }
+
+    /// Zig: `bun.ptr.Cow.toOwned` — if borrowed, deep-clone into an owned
+    /// list and return `&mut` to it; if already owned, return as-is.
+    pub fn to_owned(&mut self) -> &mut BabyList<bun_css::LayerName> {
+        if let Layers::Borrowed(p) = *self {
+            // SAFETY: see `inner()`.
+            let borrowed: &BabyList<bun_css::LayerName> = unsafe { &*p };
+            *self = Layers::Owned(borrowed.deep_clone_with(|l| l.clone()));
+        }
+        match self {
+            Layers::Owned(b) => b,
+            Layers::Borrowed(_) => unreachable!(),
+        }
+    }
 }
 
 impl CssImportOrder {

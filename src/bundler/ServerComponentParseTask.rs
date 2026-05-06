@@ -7,10 +7,10 @@ use std::fmt::Write as _;
 
 use bun_alloc::{AllocError as OOM, Arena}; // bumpalo::Bump re-export
 use bun_collections::BabyList;
-use bun_core::{fmt as bun_fmt, handle_oom};
+use bun_core::fmt as bun_fmt;
 
-use bun_logger::{self as logger, Loc, Log, Source};
-use bun_threading::thread_pool::{self as ThreadPoolLib, Task as ThreadPoolTask};
+use bun_logger::{Loc, Log, Source};
+use bun_threading::thread_pool::Task as ThreadPoolTask;
 
 use bun_js_parser::ast::{
     self as js_ast, ast::NamedExports, symbol, Binding, Expr, Stmt, B, E, G, S,
@@ -88,7 +88,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         Err(_oom) => bun_core::out_of_memory(),
     };
 
-    let result = handle_oom(Box::try_new(parse_task::Result {
+    let result = Box::new(parse_task::Result {
         ctx: task.ctx,
         // SAFETY: Zig leaves `.task = undefined`; consumer overwrites before read.
         task: Default::default(),

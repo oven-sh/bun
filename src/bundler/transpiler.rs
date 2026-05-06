@@ -181,7 +181,7 @@ impl<'a> Transpiler<'a> {
                 let buster_name: &[u8] = 'name: {
                     if bun_paths::is_absolute(entry_point) {
                         let dir = bun_paths::resolve_path::dirname::<
-                            bun_paths::resolve_path::AutoPlatform,
+                            bun_paths::platform::Auto,
                         >(entry_point);
                         if !dir.is_empty() {
                             // Normalized with trailing slash
@@ -198,7 +198,7 @@ impl<'a> Transpiler<'a> {
                     let top_level_dir = unsafe { (*self.fs).top_level_dir };
 
                     bun_paths::resolve_path::join_abs_string_buf_z::<
-                        bun_paths::resolve_path::AutoPlatform,
+                        bun_paths::platform::Auto,
                     >(top_level_dir, &mut cache_bust_buf, &parts)
                 };
 

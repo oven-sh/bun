@@ -588,7 +588,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     source_map_index: None,
                     bytecode_index: None,
                     module_info_index: None,
-                    side: Some(crate::bake_types::Side::Client),
+                    side: Some(options::Side::Client),
                     entry_point_index: None,
                     referenced_css_chunks: Box::default(),
                     bake_extra: BakeExtra::default(),
@@ -723,13 +723,13 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             }
 
             // Compute side early so it can be used for bytecode, module_info, and main chunk output files
-            let side: crate::bake_types::Side =
+            let side: options::Side =
                 if matches!(chunk.content, Chunk::Content::Css(_)) || chunk.flags.is_browser_chunk_from_server_build {
-                    crate::bake_types::Side::Client
+                    options::Side::Client
                 } else {
                     match c.graph.ast.items_target()[chunk.entry_point.source_index as usize] {
-                        options::Target::Browser => crate::bake_types::Side::Client,
-                        _ => crate::bake_types::Side::Server,
+                        options::Target::Browser => options::Side::Client,
+                        _ => options::Side::Server,
                     }
                 };
 
@@ -811,7 +811,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 },
                                 output_kind: options::OutputKind::Bytecode,
                                 loader: Loader::File,
-                                size: Some(bytecode.len() as u32),
+                                size: Some(bytecode.len()),
                                 display_size: bytecode.len() as u32,
                                 data: options::OutputFileData::Buffer {
                                     data: bytecode,
@@ -874,7 +874,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                     },
                                     output_kind: options::OutputKind::ModuleInfo,
                                     loader: Loader::File,
-                                    size: Some(module_info_bytes.len() as u32),
+                                    size: Some(module_info_bytes.len()),
                                     display_size: module_info_bytes.len() as u32,
                                     data: options::OutputFileData::Buffer {
                                         data: module_info_bytes.clone(),
@@ -966,7 +966,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     let mut extra = BakeExtra::default();
                     extra.bake_is_runtime =
                         chunk.files_with_parts_in_chunk.contains(Index::runtime().get());
-                    if output_kind == options::OutputKind::EntryPoint && side == crate::bake_types::Side::Server {
+                    if output_kind == options::OutputKind::EntryPoint && side == options::Side::Server {
                         extra.is_route = true;
                         extra.fully_static =
                             !static_route_visitor.has_transitive_use_client(chunk.entry_point.source_index);

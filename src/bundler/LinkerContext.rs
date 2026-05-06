@@ -18,7 +18,12 @@ use bun_options_types::{ImportRecord, ImportKind};
 use crate::bake_types as bake;
 use crate::bun_css as css;
 
-use bun_js_parser::{self as js_ast, Ref, Index, Expr, Stmt, Part, Symbol, Binding, Dependency, NamedImport, TlaCheck, DeclaredSymbol, ExportsKind, BundledAst as JSAst};
+use bun_js_parser::{self as js_ast, Ref, Expr, Stmt, Part, Symbol, Binding, Dependency, NamedImport, TlaCheck, DeclaredSymbol, ExportsKind, BundledAst as JSAst};
+// PORT NOTE: `crate::Index` (= `bun_options_types::BundleEnums::Index`) — the
+// bundler's source-index newtype. `bun_js_parser::Index` is layout-identical
+// but a distinct type; LinkerGraph/JSMeta/etc. are typed against the crate
+// re-export, so use that here.
+use crate::Index;
 use bun_js_parser::{E, S, B, G};
 use bun_js_printer::{self as js_printer, renamer};
 use bun_js_parser::lexer as lex;
@@ -281,17 +286,20 @@ impl<'a> LinkerContext<'a> {
     }
 
     pub fn path_with_pretty_initialized(&mut self, path: Fs::Path) -> Result<Fs::Path, BunError> {
-        // SAFETY: resolver is a backref into BundleV2.transpiler.resolver, valid for self's lifetime
-        let resolver = unsafe { &*self.resolver };
-        generic_path_with_pretty_initialized(path, self.options.target, resolver.fs.top_level_dir, self.allocator())
+        // SAFETY: resolver is a backref into BundleV2.transpiler.resolver, valid for self's lifetime;
+        // resolver.fs is a `*mut Fs::FileSystem` backref into the singleton FS.
+        let top_level_dir = unsafe { (*(*self.resolver).fs).top_level_dir };
+        generic_path_with_pretty_initialized(path, self.options.target, top_level_dir, self.allocator())
     }
 
     pub fn should_include_part(&self, source_index: crate::IndexInt, part: &Part) -> bool {
         // As an optimization, ignore parts containing a single import statement to
         // an internal non-wrapped file. These will be ignored anyway and it's a
         // performance hit to include the part only to discover it's unnecessary later.
-        if part.stmts.len() == 1 {
-            if let Stmt::SImport(s_import) = &part.stmts[0].data {
+        // SAFETY: `Part.stmts` is a raw `*mut [Stmt]` arena pointer; valid for the link step.
+        let stmts: &[Stmt] = unsafe { &*part.stmts };
+        if stmts.len() == 1 {
+            if let Some(s_import) = stmts[0].data.as_s_import() {
                 let record = self.graph.ast.items_import_records()[source_index as usize].at(s_import.import_record_index);
                 if record.source_index.is_valid()
                     && self.graph.meta.items_flags()[record.source_index.get() as usize].wrap == WrapKind::None

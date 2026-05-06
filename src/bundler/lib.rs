@@ -335,13 +335,26 @@ pub mod bake_types {
         Code(Box<[u8]>),
     }
 
-    /// Mirrors src/bake/bake.zig `Framework` — only the field bundler reads
-    /// (`built_in_modules`). Remaining fields are opaque until tier-6 collapse.
+    /// Mirrors src/bake/bake.zig `Framework` — only the fields bundler reads
+    /// (`built_in_modules`, `server_components`). Remaining fields are opaque
+    /// until tier-6 collapse.
     pub struct Framework {
         pub built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
-        // TODO(b0-genuine): remaining Framework fields (server_components,
-        // react_fast_refresh, file_system_router_types, ...) — bake constructs.
+        /// Mirrors `Framework.server_components`.
+        pub server_components: Option<ServerComponents>,
+        // TODO(b0-genuine): remaining Framework fields (react_fast_refresh,
+        // file_system_router_types, ...) — bake constructs.
         _opaque_tail: (),
+    }
+
+    /// Mirrors src/bake/bake.zig `Framework.ServerComponents` — TYPE_ONLY subset
+    /// of fields read by the bundler (BundleV2 / ServerComponentParseTask /
+    /// ParseTask).
+    #[derive(Default, Clone)]
+    pub struct ServerComponents {
+        pub separate_ssr_graph: bool,
+        pub server_runtime_import: Box<[u8]>,
+        pub server_register_client_reference: Box<[u8]>,
     }
 
     /// Alias used at the crate root (`crate::HmrRuntimeSide`); identical to `Side`.

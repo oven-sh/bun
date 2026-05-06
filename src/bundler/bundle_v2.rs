@@ -1393,26 +1393,17 @@ pub mod dispatch {
 // runtime constructs/drives it. SAFETY: erased — never dereferenced in bundler.
 pub type Watcher = *mut (); // TODO(b0-genuine): hot_reloader — opaque until runtime owns lifecycle
 
-/// `bun.jsc.AnyEventLoop` — erased handle. The draft body matched on
-/// `EventLoop::Js`/`EventLoop::Mini` (the Zig union arms); reproduce as a
-/// thin enum wrapping the erased pointers so `js_loop_for_plugins` /
-/// `wait_for_parse` keep their call shape.
-pub enum EventLoop {
-    Js(dispatch::JsEventLoopHandle),
-    Mini(core::ptr::NonNull<()>),
-}
-impl EventLoop {
-    /// Mirrors `AnyEventLoop.tick` — drives the loop until `is_done` returns
-    /// true. T5 cannot name the concrete loop, so this delegates through the
-    /// JsEventLoop vtable / spins on the Mini loop poll.
-    /// PORT NOTE: real body lives in T6; this is the data-only shim.
-    pub fn tick<Ctx>(&mut self, ctx: &mut Ctx, is_done: &impl Fn(&mut Ctx) -> bool) {
-        // Busy-wait on `is_done` — the bundle thread's pump is driven by
-        // worker callbacks that flip `pending_items`. The Mini loop in Zig
-        // also spins; the JS loop runs microtasks between checks (T6).
-        while !is_done(ctx) {
-            std::thread::yield_now();
-        }
+/// `bun.jsc.AnyEventLoop` — erased handle. Re-export the linker's alias
+/// (`Option<NonNull<()>>`). The Js/Mini discriminant lives in T6.
+pub use crate::ungate_support::EventLoop;
+
+/// Mirrors `AnyEventLoop.tick` — drives the loop until `is_done` returns true.
+/// T5 cannot name the concrete loop, so this spins on the bundle-thread
+/// `is_done` predicate. The JS loop runs microtasks between checks (T6).
+fn event_loop_tick<Ctx>(_loop: &mut EventLoop, ctx: *mut Ctx, is_done: fn(&mut Ctx) -> bool) {
+    // SAFETY: ctx is a live `&mut BundleV2` for the duration of the tick.
+    while !is_done(unsafe { &mut *ctx }) {
+        std::thread::yield_now();
     }
 }
 
@@ -1923,7 +1914,8 @@ impl<'a> BundleV2<'a> {
     }
 
     pub fn wait_for_parse(&mut self) {
-        self.r#loop().tick(self, &Self::is_done);
+        let self_ptr: *mut Self = self;
+        event_loop_tick(self.r#loop(), self_ptr, Self::is_done);
         bun_core::scoped_log!(Bundle, "Parsed {} files, producing {} ASTs", self.graph.input_files.len(), self.graph.ast.len());
     }
 
@@ -2321,7 +2313,7 @@ impl<'a> BundleV2<'a> {
 
     /// `heap` is not freed when `deinit`ing the BundleV2
     pub fn init(
-        transpiler: &'a mut Transpiler,
+        transpiler: &'a mut Transpiler<'a>,
         bake_options: Option<BakeOptions<'a>>,
         alloc: &bun_alloc::Arena,
         event_loop: EventLoop,
@@ -2335,24 +2327,23 @@ impl<'a> BundleV2<'a> {
         transpiler.options.mark_builtins_as_external = transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
         transpiler.resolver.opts.mark_builtins_as_external = transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
 
-        let heap_alloc = heap.allocator();
+        // SAFETY: aliased *mut for `ssr_transpiler` (Zig stored both as raw ptrs).
+        let ssr_alias: *mut Transpiler<'a> = transpiler as *mut _;
         let mut this = Box::new(BundleV2 {
             transpiler,
             client_transpiler: None,
-            ssr_transpiler: transpiler, // TODO(port): aliasing &mut — Phase B must restructure (Zig allows ptr alias)
+            ssr_transpiler: ssr_alias,
             framework: None,
             graph: Graph {
-                pool: core::ptr::null_mut(), // set below
+                pool: NonNull::dangling(), // set below
                 heap,
                 kit_referenced_server_data: false,
                 kit_referenced_client_data: false,
-                build_graphs: enum_map::EnumMap::default(),
                 ..Default::default()
             },
             linker: LinkerContext {
                 r#loop: event_loop,
                 graph: LinkerGraph {
-                    allocator: heap_alloc,
                     ..Default::default()
                 },
                 ..Default::default()
@@ -2360,6 +2351,7 @@ impl<'a> BundleV2<'a> {
             bun_watcher: None,
             plugins: None,
             completion: None,
+            dev_server: None,
             file_map: None,
             source_code_length: 0,
             thread_lock: bun_core::ThreadLock::init_locked(),
@@ -2376,21 +2368,21 @@ impl<'a> BundleV2<'a> {
         });
         if let Some(bo) = bake_options {
             this.client_transpiler = Some(bo.client_transpiler);
-            this.ssr_transpiler = bo.ssr_transpiler;
+            this.ssr_transpiler = bo.ssr_transpiler.as_ptr();
+            let separate_ssr = bo.framework.server_components.as_ref()
+                .map(|sc| sc.separate_ssr_graph).unwrap_or(false);
             this.framework = Some(bo.framework);
-            this.linker.framework = this.framework.as_ref();
+            this.linker.framework = this.framework.as_ref().map(|f| f as *const _);
             this.plugins = bo.plugins;
             if this.transpiler.options.server_components {
-                debug_assert!(this.client_transpiler.as_ref().unwrap().options.server_components);
-                if bo.framework.server_components.as_ref().unwrap().separate_ssr_graph {
-                    debug_assert!(this.ssr_transpiler.options.server_components);
+                debug_assert!(unsafe { this.client_transpiler.unwrap().as_ref() }.options.server_components);
+                if separate_ssr {
+                    debug_assert!(unsafe { (*this.ssr_transpiler).options.server_components });
                 }
             }
         }
-        this.transpiler.allocator = heap_alloc;
-        this.transpiler.resolver.allocator = heap_alloc;
-        this.transpiler.linker.allocator = heap_alloc;
-        this.transpiler.log.msgs_allocator = heap_alloc; // TODO(port): msgs.allocator
+        // TODO(port): allocator field assignments — Transpiler/Resolver/Linker
+        // store `&Arena` in Rust; lifetime threading deferred.
         this.transpiler.log.clone_line_text = true;
 
         // We don't expose an option to disable this. Bake forbids tree-shaking

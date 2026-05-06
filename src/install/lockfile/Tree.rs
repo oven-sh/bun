@@ -1,4 +1,5 @@
 use core::marker::ConstParamTy;
+use core::fmt::Display;
 
 use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMap, DynamicBitSet, MultiArrayList};
@@ -9,8 +10,9 @@ use bun_semver::String as SemverString;
 use bun_str::ZStr;
 
 use crate::lockfile::{
-    DependencyIDList, DependencyIDSlice, DepSorter, ExternalSlice, Lockfile,
+    DependencyIDList, DependencyIDSlice, DepSorter, Lockfile,
 };
+use crate::external_slice::ExternalSlice;
 use crate::{
     invalid_dependency_id, invalid_package_id, Dependency, DependencyID, PackageID,
     PackageNameHash, Resolution,
@@ -381,17 +383,17 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         self.lockfile.buffers.string_bytes.as_slice()
     }
 
-    pub fn package_name(&self, id: PackageID) -> bun_semver::StringFmt<'_> {
+    pub fn package_name(&self, id: PackageID) -> bun_semver::string::Formatter<'_> {
         // TODO(port): MultiArrayList column accessor (`packages.items(.name)`) — exact API TBD in bun_collections.
         self.lockfile.packages.items_name()[id as usize]
             .fmt(self.lockfile.buffers.string_bytes.as_slice())
     }
 
-    pub fn package_version(&self, id: PackageID) -> crate::ResolutionFmt<'_> {
+    pub fn package_version(&self, id: PackageID) -> crate::resolution::Formatter<'_> {
         // TODO(port): MultiArrayList column accessor (`packages.items(.resolution)`).
         self.lockfile.packages.items_resolution()[id as usize].fmt(
             self.lockfile.buffers.string_bytes.as_slice(),
-            crate::resolution::FmtMode::Auto,
+            bun_core::fmt::PathSep::Auto,
         )
     }
 
@@ -528,8 +530,9 @@ pub fn is_filtered_dependency_or_workspace(
     let mut workspace_matched = workspace_filters.is_empty();
 
     for filter in workspace_filters {
-        // TODO(port): bun.AbsPath(.{ .sep = .posix }) — exact Rust type/API TBD in bun_paths.
-        let mut filter_path = bun_paths::AbsPath::init_top_level_dir(bun_paths::Sep::Posix);
+        // bun.AbsPath(.{ .sep = .posix }) — separator is a const generic on `bun_paths::AbsPath`.
+        let mut filter_path =
+            bun_paths::AbsPath::<u8, { bun_paths::path_options::PathSeparators::POSIX }>::init_top_level_dir();
         // filter_path drops at end of iteration.
 
         let (pattern, name_or_path): (&[u8], &[u8]) = match filter {

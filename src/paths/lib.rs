@@ -98,6 +98,34 @@ pub fn disk_designator_windows(p: &[u8]) -> &[u8] {
 /// shares the same trait as resolve_path's generics.
 pub use resolve_path::PathChar;
 pub const DELIMITER: u8 = if cfg!(windows) { b';' } else { b':' };
+
+/// `bun.pathLiteral("a/b")` → NUL-terminated path with platform separators.
+/// Port of `bun.zig:pathLiteral` — on POSIX returns the literal as-is; on
+/// Windows rewrites `/` → `\` at compile time. Yields `&'static ZStr` so it
+/// drops into `[:0]const u8` slots (`stringZ`).
+#[macro_export]
+macro_rules! path_literal {
+    ($lit:expr) => {{
+        // TODO(port-windows): const-eval `/`→`\` rewrite (const_format::str_replace).
+        const __B: &[u8] = ::core::concat!($lit, "\0").as_bytes();
+        // SAFETY: literal is NUL-terminated; len excludes the NUL.
+        unsafe { ::bun_core::ZStr::from_raw(__B.as_ptr(), __B.len() - 1) }
+    }};
+}
+
+/// `bun.OSPathLiteral` — like `path_literal!` but yields the platform path-char
+/// width (`u8` on POSIX, `u16` on Windows). Port of `bun.zig:OSPathLiteral`.
+#[macro_export]
+macro_rules! os_path_literal {
+    ($lit:literal) => {{
+        #[cfg(not(windows))]
+        { $crate::path_literal!($lit) }
+        // TODO(port-windows): comptime UTF-16 path literal with sep rewrite.
+        #[cfg(windows)]
+        { ::bun_core::wstr!($lit) }
+    }};
+}
+
 pub fn is_absolute(p: &[u8]) -> bool {
     #[cfg(not(windows))] { p.first() == Some(&b'/') }
     #[cfg(windows)] { is_absolute_windows(p) }

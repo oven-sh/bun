@@ -33,7 +33,7 @@ pub struct Symbols<'bump> {
 /// `symbols()` function.
 ///
 /// See [CounterStyle](CounterStyle).
-enum Symbol {
+pub enum Symbol {
     /// A string.
     String(CssString),
     /// An image.

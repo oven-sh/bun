@@ -6,7 +6,7 @@ pub mod matcher;
 pub mod glob_walker;
 
 // `match` is a Rust keyword; re-export with raw identifier.
-pub use crate::matcher::r#match;
+pub use crate::matcher::{r#match, MatchResult};
 pub use crate::glob_walker as walk;
 pub use walk::GlobWalker;
 

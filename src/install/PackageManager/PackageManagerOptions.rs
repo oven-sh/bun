@@ -26,7 +26,7 @@ pub struct Options {
     pub explicit_global_directory: &'static [u8],
     /// destination directory to link bins into
     // must be a variable due to global installs and bunx
-    pub bin_path: ZStr<'static>,
+    pub bin_path: &'static ZStr,
 
     pub did_override_default_scope: bool,
     pub scope: Npm::registry::Scope,
@@ -95,7 +95,7 @@ pub struct Options {
     /// Override OS for optional dependencies filtering
     pub os: Npm::OperatingSystem,
 
-    pub config_version: Option<bun_core::ConfigVersion>,
+    pub config_version: Option<ConfigVersion>,
 }
 
 impl Default for Options {
@@ -106,7 +106,7 @@ impl Default for Options {
             global_bin_dir: bun_sys::Fd::INVALID,
             explicit_global_directory: b"",
             // TODO(port): bun.pathLiteral("node_modules/.bin") — platform-specific separator at comptime
-            bin_path: bun_paths::path_literal!(b"node_modules/.bin"),
+            bin_path: bun_paths::path_literal!("node_modules/.bin"),
             did_override_default_scope: false,
             // PORT NOTE: Zig had `= undefined`; always assigned in `load()` before read.
             scope: Npm::registry::Scope::default(),
@@ -240,7 +240,8 @@ impl LogLevel {
     }
 }
 
-pub use bun_install_types::node_linker::NodeLinker;
+pub use bun_install_types::NodeLinker::NodeLinker;
+pub use crate::config_version::ConfigVersion;
 
 #[derive(Default, Copy, Clone)]
 pub struct Update {

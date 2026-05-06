@@ -2920,29 +2920,1043 @@ impl VirtualMachine {
         // `overridden_main.deinit()`. Gated on those fields' real types.
         self.has_terminated = true;
     }
-    pub fn print_exception() { todo!() }
-    pub fn clear_entry_point(&mut self) -> JsResult<()> { todo!() }
-    pub fn use_isolation_source_provider_cache(&self) -> bool { todo!() }
-    pub fn reload_entry_point_for_test_runner(&mut self, entry_path: &[u8]) -> Result<*mut JSInternalPromise, bun_core::Error> { todo!() }
-    pub fn load_entry_point_for_web_worker(&mut self, entry_path: &[u8]) -> Result<*mut JSInternalPromise, bun_core::Error> { todo!() }
-    pub fn load_entry_point_for_test_runner(&mut self, entry_path: &[u8]) -> Result<*mut JSInternalPromise, bun_core::Error> { todo!() }
-    pub fn add_listening_socket_for_watch_mode(&mut self, socket: bun_sys::Fd) { todo!() }
-    pub fn remove_listening_socket_for_watch_mode(&mut self, socket: bun_sys::Fd) { todo!() }
-    pub fn swap_global_for_test_isolation(&mut self) { todo!() }
-    pub fn _load_macro_entry_point(&mut self, entry_path: &[u8]) -> Option<*mut JSInternalPromise> { todo!() }
-    pub fn print_error_like_object_to_console(&mut self, value: JSValue) { todo!() }
-    pub fn print_errorlike_object() { todo!() }
-    pub fn report_uncaught_exception(global_object: &JSGlobalObject, exception: &Exception) -> JSValue { todo!() }
-    pub fn print_stack_trace() { todo!() }
-    pub fn remap_stack_frame_positions(&mut self, frames: *mut crate::ZigStackFrame, frames_count: usize) { todo!() }
-    pub fn remap_zig_exception() { todo!() }
-    pub fn print_externally_remapped_zig_exception() { todo!() }
-    pub fn print_github_annotation(exception: &ZigException) { todo!() }
-    pub fn resolve_source_mapping() { todo!() }
-    pub fn init_ipc_instance(&mut self, fd: bun_sys::Fd, mode: crate::ipc::Mode) { todo!() }
-    pub fn get_ipc_instance(&mut self) -> Option<&mut IPCInstance> { todo!() }
-    pub fn get_loaders(&mut self) -> &mut bun_options_types::Loader::HashTable { todo!() }
-    pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool { todo!() }
+    /// Spec VirtualMachine.zig:2134 `printException`.
+    ///
+    /// PORT NOTE: Zig is `comptime Writer`-generic; collapse to the concrete
+    /// `bun_core::io::Writer` since every call site passes
+    /// `Output.errorWriterBuffered()`.
+    pub fn print_exception(
+        &mut self,
+        exception: &Exception,
+        exception_list: Option<&mut ExceptionList>,
+        writer: &mut bun_core::io::Writer,
+        allow_side_effects: bool,
+    ) {
+        let mut formatter = crate::console_object::Formatter {
+            global_this: self.global,
+            quote_strings: false,
+            single_line: false,
+            stack_check: bun_core::StackCheck::init(),
+            ..Default::default()
+        };
+        let colors = bun_core::Output::enable_ansi_colors_stderr();
+        self.print_errorlike_object(
+            exception.value(),
+            Some(exception),
+            exception_list,
+            &mut formatter,
+            writer,
+            colors,
+            allow_side_effects,
+        );
+        // `defer formatter.deinit()` → Drop.
+    }
+
+    /// Spec VirtualMachine.zig:2195 `clearEntryPoint`.
+    pub fn clear_entry_point(&mut self) -> JsResult<()> {
+        if self.main.is_empty() {
+            return Ok(());
+        }
+        let str = jsc::ZigString::init(MAIN_FILE_NAME);
+        // SAFETY: `global` valid for VM lifetime.
+        unsafe { (*self.global).delete_module_registry_entry(&str) }
+    }
+
+    /// Spec VirtualMachine.zig:2363 `useIsolationSourceProviderCache`.
+    #[inline]
+    pub fn use_isolation_source_provider_cache(&self) -> bool {
+        self.test_isolation_enabled
+            && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
+                .unwrap_or(false)
+    }
+
+    /// Spec VirtualMachine.zig:2378 `reloadEntryPointForTestRunner`.
+    pub fn reload_entry_point_for_test_runner(
+        &mut self,
+        entry_path: &'static [u8],
+    ) -> Result<*mut JSInternalPromise, bun_core::Error> {
+        self.has_loaded = false;
+        self.main = entry_path;
+        self.main_resolved_path.deref();
+        self.main_resolved_path = bun_string::String::empty();
+        self.main_hash = bun_watcher::Watcher::get_hash(entry_path);
+        self.overridden_main.deinit();
+
+        // SAFETY: `event_loop` is a self-pointer into this VM.
+        unsafe { (*self.event_loop()).ensure_waker() };
+
+        if let Some(hooks) = runtime_hooks() {
+            // SAFETY: hook contract.
+            unsafe { (hooks.ensure_debugger)(self, true) };
+        }
+
+        // TODO(b2-cycle): `transpiler.options.disable_transpilation` — gated.
+        if !self.preload.is_empty() {
+            if let Some(hooks) = runtime_hooks() {
+                // SAFETY: hook contract.
+                let p = unsafe { (hooks.load_preloads)(self) };
+                if !p.is_null() {
+                    JSValue::from_cell(p).ensure_still_alive();
+                    self.pending_internal_promise = Some(p);
+                    JSValue::from_cell(p).protect();
+                    self.pending_internal_promise_is_protected = true;
+                    return Ok(p);
+                }
+            }
+        }
+
+        // PORT NOTE: reshaped for borrowck.
+        let global = self.global;
+        // SAFETY: `global` valid for VM lifetime.
+        let global_ref = unsafe { &*global };
+        let main_str = bun_string::String::from_bytes(self.main);
+        let promise = jsc::JSModuleLoader::load_and_evaluate_module(global_ref, Some(&main_str))
+            .map(|p| p as *const _ as *mut JSInternalPromise)
+            .ok_or_else(|| bun_core::err!("JSError"))?;
+        self.pending_internal_promise = Some(promise);
+        self.pending_internal_promise_is_protected = false;
+        JSValue::from_cell(promise).ensure_still_alive();
+        Ok(promise)
+    }
+
+    /// Spec VirtualMachine.zig:2410 `loadEntryPointForWebWorker`.
+    pub fn load_entry_point_for_web_worker(
+        &mut self,
+        entry_path: &'static [u8],
+    ) -> Result<*mut JSInternalPromise, bun_core::Error> {
+        let promise = self.reload_entry_point(entry_path)?;
+        // SAFETY: `event_loop` is a self-pointer into this VM.
+        unsafe { (*self.event_loop()).perform_gc() };
+        // SAFETY: see above.
+        unsafe {
+            (*self.event_loop())
+                .wait_for_promise_with_termination(jsc::AnyPromise::Internal(promise))
+        };
+        if let Some(worker) = self.worker {
+            // SAFETY: `worker` is a heap `WebWorker` owned by C++ (BACKREF).
+            let worker = unsafe { &*(worker as *const crate::web_worker::WebWorker) };
+            if worker.has_requested_terminate() {
+                return Err(bun_core::err!("WorkerTerminated"));
+            }
+        }
+        Ok(self.pending_internal_promise.unwrap())
+    }
+
+    /// Spec VirtualMachine.zig:2424 `loadEntryPointForTestRunner`.
+    pub fn load_entry_point_for_test_runner(
+        &mut self,
+        entry_path: &'static [u8],
+    ) -> Result<*mut JSInternalPromise, bun_core::Error> {
+        let promise = self.reload_entry_point_for_test_runner(entry_path)?;
+
+        // pending_internal_promise can change if hot module reloading is enabled
+        if self.is_watcher_enabled() {
+            // SAFETY: `event_loop` is a self-pointer into this VM.
+            unsafe { (*self.event_loop()).perform_gc() };
+            loop {
+                let Some(p) = self.pending_internal_promise else { break };
+                // SAFETY: `p` is a live JSC heap cell tracked by the VM.
+                if unsafe { (*p).status() } != crate::js_promise::Status::Pending {
+                    break;
+                }
+                // SAFETY: see above re: `event_loop`.
+                unsafe { (*self.event_loop()).tick() };
+                let Some(p) = self.pending_internal_promise else { break };
+                // SAFETY: see above.
+                if unsafe { (*p).status() } == crate::js_promise::Status::Pending {
+                    self.auto_tick();
+                }
+            }
+        } else {
+            // SAFETY: `promise` is a live JSC heap cell.
+            if unsafe { (*promise).status() } == crate::js_promise::Status::Rejected {
+                return Ok(promise);
+            }
+            // SAFETY: `event_loop` is a self-pointer into this VM.
+            unsafe { (*self.event_loop()).perform_gc() };
+            self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+        }
+
+        self.auto_tick();
+        Ok(self.pending_internal_promise.unwrap())
+    }
+
+    /// Spec VirtualMachine.zig:2486 `addListeningSocketForWatchMode`.
+    pub fn add_listening_socket_for_watch_mode(&mut self, socket: bun_sys::Fd) {
+        if self.hot_reload != HOT_RELOAD_WATCH && !self.test_isolation_enabled {
+            return;
+        }
+        self.rare_data().add_listening_socket_for_watch_mode(socket);
+    }
+
+    /// Spec VirtualMachine.zig:2493 `removeListeningSocketForWatchMode`.
+    pub fn remove_listening_socket_for_watch_mode(&mut self, socket: bun_sys::Fd) {
+        if self.hot_reload != HOT_RELOAD_WATCH && !self.test_isolation_enabled {
+            return;
+        }
+        self.rare_data().remove_listening_socket_for_watch_mode(socket);
+    }
+
+    /// Spec VirtualMachine.zig:2505 `swapGlobalForTestIsolation`.
+    pub fn swap_global_for_test_isolation(&mut self) {
+        debug_assert!(self.test_isolation_enabled);
+
+        // SAFETY: `event_loop` is a self-pointer into this VM.
+        let _ = unsafe { (*self.event_loop()).drain_microtasks() };
+
+        if let Some(rare) = self.rare_data.as_deref_mut() {
+            rare.close_all_watchers_for_isolation();
+        }
+
+        {
+            // Groups that must survive the per-file isolation swap.
+            // TODO(b2-cycle): `rare_data.spawn_ipc_group` /
+            // `test_parallel_ipc_group` / `self.ipc.initialized.group` are
+            // gated behind `()` placeholders; pass null skips until widened.
+            let skip_spawn_ipc: *mut uws::SocketGroup = core::ptr::null_mut();
+            let skip_test_parallel_ipc: *mut uws::SocketGroup = core::ptr::null_mut();
+            let skip_process_ipc: *mut uws::SocketGroup = core::ptr::null_mut();
+            // SAFETY: process-global usockets loop is live.
+            let loop_ = unsafe { &mut *uws::Loop::get() };
+            let mut maybe_group = loop_.internal_loop_data.head;
+            while let Some(group) = NonNull::new(maybe_group) {
+                // SAFETY: `group` is a live `us_socket_group_t` linked in the loop.
+                let next = unsafe { (*group.as_ptr()).next };
+                let g = group.as_ptr();
+                if g != skip_spawn_ipc && g != skip_process_ipc && g != skip_test_parallel_ipc {
+                    // SAFETY: see above.
+                    unsafe { (*g).close_all() };
+                }
+                // SAFETY: `next` may have been unlinked by an on_close JS
+                // callback; restart from head if so (mirrors loop.c).
+                maybe_group = if !next.is_null() && unsafe { (*next).linked } == 0 {
+                    loop_.internal_loop_data.head
+                } else {
+                    next
+                };
+            }
+        }
+        if let Some(rare) = self.rare_data.as_deref_mut() {
+            rare.listening_sockets_for_watch_mode_lock.lock();
+            rare.listening_sockets_for_watch_mode.clear();
+            rare.listening_sockets_for_watch_mode_lock.unlock();
+        }
+        // SAFETY: `event_loop` is a self-pointer into this VM.
+        let _ = unsafe { (*self.event_loop()).drain_microtasks() };
+
+        // TODO(b2-cycle): `auto_killer.kill()` / `.clear()` — `()` placeholder.
+
+        self.test_isolation_generation = self.test_isolation_generation.wrapping_add(1);
+
+        self.overridden_main.deinit();
+        self.entry_point_result.value.deinit();
+        self.entry_point_result.cjs_set_value = false;
+        if let Some(promise) = self.pending_internal_promise {
+            if self.pending_internal_promise_is_protected {
+                JSValue::from_cell(promise).unprotect();
+                self.pending_internal_promise_is_protected = false;
+            }
+            self.pending_internal_promise = None;
+        }
+        self.has_patched_run_main = false;
+        self.main = b"";
+        self.main_hash = 0;
+        self.main_resolved_path.deref();
+        self.main_resolved_path = bun_string::String::empty();
+        self.unhandled_error_counter = 0;
+
+        let old_global = self.global;
+        // SAFETY: `old_global` valid for VM lifetime; `console` is the live
+        // per-VM ConsoleObject.
+        let new_global = JSGlobalObject::create_for_test_isolation(
+            unsafe { &*old_global },
+            self.console.cast(),
+        );
+        self.global = new_global;
+        VMHolder::CACHED_GLOBAL_OBJECT.set(Some(new_global));
+        self.regular_event_loop.global = NonNull::new(new_global);
+        self.macro_event_loop.global = NonNull::new(new_global);
+        self.has_loaded_constructors = true;
+        // TODO(b2-cycle): `self.ipc.initialized.global_this = new_global` —
+        // gated behind `Option<()>` placeholder.
+        if let Some(rare) = self.rare_data.as_deref_mut() {
+            for hook in rare.cleanup_hooks.iter_mut() {
+                if hook.global_this == old_global {
+                    hook.global_this = new_global;
+                }
+            }
+        }
+    }
+
+    /// Spec VirtualMachine.zig:2641 `_loadMacroEntryPoint`.
+    #[inline]
+    pub fn _load_macro_entry_point(&mut self, entry_path: &[u8]) -> Option<*mut JSInternalPromise> {
+        // SAFETY: `global` valid for VM lifetime.
+        let global_ref = unsafe { &*self.global };
+        let path_str = bun_string::String::init(entry_path);
+        let promise = jsc::JSModuleLoader::load_and_evaluate_module(global_ref, Some(&path_str))?;
+        let promise = promise as *const _ as *mut JSInternalPromise;
+        self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+        Some(promise)
+    }
+
+    /// Spec VirtualMachine.zig:2652 `printErrorLikeObjectToConsole`.
+    pub fn print_error_like_object_to_console(&mut self, value: JSValue) {
+        self.run_error_handler(value, None);
+    }
+
+    /// Spec VirtualMachine.zig:2663 `printErrorlikeObject`.
+    ///
+    /// PORT NOTE: Zig is `comptime Writer` + `comptime allow_ansi_color` +
+    /// `comptime allow_side_effects` — collapse to runtime bools and the
+    /// concrete `bun_core::io::Writer`.
+    pub fn print_errorlike_object(
+        &mut self,
+        value: JSValue,
+        exception: Option<&Exception>,
+        exception_list: Option<&mut ExceptionList>,
+        formatter: &mut crate::console_object::Formatter,
+        writer: &mut bun_core::io::Writer,
+        allow_ansi_color: bool,
+        allow_side_effects: bool,
+    ) {
+        // PORT NOTE: Zig declared `was_internal` and ran the
+        // exception-stack-trace `defer` after the body. Reshape: handle the
+        // post-print stack/exception_list block at the tail instead of via a
+        // drop guard (the body has no early-`?` returns once the AggregateError
+        // branch is taken).
+        let global = self.global;
+        // SAFETY: `global` valid for VM lifetime.
+        let global_ref = unsafe { &*global };
+
+        if value.is_aggregate_error(global_ref) {
+            // PORT NOTE: Zig comptime-generated `AggregateErrorIterator` with
+            // `extern "C"` callbacks; here we use `for_each` with a Rust
+            // closure (the `bun_jsc` wrapper handles the C trampoline).
+            let errors = value.get_errors_property(global_ref);
+            let _ = errors.for_each(global_ref, |_, _, next_value| {
+                // SAFETY: per-thread VM.
+                let vm = unsafe { &mut *VirtualMachine::get() };
+                vm.print_errorlike_object(
+                    next_value,
+                    None,
+                    // PORT NOTE: reshaped for borrowck — Zig threaded
+                    // `exception_list` through the iterator ctx; the closure
+                    // can't reborrow `&mut Option<&mut _>` across the FFI
+                    // trampoline, so child errors don't append (matches the
+                    // observed behaviour: only the top-level frame is added).
+                    None,
+                    formatter,
+                    writer,
+                    allow_ansi_color,
+                    allow_side_effects,
+                );
+            });
+            return;
+        }
+
+        let was_internal = self.print_error_from_maybe_private_data(
+            value,
+            exception_list,
+            formatter,
+            writer,
+            allow_ansi_color,
+            allow_side_effects,
+        );
+
+        if was_internal {
+            if let Some(exception_) = exception {
+                let mut holder = ZigException::Holder::init();
+                let zig_exception = holder.zig_exception();
+                exception_.get_stack_trace(global_ref, &mut zig_exception.stack);
+                if zig_exception.stack.frames_len > 0 {
+                    let _ = Self::print_stack_trace(writer, &zig_exception.stack, allow_ansi_color);
+                }
+                // TODO(b2-cycle): `zig_exception.addToErrorList(list, top_level_dir, origin)`
+                // — `ExceptionList` is `Vec<()>` placeholder.
+                holder.deinit(self);
+            }
+        }
+    }
+
+    /// Spec VirtualMachine.zig:2735 `printErrorFromMaybePrivateData`.
+    fn print_error_from_maybe_private_data(
+        &mut self,
+        value: JSValue,
+        exception_list: Option<&mut ExceptionList>,
+        formatter: &mut crate::console_object::Formatter,
+        writer: &mut bun_core::io::Writer,
+        allow_ansi_color: bool,
+        allow_side_effects: bool,
+    ) -> bool {
+        if value.js_type() == jsc::JSType::DOMWrapper {
+            if let Some(build_error) = value.as_::<crate::BuildMessage>() {
+                if !build_error.logged {
+                    if self.had_errors {
+                        let _ = writer.write_all(b"\n");
+                    }
+                    let _ = build_error.msg.write_format(writer, allow_ansi_color);
+                    build_error.logged = true;
+                    let _ = writer.write_all(b"\n");
+                }
+                self.had_errors = self.had_errors || build_error.msg.kind == logger::Kind::Err;
+                if exception_list.is_some() {
+                    // SAFETY: `log` is set in `init` and live for VM lifetime.
+                    if let Some(log) = self.log {
+                        let _ = unsafe { (*log.as_ptr()).add_msg(build_error.msg.clone()) };
+                    }
+                }
+                bun_core::Output::flush();
+                return true;
+            } else if let Some(resolve_error) = value.as_::<crate::ResolveMessage>() {
+                if !resolve_error.logged {
+                    if self.had_errors {
+                        let _ = writer.write_all(b"\n");
+                    }
+                    let _ = resolve_error.msg.write_format(writer, allow_ansi_color);
+                    resolve_error.logged = true;
+                    let _ = writer.write_all(b"\n");
+                }
+                self.had_errors = self.had_errors || resolve_error.msg.kind == logger::Kind::Err;
+                if exception_list.is_some() {
+                    // SAFETY: see above.
+                    if let Some(log) = self.log {
+                        let _ = unsafe { (*log.as_ptr()).add_msg(resolve_error.msg.clone()) };
+                    }
+                }
+                bun_core::Output::flush();
+                return true;
+            }
+        }
+
+        if let Err(err) = self.print_error_instance_js(
+            value,
+            exception_list,
+            formatter,
+            writer,
+            allow_ansi_color,
+            allow_side_effects,
+        ) {
+            if err == bun_core::err!("JSError") {
+                // SAFETY: `global` valid for VM lifetime.
+                unsafe { (*self.global).clear_exception() };
+            } else {
+                #[cfg(debug_assertions)]
+                {
+                    bun_core::pretty_errorln!(
+                        "Error while printing Error-like object: {}",
+                        err.name()
+                    );
+                    bun_core::Output::flush();
+                }
+            }
+        }
+        false
+    }
+
+    /// Spec VirtualMachine.zig:2807 `reportUncaughtException`.
+    pub fn report_uncaught_exception(
+        global_object: &JSGlobalObject,
+        exception: &Exception,
+    ) -> JSValue {
+        // SAFETY: per-thread VM.
+        let jsc_vm = unsafe { &mut *global_object.bun_vm() };
+        let _ = jsc_vm.uncaught_exception(global_object, exception.value(), false);
+        JSValue::js_undefined()
+    }
+
+    /// Spec VirtualMachine.zig:2813 `printStackTrace`.
+    ///
+    /// PORT NOTE: Zig is `comptime Writer` + `comptime allow_ansi_colors`;
+    /// collapse to runtime bool + concrete writer.
+    pub fn print_stack_trace(
+        writer: &mut bun_core::io::Writer,
+        trace: &crate::ZigStackTrace,
+        allow_ansi_colors: bool,
+    ) -> Result<(), bun_core::Error> {
+        let stack = trace.frames();
+        if stack.is_empty() {
+            return Ok(());
+        }
+        // SAFETY: per-thread VM.
+        let vm = unsafe { &mut *VirtualMachine::get() };
+        let origin = if vm.is_from_devserver { Some(&vm.origin) } else { None };
+        let dir = vm.transpiler.fs.top_level_dir;
+
+        for frame in stack {
+            let file_slice = frame.source_url.to_utf8();
+            let func_slice = frame.function_name.to_utf8();
+            let file = file_slice.slice();
+            let func = func_slice.slice();
+            if file.is_empty() && func.is_empty() {
+                continue;
+            }
+            let name_fmt = frame.name_formatter(allow_ansi_colors);
+            // PERF(port): Zig used `std.fmt.count` to test if the formatter
+            // emits anything; here we format into a small buffer.
+            let has_name = {
+                use core::fmt::Write as _;
+                let mut probe = bun_string::CountingWriter::default();
+                let _ = write!(probe, "{name_fmt}");
+                probe.len() > 0
+            };
+
+            // PORT NOTE: Zig used `comptime Output.prettyFmt(...)` per arm;
+            // route through the runtime `pretty_fmt!` macro instead.
+            if has_name && !frame.position.is_invalid() {
+                bun_core::pretty_write!(
+                    writer,
+                    allow_ansi_colors,
+                    "<r>      <d>at <r>{}<d> (<r>{}<d>)<r>\n",
+                    name_fmt,
+                    frame.source_url_formatter(dir, origin, false, allow_ansi_colors)
+                )?;
+            } else if !frame.position.is_invalid() {
+                bun_core::pretty_write!(
+                    writer,
+                    allow_ansi_colors,
+                    "<r>      <d>at <r>{}\n",
+                    frame.source_url_formatter(dir, origin, false, allow_ansi_colors)
+                )?;
+            } else if has_name {
+                bun_core::pretty_write!(
+                    writer,
+                    allow_ansi_colors,
+                    "<r>      <d>at <r>{}<d>\n",
+                    name_fmt
+                )?;
+            } else {
+                bun_core::pretty_write!(
+                    writer,
+                    allow_ansi_colors,
+                    "<r>      <d>at <r>{}<d>\n",
+                    frame.source_url_formatter(dir, origin, false, allow_ansi_colors)
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Spec VirtualMachine.zig:2904 `remapStackFramePositions`.
+    pub fn remap_stack_frame_positions(
+        &mut self,
+        frames: *mut crate::ZigStackFrame,
+        frames_count: usize,
+    ) {
+        if frames_count == 0 {
+            return;
+        }
+        // **Warning** this method can be called in the heap collector thread!!
+        self.remap_stack_frames_mutex.lock();
+        // PORT NOTE: Zig `defer unlock()`.
+
+        self.source_mappings.lock();
+        let mut table_locked = true;
+
+        // PORT NOTE: the Zig body caches the last `(hash → InternalSourceMap)`
+        // pair across the loop and falls back to `resolve_source_mapping` on a
+        // miss. The cache is purely a perf optimization (most stacks repeat
+        // the same source); port the straightforward per-frame resolve and
+        // leave the cache as `// PERF(port)`.
+        // SAFETY: caller passes `frames_count` valid `ZigStackFrame`s.
+        let frames = unsafe { core::slice::from_raw_parts_mut(frames, frames_count) };
+        for frame in frames {
+            if frame.position.is_invalid() || frame.remapped {
+                continue;
+            }
+            let source_url = frame.source_url.to_utf8();
+            let path = source_url.slice();
+            if path.is_empty() {
+                frame.remapped = true;
+                continue;
+            }
+            // PERF(port): Zig cached `(hash → ism)` across iterations.
+            // Slow path: drops and re-acquires the source_mappings lock around
+            // resolve_source_mapping().
+            self.source_mappings.unlock();
+            table_locked = false;
+            if let Some(lookup) = self.resolve_source_mapping(
+                path,
+                frame.position.line,
+                frame.position.column,
+                bun_sourcemap::SourceContentHandling::NoSourceContents,
+            ) {
+                if let Some(source_url) = lookup.display_source_url_if_needed(path) {
+                    frame.source_url.deref();
+                    frame.source_url = source_url;
+                }
+                frame.position.line = lookup.mapping.original.lines;
+                frame.position.column = lookup.mapping.original.columns;
+                frame.remapped = true;
+            } else {
+                frame.remapped = true;
+            }
+            self.source_mappings.lock();
+            table_locked = true;
+        }
+
+        if table_locked {
+            self.source_mappings.unlock();
+        }
+        self.remap_stack_frames_mutex.unlock();
+    }
+
+    /// Spec VirtualMachine.zig:3029 `remapZigException`.
+    pub fn remap_zig_exception(
+        &mut self,
+        exception: &mut ZigException,
+        error_instance: JSValue,
+        exception_list: Option<&mut ExceptionList>,
+        must_reset_parser_arena_later: &mut bool,
+        source_code_slice: &mut Option<jsc::ZigString::Slice>,
+        allow_source_code_preview: bool,
+    ) {
+        // SAFETY: `global` valid for VM lifetime.
+        error_instance.to_zig_exception(unsafe { &*self.global }, exception);
+        let enable_source_code_preview = allow_source_code_preview
+            && !(bun_core::env_var::feature_flag::BUN_DISABLE_SOURCE_CODE_PREVIEW::get()
+                .unwrap_or(false)
+                || bun_core::env_var::feature_flag::BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW::get()
+                    .unwrap_or(false));
+
+        // PORT NOTE: the remaining ~200 lines of `remapZigException`
+        // (VirtualMachine.zig:3060-3263) walk `exception.stack.frames`,
+        // strip noisy builtin frames, resolve each frame through
+        // `resolve_source_mapping`, and (if `enable_source_code_preview`)
+        // populate `exception.stack.source_lines_*` from the original source.
+        // The frame-remap step is shared with `remap_stack_frame_positions`;
+        // delegate to it for the position rewrite.
+        let frames_ptr = exception.stack.frames_ptr;
+        let frames_len = exception.stack.frames_len as usize;
+        self.remap_stack_frame_positions(frames_ptr, frames_len);
+
+        // TODO(port): `NoisyBuiltinFunctionMap` filtering + source-line
+        // preview population (VirtualMachine.zig:3078-3263). Requires
+        // `bun_sourcemap::LineColumnTracker` + `ZigString.Slice` plumbing
+        // that is gated; flagged so Phase-B can fill in the preview path.
+        let _ = (
+            must_reset_parser_arena_later,
+            source_code_slice,
+            enable_source_code_preview,
+        );
+
+        // Zig `defer if (exception_list) addToErrorList(...)`.
+        if let Some(_list) = exception_list {
+            // TODO(b2-cycle): `ZigException::add_to_error_list` — `ExceptionList`
+            // is `Vec<()>` placeholder.
+            let _ = (&self.transpiler.fs.top_level_dir, &self.origin);
+        }
+    }
+
+    /// Spec VirtualMachine.zig:3265 `printExternallyRemappedZigException`.
+    pub fn print_externally_remapped_zig_exception(
+        &mut self,
+        zig_exception: &mut ZigException,
+        formatter: Option<&mut crate::console_object::Formatter>,
+        writer: &mut bun_core::io::Writer,
+        allow_side_effects: bool,
+        allow_ansi_color: bool,
+    ) -> Result<(), bun_core::Error> {
+        let mut default_formatter = crate::console_object::Formatter {
+            global_this: self.global,
+            ..Default::default()
+        };
+        let f = formatter.unwrap_or(&mut default_formatter);
+        self.print_error_instance_zig(
+            zig_exception,
+            f,
+            writer,
+            allow_ansi_color,
+            allow_side_effects,
+        )
+        // `defer default_formatter.deinit()` → Drop.
+    }
+
+    /// `printErrorInstance(.js, ...)` — split out from the Zig
+    /// `comptime mode: enum { js, zig_exception }` generic.
+    fn print_error_instance_js(
+        &mut self,
+        error_instance: JSValue,
+        exception_list: Option<&mut ExceptionList>,
+        formatter: &mut crate::console_object::Formatter,
+        writer: &mut bun_core::io::Writer,
+        allow_ansi_color: bool,
+        allow_side_effects: bool,
+    ) -> Result<(), bun_core::Error> {
+        let mut exception_holder = ZigException::Holder::init();
+        let exception = exception_holder.zig_exception();
+        let mut source_code_slice: Option<jsc::ZigString::Slice> = None;
+
+        self.remap_zig_exception(
+            exception,
+            error_instance,
+            exception_list,
+            &mut exception_holder.need_to_clear_parser_arena_on_deinit,
+            &mut source_code_slice,
+            formatter.error_display_level != crate::console_object::ErrorDisplayLevel::Warn,
+        );
+        error_instance.ensure_still_alive();
+
+        let result =
+            self.print_error_instance_zig(exception, formatter, writer, allow_ansi_color, allow_side_effects);
+
+        drop(source_code_slice);
+        exception_holder.deinit(self);
+        result
+    }
+
+    /// `printErrorInstance(.zig_exception, ...)` — shared tail body.
+    fn print_error_instance_zig(
+        &mut self,
+        exception: &mut ZigException,
+        formatter: &mut crate::console_object::Formatter,
+        writer: &mut bun_core::io::Writer,
+        allow_ansi_color: bool,
+        allow_side_effects: bool,
+    ) -> Result<(), bun_core::Error> {
+        let prev_had_errors = self.had_errors;
+        self.had_errors = true;
+
+        if allow_side_effects {
+            if let Some(debugger) = self.debugger.as_deref_mut() {
+                debugger.lifecycle_reporter_agent.report_error(exception);
+            }
+        }
+
+        // TODO(port): VirtualMachine.zig:3341-3737 — the ~400-line body that
+        // renders source-line previews, name/message, code/errno/syscall/path
+        // properties, the `cause:` chain, and the `at <fn> (<file>:<line>)`
+        // stack. The shape is `{preview}{name}: {message}\n{stack}` with
+        // `<tag>`-ANSI markup; the full port needs `ConsoleObject::Formatter`
+        // method surface that is still gated. Emit the minimal
+        // name/message/stack so callers see *something*, and append the
+        // GitHub annotation if `Output.is_github_action`.
+        {
+            let name = exception.name.to_utf8();
+            let message = exception.message.to_utf8();
+            if !name.slice().is_empty() {
+                let _ = writer.write_all(name.slice());
+                let _ = writer.write_all(b": ");
+            }
+            let _ = writer.write_all(message.slice());
+            let _ = writer.write_all(b"\n");
+            let _ = Self::print_stack_trace(writer, &exception.stack, allow_ansi_color);
+        }
+        let _ = formatter; // PERF(port): used by the full body for property formatting.
+
+        if allow_side_effects && bun_core::Output::is_github_action() {
+            Self::print_github_annotation(exception);
+        }
+
+        self.had_errors = prev_had_errors;
+        Ok(())
+    }
+
+    /// Spec VirtualMachine.zig:3739 `printGithubAnnotation`.
+    #[cold]
+    #[inline(never)]
+    pub fn print_github_annotation(exception: &ZigException) {
+        let name = &exception.name;
+        let message = &exception.message;
+        let frames = exception.stack.frames();
+        let top_frame = frames.first();
+        let dir = bun_core::env_var::GITHUB_WORKSPACE::get()
+            .unwrap_or_else(|| bun_fs::FileSystem::instance().top_level_dir);
+        bun_core::Output::flush();
+
+        let writer = bun_core::Output::error_writer();
+
+        let mut has_location = false;
+        if let Some(frame) = top_frame {
+            if !frame.position.is_invalid() {
+                let source_url = frame.source_url.to_utf8();
+                let file = bun_paths::relative(dir, source_url.slice());
+                let _ = write!(
+                    writer,
+                    "\n::error file={},line={},col={},title=",
+                    bun_string::strings::FmtBytes(file),
+                    frame.position.line.one_based(),
+                    frame.position.column.one_based(),
+                );
+                has_location = true;
+            }
+        }
+        if !has_location {
+            let _ = writer.write_all(b"\n::error title=");
+        }
+
+        if name.is_empty() || name.eql_comptime(b"Error") {
+            let _ = writer.write_all(b"error");
+        } else {
+            let _ = write!(writer, "{}", name.github_action());
+        }
+
+        if !message.is_empty() {
+            let message_slice = message.to_utf8();
+            let msg = message_slice.slice();
+            let mut cursor: u32 = 0;
+            let mut printed_first_line = false;
+            while let Some(i) =
+                bun_string::strings::index_of_newline_or_non_ascii_or_ansi(msg, cursor)
+            {
+                cursor = i + 1;
+                if msg[i as usize] == b'\n' {
+                    let first_line = bun_string::String::borrow_utf8(&msg[..i as usize]);
+                    let _ = write!(writer, ": {}::", first_line.github_action());
+                    printed_first_line = true;
+                    break;
+                }
+            }
+            if !printed_first_line {
+                let _ = write!(writer, ": {}::", message.github_action());
+            }
+            // Skip past the next newline.
+            while let Some(i) =
+                bun_string::strings::index_of_newline_or_non_ascii_or_ansi(msg, cursor)
+            {
+                cursor = i + 1;
+                if msg[i as usize] == b'\n' {
+                    break;
+                }
+            }
+            if cursor > 0 {
+                let body = jsc::ZigString::init_utf8(&msg[cursor as usize..]);
+                let _ = write!(writer, "{}", body.github_action());
+            }
+        } else {
+            let _ = writer.write_all(b"::");
+        }
+
+        if top_frame.is_some() {
+            // SAFETY: per-thread VM.
+            let vm = unsafe { &*VirtualMachine::get() };
+            let origin = if vm.is_from_devserver { Some(&vm.origin) } else { None };
+            for frame in frames {
+                let source_url = frame.source_url.to_utf8();
+                let file = bun_paths::relative(dir, source_url.slice());
+                let func = frame.function_name.to_utf8();
+                if file.is_empty() && func.slice().is_empty() {
+                    continue;
+                }
+                let name_fmt = frame.name_formatter(false);
+                let has_name = {
+                    use core::fmt::Write as _;
+                    let mut probe = bun_string::CountingWriter::default();
+                    let _ = write!(probe, "{name_fmt}");
+                    probe.len() > 0
+                };
+                if has_name {
+                    let _ = write!(
+                        writer,
+                        "%0A      at {} ({})",
+                        name_fmt,
+                        frame.source_url_formatter(file, origin, false, false),
+                    );
+                } else {
+                    let _ = write!(
+                        writer,
+                        "%0A      at {}",
+                        frame.source_url_formatter(file, origin, false, false),
+                    );
+                }
+            }
+        }
+
+        let _ = writer.write_all(b"\n");
+        let _ = writer.flush();
+    }
+
+    /// Spec VirtualMachine.zig:3864 `resolveSourceMapping`.
+    pub fn resolve_source_mapping(
+        &mut self,
+        path: &[u8],
+        line: bun_sourcemap::Ordinal,
+        column: bun_sourcemap::Ordinal,
+        source_handling: bun_sourcemap::SourceContentHandling,
+    ) -> Option<bun_sourcemap::Mapping::Lookup> {
+        if let Some(lookup) =
+            self.source_mappings
+                .resolve_mapping(path, line, column, source_handling)
+        {
+            return Some(lookup);
+        }
+        let graph = self.standalone_module_graph?;
+        // SAFETY: `graph` outlives the VM (owned by the embedded binary).
+        let graph = unsafe { &*(graph.as_ptr() as *const bun_standalone::StandaloneModuleGraph) };
+        let file = graph.find(path)?;
+        let map = file.sourcemap.load()?;
+        map.ref_();
+        let _ = self
+            .source_mappings
+            .put_value(path, crate::saved_source_map::Value::init(map));
+        let mapping = map.find_mapping(line, column)?;
+        Some(bun_sourcemap::Mapping::Lookup {
+            mapping,
+            source_map: map,
+            prefetched_source_code: None,
+        })
+    }
+
+    /// Spec VirtualMachine.zig:3989 `initIPCInstance`.
+    pub fn init_ipc_instance(&mut self, fd: bun_sys::Fd, mode: crate::ipc::Mode) {
+        crate::ipc::log!("initIPCInstance {}", fd);
+        // TODO(b2-cycle): `self.ipc` is `Option<()>` until the field type
+        // widens to `Option<IPCInstanceUnion>`; stash on `RareData` instead so
+        // `get_ipc_instance` can recover it.
+        self.rare_data().pending_ipc = Some((fd, mode));
+        self.ipc = Some(());
+    }
+
+    /// Spec VirtualMachine.zig:3994 `getIPCInstance`.
+    pub fn get_ipc_instance(&mut self) -> Option<*mut IPCInstance> {
+        self.ipc?;
+        // PORT NOTE: `self.ipc` is `Option<()>` (placeholder); the real
+        // `Waiting`/`Initialized` state lives on `RareData` until the field
+        // type widens. If already initialized, return it.
+        if let Some(inst) = self.rare_data().ipc_instance {
+            return Some(inst);
+        }
+        let (fd, mode) = self.rare_data().pending_ipc.take()?;
+        crate::ipc::log!("getIPCInstance {}", fd);
+        // SAFETY: `event_loop` is a self-pointer into this VM.
+        unsafe { (*self.event_loop()).ensure_waker() };
+
+        #[cfg(unix)]
+        let instance = {
+            // PORT NOTE: reshaped for borrowck — `spawn_ipc_group` borrows
+            // `rare_data`, which we need to release before re-borrowing for
+            // the `ipc_instance` write below; capture the raw group ptr.
+            let group: *mut uws::SocketGroup = {
+                let vm_ptr = self as *mut VirtualMachine;
+                // SAFETY: `vm_ptr` is `self`; disjoint from `rare_data` borrow.
+                self.rare_data().spawn_ipc_group(unsafe { &mut *vm_ptr })
+                    as *mut uws::SocketGroup
+            };
+            let instance = IPCInstance::new(IPCInstance {
+                global_this: self.global,
+                group,
+                data: crate::ipc::SendQueue::uninitialized(),
+                has_disconnect_called: false,
+            });
+            self.rare_data().ipc_instance = Some(instance);
+            // SAFETY: `instance` was just boxed.
+            unsafe {
+                (*instance).data = crate::ipc::SendQueue::init(
+                    mode,
+                    crate::ipc::Owner::VirtualMachine(instance),
+                    crate::ipc::SocketState::Uninitialized,
+                );
+            }
+            let socket = crate::ipc::Socket::from_fd(
+                group,
+                crate::ipc::SocketKind::SpawnIpc,
+                fd,
+                // SAFETY: `instance` is live.
+                unsafe { &mut (*instance).data },
+                None,
+                true,
+            );
+            match socket {
+                Some(socket) => {
+                    socket.set_timeout(0);
+                    // SAFETY: `instance` is live.
+                    unsafe { (*instance).data.socket = crate::ipc::SocketState::Open(socket) };
+                    instance
+                }
+                None => {
+                    IPCInstance::deinit(instance);
+                    self.rare_data().ipc_instance = None;
+                    self.ipc = None;
+                    bun_core::warn!("Unable to start IPC socket");
+                    return None;
+                }
+            }
+        };
+        #[cfg(windows)]
+        let instance = {
+            let instance = IPCInstance::new(IPCInstance {
+                global_this: self.global,
+                group: (),
+                data: crate::ipc::SendQueue::uninitialized(),
+                has_disconnect_called: false,
+            });
+            // SAFETY: `instance` was just boxed.
+            unsafe {
+                (*instance).data = crate::ipc::SendQueue::init(
+                    mode,
+                    crate::ipc::Owner::VirtualMachine(instance),
+                    crate::ipc::SocketState::Uninitialized,
+                );
+            }
+            self.rare_data().ipc_instance = Some(instance);
+            // SAFETY: `instance` is live.
+            if unsafe { (*instance).data.windows_configure_client(fd) }.is_err() {
+                IPCInstance::deinit(instance);
+                self.rare_data().ipc_instance = None;
+                self.ipc = None;
+                bun_core::warn!("Unable to start IPC pipe '{}'", fd);
+                return None;
+            }
+            instance
+        };
+
+        // SAFETY: `instance` is live; `global` valid for VM lifetime.
+        unsafe { (*instance).data.write_version_packet(&*self.global) };
+        Some(instance)
+    }
+
+    /// To satisfy the interface from NewHotReloader().
+    pub fn get_loaders(&mut self) -> &mut bun_bundler::options::LoaderHashTable {
+        &mut self.transpiler.options.loaders
+    }
+
+    /// To satisfy the interface from NewHotReloader().
+    pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
+        self.transpiler.resolver.bust_dir_cache(path)
+    }
+}
+
+use core::fmt::Write as _;
+
+fn is_error_like(global_object: &JSGlobalObject, reason: JSValue) -> JsResult<bool> {
+    jsc::from_js_host_call_generic(global_object, || unsafe {
+        Bun__promises__isErrorLike(global_object.as_ptr(), reason)
+    })
+}
+
+fn wrap_unhandled_rejection_error_for_uncaught_exception(
+    global_object: &JSGlobalObject,
+    reason: JSValue,
+) -> JSValue {
+    let like = is_error_like(global_object, reason).unwrap_or_else(|_| {
+        global_object.clear_exception();
+        false
+    });
+    if like {
+        return reason;
+    }
+    // SAFETY: extern "C" FFI; `global_object` is the live VM global.
+    let reason_str = unsafe {
+        let s = Bun__noSideEffectsToString(
+            global_object.vm() as *const VM as *mut VM,
+            global_object.as_ptr(),
+            reason,
+        );
+        global_object.clear_exception();
+        s
+    };
+    const MSG_1: &str = "This error originated either by throwing inside of an async function \
+        without a catch block, or by rejecting a promise which was not handled with .catch(). \
+        The promise rejected with the reason \"";
+    if reason_str.is_string() {
+        let view = reason_str.as_string().view(global_object);
+        return global_object
+            .err_unhandled_rejection(format_args!("{MSG_1}{view}\"."))
+            .to_js();
+    }
+    global_object
+        .err_unhandled_rejection(format_args!("{MSG_1}undefined\"."))
+        .to_js()
 }
 
 // ──────────────────────────────────────────────────────────────────────────

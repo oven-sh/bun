@@ -238,7 +238,7 @@ impl NativeBrotli {
         // ordering parity with Zig.
         // TODO(port): confirm Strong/CountedKeepAlive Drop ordering is benign
         // and remove explicit deinit calls.
-        self.this_value = Strong::empty();
+        self.this_value = StrongOptional::empty();
         drop(core::mem::take(&mut self.poll_ref));
         match self.stream.mode {
             bun_zlib::NodeMode::BROTLI_ENCODE | bun_zlib::NodeMode::BROTLI_DECODE => {

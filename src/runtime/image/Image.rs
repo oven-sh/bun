@@ -476,7 +476,7 @@ impl Image {
     ) -> JsResult<JSValue> {
         let args = callframe.arguments();
         if args.len() < 1 || !args[0].is_number() {
-            return global.throw_invalid_arguments("resize(width, height?, options?)");
+            return Err(global.throw_invalid_arguments("resize(width, height?, options?)"));
         }
         // 0x3FFF² is the max_pixels default; capping each side at 0x3FFFF (≈262k)
         // keeps every downstream u32 product in range without a per-stage check.

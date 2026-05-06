@@ -2282,26 +2282,48 @@ impl RunCommand {
         bun_output::scoped_log!(RUN, "Script: \"{}\"", bstr::BStr::new(&copy_script));
 
         if !silent {
-            Output::command(&copy_script);
+            Output::command(Output::CommandArgv::Single(&copy_script));
             Output::flush();
         }
 
         if !use_system_shell {
-            let mini = jsc::MiniEventLoop::init_global(env, Some(cwd));
+            // SAFETY (port): `init_global` stores `env` in a thread-local
+            // singleton for process lifetime; the `'static` bound is a
+            // phase-a borrowck shim until the caller threads a `'static`
+            // loader through.
+            let mini = jsc::MiniEventLoop::init_global(
+                Some(unsafe {
+                    ::core::mem::transmute::<
+                        &mut DotEnv::Loader<'_>,
+                        &'static mut DotEnv::Loader<'static>,
+                    >(env)
+                }),
+                Some(cwd),
+            );
+            // SAFETY (port): `ctx: &Command::Context` is `&&mut ContextData`;
+            // the shell interpreter needs `&mut`. Phase-a draft - reborrow
+            // via raw pointer until the signature is reflowed to take
+            // `Command::Context<'_>` directly.
+            let ctx_mut: &mut bun_options_types::Context::ContextData = unsafe {
+                &mut *(*ctx as *const bun_options_types::Context::ContextData
+                    as *mut bun_options_types::Context::ContextData)
+            };
             let code = match crate::shell::Interpreter::init_and_run_from_source(
-                ctx,
-                mini,
+                ctx_mut,
+                // SAFETY: `init_global` returns the thread-local singleton
+                // pointer; non-null and lives for process lifetime.
+                unsafe { &mut *mini },
                 name,
                 &copy_script,
-                cwd,
+                Some(cwd),
             ) {
                 Ok(c) => c,
                 Err(err) => {
                     if !silent {
-                        Output::pretty_errorln(
+                        Output::pretty_errorln(format_args!(
                             "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
-                            (bstr::BStr::new(name), err.name()),
-                        );
+                            bstr::BStr::new(name), err.name(),
+                        ));
                     }
                     Global::exit(1);
                 }
@@ -2309,14 +2331,14 @@ impl RunCommand {
 
             if code > 0 {
                 if code != 2 && !silent {
-                    Output::pretty_errorln(
+                    Output::pretty_errorln(format_args!(
                         "<r><red>error<r><d>:<r> script <b>\"{}\"<r> exited with code {}<r>",
-                        (bstr::BStr::new(name), code),
-                    );
+                        bstr::BStr::new(name), code,
+                    ));
                     Output::flush();
                 }
 
-                Global::exit(code);
+                Global::exit(code as u32);
             }
 
             return Ok(());
@@ -2372,20 +2394,20 @@ impl RunCommand {
         let spawn_result = match spawn_result_maybe {
             Err(err) => {
                 if !silent {
-                    Output::pretty_errorln(
+                    Output::pretty_errorln(format_args!(
                         "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
-                        (bstr::BStr::new(name), err.name()),
-                    );
+                        bstr::BStr::new(name), err.name(),
+                    ));
                 }
                 Output::flush();
                 return Ok(());
             }
             Ok(Err(err)) => {
                 if !silent {
-                    Output::pretty_errorln(
+                    Output::pretty_errorln(format_args!(
                         "<r><red>error<r>: Failed to run script <b>{}<r> due to error:\n{}",
-                        (bstr::BStr::new(name), err),
-                    );
+                        bstr::BStr::new(name), err,
+                    ));
                 }
                 Output::flush();
                 return Ok(());
@@ -2399,14 +2421,12 @@ impl RunCommand {
                 // raw `u8` here; `signal_code()` range-checks 1..=31 (i.e. valid).
                 if let Some(sig) = spawn_result.status.signal_code() {
                     if sig != bun_core::SignalCode::SIGINT && !silent {
-                        Output::pretty_errorln(
+                        Output::pretty_errorln(format_args!(
                             "<r><red>error<r><d>:<r> script <b>\"{}\"<r> was terminated by signal {}<r>",
-                            (
-                                bstr::BStr::new(name),
-                                bun_sys::SignalCode(sig as u8)
-                                    .fmt(Output::enable_ansi_colors_stderr()),
-                            ),
-                        );
+                            bstr::BStr::new(name),
+                            bun_sys::SignalCode(sig as u8)
+                                .fmt(Output::enable_ansi_colors_stderr()),
+                        ));
                         Output::flush();
 
                         if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() == Some(true) {

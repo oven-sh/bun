@@ -104,7 +104,7 @@ pub fn to_have_returned_with(
                 received: Some(received),
                 expected_string: None,
                 received_string: None,
-                global_this: global,
+                global_this: Some(global),
                 not: false,
             };
             return this.throw(global, signature, format_args!("\n\n{}\n", diff_format));

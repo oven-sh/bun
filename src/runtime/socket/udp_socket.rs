@@ -491,7 +491,7 @@ impl UDPSocket {
     pub fn udp_socket(global_this: &JSGlobalObject, options: JSValue) -> JsResult<JSValue> {
         bun_output::scoped_log!(UdpSocket, "udpSocket");
 
-        let vm = global_this.bun_vm_ptr();
+        let vm = global_this.bun_vm();
         let this_ptr = Self::new(Self {
             socket: None,
             config: UDPSocketConfig::default(),

@@ -469,20 +469,15 @@ impl S3BlobStatTask {
         Box::into_raw(Box::new(init))
     }
 
-    /// SAFETY: caller guarantees `self.global` is still live (the VM is single-threaded
-    /// and the callback fires on the same JS thread that created the task).
-    #[inline]
-    unsafe fn global(&self) -> &JSGlobalObject {
-        unsafe { &*self.global }
-    }
-
     pub fn on_s3_exists_resolved(
         result: s3::S3StatResult,
         this: *mut core::ffi::c_void,
     ) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: `this` was allocated via Box::into_raw in `exists`; reconstructing here replaces `defer this.deinit()`
         let mut this = unsafe { Box::from_raw(this.cast::<S3BlobStatTask>()) };
-        let global = unsafe { this.global() };
+        // SAFETY: `global` was live when the task was created and the VM is single-threaded;
+        // deref the raw pointer field directly so the borrow is not tied to `this`.
+        let global = unsafe { &*this.global };
         match result {
             s3::S3StatResult::NotFound(_) => {
                 this.promise.resolve(global, JSValue::FALSE)?;
@@ -514,7 +509,8 @@ impl S3BlobStatTask {
     ) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: `this` was allocated via Box::into_raw in `size`; reconstructing here replaces `defer this.deinit()`
         let mut this = unsafe { Box::from_raw(this.cast::<S3BlobStatTask>()) };
-        let global = unsafe { this.global() };
+        // SAFETY: see on_s3_exists_resolved — deref raw pointer to avoid borrowing `this`.
+        let global = unsafe { &*this.global };
 
         match result {
             s3::S3StatResult::Success(stat_result) => {
@@ -540,7 +536,8 @@ impl S3BlobStatTask {
     ) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: `this` was allocated via Box::into_raw in `stat`; reconstructing here replaces `defer this.deinit()`
         let mut this = unsafe { Box::from_raw(this.cast::<S3BlobStatTask>()) };
-        let global = unsafe { this.global() };
+        // SAFETY: see on_s3_exists_resolved — deref raw pointer to avoid borrowing `this`.
+        let global = unsafe { &*this.global };
         match result {
             s3::S3StatResult::Success(stat_result) => {
                 let s3_stat = match S3Stat::init(

@@ -208,11 +208,44 @@ struct ParsedHostFunctionErrorSet {
 }
 
 // Zig: `inline fn parseErrorSet(T: type, errors: []const std.builtin.Type.Error) ...`
-// Pure `@typeInfo` reflection over an error set — no Rust equivalent.
-// TODO(port): proc-macro — error-set validation moves into `#[bun_jsc::host_fn]`.
+//
+// Zig iterated `@typeInfo(ErrorSet)` at comptime; Rust has no error-set reflection, so the
+// `#[bun_jsc::host_fn]` proc-macro supplies the variant names as string literals and this
+// helper validates them at const-eval time. An unknown name `panic!`s — the const-context
+// analogue of Zig's `@compileError`. The `T: type` parameter (used only for the diagnostic
+// string in Zig) is dropped; the macro embeds the function name in its own error message.
 #[allow(dead_code)]
-fn parse_error_set() -> ParsedHostFunctionErrorSet {
-    unimplemented!("comptime error-set reflection; handled by proc-macro")
+const fn parse_error_set(errors: &[&str]) -> ParsedHostFunctionErrorSet {
+    let mut errs = ParsedHostFunctionErrorSet { out_of_memory: false, js_error: false };
+    let mut i = 0;
+    while i < errors.len() {
+        let name = errors[i].as_bytes();
+        if const_bytes_eq(name, b"OutOfMemory") {
+            errs.out_of_memory = true;
+        } else if const_bytes_eq(name, b"JSError") {
+            errs.js_error = true;
+        } else {
+            // Zig: @compileError("Return value from host function '...' can not contain error '...'")
+            panic!("Return value from host function can not contain this error");
+        }
+        i += 1;
+    }
+    errs
+}
+
+#[allow(dead_code)]
+const fn const_bytes_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
 }
 
 // For when bubbling up errors to functions that require a C ABI boundary

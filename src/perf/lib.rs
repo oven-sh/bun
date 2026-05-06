@@ -206,31 +206,13 @@ impl Linux {
             .ns()
             .saturating_sub(self.start_time);
 
-<<<<<<< Updated upstream
         // Zig's `@tagName(this.event).ptr` yields `[*:0]const u8` (NUL-terminated).
         // `PerfEvent::as_cstr()` provides the equivalent `&'static CStr` so the C side's
         // `snprintf("C|%d|%s|%lld", ...)` reads a properly terminated string.
         // SAFETY: FFI call; pointer is 'static and NUL-terminated.
-||||||| Stash base
-        // TODO(port): @tagName in Zig yields a NUL-terminated string; strum::IntoStaticStr does not.
-        // PerfEvent needs an `as_cstr() -> &'static CStr` (or the generator must emit NUL-terminated names).
-        let name: &'static str = self.event.into();
-        // SAFETY: FFI call; name pointer is 'static. See TODO above re: NUL terminator.
-=======
-        // Zig: `@tagName(this.event).ptr` is `[*:0]const u8` (NUL-terminated).
-        // `PerfEvent::as_cstr()` mirrors that with `c"..."` literals.
-        let name = self.event.as_cstr();
-        // SAFETY: FFI call; `name` is a 'static NUL-terminated C string.
->>>>>>> Stashed changes
         let _ = unsafe {
             Bun__linux_trace_emit(
-<<<<<<< Updated upstream
                 self.event.as_cstr().as_ptr(),
-||||||| Stash base
-                name.as_ptr() as *const c_char,
-=======
-                name.as_ptr(),
->>>>>>> Stashed changes
                 i64::try_from(duration).unwrap(),
             )
         };
@@ -256,11 +238,5 @@ unsafe extern "C" {
 //   source:     src/perf/perf.zig (159 lines)
 //   confidence: medium
 //   todos:      6
-<<<<<<< Updated upstream
 //   notes:      trace() now takes PerfEvent (not comptime str); verify bun.timespec/OSLog paths; @tagName NUL-termination handled via PerfEvent::as_cstr()
-||||||| Stash base
-//   notes:      trace() now takes PerfEvent (not comptime str); verify bun.timespec/OSLog paths; @tagName NUL-termination needs PerfEvent.as_cstr()
-=======
-//   notes:      trace() now takes PerfEvent (not comptime str); verify bun.timespec/OSLog paths
->>>>>>> Stashed changes
 // ──────────────────────────────────────────────────────────────────────────

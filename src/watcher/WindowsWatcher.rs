@@ -16,60 +16,6 @@ bun_core::declare_scope!(watcher, visible);
 
 pub type Platform = WindowsWatcher;
 
-<<<<<<< Updated upstream
-||||||| Stash base
-// TODO(b2-blocked): bun_sys::windows — entire module body below depends on the
-// gated `bun_sys::windows` surface (HANDLE, OVERLAPPED, FILE_ACTION_*, kernel32
-// extern fns). Re-gated wholesale; Phase-A draft preserved.
-#[cfg(any())]
-use bun_sys::windows as w;
-#[cfg(any())]
-use bun_sys::windows::HANDLE;
-
-#[cfg(not(any()))]
-#[derive(Default)]
-pub struct WindowsWatcher(());
-#[cfg(not(any()))]
-impl WindowsWatcher {
-    pub fn init(&mut self, _root: &[u8]) -> Result<(), bun_core::Error> {
-        todo!("WindowsWatcher::init — bun_sys::windows")
-    }
-    pub fn stop(&mut self) {}
-}
-#[cfg(not(any()))]
-pub fn watch_loop_cycle(_this: &mut Watcher) -> bun_sys::Result<()> {
-    todo!("watch_loop_cycle — bun_sys::windows")
-}
-
-=======
-// TODO(b2-blocked): bun_sys::windows — entire module body below depends on the
-// `bun_sys::windows` surface that is still missing: OVERLAPPED, ULONG_PTR,
-// FILE_ACTION_*, FILE_NOTIFY_INFORMATION, FileNotifyChangeFilter, INFINITE,
-// FILE_LIST_DIRECTORY, FILE_OPEN_FOR_BACKUP_INTENT, CreateIoCompletionPort,
-// kernel32::{ReadDirectoryChangesW, GetQueuedCompletionStatus},
-// Win32Error::WAIT_TIMEOUT, NTSTATUS::SUCCESS. Re-gated wholesale; Phase-A
-// draft preserved.
-#[cfg(any())]
-use bun_sys::windows as w;
-#[cfg(any())]
-use bun_sys::windows::HANDLE;
-
-#[cfg(not(any()))]
-#[derive(Default)]
-pub struct WindowsWatcher(());
-#[cfg(not(any()))]
-impl WindowsWatcher {
-    pub fn init(&mut self, _root: &[u8]) -> Result<(), bun_core::Error> {
-        todo!("WindowsWatcher::init — bun_sys::windows")
-    }
-    pub fn stop(&mut self) {}
-}
-#[cfg(not(any()))]
-pub fn watch_loop_cycle(_this: &mut Watcher) -> bun_sys::Result<()> {
-    todo!("watch_loop_cycle — bun_sys::windows")
-}
-
->>>>>>> Stashed changes
 pub type EventListIndex = core::ffi::c_int;
 
 pub struct WindowsWatcher {

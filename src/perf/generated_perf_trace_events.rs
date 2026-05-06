@@ -15,7 +15,6 @@ impl From<PerfEvent> for &'static str {
     }
 }
 
-<<<<<<< Updated upstream
 impl PerfEvent {
     /// NUL-terminated tag name, mirroring Zig's `@tagName(this.event).ptr` which yields
     /// `[*:0]const u8`. Required for FFI to `Bun__linux_trace_emit` (expects C string).
@@ -26,19 +25,6 @@ impl PerfEvent {
     }
 }
 
-||||||| Stash base
-=======
-impl PerfEvent {
-    /// NUL-terminated event name, mirroring Zig's `@tagName(e).ptr` (which yields `[*:0]const u8`).
-    /// Required for FFI calls that take `[*:0]const u8` (e.g. `Bun__linux_trace_emit`).
-    pub fn as_cstr(self) -> &'static core::ffi::CStr {
-        match self {
-            PerfEvent::_Stub => c"_Stub",
-        }
-    }
-}
-
->>>>>>> Stashed changes
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/perf/generated_perf_trace_events.zig (62 lines)

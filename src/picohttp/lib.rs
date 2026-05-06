@@ -127,7 +127,6 @@ impl Header {
 
     #[inline]
     pub fn name(&self) -> &[u8] {
-<<<<<<< Updated upstream
         // picohttpparser sets `name = NULL, name_len = 0` for multiline /
         // continuation headers. `from_raw_parts(null, 0)` is UB in Rust even
         // though Zig's `[]const u8{ptr=null, len=0}` is well-defined, so guard
@@ -135,16 +134,6 @@ impl Header {
         if self.name_len == 0 {
             return &[];
         }
-||||||| Stash base
-=======
-        // picohttpparser sets name = NULL, name_len = 0 for multiline/folded
-        // headers. `from_raw_parts` requires a non-null pointer even when len
-        // is 0, so guard the empty case to match the Zig behavior (where a
-        // zero-length slice with undefined ptr is well-defined).
-        if self.name_len == 0 {
-            return &[];
-        }
->>>>>>> Stashed changes
         // SAFETY: ptr/len originate from picohttpparser pointing into the
         // caller-provided buffer, or from StringBuilder::append.
         unsafe { core::slice::from_raw_parts(self.name_ptr, self.name_len) }
@@ -580,28 +569,10 @@ impl<'a> Response<'a> {
 
         match rc {
             -1 => {
-<<<<<<< Updated upstream
                 // NOTE: `bun_core::debug!` macro is currently broken (it forwards
                 // `concat!(...)` into `pretty_errorln!` whose matcher is `$fmt:literal`).
                 // Use the function-form `output::debug` until the macro is fixed.
                 Output::debug("Malformed HTTP response:\n{}", (BStr::new(buf),));
-||||||| Stash base
-                // TODO(b2-blocked): bun_core::debug — macro passes `concat!(...)`
-                // into `pretty_errorln!` which only accepts `$fmt:literal`.
-                #[cfg(any())]
-                bun_core::debug!("Malformed HTTP response:\n{}", BStr::new(buf));
-=======
-                // NOTE: inlined `bun_core::debug!` expansion — that macro currently
-                // forwards `concat!(...)` into `pretty_errorln!` which only matches
-                // `$fmt:literal`, so we pre-concat the prefix here.
-                if cfg!(debug_assertions) {
-                    bun_core::pretty_errorln!(
-                        "<d>DEBUG:<r> Malformed HTTP response:\n{}",
-                        BStr::new(buf),
-                    );
-                    Output::flush();
-                }
->>>>>>> Stashed changes
                 Err(ParseResponseError::Malformed_HTTP_Response)
             }
             -2 => {
@@ -725,14 +696,6 @@ pub use c::phr_decode_chunked_is_in_data;
 // PORT STATUS
 //   source:     src/picohttp/picohttp.zig (386 lines)
 //   confidence: medium
-<<<<<<< Updated upstream
 //   todos:      0
 //   notes:      Header is #[repr(C)] ptr+len (must match phr_header); Request/Response/Headers carry <'a> borrowing the input buffer; pretty_fmt! is bun_core's passthrough stub until proc-macro lands; debug! call uses output::debug fn-form (macro-form broken upstream).
-||||||| Stash base
-//   todos:      1
-//   notes:      Header is #[repr(C)] ptr+len (must match phr_header); Request/Response/Headers carry <'a> borrowing the input buffer; pretty_fmt! is bun_core's passthrough stub until proc-macro lands; one debug! call re-gated on bun_core macro fix.
-=======
-//   todos:      1
-//   notes:      Header is #[repr(C)] ptr+len (must match phr_header); Request/Response/Headers carry <'a> borrowing the input buffer; pretty_fmt! is bun_core's passthrough stub until proc-macro lands; debug! call inlined via pretty_errorln! pending bun_core macro fix.
->>>>>>> Stashed changes
 // ──────────────────────────────────────────────────────────────────────────

@@ -269,117 +269,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 // Zig: `for (props) |prop| { ... } else { deopt; return null }`
                                 // — the loop body has no `break`, so the `else` arm runs on
                                 // every normal completion (including empty `props`). The
-                                // entire stmts/decls/clause_items rewriting block below is
-                                // therefore unreachable in Zig too; preserved (gated) for
-                                // 1:1 source fidelity.
+                                // entire stmts/decls/clause_items rewriting block that follows
+                                // in the Zig source is therefore unreachable there too and is
+                                // dropped from the port.
                                 {
                                     // empty object de-opts because otherwise the statement becomes
                                     // <empty space> = {};
                                     p.deoptimize_common_js_named_exports();
                                     return None;
                                 }
-
-                                 // dead in Zig (for-else above always returns)
-                                {
-                                let mut stmts = bumpalo::collections::Vec::with_capacity_in(
-                                    props.len() * 2,
-                                    p.allocator,
-                                );
-                                // PERF(port): arena bulk-alloc — profile in Phase B
-                                let mut decls: &mut [Decl] =
-                                    p.allocator.alloc_slice_fill_default(props.len());
-                                let mut clause_items: &mut [js_ast::ClauseItem] =
-                                    p.allocator.alloc_slice_fill_default(props.len());
-
-                                for prop in props {
-                                    let key = prop.key.unwrap().data.e_string().unwrap().string(p.allocator).expect("unreachable");
-                                    let visited_value = p.visit_expr(prop.value.unwrap());
-                                    let value = SideEffects::simplify_unused_expr(p, visited_value)
-                                        .unwrap_or(visited_value);
-
-                                    // We are doing `module.exports = { ... }`
-                                    // lets rewrite it to a series of what will become export assignments
-                                    let named_export_entry =
-                                        p.commonjs_named_exports.get_or_put(key).expect("unreachable");
-                                    if !named_export_entry.found_existing {
-                                        let new_ref = p
-                                            .new_symbol(
-                                                js_ast::symbol::Kind::Other,
-                                                p.allocator.alloc_slice_copy(
-                                                    format!(
-                                                        "${}",
-                                                        bun_core::fmt::fmt_identifier(key)
-                                                    )
-                                                    .as_bytes(),
-                                                ),
-                                            )
-                                            .expect("unreachable");
-                                        unsafe { &mut *p.module_scope }
-                                            .generated
-                                            .append(new_ref)
-                                            .expect("unreachable");
-                                        *named_export_entry.value_ptr = CommonJSNamedExport {
-                                            loc_ref: LocRef { loc: name_loc, ref_: Some(new_ref) },
-                                            needs_decl: false,
-                                        };
-                                    }
-                                    let ref_ = named_export_entry.value_ptr.loc_ref.ref_.unwrap();
-                                    // module.exports = {
-                                    //   foo: "bar",
-                                    //   baz: "qux",
-                                    // }
-                                    // ->
-                                    // exports.foo = "bar", exports.baz = "qux"
-                                    // Which will become
-                                    // $foo = "bar";
-                                    // $baz = "qux";
-                                    // export { $foo as foo, $baz as baz }
-
-                                    decls[0] = Decl {
-                                        binding: p.b(B::Identifier { ref_ }, prop.key.unwrap().loc),
-                                        value: Some(value),
-                                    };
-                                    // we have to ensure these are known to be top-level
-                                    p.declared_symbols
-                                        .push(js_ast::DeclaredSymbol { ref_, is_top_level: true });
-                                    p.had_commonjs_named_exports_this_visit = true;
-                                    clause_items[0] = js_ast::ClauseItem {
-                                        // We want the generated name to not conflict
-                                        alias: key,
-                                        alias_loc: prop.key.unwrap().loc,
-                                        name: named_export_entry.value_ptr.loc_ref,
-                                        ..Default::default()
-                                    };
-
-                                    stmts.extend_from_slice(&[
-                                        p.s(
-                                            S::Local {
-                                                kind: S::Local::Kind::KVar,
-                                                is_export: false,
-                                                was_commonjs_export: true,
-                                                decls: G::Decl::List::init(&decls[0..1]),
-                                                ..Default::default()
-                                            },
-                                            prop.key.unwrap().loc,
-                                        ),
-                                        p.s(
-                                            S::ExportClause {
-                                                items: &clause_items[0..1],
-                                                is_single_line: true,
-                                                ..Default::default()
-                                            },
-                                            prop.key.unwrap().loc,
-                                        ),
-                                    ]);
-                                    // PORT NOTE: reshaped for borrowck — Zig reslices `decls = decls[1..]`
-                                    decls = &mut decls[1..];
-                                    clause_items = &mut clause_items[1..];
-                                }
-
-                                p.ignore_usage(p.module_ref);
-                                p.commonjs_replacement_stmts = stmts.into_bump_slice();
-                                return Some(p.new_expr(E::Missing {}, name_loc));
-                                } // end  (dead in Zig)
                             }
 
                             // Deoptimizations:
@@ -404,7 +302,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         {
                             // inline module.id
                             p.ignore_usage(p.module_ref);
-                            return Some(p.new_expr(E::EString::init(p.source.path.pretty), name_loc));
+                            return Some(p.new_expr(e_string_init(p.source.path.pretty), name_loc));
                         } else if p.options.bundle
                             && name == b"filename"
                             && identifier_opts.assign_target() == js_ast::AssignTarget::None
@@ -412,7 +310,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             // inline module.filename
                             p.ignore_usage(p.module_ref);
                             return Some(
-                                p.new_expr(E::EString::init(p.source.path.name.filename), name_loc),
+                                p.new_expr(e_string_init(p.source.path.name.filename), name_loc),
                             );
                         } else if p.options.bundle
                             && name == b"path"
@@ -420,7 +318,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         {
                             // inline module.path
                             p.ignore_usage(p.module_ref);
-                            return Some(p.new_expr(E::EString::init(p.source.path.pretty), name_loc));
+                            return Some(p.new_expr(e_string_init(p.source.path.pretty), name_loc));
                         }
                     }
 

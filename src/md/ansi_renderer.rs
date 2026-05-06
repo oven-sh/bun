@@ -2228,39 +2228,13 @@ fn code_span_open(light: bool) -> &'static [u8] {
 /// Visible printable width of a UTF-8 byte slice, excluding ANSI escape
 /// sequences. Correctly handles multi-width graphemes (CJK, emoji).
 fn visible_width(s: &[u8]) -> usize {
-<<<<<<< Updated upstream
     strings::visible::width::exclude_ansi_colors::utf8(s)
-||||||| Stash base
-    #[cfg(any())]
-    { bun_str::strings::visible::width::exclude_ansi_colors::utf8(s) }
-    #[cfg(not(any()))]
-    {
-        // TODO(b2-blocked): bun_string::strings::visible::width::exclude_ansi_colors::utf8
-        let _ = s;
-        0
-    }
-=======
-    bun_str::strings::visible::width::exclude_ansi_colors::utf8(s)
->>>>>>> Stashed changes
 }
 
 /// Byte index of the longest prefix of `s` whose visible width is <=
 /// `max_cols`. ANSI escapes are zero-width and always included.
 fn visible_index_at(s: &[u8], max_cols: usize) -> usize {
-<<<<<<< Updated upstream
     strings::visible::width::exclude_ansi_colors::utf8_index_at_width(s, max_cols)
-||||||| Stash base
-    #[cfg(any())]
-    { bun_str::strings::visible::width::exclude_ansi_colors::utf8_index_at_width(s, max_cols) }
-    #[cfg(not(any()))]
-    {
-        // TODO(b2-blocked): bun_string::strings::visible::width::exclude_ansi_colors::utf8_index_at_width
-        let _ = max_cols;
-        s.len()
-    }
-=======
-    bun_str::strings::visible::width::exclude_ansi_colors::utf8_index_at_width(s, max_cols)
->>>>>>> Stashed changes
 }
 
 fn is_js_lang(lang: &[u8]) -> bool {
@@ -2391,22 +2365,11 @@ fn probe_kitty_graphics() -> bool {
     }
     #[cfg(unix)]
     {
-<<<<<<< Updated upstream
         // SAFETY: bun_stdio_tty is plain data written once at startup.
         let (tty0, tty1) = unsafe {
             (bun_core::Output::bun_stdio_tty[0], bun_core::Output::bun_stdio_tty[1])
         };
         if tty0 == 0 || tty1 == 0 {
-||||||| Stash base
-        if bun_core::Output::bun_stdio_tty(0) == 0 || bun_core::Output::bun_stdio_tty(1) == 0 {
-=======
-        // SAFETY: bun_stdio_tty is a process-global initialized at startup; reads are
-        // race-free with respect to the markdown renderer (no concurrent writers here).
-        let (tty0, tty1) = unsafe {
-            (bun_core::Output::bun_stdio_tty[0], bun_core::Output::bun_stdio_tty[1])
-        };
-        if tty0 == 0 || tty1 == 0 {
->>>>>>> Stashed changes
             return false;
         }
         // Honor an explicit opt-out.

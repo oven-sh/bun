@@ -292,13 +292,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             && !is_delete_target
         {
             if let Some(def) = p.define.for_identifier(name) {
+                // SAFETY: `p.define: &'a Define` outlives `p`; erase the local
+                // borrow so `value_for_define(&mut self, ..)` can be called.
+                let def = unsafe { &*(def as *const crate::defines::DefineData) };
                 if !def.valueless() {
-                    // blocked_on: P::value_for_define is in the gated round-D impl
-                    // (P.rs `` block); body preserved in _draft.
-                    let newvalue: Expr = {
-                        let _ = (in_.assign_target, is_delete_target, &def);
-                        todo!("e_identifier: P::value_for_define (gated)")
-                    };
+                    let newvalue: Expr = p.value_for_define(
+                        expr.loc,
+                        in_.assign_target,
+                        is_delete_target,
+                        def,
+                    );
 
                     // Don't substitute an identifier for a non-identifier if this is an
                     // assignment target, since it'll cause a syntax error
@@ -381,13 +384,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         break 'tagger p.visit_expr(_tag);
                     }
                     if p.options.jsx.runtime == options::JSX::Runtime::Classic {
-                        // blocked_on: jsx_strings_to_member_expression takes `&[&'a [u8]]`;
-                        // `options.jsx.fragment` is `Box<[Box<[u8]>]>` (round-C Pragma stub).
-                        // Shape mismatch — see `_draft::e_jsx_element`.
-                        let _ = &p.options.jsx.fragment;
-                        break 'tagger todo!(
-                            "e_jsx_element: jsx_strings_to_member_expression(fragment) — Pragma shape"
-                        );
+                        // PORT NOTE: `jsx_strings_to_member_expression` wants `&[&'a [u8]]`;
+                        // `options.jsx.fragment: Box<[Box<[u8]>]>` — borrow each part
+                        // and erase to `'a` (options outlives the parser).
+                        let parts: Vec<&'a [u8]> = p
+                            .options
+                            .jsx
+                            .fragment
+                            .iter()
+                            .map(|b| unsafe { core::mem::transmute::<&[u8], &'a [u8]>(&b[..]) })
+                            .collect();
+                        break 'tagger p
+                            .jsx_strings_to_member_expression(expr.loc, &parts)
+                            .expect("unreachable");
                     }
                     break 'tagger p.jsx_import(JSXImport::Fragment, expr.loc);
                 };
@@ -452,12 +461,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
 
                     let target: Expr = if runtime == options::JSX::Runtime::Classic {
-                        // blocked_on: jsx_strings_to_member_expression takes `&[&'a [u8]]`;
-                        // `options.jsx.factory` is `Box<[Box<[u8]>]>` (round-C Pragma stub).
-                        let _ = &p.options.jsx.factory;
-                        todo!(
-                            "e_jsx_element: jsx_strings_to_member_expression(factory) — Pragma shape"
-                        )
+                        let parts: Vec<&'a [u8]> = p
+                            .options
+                            .jsx
+                            .factory
+                            .iter()
+                            .map(|b| unsafe { core::mem::transmute::<&[u8], &'a [u8]>(&b[..]) })
+                            .collect();
+                        p.jsx_strings_to_member_expression(expr.loc, &parts)
+                            .expect("unreachable")
                     } else {
                         // Spec (visitExpr.zig:257) calls jsxStringsToMemberExpression(factory)
                         // unconditionally before the runtime check; that has the side-effect of

@@ -533,27 +533,24 @@ impl Expr {
     ///
     /// Sets the value of a property, creating it if it doesn't exist.
     /// `expr` must be an object.
-    pub fn set(expr: &mut Expr, bump: &Bump, name: &[u8], value: Expr) -> Result<(), AllocError> {
+    pub fn set(expr: &mut Expr, _bump: &Bump, name: &[u8], value: Expr) -> Result<(), AllocError> {
         debug_assert!(expr.is_object());
         let Data::EObject(obj) = &mut expr.data else { unreachable!() };
-        for i in 0..obj.properties.len() as usize {
-            let prop = &mut obj.properties.ptr_mut()[i];
+        for i in 0..obj.properties.len as usize {
+            let prop = &mut obj.properties.slice_mut()[i];
             let Some(key) = &prop.key else { continue };
             let Data::EString(key_str) = &key.data else { continue };
-            if key_str.eql_slice(name) {
+            if key_str.eql_bytes(name) {
                 prop.value = Some(value);
                 return Ok(());
             }
         }
 
-        obj.properties.append(
-            bump,
-            G::Property {
-                key: Some(Expr::init(E::String { data: name, ..Default::default() }, Loc::EMPTY)),
-                value: Some(value),
-                ..Default::default()
-            },
-        )?;
+        obj.properties.append(G::Property {
+            key: Some(Expr::init(E::String { data: name, ..Default::default() }, Loc::EMPTY)),
+            value: Some(value),
+            ..Default::default()
+        })?;
         Ok(())
     }
 
@@ -563,40 +560,28 @@ impl Expr {
     /// `expr` must be an object.
     pub fn set_string(
         expr: &mut Expr,
-        bump: &Bump,
+        _bump: &Bump,
         name: &[u8],
-        value: *const [u8],
+        value: &[u8],
     ) -> Result<(), AllocError> {
         debug_assert!(expr.is_object());
         let Data::EObject(obj) = &mut expr.data else { unreachable!() };
-        for i in 0..obj.properties.len() as usize {
-            let prop = &mut obj.properties.ptr_mut()[i];
+        for i in 0..obj.properties.len as usize {
+            let prop = &mut obj.properties.slice_mut()[i];
             let Some(key) = &prop.key else { continue };
             let Data::EString(key_str) = &key.data else { continue };
-            if key_str.eql_slice(name) {
+            if key_str.eql_bytes(name) {
                 prop.value = Some(Expr::init(E::String { data: value, ..Default::default() }, Loc::EMPTY));
                 return Ok(());
             }
         }
 
-        obj.properties.append(
-            bump,
-            G::Property {
-                key: Some(Expr::init(E::String { data: name, ..Default::default() }, Loc::EMPTY)),
-                value: Some(Expr::init(E::String { data: value, ..Default::default() }, Loc::EMPTY)),
-                ..Default::default()
-            },
-        )?;
+        obj.properties.append(G::Property {
+            key: Some(Expr::init(E::String { data: name, ..Default::default() }, Loc::EMPTY)),
+            value: Some(Expr::init(E::String { data: value, ..Default::default() }, Loc::EMPTY)),
+            ..Default::default()
+        })?;
         Ok(())
-    }
-
-    pub fn get_object(expr: &Expr, name: &[u8]) -> Option<Expr> {
-        if let Some(query) = expr.as_property(name) {
-            if query.expr.is_object() {
-                return Some(query.expr);
-            }
-        }
-        None
     }
 
     pub fn get_boolean(expr: &Expr, name: &[u8]) -> Option<bool> {

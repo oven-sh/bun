@@ -68,7 +68,11 @@ pub fn to_js_i64(global_object: &JSGlobalObject, value: i64) -> JSValue {
 pub fn to_js_data(global_object: &JSGlobalObject, value: Data) -> JSValue {
     // Zig: `defer value.deinit()` on `*Data` — function consumes the Data.
     // Taking `Data` by value lets Drop free it after we read the NUL-terminated slice.
-    JSValue::from_date_string(global_object, value.slice_z().as_ptr())
+    let z = value.slice_z();
+    // SAFETY: ZStr invariant guarantees a readable NUL terminator at `len`; Postgres
+    // date payloads contain no interior NULs, satisfying CStr's contract.
+    let cstr = unsafe { core::ffi::CStr::from_ptr(z.as_ptr()) };
+    JSValue::from_date_string(global_object, cstr)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

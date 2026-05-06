@@ -2212,14 +2212,14 @@ impl PostgresSQLConnection {
                 drop(copy_data);
             }
             MessageType::ParameterStatus => {
-                let parameter_status = protocol::ParameterStatus::decode_internal(reader).map_err(pg_err)?;
+                let parameter_status = protocol::ParameterStatus::decode_internal(reader.reborrow()).map_err(pg_err)?;
                 self.backend_parameters
                     .insert(parameter_status.name.slice(), parameter_status.value.slice())
                     .map_err(|_| AnyPostgresError::OutOfMemory)?;
                 // parameter_status dropped at scope end
             }
             MessageType::ReadyForQuery => {
-                let _ready_for_query = protocol::ReadyForQuery::decode_internal(reader).map_err(pg_err)?;
+                let _ready_for_query = protocol::ReadyForQuery::decode_internal(reader.reborrow()).map_err(pg_err)?;
 
                 self.set_status(Status::Connected);
                 self.flags.remove(ConnectionFlags::WAITING_TO_PREPARE);
@@ -2234,7 +2234,7 @@ impl PostgresSQLConnection {
                     if request.status == QueryStatus::PartialResponse {
                         self.finish_request(request);
                         // if is a partial response, just signal that the query is now complete
-                        request.on_result(b"", self.global(), self.js_value.get(), true);
+                        request.on_result(b"", self.global(), self.js_value.try_get().unwrap_or(JSValue::ZERO), true);
                     }
                 }
                 self.advance();
@@ -2248,10 +2248,10 @@ impl PostgresSQLConnection {
                 let request = unsafe { &mut *request_ptr };
 
                 let mut cmd: protocol::CommandComplete = Default::default();
-                cmd.decode_internal(reader).map_err(pg_err)?;
+                cmd.decode_internal(reader.reborrow()).map_err(pg_err)?;
                 debug!("-> {}", bstr::BStr::new(cmd.command_tag.slice()));
 
-                request.on_result(cmd.command_tag.slice(), self.global(), self.js_value.get(), false);
+                request.on_result(cmd.command_tag.slice(), self.global(), self.js_value.try_get().unwrap_or(JSValue::ZERO), false);
                 self.update_ref();
                 // cmd dropped at scope end
             }
@@ -2280,7 +2280,7 @@ impl PostgresSQLConnection {
                 }
             }
             MessageType::ParameterDescription => {
-                let description = protocol::ParameterDescription::decode_internal(reader).map_err(pg_err)?;
+                let description = protocol::ParameterDescription::decode_internal(reader.reborrow()).map_err(pg_err)?;
                 // errdefer bun.default_allocator.free(description.parameters);
                 let request_ptr = match self.current() {
                     Some(r) => r,
@@ -2310,7 +2310,7 @@ impl PostgresSQLConnection {
                 }
             }
             MessageType::RowDescription => {
-                let description = protocol::RowDescription::decode_internal(reader).map_err(pg_err)?;
+                let description = protocol::RowDescription::decode_internal(reader.reborrow()).map_err(pg_err)?;
                 // errdefer description.deinit();
                 let request_ptr = match self.current() {
                     Some(r) => r,
@@ -2331,16 +2331,16 @@ impl PostgresSQLConnection {
                 // invalidate state derived from them so the next DataRow builds
                 // the correct structure instead of reusing a stale cached one.
                 if !statement.fields.is_empty() {
-                    // PORT NOTE: Box<[FieldDescription]> drop runs each field's Drop.
-                    statement.fields = Box::default();
+                    // PORT NOTE: Vec<FieldDescription> drop runs each field's Drop.
+                    statement.fields = Vec::new();
                     statement.cached_structure = Default::default();
                     statement.needs_duplicate_check = true;
                     statement.fields_flags = Default::default();
                 }
-                statement.fields = description.fields;
+                statement.fields = description.fields.into_vec();
             }
             MessageType::Authentication => {
-                let auth = protocol::Authentication::decode_internal(&mut reader).map_err(pg_err)?;
+                let auth = protocol::Authentication::decode_internal(reader).map_err(pg_err)?;
 
                 match &auth {
                     protocol::Authentication::SASL => {
@@ -2579,10 +2579,10 @@ impl PostgresSQLConnection {
                 }
             }
             MessageType::BackendKeyData => {
-                self.backend_key_data = protocol::BackendKeyData::decode_internal(reader).map_err(pg_err)?;
+                self.backend_key_data = protocol::BackendKeyData::decode_internal(reader.reborrow()).map_err(pg_err)?;
             }
             MessageType::ErrorResponse => {
-                let err = protocol::ErrorResponse::decode_internal(reader).map_err(pg_err)?;
+                let err = protocol::ErrorResponse::decode_internal(reader.reborrow()).map_err(pg_err)?;
 
                 if self.status == Status::Connecting || self.status == Status::SentStartupMessage {
                     let v = crate::postgres::protocol::error_response_jsc::to_js(&err, self.global());
@@ -2641,7 +2641,7 @@ impl PostgresSQLConnection {
             }
             MessageType::NoticeResponse => {
                 debug!("UNSUPPORTED NoticeResponse");
-                let _resp = protocol::NoticeResponse::decode_internal(reader)?;
+                let _resp = protocol::NoticeResponse::decode_internal(reader.reborrow())?;
                 // _resp dropped at scope end
             }
             MessageType::EmptyQueryResponse => {

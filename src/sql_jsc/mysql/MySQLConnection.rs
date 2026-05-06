@@ -1386,7 +1386,7 @@ impl MySQLConnection {
                     // `szMeta`) that pushes the payload past 9 bytes, causing the
                     // terminator to be misparsed as a row and the query to hang.
                     if packet_type == PacketType::EOF && header_length < 0xFFFFFF {
-                        if !self.capabilities.client_deprecate_eof() {
+                        if !self.capabilities.CLIENT_DEPRECATE_EOF {
                             // Legacy protocol: EOF packets delimit sections of the result set.
                             // Handle the intermediate EOF (between column defs and rows) and
                             // the final EOF (after all rows) differently.
@@ -1396,7 +1396,7 @@ impl MySQLConnection {
                             {
                                 // Intermediate EOF between column definitions and row data - skip it
                                 let mut eof = EOFPacket::default();
-                                eof.decode(reader)?;
+                                eof.decode_internal(reader)?;
                                 statement
                                     .execution_flags
                                     .insert(mysql_statement::ExecutionFlags::COLUMNS_EOF_RECEIVED);
@@ -1404,13 +1404,13 @@ impl MySQLConnection {
                             }
                             // Final EOF after all row data - terminates the result set
                             let mut eof = EOFPacket::default();
-                            eof.decode(reader)?;
+                            eof.decode_internal(reader)?;
                             self.handle_result_set_ok(request, statement, eof.status_flags, 0, 0);
                             return Ok(());
                         }
 
                         // CLIENT_DEPRECATE_EOF mode: OK packet with 0xFE header.
-                        ok.decode(reader)?;
+                        ok.decode_internal(reader)?;
 
                         self.handle_result_set_ok(
                             request,

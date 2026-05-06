@@ -365,14 +365,60 @@ impl PostgresSQLConnection {
 
     pub fn setup_tls(&mut self) {
         debug!("setupTLS");
-        let _tls_group = unsafe { self.vm() }.rare_data().postgres_group(unsafe { self.vm() }, true);
-        // TODO(port): blocked_on uws::us_socket_t::adopt_tls — Zig calls
-        // `this.socket.SocketTCP.socket.connected.adoptTLS(...)` which has no
-        // Rust binding yet. Until it lands, upgrading to TLS is unreachable
-        // (postgres TLS handshake path).
-        let _ = (&self.secure, &self.tls_config);
-        self.fail(b"Failed to upgrade to TLS", AnyPostgresError::TLSUpgradeFailed);
-        todo!("blocked_on: uws::us_socket_t::adopt_tls");
+        // PORT NOTE: reshaped for borrowck — `rare_data()` borrows `vm` mutably
+        // while `postgres_group` also wants `&VirtualMachine`; route through a
+        // raw pointer (Zig passed the same `vm` twice with no aliasing rules).
+        let vm_ptr: *mut VirtualMachine = self.vm;
+        // SAFETY: `vm_ptr` is the live VM singleton; the two derefs do not
+        // produce overlapping `&mut` (rare_data accesses a disjoint field).
+        let tls_group = unsafe { (*vm_ptr).rare_data().postgres_group(&*vm_ptr, true) };
+
+        // Zig: `this.socket.SocketTCP.socket.connected` — at this point we are
+        // a plain TCP socket in the Connected state.
+        let Socket::SocketTcp(tcp) = &self.socket else {
+            self.fail(b"Failed to upgrade to TLS", AnyPostgresError::TLSUpgradeFailed);
+            return;
+        };
+        let uws::InternalSocket::Connected(raw) = tcp.socket else {
+            self.fail(b"Failed to upgrade to TLS", AnyPostgresError::TLSUpgradeFailed);
+            return;
+        };
+
+        // SAFETY: `secure` is set to a live `SSL_CTX*` before `setup_tls` is
+        // reached (Zig: `this.secure.?`).
+        let ssl_ctx = unsafe { &mut *self.secure.expect("secure SSL_CTX must be set before setupTLS") };
+        let sni = if self.tls_config.server_name.is_null() {
+            None
+        } else {
+            // SAFETY: `server_name` is a NUL-terminated C string owned by
+            // `tls_config` for the connection lifetime.
+            Some(unsafe { core::ffi::CStr::from_ptr(self.tls_config.server_name) })
+        };
+        let ext_size = core::mem::size_of::<Option<*mut PostgresSQLConnection>>() as i32;
+
+        // SAFETY: `raw` is a live connected `us_socket_t*`; `tls_group` is a
+        // live SocketGroup; adopt_tls may realloc and return a different ptr.
+        let Some(new_socket) = (unsafe { &mut *raw }).adopt_tls(
+            // SAFETY: `tls_group` is non-null (lazy-init in `postgres_group`).
+            unsafe { &mut *tls_group },
+            uws::SocketKind::PostgresTls,
+            ssl_ctx,
+            sni,
+            ext_size,
+            ext_size,
+        ) else {
+            self.fail(b"Failed to upgrade to TLS", AnyPostgresError::TLSUpgradeFailed);
+            return;
+        };
+        let new_socket = new_socket.as_ptr();
+        // SAFETY: ext slot is sized for `Option<*mut PostgresSQLConnection>`
+        // above and `new_socket` is a live us_socket_t.
+        unsafe { *(*new_socket).ext::<Option<*mut PostgresSQLConnection>>() = Some(self as *mut Self) };
+        self.socket = Socket::SocketTls(uws::SocketTLS { socket: uws::InternalSocket::Connected(new_socket) });
+        // ext is now repointed; safe to kick the handshake (any dispatch lands here).
+        // SAFETY: `new_socket` is a live us_socket_t with an attached SSL*.
+        unsafe { (*new_socket).start_tls_handshake() };
+        self.start();
     }
 
     fn setup_max_lifetime_timer_if_necessary(&mut self) {

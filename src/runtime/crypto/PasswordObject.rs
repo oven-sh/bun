@@ -8,17 +8,18 @@ use bun_jsc::{
     self as jsc, AnyTask, CallFrame, ConcurrentTask, EventLoop, JSFunction, JSGlobalObject,
     JSValue, JsError, JsResult, WorkPoolTask, ZigString,
 };
-use bun_jsc::node::StringOrBuffer;
-use bun_jsc::promise::{self, JSPromise};
+use bun_jsc::{JSPromise, JSPromiseStrong};
 use bun_str::strings;
-use bun_threading::{ThreadPoolTask, WorkPool};
+use bun_threading::thread_pool::Task as ThreadPoolTask;
+use bun_threading::work_pool::WorkPool;
+
+use crate::node::StringOrBuffer;
 
 // std.crypto.pwhash — Zig stdlib argon2/bcrypt. API-surface shim lives at
 // `crypto::pwhash` (this dir); vendor impl (Rust `argon2`/`bcrypt` crates or
 // Zig-stdlib staticlib) is wired there, not here.
 use super::pwhash;
-// TODO(port): bun.sha is src/sha.zig (top-level file, not a dir) — confirm crate name.
-use bun_sha::SHA512;
+use bun_sha_hmac::SHA512;
 
 // ───────────────────────────────────────────────────────────────────────────
 // PasswordObject

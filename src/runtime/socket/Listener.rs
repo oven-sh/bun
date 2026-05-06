@@ -345,10 +345,10 @@ impl Listener {
                 UnixOrHost::Unix(u) => u,
                 UnixOrHost::Fd(_) => b"",
             };
-            let err = global.create_error_instance(
-                "{}",
-                format_args!("Failed to listen at {}", bstr::BStr::new(hostname_bytes)),
-            );
+            let err = global.create_error_instance(format_args!(
+                "Failed to listen at {}",
+                bstr::BStr::new(hostname_bytes)
+            ));
             log!("Failed to listen {}", errno);
             if errno != 0 {
                 err.put(global, b"syscall", jsc::bun_string_jsc::create_utf8_for_js(global, b"listen")?);
@@ -406,7 +406,7 @@ impl Listener {
 
     // PORT NOTE: no #[bun_jsc::host_fn] — JsClass codegen emits the constructor shim.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Listener> {
-        Err(global.throw("{}", format_args!("Cannot construct Listener")))
+        Err(global.throw(format_args!("Cannot construct Listener")))
     }
 
     pub fn on_name_pipe_created<const SSL: bool>(listener: &mut Listener) -> *mut NewSocket<SSL> {

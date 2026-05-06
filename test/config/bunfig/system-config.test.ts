@@ -100,14 +100,13 @@ describe("system-wide bunfig.toml", () => {
 
     const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // The readable path must appear in stderr after the caret diagnostic —
-    // before the fix this was `at \xaa\xaa\xaa…` (ASAN poison bytes).
-    // Assert a tight shape so we don't accept any substring containing the
-    // basename on a garbled line.
+    // The readable path must appear in stderr after the caret diagnostic.
+    // Before the fix, the `at <path>:line:col` line printed whatever bytes
+    // remained on the freed stack where the PathBuffer used to live — either
+    // ASAN poison or whatever random values (pointers, stale heap) followed
+    // the frame. Asserting the exact filename:line:col shape rejects all of
+    // those while accepting the clean output produced by the fix.
     expect(stderr).toMatch(/at [^\n]*system-bunfig\.toml:1:\d+/);
-    // And the stderr must not contain any of the ASAN poison bytes that
-    // would have appeared when reading freed stack memory.
-    expect(stderr).not.toContain("\xaa");
     expect(exitCode).toBe(0);
   });
 

@@ -1,5 +1,5 @@
 use crate::css_parser as css;
-use crate::css_parser::{CssResult, ParserError, PrintErr, Printer, Token};
+use crate::css_parser::{CssResult, ParserError, ParserOptions, PrintErr, Printer, Token};
 use crate::values::angle::Angle;
 use crate::values::color::CssColor;
 use crate::values::ident::{CustomIdent, CustomIdentFns, Ident};

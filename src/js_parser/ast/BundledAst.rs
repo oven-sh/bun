@@ -73,7 +73,9 @@ pub struct BundledAst<'arena> {
     // is conveniently fully parallelized.
     pub named_imports: NamedImports,
     pub named_exports: NamedExports,
-    pub export_star_import_records: &'arena [u32],
+    // PORT NOTE: Ast owns Box<[u32]>; matching it here avoids the &'arena↔Box
+    // re-alloc on init/to_ast (Zig's `[]u32` is a fat-ptr move either way).
+    pub export_star_import_records: Box<[u32]>,
 
     pub top_level_symbols_to_parts: TopLevelSymbolToParts,
 

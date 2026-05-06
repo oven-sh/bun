@@ -114,7 +114,7 @@ pub extern "C" fn BakeResponseClass__constructRedirect(
     global_object: &JSGlobalObject,
     call_frame: &CallFrame,
 ) -> JSValue {
-    bun_jsc::to_js_host_call(global_object, || construct_redirect(global_object, call_frame))
+    bun_jsc::to_js_host_call(global_object, construct_redirect(global_object, call_frame))
 }
 
 pub fn construct_redirect(
@@ -126,7 +126,8 @@ pub fn construct_redirect(
 
     let vm = global_this.bun_vm();
     // Check if dev_server_async_local_storage is set (indicating we're in Bun dev server)
-    if let Some(async_local_storage) = vm.get_dev_server_async_local_storage()? {
+    // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
+    if let Some(async_local_storage) = unsafe { &mut *vm }.get_dev_server_async_local_storage()? {
         assert_streaming_disabled(global_this, async_local_storage, b"Response.redirect")?;
         let js = to_js_for_ssr(&mut ptr, global_this, SSRKind::Redirect);
         // TODO(port): ownership — verify JS wrapper adopts `*mut Response`; Box must not Drop here.
@@ -144,7 +145,7 @@ pub extern "C" fn BakeResponseClass__constructRender(
     call_frame: &CallFrame,
 ) -> JSValue {
     // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
-    bun_jsc::to_js_host_call(global_object, || construct_render(global_object, call_frame))
+    bun_jsc::to_js_host_call(global_object, construct_render(global_object, call_frame))
 }
 
 /// This function is only available on JSBakeResponse

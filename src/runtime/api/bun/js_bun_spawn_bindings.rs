@@ -1652,7 +1652,7 @@ pub fn append_envp_from_js(
 
         // Check for null bytes in env key and value (security: prevent null byte injection)
         if key.index_of_ascii_char(0).is_some() {
-            return global_this
+            return Err(global_this
                 .err(
                     jsc::ErrorCode::INVALID_ARG_VALUE,
                     format_args!(
@@ -1661,10 +1661,10 @@ pub fn append_envp_from_js(
                         key.to_zig_string()
                     ),
                 )
-                .throw();
+                .throw());
         }
         if value_bunstr.index_of_ascii_char(0).is_some() {
-            return global_this
+            return Err(global_this
                 .err(
                     jsc::ErrorCode::INVALID_ARG_VALUE,
                     format_args!(
@@ -1673,7 +1673,7 @@ pub fn append_envp_from_js(
                         value_bunstr.to_zig_string()
                     ),
                 )
-                .throw();
+                .throw());
         }
 
         // PORT NOTE: Zig `std.fmt.allocPrintSentinel(envp.allocator, "{f}={f}", .{key, value}, 0)`

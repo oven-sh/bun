@@ -775,37 +775,38 @@ pub mod random {
         let [buf_value, mut offset_value, mut size_value, mut callback] =
             call_frame.arguments_as_array::<4>();
 
-        let Some(buf) = buf_value.as_array_buffer(global) else {
-            return global.throw_invalid_argument_type_value(
+        let Some(mut buf) = buf_value.as_array_buffer(global) else {
+            return Err(global.throw_invalid_argument_type_value(
                 "buf",
                 "ArrayBuffer or ArrayBufferView",
                 buf_value,
-            );
+            ));
         };
 
         let element_size = buf.bytes_per_element().unwrap_or(1);
 
+        #[allow(unused_assignments)]
         let mut offset: u32 = 0;
         if offset_value.is_callable() {
             callback = offset_value;
-            offset = assert_offset(global, JSValue::js_number(0), element_size, buf.byte_len as usize)?;
-            size_value = JSValue::js_number(buf.len);
+            offset = assert_offset(global, JSValue::js_number(0.0), element_size, buf.byte_len)?;
+            size_value = JSValue::js_number(buf.len as f64);
         } else if size_value.is_callable() {
             callback = size_value;
-            offset = assert_offset(global, offset_value, element_size, buf.byte_len as usize)?;
+            offset = assert_offset(global, offset_value, element_size, buf.byte_len)?;
             // `offset` is a byte offset (already scaled by element_size) but `buf.len`
             // is an element count, so `buf.len - offset` would mix units and can
             // underflow. Defer to the `buf.byte_len - offset` default below instead.
             size_value = JSValue::UNDEFINED;
         } else {
-            let _ = validators::validate_function(global, "callback", callback)?;
-            offset = assert_offset(global, offset_value, element_size, buf.byte_len as usize)?;
+            let _ = validators::validate_function(global, b"callback", callback)?;
+            offset = assert_offset(global, offset_value, element_size, buf.byte_len)?;
         }
 
-        let size = if size_value.is_undefined() {
-            buf.byte_len - offset
+        let size: u32 = if size_value.is_undefined() {
+            (buf.byte_len - offset as usize) as u32
         } else {
-            assert_size(global, size_value, element_size, offset, buf.byte_len as usize)?
+            assert_size(global, size_value, element_size, offset, buf.byte_len)?
         };
 
         if size == 0 {
@@ -815,7 +816,7 @@ pub mod random {
 
         let ctx = JobCtx {
             value: buf_value,
-            bytes: buf.slice().as_mut_ptr(),
+            bytes: buf.slice_mut().as_mut_ptr(),
             offset,
             length: size as usize,
             result: (),

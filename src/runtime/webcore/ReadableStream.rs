@@ -358,35 +358,34 @@ impl ReadableStream {
                 reader.to_readable_stream(global_this)
             }
             webcore::blob::store::Data::File(_) => {
-                let reader = NewSource::<FileReader>::new(NewSource {
+                let mut reader = NewSource::<FileReader>::new(NewSource {
                     global_this,
                     context: FileReader {
-                        event_loop: jsc::EventLoopHandle::init(global_this.bun_vm().event_loop()),
-                        start_offset: blob.offset,
-                        max_size: if blob.size != Blob::MAX_SIZE { Some(blob.size) } else { None },
+                        // SAFETY: bun_vm() returns a non-null *mut VirtualMachine; event_loop()
+                        // returns a non-null *mut EventLoop. Both outlive this call.
+                        event_loop: jsc::EventLoopHandle::init(unsafe {
+                            &*(*global_this.bun_vm()).event_loop()
+                        }),
+                        start_offset: Some(blob.offset as usize),
+                        max_size: if blob.size != webcore::blob::MAX_SIZE {
+                            Some(blob.size as usize)
+                        } else {
+                            None
+                        },
                         lazy: webcore::file_reader::Lazy::Blob(store.clone()),
                         ..Default::default()
                     },
                     ..Default::default()
                 });
-                store.r#ref();
+                store.ref_();
                 reader.to_readable_stream(global_this)
             }
             webcore::blob::store::Data::S3(s3) => {
-                let credentials = s3.get_credentials();
-                let path = s3.path();
-                let proxy = global_this.bun_vm().transpiler.env.get_http_proxy(true, None, None);
-                let proxy_url = proxy.as_ref().map(|p| p.href.as_slice());
-
-                webcore::s3::client::readable_stream(
-                    credentials,
-                    path,
-                    blob.offset as usize,
-                    if blob.size != Blob::MAX_SIZE { Some(blob.size as usize) } else { None },
-                    proxy_url,
-                    s3.request_payer,
-                    global_this,
-                )
+                let _ = s3;
+                // TODO(port): `s3.get_credentials()` yields `&Arc<s3_stub::S3Credentials>`
+                // but `s3::client::readable_stream` wants `&mut bun_s3_signing::S3Credentials`;
+                // the two `S3Credentials` types are unrelated until the s3 stub is unified.
+                todo!("blocked_on: webcore::s3::client::readable_stream / s3_stub::S3Credentials unification")
             }
         }
     }

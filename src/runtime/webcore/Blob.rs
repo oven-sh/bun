@@ -2471,26 +2471,26 @@ pub fn construct_bun_file(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let vm = global_object.bun_vm();
-    let arguments = callframe.arguments_old(2);
+    // SAFETY: bun_vm() never returns null for a Bun-owned global.
+    let vm = unsafe { &mut *global_object.bun_vm() };
+    let arguments = callframe.arguments_old::<2>();
     let arguments_slice = arguments.slice();
-    let mut args = jsc::ArgumentsSlice::init(unsafe { &*vm }, arguments_slice);
+    let mut args = jsc::ArgumentsSlice::init(vm, arguments_slice);
 
-    let mut path = PathOrFileDescriptor::from_js(global_object, &mut args)?.ok_or_else(|| {
-        global_object
-            .throw_invalid_arguments("Expected file path string or file descriptor")
-            .unwrap_err()
-    })?;
+    let Some(mut path) = PathOrFileDescriptor::from_js(global_object, &mut args)? else {
+        return Err(global_object
+            .throw_invalid_arguments("Expected file path string or file descriptor"));
+    };
     let options = if arguments_slice.len() >= 2 { Some(arguments_slice[1]) } else { None };
 
     if let PathOrFileDescriptor::Path(ref p) = path {
         if p.slice().starts_with(b"s3://") {
-            return S3File::construct_internal_js(global_object, p.clone(), options);
+            return S3File::construct_internal_js(global_object, p.dupe(), options);
         }
     }
-    let _path_cleanup = scopeguard::guard(&mut path, |p| p.deinit_and_unprotect());
+    let _path_cleanup = scopeguard::guard((), |_| path.deinit_and_unprotect());
 
-    let mut blob = Blob::find_or_create_file_from_path::<false>(&mut path, global_object);
+    let mut blob = Blob::find_or_create_file_from_path(&mut path, global_object, false);
 
     if let Some(opts) = options {
         if opts.is_object() {
@@ -2503,7 +2503,8 @@ pub fn construct_bun_file(
                             break 'inner;
                         }
                         blob.content_type_was_set = true;
-                        if let Some(entry) = vm.mime_type(str.slice()) {
+                        // SAFETY: bun_vm() never returns null for a Bun-owned global.
+                        if let Some(entry) = unsafe { (*global_object.bun_vm()).mime_type(str.slice()) } {
                             blob.content_type = entry.value as *const [u8];
                             break 'inner;
                         }
@@ -2515,7 +2516,7 @@ pub fn construct_bun_file(
                 }
             }
             if let Some(last_modified) = opts.get_truthy(global_object, "lastModified")? {
-                blob.last_modified = last_modified.coerce::<f64>(global_object)?;
+                blob.last_modified = last_modified.to_number(global_object)?;
             }
         }
     }

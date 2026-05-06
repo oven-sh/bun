@@ -290,8 +290,11 @@ pub enum StreamResult {
     Done,
     Owned(ByteList),
     OwnedAndDone(ByteList),
-    TemporaryAndDone(ByteList),
-    Temporary(ByteList),
+    // PORT NOTE: `temporary*` payloads are borrowed slices wrapped via
+    // `ByteList::from_borrowed_slice_dangerous` (`ManuallyDrop<ByteList>` so the
+    // borrowed allocation is never freed by `Drop`).
+    TemporaryAndDone(ManuallyDrop<ByteList>),
+    Temporary(ManuallyDrop<ByteList>),
     IntoArray(IntoArray),
     IntoArrayAndDone(IntoArray),
 }
@@ -313,6 +316,7 @@ impl StreamResult {
     }
 }
 
+#[derive(Clone)]
 pub enum StreamError {
     Error(SysError),
     AbortReason(CommonAbortReason),

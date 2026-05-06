@@ -875,13 +875,15 @@ impl ServePlugins {
         let _deref_guard = scopeguard::guard((), move |_| unsafe { Self::deref_(this_ptr) });
 
         let plugin = JSBundler::Plugin::create(global, bun_jsc::BunPluginTarget::Browser);
+        // SAFETY: `Plugin::create` returns a freshly-boxed `*mut Plugin` (single owner).
+        let plugin: Box<JSBundler::Plugin> = unsafe { Box::from_raw(plugin) };
         // PERF(port): was stack-fallback alloc
         let mut bunstring_array: Vec<BunString> = Vec::with_capacity(plugin_list.len());
         for raw_plugin in &plugin_list {
-            bunstring_array.push(BunString::init(raw_plugin));
+            bunstring_array.push(BunString::init(&***raw_plugin));
         }
-        let plugin_js_array = BunString::to_js_array(global, &bunstring_array)?;
-        let bunfig_folder_bunstr = BunString::create_utf8_for_js(global, bunfig_folder)?;
+        let plugin_js_array = jsc::bun_string_jsc::to_js_array(global, &bunstring_array)?;
+        let bunfig_folder_bunstr = jsc::bun_string_jsc::create_utf8_for_js(global, bunfig_folder)?;
 
         self.state = ServePluginsState::Pending {
             promise: jsc::JSPromiseStrong::init(global),
@@ -890,8 +892,11 @@ impl ServePlugins {
             dev_server: None,
         };
 
-        global.bun_vm().event_loop().enter();
-        let result = jsc::from_js_host_call(global, || unsafe {
+        // SAFETY: `bun_vm()` returns a live raw `*mut VirtualMachine`;
+        // `event_loop()` returns a live raw `*mut EventLoop`. Reborrowed for
+        // each call so no aliased `&mut` outlives the statement.
+        unsafe { (*(*global.bun_vm()).event_loop()).enter() };
+        let result = jsc::host_fn::from_js_host_call(global, || unsafe {
             JSBundlerPlugin__loadAndResolvePluginsForServe(
                 match &self.state {
                     ServePluginsState::Pending { plugin, .. } => &**plugin,
@@ -951,12 +956,12 @@ impl ServePlugins {
 
     pub fn handle_on_resolve(&mut self) {
         debug_assert!(matches!(self.state, ServePluginsState::Pending { .. }));
-        let ServePluginsState::Pending { plugin, dev_server, html_bundle_routes, mut promise } =
+        let ServePluginsState::Pending { plugin, dev_server, html_bundle_routes, promise } =
             mem::replace(&mut self.state, ServePluginsState::Err)
         else {
             unreachable!()
         };
-        promise.deinit();
+        drop(promise); // Zig: promise.deinit() — Drop on JscStrong releases the slot.
 
         self.state = ServePluginsState::Loaded(plugin);
         let plugin_ref = match &self.state {
@@ -966,19 +971,22 @@ impl ServePlugins {
 
         for route in html_bundle_routes {
             // SAFETY: route was ref'd when stored
-            let route = unsafe { &mut *route };
-            route.on_plugins_resolved(Some(plugin_ref)); // bun.handleOom — aborts on OOM
-            route.deref_();
+            let route_ref = unsafe { &mut *route };
+            route_ref.on_plugins_resolved(Some(plugin_ref)); // bun.handleOom — aborts on OOM
+            // SAFETY: paired with the `ref_` taken when the route was pushed.
+            unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
         }
-        if let Some(server) = dev_server {
-            // SAFETY: dev_server outlives plugin load
-            unsafe { server.as_ref() }.on_plugins_resolved(plugin_ref);
+        if let Some(_server) = dev_server {
+            // TODO(port): blocked_on crate::bake::dev_server::DevServer::on_plugins_resolved
+            // — method exists on bake::dev_server_body::DevServer<'_> but not the
+            // lifetime-erased re-export this file imports.
+            let _ = plugin_ref;
         }
     }
 
     pub fn handle_on_reject(&mut self, global: &JSGlobalObject, err: JSValue) {
         debug_assert!(matches!(self.state, ServePluginsState::Pending { .. }));
-        let ServePluginsState::Pending { plugin, dev_server, html_bundle_routes, mut promise } =
+        let ServePluginsState::Pending { plugin, dev_server, html_bundle_routes, promise } =
             mem::replace(&mut self.state, ServePluginsState::Err)
         else {
             unreachable!()

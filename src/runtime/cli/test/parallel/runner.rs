@@ -56,9 +56,11 @@ pub fn run_as_coordinator(
     coverage_opts: &mut CodeCoverageOptions,
 ) -> Result<bool, bun_core::Error> {
     // SAFETY: caller guarantees `vm` is a valid live VM pointer for the duration.
-    let vm = unsafe { &mut *vm };
+    // Kept as a raw pointer; dereferenced at each use site to sidestep borrowck
+    // around the self-referential Coordinator/Worker graph.
+    let vm_ptr = vm;
     // SAFETY: env loader is initialized before the test runner runs.
-    let env = unsafe { &mut *vm.transpiler.env };
+    let env = unsafe { &mut *(*vm_ptr).transpiler.env };
     // TODO(port): narrow error set
     let n: u32 = u32::try_from(files.len()).unwrap();
     let k: u32 = ctx.test_options.parallel.min(n);
@@ -67,7 +69,8 @@ pub fn run_as_coordinator(
         // tests can rely on the var whenever --parallel is passed.
         let _ = env.map.put(b"JEST_WORKER_ID", b"1");
         let _ = env.map.put(b"BUN_TEST_WORKER_ID", b"1");
-        TestCommand::run_all_tests(reporter, vm, files);
+        // SAFETY: see vm_ptr note above.
+        TestCommand::run_all_tests(reporter, unsafe { &mut *vm_ptr }, files);
         return Ok(false);
     }
 

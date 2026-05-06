@@ -4723,32 +4723,62 @@ impl Resolver {
     // If it is not a legal port, a TypeError will be thrown.
     // FFI shim emitted by `export_host_fn!` below.
     pub fn global_lookup_service(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(2);
-        if arguments.len() < 2 {
-            return global_this.throw_not_enough_arguments("lookupService", 2, arguments.len());
+        let arguments = callframe.arguments_old::<2>();
+        if arguments.len < 2 {
+            // TODO(port): blocked_on bun_jsc::JSGlobalObject::throw_not_enough_arguments (gated)
+            return Err(global_this.throw(format_args!(
+                "Not enough arguments to 'lookupService'. Expected 2, got {}.",
+                arguments.len
+            )));
         }
 
         let addr_value = arguments.ptr[0];
         if addr_value.is_empty_or_undefined_or_null() || !addr_value.is_string() {
-            return global_this.throw_invalid_argument_type("lookupService", "address", "string");
+            return Err(global_this.throw_invalid_argument_type("lookupService", "address", "string"));
         }
         let addr_str = addr_value.to_js_string(global_this)?;
-        if addr_str.length() == 0 {
-            return global_this.throw_invalid_argument_type("lookupService", "address", "non-empty string");
+        // SAFETY: to_js_string returns a non-null *mut JSString on the Ok path.
+        if unsafe { (*addr_str).length() } == 0 {
+            return Err(global_this.throw_invalid_argument_type("lookupService", "address", "non-empty string"));
         }
-        let addr_s = addr_str.get_zig_string(global_this).slice();
+        // SAFETY: addr_str is a live JSString cell; get_zig_string borrows its
+        // backing buffer, which JSC keeps alive while addr_str is reachable.
+        let addr_zigstr = unsafe { (*addr_str).get_zig_string(global_this) };
+        let addr_s = addr_zigstr.slice();
 
         let port_value = arguments.ptr[1];
-        let port: u16 = port_value.to_port_number(global_this)?;
+        // TODO(port): blocked_on bun_jsc::JSValue::to_port_number — Zig validated
+        // 0..=0xFFFF and threw ERR_SOCKET_BAD_PORT. Coerce-and-truncate for now.
+        let port: u16 = port_value.coerce_to_i32(global_this)? as u16;
 
         // SAFETY: all-zero is a valid sockaddr_storage
         let mut sa: libc::sockaddr_storage = unsafe { core::mem::zeroed() };
-        if c_ares::get_sockaddr(addr_s, port, &mut sa as *mut _ as *mut libc::sockaddr) != 0 {
-            return global_this.throw_invalid_argument_value("address", addr_value);
+        // SAFETY: sockaddr_storage is large enough to hold any sockaddr family
+        // get_sockaddr writes (in/in6); the `&mut *` reborrow yields a
+        // `&mut sockaddr` view into that storage.
+        if c_ares::get_sockaddr(addr_s, port, unsafe {
+            &mut *(&mut sa as *mut _ as *mut libc::sockaddr)
+        }) != 0
+        {
+            // TODO(port): blocked_on bun_jsc::JSGlobalObject::throw_invalid_argument_value (gated)
+            return Err(global_this
+                .err(
+                    jsc::ErrorCode::INVALID_ARG_VALUE,
+                    format_args!("The argument 'address' is invalid."),
+                )
+                .throw());
         }
 
-        let vm = global_this.bun_vm();
-        let resolver = vm.rare_data().global_dns_resolver(vm);
+        // TODO(port): blocked_on bun_jsc::RareData::global_dns_resolver — upstream
+        // `RareData::global_dns_resolver` returns a stub `high_tier::dns::Resolver`,
+        // not this crate's `Resolver`. Until the cycle-break vtable lands and
+        // `RareData` carries the real `dns_jsc::Resolver`, this entry point cannot
+        // acquire the global resolver.
+        let _ = (sa, addr_s);
+        return todo!("blocked_on: bun_jsc::RareData::global_dns_resolver — type cycle");
+        #[allow(unreachable_code)]
+        let resolver: &mut Resolver = unreachable!();
+        #[allow(unreachable_code)]
         let channel = resolver.get_channel_or_error(global_this)?;
 
         // This string will be freed in `CAresNameInfo.deinit`

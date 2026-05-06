@@ -331,7 +331,12 @@ fn loadBunfig(allocator: std.mem.Allocator, auto_loaded: bool, is_project: bool,
     const source = switch (bun.sys.File.toSource(owned_path, allocator, .{ .convert_bom = true })) {
         .result => |s| s,
         .err => |err| {
-            if (auto_loaded) return;
+            if (auto_loaded) {
+                // Auto-discovered probe of a missing file is best-effort; release
+                // owned_path since ctx.log won't borrow from this unused path.
+                allocator.free(owned_path);
+                return;
+            }
             Output.prettyErrorln("{f}\nwhile reading config \"{s}\"", .{
                 err,
                 owned_path,

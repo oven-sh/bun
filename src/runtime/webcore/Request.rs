@@ -596,7 +596,7 @@ impl Request {
             });
 
             formatter.write_indent(writer)?;
-            writer.write_str(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>method<d>:<r> \""))?;
+            writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>method<d>:<r> \"").as_ref())?;
 
             write!(writer, "{:?}", self.method)?;
             writer.write_str("\"")?;
@@ -606,7 +606,7 @@ impl Request {
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
-            writer.write_str(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>url<d>:<r> "))?;
+            writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>url<d>:<r> ").as_ref())?;
             self.ensure_url().map_err(|_| core::fmt::Error)?;
             write!(
                 writer,
@@ -626,7 +626,7 @@ impl Request {
 
             if params_object.is_cell() {
                 formatter.write_indent(writer)?;
-                writer.write_str(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>params<d>:<r> "))?;
+                writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>params<d>:<r> ").as_ref())?;
                 formatter
                     .print_as::<_, ENABLE_ANSI_COLORS>(
                         bun_jsc::FormatTag::Private,
@@ -642,7 +642,7 @@ impl Request {
             }
 
             formatter.write_indent(writer)?;
-            writer.write_str(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>headers<d>:<r> "))?;
+            writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>headers<d>:<r> ").as_ref())?;
             let headers_js = self.get_headers(formatter.global_this()).map_err(js_err)?;
             formatter
                 .print_as::<_, ENABLE_ANSI_COLORS>(
@@ -717,16 +717,16 @@ impl Request {
                     return ct;
                 }
 
-                bun_http_types::MimeType::OTHER.value
+                &bun_http_types::MimeType::OTHER.value
             }
             BodyValue::InternalBlob(ib) => ib.content_type(),
-            BodyValue::WTFStringImpl(_) => bun_http_types::MimeType::TEXT.value,
+            BodyValue::WTFStringImpl(_) => &bun_http_types::MimeType::TEXT.value,
             // BodyValue::InlineBlob(ib) => ib.content_type(),
             BodyValue::Null
             | BodyValue::Error(_)
             | BodyValue::Used
             | BodyValue::Locked(_)
-            | BodyValue::Empty => bun_http_types::MimeType::OTHER.value,
+            | BodyValue::Empty => &bun_http_types::MimeType::OTHER.value,
         }
     }
 
@@ -822,7 +822,7 @@ impl Request {
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_url(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         self.ensure_url()?;
-        Ok(self.url.to_js(global_object))
+        self.url.to_js(global_object)
     }
 
     pub fn size_of_url(&self) -> usize {
@@ -1194,7 +1194,7 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Headers) {
-                        if let Some(headers) = response.get_init_headers() {
+                        if let Some(headers) = response.get_init_headers_mut() {
                             match headers.clone_this(global_this) {
                                 Ok(Some(h)) => {
                                     // SAFETY: clone_this returns a +1 ref FetchHeaders.

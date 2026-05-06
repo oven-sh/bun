@@ -457,7 +457,7 @@ use bun_jsc::{
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_paths::{self as path, PathBuffer, WPathBuffer, MAX_PATH_BYTES};
 use bun_str::{self, strings, String as BunString};
-use bun_sys::{self as sys, Fd};
+use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_aio::{self as Async, KeepAlive};
 use bun_threading::work_pool::WorkPool;
 
@@ -667,6 +667,21 @@ pub mod bun_object {
         };
     }
 
+    /// Adapter so `export_lazy_prop_callbacks!` accepts targets returning either
+    /// a bare `JSValue` (most getters) or a `JsResult<JSValue>` (e.g.
+    /// `get_embedded_files`, which can OOM allocating the result array).
+    trait IntoLazyPropResult {
+        fn into_lazy_prop_result(self) -> JsResult<JSValue>;
+    }
+    impl IntoLazyPropResult for JSValue {
+        #[inline]
+        fn into_lazy_prop_result(self) -> JsResult<JSValue> { Ok(self) }
+    }
+    impl IntoLazyPropResult for JsResult<JSValue> {
+        #[inline]
+        fn into_lazy_prop_result(self) -> JsResult<JSValue> { self }
+    }
+
     macro_rules! export_lazy_prop_callbacks {
         ($( $sym:ident => $target:path ),* $(,)?) => {
             $(
@@ -677,7 +692,10 @@ pub mod bun_object {
                 ) -> JSValue {
                     // SAFETY: JSC always passes valid pointers here.
                     let (g, o) = unsafe { (&*this, &*object) };
-                    bun_jsc::to_js_host_call(g, Ok($target(g, o)))
+                    bun_jsc::to_js_host_call(
+                        g,
+                        IntoLazyPropResult::into_lazy_prop_result($target(g, o)),
+                    )
                 }
             )*
         };

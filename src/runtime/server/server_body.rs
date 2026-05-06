@@ -60,6 +60,17 @@ unsafe extern "C" {
     fn ERR_lib_error_string(packed_error: u32) -> *const c_char;
 }
 
+/// Local shim: `bun_jsc::VM` lacks a `deprecated_report_extra_memory` method;
+/// call the underlying C++ symbol directly.
+#[inline]
+unsafe fn vm_report_extra_memory(vm: *mut bun_jsc::VM, size: usize) {
+    unsafe extern "C" {
+        fn JSC__VM__reportExtraMemory(vm: *mut bun_jsc::VM, size: usize);
+    }
+    // SAFETY: `vm` is a live opaque JSC VM handle.
+    unsafe { JSC__VM__reportExtraMemory(vm, size) }
+}
+
 /// Local shims over `bun_string_jsc.zig` symbols not yet surfaced through the
 /// top-level `bun_jsc::bun_string_jsc` re-export module.
 mod bun_string_jsc_shim {
@@ -3186,8 +3197,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let mut args: Vec<JSValue> = Vec::with_capacity(ARG_COUNT + 1);
         args.push(prepared.js_request);
         args.extend_from_slice(&extra_args);
-        let global = unsafe { &*self.global_this };
-        let response_value = match callback.call(global, self.js_value_assert_alive(), &args) {
+        // SAFETY: `prepared` borrows into `*self` (request/ctx allocations) but the
+        // fields touched below (`global_this`, `js_value`) are disjoint. Reborrow
+        // through a raw pointer to satisfy NLL — same pattern as `on_request_for`.
+        let this = unsafe { &*self_ptr };
+        let global = unsafe { &*this.global_this };
+        let response_value = match callback.call(global, this.js_value_assert_alive(), &args) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
         };
@@ -3305,7 +3320,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // `ThisServer: ServerLike` bound — see handle_request_for.
         let _ = ctx;
         // SAFETY: jsc_vm is a live *mut VM while the JS thread is running
-        unsafe { (*self.vm.jsc_vm).deprecated_report_extra_memory(mem::size_of::<Ctx>()) };
+        unsafe { vm_report_extra_memory(self.vm.jsc_vm, mem::size_of::<Ctx>()) };
         let _ = (should_deinit_context, method);
         todo!("blocked_on: VirtualMachine::init_request_body_value + RequestContext field access via RequestCtx trait");
         #[allow(unreachable_code)]

@@ -527,9 +527,8 @@ impl FetchTasklet {
                 let bytes = unsafe { &mut *bytes };
                 bytes.size_hint = self.get_size_hint();
                 // body can be marked as used but we still need to pipe the data
-                let chunk = self.scheduled_response_buffer.list.as_slice();
-
                 if self.result.has_more {
+                    let chunk = self.scheduled_response_buffer.list.as_slice();
                     // SAFETY: `chunk` borrows `scheduled_response_buffer` which outlives
                     // `on_data` (consumed synchronously per StreamResult::Temporary contract).
                     bytes.on_data(StreamResult::Temporary(unsafe {
@@ -540,6 +539,7 @@ impl FetchTasklet {
                     let prev = core::mem::take(&mut self.readable_stream_ref);
                     buffer_reset.set(false);
 
+                    let chunk = self.scheduled_response_buffer.list.as_slice();
                     // SAFETY: see above.
                     bytes.on_data(StreamResult::TemporaryAndDone(unsafe {
                         bun_collections::ByteList::from_borrowed_slice_dangerous(chunk)
@@ -586,10 +586,14 @@ impl FetchTasklet {
             buffer_reset.set(false);
             if !self.result.has_more {
                 let scheduled_response_buffer = core::mem::take(&mut self.scheduled_response_buffer.list);
-                let body = response.get_body_value();
+                // PORT NOTE: `body` (&mut response.body.value) and `get_fetch_headers()`
+                // (&response.init.headers) are disjoint fields, but borrowck can't see
+                // through the accessor methods. Hold `body` as a raw ptr (Zig pattern).
+                let body: *mut BodyValue = response.get_body_value();
                 // done resolve body
                 let old = core::mem::replace(
-                    body,
+                    // SAFETY: just obtained from live `response`; uniquely accessed here.
+                    unsafe { &mut *body },
                     BodyValue::InternalBlob(InternalBlob {
                         bytes: scheduled_response_buffer,
                         was_string: false,
@@ -598,7 +602,8 @@ impl FetchTasklet {
                 bun_output::scoped_log!(
                     FetchTasklet,
                     "onBodyReceived body_value length={}",
-                    match body {
+                    // SAFETY: see above.
+                    match unsafe { &*body } {
                         BodyValue::InternalBlob(b) => b.bytes.len(),
                         _ => 0,
                     }
@@ -609,9 +614,12 @@ impl FetchTasklet {
                 if matches!(old, BodyValue::Locked(_)) {
                     bun_output::scoped_log!(FetchTasklet, "onBodyReceived old.resolve");
                     let mut old = old;
+                    let headers = response.get_fetch_headers();
                     // PORT NOTE: Body.rs aliases its `JsTerminated<T>` to `JsResult<T>` for
                     // now; narrow back to the real `JsTerminated` here.
-                    BodyValue::resolve(&mut old, body, self.global_this, response.get_fetch_headers())
+                    // SAFETY: `body` points into `response.body`, disjoint from `headers`
+                    // (response.init); both live for this block.
+                    BodyValue::resolve(&mut old, unsafe { &mut *body }, self.global_this, headers)
                         .map_err(|_| bun_jsc::JsTerminated::JSTerminated)?;
                 }
             }

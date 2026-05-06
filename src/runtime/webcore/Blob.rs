@@ -1630,8 +1630,10 @@ fn write_file_with_empty_source_to_destination(
                 s3.path(),
                 b"",
                 destination_blob.content_type_or_mime_type(),
-                aws_options.content_disposition,
-                aws_options.content_encoding,
+                // SAFETY: `*const [u8]` borrows from sibling `_*_slice` fields
+                // on `aws_options`, which outlives this call.
+                aws_options.content_disposition.map(|p| unsafe { &*p }),
+                aws_options.content_encoding.map(|p| unsafe { &*p }),
                 aws_options.acl,
                 proxy_url,
                 aws_options.storage_class,
@@ -1808,7 +1810,11 @@ pub fn write_file_with_source_destination(
                         ctx,
                     )? {
                         return Ok(s3_client::upload_stream(
-                            if options.extra_options.is_some() { aws_options.credentials.dupe() } else { s3.get_credentials() },
+                            // PORT NOTE: Zig conditionally `.dupe()`d when extra_options
+                            // were provided (passing ownership). Rust `upload_stream`
+                            // takes `&S3Credentials`, and `aws_options.credentials`
+                            // already reflects extra_options, so borrow it directly.
+                            &aws_options.credentials,
                             s3.path(),
                             stream,
                             ctx,
@@ -1816,8 +1822,10 @@ pub fn write_file_with_source_destination(
                             aws_options.acl,
                             aws_options.storage_class,
                             destination_blob.content_type_or_mime_type(),
-                            aws_options.content_disposition,
-                            aws_options.content_encoding,
+                            // SAFETY: `*const [u8]` borrows from sibling `_*_slice`
+                            // fields on `aws_options`, which outlives this call.
+                            aws_options.content_disposition.map(|p| unsafe { &*p }),
+                            aws_options.content_encoding.map(|p| unsafe { &*p }),
                             proxy_url,
                             aws_options.request_payer,
                             None,
@@ -1839,7 +1847,7 @@ pub fn write_file_with_source_destination(
                     impl Wrapper {
                         fn resolve(result: S3UploadResult, opaque_self: *mut c_void) -> jsc::JsTerminatedResult<()> {
                             // SAFETY: opaque_self is the Box::into_raw(Wrapper) we passed to S3::upload below.
-                            let this = unsafe { Box::from_raw(opaque_self.cast::<Wrapper>()) };
+                            let mut this = unsafe { Box::from_raw(opaque_self.cast::<Wrapper>()) };
                             // SAFETY: global was stored from a live &JSGlobalObject; the VM outlives this callback.
                             let global = unsafe { &*this.global };
                             match result {
@@ -1864,8 +1872,10 @@ pub fn write_file_with_source_destination(
                         s3.path(),
                         bytes.slice(),
                         destination_blob.content_type_or_mime_type(),
-                        aws_options.content_disposition,
-                        aws_options.content_encoding,
+                        // SAFETY: `*const [u8]` borrows from sibling `_*_slice` fields
+                        // on `aws_options`, which outlives this call.
+                        aws_options.content_disposition.map(|p| unsafe { &*p }),
+                        aws_options.content_encoding.map(|p| unsafe { &*p }),
                         aws_options.acl,
                         proxy_url,
                         aws_options.storage_class,
@@ -1887,7 +1897,10 @@ pub fn write_file_with_source_destination(
                     ctx,
                 )? {
                     return Ok(s3_client::upload_stream(
-                        if options.extra_options.is_some() { aws_options.credentials.dupe() } else { s3.get_credentials() },
+                        // PORT NOTE: Zig conditionally `.dupe()`d when extra_options
+                        // were provided. Rust `upload_stream` takes `&S3Credentials`;
+                        // `aws_options.credentials` already reflects extra_options.
+                        &aws_options.credentials,
                         s3.path(),
                         stream,
                         ctx,
@@ -1895,8 +1908,10 @@ pub fn write_file_with_source_destination(
                         aws_options.acl,
                         aws_options.storage_class,
                         destination_blob.content_type_or_mime_type(),
-                        aws_options.content_disposition,
-                        aws_options.content_encoding,
+                        // SAFETY: `*const [u8]` borrows from sibling `_*_slice` fields
+                        // on `aws_options`, which outlives this call.
+                        aws_options.content_disposition.map(|p| unsafe { &*p }),
+                        aws_options.content_encoding.map(|p| unsafe { &*p }),
                         proxy_url,
                         aws_options.request_payer,
                         None,
@@ -1944,7 +1959,7 @@ pub fn write_file_internal(
         // TODO only reset last_modified on success paths instead of resetting
         // last_modified at the beginning for better performance.
         if let store::Data::File(ref mut file) = *blob_store.data_mut() {
-            file.last_modified = jsc::INIT_TIMESTAMP;
+            file.last_modified = jsc::INIT_TIMESTAMP as f64;
         }
     }
 
@@ -2019,7 +2034,7 @@ pub fn write_file_internal(
     // if path_or_blob is a path, convert it into a file blob
     let mut destination_blob: Blob = match path_or_blob {
         PathOrBlob::Path(ref mut path) => {
-            let new_blob = Blob::find_or_create_file_from_path::<true>(path, global_this);
+            let new_blob = Blob::find_or_create_file_from_path(path, global_this, true);
             if new_blob.store.is_none() {
                 return Err(global_this
                     .throw_invalid_arguments("Writing to an empty blob is not implemented yet"));
@@ -2064,7 +2079,7 @@ pub fn write_file_internal(
 
 fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult<()> {
     let Some(store) = &blob.store else {
-        return Err(global_this.throw("{}", format_args!("Cannot write to a detached Blob")));
+        return Err(global_this.throw("Cannot write to a detached Blob"));
     };
     if matches!(store.data, store::Data::Bytes(_)) {
         return Err(global_this.throw_invalid_arguments(
@@ -2166,14 +2181,18 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
         }
     };
 
-    let mut truncate = NEEDS_OPEN || str.is_empty();
-    let mut written: usize = 0;
+    // PORT NOTE: Zig used `defer` which can read locals at unwind time.
+    // Rust scopeguard's closure captures borrows at construction, conflicting
+    // with later `written += ...` / `truncate = false`. Route through `Cell`
+    // so the guard and the loop body share `&Cell<_>` (no mutable-borrow conflict).
+    let truncate = core::cell::Cell::new(NEEDS_OPEN || str.is_empty());
+    let written = core::cell::Cell::new(0usize);
 
     let _cleanup = scopeguard::guard((), |_| {
         // we only truncate if it's a path
         // if it's a file descriptor, we assume they want manual control over that behavior
-        if truncate {
-            let _ = bun_sys::ftruncate(fd, i64::try_from(written).unwrap());
+        if truncate.get() {
+            let _ = bun_sys::ftruncate(fd, i64::try_from(written.get()).unwrap());
         }
         if NEEDS_OPEN {
             let _ = bun_sys::close(fd);
@@ -2186,12 +2205,12 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
         while !remain.is_empty() {
             match bun_sys::write(fd, remain) {
                 bun_sys::Result::Ok(res) => {
-                    written += res;
+                    written.set(written.get() + res);
                     remain = &remain[res..];
                     if res == 0 { break; }
                 }
                 bun_sys::Result::Err(err) => {
-                    truncate = false;
+                    truncate.set(false);
                     if err.get_errno() == bun_sys::E::EAGAIN {
                         *needs_async = true;
                         return JSValue::ZERO;
@@ -2210,7 +2229,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
         }
     }
 
-    JSPromise::resolved_promise_value(global_this, JSValue::js_number(written as f64))
+    JSPromise::resolved_promise_value(global_this, JSValue::js_number(written.get() as f64))
 }
 
 fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
@@ -5187,7 +5206,7 @@ pub fn construct_bun_file(
                     }
                 }
                 if let Some(last_modified) = opts.get_truthy(global_object, b"lastModified")? {
-                    blob.last_modified = last_modified.coerce::<f64>(global_object)?;
+                    blob.last_modified = last_modified.to_number(global_object)?;
                 }
             }
         }
@@ -5294,7 +5313,8 @@ impl Any {
         if let Any::Blob(blob) = self {
             if let Some(s) = &blob.store {
                 if matches!(s.data, store::Data::Bytes(_)) && s.has_one_ref() {
-                    let internal = s.data.as_bytes_mut().to_internal_blob();
+                    // `StoreRef` exposes interior-mutable `data_mut()` (no DerefMut).
+                    let internal = s.data_mut().as_bytes_mut().to_internal_blob();
                     // PORT NOTE: Zig deref's the store; StoreRef::drop on replace handles it.
                     *self = Any::InternalBlob(internal);
                     return;
@@ -5345,7 +5365,9 @@ impl Any {
         global_this: &JSGlobalObject,
         action: streams::BufferActionTag,
     ) -> Result<JSValue, jsc::JsTerminated> {
-        Ok(JSPromise::wrap(global_this, Self::to_action_value, (self, global_this, action)))
+        // `JSPromise::wrap` takes a `FnOnce(&JSGlobalObject) -> JsResult<JSValue>`;
+        // capture `self`/`action` in the closure (Zig threaded an args tuple).
+        JSPromise::wrap(global_this, |g| self.to_action_value(g, action))
     }
 
     pub fn wrap(
@@ -5354,7 +5376,25 @@ impl Any {
         global_this: &JSGlobalObject,
         action: streams::BufferActionTag,
     ) -> Result<(), jsc::JsTerminated> {
-        promise.wrap(global_this, Self::to_action_value, (self, global_this, action))
+        // `AnyPromise` has no `wrap` in bun_jsc — open-code it: run
+        // `to_action_value`, resolve on Ok, reject with the pending exception
+        // on Err. Mirrors Zig's `AnyPromise.wrap` (AnyPromise.zig).
+        match self.to_action_value(global_this, action) {
+            Ok(value) => match promise {
+                jsc::AnyPromise::Normal(p) => unsafe { (*p).resolve(global_this, value) },
+                jsc::AnyPromise::Internal(p) => unsafe { (*p).resolve(global_this, value) },
+            },
+            Err(e) => {
+                let err = global_this
+                    .take_exception(e)
+                    .unwrap_or(JSValue::UNDEFINED);
+                match promise {
+                    jsc::AnyPromise::Normal(p) => unsafe { (*p).reject(global_this, err) },
+                    jsc::AnyPromise::Internal(p) => unsafe { (*p).reject(global_this, err) },
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn to_json(&mut self, global: &JSGlobalObject, lifetime: Lifetime) -> JsResult<JSValue> {
@@ -5370,7 +5410,7 @@ impl Any {
                 Ok(str)
             }
             Any::WTFStringImpl(impl_) => {
-                let str = BunString::init_wtf(core::mem::replace(impl_, bun_str::WTFStringImpl::null()));
+                let str = BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
                 *self = Any::Blob(Blob::default());
                 if str.length() == 0 {
                     return Ok(JSValue::NULL);
@@ -5429,7 +5469,7 @@ impl Any {
                 Ok(owned)
             }
             Any::WTFStringImpl(impl_) => {
-                let str = BunString::init_wtf(core::mem::replace(impl_, bun_str::WTFStringImpl::null()));
+                let str = BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
                 *self = Any::Blob(Blob::default());
                 str.to_js(global)
             }
@@ -5458,7 +5498,7 @@ impl Any {
                 Ok(jsc::ArrayBuffer::from_default_allocator(global, TYPED_ARRAY_VIEW, bytes))
             }
             Any::WTFStringImpl(impl_) => {
-                let str = BunString::init_wtf(core::mem::replace(impl_, bun_str::WTFStringImpl::null()));
+                let str = BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
                 *self = Any::Blob(Blob::default());
 
                 let out_bytes = str.to_utf8_without_ref();

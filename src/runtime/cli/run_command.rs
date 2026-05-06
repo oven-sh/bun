@@ -3623,7 +3623,8 @@ impl RunCommand {
                     }
 
                     let mut max_description_len: usize = 20;
-                    if let Some(max) = this_transpiler.env.get(b"MAX_DESCRIPTION_LEN") {
+                    // SAFETY: `Transpiler::env` is a non-null process-lifetime `*mut Loader`.
+                    if let Some(max) = unsafe { &*this_transpiler.env }.get(b"MAX_DESCRIPTION_LEN") {
                         if let Some(max_len) = ::core::str::from_utf8(max)
                             .ok()
                             .and_then(|s| s.parse::<usize>().ok())
@@ -3661,7 +3662,9 @@ impl RunCommand {
                             }
                         }
 
-                        let entry_item = results.get_or_put_assume_capacity(Box::from(key));
+                        let Ok(entry_item) = results.get_or_put(Box::from(key)) else {
+                            continue 'loop_;
+                        };
                         // PERF(port): was assume_capacity
 
                         if FILTER == Filter::ScriptAndDescriptions && max_description_len > 0 {
@@ -3724,13 +3727,32 @@ impl RunCommand {
             }
         }
 
-        let all_keys = results.into_keys();
-        // TODO(port): Zig got a mutable view via results.keys() then sorted in place
-
-        let mut all_keys = all_keys;
+        // TODO(port): Zig got a mutable view via results.keys() then sorted in place.
+        // `ShellCompletions` stores `&'static [&'static [u8]]`; the keys interned into
+        // `filename_store` / boxed from static tables outlive the process, so leak the
+        // owning Vec to satisfy the field type until ShellCompletions grows owned
+        // storage in Phase B.
+        let mut all_keys: Vec<&'static [u8]> = results
+            .keys()
+            .iter()
+            .map(|k| -> &'static [u8] {
+                // SAFETY: keys are either `'static` literals or interned in the
+                // process-lifetime `FilenameStore`; erase the Box borrow.
+                unsafe { ::core::slice::from_raw_parts(k.as_ptr(), k.len()) }
+            })
+            .collect();
         strings::sort_asc(&mut all_keys);
-        shell_out.commands = all_keys.into_boxed_slice();
-        shell_out.descriptions = descriptions.into_boxed_slice();
+        ::core::mem::forget(results);
+        shell_out.commands = Box::leak(all_keys.into_boxed_slice());
+        shell_out.descriptions = Box::leak(
+            // SAFETY: descriptions borrow into the package.json source buffer
+            // (process-lifetime); erase to `'static`.
+            unsafe {
+                ::core::mem::transmute::<Box<[&[u8]]>, Box<[&'static [u8]]>>(
+                    descriptions.into_boxed_slice(),
+                )
+            },
+        );
 
         Ok(shell_out)
     }
@@ -3741,47 +3763,49 @@ impl RunCommand {
 
         const EXAMPLES_TEXT: &str = "<b>Examples:<r>\n  <d>Run a JavaScript or TypeScript file<r>\n  <b><green>bun run<r> <blue>./index.js<r>\n  <b><green>bun run<r> <blue>./index.tsx<r>\n\n  <d>Run a package.json script<r>\n  <b><green>bun run<r> <blue>dev<r>\n  <b><green>bun run<r> <blue>lint<r>\n\nFull documentation is available at <magenta>https://bun.com/docs/cli/run<r>\n";
 
-        Output::pretty(const_format::concatcp!(INTRO_TEXT, "\n\n"), ());
+        Output::pretty(format_args!("{}", const_format::concatcp!(INTRO_TEXT, "\n\n")));
 
-        Output::pretty("<b>Flags:<r>", ());
+        Output::pretty(format_args!("<b>Flags:<r>"));
 
         bun_clap::simple_help(crate::cli::arguments::RUN_PARAMS.as_slice());
-        Output::pretty(const_format::concatcp!("\n\n", EXAMPLES_TEXT), ());
+        Output::pretty(format_args!("{}", const_format::concatcp!("\n\n", EXAMPLES_TEXT)));
 
         if let Some(pkg) = package_json {
             if let Some(scripts) = &pkg.scripts {
-                let mut display_name = pkg.name;
+                let mut display_name: &[u8] = &pkg.name;
 
                 if display_name.is_empty() {
                     display_name = bun_paths::basename(pkg.source.path.name.dir);
                 }
                 let _ = display_name;
 
-                let mut iterator = scripts.iter();
-
                 if scripts.count() > 0 {
-                    Output::pretty(
+                    Output::pretty(format_args!(
                         "\n<b>package.json scripts ({} found):<r>",
-                        (scripts.count(),),
-                    );
+                        scripts.count(),
+                    ));
                     // Output.prettyln("<r><blue><b>{s}<r> scripts:<r>\n", .{display_name});
-                    while let Some(entry) = iterator.next() {
-                        Output::prettyln("\n", ());
-                        Output::prettyln(
+                    for (key, value) in scripts.keys().iter().zip(scripts.values().iter()) {
+                        Output::prettyln(format_args!("\n"));
+                        Output::prettyln(format_args!(
                             "  <d>$</r> bun run<r> <blue>{}<r>\n",
-                            (bstr::BStr::new(entry.key),),
-                        );
-                        Output::prettyln("  <d>  {}<r>\n", (bstr::BStr::new(entry.value),));
+                            bstr::BStr::new(key.as_ref()),
+                        ));
+                        Output::prettyln(format_args!("  <d>  {}<r>\n", bstr::BStr::new(value)));
                     }
 
                     // Output.prettyln("\n<d>{d} scripts<r>", .{scripts.count()});
 
-                    Output::prettyln("\n", ());
+                    Output::prettyln(format_args!("\n"));
                 } else {
-                    Output::prettyln("\n<r><yellow>No \"scripts\" found in package.json.<r>\n", ());
+                    Output::prettyln(format_args!(
+                        "\n<r><yellow>No \"scripts\" found in package.json.<r>\n"
+                    ));
                 }
             } else {
-                Output::prettyln("\n<r><yellow>No \"scripts\" found in package.json.<r>\n", ());
+                Output::prettyln(format_args!(
+                    "\n<r><yellow>No \"scripts\" found in package.json.<r>\n"
+                ));
             }
         }
 

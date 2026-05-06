@@ -652,20 +652,22 @@ impl Expect {
         // here ownership moves into Expect on success, and Box drop handles error path.
         // TODO(port): errdefer — verify no leak path between here and to_js()
 
-        let expect = Box::new(Expect {
+        let expect = Expect {
             flags: Flags::default(),
             custom_label,
             parent: active_execution_entry_ref,
-        });
-        let expect_ptr = Box::into_raw(expect);
-        // SAFETY: to_js takes ownership of the m_ctx pointer
-        let expect_js_value = unsafe { (*expect_ptr).to_js(global_this) };
+        };
+        // `JsClass::to_js` boxes `self` and hands the pointer to `${T}__create`.
+        let expect_js_value = expect.to_js(global_this);
         expect_js_value.ensure_still_alive();
         super::expect::js::captured_value_set_cached(expect_js_value, global_this, value);
         expect_js_value.ensure_still_alive();
 
-        // SAFETY: expect_ptr is the m_ctx payload kept alive by expect_js_value (ensure_still_alive above)
-        unsafe { (*expect_ptr).post_match(global_this) };
+        // SAFETY: just-created wrapper; `from_js` returns the live m_ctx payload
+        // kept alive by `expect_js_value` (ensure_still_alive above).
+        if let Some(expect_ptr) = Self::from_js(expect_js_value) {
+            unsafe { (*expect_ptr).post_match(global_this) };
+        }
         Ok(expect_js_value)
     }
 

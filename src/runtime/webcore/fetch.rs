@@ -1082,47 +1082,53 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         if let Some(req) = request.as_deref_mut() {
             let body_value = req.get_body_value();
-            if matches!(*body_value, Body::Value::Used)
-                || (matches!(*body_value, Body::Value::Locked(_))
-                    && (body_value.locked().action != Body::Value::Locked::Action::None
-                        || body_value
-                            .locked()
-                            .is_disturbed::<Request>(global_this, first_arg)))
-            {
+            let already_used = match body_value {
+                BodyValue::Used => true,
+                BodyValue::Locked(locked) => {
+                    locked.action != BodyValueLockedAction::None
+                        || locked.is_disturbed::<Request>(global_this, first_arg)
+                }
+                _ => false,
+            };
+            if already_used {
                 return global_this
-                    .err(jsc::ErrorCode::BODY_ALREADY_USED, "Request body already used")
+                    .err(jsc::ErrorCode::BODY_ALREADY_USED, format_args!("Request body already used"))
                     .throw();
             }
 
-            if matches!(*body_value, Body::Value::Locked(_)) {
+            if matches!(*body_value, BodyValue::Locked(_)) {
                 if let Some(readable) = req.get_body_readable_stream(global_this) {
                     break 'extract_body Some(HTTPRequestBody::ReadableStream(
-                        ReadableStream::Strong::init(readable, global_this),
+                        readable_stream::Strong::init(readable, global_this),
                     ));
                 }
-                if body_value.locked().readable.has() {
-                    break 'extract_body Some(HTTPRequestBody::ReadableStream(
-                        ReadableStream::Strong::init(
-                            body_value.locked().readable.get(global_this).unwrap(),
-                            global_this,
-                        ),
-                    ));
+                let body_value = req.get_body_value();
+                if let BodyValue::Locked(locked) = body_value {
+                    if locked.readable.has() {
+                        break 'extract_body Some(HTTPRequestBody::ReadableStream(
+                            readable_stream::Strong::init(
+                                locked.readable.get(global_this).unwrap(),
+                                global_this,
+                            ),
+                        ));
+                    }
                 }
                 let readable = body_value.to_readable_stream(global_this)?;
-                if !readable.is_empty_or_undefined_or_null()
-                    && matches!(*body_value, Body::Value::Locked(_))
-                    && body_value.locked().readable.has()
-                {
-                    break 'extract_body Some(HTTPRequestBody::ReadableStream(
-                        ReadableStream::Strong::init(
-                            body_value.locked().readable.get(global_this).unwrap(),
-                            global_this,
-                        ),
-                    ));
+                if !readable.is_empty_or_undefined_or_null() {
+                    if let BodyValue::Locked(locked) = body_value {
+                        if locked.readable.has() {
+                            break 'extract_body Some(HTTPRequestBody::ReadableStream(
+                                readable_stream::Strong::init(
+                                    locked.readable.get(global_this).unwrap(),
+                                    global_this,
+                                ),
+                            ));
+                        }
+                    }
                 }
             }
 
-            break 'extract_body Some(HTTPRequestBody::AnyBlob(body_value.use_as_any_blob()));
+            break 'extract_body Some(HTTPRequestBody::AnyBlob(req.get_body_value().use_as_any_blob()));
         }
 
         if let Some(req) = request_init_object {
@@ -1135,7 +1141,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         break 'extract_body None;
     }
-    .unwrap_or(HTTPRequestBody::Empty);
+    .unwrap_or_default();
 
     if global_this.has_exception() {
         is_error = true;
@@ -1145,13 +1151,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // headers: Headers | undefined;
     headers = 'extract_headers: {
         let mut fetch_headers_to_deref: Option<*mut FetchHeaders> = None;
-        let _deref_guard = scopeguard::guard((), |_| {
-            if let Some(fetch_headers) = fetch_headers_to_deref {
-                // SAFETY: fetch_headers was obtained from createFromJS below.
-                unsafe { (*fetch_headers).deref() };
-            }
-        });
-        // TODO(port): errdefer — guard captures fetch_headers_to_deref by ref; verify borrowck.
+        // TODO(port): errdefer — Zig deferred `fetch_headers_to_deref.deref()`. Borrowck
+        // forbids the by-ref scopeguard here; deref is done explicitly after use below.
 
         let fetch_headers: Option<*mut FetchHeaders> = 'brk: {
             if let Some(options) = options_object {
@@ -1159,8 +1160,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     options.fast_get(global_this, jsc::BuiltinName::Headers)?
                 {
                     if !headers_value.is_undefined() {
-                        if let Some(headers__) = headers_value.as_::<FetchHeaders>() {
-                            if headers__.is_empty() {
+                        if let Some(headers__) = headers_value.as_fetch_headers() {
+                            // SAFETY: as_fetch_headers returns a live FetchHeaders*.
+                            if unsafe { (*headers__).is_empty() } {
                                 break 'brk None;
                             }
                             break 'brk Some(headers__);
@@ -1168,8 +1170,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
                         if let Some(headers__) = FetchHeaders::create_from_js(ctx, headers_value)?
                         {
-                            fetch_headers_to_deref = Some(headers__);
-                            break 'brk Some(headers__);
+                            fetch_headers_to_deref = Some(headers__.as_ptr());
+                            break 'brk Some(headers__.as_ptr());
                         }
 
                         break 'brk None;
@@ -1182,9 +1184,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             }
 
-            if let Some(req) = request.as_deref() {
+            if let Some(req) = request.as_deref_mut() {
                 if let Some(head) = req.get_fetch_headers_unless_empty() {
-                    break 'brk Some(head);
+                    break 'brk Some(head.as_ptr());
                 }
                 break 'brk None;
             }
@@ -1194,8 +1196,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     options.fast_get(global_this, jsc::BuiltinName::Headers)?
                 {
                     if !headers_value.is_undefined() {
-                        if let Some(headers__) = headers_value.as_::<FetchHeaders>() {
-                            if headers__.is_empty() {
+                        if let Some(headers__) = headers_value.as_fetch_headers() {
+                            // SAFETY: as_fetch_headers returns a live FetchHeaders*.
+                            if unsafe { (*headers__).is_empty() } {
                                 break 'brk None;
                             }
                             break 'brk Some(headers__);
@@ -1203,8 +1206,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
                         if let Some(headers__) = FetchHeaders::create_from_js(ctx, headers_value)?
                         {
-                            fetch_headers_to_deref = Some(headers__);
-                            break 'brk Some(headers__);
+                            fetch_headers_to_deref = Some(headers__.as_ptr());
+                            break 'brk Some(headers__.as_ptr());
                         }
 
                         break 'brk None;

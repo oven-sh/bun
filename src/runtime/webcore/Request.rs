@@ -1133,14 +1133,16 @@ impl Request {
                 && values_to_try[1].js_type() == bun_jsc::JSType::DOMWrapper;
             if value_type == bun_jsc::JSType::DOMWrapper {
                 if let Some(request) = value.as_direct::<Request>() {
+                    // SAFETY: as_direct returns a live *mut Request payload (m_ctx)
+                    let request = unsafe { &mut *request };
                     if values_to_try.len() == 1 {
-                        match request.clone_into(&mut req, global_this, fields.contains(Fields::Url))
+                        match Request::clone_into(request, &mut req, global_this, fields.contains(Fields::Url))
                         {
                             Ok(()) => {}
                             Err(e) => bail!(Err(e)),
                         }
                         success = true;
-                        cleanup(&mut req, &body, success);
+                        cleanup(&mut req, body_ptr, success);
                         return Ok(req);
                     }
 
@@ -1180,13 +1182,12 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Body) {
-                        match request.body.value() {
+                        match &*request.body {
                             BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
                             _ => {
-                                match request.body.value().clone(global_this) {
+                                match request.body.clone(global_this) {
                                     Ok(v) => {
-                                        // TODO(port): Arc<BodyValue> mutation
-                                        *req.body.value_mut() = v;
+                                        *req.body = v;
                                     }
                                     Err(e) => bail!(Err(e)),
                                 }
@@ -1207,10 +1208,12 @@ impl Request {
                     if !fields.contains(Fields::Headers) {
                         if let Some(headers) = response.get_init_headers() {
                             match headers.clone_this(global_this) {
-                                Ok(h) => {
-                                    req.headers = Some(h);
+                                Ok(Some(h)) => {
+                                    // SAFETY: clone_this returns a +1 ref FetchHeaders.
+                                    req.headers = Some(unsafe { HeadersRef::adopt(h) });
                                     fields.insert(Fields::Headers);
                                 }
+                                Ok(None) => {}
                                 Err(e) => bail!(Err(e)),
                             }
                         }
@@ -1231,8 +1234,7 @@ impl Request {
                             _ => {
                                 match body_value.clone(global_this) {
                                     Ok(v) => {
-                                        // TODO(port): Arc<BodyValue> mutation
-                                        *req.body.value_mut() = v;
+                                        *req.body = v;
                                     }
                                     Err(e) => bail!(Err(e)),
                                 }
@@ -1253,8 +1255,7 @@ impl Request {
                         fields.insert(Fields::Body);
                         match BodyValue::from_js(global_this, body_) {
                             Ok(v) => {
-                                // TODO(port): Arc<BodyValue> mutation
-                                *req.body.value_mut() = v;
+                                *req.body = v;
                             }
                             Err(e) => bail!(Err(e)),
                         }
@@ -1284,9 +1285,11 @@ impl Request {
                     Ok(None) => {
                         if value == values_to_try[values_to_try.len() - 1]
                             && !is_first_argument_a_url
-                            && match value.implements_to_string(global_this) {
-                                Ok(b) => b,
-                                Err(e) => bail!(Err(e)),
+                            && {
+                                let _ = value;
+                                todo!("blocked_on: bun_jsc::JSValue::implements_to_string");
+                                #[allow(unreachable_code)]
+                                false
                             }
                         {
                             let str = match BunString::from_js(value, global_this) {
@@ -1311,18 +1314,10 @@ impl Request {
                 match value.get_truthy(global_this, b"signal") {
                     Ok(Some(signal_)) => {
                         fields.insert(Fields::Signal);
-                        if let Some(signal) = AbortSignal::from_js(signal_) {
-                            // Keep it alive
-                            signal_.ensure_still_alive();
-                            req.signal = Some(signal.clone()); // signal.ref()
-                        } else {
-                            if !global_this.has_exception() {
-                                bail!(global_this.throw(format_args!(
-                                    "Failed to construct 'Request': signal is not of type AbortSignal."
-                                )));
-                            }
-                            bail!(Err(JsError::Thrown));
-                        }
+                        // Keep it alive
+                        signal_.ensure_still_alive();
+                        let _ = signal_;
+                        todo!("blocked_on: bun_jsc::AbortSignal::from_js");
                     }
                     Ok(None) => {}
                     Err(e) => bail!(Err(e)),
@@ -1337,7 +1332,7 @@ impl Request {
                 if global_this.has_exception() {
                     bail!(Err(JsError::Thrown));
                 }
-                match Response::Init::init(global_this, value) {
+                match crate::webcore::response::Init::init(global_this, value) {
                     Ok(Some(response_init)) => {
                         let header_check = !explicit_check
                             || (explicit_check
@@ -1388,7 +1383,7 @@ impl Request {
 
             // Extract redirect option
             if !fields.contains(Fields::Redirect) {
-                match value.get_optional_enum::<FetchRedirect>(global_this, b"redirect") {
+                match value.get_optional_enum::<FetchRedirect>(global_this, "redirect") {
                     Ok(Some(redirect_value)) => {
                         req.flags.redirect = redirect_value;
                         fields.insert(Fields::Redirect);
@@ -1400,7 +1395,7 @@ impl Request {
 
             // Extract cache option
             if !fields.contains(Fields::Cache) {
-                match value.get_optional_enum::<FetchCacheMode>(global_this, b"cache") {
+                match value.get_optional_enum::<FetchCacheMode>(global_this, "cache") {
                     Ok(Some(cache_value)) => {
                         req.flags.cache = cache_value;
                         fields.insert(Fields::Cache);
@@ -1412,7 +1407,7 @@ impl Request {
 
             // Extract mode option
             if !fields.contains(Fields::Mode) {
-                match value.get_optional_enum::<FetchRequestMode>(global_this, b"mode") {
+                match value.get_optional_enum::<FetchRequestMode>(global_this, "mode") {
                     Ok(Some(mode_value)) => {
                         req.flags.mode = mode_value;
                         fields.insert(Fields::Mode);
@@ -1428,22 +1423,21 @@ impl Request {
         }
 
         if req.url.is_empty() {
-            bail!(global_this.throw(format_args!(
+            bail!(Err(global_this.throw(format_args!(
                 "Failed to construct 'Request': url is required."
-            )));
+            ))));
         }
 
-        let href = URL::href_from_string(req.url.clone_ref());
+        let href = bun_url::href_from_string(&req.url.dupe_ref());
         if href.is_empty() {
             if !global_this.has_exception() {
                 // globalThis.throw can cause GC, which could cause the above string to be freed.
                 // so we must increment the reference count before calling it.
-                bail!(global_this
-                    .err_invalid_url(format_args!(
-                        "Failed to construct 'Request': Invalid URL \"{}\"",
-                        req.url
-                    ))
-                    .throw());
+                let err = global_this.err_invalid_url(format_args!(
+                    "Failed to construct 'Request': Invalid URL \"{}\"",
+                    req.url
+                ));
+                bail!(Err(global_this.throw_value(err)));
             }
             bail!(Err(JsError::Thrown));
         }

@@ -54,11 +54,9 @@ impl PackageManagerOptionsShim for install::PackageManagerOptionsStub {
     fn dry_run(&self) -> bool { todo!("blocked_on: bun_install::PackageManagerOptionsStub::dry_run") }
 }
 trait PackageManagerShim {
-    fn log_mut(&mut self) -> &mut logger::Log;
     fn original_package_json_path(&self) -> &[u8];
 }
 impl PackageManagerShim for PackageManager {
-    fn log_mut(&mut self) -> &mut logger::Log { todo!("blocked_on: bun_install::PackageManager::log") }
     fn original_package_json_path(&self) -> &[u8] { todo!("blocked_on: bun_install::PackageManager::original_package_json_path") }
 }
 
@@ -589,9 +587,12 @@ impl PublishCommand {
         print_buf: &mut Vec<u8>,
     ) -> Result<Box<[u8]>, GetOTPError> {
         let bump = bun_alloc::Arena::new();
+        // TODO(port): blocked_on bun_install::PackageManager::log — use a throwaway Log
+        // until the upstream stub grows the field (matches Zig `ctx.manager.log`).
+        let mut throwaway_log = logger::Log::init();
         let res_source = logger::Source::init_path_string(b"???", response_buf.list.as_slice());
 
-        let res_json = match json_mod::parse_utf8(&res_source, ctx.manager.log_mut(), &bump) {
+        let res_json = match json_mod::parse_utf8(&res_source, &mut throwaway_log, &bump) {
             Ok(j) => Some(j),
             Err(e) => {
                 if e == err!(OutOfMemory) {
@@ -733,7 +734,7 @@ impl PublishCommand {
                             // login successful
                             let done_bump = bun_alloc::Arena::new();
                             let otp_done_source = logger::Source::init_path_string(b"???", response_buf.list.as_slice());
-                            let otp_done_json = match json_mod::parse_utf8(&otp_done_source, ctx.manager.log_mut(), &done_bump) {
+                            let otp_done_json = match json_mod::parse_utf8(&otp_done_source, &mut throwaway_log, &done_bump) {
                                 Ok(j) => j,
                                 Err(e) => {
                                     if e == err!(OutOfMemory) {
@@ -1000,11 +1001,11 @@ impl PublishCommand {
                             continue;
                         }
 
-                        let value: Option<bun_str::ZBox> = 'value: {
+                        let value: Option<bun_core::ZBox> = 'value: {
                             if let Some(value) = &bin_prop.value {
                                 if let Some(vs) = value.data.as_e_string() {
                                     if vs.len() != 0 {
-                                        break 'value Some(bun_str::ZBox::from_bytes(
+                                        break 'value Some(bun_core::ZBox::from_bytes(
                                             strings::without_prefix_comptime_z(
                                                 // replace separators
                                                 normalize_buf_z::<path::platform::Posix>(
@@ -1056,7 +1057,7 @@ impl PublishCommand {
                     return Ok(());
                 };
                 let mut bin_props: Vec<G::Property> = Vec::new();
-                let normalized_bin_dir = bun_str::ZBox::from_bytes(
+                let normalized_bin_dir = bun_core::ZBox::from_bytes(
                     strings::without_trailing_slash(
                         strings::without_prefix(
                             normalize_buf::<path::platform::Posix>(
@@ -1075,7 +1076,7 @@ impl PublishCommand {
                 let bin_dir = match bun_sys::openat(workspace_root, &normalized_bin_dir, bun_sys::O::DIRECTORY, 0) {
                     Ok(fd) => fd,
                     Err(e) => {
-                        if e == err!(ENOENT) {
+                        if e.get_errno() == bun_sys::E::ENOENT {
                             Output::warn(format_args!(
                                 "bin directory '{}' does not exist",
                                 bstr::BStr::new(normalized_bin_dir.as_bytes()),

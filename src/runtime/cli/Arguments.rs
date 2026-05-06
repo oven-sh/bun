@@ -145,7 +145,7 @@ pub static mut Bun__Node__ProcessNoDeprecation: bool = false;
 pub static mut Bun__Node__ProcessThrowDeprecation: bool = false;
 
 #[repr(u8)]
-pub enum BunCAStore { Unset, Bundled, System }
+pub enum BunCAStore { Bundled, Openssl, System }
 #[unsafe(no_mangle)]
 pub static mut Bun__Node__CAStore: BunCAStore = BunCAStore::Bundled;
 #[unsafe(no_mangle)]
@@ -289,10 +289,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
             | CommandTag::RunAsNodeCommand
             | CommandTag::TestCommand
     ) {
-        if args.flag(b"--watch") {
-            ctx.debug.hot_reload = HotReload::Watch;
-        } else if args.flag(b"--hot") {
+        if args.flag(b"--hot") {
             ctx.debug.hot_reload = HotReload::Hot;
+        } else if args.flag(b"--watch") {
+            ctx.debug.hot_reload = HotReload::Watch;
         }
         ctx.runtime_options.smol = args.flag(b"--smol");
         for p in args.options(b"--preload") {

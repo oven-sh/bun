@@ -1588,7 +1588,7 @@ impl Pollable {
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__internal_dispatch_ready_poll(loop_: *mut Loop, tagged_pointer: *mut c_void) {
-    let tag = Pollable::from(Some(tagged_pointer));
+    let tag = Pollable::from(tagged_pointer);
 
     if tag.tag() != Pollable::FILE_POLL_TAG {
         return;

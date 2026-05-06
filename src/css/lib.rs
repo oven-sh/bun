@@ -166,6 +166,25 @@ pub mod values;
 /// were the previous `gated_mod!(values, ...)` body — now a real module so
 /// printer.rs / css_parser.rs can name the types.
 pub mod values_stub {
+    /// `values/color.rs` is now un-gated (B-2 round 6); re-export the real
+    /// data + behavior surface so any remaining `values_stub::color::*` paths
+    /// resolve to the canonical types. The previous data-only stub structs and
+    /// `todo!()`-gated `into_rgba`/`into_srgb`/`parse`/`to_css` impls are
+    /// superseded by the real bodies in `crate::values::color`.
+    pub mod color {
+        pub use crate::values::color::*;
+
+        /// `Result(CssColor)` — Zig: `pub const ParseResult = Result(CssColor);`
+        /// where `Result(T) = Maybe(T, ParseError(ParserError))` (css_parser.zig:278).
+        /// `Maybe` is now un-gated as `core::result::Result`, so this is a
+        /// straight type alias to the real `values::color::ParseResult`.
+        pub type CssColorParseResult = crate::values::color::ParseResult;
+
+        /// https://drafts.csswg.org/css-color/#hsl-to-rgb (`hue` is 0..1 here).
+        /// Real body lives in `css_parser::color::hsl_to_rgb`; re-exported for
+        /// any callers that reached it via the stub path.
+        pub use crate::css_parser::color::hsl_to_rgb;
+    }
 
     /// Data-only stubs of `values/ident.rs::{Ident,DashedIdent,CustomIdent}` so
     /// `generics::ident_eql` and cross-crate name lookups compile. Behavior

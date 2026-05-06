@@ -1631,7 +1631,7 @@ pub mod defines_full_draft {
 
     #[derive(Clone)]
     pub struct DefineData {
-        pub value: expr::Data<'static>,
+        pub value: expr::Data,
         // Zig stored `original_name_ptr: ?[*]const u8` + `original_name_len: u32`
         // borrowing into caller-owned strings (defines.zig:24-25 — the 48→40-byte
         // packing trick). The Rust port owns the `RawDefines` value bytes

@@ -272,7 +272,7 @@ impl Response {
         // SAFETY: self is a live FFI handle
         unsafe { c::uws_h3_res_get_socket_data(self) }
     }
-    pub fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
+    pub fn get_remote_socket_info(&mut self) -> Option<SocketAddress<'_>> {
         let mut port: i32 = 0;
         let mut is_ipv6: bool = false;
         let mut ip_ptr: *const u8 = ptr::null();

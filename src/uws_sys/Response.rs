@@ -322,7 +322,7 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
-    pub fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
+    pub fn get_remote_socket_info(&mut self) -> Option<SocketAddress<'_>> {
         let mut ip_ptr: *const u8 = core::ptr::null();
         let mut port: i32 = 0;
         let mut is_ipv6: bool = false;

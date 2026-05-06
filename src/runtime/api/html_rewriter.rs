@@ -36,8 +36,6 @@ use bun_lolhtml_sys::lol_html as lolhtml;
 use bun_lolhtml_sys::lol_html as lolhtml_sys;
 use crate::webcore::{self, Blob, Body, Response};
 use crate::webcore::streams::{self, Signal, StreamResult, Writable};
-// TODO(b2-blocked): `crate::webcore::sink` is still gated; `Sink` references
-// (`webcore::Sink::init`, `Sink::UTF8Fallback`) resolve once it un-gates.
 use bun_str::String as BunString;
 use bun_sys;
 

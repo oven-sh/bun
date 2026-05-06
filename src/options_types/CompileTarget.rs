@@ -267,8 +267,7 @@ impl CompileTarget {
         }
 
         // MOVE_DOWN(b0): bun.install.PackageManager.fetchCacheDirectoryPath → bun_sys
-        // T1 fallback ignores `env` (full env-override chain lives in bun_install).
-        let _ = env;
+        // T1 fallback ignores `_env` (full env-override chain lives in bun_install).
         let cache_dir = bun_sys::fetch_cache_directory_path();
         let dest = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
             path::fs::FileSystem::instance().top_level_dir(),

@@ -2052,6 +2052,9 @@ pub mod c {
     use core::ffi::{c_char, c_int, c_void};
     pub use libc::stat as Stat;
     pub use libc::{fchmod, memcmp};
+    /// `bun.c.struct_statfs` — raw `struct statfs` (POSIX) / `uv_statfs_t` (Windows).
+    /// Aliased here so `bun.StatFS` (bun.zig:1703) resolves through `bun_sys::c`.
+    pub use super::StatFS as struct_statfs;
 
     /// libc `dlsym` (RTLD_DEFAULT when `handle` is null).
     #[cfg(unix)]

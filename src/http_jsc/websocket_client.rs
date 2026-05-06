@@ -1502,15 +1502,16 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: op <= 0xF checked above
         let opcode: Opcode = unsafe { core::mem::transmute::<u8, Opcode>(op) };
 
-        
-        // Cast the JSValue to a Blob
-        // TODO(b2-blocked): bun_jsc::webcore::Blob — `jsc.WebCore.Blob` lives in
-        // a higher-tier crate (`bun_runtime::webcore`) and would create a dep
-        // cycle. Needs a `bun_jsc`-level opaque `Blob` + `JSValue::as_<Blob>()`
-        // shim before this body can compile.
+        // Cast the JSValue to a Blob.
+        // PORT NOTE: `bun_jsc::webcore::Blob` is an opaque C-ABI shim (real
+        // layout lives in `bun_runtime::webcore::Blob`, a higher-tier crate).
+        // `from_js`/`shared_view` trampoline through extern fns to avoid the
+        // dep cycle — see `bun_jsc::webcore::Blob` impl block.
         if let Some(blob) = blob_value.as_::<bun_jsc::webcore::Blob>() {
             // Get the shared view of the blob data
-            let data = blob.shared_view();
+            // SAFETY: `as_` returned a live `*mut Blob` owned by the JS heap;
+            // the JSValue is rooted by the caller for the duration of this call.
+            let data = unsafe { (*blob).shared_view() };
             if data.is_empty() {
                 // Empty blob, send empty frame
                 let bytes = Copy::Bytes(&[]);
@@ -1527,10 +1528,10 @@ impl<const SSL: bool> WebSocket<SSL> {
                 let mut inline_buf = [0u8; STACK_FRAME_SIZE];
                 bytes.copy(this.global_this, &mut inline_buf[..frame_size], data.len(), opcode);
                 // PORT NOTE: reshaped for borrowck — `&mut this` + `&this.tcp` overlap.
-            let tcp: *const Socket<SSL> = &this.tcp;
-            // SAFETY: `tcp` points into `*this`; `enqueue_encoded_bytes` only
-            // reads the socket handle (no aliasing write to `this.tcp`).
-            let _ = this.enqueue_encoded_bytes(unsafe { &*tcp }, &inline_buf[..frame_size]);
+                let tcp: *const Socket<SSL> = &this.tcp;
+                // SAFETY: `tcp` points into `*this`; `enqueue_encoded_bytes` only
+                // reads the socket handle (no aliasing write to `this.tcp`).
+                let _ = this.enqueue_encoded_bytes(unsafe { &*tcp }, &inline_buf[..frame_size]);
                 return;
             }
 
@@ -1539,13 +1540,6 @@ impl<const SSL: bool> WebSocket<SSL> {
             // Invalid blob, close connection
             this.dispatch_abrupt_close(ErrorCode::Ended);
         }
-        // TODO(b2-blocked): bun_jsc::webcore::Blob — see above. Until the
-        // `Blob` shim lands, this body is unimplementable. Do NOT silently
-        // discard the payload and close the socket (PORTING.md §Forbidden
-        // patterns: silent-no-op). `todo!()` is permitted here because a
-        // higher-tier dep blocks the real logic.
-        let _ = (blob_value, opcode);
-        todo!("WebSocket::write_blob: blocked on bun_jsc::webcore::Blob shim");
     }
 
     pub extern "C" fn write_string(this: *mut Self, str_: *const ZigString, op: u8) {

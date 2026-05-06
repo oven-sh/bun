@@ -828,16 +828,48 @@ impl VirtualMachine {
         self.had_errors = prev_had_errors;
     }
 
+    /// Spec VirtualMachine.zig:2606 `loadMacroEntryPoint`. Looks up (or
+    /// generates) the synthetic `MacroEntryPoint` source for `(entry_path,
+    /// function_name, hash)` and evaluates it under the JSC API lock via
+    /// [`run_with_api_lock`].
     pub fn load_macro_entry_point(
         &mut self,
         entry_path: &str,
         function_name: &str,
         specifier: &str,
         hash: i32,
-    ) -> JsResult<*mut JSInternalPromise> {
-        let _ = (entry_path, function_name, specifier, hash);
-        // TODO(b2-cycle): MacroEntryPointLoader + runWithAPILock — bun_bundler::entry_points gated.
-        todo!("VirtualMachine::load_macro_entry_point")
+    ) -> Result<*mut JSInternalPromise, bun_core::Error> {
+        use bun_collections::map::Entry;
+        let entry_point: *mut bun_bundler::entry_points::MacroEntryPoint =
+            match self.macro_entry_points.entry(hash) {
+                Entry::Occupied(e) => (*e.get()).cast(),
+                Entry::Vacant(v) => {
+                    let mut ep = Box::new(bun_bundler::entry_points::MacroEntryPoint::default());
+                    ep.generate(
+                        &mut self.transpiler,
+                        bun_fs::PathName::init(entry_path.as_bytes()),
+                        function_name.as_bytes(),
+                        hash,
+                        specifier.as_bytes(),
+                    )?;
+                    let raw = Box::into_raw(ep);
+                    v.insert(raw.cast());
+                    raw
+                }
+            };
+
+        // PORT NOTE: Zig used a `MacroEntryPointLoader` struct + `OpaqueWrap`
+        // because `runWithAPILock` only accepts `fn(*Ctx) void`. The Rust
+        // `run_with_api_lock` already takes a closure, so the loader struct
+        // collapses into a captured local.
+        // SAFETY: `entry_point` was just inserted (heap-allocated) or fetched
+        // from the cache; it lives for the VM lifetime.
+        let path: &[u8] = unsafe { (*entry_point).source.path.text };
+        let promise = self.run_with_api_lock(|| {
+            // SAFETY: per-thread VM; the API lock guarantees JSC is held.
+            unsafe { (*VirtualMachine::get())._load_macro_entry_point(path) }
+        });
+        promise.ok_or_else(|| bun_core::err!("JSError"))
     }
 
     pub fn is_watcher_enabled(&self) -> bool {

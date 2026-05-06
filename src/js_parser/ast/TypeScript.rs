@@ -198,10 +198,10 @@ impl Metadata {
 impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
 // TODO(port): narrow error set — only `lexer.next()` is fallible here.
 pub fn is_ts_arrow_fn_jsx(&mut self) -> Result<bool, bun_core::Error> {
-     // TODO(b2-ast-D): Lexer snapshot — Zig `const old = p.lexer` (value copy). Rust Lexer holds `&mut Log` so cannot Clone; needs a `LexerSnapshot` POD that `restore()` accepts.
-    {
     let p = self;
-    let old_lexer = p.lexer.clone();
+    // PORT NOTE: Zig `const old = p.lexer` (value copy). Rust Lexer holds `&mut Log`
+    // so cannot Clone; use the LexerSnapshot POD via `snapshot()`/`restore()`.
+    let old_lexer = p.lexer.snapshot();
 
     p.lexer.next()?;
     // Look ahead to see if this should be an arrow function instead
@@ -224,9 +224,7 @@ pub fn is_ts_arrow_fn_jsx(&mut self) -> Result<bool, bun_core::Error> {
 
     // Restore the lexer
     p.lexer.restore(&old_lexer);
-    return Ok(is_ts_arrow_fn);
-    } // end 
-    todo!("b2-ast-D: is_ts_arrow_fn_jsx body — Lexer snapshot")
+    Ok(is_ts_arrow_fn)
 }
 
 // This function is taken from the official TypeScript compiler source code:
@@ -297,10 +295,9 @@ fn is_start_of_left_hand_side_expression(&mut self) -> bool {
 }
 
 fn look_ahead_next_token_is_open_paren_or_less_than_or_dot(&mut self) -> bool {
-     // TODO(b2-ast-D): Lexer snapshot (see is_ts_arrow_fn_jsx)
-    {
     let p = self;
-    let old_lexer = p.lexer.clone();
+    // PORT NOTE: Zig value-copied the Lexer; use snapshot()/restore() (see is_ts_arrow_fn_jsx).
+    let old_lexer = p.lexer.snapshot();
     let old_log_disabled = p.lexer.is_log_disabled;
     p.lexer.is_log_disabled = true;
 
@@ -313,9 +310,7 @@ fn look_ahead_next_token_is_open_paren_or_less_than_or_dot(&mut self) -> bool {
     p.lexer.restore(&old_lexer);
     p.lexer.is_log_disabled = old_log_disabled;
 
-    return result;
-    } // end 
-    todo!("b2-ast-D: look_ahead body — Lexer snapshot")
+    result
 }
 
 // This function is taken from the official TypeScript compiler source code:

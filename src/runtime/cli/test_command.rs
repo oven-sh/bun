@@ -22,60 +22,67 @@ use bun_sys::{self, Fd, File};
 use bun_uws as uws;
 
 // ─── coverage façade ────────────────────────────────────────────────────────
-// `bun_sourcemap::coverage` was the Phase-A path; the real types now live in
-// `bun_sourcemap_jsc::code_coverage` which is not yet a dependency of this
-// crate. Provide a thin stub so the coverage-reporting code paths type-check;
-// every method is `todo!()`-gated until the dependency edge is added.
-// TODO(b2-blocked): replace with `use bun_sourcemap_jsc::code_coverage::*`.
+// Thin adapter over `bun_sourcemap_jsc::code_coverage` that preserves the
+// Zig-shaped call paths used in `print_code_coverage` below
+// (`CodeCoverageReport::Text::writeFormat(..., enable_ansi_colors)` took a
+// runtime bool in Zig; the Rust port lifted it to a const generic, so the
+// adapter dispatches). Drop once the body is normalised to call
+// `code_coverage::{text,lcov}` directly with `<ENABLE_ANSI_COLORS>`.
 mod coverage {
-    #![allow(dead_code, unused_variables)]
-    pub use bun_options_types::CodeCoverageOptions::Fraction;
+    pub use bun_sourcemap_jsc::code_coverage::{
+        lcov as Lcov, ByteRangeMapping, ByteRangeMappingHashMap, Fraction,
+        Report as CodeCoverageReport,
+    };
 
-    #[derive(Clone, Copy)]
-    pub struct ByteRangeMapping {
-        pub source_url: bun_jsc::ZigString,
+    /// `std.sort.pdq(..., isLessThan)` adapter — Rust `sort_by` wants `Ordering`.
+    #[inline]
+    pub fn is_less_than_cmp(a: &&mut ByteRangeMapping, b: &&mut ByteRangeMapping) -> core::cmp::Ordering {
+        bun_str::strings::order(a.source_url.slice(), b.source_url.slice())
     }
-    impl ByteRangeMapping {
-        pub fn map() -> Option<&'static mut ByteRangeMappingHashMap> {
-            todo!("blocked_on: bun_sourcemap_jsc::code_coverage::ByteRangeMapping")
-        }
-        pub fn is_less_than_cmp(a: &Self, b: &Self) -> core::cmp::Ordering {
-            todo!("blocked_on: bun_sourcemap_jsc::code_coverage::ByteRangeMapping")
-        }
-    }
-    pub struct ByteRangeMappingHashMap;
-    impl ByteRangeMappingHashMap {
-        pub fn value_iterator(&mut self) -> core::iter::Empty<&ByteRangeMapping> {
-            todo!("blocked_on: bun_sourcemap_jsc::code_coverage")
-        }
-        pub fn count(&self) -> usize { 0 }
-    }
-    pub struct CodeCoverageReport;
-    impl CodeCoverageReport {
-        pub fn generate<G>(_g: G, _e: &mut ByteRangeMapping, _ignore: bool) -> Option<Self> {
-            todo!("blocked_on: bun_sourcemap_jsc::code_coverage::Report")
-        }
-    }
+
     #[allow(non_snake_case)]
     pub mod Text {
         use super::*;
-        pub fn write_format<W>(
-            _r: &CodeCoverageReport, _max: usize, _f: &mut Fraction, _dir: &[u8], _w: W, _c: bool,
-        ) -> Result<(), bun_core::Error> {
-            todo!("blocked_on: bun_sourcemap_jsc::code_coverage::Text")
+        use bun_sourcemap_jsc::code_coverage::text;
+
+        /// Runtime-bool → const-generic dispatch for `text::write_format`.
+        #[inline]
+        pub fn write_format(
+            report: &CodeCoverageReport,
+            max_filename_length: usize,
+            fraction: &mut Fraction,
+            base_path: &[u8],
+            writer: &mut impl bun_io::Write,
+            enable_ansi_colors: bool,
+        ) -> bun_io::Result<()> {
+            if enable_ansi_colors {
+                text::write_format::<true>(report, max_filename_length, fraction, base_path, writer)
+            } else {
+                text::write_format::<false>(report, max_filename_length, fraction, base_path, writer)
+            }
         }
-        pub fn write_format_with_values<W>(
-            _name: &[u8], _max: usize, _avg: Fraction, _failed: Fraction, _failing: bool,
-            _w: W, _b: bool, _colors: bool,
-        ) -> Result<(), bun_core::Error> {
-            todo!("blocked_on: bun_sourcemap_jsc::code_coverage::Text")
-        }
-    }
-    #[allow(non_snake_case)]
-    pub mod Lcov {
-        use super::*;
-        pub fn write_format<W>(_r: &CodeCoverageReport, _dir: &[u8], _w: W) -> Result<(), bun_core::Error> {
-            todo!("blocked_on: bun_sourcemap_jsc::code_coverage::Lcov")
+
+        /// Runtime-bool → const-generic dispatch for `text::write_format_with_values`.
+        #[inline]
+        pub fn write_format_with_values(
+            filename: &[u8],
+            max_filename_length: usize,
+            vals: Fraction,
+            failing: Fraction,
+            failed: bool,
+            writer: &mut impl bun_io::Write,
+            indent_name: bool,
+            enable_ansi_colors: bool,
+        ) -> bun_io::Result<()> {
+            if enable_ansi_colors {
+                text::write_format_with_values::<true>(
+                    filename, max_filename_length, vals, failing, failed, writer, indent_name,
+                )
+            } else {
+                text::write_format_with_values::<false>(
+                    filename, max_filename_length, vals, failing, failed, writer, indent_name,
+                )
+            }
         }
     }
 }

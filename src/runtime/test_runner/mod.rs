@@ -283,7 +283,7 @@ pub mod expect {
             // TODO(port): land as inherent `JSValue::bind` in bun_jsc once
             // the upstream surface catches up. Shimmed here so DoneCallback /
             // ScopeFunctions compile against the Zig spec unchanged.
-            extern "C" {
+            unsafe extern "C" {
                 // bindings.cpp: Bun__JSValue__bind — [[ZIG_EXPORT(zero_is_throw)]]
                 fn Bun__JSValue__bind(
                     function: JSValue,

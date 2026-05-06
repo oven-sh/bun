@@ -27,8 +27,14 @@ use bun_collections::linear_fifo::DynamicBuffer;
 use bun_string::MutableString;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional, SystemError,
-    VirtualMachine, StringJsc as _, bun_string_jsc,
+    StringJsc as _, bun_string_jsc,
 };
+// PORT NOTE: `bun_jsc::VirtualMachine` is a *module* re-export
+// (`pub use self::virtual_machine as VirtualMachine;`). The struct lives at
+// `bun_jsc::virtual_machine::VirtualMachine` — import that directly so the
+// name resolves as a type at `&mut VirtualMachine` annotations and as the
+// owner of the `on_quiet_unhandled_rejection_handler_capture_value` assoc fn.
+use bun_jsc::virtual_machine::VirtualMachine;
 // PORT NOTE: `ZigString` is imported from `bun_jsc::zig_string` (NOT the
 // top-level `bun_jsc::ZigString` type alias, which points at
 // `bun_string::ZigString`). The `zig_string::ZigString` newtype carries the

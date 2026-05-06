@@ -835,11 +835,16 @@ impl<'a> Snapshots<'a> {
                 let snapshot_dir_path = unsafe { ZStr::from_raw(buf.as_ptr(), pos) };
                 match bun_sys::mkdir(snapshot_dir_path, 0o777) {
                     bun_sys::Result::Ok(()) => {
-                        self.snapshot_dir_path = core::ptr::NonNull::new(dir_path as *const [u8] as *mut [u8]);
+                        // SAFETY: read-only backref into Jest::RUNNER.files[..].source.path
+                        // (process-global; outlives self). Never written through — only
+                        // dereferenced via `.as_ref()` above. `NonNull::from(&_)` avoids
+                        // the `*const _ as *mut _` cast while preserving provenance.
+                        self.snapshot_dir_path = Some(core::ptr::NonNull::from(dir_path));
                     }
                     bun_sys::Result::Err(err) => match err.get_errno() {
                         bun_sys::Errno::EXIST => {
-                            self.snapshot_dir_path = core::ptr::NonNull::new(dir_path as *const [u8] as *mut [u8]);
+                            // SAFETY: see above — read-only backref, never written through.
+                            self.snapshot_dir_path = Some(core::ptr::NonNull::from(dir_path));
                         }
                         _ => return Ok(bun_sys::Result::Err(err)),
                     },

@@ -927,8 +927,15 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         pipelined_requests: 0,
         nonpipelinable_requests: 0,
         poll_ref: KeepAlive::default(),
+        // SAFETY(const_to_mut_cast): stored as `*mut` for FFI-shape parity but only ever
+        // read via `global()` (`&*`); never written through. Provenance is read-only and
+        // that is sufficient for all uses in this file.
         global_object: global_object as *const _ as *mut JSGlobalObject,
-        vm: vm as *const _ as *mut VirtualMachine,
+        // `VirtualMachine::get()` returns the singleton `*mut` with full write provenance
+        // (same pointer as `global_object.bun_vm()`, asserted in debug builds). Avoids
+        // deriving `*mut` from the `&VirtualMachine` above, which would make `vm()`'s
+        // `&mut *self.vm` UB.
+        vm: VirtualMachine::get(),
         statements: PreparedStatementsMap::default(),
         prepared_statement_id: 0,
         pending_activity_count: AtomicU32::new(0),

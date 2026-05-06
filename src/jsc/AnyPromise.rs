@@ -140,9 +140,11 @@ impl<'a> AnyPromise<'a> {
         let mut ctx = Wrapper { f };
         // SAFETY: `ctx` lives on the stack for the duration of the FFI call;
         // `call::<F>` matches the expected `extern "C" fn(*mut c_void, *mut JSGlobalObject) -> JSValue` shape.
+        // `as_ptr()` routes through JSGlobalObject's UnsafeCell interior so the
+        // `*mut` handed to C++ carries write provenance (no `&T -> *mut T` UB).
         unsafe {
             JSC__AnyPromise__wrap(
-                global_object as *const _ as *mut JSGlobalObject,
+                global_object.as_ptr(),
                 self.as_value(),
                 &mut ctx as *mut Wrapper<F> as *mut c_void,
                 call::<F>,

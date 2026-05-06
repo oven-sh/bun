@@ -1252,12 +1252,11 @@ impl FFI {
                 }
                 Step::Compiled(compiled) => {
                     let str = ZigString::init(function_name.as_bytes());
-                    let cb = host_fn::new_runtime_function(
+                    let cb = new_runtime_function(
                         global_this,
                         &str,
                         u32::try_from(function.arg_types.len()).unwrap(),
-                        // SAFETY: compiled.ptr is a valid JSHostFn entry point from TCC
-                        unsafe { core::mem::transmute::<*mut c_void, *const jsc::JSHostFn>(compiled.ptr) },
+                        compiled.ptr as *const c_void,
                         true,
                         function.symbol_from_dynamic_library,
                     );

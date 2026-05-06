@@ -25,8 +25,8 @@ impl DoneCallback {
     }
 
     pub fn create_unbound(global: &JSGlobalObject) -> JSValue {
-        // TODO(port): group_log begin(@src())/end() as RAII scope guard
-        let _g = group_log.enter();
+        group_begin!();
+        let _g = scopeguard::guard((), |_| debug::group::end());
 
         let done_callback = Box::new(DoneCallback {
             r#ref: None,

@@ -1775,34 +1775,13 @@ pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
             if global_object.has_exception() {
                 return Ok(JSValue::ZERO);
             }
-            let route_list_object = server.listen();
-            if global_object.has_exception() {
-                return Ok(JSValue::ZERO);
-            }
-            let obj = server.to_js(global_object);
-            if !route_list_object.is_empty() {
-                <$ServerType>::js::route_list_set_cached(obj, global_object, route_list_object);
-            }
-            server.js_value.set_strong(obj, global_object);
-
-            if config.allow_hot {
-                if let Some(hot) = global_object.bun_vm().hot_map() {
-                    hot.insert(&config.id, server);
-                }
-            }
-
-            if let Some(debugger) = vm.debugger.as_mut() {
-                debugger
-                    .http_server_agent
-                    .notify_server_started(jsc::api::AnyServer::from(server));
-                // bun.handleOom(err) — Rust aborts on OOM by default.
-                debugger
-                    .http_server_agent
-                    .notify_server_routes_updated(jsc::api::AnyServer::from(server))
-                    .expect("oom");
-            }
-
-            return Ok(obj);
+            // TODO(port): the rest of this body needs:
+            //   - `<$ServerType>::js::route_list_set_cached` (codegen `.classes.ts` output)
+            //   - typed `HotMap::insert<T>` (gated TaggedPtrUnion)
+            //   - `bun_jsc::api::AnyServer` for `Debugger.http_server_agent`
+            // none of which are available at this tier yet.
+            let _ = (server, vm);
+            todo!("blocked_on: server::js::route_list_set_cached + bun_jsc::api::AnyServer")
         }};
     }
 
@@ -1811,10 +1790,10 @@ pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
     let has_ssl_config = config.ssl_config.is_some();
     let development = config.is_development();
     match (development, has_ssl_config) {
-        (true, true) => serve_with!(jsc::api::DebugHTTPSServer),
-        (true, false) => serve_with!(jsc::api::DebugHTTPServer),
-        (false, true) => serve_with!(jsc::api::HTTPSServer),
-        (false, false) => serve_with!(jsc::api::HTTPServer),
+        (true, true) => serve_with!(crate::api::DebugHTTPSServer),
+        (true, false) => serve_with!(crate::api::DebugHTTPServer),
+        (false, true) => serve_with!(crate::api::HTTPSServer),
+        (false, false) => serve_with!(crate::api::HTTPServer),
     }
 }
 

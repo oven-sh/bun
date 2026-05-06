@@ -149,40 +149,20 @@ pub fn to_have_returned_with(
             successful_returns: successful_returns.slice(),
             formatter: &mut formatter,
         };
-        const FMT: &str = "    <green>Expected<r>: {}\n\
-            \x20   <red>Received<r>:\n\
-            {}\n\
-            \n\
-            \x20   Number of returns: {}";
-
-        if Output::enable_ansi_colors_stderr() {
-            return this.throw(
-                global,
-                signature,
-                Output::pretty_fmt_true(const_format::concatcp!("\n\n", FMT, "\n")),
-                // TODO(port): pretty_fmt is comptime ANSI-tag expansion in Zig; Rust needs a macro (`bun_core::pretty_fmt!`).
-                // TODO(port): Expect::throw fmt-arg plumbing — args below must map to template `{}`s, not concatenate.
-                format_args!(
-                    "{}{}{}",
-                    expected.to_fmt(&mut formatter),
-                    list_formatter,
-                    successful_returns_count,
-                ),
-            );
-        } else {
-            return this.throw(
-                global,
-                signature,
-                Output::pretty_fmt_false(const_format::concatcp!("\n\n", FMT, "\n")),
-                // TODO(port): Expect::throw fmt-arg plumbing — args below must map to template `{}`s, not concatenate.
-                format_args!(
-                    "{}{}{}",
-                    expected.to_fmt(&mut formatter),
-                    list_formatter,
-                    successful_returns_count,
-                ),
-            );
-        }
+        // TODO(port): Output.prettyFmt comptime color dispatch — Zig branches on
+        // `Output.enable_ansi_colors_stderr` to substitute/strip `<green>`/`<red>` tags at comptime.
+        // `Expect::throw` → `throw_pretty` handles tag substitution at runtime, so collapse both arms.
+        // PERF(port): was comptime bool dispatch (`switch inline else`) — profile in Phase B
+        return this.throw(
+            global,
+            signature,
+            format_args!(
+                "\n\n    <green>Expected<r>: {}\n    <red>Received<r>:\n{}\n\n    Number of returns: {}\n",
+                expected.to_fmt(&mut formatter),
+                list_formatter,
+                successful_returns_count,
+            ),
+        );
     }
 }
 

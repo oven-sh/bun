@@ -781,7 +781,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     // For spawnSync, use an isolated event loop to prevent JavaScript timers from firing
     // and to avoid interfering with the main event loop
-    let event_loop: &EventLoop = if IS_SYNC {
+    let event_loop: &jsc::event_loop::EventLoop = if IS_SYNC {
         &jsc_vm.rare_data().spawn_sync_event_loop(jsc_vm).event_loop
     } else {
         jsc_vm.event_loop()
@@ -870,9 +870,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             .with_path(display_path)
             .to_system_error();
             systemerror.errno = if err == bun_core::err!("EMFILE") {
-                -sys::UV_E::MFILE
+                -UV_E::MFILE
             } else {
-                -sys::UV_E::NFILE
+                -UV_E::NFILE
             };
             return global_this.throw_value(systemerror.to_error_instance(global_this));
         }

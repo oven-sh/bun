@@ -1455,10 +1455,10 @@ pub fn join_posix_t<'a, T: PathChar>(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Node__Path_joinWTF(
-    lhs: *mut BunString,
+    lhs: *mut bun_string::String,
     rhs_ptr: *const u8,
     rhs_len: usize,
-    result: *mut BunString,
+    result: *mut bun_string::String,
 ) {
     // SAFETY: caller passes valid pointers from C++.
     let rhs = unsafe { core::slice::from_raw_parts(rhs_ptr, rhs_len) };
@@ -1470,13 +1470,13 @@ pub extern "C" fn Bun__Node__Path_joinWTF(
     {
         let win = join_windows_t::<u8>(&[slice.slice(), rhs], &mut buf, &mut buf2);
         // SAFETY: result is a valid out-pointer.
-        unsafe { *result = BunString::clone_utf8(win) };
+        unsafe { *result = bun_string::String::clone_utf8(win) };
     }
     #[cfg(not(windows))]
     {
         let posix = join_posix_t::<u8>(&[slice.slice(), rhs], &mut buf, &mut buf2);
         // SAFETY: result is a valid out-pointer.
-        unsafe { *result = BunString::clone_utf8(posix) };
+        unsafe { *result = bun_string::String::clone_utf8(posix) };
     }
 }
 

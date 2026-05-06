@@ -215,7 +215,7 @@ impl Scripts {
         // TODO(port): `bun.AbsPath(.{ .sep = .auto })` — verify Rust type in bun_paths
         cwd_: &mut AbsPath,
         package_name: &[u8],
-        resolution_tag: Resolution::Tag,
+        resolution_tag: ResolutionTag,
         add_node_gyp_rebuild_script: bool,
     ) -> Option<List> {
         let (first_index, total, scripts) = self.get_script_entries(

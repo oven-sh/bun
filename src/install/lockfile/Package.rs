@@ -283,27 +283,27 @@ impl DependencyGroup {
     pub const DEPENDENCIES: DependencyGroup = DependencyGroup {
         prop: b"dependencies",
         field: b"dependencies",
-        behavior: Behavior { prod: true, ..Behavior::EMPTY },
+        behavior: Behavior::PROD,
     };
     pub const DEV: DependencyGroup = DependencyGroup {
         prop: b"devDependencies",
         field: b"dev_dependencies",
-        behavior: Behavior { dev: true, ..Behavior::EMPTY },
+        behavior: Behavior::DEV,
     };
     pub const OPTIONAL: DependencyGroup = DependencyGroup {
         prop: b"optionalDependencies",
         field: b"optional_dependencies",
-        behavior: Behavior { optional: true, ..Behavior::EMPTY },
+        behavior: Behavior::OPTIONAL,
     };
     pub const PEER: DependencyGroup = DependencyGroup {
         prop: b"peerDependencies",
         field: b"peer_dependencies",
-        behavior: Behavior { peer: true, ..Behavior::EMPTY },
+        behavior: Behavior::PEER,
     };
     pub const WORKSPACES: DependencyGroup = DependencyGroup {
         prop: b"workspaces",
         field: b"workspaces",
-        behavior: Behavior { workspace: true, ..Behavior::EMPTY },
+        behavior: Behavior::WORKSPACE,
     };
 }
 

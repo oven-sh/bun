@@ -417,9 +417,9 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         // allocation for the output `trees` slice. That optimization depends on MultiArrayList
         // internal layout. Porting the straightforward path (fresh Vec<Tree>) instead.
         // PERF(port): was MultiArrayList buffer reuse — profile in Phase B.
-        let slice = self.list.to_owned_slice();
-        let mut trees: Vec<Tree> = slice.items_tree().to_vec();
-        let dependencies = slice.items_dependencies_mut();
+        let mut slice = self.list.to_owned_slice();
+        let mut trees: Vec<Tree> = slice.tree().to_vec();
+        let dependencies: &mut [DependencyIDList] = slice.dependencies_mut();
 
         for tree in &trees {
             total += tree.dependencies.len;
@@ -658,7 +658,7 @@ impl Tree {
         // PORT NOTE: reshaped for borrowck — iterate over a snapshot of sort_buf indices since
         // builder is mutably borrowed inside the loop.
         let sort_buf_len = builder.sort_buf.len();
-        for sort_idx in 0..sort_buf_len {
+        'dep: for sort_idx in 0..sort_buf_len {
             let dep_id = builder.sort_buf[sort_idx];
             let pkg_id = builder.resolutions[dep_id as usize];
 

@@ -741,8 +741,8 @@ pub fn migrate_yarn_lockfile<'a>(
 
         let package_name: Option<Vec<u8>> = 'blk: {
             if let Some(name_prop) = package_json.as_property(b"name") {
-                if let bun_js_parser::ExprData::EString(e_string) = &name_prop.expr.data {
-                    let name_slice = e_string.string().unwrap_or(b"");
+                if let logger::js_ast::ExprData::EString(e_string) = &name_prop.expr.data {
+                    let name_slice = e_string.string(&json_bump).unwrap_or(b"");
                     if !name_slice.is_empty() {
                         break 'blk Some(name_slice.to_vec());
                     }
@@ -751,7 +751,7 @@ pub fn migrate_yarn_lockfile<'a>(
             break 'blk None;
         };
         let package_name_hash = if let Some(name) = &package_name {
-            SemverString::Builder::string_hash(name)
+            Semver::string::Builder::string_hash(name)
         } else {
             0
         };

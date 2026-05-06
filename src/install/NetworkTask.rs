@@ -335,7 +335,7 @@ impl NetworkTask {
                             quote(&scope.url.href),
                             quote(name),
                         ),
-                    );
+                    )?;
                 } else {
                     pm.log.add_warning_fmt(
                         None,

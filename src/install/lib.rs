@@ -858,6 +858,16 @@ pub mod lockfile {
             Ok(())
         }
 
+        /// Port of `Lockfile.appendPackage` (src/install/lockfile.zig:1531).
+        /// Real body assigns `meta.id = packages.len()`, pushes into the
+        /// `MultiArrayList<Package>` columns, then `getOrPutID(id, name_hash)`.
+        pub fn append_package(
+            &mut self,
+            _package: package::Package,
+        ) -> Result<package::Package, bun_core::Error> {
+            todo!("blocked_on: lockfile_real::Lockfile::append_package — stub PackageList lacks MultiArrayList<Package> shape (reconciler-6)")
+        }
+
         /// Port of `Lockfile.generateMetaHash` (src/install/lockfile.zig).
         pub fn generate_meta_hash(
             &self,
@@ -890,6 +900,17 @@ pub mod lockfile {
             // should not hit this, default to root just in case
             0
         }
+
+        /// Port of `Lockfile.isWorkspaceTreeId` (src/install/lockfile.zig:616).
+        /// Does this tree id belong to a workspace (including workspace root)?
+        /// TODO(dylan-conway) fix!
+        pub fn is_workspace_tree_id(&self, id: tree::Id) -> bool {
+            id == 0
+                || self.buffers.dependencies
+                    [self.buffers.trees[id as usize].dependency_id as usize]
+                    .behavior
+                    .is_workspace()
+        }
     }
     /// Stub: `MultiArrayList<Package>` column accessor surface. Real body in
     /// `lockfile.rs` (gated behind `package_manager_real`, reconciler-6).
@@ -916,6 +937,14 @@ pub mod lockfile {
         #[inline] pub fn items_dependencies(&self) -> &[ExternalSlice<Dependency>] { &self.dependencies }
         #[inline] pub fn items_resolutions(&self) -> &[ExternalSlice<PackageID>] { &self.resolutions }
         #[inline] pub fn items_resolution(&self) -> &[Resolution] { &self.resolution }
+        /// Zig: `MultiArrayList(Package).get(i)` — reassemble a row.
+        pub fn get(&self, _id: PackageID) -> package::Package {
+            todo!("blocked_on: lockfile_real PackageList (MultiArrayList<Package>) un-gate (reconciler-6)")
+        }
+        /// Zig: `MultiArrayList(Package).set(i, pkg)` — scatter a row.
+        pub fn set(&mut self, _id: PackageID, _pkg: package::Package) {
+            todo!("blocked_on: lockfile_real PackageList (MultiArrayList<Package>) un-gate (reconciler-6)")
+        }
         #[inline] pub fn items_meta(&self) -> &[package::Meta] { &self.meta }
         #[inline] pub fn items_bin(&self) -> &[crate::bin::Bin] { &self.bin }
         #[inline] pub fn items_scripts(&self) -> &[package::scripts::Scripts] { &self.scripts }
@@ -1775,6 +1804,12 @@ impl RootPackageId {
     pub resolve_tasks: bun_threading::UnboundedQueue<package_manager_task::Task<'static>>,
     /// Zig: `thread_pool: ThreadPool`.
     pub thread_pool: bun_threading::ThreadPool,
+    /// Zig: `pending_tasks: std.atomic.Value(u32) = .{ .raw = 0 }`
+    /// (src/install/PackageManager.zig). Incremented before spawning a task,
+    /// decremented on the worker thread when done; `runTasks` drains until 0.
+    pub pending_tasks: core::sync::atomic::AtomicU32,
+    /// Zig: `total_tasks: u32 = 0` — monotone counter for progress reporting.
+    pub total_tasks: u32,
     /// Zig: `preinstall_state: std.ArrayListUnmanaged(PreinstallState)`.
     pub preinstall_state: Vec<PreinstallState>,
     /// Zig: `workspace_package_json_cache: WorkspacePackageJSONCache`.
@@ -1832,15 +1867,57 @@ impl RootPackageId {
     /// Zig: `Options.security_scanner: ?[]const u8 = null` — bunfig
     /// `[install.security].scanner` value.
     pub security_scanner: Option<Box<[u8]>>,
+    /// Zig: `Options.config_version: ?ConfigVersion = null`.
+    pub config_version: Option<config_version::ConfigVersion>,
+    /// Zig: `Options.save_text_lockfile: ?bool = null`.
+    pub save_text_lockfile: Option<bool>,
+    /// Zig: `Options.global: bool = false`.
+    pub global: bool,
+    /// Zig: `Options.lockfile_only: bool = false`.
+    pub lockfile_only: bool,
+    /// Zig: `Options.filter_patterns: []const []const u8 = &.{}`.
+    pub filter_patterns: Vec<Box<[u8]>>,
 }
 /// Port of `Options.Do` (src/install/PackageManager/PackageManagerOptions.zig).
-/// Only the bits the security scanner / installer touch are surfaced; the
-/// rest land when `package_manager_real` un-gates.
+/// Field-access shape (Zig packed-struct of bools) so Phase-A drafts written
+/// against `do.foo` compile against the stub. Real bitflags `Do` lives in
+/// `PackageManagerOptions.rs`.
+#[derive(Clone, Copy)]
 pub struct PackageManagerDoStub {
+    pub save_lockfile: bool,
+    pub load_lockfile: bool,
     pub install_packages: bool,
+    pub write_package_json: bool,
+    pub run_scripts: bool,
+    pub save_yarn_lock: bool,
+    pub print_meta_hash_string: bool,
+    pub verify_integrity: bool,
+    pub summary: bool,
+    pub trust_dependencies_from_args: bool,
+    pub update_to_latest: bool,
+    pub analyze: bool,
+    pub recursive: bool,
+    pub prefetch_resolved_tarballs: bool,
 }
 impl Default for PackageManagerDoStub {
-    fn default() -> Self { Self { install_packages: true } }
+    fn default() -> Self {
+        Self {
+            save_lockfile: true,
+            load_lockfile: true,
+            install_packages: true,
+            write_package_json: true,
+            run_scripts: true,
+            save_yarn_lock: false,
+            print_meta_hash_string: false,
+            verify_integrity: true,
+            summary: true,
+            trust_dependencies_from_args: false,
+            update_to_latest: false,
+            analyze: false,
+            recursive: false,
+            prefetch_resolved_tarballs: true,
+        }
+    }
 }
 /// Port of `PublishConfig` (src/install/PackageManager/PackageManagerOptions.zig).
 #[derive(Default)] pub struct PublishConfigStub {
@@ -1883,6 +1960,16 @@ impl From<Access> for &'static str {
     /// Zig: `Options.Enable.cache` — drives the `ensureCacheDirectory`
     /// fallback to `node_modules/.cache`.
     pub cache: bool,
+    /// Zig: `Options.Enable.fail_early: bool`.
+    pub fail_early: bool,
+    /// Zig: `Options.Enable.frozen_lockfile: bool`.
+    pub frozen_lockfile: bool,
+    /// Zig: `Options.Enable.force_save_lockfile: bool`.
+    pub force_save_lockfile: bool,
+    /// Zig: `Options.Enable.exact_versions: bool`.
+    pub exact_versions: bool,
+    /// Zig: `Options.Enable.only_missing: bool`.
+    pub only_missing: bool,
 }
 pub struct PackageManagerTmpDirStub {
     pub handle: bun_sys::Fd,
@@ -2119,6 +2206,44 @@ impl PackageManager {
     /// `resolve_tasks`. Real impl posts to `uws.Loop`; stubbed until
     /// `bun_event_loop` exposes the package-manager loop handle.
     pub fn wake(&self) {}
+
+    /// Port of `PackageManager.incrementPendingTasks`
+    /// (src/install/PackageManager/runTasks.zig). `.monotonic` is okay because
+    /// the start of a task doesn't carry side effects other threads depend on
+    /// (but finishing one does). Call before the task is actually spawned.
+    #[inline]
+    pub fn increment_pending_tasks(&mut self, count: u32) {
+        self.total_tasks += count;
+        let _ = self
+            .pending_tasks
+            .fetch_add(count, core::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Port of `PackageManager.decrementPendingTasks`
+    /// (src/install/PackageManager/runTasks.zig).
+    #[inline]
+    pub fn decrement_pending_tasks(&mut self) {
+        let _ = self
+            .pending_tasks
+            .fetch_sub(1, core::sync::atomic::Ordering::Release);
+    }
+
+    /// Port of `PackageManager.cached_package_folder_name_buf()`
+    /// (src/install/PackageManager.zig:429). Thread-local scratch `PathBuffer`
+    /// shared by the `cached*FolderName*` family — callers write a
+    /// NUL-terminated cache-relative path into it and return a `&'static ZStr`
+    /// borrow. Single-buffer-per-thread, so callers must copy before the next
+    /// call on the same thread.
+    #[inline]
+    pub fn cached_package_folder_name_buf() -> &'static mut bun_paths::PathBuffer {
+        thread_local! {
+            static BUF: core::cell::UnsafeCell<bun_paths::PathBuffer> =
+                const { core::cell::UnsafeCell::new(bun_paths::PathBuffer::ZEROED) };
+        }
+        // SAFETY: `'static mut` mirrors Zig's `*bun.PathBuffer` thread-local.
+        // Single mutable borrow per thread; callers do not hold across awaits.
+        BUF.with(|b| unsafe { &mut *b.get() })
+    }
 
     // `scope_for_package_name` moved to PackageManager/PackageManagerResolution.rs
     // (real port handles `@scope/` prefix lookup in `options.registries`).

@@ -84,7 +84,7 @@ impl OverrideMap {
         for (k, v) in self.map.keys().iter().zip(self.map.values()) {
             new.map.put_assume_capacity(
                 *k,
-                v.clone(pm, old_lockfile.buffers.string_bytes.as_slice(), new_builder)?,
+                v.clone_in(pm, old_lockfile.buffers.string_bytes.as_slice(), new_builder)?,
             );
         }
 

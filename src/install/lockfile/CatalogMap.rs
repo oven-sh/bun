@@ -417,7 +417,7 @@ impl CatalogMap {
             // PERF(port): was assume_capacity
             new_catalog.default.put_assume_capacity_context(
                 builder.append::<String>(dep_name.slice(old.buffers.string_bytes.as_slice())),
-                dep.clone(pm, old.buffers.string_bytes.as_slice(), builder)?,
+                dep.clone_in(pm, old.buffers.string_bytes.as_slice(), builder)?,
                 String::array_hash_context(new, None),
             );
         }
@@ -441,7 +441,7 @@ impl CatalogMap {
                 // PERF(port): was assume_capacity
                 new_group.put_assume_capacity_context(
                     builder.append::<String>(dep_name.slice(old.buffers.string_bytes.as_slice())),
-                    dep.clone(pm, old.buffers.string_bytes.as_slice(), builder)?,
+                    dep.clone_in(pm, old.buffers.string_bytes.as_slice(), builder)?,
                     String::array_hash_context(new, None),
                 );
             }

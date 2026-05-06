@@ -3,10 +3,7 @@ use bun_paths::PathBuffer;
 use bun_semver::ExternalString;
 use bun_semver::string::JsonFormatterOptions;
 
-use crate::{
-    self as install, dependency, invalid_package_id, Dependency, DependencyID, Npm, Origin,
-    PackageID, Repository,
-};
+use crate::{invalid_package_id, Dependency, DependencyID, Npm, Origin, PackageID, Repository};
 use crate::dependency::{Behavior, NpmInfo, TagInfo, TarballInfo, URI};
 use crate::dependency::Tag as DependencyVersionTag;
 use crate::bin::Tag as BinTag;
@@ -14,7 +11,7 @@ use crate::integrity::Tag as IntegrityTag;
 
 use super::{package_index, tree, FormatVersion, Lockfile, Package};
 use super::package::scripts::Scripts as PackageScripts;
-use super::tree::{IteratorPathStyle, DepthBuf, MAX_DEPTH};
+use super::tree::{DepthBuf, IteratorPathStyle, MAX_DEPTH};
 
 // TODO(port): `w: anytype` is a `std.json.WriteStream`-shaped writer. Phase B should
 // introduce a `JsonWriter` trait in bun_core (or bun_collections) with the methods

@@ -251,6 +251,20 @@ impl Status {
     }
 }
 
+impl core::fmt::Display for Status {
+    /// Port of `Status.format` (process.zig).
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Status::Running => f.write_str("running"),
+            Status::Exited { code, signal } => {
+                write!(f, "exited with code {} and signal {}", code, *signal as u8)
+            }
+            Status::Signaled(sig) => write!(f, "signaled with {}", *sig as u8),
+            Status::Err(err) => write!(f, "{}", err),
+        }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Process — low-tier shape of `bun.spawn.Process` (process.zig `Process`).
 //

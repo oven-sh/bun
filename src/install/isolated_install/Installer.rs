@@ -780,8 +780,8 @@ impl Task {
 
                                         let mut hardlinker = Hardlinker::init(
                                             folder_dir,
-                                            src,
-                                            dest,
+                                            src.into_sep::<{ PathSeparators::ANY }>(),
+                                            dest.into_sep::<{ PathSeparators::ANY }>(),
                                             &[bun_paths::os_path_literal!("node_modules")],
                                         )?;
 
@@ -849,8 +849,8 @@ impl Task {
 
                                         let mut file_copier = FileCopier::init(
                                             folder_dir,
-                                            src_path,
-                                            dest,
+                                            src_path.into_sep::<{ PathSeparators::ANY }>(),
+                                            dest.into_sep::<{ PathSeparators::ANY }>(),
                                             &[bun_paths::os_path_literal!("node_modules")],
                                         )?;
 
@@ -924,7 +924,8 @@ impl Task {
                             }
                         }
                     };
-                    let pkg_cache_dir_subpath = AutoRelPath::from(pkg_cache_dir_subpath_init);
+                    let pkg_cache_dir_subpath =
+                        bun_core::handle_oom(AutoRelPath::from(pkg_cache_dir_subpath_init));
 
                     // SAFETY: idempotent cache-dir initialization (once-init internally).
                     // Scoped tightly so the `&mut PackageManager` does not outlive this

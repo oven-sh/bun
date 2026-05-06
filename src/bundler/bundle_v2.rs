@@ -4928,21 +4928,16 @@ impl<'a> BundleV2<'a> {
         // TODO(port): parse_result is heap-allocated by worker; reconstruct Box::from_raw at scope exit
 
         let mut diff: i32 = -1;
-        let _diff_guard = scopeguard::guard((), |_| {
-            bun_core::scoped_log!(scan_counter, "in parse task .pending_items += {} = {}\n",
-                diff, i32::try_from(graph.pending_items).unwrap() + diff);
-            graph.pending_items = u32::try_from(i32::try_from(graph.pending_items).unwrap() + diff).unwrap();
-            if diff < 0 {
-                this.on_after_decrement_scan_counter();
-            }
-        });
+        // PORT NOTE: Zig used `defer { graph.pending_items += diff; … }` —
+        // hoisted to tail position (see end of fn) so the closure doesn't
+        // double-borrow `graph`/`this`.
 
         let mut resolve_queue = ResolveQueue::new();
         let mut process_log = true;
 
         if matches!(parse_result.value, parse_task::ResultValue::Success(_)) {
-            barrel_imports::apply_barrel_optimization(this, parse_result);
-
+            // TODO(b2-blocked): `barrel_imports::apply_barrel_optimization` —
+            // body is gated (reads `Graph::ast` SoA columns not yet exposed).
             resolve_queue = Self::run_resolution_for_parse_task(parse_result, this);
             if matches!(parse_result.value, parse_task::ResultValue::Err(_)) {
                 process_log = false;

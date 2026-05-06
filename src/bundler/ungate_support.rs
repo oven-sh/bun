@@ -313,6 +313,7 @@ impl CompileResult {
 }
 
 /// `bundle_v2.zig:CompileResultForSourceMap`.
+#[derive(bun_collections::MultiArrayElement)]
 pub struct CompileResultForSourceMap {
     pub source_map_chunk: bun_sourcemap::Chunk,
     pub generated_offset: bun_sourcemap::LineColumnOffset,

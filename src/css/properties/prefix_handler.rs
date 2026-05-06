@@ -99,9 +99,11 @@ impl FallbackHandler {
             is_compat = |v: &css::css_values::color::CssColor, b| v.is_compatible(b)
         );
         // PropertyIdTag::TextShadow has no vendor prefix.
-        // TODO(port): `SmallList<TextShadow,1>` lacks `get_fallbacks`/`is_compatible` until
-        // `small_list::fallbacks_gated` un-gates. Mirror Zig's "no `getFallbacks` decl"
-        // path (skip fallback emission) and hand-roll per-element compat.
+        // PORT NOTE: `small_list::get_fallbacks_text_shadow` and `TextShadow::is_compatible`
+        // remain `#[cfg(any())]`-gated, so the fallbacks/is_compat closures hand-roll their
+        // bodies inline against the public TextShadow fields. Spec: prefix_handler.zig:38-62
+        // calls `val.getFallbacks` + `val.isCompatible` unconditionally — there is no
+        // "skip when decl missing" path, so the previous no-op closures were silently wrong.
         handle_unprefixed!(
             text_shadow, TextShadow,
             deep_clone = |l: &css::SmallList<css::css_properties::text::TextShadow, 1>, a: &bun_alloc::Arena| {
@@ -109,13 +111,50 @@ impl FallbackHandler {
                 for s in l.slice() { out.append(s.deep_clone(a)); }
                 out
             },
-            fallbacks = |_v: &mut css::SmallList<css::css_properties::text::TextShadow, 1>, _a, _t, _d: &mut css::DeclarationList| {
-                // blocked_on: small_list::get_fallbacks_text_shadow un-gate
+            fallbacks = |v: &mut css::SmallList<css::css_properties::text::TextShadow, 1>, a: &bun_alloc::Arena, t, d: &mut css::DeclarationList| {
+                use css::css_values::color::ColorFallbackKind;
+                use css::css_properties::text::TextShadow;
+                // Hand-rolled `SmallList<TextShadow,1>::getFallbacks` (small_list.zig).
+                let mut kinds = ColorFallbackKind::empty();
+                for shadow in v.slice() {
+                    kinds.insert(shadow.color.get_necessary_fallbacks(t));
+                }
+                let build = |conv: fn(&css::css_values::color::CssColor) -> Option<css::css_values::color::CssColor>| {
+                    let mut out = css::SmallList::<TextShadow, 1>::init_capacity(v.len());
+                    for s in v.slice() {
+                        out.append(TextShadow {
+                            color: conv(&s.color).unwrap_or_else(|| s.color.deep_clone(a)),
+                            x_offset: s.x_offset.clone(),
+                            y_offset: s.y_offset.clone(),
+                            blur: s.blur.clone(),
+                            spread: s.spread.clone(),
+                        });
+                    }
+                    out
+                };
+                if kinds.contains(ColorFallbackKind::RGB) {
+                    d.push(Property::TextShadow(build(css::css_values::color::CssColor::to_rgb)));
+                }
+                if kinds.contains(ColorFallbackKind::P3) {
+                    d.push(Property::TextShadow(build(css::css_values::color::CssColor::to_p3)));
+                }
+                if kinds.contains(ColorFallbackKind::LAB) {
+                    for shadow in v.slice_mut() {
+                        if let Some(lab) = shadow.color.to_lab() {
+                            shadow.color = lab;
+                        }
+                    }
+                }
             },
-            is_compat = |_v: &css::SmallList<css::css_properties::text::TextShadow, 1>, _b| {
-                // blocked_on: TextShadow::is_compatible un-gate (text.rs) — always-true
-                // matches Zig fallback when no `isCompatible` decl exists.
-                true
+            is_compat = |v: &css::SmallList<css::css_properties::text::TextShadow, 1>, b| {
+                // Hand-rolled `SmallList<TextShadow,1>::isCompatible` — AND over elements.
+                v.slice().iter().all(|s| {
+                    s.color.is_compatible(b)
+                        && s.x_offset.is_compatible(b)
+                        && s.y_offset.is_compatible(b)
+                        && s.blur.is_compatible(b)
+                        && s.spread.is_compatible(b)
+                })
             }
         );
 

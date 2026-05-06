@@ -1041,7 +1041,8 @@ macro_rules! flush_standard_property_helper {
     }};
 }
 
-#[cfg(any())] // blocked_on: flex::{BoxPack,FlexPack,BoxAlign,FlexAlign,FlexItemAlign,FlexLinePack}::from_standard — still gated in flex.rs
+// PORT NOTE: un-gated B-2 round 15 — flex::{BoxPack,FlexPack,BoxAlign,FlexAlign,
+// FlexItemAlign,FlexLinePack}::from_standard + prefixes::Feature::is_flex_2009 are real now.
 macro_rules! flush_legacy_property {
     // variant with both 2009 and 2012
     ($dest:expr, $context:expr, $feature:expr, $key:expr, prop_2009: ($ty2009:ty, $variant2009:ident), prop_2012: ($ty2012:ty, $variant2012:ident)) => {{
@@ -1102,14 +1103,6 @@ macro_rules! flush_legacy_property {
             prefix.remove(VendorPrefix::MS);
             let _ = prefix;
         }
-    }};
-}
-
-// No-op stub so `flush()` compiles until the real `flush_legacy_property!` above un-gates.
-// Delete this when un-gating the real body.
-macro_rules! flush_legacy_property {
-    ($dest:expr, $context:expr, $feature:expr, $key:expr, prop_2009: $p2009:tt, prop_2012: $p2012:tt) => {{
-        let _ = (&$dest, &$context, $feature, &*$key);
     }};
 }
 

@@ -1686,6 +1686,10 @@ pub mod c {
     }
 
     /// Darwin `sendfile(fd, s, off, *len, *hdtr, flags)`.
+    /// NOTE (SendFile.zig:67): on `EINTR`/`EAGAIN` the kernel still writes the
+    /// bytes-sent count back through `*len` before returning -1 — callers MUST
+    /// advance their offset by `*len` even on error. This wrapper is raw (no
+    /// EINTR retry); the caller owns the offset bookkeeping.
     #[cfg(target_os = "macos")]
     pub unsafe fn sendfile(
         fd: c_int, s: c_int, off: i64, len: *mut i64,

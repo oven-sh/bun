@@ -30,7 +30,7 @@ impl CounterStyleRule {
         // PORT NOTE: `css.implementDeepClone` field-walk.
         Self {
             name: self.name.deep_clone(bump),
-            declarations: super::dc::decl_block(&self.declarations, bump),
+            declarations: super::dc::decl_block_static(&self.declarations, bump),
             loc: self.loc,
         }
     }

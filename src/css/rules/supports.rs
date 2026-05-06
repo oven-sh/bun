@@ -226,27 +226,8 @@ impl SupportsCondition {
 }
 
 // ─── parse bodies ─────────────────────────────────────────────────────────
-// blocked_on: css_parser::Parser::{try_parse,expect_ident,expect_ident_matching,
-// expect_colon,expect_no_error_token,skip_whitespace,position,slice_from,next,
-// parse_nested_block,allocator,current_source_location} signatures and
-// PropertyId::{parse,with_prefix,prefix,add_prefix}. The grammar body below is
-// the full port of supports.zig:73-244 and re-lands when those siblings un-gate.
-// Stub so css_parser's now-un-gated `@supports` / `@import supports(..)`
-// prelude paths type-check. Real bodies are in the `#[cfg(any())]` impl
-// below; un-gate when its blocked_on list clears.
-#[cfg(not(any()))]
 impl SupportsCondition {
-    pub fn parse(_input: &mut css::Parser) -> css::Result<SupportsCondition> {
-        todo!("port: SupportsCondition::parse — gated body below")
-    }
-    pub fn parse_declaration(_input: &mut css::Parser) -> css::Result<SupportsCondition> {
-        todo!("port: SupportsCondition::parse_declaration — gated body below")
-    }
-}
-
-#[cfg(any())]
-impl SupportsCondition {
-    pub fn parse<'i>(input: &mut css::Parser<'i, '_>) -> css::Result<SupportsCondition> {
+    pub fn parse(input: &mut css::Parser) -> css::Result<SupportsCondition> {
         use bun_collections::ArrayHashMap;
         use bun_string::strings;
 
@@ -254,17 +235,11 @@ impl SupportsCondition {
             .try_parse(|i| i.expect_ident_matching(b"not"))
             .is_ok()
         {
-            let in_parens = match SupportsCondition::parse_in_parens(input) {
-                Ok(vv) => vv,
-                Err(e) => return Err(e),
-            };
+            let in_parens = SupportsCondition::parse_in_parens(input)?;
             return Ok(SupportsCondition::Not(Box::new(in_parens)));
         }
 
-        let in_parens: SupportsCondition = match SupportsCondition::parse_in_parens(input) {
-            Ok(vv) => vv,
-            Err(e) => return Err(e),
-        };
+        let in_parens: SupportsCondition = SupportsCondition::parse_in_parens(input)?;
         let mut expected_type: Option<i32> = None;
         // PERF(port): was arena-backed ArrayListUnmanaged — profile in Phase B
         let mut conditions: Vec<SupportsCondition> = Vec::new();
@@ -276,10 +251,11 @@ impl SupportsCondition {
             // PORT NOTE: reshaped for borrowck — Zig threaded `*?i32` through a
             // local `Closure` struct (LIFETIMES.tsv: BORROW_PARAM); a Rust closure
             // capturing `&mut expected_type` is the direct equivalent.
-            let _condition = input.try_parse(|i: &mut css::Parser<'i, '_>| -> css::Result<SupportsCondition> {
+            let _condition = input.try_parse(|i: &mut css::Parser| -> css::Result<SupportsCondition> {
                 let location = i.current_source_location();
-                let s = match i.expect_ident() {
-                    Ok(vv) => vv,
+                // SAFETY: ident borrows parser source/arena; see `css_parser::src_str`.
+                let s: &'static [u8] = match i.expect_ident() {
+                    Ok(vv) => unsafe { css::css_parser::src_str(vv) },
                     Err(e) => return Err(e),
                 };
                 let found_type: i32 = 'found_type: {
@@ -312,7 +288,7 @@ impl SupportsCondition {
                         if let SupportsCondition::Declaration(decl) = &in_parens {
                             let property_id = &decl.property_id;
                             let value = decl.value;
-                            seen_declarations.put(
+                            let _ = seen_declarations.put(
                                 SeenDeclKey(
                                     property_id.with_prefix(css::VendorPrefix::NONE),
                                     value,
@@ -335,7 +311,7 @@ impl SupportsCondition {
                                 d.property_id.add_prefix(property_id.prefix());
                             }
                         } else {
-                            seen_declarations.put(key, conditions.len());
+                            let _ = seen_declarations.put(key, conditions.len());
                             conditions.push(SupportsCondition::Declaration(Declaration {
                                 property_id,
                                 value,
@@ -363,49 +339,37 @@ impl SupportsCondition {
         Ok(in_parens)
     }
 
-    pub fn parse_declaration<'i>(input: &mut css::Parser<'i, '_>) -> css::Result<SupportsCondition> {
-        let property_id = match PropertyId::parse(input) {
-            Ok(v) => v,
-            Err(e) => return Err(e),
-        };
-        if let Some(e) = input.expect_colon().err() {
-            return Err(e);
-        }
+    pub fn parse_declaration(input: &mut css::Parser) -> css::Result<SupportsCondition> {
+        let property_id = PropertyId::parse(input)?;
+        input.expect_colon()?;
         input.skip_whitespace();
         let pos = input.position();
-        if let Some(e) = input.expect_no_error_token().err() {
-            return Err(e);
-        }
+        input.expect_no_error_token()?;
+        // SAFETY: borrows parser source/arena; see `css_parser::src_str`.
+        let value = unsafe { css::css_parser::src_str(input.slice_from(pos)) };
         Ok(SupportsCondition::Declaration(Declaration {
             property_id,
-            value: input.slice_from(pos),
+            value,
         }))
     }
 
-    fn parse_in_parens<'i>(input: &mut css::Parser<'i, '_>) -> css::Result<SupportsCondition> {
+    fn parse_in_parens(input: &mut css::Parser) -> css::Result<SupportsCondition> {
         use bun_string::strings;
         input.skip_whitespace();
         let location = input.current_source_location();
         let pos = input.position();
-        let tok = match input.next() {
-            Ok(vv) => vv,
-            Err(e) => return Err(e),
-        };
-        match *tok {
+        let tok = input.next()?.clone();
+        match tok {
             css::Token::Function(f) => {
                 if strings::eql_case_insensitive_ascii_check_length(b"selector", f) {
-                    fn parse_nested_block_fn<'i>(
-                        _: (),
-                        i: &mut css::Parser<'i, '_>,
-                    ) -> css::Result<SupportsCondition> {
-                        let p = i.position();
-                        if let Some(e) = i.expect_no_error_token().err() {
-                            return Err(e);
-                        }
-                        Ok(SupportsCondition::Selector(i.slice_from(p)))
-                    }
                     let res = input.try_parse(|i| {
-                        i.parse_nested_block((), parse_nested_block_fn)
+                        i.parse_nested_block(|i2| {
+                            let p = i2.position();
+                            i2.expect_no_error_token()?;
+                            // SAFETY: borrows parser source/arena; see `css_parser::src_str`.
+                            let s = unsafe { css::css_parser::src_str(i2.slice_from(p)) };
+                            Ok(SupportsCondition::Selector(s))
+                        })
                     });
                     if res.is_ok() {
                         return res;
@@ -413,53 +377,45 @@ impl SupportsCondition {
                 }
             }
             css::Token::OpenParen => {
-                let res = input.try_parse(|i: &mut css::Parser<'i, '_>| {
-                    i.parse_nested_block((), |_: (), i| SupportsCondition::parse(i))
+                let res = input.try_parse(|i| {
+                    i.parse_nested_block(|i2| SupportsCondition::parse(i2))
                 });
                 if res.is_ok() {
                     return res;
                 }
             }
-            _ => return Err(location.new_unexpected_token_error(*tok)),
+            _ => return Err(location.new_unexpected_token_error(tok)),
         }
 
-        if let Some(err) = input
-            .parse_nested_block((), |_: (), i: &mut css::Parser<'i, '_>| {
-                i.expect_no_error_token()
-            })
-            .err()
-        {
-            return Err(err);
-        }
+        input.parse_nested_block(|i| i.expect_no_error_token())?;
 
-        Ok(SupportsCondition::Unknown(input.slice_from(pos)))
+        // SAFETY: borrows parser source/arena; see `css_parser::src_str`.
+        let s = unsafe { css::css_parser::src_str(input.slice_from(pos)) };
+        Ok(SupportsCondition::Unknown(s))
     }
 }
 
 // PORT NOTE: Zig `SeenDeclKey` was a tuple struct with an inline hash-map context
 // providing custom hash/eql. Ported as a tuple struct with manual Hash/PartialEq
 // matching the Zig context exactly (wrapping_add of string hash and enum int).
-#[cfg(any())]
 struct SeenDeclKey(PropertyId, &'static [u8]);
 
-#[cfg(any())]
 impl core::hash::Hash for SeenDeclKey {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         // TODO(port): Zig used std.array_hash_map.hashString (wyhash, 32-bit) +% @intFromEnum.
         // bun_collections::ArrayHashMap is wyhash-backed; confirm hasher parity in Phase B.
         // PORT NOTE: hash_string returns u32 directly (mirrors Zig hashString) — no narrowing cast.
         let h: u32 = bun_collections::array_hash_map::hash_string(self.1);
-        state.write_u32(h.wrapping_add(self.0 as u32));
+        state.write_u32(h.wrapping_add(self.0.tag() as u32));
     }
 }
 
-#[cfg(any())]
 impl PartialEq for SeenDeclKey {
     fn eq(&self, other: &Self) -> bool {
-        (self.0 as u32) == (other.0 as u32) && self.1 == other.1
+        // Zig: tag-only equality + slice byte equality.
+        self.0.tag() as u16 == other.0.tag() as u16 && self.1 == other.1
     }
 }
-#[cfg(any())]
 impl Eq for SeenDeclKey {}
 
 /// A [@supports](https://drafts.csswg.org/css-conditional-3/#at-supports) rule.

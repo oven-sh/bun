@@ -248,7 +248,7 @@ impl Keyframe {
         // PORT NOTE: `css.implementDeepClone` field-walk.
         Self {
             selectors: self.selectors.iter().map(|s| s.deep_clone(bump)).collect(),
-            declarations: super::dc::decl_block(&self.declarations, bump),
+            declarations: super::dc::decl_block_static(&self.declarations, bump),
         }
     }
 }

@@ -1,6 +1,6 @@
 use core::ptr::NonNull;
 
-use bun_collections::{StringArrayHashMap, StringHashMap};
+use bun_collections::StringHashMap;
 use bun_js_parser as js_ast;
 use bun_js_parser::ast::expr::IntoExprData;
 use bun_js_parser::lexer as js_lexer;
@@ -15,6 +15,28 @@ use crate::defines_table::{
     GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING as global_no_side_effect_function_calls_safe_for_to_string,
     GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES as global_no_side_effect_property_accesses,
 };
+
+// ══════════════════════════════════════════════════════════════════════════
+// B-3 UNIFIED: `Define` / `DefineData` / `DotDefine` / `Flags` / `Options` /
+// `RawDefines` / `UserDefines` / `UserDefinesArray` are canonical in
+// `bun_js_parser::defines` (lower tier) so the parser's `P.define: &'a Define`
+// and `BundleOptions.define: Box<Define>` are the *same* nominal type. This
+// crate adds the table-backed `init` / json-parse / dotenv-vtable bodies that
+// need `defines_table` / `bun_interchange` / `bun_dotenv` (all tiered above
+// js_parser) via the `DefineExt` / `DefineDataExt` extension traits below, and
+// registers the `PURE_GLOBAL_IDENTIFIER_LOOKUP` hook so the parser-side
+// `for_identifier` falls back to the comptime map.
+// ══════════════════════════════════════════════════════════════════════════
+pub use bun_js_parser::defines::{
+    are_parts_equal, Define, DefineData, DotDefine, Flags, IdentifierDefine, Options, RawDefines,
+    UserDefines, UserDefinesArray, PURE_GLOBAL_IDENTIFIER_LOOKUP,
+};
+
+/// Alias for `Options` so `options.rs` can write `DefineData::init(DefineDataInit { .. })`
+/// (mirrors Zig's anonymous-struct init).
+pub type DefineDataInit<'a> = Options<'a>;
+/// Alias for `ExprData` so `options.rs` can write `DefineValue::EUndefined(..)`.
+pub use bun_js_parser::ExprData as DefineValue;
 
 // `Expr::Data` stores `Number`/`Undefined` inline (not via pointer), so the
 // `_PTR` indirection from Zig disappears.
@@ -45,19 +67,9 @@ fn defines_path() -> fs::Path {
     p
 }
 
-// Zig: `bun.StringArrayHashMap(string)` / `bun.StringArrayHashMap(DefineData)`.
-// Uses the boxed-key wrapper (not raw `ArrayHashMap<Box<[u8]>, _>`) so callers
-// can pass `&[u8]` borrows to `contains` / `get_or_put_value` — required by
-// `options.rs::defines_from_transform_options` and the env-define vtable below.
-pub type RawDefines = StringArrayHashMap<Box<[u8]>>;
-pub type UserDefines = StringHashMap<DefineData>;
-pub type UserDefinesArray = StringArrayHashMap<DefineData>;
-
-/// Alias for `Options` so `options.rs` can write `DefineData::init(DefineDataInit { .. })`
-/// (mirrors Zig's anonymous-struct init).
-pub type DefineDataInit<'a> = Options<'a>;
-/// Alias for `ExprData` so `options.rs` can write `DefineValue::EUndefined(..)`.
-pub use bun_js_parser::ExprData as DefineValue;
+// Zig: `pub const Data = DefineData;` inside `Define`
+// TODO(port): inherent associated type aliases are unstable; expose as module-level alias.
+pub type Data = DefineData;
 
 // ══════════════════════════════════════════════════════════════════════════
 // CYCLEBREAK(b0): vtable instances for `bun_dotenv::DefineStoreVTable`
@@ -119,31 +131,26 @@ unsafe fn env_string_store_put_raw(
 }
 
 /// Backs `to_json: *JSONStore` in `Loader.copyForDefine`.
-/// Owner type: `*mut RawDefines` (raw key→source mapping that
-/// `DefineData::from_input` later parses).
+/// Owner type: `*mut RawDefines` (`StringArrayHashMap<Box<[u8]>>`).
 pub static ENV_DEFINE_JSON_STORE_VTABLE: bun_dotenv::DefineStoreVTable = bun_dotenv::DefineStoreVTable {
     contains: env_json_store_contains,
-    put_string_define: env_json_store_put,
-    put_raw: env_json_store_put,
+    put_string_define: env_json_store_put_raw,
+    put_raw: env_json_store_put_raw,
 };
 
 unsafe fn env_json_store_contains(owner: *mut (), key: &[u8]) -> bool {
-    // SAFETY: vtable contract — owner is `*mut RawDefines`.
     unsafe { &*(owner as *const RawDefines) }.contains_key(key)
 }
-unsafe fn env_json_store_put(
+unsafe fn env_json_store_put_raw(
     owner: *mut (),
     key: &[u8],
     value: &[u8],
 ) -> Result<(), bun_core::Error> {
-    // JSON store wants the raw bytes (later fed to DefineData::from_input).
-    // SAFETY: vtable contract.
     let store = unsafe { &mut *(owner as *mut RawDefines) };
-    store.get_or_put_value(key, value.to_vec().into_boxed_slice())?;
+    store.get_or_put_value(key, Box::<[u8]>::from(value))?;
     Ok(())
 }
 
-/// Convenience: build a `DefineStoreRef` over a `UserDefinesArray` map.
 #[inline]
 pub fn env_define_string_store_ref(store: &mut UserDefinesArray) -> bun_dotenv::DefineStoreRef<'_> {
     bun_dotenv::DefineStoreRef::new(
@@ -151,7 +158,7 @@ pub fn env_define_string_store_ref(store: &mut UserDefinesArray) -> bun_dotenv::
         &ENV_DEFINE_STRING_STORE_VTABLE,
     )
 }
-/// Convenience: build a `DefineStoreRef` over a raw JSON-string map.
+
 #[inline]
 pub fn env_define_json_store_ref(store: &mut RawDefines) -> bun_dotenv::DefineStoreRef<'_> {
     bun_dotenv::DefineStoreRef::new(
@@ -160,228 +167,161 @@ pub fn env_define_json_store_ref(store: &mut RawDefines) -> bun_dotenv::DefineSt
     )
 }
 
-#[derive(Clone)]
-pub struct DefineData {
-    pub value: ExprData,
+// ══════════════════════════════════════════════════════════════════════════
+// Extension impls — bodies that need `defines_table` / `bun_interchange`.
+// ══════════════════════════════════════════════════════════════════════════
 
-    // Not using a slice here shrinks the size from 48 bytes to 40 bytes.
-    // TODO(port): lifetime — borrows into caller-owned key/value strings
-    original_name_ptr: Option<NonNull<u8>>,
-    original_name_len: u32,
-
-    pub flags: Flags,
+/// Hook body for `bun_js_parser::defines::PURE_GLOBAL_IDENTIFIER_LOOKUP`.
+fn pure_global_identifier_lookup(name: &[u8]) -> Option<&'static IdentifierDefine> {
+    table::PURE_GLOBAL_IDENTIFIER_MAP.get(name).map(|id| id.value())
 }
 
-impl Default for DefineData {
-    fn default() -> Self {
-        Self {
-            // Zig: `.e_missing = .{}` — `ExprData` has no `Default` impl yet.
-            value: ExprData::EMissing(js_ast::E::Missing),
-            original_name_ptr: None,
-            original_name_len: 0,
-            flags: Flags::default(),
-        }
-    }
+/// Extension surface for the canonical `Define` (which lives in `bun_js_parser`).
+/// Separate trait so the table-dependent `init` / `insert_global` stay in this
+/// crate without an orphan-rule violation.
+pub trait DefineExt: Sized {
+    fn insert_global(
+        &mut self,
+        global: &[&[u8]],
+        value_define: &DefineData,
+    ) -> Result<(), bun_alloc::AllocError>;
+
+    fn init(
+        user_defines: Option<UserDefines>,
+        string_defines: Option<UserDefinesArray>,
+        drop_debugger: bool,
+        omit_unused_global_calls: bool,
+    ) -> Result<Box<Define>, bun_alloc::AllocError>;
 }
 
-/// Zig: `packed struct(u8)` — not all fields are bool (`_padding: u3`,
-/// `call_can_be_unwrapped_if_unused: CallUnwrap` is 2 bits), so per PORTING.md
-/// this is a `#[repr(transparent)]` newtype with manual shift accessors
-/// matching field order (LSB-first).
-#[repr(transparent)]
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub struct Flags(u8);
-
-impl Flags {
-    // bit layout (LSB-first, matching Zig packed struct field order):
-    //   [0..3) _padding
-    //   [3]    valueless
-    //   [4]    can_be_removed_if_unused
-    //   [5..7) call_can_be_unwrapped_if_unused (CallUnwrap, 2 bits)
-    //   [7]    method_call_must_be_replaced_with_undefined
-    const VALUELESS_SHIFT: u8 = 3;
-    const CAN_BE_REMOVED_SHIFT: u8 = 4;
-    const CALL_UNWRAP_SHIFT: u8 = 5;
-    const CALL_UNWRAP_MASK: u8 = 0b11 << Self::CALL_UNWRAP_SHIFT;
-    const METHOD_CALL_UNDEF_SHIFT: u8 = 7;
-
-    #[inline]
-    pub const fn valueless(self) -> bool {
-        (self.0 >> Self::VALUELESS_SHIFT) & 1 != 0
-    }
-    #[inline]
-    pub fn set_valueless(&mut self, v: bool) {
-        self.0 = (self.0 & !(1 << Self::VALUELESS_SHIFT)) | ((v as u8) << Self::VALUELESS_SHIFT);
-    }
-
-    #[inline]
-    pub const fn can_be_removed_if_unused(self) -> bool {
-        (self.0 >> Self::CAN_BE_REMOVED_SHIFT) & 1 != 0
-    }
-    #[inline]
-    pub fn set_can_be_removed_if_unused(&mut self, v: bool) {
-        self.0 = (self.0 & !(1 << Self::CAN_BE_REMOVED_SHIFT)) | ((v as u8) << Self::CAN_BE_REMOVED_SHIFT);
-    }
-
-    #[inline]
-    pub fn call_can_be_unwrapped_if_unused(self) -> js_ast::E::CallUnwrap {
-        // SAFETY: CallUnwrap is #[repr(u8)] with values fitting in 2 bits
-        unsafe {
-            core::mem::transmute::<u8, js_ast::E::CallUnwrap>(
-                (self.0 & Self::CALL_UNWRAP_MASK) >> Self::CALL_UNWRAP_SHIFT,
-            )
+impl DefineExt for Define {
+    fn insert_global(
+        &mut self,
+        global: &[&[u8]],
+        value_define: &DefineData,
+    ) -> Result<(), bun_alloc::AllocError> {
+        let key = global[global.len() - 1];
+        let parts: Vec<Box<[u8]>> = global.iter().map(|p| Box::<[u8]>::from(*p)).collect();
+        // PORT NOTE: reshaped for borrowck — getOrPut split into entry-style match.
+        if let Some(existing) = self.dots.get_mut(key) {
+            let mut list: Vec<DotDefine> = Vec::with_capacity(existing.len() + 1);
+            // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
+            list.extend_from_slice(existing);
+            // PERF(port): was appendAssumeCapacity — profile in Phase B
+            list.push(DotDefine { parts, data: value_define.clone() });
+            // Zig: define.allocator.free(gpe.value_ptr.*); — handled by Vec drop on assign
+            *existing = list;
+        } else {
+            let mut list: Vec<DotDefine> = Vec::with_capacity(1);
+            // PERF(port): was appendAssumeCapacity — profile in Phase B
+            list.push(DotDefine { parts, data: value_define.clone() });
+            self.dots.insert(key.into(), list);
         }
-    }
-    #[inline]
-    pub fn set_call_can_be_unwrapped_if_unused(&mut self, v: js_ast::E::CallUnwrap) {
-        self.0 = (self.0 & !Self::CALL_UNWRAP_MASK) | (((v as u8) & 0b11) << Self::CALL_UNWRAP_SHIFT);
+        Ok(())
     }
 
-    #[inline]
-    pub const fn method_call_must_be_replaced_with_undefined(self) -> bool {
-        (self.0 >> Self::METHOD_CALL_UNDEF_SHIFT) & 1 != 0
-    }
-    #[inline]
-    pub fn set_method_call_must_be_replaced_with_undefined(&mut self, v: bool) {
-        self.0 =
-            (self.0 & !(1 << Self::METHOD_CALL_UNDEF_SHIFT)) | ((v as u8) << Self::METHOD_CALL_UNDEF_SHIFT);
-    }
+    fn init(
+        _user_defines: Option<UserDefines>,
+        string_defines: Option<UserDefinesArray>,
+        drop_debugger: bool,
+        omit_unused_global_calls: bool,
+    ) -> Result<Box<Define>, bun_alloc::AllocError> {
+        // Register the table-fallback hook so the parser-side `for_identifier`
+        // matches Zig behavior. Idempotent — `OnceLock::set` is a no-op after
+        // the first call.
+        let _ = PURE_GLOBAL_IDENTIFIER_LOOKUP.set(pure_global_identifier_lookup);
 
-    pub fn new(
-        valueless: bool,
-        can_be_removed_if_unused: bool,
-        call_can_be_unwrapped_if_unused: js_ast::E::CallUnwrap,
-        method_call_must_be_replaced_with_undefined: bool,
-    ) -> Self {
-        let mut f = Flags(0);
-        f.set_valueless(valueless);
-        f.set_can_be_removed_if_unused(can_be_removed_if_unused);
-        f.set_call_can_be_unwrapped_if_unused(call_can_be_unwrapped_if_unused);
-        f.set_method_call_must_be_replaced_with_undefined(method_call_must_be_replaced_with_undefined);
-        f
-    }
-}
+        let mut define = Box::new(Define {
+            identifiers: StringHashMap::default(),
+            dots: StringHashMap::default(),
+            drop_debugger,
+        });
+        define.dots.reserve(124);
 
-pub struct Options<'a> {
-    pub original_name: Option<&'a [u8]>,
-    pub value: ExprData,
-    pub valueless: bool,
-    pub can_be_removed_if_unused: bool,
-    pub call_can_be_unwrapped_if_unused: js_ast::E::CallUnwrap,
-    pub method_call_must_be_replaced_with_undefined: bool,
-}
-
-impl<'a> Default for Options<'a> {
-    fn default() -> Self {
-        Self {
-            original_name: None,
-            value: ExprData::EMissing(js_ast::E::Missing),
-            valueless: false,
-            can_be_removed_if_unused: false,
-            call_can_be_unwrapped_if_unused: js_ast::E::CallUnwrap::Never,
-            method_call_must_be_replaced_with_undefined: false,
-        }
-    }
-}
-
-impl DefineData {
-    pub fn init(options: Options<'_>) -> DefineData {
-        DefineData {
-            value: options.value,
-            flags: Flags::new(
-                options.valueless,
-                options.can_be_removed_if_unused,
-                options.call_can_be_unwrapped_if_unused,
-                options.method_call_must_be_replaced_with_undefined,
-            ),
-            original_name_ptr: options.original_name.and_then(|name| NonNull::new(name.as_ptr() as *mut u8)),
-            original_name_len: options
-                .original_name
-                .map(|name| name.len() as u32) // @truncate
-                .unwrap_or(0),
-        }
-    }
-
-    #[inline]
-    pub fn original_name(&self) -> Option<&[u8]> {
-        if self.original_name_len > 0 {
-            // TODO(port): lifetime — this borrows caller-owned memory; not tracked by borrowck
-            let ptr = self.original_name_ptr.unwrap();
-            // SAFETY: original_name_ptr is non-null when original_name_len > 0, and points to
-            // a slice of original_name_len bytes that the caller keeps alive.
-            return Some(unsafe { core::slice::from_raw_parts(ptr.as_ptr(), self.original_name_len as usize) });
-        }
-        None
-    }
-
-    /// True if accessing this value is known to not have any side effects. For
-    /// example, a bare reference to "Object.create" can be removed because it
-    /// does not have any observable side effects.
-    #[inline]
-    pub fn can_be_removed_if_unused(&self) -> bool {
-        self.flags.can_be_removed_if_unused()
-    }
-
-    /// True if a call to this value is known to not have any side effects. For
-    /// example, a bare call to "Object()" can be removed because it does not
-    /// have any observable side effects.
-    #[inline]
-    pub fn call_can_be_unwrapped_if_unused(&self) -> js_ast::E::CallUnwrap {
-        self.flags.call_can_be_unwrapped_if_unused()
-    }
-
-    #[inline]
-    pub fn method_call_must_be_replaced_with_undefined(&self) -> bool {
-        self.flags.method_call_must_be_replaced_with_undefined()
-    }
-
-    #[inline]
-    pub fn valueless(&self) -> bool {
-        self.flags.valueless()
-    }
-
-    pub fn init_boolean(value: bool) -> DefineData {
-        let mut flags = Flags::default();
-        flags.set_can_be_removed_if_unused(true);
-        DefineData {
-            value: ExprData::EBoolean(js_ast::E::Boolean { value }),
-            flags,
+        let value_define = DefineData::init(Options {
+            value: ExprData::EUndefined(js_ast::E::Undefined),
+            valueless: true,
+            can_be_removed_if_unused: true,
             ..Default::default()
+        });
+        // Step 1. Load the globals into the hash tables
+        for global in global_no_side_effect_property_accesses.iter() {
+            define.insert_global(global, &value_define)?;
         }
-    }
 
-    pub fn init_static_string(str: &'static js_ast::E::EString) -> DefineData {
-        let mut flags = Flags::default();
-        flags.set_can_be_removed_if_unused(true);
-        DefineData {
-            // Zig: @constCast(str) — Expr.Data.e_string stores *E.String.
-            // Rust port stores `StoreRef<EString>`; build one over the static.
-            value: ExprData::EString(js_ast::ast::StoreRef::from_static(str)),
-            flags,
+        let to_string_safe = DefineData::init(Options {
+            value: ExprData::EUndefined(js_ast::E::Undefined),
+            valueless: true,
+            can_be_removed_if_unused: true,
+            call_can_be_unwrapped_if_unused: js_ast::E::CallUnwrap::IfUnusedAndToStringSafe,
             ..Default::default()
-        }
-    }
+        });
 
-    pub fn merge(a: DefineData, b: DefineData) -> DefineData {
-        DefineData {
-            value: b.value,
-            flags: Flags::new(
-                // TODO: investigate if this is correct. This is what it was before. But that looks strange.
-                /* valueless: */
-                a.method_call_must_be_replaced_with_undefined()
-                    || b.method_call_must_be_replaced_with_undefined(),
-                /* can_be_removed_if_unused: */ a.can_be_removed_if_unused(),
-                /* call_can_be_unwrapped_if_unused: */ a.call_can_be_unwrapped_if_unused(),
-                /* method_call_must_be_replaced_with_undefined: */
-                a.method_call_must_be_replaced_with_undefined()
-                    || b.method_call_must_be_replaced_with_undefined(),
-            ),
-            original_name_ptr: b.original_name_ptr,
-            original_name_len: b.original_name_len,
+        if omit_unused_global_calls {
+            for global in global_no_side_effect_function_calls_safe_for_to_string.iter() {
+                define.insert_global(global, &to_string_safe)?;
+            }
+        } else {
+            for global in global_no_side_effect_function_calls_safe_for_to_string.iter() {
+                define.insert_global(global, &value_define)?;
+            }
         }
-    }
 
-    pub fn from_mergeable_input_entry(
+        // Step 3. Load user data into hash tables
+        // At this stage, user data has already been validated.
+        if let Some(user_defines) = &_user_defines {
+            define.insert_from_iterator(
+                user_defines
+                    .iter()
+                    .map(|(k, v): (&Box<[u8]>, &DefineData)| (k.as_ref(), v)),
+            )?;
+        }
+
+        // Step 4. Load environment data into hash tables.
+        // These are only strings. We do not parse them as JSON.
+        if let Some(string_defines_) = &string_defines {
+            define.insert_from_iterator(
+                string_defines_
+                    .keys()
+                    .iter()
+                    .zip(string_defines_.values().iter())
+                    .map(|(k, v)| (k.as_ref(), v)),
+            )?;
+        }
+
+        Ok(define)
+    }
+}
+
+/// Extension surface for the canonical `DefineData` — `parse` / `from_input`
+/// need `bun_interchange::json_parser` / `js_lexer::Keywords`.
+pub trait DefineDataExt: Sized {
+    fn parse(
+        key: &[u8],
+        value_str: &[u8],
+        value_is_undefined: bool,
+        method_call_must_be_replaced_with_undefined_: bool,
+        log: &mut logger::Log,
+    ) -> Result<DefineData, bun_core::Error>;
+
+    fn from_mergeable_input_entry(
+        user_defines: &mut UserDefines,
+        key: &[u8],
+        value_str: &[u8],
+        value_is_undefined: bool,
+        method_call_must_be_replaced_with_undefined_: bool,
+        log: &mut logger::Log,
+    ) -> Result<(), bun_core::Error>;
+
+    fn from_input(
+        defines: &RawDefines,
+        drop: &[&[u8]],
+        log: &mut logger::Log,
+    ) -> Result<UserDefines, bun_core::Error>;
+}
+
+impl DefineDataExt for DefineData {
+    fn from_mergeable_input_entry(
         user_defines: &mut UserDefines,
         key: &[u8],
         value_str: &[u8],
@@ -392,7 +332,7 @@ impl DefineData {
         // PERF(port): was putAssumeCapacity — profile in Phase B
         user_defines.insert(
             key.into(),
-            Self::parse(
+            <Self as DefineDataExt>::parse(
                 key,
                 value_str,
                 value_is_undefined,
@@ -403,7 +343,7 @@ impl DefineData {
         Ok(())
     }
 
-    pub fn parse(
+    fn parse(
         key: &[u8],
         value_str: &[u8],
         value_is_undefined: bool,
@@ -511,7 +451,7 @@ impl DefineData {
         unimplemented!("b2-blocked: json_parser::parse_env_json")
     }
 
-    pub fn from_input(
+    fn from_input(
         defines: &RawDefines,
         drop: &[&[u8]],
         log: &mut logger::Log,
@@ -519,12 +459,16 @@ impl DefineData {
         let mut user_defines = UserDefines::default();
         user_defines.reserve((defines.len() + drop.len()) as u32 as usize); // @truncate
         for (key, value) in defines.keys().iter().zip(defines.values().iter()) {
-            Self::from_mergeable_input_entry(&mut user_defines, key, value, false, false, log)?;
+            <Self as DefineDataExt>::from_mergeable_input_entry(
+                &mut user_defines, key, value, false, false, log,
+            )?;
         }
 
         for drop_item in drop {
             if !drop_item.is_empty() {
-                Self::from_mergeable_input_entry(&mut user_defines, drop_item, b"", true, true, log)?;
+                <Self as DefineDataExt>::from_mergeable_input_entry(
+                    &mut user_defines, drop_item, b"", true, true, log,
+                )?;
             }
         }
 
@@ -532,218 +476,9 @@ impl DefineData {
     }
 }
 
-fn are_parts_equal(a: &[Box<[u8]>], b: &[Box<[u8]>]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    for i in 0..a.len() {
-        if !strings::eql(&a[i], &b[i]) {
-            return false;
-        }
-    }
-    true
-}
-
-pub type IdentifierDefine = DefineData;
-
-#[derive(Clone)]
-pub struct DotDefine {
-    // PORTING.md §Forbidden: no `Box::leak` to fake `&'static`. Zig stored raw
-    // borrowed slices into either static tables or user-define key strings; for
-    // the Rust port we own the part strings (small, allocated once at startup).
-    // PERF(port): was `[][]const u8` borrowing — copies are tiny.
-    pub parts: Vec<Box<[u8]>>,
-    pub data: DefineData,
-}
-
 // var nan_val = try allocator.create(js_ast.E.Number);
 #[allow(dead_code)]
 const NAN_VAL: js_ast::E::Number = js_ast::E::Number { value: f64::NAN };
-
-pub struct Define {
-    pub identifiers: StringHashMap<IdentifierDefine>,
-    pub dots: StringHashMap<Vec<DotDefine>>,
-    pub drop_debugger: bool,
-}
-
-// Zig: `pub const Data = DefineData;` inside `Define`
-// TODO(port): inherent associated type aliases are unstable; expose as module-level alias
-pub type Data = DefineData;
-
-impl Define {
-    pub fn for_identifier(&self, name: &[u8]) -> Option<&IdentifierDefine> {
-        if let Some(data) = self.identifiers.get(name) {
-            return Some(data);
-        }
-
-        if let Some(id) = table::PURE_GLOBAL_IDENTIFIER_MAP.get(name) {
-            return Some(id.value());
-        }
-
-        None
-    }
-
-    // Zig: `comptime Iterator: type, iter: Iterator` — drop the type param per PORTING.md
-    pub fn insert_from_iterator<'a, I>(&mut self, iter: I) -> Result<(), bun_alloc::AllocError>
-    where
-        I: Iterator<Item = (&'a [u8], &'a DefineData)>,
-    {
-        for (key, value) in iter {
-            self.insert(key, value.clone())?;
-        }
-        Ok(())
-    }
-
-    pub fn insert(&mut self, key: &[u8], value: DefineData) -> Result<(), bun_alloc::AllocError> {
-        // If it has a dot, then it's a DotDefine.
-        // e.g. process.env.NODE_ENV
-        if let Some(last_dot) = strings::last_index_of_char(key, b'.') {
-            let tail = &key[last_dot + 1..key.len()];
-            let remainder = &key[0..last_dot];
-            let count = remainder.iter().filter(|&&b| b == b'.').count() + 1;
-            let mut parts: Vec<Box<[u8]>> = Vec::with_capacity(count + 1);
-            for split in remainder.split(|b| *b == b'.') {
-                parts.push(Box::from(split));
-            }
-            parts.push(Box::from(tail));
-
-            let mut initial_values: &[DotDefine] = &[];
-
-            // "NODE_ENV"
-            // PORT NOTE: reshaped for borrowck — getOrPut split into get/insert
-            if let Some(existing) = self.dots.get_mut(tail) {
-                for part in existing.iter_mut() {
-                    // ["process", "env"] === ["process", "env"] (if that actually worked)
-                    if are_parts_equal(&part.parts, &parts) {
-                        part.data = DefineData::merge(part.data.clone(), value);
-                        return Ok(());
-                    }
-                }
-
-                initial_values = existing.as_slice();
-            }
-
-            let mut list: Vec<DotDefine> = Vec::with_capacity(initial_values.len() + 1);
-            if !initial_values.is_empty() {
-                // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
-                list.extend_from_slice(initial_values);
-            }
-
-            // PERF(port): was appendAssumeCapacity — profile in Phase B
-            list.push(DotDefine {
-                data: value,
-                // TODO: do we need to allocate this?
-                parts,
-            });
-            self.dots.insert(tail.into(), list);
-        } else {
-            // e.g. IS_BROWSER
-            self.identifiers.insert(key.into(), value);
-        }
-        Ok(())
-    }
-
-    fn insert_global(
-        &mut self,
-        global: &[&[u8]],
-        value_define: &DefineData,
-    ) -> Result<(), bun_alloc::AllocError> {
-        let key = global[global.len() - 1];
-        let parts: Vec<Box<[u8]>> = global.iter().map(|p| Box::<[u8]>::from(*p)).collect();
-        // PORT NOTE: reshaped for borrowck — getOrPut split into entry-style match
-        if let Some(existing) = self.dots.get_mut(key) {
-            let mut list: Vec<DotDefine> = Vec::with_capacity(existing.len() + 1);
-            // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
-            list.extend_from_slice(existing);
-            // PERF(port): was appendAssumeCapacity — profile in Phase B
-            list.push(DotDefine { parts, data: value_define.clone() });
-
-            // Zig: define.allocator.free(gpe.value_ptr.*); — handled by Vec drop on assign
-            *existing = list;
-        } else {
-            let mut list: Vec<DotDefine> = Vec::with_capacity(1);
-            // PERF(port): was appendAssumeCapacity — profile in Phase B
-            list.push(DotDefine { parts, data: value_define.clone() });
-
-            self.dots.insert(key.into(), list);
-        }
-        Ok(())
-    }
-
-    pub fn init(
-        _user_defines: Option<UserDefines>,
-        string_defines: Option<UserDefinesArray>,
-        drop_debugger: bool,
-        omit_unused_global_calls: bool,
-    ) -> Result<Box<Self>, bun_alloc::AllocError> {
-        let mut define = Box::new(Define {
-            identifiers: StringHashMap::default(),
-            dots: StringHashMap::default(),
-            drop_debugger,
-        });
-        define.dots.reserve(124);
-
-        let value_define = DefineData {
-            value: ExprData::EUndefined(js_ast::E::Undefined),
-            flags: Flags::new(
-                /* valueless: */ true,
-                /* can_be_removed_if_unused: */ true,
-                /* call_can_be_unwrapped_if_unused: */ js_ast::E::CallUnwrap::Never,
-                /* method_call_must_be_replaced_with_undefined: */ false,
-            ),
-            ..Default::default()
-        };
-        // Step 1. Load the globals into the hash tables
-        for global in global_no_side_effect_property_accesses.iter() {
-            define.insert_global(global, &value_define)?;
-        }
-
-        let to_string_safe = DefineData {
-            value: ExprData::EUndefined(js_ast::E::Undefined),
-            flags: Flags::new(
-                /* valueless: */ true,
-                /* can_be_removed_if_unused: */ true,
-                /* call_can_be_unwrapped_if_unused: */ js_ast::E::CallUnwrap::IfUnusedAndToStringSafe,
-                /* method_call_must_be_replaced_with_undefined: */ false,
-            ),
-            ..Default::default()
-        };
-
-        if omit_unused_global_calls {
-            for global in global_no_side_effect_function_calls_safe_for_to_string.iter() {
-                define.insert_global(global, &to_string_safe)?;
-            }
-        } else {
-            for global in global_no_side_effect_function_calls_safe_for_to_string.iter() {
-                define.insert_global(global, &value_define)?;
-            }
-        }
-
-        // Step 3. Load user data into hash tables
-        // At this stage, user data has already been validated.
-        if let Some(user_defines) = &_user_defines {
-            define.insert_from_iterator(
-                user_defines
-                    .iter()
-                    .map(|(k, v): (&Box<[u8]>, &DefineData)| (k.as_ref(), v)),
-            )?;
-        }
-
-        // Step 4. Load environment data into hash tables.
-        // These are only strings. We do not parse them as JSON.
-        if let Some(string_defines_) = &string_defines {
-            define.insert_from_iterator(
-                string_defines_
-                    .keys()
-                    .iter()
-                    .zip(string_defines_.values().iter())
-                    .map(|(k, v)| (k.as_ref(), v)),
-            )?;
-        }
-
-        Ok(define)
-    }
-}
 
 // Zig `deinit` freed `dots` values, cleared maps, and destroyed `self`.
 // In Rust: `dots: StringHashMap<Vec<DotDefine>>` and `identifiers` drop their
@@ -753,6 +488,8 @@ impl Define {
 // PORT STATUS
 //   source:     src/bundler/defines.zig (429 lines)
 //   confidence: medium
-//   todos:      11
-//   notes:      DotDefine.parts lifetime is the main hazard (borrows into key strings / static tables); Flags packed-struct ported as #[repr(transparent)] u8 with manual accessors; Expr::Data variant names are guesses pending js_ast port.
+//   notes:      B-3 — type defs moved DOWN to bun_js_parser::defines; this file
+//               keeps the table-backed init + json-parse + dotenv vtable that
+//               need higher-tier deps. `for_identifier` table fallback wired
+//               via PURE_GLOBAL_IDENTIFIER_LOOKUP hook.
 // ──────────────────────────────────────────────────────────────────────────

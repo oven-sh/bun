@@ -210,6 +210,28 @@ pub(super) mod dc {
         }
     }
 
+    /// `'bump`-erasure adaptor for [`decl_block`].
+    ///
+    /// SAFETY: `DeclarationBlock<'static>` is the crate-wide `'bump`-erasure
+    /// placeholder until `CssRule<'bump, R>` re-threads the arena lifetime
+    /// (see `style.rs` struct PORT NOTE). `bumpalo::Vec` is invariant in
+    /// `'bump`, so the input reborrow and the output both require the same
+    /// erasure. Both sides point into the same arena that owns the source
+    /// block; lifetimes re-thread together when the rule structs grow a
+    /// real `'bump` parameter — at which point all callers move back to
+    /// [`decl_block`] and this helper is deleted.
+    #[inline]
+    pub fn decl_block_static(
+        this: &crate::DeclarationBlock<'static>,
+        bump: &Arena,
+    ) -> crate::DeclarationBlock<'static> {
+        unsafe {
+            core::mem::transmute::<crate::DeclarationBlock<'_>, crate::DeclarationBlock<'static>>(
+                decl_block(this, core::mem::transmute::<&Arena, &'static Arena>(bump)),
+            )
+        }
+    }
+
     /// `MediaList::deep_clone` — routes to the real arena-aware impl in
     /// media_query.rs (element-wise walk of `media_queries`).
     #[inline]

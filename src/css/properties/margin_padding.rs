@@ -1164,7 +1164,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
                 S::BLOCK_START,
                 S::extract_block_start,
                 S::make_top,
-                S::TOP,
+                S::TOP_ID,
                 dest,
                 context,
             );
@@ -1173,7 +1173,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
                 S::BLOCK_END,
                 S::extract_block_end,
                 S::make_bottom,
-                S::BOTTOM,
+                S::BOTTOM_ID,
                 dest,
                 context,
             );
@@ -1210,7 +1210,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
                     S::INLINE_START,
                     S::extract_inline_start,
                     S::make_left,
-                    S::LEFT,
+                    S::LEFT_ID,
                     dest,
                     context,
                 );
@@ -1219,7 +1219,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
                     S::INLINE_END,
                     S::extract_inline_end,
                     S::make_right,
-                    S::RIGHT,
+                    S::RIGHT_ID,
                     dest,
                     context,
                 );
@@ -1257,22 +1257,22 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         logical: PropertyIdTag,
         extract_logical: fn(&Property) -> &LengthPercentageOrAuto,
         make_ltr: fn(LengthPercentageOrAuto) -> Property,
-        ltr: PropertyIdTag,
+        ltr: PropertyId,
         make_rtl: fn(LengthPercentageOrAuto) -> Property,
-        rtl: PropertyIdTag,
-        _dest: &mut DeclarationList,
+        rtl: PropertyId,
+        dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
         // _ = this; // autofix
-        // _ = dest; // autofix
+        let bump = dest.bump();
         if let Some(v_) = val.as_ref() {
-            if v_.id() == logical {
+            if v_.property_id().tag() == logical {
                 let v = extract_logical(v_);
-                context.add_logical_rule(make_ltr(v.deep_clone()), make_rtl(v.deep_clone()));
+                context.add_logical_rule(make_ltr(v.clone()), make_rtl(v.clone()));
             } else if let Property::Unparsed(v) = v_ {
                 context.add_logical_rule(
-                    Property::Unparsed(v.with_property_id(ltr)),
-                    Property::Unparsed(v.with_property_id(rtl)),
+                    Property::Unparsed(v.with_property_id(bump, ltr)),
+                    Property::Unparsed(v.with_property_id(bump, rtl)),
                 );
             }
         }
@@ -1299,8 +1299,8 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             LogicalSidePair::Inline => (S::INLINE_START, S::INLINE_END),
         };
 
-        if start.as_ref().map(|p| p.id() == start_prop).unwrap_or(false)
-            && end.as_ref().map(|p| p.id() == end_prop).unwrap_or(false)
+        if start.as_ref().map(|p| p.property_id().tag() == start_prop).unwrap_or(false)
+            && end.as_ref().map(|p| p.property_id().tag() == end_prop).unwrap_or(false)
             && shorthand_supported
         {
             // Zig built `value: ValueType` field-by-field then `@unionInit`.
@@ -1308,16 +1308,16 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             // that invariant is upheld structurally by `make_*_shorthand`.
             let start_v = match pair {
                 LogicalSidePair::Block => {
-                    S::extract_block_start(start.as_ref().unwrap()).deep_clone()
+                    S::extract_block_start(start.as_ref().unwrap()).clone()
                 }
                 LogicalSidePair::Inline => {
-                    S::extract_inline_start(start.as_ref().unwrap()).deep_clone()
+                    S::extract_inline_start(start.as_ref().unwrap()).clone()
                 }
             };
             let end_v = match pair {
-                LogicalSidePair::Block => S::extract_block_end(end.as_ref().unwrap()).deep_clone(),
+                LogicalSidePair::Block => S::extract_block_end(end.as_ref().unwrap()).clone(),
                 LogicalSidePair::Inline => {
-                    S::extract_inline_end(end.as_ref().unwrap()).deep_clone()
+                    S::extract_inline_end(end.as_ref().unwrap()).clone()
                 }
             };
             let prop = match pair {
@@ -1341,20 +1341,21 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         logical: PropertyIdTag,
         extract_logical: fn(&Property) -> &LengthPercentageOrAuto,
         make_physical: fn(LengthPercentageOrAuto) -> Property,
-        physical: PropertyIdTag,
+        physical: PropertyId,
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
         // _ = this; // autofix
         let _ = context;
+        let bump = dest.bump();
         if let Some(v) = val.as_ref() {
-            if v.id() == logical {
+            if v.property_id().tag() == logical {
                 // Zig moved the payload (`@field(v, @tagName(logical))`) by value.
                 // PORT NOTE: reshaped for borrowck — clone instead of moving out
                 // of `&Property`; `LengthPercentageOrAuto` is small.
-                dest.push(make_physical(extract_logical(v).deep_clone()));
+                dest.push(make_physical(extract_logical(v).clone()));
             } else if let Property::Unparsed(u) = v {
-                dest.push(Property::Unparsed(u.with_property_id(physical)));
+                dest.push(Property::Unparsed(u.with_property_id(bump, physical)));
             }
         }
     }

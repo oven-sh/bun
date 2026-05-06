@@ -28,6 +28,7 @@ pub use bun_paths::fs;
 /// edit other crates; provide a local `options` mod that re-exports the real
 /// crate plus stand-ins. Tracked in `blocked_on`.
 pub mod options {
+    use std::borrow::Cow;
     pub use bun_options_types::*;
     // TODO(b2-blocked): bun_options_types::{JSX, ServerComponents, OutputFormat,
     // AllowUnresolved, Format, Framework} — missing from lower-tier surface.
@@ -225,11 +226,13 @@ pub mod options {
     /// and Parser.zig:1433), so `file_system_router_types`/`built_in_modules`
     /// are intentionally elided.
     ///
-    /// String fields are `&'static [u8]` (not `Cow`) because the parser only
-    /// *borrows* them: `ReactRefreshImportClause.name` is `&'static [u8]` and
-    /// `generate_react_refresh_import` takes `import_path: &'a [u8]` (which
-    /// `'static` outlives). The bake-side `Cow<'static, [u8]>` ownership is
-    /// an arena concern that does not cross into the parser.
+    /// String fields are `Cow<'static, [u8]>` to match the spec at
+    /// `bake/mod.rs` (the Zig backs them with arena-owned `[]const u8` that
+    /// is user-configured via `fromJS` and rewritten by `Framework.resolve`,
+    /// then freed in `UserOptions.deinit`). The parser only *borrows* them
+    /// for `'a` (parse lifetime), not `'static`, so `&'static [u8]` would
+    /// wrongly restrict callers to literal defaults — see PORTING.md
+    /// §Forbidden re: `&'static [T]` for arena-freed data.
     #[derive(Clone, Default)]
     pub struct Framework {
         pub is_built_in_react: bool,
@@ -247,18 +250,18 @@ pub mod options {
         pub separate_ssr_graph: bool,
         /// REQUIRED — spec (bake.zig:360) gives no default; `fromJS` throws
         /// if `serverRuntimeImportSource` is absent.
-        pub server_runtime_import: &'static [u8],
-        pub server_register_client_reference: &'static [u8],
-        pub server_register_server_reference: &'static [u8],
-        pub client_register_server_reference: &'static [u8],
+        pub server_runtime_import: Cow<'static, [u8]>,
+        pub server_register_client_reference: Cow<'static, [u8]>,
+        pub server_register_server_reference: Cow<'static, [u8]>,
+        pub client_register_server_reference: Cow<'static, [u8]>,
     }
     /// Port of `bake.Framework.ReactFastRefresh` (bake/mod.rs:101).
     #[derive(Clone)]
     pub struct ReactFastRefresh {
-        pub import_source: &'static [u8],
+        pub import_source: Cow<'static, [u8]>,
     }
     impl Default for ReactFastRefresh {
-        fn default() -> Self { Self { import_source: b"react-refresh/runtime" } }
+        fn default() -> Self { Self { import_source: Cow::Borrowed(b"react-refresh/runtime") } }
     }
     pub type MacroRemap = bun_collections::StringHashMap<bun_collections::StringHashMap<Box<[u8]>>>;
 }

@@ -559,16 +559,14 @@ fn to_parser_jsx_pragma(
     }
 }
 
-#[inline]
+// B-3 UNIFIED: `crate::options_impl::ModuleType` IS `js_ast::parser::options::ModuleType`
+// (both re-export `bun_options_types::BundleEnums::ModuleType`). Identity shim
+// kept so existing call sites compile unchanged; inlines to a move.
+#[inline(always)]
 fn to_parser_module_type(
     m: crate::options_impl::ModuleType,
 ) -> js_ast::parser::options::ModuleType {
-    use js_ast::parser::options::ModuleType as Dst;
-    match m {
-        crate::options_impl::ModuleType::Unknown => Dst::Unknown,
-        crate::options_impl::ModuleType::Cjs => Dst::Cjs,
-        crate::options_impl::ModuleType::Esm => Dst::Esm,
-    }
+    m
 }
 
 impl<'a> Transpiler<'a> {
@@ -938,14 +936,14 @@ impl<'a> Transpiler<'a> {
                     .trim_unused_imports
                     .unwrap_or(loader.is_typescript());
                 opts.features.no_macros = self.options.no_macros;
-                // TODO(port): type unification — `Features.runtime_transpiler_cache`
-                // is `Option<*mut bun_js_parser::RuntimeTranspilerCache>`, but
-                // `this_parse.runtime_transpiler_cache` is
-                // `Option<&mut crate::cache::RuntimeTranspilerCache>`. The two
-                // structs are CYCLEBREAK duplicates with different layouts;
-                // pointer-casting is unsound. Thread the real pointer once B-3
-                // collapses them. Until then the parser sees `None` (cache miss).
-                opts.features.runtime_transpiler_cache = None;
+                // B-3 UNIFIED: `crate::cache::RuntimeTranspilerCache` IS
+                // `bun_js_parser::RuntimeTranspilerCache`; thread the pointer
+                // directly. Reborrow (`.as_deref_mut()`) so `this_parse`
+                // retains ownership for the `rtc_ptr` capture below.
+                opts.features.runtime_transpiler_cache = this_parse
+                    .runtime_transpiler_cache
+                    .as_deref_mut()
+                    .map(|r| r as *mut RuntimeTranspilerCache);
 
                 // @bun annotation
                 opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
@@ -1012,18 +1010,17 @@ impl<'a> Transpiler<'a> {
                         .runtime_transpiler_cache
                         .map(core::ptr::NonNull::from);
 
-                // TODO(port): type unification — `cache::JavaScript::parse`
-                // takes `&'a bun_js_parser::defines::Define`, but
-                // `self.options.define` is `Box<crate::defines::Define>`
-                // (richer struct, extra `drop_debugger` field, different
-                // `DefineData` shape). Until B-3 collapses the two `Define`
-                // tables, hand the parser an empty one so user `--define`
-                // values are ignored at this layer (they are still applied by
-                // the bundler-side visitor that reads `self.options.define`).
-                // PERF(port): one bump alloc per parse; cheap, but lift to a
-                // `OnceCell<Define>` on `Transpiler` once the type unifies.
-                let define: &js_ast::defines::Define =
-                    allocator.alloc(js_ast::defines::Define::default());
+                // B-3 UNIFIED: `crate::defines::Define` IS
+                // `bun_js_parser::defines::Define`. Hand the parser the real
+                // table so user `--define` values apply at parse time.
+                // SAFETY: `self.options.define` is `Box<Define>` owned by the
+                // long-lived `Transpiler`; the parser borrows it for `'a`
+                // (arena lifetime). Erase to `'a` to satisfy
+                // `JavaScript::parse`'s `&'a Define` param — the box is never
+                // dropped while a parse is in flight (Zig held `*const Define`).
+                let define: &'a js_ast::defines::Define = unsafe {
+                    &*(&*self.options.define as *const crate::defines::Define)
+                };
 
                 // PORT NOTE: spec calls `transpiler.resolver.caches.js.parse`.
                 // The resolver-side `cache::JavaScript` is a fieldless
@@ -1507,7 +1504,7 @@ impl<'a> Transpiler<'a> {
                 });
             }
             options::Loader::Md => {
-                let html: &'static [u8] = match bun_md::render_to_html(source.contents) {
+                let html: &'static [u8] = match bun_md::root::render_to_html(source.contents) {
                     // PORT NOTE: Phase-A `Str` convention — `E::String.data:
                     // &'static [u8]`. The Zig allocator-backed `[]u8` becomes a
                     // leaked `Box<[u8]>` until Phase B threads `'bump`.

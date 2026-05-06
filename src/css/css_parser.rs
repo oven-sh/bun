@@ -734,6 +734,15 @@ pub trait CustomAtRuleParser {
     fn push_to_enclosing_layer(this: &mut Self, name: LayerName);
     fn reset_enclosing_layer(this: &mut Self, len: u32);
     fn bump_anon_layer_count(this: &mut Self, amount: i32);
+
+    /// Move the registered `@layer` names accumulated via `on_layer_rule` out
+    /// of the parser. The Zig spec only populates `StyleSheet.layer_names`
+    /// when `P == BundlerAtRuleParser` (css_parser.zig:3324); Rust can't
+    /// type-specialize at the call site, so this is a trait hook with a
+    /// default no-op for parsers that don't track layers.
+    fn take_layer_names(_this: &mut Self) -> BabyList<LayerName> {
+        BabyList::default()
+    }
 }
 
 /// At rules are rules that have the `@` symbol.
@@ -898,6 +907,10 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
 
     fn push_to_enclosing_layer(this: &mut Self, name: LayerName) {
         this.enclosing_layer.v.extend_from_slice(name.v.slice());
+    }
+
+    fn take_layer_names(this: &mut Self) -> BabyList<LayerName> {
+        core::mem::take(&mut this.layer_names)
     }
 
     fn reset_enclosing_layer(this: &mut Self, len: u32) {
@@ -2086,11 +2099,17 @@ impl<'a, T: CustomAtRuleParser> QualifiedRuleParser for NestedRuleParser<'a, T> 
         // PORT NOTE: Zig `defer this.composes_refs.clearRetainingCapacity();`.
         // `composes_refs` is `&mut SmallList<..>` borrowed from the parent
         // `TopLevelRuleParser`, so dropping `NestedRuleParser` on an error path
-        // does NOT clear the underlying storage. Clear at *entry* so each
-        // invocation starts fresh regardless of how the previous one exited —
-        // observably equivalent to the Zig `defer` (nothing reads the list
-        // between two calls to `parse_block`).
-        this.composes_refs.clear_retaining_capacity();
+        // does NOT clear the underlying storage. A safe `scopeguard::guard`
+        // over `&mut *this.composes_refs` would hold that borrow across
+        // `this.parse_nested(&mut self, …)` and trip borrowck, so capture the
+        // raw pointer instead — the guard fires at scope exit after all body
+        // borrows of `this` are released, and the pointee (owned by the parent
+        // `TopLevelRuleParser`) strictly outlives this frame.
+        let composes_refs_ptr: *mut SmallList<ast::Ref, 2> = &raw mut *this.composes_refs;
+        let _composes_refs_guard = scopeguard::guard((), move |()| {
+            // SAFETY: see PORT NOTE above — no aliasing borrow live at drop.
+            unsafe { (*composes_refs_ptr).clear_retaining_capacity(); }
+        });
         // allow composes if:
         // - NOT in nested style rules
         // - AND there is only one class selector
@@ -2813,10 +2832,12 @@ impl<AtRule> StyleSheet<AtRule> {
         let mut source_map_urls: Vec<Option<Box<[u8]>>> = Vec::with_capacity(1);
         source_map_urls.push(parser.current_source_map_url().map(Box::<[u8]>::from));
 
-        // TODO(port): `layer_names` is taken from `at_rule_parser` only when
-        // `P == BundlerAtRuleParser`. Rust cannot specialize at runtime; Phase
-        // B adds a `take_layer_names()` method on `CustomAtRuleParser`.
-        let layer_names = BabyList::default();
+        // Spec: `.layer_names = if (comptime P == BundlerAtRuleParser)
+        // at_rule_parser.layer_names else .{}` (css_parser.zig:3324). Rust
+        // dispatches through the `CustomAtRuleParser::take_layer_names` hook
+        // (default = empty; `BundlerAtRuleParser` overrides to move its list
+        // out) so the accumulated layer ordering isn't silently dropped.
+        let layer_names = P::take_layer_names(at_rule_parser);
 
         Ok((
             Self {

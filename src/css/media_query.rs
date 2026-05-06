@@ -738,9 +738,9 @@ impl ToCss for MediaCondition {
 }
 
 impl QueryCondition for MediaCondition {
-    fn parse_feature(_input: &mut Parser) -> Result<Self> {
-        // blocked_on: MediaFeature::parse (values/ calc lattice)
-        todo!("MediaCondition::parse_feature — gated on QueryFeature::parse")
+    fn parse_feature(input: &mut Parser) -> Result<Self> {
+        let feature = MediaFeature::parse(input)?;
+        Ok(MediaCondition::Feature(feature))
     }
     fn create_negation(condition: Box<Self>) -> Self {
         MediaCondition::Not(condition)
@@ -748,9 +748,9 @@ impl QueryCondition for MediaCondition {
     fn create_operation(operator: Operator, conditions: Vec<Self>) -> Self {
         MediaCondition::Operation { operator, conditions }
     }
-    fn parse_style_query(_input: &mut Parser) -> Result<Self> {
-        // Zig: returns input.newErrorForNextToken() — parse path still gated.
-        todo!("MediaCondition::parse_style_query — gated on Parser::new_error_for_next_token")
+    fn parse_style_query(input: &mut Parser) -> Result<Self> {
+        // Zig: `return .{ .err = input.newErrorForNextToken() }`
+        Err(input.new_error_for_next_token())
     }
     fn needs_parens(
         &self,
@@ -1126,15 +1126,246 @@ impl MediaFeatureValue {
     }
 }
 
-// ───────────────────────── gated impl bodies ─────────────────────────
-// The remaining `parse` bodies compile against the gated `values/`
-// lattice + `ParserError::{InvalidMediaQuery,InvalidValue}` and the
-// (still-shim) `Delimiters`-as-struct calling convention. They are
-// preserved here `#[cfg(any())]`-gated so the next round can flip them
-// on without re-porting from Zig.
-#[cfg(any())]
-mod __impl_bodies {
-    // (full 1500-line port body — see git rev 8b7b16543a:src/css/media_query.rs)
+// ───────────────────────── parse impl bodies ─────────────────────────
+
+// PORT NOTE: Zig `css.DefineEnumProperty(@This())` for Operator/Qualifier.
+impl css::EnumProperty for Operator {
+    fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self> {
+        use bun_string::strings::eql_case_insensitive_ascii_check_length as eq;
+        if eq(ident, b"and") { return Some(Self::And); }
+        if eq(ident, b"or") { return Some(Self::Or); }
+        None
+    }
+}
+impl Operator {
+    pub fn parse(input: &mut Parser) -> Result<Self> {
+        css::enum_property_util::parse(input)
+    }
+}
+
+impl css::EnumProperty for Qualifier {
+    fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self> {
+        use bun_string::strings::eql_case_insensitive_ascii_check_length as eq;
+        if eq(ident, b"only") { return Some(Self::Only); }
+        if eq(ident, b"not") { return Some(Self::Not); }
+        None
+    }
+}
+impl Qualifier {
+    pub fn parse(input: &mut Parser) -> Result<Self> {
+        css::enum_property_util::parse(input)
+    }
+}
+
+impl MediaType {
+    pub fn parse(input: &mut Parser) -> Result<MediaType> {
+        let name = input.expect_ident()?;
+        Ok(MediaType::from_str(name))
+    }
+
+    pub fn from_str(name: &[u8]) -> MediaType {
+        use bun_string::strings::eql_case_insensitive_ascii_check_length as eq;
+        if eq(name, b"all") { return MediaType::All; }
+        if eq(name, b"print") { return MediaType::Print; }
+        if eq(name, b"screen") { return MediaType::Screen; }
+        MediaType::Custom(name as *const [u8])
+    }
+}
+
+impl MediaList {
+    /// Parse a media query list from CSS.
+    pub fn parse(input: &mut Parser) -> Result<MediaList> {
+        // PERF(port): was ArrayListUnmanaged(input.allocator())
+        let mut media_queries: Vec<MediaQuery> = Vec::new();
+        loop {
+            match input.parse_until_before(css::Delimiters::COMMA, MediaQuery::parse) {
+                Ok(mq) => media_queries.push(mq),
+                Err(e) => {
+                    if matches!(
+                        e.kind,
+                        css::error::ParserErrorKind::basic(
+                            css::BasicParseErrorKind::end_of_input
+                        )
+                    ) {
+                        break;
+                    }
+                    return Err(e);
+                }
+            }
+
+            match input.next() {
+                Ok(tok) => {
+                    if !matches!(tok, css::Token::Comma) {
+                        // Zig: bun.Output.panic(...) — see media_query.zig:54.
+                        unreachable!(
+                            "expected a comma after parsing a MediaQuery — bug in CSS parser"
+                        );
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+
+        Ok(MediaList { media_queries })
+    }
+}
+
+impl MediaQuery {
+    pub fn parse(input: &mut Parser) -> Result<MediaQuery> {
+        // Zig: `Fn.tryParseFn` returning `(?Qualifier, ?MediaType)`.
+        let (qualifier, explicit_media_type) = input
+            .try_parse(|i| -> Result<(Option<Qualifier>, Option<MediaType>)> {
+                let qualifier = i.try_parse(Qualifier::parse).ok();
+                let media_type = MediaType::parse(i)?;
+                Ok((qualifier, Some(media_type)))
+            })
+            .unwrap_or((None, None));
+
+        let condition = if explicit_media_type.is_none() {
+            Some(MediaCondition::parse_with_flags(
+                input,
+                QueryConditionFlags::ALLOW_OR,
+            )?)
+        } else if input
+            .try_parse(|i| i.expect_ident_matching(b"and"))
+            .is_ok()
+        {
+            Some(MediaCondition::parse_with_flags(
+                input,
+                QueryConditionFlags::empty(),
+            )?)
+        } else {
+            None
+        };
+
+        let media_type = explicit_media_type.unwrap_or(MediaType::All);
+
+        Ok(MediaQuery { qualifier, media_type, condition })
+    }
+}
+
+impl MediaCondition {
+    #[inline]
+    pub fn parse_with_flags(input: &mut Parser, flags: QueryConditionFlags) -> Result<Self> {
+        parse_query_condition::<MediaCondition>(input, flags)
+    }
+}
+
+/// Parse a single query condition.
+pub fn parse_query_condition<C: QueryCondition>(
+    input: &mut Parser,
+    flags: QueryConditionFlags,
+) -> Result<C> {
+    use bun_string::strings;
+    let location = input.current_source_location();
+    let (is_negation, is_style) = 'brk: {
+        let tok = input.next()?.clone();
+        match &tok {
+            css::Token::OpenParen => break 'brk (false, false),
+            css::Token::Ident(ident) => {
+                if strings::eql_case_insensitive_ascii_check_length(ident, b"not") {
+                    break 'brk (true, false);
+                }
+            }
+            css::Token::Function(f) => {
+                if flags.allow_style()
+                    && strings::eql_case_insensitive_ascii_check_length(f, b"style")
+                {
+                    break 'brk (false, true);
+                }
+            }
+            _ => {}
+        }
+        return Err(location.new_unexpected_token_error(tok));
+    };
+
+    // (is_negation, is_style)
+    let first_condition: C = match (is_negation, is_style) {
+        (true, false) => {
+            let inner_condition = parse_parens_or_function::<C>(input, flags)?;
+            return Ok(C::create_negation(Box::new(inner_condition)));
+        }
+        (true, true) => {
+            let inner_condition = C::parse_style_query(input)?;
+            return Ok(C::create_negation(Box::new(inner_condition)));
+        }
+        (false, false) => parse_paren_block::<C>(input, flags)?,
+        (false, true) => C::parse_style_query(input)?,
+    };
+
+    let operator: Operator = match input.try_parse(Operator::parse) {
+        Ok(op) => op,
+        Err(_) => return Ok(first_condition),
+    };
+
+    if !flags.allow_or() && operator == Operator::Or {
+        return Err(location.new_unexpected_token_error(css::Token::Ident(b"or")));
+    }
+
+    // PERF(port): was ArrayListUnmanaged(input.allocator())
+    let mut conditions: Vec<C> = Vec::new();
+    conditions.push(first_condition);
+    conditions.push(parse_parens_or_function::<C>(input, flags)?);
+
+    let delim: &[u8] = match operator {
+        Operator::And => b"and",
+        Operator::Or => b"or",
+    };
+
+    loop {
+        if input.try_parse(|i| i.expect_ident_matching(delim)).is_err() {
+            return Ok(C::create_operation(operator, conditions));
+        }
+        conditions.push(parse_parens_or_function::<C>(input, flags)?);
+    }
+}
+
+/// Parse a media condition in parentheses, or a style() function.
+pub fn parse_parens_or_function<C: QueryCondition>(
+    input: &mut Parser,
+    flags: QueryConditionFlags,
+) -> Result<C> {
+    use bun_string::strings;
+    let location = input.current_source_location();
+    let t = input.next()?.clone();
+    match &t {
+        css::Token::OpenParen => return parse_paren_block::<C>(input, flags),
+        css::Token::Function(f) => {
+            if flags.allow_style()
+                && strings::eql_case_insensitive_ascii_check_length(f, b"style")
+            {
+                return C::parse_style_query(input);
+            }
+        }
+        _ => {}
+    }
+    Err(location.new_unexpected_token_error(t))
+}
+
+fn parse_paren_block<C: QueryCondition>(
+    input: &mut Parser,
+    flags: QueryConditionFlags,
+) -> Result<C> {
+    // Zig: `Closure { flags }.parseNestedBlockFn` — collapsed to a closure
+    // capturing `flags` by copy.
+    input.parse_nested_block(|i| {
+        if let Ok(inner) = i.try_parse(|i2| parse_query_condition::<C>(i2, flags)) {
+            return Ok(inner);
+        }
+        C::parse_feature(i)
+    })
+}
+
+impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
+    /// Parse a media/container feature inside `(` `)`.
+    // blocked_on: MediaFeatureName::parse + MediaFeatureValue::parse
+    // (values/{length,ratio,resolution} calc lattice). The full grammar body
+    // (media_query.zig:945-1135) lands once those leaves un-gate. For now this
+    // stays a loud `todo!()` so `@media`/`@container` parse paths fail at the
+    // feature leaf rather than at the rule-prelude root.
+    pub fn parse(_input: &mut Parser) -> Result<Self> {
+        todo!("blocked_on: QueryFeature::parse — MediaFeatureName/MediaFeatureValue::parse (values/ calc lattice)")
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

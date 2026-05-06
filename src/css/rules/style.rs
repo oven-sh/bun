@@ -388,7 +388,7 @@ impl<R> StyleRule<R> {
         Self {
             selectors: self.selectors.deep_clone(),
             vendor_prefix: self.vendor_prefix,
-            declarations: super::dc::decl_block(&self.declarations, bump),
+            declarations: super::dc::decl_block_static(&self.declarations, bump),
             rules: self.rules.deep_clone(bump),
             loc: self.loc,
         }

@@ -31,7 +31,7 @@ impl ViewportRule {
         // `Copy` bitflag (generics.zig "simple copy types" → identity).
         Self {
             vendor_prefix: self.vendor_prefix,
-            declarations: super::dc::decl_block(&self.declarations, bump),
+            declarations: super::dc::decl_block_static(&self.declarations, bump),
             loc: self.loc,
         }
     }

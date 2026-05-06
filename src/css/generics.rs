@@ -15,11 +15,13 @@ use core::cmp::Ordering;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_collections::BabyList;
-// Zig `std.hash.Wyhash` (iterative) → `Wyhash11` (the iterative impl in bun_wyhash).
+// Zig `std.hash.Wyhash` (iterative) → `bun_wyhash::Wyhash` (the final4 variant
+// matching upstream `std.hash.Wyhash`; NOT `Wyhash11`, which is a legacy v0.11
+// variant kept only for on-disk lockfile compat — different digest).
 // Re-exported `pub` so `#[derive(CssHash)]` (in `bun_css_derive`) can name the
 // hasher type as `::bun_css::generics::Wyhash` without depending on `bun_wyhash`
 // directly.
-pub use bun_wyhash::Wyhash11 as Wyhash;
+pub use bun_wyhash::Wyhash;
 
 use crate::css_parser as css;
 use crate::css_parser::{Parser, ParserOptions};
@@ -774,11 +776,37 @@ impl<T: Parse> Parse for Option<T> {
         Ok(input.try_parse(T::parse).ok())
     }
 }
+impl<T: Parse> ParseWithOptions for Option<T> {
+    #[inline]
+    fn parse_with_options(input: &mut Parser, _options: &ParserOptions) -> CssResult<Self> {
+        <Self as Parse>::parse(input)
+    }
+}
 
 impl<T: Parse> Parse for Vec<T> {
     #[inline]
     fn parse(input: &mut Parser) -> CssResult<Self> {
         input.parse_comma_separated(T::parse)
+    }
+}
+impl<T: Parse> ParseWithOptions for Vec<T> {
+    #[inline]
+    fn parse_with_options(input: &mut Parser, _options: &ParserOptions) -> CssResult<Self> {
+        <Self as Parse>::parse(input)
+    }
+}
+
+// Zig `.pointer` arm (`generics.zig:273-279`): parse the pointee then heap-allocate.
+impl<T: Parse> Parse for Box<T> {
+    #[inline]
+    fn parse(input: &mut Parser) -> CssResult<Self> {
+        T::parse(input).map(Box::new)
+    }
+}
+impl<T: Parse> ParseWithOptions for Box<T> {
+    #[inline]
+    fn parse_with_options(input: &mut Parser, _options: &ParserOptions) -> CssResult<Self> {
+        <Self as Parse>::parse(input)
     }
 }
 
@@ -884,6 +912,14 @@ pub fn has_to_css<T>() -> bool {
 }
 
 impl<T: ToCss + ?Sized> ToCss for &T {
+    #[inline]
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        (**self).to_css(dest)
+    }
+}
+
+// Zig `.pointer` arm (`generics.zig:338-341`): recurse into `*T` pointee.
+impl<T: ToCss + ?Sized> ToCss for Box<T> {
     #[inline]
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         (**self).to_css(dest)
@@ -1214,6 +1250,6 @@ impl PartialCmp for CSSInteger {
 //   notes:      Heavy @typeInfo reflection reshaped into traits + blanket impls;
 //               per-type derives `#[derive(DeepClone, CssEql, CssHash)]` are
 //               implemented in `bun_css_derive` and re-exported here (same-name
-//               trait+derive idiom). ParseWithOptions blanket uses
-//               specialization.
+//               trait+derive idiom). ParseWithOptions falls through to Parse
+//               via per-container forwarding impls (no specialization).
 // ──────────────────────────────────────────────────────────────────────────

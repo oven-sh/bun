@@ -48,26 +48,12 @@ impl PageSelector {
 }
 
 // ─── PageSelector parse ───────────────────────────────────────────────────
-// blocked_on: Parser::{try_parse,expect_ident,next_including_whitespace,
-// state,reset,new_custom_error,allocator} surface, ParserError::
-// InvalidPageSelector, PagePseudoClass::parse.
-// Stub so css_parser's now-un-gated `@page` prelude path type-checks.
-// Real body is the `#[cfg(any())]` port below.
-#[cfg(not(any()))]
-impl PageSelector {
-    pub fn parse(_input: &mut css::Parser) -> css::Result<PageSelector> {
-        todo!("port: PageSelector::parse — gated body below")
-    }
-}
-
-#[cfg(any())]
 impl PageSelector {
     pub fn parse(input: &mut css::Parser) -> css::Result<PageSelector> {
-        let name = if let Some(name) = input.try_parse(css::Parser::expect_ident, ()).as_value() {
-            Some(name)
-        } else {
-            None
-        };
+        // SAFETY: ident borrows parser source/arena; see `css_parser::src_str`.
+        let name: Option<&'static [u8]> = input
+            .try_parse(|i| i.expect_ident().map(|s| unsafe { css::css_parser::src_str(s) }))
+            .ok();
         let mut pseudo_classes: ArrayList<PagePseudoClass> = ArrayList::new();
 
         loop {
@@ -75,13 +61,13 @@ impl PageSelector {
             let state = input.state();
             let is_colon = match input.next_including_whitespace() {
                 Ok(tok) => matches!(*tok, css::Token::Colon),
-                Err(e) => return Err(e),
+                Err(_) => {
+                    input.reset(&state);
+                    break;
+                }
             };
             if is_colon {
-                let vv = match PagePseudoClass::parse(input) {
-                    Ok(vv) => vv,
-                    Err(e) => return Err(e),
-                };
+                let vv = PagePseudoClass::parse(input)?;
                 pseudo_classes.push(vv);
             } else {
                 input.reset(&state);
@@ -90,7 +76,7 @@ impl PageSelector {
         }
 
         if name.is_none() && pseudo_classes.is_empty() {
-            return Err(input.new_custom_error(css::ParserError::InvalidPageSelector));
+            return Err(input.new_custom_error(css::ParserError::invalid_page_selector));
         }
 
         Ok(PageSelector { name, pseudo_classes })
@@ -123,7 +109,7 @@ impl PageMarginRule {
         // PORT NOTE: `css.implementDeepClone` field-walk. `PageMarginBox` is `Copy`.
         Self {
             margin_box: self.margin_box,
-            declarations: super::dc::decl_block(&self.declarations, bump),
+            declarations: super::dc::decl_block_static(&self.declarations, bump),
             loc: self.loc,
         }
     }
@@ -219,7 +205,7 @@ impl PageRule {
         // PORT NOTE: `css.implementDeepClone` field-walk.
         Self {
             selectors: self.selectors.iter().map(|s| s.deep_clone(bump)).collect(),
-            declarations: super::dc::decl_block(&self.declarations, bump),
+            declarations: super::dc::decl_block_static(&self.declarations, bump),
             rules: self.rules.iter().map(|r| r.deep_clone(bump)).collect(),
             loc: self.loc,
         }
@@ -227,22 +213,6 @@ impl PageRule {
 }
 
 // ─── PageRule parse ───────────────────────────────────────────────────────
-// Stub so css_parser's now-un-gated `@page` block path type-checks.
-// Real body is the `#[cfg(any())]` port below.
-#[cfg(not(any()))]
-impl PageRule {
-    pub fn parse(
-        _selectors: ArrayList<PageSelector>,
-        _input: &mut css::Parser,
-        _loc: Location,
-        _options: &css::ParserOptions,
-    ) -> css::Result<PageRule> {
-        todo!("port: PageRule::parse — gated body below")
-    }
-}
-
-// blocked_on: RuleBodyParser.
-#[cfg(any())]
 impl PageRule {
     pub fn parse(
         selectors: ArrayList<PageSelector>,
@@ -257,15 +227,14 @@ impl PageRule {
             rules: &mut rules,
             options,
         };
-        let mut parser = css::RuleBodyParser::<PageRuleParser<'_>>::new(input, &mut rule_parser);
+        let mut parser = css::css_parser::RuleBodyParser::new(input, &mut rule_parser);
 
         while let Some(decl) = parser.next() {
-            if let Some(e) = decl.as_err() {
+            if let Err(e) = decl {
                 if parser.parser.options.error_recovery {
                     parser.parser.options.warn(e);
                     continue;
                 }
-
                 return Err(e);
             }
         }
@@ -306,9 +275,27 @@ impl From<PagePseudoClass> for &'static str {
     }
 }
 
+// PORT NOTE: Zig `css.DefineEnumProperty(@This())` — hand-rolled until
+// `#[derive(DefineEnumProperty)]` covers `&[u8]` lookup.
+impl css::EnumProperty for PagePseudoClass {
+    fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self> {
+        use bun_string::strings::eql_case_insensitive_ascii_check_length as eq;
+        if eq(ident, b"left") { return Some(Self::Left); }
+        if eq(ident, b"right") { return Some(Self::Right); }
+        if eq(ident, b"first") { return Some(Self::First); }
+        if eq(ident, b"last") { return Some(Self::Last); }
+        if eq(ident, b"blank") { return Some(Self::Blank); }
+        None
+    }
+}
+
 impl PagePseudoClass {
     pub fn as_str(&self) -> &'static str {
         css::enum_property_util::as_str(self)
+    }
+
+    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
+        css::enum_property_util::parse(input)
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
@@ -321,14 +308,6 @@ impl PagePseudoClass {
     pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         // `Copy` enum (generics.zig "simple copy types" → identity).
         *self
-    }
-}
-
-// blocked_on: css::enum_property_util EnumProperty parse bound.
-#[cfg(any())]
-impl PagePseudoClass {
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
-        css::enum_property_util::parse(input)
     }
 }
 
@@ -398,21 +377,42 @@ impl From<PageMarginBox> for &'static str {
     }
 }
 
+// PORT NOTE: Zig `css.DefineEnumProperty(@This())` — hand-rolled until
+// `#[derive(DefineEnumProperty)]` covers `&[u8]` lookup.
+impl css::EnumProperty for PageMarginBox {
+    fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self> {
+        use bun_string::strings::eql_case_insensitive_ascii_check_length as eq;
+        if eq(ident, b"top-left-corner") { return Some(Self::TopLeftCorner); }
+        if eq(ident, b"top-left") { return Some(Self::TopLeft); }
+        if eq(ident, b"top-center") { return Some(Self::TopCenter); }
+        if eq(ident, b"top-right") { return Some(Self::TopRight); }
+        if eq(ident, b"top-right-corner") { return Some(Self::TopRightCorner); }
+        if eq(ident, b"left-top") { return Some(Self::LeftTop); }
+        if eq(ident, b"left-middle") { return Some(Self::LeftMiddle); }
+        if eq(ident, b"left-bottom") { return Some(Self::LeftBottom); }
+        if eq(ident, b"right-top") { return Some(Self::RightTop); }
+        if eq(ident, b"right-middle") { return Some(Self::RightMiddle); }
+        if eq(ident, b"right-bottom") { return Some(Self::RightBottom); }
+        if eq(ident, b"bottom-left-corner") { return Some(Self::BottomLeftCorner); }
+        if eq(ident, b"bottom-left") { return Some(Self::BottomLeft); }
+        if eq(ident, b"bottom-center") { return Some(Self::BottomCenter); }
+        if eq(ident, b"bottom-right") { return Some(Self::BottomRight); }
+        if eq(ident, b"bottom-right-corner") { return Some(Self::BottomRightCorner); }
+        None
+    }
+}
+
 impl PageMarginBox {
     pub fn as_str(&self) -> &'static str {
         css::enum_property_util::as_str(self)
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        css::enum_property_util::to_css(self, dest)
-    }
-}
-
-// blocked_on: css::enum_property_util EnumProperty parse bound.
-#[cfg(any())]
-impl PageMarginBox {
     pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
         css::enum_property_util::parse(input)
+    }
+
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        css::enum_property_util::to_css(self, dest)
     }
 }
 
@@ -426,67 +426,61 @@ pub struct PageRuleParser<'a> {
 // RuleBodyItemParser as nested `pub const Foo = struct { ... }` namespaces with
 // methods taking `*This`. In Rust these become trait impls on PageRuleParser;
 // associated `pub const X = T` → `type X = T`.
-//
-// blocked_on: css::{DeclarationParser, AtRuleParser, QualifiedRuleParser,
-// RuleBodyItemParser} trait signatures, css::declaration::parse_declaration,
-// css::parse_utility::parse_string, PageMarginBox::parse, DeclarationBlock::
-// parse, ParserOptions::source_index.
-#[cfg(any())]
 const _: () = {
+    use css::css_parser::{
+        AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,
+    };
     use css::{BasicParseErrorKind, Maybe, Parser, ParserError, ParserState, Result};
 
-    impl<'a> css::DeclarationParser for PageRuleParser<'a> {
+    impl<'a> DeclarationParser for PageRuleParser<'a> {
         type Declaration = ();
 
-        fn parse_value(&mut self, name: &[u8], input: &mut Parser) -> Result<Self::Declaration> {
+        fn parse_value(this: &mut Self, name: &[u8], input: &mut Parser) -> Result<Self::Declaration> {
             css::declaration::parse_declaration(
                 name,
                 input,
-                &mut self.declarations.declarations,
-                &mut self.declarations.important_declarations,
-                self.options,
+                &mut this.declarations.declarations,
+                &mut this.declarations.important_declarations,
+                this.options,
             )
         }
     }
 
-    impl<'a> css::RuleBodyItemParser for PageRuleParser<'a> {
-        fn parse_qualified(&self) -> bool {
+    impl<'a> RuleBodyItemParser for PageRuleParser<'a> {
+        fn parse_qualified(_this: &Self) -> bool {
             false
         }
 
-        fn parse_declarations(&self) -> bool {
+        fn parse_declarations(_this: &Self) -> bool {
             true
         }
     }
 
-    impl<'a> css::AtRuleParser for PageRuleParser<'a> {
+    impl<'a> AtRuleParser for PageRuleParser<'a> {
         type Prelude = PageMarginBox;
         type AtRule = ();
 
-        fn parse_prelude(&mut self, name: &[u8], input: &mut Parser) -> Result<Self::Prelude> {
+        fn parse_prelude(_this: &mut Self, name: &[u8], input: &mut Parser) -> Result<Self::Prelude> {
             let loc = input.current_source_location();
             match css::parse_utility::parse_string(input.allocator(), name, PageMarginBox::parse) {
                 Ok(v) => Ok(v),
-                Err(_) => Err(loc.new_custom_error(ParserError::AtRuleInvalid(name))),
+                Err(_) => Err(loc.new_custom_error(ParserError::at_rule_invalid(name as *const [u8]))),
             }
         }
 
         fn parse_block(
-            &mut self,
+            this: &mut Self,
             prelude: Self::Prelude,
             start: &ParserState,
             input: &mut Parser,
         ) -> Result<Self::AtRule> {
             let loc = start.source_location();
-            let declarations = match DeclarationBlock::parse(input, self.options) {
-                Ok(vv) => vv,
-                Err(e) => return Err(e),
-            };
-            self.rules.push(PageMarginRule {
+            let declarations = DeclarationBlock::parse(input, this.options)?;
+            this.rules.push(PageMarginRule {
                 margin_box: prelude,
                 declarations,
                 loc: Location {
-                    source_index: self.options.source_index,
+                    source_index: this.options.source_index,
                     line: loc.line,
                     column: loc.column,
                 },
@@ -495,7 +489,7 @@ const _: () = {
         }
 
         fn rule_without_block(
-            &mut self,
+            _this: &mut Self,
             _prelude: Self::Prelude,
             _start: &ParserState,
         ) -> Maybe<Self::AtRule, ()> {
@@ -503,21 +497,21 @@ const _: () = {
         }
     }
 
-    impl<'a> css::QualifiedRuleParser for PageRuleParser<'a> {
+    impl<'a> QualifiedRuleParser for PageRuleParser<'a> {
         type Prelude = ();
         type QualifiedRule = ();
 
-        fn parse_prelude(&mut self, input: &mut Parser) -> Result<Self::Prelude> {
-            Err(input.new_error(BasicParseErrorKind::QualifiedRuleInvalid))
+        fn parse_prelude(_this: &mut Self, input: &mut Parser) -> Result<Self::Prelude> {
+            Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
         }
 
         fn parse_block(
-            &mut self,
+            _this: &mut Self,
             _prelude: Self::Prelude,
             _start: &ParserState,
             input: &mut Parser,
         ) -> Result<Self::QualifiedRule> {
-            Err(input.new_error(BasicParseErrorKind::QualifiedRuleInvalid))
+            Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
         }
     }
 };

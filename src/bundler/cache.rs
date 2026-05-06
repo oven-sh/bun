@@ -10,51 +10,26 @@ use bun_resolver::fs as fs_mod;
 use bun_string::{strings, MutableString};
 use bun_sys::{self, Fd};
 
-// PORT NOTE: cache.zig pulled `Define` from `./defines.zig`. In the Rust split
-// the parser crate carries its own CYCLEBREAK `defines::Define` (the type
-// `Parser::init` actually accepts); the bundler's richer `crate::defines::Define`
-// unifies with it once T3 round-D lands. `JavaScript::parse`/`scan` take the
-// parser-crate type so the call into `Parser::init` typechecks today.
+// B-3 UNIFIED: `Define` is now the single canonical `bun_js_parser::defines::Define`
+// (re-exported via `crate::defines`); `JavaScript::parse`/`scan` and the bundler's
+// `BundleOptions.define` share the same nominal type.
 use js_parser::defines::Define;
 
 // ══════════════════════════════════════════════════════════════════════════
-// CYCLEBREAK(b0) MOVE_DOWN: `jsc::RuntimeTranspilerCache` (src/jsc/RuntimeTranspilerCache.zig:28)
-// — TYPE_ONLY fields the parser writes through `ParseOptions.runtime_transpiler_cache`.
-// The disk I/O (`get`/`put`/`Entry.load`) bodies stay here jsc-free; the
-// `bun.String` output_code field becomes an owned byte buffer (the only
-// JSC use was `bun.String.createLatin1` on the JS thread, which T6 wraps).
+// B-3 UNIFIED: `RuntimeTranspilerCache` is canonical in `bun_js_parser`
+// (lower tier) so `Features.runtime_transpiler_cache: Option<*mut RTC>` and
+// `ParseOptions.runtime_transpiler_cache: Option<&mut RTC>` are the same
+// nominal type. This crate adds the disk-I/O / `js_printer` dispatch surface
+// (`put` / `disabled` / `as_printer_ref`) via the `RuntimeTranspilerCacheExt`
+// trait below — those need `bun_js_printer` / `bun_core::env_var` which sit a
+// tier above js_parser. `Entry` / `Metadata` stay concrete here; the canonical
+// struct stores them type-erased as `*mut ()`.
 // ══════════════════════════════════════════════════════════════════════════
+pub use bun_js_parser::RuntimeTranspilerCache;
 
 /// Bump when the cache wire format or parser output changes. Mirrors
 /// `expected_version` in src/jsc/RuntimeTranspilerCache.zig.
 pub const RUNTIME_TRANSPILER_CACHE_VERSION: u32 = 20;
-
-pub struct RuntimeTranspilerCache {
-    pub input_hash: Option<u64>,
-    pub input_byte_length: Option<u64>,
-    pub features_hash: Option<u64>,
-    pub exports_kind: js_ast::ExportsKind,
-    /// Zig: `?bun.String` — bundler only stores/reads the bytes; T6 owns the
-    /// `bun.String` wrapper when surfacing to JS.
-    pub output_code: Option<Box<[u8]>>,
-    pub entry: Option<RuntimeTranspilerCacheEntry>,
-    /// Set via env var `BUN_RUNTIME_TRANSPILER_CACHE=0`; T6 init writes this.
-    pub is_disabled: bool,
-}
-
-impl Default for RuntimeTranspilerCache {
-    fn default() -> Self {
-        Self {
-            input_hash: None,
-            input_byte_length: None,
-            features_hash: None,
-            exports_kind: js_ast::ExportsKind::None,
-            output_code: None,
-            entry: None,
-            is_disabled: false,
-        }
-    }
-}
 
 /// Mirrors the Zig `pub var is_disabled` mutable global — written by T6
 /// (src/runtime/cli/Arguments.zig:1603, src/jsc/VirtualMachine.zig:1383) and
@@ -62,11 +37,25 @@ impl Default for RuntimeTranspilerCache {
 /// writers can reach it; `disabled()` reads it.
 pub static DISABLED: AtomicBool = AtomicBool::new(false);
 
-impl RuntimeTranspilerCache {
+/// Extension surface for the canonical `RuntimeTranspilerCache` (defined in
+/// `bun_js_parser`). Separate trait so the `bun_js_printer`/env-var-dependent
+/// bodies stay in this crate without an orphan-rule violation.
+pub trait RuntimeTranspilerCacheExt {
     /// Mirrors the Zig `pub var is_disabled` namespaced const — kept as an
-    /// associated fn so call-sites read `RuntimeTranspilerCache::is_disabled()`.
+    /// associated fn so call-sites read `RuntimeTranspilerCache::disabled()`.
+    fn disabled() -> bool;
+    fn set_disabled(v: bool);
+    /// Spec: src/jsc/RuntimeTranspilerCache.zig:683 `put`.
+    fn put(&mut self, output_code_bytes: &[u8], sourcemap: &[u8], esm_record: &[u8]);
+    /// Erase a live `*mut Self` into the js_printer dispatch handle so
+    /// `js_printer::Options.runtime_transpiler_cache` can call back without
+    /// naming this crate. See CYCLEBREAK.md §Dispatch.
+    fn as_printer_ref(this: core::ptr::NonNull<Self>) -> bun_js_printer::RuntimeTranspilerCacheRef;
+}
+
+impl RuntimeTranspilerCacheExt for RuntimeTranspilerCache {
     #[inline]
-    pub fn disabled() -> bool {
+    fn disabled() -> bool {
         DISABLED.load(Ordering::Relaxed)
             || bun_core::env_var::BUN_RUNTIME_TRANSPILER_CACHE_PATH
                 .get()
@@ -75,12 +64,10 @@ impl RuntimeTranspilerCache {
     }
 
     #[inline]
-    pub fn set_disabled(v: bool) {
+    fn set_disabled(v: bool) {
         DISABLED.store(v, Ordering::Relaxed);
     }
 
-    /// Spec: src/jsc/RuntimeTranspilerCache.zig:683 `put`.
-    ///
     /// Bundler-tier body stores the printer output on `self` (Zig:
     /// `bun.String.cloneLatin1` → owned bytes here per the MOVE_DOWN note at
     /// the top of this block). The disk-persist tail (`toFile(...)`) lives in
@@ -90,8 +77,8 @@ impl RuntimeTranspilerCache {
     /// observationally the "write failed" path; the in-memory `output_code`
     /// hand-off to T6 (RuntimeTranspilerStore reads `cache.output_code.take()`)
     /// is preserved.
-    pub fn put(&mut self, output_code_bytes: &[u8], sourcemap: &[u8], esm_record: &[u8]) {
-        if self.input_hash.is_none() || Self::disabled() {
+    fn put(&mut self, output_code_bytes: &[u8], sourcemap: &[u8], esm_record: &[u8]) {
+        if self.input_hash.is_none() || <Self as RuntimeTranspilerCacheExt>::disabled() {
             return;
         }
         debug_assert!(self.entry.is_none());
@@ -101,11 +88,8 @@ impl RuntimeTranspilerCache {
         let _ = (sourcemap, esm_record);
     }
 
-    /// Erase a live `*mut Self` into the js_printer dispatch handle so
-    /// `js_printer::Options.runtime_transpiler_cache` can call back without
-    /// naming this crate. See CYCLEBREAK.md §Dispatch.
     #[inline]
-    pub fn as_printer_ref(
+    fn as_printer_ref(
         this: core::ptr::NonNull<Self>,
     ) -> bun_js_printer::RuntimeTranspilerCacheRef {
         bun_js_printer::RuntimeTranspilerCacheRef {

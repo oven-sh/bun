@@ -1323,29 +1323,30 @@ impl ShellExecEnv {
             buf[new_cwd_.len()] = 0;
             new_cwd_.len()
         } else {
-            // PORT NOTE: spec uses `ResolvePath.joinZ` (normalizes `.`/`..`).
-            // The full normalizer lives in bun_paths but isn't yet exposed with
-            // the exact join_buf signature; for now do the literal join the
-            // spec describes pre-normalization. `openat` on the resulting path
-            // still resolves `.`/`..` at the kernel level, so the *fd* is
-            // correct; only the stored `__cwd` string may be un-normalized.
-            // TODO(port): swap to `bun_paths::join_z` once landed.
-            let cwd = self.cwd();
-            buf[..cwd.len()].copy_from_slice(cwd);
-            let mut n = cwd.len();
+            // Spec interpreter.zig:637-640 — `ResolvePath.joinZ(&.{cwd, new_cwd_},
+            // .auto)` normalizes `.`/`..` so the stored `$PWD`/`$OLDPWD` strings
+            // reflect the resolved path (not `<cwd>/..`).
+            // PORT NOTE: reshaped for borrowck — capture only the joined length
+            // so the borrow on `buf` is released before stripping below.
+            let mut n = {
+                let existing_cwd = self.cwd();
+                bun_paths::resolve_path::join_z_buf::<bun_paths::platform::Auto>(
+                    &mut buf[..],
+                    &[existing_cwd, new_cwd_],
+                )
+                .as_bytes()
+                .len()
+            };
+            // remove trailing separator (spec interpreter.zig:643-653 — Windows
+            // checks `\\` first then falls through to `/`; POSIX only `/`).
             #[cfg(windows)]
-            { buf[n] = b'\\'; }
+            if n > 1 && buf[n - 1] == b'\\' {
+                n -= 1;
+            } else if n > 1 && buf[n - 1] == b'/' {
+                n -= 1;
+            }
             #[cfg(not(windows))]
-            { buf[n] = b'/'; }
-            n += 1;
-            buf[n..n + new_cwd_.len()].copy_from_slice(new_cwd_);
-            n += new_cwd_.len();
-            // strip trailing separator (spec: `if len > 1 && last == sep`)
-            #[cfg(windows)]
-            let sep = b'\\';
-            #[cfg(not(windows))]
-            let sep = b'/';
-            if n > 1 && buf[n - 1] == sep {
+            if n > 1 && buf[n - 1] == b'/' {
                 n -= 1;
             }
             buf[n] = 0;
@@ -1354,7 +1355,7 @@ impl ShellExecEnv {
         // SAFETY: we wrote `new_cwd_len` bytes + a NUL at `[new_cwd_len]`.
         let new_cwd_z = unsafe { bun_core::ZStr::from_raw(buf.as_ptr(), new_cwd_len) };
 
-        let new_cwd_fd = bun_sys::openat(
+        let new_cwd_fd = shell_openat(
             self.cwd_fd,
             new_cwd_z,
             bun_sys::O::DIRECTORY | bun_sys::O::RDONLY,

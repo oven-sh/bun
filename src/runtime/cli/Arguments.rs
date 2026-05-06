@@ -1509,7 +1509,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
     if !loader_tuple.keys.is_empty() {
         opts.loaders = Some(api::LoaderMap {
-            extensions: loader_tuple.keys,
+            extensions: loader_tuple.keys.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
             loaders: loader_tuple.values,
         });
     }

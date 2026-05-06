@@ -942,3 +942,49 @@ impl DevServer {
         lifecycle::init_impl(options)
     }
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// HmrSocket-facing DevServer surface (bodies gated in `../DevServer.rs`)
+// ──────────────────────────────────────────────────────────────────────────
+impl DevServer {
+    /// Length of `configuration_hash_key` — Zig: `[16]u8`.
+    pub const CONFIGURATION_HASH_KEY_LEN: usize = 16;
+
+    /// `DevServer.inspector()` — DevServer.zig:4031. Returns the JS-side
+    /// inspector agent if a debugger is attached and the frontend agent is
+    /// enabled. Full body in gated `../DevServer.rs` draft (depends on
+    /// `bun_jsc::VirtualMachine::debugger` field surface).
+    ///
+    /// SAFETY: returns `&mut BunFrontendDevServerAgent` derived through the
+    /// `UnsafeCell` on `Debugger.frontend_dev_server_agent`; two calls alias
+    /// the same agent. Caller must not hold another live `&mut` to it.
+    /// JS-thread only.
+    #[allow(clippy::missing_safety_doc)]
+    pub unsafe fn inspector(
+        &self,
+    ) -> Option<&mut crate::server::inspector_bun_frontend_dev_server_agent::BunFrontendDevServerAgent>
+    {
+        // TODO(b2-blocked): `bun_jsc::Debugger.frontend_dev_server_agent` stores
+        // the low-tier stub, not the runtime `BunFrontendDevServerAgent`.
+        // Return `None` until the agent storage is unified.
+        None
+    }
+
+    /// `DevServer.routeToBundleIndexSlow`. Full body in gated `../DevServer.rs`
+    /// draft (depends on `FrameworkRouter::match_slow` + `html_router`).
+    pub fn route_to_bundle_index_slow(&mut self, _pattern: &[u8]) -> Option<route_bundle::Index> {
+        todo!("blocked_on: dev_server::DevServer::route_to_bundle_index_slow body un-gate")
+    }
+
+    /// `DevServer.emitVisualizerMessageIfNeeded`. Full body in gated
+    /// `../DevServer.rs` draft.
+    pub fn emit_visualizer_message_if_needed(&mut self) {
+        todo!("blocked_on: dev_server::DevServer::emit_visualizer_message_if_needed body un-gate")
+    }
+
+    /// `DevServer.emitMemoryVisualizerMessage`. Full body in gated
+    /// `../DevServer.rs` draft.
+    pub fn emit_memory_visualizer_message(&mut self) {
+        todo!("blocked_on: dev_server::DevServer::emit_memory_visualizer_message body un-gate")
+    }
+}

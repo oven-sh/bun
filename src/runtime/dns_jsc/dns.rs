@@ -808,11 +808,13 @@ impl CAresNameInfo {
 
     /// SAFETY: see `process_resolve`.
     pub unsafe fn on_complete(this: *mut Self, result: JSValue) {
-        let promise = core::mem::take(&mut (*this).promise);
+        // SAFETY: see fn contract — `this` is a live node.
+        let mut promise = unsafe { core::mem::take(&mut (*this).promise) };
         // SAFETY: JSGlobalObject outlives the request.
-        let global_this = &*(*this).global_this;
+        let global_this = unsafe { &*(*this).global_this };
         let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
-        Self::destroy(this);
+        // SAFETY: see fn contract.
+        unsafe { Self::destroy(this) };
     }
 
     /// Conditionally free a heap-allocated tail node. Head nodes (`allocated == false`)

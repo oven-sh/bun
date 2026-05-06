@@ -164,11 +164,11 @@ impl HTMLRewriter {
 
         let selector = match lolhtml::HTMLSelector::parse(&selector_slice) {
             Ok(s) => s,
-            Err(_) => return global.throw_value(create_lolhtml_error(global)),
+            Err(_) => return Err(global.throw_value(create_lolhtml_error(global))),
         };
         let selector_guard = scopeguard::guard(selector, |s| unsafe {
             // SAFETY: selector owned by us until appended to context.selectors below.
-            lolhtml::HTMLSelector::deinit(s)
+            lolhtml::HTMLSelector::destroy(s)
         });
 
         let handler_ = ElementHandler::init(global, listener)?;

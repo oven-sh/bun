@@ -604,6 +604,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                             break 'brk;
                         }
 
+                        // TODO(port): `JSGlobalObject::validate_integer_range` lives in
+                        // a sibling impl block currently behind a different `mod` re-export;
+                        // route through the `bun_sql_jsc` extension trait until the
+                        // inherent method is re-exported from `bun_jsc::JSGlobalObject`.
+                        use bun_sql_jsc::jsc::JSGlobalObjectSqlExt as _;
                         let timeout_int = global_this.validate_integer_range::<u64>(
                             timeout_value,
                             0,
@@ -618,13 +623,13 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
 
             if let Some(val) = args.get(global_this, "killSignal")? {
-                kill_signal = SignalCode::from_js(val, global_this)?;
+                kill_signal = signal_code_from_js(val, global_this)?;
             }
 
             if let Some(val) = args.get(global_this, "maxBuffer")? {
                 if val.is_number() && val.is_finite() {
                     // 'Infinity' does not set maxBuffer
-                    let value = val.coerce::<i64>(global_this)?;
+                    let value = val.coerce_to_int64(global_this)?;
                     if value > 0 && (stdio[0].is_piped() || stdio[1].is_piped() || stdio[2].is_piped()) {
                         max_buffer = Some(value);
                     }

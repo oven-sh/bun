@@ -61,7 +61,7 @@ pub struct NativeZstd {
     // LIFETIMES.tsv: BORROW_PARAM → Option<*mut u32> (points into JS Uint32Array backing store)
     pub write_result: Option<*mut u32>,
     pub poll_ref: CountedKeepAlive,
-    pub this_value: Strong, // jsc.Strong.Optional
+    pub this_value: StrongOptional, // jsc.Strong.Optional
     pub write_in_progress: bool,
     pub pending_close: bool,
     pub pending_reset: bool,

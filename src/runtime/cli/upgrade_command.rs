@@ -524,12 +524,12 @@ impl UpgradeCommand {
     pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
         let args = bun_core::argv();
         if args.len() > 2 {
-            for arg in &args[2..] {
+            for arg in args.iter().skip(2) {
                 if !strings::contains(arg, b"--") {
                     Output::pretty_error(format_args!(
                         "<r><red>error<r><d>:<r> This command updates Bun itself, and does not take package names.\n<blue>note<r><d>:<r> Use `bun update"
                     ));
-                    for arg_err in &args[2..] {
+                    for arg_err in args.iter().skip(2) {
                         Output::pretty_error(format_args!(" {}", bstr::BStr::new(arg_err)));
                     }
                     Output::pretty_errorln(format_args!("` instead."));

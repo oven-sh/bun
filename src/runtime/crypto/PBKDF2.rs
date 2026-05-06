@@ -377,7 +377,9 @@ impl Job {
                 Job::run_from_js(ctx.cast::<Job>()).map_err(|_| core::ptr::null_mut())
             },
         };
-        job_ref.poll.ref_(vm);
+        // PORT NOTE: KeepAlive::ref_ now takes an aio EventLoopCtx; the JS-loop ctx is fetched
+        // via the global hook (registered by crate::init) — same pattern as s3/simple_request.rs.
+        job_ref.poll.ref_(get_vm_ctx(AllocatorType::Js));
         WorkPool::schedule(&mut job_ref.task);
 
         job
@@ -386,7 +388,7 @@ impl Job {
 
 impl Drop for Job {
     fn drop(&mut self) {
-        self.poll.unref(self.vm);
+        self.poll.unref(get_vm_ctx(AllocatorType::Js));
         self.pbkdf2.deinit_and_unprotect();
         // `promise` (JSPromiseStrong) and `output` (Vec) drop via their own `Drop` impls.
     }

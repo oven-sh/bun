@@ -1497,8 +1497,10 @@ impl CronJob {
             return;
         }
 
-        vm.event_loop().enter();
-        let _ev_guard = scopeguard::guard((), |_| vm.event_loop().exit());
+        // SAFETY: per-thread VM; raw-ptr-per-field re-borrow keeps `&mut EventLoop`
+        // lifetimes disjoint between `enter()` and the deferred `exit()`.
+        unsafe { (*vm.event_loop()).enter() };
+        let _ev_guard = scopeguard::guard((), |_| unsafe { (*vm.event_loop()).exit() });
 
         this_ref.in_fire = true;
         let result = match cb.call(this_ref.global, js_this, &[]) {

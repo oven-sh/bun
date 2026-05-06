@@ -1878,13 +1878,13 @@ impl<'a> S3StreamWrapper<'a> {
         match result {
             s3::S3UploadResult::Success => {
                 let response = Box::new(Response::init(
-                    Response::Init {
+                    response::Init {
                         method: Method::PUT,
                         status_code: 200,
                         ..Default::default()
                     },
                     Body {
-                        value: Body::Value::Empty,
+                        value: BodyValue::Empty,
                     },
                     BunString::create_atom_if_possible(self_.url.href),
                     false,
@@ -1895,14 +1895,14 @@ impl<'a> S3StreamWrapper<'a> {
             }
             s3::S3UploadResult::Failure(err) => {
                 let response = Box::new(Response::init(
-                    Response::Init {
+                    response::Init {
                         method: Method::PUT,
                         status_code: 500,
                         status_text: BunString::create_atom_if_possible(err.code),
                         ..Default::default()
                     },
                     Body {
-                        value: Body::Value::InternalBlob(Body::InternalBlob {
+                        value: BodyValue::InternalBlob(InternalBlob {
                             bytes: err.message.to_vec(),
                             was_string: true,
                         }),

@@ -3857,6 +3857,7 @@ impl RunCommand {
         // Heap-allocate each Download so AsyncHTTP.task has a stable
         // address (see RemoteImageDownload doc comment).
         let mut downloads: Vec<Box<RemoteImageDownload>> = Vec::new();
+        let _ = &mut downloads;
         // Drop frees response_buffer + the Box for each download.
 
         let done_channel = DoneChannel::init_static();

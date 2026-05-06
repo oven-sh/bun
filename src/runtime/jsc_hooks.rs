@@ -476,16 +476,45 @@ unsafe fn load_preloads(
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.
-unsafe fn ensure_debugger(vm: *mut VirtualMachine, _block_until_connected: bool) {
-    // Spec VirtualMachine.zig:2283-2290: when `vm.debugger != null`, call
-    // `jsc.Debugger.create(this, this.global)` and (if `block_until_connected`)
-    // `Debugger.waitForDebuggerIfNecessary(this)`. Silently continuing when a
-    // debugger IS configured would let execution proceed without ever attaching
-    // (PORTING.md §Forbidden: silent-no-op). Fail loudly on the
-    // debugger-present branch until `Debugger.rs` un-gates.
+unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) {
+    // Spec VirtualMachine.zig:2283-2290:
+    //   if (this.debugger != null) {
+    //       try jsc.Debugger.create(this, this.global);
+    //       if (block_until_connected)
+    //           jsc.Debugger.waitForDebuggerIfNecessary(this);
+    //   }
+    //
+    // PORT NOTE: `Debugger::create` / `wait_for_debugger_if_necessary` live in
+    // `bun_jsc::debugger`; their heavy bodies (futex spin, debugger-thread
+    // spawn, deadline poll-loop) are preserved verbatim under the
+    // `__phase_a_body` mod in Debugger.rs and un-gate independently. This hook
+    // is the literal `ensureDebugger` body — it owns the "is a debugger
+    // configured?" guard and the `block_until_connected` branch, then
+    // delegates to those two fns exactly as Zig does.
     // SAFETY: `vm` is the live per-thread VM.
-    if unsafe { (*vm).debugger.is_some() } {
-        todo!("jsc_hooks: ensure_debugger")
+    if unsafe { (*vm).debugger.is_none() } {
+        return;
+    }
+    // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives
+    // the VM; read the raw ptr before forming `&mut *vm` so the two derefs
+    // don't alias.
+    let global = unsafe { (*vm).global };
+    // Zig's `try` bubbles `error.{OutOfMemory,SystemResources}` (thread spawn)
+    // out of `ensureDebugger` into `reloadEntryPoint`/`loadEntryPoint`, which
+    // surfaces it as a process-level error. The hook signature is `()`, so
+    // match by logging via `Output::err` (same shape as the `Transpiler::init`
+    // error path above) and returning without blocking.
+    // SAFETY: per fn contract — short-lived `&mut *vm`; `global` is a live
+    // JSC heap cell (`JSGlobalObject`).
+    if let Err(e) =
+        bun_jsc::debugger::Debugger::create(unsafe { &mut *vm }, unsafe { &*global })
+    {
+        bun_core::Output::err("Debugger", format_args!("create failed: {e:?}"));
+        return;
+    }
+    if block_until_connected {
+        // SAFETY: per fn contract — short-lived `&mut *vm`.
+        bun_jsc::debugger::Debugger::wait_for_debugger_if_necessary(unsafe { &mut *vm });
     }
 }
 

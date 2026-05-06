@@ -5200,7 +5200,12 @@ pub use PollFlag as Readable;
 /// Non-blocking `poll(fd, POLLIN)`; reports readability or hangup.
 pub fn is_readable(fd: Fd) -> PollFlag {
     #[cfg(windows)]
-    { unimplemented!("TODO on Windows"); }
+    {
+        // Faithful port of `bun.zig:isReadable` — the upstream Zig hard-panics
+        // here (`@panic("TODO on Windows")`); no callers reach this on Windows.
+        let _ = fd;
+        panic!("TODO on Windows");
+    }
     #[cfg(not(windows))]
     {
         debug_assert!(fd.is_valid());

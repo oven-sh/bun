@@ -84,7 +84,7 @@ pub fn get_public_path_with_asset_prefix<W: core::fmt::Write>(
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-#[bun_jsc::host_fn(export = "BunObject_callback_sleepSync")]
+#[bun_jsc::host_fn]
 pub fn sleep_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments();
 
@@ -120,7 +120,7 @@ pub fn sleep_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     Ok(JSValue::UNDEFINED)
 }
 
-#[bun_jsc::host_fn(export = "BunObject_callback_nanoseconds")]
+#[bun_jsc::host_fn]
 pub fn nanoseconds(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
     // PORT NOTE: Zig's `std.time.Timer.read()` → `Instant::elapsed().as_nanos()`.
     // SAFETY: bun_vm() returns a live VirtualMachine pointer for a Bun-owned global.
@@ -128,7 +128,7 @@ pub fn nanoseconds(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSVa
     Ok(JSValue::js_number_from_uint64(ns))
 }
 
-#[bun_jsc::host_fn(export = "BunObject_callback_shrink")]
+#[bun_jsc::host_fn]
 pub fn shrink(global_object: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
     // PORT NOTE: `bun_jsc::VM` (the lib.rs stub) lacks `shrink_footprint`; the
     // real method lives on `bun_jsc::vm::VM`. Call the C++ symbol directly to
@@ -141,14 +141,16 @@ pub fn shrink(global_object: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue
     Ok(JSValue::UNDEFINED)
 }
 
+// phase-d: `Bun__gc` / `Bun__reportError` C exports live in `_jsc_gated` below;
+// these top-level copies are kept as plain Rust fns (no `#[no_mangle]`) so
+// existing `pub use … as gc` re-exports keep resolving without colliding at
+// codegen.
 pub use Bun__gc as gc;
-#[unsafe(no_mangle)]
 pub extern "C" fn Bun__gc(vm: *mut VirtualMachine, sync: bool) -> usize {
     // SAFETY: caller is C++ passing a live VM.
     unsafe { (*vm).garbage_collect(sync) }
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn Bun__reportError(global_object: *mut JSGlobalObject, err: JSValue) {
     // SAFETY: caller is C++ with a live global; VirtualMachine::get() is the singleton.
     let _ = unsafe { (*VirtualMachine::get()).uncaught_exception(&*global_object, err, false) };
@@ -162,7 +164,7 @@ pub extern "C" fn Bun__reportError(global_object: *mut JSGlobalObject, err: JSVa
 use bun_jsc::JSObject;
 use bun_str::strings;
 
-#[bun_jsc::host_fn(export = "BunObject_callback_indexOfLine")]
+#[bun_jsc::host_fn]
 pub fn index_of_line(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments_ = callframe.arguments_old::<2>();
     let arguments = arguments_.slice();
@@ -217,7 +219,7 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-#[bun_jsc::host_fn(export = "BunObject_callback_allocUnsafe")]
+#[bun_jsc::host_fn]
 pub fn alloc_unsafe(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_old::<1>();
     let size = arguments.ptr[0];
@@ -260,6 +262,7 @@ pub fn color_unsupported(
 // `${concat()}` would need `#![feature(macro_metavar_expr_concat)]` at the
 // crate root (out of scope for this file), so the export symbol is supplied
 // verbatim instead.
+#[allow(unused_macros)] // superseded by `bun_object::export_lazy_prop_callbacks!`
 macro_rules! lazy_prop {
     ($( $sym:ident => |$g:ident, $obj:ident| $body:expr ),* $(,)?) => {
         $(
@@ -326,15 +329,9 @@ pub fn get_argv(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     unsafe { Bun__Process__getArgv(global_this) }
 }
 
-lazy_prop! {
-    BunObject_lazyPropCb_hash            => |g, _o| get_hash_object(g, _o),
-    BunObject_lazyPropCb_JSONC           => |g, _o| get_jsonc_object(g, _o),
-    BunObject_lazyPropCb_markdown        => |g, _o| get_markdown_object(g, _o),
-    BunObject_lazyPropCb_enableANSIColors => |g, _o| enable_ansi_colors(g, _o),
-    BunObject_lazyPropCb_cwd             => |g, _o| get_cwd(g, _o),
-    BunObject_lazyPropCb_origin          => |g, _o| get_origin(g, _o),
-    BunObject_lazyPropCb_argv            => |g, _o| get_argv(g, _o),
-}
+// (lazy_prop! invocations folded into `bun_object::export_lazy_prop_callbacks!`
+// below — the per-symbol shims are emitted there to avoid duplicate
+// `#[no_mangle]` exports.)
 
 // ─── Bun.main getter/setter ─────────────────────────────────────────────────
 
@@ -421,18 +418,6 @@ fn set_main(global_this: &JSGlobalObject, new_value: JSValue) -> bool {
     // SAFETY: bun_vm() returns the live singleton VirtualMachine for a Bun-owned global.
     unsafe { (*global_this.bun_vm()).overridden_main.set(global_this, new_value) };
     true
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn BunObject_getter_main(g: *mut JSGlobalObject) -> JSValue {
-    // SAFETY: JSC always passes a live global to property getters.
-    get_main(unsafe { &*g })
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn BunObject_setter_main(g: *mut JSGlobalObject, v: JSValue) -> bool {
-    // SAFETY: JSC always passes a live global to property setters.
-    set_main(unsafe { &*g }, v)
 }
 
 // ─── host-fn bodies (the `Bun.*` surface proper) ────────────────────────────

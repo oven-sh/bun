@@ -1057,9 +1057,8 @@ impl NodeHTTPResponse {
     }
 }
 
-#[bun_jsc::host_fn]
-#[unsafe(no_mangle)]
-pub fn Bun__NodeHTTPRequest__onResolve(
+#[bun_jsc::host_fn(export = "Bun__NodeHTTPRequest__onResolve")]
+pub fn node_http_request_on_resolve(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JSValue {
@@ -1095,9 +1094,8 @@ pub fn Bun__NodeHTTPRequest__onResolve(
     JSValue::UNDEFINED
 }
 
-#[bun_jsc::host_fn]
-#[unsafe(no_mangle)]
-pub fn Bun__NodeHTTPRequest__onReject(
+#[bun_jsc::host_fn(export = "Bun__NodeHTTPRequest__onReject")]
+pub fn node_http_request_on_reject(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JSValue {

@@ -2542,11 +2542,11 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
     Ok(opts)
 }
 
-#[unsafe(no_mangle)]
+// phase-d: `#[no_mangle]` exports for these statics live at the crate top-level
+// (see lines ~143-155); the phase-a-draft copies are kept as plain Rust items
+// so in-mod references still resolve, but no longer collide at codegen.
 pub static mut Bun__Node__ZeroFillBuffers: bool = false;
-#[unsafe(no_mangle)]
 pub static mut Bun__Node__ProcessNoDeprecation: bool = false;
-#[unsafe(no_mangle)]
 pub static mut Bun__Node__ProcessThrowDeprecation: bool = false;
 
 #[repr(u8)]
@@ -2556,9 +2556,7 @@ pub enum BunCAStore {
     Openssl,
     System,
 }
-#[unsafe(no_mangle)]
 pub static mut Bun__Node__CAStore: BunCAStore = BunCAStore::Bundled;
-#[unsafe(no_mangle)]
 pub static mut Bun__Node__UseSystemCA: bool = false;
 
 // ──────────────────────────────────────────────────────────────────────────

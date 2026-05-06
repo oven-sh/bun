@@ -4703,8 +4703,13 @@ impl<'a> BundleV2<'a> {
                 continue;
             }
 
+            // PORT NOTE: borrowck — Zig `Result.path()` returns `?*Path` (raw),
+            // letting the loop body keep reading other `resolve_result` fields
+            // (`.flags`, `.path_pair`, `.primary_side_effects_data`, `.jsx`).
+            // The Rust port returns `Option<&mut Path>`, which would lock the
+            // whole struct. Detach via raw ptr to mirror the Zig aliasing.
             let path: &mut Fs::Path = match resolve_result.path() {
-                Some(p) => p,
+                Some(p) => unsafe { &mut *(p as *mut Fs::Path) },
                 None => {
                     import_record.path.is_disabled = true;
                     import_record.source_index = Index::INVALID;

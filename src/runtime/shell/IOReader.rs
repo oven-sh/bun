@@ -101,6 +101,13 @@ impl IOReader {
         // SAFETY: single-threaded. Split into its own cell so a `&mut ReaderImpl`
         // held by the bun_io read loop never overlaps a `&mut State` derived in a
         // vtable callback (see struct doc comment).
+        //
+        // MUST NOT be invoked from within a `BufferedReaderParent` vtable
+        // callback (`on_read_chunk_cb`/`on_reader_done_cb`/`on_reader_error`):
+        // the read loop already holds a live `&mut ReaderImpl` on its stack
+        // while the callback runs (PipeReader.rs aliasing contract), so
+        // re-deriving here would create two simultaneous `&mut` to the same
+        // BufferedReader = Stacked-Borrows UB.
         unsafe { &mut *self.reader.get() }
     }
 

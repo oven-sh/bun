@@ -925,9 +925,9 @@ impl Handlers {
             ($field:ident, $key:literal) => {{
                 if let Some(callback_value) = opts.get_truthy(global_object, $key)? {
                     if !callback_value.is_cell() || !callback_value.is_callable() {
-                        return global_object.throw_invalid_arguments(
+                        return Err(global_object.throw_invalid_arguments(
                             format_args!("Expected \"{}\" callback to be a function", $key),
-                        );
+                        ));
                     }
                     JSH2FrameParser::Gc::$field.set(
                         this_value,
@@ -981,9 +981,9 @@ impl Handlers {
             handlers.binary_type = match BinaryType::from_js_value(global_object, binary_type_value)? {
                 Some(bt) => bt,
                 None => {
-                    return global_object.throw_invalid_arguments(
+                    return Err(global_object.throw_invalid_arguments(
                         "Expected 'binaryType' to be 'ArrayBuffer', 'Uint8Array', or 'Buffer'",
-                    );
+                    ));
                 }
             };
         }

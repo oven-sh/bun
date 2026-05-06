@@ -376,7 +376,7 @@ impl WindowsNamedPipeContext {
         let this = WindowsNamedPipeContext::create(global_this, socket);
 
         // PORT NOTE: reshaped for borrowck — errdefer references `socket` which was moved into `this`
-        let guard = scopeguard::guard(this, |this| {
+        let mut guard = scopeguard::guard(this, |this| {
             // SAFETY: `this` is live; create() returned it and no deref has fired yet
             match unsafe { (*this).socket } {
                 SocketType::Tls(tls) => {
@@ -411,7 +411,7 @@ impl WindowsNamedPipeContext {
         // TODO: reuse the same context for multiple connections when possibles
 
         let this = WindowsNamedPipeContext::create(global_this, socket);
-        let guard = scopeguard::guard(this, |this| {
+        let mut guard = scopeguard::guard(this, |this| {
             // SAFETY: `this` is live; create() returned it and no deref has fired yet
             match unsafe { (*this).socket } {
                 SocketType::Tls(tls) => {

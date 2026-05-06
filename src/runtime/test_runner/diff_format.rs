@@ -41,9 +41,7 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
             let received = self.received_string.unwrap();
             let expected = self.expected_string.unwrap();
 
-            let mut adapter = FmtIoAdapter { inner: f, error: false };
-            print_diff_main(self.not, received, expected, &mut adapter, &diff_config)
-                .map_err(|_| fmt::Error)?;
+            print_diff_main(self.not, received, expected, f, &diff_config)?;
             return Ok(());
         }
 
@@ -100,9 +98,7 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
             expected_slice = &expected_slice[..expected_slice.len() - 1];
         }
 
-        let mut adapter = FmtIoAdapter { inner: f, error: false };
-        print_diff_main(self.not, received_slice, expected_slice, &mut adapter, &diff_config)
-            .map_err(|_| fmt::Error)?;
+        print_diff_main(self.not, received_slice, expected_slice, f, &diff_config)?;
         Ok(())
     }
 }

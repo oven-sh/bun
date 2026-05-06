@@ -94,7 +94,7 @@ use bun_jsc::{
 };
 use bun_jsc::ConcurrentTask::{ConcurrentTask, AutoDeinit};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::SysErrorJsc as _;
+use bun_jsc::{StringJsc as _, SysErrorJsc as _};
 use bun_event_loop::{Taskable, TaskTag, task_tag};
 use crate::webcore::Blob;
 use crate::webcore::blob::{Store as BlobStore, StoreRef};
@@ -1684,7 +1684,7 @@ fn extract_to_disk_filtered(
                 {
                     match bun_sys::symlinkat(link_target_z, dir_fd, pathname_z) {
                         Err(err) => {
-                            if err == bun_core::err!("EPERM") || err == bun_core::err!("ENOENT") {
+                            if matches!(err.get_errno(), bun_sys::E::EPERM | bun_sys::E::ENOENT) {
                                 if let Some(parent) = bun_core::dirname(pathname) {
                                     let _ = dir_fd.make_path(parent);
                                 }

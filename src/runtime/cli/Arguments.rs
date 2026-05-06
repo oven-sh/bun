@@ -1355,7 +1355,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 ctx.test_options.repeat_count = match strings::parse_int::<u32>(repeat_count, 10) {
                     Ok(v) => v,
                     Err(e) => {
-                        Output::pretty_errorln(format_args!("<r><red>error<r>: --rerun-each expects a number: {}", e));
+                        Output::pretty_errorln(format_args!("<r><red>error<r>: --rerun-each expects a number: {:?}", e));
                         Global::exit(1);
                     }
                 };
@@ -1366,7 +1366,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 ctx.test_options.retry = match strings::parse_int::<u32>(retry_count, 10) {
                     Ok(v) => v,
                     Err(e) => {
-                        Output::pretty_errorln(format_args!("<r><red>error<r>: --retry expects a number: {}", e));
+                        Output::pretty_errorln(format_args!("<r><red>error<r>: --retry expects a number: {:?}", e));
                         Global::exit(1);
                     }
                 };

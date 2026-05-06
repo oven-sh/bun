@@ -42,7 +42,7 @@ pub fn is_macro_path(str: &[u8]) -> bool {
 pub struct MacroContext<'a> {
     pub resolver: &'a mut Resolver,
     pub env: &'a mut DotEnvLoader<'a>,
-    pub macros: MacroMap<'a>,
+    pub macros: MacroMap,
     pub remap: MacroRemap,
     pub javascript_object: JSValue,
 }

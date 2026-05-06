@@ -1,6 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 #[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-use bun_jsc::console_object::Formatter;
 
 use super::Expect;
 use super::get_signature;
@@ -31,11 +30,7 @@ pub fn to_be_valid_date(
         return Ok(this_value);
     }
 
-    let mut formatter = Formatter {
-        global_this: global,
-        quote_strings: true,
-        ..Formatter::default()
-    };
+    let mut formatter = make_formatter(global);
     // `defer formatter.deinit()` → handled by Drop
     let received = value.to_fmt(&mut formatter);
 

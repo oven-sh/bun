@@ -12,42 +12,45 @@ impl Expect {
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         // Zig: `defer this.postMatch(globalThis);`
-        // TODO(port): scopeguard captures `&mut *this` across the fn body; Phase B may need to
-        // reshape (e.g. call post_match before each return) if borrowck rejects this.
-        let _post = scopeguard::guard((), |_| this.post_match(global));
+        // PORT NOTE: reshaped for borrowck (was `defer this.postMatch`) — scopeguard would hold
+        // a borrow of `this` for the whole body, so run the match in an inner closure and call
+        // post_match once on the way out (covers both Ok and Err paths).
+        let res = (|| -> JsResult<JSValue> {
+            let this_value = frame.this();
+            let value: JSValue = this.get_value(global, this_value, "toBeFalse", "")?;
 
-        let this_value = frame.this();
-        let value: JSValue = this.get_value(global, this_value, "toBeFalse", "")?;
+            this.increment_expect_call_counter();
 
-        this.increment_expect_call_counter();
+            let not = this.flags.not();
+            let pass = (value.is_boolean() && !value.to_boolean()) != not;
 
-        let not = this.flags.not();
-        let pass = (value.is_boolean() && !value.to_boolean()) != not;
+            if pass {
+                return Ok(JSValue::UNDEFINED);
+            }
 
-        if pass {
-            return Ok(JSValue::UNDEFINED);
-        }
+            // Zig: `var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };`
+            // Zig: `defer formatter.deinit();` — dropped; `impl Drop for ConsoleFormatter` handles cleanup.
+            let mut formatter = super::make_formatter(global);
+            let received = value.to_fmt(&mut formatter);
 
-        // Zig: `var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };`
-        // Zig: `defer formatter.deinit();` — dropped; `impl Drop for ConsoleFormatter` handles cleanup.
-        let mut formatter = super::make_formatter(global);
-        let received = value.to_fmt(&mut formatter);
+            if not {
+                let signature: &str = Expect::get_signature("toBeFalse", "", true);
+                return this.throw(
+                    global,
+                    signature,
+                    format_args!(concat!("\n\n", "Received: <red>{}<r>\n"), received),
+                );
+            }
 
-        if not {
-            let signature: &str = Expect::get_signature("toBeFalse", "", true);
-            return this.throw(
+            let signature: &str = Expect::get_signature("toBeFalse", "", false);
+            this.throw(
                 global,
                 signature,
                 format_args!(concat!("\n\n", "Received: <red>{}<r>\n"), received),
-            );
-        }
-
-        let signature: &str = Expect::get_signature("toBeFalse", "", false);
-        this.throw(
-            global,
-            signature,
-            format_args!(concat!("\n\n", "Received: <red>{}<r>\n"), received),
-        )
+            )
+        })();
+        this.post_match(global);
+        res
     }
 }
 

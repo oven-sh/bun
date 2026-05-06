@@ -176,10 +176,44 @@ impl fmt::Display for ShellErr {
 impl Drop for ShellErr {
     fn drop(&mut self) {
         match self {
-            ShellErr::Sys(sys) => sys.deref(),
+            ShellErr::Sys(sys) => {
+                // Spec `SystemError.deref()` — drop each owned bun.String field.
+                sys.code.deref();
+                sys.message.deref();
+                sys.path.deref();
+                sys.dest.deref();
+                sys.syscall.deref();
+                sys.hostname.deref();
+            }
             // Box<[u8]> drops automatically; InvalidArguments empty in Zig deinit
             _ => {}
         }
+    }
+}
+
+/// Local shim: `bun_sys::SystemError` and `bun_jsc::SystemError` are
+/// structurally identical (CYCLEBREAK TYPE_ONLY duplication) but distinct
+/// nominal types. `to_error_instance` lives on the jsc copy only.
+fn sys_error_to_jsc(e: &bun_sys::SystemError) -> bun_jsc::SystemError {
+    bun_jsc::SystemError {
+        errno: e.errno,
+        code: e.code.clone(),
+        message: e.message.clone(),
+        path: e.path.clone(),
+        syscall: e.syscall.clone(),
+        hostname: e.hostname.clone(),
+        fd: e.fd,
+        dest: e.dest.clone(),
+    }
+}
+
+/// Local shim: `bun.String.indexOfAsciiChar` lives in the gated draft module.
+fn bunstr_index_of_ascii_char(s: &BunString, chr: u8) -> Option<usize> {
+    debug_assert!(chr < 128);
+    if s.is_utf16() {
+        s.utf16().iter().position(|&c| c == u16::from(chr))
+    } else {
+        strings::index_of_char_usize(s.byte_slice(), chr)
     }
 }
 
@@ -277,7 +311,8 @@ impl<'a> GlobalJS<'a> {
 
     #[inline]
     pub fn event_loop_ctx(self) -> &'a VirtualMachine {
-        self.global_this.bun_vm()
+        // SAFETY: `bun_vm()` is non-null for a Bun-owned global; lifetime tied to 'a.
+        unsafe { &*self.global_this.bun_vm() }
     }
 
     #[inline]

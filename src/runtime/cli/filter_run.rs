@@ -185,6 +185,29 @@ impl<'a> ProcessHandle<'a> {
         let _ = err;
     }
 
+}
+
+/// `ProcessExitHandler` vtable for [`ProcessHandle`]. Mirrors the Zig
+/// `TaggedPointerUnion` arm `ProcessHandle => onProcessExit(...)`.
+static PROCESS_HANDLE_EXIT_VTABLE: ProcessExitVTable = ProcessExitVTable {
+    on_process_exit: process_handle_on_process_exit,
+};
+
+unsafe fn process_handle_on_process_exit(
+    owner: *mut (),
+    process: *mut Process,
+    status: Status,
+    rusage: *const Rusage,
+) {
+    // SAFETY: `owner` is the `*mut ProcessHandle` registered via
+    // `set_exit_handler`; it outlives the Process.
+    unsafe {
+        (*(owner as *mut ProcessHandle<'static>))
+            .on_process_exit(&mut *process, status, &*rusage)
+    };
+}
+
+impl<'a> ProcessHandle<'a> {
     pub fn on_process_exit(&mut self, proc: &mut Process, status: Status, _: &Rusage) {
         self.process.as_mut().unwrap().status = status;
         self.end_time = Some(Instant::now());

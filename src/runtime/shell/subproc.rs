@@ -1734,7 +1734,8 @@ impl PipeReader {
         // we need to ref because the process might be done and deref inside signalDoneToCmd and we wanna to keep it alive to check this.process
         // TODO(port): explicit ref/deref pair — with Arc the caller holds the strong ref;
         // intrusive refcount semantics differ. Revisit in Phase B.
-        self.try_signal_done_to_cmd().run();
+        let y = self.try_signal_done_to_cmd();
+        self.run_yield(y);
 
         if let Some(process) = self.process {
             // self.process = None;
@@ -1899,7 +1900,8 @@ impl PipeReader {
         self.state = PipeReaderState::Err(Some(err.to_system_error()));
         // we need to ref because the process might be done and deref inside signalDoneToCmd and we wanna to keep it alive to check this.process
         // TODO(port): intrusive ref/deref pair — see on_reader_done.
-        self.try_signal_done_to_cmd().run();
+        let y = self.try_signal_done_to_cmd();
+        self.run_yield(y);
         if let Some(process) = self.process {
             // self.process = None;
             // SAFETY: backref valid while PipeReader alive.

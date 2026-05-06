@@ -132,24 +132,28 @@ impl WindowsNamedPipe {
         if available.len() < suggested_size {
             // PORT NOTE: reshaped for borrowck — drop borrow before mut call
             drop(available);
-            self.incoming
-                .ensure_unused_capacity(suggested_size)
-                .unwrap_or_oom();
+            bun_core::handle_oom(self.incoming.ensure_unused_capacity(suggested_size));
             available = self.incoming.unused_capacity_slice();
         }
         // SAFETY: `available` is the unused-capacity tail of `incoming`; slicing to
         // `suggested_size` is in-bounds because we just ensured at least that much.
-        unsafe { core::slice::from_raw_parts_mut(available.as_mut_ptr(), suggested_size) }
+        // `MaybeUninit<u8>` has the same layout as `u8`; the libuv read callback
+        // writes into this region before it's observed.
+        unsafe { core::slice::from_raw_parts_mut(available.as_mut_ptr().cast::<u8>(), suggested_size) }
     }
 
     fn on_read(&mut self, buffer: &[u8]) {
         bun_output::scoped_log!(WindowsNamedPipe, "onRead ({})", buffer.len());
         self.incoming.len += buffer.len() as u32;
         debug_assert!(self.incoming.len <= self.incoming.cap);
-        debug_assert!(bun_core::is_slice_in_buffer(
-            buffer,
-            self.incoming.allocated_slice()
-        ));
+        debug_assert!({
+            let alloc = self.incoming.allocated_slice();
+            // SAFETY: `MaybeUninit<u8>` has the same layout as `u8`; only used for
+            // a pointer-range containment check, never read.
+            let alloc_bytes =
+                unsafe { core::slice::from_raw_parts(alloc.as_ptr().cast::<u8>(), alloc.len()) };
+            bun_core::is_slice_in_buffer(buffer, alloc_bytes)
+        });
 
         let data = self.incoming.slice();
 
@@ -166,12 +170,22 @@ impl WindowsNamedPipe {
     }
 
     fn on_write(&mut self, amount: usize, status: WriteStatus) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onWrite {} {:?}", amount, status);
+        bun_output::scoped_log!(
+            WindowsNamedPipe,
+            "onWrite {} {}",
+            amount,
+            match status {
+                WriteStatus::Pending => "pending",
+                WriteStatus::Drained => "drained",
+                WriteStatus::EndOfFile => "end_of_file",
+            }
+        );
 
         match status {
             WriteStatus::Pending => {}
             WriteStatus::Drained => {
                 // unref after sending all data
+                #[cfg(windows)]
                 if let Some(source) = self.writer.source.as_ref() {
                     source.pipe.unref();
                 }
@@ -185,12 +199,16 @@ impl WindowsNamedPipe {
 
     fn on_read_error(&mut self, err: bun_sys::E) {
         bun_output::scoped_log!(WindowsNamedPipe, "onReadError");
+        // `E::EOF` only exists in the Windows errno table (libuv UV_EOF mapping);
+        // this type is Windows-only at runtime so the comparison is gated.
+        #[cfg(windows)]
         if err == bun_sys::E::EOF {
             // we received FIN but we dont allow half-closed connections right now
             (self.handlers.on_end)(self.handlers.ctx);
-        } else {
-            self.on_error(bun_sys::Error::from_code(err, bun_sys::Tag::read));
+            self.writer.close();
+            return;
         }
+        self.on_error(bun_sys::Error::from_code(err, bun_sys::Tag::read));
         self.writer.close();
     }
 

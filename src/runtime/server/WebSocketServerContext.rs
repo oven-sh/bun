@@ -381,9 +381,9 @@ pub fn on_create(
     if let Some(value) = object.get(global_object, "closeOnBackpressureLimit")? {
         if !value.is_undefined_or_null() {
             if !value.is_boolean() {
-                return global_object.throw_invalid_arguments(format_args!(
+                return Err(global_object.throw_invalid_arguments(format_args!(
                     "websocket expects closeOnBackpressureLimit to be a boolean"
-                ));
+                )));
             }
 
             server.close_on_backpressure_limit = value.to_boolean();
@@ -393,9 +393,9 @@ pub fn on_create(
     if let Some(value) = object.get(global_object, "sendPings")? {
         if !value.is_undefined_or_null() {
             if !value.is_boolean() {
-                return global_object.throw_invalid_arguments(format_args!(
+                return Err(global_object.throw_invalid_arguments(format_args!(
                     "websocket expects sendPings to be a boolean"
-                ));
+                )));
             }
 
             server.send_pings_automatically = value.to_boolean();
@@ -405,9 +405,9 @@ pub fn on_create(
     if let Some(value) = object.get(global_object, "publishToSelf")? {
         if !value.is_undefined_or_null() {
             if !value.is_boolean() {
-                return global_object.throw_invalid_arguments(format_args!(
+                return Err(global_object.throw_invalid_arguments(format_args!(
                     "websocket expects publishToSelf to be a boolean"
-                ));
+                )));
             }
 
             server

@@ -951,11 +951,16 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     };
 
     // Use the isolated loop for spawnSync operations
-    // TODO(port): `to_process` returns `*mut Process` on POSIX vs `Arc<Process>`
-    // on Windows (both currently re-gated in process.rs). The Subprocess field
-    // is `ManuallyDrop<Arc<Process>>`; reconcile once process.rs settles on a
-    // single intrusive RefPtr<Process> shape.
-    let process = core::mem::ManuallyDrop::new(spawned.to_process(loop_handle, IS_SYNC));
+    // TODO(port): `to_process` returns `*mut Process`; the Subprocess field is
+    // `ManuallyDrop<Arc<Process>>`. Until process.rs settles on a single
+    // intrusive RefPtr<Process> shape, wrap the raw pointer in an Arc by
+    // assuming it was Box-allocated (process.rs does `Box::into_raw`).
+    let process_raw = spawned.to_process(loop_handle, IS_SYNC);
+    // SAFETY: `to_process` returns a freshly Box-allocated `Process`; Arc takes
+    // ownership of that allocation. TODO(port): switch to RefPtr<Process>.
+    let process = core::mem::ManuallyDrop::new(unsafe {
+        std::sync::Arc::from_raw(process_raw as *const Process)
+    });
 
     #[cfg(unix)]
     let posix_ipc_fd = if !IS_SYNC && maybe_ipc_mode.is_some() {

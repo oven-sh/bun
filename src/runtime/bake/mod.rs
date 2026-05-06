@@ -309,6 +309,14 @@ pub mod framework_router {
         // TODO(b2-blocked): `init_empty` (FrameworkRouter.zig:96) — needs
         // `Resolver` walk; un-gate from `FrameworkRouter.rs` once
         // `bun_resolver::DirInfo` is real.
+        pub fn init_empty(
+            _root: &[u8],
+            _types: Vec<Type>,
+        ) -> Result<Self, bun_alloc::AllocError> {
+            // TODO(port): keystone `Type`/`FrameworkRouter` here are distinct from the body
+            // draft; unify before constructing the real router.
+            todo!("blocked_on: framework_router::FrameworkRouter::init_empty")
+        }
 
         #[inline]
         pub fn route_ptr(&self, i: RouteIndex) -> &Route {

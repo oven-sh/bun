@@ -1880,7 +1880,7 @@ impl Comment {
         }
         // SAFETY: self.comment is non-null (checked above) and valid for the
         // duration of the lol-html callback.
-        unsafe { lolhtml::Comment::get_text(self.comment) }.to_js(global_object)
+        html_string_to_js(unsafe { lolhtml::Comment::get_text(self.comment) }, global_object)
     }
 
     #[bun_jsc::host_fn(setter)]
@@ -1892,7 +1892,7 @@ impl Comment {
         // SAFETY: self.comment is non-null (checked above) and valid for the
         // duration of the lol-html callback that owns it.
         if unsafe { lolhtml::Comment::set_text(self.comment, text.slice()) }.is_err() {
-            return global.throw_value(create_lolhtml_error(global));
+            return Err(global.throw_value(create_lolhtml_error(global)));
         }
         Ok(true)
     }
@@ -1917,12 +1917,14 @@ impl WrapperLike for Comment {
     fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
     fn ref_(&self) { self.ref_() }
     fn deref(this: *mut Self) { Self::deref(this) }
-    fn to_js(&self, g: &JSGlobalObject) -> JSValue { self.to_js(g) }
+    fn to_js(&self, _g: &JSGlobalObject) -> JSValue {
+        todo!("blocked_on: bun_jsc::JsClass to_js for *mut Self (intrusive-rc wrapper)")
+    }
 }
 
 // ──────────────────────────── EndTag ─────────────────────────────────────
 
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(no_construct, no_finalize)]
 pub struct EndTag {
     // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
     // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).

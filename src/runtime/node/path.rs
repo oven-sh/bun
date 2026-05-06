@@ -3066,27 +3066,39 @@ pub fn resolve_windows_t<'a, T: PathChar>(
     while i_i64 > -2 {
         // Backed by expandable buf2, to not conflict with buf2 backed resolvedTail,
         // because path may be long.
-        // PORT NOTE: reshaped for borrowck — store path as (ptr, len) since it may
-        // alias paths[], tmp_buf, or buf2. We copy out before mutating shared storage.
-        let path: &[T];
+        // PORT NOTE: reshaped for borrowck — `path` may alias paths[], tmp_buf, or buf2,
+        // and the loop body subsequently mutates tmp_buf/buf2 while still indexing
+        // `path`. Store as raw (ptr, len) and materialize short-lived slices at use
+        // sites; all overlapping moves go through `ptr::copy` (memmove semantics),
+        // matching the Zig original.
+        let mut path_ptr: *const T;
+        let mut path_len: usize;
+        macro_rules! path { () => {
+            // SAFETY: (path_ptr, path_len) describes a live region inside paths[]/tmp_buf/buf2;
+            // borrows are short-lived (read-only) and never held across mutation of the same range.
+            unsafe { core::slice::from_raw_parts(path_ptr, path_len) }
+        }; }
         // Locals that must outlive `path` borrow:
         let cwd_len: usize;
         if i_i64 >= 0 {
-            path = paths[usize::try_from(i_i64).unwrap()];
+            let p = paths[usize::try_from(i_i64).unwrap()];
             // validateString of `path` is performed in pub fn resolve.
 
             // Skip empty paths.
-            if path.is_empty() {
+            if p.is_empty() {
                 i_i64 -= 1;
                 continue;
             }
+            path_ptr = p.as_ptr();
+            path_len = p.len();
         } else if resolved_device_len == 0 {
             // cwd is limited to MAX_PATH_BYTES.
             cwd_len = match super::_cwd::get_cwd_t(&mut tmp_buf[..]) {
                 Ok(r) => r.len(),
                 Err(e) => return Err(e),
             };
-            path = &tmp_buf[0..cwd_len];
+            path_ptr = tmp_buf.as_ptr();
+            path_len = cwd_len;
         } else {
             // Translated from the following JS code:
             //   path = process.env[`=${resolvedDevice}`] || process.cwd();

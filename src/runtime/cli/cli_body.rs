@@ -1695,15 +1695,15 @@ To create a project with the official Next.js scaffolding tool, run
 
     fn bun_info(log: &mut logger::Log) -> Result<(), bun_core::Error> {
         // Parse arguments manually since the standard flow doesn't work for standalone commands
-        let cli = bun_install::PackageManager::CommandLineArguments::parse(
-            bun_install::PackageManager::Subcommand::Info,
-        )?;
-        let ctx = init::<{ Tag::InfoCommand }>(log)?;
-        let (pm, _) = bun_install::PackageManager::init(
-            ctx,
-            cli,
-            bun_install::PackageManager::Subcommand::Info,
-        )?;
+        let _ctx = init::<{ Tag::InfoCommand }>(log)?;
+        // `CommandLineArguments::parse` / `PackageManager::init` for `Subcommand::Info`
+        // are gated behind `bun_install::package_manager_real` (`#![cfg(any())]`
+        // reconciler-6) and the `Info` variant isn't on the public `Subcommand`
+        // stub yet; thread the args through once that lands.
+        let pm: &mut bun_install::PackageManager =
+            todo!("blocked_on: bun_install::PackageManager::init / Subcommand::Info");
+        #[allow(unreachable_code)]
+        let cli_json_output = false;
 
         // Handle arguments correctly for standalone info command
         let mut package_name: &[u8] = b"";
@@ -1715,7 +1715,7 @@ To create a project with the official Next.js scaffolding tool, run
 
         let argv = bun::argv();
         while arg_idx < argv.len() {
-            let arg = argv[arg_idx].as_bytes();
+            let arg = argv.get(arg_idx).unwrap().as_bytes();
 
             // Skip flags
             if !arg.is_empty() && arg[0] == b'-' {
@@ -1733,7 +1733,7 @@ To create a project with the official Next.js scaffolding tool, run
             arg_idx += 1;
         }
 
-        pm_view_command::view(pm, package_name, property_path, cli.json_output)?;
+        pm_view_command::view(pm, package_name, property_path, cli_json_output)?;
         Ok(())
     }
 }

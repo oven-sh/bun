@@ -2232,9 +2232,11 @@ impl ThreadSafeFunction {
                     // TODO(port): callback.deinit() — Strong handles drop on Drop; here we must
                     // explicitly clear before enqueuing the finalize task to match Zig ordering.
                     // PORT NOTE: replace callback with a no-op variant to drop Strong now.
-                    self.callback = TsfnCallback::Js(Strong::Optional::empty());
+                    self.callback = TsfnCallback::Js(StrongOptional::empty());
                     self.poll_ref.disable();
-                    self.event_loop.enqueue_task(Task::init(self));
+                    let self_ptr: *mut Self = self;
+                    // SAFETY: event_loop is the live JS-thread loop; single JS thread.
+                    unsafe { &mut *self.event_loop }.enqueue_task(Task::init(self_ptr));
                 }
             }
             _ => {
@@ -2245,9 +2247,13 @@ impl ThreadSafeFunction {
 
     pub fn dispatch_one(&mut self, is_first: bool) -> bool {
         let mut queue_finalizer_after_call = false;
+        // PORT NOTE: borrowck — capture the lock by raw ptr so the scopeguard
+        // closure doesn't hold a shared borrow of `*self` across the `&mut self`
+        // calls below. `Mutex::unlock` takes `&self` and is Sync.
+        let lock_ptr: *const Mutex = &self.lock;
         let (has_more, task) = 'brk: {
             self.lock.lock();
-            let _g = scopeguard::guard((), |_| self.lock.unlock());
+            let _g = scopeguard::guard((), |_| unsafe { (*lock_ptr).unlock() });
             // PORT NOTE: reshaped for borrowck — Zig holds the lock across these reads.
             let was_blocked = self.queue.is_blocked();
             let Some(t) = self.queue.data.read_item() else {
@@ -2296,7 +2302,8 @@ impl ThreadSafeFunction {
     fn call(&mut self, task: *mut c_void, is_first: bool) -> Result<(), bun_jsc::JsTerminated> {
         let env = self.env.get();
         if !is_first {
-            self.event_loop.drain_microtasks()?;
+            // SAFETY: event_loop is the live JS-thread loop; single JS thread.
+            unsafe { &mut *self.event_loop }.drain_microtasks()?;
         }
         // SAFETY: env is valid while the TSF is live.
         let global_object = unsafe { &*env }.to_js();
@@ -2340,8 +2347,10 @@ impl ThreadSafeFunction {
     }
 
     pub fn enqueue(&mut self, ctx: *mut c_void, block: bool) -> napi_status {
+        // PORT NOTE: borrowck — see `dispatch_one`.
+        let lock_ptr: *const Mutex = &self.lock;
         self.lock.lock();
-        let _g = scopeguard::guard((), |_| self.lock.unlock());
+        let _g = scopeguard::guard((), |_| unsafe { (*lock_ptr).unlock() });
         if block {
             while self.queue.is_blocked() {
                 self.blocking_condvar.wait(&self.lock);

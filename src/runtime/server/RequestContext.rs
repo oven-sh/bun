@@ -639,7 +639,9 @@ where
             // was collected before a prior microtask turn reached us).
             return Ok(JSValue::UNDEFINED);
         };
-        let _guard = scopeguard::guard((), |_| ctx.deref());
+        // PORT NOTE: reshaped for borrowck — defer captures raw ptr.
+        let ctx_ptr = ctx as *mut Self;
+        let _guard = scopeguard::guard((), move |_| unsafe { (*ctx_ptr).deref() });
 
         let err = arguments.ptr[0];
         Self::handle_reject(
@@ -2331,8 +2333,10 @@ where
         let Some(req) = NativePromiseContext::take::<Self>(args.ptr[args.len - 1]) else {
             return Ok(JSValue::UNDEFINED);
         };
-        let _guard = scopeguard::guard((), |_| req.deref());
-        req.handle_resolve_stream();
+        // PORT NOTE: reshaped for borrowck — defer captures raw ptr.
+        let req_ptr = req as *mut Self;
+        let _guard = scopeguard::guard((), move |_| unsafe { (*req_ptr).deref() });
+        Self::handle_resolve_stream(req);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -2344,9 +2348,11 @@ where
             return Ok(JSValue::UNDEFINED);
         };
         let err = args.ptr[0];
-        let _guard = scopeguard::guard((), |_| req.deref());
+        // PORT NOTE: reshaped for borrowck — defer captures raw ptr.
+        let req_ptr = req as *mut Self;
+        let _guard = scopeguard::guard((), move |_| unsafe { (*req_ptr).deref() });
 
-        req.handle_reject_stream(global_this, err);
+        Self::handle_reject_stream(req, global_this, err);
         Ok(JSValue::UNDEFINED)
     }
 

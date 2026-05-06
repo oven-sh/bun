@@ -4525,7 +4525,8 @@ impl DevServer<'_> {
                 let g = $g;
                 payload.extend_from_slice(&u32::try_from(g.bundled_files.len()).unwrap().to_le_bytes());
                 for (i, (k, v)) in g.bundled_files.keys().iter().zip(g.bundled_files.values()).enumerate() {
-                    let file = v.unpack();
+                    // PORT NOTE: un-gated `incremental_graph::File` is unpacked already.
+                    let file = v;
                     let mut buf = paths::path_buffer_pool::get();
                     let normalized_key = self.relative_path(&mut *buf, k);
                     payload.extend_from_slice(&u32::try_from(normalized_key.len()).unwrap().to_le_bytes());
@@ -4549,26 +4550,12 @@ impl DevServer<'_> {
         emit_files!(bake::Side::Client, &self.client_graph);
         emit_files!(bake::Side::Server, &self.server_graph);
 
-        macro_rules! emit_edges {
-            ($g:expr) => {{
-                let g = $g;
-                payload.extend_from_slice(
-                    &u32::try_from(g.edges.len() - g.edges_free_list.len()).unwrap().to_le_bytes(),
-                );
-                for (i, edge) in g.edges.iter().enumerate() {
-                    if g.edges_free_list
-                        .iter()
-                        .any(|e| *e == incremental_graph::EdgeIndex::init(u32::try_from(i).unwrap()))
-                    {
-                        continue;
-                    }
-                    payload.extend_from_slice(&u32::try_from(edge.dependency.get()).unwrap().to_le_bytes());
-                    payload.extend_from_slice(&u32::try_from(edge.imported.get()).unwrap().to_le_bytes());
-                }
-            }};
-        }
-        emit_edges!(&self.client_graph);
-        emit_edges!(&self.server_graph);
+        // TODO(b2-blocked): `incremental_graph::IncrementalGraph` keystone has no
+        // `edges_free_list`/iterable `edges` yet (lives in `incremental_graph_body`).
+        // Emit zero-length edge sections so the wire shape stays valid.
+        payload.extend_from_slice(&0u32.to_le_bytes());
+        payload.extend_from_slice(&0u32.to_le_bytes());
+        let _ = (&self.client_graph, &self.server_graph);
         Ok(())
     }
 
@@ -4583,14 +4570,17 @@ impl DevServer<'_> {
     {
         debug_assert!(id == 0);
 
-        let dw = HmrSocket::new(self, res);
+        // TODO(b2-blocked): `dev_server::HmrSocket` keystone has no `new()`;
+        // full body lives in `dev_server::hmr_socket_body::HmrSocket`. Shim until
+        // the two HmrSocket shapes are unified.
+        let dw: Box<HmrSocket> = todo!("blocked_on: dev_server::HmrSocket unification with hmr_socket_body");
         let dw_ptr: *mut HmrSocket = Box::into_raw(dw);
-        self.active_websocket_connections.put(dw_ptr, ()).expect("oom");
+        self.active_websocket_connections.put_no_clobber(dw_ptr, ()).expect("oom");
         res.upgrade::<*mut HmrSocket>(
             dw_ptr,
-            req.header("sec-websocket-key").unwrap_or(b""),
-            req.header("sec-websocket-protocol").unwrap_or(b""),
-            req.header("sec-websocket-extension").unwrap_or(b""),
+            req.header(b"sec-websocket-key").unwrap_or(b""),
+            req.header(b"sec-websocket-protocol").unwrap_or(b""),
+            req.header(b"sec-websocket-extension").unwrap_or(b""),
             upgrade_ctx,
         );
     }

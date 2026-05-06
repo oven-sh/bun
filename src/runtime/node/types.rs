@@ -1811,16 +1811,22 @@ impl PathOrBlob {
         }
 
         let Some(arg) = args.next_eat() else {
-            return ctx.throw_invalid_argument_type_value(
+            return Err(ctx.throw_invalid_argument_type_value(
                 "destination",
                 "path, file descriptor, or Blob",
                 JSValue::UNDEFINED,
-            );
+            ));
         };
         if let Some(blob) = arg.as_::<Blob>() {
-            return Ok(PathOrBlob::Blob(blob.clone_raw()));
+            // SAFETY: `as_::<Blob>()` returns a non-null `*mut Blob` owned by the
+            // live JS wrapper; valid for the duration of this call. Zig: `blob.*`.
+            return Ok(PathOrBlob::Blob(unsafe { (*blob).dupe() }));
         }
-        ctx.throw_invalid_argument_type_value("destination", "path, file descriptor, or Blob", arg)
+        Err(ctx.throw_invalid_argument_type_value(
+            "destination",
+            "path, file descriptor, or Blob",
+            arg,
+        ))
     }
 }
 

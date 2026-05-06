@@ -2603,26 +2603,11 @@ unsafe fn transpile_file(
                 }
             }
 
-            
             // TODO(b2-cycle): `RuntimeTranspilerStore::transpile` — gated
             // behind `vm.transpiler_store: ()` (VirtualMachine.rs:182-183).
-            // Un-gate once the field widens to the real store; the body is:
-            {
-                return unsafe {
-                    (*jsc_vm).transpiler_store.transpile(
-                        jsc_vm,
-                        global,
-                        (*specifier_ptr).dupe_ref(),
-                        lr.path,
-                        (*referrer).dupe_ref(),
-                        concurrent_loader,
-                        lr.package_json,
-                    )
-                }
-                .cast::<c_void>();
-            }
-            // Until then: fall through to the synchronous path (correct, just
-            // not concurrent — matches `concurrent_transpiler = false`).
+            // Un-gate once the field widens to the real store. Until then:
+            // fall through to the synchronous path (correct, just not
+            // concurrent — matches `concurrent_transpiler = false`).
         }
         let _ = concurrent_loader;
     }

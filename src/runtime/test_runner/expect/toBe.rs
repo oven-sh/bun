@@ -13,10 +13,10 @@ impl Expect {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // TODO(port): `defer this.postMatch(globalThis)` — scopeguard captures &mut this for the
-        // whole fn body; reshape for borrowck in Phase B (e.g. guard owning a *mut Self, or call
-        // post_match before every return).
-        scopeguard::defer! { this.post_match(global_this); }
+        // PORT NOTE: reshaped for borrowck — `defer this.postMatch(globalThis)` becomes a
+        // scopeguard that owns the &mut Expect and runs post_match on drop, so the body can
+        // still use `this` mutably via DerefMut.
+        let mut this = scopeguard::guard(this, |t| t.post_match(global_this));
 
         let this_value = callframe.this();
         let arguments_ = callframe.arguments_old::<2>();

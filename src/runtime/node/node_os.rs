@@ -930,19 +930,19 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
             // PORT NOTE: reshaped for borrowck — re-slice addr_str from buf
             let addr_str_len = addr_str.len();
             let start = addr_str.as_ptr() as usize - buf.as_ptr() as usize;
-            interface.put(global_this, ZigString::static_("address"), ZigString::init(&buf[start..start + addr_str_len]).with_encoding().to_js(global_this));
-            interface.put(global_this, ZigString::static_("cidr"), cidr);
+            interface.put(global_this, b"address", ZigString::init(&buf[start..start + addr_str_len]).with_encoding().to_js(global_this));
+            interface.put(global_this, b"cidr", cidr);
         }
 
         // netmask <string> The IPv4 or IPv6 network mask
         {
             let mut buf = [0u8; 64];
             let str = bun_fmt::format_ip(&netmask, &mut buf).expect("unreachable");
-            interface.put(global_this, ZigString::static_("netmask"), ZigString::init(str).with_encoding().to_js(global_this));
+            interface.put(global_this, b"netmask", ZigString::init(str).with_encoding().to_js(global_this));
         }
 
         // family <string> Either IPv4 or IPv6
-        interface.put(global_this, ZigString::static_("family"), match addr.family() as c_int {
+        interface.put(global_this, b"family", match addr.family() as c_int {
             libc::AF_INET => global_this.common_strings().ipv4(),
             libc::AF_INET6 => global_this.common_strings().ipv6(),
             _ => ZigString::static_("unknown").to_js(global_this),
@@ -995,7 +995,7 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
                 };
                 if addr_data.len() < 6 {
                     let mac = b"00:00:00:00:00:00";
-                    interface.put(global_this, ZigString::static_("mac"), ZigString::init(mac).with_encoding().to_js(global_this));
+                    interface.put(global_this, b"mac", ZigString::init(mac).with_encoding().to_js(global_this));
                 } else {
                     let mac = {
                         let mut cursor = &mut mac_buf[..];
@@ -1008,22 +1008,22 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
                         .expect("unreachable");
                         &mac_buf[..]
                     };
-                    interface.put(global_this, ZigString::static_("mac"), ZigString::init(mac).with_encoding().to_js(global_this));
+                    interface.put(global_this, b"mac", ZigString::init(mac).with_encoding().to_js(global_this));
                 }
             } else {
                 let mac = b"00:00:00:00:00:00";
-                interface.put(global_this, ZigString::static_("mac"), ZigString::init(mac).with_encoding().to_js(global_this));
+                interface.put(global_this, b"mac", ZigString::init(mac).with_encoding().to_js(global_this));
             }
         }
 
         // internal <boolean> true if the network interface is a loopback or similar interface that is not remotely accessible; otherwise false
-        interface.put(global_this, ZigString::static_("internal"), JSValue::from(is_loopback(iface)));
+        interface.put(global_this, b"internal", JSValue::from(is_loopback(iface)));
 
         // scopeid <number> The numeric IPv6 scope ID (only specified when family is IPv6)
         if addr.family() as c_int == libc::AF_INET6 {
             // SAFETY: family checked; storage is sockaddr_in6-sized
             let scope_id = unsafe { (*(addr.as_sockaddr() as *const libc::sockaddr_in6)).sin6_scope_id };
-            interface.put(global_this, ZigString::static_("scopeid"), JSValue::js_number(scope_id));
+            interface.put(global_this, b"scopeid", JSValue::js_number(scope_id as f64));
         }
 
         // Does this entry already exist?
@@ -1033,10 +1033,9 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
             array.put_index(global_this, next_index, interface)?;
         } else {
             // Add it as an array with this interface as an element
-            let member_name = ZigString::init(interface_name);
             let array = JSValue::create_empty_array(global_this, 1)?;
             array.put_index(global_this, 0, interface)?;
-            ret.put(global_this, &member_name, array);
+            ret.put(global_this, interface_name, array);
         }
 
         it = next;

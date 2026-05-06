@@ -359,12 +359,17 @@ impl<'a> State<'a> {
         self.remaining_scripts -= 1;
 
         // Flush remaining buffers (stdout first, then stderr)
-        // PORT NOTE: reshaped for borrowck — pass handle by & while borrowing handle.stdout_reader
-        // mutably; original Zig passed both as separate pointers.
-        // TODO(port): borrowck — `handle` and `handle.stdout_reader` overlap; may need raw ptr or
-        // restructure flush_pipe_buffer to take only the fields it needs.
-        self.flush_pipe_buffer(handle, &mut handle.stdout_reader)?;
-        self.flush_pipe_buffer(handle, &mut handle.stderr_reader)?;
+        // PORT NOTE: reshaped for borrowck — `flush_pipe_buffer` would need both
+        // `&ProcessHandle` and `&mut handle.stdout_reader` which overlap. Route
+        // through a raw ptr (the State/handle backref pattern is already
+        // raw-ptr-based throughout this file).
+        let handle_ptr = handle as *mut ProcessHandle;
+        // SAFETY: handle_ptr is live for this call; flush_pipe_buffer reads only
+        // `config`/`color_idx` from `handle` and writes only `pipe.line_buffer`.
+        unsafe {
+            self.flush_pipe_buffer(&*handle_ptr, &mut (*handle_ptr).stdout_reader)?;
+            self.flush_pipe_buffer(&*handle_ptr, &mut (*handle_ptr).stderr_reader)?;
+        }
 
         // Print exit status to stderr (status messages always go to stderr)
         let writer = Output::error_writer();

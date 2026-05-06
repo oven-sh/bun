@@ -552,7 +552,7 @@ pub mod GlobalRegistry {
                 let configs = configs();
 
                 // TODO(port): get_or_put_context with MapContext (content hash/eq)
-                let gop = configs.get_or_put(new_ptr);
+                let gop = bun_core::handle_oom(configs.get_or_put(new_ptr));
                 if gop.found_existing {
                     if let Some(existing_shared) = gop.value_ptr.upgrade() {
                         // Existing config is still alive; dispose the new duplicate.
@@ -587,7 +587,7 @@ pub mod GlobalRegistry {
                 return;
             }
             // TODO(port): get_index_context with MapContext
-            let Some(idx) = configs.get_index(config) else { return };
+            let Some(idx) = configs.get_index(&config) else { return };
             if configs.keys()[idx] != config {
                 return;
             }

@@ -76,7 +76,7 @@ pub use super::request_context::RequestContext as NewRequestContext;
 // associated types, so the per-monomorphization handle types are surfaced via
 // this local trait. Only `IS_H3` is consumed for control flow; `Req`/`Resp`
 // are erased to `c_void` to match `super::request_context::{Req, Resp}`.
-pub trait RequestCtx {
+pub trait RequestCtx: super::any_request_context::CtxKind {
     type Req;
     type Resp;
     const IS_H3: bool;
@@ -4254,10 +4254,11 @@ pub enum AnyUserRouteList<'a> {
 macro_rules! any_server_dispatch {
     ($self:expr, |$s:ident| $body:expr) => {
         match $self.ptr.tag() {
-            t if t == <TaggedPtrUnion<_>>::case::<HTTPServer>() => { let $s = $self.ptr.as_::<HTTPServer>(); $body }
-            t if t == <TaggedPtrUnion<_>>::case::<HTTPSServer>() => { let $s = $self.ptr.as_::<HTTPSServer>(); $body }
-            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPServer>() => { let $s = $self.ptr.as_::<DebugHTTPServer>(); $body }
-            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPSServer>() => { let $s = $self.ptr.as_::<DebugHTTPSServer>(); $body }
+            // SAFETY: tag was just checked; as_unchecked yields the matching live *mut.
+            t if t == <TaggedPtrUnion<_>>::case::<HTTPServer>() => { let $s = unsafe { &mut *$self.ptr.as_unchecked::<HTTPServer>() }; $body }
+            t if t == <TaggedPtrUnion<_>>::case::<HTTPSServer>() => { let $s = unsafe { &mut *$self.ptr.as_unchecked::<HTTPSServer>() }; $body }
+            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPServer>() => { let $s = unsafe { &mut *$self.ptr.as_unchecked::<DebugHTTPServer>() }; $body }
+            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPSServer>() => { let $s = unsafe { &mut *$self.ptr.as_unchecked::<DebugHTTPSServer>() }; $body }
             _ => unreachable!("Invalid pointer tag"),
         }
     };

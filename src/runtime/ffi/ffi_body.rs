@@ -1769,7 +1769,7 @@ impl FFI {
 
         let mut symbols = StringArrayHashMap::<Function>::default();
         if let Some(val) =
-            generate_symbols(global, &mut symbols, object).unwrap_or(Some(JSValue::ZERO))
+            generate_symbols(global, &mut symbols, unsafe { &*object }).unwrap_or(Some(JSValue::ZERO))
         {
             // an error while validating symbols
             return val;
@@ -1785,7 +1785,8 @@ impl FFI {
         let napi_env = make_napi_env_if_needed(symbols.values(), global);
 
         for function in symbols.values_mut() {
-            let function_name = function.base_name.as_ref().unwrap().clone();
+            let function_name =
+                ZBox::from_bytes(function.base_name.as_ref().unwrap().as_bytes());
 
             if function.symbol_from_dynamic_library.is_none() {
                 let ret = global.to_invalid_arguments(format_args!(
@@ -1825,7 +1826,7 @@ impl FFI {
                     );
                     compiled.js_function = cb;
 
-                    obj.put(global, &name, cb);
+                    obj.put(global, name.slice(), cb);
                 }
             }
         }
@@ -1851,7 +1852,7 @@ pub fn generate_symbol_for_function(
 
     let mut abi_types: Vec<ABIType> = Vec::new();
 
-    if let Some(args) = value.get_own(global, "args")? {
+    if let Some(args) = value.get_own(global, &bun_str::String::borrow_utf8(b"args"))? {
         if args.is_empty_or_undefined_or_null() || !args.js_type().is_array() {
             return Ok(Some(
                 ZigString::static_(b"Expected an object with \"args\" as an array")
@@ -1861,8 +1862,8 @@ pub fn generate_symbol_for_function(
 
         let mut array = args.array_iterator(global)?;
 
-        abi_types.reserve_exact(array.len());
-        while let Some(val) = array.next(global)? {
+        abi_types.reserve_exact(array.len);
+        while let Some(val) = array.next()? {
             if val.is_empty_or_undefined_or_null() {
                 return Ok(Some(
                     ZigString::static_(b"param must be a string (type name) or number")
@@ -1871,7 +1872,7 @@ pub fn generate_symbol_for_function(
             }
 
             if val.is_any_int() {
-                let int = val.to::<i32>();
+                let int = val.to_int32();
                 if (0..=ABIType::MAX).contains(&int) {
                     // SAFETY: range-checked above; ABIType is #[repr(i32)]
                     abi_types.push(unsafe { core::mem::transmute::<i32, ABIType>(int) });

@@ -1,8 +1,6 @@
 //! Port of `src/cli/bunx_command.zig`.
 
-use core::ffi::c_int;
 use core::mem::size_of;
-use std::cell::RefCell;
 use std::io::Write as _;
 use std::sync::OnceLock;
 
@@ -33,12 +31,6 @@ use crate::api::bun::process::Status as SpawnStatus;
 bun_output::declare_scope!(bunx, visible);
 
 pub struct BunxCommand;
-
-// PORT NOTE: Zig had a module-level `var path_buf: bun.PathBuffer = undefined;`.
-// Rust forbids plain mutable statics; use a thread-local scratch buffer instead.
-thread_local! {
-    static PATH_BUF: RefCell<PathBuffer> = const { RefCell::new(PathBuffer::ZEROED) };
-}
 
 /// `bun_core::which` takes its own `PathBuffer` newtype; both wrap
 /// `[u8; MAX_PATH_BYTES]` so a pointer cast is layout-safe. Avoids retyping

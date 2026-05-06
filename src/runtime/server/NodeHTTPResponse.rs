@@ -705,7 +705,7 @@ impl NodeHTTPResponse {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_undef(3);
+        let arguments = callframe.arguments_undef::<3>();
 
         if self.is_requested_completed_or_ended() {
             return global_object
@@ -724,34 +724,32 @@ impl NodeHTTPResponse {
         let state = self.raw_response.as_ref().unwrap().state();
         handle_ended_if_necessary(state, global_object)?;
 
-        let status_code_value: JSValue = if arguments.len() > 0 {
-            arguments[0]
+        let status_code_value: JSValue = if arguments.len > 0 {
+            arguments.ptr[0]
         } else {
             JSValue::UNDEFINED
         };
-        let status_message_value: JSValue = if arguments.len() > 1 && arguments[1] != JSValue::NULL {
-            arguments[1]
+        let status_message_value: JSValue = if arguments.len > 1 && arguments.ptr[1] != JSValue::NULL {
+            arguments.ptr[1]
         } else {
             JSValue::UNDEFINED
         };
-        let headers_object_value: JSValue = if arguments.len() > 2 && arguments[2] != JSValue::NULL {
-            arguments[2]
+        let headers_object_value: JSValue = if arguments.len > 2 && arguments.ptr[2] != JSValue::NULL {
+            arguments.ptr[2]
         } else {
             JSValue::UNDEFINED
         };
 
         let status_code: i32 = 'brk: {
             if !status_code_value.is_undefined() {
-                break 'brk global_object.validate_integer_range(
-                    status_code_value,
-                    200i32,
-                    jsc::IntegerRange {
-                        min: 100,
-                        max: 999,
-                        field_name: b"statusCode",
-                        ..Default::default()
-                    },
-                )?;
+                // TODO(port): blocked_on: bun_jsc::JSGlobalObject::validate_integer_range (gated upstream)
+                let _ = jsc::IntegerRange {
+                    min: 100,
+                    max: 999,
+                    field_name: b"statusCode",
+                    ..Default::default()
+                };
+                break 'brk status_code_value.coerce_to_int64(global_object)?.clamp(100, 999) as i32;
             }
             break 'brk 200;
         };
@@ -760,7 +758,7 @@ impl NodeHTTPResponse {
         let status_message_slice = if !status_message_value.is_undefined() {
             status_message_value.to_slice(global_object)?
         } else {
-            ZigString::Slice::empty()
+            ZigStringSlice::EMPTY
         };
         // status_message_slice drops at scope exit.
 
@@ -777,7 +775,7 @@ impl NodeHTTPResponse {
         // Validate status message does not contain invalid characters (defense-in-depth
         // against HTTP response splitting). Matches Node.js checkInvalidHeaderChar:
         // rejects any char not in [\t\x20-\x7e\x80-\xff].
-        if status_message_slice.len() > 0 {
+        if status_message_slice.slice().len() > 0 {
             for &c in status_message_slice.slice() {
                 if c != b'\t' && (c < 0x20 || c == 0x7f) {
                     return global_object

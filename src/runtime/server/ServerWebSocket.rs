@@ -1012,7 +1012,7 @@ impl ServerWebSocket {
                         "send() backpressure ({} bytes string)",
                         buffer.len()
                     );
-                    JSValue::js_number(-1)
+                    JSValue::js_number(-1.0)
                 }
                 SendStatus::Success => {
                     bun_output::scoped_log!(
@@ -1020,7 +1020,7 @@ impl ServerWebSocket {
                         "send() success ({} bytes string)",
                         buffer.len()
                     );
-                    JSValue::js_number(buffer.len())
+                    JSValue::js_number(buffer.len() as f64)
                 }
                 SendStatus::Dropped => {
                     bun_output::scoped_log!(
@@ -1028,7 +1028,7 @@ impl ServerWebSocket {
                         "send() dropped ({} bytes string)",
                         buffer.len()
                     );
-                    JSValue::js_number(0)
+                    JSValue::js_number(0.0)
                 }
             };
             js_string.ensure_still_alive();
@@ -1042,30 +1042,30 @@ impl ServerWebSocket {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old(2);
+        let args = callframe.arguments_old::<2>();
 
-        if args.len() < 1 {
+        if args.len < 1 {
             bun_output::scoped_log!(WebSocketServer, "sendText()");
-            return global_this.throw("sendText requires at least 1 argument");
+            return Err(global_this.throw("sendText requires at least 1 argument"));
         }
 
         if self.is_closed() {
             bun_output::scoped_log!(WebSocketServer, "sendText() closed");
-            return Ok(JSValue::js_number(0));
+            return Ok(JSValue::js_number(0.0));
         }
 
-        let message_value = args.ptr(0);
-        let compress_value = args.ptr(1);
+        let message_value = args.ptr[0];
+        let compress_value = args.ptr[1];
 
         if !compress_value.is_boolean() && !compress_value.is_undefined() && !compress_value.is_empty()
         {
-            return global_this.throw("sendText expects compress to be a boolean");
+            return Err(global_this.throw("sendText expects compress to be a boolean"));
         }
 
-        let compress = args.len() > 1 && compress_value.to_boolean();
+        let compress = args.len > 1 && compress_value.to_boolean();
 
         if message_value.is_empty_or_undefined_or_null() || !message_value.is_string() {
-            return global_this.throw("sendText expects a string");
+            return Err(global_this.throw("sendText expects a string"));
         }
 
         let js_string = message_value.to_js_string(global_this)?;

@@ -1144,23 +1144,28 @@ impl IncrementalGraph<Server> {
 
         let key_boxed: Box<[u8]> = Box::from(key);
         let gop = self.bundled_files.get_or_put(key_boxed)?;
-        let file_index = FileIndex::init(u32::try_from(gop.index).unwrap());
+        let gop_index = gop.index;
+        let found_existing = gop.found_existing;
+        let file_index = FileIndex::init(u32::try_from(gop_index).unwrap());
+        // PORT NOTE: reshaped for borrowck — drop `gop` before touching other
+        // `self` fields; re-index via `gop_index`/`file_index` where needed.
+        drop(gop);
 
-        if !gop.found_existing {
+        if !found_existing {
             self.first_dep.push(OptionalEdgeIndex::NONE);
             self.first_import.push(OptionalEdgeIndex::NONE);
         }
 
-        if self.stale_files.unmanaged.bit_length > gop.index {
-            self.stale_files.unset(gop.index);
+        if self.stale_files.unmanaged.bit_length > gop_index {
+            self.stale_files.unset(gop_index);
         }
 
         *ctx.get_cached_index(Side::Server, index) = CachedFileIndex(file_index.get());
 
-        if !gop.found_existing {
+        if !found_existing {
             let client_component_boundary = ctx.server_to_client_bitset.is_set(index.get() as usize);
 
-            *gop.value_ptr = ServerFile {
+            self.bundled_files.values_mut()[gop_index] = ServerFile {
                 is_rsc: !is_ssr_graph,
                 is_ssr: is_ssr_graph,
                 is_route: false,
@@ -1179,29 +1184,32 @@ impl IncrementalGraph<Server> {
                     .push(ig::FileIndex::init(file_index.get()));
             }
         } else {
-            gop.value_ptr.kind = match content {
-                ReceiveChunkContent::Js { .. } => FileKind::Js,
-                ReceiveChunkContent::Css(_) => FileKind::Css,
-            };
+            {
+                let value_ptr = &mut self.bundled_files.values_mut()[gop_index];
+                value_ptr.kind = match content {
+                    ReceiveChunkContent::Js { .. } => FileKind::Js,
+                    ReceiveChunkContent::Css(_) => FileKind::Css,
+                };
 
-            if is_ssr_graph {
-                gop.value_ptr.is_ssr = true;
-            } else {
-                gop.value_ptr.is_rsc = true;
+                if is_ssr_graph {
+                    value_ptr.is_ssr = true;
+                } else {
+                    value_ptr.is_rsc = true;
+                }
             }
 
             if ctx.server_to_client_bitset.is_set(index.get() as usize) {
-                gop.value_ptr.is_client_component_boundary = true;
+                self.bundled_files.values_mut()[gop_index].is_client_component_boundary = true;
                 self.owner()
                     .incremental_result
                     .client_components_added
                     .push(ig::FileIndex::init(file_index.get()));
-            } else if gop.value_ptr.is_client_component_boundary {
-                let _key_owned = gop.key_ptr.clone();
+            } else if self.bundled_files.values()[gop_index].is_client_component_boundary {
+                let _key_owned = self.bundled_files.keys()[gop_index].clone();
                 let _client_graph = &mut self.owner().client_graph;
                 // TODO(port): blocked_on: dev_server::incremental_graph::IncrementalGraph::get_file_index/disconnect_and_delete_file
                 // re-fetch value_ptr
-                self.bundled_files.values_mut()[file_index.get() as usize]
+                self.bundled_files.values_mut()[gop_index]
                     .is_client_component_boundary = false;
 
                 self.owner()
@@ -1210,10 +1218,9 @@ impl IncrementalGraph<Server> {
                     .push(ig::FileIndex::init(file_index.get()));
             }
 
-            let value = &mut self.bundled_files.values_mut()[file_index.get() as usize];
+            let value = &mut self.bundled_files.values_mut()[gop_index];
             if value.failed {
                 value.failed = false;
-                let _dev = self.owner();
                 // TODO(port): blocked_on: bun_collections::ArrayHashMap::fetch_swap_remove_adapted
                 todo!("blocked_on: bun_collections::ArrayHashMap::fetch_swap_remove_adapted");
             }

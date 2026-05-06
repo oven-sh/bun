@@ -4189,7 +4189,10 @@ impl Resolver {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {
                 // syscall = "query" + ucfirst(TYPE_NAME)
-                return global_this.throw_value(err.to_js_with_syscall(global_this, T::syscall_name())?);
+                // TODO(port): blocked_on CAresRecordTypeExt::syscall_name impls — using "query" placeholder.
+                return Err(global_this.throw_value(
+                    super::cares_jsc::error_to_js_with_syscall(err, global_this, b"query")?,
+                ));
             }
         };
 

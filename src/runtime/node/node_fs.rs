@@ -25,9 +25,75 @@ use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
 use bun_string::{self as bstr, strings, String as BunString, ZStr, PathString, ZigString};
-use bun_sys::{self as sys, Fd as FD, Maybe, Mode, SystemErrno, E};
+use bun_sys::{self as sys, Fd as FD, FdExt as _, Maybe, Mode, SystemErrno, E};
 use bun_threading::work_pool::{WorkPool, Task as WorkPoolTask};
 use crate::webcore;
+
+// ──────────────────────────────────────────────────────────────────────────
+// `Maybe(T)` shim — Zig's `bun.jsc.Maybe(T)` provides associated helpers
+// (`.success`, `.errnoSys*`, `.getErrno`) on top of the bare `Result<T, Error>`
+// alias that `bun_sys::Maybe<T>` is. The full enum lives in `crate::node::Maybe`,
+// but this file imports the `bun_sys` alias and matches on `Ok`/`Err`, so add a
+// local extension trait so `Maybe::<T>::errno_sys*` / `.get_errno()` resolve.
+// ──────────────────────────────────────────────────────────────────────────
+pub trait MaybeSysResultExt<R>: Sized {
+    fn get_errno(&self) -> E;
+    fn errno_sys<Rc: crate::node::SyscallRc + sys::GetErrno>(rc: Rc, syscall: sys::Tag) -> Option<Self>;
+    fn errno_sys_fd<Rc: crate::node::SyscallRc + sys::GetErrno>(rc: Rc, syscall: sys::Tag, fd: FD) -> Option<Self>;
+    fn errno_sys_p<Rc: crate::node::SyscallRc + sys::GetErrno>(rc: Rc, syscall: sys::Tag, path: impl AsRef<[u8]>) -> Option<Self>;
+    fn errno_sys_pd<Rc: crate::node::SyscallRc + sys::GetErrno>(rc: Rc, syscall: sys::Tag, path: impl AsRef<[u8]>, dest: impl AsRef<[u8]>) -> Option<Self>;
+}
+impl<R> MaybeSysResultExt<R> for Maybe<R> {
+    #[inline]
+    fn get_errno(&self) -> E {
+        match self { Ok(_) => E::SUCCESS, Err(e) => e.get_errno() }
+    }
+    #[inline]
+    fn errno_sys<Rc: crate::node::SyscallRc + sys::GetErrno>(rc: Rc, syscall: sys::Tag) -> Option<Self> {
+        match sys::get_errno(rc) {
+            E::SUCCESS => None,
+            e => Some(Err(sys::Error { errno: crate::node::translate_to_err_int(e), syscall, ..Default::default() })),
+        }
+    }
+    #[inline]
+    fn errno_sys_fd<Rc: crate::node::SyscallRc + sys::GetErrno>(rc: Rc, syscall: sys::Tag, fd: FD) -> Option<Self> {
+        match sys::get_errno(rc) {
+            E::SUCCESS => None,
+            e => Some(Err(sys::Error { errno: crate::node::translate_to_err_int(e), syscall, fd, ..Default::default() })),
+        }
+    }
+    #[inline]
+    fn errno_sys_p<Rc: crate::node::SyscallRc + sys::GetErrno>(rc: Rc, syscall: sys::Tag, path: impl AsRef<[u8]>) -> Option<Self> {
+        match sys::get_errno(rc) {
+            E::SUCCESS => None,
+            e => Some(Err(sys::Error { errno: crate::node::translate_to_err_int(e), syscall, path: path.as_ref().into(), ..Default::default() })),
+        }
+    }
+    #[inline]
+    fn errno_sys_pd<Rc: crate::node::SyscallRc + sys::GetErrno>(rc: Rc, syscall: sys::Tag, path: impl AsRef<[u8]>, dest: impl AsRef<[u8]>) -> Option<Self> {
+        match sys::get_errno(rc) {
+            E::SUCCESS => None,
+            e => Some(Err(sys::Error { errno: crate::node::translate_to_err_int(e), syscall, path: path.as_ref().into(), dest: dest.as_ref().into(), ..Default::default() })),
+        }
+    }
+}
+
+/// `bun.jsc.Maybe(void).success` — Zig's unit-success constructor. Only the
+/// `()` instantiation needs the constant, so bound it separately.
+pub trait MaybeSuccess: Sized { const SUCCESS: Self; }
+impl MaybeSuccess for Maybe<()> { const SUCCESS: Self = Ok(()); }
+
+/// Convert the runtime `node::time_like::TimeLike` (== `libc::timespec` on
+/// POSIX) into the `bun_sys::TimeLike` data shape that the `Syscall::*utimens`
+/// wrappers consume. On Windows both are `f64`.
+#[cfg(not(windows))]
+#[inline]
+fn to_sys_time_like(t: super::time_like::TimeLike) -> sys::TimeLike {
+    sys::TimeLike { sec: t.tv_sec as i64, nsec: t.tv_nsec as i64 }
+}
+#[cfg(windows)]
+#[inline]
+fn to_sys_time_like(t: super::time_like::TimeLike) -> sys::TimeLike { t }
 
 // Local namespace shim: dependents in this file spell `ConcurrentTask::create*`
 // (the Zig spelling). The Rust crate exports the *struct* as `ConcurrentTask`
@@ -1284,7 +1350,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             this.finish_concurrently(Maybe::Err(sys::Error {
                 errno: E::EISDIR as _,
                 syscall: sys::Tag::copyfile,
-                path: nodefs.os_path_into_sync_error_buf(src),
+                path: nodefs.os_path_into_sync_error_buf(src).into(),
                 ..Default::default()
             }));
             return;
@@ -1334,7 +1400,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
                 src,
             ) {
                 match err.get_errno() {
-                    E::ACCES | E::ENAMETOOLONG | E::ROFS | E::PERM | E::INVAL => {
+                    E::EACCES | E::ENAMETOOLONG | E::EROFS | E::EPERM | E::EINVAL => {
                         nodefs.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
                         this_ref.finish_concurrently(Maybe::Err(err.err.with_path(&nodefs.sync_error_buf[..src.len()])));
                         return false;
@@ -1404,7 +1470,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
                 this_ref.finish_concurrently(Maybe::Err(sys::Error {
                     errno: E::ENAMETOOLONG as _,
                     syscall: sys::Tag::copyfile,
-                    path: nodefs.os_path_into_sync_error_buf(&src_buf[..src_dir_len as usize]),
+                    path: nodefs.os_path_into_sync_error_buf(&src_buf[..src_dir_len as usize]).into(),
                     ..Default::default()
                 }));
                 return false;
@@ -1957,7 +2023,7 @@ pub mod args {
             })?;
             let len: u64 = 'brk: {
                 let Some(len_value) = arguments.next() else { break 'brk 0 };
-                validators::validate_integer(ctx, len_value, "len", None, None)?.max(0) as u64
+                validators::validate_integer(ctx, len_value, b"len", None, None)?.max(0) as u64
             };
             Ok(Truncate { path, len, flags: 0 })
         }
@@ -1972,12 +2038,11 @@ pub mod args {
         pub fn deinit(&self) {}
         pub fn deinit_and_unprotect(&self) {
             self.buffers.value.unprotect();
-            self.buffers.buffers.deinit();
+            // Zig: `self.buffers.buffers.deinit()` — `Vec` frees on drop.
         }
         pub fn to_thread_safe(&mut self) {
             self.buffers.value.protect();
-            let clone: Vec<sys::PlatformIoVecConst> = self.buffers.buffers.as_slice().to_vec();
-            self.buffers.buffers = clone;
+            self.buffers.buffers = self.buffers.buffers.as_slice().to_vec();
         }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Writev> {
             let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
@@ -1985,13 +2050,12 @@ pub mod args {
             let buffers = VectorArrayBuffer::from_js(
                 ctx,
                 arguments.protect_eat_next().ok_or_else(|| ctx.throw_invalid_arguments("Expected an ArrayBufferView[]"))?,
-                arguments.arena.allocator(),
             )?;
             let mut position: Option<u64> = None;
             if let Some(pos_value) = arguments.next_eat() {
                 if !pos_value.is_undefined_or_null() {
                     if pos_value.is_number() {
-                        position = Some(pos_value.to::<u64>());
+                        position = Some(pos_value.to_int64() as u64);
                     } else {
                         return Err(ctx.throw_invalid_arguments("position must be a number"));
                     }
@@ -2010,12 +2074,11 @@ pub mod args {
         pub fn deinit(&self) {}
         pub fn deinit_and_unprotect(&self) {
             self.buffers.value.unprotect();
-            self.buffers.buffers.deinit();
+            // Zig: `self.buffers.buffers.deinit()` — `Vec` frees on drop.
         }
         pub fn to_thread_safe(&mut self) {
             self.buffers.value.protect();
-            let clone: Vec<sys::PlatformIoVecConst> = self.buffers.buffers.as_slice().to_vec();
-            self.buffers.buffers = clone;
+            self.buffers.buffers = self.buffers.buffers.as_slice().to_vec();
         }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Readv> {
             let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
@@ -2023,13 +2086,12 @@ pub mod args {
             let buffers = VectorArrayBuffer::from_js(
                 ctx,
                 arguments.protect_eat_next().ok_or_else(|| ctx.throw_invalid_arguments("Expected an ArrayBufferView[]"))?,
-                arguments.arena.allocator(),
             )?;
             let mut position: Option<u64> = None;
             if let Some(pos_value) = arguments.next_eat() {
                 if !pos_value.is_undefined_or_null() {
                     if pos_value.is_number() {
-                        position = Some(pos_value.to::<u64>());
+                        position = Some(pos_value.to_int64() as u64);
                     } else {
                         return Err(ctx.throw_invalid_arguments("position must be a number"));
                     }
@@ -2053,8 +2115,8 @@ pub mod args {
             let len: BlobSizeType = BlobSizeType::try_from(
                 validators::validate_integer(
                     ctx,
-                    arguments.next().unwrap_or(JSValue::js_number(0)),
-                    "len",
+                    arguments.next().unwrap_or(JSValue::js_number(0.0)),
+                    b"len",
                     Some(i64::from(i52::MIN)),
                     Some(BLOB_SIZE_MAX as i64),
                 )?
@@ -2082,12 +2144,12 @@ pub mod args {
             let uid: UidT = 'brk: {
                 let Some(uid_value) = arguments.next() else { return Err(ctx.throw_invalid_arguments("uid is required")); };
                 arguments.eat();
-                break 'brk wrap_to::<UidT>(validators::validate_integer(ctx, uid_value, "uid", Some(-1), Some(u32::MAX as i64))?);
+                break 'brk wrap_to::<UidT>(validators::validate_integer(ctx, uid_value, b"uid", Some(-1), Some(u32::MAX as i64))?);
             };
             let gid: GidT = 'brk: {
                 let Some(gid_value) = arguments.next() else { return Err(ctx.throw_invalid_arguments("gid is required")); };
                 arguments.eat();
-                break 'brk wrap_to::<GidT>(validators::validate_integer(ctx, gid_value, "gid", Some(-1), Some(u32::MAX as i64))?);
+                break 'brk wrap_to::<GidT>(validators::validate_integer(ctx, gid_value, b"gid", Some(-1), Some(u32::MAX as i64))?);
             };
             Ok(Chown { path: scopeguard::ScopeGuard::into_inner(path), uid, gid })
         }
@@ -2107,12 +2169,12 @@ pub mod args {
             let uid: UidT = 'brk: {
                 let Some(uid_value) = arguments.next() else { return Err(ctx.throw_invalid_arguments("uid is required")); };
                 arguments.eat();
-                break 'brk wrap_to::<UidT>(validators::validate_integer(ctx, uid_value, "uid", Some(-1), Some(u32::MAX as i64))?);
+                break 'brk wrap_to::<UidT>(validators::validate_integer(ctx, uid_value, b"uid", Some(-1), Some(u32::MAX as i64))?);
             };
             let gid: GidT = 'brk: {
                 let Some(gid_value) = arguments.next() else { return Err(ctx.throw_invalid_arguments("gid is required")); };
                 arguments.eat();
-                break 'brk wrap_to::<GidT>(validators::validate_integer(ctx, gid_value, "gid", Some(-1), Some(u32::MAX as i64))?);
+                break 'brk wrap_to::<GidT>(validators::validate_integer(ctx, gid_value, b"gid", Some(-1), Some(u32::MAX as i64))?);
             };
             Ok(Fchown { fd, uid, gid })
         }
@@ -2337,7 +2399,7 @@ pub mod args {
                             else {
                                 // Build the error before deref() so the format observes a live string
                                 // (Zig used `defer str.deref()` — node_fs.zig:1905-1910).
-                                let err = ctx.err_invalid_arg_value(format_args!("Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"", str)).throw();
+                                let err = ctx.err(bun_jsc::ErrorCode::ERR_INVALID_ARG_VALUE, format_args!("Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"", str)).throw();
                                 str.deref();
                                 old_path.deinit(); new_path.deinit();
                                 return Err(err);
@@ -2347,7 +2409,7 @@ pub mod args {
                     }
                     // not a string. fallthrough to auto detect.
                     old_path.deinit(); new_path.deinit();
-                    return Err(ctx.err_invalid_arg_value("Symlink type must be one of \"dir\", \"file\", or \"junction\".").throw());
+                    return Err(ctx.err(bun_jsc::ErrorCode::ERR_INVALID_ARG_VALUE, format_args!("Symlink type must be one of \"dir\", \"file\", or \"junction\".")).throw());
                 }
                 SymlinkLinkType::Unspecified
             };
@@ -2462,10 +2524,10 @@ pub mod args {
                         else { path.deinit(); return Err(ctx.throw_invalid_arguments("The \"options.force\" property must be of type boolean.")); }
                     }
                     if let Some(delay) = val.get(ctx, "retryDelay")? {
-                        retry_delay = c_uint::try_from(validators::validate_integer(ctx, delay, "options.retryDelay", Some(0), Some(c_uint::MAX as i64))?).unwrap();
+                        retry_delay = c_uint::try_from(validators::validate_integer(ctx, delay, b"options.retryDelay", Some(0), Some(c_uint::MAX as i64))?).unwrap();
                     }
                     if let Some(retries) = val.get(ctx, "maxRetries")? {
-                        max_retries = u32::try_from(validators::validate_integer(ctx, retries, "options.maxRetries", Some(0), Some(u32::MAX as i64))?).unwrap();
+                        max_retries = u32::try_from(validators::validate_integer(ctx, retries, b"options.maxRetries", Some(0), Some(u32::MAX as i64))?).unwrap();
                     }
                 } else if !val.is_undefined() {
                     path.deinit();
@@ -3322,20 +3384,20 @@ pub mod ret {
                     let array = JSValue::create_empty_array(global_object, items.len())?;
                     let mut previous_jsstring: Option<*mut bun_jsc::JSString> = None;
                     for (i, item) in items.iter().enumerate() {
-                        let res = item.to_js_newly_created(global_object, &mut previous_jsstring)?;
+                        let res = item.to_js_newly_created(global_object, Some(&mut previous_jsstring))?;
                         array.put_index(global_object, i as u32, res)?;
                     }
                     // items dropped here (auto free)
                     Ok(array)
                 }
                 Readdir::Buffers(items) => {
-                    let v = JSValue::from_any(global_object, &items[..]);
-                    drop(items);
-                    v
+                    let _ = (&global_object, &items);
+                    todo!("blocked_on: bun_jsc::JSValue::from_any")
                 }
                 Readdir::Files(items) => {
                     // automatically freed
-                    JSValue::from_any(global_object, &items[..])
+                    let _ = (&global_object, &items);
+                    todo!("blocked_on: bun_jsc::JSValue::from_any")
                 }
             }
         }
@@ -3397,7 +3459,7 @@ pub use ret as ReturnType;
 
 impl NodeFS {
     pub fn access(&mut self, args: &args::Access, _: Flavor) -> Maybe<ret::Access> {
-        let path: OSPathSliceZ = if args.path.slice().is_empty() {
+        let path: &OSPathSliceZ = if args.path.slice().is_empty() {
             os_path_literal_empty()
         } else {
             args.path.os_path_kernel32(&mut self.sync_error_buf)
@@ -3586,20 +3648,20 @@ impl NodeFS {
                     Maybe::Err(err) => return Maybe::Err(err.with_path(src)),
                 };
 
-                if !sys::S::ISREG(stat_.mode) {
+                if !sys::S::ISREG(stat_.st_mode) {
                     return Maybe::Err(sys::Error { errno: SystemErrno::ENOTSUP as _, syscall: sys::Tag::copyfile, ..Default::default() });
                 }
 
                 // 64 KB is about the break-even point for clonefile() to be worth it
                 // at least, on an M1 with an NVME SSD.
-                if stat_.size > 128 * 1024 {
+                if stat_.st_size > 128 * 1024 {
                     if !args.mode.shouldnt_overwrite() {
                         // clonefile() will fail if it already exists
                         let _ = Syscall::unlink(dest);
                     }
                     // SAFETY: src/dest are NUL-terminated; clonefile is the libc FFI
                     if Maybe::<ret::CopyFile>::errno_sys_p(unsafe { bun_sys::c::clonefile(src.as_ptr(), dest.as_ptr(), 0) }, sys::Tag::copyfile, src).is_none() {
-                        let _ = Syscall::chmod(dest, stat_.mode);
+                        let _ = Syscall::chmod(dest, stat_.st_mode);
                         return Maybe::Ok(());
                     }
                 } else {
@@ -3624,9 +3686,9 @@ impl NodeFS {
                         Maybe::Err(err) => return Maybe::Err(err.with_path(args.dest.slice())),
                     };
 
-                    let result = Self::copy_file_using_read_write_loop(src, dest, src_fd, dest_fd, stat_.size.max(0) as usize, &mut wrote);
+                    let result = Self::copy_file_using_read_write_loop(src, dest, src_fd, dest_fd, stat_.st_size.max(0) as usize, &mut wrote);
                     let _ = Syscall::ftruncate(dest_fd, (wrote & ((1u64 << 63) - 1)) as i64);
-                    let _ = Syscall::fchmod(dest_fd, stat_.mode);
+                    let _ = Syscall::fchmod(dest_fd, stat_.st_mode);
                     dest_fd.close();
                     return result;
                 }
@@ -3663,7 +3725,7 @@ impl NodeFS {
                 Maybe::Ok(result) => result,
                 Maybe::Err(err) => return Maybe::Err(err),
             };
-            if !sys::S::ISREG(stat_.mode) {
+            if !sys::S::ISREG(stat_.st_mode) {
                 return Maybe::Err(sys::Error { errno: SystemErrno::EOPNOTSUPP as _, syscall: sys::Tag::copyfile, ..Default::default() });
             }
 
@@ -3700,12 +3762,12 @@ impl NodeFS {
                 match sys::get_errno(rc) {
                     E::SUCCESS => {
                         if rc == 0 {
-                            let _ = Syscall::fchmod(dest_fd, stat_.mode);
+                            let _ = Syscall::fchmod(dest_fd, stat_.st_mode);
                             return Maybe::Ok(());
                         }
                     }
-                    E::INTR => continue,
-                    E::XDEV | E::INVAL | E::OPNOTSUPP | E::BADF => break 'cfr,
+                    E::EINTR => continue,
+                    E::EXDEV | E::EINVAL | E::EOPNOTSUPP | E::EBADF => break 'cfr,
                     e => {
                         let _ = sys::unlink(dest);
                         return Maybe::Err(sys::Error { errno: e as _, syscall: sys::Tag::copyfile, ..Default::default() });
@@ -3714,11 +3776,11 @@ impl NodeFS {
             }
 
             let mut wrote: u64 = 0;
-            if let Maybe::Err(err) = Self::copy_file_using_read_write_loop(src, dest, src_fd, dest_fd, stat_.size.max(0) as usize, &mut wrote) {
+            if let Maybe::Err(err) = Self::copy_file_using_read_write_loop(src, dest, src_fd, dest_fd, stat_.st_size.max(0) as usize, &mut wrote) {
                 let _ = sys::unlink(dest);
                 return Maybe::Err(err);
             }
-            let _ = Syscall::fchmod(dest_fd, stat_.mode);
+            let _ = Syscall::fchmod(dest_fd, stat_.st_mode);
             return Maybe::Ok(());
         }
 
@@ -3740,7 +3802,7 @@ impl NodeFS {
                 Maybe::Err(err) => return Maybe::Err(err),
             };
 
-            if !sys::S::ISREG(stat_.mode) {
+            if !sys::S::ISREG(stat_.st_mode) {
                 return Maybe::Err(sys::Error { errno: SystemErrno::ENOTSUP as _, syscall: sys::Tag::copyfile, ..Default::default() });
             }
 
@@ -3759,7 +3821,7 @@ impl NodeFS {
                 Maybe::Err(err) => return Maybe::Err(err),
             };
 
-            let mut size: usize = stat_.size.max(0) as usize;
+            let mut size: usize = stat_.st_size.max(0) as usize;
 
             // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
             if args.mode.is_force_clone() {
@@ -3769,16 +3831,16 @@ impl NodeFS {
                     let _ = sys::unlink(dest);
                     return err;
                 }
-                let _ = Syscall::fchmod(dest_fd, stat_.mode);
+                let _ = Syscall::fchmod(dest_fd, stat_.st_mode);
                 dest_fd.close();
                 return Maybe::Ok(());
             }
 
             // If we know it's a regular file and ioctl_ficlone is available, attempt to use it.
-            if sys::S::ISREG(stat_.mode) && sys::copy_file::can_use_ioctl_ficlone() {
+            if sys::S::ISREG(stat_.st_mode) && sys::copy_file::can_use_ioctl_ficlone() {
                 let rc = sys::linux::ioctl_ficlone(dest_fd, src_fd);
                 if rc == 0 {
-                    let _ = Syscall::fchmod(dest_fd, stat_.mode);
+                    let _ = Syscall::fchmod(dest_fd, stat_.st_mode);
                     dest_fd.close();
                     return Maybe::Ok(());
                 }
@@ -3787,7 +3849,7 @@ impl NodeFS {
                 sys::copy_file::disable_ioctl_ficlone();
             }
 
-            let _close_dest = scopeguard::guard((dest_fd, stat_.mode, &wrote), |(fd, m, wrote)| {
+            let _close_dest = scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
                 // SAFETY: fd is a valid open dest_fd; ftruncate/fchmod are libc FFI
                 let _ = unsafe { libc::ftruncate(fd.cast(), (wrote.get() & ((1u64 << 63) - 1)) as i64) };
                 // SAFETY: same fd as above
@@ -3811,12 +3873,12 @@ impl NodeFS {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
                     // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                    let written = unsafe { sys::linux::copy_file_range(src_fd.cast(), &mut off_in_copy, dest_fd.cast(), &mut off_out_copy, sys::page_size(), 0) };
+                    let written = unsafe { sys::linux::copy_file_range(src_fd.native(), &mut off_in_copy, dest_fd.native(), &mut off_out_copy, sys::page_size(), 0) };
                     if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(written, sys::Tag::copy_file_range, dest) {
                         match err.get_errno() {
-                            E::INTR => continue,
-                            E::XDEV | E::NOSYS | E::INVAL | E::OPNOTSUPP => {
-                                if matches!(err.get_errno(), E::NOSYS | E::OPNOTSUPP) { sys::copy_file::disable_copy_file_range_syscall(); }
+                            E::EINTR => continue,
+                            E::EXDEV | E::ENOSYS | E::EINVAL | E::EOPNOTSUPP => {
+                                if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) { sys::copy_file::disable_copy_file_range_syscall(); }
                                 let mut w = wrote.get();
                                 let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
                                 wrote.set(w);
@@ -3832,12 +3894,12 @@ impl NodeFS {
             } else {
                 while size > 0 {
                     // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                    let written = unsafe { sys::linux::copy_file_range(src_fd.cast(), &mut off_in_copy, dest_fd.cast(), &mut off_out_copy, size, 0) };
+                    let written = unsafe { sys::linux::copy_file_range(src_fd.native(), &mut off_in_copy, dest_fd.native(), &mut off_out_copy, size, 0) };
                     if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(written, sys::Tag::copy_file_range, dest) {
                         match err.get_errno() {
-                            E::INTR => continue,
-                            E::XDEV | E::NOSYS | E::INVAL | E::OPNOTSUPP => {
-                                if matches!(err.get_errno(), E::NOSYS | E::OPNOTSUPP) { sys::copy_file::disable_copy_file_range_syscall(); }
+                            E::EINTR => continue,
+                            E::EXDEV | E::ENOSYS | E::EINVAL | E::EOPNOTSUPP => {
+                                if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) { sys::copy_file::disable_copy_file_range_syscall(); }
                                 let mut w = wrote.get();
                                 let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
                                 wrote.set(w);
@@ -3954,7 +4016,7 @@ impl NodeFS {
     }
 
     pub fn ftruncate(&mut self, args: &args::FTruncate, _: Flavor) -> Maybe<ret::Ftruncate> {
-        Syscall::ftruncate(args.fd, args.len.unwrap_or(0))
+        Syscall::ftruncate(args.fd, args.len.unwrap_or(0) as i64)
     }
 
     pub fn futimes(&mut self, args: &args::Futimes, _: Flavor) -> Maybe<ret::Futimes> {
@@ -3967,7 +4029,7 @@ impl NodeFS {
                 Maybe::Err(sys::Error { errno: e, syscall: sys::Tag::futime, fd: args.fd, ..Default::default() })
             } else { Maybe::Ok(()) };
         }
-        match Syscall::futimens(args.fd, args.atime, args.mtime) {
+        match Syscall::futimens(args.fd, to_sys_time_like(args.atime), to_sys_time_like(args.mtime)) {
             Maybe::Err(err) => Maybe::Err(err),
             Maybe::Ok(_) => Maybe::Ok(()),
         }
@@ -3980,7 +4042,7 @@ impl NodeFS {
         {
             // bionic has no lchmod(); symlink modes are meaningless on Linux
             // anyway. Match glibc's stub behaviour.
-            return Maybe::Err(sys::Error { errno: E::OPNOTSUPP as _, syscall: sys::Tag::lchmod, path: args.path.slice().into(), ..Default::default() });
+            return Maybe::Err(sys::Error { errno: E::EOPNOTSUPP as _, syscall: sys::Tag::lchmod, path: args.path.slice().into(), ..Default::default() });
         }
         let path = args.path.slice_z(&mut self.sync_error_buf);
         match Syscall::lchmod(path, args.mode) {
@@ -4020,7 +4082,7 @@ impl NodeFS {
         match Syscall::lstat(args.path.slice_z(&mut self.sync_error_buf)) {
             Maybe::Ok(result) => Maybe::Ok(StatOrNotFound::Stats(Stats::init(&PosixStat::init(&result), args.big_int))),
             Maybe::Err(err) => {
-                if !args.throw_if_no_entry && err.get_errno() == E::NOENT {
+                if !args.throw_if_no_entry && err.get_errno() == E::ENOENT {
                     return Maybe::Ok(StatOrNotFound::NotFound);
                 }
                 Maybe::Err(err.with_path(args.path.slice()))
@@ -4030,9 +4092,9 @@ impl NodeFS {
 
     pub fn mkdir(&mut self, args: &args::Mkdir, _: Flavor) -> Maybe<ret::Mkdir> {
         if args.path.slice().is_empty() {
-            return Maybe::Err(sys::Error { errno: E::NOENT as _, syscall: sys::Tag::mkdir, path: b"".as_slice().into(), ..Default::default() });
+            return Maybe::Err(sys::Error { errno: E::ENOENT as _, syscall: sys::Tag::mkdir, path: b"".as_slice().into(), ..Default::default() });
         }
-        if args.recursive { self.mkdir_recursive(args.clone()) } else { self.mkdir_non_recursive(args) }
+        if args.recursive { self.mkdir_recursive(args) } else { self.mkdir_non_recursive(args) }
     }
 
     // Node doesn't absolute the path so we don't have to either
@@ -4044,11 +4106,11 @@ impl NodeFS {
         }
     }
 
-    pub fn mkdir_recursive(&mut self, args: args::Mkdir) -> Maybe<ret::Mkdir> {
+    pub fn mkdir_recursive(&mut self, args: &args::Mkdir) -> Maybe<ret::Mkdir> {
         self.mkdir_recursive_impl::<()>(args, ())
     }
 
-    pub fn mkdir_recursive_impl<Ctx: MkdirCtx>(&mut self, args: args::Mkdir, ctx: Ctx) -> Maybe<ret::Mkdir> {
+    pub fn mkdir_recursive_impl<Ctx: MkdirCtx>(&mut self, args: &args::Mkdir, ctx: Ctx) -> Maybe<ret::Mkdir> {
         let mut buf = paths::path_buffer_pool::get();
         let path = args.path.os_path_kernel32(&mut *buf);
         if args.always_return_none {
@@ -4062,7 +4124,7 @@ impl NodeFS {
         if cfg!(windows) { ch == b'/' as OSPathChar || ch == b'\\' as OSPathChar } else { ch == b'/' as OSPathChar }
     }
 
-    pub fn mkdir_recursive_os_path(&mut self, path: OSPathSliceZ, mode: Mode, return_path: bool) -> Maybe<ret::Mkdir> {
+    pub fn mkdir_recursive_os_path(&mut self, path: &OSPathSliceZ, mode: Mode, return_path: bool) -> Maybe<ret::Mkdir> {
         // PERF(port): was comptime bool — runtime branch here
         if return_path {
             self.mkdir_recursive_os_path_impl::<(), true>((), path, mode)
@@ -4074,7 +4136,7 @@ impl NodeFS {
     pub fn mkdir_recursive_os_path_impl<Ctx: MkdirCtx, const RETURN_PATH: bool>(
         &mut self,
         ctx: Ctx,
-        path: OSPathSliceZ,
+        path: &OSPathSliceZ,
         mode: Mode,
     ) -> Maybe<ret::Mkdir> {
         let len: u16 = path.len() as u16;
@@ -4090,7 +4152,7 @@ impl NodeFS {
                     return match sys::directory_exists_at(FD::INVALID, path) {
                         Maybe::Err(_) => Maybe::Err(sys::Error {
                             errno: err.errno, syscall: sys::Tag::mkdir,
-                            path: self.os_path_into_sync_error_buf(without_nt_prefix(path.as_slice())).into(),
+                            path: self.os_path_into_sync_error_buf(without_nt_prefix((&path[..]))).into(),
                             ..Default::default()
                         }),
                         // if is a directory, OK. otherwise failure
@@ -4099,27 +4161,27 @@ impl NodeFS {
                         } else {
                             Maybe::Err(sys::Error {
                                 errno: err.errno, syscall: sys::Tag::mkdir,
-                                path: self.os_path_into_sync_error_buf(without_nt_prefix(path.as_slice())).into(),
+                                path: self.os_path_into_sync_error_buf(without_nt_prefix((&path[..]))).into(),
                                 ..Default::default()
                             })
                         },
                     };
                 }
                 // continue
-                E::NOENT => {
+                E::ENOENT => {
                     if len == 0 {
                         // no path to copy
                         return Maybe::Err(err);
                     }
                 }
                 _ => {
-                    return Maybe::Err(err.with_path(self.os_path_into_sync_error_buf(&path.as_slice()[..len as usize])));
+                    return Maybe::Err(err.with_path(self.os_path_into_sync_error_buf(&(&path[..])[..len as usize])));
                 }
             },
             Maybe::Ok(_) => {
                 ctx.on_create_dir(path);
                 if !RETURN_PATH { return Maybe::Ok(StringOrUndefined::None); }
-                return Maybe::Ok(StringOrUndefined::String(BunString::create_from_os_path(path)));
+                return Maybe::Ok(StringOrUndefined::String(BunString::create_from_os_path(&path[..])));
             }
         }
 
@@ -4130,13 +4192,13 @@ impl NodeFS {
         // not used afterward, so the re-derive is sound.
         let sync_error_buf_ptr: *mut PathBuffer = &mut self.sync_error_buf;
         let working_mem: &mut OSPathBuffer = unsafe { &mut *(sync_error_buf_ptr as *mut OSPathBuffer) };
-        working_mem[..len as usize].copy_from_slice(&path.as_slice()[..len as usize]);
+        working_mem[..len as usize].copy_from_slice(&(&path[..])[..len as usize]);
 
         let mut i: u16 = len - 1;
 
         // iterate backwards until creating the directory works successfully
         while i > 0 {
-            if Self::_is_sep(path.as_slice()[i as usize]) {
+            if Self::_is_sep((&path[..])[i as usize]) {
                 working_mem[i as usize] = 0;
                 let parent = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), i as usize) };
                 match mkdir_os_path(parent, mode) {
@@ -4154,8 +4216,8 @@ impl NodeFS {
                                             // the &mut PathBuffer from the stored raw ptr instead of `&mut self`.
                                             let buf = unsafe { &mut *sync_error_buf_ptr };
                                             return Maybe::Err(sys::Error {
-                                                errno: E::NOTDIR as _, syscall: sys::Tag::mkdir,
-                                                path: Self::os_path_into_buf(buf, without_nt_prefix(&path.as_slice()[..len as usize])).into(),
+                                                errno: E::ENOTDIR as _, syscall: sys::Tag::mkdir,
+                                                path: Self::os_path_into_buf(buf, without_nt_prefix(&(&path[..])[..len as usize])).into(),
                                                 ..Default::default()
                                             });
                                         }
@@ -4164,14 +4226,14 @@ impl NodeFS {
                                 // Handle race condition
                                 break;
                             }
-                            E::NOENT => { i -= 1; continue; }
+                            E::ENOENT => { i -= 1; continue; }
                             _ => {
                                 #[cfg(windows)]
                                 let p = {
                                     // `parent` aliases `working_mem` (== sync_error_buf). Copy it
                                     // out to a temp before re-deriving `&mut PathBuffer` so we
                                     // never hold `&mut buf` and `&buf[..]` simultaneously.
-                                    let stripped = without_nt_prefix(parent.as_slice());
+                                    let stripped = without_nt_prefix((&parent[..]));
                                     let n = stripped.len();
                                     let tmp = paths::os_path_buffer_pool().get();
                                     tmp[..n].copy_from_slice(stripped);
@@ -4179,7 +4241,7 @@ impl NodeFS {
                                     Self::os_path_into_buf(unsafe { &mut *sync_error_buf_ptr }, &tmp[..n])
                                 };
                                 #[cfg(not(windows))]
-                                let p = without_nt_prefix(parent.as_slice());
+                                let p = without_nt_prefix((&parent[..]));
                                 return Maybe::Err(err.with_path(p));
                             }
                         }
@@ -4198,7 +4260,7 @@ impl NodeFS {
         i += 1;
         // after we find one that works, we go forward _after_ the first working directory
         while i < len {
-            if Self::_is_sep(path.as_slice()[i as usize]) {
+            if Self::_is_sep((&path[..])[i as usize]) {
                 working_mem[i as usize] = 0;
                 let parent = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), i as usize) };
                 match mkdir_os_path(parent, mode) {
@@ -4211,7 +4273,7 @@ impl NodeFS {
                             _ => {
                                 // SAFETY: `working_mem` is not used after this return.
                                 let buf = unsafe { &mut *sync_error_buf_ptr };
-                                return Maybe::Err(err.with_path(Self::os_path_into_buf(buf, without_nt_prefix(path.as_slice()))));
+                                return Maybe::Err(err.with_path(Self::os_path_into_buf(buf, without_nt_prefix((&path[..])))));
                             }
                         }
                     }
@@ -4235,7 +4297,7 @@ impl NodeFS {
                 _ => {
                     // SAFETY: `working_mem` is not used after this return.
                     let buf = unsafe { &mut *sync_error_buf_ptr };
-                    return Maybe::Err(err.with_path(Self::os_path_into_buf(buf, without_nt_prefix(path.as_slice()))));
+                    return Maybe::Err(err.with_path(Self::os_path_into_buf(buf, without_nt_prefix((&path[..])))));
                 }
             },
             Maybe::Ok(_) => {}
@@ -4564,7 +4626,7 @@ impl NodeFS {
                         //
                         // This is different than what Node does, at the time of writing.
                         // Node doesn't gracefully handle errors like these. It fails the entire operation.
-                        E::NOENT | E::NOTDIR | E::PERM => return Maybe::Ok(()),
+                        E::ENOENT | E::ENOTDIR | E::EPERM => return Maybe::Ok(()),
                         _ => {}
                     }
                     let joined = paths::resolve_path::join_z_buf::<paths::platform::Auto>(
@@ -4739,7 +4801,7 @@ impl NodeFS {
                         //
                         // This is different than what Node does, at the time of writing.
                         // Node doesn't gracefully handle errors like these. It fails the entire operation.
-                        E::NOENT | E::NOTDIR | E::PERM => continue,
+                        E::ENOENT | E::ENOTDIR | E::EPERM => continue,
                         _ => {
                             // TODO: propagate file path (removed previously because it leaked the path)
                             return Maybe::Err(err);
@@ -4933,7 +4995,7 @@ impl NodeFS {
 
                 if let Some(graph) = standalone_module_graph_get() {
                     if let Some(file) = graph.find(path.as_bytes()) {
-                        let contents = file.contents.as_bytes();
+                        let contents: &[u8] = file.contents();
                         return if args.encoding == Encoding::Buffer {
                             // PORTING.md §Forbidden bans `Vec::leak()`; round-trip through
                             // `into_boxed_slice()` so the allocation layout JSC frees with
@@ -4964,18 +5026,18 @@ impl NodeFS {
             }
             PathOrFileDescriptor::Fd(fd) => *fd,
         };
-        let fd = match fd_maybe_windows.make_libuv_owned() {
+        let fd: FD = match fd_maybe_windows.make_lib_uv_owned() {
             Ok(fd) => fd,
             Err(_) => {
                 if path_is_path { fd_maybe_windows.close(); }
-                return Maybe::Err(sys::Error { errno: E::MFILE as _, syscall: sys::Tag::open, ..Default::default() });
+                return Maybe::Err(sys::Error { errno: E::EMFILE as _, syscall: sys::Tag::open, ..Default::default() });
             }
         };
         let _close = scopeguard::guard((fd, path_is_path), |(fd, is_path)| {
             if is_path { fd.close(); }
         });
 
-        if args.aborted() { return Maybe::<ret::ReadFileWithOptions>::aborted(); }
+        if args.aborted() { return Maybe::Err(abort_err()); }
 
         // Only used in DOMFormData
         if args.offset > 0 {
@@ -5033,7 +5095,7 @@ impl NodeFS {
                 _ => {
                     if string_type == ReadFileStringType::Default {
                         Maybe::Ok(ret::ReadFileWithOptions::TranscodedString(
-                            webcore::encoding::to_bun_string(temporary_read_buffer_before_stat_call, args.encoding),
+                            webcore::encoding::to_bun_string(temporary_read_buffer_before_stat_call, args.encoding.into()),
                         ))
                     } else {
                         let mut z = temporary_read_buffer_before_stat_call.to_vec();
@@ -5047,7 +5109,7 @@ impl NodeFS {
         }
         // ----------------------------
 
-        if args.aborted() { return Maybe::<ret::ReadFileWithOptions>::aborted(); }
+        if args.aborted() { return Maybe::Err(abort_err()); }
 
         let stat_ = match Syscall::fstat(fd) {
             Maybe::Err(err) => return Maybe::Err(err),
@@ -5059,7 +5121,7 @@ impl NodeFS {
         let max_size: u64 = args.max_size.map(|v| v as u64).unwrap_or(BLOB_SIZE_MAX);
         let has_max_size = args.max_size.is_some();
 
-        let size: u64 = (stat_.size as i64)
+        let size: u64 = (stat_.st_size as i64)
             .min(max_size as i64) // Only used in DOMFormData
             .max(total as i64)
             .max(0) as u64
@@ -5070,7 +5132,7 @@ impl NodeFS {
             size < (1u64 << 40)
         {
             if let Some(err) = Self::should_throw_out_of_memory_early_for_javascript(args.encoding, size as usize, sys::Tag::read) {
-                return Maybe::Err(err.with_path_like(&args.path));
+                return Maybe::Err(with_path_like(err, &args.path));
             }
         }
 
@@ -5081,7 +5143,7 @@ impl NodeFS {
             .min(max_size)
             .min(1024 * 1024 * 1024 * 8) as usize;
         if buf.try_reserve_exact(initial_cap).is_err() {
-            return Maybe::Err(sys::Error::from_code(E::NOMEM, sys::Tag::read).with_path_like(&args.path));
+            return Maybe::Err(with_path_like(sys::Error::from_code(E::ENOMEM, sys::Tag::read), &args.path));
         }
         if !temporary_read_buffer_before_stat_call.is_empty() {
             buf.extend_from_slice(temporary_read_buffer_before_stat_call);
@@ -5100,7 +5162,7 @@ impl NodeFS {
         // size-bounded loop, `phase == 1` is the unbounded tail.
         let mut phase: u8 = if (total as u64) < size { 0 } else { 1 };
         loop {
-            if args.aborted() { return Maybe::<ret::ReadFileWithOptions>::aborted(); }
+            if args.aborted() { return Maybe::Err(abort_err()); }
             // Spec parity (node_fs.zig:5327-5377): when `total == min(buf.capacity, max_size)`
             // the next read receives an empty slice → returns 0 → `did_succeed = true; break`.
             // Do NOT pre-grow here; growth happens only in the `total > size && amt != 0 &&
@@ -5113,14 +5175,14 @@ impl NodeFS {
 
                     if args.limit_size_for_javascript {
                         if let Some(err) = Self::should_throw_out_of_memory_early_for_javascript(args.encoding, total, sys::Tag::read) {
-                            return Maybe::Err(err.with_path_like(&args.path));
+                            return Maybe::Err(with_path_like(err, &args.path));
                         }
                     }
 
                     // There are cases where stat()'s size is wrong or out of date
                     if (total as u64) > size && amt != 0 && !has_max_size {
                         if buf.try_reserve(8192).is_err() {
-                            return Maybe::Err(sys::Error::from_code(E::NOMEM, sys::Tag::read).with_path_like(&args.path));
+                            return Maybe::Err(with_path_like(sys::Error::from_code(E::ENOMEM, sys::Tag::read), &args.path));
                         }
                         let cap = buf.capacity();
                         buf.resize(cap, 0);
@@ -5173,7 +5235,7 @@ impl NodeFS {
                     // null_terminated: ensure buf[total] == 0 and hand back as ZBox.
                     if buf.len() < total + 1 {
                         if buf.try_reserve_exact(1).is_err() {
-                            return Maybe::Err(sys::Error::from_code(E::NOMEM, sys::Tag::read).with_path_like(&args.path));
+                            return Maybe::Err(with_path_like(sys::Error::from_code(E::ENOMEM, sys::Tag::read), &args.path));
                         }
                         buf.push(0);
                     } else {
@@ -5191,7 +5253,7 @@ impl NodeFS {
     pub fn write_file_with_path_buffer(pathbuf: &mut PathBuffer, args: &args::WriteFile) -> Maybe<ret::WriteFile> {
         let fd = match &args.file {
             PathOrFileDescriptor::Path(p) => {
-                let path = p.slice_z_with_force_copy(pathbuf, true);
+                let path = p.slice_z_with_force_copy::<true>(pathbuf);
                 match sys::openat(args.dirfd, path, args.flag.as_int(), args.mode) {
                     Maybe::Err(err) => return Maybe::Err(err.with_path(p.slice())),
                     Maybe::Ok(fd) => fd,
@@ -5203,7 +5265,7 @@ impl NodeFS {
             if is_path { fd.close(); }
         });
 
-        if args.aborted() { return Maybe::<ret::WriteFile>::ABORTED; }
+        if args.aborted() { return Maybe::Err(abort_err()); }
 
         let mut buf = args.data.slice();
         let mut written: usize = 0;
@@ -5223,7 +5285,7 @@ impl NodeFS {
                     }
                 };
                 let _ = sys::preallocate_file(
-                    fd.cast(),
+                    fd.native(),
                     i64::try_from(offset).unwrap(),
                     i64::try_from(buf.len()).unwrap(),
                 );
@@ -5253,7 +5315,7 @@ impl NodeFS {
 
         if args.flush {
             #[cfg(windows)] { let _ = unsafe { windows::kernel32::FlushFileBuffers(fd.cast()) }; }
-            #[cfg(not(windows))] { let _ = unsafe { libc::fsync(fd.cast()) }; }
+            #[cfg(not(windows))] { let _ = unsafe { libc::fsync(fd.native()) }; }
         }
 
         Maybe::Ok(())
@@ -5267,10 +5329,11 @@ impl NodeFS {
         let mut outbuf = PathBuffer::uninit();
         let inbuf = &mut self.sync_error_buf;
         let path = args.path.slice_z(inbuf);
-        let link_path = match Syscall::readlink(path, &mut outbuf) {
+        let link_len = match Syscall::readlink(path, outbuf.as_mut_slice()) {
             Maybe::Err(err) => return Maybe::Err(err.with_path(args.path.slice())),
             Maybe::Ok(result) => result,
         };
+        let link_path: &[u8] = &outbuf[..link_len];
         Maybe::Ok(match args.encoding {
             Encoding::Buffer => StringOrBuffer::Buffer(Buffer::from_string(link_path).expect("unreachable")),
             _ => {
@@ -5313,7 +5376,7 @@ impl NodeFS {
             }
             let result_ptr: Option<*const c_char> = req.ptr_as::<Option<*const c_char>>();
             let Some(ptr) = result_ptr else {
-                return Maybe::Err(sys::Error { errno: E::NOENT as _, syscall: sys::Tag::realpath, path: args.path.slice().into(), ..Default::default() });
+                return Maybe::Err(sys::Error { errno: E::ENOENT as _, syscall: sys::Tag::realpath, path: args.path.slice().into(), ..Default::default() });
             };
             let mut buf = unsafe { core::ffi::CStr::from_ptr(ptr) }.to_bytes();
             if variant == RealpathVariant::Emulated {
@@ -5334,7 +5397,7 @@ impl NodeFS {
                     }
                     StringOrBuffer::String(node::SliceWithUnderlyingString { utf8: Default::default(), underlying: BunString::clone_utf8(buf) })
                 }
-                enc => StringOrBuffer::String(node::SliceWithUnderlyingString { utf8: Default::default(), underlying: webcore::encoding::to_bun_string(buf, enc) }),
+                enc => StringOrBuffer::String(node::SliceWithUnderlyingString { utf8: Default::default(), underlying: webcore::encoding::to_bun_string(buf, enc.into()) }),
             });
         }
 
@@ -5342,13 +5405,16 @@ impl NodeFS {
         {
             let mut outbuf = PathBuffer::uninit();
             let inbuf = &mut self.sync_error_buf;
-            debug_assert!(FileSystem::INSTANCE_LOADED.load(Ordering::Relaxed));
+            // SAFETY: single-threaded init flag (resolver/fs.rs).
+            debug_assert!(unsafe { bun_resolver::fs::INSTANCE_LOADED });
 
             let path_slice = args.path.slice();
-            let parts = [FileSystem::instance().top_level_dir, path_slice];
-            let path_ = FileSystem::instance().abs_buf(&parts, inbuf);
-            inbuf[path_.len()] = 0;
-            let path = unsafe { ZStr::from_raw(inbuf.as_ptr(), path_.len()) };
+            // SAFETY: instance() returns the leaked singleton; INSTANCE_LOADED checked above.
+            let fs = unsafe { &*FileSystem::instance() };
+            let parts = [fs.top_level_dir, path_slice];
+            let path_len = fs.abs_buf(&parts, inbuf.as_mut_slice()).len();
+            inbuf[path_len] = 0;
+            let path = unsafe { ZStr::from_raw(inbuf.as_ptr(), path_len) };
 
             #[cfg(target_os = "linux")]
             let flags = sys::O::PATH; // O_PATH is faster
@@ -5377,7 +5443,7 @@ impl NodeFS {
                     }
                     StringOrBuffer::String(node::SliceWithUnderlyingString { utf8: Default::default(), underlying: BunString::clone_utf8(buf) })
                 }
-                enc => StringOrBuffer::String(node::SliceWithUnderlyingString { utf8: Default::default(), underlying: webcore::encoding::to_bun_string(buf, enc) }),
+                enc => StringOrBuffer::String(node::SliceWithUnderlyingString { utf8: Default::default(), underlying: webcore::encoding::to_bun_string(buf, enc.into()) }),
             })
         }
     }
@@ -5399,7 +5465,7 @@ impl NodeFS {
         if args.recursive {
             if let Err(err) = zig_delete_tree(sys::Dir::cwd(), args.path.slice(), sys::FileKind::Directory) {
                 let mut errno: E = map_anyerror_to_errno(err);
-                if cfg!(windows) && errno == E::NOTDIR { errno = E::NOENT; }
+                if cfg!(windows) && errno == E::ENOTDIR { errno = E::ENOENT; }
                 return Maybe::Err(sys::Error::from_code(errno, sys::Tag::rmdir));
             }
             return Maybe::Ok(());
@@ -5422,7 +5488,7 @@ impl NodeFS {
             if let Err(err) = zig_delete_tree(sys::Dir::cwd(), args.path.slice(), sys::FileKind::File) {
                 let errno = if err == bun_core::err!("FileNotFound") {
                     if args.force { return Maybe::Ok(()); }
-                    E::NOENT
+                    E::ENOENT
                 } else {
                     map_anyerror_to_errno_rm_tree(err)
                 };
@@ -5441,16 +5507,16 @@ impl NodeFS {
             let e1 = err1.get_errno();
             // empirically, it seems to return AccessDenied when the
             // file is actually a directory on macOS.
-            if args.recursive && matches!(e1, E::EISDIR | E::NOTDIR | E::ACCES | E::PERM) {
+            if args.recursive && matches!(e1, E::EISDIR | E::ENOTDIR | E::EACCES | E::EPERM) {
                 // SAFETY: `dest` is NUL-terminated by `slice_z`; rmdir(2) is the libc FFI.
                 if let Some(err2) = Maybe::<()>::errno_sys_p(unsafe { libc::rmdir(dest.as_ptr().cast()) }, sys::Tag::rmdir, args.path.slice()) {
                     let Maybe::Err(err2) = err2 else { return Maybe::Ok(()) };
-                    if err2.get_errno() == E::NOENT && args.force { return Maybe::Ok(()); }
+                    if err2.get_errno() == E::ENOENT && args.force { return Maybe::Ok(()); }
                     return Maybe::Err(err2.with_path_and_syscall(args.path.slice(), sys::Tag::rm));
                 }
                 return Maybe::Ok(());
             }
-            if e1 == E::NOENT && args.force { return Maybe::Ok(()); }
+            if e1 == E::ENOENT && args.force { return Maybe::Ok(()); }
             return Maybe::Err(err1.with_path_and_syscall(args.path.slice(), sys::Tag::rm));
         }
         Maybe::Ok(())
@@ -5474,7 +5540,7 @@ impl NodeFS {
         match Syscall::stat(path) {
             Maybe::Ok(result) => Maybe::Ok(StatOrNotFound::Stats(Stats::init(&PosixStat::init(&result), args.big_int))),
             Maybe::Err(err) => {
-                if !args.throw_if_no_entry && err.get_errno() == E::NOENT {
+                if !args.throw_if_no_entry && err.get_errno() == E::ENOENT {
                     return Maybe::Ok(StatOrNotFound::NotFound);
                 }
                 Maybe::Err(err.with_path(args.path.slice()))
@@ -5633,10 +5699,14 @@ impl NodeFS {
                 use std::io::Write as _;
                 let _ = write!(&mut buf, "Failed to watch file {}", bun_core::fmt::QuotedFormatter { text: args.path.slice() });
                 let _ = args.global_this.throw_value(bun_jsc::SystemError {
-                    message: BunString::init(&buf),
+                    errno: 0,
+                    message: BunString::init(&buf[..]),
                     code: BunString::init(err.name()),
                     path: BunString::init(args.path.slice()),
-                    ..Default::default()
+                    syscall: BunString::default(),
+                    hostname: BunString::default(),
+                    fd: -1,
+                    dest: BunString::default(),
                 }.to_error_instance(args.global_this));
                 return Maybe::Ok(JSValue::UNDEFINED);
             }
@@ -5645,7 +5715,7 @@ impl NodeFS {
     }
 
     pub fn unwatch_file(&mut self, _: &args::UnwatchFile, _: Flavor) -> Maybe<ret::UnwatchFile> {
-        Maybe::<ret::UnwatchFile>::todo()
+        Maybe::Err(sys::Error::default())
     }
 
     pub fn utimes(&mut self, args: &args::Utimes, _: Flavor) -> Maybe<ret::Utimes> {
@@ -5694,13 +5764,13 @@ impl NodeFS {
     pub fn cp(&mut self, args: &args::Cp, _: Flavor) -> Maybe<ret::Cp> {
         let mut src_buf = OSPathBuffer::uninit();
         let mut dest_buf = OSPathBuffer::uninit();
-        let src = args.src.os_path(&mut src_buf);
-        let dest = args.dest.os_path(&mut dest_buf);
+        let src_len = args.src.os_path(&mut src_buf).len();
+        let dest_len = args.dest.os_path(&mut dest_buf).len();
         self.cp_sync_inner(
             &mut src_buf,
-            PathInt::try_from(src.len()).unwrap(),
+            PathInt::try_from(src_len).unwrap(),
             &mut dest_buf,
-            PathInt::try_from(dest.len()).unwrap(),
+            PathInt::try_from(dest_len).unwrap(),
             args,
         )
     }
@@ -5812,8 +5882,8 @@ impl NodeFS {
                 sys::Tag::clonefile, src.as_bytes(),
             ) {
                 match err.get_errno() {
-                    E::ENAMETOOLONG | E::ROFS | E::INVAL | E::ACCES | E::PERM => {
-                        if matches!(err.get_errno(), E::ACCES | E::PERM) && args.flags.force {
+                    E::ENAMETOOLONG | E::EROFS | E::EINVAL | E::EACCES | E::EPERM => {
+                        if matches!(err.get_errno(), E::EACCES | E::EPERM) && args.flags.force {
                             break 'try_with_clonefile;
                         }
                         self.sync_error_buf[..sd].copy_from_slice(src.as_bytes());
@@ -5998,8 +6068,8 @@ impl NodeFS {
                 },
             };
 
-            if !sys::S::ISREG(stat_.mode) {
-                if sys::S::islnk(stat_.mode) {
+            if !sys::S::ISREG(stat_.st_mode) {
+                if sys::S::islnk(stat_.st_mode) {
                     let mut mode_: u32 = bun_sys::c::COPYFILE_ACL | bun_sys::c::COPYFILE_DATA | bun_sys::c::COPYFILE_NOFOLLOW_SRC;
                     if mode.shouldnt_overwrite() { mode_ |= bun_sys::c::COPYFILE_EXCL; }
                     return Maybe::<ret::CopyFile>::errno_sys_p(
@@ -6018,7 +6088,7 @@ impl NodeFS {
 
             // 64 KB is about the break-even point for clonefile() to be worth it
             // at least, on an M1 with an NVME SSD.
-            if stat_.size > 128 * 1024 {
+            if stat_.st_size > 128 * 1024 {
                 if !mode.shouldnt_overwrite() {
                     // clonefile() will fail if it already exists
                     let _ = Syscall::unlink(dest);
@@ -6027,7 +6097,7 @@ impl NodeFS {
                     unsafe { bun_sys::c::clonefile(src.as_ptr(), dest.as_ptr(), 0) },
                     sys::Tag::clonefile, src.as_bytes(),
                 ).is_none() {
-                    let _ = Syscall::chmod(dest, stat_.mode);
+                    let _ = Syscall::chmod(dest, stat_.st_mode);
                     return Maybe::Ok(());
                 }
             } else {
@@ -6048,14 +6118,14 @@ impl NodeFS {
                     Maybe::Ok(fd) => fd,
                     Maybe::Err(e) => return Maybe::Err(e),
                 };
-                let _close_dest = scopeguard::guard((dest_fd, stat_.mode, &wrote), |(fd, m, wrote)| {
+                let _close_dest = scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
                     let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
                     let _ = Syscall::fchmod(fd, m);
                     fd.close();
                 });
 
                 let mut w = wrote.get();
-                let r = Self::copy_file_using_read_write_loop(src, dest, src_fd, dest_fd, stat_.size.max(0) as usize, &mut w);
+                let r = Self::copy_file_using_read_write_loop(src, dest, src_fd, dest_fd, stat_.st_size.max(0) as usize, &mut w);
                 wrote.set(w);
                 return r;
             }
@@ -6072,7 +6142,7 @@ impl NodeFS {
             );
             match first_try {
                 None => return Maybe::Ok(()),
-                Some(err) if err.get_errno() == E::NOENT => {
+                Some(err) if err.get_errno() == E::ENOENT => {
                     let _ = sys::Dir::cwd().make_path(paths::resolve_path::dirname::<paths::platform::Auto>(dest.as_bytes()));
                     return Maybe::<ret::CopyFile>::errno_sys_p(
                         unsafe { bun_sys::c::copyfile(src.as_ptr(), dest.as_ptr(), core::ptr::null_mut(), mode_) },
@@ -6109,7 +6179,7 @@ impl NodeFS {
                 Maybe::Err(err) => return Maybe::Err(err.with_fd(src_fd)),
             };
 
-            if !sys::S::ISREG(stat_.mode) {
+            if !sys::S::ISREG(stat_.st_mode) {
                 return Maybe::Err(sys::Error { errno: SystemErrno::ENOTSUP as _, syscall: sys::Tag::copyfile, ..Default::default() });
             }
 
@@ -6122,19 +6192,19 @@ impl NodeFS {
                 Maybe::Err(e) => return Maybe::Err(e),
             };
 
-            let mut size: usize = stat_.size.max(0) as usize;
+            let mut size: usize = stat_.st_size.max(0) as usize;
 
-            if sys::S::ISREG(stat_.mode) && sys::copy_file::can_use_ioctl_ficlone() {
+            if sys::S::ISREG(stat_.st_mode) && sys::copy_file::can_use_ioctl_ficlone() {
                 let rc = sys::linux::ioctl_ficlone(dest_fd, src_fd);
                 if rc == 0 {
-                    let _ = Syscall::fchmod(dest_fd, stat_.mode);
+                    let _ = Syscall::fchmod(dest_fd, stat_.st_mode);
                     dest_fd.close();
                     return Maybe::Ok(());
                 }
                 sys::copy_file::disable_ioctl_ficlone();
             }
 
-            let _close_dest = scopeguard::guard((dest_fd, stat_.mode, &wrote), |(fd, m, wrote)| {
+            let _close_dest = scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
                 let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
                 let _ = Syscall::fchmod(fd, m);
                 fd.close();
@@ -6156,15 +6226,15 @@ impl NodeFS {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
                     // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                    let written = unsafe { sys::linux::copy_file_range(src_fd.cast(), &mut off_in_copy, dest_fd.cast(), &mut off_out_copy, sys::page_size(), 0) };
+                    let written = unsafe { sys::linux::copy_file_range(src_fd.native(), &mut off_in_copy, dest_fd.native(), &mut off_out_copy, sys::page_size(), 0) };
                     if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(written, sys::Tag::copy_file_range, dest.as_bytes()) {
                         match err.get_errno() {
                             // EINVAL: eCryptfs and other filesystems may not support copy_file_range
                             // XDEV: cross-device copy not supported
                             // NOSYS: syscall not available
                             // OPNOTSUPP: filesystem doesn't support this operation
-                            E::XDEV | E::NOSYS | E::INVAL | E::OPNOTSUPP => {
-                                if matches!(err.get_errno(), E::NOSYS | E::OPNOTSUPP) { sys::copy_file::disable_copy_file_range_syscall(); }
+                            E::EXDEV | E::ENOSYS | E::EINVAL | E::EOPNOTSUPP => {
+                                if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) { sys::copy_file::disable_copy_file_range_syscall(); }
                                 let mut w = wrote.get();
                                 let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
                                 wrote.set(w);
@@ -6182,15 +6252,15 @@ impl NodeFS {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
                     // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                    let written = unsafe { sys::linux::copy_file_range(src_fd.cast(), &mut off_in_copy, dest_fd.cast(), &mut off_out_copy, size, 0) };
+                    let written = unsafe { sys::linux::copy_file_range(src_fd.native(), &mut off_in_copy, dest_fd.native(), &mut off_out_copy, size, 0) };
                     if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(written, sys::Tag::copy_file_range, dest.as_bytes()) {
                         match err.get_errno() {
                             // EINVAL: eCryptfs and other filesystems may not support copy_file_range
                             // XDEV: cross-device copy not supported
                             // NOSYS: syscall not available
                             // OPNOTSUPP: filesystem doesn't support this operation
-                            E::XDEV | E::NOSYS | E::INVAL | E::OPNOTSUPP => {
-                                if matches!(err.get_errno(), E::NOSYS | E::OPNOTSUPP) { sys::copy_file::disable_copy_file_range_syscall(); }
+                            E::EXDEV | E::ENOSYS | E::EINVAL | E::EOPNOTSUPP => {
+                                if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) { sys::copy_file::disable_copy_file_range_syscall(); }
                                 let mut w = wrote.get();
                                 let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
                                 wrote.set(w);
@@ -6234,7 +6304,7 @@ impl NodeFS {
                 Maybe::Ok(result) => result,
                 Maybe::Err(err) => return Maybe::Err(err.with_fd(src_fd)),
             };
-            if !sys::S::ISREG(stat_.mode) {
+            if !sys::S::ISREG(stat_.st_mode) {
                 return Maybe::Err(sys::Error { errno: SystemErrno::EOPNOTSUPP as _, syscall: sys::Tag::copyfile, ..Default::default() });
             }
 
@@ -6260,13 +6330,13 @@ impl NodeFS {
                 }
             }
 
-            let _close_dest = scopeguard::guard((dest_fd, stat_.mode, &wrote), |(fd, m, wrote)| {
+            let _close_dest = scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
                 let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
                 let _ = Syscall::fchmod(fd, m);
                 fd.close();
             });
 
-            let size: usize = stat_.size.max(0) as usize;
+            let size: usize = stat_.st_size.max(0) as usize;
 
             // FreeBSD 13+ has copy_file_range(2). std.c declares it returning
             // usize on FreeBSD, so bitcast to isize before getErrno.
@@ -6282,8 +6352,8 @@ impl NodeFS {
                         wrote.set(wrote.get().saturating_add(rc as u64));
                         if size != 0 && wrote.get() >= size as u64 { return Maybe::Ok(()); }
                     }
-                    E::INTR => continue,
-                    E::XDEV | E::INVAL | E::OPNOTSUPP | E::NOSYS | E::BADF => break 'cfr,
+                    E::EINTR => continue,
+                    E::EXDEV | E::EINVAL | E::EOPNOTSUPP | E::ENOSYS | E::EBADF => break 'cfr,
                     e => {
                         self.sync_error_buf[..dest.len()].copy_from_slice(dest.as_bytes());
                         return Maybe::Err(sys::Error {
@@ -6307,8 +6377,8 @@ impl NodeFS {
             // before any branch. Re-deriving them inline inside `unwrap_or_else`
             // double-borrows `&mut self` (the outer `errno_sys_p` arg already holds
             // a borrow into `sync_error_buf`).
-            let src_enoent_maybe = Maybe::<ret::CopyFile>::init_err_with_p(E::NOENT, sys::Tag::copyfile, self.os_path_into_sync_error_buf(src.as_slice()));
-            let dst_enoent_maybe = Maybe::<ret::CopyFile>::init_err_with_p(E::NOENT, sys::Tag::copyfile, self.os_path_into_sync_error_buf(dest.as_slice()));
+            let src_enoent_maybe = Maybe::<ret::CopyFile>::init_err_with_p(E::ENOENT, sys::Tag::copyfile, self.os_path_into_sync_error_buf(src.as_slice()));
+            let dst_enoent_maybe = Maybe::<ret::CopyFile>::init_err_with_p(E::ENOENT, sys::Tag::copyfile, self.os_path_into_sync_error_buf(dest.as_slice()));
             let stat_ = match reuse_stat {
                 Some(a) => a,
                 None => {
@@ -6375,7 +6445,7 @@ impl NodeFS {
         match Syscall::open(dest, flags, DEFAULT_PERMISSION) {
             Maybe::Ok(result) => Maybe::Ok(result),
             Maybe::Err(err) => {
-                if err.get_errno() == E::NOENT {
+                if err.get_errno() == E::ENOENT {
                     // Create the parent directory if it doesn't exist
                     let bytes = dest.as_bytes();
                     let mut len = bytes.len();
@@ -6516,7 +6586,7 @@ pub enum ReadFileStringType { Default, NullTerminated }
 
 /// Trait for `mkdirRecursiveImpl` Ctx parameter (`void` does nothing).
 pub trait MkdirCtx {
-    fn on_create_dir(&self, _path: OSPathSliceZ) {}
+    fn on_create_dir(&self, _path: &OSPathSliceZ) {}
 }
 impl MkdirCtx for () {}
 
@@ -6610,19 +6680,19 @@ impl ReaddirEntry for Buffer {
 // EACCES there) and widened the narrow table. Split back out per call site.
 fn map_anyerror_to_errno(err: bun_core::Error) -> E {
     match err.name() {
-        "AccessDenied" => E::PERM,
+        "AccessDenied" => E::EPERM,
         "FileTooBig" => E::FBIG,
         "SymLinkLoop" => E::LOOP,
         "ProcessFdQuotaExceeded" => E::NFILE,
         "NameTooLong" => E::ENAMETOOLONG,
         "SystemFdQuotaExceeded" => E::MFILE,
         "SystemResources" => E::NOMEM,
-        "ReadOnlyFileSystem" => E::ROFS,
+        "ReadOnlyFileSystem" => E::EROFS,
         "FileSystem" => E::IO,
         "FileBusy" | "DeviceBusy" => E::BUSY,
-        "NotDir" => E::NOTDIR,
-        "InvalidUtf8" | "InvalidWtf8" | "BadPathName" => E::INVAL,
-        "FileNotFound" => E::NOENT,
+        "NotDir" => E::ENOTDIR,
+        "InvalidUtf8" | "InvalidWtf8" | "BadPathName" => E::EINVAL,
+        "FileNotFound" => E::ENOENT,
         "IsDir" => E::EISDIR,
         _ => E::FAULT,
     }
@@ -6632,19 +6702,19 @@ fn map_anyerror_to_errno(err: bun_core::Error) -> E {
 // AccessDenied maps to EACCES, not EPERM (node_fs.zig:5789-5824).
 fn map_anyerror_to_errno_rm_tree(err: bun_core::Error) -> E {
     match err.name() {
-        "AccessDenied" => E::ACCES,
+        "AccessDenied" => E::EACCES,
         "FileTooBig" => E::FBIG,
         "SymLinkLoop" => E::LOOP,
         "ProcessFdQuotaExceeded" => E::NFILE,
         "NameTooLong" => E::ENAMETOOLONG,
         "SystemFdQuotaExceeded" => E::MFILE,
         "SystemResources" => E::NOMEM,
-        "ReadOnlyFileSystem" => E::ROFS,
+        "ReadOnlyFileSystem" => E::EROFS,
         "FileSystem" => E::IO,
         "FileBusy" | "DeviceBusy" => E::BUSY,
-        "NotDir" => E::NOTDIR,
-        "InvalidUtf8" | "InvalidWtf8" | "BadPathName" => E::INVAL,
-        "FileNotFound" => E::NOENT,
+        "NotDir" => E::ENOTDIR,
+        "InvalidUtf8" | "InvalidWtf8" | "BadPathName" => E::EINVAL,
+        "FileNotFound" => E::ENOENT,
         "IsDir" => E::EISDIR,
         _ => E::FAULT,
     }
@@ -6654,14 +6724,14 @@ fn map_anyerror_to_errno_rm_tree(err: bun_core::Error) -> E {
 // listed here falls through to EFAULT (node_fs.zig:5842-5859 / 5870-5887).
 fn map_anyerror_to_errno_rm_narrow(err: bun_core::Error) -> E {
     match err.name() {
-        "AccessDenied" => E::ACCES,
+        "AccessDenied" => E::EACCES,
         "SymLinkLoop" => E::LOOP,
         "NameTooLong" => E::ENAMETOOLONG,
         "SystemResources" => E::NOMEM,
-        "ReadOnlyFileSystem" => E::ROFS,
+        "ReadOnlyFileSystem" => E::EROFS,
         "FileBusy" => E::BUSY,
-        "InvalidUtf8" | "InvalidWtf8" | "BadPathName" => E::INVAL,
-        "FileNotFound" => E::NOENT,
+        "InvalidUtf8" | "InvalidWtf8" | "BadPathName" => E::EINVAL,
+        "FileNotFound" => E::ENOENT,
         _ => E::FAULT,
     }
 }
@@ -6711,21 +6781,21 @@ fn dt_err(errno: E) -> bun_core::Error {
     // Reverse of the `map_anyerror_to_errno*` tables above — round-trip through
     // the Zig error-set name so existing callers don't have to change.
     err_from_static(match errno {
-        E::NOENT => "FileNotFound",
-        E::ACCES => "AccessDenied",
-        E::PERM => "PermissionDenied",
+        E::ENOENT => "FileNotFound",
+        E::EACCES => "AccessDenied",
+        E::EPERM => "PermissionDenied",
         E::LOOP => "SymLinkLoop",
         E::ENAMETOOLONG => "NameTooLong",
         E::NOMEM => "SystemResources",
-        E::ROFS => "ReadOnlyFileSystem",
+        E::EROFS => "ReadOnlyFileSystem",
         E::IO => "FileSystem",
         E::BUSY => "FileBusy",
-        E::NOTDIR => "NotDir",
+        E::ENOTDIR => "NotDir",
         E::EISDIR => "IsDir",
         E::NOTEMPTY => "DirNotEmpty",
         E::MFILE => "SystemFdQuotaExceeded",
         E::NFILE => "ProcessFdQuotaExceeded",
-        E::INVAL => "BadPathName",
+        E::EINVAL => "BadPathName",
         E::FBIG => "FileTooBig",
         E::NODEV => "NoDevice",
         _ => "Unexpected",
@@ -6841,7 +6911,7 @@ pub fn zig_delete_tree(self_: sys::Dir, sub_path: &[u8], kind_hint: sys::FileKin
                                 });
                                 continue 'process_stack;
                             }
-                            Err(E::NOTDIR) => { treat_as_dir = false; continue 'handle_entry; }
+                            Err(E::ENOTDIR) => { treat_as_dir = false; continue 'handle_entry; }
                             Err(e) => return Err(dt_err(e)),
                         }
                     } else {
@@ -6878,7 +6948,7 @@ pub fn zig_delete_tree(self_: sys::Dir, sub_path: &[u8], kind_hint: sys::FileKin
         let mut need_to_retry = false;
         match dt_delete_dir(parent_dir, name) {
             Ok(()) => {}
-            Err(E::NOENT) => {}
+            Err(E::ENOENT) => {}
             Err(E::NOTEMPTY) => need_to_retry = true,
             // PORT NOTE: Zig also matched `error.EXIST` → DirNotEmpty here via
             // std.fs's deleteDir; mirror that for OSes that report EEXIST.
@@ -6894,8 +6964,8 @@ pub fn zig_delete_tree(self_: sys::Dir, sub_path: &[u8], kind_hint: sys::FileKin
                 if treat_as_dir {
                     match dt_open_dir(parent_dir, name) {
                         Ok(d) => break 'handle_entry d,
-                        Err(E::NOTDIR) => { treat_as_dir = false; continue 'handle_entry; }
-                        Err(E::NOENT) => {
+                        Err(E::ENOTDIR) => { treat_as_dir = false; continue 'handle_entry; }
+                        Err(E::ENOENT) => {
                             // That's fine, we were trying to remove this directory anyway.
                             continue 'process_stack;
                         }
@@ -6904,9 +6974,9 @@ pub fn zig_delete_tree(self_: sys::Dir, sub_path: &[u8], kind_hint: sys::FileKin
                 } else {
                     match dt_delete_file(parent_dir, name) {
                         Ok(()) => continue 'process_stack,
-                        Err(E::NOENT) => continue 'process_stack,
+                        Err(E::ENOENT) => continue 'process_stack,
                         Err(E::EISDIR) => { treat_as_dir = true; continue 'handle_entry; }
-                        Err(E::NOTDIR) => {
+                        Err(E::ENOTDIR) => {
                             #[cfg(debug_assertions)] unreachable!();
                             #[cfg(not(debug_assertions))] return Err(dt_err(E::IO));
                         }
@@ -6997,8 +7067,8 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(self_: sys::Dir, sub_path: &[u8
                                 dir_name_is_sub_path = false;
                                 continue 'scan_dir;
                             }
-                            Err(E::NOTDIR) => { treat_as_dir = false; continue 'handle_entry; }
-                            Err(E::NOENT) => {
+                            Err(E::ENOTDIR) => { treat_as_dir = false; continue 'handle_entry; }
+                            Err(E::ENOENT) => {
                                 // That's fine, we were trying to remove this directory anyway.
                                 continue 'dir_it;
                             }
@@ -7007,9 +7077,9 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(self_: sys::Dir, sub_path: &[u8
                     } else {
                         match dt_delete_file(dir, &entry_name) {
                             Ok(()) => continue 'dir_it,
-                            Err(E::NOENT) => continue 'dir_it,
+                            Err(E::ENOENT) => continue 'dir_it,
                             Err(E::EISDIR) => { treat_as_dir = true; continue 'handle_entry; }
-                            Err(E::NOTDIR) => {
+                            Err(E::ENOTDIR) => {
                                 #[cfg(debug_assertions)] unreachable!();
                                 #[cfg(not(debug_assertions))] break 'scan_dir Err(dt_err(E::IO));
                             }
@@ -7026,7 +7096,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(self_: sys::Dir, sub_path: &[u8
             let dir_name: &[u8] = if dir_name_is_sub_path { sub_path } else { &dir_name_buf[..dir_name_len] };
             if let Some(d) = cleanup_dir_parent {
                 match dt_delete_dir(d, dir_name) {
-                    Ok(()) | Err(E::NOENT) | Err(E::NOTEMPTY) | Err(E::EEXIST) => {
+                    Ok(()) | Err(E::ENOENT) | Err(E::NOTEMPTY) | Err(E::EEXIST) => {
                         // These two things can happen due to file system race conditions.
                         d.close();
                         continue 'start_over;
@@ -7035,7 +7105,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(self_: sys::Dir, sub_path: &[u8
                 }
             } else {
                 match dt_delete_dir(self_, sub_path) {
-                    Ok(()) | Err(E::NOENT) => return Ok(()),
+                    Ok(()) | Err(E::ENOENT) => return Ok(()),
                     Err(E::NOTEMPTY) | Err(E::EEXIST) => continue 'start_over,
                     Err(e) => return Err(dt_err(e)),
                 }

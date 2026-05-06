@@ -52,7 +52,7 @@ pub fn print_diff_main(
     expected_slice: &[u8],
     writer: &mut impl Write,
     config: &DiffConfig,
-) -> std::io::Result<()> {
+) -> std::fmt::Result {
     // PERF(port): was arena bulk-free — profile in Phase B (all intermediate Vecs below were arena-allocated in Zig)
     if not {
         match config.enable_ansi_colors {
@@ -340,33 +340,33 @@ fn print_diff_footer(
     config: &DiffConfig,
     removed_diff_lines: usize,
     inserted_diff_lines: usize,
-) -> std::io::Result<()> {
+) -> std::fmt::Result {
     if config.enable_ansi_colors {
-        writer.write_all(styles::REMOVED_LINE.prefix.color.as_bytes())?;
+        writer.write_str(styles::REMOVED_LINE.prefix.color)?;
     }
-    writer.write_all(styles::REMOVED_LINE.prefix.msg.as_bytes())?;
-    writer.write_all(b"Expected")?;
+    writer.write_str(styles::REMOVED_LINE.prefix.msg)?;
+    writer.write_str("Expected")?;
     write!(
         writer,
         "  {}{}",
         styles::REMOVED_LINE.prefix.msg, removed_diff_lines
     )?;
     if config.enable_ansi_colors {
-        writer.write_all(colors::RESET.as_bytes())?;
+        writer.write_str(colors::RESET)?;
     }
-    writer.write_all(b"\n")?;
+    writer.write_str("\n")?;
     if config.enable_ansi_colors {
-        writer.write_all(styles::INSERTED_LINE.prefix.color.as_bytes())?;
+        writer.write_str(styles::INSERTED_LINE.prefix.color)?;
     }
-    writer.write_all(styles::INSERTED_LINE.prefix.msg.as_bytes())?;
-    writer.write_all(b"Received")?;
+    writer.write_str(styles::INSERTED_LINE.prefix.msg)?;
+    writer.write_str("Received")?;
     write!(
         writer,
         "  {}{}",
         styles::INSERTED_LINE.prefix.msg, inserted_diff_lines
     )?;
     if config.enable_ansi_colors {
-        writer.write_all(colors::RESET.as_bytes())?;
+        writer.write_str(colors::RESET)?;
     }
     Ok(())
 }
@@ -387,13 +387,13 @@ fn print_line_prefix(
     writer: &mut impl Write,
     config: &DiffConfig,
     prefix: PrefixStyle,
-) -> std::io::Result<()> {
+) -> std::fmt::Result {
     if config.enable_ansi_colors {
-        writer.write_all(prefix.color.as_bytes())?;
+        writer.write_str(prefix.color)?;
     }
-    writer.write_all(prefix.msg.as_bytes())?;
+    writer.write_str(prefix.msg)?;
     if config.enable_ansi_colors {
-        writer.write_all(colors::RESET.as_bytes())?;
+        writer.write_str(colors::RESET)?;
     }
     Ok(())
 }

@@ -154,10 +154,13 @@ macro_rules! extern_crypto_job {
                             unsafe { ctx_run_from_js(this.ctx, vm.global, callback) };
                         });
                         if let Err(err) = res {
-                            let _ = vm.global.report_uncaught_exception(
-                                vm.global
+                            // SAFETY: vm.global is the VM's `*mut JSGlobalObject`;
+                            // non-null while the VM lives.
+                            let global = unsafe { &*vm.global };
+                            let _ = global.report_uncaught_exception(
+                                global
                                     .take_exception(err)
-                                    .as_exception(vm.global.vm())
+                                    .as_exception(global.vm())
                                     .expect("unreachable"),
                             );
                         }

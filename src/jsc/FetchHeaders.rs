@@ -87,8 +87,8 @@ impl FetchHeaders {
     pub fn create_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<NonNull<FetchHeaders>>> {
         // TODO(port): bun.jsc.fromJSHostCallGeneric — wraps the FFI call and converts a pending VM exception into JsError
         host_fn::from_js_host_call_generic(global, || {
-            // SAFETY: global is a valid borrowed ref
-            let p = unsafe { WebCore__FetchHeaders__createFromJS(global as *const _ as *mut _, value) };
+            // SAFETY: `global` is an opaque ZST handle passed by address only.
+            let p = unsafe { WebCore__FetchHeaders__createFromJS(global, value) };
             NonNull::new(p)
         })
     }

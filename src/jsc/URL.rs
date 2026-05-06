@@ -43,14 +43,14 @@ unsafe extern "C" {
 impl URL {
     /// Includes the leading '#'.
     pub fn hash(&self) -> String {
-        // SAFETY: self is a valid *URL handle from C++
-        unsafe { URL__hash(self as *const URL as *mut URL) }
+        // SAFETY: self is a valid opaque *URL handle from C++; getter does not mutate.
+        unsafe { URL__hash(self) }
     }
 
     /// Exactly the same as hash, excluding the leading '#'.
     pub fn fragment_identifier(&self) -> String {
-        // SAFETY: self is a valid *URL handle from C++
-        unsafe { URL__fragmentIdentifier(self as *const URL as *mut URL) }
+        // SAFETY: self is a valid opaque *URL handle from C++; getter does not mutate.
+        unsafe { URL__fragmentIdentifier(self) }
     }
 
     pub fn href_from_string(str: String) -> String {

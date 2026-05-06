@@ -1308,15 +1308,15 @@ pub fn load_npmrc_config(
         }
         if log.has_errors() {
             if log.errors == 1 {
-                Output::warn(
-                    "Encountered an error while reading <b>{s}<r>:\n\n",
-                    (bstr::BStr::new(npmrc_path.as_bytes()),),
-                );
+                Output::warn(&format_args!(
+                    "Encountered an error while reading <b>{}<r>:\n\n",
+                    bstr::BStr::new(npmrc_path.as_bytes()),
+                ));
             } else {
-                Output::warn(
-                    "Encountered errors while reading <b>{s}<r>:\n\n",
-                    (bstr::BStr::new(npmrc_path.as_bytes()),),
-                );
+                Output::warn(&format_args!(
+                    "Encountered errors while reading <b>{}<r>:\n\n",
+                    bstr::BStr::new(npmrc_path.as_bytes()),
+                ));
             }
             Output::flush();
         }

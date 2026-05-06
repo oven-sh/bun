@@ -267,21 +267,26 @@ impl Value {
             FieldType::MYSQL_TYPE_TINY => Ok(Value::Bool(value.to_boolean())),
             FieldType::MYSQL_TYPE_SHORT => {
                 if unsigned {
-                    // TODO(port): validate_integer_range options-struct API shape
                     return Ok(Value::Ushort(global_object.validate_integer_range::<u16>(
                         value,
                         0,
-                        u16::MIN,
-                        u16::MAX,
-                        "u16",
+                        IntegerRange {
+                            min: u16::MIN as i128,
+                            max: u16::MAX as i128,
+                            field_name: b"u16",
+                            ..Default::default()
+                        },
                     )?));
                 }
                 Ok(Value::Short(global_object.validate_integer_range::<i16>(
                     value,
                     0,
-                    i16::MIN,
-                    i16::MAX,
-                    "i16",
+                    IntegerRange {
+                        min: i16::MIN as i128,
+                        max: i16::MAX as i128,
+                        field_name: b"i16",
+                        ..Default::default()
+                    },
                 )?))
             }
             FieldType::MYSQL_TYPE_LONG => {
@@ -289,17 +294,23 @@ impl Value {
                     return Ok(Value::Uint(global_object.validate_integer_range::<u32>(
                         value,
                         0,
-                        u32::MIN,
-                        u32::MAX,
-                        "u32",
+                        IntegerRange {
+                            min: u32::MIN as i128,
+                            max: u32::MAX as i128,
+                            field_name: b"u32",
+                            ..Default::default()
+                        },
                     )?));
                 }
                 Ok(Value::Int(global_object.validate_integer_range::<i32>(
                     value,
                     0,
-                    i32::MIN,
-                    i32::MAX,
-                    "i32",
+                    IntegerRange {
+                        min: i32::MIN as i128,
+                        max: i32::MAX as i128,
+                        field_name: b"i32",
+                        ..Default::default()
+                    },
                 )?))
             }
             FieldType::MYSQL_TYPE_LONGLONG => {
@@ -307,17 +318,23 @@ impl Value {
                     return Ok(Value::Ulong(global_object.validate_big_int_range::<u64>(
                         value,
                         0,
-                        0,
-                        u64::MAX,
-                        "u64",
+                        IntegerRange {
+                            min: 0,
+                            max: u64::MAX as i128,
+                            field_name: b"u64",
+                            ..Default::default()
+                        },
                     )?));
                 }
                 Ok(Value::Long(global_object.validate_big_int_range::<i64>(
                     value,
                     0,
-                    i64::MIN,
-                    i64::MAX,
-                    "i64",
+                    IntegerRange {
+                        min: i64::MIN as i128,
+                        max: i64::MAX as i128,
+                        field_name: b"i64",
+                        ..Default::default()
+                    },
                 )?))
             }
 

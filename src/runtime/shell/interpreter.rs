@@ -1976,6 +1976,12 @@ pub struct ShellTask {
     pub task: WorkPoolTask,
     pub event_loop: EventLoopHandle,
     pub keep_alive: bun_aio::KeepAlive,
+    /// Back-ref to the owning [`Interpreter`]. The Zig original threaded the
+    /// interpreter through each builtin's parent-ptr chain; the Rust port uses
+    /// a NodeId arena, so the high-tier dispatch (`runtime::dispatch::run_task`)
+    /// recovers `&mut Interpreter` from this field instead. Set at
+    /// `ShellTask::new`; cleared (raw-ptr) only when the task is freed.
+    pub interp: *mut Interpreter,
     // TODO(b2-blocked): bun_jsc::EventLoopTask (concurrent_task).
 }
 
@@ -1990,6 +1996,7 @@ impl ShellTask {
             },
             event_loop,
             keep_alive: Default::default(),
+            interp: core::ptr::null_mut(),
         }
     }
 

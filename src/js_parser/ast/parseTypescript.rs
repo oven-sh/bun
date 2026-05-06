@@ -658,24 +658,29 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             //   (function (foo) {
             //     foo[foo["bar"] = foo] = "bar";
             //   })(foo || (foo = {}));
-            if p.current_scope.members.contains_key(name_text) {
+            // SAFETY: current_scope is an arena-owned Scope pointer valid for 'a.
+            if unsafe { &*p.current_scope }.members.contains_key(name_text) {
                 // Add a "_" to make tests easier to read, since non-bundler tests don't
                 // run the renamer. For external-facing things the renamer will avoid
                 // collisions automatically so this isn't important for correctness.
+                // PERF(port): strings::cat heap-allocates; Zig allocated into p.allocator.
+                // Phase B: route through bump arena.
+                let prefixed = strings::cat(b"_", name_text).expect("unreachable");
+                let prefixed: &'a [u8] = p.allocator.alloc_slice_copy(&prefixed);
                 arg_ref = p
-                    .new_symbol(
-                        SymbolKind::Hoisted,
-                        strings::cat(p.allocator, b"_", name_text).expect("unreachable"),
-                    )
+                    .new_symbol(SymbolKind::Hoisted, prefixed)
                     .expect("unreachable");
-                p.current_scope.generated.push(arg_ref);
+                // SAFETY: see above.
+                unsafe { &mut *p.current_scope }.generated.append(arg_ref)?;
             } else {
                 arg_ref = p
                     .declare_symbol(SymbolKind::Hoisted, name_loc, name_text)
                     .expect("unreachable");
             }
-            p.ref_to_ts_namespace_member.insert(arg_ref, enum_member_data);
-            ts_namespace.arg_ref = arg_ref;
+            p.ref_to_ts_namespace_member
+                .insert(arg_ref, TSNamespaceMemberData::Namespace(exported_members));
+            // SAFETY: ts_namespace is arena-owned; only borrowed via this raw pointer here.
+            unsafe { (*ts_namespace).arg_ref = arg_ref };
 
             p.pop_scope();
         }

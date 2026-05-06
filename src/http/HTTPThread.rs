@@ -251,12 +251,28 @@ impl Default for InitOpts {
 fn on_init_error_noop(err: InitError, opts: &InitOpts) -> ! {
     match err {
         InitError::LoadCAFile => {
-            // TODO(port): bun_sys::exists_z once that lands.
-            Output::err(
-                "HTTPThread",
-                "failed to load CA file: '{}'",
-                (bstr::BStr::new(opts.abs_ca_file_name),),
-            );
+            // SAFETY: `abs_ca_file_name` is Zig `stringZ` (`[:0]const u8`) by
+            // contract — already passed as a C string to BoringSSL via
+            // `init_with_thread_opts`, so `ptr[len] == 0` holds.
+            let path = unsafe {
+                bun_core::ZStr::from_raw(
+                    opts.abs_ca_file_name.as_ptr(),
+                    opts.abs_ca_file_name.len(),
+                )
+            };
+            if !bun_sys::exists_z(path) {
+                Output::err(
+                    "HTTPThread",
+                    "failed to find CA file: '{}'",
+                    (bstr::BStr::new(opts.abs_ca_file_name),),
+                );
+            } else {
+                Output::err(
+                    "HTTPThread",
+                    "failed to load CA file: '{}'",
+                    (bstr::BStr::new(opts.abs_ca_file_name),),
+                );
+            }
         }
         InitError::InvalidCAFile => {
             Output::err(

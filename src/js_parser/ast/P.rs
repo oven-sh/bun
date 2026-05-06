@@ -3218,7 +3218,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         match expr.data {
             js_ast::ExprData::EMissing(_) => return None,
             js_ast::ExprData::EIdentifier(ex) => {
-                return Some(self.b(B::Identifier { r#ref: ex.r#ref }, expr.loc));
+                return Some(self.b(B::Identifier { r#ref: ex.ref_ }, expr.loc));
             }
             js_ast::ExprData::EArray(ex) => {
                 if let Some(spread) = ex.comma_after_spread {
@@ -3236,14 +3236,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let mut items = BumpVec::with_capacity_in(ex.items.len as usize, self.allocator);
                 let mut is_spread = false;
                 for i in 0..ex.items.len as usize {
-                    let mut item = ex.items.ptr()[i];
+                    let mut item = ex.items.slice()[i];
                     if matches!(item.data, js_ast::ExprData::ESpread(_)) {
                         is_spread = true;
                         item = item.data.e_spread().value;
                     }
                     let res = self.convert_expr_to_binding_and_initializer(&mut item, invalid_loc, is_spread);
 
-                    items.push(js_ast::b::ArrayBinding {
+                    items.push(crate::ArrayBinding {
                         // It's valid for it to be missing
                         // An example:
                         //      Promise.all(promises).then(([, len]) => true);
@@ -3255,7 +3255,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
 
                 return Some(self.b(
-                    B::Array { items: items.into_bump_slice(), has_spread: is_spread, is_single_line: ex.is_single_line },
+                    B::Array { items: items.into_bump_slice_mut() as *mut [_], has_spread: is_spread, is_single_line: ex.is_single_line },
                     expr.loc,
                 ));
             }

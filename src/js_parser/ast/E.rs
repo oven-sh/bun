@@ -1296,15 +1296,17 @@ impl EString {
     /// Ensure `data` is UTF-8 (transcode from UTF-16 rope if needed).
     /// `lexer.rs::to_utf8_e_string` only ever calls this on a freshly-decoded
     /// non-rope string; the heavy rope-walk path is in the gated impl below.
-    pub fn to_utf8(&mut self, _bump: &Bump) -> Result<(), AllocError> {
+    pub fn to_utf8(&mut self, bump: &Bump) -> Result<(), AllocError> {
         if !self.is_utf16 {
             return Ok(());
         }
-        // TODO(b2-blocked): bun_string::strings::convert_utf16_to_utf8 surface
-        // (track-A). Until then, lexer's `NeedsDecode` arm already produces
-        // ASCII-only utf8 via `copy_utf16_into_utf8`, so this branch is not hit
-        // on the current call path. Fail loud if it is.
-        todo!("EString::to_utf8(utf16) — blocked on bun_string transcoding")
+        let v = strings::to_utf8_alloc(self.slice16());
+        // SAFETY: arena-owned slice; lifetime erased to 'static per Phase-A `Str` convention.
+        self.data = unsafe {
+            core::mem::transmute::<&[u8], &'static [u8]>(bump.alloc_slice_copy(&v))
+        };
+        self.is_utf16 = false;
+        Ok(())
     }
 }
 

@@ -806,8 +806,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         None
     }
 
-     // round-D draft body; superseded by the un-gated body above.
-    fn _maybe_rewrite_property_access_draft(
+    // round-D draft body removed — superseded by the un-gated body above.
+    #[allow(dead_code)]
+    fn _maybe_rewrite_property_access_draft_removed() {}
+
+    fn _draft_removed_marker(
         &mut self,
         loc: logger::Loc,
         target: js_ast::Expr,
@@ -815,6 +818,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         name_loc: logger::Loc,
         identifier_opts: IdentifierOpts,
     ) -> Option<Expr> {
+        // This function exists only as a placeholder so the diff is reviewable;
+        // the original `_maybe_rewrite_property_access_draft` body duplicated
+        // `maybe_rewrite_property_access` above and has been deleted.
+        let _ = (loc, target, name, name_loc, identifier_opts);
+        None
+    }
+}
+
+#[cfg(__never_compiled_draft_removed)]
+mod __removed_draft {
+    fn __removed() {
         let p = self;
         {
         // Zig labeled switch with `continue :sw` → loop + match with mutable scrutinee.

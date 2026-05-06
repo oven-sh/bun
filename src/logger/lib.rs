@@ -888,8 +888,16 @@ pub mod fs_ext {
         pub contents: &'static [u8],
     }
 }
+<<<<<<< Updated upstream
 pub use fs_ext::PathContentsPair;
 // TODO(b2-blocked): bun_schema::api — `to_api` methods gated behind .
+||||||| Stash base
+use fs_ext::PathContentsPair;
+// TODO(b2-blocked): bun_schema::api — `to_api` methods gated behind #[cfg(any())].
+=======
+use fs_ext::PathContentsPair;
+// TODO(b2-blocked): bun_api::{MessageLevel,Location,MessageData,MessageMeta,Message,Log} — `to_api` methods gated behind #[cfg(any())].
+>>>>>>> Stashed changes
 #[allow(unused_imports)]
 use bun_core::strings;
 
@@ -1094,6 +1102,12 @@ impl Kind {
         }
     }
 
+<<<<<<< Updated upstream
+||||||| Stash base
+    #[cfg(any())] // TODO(b2-blocked): bun_schema::api
+=======
+    #[cfg(any())] // TODO(b2-blocked): bun_api::{MessageLevel,Location,MessageData,MessageMeta,Message,Log}
+>>>>>>> Stashed changes
     #[inline]
     pub fn to_api(self) -> api::MessageLevel {
         match self {
@@ -1254,6 +1268,12 @@ impl Location {
         }
     }
 
+<<<<<<< Updated upstream
+||||||| Stash base
+    #[cfg(any())] // TODO(b2-blocked): bun_schema::api
+=======
+    #[cfg(any())] // TODO(b2-blocked): bun_api::{MessageLevel,Location,MessageData,MessageMeta,Message,Log}
+>>>>>>> Stashed changes
     pub fn to_api(&self) -> api::Location {
         api::Location {
             file: self.file.to_vec(),
@@ -1410,6 +1430,12 @@ impl Data {
         }
     }
 
+<<<<<<< Updated upstream
+||||||| Stash base
+    #[cfg(any())] // TODO(b2-blocked): bun_schema::api
+=======
+    #[cfg(any())] // TODO(b2-blocked): bun_api::{MessageLevel,Location,MessageData,MessageMeta,Message,Log}
+>>>>>>> Stashed changes
     pub fn to_api(&self) -> api::MessageData {
         api::MessageData {
             text: Some(self.text.to_vec()),
@@ -1427,6 +1453,7 @@ impl Data {
             return Ok(());
         }
 
+<<<<<<< Updated upstream
         // Local wrapper around `bun_core::pretty_fmt!` so the const-generic
         // `ENABLE_ANSI_COLORS` selects the right comptime template at each call
         // site (the macro pattern-matches a literal `true`/`false` token).
@@ -1449,17 +1476,60 @@ impl Data {
         const RED: &str = "\x1b[31m";
         const BLUE: &str = "\x1b[34m";
 
+||||||| Stash base
+        // TODO(port): `Output.color_map.get("...")` is a comptime lookup into a
+        // ComptimeStringMap of ANSI escape strings. Model as associated consts.
+=======
+        // PORT NOTE: Zig `Output.color_map.get("…")` is a comptime ANSI lookup.
+        // bun_core::output exposes `BOLD`/`DIM`/`RESET` as consts and the rest
+        // via a phf map; inline the four needed escapes here so the comptime
+        // string-concat below stays `const`.
+        use bun_core::output::{BOLD, DIM, RESET};
+        const RED: &str = "\x1b[31m";
+        const BLUE: &str = "\x1b[34m";
+        const CYAN: &str = "\x1b[36m";
+        const YELLOW: &str = "\x1b[33m";
+
+>>>>>>> Stashed changes
         let message_color: &'static str = match kind {
+<<<<<<< Updated upstream
             Kind::Err => B,
             Kind::Note => BLUE,
             _ => const_format::concatcp!(D, B),
+||||||| Stash base
+            Kind::Err => Output::color_map::B,
+            Kind::Note => Output::color_map::BLUE,
+            _ => const_format::concatcp!(Output::color_map::D, Output::color_map::B),
+=======
+            Kind::Err => BOLD,
+            Kind::Note => BLUE,
+            _ => const_format::concatcp!(DIM, BOLD),
+>>>>>>> Stashed changes
         };
 
         let color_name: &'static str = match kind {
+<<<<<<< Updated upstream
             Kind::Err => RED,
             Kind::Note => BLUE,
             _ => D,
+||||||| Stash base
+            Kind::Err => Output::color_map::RED,
+            Kind::Note => Output::color_map::BLUE,
+            _ => Output::color_map::D,
+=======
+            Kind::Err => RED,
+            Kind::Note => BLUE,
+            _ => DIM,
+>>>>>>> Stashed changes
         };
+
+        // PORT NOTE: Zig `Output.prettyFmt::<C>("<b>{d}<r>", .{x})` rewrote
+        // `<tag>`s comptime. Until the `pretty_fmt!` proc-macro lands the tags
+        // are emitted manually via this helper.
+        #[inline(always)]
+        fn ansi<const C: bool>(to: &mut impl fmt::Write, code: &str) -> fmt::Result {
+            if C { to.write_str(code) } else { Ok(()) }
+        }
 
         if let Some(location) = &self.location {
             if let Some(line_text_) = location.line_text {
@@ -1475,13 +1545,21 @@ impl Data {
                         let bold = matches!(kind, Kind::Err | Kind::Warn);
                         // bold the line number for error but dim for the attached note
                         // PERF(port): was comptime bool dispatch on `bold` — profile in Phase B
+<<<<<<< Updated upstream
                         if bold {
                             pretty_write!("<b>{} | <r>", location.line)?;
                         } else {
                             pretty_write!("<d>{} | <r>", location.line)?;
                         }
+||||||| Stash base
+=======
+                        ansi::<ENABLE_ANSI_COLORS>(to, if bold { BOLD } else { DIM })?;
+                        write!(to, "{} | ", location.line)?;
+                        ansi::<ENABLE_ANSI_COLORS>(to, RESET)?;
+>>>>>>> Stashed changes
 
-                        line_offset_for_second_line += fmt_count(format_args!("{} | ", location.line));
+                        line_offset_for_second_line +=
+                            fmt_count(format_args!("{} | ", location.line));
                     }
 
                     write!(
@@ -1502,7 +1580,13 @@ impl Data {
                         to.write_str(message_color)?;
                         to.write_str(color_name)?;
                         // always bold the ^
+<<<<<<< Updated upstream
                         to.write_str(B)?;
+||||||| Stash base
+                        to.write_str(Output::color_map::B)?;
+=======
+                        to.write_str(BOLD)?;
+>>>>>>> Stashed changes
 
                         to.write_char('^')?;
 
@@ -1520,13 +1604,42 @@ impl Data {
 
         write!(to, "{}", bstr::BStr::new(kind.string()))?;
 
+<<<<<<< Updated upstream
         pretty_write!("<r><d>: <r>")?;
+||||||| Stash base
+        write!(
+            to,
+            "{}",
+            Output::pretty_fmt::<ENABLE_ANSI_COLORS>(format_args!("<r><d>: <r>"))
+        )?;
+=======
+        // "<r><d>: <r>"
+        ansi::<ENABLE_ANSI_COLORS>(to, RESET)?;
+        ansi::<ENABLE_ANSI_COLORS>(to, DIM)?;
+        to.write_str(": ")?;
+        ansi::<ENABLE_ANSI_COLORS>(to, RESET)?;
+>>>>>>> Stashed changes
 
         if ENABLE_ANSI_COLORS {
             to.write_str(message_color)?;
         }
 
+<<<<<<< Updated upstream
         pretty_write!("{}<r>", bstr::BStr::new(&*self.text))?;
+||||||| Stash base
+        write!(
+            to,
+            "{}",
+            Output::pretty_fmt::<ENABLE_ANSI_COLORS>(format_args!(
+                "{}<r>",
+                bstr::BStr::new(self.text)
+            ))
+        )?;
+=======
+        // "{s}<r>"
+        write!(to, "{}", bstr::BStr::new(&*self.text))?;
+        ansi::<ENABLE_ANSI_COLORS>(to, RESET)?;
+>>>>>>> Stashed changes
 
         if let Some(location) = &self.location {
             if !location.file.is_empty() {
@@ -1537,18 +1650,82 @@ impl Data {
                     (kind.string().len() + ": ".len()) - "at ".len(),
                 )?;
 
+<<<<<<< Updated upstream
                 pretty_write!("<d>at <r><cyan>{}<r>", bstr::BStr::new(location.file))?;
+||||||| Stash base
+                write!(
+                    to,
+                    "{}",
+                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>(format_args!(
+                        "<d>at <r><cyan>{}<r>",
+                        bstr::BStr::new(location.file)
+                    ))
+                )?;
+=======
+                // "<d>at <r><cyan>{s}<r>"
+                ansi::<ENABLE_ANSI_COLORS>(to, DIM)?;
+                to.write_str("at ")?;
+                ansi::<ENABLE_ANSI_COLORS>(to, RESET)?;
+                ansi::<ENABLE_ANSI_COLORS>(to, CYAN)?;
+                write!(to, "{}", bstr::BStr::new(location.file))?;
+                ansi::<ENABLE_ANSI_COLORS>(to, RESET)?;
+>>>>>>> Stashed changes
 
                 if location.line > 0 && location.column > -1 {
+<<<<<<< Updated upstream
                     pretty_write!(
                         "<d>:<r><yellow>{}<r><d>:<r><yellow>{}<r>",
                         location.line,
                         location.column,
                     )?;
+||||||| Stash base
+                    write!(
+                        to,
+                        "{}",
+                        Output::pretty_fmt::<ENABLE_ANSI_COLORS>(format_args!(
+                            "<d>:<r><yellow>{}<r><d>:<r><yellow>{}<r>",
+                            location.line, location.column
+                        ))
+                    )?;
+=======
+                    // "<d>:<r><yellow>{d}<r><d>:<r><yellow>{d}<r>"
+                    ansi::<ENABLE_ANSI_COLORS>(to, DIM)?;
+                    to.write_str(":")?;
+                    ansi::<ENABLE_ANSI_COLORS>(to, RESET)?;
+                    ansi::<ENABLE_ANSI_COLORS>(to, YELLOW)?;
+                    write!(to, "{}", location.line)?;
+                    ansi::<ENABLE_ANSI_COLORS>(to, RESET)?;
+                    ansi::<ENABLE_ANSI_COLORS>(to, DIM)?;
+                    to.write_str(":")?;
+                    ansi::<ENABLE_ANSI_COLORS>(to, RESET)?;
+                    ansi::<ENABLE_ANSI_COLORS>(to, YELLOW)?;
+                    write!(to, "{}", location.column)?;
+                    ansi::<ENABLE_ANSI_COLORS>(to, RESET)?;
+>>>>>>> Stashed changes
                 } else if location.line > -1 {
+<<<<<<< Updated upstream
                     pretty_write!("<d>:<r><yellow>{}<r>", location.line)?;
+||||||| Stash base
+                    write!(
+                        to,
+                        "{}",
+                        Output::pretty_fmt::<ENABLE_ANSI_COLORS>(format_args!(
+                            "<d>:<r><yellow>{}<r>",
+                            location.line
+                        ))
+                    )?;
+=======
+                    // "<d>:<r><yellow>{d}<r>"
+                    ansi::<ENABLE_ANSI_COLORS>(to, DIM)?;
+                    to.write_str(":")?;
+                    ansi::<ENABLE_ANSI_COLORS>(to, RESET)?;
+                    ansi::<ENABLE_ANSI_COLORS>(to, YELLOW)?;
+                    write!(to, "{}", location.line)?;
+                    ansi::<ENABLE_ANSI_COLORS>(to, RESET)?;
+>>>>>>> Stashed changes
                 }
 
+<<<<<<< Updated upstream
                 if cfg!(debug_assertions) {
                     // TODO(port): the Zig gates this on
                     // `std.mem.indexOf(u8, @typeName(@TypeOf(to)), "fs.file") != null` —
@@ -1561,6 +1738,39 @@ impl Data {
                     {
                         pretty_write!(" <d>byte={}<r>", location.offset)?;
                     }
+||||||| Stash base
+                if cfg!(debug_assertions) {
+                    // TODO(port): the Zig gates this on
+                    // `std.mem.indexOf(u8, @typeName(@TypeOf(to)), "fs.file") != null` —
+                    // i.e. comptime reflection on the writer's type name to detect
+                    // a real file writer (vs Bun.inspect). No Rust equivalent;
+                    // Phase B should plumb an explicit flag.
+                    if false && Output::enable_ansi_colors_stderr() {
+                        write!(
+                            to,
+                            "{}",
+                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>(format_args!(
+                                " <d>byte={}<r>",
+                                location.offset
+                            ))
+                        )?;
+                    }
+=======
+                // TODO(port): the Zig gates this on
+                // `std.mem.indexOf(u8, @typeName(@TypeOf(to)), "fs.file") != null` —
+                // i.e. comptime reflection on the writer's type name to detect
+                // a real file writer (vs Bun.inspect). No Rust equivalent;
+                // Phase B should plumb an explicit flag. Dead block until then.
+                #[cfg(debug_assertions)]
+                #[allow(unreachable_code)]
+                if false
+                    && bun_core::output::ENABLE_ANSI_COLORS_STDERR
+                        .load(core::sync::atomic::Ordering::Relaxed)
+                {
+                    ansi::<ENABLE_ANSI_COLORS>(to, DIM)?;
+                    write!(to, " byte={}", location.offset)?;
+                    ansi::<ENABLE_ANSI_COLORS>(to, RESET)?;
+>>>>>>> Stashed changes
                 }
             }
         }
@@ -1708,6 +1918,12 @@ impl Msg {
         }
     }
 
+<<<<<<< Updated upstream
+||||||| Stash base
+    #[cfg(any())] // TODO(b2-blocked): bun_schema::api
+=======
+    #[cfg(any())] // TODO(b2-blocked): bun_api::{MessageLevel,Location,MessageData,MessageMeta,Message,Log}
+>>>>>>> Stashed changes
     pub fn to_api(&self) -> Result<api::Message, AllocError> {
         let mut notes = vec![api::MessageData::default(); self.notes.len()].into_boxed_slice();
         for (i, note) in self.notes.iter().enumerate() {
@@ -1732,6 +1948,12 @@ impl Msg {
         })
     }
 
+<<<<<<< Updated upstream
+||||||| Stash base
+    #[cfg(any())] // TODO(b2-blocked): bun_schema::api
+=======
+    #[cfg(any())] // TODO(b2-blocked): bun_api::{MessageLevel,Location,MessageData,MessageMeta,Message,Log}
+>>>>>>> Stashed changes
     pub fn to_api_from_list(list: &[Msg]) -> Result<Box<[api::Message]>, AllocError> {
         // PORT NOTE: Zig took `comptime ListType: type, list: ListType` and read
         // `list.items`; collapsed to `&[Msg]`.
@@ -2008,6 +2230,12 @@ impl Log {
         (self.warnings + self.errors) > 0
     }
 
+<<<<<<< Updated upstream
+||||||| Stash base
+    #[cfg(any())] // TODO(b2-blocked): bun_schema::api
+=======
+    #[cfg(any())] // TODO(b2-blocked): bun_api::{MessageLevel,Location,MessageData,MessageMeta,Message,Log}
+>>>>>>> Stashed changes
     pub fn to_api(&self) -> Result<api::Log, AllocError> {
         let mut warnings: u32 = 0;
         let mut errors: u32 = 0;
@@ -2917,8 +3145,30 @@ pub fn alloc_print(args: fmt::Arguments<'_>) -> Result<Cow<'static, [u8]>, Alloc
     // rendered bytes, or user-supplied argument values containing `<`
     // (`<stdin>`, `Array<string>`, JSX/HTML snippets) get mangled.
     use std::io::Write;
+<<<<<<< Updated upstream
     let mut v = Vec::new();
     let _ = write!(&mut v, "{}", args);
+||||||| Stash base
+    let mut v = Vec::new();
+    // TODO(b2-blocked): bun_core::Output::pretty_fmt (runtime fn taking fmt::Arguments)
+    #[cfg(any())]
+    if Output::ENABLE_ANSI_COLORS_STDERR.load(core::sync::atomic::Ordering::Relaxed) {
+        let _ = write!(&mut v, "{}", Output::pretty_fmt::<true>(args));
+    } else {
+        let _ = write!(&mut v, "{}", Output::pretty_fmt::<false>(args));
+    }
+    let _ = write!(&mut v, "{}", args);
+=======
+    let mut tmp = Vec::new();
+    let _ = write!(&mut tmp, "{}", args);
+    // PORT NOTE: Zig rewrote `<tag>`s comptime on the format *string*; with
+    // `fmt::Arguments` opaque we run the runtime rewriter on the *rendered*
+    // bytes instead. Args containing literal `<`/`>` would be misparsed —
+    // acceptable until the `pretty_format_args!` proc-macro lands.
+    let enable =
+        bun_core::output::ENABLE_ANSI_COLORS_STDERR.load(core::sync::atomic::Ordering::Relaxed);
+    let v = bun_core::output::pretty_fmt_runtime(&tmp, enable);
+>>>>>>> Stashed changes
     // Zig returns an allocator-owned slice that the Log takes ownership of via
     // `Data.text` and frees in `Data.deinit`. `Cow::Owned` gives the same
     // ownership: `Data` (via `Drop`) frees it.

@@ -108,15 +108,33 @@ impl CPUFeatures {
         debug_assert!(!flags.contains(Flags::NONE) && (raw & !Flags::all().bits()) == 0);
 
         #[cfg(target_arch = "x86_64")]
+<<<<<<< Updated upstream
         
+||||||| Stash base
+        #[cfg(any())]
+=======
+>>>>>>> Stashed changes
         {
             // Zig: bun.analytics.Features.no_avx / no_avx2 are global mutable
+<<<<<<< Updated upstream
             // counters (`+= usize`). Rust port stores them as `AtomicUsize`.
             use core::sync::atomic::Ordering;
             bun_analytics::features::no_avx
                 .fetch_add(usize::from(!flags.contains(Flags::AVX)), Ordering::Relaxed);
             bun_analytics::features::no_avx2
                 .fetch_add(usize::from(!flags.contains(Flags::AVX2)), Ordering::Relaxed);
+||||||| Stash base
+            // counters (`+= usize`). bun_analytics does not compile yet.
+            bun_analytics::Features::no_avx_add(usize::from(!flags.contains(Flags::AVX)));
+            bun_analytics::Features::no_avx2_add(usize::from(!flags.contains(Flags::AVX2)));
+=======
+            // counters (`+= usize`). Rust port stores them as AtomicUsize.
+            use core::sync::atomic::Ordering;
+            bun_analytics::features::no_avx
+                .fetch_add(usize::from(!flags.contains(Flags::AVX)), Ordering::Relaxed);
+            bun_analytics::features::no_avx2
+                .fetch_add(usize::from(!flags.contains(Flags::AVX2)), Ordering::Relaxed);
+>>>>>>> Stashed changes
         }
 
         CPUFeatures { flags }

@@ -111,6 +111,7 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
 
         count += extra;
     }
+<<<<<<< Updated upstream
 
     let changes_len = usize::try_from(count.max(0)).unwrap();
     let changes = &changelist[0..changes_len];
@@ -149,12 +150,63 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     }
 
     Ok(())
+||||||| Stash base
+    let _ = this;
+    todo!("watch_loop_cycle — bun_sys::c::kevent")
+=======
+
+    let changes_len = usize::try_from(count.max(0)).unwrap();
+    let changes = &changelist[0..changes_len];
+    // PORT NOTE: reshaped for borrowck — Zig re-slices `watchevents` in place; Rust tracks out_len
+    // and slices once at the end to avoid overlapping &mut borrows of `this`.
+    let watchevents = &mut this.watch_events[0..changes_len];
+    let mut out_len: usize = 0;
+    if changes_len > 0 {
+        watchevents[0] = watch_event_from_kevent(&changes[0]);
+        out_len = 1;
+        let mut prev_event = changes[0];
+        for event in &changes[1..] {
+            if prev_event.udata == event.udata {
+                let new = watch_event_from_kevent(event);
+                watchevents[out_len - 1].merge(new);
+                continue;
+            }
+
+            watchevents[out_len] = watch_event_from_kevent(event);
+            prev_event = *event;
+            out_len += 1;
+        }
+    }
+
+    // PORT NOTE: `Mutex::{lock,unlock}` take `&self`, so the guard's shared borrow of
+    // `this.mutex` coexists with the shared borrows of other `this` fields below.
+    this.mutex.lock();
+    let _unlock = scopeguard::guard((), |_| this.mutex.unlock());
+    if this.running {
+        // PORT NOTE: reshaped for borrowck — copy the (small) deduped slice into a
+        // local so `this` is no longer mutably borrowed via `watchevents`.
+        let deduped: Vec<WatchEvent> = this.watch_events[0..out_len].to_vec();
+        let changed = &this.changed_filepaths[0..out_len];
+        this.write_trace_events(&deduped, changed);
+        (this.on_file_update)(this.ctx, &mut deduped.clone(), changed, &this.watchlist);
+    }
+
+    Ok(())
+>>>>>>> Stashed changes
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/watcher/KEventWatcher.zig (108 lines)
 //   confidence: medium
+<<<<<<< Updated upstream
 //   todos:      1
 //   notes:      watch_loop_cycle reshaped for borrowck (deduped events copied to Vec before write_trace_events/on_file_update)
+||||||| Stash base
+//   todos:      4
+//   notes:      raw kevent()/kqueue() need bun_sys::c bindings; watch_loop_cycle has borrowck overlap on Watcher fields (mutex guard vs. watch_events/changed_filepaths)
+=======
+//   todos:      1
+//   notes:      fully un-gated against bun_sys::kqueue + bun_sys::c::kevent; mutex guard uses &self lock/unlock so coexists with shared field borrows (matches INotifyWatcher pattern). Not cargo-checked on a Darwin host yet.
+>>>>>>> Stashed changes
 // ──────────────────────────────────────────────────────────────────────────

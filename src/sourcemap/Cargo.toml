@@ -26,16 +26,38 @@ bun_alloc.workspace = true
 bun_base64.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
+<<<<<<< Updated upstream
 # TODO(b2-blocked): bun_interchange — json::parse signature is live; wire in
 # once parse_json un-gates (currently blocked on bun_logger::Source lifetime,
 # not on bun_interchange).
+||||||| Stash base
+# TODO(b2-blocked): bun_interchange::json::parse — re-add once bun_interchange compiles.
+=======
+# TODO(b2-blocked): bun_interchange::json::parse — parse_json body needs
+# Expr accessor surface from bun_js_parser before this is useful.
+>>>>>>> Stashed changes
 # bun_interchange.workspace = true
+<<<<<<< Updated upstream
 bun_io.workspace = true
 # bun_js_parser not needed: parse_json uses the T2 value-subset Expr from
 # bun_logger::js_ast (what bun_interchange::json::parse returns).
 # bun_js_printer would create a dep cycle (it depends on bun_sourcemap);
 # quote_for_json moved down to bun_string, so Chunk::print_source_map_contents*
 # is now un-gated without the cycle.
+||||||| Stash base
+# TODO(b2-blocked): bun_io::Write — re-add once trait surface lands.
+# bun_io.workspace = true
+# TODO(b1): bun_js_parser does not compile yet (1302 errors via bun_css); re-add in B-2.
+# bun_js_parser.workspace = true
+=======
+# TODO(b2-blocked): bun_io::Write — trait surface not yet landed.
+# bun_io.workspace = true
+# TODO(b2-blocked): bun_js_parser — Expr::data_store_reset / Data::is_e_* /
+# Data::as_e_array not yet exposed; needed by parse_json.
+# bun_js_parser.workspace = true
+# bun_js_printer would create a dep cycle (it depends on bun_sourcemap);
+# Chunk::print_source_map_contents* stays gated until quote_for_json moves down.
+>>>>>>> Stashed changes
 bun_logger.workspace = true
 bun_paths.workspace = true
 bun_ptr.workspace = true

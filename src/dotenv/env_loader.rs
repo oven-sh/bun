@@ -24,6 +24,7 @@ pub enum DotEnvFileSuffix {
     Test,
 }
 
+<<<<<<< Updated upstream
 /// Downstream callers (transpiler, install, lockfile) variously spell the load-mode
 /// discriminant `Kind` or `Mode`; both alias the same `DotEnvFileSuffix` enum so the
 /// crate exports a single canonical type without forcing a tree-wide rename.
@@ -60,6 +61,24 @@ pub struct S3Credentials {
     pub insecure_http: bool,
 }
 
+||||||| Stash base
+=======
+/// Mirrors `api::DotEnvBehavior` (peechy schema enum).
+/// MOVE_DOWN(b2): defined here (T2) so `copy_for_define` names no higher-tier
+/// type; `bun_options_types::api::DotEnvBehavior` (T3) converts at the call
+/// site. Same `#[repr(u32)]` discriminants as schema.zig:1172.
+#[repr(u32)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum DotEnvBehavior {
+    #[default]
+    None = 0,
+    Disable = 1,
+    Prefix = 2,
+    LoadAll = 3,
+    LoadAllWithoutInlining = 4,
+}
+
+>>>>>>> Stashed changes
 pub struct Loader<'a> {
     pub map: &'a mut Map,
     // allocator dropped — global mimalloc (see PORTING.md §Allocators)
@@ -162,6 +181,7 @@ impl<'a> Loader<'a> {
 
     pub fn load_tracy(&self) {}
 
+<<<<<<< Updated upstream
     pub fn get_s3_credentials(&mut self) -> &S3Credentials {
         if self.aws_credentials.is_some() {
             return self.aws_credentials.as_ref().unwrap();
@@ -219,6 +239,17 @@ impl<'a> Loader<'a> {
         });
 
         self.aws_credentials.as_ref().unwrap()
+||||||| Stash base
+    #[cfg(any())]
+    pub fn get_s3_credentials(&mut self) {
+        // TODO(b2-blocked): bun_s3_signing::S3Credentials (T5 — needs TYPE_ONLY move-down ≤T2)
+        // TODO(b2-blocked): bun_url::URL::host_with_path (gated in B-1)
+=======
+    #[cfg(any())]
+    pub fn get_s3_credentials(&mut self) {
+        // TODO(b2-blocked): bun_s3_signing::S3Credentials (T5 — needs TYPE_ONLY move-down ≤T2)
+        // (bun_url::URL::host_with_path now available; only the credentials type blocks this.)
+>>>>>>> Stashed changes
     }
 
     /// Checks whether `NODE_TLS_REJECT_UNAUTHORIZED` is set to `0` or `false`.
@@ -535,20 +566,42 @@ impl<'a> Loader<'a> {
     // and bun_js_parser::{E::String, Expr::Data}. Converted to manual vtable (cold-path
     // §Dispatch, PORTING.md): dotenv passes (key, raw_value) bytes; the high-tier vtable
     // impl (bun_bundler / bun_runtime) constructs E::String + DefineData and inserts.
+<<<<<<< Updated upstream
     //
     // PORT NOTE: `framework_defaults: api.StringMap` flattened to parallel key/value slices
     // and `api.DotEnvBehavior` mirrored locally so this crate names no `bun_api` types
     // (PORTING.md §Dispatch — low tier names no high-tier types). The high-tier caller
     // unpacks its `api::StringMap` at the call site.
+||||||| Stash base
+    #[cfg(any())]
+=======
+    // `api.StringMap` (peechy schema, parallel arrays) is taken as two slices so this
+    // names no `bun_api`/`bun_options_types` type; `DotEnvBehavior` is the local
+    // MOVE_DOWN copy (same discriminants).
+>>>>>>> Stashed changes
     pub fn copy_for_define(
         &mut self,
+<<<<<<< Updated upstream
         to_json: DefineStoreRef<'_>,
         to_string: DefineStoreRef<'_>,
         framework_defaults_keys: &[&[u8]],
         framework_defaults_values: &[&[u8]],
         behavior: DotEnvBehavior,
+||||||| Stash base
+        to_json: DefineStoreRef<'_>,
+        to_string: DefineStoreRef<'_>,
+        framework_defaults: &(), // TODO(b2-blocked): bun_api::StringMap
+        behavior: (),            // TODO(b2-blocked): bun_api::DotEnvBehavior
+=======
+        to_json: &DefineStoreRef<'_>,
+        to_string: &DefineStoreRef<'_>,
+        framework_defaults_keys: &[&[u8]],
+        framework_defaults_values: &[&[u8]],
+        behavior: DotEnvBehavior,
+>>>>>>> Stashed changes
         prefix: &[u8],
     ) -> Result<(), bun_core::Error> {
+<<<<<<< Updated upstream
         const INVALID_HASH: u64 = u64::MAX - 1;
         let mut string_map_hashes: Vec<u64> = vec![INVALID_HASH; framework_defaults_keys.len()];
 
@@ -628,6 +681,90 @@ impl<'a> Loader<'a> {
             }
         }
 
+||||||| Stash base
+        // TODO(b2-blocked): bun_api::StringMap
+        // TODO(b2-blocked): bun_api::DotEnvBehavior
+        // TODO(b2-blocked): bun_collections::ArrayHashMapExt::Iterator (resettable)
+=======
+        const INVALID_HASH: u64 = u64::MAX - 1;
+        const PROCESS_ENV: &[u8] = b"process.env.";
+
+        let mut string_map_hashes = vec![INVALID_HASH; framework_defaults_keys.len()];
+        // Frameworks determine an allowlist of values
+        for (i, &key) in framework_defaults_keys.iter().enumerate() {
+            if key.len() > PROCESS_ENV.len() && &key[..PROCESS_ENV.len()] == PROCESS_ENV {
+                let hashable_segment = &key[PROCESS_ENV.len()..];
+                string_map_hashes[i] = bun_wyhash::hash(hashable_segment);
+            }
+        }
+
+        // We have to copy all the keys to prepend "process.env" :/
+        if behavior != DotEnvBehavior::Disable
+            && behavior != DotEnvBehavior::LoadAllWithoutInlining
+        {
+            // PORT NOTE: reshaped for borrowck — Zig's two-pass `iter.reset()` over
+            // self.map sized a single key_buf arena + E.String slab so DefineData could
+            // borrow into them. The vtable impl owns/copies (key, value) bytes itself,
+            // so the pre-count pass and slab are gone; iterate keys()/values() once.
+            // PERF(port): was single-arena key_buf — profile in Phase B.
+            let mut key_buf: Vec<u8> = Vec::new();
+            let keys = self.map.map.keys();
+            let values = self.map.map.values();
+            debug_assert_eq!(keys.len(), values.len());
+
+            if behavior == DotEnvBehavior::Prefix {
+                debug_assert!(!prefix.is_empty());
+                // Zig gates the second pass on `key_buf_len > 0` (env_loader.zig:455),
+                // which for behavior==.prefix means "at least one env key starts with
+                // prefix". When zero keys match, the framework-default `else` arm below
+                // must NOT run — those entries fall through to `to_json` instead.
+                let any_prefix_match =
+                    keys.iter().any(|k| strings::starts_with(k, prefix));
+                if any_prefix_match {
+                    for (k, v) in keys.iter().zip(values.iter()) {
+                        let value: &[u8] = &v.value;
+                        if strings::starts_with(k, prefix) {
+                            debug_assert!(!k.is_empty());
+                            key_buf.clear();
+                            key_buf.extend_from_slice(PROCESS_ENV);
+                            key_buf.extend_from_slice(k);
+                            to_string.put_string_define(&key_buf, value)?;
+                        } else {
+                            let hash = bun_wyhash::hash(k);
+                            debug_assert!(hash != INVALID_HASH);
+                            if let Some(key_i) =
+                                string_map_hashes.iter().position(|&h| h == hash)
+                            {
+                                to_string.put_string_define(
+                                    framework_defaults_keys[key_i],
+                                    value,
+                                )?;
+                            }
+                        }
+                    }
+                }
+            } else {
+                for (k, v) in keys.iter().zip(values.iter()) {
+                    if k.is_empty() {
+                        continue;
+                    }
+                    let value: &[u8] = &v.value;
+                    key_buf.clear();
+                    key_buf.extend_from_slice(PROCESS_ENV);
+                    key_buf.extend_from_slice(k);
+                    to_string.put_string_define(&key_buf, value)?;
+                }
+            }
+        }
+
+        for (i, &key) in framework_defaults_keys.iter().enumerate() {
+            let value = framework_defaults_values[i];
+            if !to_string.contains(key) && !to_json.contains(key) {
+                to_json.put_raw(key, value)?;
+            }
+        }
+
+>>>>>>> Stashed changes
         Ok(())
     }
 
@@ -912,6 +1049,7 @@ impl<'a> Loader<'a> {
         if self.default_file_slot(base).is_some() {
             return Ok(());
         }
+<<<<<<< Updated upstream
 
         // PORT NOTE: Zig used `std.fs.Dir.openFile` whose error set names
         // (`error.FileNotFound`, `error.FileBusy`, …) don't map 1:1 to errno.
@@ -1012,6 +1150,110 @@ impl<'a> Loader<'a> {
         // the bytes is observationally identical. Revisit once `bun_logger`
         // grows an owning `contents` (Phase-B `Str` rework).
         *self.default_file_slot(base) = Some(logger::Source::init_path_string(base, b""));
+||||||| Stash base
+        let _ = (dir, base, value_buffer);
+=======
+
+        // PORT NOTE: `logger::Source.contents` is `&'static [u8]`; storing the file
+        // buffer there would require `Box::leak` (PORTING.md §Forbidden). Nothing in
+        // this crate (or upstream callers) reads `Source.contents` after the parse —
+        // the slot is only checked for `.is_some()` (retry guard + `print_loaded`).
+        // So: read into an owned buffer, parse from it (keys/values are dup'd into
+        // `self.map`), drop the buffer, then store an empty-contents `Source` as the
+        // retry sentinel. Phase-B `bun_logger` ownership rework can restore the
+        // contents field if a consumer materialises.
+        let empty = logger::Source::init_path_string(base, b"");
+
+        let mut path_buf = PathBuffer::uninit();
+        path_buf[..base.len()].copy_from_slice(base);
+        path_buf[base.len()] = 0;
+        // SAFETY: path_buf[base.len()] == 0 written above
+        let path_z = unsafe { ZStr::from_raw(path_buf.as_ptr(), base.len()) };
+
+        let file = match bun_sys::File::openat(dir, path_z, bun_sys::O::RDONLY, 0) {
+            Ok(f) => f,
+            Err(err) => {
+                match err.get_errno() {
+                    bun_sys::E::EISDIR | bun_sys::E::ENOENT => {
+                        // prevent retrying
+                        *self.default_file_slot(base) = Some(empty);
+                        return Ok(());
+                    }
+                    bun_sys::E::EBUSY | bun_sys::E::EACCES => {
+                        if !self.quiet {
+                            bun_core::pretty_errorln!(
+                                "<r><red>{}<r> error loading {} file",
+                                bstr::BStr::new(err.name()),
+                                bstr::BStr::new(base)
+                            );
+                        }
+                        // prevent retrying
+                        *self.default_file_slot(base) = Some(empty);
+                        return Ok(());
+                    }
+                    _ => return Err(err.into()),
+                }
+            }
+        };
+        let close_guard = scopeguard::guard(file.handle, |fd| {
+            let _ = bun_sys::close(fd);
+        });
+
+        let end: usize = 'blk: {
+            #[cfg(windows)]
+            {
+                let pos = file.get_end_pos()?;
+                if pos == 0 {
+                    *self.default_file_slot(base) = Some(empty);
+                    return Ok(());
+                }
+                break 'blk pos;
+            }
+            #[cfg(not(windows))]
+            {
+                let stat = file.stat()?;
+                if stat.st_size == 0
+                    || bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode)
+                        != bun_sys::FileKind::File
+                {
+                    *self.default_file_slot(base) = Some(empty);
+                    return Ok(());
+                }
+                break 'blk stat.st_size as usize;
+            }
+        };
+
+        let mut buf: Vec<u8> = Vec::with_capacity(end + 1);
+        let amount_read = match file.read_all(&mut buf) {
+            Ok(n) => n,
+            Err(err) => match err.get_errno() {
+                bun_sys::E::EACCES | bun_sys::E::EISDIR => {
+                    if !self.quiet {
+                        bun_core::pretty_errorln!(
+                            "<r><red>{}<r> error loading {} file",
+                            bstr::BStr::new(err.name()),
+                            bstr::BStr::new(base)
+                        );
+                    }
+                    // prevent retrying
+                    *self.default_file_slot(base) = Some(empty);
+                    return Ok(());
+                }
+                _ => return Err(err.into()),
+            },
+        };
+        // The null byte here is mostly for debugging purposes (Zig: buf[end] = 0).
+        buf.push(0);
+
+        Parser::parse_bytes::<OVERRIDE, false, true>(
+            &buf[..amount_read],
+            self.map,
+            value_buffer,
+        )?;
+
+        drop(close_guard);
+        *self.default_file_slot(base) = Some(empty);
+>>>>>>> Stashed changes
         Ok(())
     }
 
@@ -1023,6 +1265,7 @@ impl<'a> Loader<'a> {
         if self.custom_files_loaded.contains(file_path) {
             return Ok(());
         }
+<<<<<<< Updated upstream
 
         let file = match bun_sys::open_file(file_path, bun_sys::OpenFlags::READ_ONLY) {
             Ok(f) => f,
@@ -1095,6 +1338,93 @@ impl<'a> Loader<'a> {
         // TODO(port): see `load_env_file` — `Source.contents` not retained
         // pending the `bun_logger` owning-`Str` rework.
         self.custom_files_loaded.put(file_path, logger::Source::default())?;
+||||||| Stash base
+        let _ = (file_path, value_buffer);
+=======
+
+        // PORT NOTE: see `load_env_file` — `Source.contents` would require a leak;
+        // store `Source::default()` as the value (only `.contains()` / `.keys()`
+        // are read on `custom_files_loaded`). Phase-B `bun_logger` rework can
+        // restore the real contents.
+        let mut path_buf = PathBuffer::uninit();
+        if file_path.len() >= MAX_PATH_BYTES {
+            // prevent retrying
+            self.custom_files_loaded.put(file_path, logger::Source::default())?;
+            return Ok(());
+        }
+        path_buf[..file_path.len()].copy_from_slice(file_path);
+        path_buf[file_path.len()] = 0;
+        // SAFETY: path_buf[file_path.len()] == 0 written above
+        let path_z = unsafe { ZStr::from_raw(path_buf.as_ptr(), file_path.len()) };
+
+        // Zig `bun.openFile(file_path, .{ .mode = .read_only })` — open at cwd.
+        let file = match bun_sys::File::open(path_z, bun_sys::O::RDONLY, 0) {
+            Ok(f) => f,
+            Err(_) => {
+                // prevent retrying
+                self.custom_files_loaded.put(file_path, logger::Source::default())?;
+                return Ok(());
+            }
+        };
+        let close_guard = scopeguard::guard(file.handle, |fd| {
+            let _ = bun_sys::close(fd);
+        });
+
+        let end: usize = 'blk: {
+            #[cfg(windows)]
+            {
+                let pos = file.get_end_pos()?;
+                if pos == 0 {
+                    self.custom_files_loaded.put(file_path, logger::Source::default())?;
+                    return Ok(());
+                }
+                break 'blk pos;
+            }
+            #[cfg(not(windows))]
+            {
+                let stat = file.stat()?;
+                if stat.st_size == 0
+                    || bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode)
+                        != bun_sys::FileKind::File
+                {
+                    self.custom_files_loaded.put(file_path, logger::Source::default())?;
+                    return Ok(());
+                }
+                break 'blk stat.st_size as usize;
+            }
+        };
+
+        let mut buf: Vec<u8> = Vec::with_capacity(end + 1);
+        let amount_read = match file.read_all(&mut buf) {
+            Ok(n) => n,
+            Err(err) => match err.get_errno() {
+                bun_sys::E::EACCES | bun_sys::E::EISDIR => {
+                    if !self.quiet {
+                        bun_core::pretty_errorln!(
+                            "<r><red>{}<r> error loading {} file",
+                            bstr::BStr::new(err.name()),
+                            bstr::BStr::new(file_path)
+                        );
+                    }
+                    // prevent retrying
+                    self.custom_files_loaded.put(file_path, logger::Source::default())?;
+                    return Ok(());
+                }
+                _ => return Err(err.into()),
+            },
+        };
+        // The null byte here is mostly for debugging purposes.
+        buf.push(0);
+
+        Parser::parse_bytes::<OVERRIDE, false, true>(
+            &buf[..amount_read],
+            self.map,
+            value_buffer,
+        )?;
+
+        drop(close_guard);
+        self.custom_files_loaded.put(file_path, logger::Source::default())?;
+>>>>>>> Stashed changes
         Ok(())
     }
 }
@@ -1448,6 +1778,7 @@ impl<'a> Parser<'a> {
         map: &mut Map,
         value_buffer: &mut Vec<u8>,
     ) -> Result<(), AllocError> {
+<<<<<<< Updated upstream
         Self::parse_bytes::<OVERRIDE, IS_PROCESS, EXPAND>(&source.contents, map, value_buffer)
     }
 
@@ -1461,13 +1792,38 @@ impl<'a> Parser<'a> {
         map: &mut Map,
         value_buffer: &mut Vec<u8>,
     ) -> Result<(), AllocError> {
+||||||| Stash base
+=======
+        Self::parse_bytes::<OVERRIDE, IS_PROCESS, EXPAND>(source.contents, map, value_buffer)
+    }
+
+    /// Parse from raw bytes (`logger::Source.contents` is `&'static [u8]`, which
+    /// would force a leak for heap-backed file buffers — PORTING.md §Forbidden).
+    /// Keys and values are dup'd into `map`, so `src` may be dropped after this
+    /// returns.
+    pub fn parse_bytes<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
+        src: &[u8],
+        map: &mut Map,
+        value_buffer: &mut Vec<u8>,
+    ) -> Result<(), AllocError> {
+>>>>>>> Stashed changes
         // Clear the buffer before each parse to ensure no leftover data
         value_buffer.clear();
+<<<<<<< Updated upstream
         let mut parser = Parser {
             pos: 0,
             src,
             value_buffer,
         };
+||||||| Stash base
+        let mut parser = Parser {
+            pos: 0,
+            src: source.contents,
+            value_buffer,
+        };
+=======
+        let mut parser = Parser { pos: 0, src, value_buffer };
+>>>>>>> Stashed changes
         parser._parse::<OVERRIDE, IS_PROCESS, EXPAND>(map)
     }
 }
@@ -1786,10 +2142,11 @@ pub fn set_instance(loader: *mut Loader<'static>) {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/dotenv/env_loader.zig (1433 lines)
-//   confidence: medium (Map/Parser/loadProcess/ccache/node-path/envp all live; file-loading
-//               gated only on bun_logger Source ownership + DirEntry query)
+//   confidence: medium-high (Map/Parser/loadProcess/ccache/node-path/envp/file-loading/
+//               copy_for_define all live)
 //   notes:      @field(this, base) → match helper; HashTableValue.value owned (Box<[u8]>),
 //               Phase B may need Cow. NullDelimitedEnvMap owns its strings (no Box::leak).
+<<<<<<< Updated upstream
 //               load_default_files un-gated (calls bun_sys::fs::DirEntry::has_comptime_query
 //               stub — fills in once resolver→sys MOVE_DOWN lands). copy_for_define un-gated
 //               via DefineStoreVTable + local DotEnvBehavior mirror (api.StringMap flattened
@@ -1797,4 +2154,20 @@ pub fn set_instance(loader: *mut Loader<'static>) {
 //               owning contents (PORTING.md §Forbidden bans Box::leak); get_s3_credentials
 //               un-gated via local S3Credentials POD mirror (§Dispatch — high-tier callers
 //               construct the real refcounted bun_s3_signing::S3Credentials from it).
+||||||| Stash base
+//               load_default_files body re-gated on bun_sys::fs::DirEntry::has_comptime_query
+//               (MOVE_DOWN resolver→sys not landed); load_env_file{,_dynamic} bodies re-gated
+//               on bun_logger::Source owning contents. copy_for_define re-gated on bun_api
+//               (higher tier — vtable-dispatch path); get_s3_credentials re-gated on
+//               bun_s3_signing TYPE_ONLY move-down (higher tier).
+=======
+//               load_env_file{,_dynamic} parse from an owned buffer then store an
+//               empty-contents Source sentinel (no consumer reads `Source.contents` post-
+//               parse; avoids the Box::leak the &'static field would force). copy_for_define
+//               un-gated via DefineStoreVTable + parallel-slice framework_defaults +
+//               local-MOVE_DOWN DotEnvBehavior. load_default_files body re-gated on
+//               bun_sys::fs::DirEntry::has_comptime_query (resolver→sys MOVE_DOWN not
+//               landed); get_s3_credentials re-gated on bun_s3_signing::S3Credentials
+//               TYPE_ONLY move-down (T5).
+>>>>>>> Stashed changes
 // ──────────────────────────────────────────────────────────────────────────

@@ -1541,7 +1541,15 @@ impl<'a> Match<'a> {
             name = &name[i + dir.len()..];
         }
 
-        &name[0..name.len() - bun_paths::extension(name).len()]
+        #[cfg(any())] // TODO(b2-blocked): bun_paths::extension
+        {
+            &name[0..name.len() - bun_paths::extension(name).len()]
+        }
+        #[cfg(not(any()))]
+        {
+            let _ = name;
+            todo!("b2-blocked: bun_paths::extension")
+        }
     }
 
     pub fn pathname_without_leading_slash(&self) -> &[u8] {

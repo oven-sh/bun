@@ -519,6 +519,7 @@ impl Watcher {
     ) -> sys::Result<WatchItemIndex> {
         #[cfg(windows)]
         {
+<<<<<<< Updated upstream
             let rel = bun_paths::is_parent_or_equal(self.top_level_dir(), file_path);
             if rel == bun_paths::ParentEqual::Unrelated {
                 Output::warn(format_args!(
@@ -526,8 +527,172 @@ impl Watcher {
                     bstr::BStr::new(file_path)
                 ));
                 return Ok(NO_WATCH_ITEM);
+||||||| Stash base
+            // TODO(b2-blocked): bun_fs::PathName — `init()` / `dir_with_trailing_slash()`
+            // (upward T5 dep; CYCLEBREAK once bun_paths::fs::PathName grows the impl).
+            #[cfg(windows)]
+            {
+                let rel = bun_paths::is_parent_or_equal(self.top_level_dir(), file_path);
+                if rel == bun_paths::ParentEqual::Unrelated {
+                    Output::warn(format_args!(
+                        "Directory {} is not in the project directory and will not be watched\n",
+                        bstr::BStr::new(file_path)
+                    ));
+                    return Ok(NO_WATCH_ITEM);
+                }
+=======
+            // TODO(b2-blocked): bun_paths::fs::PathName::{init, dir_with_trailing_slash}
+            // (lower-tier MOVE_DOWN stub at src/paths/lib.rs:346 has the struct but no impl).
+            #[cfg(windows)]
+            {
+                let rel = bun_paths::is_parent_or_equal(self.top_level_dir(), file_path);
+                if rel == bun_paths::ParentEqual::Unrelated {
+                    Output::warn(format_args!(
+                        "Directory {} is not in the project directory and will not be watched\n",
+                        bstr::BStr::new(file_path)
+                    ));
+                    return Ok(NO_WATCH_ITEM);
+                }
+>>>>>>> Stashed changes
             }
+<<<<<<< Updated upstream
+||||||| Stash base
+
+            let fd = if stored_fd.is_valid() {
+                stored_fd
+            } else {
+                bun_sys::open_a(file_path, 0, 0)?
+            };
+
+            let file_path_: &[u8] = if CLONE_FILE_PATH {
+                // TODO(b2-blocked): see append_file_assume_capacity (Box::leak forbidden).
+                file_path
+            } else {
+                file_path
+            };
+
+            let parent_hash =
+                Self::get_hash(bun_fs::PathName::init(file_path_).dir_with_trailing_slash());
+
+            let watchlist_id = self.watchlist.len();
+
+            let mut item = WatchItem {
+                file_path: file_path_,
+                fd,
+                hash,
+                count: 0,
+                loader: Loader::File,
+                parent_hash,
+                kind: WatchItemKind::Directory,
+                package_json: None,
+                #[cfg(target_os = "linux")]
+                eventlist_index: 0,
+            };
+
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+            {
+                self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
+            }
+            #[cfg(target_os = "linux")]
+            {
+                let mut buf = bun_paths::path_buffer_pool::get();
+                let path: &ZStr = if CLONE_FILE_PATH
+                    && !file_path_.is_empty()
+                    && file_path_[file_path_.len() - 1] == 0
+                {
+                    // SAFETY: last byte is 0, slice len excludes it
+                    unsafe { ZStr::from_raw(file_path_.as_ptr(), file_path_.len() - 1) }
+                } else {
+                    let trailing_slash = if file_path_.len() > 1 {
+                        strings::trim_right(file_path_, &[0, b'/'])
+                    } else {
+                        file_path_
+                    };
+                    buf[0..trailing_slash.len()].copy_from_slice(trailing_slash);
+                    buf[trailing_slash.len()] = 0;
+                    // SAFETY: buf[len] == 0 written above
+                    unsafe { ZStr::from_raw(buf.as_ptr(), trailing_slash.len()) }
+                };
+
+                item.eventlist_index = self
+                    .platform
+                    .watch_dir(path)
+                    .map_err(|e| e.with_path(file_path))?;
+            }
+
+            // PERF(port): was assume_capacity
+            self.watchlist.append_assume_capacity(item);
+            return Ok((self.watchlist.len() - 1) as WatchItemIndex);
+=======
+
+            let fd = if stored_fd.is_valid() {
+                stored_fd
+            } else {
+                bun_sys::open_a(file_path, 0, 0)?
+            };
+
+            let file_path_: &[u8] = if CLONE_FILE_PATH {
+                // TODO(b2-blocked): see append_file_assume_capacity (Box::leak forbidden).
+                file_path
+            } else {
+                file_path
+            };
+
+            let parent_hash =
+                Self::get_hash(bun_paths::fs::PathName::init(file_path_).dir_with_trailing_slash());
+
+            let watchlist_id = self.watchlist.len();
+
+            let mut item = WatchItem {
+                file_path: file_path_,
+                fd,
+                hash,
+                count: 0,
+                loader: Loader::File,
+                parent_hash,
+                kind: WatchItemKind::Directory,
+                package_json: None,
+                #[cfg(target_os = "linux")]
+                eventlist_index: 0,
+            };
+
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+            {
+                self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
+            }
+            #[cfg(target_os = "linux")]
+            {
+                let mut buf = bun_paths::path_buffer_pool::get();
+                let path: &ZStr = if CLONE_FILE_PATH
+                    && !file_path_.is_empty()
+                    && file_path_[file_path_.len() - 1] == 0
+                {
+                    // SAFETY: last byte is 0, slice len excludes it
+                    unsafe { ZStr::from_raw(file_path_.as_ptr(), file_path_.len() - 1) }
+                } else {
+                    let trailing_slash = if file_path_.len() > 1 {
+                        strings::trim_right(file_path_, &[0, b'/'])
+                    } else {
+                        file_path_
+                    };
+                    buf[0..trailing_slash.len()].copy_from_slice(trailing_slash);
+                    buf[trailing_slash.len()] = 0;
+                    // SAFETY: buf[len] == 0 written above
+                    unsafe { ZStr::from_raw(buf.as_ptr(), trailing_slash.len()) }
+                };
+
+                item.eventlist_index = self
+                    .platform
+                    .watch_dir(path)
+                    .map_err(|e| e.with_path(file_path))?;
+            }
+
+            // PERF(port): was assume_capacity
+            self.watchlist.append_assume_capacity(item);
+            return Ok((self.watchlist.len() - 1) as WatchItemIndex);
+>>>>>>> Stashed changes
         }
+<<<<<<< Updated upstream
 
         let fd = if stored_fd.is_valid() {
             stored_fd
@@ -602,6 +767,13 @@ impl Watcher {
         // PERF(port): was assume_capacity
         self.watchlist.append_assume_capacity(item);
         Ok((self.watchlist.len() - 1) as WatchItemIndex)
+||||||| Stash base
+        let _ = (stored_fd, file_path, hash);
+        todo!("append_directory_assume_capacity — bun_fs::PathName")
+=======
+        let _ = (stored_fd, file_path, hash);
+        todo!("append_directory_assume_capacity — bun_paths::fs::PathName::{{init,dir_with_trailing_slash}}")
+>>>>>>> Stashed changes
     }
 
     // Below is platform-independent
@@ -615,9 +787,214 @@ impl Watcher {
         dir_fd: Fd,
         package_json: Option<&'static PackageJSON>,
     ) -> sys::Result<()> {
+<<<<<<< Updated upstream
         if LOCK {
             self.mutex.lock();
+||||||| Stash base
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_fs::PathName — `init()` / `dir_with_trailing_slash()`
+            // (upward T5 dep; CYCLEBREAK once bun_paths::fs::PathName grows the impl).
+            if LOCK {
+                self.mutex.lock();
+            }
+            // TODO(port): errdefer — defer-unlock captures &mut self; needs RAII
+            // MutexGuard. Until then, each early-return below hand-inlines
+            // `if LOCK { self.mutex.unlock() }`.
+
+            debug_assert!(file_path.len() > 1);
+            let pathname = bun_fs::PathName::init(file_path);
+
+            let parent_dir = pathname.dir_with_trailing_slash();
+            let parent_dir_hash: HashType = Self::get_hash(parent_dir);
+
+            let mut parent_watch_item: Option<WatchItemIndex> = None;
+            let autowatch_parent_dir =
+                feature_flags::WATCH_DIRECTORIES && self.is_eligible_directory(parent_dir);
+            if autowatch_parent_dir {
+                let watchlist_slice = self.watchlist.slice();
+
+                if dir_fd.is_valid() {
+                    let fds = watchlist_slice.items().fd;
+                    if let Some(i) = fds.iter().position(|f| *f == dir_fd) {
+                        parent_watch_item = Some(i as WatchItemIndex);
+                    }
+                }
+
+                if parent_watch_item.is_none() {
+                    let hashes = watchlist_slice.items().hash;
+                    if let Some(i) = hashes.iter().position(|h| *h == parent_dir_hash) {
+                        parent_watch_item = Some(i as WatchItemIndex);
+                    }
+                }
+            }
+            let _ = self
+                .watchlist
+                .ensure_unused_capacity(1 + usize::from(parent_watch_item.is_none()));
+
+            if autowatch_parent_dir {
+                parent_watch_item = Some(match parent_watch_item {
+                    Some(v) => v,
+                    None => match self.append_directory_assume_capacity::<CLONE_FILE_PATH>(
+                        dir_fd,
+                        parent_dir,
+                        parent_dir_hash,
+                    ) {
+                        Err(err) => {
+                            if LOCK {
+                                self.mutex.unlock();
+                            }
+                            return Err(err.with_path(parent_dir));
+                        }
+                        Ok(r) => r,
+                    },
+                });
+            }
+            let _ = parent_watch_item;
+
+            match self.append_file_assume_capacity::<CLONE_FILE_PATH>(
+                fd,
+                file_path,
+                hash,
+                loader,
+                parent_dir_hash,
+                package_json,
+            ) {
+                Err(err) => {
+                    if LOCK {
+                        self.mutex.unlock();
+                    }
+                    return Err(err.with_path(file_path));
+                }
+                Ok(()) => {}
+            }
+
+            if true {
+                let cwd_len_with_slash = if self.cwd[self.cwd.len() - 1] == b'/' {
+                    self.cwd.len()
+                } else {
+                    self.cwd.len() + 1
+                };
+                let display_path =
+                    if file_path.len() > cwd_len_with_slash && file_path.starts_with(self.cwd) {
+                        &file_path[cwd_len_with_slash..]
+                    } else {
+                        file_path
+                    };
+                log!(
+                    "<d>Added <b>{}<r><d> to watch list.<r>",
+                    bstr::BStr::new(display_path)
+                );
+            }
+
+            if LOCK {
+                self.mutex.unlock();
+            }
+            return Ok(());
+=======
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_paths::fs::PathName::{init, dir_with_trailing_slash}
+            // (lower-tier MOVE_DOWN stub at src/paths/lib.rs:346 has the struct but no impl).
+            if LOCK {
+                self.mutex.lock();
+            }
+            // TODO(port): errdefer — defer-unlock captures &mut self; needs RAII
+            // MutexGuard. Until then, each early-return below hand-inlines
+            // `if LOCK { self.mutex.unlock() }`.
+
+            debug_assert!(file_path.len() > 1);
+            let pathname = bun_paths::fs::PathName::init(file_path);
+
+            let parent_dir = pathname.dir_with_trailing_slash();
+            let parent_dir_hash: HashType = Self::get_hash(parent_dir);
+
+            let mut parent_watch_item: Option<WatchItemIndex> = None;
+            let autowatch_parent_dir =
+                feature_flags::WATCH_DIRECTORIES && self.is_eligible_directory(parent_dir);
+            if autowatch_parent_dir {
+                let watchlist_slice = self.watchlist.slice();
+
+                if dir_fd.is_valid() {
+                    let fds = watchlist_slice.items().fd;
+                    if let Some(i) = fds.iter().position(|f| *f == dir_fd) {
+                        parent_watch_item = Some(i as WatchItemIndex);
+                    }
+                }
+
+                if parent_watch_item.is_none() {
+                    let hashes = watchlist_slice.items().hash;
+                    if let Some(i) = hashes.iter().position(|h| *h == parent_dir_hash) {
+                        parent_watch_item = Some(i as WatchItemIndex);
+                    }
+                }
+            }
+            let _ = self
+                .watchlist
+                .ensure_unused_capacity(1 + usize::from(parent_watch_item.is_none()));
+
+            if autowatch_parent_dir {
+                parent_watch_item = Some(match parent_watch_item {
+                    Some(v) => v,
+                    None => match self.append_directory_assume_capacity::<CLONE_FILE_PATH>(
+                        dir_fd,
+                        parent_dir,
+                        parent_dir_hash,
+                    ) {
+                        Err(err) => {
+                            if LOCK {
+                                self.mutex.unlock();
+                            }
+                            return Err(err.with_path(parent_dir));
+                        }
+                        Ok(r) => r,
+                    },
+                });
+            }
+            let _ = parent_watch_item;
+
+            match self.append_file_assume_capacity::<CLONE_FILE_PATH>(
+                fd,
+                file_path,
+                hash,
+                loader,
+                parent_dir_hash,
+                package_json,
+            ) {
+                Err(err) => {
+                    if LOCK {
+                        self.mutex.unlock();
+                    }
+                    return Err(err.with_path(file_path));
+                }
+                Ok(()) => {}
+            }
+
+            if true {
+                let cwd_len_with_slash = if self.cwd[self.cwd.len() - 1] == b'/' {
+                    self.cwd.len()
+                } else {
+                    self.cwd.len() + 1
+                };
+                let display_path =
+                    if file_path.len() > cwd_len_with_slash && file_path.starts_with(self.cwd) {
+                        &file_path[cwd_len_with_slash..]
+                    } else {
+                        file_path
+                    };
+                log!(
+                    "<d>Added <b>{}<r><d> to watch list.<r>",
+                    bstr::BStr::new(display_path)
+                );
+            }
+
+            if LOCK {
+                self.mutex.unlock();
+            }
+            return Ok(());
+>>>>>>> Stashed changes
         }
+<<<<<<< Updated upstream
         // TODO(port): errdefer — defer-unlock captures &mut self; needs RAII
         // MutexGuard. Until then, each early-return below hand-inlines
         // `if LOCK { self.mutex.unlock() }`.
@@ -715,6 +1092,13 @@ impl Watcher {
             self.mutex.unlock();
         }
         Ok(())
+||||||| Stash base
+        let _ = (fd, file_path, hash, loader, dir_fd, package_json);
+        todo!("append_file_maybe_lock — bun_fs::PathName")
+=======
+        let _ = (fd, file_path, hash, loader, dir_fd, package_json);
+        todo!("append_file_maybe_lock — bun_paths::fs::PathName::{{init,dir_with_trailing_slash}}")
+>>>>>>> Stashed changes
     }
 
     #[inline]

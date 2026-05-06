@@ -3374,6 +3374,7 @@ lexer_impl_header! {
 
                 // PORT NOTE: std.fmt.parseInt(i32, ..) — bytes-based parser; source bytes are
                 // not guaranteed UTF-8 so we never round-trip through &str (PORTING.md §Strings).
+<<<<<<< Updated upstream
                 cursor.c = match bun_string::strings::parse_int::<i32>(number, base) {
                     Ok(v) => v,
                     Err(err) => {
@@ -3402,6 +3403,31 @@ lexer_impl_header! {
 
                         strings::UNICODE_REPLACEMENT as CodePoint
                     }
+||||||| Stash base
+                #[cfg(any())]
+                {
+                    cursor.c = match bun_string::strings::parse_int::<i32>(number, u32::from(base)) {
+                        Ok(v) => v,
+                        Err(_) => strings::UNICODE_REPLACEMENT,
+                    };
+                }
+                // TODO(b2-blocked): bun_string::strings::parse_int
+                cursor.c = {
+                    let _ = (number, base);
+                    self.add_error(
+                        self.start,
+                        format_args!(
+                            "Invalid JSX entity escape: {}",
+                            bstr::BStr::new(entity)
+                        ),
+                        false,
+                    );
+                    strings::UNICODE_REPLACEMENT as CodePoint
+=======
+                cursor.c = match bun_string::strings::parse_int::<i32>(number, base) {
+                    Ok(v) => v,
+                    Err(_) => strings::UNICODE_REPLACEMENT as CodePoint,
+>>>>>>> Stashed changes
                 };
 
                 cursor.i += u32::try_from(length).unwrap() + 1;

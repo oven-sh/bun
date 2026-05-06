@@ -245,7 +245,7 @@ impl CompileTarget {
         &self,
         buf: &'a mut PathBuffer,
         version_str: &'a ZStr,
-        env: &mut bun_dotenv::Loader,
+        _env: &mut bun_dotenv::Loader<'_>,
         needs_download: &mut bool,
     ) -> &'a ZStr {
         if self.is_default() {
@@ -266,6 +266,7 @@ impl CompileTarget {
             return version_str;
         }
 
+<<<<<<< Updated upstream
         // MOVE_DOWN(b0): bun.install.PackageManager.fetchCacheDirectoryPath → bun_sys
         // T1 fallback ignores `env` (full env-override chain lives in bun_install).
         let _ = env;
@@ -277,6 +278,26 @@ impl CompileTarget {
                 cache_dir.as_slice(),
                 version_str.as_bytes(),
             ],
+||||||| Stash base
+        let dest = path::join_abs_string_buf_z(
+            bun_fs::FileSystem::instance().top_level_dir,
+            buf,
+            &[
+                // MOVE_DOWN(b0): bun_install::PackageManager::fetch_cache_directory_path → bun_sys
+                bun_sys::fetch_cache_directory_path(env, None).path,
+                version_str.as_bytes(),
+            ],
+            path::Platform::Auto,
+=======
+        // MOVE_DOWN(b0): bun_install::PackageManager::fetch_cache_directory_path → bun_sys
+        // PORT NOTE: bun_sys::fetch_cache_directory_path is the T1 fallback (no env-override
+        // chain yet); full chain lands when bun_install ports. `_env` is unused until then.
+        let cache_dir = bun_sys::fetch_cache_directory_path();
+        let dest = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
+            bun_paths::fs::FileSystem::instance().top_level_dir(),
+            &mut buf.0,
+            &[cache_dir.as_slice(), version_str.as_bytes()],
+>>>>>>> Stashed changes
         );
 
         if bun_sys::exists_at(Fd::cwd(), dest) {
@@ -286,6 +307,22 @@ impl CompileTarget {
         dest
     }
 
+<<<<<<< Updated upstream
+||||||| Stash base
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_sys::move_file_z
+    // TODO(b2-blocked): bun_sys::Dir::make_open_path
+    // TODO(b2-blocked): bun_sys::Dir::delete_tree
+    // TODO(b2-blocked): bun_core::fast_random
+    // TODO(b2-blocked): bun_paths::fs::FileSystem::tmpname
+=======
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_paths::fs::FileSystem::tmpname — currently only in
+    //   bun_resolver (T4+). Once moved down to bun_paths::fs (alongside the
+    //   top_level_dir singleton already there), this body compiles.
+    //   All other prior blockers (move_file_z, Dir::make_open_path,
+    //   Dir::delete_tree, fast_random) now exist.
+>>>>>>> Stashed changes
     pub fn download_to_path(
         &self,
         env: &mut bun_dotenv::Loader,
@@ -309,8 +346,15 @@ impl CompileTarget {
             refresher.refresh();
 
             // TODO: This is way too much code necessary to send a single HTTP request...
+<<<<<<< Updated upstream
             let mut compressed_archive_bytes =
                 Box::new(MutableString::init(24 * 1024 * 1024)?);
+||||||| Stash base
+            let mut compressed_archive_bytes =
+                Box::new(bun_core::MutableString::init(24 * 1024 * 1024)?);
+=======
+            let mut compressed_archive_bytes = Box::new(MutableString::init(24 * 1024 * 1024)?);
+>>>>>>> Stashed changes
             let mut url_buffer = [0u8; 2048];
             let url_str = match self.to_npm_registry_url(&mut url_buffer) {
                 Ok(s) => s,
@@ -322,6 +366,7 @@ impl CompileTarget {
             let url_str_copy: Box<[u8]> = Box::from(url_str);
             let url = bun_url::URL::parse(&url_str_copy);
             {
+<<<<<<< Updated upstream
                 // TODO(port): errdefer progress.end() — `start` returns `&mut Node`
                 // borrowing `refresher`, so a scopeguard capturing it would alias.
                 // Phase B: reshape with a guard that re-borrows on drop.
@@ -330,6 +375,19 @@ impl CompileTarget {
                 let reject_unauthorized = env.get_tls_reject_unauthorized();
                 let http_proxy: Option<bun_url::URL> = env.get_http_proxy_for(&url);
                 let progress = refresher.start(b"Downloading", 0);
+||||||| Stash base
+                let mut progress = refresher.start("Downloading", 0);
+                let _progress_guard = scopeguard::guard((), |_| progress.end());
+                // TODO(port): errdefer — progress captured by guard above conflicts with use below; Phase B reshape
+                let http_proxy: Option<bun_url::URL> = env.get_http_proxy_for(&url);
+=======
+                let reject_unauthorized = env.get_tls_reject_unauthorized();
+                let http_proxy: Option<bun_url::URL<'_>> = env.get_http_proxy_for(&url);
+                // PORT NOTE: reshaped for borrowck — `Progress::start` returns
+                // `&mut Node`, so the scopeguard `defer progress.end()` from Zig
+                // is collapsed to an explicit `.end()` after the request.
+                let progress = refresher.start(b"Downloading", 0);
+>>>>>>> Stashed changes
 
                 let status_code = unsafe {
                     (http_vt.get_sync)(
@@ -368,6 +426,7 @@ impl CompileTarget {
                 }
 
                 {
+<<<<<<< Updated upstream
                     // PORT NOTE: reshaped for borrowck — `refresher.start` borrows
                     // `refresher` mutably; do gunzip work first, drive progress around it.
                     refresher.start(b"Decompressing", 0);
@@ -384,6 +443,37 @@ impl CompileTarget {
                     })();
                     refresher.root.end();
                     if let Err(e) = gunzip_result {
+||||||| Stash base
+                    let mut node = refresher.start("Decompressing", 0);
+                    let mut gunzip = match bun_zlib::ZlibReaderArrayList::init(
+                        compressed_archive_bytes.list.as_slice(),
+                        &mut tarball_bytes,
+                    ) {
+                        Ok(g) => g,
+                        Err(_) => {
+                            node.end();
+                            // Return error without printing - let caller handle the messaging
+                            return Err(bun_core::err!("InvalidResponse"));
+                        }
+                    };
+                    if gunzip.read_all(true).is_err() {
+                        node.end();
+=======
+                    let node = refresher.start(b"Decompressing", 0);
+                    let mut gunzip = match bun_zlib::ZlibReaderArrayList::init(
+                        compressed_archive_bytes.list.as_slice(),
+                        &mut tarball_bytes,
+                    ) {
+                        Ok(g) => g,
+                        Err(_) => {
+                            node.end();
+                            // Return error without printing - let caller handle the messaging
+                            return Err(bun_core::err!("InvalidResponse"));
+                        }
+                    };
+                    if gunzip.read_all(true).is_err() {
+                        node.end();
+>>>>>>> Stashed changes
                         // Return error without printing - let caller handle the messaging
                         return Err(e);
                     }
@@ -391,14 +481,20 @@ impl CompileTarget {
                 refresher.refresh();
 
                 {
+<<<<<<< Updated upstream
                     refresher.start(b"Extracting", 0);
+||||||| Stash base
+                    let mut node = refresher.start("Extracting", 0);
+=======
+                    let node = refresher.start(b"Extracting", 0);
+>>>>>>> Stashed changes
                     // defer node.end() — see explicit calls below
-                    // TODO(port): scopeguard for node.end() conflicts with explicit node.end() in error arms
 
                     // Inlined `bun.fs.FileSystem.tmpname` (lives in bun_resolver,
                     // which is a higher tier — would form a cycle). Produces
                     // `.{hex(hash|nano)}-{hex(counter)}.tmp\0`.
                     let mut tmpname_buf = [0u8; 1024];
+<<<<<<< Updated upstream
                     let tempdir_name: &ZStr = {
                         use core::sync::atomic::AtomicU32;
                         static TMPNAME_ID: AtomicU32 = AtomicU32::new(0);
@@ -421,12 +517,36 @@ impl CompileTarget {
                     };
                     let tmpdir = bun_sys::Dir::cwd()
                         .make_open_path(tempdir_name.as_bytes(), Default::default())?;
+||||||| Stash base
+                    let tempdir_name = bun_fs::FileSystem::tmpname(
+                        b"tmp",
+                        &mut tmpname_buf,
+                        bun_core::fast_random(),
+                    )?;
+                    // TODO(port): std.fs.cwd().makeOpenPath / deleteTree — use bun_sys equivalents
+                    let tmpdir = bun_sys::Dir::cwd().make_open_path(tempdir_name)?;
+=======
+                    // TODO(b2-blocked): bun_paths::fs::FileSystem::tmpname
+                    let tempdir_name = bun_paths::fs::FileSystem::tmpname(
+                        b"tmp",
+                        &mut tmpname_buf,
+                        bun_core::fast_random(),
+                    )?;
+                    let tmpdir = bun_sys::Dir::cwd()
+                        .make_open_path(tempdir_name.as_bytes(), bun_sys::OpenDirOptions::default())?;
+>>>>>>> Stashed changes
                     let _cleanup = scopeguard::guard((), |_| {
                         let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name.as_bytes());
                     });
                     let extract_res = bun_libarchive::Archiver::extract_to_dir(
                         tarball_bytes.as_slice(),
+<<<<<<< Updated upstream
                         tmpdir.fd(),
+||||||| Stash base
+                        &tmpdir,
+=======
+                        tmpdir.fd,
+>>>>>>> Stashed changes
                         None,
                         &mut (),
                         bun_libarchive::ExtractOptions {
@@ -448,16 +568,33 @@ impl CompileTarget {
                         } else {
                             bun_core::zstr!("bun")
                         };
+<<<<<<< Updated upstream
                         let mv = bun_sys::move_file_z(
                             tmpdir.fd(),
                             src_name,
                             Fd::INVALID,
                             dest_z,
                         );
+||||||| Stash base
+                        let mv = bun_sys::move_file_z(
+                            Fd::from_std_dir(&tmpdir),
+                            src_name,
+                            bun_sys::INVALID_FD,
+                            dest_z,
+                        );
+=======
+                        let mv = bun_sys::move_file_z(tmpdir.fd, src_name, Fd::INVALID, dest_z);
+>>>>>>> Stashed changes
                         if mv.is_err() {
                             if !did_retry {
                                 did_retry = true;
+<<<<<<< Updated upstream
                                 let dirname = path::dirname_simple(dest_z.as_bytes());
+||||||| Stash base
+                                let dirname = path::dirname(dest_z.as_bytes(), path::Platform::Loose);
+=======
+                                let dirname = bun_paths::dirname(dest_z.as_bytes());
+>>>>>>> Stashed changes
                                 if !dirname.is_empty() {
                                     let _ = bun_sys::Dir::cwd().make_path(dirname);
                                     continue;

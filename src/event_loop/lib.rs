@@ -10,12 +10,28 @@ pub mod EventLoopTimer;
 
 // ────────────────────────────────────────────────────────────────────────────
 // B-2 un-gated: AnyEventLoop / SpawnSyncEventLoop / MiniEventLoop compile.
+<<<<<<< Updated upstream
 // All `` gates removed this pass — bun_uws_sys::Loop and
 // bun_core::Timespec are now real types. `InternalLoopData::set_parent_event_loop`
 // is reached via the lower-tier `set_parent_raw(tag, ptr)` +
 // `EventLoopHandle::into_tag_ptr()`. Windows-only `MiniVM::platform_event_loop`
 // (`uws::Loop::uv_loop`) remains `#[cfg(windows)]`-guarded with a
 // `TODO(b2-blocked)` marker; the POSIX build is gate-free.
+||||||| Stash base
+// Un-gated this pass: DeferredTaskQueue::run, MiniEventLoop::{stdout,stderr},
+// EventLoopHandle::create_null_delimited_env_map, both put_file_poll (via new
+// MINI_EVENT_LOOP_CTX_VTABLE adapter), AnyEventLoop::{tick,tick_once}.
+// Function bodies that touch still-gated lower-tier surface — bun_uws::Loop
+// methods/fields (the bun_uws_sys::Loop module is itself `#[cfg(any())]`-gated,
+// so Loop is opaque) and bun_core::Timespec — remain individually re-gated
+// with `// TODO(b2-blocked):` markers.
+=======
+// All `#[cfg(any())]` gates removed this pass — bun_uws_sys::Loop is now live
+// (iteration_number/inc/dec/ref_/unref/tick*/wakeup/get/create/destroy) and
+// bun_core::Timespec landed. InternalLoopData::set_parent_event_loop is still
+// higher-tier; both call sites use the lower-tier `set_parent_raw(tag, ptr)`
+// instead (tag 1 = jsc::EventLoop, tag 2 = MiniEventLoop).
+>>>>>>> Stashed changes
 // ────────────────────────────────────────────────────────────────────────────
 
 #[path = "MiniEventLoop.rs"]

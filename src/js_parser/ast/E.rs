@@ -91,11 +91,24 @@ impl Array {
         // This over-allocates a little but it's fine
         // PERF(port): Zig allocated in arena; Phase-A BabyList uses global allocator.
         let mut out: BabyList<Expr> =
+<<<<<<< Updated upstream
             BabyList::init_capacity(estimated_count + self.items.len as usize)?;
+||||||| Stash base
+            BabyList::init_capacity(bump, estimated_count + self.items.len() as usize)?;
+=======
+            BabyList::init_capacity(estimated_count + self.items.len() as usize)?;
+>>>>>>> Stashed changes
         out.expand_to_capacity();
+<<<<<<< Updated upstream
         // PORT NOTE: reshaped for borrowck — iterate items via index so the &mut
         // borrow of `out` (remain) does not overlap a shared borrow of `self`.
         let items_len = self.items.len as usize;
+||||||| Stash base
+=======
+        // PORT NOTE: reshaped for borrowck — iterate items via index so the &mut
+        // borrow of `out` (remain) does not overlap a shared borrow of `self`.
+        let items_len = self.items.len() as usize;
+>>>>>>> Stashed changes
         let mut remain = out.slice_mut();
         for idx in 0..items_len {
             let item = self.items.slice()[idx];
@@ -125,8 +138,15 @@ impl Array {
 
         // PORT NOTE: reshaped for borrowck — capture remain.len() before re-borrowing `out`.
         let remain_len = remain.len();
+<<<<<<< Updated upstream
         let new_len = out.len as usize - remain_len;
         out.shrink_retaining_capacity(new_len);
+||||||| Stash base
+        out.shrink_retaining_capacity(out.len() - u32::try_from(remain_len).unwrap());
+=======
+        let new_len = out.len() as usize - remain_len;
+        out.shrink_retaining_capacity(new_len);
+>>>>>>> Stashed changes
         Ok(out)
     }
 
@@ -134,6 +154,8 @@ impl Array {
     // PORTING.md (jsc extension trait lives in `js_parser_jsc` crate).
 
     /// Assumes each item in the array is a string
+    // TODO(b2-ast-round-C): depends on `EString::order` (gated EString impl).
+    #[cfg(any())]
     pub fn alphabetize_strings(&mut self) {
         if cfg!(debug_assertions) {
             for item in self.items.slice() {

@@ -385,6 +385,7 @@ dependencies = [
  "phf",
  "scopeguard",
  "strum",
+<<<<<<< Updated upstream
  "thiserror",
 ]
 
@@ -395,6 +396,10 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+||||||| Stash base
+=======
+ "thiserror",
+>>>>>>> Stashed changes
 ]
 
 [[package]]
@@ -453,8 +458,13 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_alloc",
+<<<<<<< Updated upstream
  "bun_core_macros",
  "bun_simdutf_sys",
+||||||| Stash base
+=======
+ "bun_simdutf_sys",
+>>>>>>> Stashed changes
  "const_format",
  "enum-map",
  "enumset",
@@ -802,8 +812,13 @@ dependencies = [
  "bun_http",
  "bun_http_types",
  "bun_io",
+<<<<<<< Updated upstream
  "bun_jsc",
  "bun_libdeflate_sys",
+||||||| Stash base
+=======
+ "bun_jsc",
+>>>>>>> Stashed changes
  "bun_ptr",
  "bun_string",
  "bun_uws",
@@ -852,10 +867,17 @@ dependencies = [
  "bun_base64",
  "bun_collections",
  "bun_core",
+<<<<<<< Updated upstream
  "bun_dotenv",
  "bun_install_types",
  "bun_interchange",
  "bun_js_parser",
+||||||| Stash base
+=======
+ "bun_dotenv",
+ "bun_install_types",
+ "bun_js_parser",
+>>>>>>> Stashed changes
  "bun_logger",
  "bun_string",
  "bun_sys",
@@ -1177,6 +1199,7 @@ dependencies = [
  "phf",
  "scopeguard",
  "strum",
+<<<<<<< Updated upstream
  "thiserror",
 ]
 
@@ -1187,6 +1210,10 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+||||||| Stash base
+=======
+ "thiserror",
+>>>>>>> Stashed changes
 ]
 
 [[package]]
@@ -1890,8 +1917,6 @@ dependencies = [
  "bun_base64",
  "bun_collections",
  "bun_core",
- "bun_interchange",
- "bun_io",
  "bun_logger",
  "bun_paths",
  "bun_ptr",
@@ -2203,8 +2228,13 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_core",
+<<<<<<< Updated upstream
  "bun_jsc",
  "bun_string",
+||||||| Stash base
+=======
+ "bun_string",
+>>>>>>> Stashed changes
  "bun_url",
  "const_format",
  "enum-map",
@@ -2358,8 +2388,13 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_core",
+<<<<<<< Updated upstream
  "bun_io",
  "bun_zlib_sys",
+||||||| Stash base
+=======
+ "bun_zlib_sys",
+>>>>>>> Stashed changes
  "const_format",
  "enum-map",
  "enumset",

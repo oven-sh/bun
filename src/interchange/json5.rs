@@ -490,6 +490,27 @@ impl<'a> JSON5Parser<'a> {
         Ok(result)
     }
 
+<<<<<<< Updated upstream
+||||||| Stash base
+    #[cfg(any())]
+=======
+    // TODO(b2-blocked): bun_logger::js_ast::{E, G, ExprNodeList}
+    //   parse_value/parse_object/parse_object_key/parse_array all construct
+    //   `E::String { data }` / `E::Number { value }` / `G::Property { key, .. }`
+    //   AST payloads; the T2 stub shapes are field-less `(())` newtypes, so
+    //   these bodies stay gated until the real `E`/`G` namespace lands in
+    //   `bun_logger::js_ast`. The non-gated `parse_value` below keeps the call
+    //   chain (`parse` → `parse_root` → `parse_value`) compiling.
+    #[cfg(not(any()))]
+    fn parse_value(&mut self) -> Result<Expr, ParseError> {
+        if !self.stack_check.is_safe_to_recurse() {
+            return Err(ParseError::StackOverflow);
+        }
+        todo!("b2-blocked: bun_logger::js_ast::E (parse_value)")
+    }
+
+    #[cfg(any())]
+>>>>>>> Stashed changes
     fn parse_value(&mut self) -> Result<Expr, ParseError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(ParseError::StackOverflow);

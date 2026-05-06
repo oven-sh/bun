@@ -251,10 +251,30 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
     }
 
     // TODO(port): narrow error set — Zig inferred error union includes Writer's error set.
+<<<<<<< Updated upstream
     pub fn read_all(&mut self, is_done: bool) -> Result<(), bun_core::Error>
     where
         W: bun_io::Write,
     {
+||||||| Stash base
+    // TODO(b2-blocked): bun_io::Write
+    // bun_io crate does not yet compile (tier-0) and lacks a `Write` trait. Per
+    // PORTING.md §anytype: byte writers use `&mut impl bun_io::Write`. Body preserved.
+    #[cfg(any())]
+    pub fn read_all(&mut self, is_done: bool) -> Result<(), bun_core::Error>
+    where
+        W: bun_io::Write, // trait must expose `write(&mut self, &[u8]) -> Result<usize, E>`
+    {
+=======
+    // TODO(b2-blocked): bun_io::Write — bun_io compiles but still lacks a `Write` trait.
+    // Per PORTING.md §anytype: byte writers use `&mut impl bun_io::Write`. Signature un-gated;
+    // body re-gated until `bun_io::Write` lands (then restore `where W: bun_io::Write`).
+    // Zig `NewZlibReader` has no in-tree callers, so the unbounded `W` is harmless meanwhile.
+    pub fn read_all(&mut self, is_done: bool) -> Result<(), bun_core::Error> {
+        let _ = is_done;
+        #[cfg(any())]
+        // where W: bun_io::Write — trait must expose `write(&mut self, &[u8]) -> Result<usize, E>`
+>>>>>>> Stashed changes
         while self.state == ZlibReaderState::Uninitialized || self.state == ZlibReaderState::Inflating {
             // Before the call of inflate(), the application should ensure
             // that at least one of the actions is possible, by providing

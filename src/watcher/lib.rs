@@ -10,12 +10,27 @@
 
 // ─── platform impls ───────────────────────────────────────────────────────
 //
+<<<<<<< Updated upstream
 // Each platform watcher is compiled only for its target. All three backends
 // are now un-gated against their respective `bun_sys` platform surfaces. The
 // Windows backend's `init()` body alone remains re-gated on lower-tier
 // symbols that have not landed (`bun_windows_sys::ntdll::NtCreateFile`,
 // `bun_windows_sys::FILE_OPEN`); see the `TODO(b2-blocked)` marker in
 // `WindowsWatcher.rs`. A host build never compiles the non-native backends.
+||||||| Stash base
+// Each platform watcher is compiled only for its target. The Linux backend
+// is fully un-gated; macOS/Windows backends keep small `#[cfg(any())]`
+// re-gates *inside their target cfg* where their lower-tier deps
+// (`bun_sys::c` kqueue bindings, `bun_sys::windows`) are themselves still
+// gated — a host build never sees them anyway.
+=======
+// Each platform watcher is compiled only for its target. The Linux and
+// macOS/FreeBSD backends are fully un-gated. The Windows backend keeps a
+// `#[cfg(any())]` re-gate *inside its target cfg* where the lower-tier
+// `bun_sys::windows` surface (OVERLAPPED, FILE_NOTIFY_INFORMATION,
+// ReadDirectoryChangesW, IOCP) is still missing — a host build never sees
+// it anyway.
+>>>>>>> Stashed changes
 
 #[cfg(target_os = "linux")]
 #[path = "INotifyWatcher.rs"]

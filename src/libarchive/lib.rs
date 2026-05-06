@@ -929,10 +929,26 @@ impl Archiver {
                                 };
                                 match bun_sys::symlinkat(link_target, dir_fd, path_z) {
                                     Ok(()) => {}
+<<<<<<< Updated upstream
                                     // PORT NOTE: Zig matched error.EPERM / error.ENOENT (errnoToZigErr maps 1:1).
+||||||| Stash base
+                                    // PORT NOTE: Zig matched error.AccessDenied / error.FileNotFound.
+=======
+                                    // PORT NOTE: Zig matched error.EPERM / error.ENOENT (raw errno via .unwrap()).
+>>>>>>> Stashed changes
                                     Err(err) => match err.get_errno() {
+<<<<<<< Updated upstream
                                         bun_sys::E::EPERM | bun_sys::E::ENOENT => {
                                             let dirname = bun_paths::dirname_simple(path_slice);
+||||||| Stash base
+                                        bun_sys::E::EACCES
+                                        | bun_sys::E::EPERM
+                                        | bun_sys::E::ENOENT => {
+                                            let dirname = bun_paths::dirname(path_slice);
+=======
+                                        bun_sys::E::EPERM | bun_sys::E::ENOENT => {
+                                            let dirname = bun_paths::dirname(path_slice);
+>>>>>>> Stashed changes
                                             if dirname.is_empty() {
                                                 return Err(err.into());
                                             }

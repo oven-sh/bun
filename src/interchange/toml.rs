@@ -255,6 +255,7 @@ impl<'a> TOML<'a> {
         Expr::init(t, loc)
     }
 
+<<<<<<< Updated upstream
     pub fn parse(
         source_: &'a logger::Source,
         log: &'a mut logger::Log,
@@ -271,7 +272,220 @@ impl<'a> TOML<'a> {
                 });
             }
             _ => {}
+||||||| Stash base
+    pub fn parse_key_segment(&mut self) -> Result<Option<Expr>, bun_core::Error> {
+        let loc = self.lexer.loc();
+
+        match self.lexer.token {
+            T::TStringLiteral => {
+                let str = self.lexer.to_string(loc);
+                self.lexer.next()?;
+                Ok(Some(str))
+            }
+            T::TIdentifier => {
+                let str = E::String { data: self.lexer.identifier };
+                self.lexer.next()?;
+                Ok(Some(self.e(str, loc)))
+            }
+            T::TFalse => {
+                self.lexer.next()?;
+                Ok(Some(self.e(E::String { data: b"false" }, loc)))
+            }
+            T::TTrue => {
+                self.lexer.next()?;
+                Ok(Some(self.e(E::String { data: b"true" }, loc)))
+            }
+            // what we see as a number here could actually be a string
+            T::TNumericLiteral => {
+                let literal = self.lexer.raw();
+                self.lexer.next()?;
+                Ok(Some(self.e(E::String { data: literal }, loc)))
+            }
+
+            _ => Ok(None),
         }
+    }
+
+    pub fn parse_key(&mut self, bump: &Bump) -> Result<&mut Rope, bun_core::Error> {
+        // TODO(port): lifetime — Zig returns `*Rope` allocated from `allocator`
+        // (a stack-fallback arena reset per-iteration). Here we allocate from the
+        // caller-provided bump and return `&mut Rope` borrowed from it.
+        let rope: &mut Rope = bump.alloc(Rope {
+            head: match self.parse_key_segment()? {
+                Some(seg) => seg,
+                None => {
+                    self.lexer.expected_string("key")?;
+                    return Err(bun_core::err!("SyntaxError"));
+                }
+            },
+            next: None,
+        });
+        let head: *mut Rope = rope;
+        let mut rope: *mut Rope = rope;
+
+        while self.lexer.token == T::TDot {
+            self.lexer.next()?;
+
+            let Some(seg) = self.parse_key_segment()? else { break };
+            // SAFETY: `rope` points into `bump` and is live for this call; we are
+            // the sole mutator. Raw pointers used to avoid stacked &mut reborrows.
+            // PORT NOTE: reshaped for borrowck
+            unsafe {
+                rope = (*rope).append(seg, bump)?;
+            }
+        }
+
+        // SAFETY: `head` was just allocated from `bump` above and is non-null.
+        Ok(unsafe { &mut *head })
+    }
+
+    pub fn parse(
+        source_: &logger::Source,
+        log: &'a mut logger::Log,
+        bump: &'a Bump,
+        redact_logs: bool,
+    ) -> Result<Expr, bun_core::Error> {
+        // TODO(port): narrow error set
+        match source_.contents.len() {
+            // This is to be consisntent with how disabled JS files are handled
+            0 => {
+                return Ok(Expr {
+                    loc: logger::Loc { start: 0 },
+                    data: Expr::init(E::Object::default(), logger::Loc::EMPTY).data,
+                });
+            }
+            _ => {}
+=======
+    pub fn parse(
+        source_: &logger::Source,
+        log: &'a mut logger::Log,
+        bump: &'a Bump,
+        redact_logs: bool,
+    ) -> Result<Expr, bun_core::Error> {
+        // TODO(port): narrow error set
+        match source_.contents.len() {
+            // This is to be consisntent with how disabled JS files are handled
+            0 => {
+                return Ok(Expr {
+                    loc: logger::Loc { start: 0 },
+                    data: Expr::init(E::Object::default(), logger::Loc::EMPTY).data,
+                });
+            }
+            _ => {}
+        }
+
+        // PORT NOTE: Zig copies the `Source` by value (`source_.*`); the T2
+        // `logger::Source` does not yet derive `Clone`, so reconstruct field-wise.
+        // All fields are `Copy`/`Clone`.
+        // TODO(port): drop once `bun_logger::Source` derives `Clone`.
+        let source_copy = logger::Source {
+            path: source_.path.clone(),
+            contents: source_.contents,
+            contents_is_recycled: source_.contents_is_recycled,
+            identifier_name: source_.identifier_name,
+            index: source_.index,
+        };
+        let mut parser = TOML::init(bump, source_copy, log, redact_logs)?;
+
+        parser.run_parser()
+    }
+
+    pub fn parse_maybe_trailing_comma(&mut self, closer: T) -> Result<bool, bun_core::Error> {
+        // TODO(port): narrow error set
+        self.lexer.expect(T::t_comma)?;
+
+        if self.lexer.token == closer {
+            return Ok(false);
+        }
+
+        Ok(true)
+    }
+
+    // ── AST-producing methods ──────────────────────────────────────────────
+    // TODO(b2-blocked): bun_logger::js_ast::{E::*, e::object::Rope, ExprData}
+    //   Everything below constructs `E::String { data }` / `E::Number { value }`
+    //   / `E::Object` / `E::Array` payloads and threads `Rope`. The T2 stub
+    //   shapes are field-less `(())` newtypes, so these bodies stay gated until
+    //   the real `E` namespace lands in `bun_logger::js_ast`.
+
+    #[cfg(any())]
+    pub fn parse_key_segment(&mut self) -> Result<Option<Expr>, bun_core::Error> {
+        let loc = self.lexer.loc();
+
+        match self.lexer.token {
+            T::TStringLiteral => {
+                let str = self.lexer.to_string(loc);
+                self.lexer.next()?;
+                Ok(Some(str))
+            }
+            T::TIdentifier => {
+                let str = E::String { data: self.lexer.identifier };
+                self.lexer.next()?;
+                Ok(Some(self.e(str, loc)))
+            }
+            T::TFalse => {
+                self.lexer.next()?;
+                Ok(Some(self.e(E::String { data: b"false" }, loc)))
+            }
+            T::TTrue => {
+                self.lexer.next()?;
+                Ok(Some(self.e(E::String { data: b"true" }, loc)))
+            }
+            // what we see as a number here could actually be a string
+            T::TNumericLiteral => {
+                let literal = self.lexer.raw();
+                self.lexer.next()?;
+                Ok(Some(self.e(E::String { data: literal }, loc)))
+            }
+
+            _ => Ok(None),
+        }
+    }
+
+    #[cfg(any())]
+    pub fn parse_key(&mut self, bump: &Bump) -> Result<&mut Rope, bun_core::Error> {
+        // TODO(port): lifetime — Zig returns `*Rope` allocated from `allocator`
+        // (a stack-fallback arena reset per-iteration). Here we allocate from the
+        // caller-provided bump and return `&mut Rope` borrowed from it.
+        let rope: &mut Rope = bump.alloc(Rope {
+            head: match self.parse_key_segment()? {
+                Some(seg) => seg,
+                None => {
+                    self.lexer.expected_string("key")?;
+                    return Err(bun_core::err!("SyntaxError"));
+                }
+            },
+            next: None,
+        });
+        let head: *mut Rope = rope;
+        let mut rope: *mut Rope = rope;
+
+        while self.lexer.token == T::TDot {
+            self.lexer.next()?;
+
+            let Some(seg) = self.parse_key_segment()? else { break };
+            // SAFETY: `rope` points into `bump` and is live for this call; we are
+            // the sole mutator. Raw pointers used to avoid stacked &mut reborrows.
+            // PORT NOTE: reshaped for borrowck
+            unsafe {
+                rope = (*rope).append(seg, bump)?;
+            }
+        }
+
+        // SAFETY: `head` was just allocated from `bump` above and is non-null.
+        Ok(unsafe { &mut *head })
+    }
+
+    fn run_parser(&mut self) -> Result<Expr, bun_core::Error> {
+        // TODO(b2-blocked): bun_logger::js_ast::{E, ExprData, e::object::Rope}
+        #[cfg(any())]
+        return self.run_parser_impl();
+        #[allow(unreachable_code)]
+        {
+            todo!("b2-blocked: bun_logger::js_ast::E (run_parser)")
+>>>>>>> Stashed changes
+        }
+<<<<<<< Updated upstream
 
         // PORT NOTE: Zig copies the `Source` by value (`source_.*`). The Rust
         // `Lexer` borrows it (`&'a Source`) so `identifier`/`string_literal_slice`
@@ -280,8 +494,16 @@ impl<'a> TOML<'a> {
         let mut parser = TOML::init(bump, source_, log, redact_logs)?;
 
         parser.run_parser()
+||||||| Stash base
+
+        let mut parser = TOML::init(bump, source_.clone(), log, redact_logs)?;
+
+        parser.run_parser()
+=======
+>>>>>>> Stashed changes
     }
 
+<<<<<<< Updated upstream
     pub fn parse_maybe_trailing_comma(&mut self, closer: T) -> Result<bool, bun_core::Error> {
         // TODO(port): narrow error set
         self.lexer.expect(T::t_comma)?;
@@ -364,6 +586,16 @@ impl<'a> TOML<'a> {
     fn run_parser(&mut self) -> Result<Expr, bun_core::Error> {
         let root = self.e(E::Object::default(), self.lexer.loc());
         let mut head: *mut E::Object = root.data.e_object().unwrap().as_ptr();
+||||||| Stash base
+    fn run_parser(&mut self) -> Result<Expr, bun_core::Error> {
+        let mut root = self.e(E::Object::default(), self.lexer.loc());
+        let mut head: *mut E::Object = root.data.e_object();
+=======
+    #[cfg(any())]
+    fn run_parser_impl(&mut self) -> Result<Expr, bun_core::Error> {
+        let mut root = self.e(E::Object::default(), self.lexer.loc());
+        let mut head: *mut E::Object = root.data.e_object();
+>>>>>>> Stashed changes
         // TODO(port): `head` aliases into `root.data`; using raw pointer to mirror
         // the Zig `*E.Object` and sidestep overlapping &mut on `root`.
 
@@ -445,6 +677,7 @@ impl<'a> TOML<'a> {
         }
     }
 
+    #[cfg(any())]
     pub fn parse_assignment(
         &mut self,
         obj: &mut E::Object,
@@ -490,6 +723,7 @@ impl<'a> TOML<'a> {
         Ok(())
     }
 
+    #[cfg(any())]
     pub fn parse_value(&mut self) -> Result<Expr, bun_core::Error> {
         if !self.stack_check.is_safe_to_recurse() {
             // Zig: `bun.throwStackOverflow()`.

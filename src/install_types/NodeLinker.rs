@@ -198,17 +198,44 @@ impl From<FromExprError> for bun_core::Error {
 }
 
 impl PnpmMatcher {
+<<<<<<< Updated upstream
     // B-2 UN-GATED: bun_logger::ast::ExprData now exposes the real value-shaped
     // enum (`EString`/`EArray` via `StoreRef<E::*>`). `match` arms reconciled
     // against the arena-taking `E::String::slice` / `Expr::as_string_cloned`
     // signatures — Zig's `allocator` param maps to a local `bun_alloc::Arena`
     // (PORTING.md §Allocators: AST=bumpalo) used only for transient UTF-16→UTF-8
     // transcoding inside `slice`/`string_cloned`.
+||||||| Stash base
+    // TODO(b2-blocked): bun_logger::ast::Expr / bun_logger::ast::ExprData —
+    // EString/EArray/.as_string_cloned/.slice/.loc have not yet moved down
+    // from bun_js_parser into bun_logger per CYCLEBREAK §→logger. The fn
+    // signature itself names `ast::Expr`, so the whole fn (not just the body)
+    // stays gated until that lower-tier surface lands. Body is otherwise
+    // reconciled against the live `bun_logger::{Log, Source, AddErrorOptions}`
+    // API so un-gating only needs the `ast` import.
+    #[cfg(any())]
+=======
+    // B-2: signature un-gated — `bun_logger::ast::Expr { loc, data }` now
+    // exists (CYCLEBREAK §→logger landed the type-only stub). Body remains
+    // gated: `ast::ExprData` is still an opaque `struct(())` placeholder, so
+    // the `EString`/`EArray` match arms and `Expr::as_string_cloned` /
+    // `E::String::slice` / `E::Array::slice` cannot resolve until the real
+    // tagged-union port arrives in bun_logger. Body is otherwise reconciled
+    // against the live `bun_logger::{Log, Source, AddErrorOptions}` API so
+    // un-gating only needs the `ExprData` enum surface.
+>>>>>>> Stashed changes
     pub fn from_expr(
         expr: &ast::Expr,
         log: &mut logger::Log,
         source: &logger::Source,
     ) -> Result<PnpmMatcher, FromExprError> {
+        #![allow(unreachable_code)]
+        #[cfg(any())]
+        // TODO(b2-blocked): bun_logger::ast::ExprData (enum variants EString/EArray)
+        // TODO(b2-blocked): bun_logger::ast::Expr::as_string_cloned
+        // TODO(b2-blocked): bun_logger::ast::E::String::slice
+        // TODO(b2-blocked): bun_logger::ast::E::Array::slice
+        {
         let mut buf: Vec<u8> = Vec::new();
         // Scratch arena for `E::String::slice` / `as_string_cloned` (Zig passed
         // `allocator`). Freed on return; the patterns are consumed by
@@ -310,10 +337,13 @@ impl PnpmMatcher {
             Behavior::HasExcludeAndIncludeMatchers
         };
 
-        Ok(PnpmMatcher {
+        return Ok(PnpmMatcher {
             matchers: matchers.into_boxed_slice(),
             behavior,
-        })
+        });
+        } // end #[cfg(any())]
+        let _ = (expr, log, source);
+        Err(FromExprError::UnexpectedExpr)
     }
 
     pub fn is_match(&self, name: &[u8]) -> bool {

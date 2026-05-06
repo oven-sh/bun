@@ -74,9 +74,26 @@ impl<T: fmt::Display> Err<T> {
         log: &mut logger::Log,
         source: &logger::Source,
     ) -> Result<(), bun_core::Error> {
+<<<<<<< Updated upstream
         use std::io::Write as _;
         let mut text: Vec<u8> = Vec::new();
         write!(&mut text, "{}", self.kind).map_err(|_| bun_core::err!("WriteFailed"))?;
+||||||| Stash base
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): bun_logger::Data — `text` field is currently
+            // `&'static [u8]`; logger.rs already notes Phase B must retype it
+            // to `Box<[u8]>`. Un-gate once that lands (cannot Box::leak per
+            // PORTING.md §Forbidden).
+            use std::io::Write as _;
+            let mut text: Vec<u8> = Vec::new();
+            write!(&mut text, "{}", self.kind).map_err(|_| bun_core::err!("WriteFailed"))?;
+=======
+        use std::borrow::Cow;
+        use std::io::Write as _;
+        let mut text: Vec<u8> = Vec::new();
+        write!(&mut text, "{}", self.kind).map_err(|_| bun_core::err!("WriteFailed"))?;
+>>>>>>> Stashed changes
 
         log.add_msg(logger::Msg {
             kind: logger::Kind::Err,
@@ -85,10 +102,20 @@ impl<T: fmt::Display> Err<T> {
                     Some(loc) => Some(loc.to_location(source)?),
                     None => None,
                 },
+<<<<<<< Updated upstream
                 text: text.into(),
             },
             ..Default::default()
         })?;
+||||||| Stash base
+                ..Default::default()
+            })?;
+=======
+                text: Cow::Owned(text),
+            },
+            ..Default::default()
+        })?;
+>>>>>>> Stashed changes
 
         log.errors += 1;
         Ok(())

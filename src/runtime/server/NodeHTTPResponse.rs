@@ -1351,7 +1351,7 @@ impl NodeHTTPResponse {
             return Ok(if IS_END {
                 JSValue::UNDEFINED
             } else {
-                JSValue::js_number(0)
+                JSValue::js_number_from_int32(0)
             });
         }
 

@@ -4535,16 +4535,18 @@ pub fn server_set_idle_timeout_(server: JSValue, seconds: JSValue, global: &JSGl
 
 pub fn server_set_on_client_error_(global: &JSGlobalObject, server: JSValue, callback: JSValue) -> JsResult<JSValue> {
     if !server.is_object() {
-        return global.throw(format_args!("Failed to set clientError: The 'this' value is not a Server."));
+        return Err(global.throw(format_args!("Failed to set clientError: The 'this' value is not a Server.")));
     }
 
     if !callback.is_function() {
-        return global.throw(format_args!("Failed to set clientError: The provided value is not a function."));
+        return Err(global.throw(format_args!("Failed to set clientError: The provided value is not a function.")));
     }
 
     macro_rules! handle {
         ($T:ty) => {
             if let Some(this) = server.as_::<$T>() {
+                // SAFETY: as_ returned a non-null *mut to a live server.
+                let this = unsafe { &mut *this };
                 if let Some(app) = this.app {
                     this.on_clienterror.deinit();
                     this.on_clienterror = Strong::create(callback, global);

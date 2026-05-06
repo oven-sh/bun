@@ -2386,25 +2386,28 @@ impl<const SSL: bool> NewSocket<SSL> {
         // adopt; the old `isDetached()/isNamedPipe()` guard let those
         // through and the `.connected` payload read below would then be
         // illegal-union-access on a `.connecting` socket.
-        let Some(raw_socket) = this.socket.socket.get() else {
-            return global
-                .throw_invalid_arguments("upgradeTLS requires an established socket", ());
+        // PORT NOTE: Zig `InternalSocket.get()` returns `?*us_socket_t` (Some
+        // only for `.connected`); inline the match here since the Rust
+        // `bun_uws::InternalSocket` lacks `get()`.
+        let uws::InternalSocket::Connected(raw_socket) = this.socket.socket else {
+            return Err(global
+                .throw_invalid_arguments("upgradeTLS requires an established socket"));
         };
         if this.is_server() {
-            return global.throw("Server-side upgradeTLS is not supported. Use upgradeDuplexToTLS with isServer: true instead.", ());
+            return Err(global.throw("Server-side upgradeTLS is not supported. Use upgradeDuplexToTLS with isServer: true instead."));
         }
 
-        let args = callframe.arguments_old(1);
-        if args.len() < 1 {
-            return global.throw("Expected 1 arguments", ());
+        let args = callframe.arguments_old::<1>();
+        if args.len < 1 {
+            return Err(global.throw("Expected 1 arguments"));
         }
-        let opts = args.ptr()[0];
+        let opts = args.ptr[0];
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
-            return global.throw("Expected options object", ());
+            return Err(global.throw("Expected options object"));
         }
 
         let socket_obj = opts.get(global, "socket")?.ok_or_else(|| {
-            global.throw_err("Expected \"socket\" option", ())
+            global.throw("Expected \"socket\" option")
         })?;
         if global.has_exception() {
             return Ok(JSValue::ZERO);

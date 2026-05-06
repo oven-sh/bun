@@ -462,7 +462,7 @@ fn cpus_impl_darwin(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
         )
     } != 0
     {
-        return Err(bun_core::err!("no_processor_info"));
+        return Err(OsError::Any);
     }
     let _dealloc = scopeguard::guard((), |_| {
         // SAFETY: info/info_size returned by host_processor_info

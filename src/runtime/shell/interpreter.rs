@@ -401,51 +401,50 @@ impl Interpreter {
     // live in `shell_body.rs` (gated). Body preserved verbatim below; until
     // un-gated this returns `ParseUnavailable` so the standalone-shell path
     // surfaces a clear error instead of UB-walking an empty AST.
-    #[allow(unused_variables)]
-    pub fn parse(
-        arena: &bun_alloc::Arena,
-        src: &[u8],
-        jsobjs: &[crate::jsc::JSValue],
-        out_lex_err: &mut Option<Box<[u8]>>,
-        out_parse_err: &mut Option<Box<[u8]>>,
+    pub fn parse<'a>(
+        arena: &'a bun_alloc::Arena,
+        src: &'a [u8],
+        jsobjs: &'a mut [crate::jsc::JSValue],
+        jsstrings_to_escape: &'a mut [bun_str::String],
+        out_parser: &mut Option<bun_shell_parser::Parser<'a>>,
+        out_lex_result: &mut Option<bun_shell_parser::LexResult<'a>>,
     ) -> Result<ast::Script, bun_core::Error> {
-        
-        {
-            use crate::shell::shell_body::{LexerAscii, LexerUnicode, ParseError, Parser};
-            let jsobjs_len = jsobjs.len() as u32;
-            let lex_result = if bun_core::strings::is_all_ascii(src) {
-                let mut lexer = LexerAscii::new(arena, src, &[], jsobjs_len);
-                lexer.lex()?;
-                lexer.get_result()
-            } else {
-                let mut lexer = LexerUnicode::new(arena, src, &[], jsobjs_len);
-                lexer.lex()?;
-                lexer.get_result()
-            };
-            if !lex_result.errors.is_empty() {
-                *out_lex_err = Some(lex_result.combine_errors(arena));
-                return Err(ParseError::Lex.into());
-            }
-            let mut parser = Parser::new(arena, lex_result, jsobjs)?;
-            match parser.parse() {
-                // `bun_shell_parser::ast::Script<'arena>` → `shell::ast::Script`:
-                // the local `ast` module (see `shell/mod.rs`) is a lifetime-
-                // erased, layout-compatible mirror so state nodes can hold
-                // `*const ast::*` into the arena without threading `'arena`.
-                Ok(script) => Ok(unsafe {
-                    core::mem::transmute::<
-                        crate::shell::shell_body::AST::Script<'_>,
-                        ast::Script,
-                    >(script)
-                }),
-                Err(e) => {
-                    *out_parse_err = Some(parser.combine_errors());
-                    Err(e)
-                }
-            }
+        use crate::shell::shell_body::{LexerAscii, LexerUnicode, ParseError, Parser};
+        let jsobjs_len = jsobjs.len() as u32;
+        let lex_result = if bun_core::strings::is_all_ascii(src) {
+            let mut lexer = LexerAscii::new(arena, src, jsstrings_to_escape, jsobjs_len);
+            lexer.lex().map_err(|e| bun_core::err!(from e))?;
+            lexer.get_result()
+        } else {
+            let mut lexer = LexerUnicode::new(arena, src, jsstrings_to_escape, jsobjs_len);
+            lexer.lex().map_err(|e| bun_core::err!(from e))?;
+            lexer.get_result()
+        };
+        if !lex_result.errors.is_empty() {
+            *out_lex_result = Some(lex_result);
+            return Err(ParseError::Lex.into());
         }
-        #[cfg(any())]
-        Err(bun_core::err!("ParseUnavailable"))
+        // SAFETY: `bun_jsc::JSValue` and `bun_shell_parser::JSValueRaw` are both
+        // `#[repr(transparent)]` over `usize` — see the `JSValueRaw` doc in
+        // `shell_parser/parse.rs`, which sanctions exactly this transmute.
+        let jsobjs_raw: &'a mut [bun_shell_parser::JSValueRaw] = unsafe {
+            core::mem::transmute::<
+                &'a mut [crate::jsc::JSValue],
+                &'a mut [bun_shell_parser::JSValueRaw],
+            >(jsobjs)
+        };
+        *out_parser = Some(Parser::new(arena, lex_result, jsobjs_raw)?);
+        let script = out_parser.as_mut().unwrap().parse()?;
+        // `bun_shell_parser::ast::Script<'arena>` → `shell::ast::Script`:
+        // the local `ast` module (see `shell/mod.rs`) is a lifetime-
+        // erased, layout-compatible mirror so state nodes can hold
+        // `*const ast::*` into the arena without threading `'arena`.
+        Ok(unsafe {
+            core::mem::transmute::<
+                crate::shell::shell_body::AST::Script<'_>,
+                ast::Script,
+            >(script)
+        })
     }
 
     /// Spec: interpreter.zig `ThisInterpreter.init` + `initImpl`.

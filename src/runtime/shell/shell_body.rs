@@ -5627,17 +5627,18 @@ pub mod testing_apis {
         Ok(bun_str.to_js(global))
     }
 
-    pub const SHELL_PARSE: jsc::JSHostFn = jsc::MarkedArgumentBuffer::wrap(shell_parse_impl);
+    pub const SHELL_PARSE: jsc::JSHostFn = marked_arg_buffer_wrap(shell_parse_impl);
 
     fn shell_parse_impl(
         global: &JSGlobalObject,
         callframe: &CallFrame,
         marked_argument_buffer: &mut MarkedArgumentBuffer,
     ) -> JsResult<JSValue> {
-        let arguments_ = callframe.arguments_old(2);
-        let mut arguments =
-            jsc::CallFrame::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
-        let string_args = match arguments.next_eat() {
+        let arguments_ = callframe.arguments_old::<2>();
+        // SAFETY: bun_vm() is non-null for a Bun-owned global.
+        let vm = unsafe { &*global.bun_vm() };
+        let mut arguments = jsc::ArgumentsSlice::init(vm, arguments_.slice());
+        let string_args: JSValue = match arguments.next_eat() {
             Some(s) => s,
             None => {
                 return Err(global.throw(format_args!(

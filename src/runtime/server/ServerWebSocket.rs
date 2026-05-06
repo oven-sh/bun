@@ -1423,9 +1423,9 @@ impl ServerWebSocket {
     pub fn terminate(
         &mut self,
         _global_this: &JSGlobalObject,
-        _callframe: &CallFrame,
-        _this_value: JSValue,
+        callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _this_value = callframe.this();
         bun_output::scoped_log!(WebSocketServer, "terminate()");
 
         if self.is_closed() {

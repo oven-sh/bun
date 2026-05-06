@@ -63,6 +63,13 @@ trait JSGlobalObjectDnsExt {
         expected: usize,
         got: usize,
     ) -> JsResult<JSValue>;
+    fn throw_invalid_argument_property_value(
+        &self,
+        name: &str,
+        expected: &str,
+        value: JSValue,
+    ) -> JsResult<JSValue>;
+    fn throw_invalid_argument_value(&self, name: &str, value: JSValue) -> JsResult<JSValue>;
 }
 impl JSGlobalObjectDnsExt for JSGlobalObject {
     fn throw_not_enough_arguments(
@@ -74,6 +81,50 @@ impl JSGlobalObjectDnsExt for JSGlobalObject {
         Err(self.throw_invalid_arguments(format_args!(
             "Not enough arguments to '{name_}'. Expected {expected}, got {got}."
         )))
+    }
+    fn throw_invalid_argument_property_value(
+        &self,
+        name: &str,
+        expected: &str,
+        value: JSValue,
+    ) -> JsResult<JSValue> {
+        let _ = value;
+        Err(self.throw_invalid_arguments(format_args!(
+            "The \"{name}\" property must be {expected}."
+        )))
+    }
+    fn throw_invalid_argument_value(&self, name: &str, value: JSValue) -> JsResult<JSValue> {
+        let _ = value;
+        Err(self.throw_invalid_arguments(format_args!(
+            "The value of \"{name}\" is invalid."
+        )))
+    }
+}
+
+/// `JSValue::to_port_number` shim — upstream method is cfg-gated.
+pub(crate) trait JSValueDnsExt {
+    fn to_port_number(self, global: &JSGlobalObject) -> JsResult<u16>;
+}
+impl JSValueDnsExt for JSValue {
+    fn to_port_number(self, global: &JSGlobalObject) -> JsResult<u16> {
+        let _ = global;
+        // TODO(port): match Node's `validatePort` semantics once
+        // bun_jsc::JSValue::coerce_to_int32 lands at this tier.
+        todo!("blocked_on: bun_jsc::JSValue::to_port_number")
+    }
+}
+
+/// Helper: fetch the per-VM global DNS resolver. Splits the double `&mut`
+/// borrow (`rare_data()` + `global_dns_resolver(vm)`) via raw pointers since
+/// `bun_vm()` already returns `*mut VirtualMachine`.
+#[inline]
+pub(crate) fn global_resolver_mut(global_this: &JSGlobalObject) -> &mut Resolver {
+    let vm_ptr = global_this.bun_vm();
+    // SAFETY: `bun_vm()` returns the live VM back-ptr; RareData is owned by it
+    // and outlives this call. The two `&mut *vm_ptr` derefs are sequenced.
+    unsafe {
+        let rare: *mut _ = (*vm_ptr).rare_data();
+        (*rare).global_dns_resolver(&mut *vm_ptr)
     }
 }
 
@@ -4179,6 +4230,19 @@ macro_rules! resolve_record_fn {
             this.do_resolve_cares::<$ty>(name.slice(), global_this)
         }
     };
+}
+
+// `c_ares::Channel::init` requires this to wire the socket-state callback and
+// hand the allocated channel pointer back into `self.channel`.
+impl c_ares::ChannelContainer for Resolver {
+    #[inline]
+    fn on_dns_socket_state(&mut self, socket: c_ares::ares_socket_t, readable: bool, writable: bool) {
+        Resolver::on_dns_socket_state(self, socket, readable, writable);
+    }
+    #[inline]
+    fn set_channel(&mut self, channel: *mut c_ares::Channel) {
+        self.channel = Some(channel);
+    }
 }
 
 impl Resolver {

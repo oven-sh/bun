@@ -480,17 +480,19 @@ unsafe extern "C" {
 // =============================================================================
 
 impl SocketAddress {
-    #[bun_jsc::host_fn(getter)]
+    // PORT NOTE: `host_fn(getter)` shim passes `&Self`, but this getter mutates
+    // `_presentation` via `address()`; until the macro grows a `getter_mut`
+    // variant the shim is omitted (codegen owns the actual link name).
     pub fn get_address(this: &mut Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         // toJS increments ref count
         let addr_ = this.address();
         Ok(match addr_.tag() {
             bun_str::Tag::Dead => unreachable!(),
             bun_str::Tag::Empty => match this.family() {
-                AF::INET => global.common_strings().loopback_127_0_0_1(),
+                AF::INET => global.common_strings().in4_loopback(),
                 AF::INET6 => global.common_strings().in6_any(),
             },
-            _ => addr_.to_js(global),
+            _ => addr_.to_js(global)?,
         })
     }
 

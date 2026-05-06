@@ -1743,10 +1743,9 @@ impl<S: GraphSide> IncrementalGraph<S> {
                 let g: &mut IncrementalGraph<Client> =
                     unsafe { &mut *(self as *mut Self as *mut IncrementalGraph<Client>) };
                 let file = g.get_file_by_index(file_index);
-                let dev = g.owner();
                 if file.is_hmr_root {
                     let key = g.bundled_files.keys()[file_index.get() as usize].clone();
-                    let _ = (&key, &dev.server_graph, gts, goal);
+                    let _ = (&key, &g.owner().server_graph, &mut *gts, goal);
                     // TODO(port): blocked_on: dev_server::incremental_graph::IncrementalGraph::get_file_index/trace_dependencies
                 } else if let Some(route_bundle_index) = file.html_route_bundle_index {
                     // If the HTML file itself was modified, or an asset was

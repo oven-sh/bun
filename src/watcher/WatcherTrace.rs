@@ -62,7 +62,7 @@ pub fn write_events(watcher: &Watcher, events: &[WatchEvent], changed_files: &[C
                 let n = c.position() as usize;
                 core::str::from_utf8(&name_buf[..n]).unwrap_or("WriteFailed")
             };
-            output::err(name, format_args!("Failed to flush watcher trace file"));
+            output::err(name, "Failed to flush watcher trace file", ());
         }
     });
 

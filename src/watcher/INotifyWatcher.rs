@@ -321,11 +321,8 @@ impl INotifyWatcher {
                         if cfg!(debug_assertions) {
                             Output::err(
                                 "EINVAL",
-                                format_args!(
-                                    "inotify read({}, {})",
-                                    self.fd,
-                                    self.eventlist_bytes.0.len()
-                                ),
+                                "inotify read({}, {})",
+                                (self.fd, self.eventlist_bytes.0.len()),
                             );
                         }
                         return Err(bun_sys::Error {

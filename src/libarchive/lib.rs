@@ -909,14 +909,16 @@ impl Archiver {
                                 ) {
                                     // Skip symlinks that would escape the extraction directory
                                     if options.log {
-                                        Output::warn(format_args!(
+                                        Output::warn(
                                             "Skipping symlink with unsafe target: {} -> {}\n",
-                                            bun_core::fmt::fmt_os_path(
-                                                path_slice,
-                                                Default::default()
+                                            (
+                                                bun_core::fmt::fmt_os_path(
+                                                    path_slice,
+                                                    Default::default(),
+                                                ),
+                                                bstr::BStr::new(link_target.as_bytes()),
                                             ),
-                                            bstr::BStr::new(link_target.as_bytes()),
-                                        ));
+                                        );
                                     }
                                     continue;
                                 }
@@ -1120,11 +1122,11 @@ impl Archiver {
                                             if options.log {
                                                 Output::err(
                                                     "libarchive error",
-                                                    format_args!(
-                                                        "extracting {}, retry {} / {}",
+                                                    "extracting {}, retry {} / {}",
+                                                    (
                                                         bun_core::fmt::fmt_os_path(
                                                             path_slice,
-                                                            Default::default()
+                                                            Default::default(),
                                                         ),
                                                         retries_remaining,
                                                         5,
@@ -1139,11 +1141,11 @@ impl Archiver {
                                                 );
                                                 Output::err(
                                                     "libarchive error",
-                                                    format_args!(
-                                                        "extracting {}: {}",
+                                                    "extracting {}: {}",
+                                                    (
                                                         bun_core::fmt::fmt_os_path(
                                                             path_slice,
-                                                            Default::default()
+                                                            Default::default(),
                                                         ),
                                                         bstr::BStr::new(archive_error),
                                                     ),

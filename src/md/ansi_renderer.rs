@@ -2243,7 +2243,7 @@ fn is_js_lang(lang: &[u8]) -> bool {
         b"ts", b"typescript", b"tsx", b"mts", b"cts",
     ];
     for n in NAMES {
-        if strings::eql_case_insensitive_ascii::<true>(lang, n) {
+        if strings::eql_case_insensitive_ascii(lang, n, true) {
             return true;
         }
     }
@@ -2316,7 +2316,7 @@ pub fn detect_kitty_graphics() -> bool {
     // TERM=dumb is the standard opt-out for any ESC handling — bail
     // before any env match or probe runs.
     if let Some(term) = bun_core::getenv_z(bun_core::zstr!("TERM")) {
-        if strings::eql_case_insensitive_ascii::<true>(term, b"dumb") {
+        if strings::eql_case_insensitive_ascii(term, b"dumb", true) {
             return false;
         }
     }
@@ -2336,10 +2336,10 @@ pub fn detect_kitty_graphics() -> bool {
         }
     }
     if let Some(tp) = bun_core::getenv_z(bun_core::zstr!("TERM_PROGRAM")) {
-        if strings::eql_case_insensitive_ascii::<true>(tp, b"wezterm") {
+        if strings::eql_case_insensitive_ascii(tp, b"wezterm", true) {
             return true;
         }
-        if strings::eql_case_insensitive_ascii::<true>(tp, b"ghostty") {
+        if strings::eql_case_insensitive_ascii(tp, b"ghostty", true) {
             return true;
         }
     }

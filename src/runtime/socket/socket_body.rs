@@ -16,11 +16,58 @@ use bun_collections::BabyList;
 use bun_core::{self, fmt as bun_fmt};
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, Strong, SystemError,
-    VirtualMachine,
 };
+// `bun_jsc::VirtualMachine` is the *module* (alias of `virtual_machine`); name the
+// struct directly so `VirtualMachine::get()` resolves as an associated fn.
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_str::{self as bstr, String as BunString, ZigString, ZStr};
 use bun_sys as sys;
 use bun_uws as uws;
+use bun_boringssl_sys as boringssl_sys;
+use bun_event_loop::AnyTask::AnyTask;
+use crate::node::{StringOrBuffer, BlobOrStringOrBuffer};
+use crate::socket::SSLConfig;
+use crate::crypto::boringssl_jsc::err_to_js as boringssl_err_to_js;
+use super::upgraded_duplex::{UpgradedDuplex, Handlers as UpgradedDuplexHandlers};
+
+// ── BoringSSL FFI not yet surfaced in `bun_boringssl_sys` — declared locally
+// (mirrors `extern fn`s in `boringssl.zig`).
+mod boringssl_ffi {
+    use core::ffi::{c_int, c_uint, c_void};
+    use bun_boringssl_sys::{SSL, SSL_CTX};
+    pub const SSL_TLSEXT_ERR_OK: c_int = 0;
+    pub const SSL_TLSEXT_ERR_ALERT_FATAL: c_int = 2;
+    pub const SSL_TLSEXT_ERR_NOACK: c_int = 3;
+    pub const OPENSSL_NPN_NEGOTIATED: c_int = 1;
+    unsafe extern "C" {
+        pub fn SSL_get_ex_data(ssl: *const SSL, idx: c_int) -> *mut c_void;
+        pub fn SSL_set_ex_data(ssl: *mut SSL, idx: c_int, data: *mut c_void) -> c_int;
+        pub fn SSL_get_SSL_CTX(ssl: *const SSL) -> *mut SSL_CTX;
+        pub fn SSL_select_next_proto(
+            out: *mut *mut u8,
+            outlen: *mut u8,
+            server: *const u8,
+            server_len: c_uint,
+            client: *const u8,
+            client_len: c_uint,
+        ) -> c_int;
+        pub fn SSL_CTX_set_alpn_select_cb(
+            ctx: *mut SSL_CTX,
+            cb: Option<
+                unsafe extern "C" fn(
+                    *mut SSL,
+                    *mut *const u8,
+                    *mut u8,
+                    *const u8,
+                    c_uint,
+                    *mut c_void,
+                ) -> c_int,
+            >,
+            arg: *mut c_void,
+        );
+        pub fn SSL_set_alpn_protos(ssl: *mut SSL, protos: *const u8, protos_len: c_uint) -> c_int;
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports

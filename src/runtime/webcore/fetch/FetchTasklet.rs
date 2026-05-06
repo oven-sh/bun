@@ -421,13 +421,15 @@ impl FetchTasklet {
 
         if let Some(readable) = self.readable_stream_ref.get(global_this) {
             bun_output::scoped_log!(FetchTasklet, "onBodyReceived readable_stream_ref");
-            if let readable_stream::Ptr::Bytes(bytes) = &readable.ptr {
+            if let readable_stream::Source::Bytes(bytes) = readable.ptr {
+                // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
+                let bytes = unsafe { &mut *bytes };
                 bytes.set_size_hint(self.get_size_hint());
                 // body can be marked as used but we still need to pipe the data
                 let chunk = self.scheduled_response_buffer.list.as_slice();
 
                 if self.result.has_more {
-                    bytes.on_data(readable_stream::StreamResult::Temporary(
+                    bytes.on_data(StreamResult::Temporary(
                         bun_collections::ByteList::from_borrowed_slice_dangerous(chunk),
                     ))?;
                 } else {
@@ -435,7 +437,7 @@ impl FetchTasklet {
                     let prev = core::mem::take(&mut self.readable_stream_ref);
                     buffer_reset.set(false);
 
-                    bytes.on_data(readable_stream::StreamResult::TemporaryAndDone(
+                    bytes.on_data(StreamResult::TemporaryAndDone(
                         bun_collections::ByteList::from_borrowed_slice_dangerous(chunk),
                     ))?;
                     drop(prev);

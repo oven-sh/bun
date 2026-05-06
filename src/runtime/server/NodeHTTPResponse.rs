@@ -1409,17 +1409,17 @@ impl NodeHTTPResponse {
             let mut encoding = crate::node::Encoding::Utf8;
             if !encoding_value.is_undefined_or_null() {
                 if !encoding_value.is_string() {
-                    return global_object.throw_invalid_argument_type_value(
+                    return Err(global_object.throw_invalid_argument_type_value(
                         "encoding",
                         "string",
                         encoding_value,
-                    );
+                    ));
                 }
 
                 encoding = match crate::node::Encoding::from_js(encoding_value, global_object)? {
                     Some(e) => e,
                     None => {
-                        return global_object.throw_invalid_arguments("Invalid encoding");
+                        return Err(global_object.throw_invalid_arguments("Invalid encoding"));
                     }
                 };
             }
@@ -1432,11 +1432,11 @@ impl NodeHTTPResponse {
             match result {
                 Some(r) => break 'brk r,
                 None => {
-                    return global_object.throw_invalid_argument_type_value(
+                    return Err(global_object.throw_invalid_argument_type_value(
                         "input",
                         "string or buffer",
                         input_value,
-                    );
+                    ));
                 }
             }
         };

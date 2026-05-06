@@ -3464,24 +3464,26 @@ pub fn finalize_bundle(
             // Send the JS chunk
             if dev.client_graph.current_chunk_len > 0 {
                 let script_id = 'h: {
-                    let mut source_map_hash = bundler::ContentHasher::Hash::init(0x4b12);
+                    // `bundler.ContentHasher.Hash` = `std.hash.XxHash64`.
+                    let mut source_map_hash = bun_hash::XxHash64Streaming::init(0x4b12);
                     let keys = dev.client_graph.bundled_files.keys();
                     let values = dev.client_graph.bundled_files.values();
                     for part in &dev.client_graph.current_chunk_parts {
                         source_map_hash.update(&keys[part.get() as usize]);
-                        let val = values[part.get() as usize].unpack();
-                        if let Some(source_map) = val.source_map.get() {
-                            source_map_hash.update(source_map.vlq());
-                        }
+                        let _val = &values[part.get() as usize];
+                        // TODO(port): `val.source_map.get().vlq()` once
+                        // `packed_map::Shared::get()` is un-gated; until then
+                        // the key hash omits the VLQ contribution.
+                        let _: () = todo!("blocked_on: packed_map::Shared::get / PackedMap::vlq");
                     }
                     // Set the bottom bit.
-                    break 'h source_map_store::Key::init(source_map_hash.final_() | 1);
+                    break 'h source_map_store::Key::init(source_map_hash.digest() | 1);
                 };
                 let mut sockets: u32 = 0;
                 for socket_ptr in dev.active_websocket_connections.keys() {
                     // SAFETY: socket_ptr is a valid *mut HmrSocket owned by the connection map
                     let socket = unsafe { &mut **socket_ptr };
-                    if socket.subscriptions.hot_update {
+                    if socket.is_subscribed(HmrTopic::HotUpdate) {
                         let entry = socket
                             .referenced_source_maps
                             .get_or_put(script_id)
@@ -3489,13 +3491,18 @@ pub fn finalize_bundle(
                         if !entry.found_existing {
                             sockets += 1;
                         }
-                        *entry.value = ();
+                        *entry.value_ptr = ();
                     }
                 }
                 map_log!("inc {:x}, for {} sockets", script_id.get(), sockets);
                 let entry = match dev.source_maps.put_or_increment_ref_count(script_id, sockets)? {
                     source_map_store::PutOrIncrementRefCount::Uninitialized(entry) => 'brk: {
-                        dev.client_graph.take_source_map(entry)?;
+                        // TODO(port): `take_source_map` is typed against the
+                        // keystone `Entry`; the body-module `Entry` will unify
+                        // once `source_map_store_body` is folded in.
+                        let _ = &entry;
+                        let _: () = todo!("blocked_on: source_map_store::Entry unification with source_map_store_body::Entry");
+                        #[allow(unreachable_code)]
                         break 'brk entry;
                     }
                     source_map_store::PutOrIncrementRefCount::Shared(entry) => entry,
@@ -3506,7 +3513,7 @@ pub fn finalize_bundle(
                 dev.client_graph.take_js_bundle_to_list(
                     &mut hot_update_payload,
                     &incremental_graph::TakeJSBundleOptionsClient {
-                        kind: ChunkKind::HmrChunk,
+                        kind: crate::bake::dev_server::ChunkKind::HmrChunk,
                         script_id,
                         console_log: dev.should_receive_console_log_from_browser(),
                         ..Default::default()
@@ -3545,7 +3552,9 @@ pub fn finalize_bundle(
         }
 
         while let Some(node) = current_bundle.requests.pop_first() {
-            let req = &mut node.data;
+            // SAFETY: `pop_first` hands back ownership of the intrusive node;
+            // it stays alive until `deref_()` releases it below.
+            let req = unsafe { &mut (*node).data };
             let _deref = scopeguard::guard((), |_| req.deref_());
 
             let rb = dev.route_bundle_ptr(req.route_bundle_index);
@@ -3581,9 +3590,7 @@ pub fn finalize_bundle(
         if current_bundle.had_reload_event {
             let clear_terminal = !bun_output::scope_is_visible!(DevServer)
                 // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
-                && !unsafe { &*dev.vm }
-                    .transpiler
-                    .env
+                && !unsafe { &*(*dev.vm).transpiler.env }
                     .has_set_no_clear_terminal_on_reload(false);
             if clear_terminal {
                 Output::disable_buffering();
@@ -3618,20 +3625,21 @@ pub fn finalize_bundle(
             // Compute a file name to display
             let file_name: Option<&[u8]> = if current_bundle.had_reload_event {
                 if !bv2.graph.entry_points.is_empty() {
-                    Some(dev.relative_path(
-                        &mut *buf,
+                    Some(dev.relative_path(&mut *buf, {
+                        use bun_bundler::Graph::InputFileListExt as _;
                         &bv2.graph.input_files.items_source()
                             [bv2.graph.entry_points[0].get() as usize]
                             .path
-                            .text,
-                    ))
+                            .text
+                    }))
                 } else {
                     None // TODO: How does this happen
                 }
             } else {
                 'brk: {
                     let route_bundle_index = 'rbi: {
-                        if let Some(first) = current_bundle.requests.first {
+                        let first = current_bundle.requests.first;
+                        if !first.is_null() {
                             // SAFETY: first is an intrusive list node valid while current_bundle.requests holds it
                             break 'rbi unsafe { &*first }.data.route_bundle_index;
                         }
@@ -3673,8 +3681,9 @@ pub fn finalize_bundle(
         Output::flush();
 
         // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
-        if let Some(agent) = unsafe { dev.inspector() } {
-            agent.notify_bundle_complete(dev.inspector_server_id, ms_elapsed as f64);
+        if let Some(_agent) = unsafe { dev.inspector() } {
+            let _ = (dev.inspector_server_id, ms_elapsed as f64);
+            todo!("blocked_on: bun_jsc::debugger::BunFrontendDevServerAgent::notify_bundle_complete");
         }
     }
 

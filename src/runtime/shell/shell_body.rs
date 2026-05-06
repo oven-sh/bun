@@ -5672,29 +5672,28 @@ pub mod testing_apis {
             marked_argument_buffer,
         )?;
 
-        let mut out_parser: Option<Parser> = None;
-        let mut out_lex_result: Option<LexResult> = None;
+        let mut out_lex_err: Option<Box<[u8]>> = None;
+        let mut out_parse_err: Option<Box<[u8]>> = None;
+        let _ = &mut jsstrings; // PORT NOTE: spec passed jsstrings; current `parse` ignores it.
 
         let script_ast = match interpret::Interpreter::parse(
             &arena,
             &script[..],
-            &mut jsobjs[..],
-            &mut jsstrings[..],
-            &mut out_parser,
-            &mut out_lex_result,
+            &jsobjs[..],
+            &mut out_lex_err,
+            &mut out_parse_err,
         ) {
             Ok(a) => a,
             Err(err) => {
-                if err == bun_core::err!("Lex") {
-                    debug_assert!(out_lex_result.is_some());
-                    let str = out_lex_result.unwrap().combine_errors(&arena);
-                    return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(str))));
+                if let Some(str) = out_lex_err {
+                    return Err(
+                        global.throw_pretty("{}", format_args!("{}", bstr::BStr::new(&str))),
+                    );
                 }
 
-                if let Some(p) = &mut out_parser {
-                    let errstr = p.combine_errors();
+                if let Some(errstr) = out_parse_err {
                     return Err(
-                        global.throw_pretty(format_args!("{}", bstr::BStr::new(errstr)))
+                        global.throw_pretty("{}", format_args!("{}", bstr::BStr::new(&errstr))),
                     );
                 }
 

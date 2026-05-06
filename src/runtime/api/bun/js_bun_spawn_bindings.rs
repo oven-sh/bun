@@ -1261,9 +1261,13 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // This must go before other things happen so that the exit handler is
         // registered before onProcessExit can potentially be called.
         if let Some(timeout_val) = timeout {
-            subprocess.event_loop_timer.next =
-                bun_core::timespec::ms_from_now(bun_core::timespec::Mode::AllowMockedTime, timeout_val);
-            global_this.bun_vm().timer.insert(&mut subprocess.event_loop_timer);
+            let ts = Timespec::ms_from_now(TimespecMockMode::AllowMockedTime, i64::from(timeout_val));
+            // PORT NOTE: `EventLoopTimer.next` is a local-stub Timespec until
+            // `bun_event_loop` switches to `bun_core::Timespec`; copy fieldwise.
+            subprocess.event_loop_timer.next = crate::timer::ElTimespec { sec: ts.sec, nsec: ts.nsec };
+            // TODO(port): `VirtualMachineRef.timer` is a `()` cycle-breaker stub;
+            // skip the insert until the timer queue is wired.
+            let _ = &mut subprocess.event_loop_timer;
             subprocess.set_event_loop_timer_refd(true);
         }
 

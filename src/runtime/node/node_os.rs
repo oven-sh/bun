@@ -546,7 +546,7 @@ pub fn cpus_impl_windows(global_this: &JSGlobalObject) -> Result<JSValue, OsErro
         unsafe { libuv::uv_free_cpu_info(cpu_infos, count) };
     });
 
-    let values = JSValue::create_empty_array(global_this, u32::try_from(count).unwrap())?;
+    let values = JSValue::create_empty_array(global_this, usize::try_from(count).unwrap())?;
 
     // SAFETY: cpu_infos points to `count` entries per uv_cpu_info contract
     let infos = unsafe { core::slice::from_raw_parts(cpu_infos, usize::try_from(count).unwrap()) };

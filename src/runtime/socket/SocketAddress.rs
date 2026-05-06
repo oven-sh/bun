@@ -526,15 +526,15 @@ impl SocketAddress {
     #[bun_jsc::host_fn(getter)]
     pub fn get_family(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(match this.family() {
-            AF::INET => global.common_strings().ipv4(),
-            AF::INET6 => global.common_strings().ipv6(),
+            AF::INET => global.common_strings().ipv4_lower(),
+            AF::INET6 => global.common_strings().ipv6_lower(),
         })
     }
 
     /// `sockaddr.addrfamily`
     #[bun_jsc::host_fn(getter)]
     pub fn get_addr_family(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.family().int())
+        JSValue::js_number(f64::from(this.family().int()))
     }
 
     /// NOTE: zig std uses posix values only, while this returns whatever the

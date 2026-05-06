@@ -1455,21 +1455,24 @@ impl ServerWebSocket {
         &mut self,
         global_this: &JSGlobalObject,
         value: JSValue,
-    ) -> JsResult<()> {
+    ) -> JsResult<bool> {
         bun_output::scoped_log!(WebSocketServer, "setBinaryType()");
 
-        let btype = BinaryType::from_js_value(global_this, value)?;
-        match btype.unwrap_or(
+        use bun_jsc::array_buffer::BinaryType as FullBinaryType;
+        let btype = FullBinaryType::from_js_value(global_this, value)?;
+        let val = match btype {
+            Some(FullBinaryType::ArrayBuffer) => BinaryType::ArrayBuffer,
+            Some(FullBinaryType::Buffer) => BinaryType::Buffer,
+            Some(FullBinaryType::Uint8Array) => BinaryType::Uint8Array,
             // some other value which we don't support
-            BinaryType::Float64Array,
-        ) {
-            val @ (BinaryType::ArrayBuffer | BinaryType::Buffer | BinaryType::Uint8Array) => {
-                self.flags.set_binary_type(val);
-                Ok(())
+            _ => {
+                return Err(global_this.throw(
+                    "binaryType must be either \"uint8array\" or \"arraybuffer\" or \"nodebuffer\"",
+                ));
             }
-            _ => global_this
-                .throw("binaryType must be either \"uint8array\" or \"arraybuffer\" or \"nodebuffer\""),
-        }
+        };
+        self.flags.set_binary_type(val);
+        Ok(true)
     }
 
     #[bun_jsc::host_fn(method)]

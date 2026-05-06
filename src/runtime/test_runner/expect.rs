@@ -1005,7 +1005,7 @@ impl Expect {
                 let diff_format = DiffFormatter {
                     received_string: Some(&pretty_value),
                     expected_string: Some(trim_res.trimmed),
-                    global_this,
+                    global_this: Some(global_this),
                     ..Default::default()
                 };
                 return Err(global_this.throw_pretty(signature, format_args!("\n\n{}\n", diff_format)));

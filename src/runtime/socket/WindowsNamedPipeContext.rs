@@ -78,9 +78,13 @@ pub enum EventState {
     None,
 }
 
+/// Zig: `union(enum) { tls: *TLSSocket, tcp: *TCPSocket, none }` — raw
+/// intrusive-refcounted pointers (see `NewSocket::ref_`/`deref`). `Copy` so
+/// matching by value avoids `&self.socket` aliasing `&mut self.named_pipe`.
+#[derive(Copy, Clone)]
 pub enum SocketType {
-    Tls(Arc<TLSSocket>),
-    Tcp(Arc<TCPSocket>),
+    Tls(*mut TLSSocket),
+    Tcp(*mut TCPSocket),
     None,
 }
 

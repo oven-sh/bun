@@ -527,7 +527,7 @@ impl Terminal {
                         terminal
                             .reader
                             .flags
-                            .insert(bun_io::PosixFlags::NONBLOCKING | bun_io::PosixFlags::POLLABLE);
+                            .insert(PosixFlags::NONBLOCKING | PosixFlags::POLLABLE);
                         poll.set_flag(bun_io::FilePollFlag::Nonblocking);
                     }
                 }

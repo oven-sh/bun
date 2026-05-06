@@ -1785,7 +1785,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     let _ = FetchTasklet::queue(
         global_this,
-        FetchTasklet::Options {
+        FetchOptions {
             method,
             url,
             headers: headers.take().unwrap_or_else(Headers::default),
@@ -1808,13 +1808,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             force_http3,
             force_http1,
             check_server_identity: if check_server_identity.is_empty_or_undefined_or_null() {
-                jsc::Strong::empty()
+                jsc::Strong::default()
             } else {
                 jsc::Strong::create(check_server_identity, global_this)
             },
             unix_socket_path: core::mem::replace(
                 &mut unix_socket_path,
-                ZigString::Slice::empty(),
+                ZigStringSlice::empty(),
             ),
         },
         // Pass the Strong value instead of creating a new one, or else we
@@ -1830,7 +1830,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if store.ref_count.load(core::sync::atomic::Ordering::Relaxed)
                 == initial_body_reference_count
             {
-                Output::panic("Expected body ref count to have incremented in FetchTasklet");
+                Output::panic(format_args!("Expected body ref count to have incremented in FetchTasklet"));
             }
         }
     }
@@ -1844,7 +1844,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         body.detach();
     } else {
         // These are single-use, and have effectively been moved to the FetchTasklet.
-        body = HTTPRequestBody::Empty;
+        body = HTTPRequestBody::default();
     }
 
     Ok(promise_val)

@@ -288,49 +288,42 @@ describe("system-wide bunfig.toml", () => {
     expect(sysExit).toBe(0);
   });
 
-  test.skipIf(!isWindows)(
-    "auto-discovered system bunfig with validation error warns but does not crash",
-    async () => {
-      // Auto-discovered /etc/bunfig.toml (POSIX) / %ALLUSERSPROFILE%\bunfig.toml
-      // (Windows) must not hard-crash every package-manager invocation when the
-      // sysadmin typos it — the feature is opt-in via BUN_SYSTEM_CONFIG, and the
-      // default-path probe stays best-effort. Only the Windows default-path is
-      // overridable via env (ALLUSERSPROFILE); on POSIX the path is hardcoded
-      // /etc/bunfig.toml, so this only runs on Windows.
-      using dir = tempDir("system-bunfig-auto-broken", {
-        "package.json": `{"name": "test", "version": "1.0.0"}`,
-        // Invalid `auto` value — Bunfig.Parser.addError throws
-        // error.@"Invalid Bunfig" (the non-log-only error path).
-        "bunfig.toml": `[install]\nauto = "bogus-value"\n`,
-      });
+  test.skipIf(!isWindows)("auto-discovered system bunfig with validation error warns but does not crash", async () => {
+    // Auto-discovered /etc/bunfig.toml (POSIX) / %ALLUSERSPROFILE%\bunfig.toml
+    // (Windows) must not hard-crash every package-manager invocation when the
+    // sysadmin typos it — the feature is opt-in via BUN_SYSTEM_CONFIG, and the
+    // default-path probe stays best-effort. Only the Windows default-path is
+    // overridable via env (ALLUSERSPROFILE); on POSIX the path is hardcoded
+    // /etc/bunfig.toml, so this only runs on Windows.
+    using dir = tempDir("system-bunfig-auto-broken", {
+      "package.json": `{"name": "test", "version": "1.0.0"}`,
+      // Invalid `auto` value — Bunfig.Parser.addError throws
+      // error.@"Invalid Bunfig" (the non-log-only error path).
+      "bunfig.toml": `[install]\nauto = "bogus-value"\n`,
+    });
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "pm", "cache"],
-        env: {
-          ...bunEnv,
-          BUN_INSTALL_CACHE_DIR: undefined,
-          BUN_INSTALL: undefined,
-          // No BUN_SYSTEM_CONFIG — forces the auto-discovered path via
-          // %ALLUSERSPROFILE%\bunfig.toml.
-          BUN_SYSTEM_CONFIG: undefined,
-          ALLUSERSPROFILE: String(dir),
-        },
-        cwd: String(dir),
-        stderr: "pipe",
-      });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "cache"],
+      env: {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: undefined,
+        BUN_INSTALL: undefined,
+        // No BUN_SYSTEM_CONFIG — forces the auto-discovered path via
+        // %ALLUSERSPROFILE%\bunfig.toml.
+        BUN_SYSTEM_CONFIG: undefined,
+        ALLUSERSPROFILE: String(dir),
+      },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
 
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      // Auto-discovered: we warn about the broken file but still run.
-      expect(stderr).toContain("ignoring auto-discovered system bunfig");
-      expect(exitCode).toBe(0);
-      // `bun pm cache` printed *some* cache directory — i.e. the process
-      // continued past the broken bunfig.
-      expect(stdout.trim().length).toBeGreaterThan(0);
-    },
-  );
+    // Auto-discovered: we warn about the broken file but still run.
+    expect(stderr).toContain("ignoring auto-discovered system bunfig");
+    expect(exitCode).toBe(0);
+    // `bun pm cache` printed *some* cache directory — i.e. the process
+    // continued past the broken bunfig.
+    expect(stdout.trim().length).toBeGreaterThan(0);
+  });
 });

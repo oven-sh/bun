@@ -978,30 +978,6 @@ pub struct AlignHandler {
     pub has_any: bool,
 }
 
-impl AlignHandler {
-    // No-op stubs so `DeclarationHandler` compiles; real bodies are gated below.
-    #[inline]
-    pub fn handle_property(
-        &mut self,
-        _property: &Property,
-        _dest: &mut DeclarationList<'_>,
-        _context: &mut PropertyHandlerContext<'_>,
-    ) -> bool {
-        false
-    }
-    #[inline]
-    pub fn finalize(
-        &mut self,
-        _dest: &mut DeclarationList<'_>,
-        _context: &mut PropertyHandlerContext<'_>,
-    ) {
-    }
-}
-
-#[cfg(any())] // blocked_on: prefixes::Feature method names + Property variant payloads + flex::{BoxPack,FlexPack,...}::from_standard
-mod align_handler_body {
-use super::*;
-
 // ─── helper macros (Zig used `comptime prop: []const u8` + `@field` / `@unionInit`) ───
 //
 // TODO(port): the Zig source threads field names as comptime strings into helper fns
@@ -1038,7 +1014,7 @@ macro_rules! handle_property_helper {
 macro_rules! flush_prefixed_property {
     ($dest:expr, $context:expr, $variant:ident, $key:expr) => {{
         if let Some((val, prefix)) = $key {
-            $dest.push(Property::$variant(val, prefix));
+            $dest.push(Property::$variant((val, prefix)));
         }
     }};
 }
@@ -1060,7 +1036,7 @@ macro_rules! flush_standard_property_helper {
             } else {
                 prefix
             };
-            $dest.push(Property::$variant(val, prefix));
+            $dest.push(Property::$variant((val, prefix)));
         }
     }};
 }
@@ -1088,7 +1064,7 @@ macro_rules! flush_legacy_property {
                         // as a note in case the macro is reused elsewhere.
                         let s = <$ty2009>::from_standard(val);
                         if let Some(a) = s {
-                            $dest.push(Property::$variant2009(a, prefixes_2009));
+                            $dest.push(Property::$variant2009((a, prefixes_2009)));
                         }
                     }
                 }
@@ -1098,7 +1074,7 @@ macro_rules! flush_legacy_property {
             if prefix.contains(VendorPrefix::MS) {
                 let s = <$ty2012>::from_standard(val);
                 if let Some(q) = s {
-                    $dest.push(Property::$variant2012(q, VendorPrefix::MS));
+                    $dest.push(Property::$variant2012((q, VendorPrefix::MS)));
                 }
             }
 
@@ -1117,7 +1093,7 @@ macro_rules! flush_legacy_property {
             if prefix.contains(VendorPrefix::MS) {
                 let s = <$ty2012>::from_standard(val);
                 if let Some(q) = s {
-                    $dest.push(Property::$variant2012(q, VendorPrefix::MS));
+                    $dest.push(Property::$variant2012((q, VendorPrefix::MS)));
                 }
             }
 
@@ -1141,24 +1117,24 @@ macro_rules! flush_shorthand_helper {
         // Only use shorthand if both align and justify are present
         if let Some((align, align_prefix)) = &mut *$align_val {
             if let Some((justify_actual, justify_prefix)) = &mut *$justify_val {
-                let intersection = align_prefix.bitand(*justify_prefix);
+                let intersection = *align_prefix & *justify_prefix;
                 // Only use shorthand if unprefixed.
                 if intersection.contains(VendorPrefix::NONE) {
                     // Add prefixed longhands if needed.
                     *align_prefix = $this.flush_prefixes_helper($context, $align_feature);
                     align_prefix.remove(VendorPrefix::NONE);
                     if !align_prefix.is_empty() {
-                        $dest.push(Property::$align_variant(align.clone(), *align_prefix));
+                        $dest.push(Property::$align_variant((align.clone(), *align_prefix)));
                     }
 
                     *justify_prefix = $this.flush_prefixes_helper($context, $justify_feature);
                     justify_prefix.remove(VendorPrefix::NONE);
 
                     if !justify_prefix.is_empty() {
-                        $dest.push(Property::$justify_variant(
+                        $dest.push(Property::$justify_variant((
                             justify_actual.clone(),
                             *justify_prefix,
-                        ));
+                        )));
                     }
 
                     // Add shorthand.
@@ -1192,7 +1168,7 @@ macro_rules! flush_shorthand_helper {
                     *align_prefix = $this.flush_prefixes_helper($context, $align_feature);
                     align_prefix.remove(VendorPrefix::NONE);
                     if !align_prefix.is_empty() {
-                        $dest.push(Property::$align_variant(align.clone(), *align_prefix));
+                        $dest.push(Property::$align_variant((align.clone(), *align_prefix)));
                     }
 
                     // Add shorthand.
@@ -1232,26 +1208,26 @@ impl AlignHandler {
     pub fn handle_property(
         &mut self,
         property: &Property,
-        dest: &mut DeclarationList,
-        context: &mut PropertyHandlerContext,
+        dest: &mut DeclarationList<'_>,
+        context: &mut PropertyHandlerContext<'_>,
     ) -> bool {
         match property {
-            Property::AlignContent(val, vp) => {
+            Property::AlignContent((val, vp)) => {
                 self.flex_line_pack = None;
                 handle_property_helper!(self, dest, context, align_content, val, *vp);
             }
-            Property::FlexLinePack(val, vp) => {
+            Property::FlexLinePack((val, vp)) => {
                 handle_property_helper!(self, dest, context, flex_line_pack, val, *vp);
             }
-            Property::JustifyContent(val, vp) => {
+            Property::JustifyContent((val, vp)) => {
                 self.box_pack = None;
                 self.flex_pack = None;
                 handle_property_helper!(self, dest, context, justify_content, val, *vp);
             }
-            Property::BoxPack(val, vp) => {
+            Property::BoxPack((val, vp)) => {
                 handle_property_helper!(self, dest, context, box_pack, val, *vp);
             }
-            Property::FlexPack(val, vp) => {
+            Property::FlexPack((val, vp)) => {
                 handle_property_helper!(self, dest, context, flex_pack, val, *vp);
             }
             Property::PlaceContent(val) => {
@@ -1263,11 +1239,11 @@ impl AlignHandler {
                 handle_property_helper!(self, dest, context, align_content, &val.align, VendorPrefix::NONE);
                 handle_property_helper!(self, dest, context, justify_content, &val.justify, VendorPrefix::NONE);
             }
-            Property::AlignSelf(val, vp) => {
+            Property::AlignSelf((val, vp)) => {
                 self.flex_item_align = None;
                 handle_property_helper!(self, dest, context, align_self, val, *vp);
             }
-            Property::FlexItemAlign(val, vp) => {
+            Property::FlexItemAlign((val, vp)) => {
                 handle_property_helper!(self, dest, context, flex_item_align, val, *vp);
             }
             Property::JustifySelf(val) => {
@@ -1279,15 +1255,15 @@ impl AlignHandler {
                 handle_property_helper!(self, dest, context, align_self, &val.align, VendorPrefix::NONE);
                 self.justify_self = Some(val.justify.clone());
             }
-            Property::AlignItems(val, vp) => {
+            Property::AlignItems((val, vp)) => {
                 self.box_align = None;
                 self.flex_align = None;
                 handle_property_helper!(self, dest, context, align_items, val, *vp);
             }
-            Property::BoxAlign(val, vp) => {
+            Property::BoxAlign((val, vp)) => {
                 handle_property_helper!(self, dest, context, box_align, val, *vp);
             }
-            Property::FlexAlign(val, vp) => {
+            Property::FlexAlign((val, vp)) => {
                 handle_property_helper!(self, dest, context, flex_align, val, *vp);
             }
             Property::JustifyItems(val) => {
@@ -1314,7 +1290,7 @@ impl AlignHandler {
                 self.has_any = true;
             }
             Property::Unparsed(val) => {
-                if is_align_property(val.property_id) {
+                if is_align_property(&val.property_id) {
                     self.flush(dest, context);
                     dest.push(property.clone());
                 } else {
@@ -1327,11 +1303,11 @@ impl AlignHandler {
         true
     }
 
-    pub fn finalize(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+    pub fn finalize(&mut self, dest: &mut DeclarationList<'_>, context: &mut PropertyHandlerContext<'_>) {
         self.flush(dest, context);
     }
 
-    fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+    fn flush(&mut self, dest: &mut DeclarationList<'_>, context: &mut PropertyHandlerContext<'_>) {
         if !self.has_any {
             return;
         }
@@ -1421,7 +1397,7 @@ impl AlignHandler {
 
     /// Gets prefixes for standard properties.
     // PERF(port): was comptime monomorphization (`comptime feature: Feature`) — profile in Phase B
-    fn flush_prefixes_helper(&self, context: &PropertyHandlerContext, feature: Feature) -> VendorPrefix {
+    fn flush_prefixes_helper(&self, context: &PropertyHandlerContext<'_>, feature: Feature) -> VendorPrefix {
         let mut prefix = context.targets.prefixes(VendorPrefix::NONE, feature);
         // Firefox only implemented the 2009 spec prefixed.
         // Microsoft only implemented the 2012 spec prefixed.

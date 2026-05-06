@@ -2909,12 +2909,12 @@ pub enum Property {
     TransitionTimingFunction((SmallList<css::css_values::easing::EasingFunction, 1>, VendorPrefix)),
     Transition((SmallList<transition::Transition, 1>, VendorPrefix)),
     Transform((transform::TransformList, VendorPrefix)),
-    TransformOrigin((css::css_values::position::Position, VendorPrefix)),
+    TransformOrigin((position::Position, VendorPrefix)),
     TransformStyle((transform::TransformStyle, VendorPrefix)),
     TransformBox(transform::TransformBox),
     BackfaceVisibility((transform::BackfaceVisibility, VendorPrefix)),
     Perspective((transform::Perspective, VendorPrefix)),
-    PerspectiveOrigin((css::css_values::position::Position, VendorPrefix)),
+    PerspectiveOrigin((position::Position, VendorPrefix)),
     Translate(transform::Translate),
     Rotate(transform::Rotate),
     Scale(transform::Scale),
@@ -2928,7 +2928,7 @@ pub enum Property {
     MaskRepeat((SmallList<background::BackgroundRepeat, 1>, VendorPrefix)),
     MaskPositionX(SmallList<css::css_values::position::HorizontalPosition, 1>),
     MaskPositionY(SmallList<css::css_values::position::VerticalPosition, 1>),
-    MaskPosition((SmallList<css::css_values::position::Position, 1>, VendorPrefix)),
+    MaskPosition((SmallList<position::Position, 1>, VendorPrefix)),
     MaskClip((SmallList<masking::MaskClip, 1>, VendorPrefix)),
     MaskOrigin((SmallList<masking::GeometryBox, 1>, VendorPrefix)),
     MaskSize((SmallList<background::BackgroundSize, 1>, VendorPrefix)),
@@ -3213,7 +3213,7 @@ impl Property {
     }
 
     /// `(name, prefix)` pair for serialization. Panics on `Custom`.
-    pub(crate) fn __to_css_helper(&self) -> (&'static [u8], VendorPrefix) {
+    pub(crate) fn __to_css_helper(&self) -> (&[u8], VendorPrefix) {
         match self {
             Property::BackgroundColor(..) => (b"background-color", VendorPrefix::NONE),
             Property::BackgroundImage(..) => (b"background-image", VendorPrefix::NONE),
@@ -3467,7 +3467,7 @@ impl Property {
                 if p.is_empty() {
                     p = VendorPrefix::NONE;
                 }
-                return (u.property_id.name_static(), p);
+                return (u.property_id.name(), p);
             }
             Property::Custom(..) => unreachable!(),
         }
@@ -5181,7 +5181,7 @@ impl Property {
                 }
             }
             PropertyId::TransformOrigin(pre) => {
-                if let Some(c) = css::generic::parse_with_options::<css::css_values::position::Position>(input, options).ok() {
+                if let Some(c) = css::generic::parse_with_options::<position::Position>(input, options).ok() {
                     if input.expect_exhausted().is_ok() {
                         return Ok(Property::TransformOrigin((c, pre)));
                     }
@@ -5216,7 +5216,7 @@ impl Property {
                 }
             }
             PropertyId::PerspectiveOrigin(pre) => {
-                if let Some(c) = css::generic::parse_with_options::<css::css_values::position::Position>(input, options).ok() {
+                if let Some(c) = css::generic::parse_with_options::<position::Position>(input, options).ok() {
                     if input.expect_exhausted().is_ok() {
                         return Ok(Property::PerspectiveOrigin((c, pre)));
                     }
@@ -5314,7 +5314,7 @@ impl Property {
                 }
             }
             PropertyId::MaskPosition(pre) => {
-                if let Some(c) = css::generic::parse_with_options::<SmallList<css::css_values::position::Position, 1>>(input, options).ok() {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<position::Position, 1>>(input, options).ok() {
                     if input.expect_exhausted().is_ok() {
                         return Ok(Property::MaskPosition((c, pre)));
                     }
@@ -5489,6 +5489,31 @@ impl Property {
 
     pub fn to_css(&self, dest: &mut css::Printer, important: bool) -> Result<(), css::PrintErr> {
         properties_impl::property_mixin::to_css(self, dest, important)
+    }
+
+    /// Returns the given longhand property for a shorthand.
+    #[cfg(any())] // blocked_on: shorthand_handler_port — Property::longhand (.zig:7087-7160)
+    pub fn longhand(&self, property_id: &PropertyId) -> Option<Property> {
+        let _ = property_id;
+        todo!("blocked_on: shorthand_handler_port — Property::longhand")
+    }
+
+    #[cfg(any())] // blocked_on: generics::deep_clone_dispatch — Property::deepClone (.zig:6307-6564)
+    pub fn deep_clone(&self, allocator: &bun_alloc::Arena) -> Property {
+        let _ = allocator;
+        todo!("blocked_on: generics::deep_clone_dispatch — Property::deep_clone")
+    }
+
+    #[cfg(any())] // blocked_on: generics::eql_dispatch — Property::eql (.zig:7162-7415)
+    pub fn eql(&self, other: &Property) -> bool {
+        let _ = other;
+        todo!("blocked_on: generics::eql_dispatch — Property::eql")
+    }
+
+    #[cfg(any())] // blocked_on: generics::deinit_dispatch — Property::deinit (.zig:6566)
+    pub fn deinit(&mut self, allocator: &bun_alloc::Arena) {
+        let _ = allocator;
+        todo!("blocked_on: generics::deinit_dispatch — Property::deinit")
     }
 }
 

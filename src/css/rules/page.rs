@@ -35,10 +35,22 @@ impl PageSelector {
     }
 }
 
-// ─── PageSelector parse/clone ─────────────────────────────────────────────
+impl PageSelector {
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        // PORT NOTE: `css.implementDeepClone` field-walk. `name: Option<&'static
+        // [u8]>` is an arena-owned slice → identity copy; `PagePseudoClass` is
+        // `Copy`.
+        Self {
+            name: self.name,
+            pseudo_classes: self.pseudo_classes.iter().map(|p| p.deep_clone(bump)).collect(),
+        }
+    }
+}
+
+// ─── PageSelector parse ───────────────────────────────────────────────────
 // blocked_on: Parser::{try_parse,expect_ident,next_including_whitespace,
 // state,reset,new_custom_error,allocator} surface, ParserError::
-// InvalidPageSelector, PagePseudoClass::parse, DeepClone.
+// InvalidPageSelector, PagePseudoClass::parse.
 #[cfg(any())]
 impl PageSelector {
     pub fn parse(input: &mut css::Parser) -> css::Result<PageSelector> {
@@ -74,10 +86,6 @@ impl PageSelector {
 
         Ok(PageSelector { name, pseudo_classes })
     }
-
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        css::implement_deep_clone(self, bump)
-    }
 }
 
 pub struct PageMarginRule {
@@ -101,11 +109,14 @@ impl PageMarginRule {
     }
 }
 
-// blocked_on: DeepClone.
-#[cfg(any())]
 impl PageMarginRule {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        css::implement_deep_clone(self, bump)
+        // PORT NOTE: `css.implementDeepClone` field-walk. `PageMarginBox` is `Copy`.
+        Self {
+            margin_box: self.margin_box,
+            declarations: super::dc::decl_block(&self.declarations, bump),
+            loc: self.loc,
+        }
     }
 }
 
@@ -194,8 +205,20 @@ impl PageRule {
     }
 }
 
-// ─── PageRule parse/clone ─────────────────────────────────────────────────
-// blocked_on: RuleBodyParser, DeepClone.
+impl PageRule {
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        // PORT NOTE: `css.implementDeepClone` field-walk.
+        Self {
+            selectors: self.selectors.iter().map(|s| s.deep_clone(bump)).collect(),
+            declarations: super::dc::decl_block(&self.declarations, bump),
+            rules: self.rules.iter().map(|r| r.deep_clone(bump)).collect(),
+            loc: self.loc,
+        }
+    }
+}
+
+// ─── PageRule parse ───────────────────────────────────────────────────────
+// blocked_on: RuleBodyParser.
 #[cfg(any())]
 impl PageRule {
     pub fn parse(
@@ -225,10 +248,6 @@ impl PageRule {
         }
 
         Ok(PageRule { selectors, declarations, rules, loc })
-    }
-
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        css::implement_deep_clone(self, bump)
     }
 }
 
@@ -274,15 +293,19 @@ impl PagePseudoClass {
     }
 }
 
-// blocked_on: css::enum_property_util EnumProperty parse bound, DeepClone.
+impl PagePseudoClass {
+    #[inline]
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+        // `Copy` enum (generics.zig "simple copy types" → identity).
+        *self
+    }
+}
+
+// blocked_on: css::enum_property_util EnumProperty parse bound.
 #[cfg(any())]
 impl PagePseudoClass {
     pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
         css::enum_property_util::parse(input)
-    }
-
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        css::implement_deep_clone(self, bump)
     }
 }
 

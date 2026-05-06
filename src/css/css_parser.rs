@@ -1434,21 +1434,11 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> QualifiedRuleParser
 // ── NestedRuleParser behavior (struct hoisted above) ─────────────────────────
 
 impl<'a, T: CustomAtRuleParser> NestedRuleParser<'a, T> {
-    /// If css modules is enabled, we want to record each occurrence of the
-    /// `composes` property for the bundler so we can generate the lazy JS
-    /// import object later.
-    pub fn record_composes(&mut self, composes: &mut Composes) {
-        for ref_ in self.composes_refs.slice() {
-            let entry = self.composes.entry(*ref_).or_insert_with(ComposesEntry::default);
-            entry.composes.push(composes.deep_clone());
-        }
-    }
-
     pub fn parse_nested(
         &mut self,
         input: &mut Parser,
         is_style_rule: bool,
-    ) -> CssResult<(DeclarationBlock, CssRuleList<T::AtRule>)> {
+    ) -> CssResult<(DeclarationBlock<'static>, CssRuleList<T::AtRule>)> {
         // TODO: think about memory management in error cases
         let mut rules = CssRuleList::<T::AtRule>::default();
         let composes_state = if self.is_in_style_rule
@@ -1457,21 +1447,21 @@ impl<'a, T: CustomAtRuleParser> NestedRuleParser<'a, T> {
             let ComposesState::Allow(l) = self.composes_state else { unreachable!() };
             ComposesState::DisallowNested(l)
         } else {
-            // TODO(port): Zig copies enum value; ComposesState may need Clone.
-            core::mem::replace(&mut self.composes_state, ComposesState::DisallowEntirely)
+            // ComposesState is Copy.
+            self.composes_state
         };
         let mut nested_parser = NestedRuleParser::<T> {
             options: self.options,
-            at_rule_parser: self.at_rule_parser,
+            at_rule_parser: &mut *self.at_rule_parser,
             declarations: DeclarationList::default(),
             important_declarations: DeclarationList::default(),
             rules: &mut rules,
             is_in_style_rule: self.is_in_style_rule || is_style_rule,
             allow_declarations: self.allow_declarations || self.is_in_style_rule || is_style_rule,
             composes_state,
-            composes: self.composes,
-            composes_refs: self.composes_refs,
-            local_properties: self.local_properties,
+            composes: &mut *self.composes,
+            composes_refs: &mut *self.composes_refs,
+            local_properties: &mut *self.local_properties,
         };
         // PORT NOTE: reshaped for borrowck — Zig held `self.*` aliased.
 
@@ -1556,26 +1546,30 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
     type AtRule = ();
 
     fn parse_prelude(this: &mut Self, name: &[u8], input: &mut Parser) -> CssResult<Self::Prelude> {
+        // TODO(port): lifetime — `name` borrows the input arena. Detach to
+        // `'static` to feed `BasicParseErrorKind::at_rule_invalid` (matches the
+        // `Token` payload erasure throughout this file).
+        let name: &'static [u8] = unsafe { &*(name as *const [u8]) };
         let result: Self::Prelude = 'brk: {
             // TODO(port): Zig `ComptimeEnumMap(PreludeEnum)` ASCII-CI dispatch.
             // Phase B: replace these chained if-eql with `match_ignore_ascii_case!`.
-            if strings::eql_case_insensitive_ascii(name, b"media", true) {
-                break 'brk AtRulePrelude::Media(MediaList::parse(input)?);
+            if strings::eql_case_insensitive_ascii::<true>(name, b"media") {
+                break 'brk AtRulePrelude::Media(parse_media_list(input)?);
             }
-            if strings::eql_case_insensitive_ascii(name, b"supports", true) {
+            if strings::eql_case_insensitive_ascii::<true>(name, b"supports") {
                 break 'brk AtRulePrelude::Supports(SupportsCondition::parse(input)?);
             }
-            if strings::eql_case_insensitive_ascii(name, b"font-face", true) {
+            if strings::eql_case_insensitive_ascii::<true>(name, b"font-face") {
                 break 'brk AtRulePrelude::FontFace;
             }
-            if strings::eql_case_insensitive_ascii(name, b"font-palette-values", true) {
+            if strings::eql_case_insensitive_ascii::<true>(name, b"font-palette-values") {
                 break 'brk AtRulePrelude::FontPaletteValues(DashedIdentFns::parse(input)?);
             }
-            if strings::eql_case_insensitive_ascii(name, b"counter-style", true) {
+            if strings::eql_case_insensitive_ascii::<true>(name, b"counter-style") {
                 break 'brk AtRulePrelude::CounterStyle(CustomIdentFns::parse(input)?);
             }
-            if strings::eql_case_insensitive_ascii(name, b"viewport", true)
-                || strings::eql_case_insensitive_ascii(name, b"-ms-viewport", true)
+            if strings::eql_case_insensitive_ascii::<true>(name, b"viewport")
+                || strings::eql_case_insensitive_ascii::<true>(name, b"-ms-viewport")
             {
                 let prefix = if strings::starts_with_case_insensitive_ascii(name, b"-ms") {
                     VendorPrefix::MS
@@ -1584,11 +1578,11 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 };
                 break 'brk AtRulePrelude::Viewport(prefix);
             }
-            if strings::eql_case_insensitive_ascii(name, b"keyframes", true)
-                || strings::eql_case_insensitive_ascii(name, b"-webkit-keyframes", true)
-                || strings::eql_case_insensitive_ascii(name, b"-moz-keyframes", true)
-                || strings::eql_case_insensitive_ascii(name, b"-o-keyframes", true)
-                || strings::eql_case_insensitive_ascii(name, b"-ms-keyframes", true)
+            if strings::eql_case_insensitive_ascii::<true>(name, b"keyframes")
+                || strings::eql_case_insensitive_ascii::<true>(name, b"-webkit-keyframes")
+                || strings::eql_case_insensitive_ascii::<true>(name, b"-moz-keyframes")
+                || strings::eql_case_insensitive_ascii::<true>(name, b"-o-keyframes")
+                || strings::eql_case_insensitive_ascii::<true>(name, b"-ms-keyframes")
             {
                 let prefix = if strings::starts_with_case_insensitive_ascii(name, b"-webkit") {
                     VendorPrefix::WEBKIT
@@ -1605,7 +1599,7 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                     input.try_parse(css_rules::keyframes::KeyframesName::parse)?;
                 break 'brk AtRulePrelude::Keyframes { name: keyframes_name, prefix };
             }
-            if strings::eql_case_insensitive_ascii(name, b"page", true) {
+            if strings::eql_case_insensitive_ascii::<true>(name, b"page") {
                 let selectors = input
                     .try_parse(|input2| {
                         input2.parse_comma_separated(css_rules::page::PageSelector::parse)
@@ -1613,16 +1607,16 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                     .unwrap_or_default();
                 break 'brk AtRulePrelude::Page(selectors);
             }
-            if strings::eql_case_insensitive_ascii(name, b"-moz-document", true) {
+            if strings::eql_case_insensitive_ascii::<true>(name, b"-moz-document") {
                 // Firefox only supports the url-prefix() function with no
                 // arguments as a legacy CSS hack.
                 input.expect_function_matching(b"url-prefix")?;
                 input.parse_nested_block(|input2| {
                     // Firefox also allows an empty string as an argument...
-                    let _ = input2.try_parse(|input2| {
+                    let _ = input2.try_parse(|input2| -> CssResult<()> {
                         let s = input2.expect_string()?;
                         if !s.is_empty() {
-                            return Err(input2.new_custom_error(ParserError::InvalidValue));
+                            return Err(input2.new_custom_error(ParserError::invalid_value));
                         }
                         Ok(())
                     });
@@ -1630,9 +1624,9 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 })?;
                 break 'brk AtRulePrelude::MozDocument;
             }
-            if strings::eql_case_insensitive_ascii(name, b"layer", true) {
-                let names = match SmallList::<LayerName, 1>::parse(input) {
-                    Ok(vv) => vv,
+            if strings::eql_case_insensitive_ascii::<true>(name, b"layer") {
+                let names = match input.parse_comma_separated(LayerName::parse) {
+                    Ok(vv) => SmallList::<LayerName, 1>::from_list(vv),
                     Err(e) => {
                         if matches!(
                             e.kind,
@@ -1646,28 +1640,27 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 };
                 break 'brk AtRulePrelude::Layer(names);
             }
-            if strings::eql_case_insensitive_ascii(name, b"container", true) {
+            if strings::eql_case_insensitive_ascii::<true>(name, b"container") {
                 let container_name =
                     input.try_parse(css_rules::container::ContainerName::parse).ok();
                 let condition = css_rules::container::ContainerCondition::parse(input)?;
                 break 'brk AtRulePrelude::Container { name: container_name, condition };
             }
-            if strings::eql_case_insensitive_ascii(name, b"starting-style", true) {
+            if strings::eql_case_insensitive_ascii::<true>(name, b"starting-style") {
                 break 'brk AtRulePrelude::StartingStyle;
             }
-            if strings::eql_case_insensitive_ascii(name, b"scope", true) {
-                let mut selector_parser = selector::parser::SelectorParser {
+            if strings::eql_case_insensitive_ascii::<true>(name, b"scope") {
+                let mut selector_parser = selector_parser::SelectorParser {
                     is_nesting_allowed: true,
                     options: this.options,
-                    ..Default::default()
                 };
                 let scope_start = if input.try_parse(Parser::expect_parenthesis_block).is_ok() {
                     Some(input.parse_nested_block(|input2| {
                         SelectorList::parse_relative(
                             &mut selector_parser,
                             input2,
-                            selector::parser::ErrorRecovery::IgnoreInvalidSelector,
-                            selector::parser::NestingRequirement::None,
+                            selector_parser::ParseErrorRecovery::IgnoreInvalidSelector,
+                            selector_parser::NestingRequirement::None,
                         )
                     })?)
                 } else {
@@ -1679,8 +1672,8 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                         SelectorList::parse_relative(
                             &mut selector_parser,
                             input2,
-                            selector::parser::ErrorRecovery::IgnoreInvalidSelector,
-                            selector::parser::NestingRequirement::None,
+                            selector_parser::ParseErrorRecovery::IgnoreInvalidSelector,
+                            selector_parser::NestingRequirement::None,
                         )
                     })?)
                 } else {
@@ -1688,19 +1681,18 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 };
                 break 'brk AtRulePrelude::Scope { scope_start, scope_end };
             }
-            if strings::eql_case_insensitive_ascii(name, b"nest", true) {
+            if strings::eql_case_insensitive_ascii::<true>(name, b"nest") {
                 if this.is_in_style_rule {
-                    this.options.warn(input.new_custom_error(ParserError::DeprecatedNestRule));
-                    let mut selector_parser = selector::parser::SelectorParser {
+                    this.options.warn(input.new_custom_error(ParserError::deprecated_nest_rule));
+                    let mut selector_parser = selector_parser::SelectorParser {
                         is_nesting_allowed: true,
                         options: this.options,
-                        ..Default::default()
                     };
                     let selectors = SelectorList::parse(
                         &mut selector_parser,
                         input,
-                        selector::parser::ErrorRecovery::DiscardList,
-                        selector::parser::NestingRequirement::Contained,
+                        selector_parser::ParseErrorRecovery::DiscardList,
+                        selector_parser::NestingRequirement::Contained,
                     )?;
                     break 'brk AtRulePrelude::Nest(selectors);
                 }
@@ -1725,7 +1717,10 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
         let loc = this.get_loc(start);
         match prelude {
             AtRulePrelude::FontFace => {
-                let mut decl_parser = css_rules::font_face::FontFaceDeclarationParser::default();
+                // blocked_on: `FontFaceDeclarationParser: RuleBodyItemParser`
+                // trait impls (rules/font_face.rs gated const block).
+                #[cfg(any())] {
+                let mut decl_parser = css_rules::font_face::FontFaceDeclarationParser;
                 let mut parser = RuleBodyParser::new(input, &mut decl_parser);
                 // todo_stuff.think_mem_mgmt
                 // PERF(port): was arena bulk-free — profile in Phase B
@@ -1738,7 +1733,12 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 this.rules.v.push(CssRule::FontFace(
                     css_rules::font_face::FontFaceRule { properties, loc },
                 ));
-                Ok(())
+                return Ok(());
+                }
+                #[cfg(not(any()))] {
+                let _ = (input, loc);
+                todo("@font-face block — FontFaceDeclarationParser trait impls gated");
+                }
             }
             AtRulePrelude::FontPaletteValues(name) => {
                 let rule = css_rules::font_palette_values::FontPaletteValuesRule::parse(

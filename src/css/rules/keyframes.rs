@@ -103,8 +103,19 @@ impl KeyframesName {
     }
 }
 
-// ─── KeyframesName parse/clone ────────────────────────────────────────────
-// blocked_on: Parser::next/Token shape (css_parser.rs), DeepClone.
+impl KeyframesName {
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        // PORT NOTE: `css.implementDeepClone` variant-walk. `Custom(&'static [u8])`
+        // is an arena-owned slice → identity copy (generics.zig "const strings").
+        match self {
+            Self::Ident(i) => Self::Ident(i.deep_clone(bump)),
+            Self::Custom(s) => Self::Custom(s),
+        }
+    }
+}
+
+// ─── KeyframesName parse ──────────────────────────────────────────────────
+// blocked_on: Parser::next/Token shape (css_parser.rs).
 #[cfg(any())]
 impl KeyframesName {
     pub fn parse(input: &mut css::Parser) -> css::Result<KeyframesName> {
@@ -133,12 +144,6 @@ impl KeyframesName {
             css::Token::QuotedString(s) => Ok(KeyframesName::Custom(s)),
             t => Err(input.new_unexpected_token_error(t)),
         }
-    }
-
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // TODO(port): css.implementDeepClone is comptime field-reflection; replace with
-        // a `#[derive(DeepClone)]` or hand-rolled clone in Phase B.
-        css::implement_deep_clone(self, bump)
     }
 }
 
@@ -180,8 +185,20 @@ impl KeyframeSelector {
     }
 }
 
-// ─── KeyframeSelector parse/clone ─────────────────────────────────────────
-// blocked_on: css::derive_parse (DeriveParse comptime macro replacement), DeepClone.
+impl KeyframeSelector {
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+        // PORT NOTE: `css.implementDeepClone` variant-walk. `Percentage` is
+        // `Copy` (`{ v: f32 }`) → identity.
+        match self {
+            Self::Percentage(p) => Self::Percentage(*p),
+            Self::From => Self::From,
+            Self::To => Self::To,
+        }
+    }
+}
+
+// ─── KeyframeSelector parse ───────────────────────────────────────────────
+// blocked_on: css::derive_parse (DeriveParse comptime macro replacement).
 #[cfg(any())]
 impl KeyframeSelector {
     // TODO: implement this
@@ -196,11 +213,6 @@ impl KeyframeSelector {
     //     _ = input; // autofix
     //     @panic(css.todo_stuff.depth);
     // }
-
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // TODO(port): css.implementDeepClone — see note on KeyframesName::deep_clone.
-        css::implement_deep_clone(self, bump)
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -233,12 +245,13 @@ impl Keyframe {
     }
 }
 
-// blocked_on: DeepClone.
-#[cfg(any())]
 impl Keyframe {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // TODO(port): css.implementDeepClone — see note on KeyframesName::deep_clone.
-        css::implement_deep_clone(self, bump)
+        // PORT NOTE: `css.implementDeepClone` field-walk.
+        Self {
+            selectors: self.selectors.iter().map(|s| s.deep_clone(bump)).collect(),
+            declarations: super::dc::decl_block(&self.declarations, bump),
+        }
     }
 }
 
@@ -314,10 +327,8 @@ impl KeyframesRule {
     }
 }
 
-// ─── KeyframesRule fallbacks/clone ────────────────────────────────────────
-// blocked_on: DeepClone.
-#[cfg(any())]
 impl KeyframesRule {
+    #[cfg(any())]
     pub fn get_fallbacks<T>(&mut self, _targets: &css::targets::Targets) -> &[css::css_rules::CssRule<T>] {
         let _ = self;
         // Zig: `@compileError(css.todo_stuff.depth)` — intentionally unimplemented.
@@ -326,8 +337,14 @@ impl KeyframesRule {
     }
 
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // TODO(port): css.implementDeepClone — see note on KeyframesName::deep_clone.
-        css::implement_deep_clone(self, bump)
+        // PORT NOTE: `css.implementDeepClone` field-walk. `VendorPrefix` is a
+        // `Copy` bitflag (generics.zig "simple copy types" → identity).
+        Self {
+            name: self.name.deep_clone(bump),
+            keyframes: self.keyframes.iter().map(|k| k.deep_clone(bump)).collect(),
+            vendor_prefix: self.vendor_prefix,
+            loc: self.loc,
+        }
     }
 }
 

@@ -30,8 +30,8 @@ use bun_jsc::virtual_machine::{
     InitOptions, RuntimeHooks, RuntimeState as OpaqueRuntimeState, VirtualMachine,
 };
 use bun_jsc::{
-    AnyPromise, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSModuleLoader, JSValue,
-    ResolvedSource,
+    AnyPromise, ErrorableResolvedSource, ErrorableString, JSGlobalObject, JSInternalPromise,
+    JSModuleLoader, JSValue, ResolvedSource,
 };
 use bun_jsc::js_promise::Status as PromiseStatus;
 
@@ -1850,12 +1850,482 @@ unsafe fn get_hardcoded_module_hook(
     }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// LoaderHooks::resolve — `VirtualMachine.resolveMaybeNeedsTrailingSlash`
+// (spec VirtualMachine.zig:1873-2016) + `_resolve` (spec :1724-1852).
+//
+// This is the resolution path behind `Bun__resolveSync`,
+// `Zig__GlobalObject__resolve`, `import.meta.resolve`, and
+// `Module._findPath`. The body drives `transpiler.resolver` (a
+// `bun_resolver::Resolver` value field of `VirtualMachine`) and reaches into
+// `ServerEntryPoint` / `ObjectURLRegistry` — all forward-deps on `bun_jsc`,
+// hence §Dispatch.
+// ════════════════════════════════════════════════════════════════════════════
+
+/// `bun.pathLiteral(s)` — comptime path-separator rewrite. Only the two
+/// `_resolve` callers need it (the `[eval]` / `[stdin]` suffix checks); inline
+/// the const-folded result instead of pulling in the `bun.rs` macro.
+#[cfg(windows)]
+const EVAL_SUFFIX: &[u8] = b"\\[eval]";
+#[cfg(not(windows))]
+const EVAL_SUFFIX: &[u8] = b"/[eval]";
+#[cfg(windows)]
+const STDIN_SUFFIX: &[u8] = b"\\[stdin]";
+#[cfg(not(windows))]
+const STDIN_SUFFIX: &[u8] = b"/[stdin]";
+
+/// Spec VirtualMachine.zig:1712-1720.
+#[inline]
+fn normalize_specifier_for_resolution<'a>(specifier: &'a [u8], query_string: &mut &'a [u8]) -> &'a [u8] {
+    if let Some(i) = bun_string::strings::index_of_char(specifier, b'?') {
+        let i = i as usize;
+        *query_string = &specifier[i..];
+        &specifier[..i]
+    } else {
+        specifier
+    }
+}
+
+/// Spec VirtualMachine.zig:1865-1871 — strip a `file://` prefix.
+#[inline]
+fn normalize_source(source: &[u8]) -> &[u8] {
+    source.strip_prefix(b"file://".as_slice()).unwrap_or(source)
+}
+
+/// Port of `VirtualMachine._resolve` (spec VirtualMachine.zig:1724-1852).
+///
+/// Writes the resolved path/query into `*ret_path` / `*ret_query`. The Zig
+/// `ResolveFunctionResult.result: ?Resolver.Result` field is unused by the
+/// only caller (`resolveMaybeNeedsTrailingSlash` reads `.path` /
+/// `.query_string` and clones them), so we drop it and return only the slices
+/// the caller actually consumes — avoids materialising the 1KB
+/// `Resolver::Result` on every fast-path hit.
+///
+/// # Safety
+/// `vm` is the live per-thread VM. `specifier` / `source` borrow the caller's
+/// `to_utf8()` buffers and must outlive the returned slices (which the caller
+/// immediately `cloneUTF8`s).
+unsafe fn _resolve<'a>(
+    vm: *mut VirtualMachine,
+    specifier: &'a [u8],
+    source: &'a [u8],
+    is_esm: bool,
+    is_a_file_path: bool,
+    ret_path: &mut &'a [u8],
+    ret_query: &mut &'a [u8],
+) -> Result<(), bun_core::Error> {
+    use bun_jsc::virtual_machine::MAIN_FILE_NAME;
+    use bun_resolve_builtins::{Alias, Cfg as AliasCfg, Target};
+
+    // Spec :1732 — `Runtime.Runtime.Imports.alt_name` == `Runtime.Runtime.Imports.Name`
+    // == `"bun:wrap"` (see js_parser/runtime.rs:644-645). Zig compared the
+    // *basename* against `alt_name`; both consts are the bare specifier so a
+    // direct equality on `basename(specifier)` is correct.
+    if bun_paths::basename(specifier) == b"bun:wrap" {
+        *ret_path = b"bun:wrap";
+        return Ok(());
+    }
+
+    // Spec :1734-1737 — `bun:main` synthetic entry. `entry_point` lives on the
+    // high-tier `RuntimeState` (it was a value field of `VirtualMachine` in
+    // Zig).
+    if specifier == MAIN_FILE_NAME {
+        let state = runtime_state();
+        // SAFETY: `state` is the per-thread `RuntimeState` box; null only when
+        // no high tier is installed (impossible — this *is* the high tier).
+        if !state.is_null() && unsafe { (*state).entry_point.generated } {
+            *ret_path = MAIN_FILE_NAME;
+            return Ok(());
+        }
+    }
+
+    // Spec :1738-1741 — `macro:` namespace passes through.
+    if specifier.starts_with(bun_js_parser::Macro::NAMESPACE_WITH_COLON) {
+        // PORT NOTE: Zig duped into `bun.default_allocator`; the caller now
+        // `bun.String.cloneUTF8`s `ret_path` unconditionally (spec :2015), so
+        // returning the borrowed slice is sufficient and avoids the leak
+        // (PORTING.md §Forbidden: `Box::leak`).
+        *ret_path = specifier;
+        return Ok(());
+    }
+
+    // Spec :1742-1745 — `node_fallbacks` virtual import path.
+    if specifier.starts_with(node_fallbacks::IMPORT_PATH) {
+        *ret_path = specifier;
+        return Ok(());
+    }
+
+    // Spec :1746-1749 — hardcoded builtin alias (`node:fs` etc.).
+    if let Some(alias) = Alias::get(specifier, Target::Bun, AliasCfg::default()) {
+        *ret_path = alias.path.as_bytes();
+        return Ok(());
+    }
+
+    // Spec :1750-1756 — `[eval]` / `[stdin]` virtual sources.
+    // SAFETY: `vm` is the live per-thread VM.
+    if unsafe { (*vm).module_loader.eval_source.is_some() }
+        && (specifier.ends_with(EVAL_SUFFIX) || specifier.ends_with(STDIN_SUFFIX))
+    {
+        *ret_path = specifier;
+        return Ok(());
+    }
+
+    // Spec :1757-1765 — `blob:` URLs registered via `URL.createObjectURL`.
+    if let Some(rest) = specifier.strip_prefix(b"blob:".as_slice()) {
+        if crate::webcore::object_url_registry::ObjectURLRegistry::singleton().has(rest) {
+            *ret_path = specifier;
+            return Ok(());
+        }
+        return Err(bun_core::err!("ModuleNotFound"));
+    }
+
+    // ── Filesystem resolver ──────────────────────────────────────────────
+    let is_special_source =
+        source == MAIN_FILE_NAME || bun_js_parser::Macro::is_macro_path(source);
+    let mut query_string: &[u8] = b"";
+    let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
+    // Spec :1771-1778. `Fs.PathName.init(source).dirWithTrailingSlash()` slices
+    // `source` in place, so the `'a` lifetime is preserved.
+    // SAFETY: `vm.transpiler.fs` is the `'static` `FileSystem` singleton
+    // pointer set in `init_runtime_state`.
+    let top_level_dir: &'a [u8] =
+        unsafe { core::mem::transmute::<&[u8], &'a [u8]>((*(*vm).transpiler.fs).top_level_dir) };
+    let source_to_use: &[u8] = if !is_special_source {
+        if is_a_file_path {
+            Fs::PathName::init(source).dir_with_trailing_slash()
+        } else {
+            source
+        }
+    } else {
+        top_level_dir
+    };
+
+    // Spec :1780-1838 — `resolveAndAutoInstall` retry-on-not-found loop.
+    // SAFETY: `resolver.opts.global_cache` is a plain enum field.
+    let global_cache = unsafe { (*vm).transpiler.resolver.opts.global_cache };
+    let kind = if is_esm { ImportKind::Stmt } else { ImportKind::Require };
+
+    // This cache-bust is disabled when the filesystem is not being used to
+    // resolve.
+    let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
+    let result: bun_resolver::Result = loop {
+        // SAFETY: `vm.transpiler.resolver` is the unique per-VM resolver; this
+        // is the only `&mut` borrow live for this call (the JS thread is
+        // single-entry here).
+        match unsafe {
+            (*vm).transpiler.resolver.resolve_and_auto_install(
+                source_to_use,
+                normalized_specifier,
+                kind,
+                global_cache,
+            )
+        } {
+            ResolveResultUnion::Success(r) => break r,
+            ResolveResultUnion::Failure(e) => return Err(e),
+            ResolveResultUnion::Pending(_) | ResolveResultUnion::NotFound => {
+                if !retry_on_not_found {
+                    return Err(bun_core::err!("ModuleNotFound"));
+                }
+                retry_on_not_found = false;
+
+                // Spec :1799-1833 — bust the dir cache for the candidate
+                // parent directory and retry once.
+                let mut buf = bun_paths::path_buffer_pool::get();
+                let buster_name: &[u8] = 'name: {
+                    if bun_paths::is_absolute(normalized_specifier) {
+                        if let Some(dir) = bun_core::dirname(normalized_specifier) {
+                            if dir.len() > buf.len() {
+                                return Err(bun_core::err!("ModuleNotFound"));
+                            }
+                            // Normalized without trailing slash.
+                            break 'name bun_string::strings::paths::normalize_slashes_only(
+                                &mut buf[..],
+                                dir,
+                                bun_paths::SEP,
+                            );
+                        }
+                    }
+
+                    // If the specifier is too long to join, it can't name a
+                    // real directory — skip the cache bust and fail.
+                    if source_to_use.len() + normalized_specifier.len() + 4 >= buf.len() {
+                        return Err(bun_core::err!("ModuleNotFound"));
+                    }
+
+                    let parts: [&[u8]; 3] = [source_to_use, normalized_specifier, b".."];
+                    break 'name bun_paths::resolve_path::join_abs_string_buf_z::<
+                        bun_paths::platform::Auto,
+                    >(top_level_dir, &mut buf[..], &parts)
+                    .as_bytes();
+                };
+
+                // Only re-query if we previously had something cached.
+                // SAFETY: see above.
+                if unsafe {
+                    (*vm).transpiler.resolver.bust_dir_cache(
+                        bun_string::strings::paths::without_trailing_slash_windows_path(
+                            buster_name,
+                        ),
+                    )
+                } {
+                    continue;
+                }
+                return Err(bun_core::err!("ModuleNotFound"));
+            }
+        }
+    };
+
+    // Spec :1840-1842.
+    // SAFETY: plain bool/usize fields.
+    unsafe {
+        if !(*vm).macro_mode {
+            (*vm).has_any_macro_remappings = (*vm).has_any_macro_remappings
+                || !(*vm).transpiler.options.macro_remap.is_empty();
+        }
+    }
+
+    *ret_query = query_string;
+    let Some(result_path) = result.path_const() else {
+        return Err(bun_core::err!("ModuleNotFound"));
+    };
+    // SAFETY: plain usize field.
+    unsafe { (*vm).resolved_count += 1 };
+
+    // PORT NOTE: `result_path.text` is a `&'_ [u8]` borrowed from the
+    // resolver's interned `'static` BSSStringList stores (see resolver/lib.rs
+    // §allocators) — the same store `load_preloads` reads from. Transmute the
+    // lifetime to `'a` so the caller can `cloneUTF8` it; the underlying bytes
+    // outlive the program.
+    *ret_path = unsafe { core::mem::transmute::<&[u8], &'a [u8]>(result_path.text) };
+    Ok(())
+}
+
+/// `LoaderHooks::resolve` body — port of
+/// `VirtualMachine.resolveMaybeNeedsTrailingSlash` (spec VirtualMachine.zig:1873-2016).
+///
+/// # Safety
+/// `res` / `global` are valid; `query_string` is null or a valid out-param.
+/// `specifier` / `source` are passed by value (spec moves the `bun.String`s by
+/// value too) and are NOT derefed here — the caller owns them.
+unsafe fn resolve_hook(
+    res: *mut ErrorableString,
+    global: *mut JSGlobalObject,
+    specifier: bun_string::String,
+    source: bun_string::String,
+    query_string: *mut bun_string::String,
+    is_esm: bool,
+    is_a_file_path: bool,
+    is_user_require_resolve: bool,
+) -> bool {
+    use bun_jsc::ResolveMessage;
+    use bun_logger as logger;
+    use bun_resolve_builtins::{Alias, Cfg as AliasCfg, Target};
+
+    // SAFETY: per fn contract.
+    let global_ref = unsafe { &*global };
+    let vm: *mut VirtualMachine = global_ref.bun_vm() as *mut VirtualMachine;
+
+    // Spec :1883-1904 — overlong specifier guard. `MAX_PATH_BYTES * 1.5`,
+    // truncated. PORT NOTE: Zig used `@intFromFloat(@trunc(f64(..) * 1.5))`;
+    // integer `* 3 / 2` is exact for the powers-of-two MAX_PATH_BYTES values.
+    const MAX_SPECIFIER_LEN: u32 = (bun_paths::MAX_PATH_BYTES as u32) * 3 / 2;
+    if is_a_file_path && specifier.length() > MAX_SPECIFIER_LEN {
+        let specifier_utf8 = specifier.to_utf8();
+        let source_utf8 = source.to_utf8();
+        let import_kind = if is_esm {
+            ImportKind::Stmt
+        } else if is_user_require_resolve {
+            ImportKind::RequireResolve
+        } else {
+            ImportKind::Require
+        };
+        let printed = bun_core::handle_oom(ResolveMessage::fmt(
+            specifier_utf8.slice(),
+            source_utf8.slice(),
+            bun_core::err!("NameTooLong"),
+            import_kind,
+        ));
+        let msg = logger::Msg {
+            data: logger::range_data(None, logger::Range::NONE, printed),
+            ..Default::default()
+        };
+        let js_err = match ResolveMessage::create(global_ref, &msg, source_utf8.slice()) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        // SAFETY: per fn contract.
+        unsafe { *res = ErrorableString::err(bun_core::err!("NameTooLong"), js_err) };
+        return true;
+    }
+
+    let specifier_utf8 = specifier.to_utf8();
+    let source_utf8 = source.to_utf8();
+
+    // Spec :1913-1925 — `PluginRunner.onResolveJSC`. The `plugin_runner` field
+    // is `Option<()>` on the low-tier VM (TODO(b2-cycle) in VirtualMachine.rs:
+    // gated `bun_bundler::transpiler::PluginRunner`); skip until it widens.
+    // PORT NOTE: NOT silently dropping — `Zig__GlobalObject__resolve` already
+    // short-circuits plugin namespaces in C++ (ZigGlobalObject.cpp:3299-3331),
+    // and `Bun__resolveSync` callers go through `PluginRunner` only when a
+    // plugin is registered (which Phase B doesn't yet do).
+    #[cfg(any())]
+    {
+        // SAFETY: `vm` is the live per-thread VM.
+        if let Some(plugin_runner) = unsafe { (*vm).plugin_runner.as_mut() } {
+            if PluginRunner::could_be_plugin(specifier_utf8.slice()) {
+                let namespace = PluginRunner::extract_namespace(specifier_utf8.slice());
+                let after_namespace = if namespace.is_empty() {
+                    specifier_utf8.slice()
+                } else {
+                    &specifier_utf8.slice()[namespace.len() + 1..]
+                };
+                match plugin_runner.on_resolve_jsc(
+                    bun_string::String::init(namespace),
+                    bun_string::String::borrow_utf8(after_namespace),
+                    source,
+                    bun_options_types::Target::Bun,
+                ) {
+                    Ok(Some(resolved_path)) => {
+                        unsafe { *res = resolved_path };
+                        return true;
+                    }
+                    Ok(None) => {}
+                    Err(_) => return false,
+                }
+            }
+        }
+    }
+
+    // Spec :1927-1935 — hardcoded builtin alias fast path. For
+    // `require.resolve("fs")` (`is_user_require_resolve && node_builtin`) Node
+    // returns the bare specifier as-is, not the canonical `node:fs`.
+    if let Some(hardcoded) = Alias::get(specifier_utf8.slice(), Target::Bun, AliasCfg::default()) {
+        let path = if is_user_require_resolve && hardcoded.node_builtin {
+            specifier.dupe_ref()
+        } else {
+            bun_string::String::init(hardcoded.path.as_bytes())
+        };
+        // SAFETY: per fn contract.
+        unsafe { *res = ErrorableString::ok(path) };
+        return true;
+    }
+
+    // Spec :1937-1954 — swap `vm.log` (and resolver/linker/pm logs) to a fresh
+    // local Log so resolver diagnostics don't leak into the VM log. PORT NOTE:
+    // the Rust `Resolver.log` / `Linker.log` are `*mut Log` (see
+    // transpile_source_code's identical swap at jsc_hooks.rs:848-879), so the
+    // pointer write is sound; restore via scopeguard so the early-`return
+    // false` paths don't leave a dangling stack pointer.
+    let mut log = logger::Log::init();
+    // SAFETY: `vm.log` is `Option<NonNull<Log>>`.
+    let old_log: *mut logger::Log =
+        unsafe { (*vm).log }.map(|p| p.as_ptr()).unwrap_or(ptr::null_mut());
+    let log_ptr: *mut logger::Log = &mut log;
+    // SAFETY: `vm` is the live per-thread VM; the log fields are raw `*mut`.
+    unsafe {
+        (*vm).log = core::ptr::NonNull::new(log_ptr);
+        (*vm).transpiler.resolver.log = log_ptr;
+        (*vm).transpiler.linker.log = log_ptr;
+        // TODO(b2-cycle): `transpiler.resolver.package_manager` log swap —
+        // gated alongside the PM field (see transpile_source_code §log-swap).
+    }
+    let _restore = scopeguard::guard((), |_| unsafe {
+        (*vm).log = core::ptr::NonNull::new(old_log);
+        (*vm).transpiler.resolver.log = old_log;
+        (*vm).transpiler.linker.log = old_log;
+    });
+
+    // Spec :1955 — `jsc_vm._resolve(...)`.
+    let mut result_path: &[u8] = b"";
+    let mut result_query: &[u8] = b"";
+    // SAFETY: `vm` is the live per-thread VM; the slices borrow
+    // `specifier_utf8`/`source_utf8` which outlive this call.
+    if let Err(mut err) = unsafe {
+        _resolve(
+            vm,
+            specifier_utf8.slice(),
+            normalize_source(source_utf8.slice()),
+            is_esm,
+            is_a_file_path,
+            &mut result_path,
+            &mut result_query,
+        )
+    } {
+        // Spec :1956-1999 — synthesise a `ResolveMessage` from the first
+        // `.resolve`-tagged log msg, or fall back to `ResolveMessage::fmt`.
+        let msg: logger::Msg = 'brk: {
+            for m in log.msgs.iter() {
+                if let logger::Metadata::Resolve(r) = &m.metadata {
+                    err = r.err;
+                    // PORT NOTE: Zig moved the msg out (`break :brk m`); the
+                    // Rust `Msg` is `Clone` (Result<Msg, AllocError>).
+                    break 'brk bun_core::handle_oom(m.clone());
+                }
+            }
+
+            let import_kind = if is_esm {
+                ImportKind::Stmt
+            } else if is_user_require_resolve {
+                ImportKind::RequireResolve
+            } else {
+                ImportKind::Require
+            };
+
+            let printed = bun_core::handle_oom(ResolveMessage::fmt(
+                specifier_utf8.slice(),
+                source_utf8.slice(),
+                err,
+                import_kind,
+            ));
+            logger::Msg {
+                data: logger::range_data(None, logger::Range::NONE, printed.clone()),
+                metadata: logger::Metadata::Resolve(logger::MetadataResolve {
+                    specifier: logger::BabyString::r#in(&printed, specifier_utf8.slice()),
+                    import_kind,
+                    err,
+                }),
+                ..Default::default()
+            }
+        };
+
+        let js_err = match ResolveMessage::create(global_ref, &msg, source_utf8.slice()) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        // SAFETY: per fn contract.
+        unsafe { *res = ErrorableString::err(err, js_err) };
+        return true;
+    }
+
+    // Spec :2002-2010 — write `*query_string`. `result_query` borrows
+    // `specifier_utf8`, which is freed when this fn returns; clone into an
+    // owned `bun.String`.
+    if !query_string.is_null() {
+        // SAFETY: per fn contract — `query_string` is a valid out-param.
+        unsafe {
+            *query_string = if !result_query.is_empty() {
+                bun_string::String::clone_utf8(result_query)
+            } else {
+                bun_string::String::empty()
+            };
+        }
+    }
+
+    // Spec :2015 — `result.path` may borrow `specifier_utf8` (e.g. `http://`
+    // specifiers the resolver marked external without copying); clone for the
+    // same reason. Callers own the resulting ref.
+    // SAFETY: per fn contract.
+    unsafe { *res = ErrorableString::ok(bun_string::String::clone_utf8(result_path)) };
+    true
+}
+
 /// The static `LoaderHooks` instance handed to `bun_jsc`.
 pub static LOADER_HOOKS_INSTANCE: LoaderHooks = LoaderHooks {
     transpile_source_code,
     fetch_builtin_module,
     get_hardcoded_module: get_hardcoded_module_hook,
     transpile_file,
+    resolve: resolve_hook,
 };
 
 // ════════════════════════════════════════════════════════════════════════════

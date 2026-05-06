@@ -1351,7 +1351,7 @@ impl<'a> Transpiler<'a> {
         // PERF(port): one extra alloc vs Zig's borrowed-slice — profile Phase B.
         let symbols = js_ast::ast::symbol::Map::init_with_one_list(core::mem::take(&mut ast.symbols));
 
-        // TODO(b2-blocked): two Options fields can't cross the type seam yet
+        // TODO(b2-blocked): one Options field can't cross the type seam yet
         // (only this crate is editable); set to `Default` and forward once the
         // lower-tier types unify:
         //   * `css_import_behavior` — `self.options.css_import_behavior()`
@@ -1359,10 +1359,10 @@ impl<'a> Transpiler<'a> {
         //     `js_printer::Options` still uses its local stand-in
         //     `js_printer::CssInJsBehavior` (variants don't even match —
         //     `AutoOnimportcss` vs `AutoOnlyCssFiles`). Spec: zig:595/621/647.
-        //   * `runtime_imports` — `Ast.runtime_imports` is the opaque
-        //     `ast::runtime_stub::Imports` unit struct; `Options.runtime_imports`
-        //     wants `bun_js_parser::runtime::Imports` (parser.rs stub).
-        //     Spec: zig:593/619/645.
+        // `runtime_imports` is now forwarded — after Round-G `Ast.runtime_imports`
+        // is the real `parser::Runtime::Imports`, the same type
+        // `js_printer::Options.runtime_imports` takes (via `js_ast::runtime`),
+        // so the seam is gone. Spec: zig:593/619/645.
         // `target` is now forwarded via `to_bundle_enums_target` below — it
         // *does* affect the EsmAscii/bun-runtime path (js_printer/lib.rs:6872
         // gates the `var {require}=import.meta;` hoist on `target == Bun`;
@@ -1398,6 +1398,7 @@ impl<'a> Transpiler<'a> {
                 source,
                 js_printer::Options {
                     bundling: false,
+                    runtime_imports: ast.runtime_imports.clone(),
                     require_ref: Some(require_ref),
                     source_map_handler: source_map_context,
                     minify_whitespace: self.options.minify_whitespace,
@@ -1414,6 +1415,7 @@ impl<'a> Transpiler<'a> {
             js_printer::Format::Esm => {
                 let opts = js_printer::Options {
                     bundling: false,
+                    runtime_imports: ast.runtime_imports.clone(),
                     require_ref: Some(require_ref),
                     source_map_handler: source_map_context,
                     minify_whitespace: self.options.minify_whitespace,
@@ -1476,6 +1478,7 @@ impl<'a> Transpiler<'a> {
         let _ = (runtime_transpiler_cache, module_info);
         let opts = js_printer::Options {
             bundling: false,
+            runtime_imports: ast.runtime_imports.clone(),
             require_ref: Some(ast.require_ref),
             source_map_handler: source_map_context,
             minify_whitespace: self.options.minify_whitespace,

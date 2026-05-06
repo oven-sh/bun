@@ -831,7 +831,8 @@ impl ColorFallbackKind {
     }
 }
 
-use super::color_generated::generated_color_conversions;
+#[allow(unused_imports)]
+use super::color_generated::generated_color_conversions as _;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Colorspace traits (replaces Zig comptime mixins: DefineColorspace,
@@ -910,8 +911,8 @@ pub trait ColorGamut: Sized + Copy {
 /// RecangularPremultiply / PolarPremultiply + AdjustPowerless* mixins.
 pub trait Interpolate: Colorspace {
     fn fill_missing_components(&mut self, other: &Self) {
-        let (a, b, c, alpha) = self.components_mut();
         let (oa, ob, oc, oalpha) = other.components();
+        let (a, b, c, alpha) = self.components_mut();
         if a.is_nan() { *a = oa; }
         if b.is_nan() { *b = ob; }
         if c.is_nan() { *c = oc; }
@@ -946,68 +947,75 @@ fn lerp_components<T: Colorspace>(this: &T, p1: f32, other: &T, p2: f32) -> (f32
 
 pub fn parse_color_function(
     location: css::SourceLocation,
-    function: &[u8],
+    function: &'static [u8],
     input: &mut css::Parser,
 ) -> CssResult<CssColor> {
     let mut parser = ComponentParser::new(true);
 
-    // TODO(port): phf custom hasher — Zig used ComptimeEnumMap.getASCIIICaseInsensitive
-    static MAP: phf::Map<&'static [u8], u8> = phf::phf_map! {
-        b"lab" => 0, b"oklab" => 1, b"lch" => 2, b"oklch" => 3, b"color" => 4,
-        b"hsl" => 5, b"hsla" => 6, b"hwb" => 7, b"rgb" => 8, b"rgba" => 9,
-        b"color-mix" => 10, b"light-dark" => 11,
-    };
-    // TODO(port): need case-insensitive lookup; for now lowercase the input
-    let lower = strings::to_ascii_lowercase_stack::<16>(function);
-    if let Some(val) = MAP.get(lower.as_slice()) {
-        return match val {
-            0 => parse_lab::<LAB>(input, &mut parser, |l, a, b, alpha| {
-                LABColor::Lab(LAB { l, a, b, alpha })
-            }),
-            1 => parse_lab::<OKLAB>(input, &mut parser, |l, a, b, alpha| {
-                LABColor::Oklab(OKLAB { l, a, b, alpha })
-            }),
-            2 => parse_lch::<LCH>(input, &mut parser, |l, c, h, alpha| {
-                LABColor::Lch(LCH { l, c, h, alpha })
-            }),
-            3 => parse_lch::<OKLCH>(input, &mut parser, |l, c, h, alpha| {
-                LABColor::Oklch(OKLCH { l, c, h, alpha })
-            }),
-            4 => parse_predefined(input, &mut parser),
-            5 | 6 => parse_hsl_hwb::<HSL>(input, &mut parser, true, |h, s, l, a| {
-                let hsl = HSL { h, s, l, alpha: a };
-                if !h.is_nan() && !s.is_nan() && !l.is_nan() && !a.is_nan() {
-                    CssColor::Rgba(RGBA::from(hsl))
-                } else {
-                    CssColor::Float(Box::new(FloatColor::Hsl(hsl)))
-                }
-            }),
-            7 => parse_hsl_hwb::<HWB>(input, &mut parser, false, |h, w, b, a| {
-                let hwb = HWB { h, w, b, alpha: a };
-                if !h.is_nan() && !w.is_nan() && !b.is_nan() && !a.is_nan() {
-                    CssColor::Rgba(RGBA::from(hwb))
-                } else {
-                    CssColor::Float(Box::new(FloatColor::Hwb(hwb)))
-                }
-            }),
-            8 | 9 => parse_rgb(input, &mut parser),
-            10 => input.parse_nested_block(|i| parse_color_mix(i)),
-            11 => input.parse_nested_block(|i| {
-                let light = match CssColor::parse(i)? {
-                    CssColor::LightDark { light, dark } => take_light_free_dark(light, dark),
-                    v => Box::new(v),
-                };
-                if let Err(e) = i.expect_comma() {
-                    return Err(e);
-                }
-                let dark = match CssColor::parse(i)? {
-                    CssColor::LightDark { light, dark } => take_dark_free_light(light, dark),
-                    v => Box::new(v),
-                };
-                Ok(CssColor::LightDark { light, dark })
-            }),
-            _ => unreachable!(),
-        };
+    // todo_stuff.match_ignore_ascii_case
+    use strings::eql_case_insensitive_ascii_check_length as eq_ci;
+    if eq_ci(function, b"lab") {
+        return parse_lab::<LAB>(input, &mut parser, |l, a, b, alpha| {
+            LABColor::Lab(LAB { l, a, b, alpha })
+        });
+    }
+    if eq_ci(function, b"oklab") {
+        return parse_lab::<OKLAB>(input, &mut parser, |l, a, b, alpha| {
+            LABColor::Oklab(OKLAB { l, a, b, alpha })
+        });
+    }
+    if eq_ci(function, b"lch") {
+        return parse_lch::<LCH>(input, &mut parser, |l, c, h, alpha| {
+            LABColor::Lch(LCH { l, c, h, alpha })
+        });
+    }
+    if eq_ci(function, b"oklch") {
+        return parse_lch::<OKLCH>(input, &mut parser, |l, c, h, alpha| {
+            LABColor::Oklch(OKLCH { l, c, h, alpha })
+        });
+    }
+    if eq_ci(function, b"color") {
+        return parse_predefined(input, &mut parser);
+    }
+    if eq_ci(function, b"hsl") || eq_ci(function, b"hsla") {
+        return parse_hsl_hwb::<HSL>(input, &mut parser, true, |h, s, l, a| {
+            let hsl = HSL { h, s, l, alpha: a };
+            if !h.is_nan() && !s.is_nan() && !l.is_nan() && !a.is_nan() {
+                CssColor::Rgba(RGBA::from(hsl))
+            } else {
+                CssColor::Float(Box::new(FloatColor::Hsl(hsl)))
+            }
+        });
+    }
+    if eq_ci(function, b"hwb") {
+        return parse_hsl_hwb::<HWB>(input, &mut parser, false, |h, w, b, a| {
+            let hwb = HWB { h, w, b, alpha: a };
+            if !h.is_nan() && !w.is_nan() && !b.is_nan() && !a.is_nan() {
+                CssColor::Rgba(RGBA::from(hwb))
+            } else {
+                CssColor::Float(Box::new(FloatColor::Hwb(hwb)))
+            }
+        });
+    }
+    if eq_ci(function, b"rgb") || eq_ci(function, b"rgba") {
+        return parse_rgb(input, &mut parser);
+    }
+    if eq_ci(function, b"color-mix") {
+        return input.parse_nested_block(|i| parse_color_mix(i));
+    }
+    if eq_ci(function, b"light-dark") {
+        return input.parse_nested_block(|i| {
+            let light = match CssColor::parse(i)? {
+                CssColor::LightDark { light, dark } => take_light_free_dark(light, dark),
+                v => Box::new(v),
+            };
+            i.expect_comma()?;
+            let dark = match CssColor::parse(i)? {
+                CssColor::LightDark { light, dark } => take_dark_free_light(light, dark),
+                v => Box::new(v),
+            };
+            Ok(CssColor::LightDark { light, dark })
+        });
     }
     Err(location.new_unexpected_token_error(css::Token::Ident(function)))
 }
@@ -1153,11 +1161,14 @@ pub fn delta_eok<T: Into<OKLAB>>(a_: T, b_: OKLCH) -> f32 {
     (delta_l.powi(2) + delta_a.powi(2) + delta_b.powi(2)).sqrt()
 }
 
-pub fn parse_lab<T: Colorspace>(
+pub fn parse_lab<T>(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
     func: fn(f32, f32, f32, f32) -> LABColor,
-) -> CssResult<CssColor> {
+) -> CssResult<CssColor>
+where
+    T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + Into<OKLAB>,
+{
     // https://www.w3.org/TR/css-color-4/#funcdef-lab
     input.parse_nested_block(|i| {
         parser.parse_relative::<T, CssColor, _>(i, |i, p| {
@@ -1172,7 +1183,7 @@ pub fn parse_lab<T: Colorspace>(
     })
 }
 
-pub fn parse_lch<T: Colorspace>(
+pub fn parse_lch<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + Into<OKLAB>>(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
     func: fn(f32, f32, f32, f32) -> LABColor,
@@ -1201,7 +1212,7 @@ pub fn parse_lch<T: Colorspace>(
 /// Parses the hsl() and hwb() functions.
 /// The results of this function are stored as floating point if there are any `none` components.
 /// https://drafts.csswg.org/css-color-4/#the-hsl-notation
-pub fn parse_hsl_hwb<T: Colorspace>(
+pub fn parse_hsl_hwb<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + Into<OKLAB>>(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
     allows_legacy: bool,
@@ -1298,7 +1309,7 @@ fn parse_legacy_alpha(input: &mut css::Parser, parser: &ComponentParser) -> CssR
 }
 
 fn parse_alpha(input: &mut css::Parser, parser: &ComponentParser) -> CssResult<f32> {
-    let res = if input.try_parse(|i| i.expect_delim('/')).is_ok() {
+    let res = if input.try_parse(|i| i.expect_delim(b'/')).is_ok() {
         parse_number_or_percentage(input, parser)?.clamp(0.0, 1.0)
     } else {
         1.0
@@ -1771,7 +1782,7 @@ impl ComponentParser {
         func: F,
     ) -> CssResult<C>
     where
-        T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH>,
+        T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + Into<OKLAB>,
         C: LightDarkOwned,
         F: Fn(&mut css::Parser, &mut ComponentParser) -> CssResult<C> + Copy,
     {
@@ -1793,7 +1804,7 @@ impl ComponentParser {
         func: F,
     ) -> CssResult<C>
     where
-        T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH>,
+        T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + Into<OKLAB>,
         C: LightDarkOwned,
         F: Fn(&mut css::Parser, &mut ComponentParser) -> CssResult<C> + Copy,
     {
@@ -1995,20 +2006,19 @@ impl RelativeComponentParser {
         // TODO(port): Zig threads a stack `Angle` through `Calc(Angle).parseWith` via a closure
         // that returns `Calc{ .value = &t.angle }` (raw stack pointer). Here we use a Cell-based
         // closure; Phase B should verify Calc::parse_with API shape.
+        // PORT NOTE: Zig threads a stack `Angle` through `Calc(Angle).parseWith`
+        // via a closure that returns `Calc{ .value = &t.angle }` (raw stack
+        // pointer). Rust `Calc::Value` is `Box<V>`, so box the temporary.
         if let Ok(value) = input.try_parse(|i| {
-            let mut angle_slot = Angle::Deg(0.0);
-            match Calc::<Angle>::parse_with(i, |ident| {
-                let value = this.get_ident(ident, allowed)?;
-                angle_slot = Angle::Deg(value);
-                Some(Calc::Value(&angle_slot)) // TODO(port): lifetime — Zig stored stack ptr
+            match Calc::<Angle>::parse_with(i, this, |ctx, ident| {
+                let value = ctx.get_ident(ident, allowed)?;
+                Some(Calc::Value(Box::new(Angle::Deg(value))))
             }) {
                 Ok(Calc::Value(v)) => Ok(*v),
                 _ => Err(i.new_custom_error(css::ParserError::invalid_value)),
             }
         }) {
-            return Ok(css::color::AngleOrNumber::Angle {
-                degrees: value.to_degrees(),
-            });
+            return Ok(css::color::AngleOrNumber::Angle { degrees: value.to_degrees() });
         }
 
         Err(input.new_error_for_next_token())
@@ -2031,24 +2041,19 @@ impl RelativeComponentParser {
             return Ok(NumberOrPercentage::Percentage { unit_value: value });
         }
 
-        {
-            // TODO(port): same stack-pointer pattern as parse_angle_or_number above.
-            if let Ok(value) = input.try_parse(|i| {
-                let mut percentage = Percentage { v: 0.0 };
-                match Calc::<Percentage>::parse_with(i, |ident| {
-                    let v = this.get_ident(ident, allowed)?;
-                    percentage = Percentage { v };
-                    // value variant is a *Percentage
-                    // but we immediately dereference it and discard the pointer
-                    // so using a field on this closure struct instead of making a gratuitous allocation
-                    Some(Calc::Value(&percentage)) // TODO(port): lifetime
-                }) {
-                    Ok(Calc::Value(v)) => Ok(*v),
-                    _ => Err(i.new_custom_error(css::ParserError::invalid_value)),
-                }
+        if let Ok(value) = input.try_parse(|i| {
+            match Calc::<Percentage>::parse_with(i, this, |ctx, ident| {
+                let v = ctx.get_ident(ident, allowed)?;
+                // value variant is a *Percentage
+                // but we immediately dereference it and discard the pointer
+                // so using a field on this closure struct instead of making a gratuitous allocation
+                Some(Calc::Value(Box::new(Percentage { v })))
             }) {
-                return Ok(NumberOrPercentage::Percentage { unit_value: value.v });
+                Ok(Calc::Value(v)) => Ok(*v),
+                _ => Err(i.new_custom_error(css::ParserError::invalid_value)),
             }
+        }) {
+            return Ok(NumberOrPercentage::Percentage { unit_value: value.v });
         }
 
         Err(input.new_error_for_next_token())
@@ -2065,11 +2070,9 @@ impl RelativeComponentParser {
         }
 
         if let Ok(value) = input.try_parse(|i| {
-            let mut temp = Percentage { v: 0.0 };
-            let calc_value = match Calc::<Percentage>::parse_with(i, |ident| {
-                let v = this.get_ident(ident, ChannelType::PERCENTAGE)?;
-                temp = Percentage { v };
-                Some(Calc::Value(&temp)) // TODO(port): lifetime
+            let calc_value = match Calc::<Percentage>::parse_with(i, this, |ctx, ident| {
+                let v = ctx.get_ident(ident, ChannelType::PERCENTAGE)?;
+                Some(Calc::Value(Box::new(Percentage { v })))
             }) {
                 Ok(v) => v,
                 Err(_) => return Err(i.new_custom_error(css::ParserError::invalid_value)),
@@ -2121,8 +2124,8 @@ impl RelativeComponentParser {
         this: &RelativeComponentParser,
         allowed_types: ChannelType,
     ) -> CssResult<f32> {
-        if let Ok(calc_val) = Calc::<f32>::parse_with(input, |ident| {
-            let v = this.get_ident(ident, allowed_types)?;
+        if let Ok(calc_val) = Calc::<f32>::parse_with(input, this, |ctx, ident| {
+            let v = ctx.get_ident(ident, allowed_types)?;
             Some(Calc::Number(v))
         }) {
             // PERF: I don't like this redundant allocation
@@ -2193,7 +2196,10 @@ pub fn parse_predefined(input: &mut css::Parser, parser: &mut ComponentParser) -
                 None
             };
 
-        let colorspace = i.expect_ident()?;
+        // PORT NOTE: reshaped for borrowck — `expect_ident()` borrows the
+        // parser; launder the slice via `src_str` (it points into the input
+        // buffer, see Phase-A `'static` placeholder) so `i` is reusable below.
+        let colorspace: &'static [u8] = unsafe { css::src_str(i.expect_ident()?) };
 
         if let Some(f) = &from {
             if let CssColor::LightDark { light, dark } = f {
@@ -2217,7 +2223,7 @@ pub fn parse_predefined(input: &mut css::Parser, parser: &mut ComponentParser) -
 pub fn parse_predefined_relative(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
-    colorspace: &[u8],
+    colorspace: &'static [u8],
     from_: Option<&CssColor>,
 ) -> CssResult<CssColor> {
     use strings::eql_case_insensitive_ascii_check_length as eq_ci;
@@ -2302,42 +2308,19 @@ pub fn parse_predefined_relative(
 
 /// A [color space](https://www.w3.org/TR/css-color-4/#interpolation-space) keyword
 /// used in interpolation functions such as `color-mix()`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, crate::DefineEnumProperty)]
 pub enum ColorSpaceName {
-    #[strum(serialize = "srgb")]
     Srgb,
-    #[strum(serialize = "srgb-linear")]
     SrgbLinear,
-    #[strum(serialize = "lab")]
     Lab,
-    #[strum(serialize = "oklab")]
     Oklab,
-    #[strum(serialize = "xyz")]
     Xyz,
-    #[strum(serialize = "xyz-d50")]
     XyzD50,
-    #[strum(serialize = "xyz-d65")]
     XyzD65,
-    #[strum(serialize = "hsl")]
     Hsl,
-    #[strum(serialize = "hwb")]
     Hwb,
-    #[strum(serialize = "lch")]
     Lch,
-    #[strum(serialize = "oklch")]
     Oklch,
-}
-
-impl ColorSpaceName {
-    pub fn as_str(&self) -> &'static [u8] {
-        css::enum_property_util::as_str(self)
-    }
-    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        css::enum_property_util::parse(input)
-    }
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        css::enum_property_util::to_css(self, dest)
-    }
 }
 
 pub fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
@@ -2430,8 +2413,7 @@ pub fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
 
 /// A hue [interpolation method](https://www.w3.org/TR/css-color-4/#typedef-hue-interpolation-method)
 /// used in interpolation functions such as `color-mix()`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-#[strum(serialize_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, crate::DefineEnumProperty)]
 pub enum HueInterpolationMethod {
     /// Angles are adjusted so that θ₂ - θ₁ ∈ [-180, 180].
     Shorter,
@@ -2446,16 +2428,6 @@ pub enum HueInterpolationMethod {
 }
 
 impl HueInterpolationMethod {
-    pub fn as_str(&self) -> &'static [u8] {
-        css::enum_property_util::as_str(self)
-    }
-    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        css::enum_property_util::parse(input)
-    }
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        css::enum_property_util::to_css(self, dest)
-    }
-
     pub fn interpolate(&self, a: &mut f32, b: &mut f32) {
         // https://drafts.csswg.org/css-color/#hue-interpolation
         if *self == HueInterpolationMethod::Specified {
@@ -2580,21 +2552,21 @@ pub fn write_components(
     dest: &mut Printer,
 ) -> Result<(), PrintErr> {
     dest.write_str(name)?;
-    dest.write_char('(')?;
+    dest.write_char(b'(')?;
     if a.is_nan() {
         dest.write_str("none")?;
     } else {
         Percentage { v: a }.to_css(dest)?;
     }
-    dest.write_char(' ')?;
+    dest.write_char(b' ')?;
     write_component(b, dest)?;
-    dest.write_char(' ')?;
+    dest.write_char(b' ')?;
     write_component(c, dest)?;
     if alpha.is_nan() || (alpha - 1.0).abs() > f32::EPSILON {
         dest.delim(b'/', true)?;
         write_component(alpha, dest)?;
     }
-    dest.write_char(')')
+    dest.write_char(b')')
 }
 
 pub fn write_component(c: f32, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -2623,11 +2595,11 @@ pub fn write_predefined(
 
     dest.write_str("color(")?;
     dest.write_str(name)?;
-    dest.write_char(' ')?;
+    dest.write_char(b' ')?;
     write_component(a, dest)?;
-    dest.write_char(' ')?;
+    dest.write_char(b' ')?;
     write_component(b, dest)?;
-    dest.write_char(' ')?;
+    dest.write_char(b' ')?;
     write_component(c, dest)?;
 
     if alpha.is_nan() || (alpha - 1.0).abs() > f32::EPSILON {
@@ -2635,7 +2607,7 @@ pub fn write_predefined(
         write_component(alpha, dest)?;
     }
 
-    dest.write_char(')')
+    dest.write_char(b')')
 }
 
 // TODO(port): move to <area>_sys

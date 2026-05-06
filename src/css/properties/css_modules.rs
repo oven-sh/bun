@@ -136,6 +136,15 @@ pub enum Specifier {
     ImportRecordIndex(u32),
 }
 
+// `generics::CssEql` so the `Option<Specifier>` blanket (used by
+// `DashedIdentReference::eql` in values/ident.rs) resolves. Forwards to the
+// inherent `eql` below — same shape the old data-only stub in `values/mod.rs`
+// carried before this leaf un-gated.
+impl crate::generics::CssEql for Specifier {
+    #[inline]
+    fn eql(&self, other: &Self) -> bool { Specifier::eql(self, other) }
+}
+
 impl Specifier {
     pub fn eql(lhs: &Self, rhs: &Self) -> bool {
         // PORT NOTE: Zig `css.implementEql` (variant-wise reflection) → hand-match.

@@ -248,6 +248,21 @@ impl ImportRule {
         self.layer.is_some() || self.supports.is_some() || !self.media.media_queries.is_empty()
     }
 
+    pub fn deep_clone(&self, bump: &Arena) -> Self {
+        // PORT NOTE: `css.implementDeepClone` field-walk. `url: &'static [u8]`
+        // is an arena-owned slice → identity copy (generics.zig "const
+        // strings" rule); `media` routes through `dc::media_list` until
+        // `MediaList` gains an arena-aware `deep_clone`.
+        Self {
+            url: self.url,
+            layer: self.layer.as_ref().map(|l| l.deep_clone(bump)),
+            supports: self.supports.as_ref().map(|s| s.deep_clone(bump)),
+            media: super::dc::media_list(&self.media, bump),
+            import_record_idx: self.import_record_idx,
+            loc: self.loc,
+        }
+    }
+
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // blocked_on: dependencies::ImportDependency::new (its impl block is
         // `#[cfg(any())]`-gated on `to_css::string` + `css_modules::hash`).
@@ -335,5 +350,5 @@ use {Arena as _Arena, BabyList as _BabyList, ImportRecord as _ImportRecord};
 //   source:     src/css/rules/import.zig (268 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      layout-pun conditions()/conditions_mut() needs #[repr(C)] verified; url laundered as &'static [u8] pending crate-wide 'bump; clone_with_import_records / conditions_with_import_records gated on MediaList::clone_with_import_records; ImportDependency hookup in to_css gated on dependencies.rs un-gate; inherent deep_clone via deep_clone_shim! in mod.rs
+//   notes:      layout-pun conditions()/conditions_mut() needs #[repr(C)] verified; url laundered as &'static [u8] pending crate-wide 'bump; clone_with_import_records / conditions_with_import_records gated on MediaList::clone_with_import_records; ImportDependency hookup in to_css gated on dependencies.rs un-gate; inherent deep_clone real (field-walk port of css.implementDeepClone)
 // ──────────────────────────────────────────────────────────────────────────

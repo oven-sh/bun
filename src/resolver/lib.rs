@@ -3369,7 +3369,12 @@ pub struct Resolver<'a> {
     /// This cache maps a directory path to information about that directory and
     /// all parent directories. When interacting with this structure, make sure
     /// to validate your keys with `Resolver.assertValidCacheKey`
-    pub dir_cache: &'static mut DirInfo::HashMap,
+    // PORT NOTE: Zig `dir_cache: *DirInfo.HashMap` is a raw aliasing pointer to the
+    // `DirInfo::hash_map_instance()` singleton. Modeled as `*mut` (not `&'static mut`)
+    // for the same reason as `fs`/`log` above — `clone_for_worker` bitwise-copies the
+    // Resolver, so a `&'static mut` here would manufacture aliased unique refs (UB).
+    // Deref through the `dir_cache()` accessor below.
+    pub dir_cache: *mut DirInfo::HashMap,
 
     /// This is set to false for the runtime. The runtime should choose "main"
     /// over "module" in package.json
@@ -3399,6 +3404,15 @@ impl<'a> Resolver<'a> {
         // SAFETY: BACKREF — owner (Transpiler/BundleV2) outlives the Resolver;
         // worker clones share the same Log under the resolver mutex.
         unsafe { &mut *self.log }
+    }
+
+    /// Port of Zig `r.dir_cache` deref. Mirrors `fs()`/`log()` — returns a fresh
+    /// `&'a mut` per call so worker-cloned Resolvers don't hold a persistent
+    /// aliased `&'static mut` to the BSSMap singleton.
+    #[inline(always)]
+    pub fn dir_cache(&self) -> &'a mut DirInfo::HashMap {
+        // SAFETY: ARENA — `DirInfo::hash_map_instance()` singleton; never freed.
+        unsafe { &mut *self.dir_cache }
     }
 
     // TODO(b2-blocked): bun_install::PackageManager + bun_http::HTTPThread —
@@ -4819,7 +4833,7 @@ impl<'a> Resolver<'a> {
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
         Self::assert_valid_cache_key(path);
         let first_bust = self.fs().fs.bust_entries_cache(path);
-        let second_bust = self.dir_cache.remove(path);
+        let second_bust = self.dir_cache().remove(path);
         bun_output::scoped_log!(Resolver, "Bust {} = {}, {}", bstr::BStr::new(path), first_bust, second_bust);
         first_bust || second_bust
     }
@@ -5483,10 +5497,10 @@ impl<'a> Resolver<'a> {
         let dir_path = strings::without_trailing_slash_windows_path(dir_path_maybe_trail_slash);
 
         Self::assert_valid_cache_key(dir_path);
-        let mut dir_cache_info_result = self.dir_cache.get_or_put(dir_path);
+        let mut dir_cache_info_result = self.dir_cache().get_or_put(dir_path);
         if dir_cache_info_result.status == allocators::Status::Exists {
             // we've already looked up this package before
-            return Ok(self.dir_cache.at_index(dir_cache_info_result.index));
+            return Ok(self.dir_cache().at_index(dir_cache_info_result.index));
         }
         let rfs = &mut self.fs().fs;
         let mut cached_dir_entry_result = rfs.entries.get_or_put(dir_path);
@@ -5574,7 +5588,7 @@ impl<'a> Resolver<'a> {
 
         // We must initialize it as empty so that the result index is correct.
         // This is important so that browser_scope has a valid index.
-        let dir_info_ptr = self.dir_cache.put(&dir_cache_info_result, DirInfo::DirInfo::default()).expect("unreachable");
+        let dir_info_ptr = self.dir_cache().put(&dir_cache_info_result, DirInfo::DirInfo::default()).expect("unreachable");
 
         // `dir_path` is a slice into the threadlocal `bufs(.path_in_global_disk_cache)` buffer,
         // which gets overwritten on the next auto-install resolution. `dirInfoUncached` stores
@@ -6078,9 +6092,9 @@ impl<'a> Resolver<'a> {
 
         let path_without_trailing_slash = strings::without_trailing_slash_windows_path(input_path);
         Self::assert_valid_cache_key(path_without_trailing_slash);
-        let top_result = self.dir_cache.get_or_put(path_without_trailing_slash)?;
+        let top_result = self.dir_cache().get_or_put(path_without_trailing_slash)?;
         if top_result.status != allocators::Status::Unknown {
-            return Ok(self.dir_cache.at_index(top_result.index).map(|d| d as *mut _));
+            return Ok(self.dir_cache().at_index(top_result.index).map(|d| d as *mut _));
         }
 
         let dir_info_uncached_path_buf = bufs!(dir_info_uncached_path);
@@ -6125,7 +6139,7 @@ impl<'a> Resolver<'a> {
 
         while top.len() > root_path.len() {
             debug_assert!(top.as_ptr() == root_path.as_ptr());
-            let result = self.dir_cache.get_or_put(top)?;
+            let result = self.dir_cache().get_or_put(top)?;
 
             if result.status != allocators::Status::Unknown {
                 top_parent = result;
@@ -6167,7 +6181,7 @@ impl<'a> Resolver<'a> {
         }
 
         if top == root_path {
-            let result = self.dir_cache.get_or_put(root_path)?;
+            let result = self.dir_cache().get_or_put(root_path)?;
             if result.status != allocators::Status::Unknown {
                 top_parent = result;
             } else {
@@ -6303,7 +6317,7 @@ impl<'a> Resolver<'a> {
                             //
                             //   openat(dfd: CWD, filename: "node_modules/react", flags: RDONLY|DIRECTORY) = -1 ENOENT (No such file or directory)
                             //   ...
-                            self.dir_cache.mark_not_found(queue_top.result);
+                            self.dir_cache().mark_not_found(queue_top.result);
                             rfs!().entries.mark_not_found(cached_dir_entry_result);
                             if !(err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound")) {
                                 if ENABLE_LOGGING {
@@ -6438,8 +6452,8 @@ impl<'a> Resolver<'a> {
             // PORT NOTE: erase the `&mut DirInfo` borrow to `*mut` immediately so
             // `self.dir_cache` (and `*self`) are reborrowable for the call below.
             let dir_info_ptr: *mut DirInfo::DirInfo =
-                self.dir_cache.put(&mut queue_top.result, DirInfo::DirInfo::default())?;
-            let parent_dir_ptr = self.dir_cache.at_index(top_parent.index).map(|d| d as *mut _);
+                self.dir_cache().put(&mut queue_top.result, DirInfo::DirInfo::default())?;
+            let parent_dir_ptr = self.dir_cache().at_index(top_parent.index).map(|d| d as *mut _);
 
             self.dir_info_uncached(
                 dir_info_ptr,
@@ -7830,7 +7844,7 @@ impl<'a> Resolver<'a> {
 impl<'a> Drop for Resolver<'a> {
     fn drop(&mut self) {
         // pub fn deinit(r: *ThisResolver) void
-        for di in self.dir_cache.values_mut() {
+        for di in self.dir_cache().values_mut() {
             // Zig: `di.deinit()` — releases owned PackageJSON / TSConfigJSON resources
             // in-place (side effects beyond memory: those Drops close cached fds /
             // deref intrusive refcounts). Ported as `DirInfo::reset`.

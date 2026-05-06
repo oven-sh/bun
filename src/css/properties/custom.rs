@@ -1536,18 +1536,8 @@ impl CustomPropertyName {
         match self {
             CustomPropertyName::Custom(custom) => {
                 // Spec custom.zig:1496-1501 → DashedIdent.toCss → dest.writeDashedIdent(ident, true),
-                // which applies CSS-Modules dashed-ident renaming. Printer::write_dashed_ident is
-                // still `#[cfg(any())]`-gated (printer.rs:559); until it un-gates, fall back to
-                // plain identifier serialization so property_mixin::to_css keeps compiling.
-                // blocked_on: Printer::write_dashed_ident
-                #[cfg(any())]
-                {
-                    return dest.write_dashed_ident(custom, true);
-                }
-                // SAFETY: arena-owned slice valid for printer lifetime.
-                let v = unsafe { &*custom.v };
-                css_parser::serializer::serialize_identifier(v, dest)
-                    .map_err(|_| dest.add_fmt_error())
+                // which applies CSS-Modules dashed-ident renaming.
+                dest.write_dashed_ident(custom, true)
             }
             CustomPropertyName::Unknown(unknown) => {
                 // SAFETY: arena-owned slice valid for printer lifetime.

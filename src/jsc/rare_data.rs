@@ -542,6 +542,7 @@ impl Default for AWSSignatureCache {
 //   - default_client_ssl_ctx / dns / s3  (high-tier ctors)
 // ──────────────────────────────────────────────────────────────────────────
 
+#[cfg(any())] // gated: high-tier bodies — un-gated equivalents live below.
 mod _accessor_body {
 use super::*;
 
@@ -1708,18 +1709,21 @@ impl Drop for RareData {
         // path_buf / websocket_deflate / tls_default_ciphers / valkey_context:
         // all dropped automatically via field Drop.
 
-        // TODO(port): bun_boringssl_sys not in dep graph — gated.
-        
+        // TODO(port): bun_boringssl_sys not in dep graph — inline extern decls
+        // mirror `boring_engine()` above; BoringSSL is linked into the binary.
+        extern "C" {
+            fn ENGINE_free(engine: *mut boring_sys::ENGINE);
+            fn SSL_CTX_free(ctx: *mut boring_sys::SSL_CTX);
+        }
         if let Some(engine) = self.boring_ssl_engine.take() {
             // SAFETY: engine was created by ENGINE_new.
-            unsafe { boring_sys::ENGINE_free(engine) };
+            unsafe { ENGINE_free(engine) };
         }
         debug_assert!(self.cron_jobs.is_empty());
 
-        
         if let Some(s) = self.default_client_ssl_ctx.take() {
             // SAFETY: returned by ssl_ctx_cache.get_or_create_opts with +1 ref.
-            unsafe { boring_sys::SSL_CTX_free(s) };
+            unsafe { SSL_CTX_free(s) };
         }
         // After the default-ctx free so the tombstone callback still finds a live
         // map; deinit then clears every remaining entry's ex_data so any later

@@ -2510,7 +2510,7 @@ pub mod formatter {
         pub fn write_latin1(&mut self, buf: &[u8]) {
             let mut remain = buf;
             while !remain.is_empty() {
-                if let Some(i) = strings::first_non_ascii(remain) {
+                if let Some(i) = strings::immutable::first_non_ascii(remain) {
                     if i > 0 {
                         if self.ctx.write_all(&remain[0..i as usize]).is_err() {
                             self.failed = true;
@@ -2519,8 +2519,8 @@ pub mod formatter {
                     }
                     if self
                         .ctx
-                        .write_all(&strings::latin1_to_codepoint_bytes_assume_not_ascii(
-                            remain[i as usize],
+                        .write_all(&strings::immutable::latin1_to_codepoint_bytes_assume_not_ascii(
+                            u32::from(remain[i as usize]),
                         ))
                         .is_err()
                     {
@@ -2840,10 +2840,11 @@ pub mod formatter {
 
                     writer.write_all(b"\"");
 
-                    while let Some(j) = strings::index_of_any16(utf16_slice, b"\"") {
-                        writer.write_16_bit(&utf16_slice[0..j]);
+                    const QUOTE_U16: &[u16] = &[b'"' as u16];
+                    while let Some(j) = strings::immutable::index_of_any16(utf16_slice, QUOTE_U16) {
+                        writer.write_16_bit(&utf16_slice[0..j as usize]);
                         writer.write_all(b"\"");
-                        utf16_slice = &utf16_slice[j + 1..];
+                        utf16_slice = &utf16_slice[j as usize + 1..];
                     }
 
                     writer.write_16_bit(utf16_slice);

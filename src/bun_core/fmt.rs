@@ -2666,6 +2666,21 @@ pub fn count_int(n: i64) -> usize {
     neg + d
 }
 
+/// Byte length of `n` formatted with the default `{}` Display — moral
+/// equivalent of Zig's `std.fmt.count("{d}", .{n})`. Used by ConsoleObject
+/// width tracking for `%f` substitutions.
+#[inline]
+pub fn count_float(n: f64) -> usize {
+    struct Counter(usize);
+    impl core::fmt::Write for Counter {
+        #[inline]
+        fn write_str(&mut self, s: &str) -> core::fmt::Result { self.0 += s.len(); Ok(()) }
+    }
+    let mut c = Counter(0);
+    let _ = core::fmt::Write::write_fmt(&mut c, format_args!("{n}"));
+    c.0
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // NullableFallback
 // ───────────────────────────────────────────────────────────────────────────

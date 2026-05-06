@@ -167,9 +167,10 @@ impl ZigString {
     
     pub fn encode(&self, encoding: Encoding) -> Vec<u8> {
         // PERF(port): was inline-else monomorphization over ByteString × Encoding — profile in Phase B
+        let _ = encoding;
         match self.as_() {
-            ByteString::Latin1(repr) => encoding::construct_from_u8(repr, encoding),
-            ByteString::Utf16(repr) => encoding::construct_from_u16(repr, encoding),
+            ByteString::Latin1(_repr) => todo!("blocked_on: webcore::encoding::construct_from_u8 (forward-dep cycle)"),
+            ByteString::Utf16(_repr) => todo!("blocked_on: webcore::encoding::construct_from_u16 (forward-dep cycle)"),
         }
     }
 
@@ -585,9 +586,9 @@ impl ZigString {
         // TODO(port): narrow error set
         let slice_ = self.slice();
         const PREFIX: &[u8] = b"data:;base64,";
-        let size = bun_core::base64::standard_encoded_len(slice_.len());
+        let size = bun_core::base64::standard_encoder_calc_size(slice_.len());
         let mut buf = vec![0u8; size + PREFIX.len()];
-        let encoded_len = bun_core::base64::url_safe_encode(&mut buf[PREFIX.len()..], slice_);
+        let encoded_len = bun_base64::encode_url_safe(&mut buf[PREFIX.len()..], slice_);
         buf[..PREFIX.len()].copy_from_slice(PREFIX);
         buf.truncate(PREFIX.len() + encoded_len);
         Ok(buf)
@@ -824,21 +825,22 @@ impl ZigString {
     }
 
     // TODO(port): `c_api::{JSStringRef, JSStringCreateWithCharactersNoCopy,
-    // JSStringCreateStatic}` not yet declared in javascript_core_c_api.rs.
-    
-    pub fn to_js_string_ref(&self) -> c_api::JSStringRef {
+    // JSStringCreateStatic}` not yet declared in javascript_core_c_api.rs —
+    // declared locally here until they're hoisted into the shared c_api module.
+
+    pub fn to_js_string_ref(&self) -> JSStringRef {
         // TODO(port): Zig had `if @hasDecl(bun, "bindgen") return undefined` — bindgen-mode stub dropped
         if self.is_16bit() {
             // SAFETY: untagged ptr is 2-byte aligned UTF-16 data valid for self.len u16s.
             unsafe {
-                c_api::JSStringCreateWithCharactersNoCopy(
+                JSStringCreateWithCharactersNoCopy(
                     Self::untagged(self._unsafe_ptr_do_not_use).cast::<u16>(),
                     self.len,
                 )
             }
         } else {
             // SAFETY: untagged ptr is valid latin1 for self.len bytes.
-            unsafe { c_api::JSStringCreateStatic(Self::untagged(self._unsafe_ptr_do_not_use), self.len) }
+            unsafe { JSStringCreateStatic(Self::untagged(self._unsafe_ptr_do_not_use), self.len) }
         }
     }
 
@@ -1045,7 +1047,7 @@ impl Slice {
 
     pub fn clone_with_trailing_slash(&self) -> Result<Slice, bun_core::Error> {
         // TODO(port): narrow error set
-        let buf = strings::clone_normalizing_separators(self.slice())?;
+        let buf = strings::paths::clone_normalizing_separators(self.slice());
         let leaked = Box::leak(buf.into_boxed_slice());
         Ok(Slice {
             allocator: NullableAllocator::default_alloc(),

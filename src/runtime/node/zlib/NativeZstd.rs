@@ -8,7 +8,7 @@ use core::{mem, ptr};
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional, WorkPoolTask};
 use bun_zstd::c; // `bun.c` translated-c-headers (ZSTD_* fns/consts live here)
 
-use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
+use crate::node::node_zlib_binding::{CompressionContext, CompressionStream, CompressionStreamImpl, CountedKeepAlive, Error};
 use crate::node::util::validators;
 // `bun.zlib.NodeMode` — #[repr(u8)] enum shared by all native-zlib stream types.
 use bun_zlib::NodeMode;

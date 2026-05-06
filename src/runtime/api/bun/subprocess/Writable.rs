@@ -268,8 +268,15 @@ impl<'a> Writable<'a> {
             }
 
             Stdio::Blob(_) => {
-                let blob = match core::mem::replace(stdio, Stdio::Ignore) {
-                    Stdio::Blob(b) => b,
+                // `Stdio` has a Drop impl (would `blob.detach()`), so we can't
+                // move the payload out by match — take ownership via
+                // ManuallyDrop + ptr::read to transfer without detaching.
+                let owned =
+                    core::mem::ManuallyDrop::new(core::mem::replace(stdio, Stdio::Ignore));
+                let blob = match &*owned {
+                    // SAFETY: `owned` is ManuallyDrop and discarded after this
+                    // read; the Blob payload is moved out exactly once.
+                    Stdio::Blob(b) => unsafe { core::ptr::read(b) },
                     _ => unreachable!(),
                 };
                 Ok(Writable::Buffer(StaticPipeWriter::create(

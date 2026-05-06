@@ -1542,9 +1542,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
                             break;
                         }
                     }
-                    completions.commands = &prefilled_completions[0..prefilled_i];
-                    // TODO(port): lifetime — `commands` borrows stack array; Zig stack-slice was
-                    // OK because print() runs before return. Same here.
+                    // `commands` is `&'static [..]`; the stack array's elements are already
+                    // `&'static [u8]` (from add_completions tables). Leak the outer slice for
+                    // process lifetime — print() runs immediately and the process exits after.
+                    completions.commands = Box::leak(
+                        prefilled_completions[0..prefilled_i]
+                            .to_vec()
+                            .into_boxed_slice(),
+                    );
                 }
             }
         }

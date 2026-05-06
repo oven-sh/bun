@@ -1223,8 +1223,11 @@ impl UDPSocket {
 
         let payload_arg = arguments.ptr[0];
         let mut payload_str = ZigStringSlice::empty();
+        // Hoisted so the `slice()` borrow outlives the `'brk` block; the
+        // backing store is kept alive by `payload_arg` on the JS stack.
+        let array_buffer = payload_arg.as_array_buffer(global_this);
         let payload: &[u8] = 'brk: {
-            if let Some(array_buffer) = payload_arg.as_array_buffer(global_this) {
+            if let Some(ref array_buffer) = array_buffer {
                 break 'brk array_buffer.slice();
             } else if payload_arg.is_string() {
                 // `isString()` is `isStringLike()` and accepts boxed
@@ -1315,9 +1318,7 @@ impl UDPSocket {
                                 )
                             };
                             if index > 0 {
-                                if let Ok(id) = u32::try_from(index) {
-                                    break 'blk id;
-                                }
+                                break 'blk index;
                             }
                         }
                         // "an invalid Scope gets turned into #0 (default selection)"

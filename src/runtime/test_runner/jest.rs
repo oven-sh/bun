@@ -253,7 +253,7 @@ impl<'a> TestRunner<'a> {
 // through `crate::timer` (see src/runtime/timer/mod.rs).
 use crate::timer::EventLoopTimerState as TimerState;
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct Summary {
     pub pass: u32,
     pub expectations: u32,

@@ -31,7 +31,7 @@ impl Default for StringJoiner {
     }
 }
 
-struct Node {
+pub struct Node {
     /// Replaces Zig's `NullableAllocator`: when `true`, `slice` was heap-allocated by
     /// this joiner (via `push_cloned`) and is freed on node drop; when `false`, `slice`
     /// is borrowed and the caller guarantees it outlives `done()`.

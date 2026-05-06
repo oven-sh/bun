@@ -615,7 +615,7 @@ pub fn integrity<const SHORT: bool>(bytes: [u8; SHA512_DIGEST]) -> IntegrityForm
 // JSON formatters
 // ───────────────────────────────────────────────────────────────────────────
 
-struct JSONFormatter<'a> {
+pub struct JSONFormatter<'a> {
     input: &'a [u8],
 }
 
@@ -1281,7 +1281,7 @@ impl Default for HighlighterOptions {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum ColorCode {
+pub enum ColorCode {
     Magenta,
     Blue,
     Orange,

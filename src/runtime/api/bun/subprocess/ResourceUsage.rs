@@ -1,6 +1,6 @@
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_str::ZigString;
-use bun_spawn::Rusage;
+use crate::api::bun::Rusage;
 
 #[bun_jsc::JsClass]
 pub struct ResourceUsage {

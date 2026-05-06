@@ -1035,11 +1035,11 @@ impl Assets {
     }
 
     fn create_full(
-        /// content of known asset (Zig looked this up by name via `@field`)
+        // content of known asset (Zig looked this up by name via `@field`)
         asset: &'static [u8],
-        /// name of asset file to create
+        // name of asset file to create
         filename: &[u8],
-        /// optionally add a suffix to the end of the `+ filename` message. Must have a leading space.
+        // optionally add a suffix to the end of the `+ filename` message. Must have a leading space.
         message_suffix: &'static str,
         args: Option<core::fmt::Arguments<'_>>,
     ) -> Result<(), Error> {

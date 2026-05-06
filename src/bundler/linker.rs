@@ -722,11 +722,9 @@ impl Linker {
 // PORT STATUS
 //   source:     src/bundler/linker.zig (421 lines)
 //   confidence: medium
-//   todos:      4
+//   todos:      1
 //   notes:      ImportPathFormat const-generic demoted to runtime arg
-//               (no `adt_const_params` in this crate); HardcodedModule /
-//               is_node_builtin / PluginRunner are FORWARD_DECL stubs until
-//               `bun_resolve_builtins` + `bundler_jsc::plugin_runner` deps
-//               land; `get_hashed_filename` body gated on
-//               `bun_resolver::fs::RealFS::ModKey`.
+//               (no `adt_const_params` in this crate); PluginRunner is a
+//               FORWARD_DECL stub until the `bundler_jsc::plugin_runner` dep
+//               lands.
 // ──────────────────────────────────────────────────────────────────────────

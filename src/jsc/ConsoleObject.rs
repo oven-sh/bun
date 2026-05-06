@@ -3606,36 +3606,62 @@ pub mod formatter {
                         return Ok(());
                     }
                     if value.to_boolean() {
-                        self.add_for_new_line(4);
+                        writer.add_for_new_line(4);
                         writer.write_all(pf!("<r><yellow>true<r>").as_bytes());
                     } else {
-                        self.add_for_new_line(5);
+                        writer.add_for_new_line(5);
                         writer.write_all(pf!("<r><yellow>false<r>").as_bytes());
                     }
                 }
                 Tag::GlobalObject => {
                     const FMT: &str = "[Global Object]";
-                    self.add_for_new_line(FMT.len());
+                    writer.add_for_new_line(FMT.len());
                     writer.write_all(
                         pfmt!(concat!("<cyan>", "[Global Object]", "<r>"), ENABLE_ANSI_COLORS)
                             .as_bytes(),
                     );
                 }
                 Tag::Map => {
-                    reseat_writer!();
+                    // PORT NOTE: inline `reseat_writer!()` as drop/call/recreate so the
+                    // recursive helper can borrow `&mut self` + `writer_` (E0499).
+                    if writer.failed { self.failed = true; }
+                    drop(writer);
                     self.print_map_like::<ENABLE_ANSI_COLORS, false>(writer_, value)?;
+                    writer = WrappedWriter {
+                        ctx: writer_,
+                        failed: false,
+                        estimated_line_length: &mut self.estimated_line_length,
+                    };
                 }
                 Tag::MapIterator => {
-                    reseat_writer!();
+                    if writer.failed { self.failed = true; }
+                    drop(writer);
                     self.print_map_iterator_like::<ENABLE_ANSI_COLORS>(writer_, value, "MapIterator")?;
+                    writer = WrappedWriter {
+                        ctx: writer_,
+                        failed: false,
+                        estimated_line_length: &mut self.estimated_line_length,
+                    };
                 }
                 Tag::SetIterator => {
-                    reseat_writer!();
+                    if writer.failed { self.failed = true; }
+                    drop(writer);
                     self.print_map_iterator_like::<ENABLE_ANSI_COLORS>(writer_, value, "SetIterator")?;
+                    writer = WrappedWriter {
+                        ctx: writer_,
+                        failed: false,
+                        estimated_line_length: &mut self.estimated_line_length,
+                    };
                 }
                 Tag::Set => {
-                    reseat_writer!();
+                    if writer.failed { self.failed = true; }
+                    drop(writer);
                     self.print_set::<ENABLE_ANSI_COLORS>(writer_, value)?;
+                    writer = WrappedWriter {
+                        ctx: writer_,
+                        failed: false,
+                        estimated_line_length: &mut self.estimated_line_length,
+                    };
                 }
                 Tag::ToJSON => {
                     if let Some(func) = value.get(self.global_this, "toJSON")? {
@@ -3940,8 +3966,9 @@ pub mod formatter {
                                 format_args!("{}empty item{}", pf!("<r><d>"), pf!("<r>")),
                             );
                         } else {
-                            self.estimated_line_length +=
-                                bun_core::fmt::fast_digit_count(u64::from(empty_count)) as usize;
+                            writer.add_for_new_line(
+                                bun_core::fmt::fast_digit_count(u64::from(empty_count)) as usize,
+                            );
                             writer.pretty::<C>(
                                 " x empty items".len(),
                                 format_args!(

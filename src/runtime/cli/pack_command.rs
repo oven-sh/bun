@@ -665,7 +665,7 @@ fn iterate_bundled_deps(
     let mut additional_bundled_deps: Vec<DirInfo> = Vec::new();
 
     let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
-    while let Some(entry) = iter.next().unwrap().ok().flatten() {
+    while let Some(entry) = iter.next().ok().flatten() {
         if entry.kind != bun_sys::FileKind::Directory {
             continue;
         }

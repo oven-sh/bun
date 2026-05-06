@@ -401,9 +401,8 @@ impl CreateCommand {
                                 node.end();
                                 progress.refresh();
 
-                                Output::pretty_error(
+                                pretty_error!(
                                     "\n<r><red>error:<r> GitHub returned 403. This usually means GitHub is rate limiting your requests.\nTo fix this, either:<r>  <b>A) pass a <r><cyan>GITHUB_ACCESS_TOKEN<r> environment variable to bun<r>\n  <b>B)Wait a little and try again<r>\n",
-                                    format_args!(""),
                                 );
                                 Global::crash();
                             } else if err == bun_core::err!("GitHubRepositoryNotFound") {

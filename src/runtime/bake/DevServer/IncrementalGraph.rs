@@ -1120,17 +1120,16 @@ impl IncrementalGraph<Server> {
 
         if bun_core::FeatureFlags::BAKE_DEBUGGING_FEATURES {
             if let ReceiveChunkContent::Js { code, .. } = &content {
-                if let Some(dump_dir) = &dev.dump_dir {
-                    dev_server_body::dump_bundle_for_chunk(dev, dump_dir, Side::Server, key, code, true, is_ssr_graph);
-                }
+                let _ = (dev, code, is_ssr_graph);
+                // TODO(port): blocked_on: dev_server::DevServer::dump_dir / dump_bundle_for_chunk
             }
         }
 
-        let gop = self.bundled_files.get_or_put(key)?;
+        let key_boxed: Box<[u8]> = Box::from(key);
+        let gop = self.bundled_files.get_or_put(key_boxed)?;
         let file_index = FileIndex::init(u32::try_from(gop.index).unwrap());
 
         if !gop.found_existing {
-            *gop.key_ptr = Box::<[u8]>::from(key);
             self.first_dep.push(OptionalEdgeIndex::NONE);
             self.first_import.push(OptionalEdgeIndex::NONE);
         }
@@ -1139,7 +1138,7 @@ impl IncrementalGraph<Server> {
             self.stale_files.unset(gop.index);
         }
 
-        *ctx.get_cached_index(Side::Server, index) = Some(file_index).into();
+        *ctx.get_cached_index(Side::Server, index) = CachedFileIndex(file_index.get());
 
         if !gop.found_existing {
             let client_component_boundary = ctx.server_to_client_bitset.is_set(index.get() as usize);

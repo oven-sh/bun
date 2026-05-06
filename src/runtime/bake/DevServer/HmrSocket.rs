@@ -252,7 +252,6 @@ impl HmrSocket {
                             .expect("OOM");
 
                         // `event.entry_points.deinit(allocator)` → Drop handles this
-                        drop(event);
                     }
                 }
             }

@@ -232,6 +232,46 @@ pub struct SyncProcessPosix {
 #[cfg(not(windows))]
 type SyncProcess = SyncProcessPosix;
 
+/// Implemented by high-tier handler types that want to call
+/// `Process::set_exit_handler(self_ptr)` Zig-style (no explicit vtable).
+/// Replaces the Zig `TaggedPointerUnion` `inline switch` — see `_exit_handler_variants`.
+pub trait ProcessExitOwner: Sized {
+    /// Thunk invoked when the process exits. `this` is the owner pointer
+    /// passed to `set_exit_handler`. Default impls in caller modules forward
+    /// to the type's inherent `on_process_exit`.
+    unsafe fn on_process_exit_dyn(
+        this: *mut Self,
+        process: *mut Process,
+        status: Status,
+        rusage: &Rusage,
+    );
+
+    /// Returns the static vtable for this owner type. Generated per-`T` via a
+    /// generic-monomorphised thunk; the `'static` lifetime is satisfied by a
+    /// per-monomorphisation `static` item.
+    #[inline]
+    fn exit_vtable() -> &'static ProcessExitVTable {
+        unsafe fn thunk<T: ProcessExitOwner>(
+            owner: *mut (),
+            process: *mut Process,
+            status: Status,
+            rusage: *const Rusage,
+        ) {
+            // SAFETY: owner was registered as `*mut T`; rusage is a valid
+            // pointer for the duration of the call (see `ProcessExitHandler::call`).
+            unsafe { T::on_process_exit_dyn(owner.cast::<T>(), process, status, &*rusage) }
+        }
+        // PORT NOTE: associated `const VTABLE: ProcessExitVTable` cannot be
+        // borrowed `&'static` from a default trait body; use a generic local
+        // `static` instead (one instance per monomorphisation).
+        struct Holder<T: ProcessExitOwner>(core::marker::PhantomData<T>);
+        impl<T: ProcessExitOwner> Holder<T> {
+            const V: ProcessExitVTable = ProcessExitVTable { on_process_exit: thunk::<T> };
+        }
+        &Holder::<Self>::V
+    }
+}
+
 impl ProcessExitHandler {
     /// Zig: `init(anytype)` — high-tier callers pass `(&mut self, &SELF_EXIT_VTABLE)`.
     pub fn init(&mut self, owner: *mut (), vtable: &'static ProcessExitVTable) {

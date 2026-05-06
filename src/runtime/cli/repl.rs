@@ -626,7 +626,7 @@ fn cmd_load(repl: &mut Repl, args: &[u8]) -> ReplResult {
     let mut path_buf = PathBuffer::uninit();
     let path_z = path::resolve_path::z(filename, &mut path_buf);
     let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), path_z) {
-        sys::Result::Ok(bytes) => bytes,
+        sys::Result::Ok(bytes) => bytes.into(),
         sys::Result::Err(err) => {
             repl.print_error(format_args!("{}\n", err));
             return ReplResult::SkipEval;

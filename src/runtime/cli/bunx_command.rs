@@ -4,10 +4,12 @@ use core::ffi::c_int;
 use core::mem::size_of;
 use std::cell::RefCell;
 use std::io::Write as _;
+use std::sync::OnceLock;
 
 use bstr::BStr;
 
 use crate::cli::{self, Command};
+use crate::cli::command::ContextData;
 use crate::run_command::RunCommand as Run;
 
 use bun_alloc::AllocError;
@@ -18,6 +20,7 @@ use bun_resolver::fs::RealFS;
 use bun_install::update_request::{self, UpdateRequest};
 use bun_install::dependency::VersionTag;
 use bun_interchange::json;
+use bun_logger::js_ast::expr::Data as ExprData;
 use bun_paths::{self, PathBuffer, DELIMITER};
 use bun_str::{strings, ZStr};
 use bun_sys::{self, Fd, FdDirExt as _, O};

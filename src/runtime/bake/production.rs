@@ -537,7 +537,7 @@ pub fn build_with_vm(
     let mut root_dir_buf = PathBuffer::uninit();
     let root_dir_path = resolve_path::join_abs_string_buf::<platform::Auto>(
         cwd,
-        root_dir_buf.as_mut_slice(),
+        &mut root_dir_buf.0,
         &[b"dist"],
     );
     // PORT NOTE: reshaped for borrowck — copy out so root_dir_buf can drop.

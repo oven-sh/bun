@@ -2349,7 +2349,7 @@ pub mod cache {
                     Ok(c) => c,
                     Err(err) => {
                         if cfg!(debug_assertions) {
-                            Output::print_error(format_args!(
+                            Output::print_error("{}", format_args!(
                                 "{}: readFile error -- {}",
                                 bstr::BStr::new(path.as_bytes()),
                                 bstr::BStr::new(err.name()),
@@ -2413,7 +2413,7 @@ pub mod cache {
                     Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
                         let handle = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
                             .map_err(bun_core::Error::from)?;
-                        Output::pretty_errorln(format_args!(
+                        Output::pretty_errorln("{}", format_args!(
                             "<r><d>Internal error: directory mismatch for directory \"{}\", fd {}<r>. You don't need to do anything, but this indicates a bug.",
                             bstr::BStr::new(path),
                             dirname_fd,
@@ -2450,7 +2450,7 @@ pub mod cache {
                     Ok(c) => c,
                     Err(err) => {
                         if cfg!(debug_assertions) {
-                            Output::print_error(format_args!(
+                            Output::print_error("{}", format_args!(
                                 "{}: readFile error -- {}",
                                 bstr::BStr::new(path),
                                 bstr::BStr::new(err.name()),

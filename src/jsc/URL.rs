@@ -116,28 +116,28 @@ impl URL {
     // the caller must destroy(). Consider an RAII wrapper in Phase B instead of NonNull<URL>.
 
     pub fn protocol(&self) -> String {
-        // SAFETY: self is a valid *URL handle from C++
-        unsafe { URL__protocol(self as *const URL as *mut URL) }
+        // SAFETY: self is a valid opaque *URL handle from C++; getter does not mutate.
+        unsafe { URL__protocol(self) }
     }
 
     pub fn href(&self) -> String {
-        // SAFETY: self is a valid *URL handle from C++
-        unsafe { URL__href(self as *const URL as *mut URL) }
+        // SAFETY: self is a valid opaque *URL handle from C++; getter does not mutate.
+        unsafe { URL__href(self) }
     }
 
     pub fn username(&self) -> String {
-        // SAFETY: self is a valid *URL handle from C++
-        unsafe { URL__username(self as *const URL as *mut URL) }
+        // SAFETY: self is a valid opaque *URL handle from C++; getter does not mutate.
+        unsafe { URL__username(self) }
     }
 
     pub fn password(&self) -> String {
-        // SAFETY: self is a valid *URL handle from C++
-        unsafe { URL__password(self as *const URL as *mut URL) }
+        // SAFETY: self is a valid opaque *URL handle from C++; getter does not mutate.
+        unsafe { URL__password(self) }
     }
 
     pub fn search(&self) -> String {
-        // SAFETY: self is a valid *URL handle from C++
-        unsafe { URL__search(self as *const URL as *mut URL) }
+        // SAFETY: self is a valid opaque *URL handle from C++; getter does not mutate.
+        unsafe { URL__search(self) }
     }
 
     /// Returns the host WITHOUT the port.

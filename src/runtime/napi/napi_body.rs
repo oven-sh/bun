@@ -97,20 +97,21 @@ impl NapiEnv {
 
     /// Assert that we're not currently performing garbage collection
     pub fn check_gc(&self) {
-        // SAFETY: env is non-null.
-        unsafe { napi_internal_check_gc(self as *const _ as *mut _) };
+        // SAFETY: env is non-null; C++ side is read-only here.
+        unsafe { napi_internal_check_gc(self.as_mut_ptr()) };
     }
 
     /// Return the Node-API version number declared by the module we are running code from
     pub fn get_version(&self) -> u32 {
-        // SAFETY: env is non-null.
-        unsafe { napi_internal_get_version(self as *const _ as *mut _) }
+        // SAFETY: env is non-null; C++ side is read-only here.
+        unsafe { napi_internal_get_version(self.as_mut_ptr()) }
     }
 
     pub fn get_and_clear_pending_exception(&self) -> Option<JSValue> {
         let mut exception = JSValue::ZERO;
-        // SAFETY: out-param is a valid stack location.
-        if unsafe { NapiEnv__getAndClearPendingException(self as *const _ as *mut _, &mut exception) } {
+        // SAFETY: out-param is a valid stack location; interior mutability via
+        // `as_mut_ptr` permits C++ to clear the pending exception.
+        if unsafe { NapiEnv__getAndClearPendingException(self.as_mut_ptr(), &mut exception) } {
             return Some(exception);
         }
         None

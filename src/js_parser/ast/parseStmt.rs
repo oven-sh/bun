@@ -1398,7 +1398,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 stmt = S::Import {
                     namespace_ref: Ref::NONE,
                     import_record_index: u32::MAX,
-                    items: import_clause.items as *const _ as *mut _,
+                    // SAFETY: sole owner — fresh arena slice from parse_import_clause,
+                    // moved into the AST node here; no other &mut alias exists.
+                    items: import_clause.items,
                     is_single_line: import_clause.is_single_line,
                     ..Default::default()
                 };
@@ -1507,7 +1509,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         T::TOpenBrace => {
                             let import_clause = p.parse_import_clause()?;
 
-                            stmt.items = import_clause.items as *const _ as *mut _;
+                            // SAFETY: sole owner — fresh arena slice from parse_import_clause,
+                            // moved into the AST node here; no other &mut alias exists.
+                            stmt.items = import_clause.items;
                             stmt.is_single_line = import_clause.is_single_line;
                         }
                         _ => {

@@ -279,13 +279,15 @@ impl ArrayBuffer {
     pub fn create<const KIND: JSType>(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
         crate::mark_binding!();
         match KIND {
-            // SAFETY: FFI — global is valid; bytes ptr/len come from a live slice, copied by callee.
+            // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); bytes
+            // ptr/len come from a live slice, copied by callee.
             JSType::Uint8Array => crate::host_fn::from_js_host_call(global, || unsafe {
-                Bun__createUint8ArrayForCopy(global as *const _ as *mut _, bytes.as_ptr().cast(), bytes.len(), false)
+                Bun__createUint8ArrayForCopy(global, bytes.as_ptr().cast(), bytes.len(), false)
             }),
-            // SAFETY: FFI — global is valid; bytes ptr/len come from a live slice, copied by callee.
+            // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); bytes
+            // ptr/len come from a live slice, copied by callee.
             JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, || unsafe {
-                Bun__createArrayBufferForCopy(global as *const _ as *mut _, bytes.as_ptr().cast(), bytes.len())
+                Bun__createArrayBufferForCopy(global, bytes.as_ptr().cast(), bytes.len())
             }),
             _ => panic!("ArrayBuffer::create: KIND not implemented"), // Zig: @compileError
         }
@@ -294,13 +296,15 @@ impl ArrayBuffer {
     pub fn create_empty<const KIND: JSType>(global: &JSGlobalObject) -> JsResult<JSValue> {
         crate::mark_binding!();
         match KIND {
-            // SAFETY: FFI — global is valid; null ptr with len 0 is the documented empty case.
+            // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); null ptr
+            // with len 0 is the documented empty case.
             JSType::Uint8Array => crate::host_fn::from_js_host_call(global, || unsafe {
-                Bun__createUint8ArrayForCopy(global as *const _ as *mut _, ptr::null(), 0, false)
+                Bun__createUint8ArrayForCopy(global, ptr::null(), 0, false)
             }),
-            // SAFETY: FFI — global is valid; null ptr with len 0 is the documented empty case.
+            // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); null ptr
+            // with len 0 is the documented empty case.
             JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, || unsafe {
-                Bun__createArrayBufferForCopy(global as *const _ as *mut _, ptr::null(), 0)
+                Bun__createArrayBufferForCopy(global, ptr::null(), 0)
             }),
             _ => panic!("ArrayBuffer::create_empty: KIND not implemented"), // Zig: @compileError
         }

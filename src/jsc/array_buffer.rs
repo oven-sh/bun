@@ -131,6 +131,8 @@ impl ArrayBuffer {
 // ──────────────────────────────────────────────────────────────────────────
 mod _body {
 use super::*;
+use crate::SysErrorJsc;
+use bun_sys::FdExt;
 impl ArrayBuffer {
     /// Only use this when reading from the file descriptor is _very_ cheap. Like, for example, an in-memory file descriptor.
     /// Do not use this for pipes, however tempting it may seem.
@@ -153,7 +155,7 @@ impl ArrayBuffer {
 
         let mut read: isize = 0;
         while !bytes.is_empty() {
-            match bun_sys::pread(fd, bytes, read) {
+            match bun_sys::pread(fd, bytes, read as i64) {
                 bun_sys::Result::Ok(amount) => {
                     bytes = &mut bytes[amount..];
                     read += isize::try_from(amount).unwrap();
@@ -166,8 +168,9 @@ impl ArrayBuffer {
                     }
                 }
                 bun_sys::Result::Err(err) => {
-                    let Ok(err_js) = err.to_js(global) else { return JSValue::ZERO };
-                    return global.throw_value(err_js).unwrap_or(JSValue::ZERO);
+                    let err_js = err.to_js(global);
+                    let _ = global.throw_value(err_js);
+                    return JSValue::ZERO;
                 }
             }
         }
@@ -199,12 +202,12 @@ impl ArrayBuffer {
         let stat = match bun_sys::fstat(fd) {
             bun_sys::Result::Err(err) => {
                 fd.close();
-                return global.throw_value(err.to_js(global)?);
+                return Err(global.throw_value(err.to_js(global)));
             }
             bun_sys::Result::Ok(fstat) => fstat,
         };
 
-        let size = stat.size;
+        let size = stat.st_size;
 
         if size == 0 {
             fd.close();
@@ -247,8 +250,9 @@ impl ArrayBuffer {
                 })
             }
             bun_sys::Result::Err(err) => {
-                let Ok(err_js) = err.to_js(global) else { return Ok(JSValue::ZERO) };
-                global.throw_value(err_js).or(Ok(JSValue::ZERO))
+                let err_js = err.to_js(global);
+                let _ = global.throw_value(err_js);
+                Ok(JSValue::ZERO)
             }
         }
     }

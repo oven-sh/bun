@@ -438,12 +438,12 @@ fn message_with_type_and_level_(
     // TODO(port-cycle): `CLI::get().runtime_options.console_depth` — `CLI`
     // (`bun_runtime::cli::Command`) is a high-tier cycle dep. Until the CLI
     // context is plumbed through `VirtualMachine`, fall back to the default.
-    
+    #[cfg(any())]
     let console_depth = CLI::get()
         .runtime_options
         .console_depth
         .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
-    #[cfg(any())]
+    #[cfg(not(any()))]
     let console_depth = DEFAULT_CONSOLE_LOG_DEPTH;
 
     let mut print_options = FormatOptions {
@@ -604,11 +604,7 @@ struct VisibleCharacterCounter<'a> {
 
 impl bun_io::Write for VisibleCharacterCounter<'_> {
     fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
-        // TODO(phase-c): `strings::visible::width::exclude_ansi_colors::utf8`
-        // not yet ported — fall back to raw byte count so the build links.
-        
-        { *self.width += strings::visible::width::exclude_ansi_colors::utf8(bytes); }
-        *self.width += bytes.len();
+        *self.width += strings::immutable::visible::width::exclude_ansi_colors::utf8(bytes);
         Ok(())
     }
 }
@@ -635,7 +631,7 @@ impl<'a> TablePrinter<'a> {
 // surface (`is_iterable`, `for_each_with_context`, `to_object`, `get_own`,
 // `to_cell`) and `jsc::PropertyIteratorOptions` (~30 errs). Stub `print_table`
 // provided above; restore once the missing iterator helpers land.
-
+#[cfg(any())]
 impl<'a> TablePrinter<'a> {
     /// Compute how much horizontal space a `JSValue` will take when printed.
     fn get_width_for_value(&mut self, value: JSValue) -> JsResult<u32> {
@@ -3144,7 +3140,7 @@ pub mod formatter {
                     }
                 }
                 Tag::Integer => {
-                    let int = value.coerce_i64(self.global_this)?;
+                    let int = value.coerce_to_int64(self.global_this)?;
                     if int < i64::from(u32::MAX) {
                         let mut i = int;
                         let is_negative = i < 0;
@@ -3308,9 +3304,11 @@ pub mod formatter {
                     });
 
                     reseat_writer!();
-                    VirtualMachine::get().print_errorlike_object::<ENABLE_ANSI_COLORS>(
-                        value, None, None, self, writer_, false,
-                    );
+                    // TODO(port): `VirtualMachine::print_errorlike_object` takes
+                    // `&mut bun_core::io::Writer`, not `&mut dyn bun_io::Write`;
+                    // adapter pending. Suppress unused for now.
+                    let _ = (value, &mut *self, &mut *writer_, ENABLE_ANSI_COLORS);
+                    todo!("blocked_on: VirtualMachine::print_errorlike_object writer adapter");
                 }
                 Tag::Class => {
                     // Prefer the constructor's own `.name` property over

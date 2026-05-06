@@ -106,18 +106,17 @@ gated_prop!(animation, {
 });
 pub mod background;
 pub mod border;
-gated_prop!(border_image, {
-    handler_stub!(BorderImageHandler);
-    prop_value_stub!(BorderImage, BorderImageRepeat, BorderImageSideWidth, BorderImageSlice);
-});
-gated_prop!(border_radius, {
-    handler_stub!(BorderRadiusHandler);
-    prop_value_stub!(BorderRadius);
-});
-gated_prop!(box_shadow, {
-    handler_stub!(BoxShadowHandler);
-    prop_value_stub!(BoxShadow);
-});
+// `border_image`: un-gated — real BorderImage / BorderImageSlice /
+// BorderImageSideWidth / BorderImageRepeat / BorderImageHandler live in
+// `border_image.rs`. parse/to_css for BorderImageSideWidth remain internally
+// gated on the DeriveParse/DeriveToCss proc-macros.
+pub mod border_image;
+// `border_radius`: un-gated — real BorderRadius + BorderRadiusHandler
+// (handle_property/finalize bodies) live in `border_radius.rs`.
+pub mod border_radius;
+// `box_shadow`: un-gated — real BoxShadow + BoxShadowHandler live in
+// `box_shadow.rs`.
+pub mod box_shadow;
 gated_prop!(contain);
 pub mod display;
 gated_prop!(effects);
@@ -135,7 +134,9 @@ pub mod masking;
 pub mod outline;
 pub mod overflow;
 pub mod position;
-gated_prop!(prefix_handler, { handler_stub!(FallbackHandler); });
+// `prefix_handler`: un-gated — real FallbackHandler (handle_property/finalize
+// bodies) lives in `prefix_handler.rs`.
+pub mod prefix_handler;
 gated_prop!(shape);
 pub mod size;
 gated_prop!(svg);

@@ -590,14 +590,16 @@ impl Interpreter {
         let _ = ctx;
 
         // ── optional cwd override (Zig `init` tail) ────────────────────────
-        if let Some(_c) = cwd_ {
-            // TODO(b2-blocked): `ShellExecEnv::change_cwd_impl` — depends on
-            // ResolvePath join_buf + openat(O_DIRECTORY) cleanup ordering.
-            // Until then the override is a no-op (root_shell.__cwd already
-            // holds process cwd; `bun run` always passes the same dir).
-            #[cfg(any())]
-            if let Err(e) = interpreter.root_shell.change_cwd_impl(&mut *interpreter, _c, true) {
-                drop(interpreter); // root_io / root_shell drop close fds
+        if let Some(c) = cwd_ {
+            // Spec interpreter.zig:921-930: `root_shell.changeCwdImpl(interp,
+            // c, true)`; on failure, deref root_io + deinit root_shell + free.
+            // The interpreter parameter is unused (`_` in spec) so we don't
+            // pass it (avoids the obvious self-borrow).
+            if let Err(e) = interpreter.root_shell.change_cwd_impl(c, true) {
+                // `interpreter`'s Drop closes `cwd_fd` via deinit_from_exec
+                // semantics: explicitly close here before dropping the box so
+                // we match Zig's `root_io.deref(); root_shell.deinitImpl(...)`.
+                closefd(interpreter.root_shell.cwd_fd);
                 return Err(ShellErr::new_sys(e));
             }
         }

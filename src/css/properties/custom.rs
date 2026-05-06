@@ -1440,14 +1440,14 @@ impl UnparsedProperty {
         Ok(UnparsedProperty { property_id, value })
     }
 
-    #[cfg(any())]
-    // blocked_on: PropertyId::{prefix, with_prefix} + UnparsedProperty::deep_clone.
+    // un-gated B-2 round 10: PropertyId::{prefix, with_prefix} + deep_clone are real now.
     pub fn get_prefixed(
         &self,
+        bump: &Arena,
         targets: css::targets::Targets,
         feature: css::prefixes::Feature,
     ) -> UnparsedProperty {
-        let mut clone = self.deep_clone();
+        let mut clone = self.deep_clone(bump);
         let prefix = self.property_id.prefix();
         clone.property_id =
             clone.property_id.with_prefix(targets.prefixes(prefix.or_none(), feature));
@@ -1455,11 +1455,11 @@ impl UnparsedProperty {
     }
 
     /// Returns a new UnparsedProperty with the same value and the given property id.
-    #[cfg(any())] // blocked_on: TokenList::deep_clone
-    pub fn with_property_id(&self, property_id: css::properties::PropertyId) -> UnparsedProperty {
+    // un-gated B-2 round 10: TokenList::deep_clone is real (arena-threaded).
+    pub fn with_property_id(&self, bump: &Arena, property_id: css::properties::PropertyId) -> UnparsedProperty {
         UnparsedProperty {
             property_id,
-            value: self.value.deep_clone(),
+            value: self.value.deep_clone(bump),
         }
     }
 

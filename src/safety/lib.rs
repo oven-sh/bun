@@ -4,7 +4,7 @@
 // mimalloc + bumpalo for AST). The Zig allocator-identity checks it provided
 // (`assertEq`, `CheckedAllocator`) are replaced by the AtomicPtr hooks below
 // (`ALLOC_HAS_PTR`/`IS_WTF_ALLOCATOR`). Draft kept for diff-pass only.
-#[cfg(any())] pub mod alloc;
+ pub mod alloc;
 
 #[path = "CriticalSection.rs"] mod critical_section;
 pub use critical_section::CriticalSection;

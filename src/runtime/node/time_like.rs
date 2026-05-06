@@ -1,4 +1,4 @@
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, JsType};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, JSType as JsType};
 
 /// On windows, this is what libuv expects
 /// On unix it is what the utimens api expects

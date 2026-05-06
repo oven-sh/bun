@@ -80,7 +80,7 @@ impl Flags {
         }
     }
     #[inline]
-    #[cfg(any())] // TODO(b2-blocked): bun_jsc::BinaryType repr(u8) — shim is opaque(usize).
+     // TODO(b2-blocked): bun_jsc::BinaryType repr(u8) — shim is opaque(usize).
     pub fn binary_type(self) -> BinaryType {
         // SAFETY: stored value was written via set_binary_type from a valid BinaryType discriminant
         unsafe {
@@ -90,7 +90,7 @@ impl Flags {
         }
     }
     #[inline]
-    #[cfg(any())] // TODO(b2-blocked): bun_jsc::BinaryType repr(u8).
+     // TODO(b2-blocked): bun_jsc::BinaryType repr(u8).
     pub fn set_binary_type(&mut self, v: BinaryType) {
         self.0 = (self.0 & !Self::BINARY_TYPE_MASK)
             | (((v as u8 as u64) << Self::BINARY_TYPE_SHIFT) & Self::BINARY_TYPE_MASK);
@@ -126,7 +126,7 @@ impl Flags {
 // init_strong, codegen js::data_set_cached, ArrayBuffer/JSUint8Array),
 // bun_uws::AnyWebSocket::{send, publish, subscribe, cork, end, …} (cycle-5-B).
 // TODO(b2-blocked): bun_jsc + bun_uws AnyWebSocket method surface.
-#[cfg(any())]
+
 mod _gated {
 use super::*;
 use bun_core::Output;

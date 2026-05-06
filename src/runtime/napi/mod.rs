@@ -11,7 +11,7 @@ use core::ffi::c_void;
 use core::ptr;
 
 // ─── gated Phase-A drafts (preserved, not compiled) ──────────────────────────
-#[cfg(any())]
+
 #[path = "napi_body.rs"]
 mod napi_body;
 

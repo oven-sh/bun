@@ -23,7 +23,7 @@ pub mod css_modules {
 // (round 6: all callers removed — every `values/*.rs` is now `pub mod`.)
 // ─── B-2 round 3: calc lattice leaves un-gated ───────────────────────────
 // number/angle/time/percentage/css_string + calc are now real. calc.rs
-// internally `#[cfg(any())]`-gates its Length/DimensionPercentage<LengthValue>
+// internally ``-gates its Length/DimensionPercentage<LengthValue>
 // CalcValue impls until length.rs un-gates; percentage.rs likewise gates the
 // generic-D `DimensionPercentage<D>` method block on the missing
 // Zero/MulF32/TryAdd protocol traits.
@@ -62,7 +62,7 @@ pub mod syntax;
 // the full data-type surface (CssColor / RGBA / colorspaces / LABColor /
 // PredefinedColor / FloatColor / ColorFallbackKind) with real `is_compatible`
 // / `eql` / `deep_clone`; the heavy parse/to_css/conversion bodies stay
-// inside `color::gated_full_impl` (`#[cfg(any())]`) until
+// inside `color::gated_full_impl` (``) until
 // `color_generated.rs` (color_via.ts → Rust) lands. `gradient.rs` types are
 // real (Gradient / Linear/Radial/Conic / WebKitGradient / GradientItem /
 // ColorStop / LineDirection / EndingShape / ShapeExtent); parse paths that
@@ -84,7 +84,7 @@ pub mod url;
 
 /// Numeric protocol traits referenced by `DimensionPercentage<D>` and the
 /// `CalcValue for DimensionPercentage<D>` impls. These mirror the shapes in
-/// `crate::generics::parse_tocss_numeric_gated` (still `#[cfg(any())]`-gated);
+/// `crate::generics::parse_tocss_numeric_gated` (still ``-gated);
 /// once that block un-gates these become `pub use crate::generics::{...}`.
 pub mod protocol {
     use crate::css_parser as css;

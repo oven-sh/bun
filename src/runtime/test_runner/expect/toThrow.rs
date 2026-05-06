@@ -1,4 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 use bun_str::{strings, ZigString};
 
@@ -6,7 +7,7 @@ use super::Expect;
 use super::ExpectAny;
 use super::get_signature;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_throw(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -77,10 +78,10 @@ pub fn to_throw(
             let signature_no_args: &'static str = get_signature("toThrow", "", true);
             if let Some(err) = result.to_error() {
                 let name: JSValue = err
-                    .get_truthy_comptime(global, "name")?
+                    .get_truthy(global, "name")?
                     .unwrap_or(JSValue::UNDEFINED);
                 let message: JSValue = err
-                    .get_truthy_comptime(global, "message")?
+                    .get_truthy(global, "message")?
                     .unwrap_or(JSValue::UNDEFINED);
                 // TODO(port): comptime string concat — get_signature must be const fn for concatcp!
                 let fmt = const_format::concatcp!(
@@ -130,7 +131,7 @@ pub fn to_throw(
                 }
             }
 
-            return this.throw(
+            return this.throw_fmt(
                 global,
                 signature,
                 "\n\nExpected substring: not <green>{}<r>\nReceived message: <red>{}<r>\n",
@@ -163,7 +164,7 @@ pub fn to_throw(
                 }
             }
 
-            return this.throw(
+            return this.throw_fmt(
                 global,
                 signature,
                 "\n\nExpected pattern: not <green>{}<r>\nReceived message: <red>{}<r>\n",
@@ -191,7 +192,7 @@ pub fn to_throw(
                 return Ok(JSValue::UNDEFINED);
             }
 
-            return this.throw(
+            return this.throw_fmt(
                 global,
                 signature,
                 "\n\nExpected message: not <green>{}<r>\n",
@@ -208,7 +209,7 @@ pub fn to_throw(
         let received_message: JSValue = result
             .fast_get(global, bun_jsc::BuiltinName::Message)?
             .unwrap_or(JSValue::UNDEFINED);
-        return this.throw(
+        return this.throw_fmt(
             global,
             signature,
             "\n\nExpected constructor: not <green>{}<r>\n\nReceived message: <red>{}<r>\n",
@@ -252,7 +253,7 @@ pub fn to_throw(
             if let Some(received_message) = received_message_opt {
                 let expected_value_fmt = expected_value.to_fmt(&mut formatter);
                 let received_message_fmt = received_message.to_fmt(&mut formatter);
-                return this.throw(
+                return this.throw_fmt(
                     global,
                     signature,
                     concat!("\n\n", "Expected substring: <green>{}<r>\nReceived message: <red>{}<r>\n"),
@@ -262,7 +263,7 @@ pub fn to_throw(
 
             let expected_fmt = expected_value.to_fmt(&mut formatter);
             let received_fmt = result.to_fmt(&mut formatter);
-            return this.throw(
+            return this.throw_fmt(
                 global,
                 signature,
                 concat!("\n\n", "Expected substring: <green>{}<r>\nReceived value: <red>{}<r>"),
@@ -291,7 +292,7 @@ pub fn to_throw(
                 let received_message_fmt = received_message.to_fmt(&mut formatter);
                 let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
 
-                return this.throw(
+                return this.throw_fmt(
                     global,
                     signature,
                     concat!("\n\n", "Expected pattern: <green>{}<r>\nReceived message: <red>{}<r>\n"),
@@ -302,7 +303,7 @@ pub fn to_throw(
             let expected_fmt = expected_value.to_fmt(&mut formatter);
             let received_fmt = result.to_fmt(&mut formatter);
             let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
-            return this.throw(
+            return this.throw_fmt(
                 global,
                 signature,
                 concat!("\n\n", "Expected pattern: <green>{}<r>\nReceived value: <red>{}<r>"),
@@ -325,7 +326,7 @@ pub fn to_throw(
             let mut formatter = Formatter::new(global).quote_strings(true);
             let received_fmt = result.to_fmt(&mut formatter);
             let expected_fmt = expected_value.to_fmt(&mut formatter);
-            return this.throw(
+            return this.throw_fmt(
                 global,
                 signature,
                 "\n\nExpected value: <green>{}<r>\nReceived value: <red>{}<r>\n",
@@ -351,7 +352,7 @@ pub fn to_throw(
             if let Some(received_message) = received_message_opt {
                 let expected_fmt = expected_message.to_fmt(&mut formatter);
                 let received_fmt = received_message.to_fmt(&mut formatter);
-                return this.throw(
+                return this.throw_fmt(
                     global,
                     signature,
                     "\n\nExpected message: <green>{}<r>\nReceived message: <red>{}<r>\n",
@@ -361,7 +362,7 @@ pub fn to_throw(
 
             let expected_fmt = expected_message.to_fmt(&mut formatter);
             let received_fmt = result.to_fmt(&mut formatter);
-            return this.throw(
+            return this.throw_fmt(
                 global,
                 signature,
                 "\n\nExpected message: <green>{}<r>\nReceived value: <red>{}<r>\n",
@@ -416,7 +417,7 @@ pub fn to_throw(
 
     if expected_value.is_empty() || expected_value.is_undefined() {
         let signature: &'static str = get_signature("toThrow", "", false);
-        return this.throw(
+        return this.throw_fmt(
             global,
             signature,
             concat!("\n\n", "Received function did not throw\nReceived value: <red>{}<r>\n"),

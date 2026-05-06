@@ -130,7 +130,7 @@ pub struct BundleV2<'a> {
 // machinery, `on_parse_task_complete`, `deinit_without_freeing_arena`). Method
 // bodies are real where lower-tier surfaces exist; sub-regions that touch
 // still-gated modules (`ThreadPool`, full `dispatch::DevServerVTable`,
-// `ServerComponentParseTask`, `Watcher`) are `#[cfg(any())]`-gated inline so
+// `ServerComponentParseTask`, `Watcher`) are ``-gated inline so
 // the call shape is preserved verbatim and un-gates by deletion once those
 // land. See `__phase_a_draft` below for the full reference bodies.
 // ──────────────────────────────────────────────────────────────────────────
@@ -213,7 +213,7 @@ impl<'a> BundleV2<'a> {
                     if let Some(mut p) = self.client_transpiler {
                         return p.as_mut();
                     }
-                    #[cfg(any())]
+                    
                     {
                         return self.initialize_client_transpiler().unwrap_or_else(|e| {
                             bun_core::output::err(e);
@@ -262,7 +262,7 @@ impl<'a> BundleV2<'a> {
             let _dev = self
                 .dev_server
                 .unwrap_or_else(|| panic!("No dev server attached in asynchronous bundle job"));
-            #[cfg(any())]
+            
             {
                 // TODO(b2-blocked): `finish_from_bake_dev_server` — full body
                 // gated below (needs full `DevServerVTable` slot set).
@@ -317,7 +317,7 @@ impl<'a> BundleV2<'a> {
             if !loader.should_copy_for_bundling() {
                 this.finalizers.push(core::mem::take(&mut parse_result.external));
             } else {
-                #[cfg(any())]
+                
                 {
                     // TODO(b2-blocked): `InputFile.allocator` column was dropped
                     // in the Rust port (PORT NOTE in Graph.rs); revisit once the
@@ -339,7 +339,7 @@ impl<'a> BundleV2<'a> {
         let mut process_log = true;
 
         if matches!(parse_result.value, ParseResultValue::Success(_)) {
-            #[cfg(any())]
+            
             {
                 // TODO(b2-blocked): `barrel_imports::apply_barrel_optimization`
                 // body is gated (reads `transpiler.options.optimize_imports` +
@@ -353,7 +353,7 @@ impl<'a> BundleV2<'a> {
         }
 
         // To minimize contention, watchers are appended on the bundle thread.
-        #[cfg(any())]
+        
         if let Some(watcher) = this.bun_watcher {
             // TODO(b2-blocked): `bun_core::Watcher` opaque — `add_file` lives in
             // T6 (`bun_runtime::hot_reloader`). Slot is `Option<NonNull<()>>`
@@ -410,7 +410,7 @@ impl<'a> BundleV2<'a> {
                 let idx = result.source.index.0 as usize;
                 // Warning: `input_files` and `ast` arrays may resize in this
                 // function call. It is not safe to cache slices from them.
-                #[cfg(any())]
+                
                 {
                     // TODO(b2-blocked): `Logger::Source: !Clone` (logger/lib.rs:2607);
                     // Zig moved by value here. Restructure once `Success.source`
@@ -428,7 +428,7 @@ impl<'a> BundleV2<'a> {
                     result.unique_key_for_additional_file.into();
                 this.graph.input_files.items_content_hash_for_additional_file_mut()[idx] =
                     result.content_hash_for_additional_file;
-                #[cfg(any())]
+                
                 if !result.unique_key_for_additional_file.is_empty()
                     && result.loader.should_copy_for_bundling()
                 {
@@ -460,7 +460,7 @@ impl<'a> BundleV2<'a> {
                     this.graph.css_file_count += 1;
                 }
 
-                #[cfg(any())]
+                
                 {
                     // TODO(b2-blocked): `process_resolve_queue` /
                     // `patch_import_record_source_indices` /
@@ -523,7 +523,7 @@ impl<'a> BundleV2<'a> {
                 bun_core::scoped_log!(Bundle, "onParse() = err");
 
                 if process_log {
-                    #[cfg(any())]
+                    
                     if let Some(dev_server) = this.dev_server {
                         // TODO(b2-blocked): `handle_parse_task_failure` slot is
                         // in the gated full vtable below.
@@ -596,7 +596,7 @@ impl<'a> BundleV2<'a> {
         // entry_point_original_names are owned `Vec`/`MultiArrayList` and drop
         // automatically; arena-backed slices are bulk-freed by the caller.
 
-        #[cfg(any())]
+        
         {
             // TODO(b2-blocked): `crate::ThreadPool` is the unit stub in lib.rs
             // (real `ThreadPool.rs` gated). Worker-assignment teardown un-gates
@@ -638,7 +638,7 @@ fn parse_task_step_name(step: parse_task::Step) -> &'static str {
 // vtable slot set, `api::JSBundler` TYPE_ONLY split, `LinkerContext`,
 // `ParseTask`, `ThreadPool`, OUT_DIR codegen for HmrRuntime embeds.)
 // ══════════════════════════════════════════════════════════════════════════
-#[cfg(any())]
+
 mod __phase_a_draft {
 // This is Bun's JavaScript/TypeScript bundler
 //

@@ -542,7 +542,7 @@ fn is_selector_unused(
         match component {
             Component::Class(ident) | Component::Id(ident) => {
                 // PORT NOTE: `IdentOrRef::as_original_string` is
-                // `#[cfg(any())]`-gated (blocked_on bun_logger::symbol::List::at
+                // ``-gated (blocked_on bun_logger::symbol::List::at
                 // + Symbol.original_name). Inline the ident arm; the ref arm
                 // (CSS-modules symbol-table lookup) is unreachable until
                 // `Parser::add_symbol_for_name` un-gates (see
@@ -585,7 +585,7 @@ fn is_selector_unused(
 /// Note that we have two serialization modules, one from lightningcss and one from servo.
 ///
 /// This is because it actually uses both implementations. This is confusing.
-/// `Printer::lookup_ident_or_ref` shim. The real method is `#[cfg(any())]`-
+/// `Printer::lookup_ident_or_ref` shim. The real method is ``-
 /// gated (blocked_on `Printer::lookup_symbol`). Inline the ident arm; the ref
 /// arm falls back to `IdentOrRef::debug_ident()` (the symbol-table path is
 /// only reachable under CSS-modules, which is itself gated upstream — see
@@ -839,7 +839,7 @@ pub mod serialize {
                 // arena-signature reshape). The minify-path picks the shorter of
                 // (serialized-as-ident, serialized-as-string); fall through to the
                 // non-minify branch until that helper un-gates.
-                #[cfg(any())]
+                
                 if dest.minify {
                     // PERF: should we put a scratch buffer in the printer
                     // Serialize as both an identifier and a string and choose the shorter one.
@@ -868,7 +868,7 @@ pub mod serialize {
                 } else {
                     CSSStringFns::to_css(&v.value, dest)?;
                 }
-                #[cfg(not(any()))]
+                #[cfg(any())]
                 CSSStringFns::to_css(value, dest)?;
 
                 match case_sensitivity {
@@ -940,7 +940,7 @@ pub mod serialize {
             }
             Component::Class(class) => {
                 dest.write_char(b'.')?;
-                // PORT NOTE: `Printer::write_ident_or_ref` is `#[cfg(any())]`-
+                // PORT NOTE: `Printer::write_ident_or_ref` is ``-
                 // gated (blocked_on css_modules pattern.write closure-arity).
                 // Inline its non-CSS-modules path: lookup → serialize.
                 let s = lookup_ident_or_ref(dest, *class);
@@ -1197,7 +1197,7 @@ pub mod serialize {
                 dest.write_str(name)?;
                 dest.write_char(b'(')?;
                 // blocked_on: properties::custom (TokenList::to_css_raw) un-gate.
-                #[cfg(any())]
+                
                 arguments.to_css_raw(dest)?;
                 let _ = arguments;
                 dest.write_char(b')')?;
@@ -1333,7 +1333,7 @@ pub mod serialize {
                 dest.write_str(name)?;
                 dest.write_char(b'(')?;
                 // blocked_on: properties::custom (TokenList::to_css_raw) un-gate.
-                #[cfg(any())]
+                
                 arguments.to_css_raw(dest)?;
                 let _ = arguments;
                 dest.write_char(b')')?;

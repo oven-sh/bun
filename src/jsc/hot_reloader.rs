@@ -38,7 +38,7 @@ pub enum ImportWatcher {
 
 impl ImportWatcher {
     pub fn start(&mut self) -> Result<(), bun_core::Error> {
-        #[cfg(any())] // TODO(b2-blocked): bun_watcher::Watcher::start
+         // TODO(b2-blocked): bun_watcher::Watcher::start
         {
             // TODO(port): narrow error set
             match self {
@@ -52,7 +52,7 @@ impl ImportWatcher {
 
     #[inline]
     pub fn watchlist(&self) -> bun_watcher::WatchList {
-        #[cfg(any())] // TODO(b2-blocked): bun_watcher::Watcher.watchlist field
+         // TODO(b2-blocked): bun_watcher::Watcher.watchlist field
         match self {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => return w.watchlist,
             ImportWatcher::None => {}
@@ -62,7 +62,7 @@ impl ImportWatcher {
 
     #[inline]
     pub fn index_of(&self, hash: bun_watcher::HashType) -> Option<u32> {
-        #[cfg(any())] // TODO(b2-blocked): bun_watcher::Watcher::index_of
+         // TODO(b2-blocked): bun_watcher::Watcher::index_of
         match self {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => return w.index_of(hash),
             ImportWatcher::None => {}
@@ -77,7 +77,7 @@ impl ImportWatcher {
         file_path: &[u8],
         loader: bun_bundler::options::Loader,
     ) -> bool {
-        #[cfg(any())] // TODO(b2-blocked): bun_watcher::Watcher::add_file_by_path_slow
+         // TODO(b2-blocked): bun_watcher::Watcher::add_file_by_path_slow
         match self {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => {
                 return w.add_file_by_path_slow(file_path, loader)
@@ -98,7 +98,7 @@ impl ImportWatcher {
         dir_fd: Fd,
         package_json: Option<&mut bun_resolver::PackageJSON>,
     ) -> bun_sys::Result<()> {
-        #[cfg(any())] // TODO(b2-blocked): bun_watcher::Watcher::add_file
+         // TODO(b2-blocked): bun_watcher::Watcher::add_file
         match self {
             ImportWatcher::Hot(watcher) | ImportWatcher::Watch(watcher) => return watcher
                 .add_file::<COPY_FILE_PATH>(fd, file_path, hash, loader, dir_fd, package_json),
@@ -143,7 +143,7 @@ fn record_changed_path(path: &[u8]) {
     if path.is_empty() {
         return;
     }
-    #[cfg(any())] // TODO(b2-blocked): bun_collections::StringSet::insert
+     // TODO(b2-blocked): bun_collections::StringSet::insert
     {
         // SAFETY: pointer set once by test_command before watcher thread starts;
         // only watcher thread reaches here.
@@ -187,7 +187,7 @@ fn flush_changed_paths_for_reload() {
             buf.extend_from_slice(p);
             buf.push(b'\n');
         }
-        #[cfg(any())] // TODO(b2-blocked): bun_sys::File::write_file
+         // TODO(b2-blocked): bun_sys::File::write_file
         {
             let _ = bun_sys::File::write_file(Fd::cwd(), dest, &buf);
         }
@@ -256,7 +256,7 @@ impl Default for MainFile {
 
 impl MainFile {
     pub fn init(file: &'static [u8]) -> MainFile {
-        #[cfg(any())] // TODO(b2-blocked): bun_watcher::Watcher::get_hash, bun_paths::dirname, bun_core::is_slice_in_buffer
+         // TODO(b2-blocked): bun_watcher::Watcher::get_hash, bun_paths::dirname, bun_core::is_slice_in_buffer
         {
         let mut main = MainFile {
             file,
@@ -277,7 +277,7 @@ impl MainFile {
         }
 
         return main;
-        } // end #[cfg(any())]
+        } // end 
         MainFile {
             file,
             ..Default::default()
@@ -325,7 +325,7 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
     }
 
     pub fn run(&mut self) {
-        #[cfg(any())] // TODO(b2-blocked): HotReloaderCtx trait — Ctx::reload(self, task)
+         // TODO(b2-blocked): HotReloaderCtx trait — Ctx::reload(self, task)
         {
         // Since we rely on the event loop for hot reloads, there can be
         // a delay before the next reload begins. In the time between the
@@ -343,7 +343,7 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
             // TODO(port): requires `Ctx: HotReloaderCtx` trait bound for `.reload`
             unsafe { (*reloader.ctx).reload(self) };
         }
-        } // end #[cfg(any())]
+        } // end 
     }
 
     pub fn enqueue(&mut self) {
@@ -352,7 +352,7 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
             return;
         }
 
-        #[cfg(any())] // TODO(b2-blocked): bun_core::{Output::flush, reload_process}, crate::{ConcurrentTask, Task::init, NewHotReloader::enqueue_task_concurrent}
+         // TODO(b2-blocked): bun_core::{Output::flush, reload_process}, crate::{ConcurrentTask, Task::init, NewHotReloader::enqueue_task_concurrent}
         {
         if RELOAD_IMMEDIATELY {
             Output::flush();
@@ -395,7 +395,7 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
             (*self.reloader)
                 .enqueue_task_concurrent((*that).concurrent_task.assume_init_mut() as *mut _);
         }
-        } // end #[cfg(any())]
+        } // end 
         self.count = 0;
     }
 
@@ -417,7 +417,7 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
         verbose: bool,
         clear_screen_flag: bool,
     ) -> Box<Watcher> {
-        #[cfg(any())] // TODO(b2-blocked): bun_watcher::Watcher::{init, start}, bun_core::{handle_error_return_trace, Output::panic}
+         // TODO(b2-blocked): bun_watcher::Watcher::{init, start}, bun_core::{handle_error_return_trace, Output::panic}
         {
         let reloader = Box::into_raw(Box::new(Self {
             ctx,
@@ -448,7 +448,7 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
             ));
         }
         return watcher;
-        } // end #[cfg(any())]
+        } // end 
         let _ = (ctx, fs, verbose, clear_screen_flag);
         todo!("NewHotReloader::init — blocked on bun_watcher::Watcher::init")
     }
@@ -463,7 +463,7 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
     }
 
     pub fn event_loop(&self) -> *mut EventLoopType {
-        #[cfg(any())] // TODO(b2-blocked): HotReloaderCtx trait — Ctx::event_loop
+         // TODO(b2-blocked): HotReloaderCtx trait — Ctx::event_loop
         {
             // SAFETY: ctx outlives reloader (BACKREF).
             return unsafe { (*self.ctx).event_loop() };
@@ -476,7 +476,7 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
             unreachable!();
         }
 
-        #[cfg(any())] // TODO(b2-blocked): EventLoopType::enqueue_task_concurrent — needs trait bound
+         // TODO(b2-blocked): EventLoopType::enqueue_task_concurrent — needs trait bound
         {
             // SAFETY: event_loop() returns a valid pointer for the lifetime of ctx.
             unsafe { (*self.event_loop()).enqueue_task_concurrent(task) };
@@ -485,7 +485,7 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
     }
 
     pub fn enable_hot_module_reloading(this: *mut Ctx, entry_path: Option<&'static [u8]>) {
-        #[cfg(any())] // TODO(b2-blocked): HotReloaderCtx trait — Ctx::{bun_watcher, transpiler.{fs, env, resolver.watcher}}, bun_watcher::Watcher::init, bun_resolver::ResolveWatcher
+         // TODO(b2-blocked): HotReloaderCtx trait — Ctx::{bun_watcher, transpiler.{fs, env, resolver.watcher}}, bun_watcher::Watcher::init, bun_resolver::ResolveWatcher
         {
         // SAFETY: caller passes a live Ctx pointer.
         let ctx = unsafe { &mut *this };
@@ -495,13 +495,13 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
         // trait associated type/const (`const WATCHER_IS_IMPORT: bool`) or by
         // splitting this fn per Ctx. The two arms below are both transcribed;
         // pick one at Phase B.
-        #[cfg(any())] // disabled: ImportWatcher arm
+         // disabled: ImportWatcher arm
         {
             if !matches!(ctx.bun_watcher, ImportWatcher::None) {
                 return;
             }
         }
-        #[cfg(any())] // disabled: Option<Box<Watcher>> arm
+         // disabled: Option<Box<Watcher>> arm
         {
             if ctx.bun_watcher.is_some() {
                 return;
@@ -524,7 +524,7 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
         }));
 
         // TODO(port): same `@TypeOf == ImportWatcher` split as above.
-        #[cfg(any())] // disabled: ImportWatcher arm
+         // disabled: ImportWatcher arm
         {
             ctx.bun_watcher = if RELOAD_IMMEDIATELY {
                 ImportWatcher::Watch(match Watcher::init(reloader, ctx.transpiler.fs) {
@@ -570,7 +570,7 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
                     );
             }
         }
-        #[cfg(any())] // disabled: Option<Box<Watcher>> arm
+         // disabled: Option<Box<Watcher>> arm
         {
             ctx.bun_watcher = Some(match Watcher::init(reloader, ctx.transpiler.fs) {
                 Ok(w) => w,
@@ -600,7 +600,7 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
         unsafe { (*reloader).get_context() }
             .start()
             .expect("Failed to start File Watcher");
-        } // end #[cfg(any())]
+        } // end 
         let _ = (this, entry_path);
     }
 
@@ -609,7 +609,7 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
         key: &[u8],
         value: *mut core::ffi::c_void,
     ) {
-        #[cfg(any())] // TODO(b2-blocked): bun_collections::StringHashMap::put
+         // TODO(b2-blocked): bun_collections::StringHashMap::put
         {
             self.tombstones.put(key, value).expect("unreachable");
         }
@@ -620,7 +620,7 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
         &mut self,
         key: &[u8],
     ) -> Option<*mut core::ffi::c_void> {
-        #[cfg(any())] // TODO(b2-blocked): bun_collections::StringHashMap::get
+         // TODO(b2-blocked): bun_collections::StringHashMap::get
         {
             return self.tombstones.get(key);
         }
@@ -629,7 +629,7 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
     }
 
     pub fn on_error(_: &mut Self, err: bun_sys::Error) {
-        #[cfg(any())] // TODO(b2-blocked): bun_core::Output::err, bun_sys::E::from_raw
+         // TODO(b2-blocked): bun_core::Output::err, bun_sys::E::from_raw
         {
             // TODO(port): @enumFromInt(err.errno) → bun_sys::E::from_raw
             Output::err(
@@ -644,7 +644,7 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
     }
 
     pub fn get_context(&mut self) -> &mut Watcher {
-        #[cfg(any())] // TODO(b2-blocked): HotReloaderCtx trait — Ctx::bun_watcher_mut
+         // TODO(b2-blocked): HotReloaderCtx trait — Ctx::bun_watcher_mut
         {
             // TODO(port): comptime reflection on `@TypeOf(this.ctx.bun_watcher)`.
             // Zig branches three ways: ImportWatcher / Option / bare. Phase B:
@@ -662,7 +662,7 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
         changed_files: &mut [Option<&mut ZStr>],
         watchlist: bun_watcher::WatchList,
     ) {
-        #[cfg(any())] // TODO(b2-blocked): bun_watcher::{WatchList::slice, WatchEvent fields, Kind, Watcher::{get_hash, remove_at_index, flush_evictions}}, bun_resolver::fs::{FileSystem::{instance, relative_to}, RealFS, real_fs::EntriesOption, PathName::find_extname}, bun_sys::{faccessat, access, F_OK}, bun_string::{strings::{without_trailing_slash_windows_path, trim_right}, PathString}, HotReloaderCtx::{bust_dir_cache, get_loaders}
+         // TODO(b2-blocked): bun_watcher::{WatchList::slice, WatchEvent fields, Kind, Watcher::{get_hash, remove_at_index, flush_evictions}}, bun_resolver::fs::{FileSystem::{instance, relative_to}, RealFS, real_fs::EntriesOption, PathName::find_extname}, bun_sys::{faccessat, access, F_OK}, bun_string::{strings::{without_trailing_slash_windows_path, trim_right}, PathString}, HotReloaderCtx::{bust_dir_cache, get_loaders}
         {
         let slice = watchlist.slice();
         let file_paths = slice.items_file_path();
@@ -1004,7 +1004,7 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
         // `defer current_task.enqueue();`
         current_task.enqueue();
         // _flush guard handles `Output::flush()` then `ctx.flush_evictions()` on drop (LIFO).
-        } // end #[cfg(any())]
+        } // end 
         let _ = (events, changed_files, watchlist);
     }
 }

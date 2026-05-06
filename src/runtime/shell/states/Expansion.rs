@@ -79,7 +79,7 @@ impl Expansion {
         //
         // Gated until: ast::Atom/SimpleAtom/CompoundAtom, bun_glob::GlobWalker,
         // ShellExecEnv::dupe_for_subshell (for $(...)).
-        #[cfg(any())]
+        
         {
             include!("Expansion_next_body.rs");
         }

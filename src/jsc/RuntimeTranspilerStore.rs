@@ -42,7 +42,7 @@ pub fn dump_source_string_failiable(
     specifier: &[u8],
     written: &[u8],
 ) -> Result<(), bun_core::Error> {
-    #[cfg(any())] // TODO(b2-blocked): bun_sys::Dir, bun_io::BufWriter, bun_core::fmt::format_json_string_utf8, bun_paths::{dirname, basename, windows_filesystem_root}, vm.source_mappings, bun_resolver::fs::FileSystem::RealFS::platform_temp_dir
+     // TODO(b2-blocked): bun_sys::Dir, bun_io::BufWriter, bun_core::fmt::format_json_string_utf8, bun_paths::{dirname, basename, windows_filesystem_root}, vm.source_mappings, bun_resolver::fs::FileSystem::RealFS::platform_temp_dir
     {
     // TODO(port): narrow error set
     if !cfg!(debug_assertions) {
@@ -143,7 +143,7 @@ pub fn dump_source_string_failiable(
     } else {
         let _ = dir.write_file(bun_paths::basename(specifier), written);
     }
-    } // end #[cfg(any())]
+    } // end 
     let _ = (vm, specifier, written);
     Ok(())
 }
@@ -190,7 +190,7 @@ impl RuntimeTranspilerStore {
         global: &JSGlobalObject,
         vm: &mut VirtualMachine,
     ) {
-        #[cfg(any())] // TODO(b2-blocked): bun_collections::UnboundedQueue::{pop_batch, iterator}, EventLoop::drain_microtasks_with_global, JSGlobalObject::report_uncaught_exception_from_error
+         // TODO(b2-blocked): bun_collections::UnboundedQueue::{pop_batch, iterator}, EventLoop::drain_microtasks_with_global, JSGlobalObject::report_uncaught_exception_from_error
         {
         let mut batch = self.queue.pop_batch();
         let jsc_vm = vm.jsc_vm;
@@ -214,7 +214,7 @@ impl RuntimeTranspilerStore {
         }
 
         // immediately after this is called, the microtasks will be drained again.
-        } // end #[cfg(any())]
+        } // end 
         let _ = (event_loop, global, vm);
     }
 
@@ -228,7 +228,7 @@ impl RuntimeTranspilerStore {
         loader: Loader,
         package_json: Option<&PackageJSON>,
     ) -> *mut c_void {
-        #[cfg(any())] // TODO(b2-blocked): TranspilerJobStore::get, JSInternalPromise::create, ResolvedSource fields, ResolvedSourceTag, Strong::create, JSValue::from_cell, Fs::Path::init, PackageJSON.module_type
+         // TODO(b2-blocked): TranspilerJobStore::get, JSInternalPromise::create, ResolvedSource fields, ResolvedSourceTag, Strong::create, JSValue::from_cell, Fs::Path::init, PackageJSON.module_type
         {
         let job: *mut TranspilerJob = self.store.get();
         let owned_path = Fs::Path::init(Box::<[u8]>::from(path.text));
@@ -282,7 +282,7 @@ impl RuntimeTranspilerStore {
         // SAFETY: job fully initialized above
         unsafe { (*job).schedule() };
         return promise as *mut c_void;
-        } // end #[cfg(any())]
+        } // end 
         let _ = (vm, global_object, input_specifier, path, referrer, loader, package_json);
         core::ptr::null_mut()
     }
@@ -348,7 +348,7 @@ impl TranspilerJob {
     /// several fields are reset to sentinel values for reuse. Not exposed as `pub fn deinit`
     /// per PORTING.md; only caller is `run_from_js_thread`.
     fn reset_for_pool(&mut self) {
-        #[cfg(any())] // TODO(b2-blocked): Fs::Path::empty, bun_aio::KeepAlive::disable, bun_string::String::deref_, Strong::empty
+         // TODO(b2-blocked): Fs::Path::empty, bun_aio::KeepAlive::disable, bun_string::String::deref_, Strong::empty
         {
         // bun.default_allocator.free(this.path.text) → path.text is Box<[u8]> in owned_path;
         // dropping the Fs::Path frees it.
@@ -366,11 +366,11 @@ impl TranspilerJob {
         // self.promise.deinit() → Drop via replace
         drop(core::mem::replace(&mut self.promise, Strong::empty()));
         // self.globalThis = undefined; — no-op in Rust
-        } // end #[cfg(any())]
+        } // end 
     }
 
     pub fn dispatch_to_main_thread(&mut self) {
-        #[cfg(any())] // TODO(b2-blocked): VirtualMachine.transpiler_store, UnboundedQueue::push, ConcurrentTask::create_from, EventLoop::enqueue_task_concurrent
+         // TODO(b2-blocked): VirtualMachine.transpiler_store, UnboundedQueue::push, ConcurrentTask::create_from, EventLoop::enqueue_task_concurrent
         {
         // SAFETY: vm outlives the job (BACKREF — VM owns the store).
         let vm = unsafe { &*self.vm };
@@ -379,11 +379,11 @@ impl TranspilerJob {
         // Another thread may free `self` at any time after .push, so we cannot use it any more.
         vm.event_loop()
             .enqueue_task_concurrent(ConcurrentTask::create_from(transpiler_store));
-        } // end #[cfg(any())]
+        } // end 
     }
 
     pub fn run_from_js_thread(&mut self) -> JsResult<()> {
-        #[cfg(any())] // TODO(b2-blocked): Strong::swap, bun_aio::KeepAlive::unref, bun_string::String::{empty, clone_utf8, create_if_different, dupe_ref}, ResolvedSource fields, AsyncModule::fulfill, TranspilerJobStore::put
+         // TODO(b2-blocked): Strong::swap, bun_aio::KeepAlive::unref, bun_string::String::{empty, clone_utf8, create_if_different, dupe_ref}, ResolvedSource fields, AsyncModule::fulfill, TranspilerJobStore::put
         {
         // SAFETY: vm/global_this outlive the job (BACKREF).
         let vm = unsafe { &*self.vm };
@@ -425,12 +425,12 @@ impl TranspilerJob {
             referrer,
             &mut log,
         )
-        } // end #[cfg(any())]
+        } // end 
         Ok(())
     }
 
     pub fn schedule(&mut self) {
-        #[cfg(any())] // TODO(b2-blocked): bun_aio::KeepAlive::ref_, bun_threading::WorkPool::schedule
+         // TODO(b2-blocked): bun_aio::KeepAlive::ref_, bun_threading::WorkPool::schedule
         {
             // SAFETY: vm outlives the job (BACKREF).
             self.poll_ref.ref_(unsafe { &*self.vm });
@@ -449,7 +449,7 @@ impl TranspilerJob {
     }
 
     pub fn run(&mut self) {
-        #[cfg(any())] // TODO(b2-blocked): bun_alloc::Arena, bun_js_parser::ast::ASTMemoryAllocator, bun_transpiler::Transpiler, bun_watcher::Watcher::get_hash, bun_resolver::{node_fallbacks, package_json::MacroMap}, bun_resolve_builtins::HardcodedModule, bun_bundler::{analyze_transpiled_module, Transpiler::ParseOptions, parse_result::AlreadyBundled}, bun_js_printer::{BufferWriter, BufferPrinter, Format}, RuntimeTranspilerCache fields, ResolvedSource fields, VirtualMachine::{transpiler, bun_watcher, main, main_hash, debugger, module_loader, smol, source_map_handler, is_watcher_enabled, use_isolation_source_provider_cache, source_mappings}
+         // TODO(b2-blocked): bun_alloc::Arena, bun_js_parser::ast::ASTMemoryAllocator, bun_transpiler::Transpiler, bun_watcher::Watcher::get_hash, bun_resolver::{node_fallbacks, package_json::MacroMap}, bun_resolve_builtins::HardcodedModule, bun_bundler::{analyze_transpiled_module, Transpiler::ParseOptions, parse_result::AlreadyBundled}, bun_js_printer::{BufferWriter, BufferPrinter, Format}, RuntimeTranspilerCache fields, ResolvedSource fields, VirtualMachine::{transpiler, bun_watcher, main, main_hash, debugger, module_loader, smol, source_map_handler, is_watcher_enabled, use_isolation_source_provider_cache, source_mappings}
         {
         // PERF(port): was ArenaAllocator bulk-free feeding transpiler/AST — kept as Bump.
         let mut arena = Arena::new();
@@ -897,7 +897,7 @@ impl TranspilerJob {
 
         // arena drops here (bulk-free)
         let _ = arena;
-        } // end #[cfg(any())]
+        } // end 
         // Dispatch must always run to unblock the JS thread; mirrors `defer this.dispatchToMainThread()`.
         self.parse_error = Some(bun_core::err!("RuntimeTranspilerStoreGated"));
         self.dispatch_to_main_thread();
@@ -906,11 +906,11 @@ impl TranspilerJob {
 
 // TODO(port): placeholder re-exports for types referenced by tag matching above; Phase B
 // resolves these against their real crates. All four are only used inside the
-// `#[cfg(any())]`-gated `run()` body so they are gated likewise.
-#[cfg(any())] use crate::resolved_source::Tag as ResolvedSourceTag;
-#[cfg(any())] use bun_bundler::parse_result::AlreadyBundled;
-#[cfg(any())] use crate::runtime_transpiler_cache::OutputCode;
-#[cfg(any())] use crate::virtual_machine::BunWatcher;
+// ``-gated `run()` body so they are gated likewise.
+ use crate::resolved_source::Tag as ResolvedSourceTag;
+ use bun_bundler::parse_result::AlreadyBundled;
+ use crate::runtime_transpiler_cache::OutputCode;
+ use crate::virtual_machine::BunWatcher;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

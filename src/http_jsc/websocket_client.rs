@@ -43,10 +43,10 @@ use self::websocket_proxy_tunnel::WebSocketProxyTunnel;
 #[path = "websocket_client/CppWebSocket.rs"]                        pub mod cpp_websocket;
 #[path = "websocket_client/WebSocketDeflate.rs"]                    pub mod websocket_deflate;
 #[path = "websocket_client/WebSocketProxy.rs"]                      pub mod websocket_proxy;
-#[cfg(any())] #[path = "websocket_client/WebSocketProxyTunnel.rs"]  pub mod websocket_proxy_tunnel;
-#[cfg(any())] #[path = "websocket_client/WebSocketUpgradeClient.rs"] pub mod websocket_upgrade_client;
+ #[path = "websocket_client/WebSocketProxyTunnel.rs"]  pub mod websocket_proxy_tunnel;
+ #[path = "websocket_client/WebSocketUpgradeClient.rs"] pub mod websocket_upgrade_client;
 
-#[cfg(not(any()))]
+#[cfg(any())]
 pub mod websocket_proxy_tunnel {
     /// Stub for `WebSocketProxyTunnel` (real impl gated above).
     pub struct WebSocketProxyTunnel { _priv: () }
@@ -88,7 +88,7 @@ pub mod websocket_proxy_tunnel {
         }
     }
 }
-#[cfg(not(any()))]
+#[cfg(any())]
 pub mod websocket_upgrade_client { /* stub: no types referenced from struct layout */ }
 
 bun_core::declare_scope!(WebSocketClient, visible);
@@ -1553,7 +1553,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: op <= 0xF checked above
         let opcode: Opcode = unsafe { core::mem::transmute::<u8, Opcode>(op) };
 
-        #[cfg(any())]
+        
         // Cast the JSValue to a Blob
         // TODO(b2-blocked): bun_jsc::webcore::Blob — `jsc.WebCore.Blob` lives in
         // a higher-tier crate (`bun_runtime::webcore`) and would create a dep

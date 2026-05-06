@@ -10,11 +10,11 @@
 // `CustomProperty::parse`, `UnparsedProperty::parse` are now real.
 //
 // A few leaf calls (Url::parse/to_css, CustomIdent::to_css) are still
-// `#[cfg(any())]`-gated in *other* files; those bodies are inlined verbatim
+// ``-gated in *other* files; those bodies are inlined verbatim
 // under `mod ext` below so the hub compiles without touching
 // `values/{url,ident}.rs`. `DashedIdentReference::{parse_with_options,to_css}`
 // are now real and forwarded directly. Remaining internal
-// `#[cfg(any())]` gates carry `blocked_on:` notes for the next round
+// `` gates carry `blocked_on:` notes for the next round
 // (ComponentParser un-gate from `values::color::gated_full_impl`;
 // `properties::animation` un-gate; `get_fallback` chain).
 
@@ -51,7 +51,7 @@ use bun_alloc::Arena;
 
 // ─── External-gate shims ───────────────────────────────────────────────────
 // `TokenList::{parse,to_css}` bottom out on a handful of leaf fns that still
-// carry `#[cfg(any())]` in *other* files (`values/{url,ident}.rs`,
+// carry `` in *other* files (`values/{url,ident}.rs`,
 // `css_modules.rs`). Those gates are stale — every dependency they cite now
 // exists — but this round's edit scope is `custom.rs` + `css_parser.rs` only.
 // To un-gate the TokenList hub without touching those files, the leaf bodies
@@ -724,7 +724,7 @@ impl TokenList {
         Ok(())
     }
 
-    #[cfg(any())]
+    
     // blocked_on: CssColor::get_fallback (allocator-shaped), TokenOrValue::deep_clone,
     // Function/Variable/EnvironmentVariable::get_fallback un-gate.
     pub fn get_fallback(&self, kind: ColorFallbackKind) -> Self {
@@ -743,7 +743,7 @@ impl TokenList {
         tokens
     }
 
-    #[cfg(any())]
+    
     // blocked_on: ColorFallbackKind::supports_condition (gated_full_impl in
     // values/color.rs) + TokenList::get_fallback.
     pub fn get_fallbacks(&mut self, targets: css::targets::Targets) -> css::SmallList<Fallbacks, 2> {
@@ -1057,7 +1057,7 @@ impl Variable {
         dest.write_char(b')')
     }
 
-    #[cfg(any())] // blocked_on: TokenList::get_fallback
+     // blocked_on: TokenList::get_fallback
     pub fn get_fallback(&self, kind: ColorFallbackKind) -> Self {
         Variable {
             name: self.name,
@@ -1125,7 +1125,7 @@ impl EnvironmentVariable {
         dest.write_char(b')')
     }
 
-    #[cfg(any())] // blocked_on: TokenList::get_fallback
+     // blocked_on: TokenList::get_fallback
     pub fn get_fallback(&self, kind: ColorFallbackKind) -> Self {
         EnvironmentVariable {
             name: self.name.clone(),
@@ -1275,7 +1275,7 @@ impl Function {
 
     // eql / hash / deep_clone — provided by `#[derive(CssEql, CssHash, DeepClone)]`.
 
-    #[cfg(any())] // blocked_on: TokenList::get_fallback + Ident::deep_clone
+     // blocked_on: TokenList::get_fallback + Ident::deep_clone
     pub fn get_fallback(&self, kind: ColorFallbackKind) -> Self {
         Function {
             name: self.name,

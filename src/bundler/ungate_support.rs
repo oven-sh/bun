@@ -49,7 +49,7 @@ pub mod perf {
 }
 
 /// Type-surface shim for `bun_css` as seen by the bundler. The real crate's
-/// `BundlerStyleSheet` is itself gated (`css_parser.rs: #[cfg(any())]`) and
+/// `BundlerStyleSheet` is itself gated (`css_parser.rs: `) and
 /// several types carry a `'bump` lifetime that `Chunk`/`ParseTask` don't yet
 /// thread, so this module is the canonical bundler-facing surface for now —
 /// it re-exports real types where they exist (under `feature = "css"`) and
@@ -358,9 +358,9 @@ pub mod bun_renamer {
 /// `HTMLImportManifest` — gated module; minimal callable surface so
 /// `Chunk.rs::IntermediateOutput::code` typechecks.
 // TODO(b2-blocked): real `HTMLImportManifest.rs` is gated. Call sites in
-// `Chunk.rs::code_with_source_map_shifts` are likewise `#[cfg(any())]`-gated
+// `Chunk.rs::code_with_source_map_shifts` are likewise ``-gated
 // (PORTING.md §Forbidden: no `unimplemented!()` in live code).
-#[cfg(any())]
+
 pub mod html_import_manifest {
     use crate::Graph::Graph;
     use crate::{chunk::Chunk, LinkerGraph};

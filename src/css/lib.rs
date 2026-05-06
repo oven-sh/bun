@@ -9,22 +9,22 @@ extern crate self as bun_css;
 // inter-dependent hub modules (css_parser, properties/, rules/, values/,
 // selectors/, declaration, generics, media_query, printer, context,
 // css_modules, small_list, dependencies, error) remain gated behind
-// `#[cfg(any())]` until the cross-module re-export web is untangled in a
+// `` until the cross-module re-export web is untangled in a
 // follow-up B-2 round.
 
 macro_rules! gated_mod {
     ($name:ident, $path:literal) => {
-        #[cfg(any())]
+        
         #[path = $path]
         pub mod $name;
-        #[cfg(not(any()))]
+        #[cfg(any())]
         pub mod $name {}
     };
     ($name:ident, $path:literal, { $($body:tt)* }) => {
-        #[cfg(any())]
+        
         #[path = $path]
         pub mod $name;
-        #[cfg(not(any()))]
+        #[cfg(any())]
         pub mod $name { $($body)* }
     };
 }
@@ -73,7 +73,7 @@ pub mod media_query;
 // `PropertyHandlerContext` / `DeclarationContext` now compile for real so the
 // `rules/` leaf modules can un-gate against them. The heavy method bodies
 // (parse / to_css / minify / get_*_rules) and the per-property handler
-// fields stay internally `#[cfg(any())]`-gated until `properties/*` un-gate.
+// fields stay internally ``-gated until `properties/*` un-gate.
 // The `RuleBodyParser`/`RuleBodyItemParser`/`DeclarationParser` traits are
 // now un-gated in css_parser.rs (round 5), so `DeclarationBlock::parse` can
 // flip when `properties_generated` lands.
@@ -149,7 +149,7 @@ pub mod generics;
 // `selectors/`/`declaration`/`media_query` hubs. The heavy *behavior* bodies
 // (`AtRuleParser`/`QualifiedRuleParser` impls for Top/NestedRuleParser,
 // `StyleSheet::{parse,minify,to_css}`, `StyleAttribute::{parse,to_css}`)
-// stay internally `#[cfg(any())]`-gated on the rules/ leaf modules +
+// stay internally ``-gated on the rules/ leaf modules +
 // properties_generated. `printer.rs` is real (Printer struct +
 // write/indent/delim). `values/` is real for the leaf submodules; the heavy
 // ones (color, calc, gradient, image, length, syntax) are internally gated

@@ -3,7 +3,7 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
 // AUTOGEN: mod declarations only — real exports added in B-1.
 //
-// B-1 gate-and-stub: all Phase-A draft modules are gated behind `#[cfg(any())]`
+// B-1 gate-and-stub: all Phase-A draft modules are gated behind ``
 // so the crate compiles. Draft bodies are preserved on disk; un-gating happens
 // in B-2 as lower-tier crate surfaces solidify.
 
@@ -16,13 +16,13 @@ pub mod IndexStringMap;
 pub mod PathToSourceIndexMap;
 pub mod DeferredBatchTask;
 pub mod Graph;
-#[cfg(any())]
+
 pub mod BundleThread;
-#[cfg(any())]
+
 pub mod ServerComponentParseTask;
-#[cfg(any())]
+
 pub mod HTMLImportManifest;
-#[cfg(any())]
+
 pub mod HTMLScanner;
 #[path = "OutputFile.rs"]
 pub mod output_file;
@@ -30,7 +30,7 @@ pub mod cache;
 #[path = "ThreadPool.rs"]
 pub mod thread_pool;
 pub mod entry_points;
-#[cfg(any())]
+
 pub mod AstBuilder;
 pub mod analyze_transpiled_module;
 pub mod linker;
@@ -65,73 +65,73 @@ pub mod linker_context {
     //    ImportData / GenerateChunkCtx / thread_pool::Worker / …) lands.
     //    Re-exports from these into `linker_context::*` stay blocked until
     //    un-gate; downstream callers go through `LinkerContext` methods.
-    #[cfg(any())]
+    
     #[path = "computeChunks.rs"]
     pub mod compute_chunks;
-    #[cfg(any())]
+    
     #[path = "computeCrossChunkDependencies.rs"]
     pub mod compute_cross_chunk_dependencies;
-    #[cfg(any())]
+    
     #[path = "convertStmtsForChunk.rs"]
     pub mod convert_stmts_for_chunk;
-    #[cfg(any())]
+    
     #[path = "convertStmtsForChunkForDevServer.rs"]
     pub mod convert_stmts_for_chunk_for_dev_server;
-    #[cfg(any())]
+    
     #[path = "doStep5.rs"]
     pub mod do_step5;
-    #[cfg(any())]
+    
     #[path = "findAllImportedPartsInJSOrder.rs"]
     pub mod find_all_imported_parts_in_js_order;
-    #[cfg(any())]
+    
     #[path = "findImportedCSSFilesInJSOrder.rs"]
     pub mod find_imported_css_files_in_js_order;
-    #[cfg(any())]
+    
     #[path = "findImportedFilesInCSSOrder.rs"]
     pub mod find_imported_files_in_css_order;
-    #[cfg(any())]
+    
     #[path = "generateChunksInParallel.rs"]
     pub mod generate_chunks_in_parallel;
-    #[cfg(any())]
+    
     #[path = "generateCodeForFileInChunkJS.rs"]
     pub mod generate_code_for_file_in_chunk_js;
-    #[cfg(any())]
+    
     #[path = "generateCodeForLazyExport.rs"]
     pub mod generate_code_for_lazy_export;
-    #[cfg(any())]
+    
     #[path = "generateCompileResultForCssChunk.rs"]
     pub mod generate_compile_result_for_css_chunk;
-    #[cfg(any())]
+    
     #[path = "generateCompileResultForHtmlChunk.rs"]
     pub mod generate_compile_result_for_html_chunk;
-    #[cfg(any())]
+    
     #[path = "generateCompileResultForJSChunk.rs"]
     pub mod generate_compile_result_for_js_chunk;
-    #[cfg(any())]
+    
     #[path = "postProcessCSSChunk.rs"]
     pub mod post_process_css_chunk;
-    #[cfg(any())]
+    
     #[path = "postProcessHTMLChunk.rs"]
     pub mod post_process_html_chunk;
-    #[cfg(any())]
+    
     #[path = "postProcessJSChunk.rs"]
     pub mod post_process_js_chunk;
-    #[cfg(any())]
+    
     #[path = "prepareCssAstsForChunk.rs"]
     pub mod prepare_css_asts_for_chunk;
-    #[cfg(any())]
+    
     #[path = "renameSymbolsInChunk.rs"]
     pub mod rename_symbols_in_chunk;
-    #[cfg(any())]
+    
     #[path = "writeOutputFilesToDisk.rs"]
     pub mod write_output_files_to_disk;
-    #[cfg(any())]
+    
     #[path = "MetafileBuilder.rs"]
     pub mod metafile_builder;
-    #[cfg(any())]
+    
     #[path = "OutputFileListBuilder.rs"]
     pub mod output_file_list_builder;
-    #[cfg(any())]
+    
     #[path = "StaticRouteVisitor.rs"]
     pub mod static_route_visitor;
 }

@@ -1,9 +1,10 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::{Expect, get_signature};
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_be_negative(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -32,27 +33,23 @@ pub fn to_be_negative(
         return Ok(JSValue::UNDEFINED);
     }
 
-    let mut formatter = Formatter {
-        global,
-        quote_strings: true,
-        ..Default::default()
-    };
+    let mut formatter = super::make_formatter(global);
     // Zig: `defer formatter.deinit();` — handled by Drop
     let received = value.to_fmt(&mut formatter);
 
     if not {
-        const SIGNATURE: &str = get_signature("toBeNegative", "", true);
+        let signature: &str = get_signature("toBeNegative", "", true);
         return this.throw(
             global,
-            SIGNATURE,
+            signature,
             format_args!(concat!("\n\n", "Received: <red>{}<r>\n"), received),
         );
     }
 
-    const SIGNATURE: &str = get_signature("toBeNegative", "", false);
+    let signature: &str = get_signature("toBeNegative", "", false);
     this.throw(
         global,
-        SIGNATURE,
+        signature,
         format_args!(concat!("\n\n", "Received: <red>{}<r>\n"), received),
     )
 }

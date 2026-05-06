@@ -1,10 +1,11 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_str::ZigString;
 
 use super::Expect;
 use super::get_signature;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_match_snapshot(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -16,7 +17,7 @@ pub fn to_match_snapshot(
     let mut this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
-    let _arguments = frame.arguments_old(2);
+    let _arguments = frame.arguments_old::<2>();
     let arguments: &[JSValue] = &_arguments.ptr[0.._arguments.len];
 
     this.increment_expect_call_counter();
@@ -25,7 +26,7 @@ pub fn to_match_snapshot(
     if not {
         // PERF(port): was `comptime getSignature(...)` — requires `get_signature` be `const fn` in Phase B.
         let signature = const { get_signature("toMatchSnapshot", "", true) };
-        return this.throw(
+        return this.throw_fmt(
             global,
             signature,
             "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n",
@@ -36,7 +37,7 @@ pub fn to_match_snapshot(
     let Some(buntest_strong) = this.bun_test() else {
         // PERF(port): was `comptime getSignature(...)` — requires `get_signature` be `const fn` in Phase B.
         let signature = const { get_signature("toMatchSnapshot", "", true) };
-        return this.throw(
+        return this.throw_fmt(
             global,
             signature,
             "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n",
@@ -55,7 +56,7 @@ pub fn to_match_snapshot(
             } else if arguments[0].is_object() {
                 property_matchers = Some(arguments[0]);
             } else {
-                return this.throw(
+                return this.throw_fmt(
                     global,
                     "",
                     "\n\nMatcher error: Expected first argument to be a string or object\n",
@@ -68,7 +69,7 @@ pub fn to_match_snapshot(
                 // PERF(port): was `comptime getSignature(...)` — requires `get_signature` be `const fn` in Phase B.
                 let signature =
                     const { get_signature("toMatchSnapshot", "<green>properties<r><d>, <r>hint", false) };
-                return this.throw(
+                return this.throw_fmt(
                     global,
                     signature,
                     "\n\nMatcher error: Expected <green>properties<r> must be an object\n",
@@ -81,7 +82,7 @@ pub fn to_match_snapshot(
             if arguments[1].is_string() {
                 arguments[1].to_zig_string(&mut hint_string, global)?;
             } else {
-                return this.throw(
+                return this.throw_fmt(
                     global,
                     "",
                     "\n\nMatcher error: Expected second argument to be a string\n",
@@ -109,5 +110,5 @@ pub fn to_match_snapshot(
 //   source:     src/test_runner/expect/toMatchSnapshot.zig (68 lines)
 //   confidence: medium
 //   todos:      0
-//   notes:      `defer this.postMatch` expressed via scopeguard wrapping `&mut Expect`; `get_signature` assumed const-evaluable in Phase B; `frame.arguments_old(2)` shape (ptr/len) may need adjustment.
+//   notes:      `defer this.postMatch` expressed via scopeguard wrapping `&mut Expect`; `get_signature` assumed const-evaluable in Phase B; `frame.arguments_old::<2>()` shape (ptr/len) may need adjustment.
 // ──────────────────────────────────────────────────────────────────────────

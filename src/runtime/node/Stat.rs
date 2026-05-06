@@ -1,8 +1,12 @@
 //! Stats and BigIntStats classes from node:fs
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_sys::PosixStat;
 use bun_core::Timespec;
+
+// TODO(b2-blocked): swap to `bun_sys::PosixStat` once exported. The Zig
+// `bun.PosixStat` is a uv-shaped stat struct; `bun_sys::Stat` (libc::stat on
+// posix) is layout-compatible enough for the field accessors below.
+pub type PosixStat = bun_sys::Stat;
 
 const MS_PER_S: i64 = 1000;
 const NS_PER_MS: i64 = 1_000_000;
@@ -35,7 +39,9 @@ impl<const BIG: bool> StatType<BIG> {
             // PORT NOTE: Zig rebuilt a `bun.timespec` with `@intCast` on each field; since
             // `StatTimespec == bun.timespec` those casts are identity — call methods on `ts`
             // directly.
-            return u64::try_from(ts.ns_signed().max(0)).unwrap();
+            // PORT NOTE: `Timespec::ns_signed` not yet exported; compute inline.
+            let ns_signed: i128 = (ts.sec as i128) * 1_000_000_000 + (ts.nsec as i128);
+            return u64::try_from(ns_signed.max(0)).unwrap();
         }
         ts.ns()
     }
@@ -227,7 +233,9 @@ pub fn create_stats_for_ino(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
     let [ino_arg, big_arg] = frame.arguments_as_array::<2>();
     // SAFETY: all-zero is a valid PosixStat (repr(C) POD with no NonNull/NonZero fields).
     let mut stat_: PosixStat = unsafe { core::mem::zeroed::<PosixStat>() };
-    stat_.ino = ino_arg.to_uint64_no_truncate();
+    // PORT NOTE: `JSValue::to_uint64_no_truncate` not yet ported; `to_int64` is
+    // close enough for the test-only path (negative values clamp to 0 below).
+    stat_.ino = ino_arg.to_int64().max(0) as _;
     Stats::init(&stat_, big_arg.to_boolean()).to_js_newly_created(global)
 }
 

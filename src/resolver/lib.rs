@@ -3681,7 +3681,7 @@ impl PendingResolution {
     // TODO(b2-blocked): Package::copy → PackageExternal needs a string-builder/arena;
     // wire once Semver::String::Builder is threaded through here. Gated alongside
     // its sole (auto-install) caller so the live symbol carries no `unimplemented!()`.
-    #[cfg(any())]
+    
     pub fn init(
         esm: crate::package_json::Package,
         dependency: Dependency::Version,
@@ -3737,7 +3737,7 @@ impl AnyResolveWatcher {
 // TODO(b2-blocked): const fn-pointer generics (`adt_const_params` for fn ptrs)
 // are forbidden on stable. Reshape to a ZST `trait OnWatch` so the watch shim
 // monomorphizes; until then callers construct `AnyResolveWatcher` directly.
-#[cfg(any())]
+
 pub struct ResolveWatcher<C, const ON_WATCH: fn(*mut C, &[u8], FD)>;
 
 pub struct Resolver<'a> {
@@ -3885,7 +3885,7 @@ impl<'a> Resolver<'a> {
     // TODO(b2-blocked): bun_install::PackageManager + bun_http::HTTPThread —
     // re-gated; the resolver body only reaches this on the auto-install path
     // (`load_node_modules` global-cache block, also re-gated below).
-    #[cfg(any())]
+    
     pub fn get_package_manager(&mut self) -> &mut PackageManager {
         if let Some(pm) = self.package_manager {
             // SAFETY: BACKREF — pm outlives resolver; lazily inited below.
@@ -5668,7 +5668,7 @@ impl<'a> Resolver<'a> {
             // FORWARD_DECL stubs above). Re-gated until those crates compile;
             // `use_package_manager()` is `false` outside standalone+global_cache
             // anyway, so the live resolver never reaches this on the bundler path.
-            #[cfg(any())]
+            
             {
             let esm = esm_.as_ref().unwrap().with_auto_version();
             'load_module_from_cache: {
@@ -5966,7 +5966,7 @@ impl<'a> Resolver<'a> {
                     }
                 }
             }
-            } // end #[cfg(any())] — TODO(b2-blocked): bun_install auto-install path
+            } // end  — TODO(b2-blocked): bun_install auto-install path
         }
 
         if let Some(d) = self.debug_logs.as_mut() { d.decrease_indent(); }
@@ -5975,7 +5975,7 @@ impl<'a> Resolver<'a> {
 
     // TODO(b2-blocked): bun_install — re-gated; only reached from the auto-install
     // path above (also re-gated).
-    #[cfg(any())]
+    
     fn dir_info_for_resolution(
         &mut self,
         dir_path_maybe_trail_slash: &[u8],
@@ -6110,7 +6110,7 @@ impl<'a> Resolver<'a> {
 
     // TODO(b2-blocked): bun_install — re-gated; only reached from the auto-install
     // path above (also re-gated).
-    #[cfg(any())]
+    
     fn enqueue_dependency_to_resolve(
         &mut self,
         package_json_: Option<&mut PackageJSON>,
@@ -8675,4 +8675,4 @@ pub struct RootPathPair<'b> {
 //   notes:      heavy reliance on threadlocal raw bufs + BSSMap-interned ptrs; many `defer` reshapes need scopeguard wiring; PackageManager/ESModule API surface guessed; borrowck will need significant Phase-B reshaping around &mut self + cached *DirInfo. Drop must close DirInfo FDs. ResolveWatcher needs stable-Rust reshape (const fn-ptr generic).
 // ──────────────────────────────────────────────────────────────────────────
 
-} // end #[cfg(any())] mod __phase_a_body
+} // end  mod __phase_a_body

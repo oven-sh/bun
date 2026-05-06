@@ -15,8 +15,7 @@ unsafe extern "C" {
 
 // ───────────────────────────── argv0 / execPath ─────────────────────────────
 
-#[unsafe(no_mangle)]
-#[export_name = "Bun__Process__createArgv0"]
+#[unsafe(export_name = "Bun__Process__createArgv0")]
 pub extern "C" fn create_argv0(global_object: *const JSGlobalObject) -> JSValue {
     // SAFETY: global_object is valid for the duration of this call
     let global = unsafe { &*global_object };
@@ -24,8 +23,7 @@ pub extern "C" fn create_argv0(global_object: *const JSGlobalObject) -> JSValue 
     ZigString::from_utf8(argv0).to_js(global)
 }
 
-#[unsafe(no_mangle)]
-#[export_name = "Bun__Process__getExecPath"]
+#[unsafe(export_name = "Bun__Process__getExecPath")]
 pub extern "C" fn get_exec_path(global_object: *const JSGlobalObject) -> JSValue {
     let Ok(out) = bun_core::self_exe_path() else {
         // if for any reason we are unable to get the executable path, we just return argv[0]
@@ -51,8 +49,7 @@ pub extern "C" fn get_exec_argv(global: &JSGlobalObject) -> JSValue {
 // ───────────────────────────── exit ─────────────────────────────
 
 // TODO(@190n) this may need to be noreturn
-#[unsafe(no_mangle)]
-#[export_name = "Bun__Process__exit"]
+#[unsafe(export_name = "Bun__Process__exit")]
 pub extern "C" fn exit(global_object: *const JSGlobalObject, code: u8) {
     // SAFETY: global_object is valid for the duration of this call
     let global_object = unsafe { &*global_object };
@@ -139,7 +136,7 @@ pub static Bun__version_sha: CStrPtr =
 //                               (utf16_byte_length / value().wtf_string_impl())
 // TODO(b2-blocked): un-gate once the above land. uncaught_exception/BunObject
 // are external blockers, not referenced here.
-#[cfg(any())]
+
 mod _impl {
 use core::ffi::{c_char, c_void};
 

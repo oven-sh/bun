@@ -44,7 +44,7 @@ pub struct DebugFmt<'a, 'bump>(&'a DeclarationBlock<'bump>);
 
 // blocked_on: Printer::new signature (Zig passes allocator + Managed(u8) +
 // writer + options + null + null + &symbols; the Rust ctor shape is unsettled).
-#[cfg(any())]
+
 impl<'a, 'bump> core::fmt::Display for DebugFmt<'a, 'bump> {
     fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut arraylist: Vec<u8> = Vec::new();
@@ -262,7 +262,7 @@ impl DeclarationBlock<'static> {
 // below are the real manual unrolls of Zig's comptime-reflection helpers
 // (`implementEql`/`implementDeepClone`); they un-gate the moment the
 // per-variant trait impls land in `properties_generated.rs`.
-#[cfg(any())]
+
 impl<'bump> DeclarationBlock<'bump> {
     pub fn hash_property_ids(&self, hasher: &mut bun_wyhash::Wyhash) {
         for decl in self.declarations.iter() {

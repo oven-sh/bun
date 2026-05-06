@@ -9,7 +9,7 @@
 //! `rare_data`, `counters`, `active_tasks`, …) + lifecycle accessors. Fields
 //! and methods that name `bun_runtime` / `bun_webcore` types (forward-dep
 //! cycle on `bun_jsc`) are preserved verbatim from the Phase-A draft inside
-//! `#[cfg(any())]` blocks below; un-gate piecewise as the cycle breaks.
+//! `` blocks below; un-gate piecewise as the cycle breaks.
 //! ──────────────────────────────────────────────────────────────────────────
 
 use core::cell::Cell;
@@ -1306,7 +1306,7 @@ impl VirtualMachine {
     /// `eventLoop().autoTickActive()` — like [`auto_tick`](Self::auto_tick)
     /// but only sleeps in the uSockets loop while it has active handles
     /// (spec event_loop.zig:456). The real body lives in `event_loop.rs`
-    /// behind `#[cfg(any())]` until the b2-cycle (`Timer::All`) breaks; until
+    /// behind `` until the b2-cycle (`Timer::All`) breaks; until
     /// then route through the same `auto_tick` hook so drain loops in
     /// `on_before_exit` / `bun_main` still make forward progress.
     #[inline]
@@ -1722,18 +1722,18 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
 // `bun_runtime` / `bun_schema` / gated-sibling-dependent impl — preserved
 // verbatim from the Phase-A draft. Un-gate piecewise once the cycle breaks.
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
+
 mod _gated_impl {
     include!("VirtualMachine.gated.rs");
 }
 // PORT NOTE: the full Phase-A draft (3550 lines) referenced ~40 types from
 // `bun_runtime` (cycle), `bun_schema` (no crate), `bun_spawn`/`bun_output`
 // (no workspace dep), and gated bundler internals. Rather than duplicate it
-// here under `#[cfg(any())]`, the original is preserved in git history at
+// here under ``, the original is preserved in git history at
 // commit `5410a51d85^` (`git show 5410a51d85^:src/jsc/VirtualMachine.rs`).
 // The methods listed below are the ones whose bodies were gated; each maps
 // 1:1 to a `pub fn` in `VirtualMachine.zig`.
-#[cfg(any())]
+
 impl VirtualMachine {
     pub fn get_dev_server_async_local_storage(&mut self) -> JsResult<Option<JSValue>> { todo!() }
     pub fn allow_addons(this: &VirtualMachine) -> bool { todo!() }

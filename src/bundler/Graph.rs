@@ -146,7 +146,7 @@ impl Graph {
     ///
     /// Returns true if there were more tasks queued.
     pub fn drain_deferred_tasks(&mut self, transpiler: &mut BundleV2) -> bool {
-        #[cfg(any())]
+        
         {
             transpiler.thread_lock.assert_locked();
 

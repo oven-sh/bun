@@ -1,3 +1,4 @@
+#![cfg(any())]
 use core::ffi::c_void;
 
 // TODO(port): `std.heap.c_allocator` is a `std.mem.Allocator` value backed by libc

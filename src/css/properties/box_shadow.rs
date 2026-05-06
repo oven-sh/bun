@@ -232,7 +232,7 @@ impl BoxShadowHandler {
                     let mut unparsed = unp.deep_clone(allocator);
                     // TODO(port): re-enable once `PropertyHandlerContext::add_unparsed_fallbacks`
                     // un-gates (blocked on `SupportsCondition::eql` in context.rs).
-                    #[cfg(any())]
+                    
                     context.add_unparsed_fallbacks(&mut unparsed);
                     let _ = &mut unparsed;
                     dest.push(Property::Unparsed(unparsed));

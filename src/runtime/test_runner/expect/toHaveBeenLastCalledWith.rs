@@ -1,10 +1,11 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::DiffFormatter;
 use super::{Expect, get_signature};
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_have_been_last_called_with(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -28,12 +29,8 @@ pub fn to_have_been_last_called_with(
 
     let calls = super::mock::JSMockFunction__getCalls(global, value)?;
     if !calls.js_type().is_array() {
-        let mut formatter = Formatter {
-            global_this: global,
-            quote_strings: true,
-            ..Default::default()
-        };
-        return this.throw(
+        let mut formatter = super::make_formatter(global);
+        return this.throw_fmt(
             global,
             get_signature("toHaveBeenLastCalledWith", "<green>...expected<r>", false),
             format_args!(
@@ -52,11 +49,7 @@ pub fn to_have_been_last_called_with(
         last_call_value = calls.get_index(global, total_calls - 1)?;
 
         if !last_call_value.js_type().is_array() {
-            let mut formatter = Formatter {
-                global_this: global,
-                quote_strings: true,
-                ..Default::default()
-            };
+            let mut formatter = super::make_formatter(global);
             return global.throw(format_args!(
                 "Expected value must be a mock function with calls: {}",
                 value.to_fmt(&mut formatter),
@@ -81,11 +74,7 @@ pub fn to_have_been_last_called_with(
     }
 
     // handle failure
-    let mut formatter = Formatter {
-        global_this: global,
-        quote_strings: true,
-        ..Default::default()
-    };
+    let mut formatter = super::make_formatter(global);
 
     let expected_args_js_array = JSValue::create_empty_array(global, arguments.len())?;
     for (i, arg) in arguments.iter().enumerate() {

@@ -74,7 +74,7 @@ impl GarbageCollectionController {
         self.gc_repeating_timer = Some(uws::Timer::create_fallthrough(actual, self as *mut Self));
         actual.internal_loop_data.jsc_vm = vm.jsc_vm.cast();
 
-        #[cfg(any())] // TODO(b2-blocked): bun_jsc::EventLoop.debug.track_last_fn_name, bun_transpiler::Transpiler.env
+         // TODO(b2-blocked): bun_jsc::EventLoop.debug.track_last_fn_name, bun_transpiler::Transpiler.env
         {
             #[cfg(debug_assertions)]
             {
@@ -140,7 +140,7 @@ impl GarbageCollectionController {
     }
 
     pub fn bun_vm(&mut self) -> &mut VirtualMachine {
-        #[cfg(any())] // TODO(b2-blocked): VirtualMachine.gc_controller field is `()` placeholder; offset_of! invalid until real type wired
+         // TODO(b2-blocked): VirtualMachine.gc_controller field is `()` placeholder; offset_of! invalid until real type wired
         {
             // SAFETY: self is the `gc_controller` field embedded in a VirtualMachine
             return unsafe {
@@ -196,7 +196,7 @@ impl GarbageCollectionController {
         if self.disabled {
             return;
         }
-        #[cfg(any())] // TODO(b2-blocked): bun_jsc::VM::block_bytes_allocated
+         // TODO(b2-blocked): bun_jsc::VM::block_bytes_allocated
         {
             let vm = self.bun_vm().jsc_vm;
             self.process_gc_timer_with_heap_size(vm, vm.block_bytes_allocated());
@@ -242,7 +242,7 @@ impl GarbageCollectionController {
         if self.disabled {
             return;
         }
-        #[cfg(any())] // TODO(b2-blocked): bun_jsc::VM::block_bytes_allocated
+         // TODO(b2-blocked): bun_jsc::VM::block_bytes_allocated
         {
             let vm = self.bun_vm().jsc_vm;
             vm.collect_async();

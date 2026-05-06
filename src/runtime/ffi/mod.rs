@@ -25,10 +25,10 @@ mod host_fns;
 pub use host_fns::{generate_symbol_for_function, generate_symbols};
 
 // ─── gated Phase-A drafts (preserved, not compiled) ──────────────────────────
-#[cfg(any())]
+
 #[path = "ffi_body.rs"]
 mod ffi_body; // full Phase-A draft of FFI.zig
-#[cfg(any())]
+
 #[path = "FFIObject.rs"]
 pub mod ffi_object_draft;
 

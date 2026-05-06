@@ -143,13 +143,13 @@ mod hardcoded_module {
 }
 
 // ── ExternalModules::is_node_builtin shim ───────────────────────────────
-// `options::ExternalModules::is_node_builtin` is `#[cfg(any())]`-gated for the
+// `options::ExternalModules::is_node_builtin` is ``-gated for the
 // same `bun_resolve_builtins` reason. Spec (linker.zig:229) routes the
 // browser-target diagnostic through this check; returning a hard `false` here
 // would silently emit the wrong message. Gated until the dep lands — the
 // call site falls through to the generic diagnostic instead of a live panic
 // on common input (`import 'node:fs'` with `--target=browser`).
-#[cfg(any())]
+
 #[inline]
 fn is_node_builtin(_path: &[u8]) -> bool {
     todo!("b2-blocked: bun_resolve_builtins — ExternalModules::is_node_builtin")
@@ -239,7 +239,7 @@ impl Linker {
     // path is reachable from the un-gated transpiler surface. Gate the real
     // bodies and provide a loud stub so any future caller fails fast instead
     // of silently mis-hashing.
-    #[cfg(any())]
+    
     pub fn get_mod_key(
         &mut self,
         file_path: &Fs::Path<'_>,
@@ -421,7 +421,7 @@ impl Linker {
                     // `could_be_plugin` / `on_resolve` have no method bodies
                     // to call here. Gate the dispatch until the JSC-side
                     // plugin runner is linked.
-                    #[cfg(any())]
+                    
                     if let Some(runner) = self.plugin_runner {
                         let import_record =
                             &mut result.ast.import_records.slice_mut()[record_i];
@@ -499,11 +499,11 @@ impl Linker {
             && resolver::is_package_path(import_record.path.text)
         {
             // TODO(b2-blocked): bun_resolve_builtins — the browser-target
-            // node-builtin diagnostic (linker.zig:229) is `#[cfg(any())]`-gated
+            // node-builtin diagnostic (linker.zig:229) is ``-gated
             // until `is_node_builtin` is wired. Until then, fall through to the
             // generic "bun install" message rather than panicking on common
             // input (`import 'node:fs'` with `--target=browser`).
-            #[cfg(any())]
+            
             if opts.target == BundleTarget::Browser
                 && is_node_builtin(import_record.path.text)
             {
@@ -531,7 +531,7 @@ impl Linker {
                     bun_core::err!("ModuleNotFound"),
                 )?;
             }
-            #[cfg(not(any()))]
+            #[cfg(any())]
             {
                 let _ = opts; // keep `opts` live in non-gated build
                 log.add_resolve_error(

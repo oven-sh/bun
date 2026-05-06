@@ -1,10 +1,11 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 use bun_str::strings;
 
 use super::Expect;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_include(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -16,7 +17,7 @@ pub fn to_include(
     let _post = scopeguard::guard((), |_| this.post_match(global));
 
     let this_value = frame.this();
-    let arguments_ = frame.arguments_old(1);
+    let arguments_ = frame.arguments_old::<1>();
     let arguments = arguments_.slice();
 
     if arguments.len() < 1 {
@@ -53,21 +54,17 @@ pub fn to_include(
         return Ok(JSValue::UNDEFINED);
     }
 
-    let mut formatter = Formatter {
-        global_this: global,
-        quote_strings: true,
-        ..Default::default()
-    };
+    let mut formatter = super::make_formatter(global);
     let value_fmt = value.to_fmt(&mut formatter);
     let expected_fmt = expected.to_fmt(&mut formatter);
 
     if not {
         const EXPECTED_LINE: &str = "Expected to not include: <green>{}<r>\n";
         const RECEIVED_LINE: &str = "Received: <red>{}<r>\n";
-        const SIGNATURE: &str = Expect::get_signature("toInclude", "<green>expected<r>", true);
+        let signature: &str = Expect::get_signature("toInclude", "<green>expected<r>", true);
         return this.throw(
             global,
-            SIGNATURE,
+            signature,
             format_args!(
                 concat!(
                     "\n\n",
@@ -82,10 +79,10 @@ pub fn to_include(
 
     const EXPECTED_LINE: &str = "Expected to include: <green>{}<r>\n";
     const RECEIVED_LINE: &str = "Received: <red>{}<r>\n";
-    const SIGNATURE: &str = Expect::get_signature("toInclude", "<green>expected<r>", false);
+    let signature: &str = Expect::get_signature("toInclude", "<green>expected<r>", false);
     this.throw(
         global,
-        SIGNATURE,
+        signature,
         format_args!(
             concat!(
                 "\n\n",

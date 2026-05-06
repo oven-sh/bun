@@ -9,6 +9,30 @@ use bun_str::strings;
 use bun_str::String as BunString;
 use bun_simdutf_sys::simdutf as bun_simdutf;
 
+// PORT NOTE: `bun_str::String` does not yet expose Rust wrappers for the
+// "external globally allocated" constructors (the C++ FFI symbols exist but
+// are private to that crate). Re-declare them here so encoding helpers can
+// hand off owned `Vec<u8>`/`Vec<u16>` storage to WTF without an extra copy.
+extern "C" {
+    fn BunString__createExternalGloballyAllocatedLatin1(bytes: *mut u8, len: usize) -> BunString;
+    fn BunString__createExternalGloballyAllocatedUTF16(bytes: *mut u16, len: usize) -> BunString;
+}
+
+#[inline]
+fn create_external_globally_allocated_latin1(bytes: Vec<u8>) -> BunString {
+    let mut bytes = core::mem::ManuallyDrop::new(bytes);
+    // SAFETY: `bytes` was allocated with the global allocator; ownership of the
+    // buffer transfers to WTF, which frees it via the global allocator.
+    unsafe { BunString__createExternalGloballyAllocatedLatin1(bytes.as_mut_ptr(), bytes.len()) }
+}
+
+#[inline]
+fn create_external_globally_allocated_utf16(bytes: Vec<u16>) -> BunString {
+    let mut bytes = core::mem::ManuallyDrop::new(bytes);
+    // SAFETY: see latin1 variant above.
+    unsafe { BunString__createExternalGloballyAllocatedUTF16(bytes.as_mut_ptr(), bytes.len()) }
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // PORT NOTE: Zig used `comptime encoding: Encoding`. Stable Rust does not allow
 // enum-typed const generics without `#![feature(adt_const_params)]`, so per

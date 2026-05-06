@@ -28,7 +28,7 @@ pub fn msg_from_js(global_object: &JSGlobalObject, file: &'static [u8], err: JSV
             // module. Both the `to_zig_exception` FFI write and the `.message`
             // read are unsound against the stub layout, so this arm stays
             // re-gated until bun_jsc un-gates `ZigException.rs`.
-            #[cfg(any())]
+            
             {
                 value.to_zig_exception(global_object, zig_exception_holder.zig_exception());
                 zig_exception_holder.zig_exception().message

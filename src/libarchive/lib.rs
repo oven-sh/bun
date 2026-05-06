@@ -20,7 +20,7 @@ use bun_wyhash::hash;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local libarchive C-API surface. The real bindings live in
-// `bun_libarchive_sys::bindings`, which is still `#[cfg(any())]`-gated at
+// `bun_libarchive_sys::bindings`, which is still ``-gated at
 // tier 0. This module provides the *type-level* surface needed for
 // `bun_libarchive` to compile; every method body is a `todo!()` so a real
 // build that reaches FFI will panic loudly until the sys crate un-gates.

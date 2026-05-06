@@ -1,15 +1,16 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter as ConsoleFormatter;
 
 use super::Expect;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_be_odd(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // Zig: `defer this.postMatch(globalThis);`
     // TODO(port): borrowck — scopeguard captures `this` while body also uses `&mut self`; Phase B may need raw-ptr reshape or move post_match into Drop guard on a sub-borrow.
     let _post_match = scopeguard::guard((), |_| this.post_match(global));
 
-    let this_value = frame.this_value();
+    let this_value = frame.this();
 
     let value: JSValue = this.get_value(global, this_value, "toBeOdd", "")?;
 
@@ -48,11 +49,7 @@ pub fn to_be_odd(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame) 
     }
 
     // handle failure
-    let mut formatter = ConsoleFormatter {
-        global_this: global,
-        quote_strings: true,
-        ..Default::default()
-    };
+    let mut formatter = super::make_formatter(global);
     // Zig `defer formatter.deinit();` — handled by Drop.
     let value_fmt = value.to_fmt(&mut formatter);
     if not {

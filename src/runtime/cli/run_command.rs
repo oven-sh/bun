@@ -13,7 +13,7 @@
 //! options struct, and `ParentDeathWatchdog` — all blocked on lower-tier
 //! surfaces, not on this file.
 //!
-//! Still re-gated inside `exec()` with `#[cfg(any())]`: `configure_path_for_run`
+//! Still re-gated inside `exec()` with ``: `configure_path_for_run`
 //! (bun-node fake-exe + PATH stitching), `node_modules/.bin` `which()` fallback,
 //! the markdown renderer, and the full `Run::start` run-loop (`hold_api_lock` +
 //! `globalExit`); their bodies are preserved verbatim in `phase_a_draft` below.
@@ -38,7 +38,7 @@ use bun_which::which;
 use crate::cli::arguments;
 use crate::cli::command::{ContextData, Tag as CommandTag};
 
-bun_core::declare_scope!(RUN, visible);
+bun_core::declare_scope!(RUN_LOG, visible);
 
 /// Process-lifetime arena for the runner's `Transpiler`. Zig passed
 /// `ctx.allocator` (== `bun.default_allocator`); the Rust port threads an
@@ -63,7 +63,7 @@ fn runner_arena() -> &'static bun_alloc::Arena {
 
 /// Inlined from `shell_body.rs` (`SPECIAL_CHARS` / `needs_escape_utf8_ascii_latin1`
 /// / `escape_8bit`) so passthrough-arg escaping is never lossy while the
-/// shell crate is `#[cfg(any())]`-gated. Kept byte-identical to the spec
+/// shell crate is ``-gated. Kept byte-identical to the spec
 /// (run_command.zig:233-239 → shell.zig escape8Bit).
 mod shell_escape_inline {
     const SPECIAL_JS_CHAR: u8 = 8;
@@ -221,7 +221,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         ONCE.call(|| {
             // SAFETY: single-writer (Once gate), process-lifetime storage,
             // CLI is single-threaded at this point.
-            let buf = unsafe { &mut *::core::ptr::addr_of_mut!(SHELL_BUF) };
+            let buf = unsafe { &mut *::::core::ptr::addr_of_mut!(SHELL_BUF) };
             let len = Self::find_shell_impl(path, cwd, buf)?;
             buf[len] = 0;
             // SAFETY: `buf[len] == 0` written above; SHELL_BUF is `'static`.
@@ -278,11 +278,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
                                 // implicit yarn commands
                                 // TODO(b2-blocked): `crate::cli::list_of_yarn_commands`
-                                // is `#[cfg(any())]`-gated (duplicate phf_set! keys).
+                                // is ``-gated (duplicate phf_set! keys).
                                 // Until it un-gates, fall through (don't rewrite the
                                 // bare-subcommand form) so we never misclassify an
                                 // actual yarn builtin as a script.
-                                #[cfg(any())]
+                                
                                 if !crate::cli::list_of_yarn_commands::ALL_YARN_COMMANDS
                                     .contains(yarn_cmd)
                                 {
@@ -401,7 +401,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         for part in passthrough {
             copy_script.push(b' ');
             // PORT NOTE: `crate::shell::needs_escape_utf8_ascii_latin1` /
-            // `escape_8bit` live in `shell_body.rs`, which is `#[cfg(any())]`.
+            // `escape_8bit` live in `shell_body.rs`, which is ``.
             // Until the shell-escape surface re-exports, use the inlined
             // byte-identical copies in `shell_escape_inline` so the live path
             // is never lossy (run_command.zig:233-239).
@@ -412,7 +412,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             copy_script.extend_from_slice(part);
         }
 
-        bun_core::scoped_log!(RUN, "Script: \"{}\"", bstr::BStr::new(&copy_script));
+        bun_core::scoped_log!(RUN_LOG, "Script: \"{}\"", bstr::BStr::new(&copy_script));
 
         if !silent {
             Output::command(Output::CommandArgv::Single(&copy_script));
@@ -422,7 +422,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         if !use_system_shell {
             // TODO(b2-blocked): `crate::shell::Interpreter::init_and_run_from_source`
             // — interpreter.rs has the struct but not this entrypoint yet.
-            #[cfg(any())]
+            
             {
                 let mini =
                     bun_event_loop::MiniEventLoop::init_global(Some(unsafe { &mut *(env as *mut _) }), Some(cwd));
@@ -473,7 +473,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // Signaled, Err}`) — bun_core only exposes `spawn_sync_inherit` and a
         // flat `SpawnStatus { code }` so far. Preserved verbatim in
         // `phase_a_draft::run_package_script_foreground`.
-        #[cfg(any())]
+        
         {
             let ipc_fd: Option<bun_sys::Fd> = if !cfg!(windows) {
                 bun_core::env_var::NODE_CHANNEL_FD.get().and_then(|s| {
@@ -560,7 +560,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // TODO(b2-blocked): `Transpiler::configure_linker` lives in the gated
         // `__phase_a_draft` impl (transpiler.rs:1313).
-        #[cfg(any())]
+        
         this_transpiler.configure_linker();
 
         // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
@@ -612,7 +612,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // (see comment in env_loader.zig:542-548 - the script's own bun instance loads .env)
             // TODO(b2-blocked): `Transpiler::run_env_loader` is in the gated
             // `__phase_a_draft` impl (transpiler.rs:1317).
-            #[cfg(any())]
+            
             let _ = this_transpiler.run_env_loader(true);
         }
 
@@ -623,7 +623,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // loader snapshots `environ` before flag parsing runs, so the
         // `setenv()` in `enable()` isn't reflected here.
         // TODO(b2-blocked): `bun_core::ParentDeathWatchdog` not yet ported.
-        #[cfg(any())]
+        
         if bun_core::ParentDeathWatchdog::is_enabled() {
             env_loader.map.put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1").expect("unreachable");
         }
@@ -792,7 +792,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // (`Run.boot` in src/bun.js.rs lines 110-170 — install/global_cache/
         // minify/macros/serve_plugins) — needs `vm.transpiler` populated by
         // `init_runtime_state`, which is still a no-op for those fields.
-        #[cfg(any())]
+        
         {
             let b = &mut vm.transpiler;
             b.options.install = ctx.install.as_deref();
@@ -902,7 +902,7 @@ impl Run {
                 vm.tick();
                 // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
                 // accessed here (no live `&mut EventLoop` overlaps).
-                unsafe { (*vm.event_loop()).auto_tick_active() };
+                vm.auto_tick_active();
                 dispatch = true;
             }
             if dispatch {
@@ -1006,7 +1006,9 @@ impl Run {
                         // uniquely accessed here.
                         unsafe { (*vm.event_loop()).tick() };
                         // SAFETY: as above.
-                        unsafe { (*vm.event_loop()).tick_possibly_forever() };
+                        // TODO(b2-cycle): EventLoop::tick_possibly_forever is gated.
+                        let _ = vm.event_loop();
+                        todo!("blocked_on: bun_jsc::event_loop::EventLoop::tick_possibly_forever");
                     } else {
                         vm.exit_handler.exit_code = 1;
                         Run::on_exit(vm);
@@ -1079,18 +1081,20 @@ impl Run {
                     vm.tick();
                     // SAFETY: `event_loop` is a self-pointer into this VM;
                     // uniquely accessed here.
-                    unsafe { (*vm.event_loop()).auto_tick_active() };
+                    vm.auto_tick_active();
                 }
                 Run::on_before_exit(vm);
                 // SAFETY: as above.
-                unsafe { (*vm.event_loop()).tick_possibly_forever() };
+                // TODO(b2-cycle): EventLoop::tick_possibly_forever is gated.
+                let _ = vm.event_loop();
+                todo!("blocked_on: bun_jsc::event_loop::EventLoop::tick_possibly_forever");
             }
         } else {
             while vm.is_event_loop_alive() {
                 vm.tick();
                 // SAFETY: `event_loop` is a self-pointer into this VM;
                 // uniquely accessed here.
-                unsafe { (*vm.event_loop()).auto_tick_active() };
+                vm.auto_tick_active();
             }
 
             if self.eval_and_print {
@@ -1171,7 +1175,7 @@ impl RunCommand {
     ) -> bool {
         // TODO(b2-blocked): `Loader::Md` → `render_markdown_file_and_exit`
         // (needs bun_md + bun_http remote-image prefetch). See phase_a_draft.
-        #[cfg(any())]
+        
         if matches!(
             loader.or_else(|| Self::default_loader_for(path)),
             Some(Loader::Md)
@@ -1191,7 +1195,7 @@ impl RunCommand {
         if let Err(err) = Self::boot(ctx, owned, loader) {
             // SAFETY: `ctx.log` was set in `create_context_data` (single-threaded
             // CLI startup) and is process-lifetime.
-            #[cfg(any())]
+            
             // TODO(b2): `Log::print` wants `&mut impl fmt::Write`;
             // `Output::error_writer()` is `*mut io::Writer`. Route through a
             // shim once io::Writer implements fmt::Write.
@@ -1260,7 +1264,7 @@ impl RunCommand {
         if !ctx.debug.loaded_bunfig {
             // TODO(b2-blocked): `Arguments::load_config_path` body is `todo!()`;
             // calling it would panic. Un-gate once bunfig parsing is real.
-            #[cfg(any())]
+            
             let _ = arguments::load_config_path(true, b"bunfig.toml", ctx, CommandTag::RunCommand);
         }
 
@@ -1289,7 +1293,7 @@ impl RunCommand {
         let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
         // TODO(b2-blocked): `configure_path_for_run` — bun-node fake-exe
         // creation + PATH stitching; preserved in phase_a_draft.
-        #[cfg(any())]
+        
         Self::configure_path_for_run(
             ctx,
             root_dir_info,
@@ -1330,7 +1334,7 @@ impl RunCommand {
                 if let Some(scripts) = package_json.scripts.as_deref() {
                     if let Some(&script_content) = scripts.get(target_name) {
                         bun_core::scoped_log!(
-                            RUN,
+                            RUN_LOG,
                             "Found matching script `{}`",
                             bstr::BStr::new(script_content)
                         );
@@ -1359,7 +1363,7 @@ impl RunCommand {
                             ),
                         );
                         bun_core::scoped_log!(
-                            RUN,
+                            RUN_LOG,
                             "Running in dir `{}`",
                             bstr::BStr::new(package_json_dir)
                         );
@@ -1429,7 +1433,7 @@ impl RunCommand {
         // TODO(b2-blocked): `which()` over the stitched PATH +
         // `run_binary_without_bunx_path` — needs Transpiler.env. See
         // phase_a_draft `BunXFastPath` + `path_for_which` block.
-        #[cfg(any())]
+        
         {
             let path_for_which = /* … */ b"";
             if let Some(dest) = which(&mut path_buf, path_for_which, top_level_dir, target_name) {
@@ -1517,7 +1521,11 @@ impl RunCommand {
         } else {
             // `..foo` / `~foo` — resolve against cwd via joinAbsStringBuf.
             let mut cwd_buf = PathBuffer::uninit();
-            let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) else { return false };
+            // SAFETY: bun_paths::PathBuffer and bun_core::PathBuffer are
+            // layout-identical newtypes over [u8; MAX_PATH_BYTES].
+            let Ok(cwd) = bun_core::getcwd(unsafe {
+                &mut *(::core::ptr::addr_of_mut!(cwd_buf) as *mut bun_core::PathBuffer)
+            }) else { return false };
             let cwd_len = cwd.as_bytes().len();
             cwd_buf[cwd_len] = paths::SEP;
             let joined = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
@@ -1584,7 +1592,7 @@ impl RunCommand {
         // TODO(b2-blocked): `bun_sys::File::stdin().read_to_end` — File API
         // shape not yet on the Rust `bun_sys` surface at this tier. Preserved
         // in phase_a_draft.
-        #[cfg(any())]
+        
         {
             let mut list: Vec<u8> = Vec::new();
             if bun_sys::File::stdin().read_to_end(&mut list).is_err() {
@@ -1615,7 +1623,10 @@ impl RunCommand {
 
         let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
         let mut cwd_buf = PathBuffer::uninit();
-        let cwd = bun_core::getcwd(&mut cwd_buf)?;
+        // SAFETY: bun_paths::PathBuffer and bun_core::PathBuffer are layout-identical.
+        let cwd = bun_core::getcwd(unsafe {
+            &mut *(::core::ptr::addr_of_mut!(cwd_buf) as *mut bun_core::PathBuffer)
+        })?;
         let cwd_bytes = cwd.as_bytes();
         let cwd_len = cwd_bytes.len();
         entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
@@ -1635,7 +1646,10 @@ impl RunCommand {
             // synthetic `[eval]` path under cwd
             let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
             let mut cwd_buf = PathBuffer::uninit();
-            let cwd = bun_core::getcwd(&mut cwd_buf)?;
+            // SAFETY: bun_paths::PathBuffer and bun_core::PathBuffer are layout-identical.
+            let cwd = bun_core::getcwd(unsafe {
+                &mut *(::core::ptr::addr_of_mut!(cwd_buf) as *mut bun_core::PathBuffer)
+            })?;
             let cwd_bytes = cwd.as_bytes();
             let cwd_len = cwd_bytes.len();
             entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
@@ -1664,7 +1678,10 @@ impl RunCommand {
             // platform separator) and then runs the result through
             // `resolve_path.joinAbsStringBuf(.., .loose)` to collapse `.`/`..`.
             let mut cwd_buf = PathBuffer::uninit();
-            let cwd = bun_core::getcwd(&mut cwd_buf)?;
+            // SAFETY: bun_paths::PathBuffer and bun_core::PathBuffer are layout-identical.
+            let cwd = bun_core::getcwd(unsafe {
+                &mut *(::core::ptr::addr_of_mut!(cwd_buf) as *mut bun_core::PathBuffer)
+            })?;
             let cwd_len = cwd.as_bytes().len();
             cwd_buf[cwd_len] = b'/';
             let mut out_buf = PathBuffer::uninit();
@@ -1685,7 +1702,7 @@ impl RunCommand {
             // TODO(b2): `Log::print` wants `&mut impl fmt::Write`;
             // `Output::error_writer()` is `*mut io::Writer`. Route through a
             // shim once io::Writer implements fmt::Write.
-            #[cfg(any())]
+            
             let _ = unsafe { ctx.log() }.print(Output::error_writer());
 
             Output::err(
@@ -1715,7 +1732,7 @@ pub enum Filter { Script, Bin, BunJs, All, AllPlusBunJs, ScriptExclude, ScriptAn
 // Phase-A draft preserved verbatim. Re-gate lifted once bun_jsc / transpiler /
 // resolver siblings are green.
 // ─────────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
+
 mod phase_a_draft {
 use core::ffi::{c_char, CStr};
 use std::cell::RefCell;

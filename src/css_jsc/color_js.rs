@@ -493,7 +493,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                             }
 
                             OutputColorFormat::Hsl => {
-                                #[cfg(any())]
+                                
                                 {
                                     // TODO(b2-blocked): bun_css::values::color::{RGBA,FloatColor,LABColor}::into_hsl
                                     let hsl: HSL = match &result {
@@ -521,7 +521,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                                 todo!("bun_css_jsc::color_js Hsl branch — gated on bun_css::values::color::*::into_hsl")
                             }
                             OutputColorFormat::Lab => {
-                                #[cfg(any())]
+                                
                                 {
                                     // TODO(b2-blocked): bun_css::values::color::{RGBA,FloatColor,LABColor}::into_lab
                                     let lab: LAB = match &result {

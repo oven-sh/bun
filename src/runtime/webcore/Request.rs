@@ -99,7 +99,7 @@ impl BodyMixin for Request {}
 // short-circuit on a JS-side stream that was already read (Zig:
 // `T.js.bodyGetCached(this_value)`).
 // TODO(b2-blocked): bun_jsc::* — JSValue, generated `js::body_get_cached`.
-#[cfg(any())]
+
 impl crate::webcore::body::BodyOwnerJs for Request {
     fn body_get_cached(this_value: JSValue) -> Option<JSValue> {
         js::body_get_cached(this_value)
@@ -112,7 +112,7 @@ impl crate::webcore::body::BodyOwnerJs for Request {
 // paths in Body.zig are silently dead.
 // TODO(b2-blocked): merge with the stub `impl BodyMixin for Request {}` above
 // once the gated `BodyMixin` trait replaces the stub.
-#[cfg(any())]
+
 impl BodyMixin for Request {
     fn get_body_value(&mut self) -> &mut BodyValue {
         Request::get_body_value(self)
@@ -159,7 +159,11 @@ impl Request {
             return Ok(self.headers.as_mut().unwrap());
         }
 
-        if let Some(req) = self.request_context.get_request() {
+        // TODO(b2-blocked): AnyRequestContext::get_request is cfg-gated in
+        // src/runtime/server/AnyRequestContext.rs. Until un-gated, behave as
+        // if there is no live uWS request.
+        let uws_req: Option<*mut uws::Request> = None;
+        if let Some(req) = uws_req {
             // we have a request context, so we can get the headers from it
             self.headers = Some(HeadersRef::create_from_uws(req as *mut core::ffi::c_void));
         } else {
@@ -174,11 +178,11 @@ impl Request {
                 BodyValue::Locked(locked) => match locked.readable.get(global_this) {
                     Some(readable) => match readable.ptr {
                         crate::webcore::readable_stream::Source::Blob(blob) => {
-                            // SAFETY: Source::Blob holds a non-null *mut ByteBlobLoader
-                            // owned by the stream; its `content_type: Box<[u8]>` stays
-                            // valid across the field borrow below (same invariant as the
-                            // direct Blob arm).
-                            Some(unsafe { &*(*blob).content_type as *const [u8] })
+                            // TODO(b2-blocked): ByteBlobLoader is a stub unit struct
+                            // (webcore.rs); its `content_type` field comes back once
+                            // the real ByteBlobLoader module is wired in.
+                            let _ = blob;
+                            None
                         }
                         _ => None,
                     },
@@ -206,7 +210,9 @@ impl Request {
 
     pub fn get_fetch_headers_unless_empty(&mut self) -> Option<&mut HeadersRef> {
         if self.headers.is_none() {
-            if let Some(req) = self.request_context.get_request() {
+            // TODO(b2-blocked): AnyRequestContext::get_request is cfg-gated.
+            let uws_req: Option<*mut uws::Request> = None;
+            if let Some(req) = uws_req {
                 // we have a request context, so we can get the headers from it
                 self.headers = Some(HeadersRef::create_from_uws(req as *mut core::ffi::c_void));
             }
@@ -280,7 +286,7 @@ impl Request {
 // Strong::create/get, request_context methods, JsRef::try_get, codegen
 // gc.stream slots, etc.). Struct + Flags + InternalJSEventCallback type are
 // kept un-gated; impl bodies gated.
-#[cfg(any())]
+
 mod _jsc_gated {
 use super::*;
 

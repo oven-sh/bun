@@ -207,7 +207,7 @@ impl ParseTask {
     // All three collapse to `clone()`/direct-assign once the TYPE_ONLY mirrors
     // unify (lib.rs `pub mod options` shadow + resolver `fs::Path` lifetime
     // erasure). Body preserved verbatim for that flip.
-    #[cfg(any())]
+    
     pub fn init(
         resolve_result: &_resolver::Result,
         source_index: Index,
@@ -271,7 +271,7 @@ impl ParseTask {
 // taskCallback / ioTaskCallback — thread-pool entry points. Real `unsafe fn`
 // signatures matching `ThreadPoolLib::Task.callback`; bodies dispatch to
 // `parse_worker::run_from_thread_pool` once the `ThreadPool::Worker` module
-// un-gates (lib.rs `#[cfg(any())] pub mod ThreadPool`).
+// un-gates (lib.rs ` pub mod ThreadPool`).
 // ───────────────────────────────────────────────────────────────────────────
 
 pub unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
@@ -421,7 +421,7 @@ export var __callDispose = (stack, error, hasError) => {
 // Per-file parse worker — `getAST`/`getCodeForParseTask`/`runFromThreadPool`.
 // Un-gated B-2: struct/FFI surface and `get_runtime_source` are real. Bodies
 // that touch the still-gated `crate::ThreadPool` Worker module or the opaque
-// `JSBundlerPlugin`/`FileMap` forward-decls remain `#[cfg(any())]`-gated
+// `JSBundlerPlugin`/`FileMap` forward-decls remain ``-gated
 // per-function below with explicit `// blocked_on:` notes; they un-gate by
 // deletion once those modules land.
 // ══════════════════════════════════════════════════════════════════════════
@@ -515,7 +515,7 @@ pub fn get_runtime_source(target: options::Target) -> RuntimeSource {
 // blocked_on: `js_parser::new_lazy_export_ast` body (parser.rs round-D gate —
 // `Parser::to_lazy_export_ast`); `bun_css::BundlerStyleSheet` (gated upstream);
 // `Expr::init` overload set for arbitrary `E::*` defaults.
-#[cfg(any())]
+
 fn get_empty_css_ast(
     log: &mut Log,
     transpiler: &mut Transpiler,
@@ -535,7 +535,7 @@ fn get_empty_css_ast(
 // blocked_on: `js_parser::new_lazy_export_ast` body (parser.rs round-D gate);
 // `Expr::init(RootType)` requires `IntoExprData` bound that doesn't yet cover
 // `E::Undefined`/`E::Object`/`E::String` defaults uniformly.
-#[cfg(any())]
+
 fn get_empty_ast<RootType: Default>(
     log: &mut Log,
     transpiler: &mut Transpiler,
@@ -578,7 +578,7 @@ pub struct FileLoaderHash {
 //   - `js_parser::new_lazy_export_ast` body (round-D).
 // The signature now names the real `ParserOptions`; body un-gates in lockstep
 // with the above.
-#[cfg(any())]
+
 #[allow(clippy::too_many_arguments)]
 fn get_ast(
     log: &mut Log,
@@ -1048,7 +1048,7 @@ fn get_ast(
 // requires the real T6 `jsc::api::JSBundler::FileMap` surface. Also blocked on
 // `bake_types::Framework.built_in_modules` value variant carrying `&[u8]` (vs
 // `Box<[u8]>` here) and `resolver.caches.fs.read_file_with_allocator` shape.
-#[cfg(any())]
+
 fn get_code_for_parse_task_without_plugins(
     task: &mut ParseTask,
     log: &mut Log,
@@ -1172,7 +1172,7 @@ fn get_code_for_parse_task_without_plugins(
 // requires the real T6 `jsc::api::JSBundler::Plugin` surface (or a
 // `dispatch::PluginVTable` slot). Also calls the gated
 // `get_code_for_parse_task_without_plugins`.
-#[cfg(any())]
+
 #[allow(clippy::too_many_arguments)]
 fn get_code_for_parse_task(
     task: &mut ParseTask,
@@ -1351,7 +1351,7 @@ impl BunLogOptions {
         // `Box::leak` to fake `'static` is forbidden (PORTING.md §Forbidden),
         // so until the type change lands we omit the borrowed path/line_text
         // rather than leak per-message. The only caller (`log_fn`) is itself
-        // only reachable from the `#[cfg(any())]`-gated `run` below.
+        // only reachable from the ``-gated `run` below.
         let _ = self.path();
         let _ = self.source_line_text();
         let location = Location::init(
@@ -1448,7 +1448,7 @@ impl OnBeforeParseResult {
 }
 
 // blocked_on: calls `get_code_for_parse_task_without_plugins` (gated above).
-#[cfg(any())]
+
 pub extern "C" fn fetch_source_code(
     args: *mut OnBeforeParseArguments,
     result: *mut OnBeforeParseResult,
@@ -1546,7 +1546,7 @@ pub extern "C" fn OnBeforeParsePlugin__isDone(this: *mut OnBeforeParsePlugin<'_>
 // is an `extern "C"` JSC dispatch; needs a `dispatch` vtable slot or the real
 // `bun_bundler_jsc::JSBundler::Plugin` re-export. Also references the gated
 // `fetch_source_code` callback above.
-#[cfg(any())]
+
 impl<'a> OnBeforeParsePlugin<'a> {
     pub fn run(
         &mut self,
@@ -1690,10 +1690,10 @@ impl<'a> OnBeforeParsePlugin<'a> {
 // getSourceCode
 // ───────────────────────────────────────────────────────────────────────────
 
-// blocked_on: `crate::ThreadPool::Worker` (lib.rs `#[cfg(any())] pub mod
+// blocked_on: `crate::ThreadPool::Worker` (lib.rs ` pub mod
 // ThreadPool` — the bundler worker module, distinct from `bun_threading`).
 // `Worker.{allocator, data.transpiler}` field shape comes from there.
-#[cfg(any())]
+
 fn get_source_code(
     task: &mut ParseTask,
     this: &mut ThreadPool::Worker,
@@ -1742,7 +1742,7 @@ fn get_source_code(
 // js_parser-local `parser::options` shims); `get_ast`/`get_empty_*` (gated).
 // Signature is real; body un-gates once the `ThreadPool` module + the
 // `parser::options` ↔ `BundleOptions` type unification land.
-#[cfg(any())]
+
 fn run_with_source_code(
     task: &mut ParseTask,
     this: &mut ThreadPool::Worker,
@@ -2045,7 +2045,7 @@ fn run_with_source_code(
 /// `super::*`). Body is gated on `crate::ThreadPool::Worker` — see
 /// `run_from_thread_pool_impl` below for the full ported body.
 pub fn run_from_thread_pool(this: &mut ParseTask) {
-    #[cfg(any())]
+    
     return run_from_thread_pool_impl(this);
     // blocked_on: `crate::ThreadPool::Worker::get` (gated module). Fail loud
     // rather than silently returning so a thread-pool dispatch with the gate
@@ -2053,7 +2053,7 @@ pub fn run_from_thread_pool(this: &mut ParseTask) {
     let _ = this;
     todo!(
         "ParseTask::run_from_thread_pool: bundler ThreadPool::Worker module is gated \
-         (lib.rs #[cfg(any())] pub mod ThreadPool)"
+         (lib.rs  pub mod ThreadPool)"
     );
 }
 
@@ -2061,7 +2061,7 @@ pub fn run_from_thread_pool(this: &mut ParseTask) {
 // `ctx.graph.pool.schedule_inside_thread_pool` (`graph.pool: NonNull<ThreadPool>`
 // where `ThreadPool` is the lib.rs unit-stub); `BundleV2.loop_()` returning the
 // erased `EventLoop = Option<NonNull<()>>` (no `Js`/`Mini` variants yet).
-#[cfg(any())]
+
 fn run_from_thread_pool_impl(this: &mut ParseTask) {
     // SAFETY: ctx backref valid.
     let ctx = unsafe { &*this.ctx };

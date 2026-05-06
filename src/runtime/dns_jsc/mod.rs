@@ -15,13 +15,13 @@ use crate::jsc::{JSGlobalObject, JSValue};
 use crate::timer::EventLoopTimer;
 
 // ─── gated Phase-A drafts (preserved on disk, not compiled) ──────────────────
-#[cfg(any())]
+
 #[path = "dns.rs"]
 mod dns_body; // full Phase-A draft of dns.zig (Resolver methods, all backends)
-#[cfg(any())]
+
 #[path = "cares_jsc.rs"]
 pub mod cares_jsc; // c-ares reply struct → JSValue bridges
-#[cfg(any())]
+
 #[path = "options_jsc.rs"]
 pub mod options_jsc; // GetAddrInfo.Options ↔ JSValue
 

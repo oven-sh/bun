@@ -88,7 +88,7 @@ impl PendingConnect {
 // TODO(b2-blocked): on_dns_resolved/fail_session reach into ClientSession
 // fields (closed/pending/qsocket) and ClientContext::get/unregister — both
 // gated until the lib.rs `_phase_a_draft` impl block lands.
-#[cfg(any())]
+
 mod _phase_a_draft {
 use super::*;
 impl PendingConnect {

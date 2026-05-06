@@ -141,7 +141,7 @@ where
     }
 }
 
-#[cfg(any())] // blocked_on: CssColor::get_fallbacks + S: DeepClone — fallback path
+ // blocked_on: CssColor::get_fallbacks + S: DeepClone — fallback path
 impl<S, const P: u8> GenericBorder<S, P>
 where
     S: css::generic::Parse + css::generic::ToCss + Default + PartialEq,
@@ -242,7 +242,7 @@ pub enum BorderSideWidth {
 }
 
 impl BorderSideWidth {
-    #[cfg(any())] // blocked_on: Length::is_compatible
+     // blocked_on: Length::is_compatible
     pub fn is_compatible(&self, browsers: Browsers) -> bool {
         match self {
             BorderSideWidth::Length(len) => len.is_compatible(browsers),
@@ -470,7 +470,7 @@ define_size_shorthand! {
 
 // TODO(port): Zig used `inline for (std.meta.fields(T))` reflection. We expand
 // the field list at macro invocation. All fields are `CssColor`.
-#[cfg(any())] // blocked_on: macro ordering (must hoist above first use) + CssColor::{get_necessary_fallbacks,get_fallback} + SmallList::append
+ // blocked_on: macro ordering (must hoist above first use) + CssColor::{get_necessary_fallbacks,get_fallback} + SmallList::append
 macro_rules! impl_fallbacks {
     ($T:ty; $($field:ident),+) => {
         impl $T {
@@ -523,7 +523,7 @@ struct BorderShorthand {
     color: Option<CssColor>,
 }
 
-#[cfg(any())] // blocked_on: css::implement_eql blanket + GenericBorder method bodies + DeepClone trait bound
+ // blocked_on: css::implement_eql blanket + GenericBorder method bodies + DeepClone trait bound
 impl BorderShorthand {
     pub fn eql(&self, rhs: &Self) -> bool {
         css::implement_eql(self, rhs)
@@ -644,7 +644,7 @@ bitflags::bitflags! {
     }
 }
 
-#[cfg(any())] // blocked_on: PropertyIdTag variant name verification (PascalCase mapping)
+ // blocked_on: PropertyIdTag variant name verification (PascalCase mapping)
 impl BorderProperty {
     pub fn try_from_property_id(property_id: PropertyIdTag) -> Option<Self> {
         // TODO(port): Zig used `inline for` over PropertyIdTag fields + @hasDecl.
@@ -755,7 +755,7 @@ impl BorderHandler {
     }
 }
 
-#[cfg(any())] // blocked_on: Property variant payloads + BorderShorthand methods + flush_category!/fc_prop! macro web
+ // blocked_on: Property variant payloads + BorderShorthand methods + flush_category!/fc_prop! macro web
 mod border_handler_body {
 use super::*;
 impl BorderHandler {

@@ -118,7 +118,7 @@ impl ImportConditions {
     /// But this could change in the future, so still keeping this function.
     ///
     // blocked_on: MediaList::clone_with_import_records (no impl yet on MediaList).
-    #[cfg(any())]
+    
     pub fn clone_with_import_records(
         &self,
         allocator: &Arena,
@@ -149,7 +149,7 @@ impl ImportConditions {
 
     // blocked_on: SupportsCondition::eql (gated in supports.rs on
     // generics::CssEql derive).
-    #[cfg(any())]
+    
     pub fn supports_eql(lhs: &Self, rhs: &Self) -> bool {
         match (&lhs.supports, &rhs.supports) {
             (None, None) => true,
@@ -231,7 +231,7 @@ impl ImportRule {
 
     /// The `import_records` here is preserved from esbuild in the case that we do need it, it doesn't seem necessary now
     // blocked_on: MediaList::clone_with_import_records (no impl yet on MediaList).
-    #[cfg(any())]
+    
     pub fn conditions_with_import_records(
         &self,
         allocator: &Arena,
@@ -273,8 +273,8 @@ impl ImportRule {
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // blocked_on: dependencies::ImportDependency::new (its impl block is
-        // `#[cfg(any())]`-gated on `to_css::string` + `css_modules::hash`).
-        #[cfg(any())]
+        // ``-gated on `to_css::string` + `css_modules::hash`).
+        
         let dep: Option<css::dependencies::ImportDependency> = if dest.dependencies.is_some() {
             Some(css::dependencies::ImportDependency::new(
                 dest.allocator,
@@ -286,7 +286,7 @@ impl ImportRule {
         } else {
             None
         };
-        #[cfg(not(any()))]
+        #[cfg(any())]
         let dep: Option<css::dependencies::ImportDependency> = if dest.dependencies.is_some() {
             // Spec import.zig:210-233 — when `dest.dependencies != null`, an
             // `ImportDependency` is constructed, its `placeholder` is serialized

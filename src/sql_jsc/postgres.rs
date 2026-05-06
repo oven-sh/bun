@@ -1,7 +1,7 @@
 use crate::jsc::{JSGlobalObject, JSValue};
 
 pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
-    #[cfg(any())]
+    
     {
         // TODO(b2-blocked): bun_jsc::JSValue::{create_empty_object_with_null_prototype,put}
         // TODO(b2-blocked): bun_jsc::JSFunction::create
@@ -30,7 +30,7 @@ pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
         );
         return binding;
     }
-    #[cfg(not(any()))]
+    #[cfg(any())]
     {
         let _ = global_object;
         unimplemented!("b2-blocked: bun_jsc::JSValue / JSFunction method surface")
@@ -39,7 +39,7 @@ pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Submodule tree (Phase-A draft files use PascalCase basenames; wired via
-// `#[path]`). Heavy modules remain `#[cfg(any())]`-gated until their lower-
+// `#[path]`). Heavy modules remain ``-gated until their lower-
 // tier deps land — see per-module `TODO(b2-blocked)` markers.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -72,10 +72,10 @@ pub use postgres_sql_statement::PostgresSQLStatement;
 // TODO(b2-blocked): bun_jsc::host_fn proc-macro + JSValue/CallFrame method surface
 // TODO(b2-blocked): bun_uws::Socket method surface
 // TODO(b2-blocked): bun_jsc::VirtualMachine::get / RareData
-#[cfg(any())]
+
 #[path = "postgres/PostgresSQLConnection.rs"]
 pub mod postgres_sql_connection;
-#[cfg(not(any()))]
+#[cfg(any())]
 pub mod postgres_sql_connection {
     pub struct PostgresSQLConnection {
         pub password: Vec<u8>,
@@ -84,24 +84,24 @@ pub mod postgres_sql_connection {
 pub use postgres_sql_connection::PostgresSQLConnection;
 
 // TODO(b2-blocked): bun_jsc::host_fn proc-macro + JSValue/CallFrame method surface
-#[cfg(any())]
+
 #[path = "postgres/PostgresSQLQuery.rs"]
 pub mod postgres_sql_query;
-#[cfg(not(any()))]
+#[cfg(any())]
 pub mod postgres_sql_query {
     pub struct PostgresSQLQuery(());
 }
 pub use postgres_sql_query::PostgresSQLQuery;
 
 // TODO(b2-blocked): bun_jsc::JSValue / bun_jsc::JSObject method surface
-#[cfg(any())]
+
 #[path = "postgres/PostgresRequest.rs"]
 pub mod postgres_request;
 
 // TODO(b2-blocked): bun_jsc::js_object::ExternColumnIdentifier
 // TODO(b2-blocked): bun_jsc::JSType (real enum)
 // TODO(b2-blocked): bun_string::wtf::{RefPtr,StringImpl}
-#[cfg(any())]
+
 #[path = "postgres/DataCell.rs"]
 pub mod data_cell;
 

@@ -22,8 +22,8 @@ use bun_string::{self as strings, String as BunString};
 // High-tier deps (CLI command-line, JS lexer/printer, Jest pretty-format) —
 // gated; bodies that reference them are gated below.
 // TODO(port): bun_runtime / bun_js_parser cycle.
-#[cfg(any())] use bun_runtime::cli::Command as CLI;
-#[cfg(any())] use bun_runtime::test_runner::pretty_format::JestPrettyFormat;
+ use bun_runtime::cli::Command as CLI;
+ use bun_runtime::test_runner::pretty_format::JestPrettyFormat;
 
 /// Thin facade over `bun_js_parser::lexer` / `bun_js_printer` so the call
 /// sites below keep their Zig spelling (`JSLexer.isLatin1Identifier`,
@@ -255,7 +255,7 @@ pub enum MessageType {
 // ───────────────────────────────────────────────────────────────────────────
 // Body — format2 / TablePrinter / Formatter::print_as / C-exported
 // Bun__ConsoleObject__* shims. The high-tier-cycle deps (bun_runtime: CLI,
-// JSLexer, JSPrinter, JestPrettyFormat) remain individually #[cfg(any())]-
+// JSLexer, JSPrinter, JestPrettyFormat) remain individually -
 // gated at their use sites; everything else is live.
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -428,7 +428,7 @@ fn message_with_type_and_level_(
     // TODO(port-cycle): `crate::Jest::runner()?.bun_test_root.on_before_print()`
     // — Jest runner lives in `bun_runtime` (high-tier cycle); restored when
     // the test-runner crate split lands.
-    #[cfg(any())]
+    
     if let Some(runner) = crate::Jest::runner() {
         runner.bun_test_root.on_before_print();
     }
@@ -438,12 +438,12 @@ fn message_with_type_and_level_(
     // TODO(port-cycle): `CLI::get().runtime_options.console_depth` — `CLI`
     // (`bun_runtime::cli::Command`) is a high-tier cycle dep. Until the CLI
     // context is plumbed through `VirtualMachine`, fall back to the default.
-    #[cfg(any())]
+    
     let console_depth = CLI::get()
         .runtime_options
         .console_depth
         .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
-    #[cfg(not(any()))]
+    #[cfg(any())]
     let console_depth = DEFAULT_CONSOLE_LOG_DEPTH;
 
     let mut print_options = FormatOptions {
@@ -606,7 +606,7 @@ impl bun_io::Write for VisibleCharacterCounter<'_> {
     fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
         // TODO(phase-c): `strings::visible::width::exclude_ansi_colors::utf8`
         // not yet ported — fall back to raw byte count so the build links.
-        #[cfg(any())]
+        
         { *self.width += strings::visible::width::exclude_ansi_colors::utf8(bytes); }
         *self.width += bytes.len();
         Ok(())
@@ -635,7 +635,7 @@ impl<'a> TablePrinter<'a> {
 // surface (`is_iterable`, `for_each_with_context`, `to_object`, `get_own`,
 // `to_cell`) and `jsc::PropertyIteratorOptions` (~30 errs). Stub `print_table`
 // provided above; restore once the missing iterator helpers land.
-#[cfg(any())]
+
 impl<'a> TablePrinter<'a> {
     /// Compute how much horizontal space a `JSValue` will take when printed.
     fn get_width_for_value(&mut self, value: JSValue) -> JsResult<u32> {
@@ -1065,7 +1065,7 @@ pub fn write_trace(_writer: &mut (impl bun_io::Write + ?Sized), _global: &JSGlob
     // TODO(phase-c): body re-gated — `ZigString::to_error_instance` /
     // `VirtualMachine::{remap_zig_exception, print_stack_trace}` not yet
     // ported. `console.trace()` falls through to a no-op until then.
-    #[cfg(any())]
+    
     {
         let mut holder = ZigException::Holder::init();
         let vm = VirtualMachine::get();
@@ -1197,7 +1197,7 @@ impl ErrorDisplayLevel {
 
 // TODO(phase-c): re-gated — body references unported `JSValue::coerce_f64` /
 // `get_boolean_loose`. Stub provided immediately below.
-#[cfg(any())]
+
 impl FormatOptions {
     pub fn from_js(
         &mut self,
@@ -1693,7 +1693,7 @@ pub mod formatter {
         // the pool itself is the gated `print_as` body — keep `Pool` gated
         // and name `PoolNode` directly so `Formatter::map_node` /
         // `Drop` still type-check.
-        #[cfg(any())]
+        
         pub type Pool = ObjectPool<Map, true, 16>;
         #[allow(unused_imports)] use ObjectPool as _;
         pub type PoolNode = bun_collections::pool::Node<Map>;
@@ -1993,7 +1993,7 @@ pub mod formatter {
                 && value.is_callable()
             {
                 // TODO(phase-c): `JSValue::is_class` not yet ported.
-                #[cfg(any())]
+                
                 if value.is_class(global_this) {
                     return Ok(TagResult { tag: TagPayload::Class, cell: js_type });
                 }
@@ -2024,7 +2024,7 @@ pub mod formatter {
             // Is this a react element?
             // TODO(phase-c): `JSValue::get_own_truthy` / `symbol_for` not yet
             // ported — JSX detection re-gated.
-            #[cfg(any())]
+            
             if js_type.is_object() && js_type != jsc::JSType::ProxyObject {
                 if let Some(typeof_symbol) = value.get_own_truthy(global_this, "$$typeof")? {
                     // React 18 and below
@@ -2079,7 +2079,7 @@ pub mod formatter {
                 T::ProxyObject => {
                     // TODO(phase-c): `JSValue::get_proxy_internal_field` /
                     // `jsc::ProxyField` not yet ported — assume live proxy.
-                    #[cfg(any())]
+                    
                     {
                         let handler = value.get_proxy_internal_field(jsc::ProxyField::Handler);
                         if handler.is_empty() || handler.is_undefined_or_null() {
@@ -2174,7 +2174,7 @@ pub mod formatter {
     // TODO(phase-c): re-gated — `write_with_formatting` body references
     // unported `JSValue`/`ZigString` surface (~5 errs). Restore once the
     // missing methods land.
-    #[cfg(any())]
+    
     impl<'a> Formatter<'a> {
         // TODO(port): Zig parameterizes over `Slice` (`[]const u8` or `[]const u16`)
         // via `comptime Slice: type`. Phase A handles only the `&[u8]` path; the
@@ -2475,7 +2475,7 @@ pub mod formatter {
     }
 
     // TODO(phase-c): re-gated — body references unported helpers.
-    #[cfg(any())]
+    
     impl<'w> WrappedWriter<'w> {
         pub const IS_WRAPPED_WRITER: bool = true;
 
@@ -2591,7 +2591,7 @@ pub mod formatter {
         pub count: usize,
     }
 
-    #[cfg(any())] // TODO(phase-c): re-gated — calls gated `Formatter::format`.
+     // TODO(phase-c): re-gated — calls gated `Formatter::format`.
     impl<'a, 'b, const C: bool, const IS_ITERATOR: bool, const SINGLE_LINE: bool>
         MapIteratorCtx<'a, 'b, C, IS_ITERATOR, SINGLE_LINE>
     {
@@ -2658,7 +2658,7 @@ pub mod formatter {
         pub is_first: bool,
     }
 
-    #[cfg(any())] // TODO(phase-c): re-gated — calls gated `Formatter::format`.
+     // TODO(phase-c): re-gated — calls gated `Formatter::format`.
     impl<'a, 'b, const C: bool, const SINGLE_LINE: bool> SetIteratorCtx<'a, 'b, C, SINGLE_LINE> {
         pub extern "C" fn for_each(
             _: *mut jsc::VM,
@@ -2705,7 +2705,7 @@ pub mod formatter {
         pub parent: JSValue,
     }
 
-    #[cfg(any())] // TODO(phase-c): re-gated — body references unported `JSValue` surface.
+     // TODO(phase-c): re-gated — body references unported `JSValue` surface.
     impl<'a, 'b, const C: bool> PropertyIteratorCtx<'a, 'b, C> {
         pub fn handle_first_property(
             &mut self,
@@ -2903,7 +2903,7 @@ pub mod formatter {
     ) -> JsResult<Option<ZigString>> {
         // TODO(phase-c): body re-gated — `JSValue::get_class_name` /
         // `get_prototype` not yet ported.
-        #[cfg(any())]
+        
         {
             let mut name_str = ZigString::init(b"");
             value.get_class_name(global_this, &mut name_str)?;
@@ -2935,7 +2935,7 @@ pub mod formatter {
     // TODO(phase-c): re-gated — `print_as` body (~700L) references ~22
     // unported `JSValue`/`ZigString`/`VirtualMachine` methods. Stub provided
     // below; restore arm-by-arm as the missing surface lands.
-    #[cfg(any())]
+    
     impl<'a> Formatter<'a> {
         pub fn print_as<const FORMAT: Tag, const ENABLE_ANSI_COLORS: bool>(
             &mut self,
@@ -3656,7 +3656,7 @@ pub mod formatter {
     // TODO(phase-c): re-gated — `print_array`/`print_object`/… bodies (~1200L)
     // reference ~40 unported `JSValue` methods. `format` dispatcher stubbed
     // below; restore once `print_as` un-gates.
-    #[cfg(any())]
+    
     impl<'a> Formatter<'a> {
         fn tag_opts(&self) -> TagOptions {
             let mut opts = TagOptions::HIDE_GLOBAL;
@@ -3936,7 +3936,7 @@ pub mod formatter {
             // still print. Restored once the runtime types implement a
             // dyn-erased `WriteFormat` hook this crate can call without naming
             // them.
-            #[cfg(any())]
+            
             if let Some(response) = value.as_::<bun_runtime::webcore::Response>() {
                 let _ = response.write_format::<C>(self, writer_);
                 return Ok(());
@@ -4892,7 +4892,7 @@ pub mod formatter {
     // ───────────────────────────────────────────────────────────────────────
     impl<'a> Formatter<'a> {
         /// Stubbed runtime-tag dispatcher. Real body lives in the
-        /// `#[cfg(any())]`-gated impl above (calls `print_as::<{Tag::…}, C>`
+        /// ``-gated impl above (calls `print_as::<{Tag::…}, C>`
         /// per arm). Phase-C: fall through to a single debug-format write so
         /// callers see *something* and the build links.
         pub fn format<const ENABLE_ANSI_COLORS: bool>(
@@ -5183,8 +5183,8 @@ pub extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
     // TODO(phase-c): `JSGlobalObject::generate_heap_snapshot` lives in the
     // gated `JSGlobalObject.rs` impl; emit `undefined` until it un-gates.
     let snapshot: [JSValue; 1] = [{
-        #[cfg(any())] { global_this.generate_heap_snapshot() }
-        #[cfg(not(any()))] { let _ = global_this; JSValue::UNDEFINED }
+         { global_this.generate_heap_snapshot() }
+        #[cfg(any())] { let _ = global_this; JSValue::UNDEFINED }
     }];
     // SAFETY: re-entry into our own host shim with a stack-local args slice.
     unsafe {

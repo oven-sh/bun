@@ -594,7 +594,7 @@ impl BackgroundProperty {
             | Self::CLIP.bits(),
     );
 
-    #[cfg(any())] // blocked_on: PropertyId variant arity (BackgroundClip carries VendorPrefix payload)
+     // blocked_on: PropertyId variant arity (BackgroundClip carries VendorPrefix payload)
     pub fn try_from_property_id(property_id: PropertyId) -> Option<BackgroundProperty> {
         match property_id {
             PropertyId::BackgroundColor => Some(Self::BACKGROUND_COLOR),
@@ -635,7 +635,7 @@ pub struct BackgroundHandler {
 impl BackgroundHandler {
     // PORTING.md §Forbidden: silent no-op where the .zig has real logic is flagged.
     // Real bodies are gated below in `mod background_handler_body` behind
-    // `#[cfg(any())]` pending Property variant payloads + Image/CssColor fallback
+    // `` pending Property variant payloads + Image/CssColor fallback
     // methods + SmallList helpers. Until those land, fail loudly so the missing
     // shorthand-collapse / fallback / `-webkit-background-clip: text` prefixing
     // is not silently skipped.
@@ -658,7 +658,7 @@ impl BackgroundHandler {
     }
 }
 
-#[cfg(any())] // blocked_on: Property variant payloads + Image/CssColor fallback methods + SmallList helpers
+ // blocked_on: Property variant payloads + Image/CssColor fallback methods + SmallList helpers
 mod background_handler_body {
 use super::*;
 

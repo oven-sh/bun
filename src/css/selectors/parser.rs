@@ -1217,7 +1217,7 @@ impl<'a> SelectorParser<'a> {
         // ArrayHashMap::entry + SymbolList::push). The CSS-modules branch
         // returns the symbol-table ref; until that un-gates, fall through to
         // the ident arm so non-modules parsing is correct.
-        #[cfg(any())]
+        
         if input.flags.css_modules() {
             return <impl_::Selectors as SelectorImpl>::LocalIdentifier::from_ref(
                 input.add_symbol_for_name(raw, tag, bun_logger::Loc { start: i32::try_from(loc).unwrap() }),
@@ -1288,13 +1288,13 @@ impl<'a> SelectorParser<'a> {
         // The stub `properties::custom::TokenList` is a unit struct with no `.v`
         // field and no `parse_raw`; consume the function args as opaque tokens
         // until the real `custom.rs` un-gates.
-        #[cfg(any())]
+        
         {
             let mut args: Vec<css::css_properties::custom::TokenOrValue> = Vec::new();
             TokenList::parse_raw(input, &mut args, self.options, 0)?;
             return Ok(PseudoElement::CustomFunction { name, arguments: TokenList { v: args } });
         }
-        #[cfg(not(any()))]
+        #[cfg(any())]
         {
             // Spec (parser.zig:1088-1094) calls `TokenList.parseRaw(input, ...)`
             // which consumes the function-argument tokens. Until
@@ -1413,7 +1413,7 @@ impl<'a> SelectorParser<'a> {
                 // The stub `properties::custom::TokenList` is a unit struct with no `.v`;
                 // until the real module is wired, drop the unparsed args (matches the
                 // PseudoElement::CustomFunction fallback above).
-                #[cfg(any())]
+                
                 {
                     let mut args: Vec<css::css_properties::custom::TokenOrValue> = Vec::new();
                     css::TokenListFns::parse_raw(parser, &mut args, self.options, 0)?;
@@ -1422,7 +1422,7 @@ impl<'a> SelectorParser<'a> {
                         arguments: TokenList { v: args },
                     };
                 }
-                #[cfg(not(any()))]
+                #[cfg(any())]
                 {
                     // Consume the function body so the outer parser stays in sync.
                     while parser.next().is_ok() {}
@@ -3959,7 +3959,7 @@ pub enum ViewTransitionPartName {
 
 impl ViewTransitionPartName {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // PORT NOTE: `CustomIdentFns::to_css` is `#[cfg(any())]`-gated on
+        // PORT NOTE: `CustomIdentFns::to_css` is ``-gated on
         // `Printer::{css_module,write_ident}`; inline the
         // `write_ident(v, false)` body (CSS-modules custom-ident scoping is a
         // serializer concern, not a grammar concern — the gated impl just

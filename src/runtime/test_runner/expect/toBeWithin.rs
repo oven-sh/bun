@@ -1,4 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::Expect;
@@ -13,9 +14,9 @@ impl Expect {
         // defer this.postMatch(globalThis);
         let mut this = scopeguard::guard(this, |t| t.post_match(global));
 
-        let this_value = frame.this_value();
-        let _arguments = frame.arguments_old(2);
-        let arguments = _arguments.as_slice();
+        let this_value = frame.this();
+        let _arguments = frame.arguments_old::<2>();
+        let arguments = _arguments.slice();
 
         if arguments.len() < 1 {
             return global.throw_invalid_arguments(format_args!(

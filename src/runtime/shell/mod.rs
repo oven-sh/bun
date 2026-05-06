@@ -22,7 +22,7 @@
 // The full lexer/parser/AST draft (5574 lines) depends on `bun_jsc` method
 // surface, `bun_glob::GlobWalker`, `bun_output` macros, and
 // `bun_collections::IntegerBitSet`.
-#[cfg(any())]
+
 #[path = "shell_body.rs"]
 mod shell_body;
 
@@ -136,7 +136,7 @@ pub const SUBSHELL_TODO_ERROR: &str =
 // Port of `shell.zig` escape8Bit / needsEscapeUtf8AsciiLatin1 / SPECIAL_CHARS.
 // Exposed here so `run_command.rs` / `filter_run.rs` passthrough-arg escaping
 // can call `crate::shell::*` while the full lexer/parser in `shell_body.rs`
-// remains `#[cfg(any())]`-gated.
+// remains ``-gated.
 
 /// 0x08 — Bell; cannot be typed as a literal. Guards lexer-internal `__bun_` /
 /// `__bunstr_` markers from colliding with user input.

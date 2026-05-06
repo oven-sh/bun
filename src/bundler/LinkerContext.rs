@@ -125,29 +125,29 @@ macro_rules! debug_tree_shake {
 // gated alongside its module declaration so partial un-gates compile.
 pub use crate::linker_context::scan_imports_and_exports::scan_imports_and_exports;
 
-#[cfg(any())] pub use crate::linker_context::output_file_list_builder as OutputFileListBuilder;
-#[cfg(any())] pub use crate::linker_context::static_route_visitor as StaticRouteVisitor;
-#[cfg(any())] pub use crate::linker_context::metafile_builder as MetafileBuilder;
-#[cfg(any())] pub use crate::linker_context::compute_chunks::compute_chunks;
-#[cfg(any())] pub use crate::linker_context::find_all_imported_parts_in_js_order::{find_all_imported_parts_in_js_order, find_imported_parts_in_js_order};
-#[cfg(any())] pub use crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order;
-#[cfg(any())] pub use crate::linker_context::find_imported_css_files_in_js_order::find_imported_css_files_in_js_order;
-#[cfg(any())] pub use crate::linker_context::generate_code_for_lazy_export::generate_code_for_lazy_export;
-#[cfg(any())] pub use crate::linker_context::do_step5::{do_step5, create_exports_for_file};
-#[cfg(any())] pub use crate::linker_context::compute_cross_chunk_dependencies::compute_cross_chunk_dependencies;
-#[cfg(any())] pub use crate::linker_context::post_process_js_chunk::post_process_js_chunk;
-#[cfg(any())] pub use crate::linker_context::post_process_css_chunk::post_process_css_chunk;
-#[cfg(any())] pub use crate::linker_context::post_process_html_chunk::post_process_html_chunk;
-#[cfg(any())] pub use crate::linker_context::rename_symbols_in_chunk::rename_symbols_in_chunk;
-#[cfg(any())] pub use crate::linker_context::generate_chunks_in_parallel::generate_chunks_in_parallel;
-#[cfg(any())] pub use crate::linker_context::generate_compile_result_for_js_chunk::generate_compile_result_for_js_chunk;
-#[cfg(any())] pub use crate::linker_context::generate_compile_result_for_css_chunk::generate_compile_result_for_css_chunk;
-#[cfg(any())] pub use crate::linker_context::generate_compile_result_for_html_chunk::generate_compile_result_for_html_chunk;
-#[cfg(any())] pub use crate::linker_context::prepare_css_asts_for_chunk::{prepare_css_asts_for_chunk, PrepareCssAstTask};
-#[cfg(any())] pub use crate::linker_context::convert_stmts_for_chunk::convert_stmts_for_chunk;
-#[cfg(any())] pub use crate::linker_context::convert_stmts_for_chunk_for_dev_server::convert_stmts_for_chunk_for_dev_server;
-#[cfg(any())] pub use crate::linker_context::generate_code_for_file_in_chunk_js::generate_code_for_file_in_chunk_js;
-#[cfg(any())] pub use crate::linker_context::write_output_files_to_disk::write_output_files_to_disk;
+ pub use crate::linker_context::output_file_list_builder as OutputFileListBuilder;
+ pub use crate::linker_context::static_route_visitor as StaticRouteVisitor;
+ pub use crate::linker_context::metafile_builder as MetafileBuilder;
+ pub use crate::linker_context::compute_chunks::compute_chunks;
+ pub use crate::linker_context::find_all_imported_parts_in_js_order::{find_all_imported_parts_in_js_order, find_imported_parts_in_js_order};
+ pub use crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order;
+ pub use crate::linker_context::find_imported_css_files_in_js_order::find_imported_css_files_in_js_order;
+ pub use crate::linker_context::generate_code_for_lazy_export::generate_code_for_lazy_export;
+ pub use crate::linker_context::do_step5::{do_step5, create_exports_for_file};
+ pub use crate::linker_context::compute_cross_chunk_dependencies::compute_cross_chunk_dependencies;
+ pub use crate::linker_context::post_process_js_chunk::post_process_js_chunk;
+ pub use crate::linker_context::post_process_css_chunk::post_process_css_chunk;
+ pub use crate::linker_context::post_process_html_chunk::post_process_html_chunk;
+ pub use crate::linker_context::rename_symbols_in_chunk::rename_symbols_in_chunk;
+ pub use crate::linker_context::generate_chunks_in_parallel::generate_chunks_in_parallel;
+ pub use crate::linker_context::generate_compile_result_for_js_chunk::generate_compile_result_for_js_chunk;
+ pub use crate::linker_context::generate_compile_result_for_css_chunk::generate_compile_result_for_css_chunk;
+ pub use crate::linker_context::generate_compile_result_for_html_chunk::generate_compile_result_for_html_chunk;
+ pub use crate::linker_context::prepare_css_asts_for_chunk::{prepare_css_asts_for_chunk, PrepareCssAstTask};
+ pub use crate::linker_context::convert_stmts_for_chunk::convert_stmts_for_chunk;
+ pub use crate::linker_context::convert_stmts_for_chunk_for_dev_server::convert_stmts_for_chunk_for_dev_server;
+ pub use crate::linker_context::generate_code_for_file_in_chunk_js::generate_code_for_file_in_chunk_js;
+ pub use crate::linker_context::write_output_files_to_disk::write_output_files_to_disk;
 
 // TODO(port): DeferredBatchTask, ParseTask re-exports — Zig re-exports from bundle_v2
 pub use crate::DeferredBatchTask::DeferredBatchTask;
@@ -266,7 +266,7 @@ use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
 // `ThreadPool::Worker`, `generic_path_with_pretty_initialized`, and the gated
 // `linker_context/` submodules. The struct + LinkerOptions + SourceMapData
 // above are real; this impl block un-gates with `LinkerGraph.rs`.
-#[cfg(any())]
+
 impl<'a> LinkerContext<'a> {
     pub fn allocator(&self) -> &Bump {
         // TODO(port): bundler is an AST crate; LinkerGraph owns the arena
@@ -953,7 +953,7 @@ impl From<BunError> for LinkError {
     }
 }
 // TODO(b2-blocked): bun_core::Error::from_name — not yet on the public surface.
-#[cfg(any())]
+
 impl From<LinkError> for BunError {
     fn from(e: LinkError) -> Self { BunError::from_name(<&'static str>::from(e)) }
 }
@@ -1059,7 +1059,7 @@ impl Default for SourceMapDataTask {
 
 // TODO(b2-blocked): bodies depend on `ThreadPool::Worker`, `BundleV2.linker`
 // container_of, and `LinkerGraph` SoA accessors. Un-gates with `ThreadPool.rs`.
-#[cfg(any())]
+
 impl SourceMapDataTask {
     pub fn run_line_offset(thread_task: *mut ThreadPoolLib::Task) {
         // SAFETY: thread_task points to SourceMapDataTask.thread_task
@@ -1124,7 +1124,7 @@ impl SourceMapDataTask {
 }
 
 // TODO(b2-blocked): see SourceMapDataTask above.
-#[cfg(any())]
+
 impl SourceMapData {
     pub fn compute_line_offsets(this: &mut LinkerContext, alloc: &Bump, source_index: crate::IndexInt) {
         debug!("Computing LineOffsetTable: {}", source_index);
@@ -1249,7 +1249,7 @@ struct SubstituteChunkFinalPathResult {
 // gated `linker_context/scanImportsAndExports.rs`, `bun_resolve_builtins`,
 // and `css::css_modules`. The bodies are real ports of `LinkerContext.zig`
 // and un-gate together with `LinkerGraph.rs`.
-#[cfg(any())]
+
 impl<'a> LinkerContext<'a> {
     pub fn generate_isolated_hash(&mut self, chunk: &Chunk) -> u64 {
         let _trace = bun::perf::trace("Bundler.generateIsolatedHash");
@@ -1904,7 +1904,7 @@ impl<'a> LinkerContext<'a> {
         }
         list.sort_by(StableRef::is_less_than);
     }
-} // end #[cfg(any())] — split: tree-shaking trio un-gated below (B-2 second pass)
+} // end  — split: tree-shaking trio un-gated below (B-2 second pass)
 
 // ══════════════════════════════════════════════════════════════════════════
 // B-2 second pass: un-gated tree-shaking primitives. These reach into
@@ -2252,7 +2252,7 @@ impl<'a> LinkerContext<'a> {
 // `linker_context/scanImportsAndExports.rs` calls these `LinkerContext`
 // methods inherently. Real ports of the `LinkerContext.zig` /
 // `linker_context/doStep5.zig` / `linker_context/generateCodeForLazyExport.zig`
-// bodies. The `#[cfg(any())]` impl block immediately below retains the
+// bodies. The `` impl block immediately below retains the
 // Phase-A drafts (now duplicated) until the next sweep removes them.
 // ══════════════════════════════════════════════════════════════════════════
 
@@ -2266,7 +2266,7 @@ use bun_js_parser::{
 use bun_js_parser::ast::symbol::Use as SymbolUse;
 
 /// `bundle_v2.zig:ImportTracker.Status`. Mirrors the still-gated
-/// `bundle_v2::ImportTrackerStatus` (inside the Phase-A `#[cfg(any())]` draft);
+/// `bundle_v2::ImportTrackerStatus` (inside the Phase-A `` draft);
 /// collapses to a re-export once `bundle_v2` un-gates it.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -3470,7 +3470,7 @@ impl<'a> LinkerContext<'a> {
         todo!("phase-c: rung 1 re-gated — create_exports_for_file body has ~12 type errs (Batcher/G::Decl::List/B::Identifier); bundler-linker not on -e/run path")
     }
 
-    #[cfg(any())] // blocked_on(phase-c): re-gated for rung-1 link — body has type errs; not on -e/run path
+     // blocked_on(phase-c): re-gated for rung-1 link — body has type errs; not on -e/run path
     fn __create_exports_for_file_gated(
         &mut self,
         allocator: &Bump,
@@ -3810,7 +3810,7 @@ impl<'a> LinkerContext<'a> {
         todo!("phase-c: rung 1 re-gated — generate_code_for_lazy_export body has ~12 type errs (Expr::Data/B::Identifier/LocRef.r#ref); bundler-linker not on -e/run path")
     }
 
-    #[cfg(any())] // blocked_on(phase-c): re-gated for rung-1 link — body has type errs; not on -e/run path
+     // blocked_on(phase-c): re-gated for rung-1 link — body has type errs; not on -e/run path
     fn __generate_code_for_lazy_export_gated(
         &mut self,
         source_index: crate::IndexInt,
@@ -3849,7 +3849,7 @@ impl<'a> LinkerContext<'a> {
         // module un-gates and this branch becomes
         //   `crate::linker_context::generate_code_for_lazy_export::populate_css_stub_exports(self, css_ast, part, source_index)?;`
         if let Some(_css_ast) = self.graph.ast.items_css()[source_index as usize] {
-            #[cfg(any())]
+            
             {
                 crate::linker_context::generate_code_for_lazy_export::populate_css_stub_exports(
                     self, _css_ast, part, source_index,
@@ -4044,7 +4044,7 @@ impl<'a> LinkerContext<'a> {
 //
 // PORT NOTE: the bodies above (un-gated) supersede these; this block is kept
 // gated as the Phase-A reference until the next sweep removes it.
-#[cfg(any())]
+
 impl<'a> LinkerContext<'a> {
     pub fn match_import_with_export(
         &mut self,
@@ -4979,7 +4979,7 @@ impl InsideWrapperPrefix {
 
 // TODO(b2-blocked): `Expr`/`Stmt` builder helpers (`E::Call`, `S::SExpr` etc.)
 // — bun_js_parser AST builder surface not yet stable.
-#[cfg(any())]
+
 impl InsideWrapperPrefix {
     pub fn append_non_dependency(&mut self, stmt: Stmt) -> Result<(), AllocError> {
         self.stmts.push(stmt);

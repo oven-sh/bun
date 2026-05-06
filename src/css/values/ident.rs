@@ -138,7 +138,7 @@ pub struct DashedIdent {
 // type aliases are unstable in Rust; expose as a free type alias instead.
 // bun_collections::ArrayHashMap is wyhash-keyed; Phase B must verify the
 // hasher matches std.array_hash_map.hashString or supply a custom Hash impl.
-#[cfg(any())] // blocked_on: bun_collections::ArrayHashMap surface
+ // blocked_on: bun_collections::ArrayHashMap surface
 pub type DashedIdentHashMap<V> = bun_collections::ArrayHashMap<DashedIdent, V>;
 
 impl DashedIdent {
@@ -370,7 +370,7 @@ impl IdentOrRef {
         None
     }
 
-    #[cfg(any())] // blocked_on: bun_logger::symbol::Map::follow + LocalsResultsMap::get surface
+     // blocked_on: bun_logger::symbol::Map::follow + LocalsResultsMap::get surface
     pub fn as_str(
         self,
         map: &bun_logger::symbol::Map,
@@ -386,7 +386,7 @@ impl IdentOrRef {
         local_names.unwrap().get(final_ref)
     }
 
-    #[cfg(any())] // blocked_on: bun_logger::symbol::List::at + Symbol.original_name
+     // blocked_on: bun_logger::symbol::List::at + Symbol.original_name
     pub fn as_original_string(self, symbols: &bun_logger::symbol::List) -> &[u8] {
         if self.is_ident() {
             // SAFETY: arena slice reconstructed from packed ptr/len

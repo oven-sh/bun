@@ -8,7 +8,7 @@ pub mod bun_install_js_bindings {
         // takes a raw-ABI `JSHostFn`; the proc-macro lowers a `JSHostFnZig`-shaped
         // fn to that ABI. Until it lands, `js_parse_lockfile` has the wrong
         // fn-pointer type to pass here.
-        #[cfg(any())]
+        
         {
             use bun_jsc::JSFunction;
             let obj = JSValue::create_empty_object(_global, 1);
@@ -25,7 +25,7 @@ pub mod bun_install_js_bindings {
             );
             return obj;
         }
-        #[cfg(not(any()))]
+        #[cfg(any())]
         todo!("install_binding::generate — gated on bun_jsc::host_fn proc-macro")
     }
 
@@ -65,7 +65,7 @@ pub mod bun_install_js_bindings {
         // needs `.resolver.env_loader` / `.resolver.get_package_manager()` / `.env`.
         // Re-gated: env_loader fixup + manager acquisition. Passing `None` until
         // the bundler crate un-gates Transpiler/Resolver field surface.
-        #[cfg(any())]
+        
         {
             // PORT NOTE: reshaped for borrowck — Zig accessed globalObject.bunVM().transpiler.resolver
             // through chained pointer dereferences.
@@ -75,9 +75,9 @@ pub mod bun_install_js_bindings {
             }
         }
         // as long as we aren't migration from `package-lock.json`, leaving this undefined is okay
-        #[cfg(any())]
+        
         let manager = Some(global.bun_vm().transpiler.resolver.get_package_manager());
-        #[cfg(not(any()))]
+        #[cfg(any())]
         let manager = None;
 
         let load_result: lockfile::LoadResult =

@@ -3,11 +3,11 @@
 //!
 //! B-2 un-gate (this round): structs + state machines are real. JS-facing
 //! method bodies (`set_timeout`/`clear_timer`/`warn_invalid_countdown`/etc.)
-//! remain `#[cfg(any())]`-gated on `bun_jsc` (commented out in Cargo.toml).
+//! remain ``-gated on `bun_jsc` (commented out in Cargo.toml).
 //! `All::insert`/`remove`/`update`/`get_timeout`/`drain_timers` — the surface
 //! `EventLoop::auto_tick` blocks on per keystone C — are real.
 //!
-//! Full Phase-A drafts are preserved gated under `#[cfg(any())] mod *_draft`
+//! Full Phase-A drafts are preserved gated under ` mod *_draft`
 //! so this file can be diffed against `Timer.rs` once `bun_jsc` is green.
 
 use core::mem::offset_of;
@@ -30,22 +30,22 @@ pub(crate) use bun_event_loop::EventLoopTimer::Timespec as ElTimespec;
 use crate::jsc::{JSGlobalObject, JSValue, JsResult};
 
 // ─── gated Phase-A drafts (preserved, not compiled) ──────────────────────────
-#[cfg(any())]
+
 #[path = "Timer.rs"]
 mod timer_draft;
-#[cfg(any())]
+
 #[path = "TimeoutObject.rs"]
 mod timeout_object_draft;
-#[cfg(any())]
+
 #[path = "ImmediateObject.rs"]
 mod immediate_object_draft;
-#[cfg(any())]
+
 #[path = "TimerObjectInternals.rs"]
 mod timer_object_internals_draft;
-#[cfg(any())]
+
 #[path = "DateHeaderTimer.rs"]
 mod date_header_timer_draft;
-#[cfg(any())]
+
 #[path = "EventLoopDelayMonitor.rs"]
 mod event_loop_delay_monitor_draft;
 
@@ -695,7 +695,7 @@ impl All {
 // host_fn export thunks all need `JSGlobalObject::bun_vm()`,
 // `JSValue::to_number()`, `bun_str::String::transfer_to_js()`, etc.
 // Kept gated until `bun_jsc.workspace = true` is re-enabled.
-#[cfg(any())]
+
 impl All {
     include!("Timer.rs"); // not literally — see timer_draft above
 }

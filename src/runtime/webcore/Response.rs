@@ -183,7 +183,7 @@ impl BodyMixin for Response {}
 // short-circuit on a JS-side stream that was already read (Zig:
 // `T.js.bodyGetCached(this_value)`).
 // TODO(b2-blocked): bun_jsc::* — JSValue, generated `js::body_get_cached`.
-#[cfg(any())]
+
 impl crate::webcore::body::BodyOwnerJs for Response {
     fn body_get_cached(this_value: JSValue) -> Option<JSValue> {
         js::body_get_cached(this_value)
@@ -196,7 +196,7 @@ impl crate::webcore::body::BodyOwnerJs for Response {
 // paths in Body.zig are silently dead.
 // TODO(b2-blocked): merge with the stub `impl BodyMixin for Response {}` above
 // once the gated `BodyMixin` trait replaces the stub.
-#[cfg(any())]
+
 impl BodyMixin for Response {
     fn get_body_value(&mut self) -> &mut BodyValue {
         Response::get_body_value(self)
@@ -298,7 +298,7 @@ impl Response {
 // TODO(b2-blocked): bun_jsc::* + bun_core::form_data — to_js, JsRef::try_get/
 // init_weak, js::gc::stream, ReadableStream::from_js, BodyValue::estimated_size,
 // JSValue methods. Everything below until `Init` is JSC integration.
-#[cfg(any())]
+
 impl Response {
     #[inline]
     pub fn get_body_len(&self) -> usize {
@@ -395,7 +395,7 @@ impl Response {
 }
 
 // TODO(b2-blocked): bun_jsc::* — host_fn, callframe.arguments_old, JSValue::as_.
-#[cfg(any())]
+
 mod _jsc_host_fns {
 use super::*;
 
@@ -585,7 +585,7 @@ impl Response {
 // TODO(b2-blocked): bun_jsc::* — write_format ConsoleFormatter, do_clone/
 // constructor/from_js paths (need codegen js::gc::stream slots, JsClass downcast,
 // Body::extract).
-#[cfg(any())]
+
 impl Response {
     pub fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
@@ -1099,7 +1099,7 @@ impl Init {
         // TODO(b2-blocked): bun_jsc::JsClass — Request/Response don't yet impl
         // `JsClass`, so the DOMWrapper fast-path (`as_direct::<Request>`) is
         // gated. Slow path below covers correctness; un-gate once codegen lands.
-        #[cfg(any())]
+        
         if js_type == JSType::DOMWrapper {
             // fast path: it's a Request object or a Response object
             // we can skip calling JS getters
@@ -1150,13 +1150,10 @@ impl Init {
                 result.status_code = (u32::try_from(number).unwrap()) as u16;
             } else {
                 if !global_this.has_exception() {
-                    let err = global_this.create_range_error_instance(
-                        "The status provided ({d}) must be 101 or in the range of [200, 599]",
-                        format_args!(
-                            "The status provided ({}) must be 101 or in the range of [200, 599]",
-                            number
-                        ),
-                    );
+                    let err = global_this.create_range_error_instance(format_args!(
+                        "The status provided ({}) must be 101 or in the range of [200, 599]",
+                        number
+                    ));
                     return Err(global_this.throw_value(err));
                 }
                 return Err(JsError::Thrown);
@@ -1173,7 +1170,7 @@ impl Init {
 
         // TODO(b2-blocked): bun_http_jsc — `Method::from_js` lives in the
         // `bun_http_jsc` extension-trait crate (not yet a runtime dep).
-        #[cfg(any())]
+        
         if let Some(method_value) = response_init.get_truthy(global_this, b"method")? {
             if let Some(method) = Method::from_js(global_this, method_value)? {
                 result.method = method;

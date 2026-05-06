@@ -1,4 +1,5 @@
 use core::cell::RefCell;
+#[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 use core::ffi::c_void;
 use bun_io::Write as _;
 
@@ -13,8 +14,36 @@ use bun_str::{strings, ZigString};
 
 use super::expect;
 
+/// Local shim over `Output::pretty_fmt` that (a) accepts the const-generic
+/// `ENABLE_ANSI_COLORS` form the Phase-A draft was written against and
+/// (b) returns a value that is `Display`, `Deref<Target=[u8]>`, *and* has an
+/// `.as_bytes()` method — covering all three call shapes in this file
+/// (`format_args!("{}", …)`, `writer.write_all(&…)`, `….as_bytes()`).
+#[inline]
+fn pretty_fmt_const<const ENABLE_ANSI_COLORS: bool>(s: &str) -> PrettyStr {
+    PrettyStr(Output::pretty_fmt(s, ENABLE_ANSI_COLORS).0)
+}
+#[repr(transparent)]
+pub struct PrettyStr(Vec<u8>);
+impl PrettyStr {
+    #[inline] pub fn as_bytes(&self) -> &[u8] { &self.0 }
+}
+impl core::ops::Deref for PrettyStr {
+    type Target = [u8];
+    #[inline] fn deref(&self) -> &[u8] { &self.0 }
+}
+impl AsRef<[u8]> for PrettyStr {
+    #[inline] fn as_ref(&self) -> &[u8] { &self.0 }
+}
+impl core::fmt::Display for PrettyStr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // SAFETY: pretty_fmt output is ASCII/ANSI escape bytes (valid UTF-8).
+        f.write_str(unsafe { core::str::from_utf8_unchecked(&self.0) })
+    }
+}
+
 // ── Local FFI shims for JSC C-API symbols not yet re-exported via `bun_jsc::c_api`.
-// The full `javascript_core_c_api.rs` module is `#[cfg(any())]`-gated in bun_jsc;
+// The full `javascript_core_c_api.rs` module is ``-gated in bun_jsc;
 // declare just the two we need here. Types match `bun_jsc::C::JSObjectRef` etc.
 // TODO(port): drop once `bun_jsc::c_api` re-exports the full C-API surface.
 mod capi_ext {
@@ -186,11 +215,11 @@ impl JestPrettyFormat {
             if tag.tag == Tag::String {
                 if options.enable_colors {
                     if level == MessageLevel::Error {
-                        let _ = writer.write_all(Output::pretty_fmt::<true>("<r><red>"));
+                        let _ = writer.write_all(&pretty_fmt_const::<true>("<r><red>"));
                     }
                     fmt.format::<W, true>(tag, writer, vals[0], global)?;
                     if level == MessageLevel::Error {
-                        let _ = writer.write_all(Output::pretty_fmt::<true>("<r>"));
+                        let _ = writer.write_all(&pretty_fmt_const::<true>("<r>"));
                     }
                 } else {
                     fmt.format::<W, false>(tag, writer, vals[0], global)?;
@@ -231,7 +260,7 @@ impl JestPrettyFormat {
         let mut any = false;
         if options.enable_colors {
             if level == MessageLevel::Error {
-                let _ = writer.write_all(Output::pretty_fmt::<true>("<r><red>"));
+                let _ = writer.write_all(&pretty_fmt_const::<true>("<r><red>"));
             }
             loop {
                 if any {
@@ -253,7 +282,7 @@ impl JestPrettyFormat {
                 fmt.remaining_values = &fmt.remaining_values[1..];
             }
             if level == MessageLevel::Error {
-                let _ = writer.write_all(Output::pretty_fmt::<true>("<r>"));
+                let _ = writer.write_all(&pretty_fmt_const::<true>("<r>"));
             }
         } else {
             loop {
@@ -802,7 +831,7 @@ impl<'a> Formatter<'a> {
         &mut self,
         writer: &mut W,
     ) -> bun_io::Result<()> {
-        writer.write_all(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><d>,<r>"))?;
+        writer.write_all(&pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><d>,<r>"))?;
         self.estimated_line_length += 1;
         Ok(())
     }
@@ -1028,10 +1057,10 @@ impl<'a, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 
                 writer.print(format_args!(
                     concat!("{}", "\"{}\"", "{}", ":", "{}", " "),
-                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                     key,
-                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<d>"),
-                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
+                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                 ));
             } else if key.is_16_bit()
                 && is_latin1_identifier_utf16(key.utf16_slice_aligned())
@@ -1040,10 +1069,10 @@ impl<'a, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 
                 writer.print(format_args!(
                     concat!("{}", "\"{}\"", "{}", ":", "{}", " "),
-                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                     key,
-                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<d>"),
-                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
+                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                 ));
             } else if key.is_16_bit() {
                 let utf16_slice = key.utf16_slice_aligned();
@@ -1051,42 +1080,42 @@ impl<'a, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
                 this.add_for_new_line(utf16_slice.len() + 2);
 
                 if ENABLE_ANSI_COLORS {
-                    writer.write_all(Output::pretty_fmt::<true>("<r><green>").as_bytes());
+                    writer.write_all(pretty_fmt_const::<true>("<r><green>").as_bytes());
                 }
 
                 writer.write_all(b"\"");
                 writer.write_16_bit(utf16_slice);
                 writer.print(format_args!(
                     "\"{}:{} ",
-                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><d>"),
-                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><d>"),
+                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                 ));
             } else {
                 this.add_for_new_line(key.len + 2);
 
                 writer.print(format_args!(
                     "{}{}{}:{} ",
-                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><green>"),
+                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><green>"),
                     bun_fmt::format_json_string_latin1(key.slice()),
-                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><d>"),
-                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><d>"),
+                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                 ));
             }
         } else {
             this.add_for_new_line(1 + b"[Symbol()]:".len() + key.len);
             writer.print(format_args!(
                 "{}[{}Symbol({}){}]:{} ",
-                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><d>"),
-                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><blue>"),
+                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><d>"),
+                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><blue>"),
                 key,
-                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><d>"),
-                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><d>"),
+                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
             ));
         }
 
         if tag.cell.is_string_like() {
             if ENABLE_ANSI_COLORS {
-                writer.write_all(Output::pretty_fmt::<true>("<r><green>").as_bytes());
+                writer.write_all(pretty_fmt_const::<true>("<r><green>").as_bytes());
             }
         }
 
@@ -1100,7 +1129,7 @@ impl<'a, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 
         if tag.cell.is_string_like() {
             if ENABLE_ANSI_COLORS {
-                writer.write_all(Output::pretty_fmt::<true>("<r>").as_bytes());
+                writer.write_all(pretty_fmt_const::<true>("<r>").as_bytes());
             }
         }
 
@@ -1139,7 +1168,7 @@ impl<'a> Formatter<'a> {
             let entry = self.map.get_or_put(value).expect("unreachable");
             if entry.found_existing {
                 writer.write_all(
-                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><cyan>[Circular]<r>").as_bytes(),
+                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><cyan>[Circular]<r>").as_bytes(),
                 );
                 if writer.failed {
                     self.failed = true;
@@ -1205,7 +1234,7 @@ impl<'a> Formatter<'a> {
                         }
 
                         if ENABLE_ANSI_COLORS {
-                            writer.write_all(Output::pretty_fmt::<true>("<r><green>").as_bytes());
+                            writer.write_all(pretty_fmt_const::<true>("<r><green>").as_bytes());
                         }
 
                         let mut has_newline = false;
@@ -1257,7 +1286,7 @@ impl<'a> Formatter<'a> {
                         // before the body, so it fires AFTER the trailing `\n` at .zig:975.
                         // Emit it last here to keep byte-for-byte parity with colored output.
                         if ENABLE_ANSI_COLORS {
-                            writer.write_all(Output::pretty_fmt::<true>("<r>").as_bytes());
+                            writer.write_all(pretty_fmt_const::<true>("<r>").as_bytes());
                         }
                         return Ok(());
                     }
@@ -1265,7 +1294,7 @@ impl<'a> Formatter<'a> {
                     if js_type == JSType::RegExpObject && ENABLE_ANSI_COLORS {
                         writer.print(format_args!(
                             "{}",
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><red>")
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><red>")
                         ));
                     }
 
@@ -1290,7 +1319,7 @@ impl<'a> Formatter<'a> {
                     if js_type == JSType::RegExpObject && ENABLE_ANSI_COLORS {
                         writer.print(format_args!(
                             "{}",
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>")
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>")
                         ));
                     }
                 }
@@ -1314,9 +1343,9 @@ impl<'a> Formatter<'a> {
                     }
                     writer.print(format_args!(
                         "{}{}{}",
-                        Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><yellow>"),
+                        pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><yellow>"),
                         int,
-                        Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                        pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                     ));
                 }
                 Tag::BigInt => {
@@ -1325,9 +1354,9 @@ impl<'a> Formatter<'a> {
 
                     writer.print(format_args!(
                         "{}{}n{}",
-                        Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><yellow>"),
+                        pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><yellow>"),
                         bstr::BStr::new(out_str),
-                        Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                        pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                     ));
                 }
                 Tag::Double => {
@@ -1344,22 +1373,22 @@ impl<'a> Formatter<'a> {
                         self.add_for_new_line(b"Infinity".len());
                         writer.print(format_args!(
                             "{}Infinity{}",
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><yellow>"),
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><yellow>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                         ));
                     } else if num.is_infinite() && num.is_sign_negative() {
                         self.add_for_new_line(b"-Infinity".len());
                         writer.print(format_args!(
                             "{}-Infinity{}",
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><yellow>"),
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><yellow>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                         ));
                     } else if num.is_nan() {
                         self.add_for_new_line(b"NaN".len());
                         writer.print(format_args!(
                             "{}NaN{}",
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><yellow>"),
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><yellow>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                         ));
                     } else {
                         // Width estimate for the JS double serialization.
@@ -1369,9 +1398,9 @@ impl<'a> Formatter<'a> {
                         );
                         writer.print(format_args!(
                             "{}{}{}",
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><yellow>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><yellow>"),
                             num,
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                         ));
                     }
                 }
@@ -1379,16 +1408,16 @@ impl<'a> Formatter<'a> {
                     self.add_for_new_line(9);
                     writer.print(format_args!(
                         "{}undefined{}",
-                        Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><d>"),
-                        Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                        pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><d>"),
+                        pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                     ));
                 }
                 Tag::Null => {
                     self.add_for_new_line(4);
                     writer.print(format_args!(
                         "{}null{}",
-                        Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><yellow>"),
-                        Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                        pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><yellow>"),
+                        pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                     ));
                 }
                 Tag::Symbol => {
@@ -1399,15 +1428,15 @@ impl<'a> Formatter<'a> {
                         self.add_for_new_line(description.len + b"()".len());
                         writer.print(format_args!(
                             "{}Symbol({}){}",
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><blue>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><blue>"),
                             description,
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                         ));
                     } else {
                         writer.print(format_args!(
                             "{}Symbol{}",
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><blue>"),
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><blue>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                         ));
                     }
                 }
@@ -1435,15 +1464,15 @@ impl<'a> Formatter<'a> {
                     if printable.len == 0 {
                         writer.print(format_args!(
                             "{}[class]{}",
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<cyan>"),
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<cyan>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                         ));
                     } else {
                         writer.print(format_args!(
                             "{}[class {}]{}",
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<cyan>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<cyan>"),
                             printable,
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                         ));
                     }
                 }
@@ -1454,15 +1483,15 @@ impl<'a> Formatter<'a> {
                     if printable.len == 0 {
                         writer.print(format_args!(
                             "{}[Function]{}",
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<cyan>"),
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<cyan>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                         ));
                     } else {
                         writer.print(format_args!(
                             "{}[Function: {}]{}",
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<cyan>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<cyan>"),
                             printable,
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                         ));
                     }
                 }
@@ -1521,7 +1550,7 @@ impl<'a> Formatter<'a> {
                                 if tag.cell.is_string_like() {
                                     if ENABLE_ANSI_COLORS {
                                         writer.write_all(
-                                            Output::pretty_fmt::<true>("<r>").as_bytes(),
+                                            pretty_fmt_const::<true>("<r>").as_bytes(),
                                         );
                                     }
                                 }
@@ -1555,7 +1584,7 @@ impl<'a> Formatter<'a> {
                                 if tag.cell.is_string_like() {
                                     if ENABLE_ANSI_COLORS {
                                         writer.write_all(
-                                            Output::pretty_fmt::<true>("<r>").as_bytes(),
+                                            pretty_fmt_const::<true>("<r>").as_bytes(),
                                         );
                                     }
                                 }
@@ -1636,7 +1665,7 @@ impl<'a> Formatter<'a> {
 
                         self.add_for_new_line(b"FormData (entries) ".len());
                         writer.write_all(
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>(
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>(
                                 "<r><blue>FormData<r> <d>(entries)<r> ",
                             )
                             .as_bytes(),
@@ -1656,11 +1685,11 @@ impl<'a> Formatter<'a> {
                         // of this arm instead of printing `Timeout (#N[, repeats])` per
                         // .zig:1242-1254. Replace with `value.as_::<crate::timer::TimeoutObject>()`
                         // once available.
-                        #[cfg(any())]
+                        
                         {
                             value.as_::<crate::timer::TimeoutObject>()
                         }
-                        #[cfg(not(any()))]
+                        #[cfg(any())]
                         {
                             None::<*mut crate::timer::TimeoutObject>
                         }
@@ -1683,26 +1712,26 @@ impl<'a> Formatter<'a> {
                             );
                             writer.print(format_args!(
                                 "{}Timeout{} {}(#{}{}{}{}, repeats){}",
-                                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><blue>"),
-                                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
-                                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<d>"),
-                                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<yellow>"),
+                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><blue>"),
+                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
+                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
+                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<yellow>"),
                                 timer.internals.id,
-                                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
-                                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<d>"),
-                                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
+                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
+                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                             ));
                         } else {
                             writer.print(format_args!(
                                 "{}Timeout{} {}(#{}{}{}{}){}",
-                                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><blue>"),
-                                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
-                                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<d>"),
-                                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<yellow>"),
+                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><blue>"),
+                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
+                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
+                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<yellow>"),
                                 timer.internals.id,
-                                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
-                                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<d>"),
-                                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
+                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
+                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                             ));
                         }
 
@@ -1712,11 +1741,11 @@ impl<'a> Formatter<'a> {
                         // ALWAYS `None` until codegen lands; Immediate values fall through to
                         // the generic Object printer instead of `Immediate (#N)` per
                         // .zig:1255-1261. Replace with `value.as_::<crate::timer::ImmediateObject>()`.
-                        #[cfg(any())]
+                        
                         {
                             value.as_::<crate::timer::ImmediateObject>()
                         }
-                        #[cfg(not(any()))]
+                        #[cfg(any())]
                         {
                             None::<*mut crate::timer::ImmediateObject>
                         }
@@ -1731,14 +1760,14 @@ impl<'a> Formatter<'a> {
                         );
                         writer.print(format_args!(
                             "{}Immediate{} {}(#{}{}{}{}){}",
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><blue>"),
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<d>"),
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<yellow>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><blue>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<yellow>"),
                             immediate.internals.id,
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<d>"),
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                         ));
 
                         return Ok(());
@@ -1747,11 +1776,11 @@ impl<'a> Formatter<'a> {
                         // ALWAYS `None` until codegen lands; BuildMessage values fall through
                         // to the generic Object printer instead of `msg.writeFormat` per
                         // .zig:1262-1264. Replace with `value.as_::<crate::api::BuildMessage>()`.
-                        #[cfg(any())]
+                        
                         {
                             value.as_::<crate::api::BuildMessage>()
                         }
-                        #[cfg(not(any()))]
+                        #[cfg(any())]
                         {
                             None::<*mut crate::api::BuildMessage>
                         }
@@ -1769,11 +1798,11 @@ impl<'a> Formatter<'a> {
                         // ALWAYS `None` until codegen lands; ResolveMessage values fall through
                         // to the generic Object printer instead of `msg.writeFormat` per
                         // .zig:1265-1268. Replace with `value.as_::<crate::api::ResolveMessage>()`.
-                        #[cfg(any())]
+                        
                         {
                             value.as_::<crate::api::ResolveMessage>()
                         }
-                        #[cfg(not(any()))]
+                        #[cfg(any())]
                         {
                             None::<*mut crate::api::ResolveMessage>
                         }
@@ -1829,12 +1858,12 @@ impl<'a> Formatter<'a> {
                     if value.to_boolean() {
                         self.add_for_new_line(4);
                         writer.write_all(
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><yellow>true<r>").as_bytes(),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><yellow>true<r>").as_bytes(),
                         );
                     } else {
                         self.add_for_new_line(5);
                         writer.write_all(
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><yellow>false<r>").as_bytes(),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><yellow>false<r>").as_bytes(),
                         );
                     }
                 }
@@ -1842,7 +1871,7 @@ impl<'a> Formatter<'a> {
                     const FMT: &str = "[this.globalThis]";
                     self.add_for_new_line(FMT.len());
                     writer.write_all(
-                        Output::pretty_fmt::<ENABLE_ANSI_COLORS>(concat!(
+                        pretty_fmt_const::<ENABLE_ANSI_COLORS>(concat!(
                             "<cyan>", "[this.globalThis]", "<r>"
                         ))
                         .as_bytes(),
@@ -1952,9 +1981,9 @@ impl<'a> Formatter<'a> {
 
                         writer.print(format_args!(
                             "{}{}{}",
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><magenta>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><magenta>"),
                             bstr::BStr::new(out_buf),
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                         ));
                         return Ok(());
                     }
@@ -1988,9 +2017,9 @@ impl<'a> Formatter<'a> {
 
                     writer.print(format_args!(
                         "{}{}{} {{\n",
-                        Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><cyan>"),
+                        pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><cyan>"),
                         <&'static str>::from(event_type),
-                        Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                        pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                     ));
                     {
                         self.indent += 1;
@@ -2000,12 +2029,12 @@ impl<'a> Formatter<'a> {
 
                         writer.print(format_args!(
                             "{}type: {}\"{}\"{}{},{}\n",
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<green>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<green>"),
                             bstr::BStr::new(event_type.label()),
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<d>"),
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                         ));
 
                         if let Some(message_value) =
@@ -2015,9 +2044,9 @@ impl<'a> Formatter<'a> {
                                 self.write_indent(writer.ctx).expect("unreachable");
                                 writer.print(format_args!(
                                     "{}message{}:{} ",
-                                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><blue>"),
-                                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<d>"),
-                                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><blue>"),
+                                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
+                                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                                 ));
 
                                 let tag = Tag::get(message_value, self.global_this)?;
@@ -2033,9 +2062,9 @@ impl<'a> Formatter<'a> {
                                 self.write_indent(writer.ctx).expect("unreachable");
                                 writer.print(format_args!(
                                     "{}data{}:{} ",
-                                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><blue>"),
-                                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<d>"),
-                                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><blue>"),
+                                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
+                                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                                 ));
                                 let data: JSValue = value
                                     .fast_get(self.global_this, jsc::BuiltinName::Data)?
@@ -2060,9 +2089,9 @@ impl<'a> Formatter<'a> {
                                     self.write_indent(writer.ctx).expect("unreachable");
                                     writer.print(format_args!(
                                         "{}error{}:{} ",
-                                        Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><blue>"),
-                                        Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<d>"),
-                                        Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                                        pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><blue>"),
+                                        pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
+                                        pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                                     ));
 
                                     let tag = Tag::get(data, self.global_this)?;
@@ -2083,7 +2112,7 @@ impl<'a> Formatter<'a> {
                     writer.write_all(b"}");
                 }
                 Tag::JSX => {
-                    writer.write_all(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>").as_bytes());
+                    writer.write_all(pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>").as_bytes());
 
                     writer.write_all(b"<");
 
@@ -2122,17 +2151,17 @@ impl<'a> Formatter<'a> {
 
                     if !is_tag_kind_primitive {
                         writer.write_all(
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<cyan>").as_bytes(),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<cyan>").as_bytes(),
                         );
                     } else {
                         writer.write_all(
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<green>").as_bytes(),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<green>").as_bytes(),
                         );
                     }
                     writer.write_all(tag_name_slice.slice());
                     if ENABLE_ANSI_COLORS {
                         writer.write_all(
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>").as_bytes(),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>").as_bytes(),
                         );
                     }
 
@@ -2200,16 +2229,16 @@ impl<'a> Formatter<'a> {
 
                                     writer.print(format_args!(
                                         "{}{}{}={}",
-                                        Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><blue>"),
+                                        pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><blue>"),
                                         prop.trunc(128),
-                                        Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<d>"),
-                                        Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                                        pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
+                                        pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                                     ));
 
                                     if tag.cell.is_string_like() {
                                         if ENABLE_ANSI_COLORS {
                                             writer.write_all(
-                                                Output::pretty_fmt::<true>("<r><green>").as_bytes(),
+                                                pretty_fmt_const::<true>("<r><green>").as_bytes(),
                                             );
                                         }
                                     }
@@ -2221,7 +2250,7 @@ impl<'a> Formatter<'a> {
                                     if tag.cell.is_string_like() {
                                         if ENABLE_ANSI_COLORS {
                                             writer.write_all(
-                                                Output::pretty_fmt::<true>("<r>").as_bytes(),
+                                                pretty_fmt_const::<true>("<r>").as_bytes(),
                                             );
                                         }
                                     }
@@ -2263,7 +2292,7 @@ impl<'a> Formatter<'a> {
                                                 }
                                                 if ENABLE_ANSI_COLORS {
                                                     writer.write_all(
-                                                        Output::pretty_fmt::<true>("<r>").as_bytes(),
+                                                        pretty_fmt_const::<true>("<r>").as_bytes(),
                                                     );
                                                 }
 
@@ -2352,14 +2381,14 @@ impl<'a> Formatter<'a> {
                                         writer.write_all(b"</");
                                         if !is_tag_kind_primitive {
                                             writer.write_all(
-                                                Output::pretty_fmt::<ENABLE_ANSI_COLORS>(
+                                                pretty_fmt_const::<ENABLE_ANSI_COLORS>(
                                                     "<r><cyan>",
                                                 )
                                                 .as_bytes(),
                                             );
                                         } else {
                                             writer.write_all(
-                                                Output::pretty_fmt::<ENABLE_ANSI_COLORS>(
+                                                pretty_fmt_const::<ENABLE_ANSI_COLORS>(
                                                     "<r><green>",
                                                 )
                                                 .as_bytes(),
@@ -2368,7 +2397,7 @@ impl<'a> Formatter<'a> {
                                         writer.write_all(tag_name_slice.slice());
                                         if ENABLE_ANSI_COLORS {
                                             writer.write_all(
-                                                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>")
+                                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>")
                                                     .as_bytes(),
                                             );
                                         }
@@ -2745,9 +2774,9 @@ impl JestPrettyFormat {
             this.add_for_new_line(class_name.len);
             writer.print(format_args!(
                 "{}{}{}",
-                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<cyan>"),
+                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<cyan>"),
                 class_name,
-                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
             ));
             this.add_for_new_line(1);
             writer.write_all(b">");

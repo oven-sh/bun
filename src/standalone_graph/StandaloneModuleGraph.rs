@@ -995,7 +995,7 @@ pub fn inject(
                                 // TODO(b2-blocked): bun_resolver::fs::RealFS::tmpdir_path —
                                 // T6 crate not in deps. Retry-in-tmpdir fallback skipped
                                 // until tmpdir_path moves down or bun_resolver is added.
-                                #[cfg(any())]
+                                
                                 {
                                 let zname_z = bun_str::strings::concat(&[
                                     bun_fs::FileSystem::RealFS::tmpdir_path(),
@@ -1925,7 +1925,7 @@ pub fn serialize_json_source_map_for_standalone(
     // (`InternalSourceMap::from_vlq` and `expr::data::Store::reset` are available;
     //  only the JSON parse return type + EString utf8 helpers block.)
     // PERF(port): was arena bulk-free (arena param dropped)
-    #[cfg(any())]
+    
     {
     let json_src = bun_logger::Source::init_path_string(b"sourcemap.json", json_source);
     let mut log = bun_logger::Log::new();

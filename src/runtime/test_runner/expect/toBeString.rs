@@ -1,4 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::Expect;
@@ -16,7 +17,7 @@ impl Expect {
         // calls below go through the guard.
         let mut this = scopeguard::guard(this, |this| this.post_match(global));
 
-        let this_value = frame.this_value();
+        let this_value = frame.this();
         let value: JSValue = this.get_value(global, this_value, "toBeString", "")?;
 
         this.increment_expect_call_counter();

@@ -7,7 +7,7 @@ use bun_string::strings;
 // (http_types → options_types → zlib → io → uws_sys → http_types). `by_loader`
 // (the only consumer) stays gated below until the io→uws_sys edge is broken or
 // Loader moves to a lower tier.
-#[cfg(any())]
+
 use bun_options_types::Loader; // TYPE_ONLY: was bun_bundler::options::Loader (T5); moved to options_types (T3) per CYCLEBREAK
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -503,7 +503,7 @@ impl MimeType {
 
 // TODO: improve this
 // TODO(b2-blocked): bun_options_types::Loader (same-tier T3 → cargo cycle; see top-of-file note)
-#[cfg(any())]
+
 pub fn by_loader(loader: Loader, ext: &[u8]) -> MimeType {
     match loader {
         Loader::Tsx | Loader::Ts | Loader::Js | Loader::Jsx | Loader::Json => JAVASCRIPT,

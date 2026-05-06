@@ -108,7 +108,7 @@ impl CPUFeatures {
         debug_assert!(!flags.contains(Flags::NONE) && (raw & !Flags::all().bits()) == 0);
 
         #[cfg(target_arch = "x86_64")]
-        #[cfg(any())]
+        
         {
             // TODO(b2-blocked): bun_analytics::Features::no_avx_add
             // TODO(b2-blocked): bun_analytics::Features::no_avx2_add

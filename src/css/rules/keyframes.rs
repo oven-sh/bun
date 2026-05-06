@@ -64,7 +64,7 @@ impl KeyframesName {
         // route through the unscoped `serialize_identifier` tail it shares.
         #[inline]
         fn write_ident(dest: &mut Printer, v: &[u8], _handle_css_module: bool) -> core::result::Result<(), PrintErr> {
-            #[cfg(any())]
+            
             return dest.write_ident(v, _handle_css_module);
             css::serializer::serialize_identifier(v, dest).map_err(|_| dest.add_fmt_error())
         }
@@ -197,7 +197,7 @@ impl KeyframeSelector {
 
 // ─── KeyframeSelector parse ───────────────────────────────────────────────
 // blocked_on: css::derive_parse (DeriveParse comptime macro replacement).
-#[cfg(any())]
+
 impl KeyframeSelector {
     // TODO: implement this
     // Zig: `pub const parse = css.DeriveParse(@This()).parse;`
@@ -326,7 +326,7 @@ impl KeyframesRule {
 }
 
 impl KeyframesRule {
-    #[cfg(any())]
+    
     pub fn get_fallbacks<T>(&mut self, _targets: &css::targets::Targets) -> &[css::css_rules::CssRule<T>] {
         let _ = self;
         // Zig: `@compileError(css.todo_stuff.depth)` — intentionally unimplemented.
@@ -360,7 +360,7 @@ pub struct KeyframesListParser;
 // RuleBodyItemParser} trait signatures (css_parser.rs round-5 surface),
 // Parser::parse_comma_separated, DeclarationBlock::parse, ParserOptions::default
 // allocator threading.
-#[cfg(any())]
+
 const _: () = {
     use css::{BasicParseErrorKind, Maybe, Parser, ParserOptions, ParserState, Result};
 

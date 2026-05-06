@@ -952,7 +952,7 @@ impl<'a> RouteLoader<'a> {
         root_dir_info: DirInfoRef,
         base_dir: &[u8],
     ) {
-        #[cfg(any())]
+        
         // TODO(b2-blocked): bun_sys::fs::DirEntry::iter — opaque stub exposes no
         //   way to iterate `data` (Zig: `entries.data.iterator()`); MOVE_DOWN
         //   bun_resolver::fs→sys still pending the EntryMap surface. Once that
@@ -1030,7 +1030,7 @@ impl<'a> RouteLoader<'a> {
                 }
             }
         }
-        } // end #[cfg(any())] gated body
+        } // end  gated body
     }
 }
 
@@ -1353,7 +1353,7 @@ impl Route {
                     .dirname_store()
                     .append(_abs)
                     .expect("unreachable");
-                #[cfg(any())]
+                
                 // TODO(b2-blocked): bun_sys::fs::Entry::set_abs_path — opaque
                 //   MOVE_DOWN stub exposes no setter for `abs_path`
                 //   (Zig: `entry.abs_path = PathString.init(...)`).
@@ -1529,7 +1529,7 @@ impl<'a> Match<'a> {
         self.params.len() > 0
     }
 
-    #[cfg(any())]
+    
     // TODO(b2-blocked): bun_url::PathnameScanner still names the non-generic
     // `bun_url::route_param::Param`; once it adopts `Param<'a>` this un-gates.
     pub fn params_iterator(&self) -> PathnameScanner<'_> {

@@ -104,7 +104,7 @@ pub struct UTF8Fallback;
 // TODO(b2-blocked): `bun_str::strings::{is_all_ascii, replace_latin1_with_utf8,
 // copy_utf16_into_utf8_impl, to_utf8_alloc}` + `ByteList::from_*` constructors
 // are not yet exported with these exact names. Body gated; signatures kept.
-#[cfg(any())]
+
 impl UTF8Fallback {
     const STACK_SIZE: usize = 1024;
 
@@ -372,7 +372,7 @@ impl<T> JSSink<T> {
 /// models that with default method bodies. Associated `const`s replace
 /// `@hasField` checks.
 // TODO(b2-blocked): `streams::Start` is gated inside streams.rs `_jsc_gated`.
-#[cfg(any())]
+
 pub trait JsSinkType: Sized {
     const NAME: &'static str;
     /// Mirrors `@hasDecl(SinkType, "construct")`.
@@ -431,7 +431,7 @@ pub trait JsSinkType: Sized {
 // mark_binding, from_js_host_call_generic, ErrorCode, SystemError,
 // EnsureStillAlive, VirtualMachine::get}` and `streams::Start::from_js` — gated
 // until those land.
-#[cfg(any())]
+
 #[macro_export]
 macro_rules! js_sink {
     ($SinkType:ty, $abi_name:literal, $mod_name:ident) => {
@@ -995,7 +995,7 @@ pub struct Detached {
 pub type DestructorPtr = TaggedPtrUnion<(Detached, Detached)>;
 
 // TODO(b2-blocked): `Subprocess::on_stdin_destroyed` + `Output::debug_warn`.
-#[cfg(any())]
+
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_void) {
     let _ = sink_ptr; // autofix

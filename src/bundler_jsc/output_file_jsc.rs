@@ -6,7 +6,7 @@ use crate::{JSGlobalObject, JSValue};
 pub struct SavedFile;
 
 impl SavedFile {
-    #[cfg(any())]
+    
     pub fn to_js(
         global_this: &JSGlobalObject,
         path: &[u8],
@@ -51,7 +51,7 @@ impl SavedFile {
 // With the impl-target type itself a unit stub, body-gating per-method is not
 // meaningful; the whole trait+impl is gated and the blockers are reported.
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
+
 mod _output_file_jsc_impl {
     use super::*;
     use bun_bundler::output_file::{OutputFile, OutputFileValue};

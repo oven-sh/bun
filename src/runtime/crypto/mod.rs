@@ -7,25 +7,25 @@ use crate::jsc::{JSGlobalObject, JSValue};
 
 #[path = "pwhash.rs"]
 pub mod pwhash;
-#[cfg(any())]
+
 #[path = "PasswordObject.rs"]
 pub mod password_object;
-#[cfg(any())]
+
 #[path = "CryptoHasher.rs"]
 pub mod crypto_hasher;
 #[path = "HMAC.rs"]
 pub mod hmac;
 #[path = "EVP.rs"]
 pub mod evp;
-#[cfg(any())]
+
 #[path = "PBKDF2.rs"]
 pub mod pbkdf2;
-#[cfg(any())]
+
 #[path = "boringssl_jsc.rs"]
 pub mod boringssl_jsc;
 
 pub fn create_crypto_error(global_this: &JSGlobalObject, err_code: u32) -> JSValue {
-    #[cfg(any())]
+    
     {
         return boringssl_jsc::err_to_js(global_this, err_code);
     }

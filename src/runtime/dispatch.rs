@@ -43,7 +43,7 @@ use bun_event_loop::EventLoopTimer::{
 /// loop (the per-item `switch`). The surrounding drain loop + microtask flush
 /// lives in [`tick_queue_with_count`] below (gated until `bun_jsc` is a dep).
 ///
-/// Arms whose payload type is still `#[cfg(any())]`-gated in this crate are
+/// Arms whose payload type is still ``-gated in this crate are
 /// `todo!("dispatch: …")` placeholders so the table stays exhaustive against
 /// `task_tag::COUNT`; un-gating a type means swapping its arm body in-place.
 // PERF(port): was inline switch — Zig `inline else` monomorphized every arm.
@@ -246,7 +246,7 @@ const _: () = assert!(
 // commented out under `TODO(b2-blocked)`).
 // ────────────────────────────────────────────────────────────────────────────
 // TODO(b2-blocked): bun_jsc::event_loop — un-gate once `bun_jsc` is a dep.
-#[cfg(any())]
+
 pub fn tick_queue_with_count(
     el: &mut bun_jsc::event_loop::EventLoop,
     vm: &mut bun_jsc::VirtualMachine,
@@ -300,7 +300,7 @@ pub unsafe fn run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             // SAFETY: tag set with this pointee type at `FilePoll::init`.
             let proc = unsafe { &mut *(owner.ptr as *mut crate::api::bun_process::Process) };
             // `Process::on_wait_pid_from_event_loop_task` is body-gated
-            // (`#[cfg(any())] impl Process`) pending the `bun_spawn` posix
+            // (` impl Process`) pending the `bun_spawn` posix
             // wrappers; the cast above stays so the type wiring is exercised.
             // TODO(b2-blocked): crate::api::bun_process::Process::on_wait_pid_from_event_loop_task
             let _ = proc;
@@ -409,7 +409,7 @@ unsafe fn run_wtf_timer_hook(
 /// builds (debug-asserts in debug) — i.e. `setTimeout`/`setInterval` callbacks
 /// never fire.
 ///
-/// Arms whose container type is still `#[cfg(any())]`-gated in this crate are
+/// Arms whose container type is still ``-gated in this crate are
 /// `todo!("dispatch: …")` placeholders so the table stays exhaustive against
 /// `EventLoopTimerTag`; un-gating a type means swapping its arm body in-place.
 ///
@@ -447,7 +447,7 @@ unsafe fn fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()
             // gated `TimerObjectInternals.rs` Phase-A draft (the un-gated
             // `timer_object_internals.rs` only carries `run_immediate_task`).
             // Un-gate the call below once `fire()` is moved over.
-            #[cfg(any())]
+            
             // SAFETY: per fn contract — `now` is the live snapshot; `vm` is the
             // per-thread VM. `fire` may free the container; `t` is dead after.
             return unsafe { (*internals).fire(&*now, vm) };
@@ -459,7 +459,7 @@ unsafe fn fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()
             // SAFETY: see TimeoutObject arm.
             let internals = unsafe { core::ptr::addr_of_mut!((*container).internals) };
             // TODO(b2-blocked): `TimerObjectInternals::fire` — gated draft.
-            #[cfg(any())]
+            
             // SAFETY: see TimeoutObject arm.
             return unsafe { (*internals).fire(&*now, vm) };
             let _ = (internals, vm);
@@ -601,10 +601,10 @@ pub fn install_dispatch_hooks() {
     );
 
     // bun_jsc::RUN_TASK_HOOK / TICK_QUEUE_HOOK → tick_queue_with_count.
-    // Gated: `tick_queue_with_count` itself is `#[cfg(any())]` above (its
+    // Gated: `tick_queue_with_count` itself is `` above (its
     // `HotReloadTask` early-return needs the high-tier type un-gated).
     // TODO(b2-blocked): bun_jsc::set_run_task_hook / set_tick_queue_hook.
-    #[cfg(any())]
+    
     {
         bun_jsc::set_run_task_hook(tick_queue_with_count);
         bun_jsc::event_loop::set_tick_queue_hook(tick_queue_with_count);
@@ -617,7 +617,7 @@ pub fn install_dispatch_hooks() {
 //               src/aio/posix_event_loop.zig FilePoll.onUpdate (13-arm switch)
 //   confidence: medium — table exhaustive, arm bodies mostly gated
 //   todos:      see `todo!("dispatch: …")` count; un-gate per-type as the
-//               owning module loses its `#[cfg(any())]`
+//               owning module loses its ``
 //   notes:      §Dispatch hot-path — high tier owns the match; low tier
 //               stores (tag, ptr) + AtomicPtr hook only.
 // ──────────────────────────────────────────────────────────────────────────

@@ -8,35 +8,35 @@
 //! (`ConcurrentPromiseTask`, `webcore::Blob`, cached-slot accessors) is real.
 
 // ─── gated Phase-A drafts (preserved on disk, not compiled) ──────────────────
-#[cfg(any())]
+
 #[path = "Image.rs"]
 mod image_body; // full Phase-A draft of Image.zig
-#[cfg(any())]
+
 #[path = "codecs.rs"]
 pub mod codecs_body; // full Phase-A draft — needs bun_str::zstr!, bun_alloc::mimalloc
 
 // Per-codec bodies depend on `super::codecs` (the gated draft above) for
 // `Decoded`/`Encoded`/`Error`/`DecodeHint`, plus FFI sys crates not yet
 // vendored (libspng / libjpeg-turbo / libwebp). They stay gated alongside it.
-#[cfg(any())]
+
 #[path = "codec_jpeg.rs"]
 pub mod codec_jpeg;
-#[cfg(any())]
+
 #[path = "codec_png.rs"]
 pub mod codec_png;
-#[cfg(any())]
+
 #[path = "codec_webp.rs"]
 pub mod codec_webp;
-#[cfg(any())]
+
 #[path = "codec_bmp.rs"]
 pub mod codec_bmp;
-#[cfg(any())]
+
 #[path = "codec_gif.rs"]
 pub mod codec_gif;
-#[cfg(any())]
+
 #[path = "backend_coregraphics.rs"]
 pub mod backend_coregraphics;
-#[cfg(any())]
+
 #[path = "backend_wic.rs"]
 pub mod backend_wic;
 

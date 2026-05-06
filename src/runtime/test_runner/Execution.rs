@@ -36,10 +36,11 @@
 //! ```
 
 use core::ptr::NonNull;
+#[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 
 use bun_core::Timespec; // TODO(port): confirm crate path for bun.timespec
 use bun_jsc::{JSGlobalObject, JsResult, VirtualMachine};
-use bun_output::scoped_log;
+use bun_core::scoped_log;
 
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
@@ -48,7 +49,7 @@ use super::bun_test::{
 };
 use crate::cli::test_command;
 
-bun_output::declare_scope!(jest, visible);
+bun_core::declare_scope!(jest, visible);
 
 pub struct Execution {
     pub groups: Box<[ConcurrentGroup]>,

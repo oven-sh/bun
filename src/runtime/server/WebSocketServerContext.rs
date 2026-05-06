@@ -53,7 +53,7 @@ bitflags::bitflags! {
 // JS callback bodies — gated until bun_jsc method surface (JSValue::call,
 // get_truthy, protect, JSGlobalObject::throw_*) is available.
 // TODO(b2-blocked): bun_jsc::{JSValue, JSGlobalObject} methods.
-#[cfg(any())]
+
 impl Handler {
     pub fn run_error_callback(
         &self,
@@ -173,7 +173,7 @@ impl WebSocketServerContext {
     // gated alongside since they only call gated methods.
 }
 
-#[cfg(any())]
+
 static COMPRESS_TABLE: phf::Map<&'static [u8], i32> = phf::phf_map! {
     b"disable" => 0,
     b"shared" => uws::SHARED_COMPRESSOR,
@@ -188,7 +188,7 @@ static COMPRESS_TABLE: phf::Map<&'static [u8], i32> = phf::phf_map! {
     b"256KB" => uws::DEDICATED_COMPRESSOR_256KB,
 };
 
-#[cfg(any())]
+
 static DECOMPRESS_TABLE: phf::Map<&'static [u8], i32> = phf::phf_map! {
     b"disable" => 0,
     b"shared" => uws::SHARED_DECOMPRESSOR,
@@ -203,7 +203,7 @@ static DECOMPRESS_TABLE: phf::Map<&'static [u8], i32> = phf::phf_map! {
     b"256KB" => uws::DEDICATED_COMPRESSOR_256KB,
 };
 
-#[cfg(any())]
+
 // TODO(port): phf custom hasher — Zig used `.getWithEql(zig_string, ZigString.eqlComptime)`,
 // which compares a ZigString (possibly UTF-16) against the literal keys. Here we go through
 // `ZigString::as_bytes_if_latin1()` (or equivalent) and look up in the phf map; Phase B should
@@ -214,7 +214,7 @@ fn lookup_zig_string(table: &phf::Map<&'static [u8], i32>, key: &bun_str::ZigStr
 
 // TODO(b2-blocked): bun_jsc::JSValue::{get, get_truthy, to_boolean, is_string,
 // get_zig_string, to_int64, is_any_int}.
-#[cfg(any())]
+
 pub fn on_create(
     global_object: &JSGlobalObject,
     object: JSValue,

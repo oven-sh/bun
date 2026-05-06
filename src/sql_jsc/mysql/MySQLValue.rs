@@ -261,7 +261,7 @@ impl Value {
         unsigned: bool,
         roots: &mut MarkedArgumentBuffer,
     ) -> Result<Value, any_mysql_error::Error> {
-        #[cfg(not(any()))]
+        #[cfg(any())]
         {
             // TODO(b2-blocked): bun_jsc::JSGlobalObject::{validate_integer_range,validate_big_int_range}
             // TODO(b2-blocked): bun_jsc::JSValue::{coerce,json_stringify_fast,as_<T>}
@@ -271,7 +271,7 @@ impl Value {
             let _ = (value, global_object, field_type, unsigned, roots);
             unimplemented!("b2-blocked: bun_jsc / bun_runtime method surface")
         }
-        #[cfg(any())]
+        
         {
         if value.is_empty_or_undefined_or_null() {
             return Ok(Value::Null);

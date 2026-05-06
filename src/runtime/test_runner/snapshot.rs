@@ -1,4 +1,5 @@
 use core::ffi::c_ulong;
+#[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 use std::io::Write as _;
 
 use bun_collections::{ArrayHashMap, HashMap, StringHashMap};

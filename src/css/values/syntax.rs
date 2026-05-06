@@ -109,7 +109,7 @@ impl SyntaxString {
         match self {
             SyntaxString::Universal => {
                 // blocked_on: properties::custom::TokenList::parse un-gate
-                // (its `parse_into` body is `#[cfg(any())]`). Body identical to
+                // (its `parse_into` body is ``). Body identical to
                 // Zig once that flips:
                 //   ParsedComponent::TokenList(TokenList::parse(input, &ParserOptions::default(None), 0)?)
                 let _ = input;

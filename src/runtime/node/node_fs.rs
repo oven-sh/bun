@@ -79,7 +79,7 @@ mod node {
     pub use super::super::{gid_t, uid_t};
 
     /// `node::mode_from_js` — the real impl lives in `super::types::mode_from_js`
-    /// but is currently `#[cfg(any())]`-gated by a sibling agent. Forward to it
+    /// but is currently ``-gated by a sibling agent. Forward to it
     /// when ungated; until then this is a typed stub so the dozens of call
     /// sites in `args::*::from_js` keep their signatures.
     #[inline]
@@ -100,9 +100,9 @@ use super::util::validators;
 pub use super::node_fs_constant as constants;
 // node_fs_watcher / node_fs_stat_watcher are JSC-bound and not yet declared in
 // `node.rs`; their re-exports stay gated.
-#[cfg(any())]
+
 pub use super::node_fs_watcher::FSWatcher as Watcher;
-#[cfg(any())]
+
 pub use super::node_fs_stat_watcher::StatWatcher;
 
 // PORT NOTE: `Binding` is `super::node_fs_binding::Binding` in Zig, but that
@@ -2952,13 +2952,13 @@ pub mod args {
 
     pub type UnwatchFile = ();
     // TODO(b2-blocked): Watcher / StatWatcher modules are gated; arg types stubbed.
-    #[cfg(any())]
+    
     pub type Watch = super::Watcher::Arguments;
-    #[cfg(any())]
+    
     pub type WatchFile = super::StatWatcher::Arguments;
-    #[cfg(not(any()))]
+    #[cfg(any())]
     pub type Watch = ();
-    #[cfg(not(any()))]
+    #[cfg(any())]
     pub type WatchFile = ();
 
     pub struct Fsync { pub fd: FD }
@@ -4768,7 +4768,7 @@ impl NodeFS {
         // PORT NOTE: Zig used a 256 KB *stack* buffer in the async case and the
         // VM's `rareData().pipeReadBuffer()` (a per-VM 256 KB heap slab) in the
         // sync case. Rust can't put 256 KB on the stack portably, and the
-        // RareData accessor is `#[cfg(any())]`-gated (b2-cycle), so for round 3
+        // RareData accessor is ``-gated (b2-cycle), so for round 3
         // both flavors use a transient heap buffer. Same observable behaviour;
         // revisit once `rare_data().pipe_read_buffer()` is real.
         let mut tmp_read_backing: Vec<u8> = vec![0u8; 256 * 1024];
@@ -5399,7 +5399,7 @@ impl NodeFS {
     }
 
     // TODO(b2-blocked): args::WatchFile = StatWatcher::Arguments — module gated.
-    #[cfg(any())]
+    
     pub fn watch_file(&mut self, args: &args::WatchFile, flavor: Flavor) -> Maybe<ret::WatchFile> {
         debug_assert!(flavor == Flavor::Sync);
         let watcher = match args.create_stat_watcher() {
@@ -5457,7 +5457,7 @@ impl NodeFS {
     }
 
     // TODO(b2-blocked): args::Watch = Watcher::Arguments — module gated.
-    #[cfg(any())]
+    
     pub fn watch(&mut self, args: &args::Watch, _: Flavor) -> Maybe<ret::Watch> {
         match args.create_fs_watcher() {
             Maybe::Ok(result) => Maybe::Ok(result.js_this),

@@ -1,3 +1,4 @@
+#![cfg(any())]
 use core::ffi::c_void;
 
 use crate::mimalloc;

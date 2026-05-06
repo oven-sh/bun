@@ -26,7 +26,7 @@ thread_local! {
 // TCPSocket, TLSSocket}` whose struct shapes / `bun_jsc::codegen` re-exports
 // are not yet stable. The two statics above are the only JSC-free state.
 // TODO(b2-blocked): un-gate once bun_jsc JSFunction/codegen + crate::api socket types land.
-#[cfg(any())]
+
 mod _impl {
 use super::*;
 

@@ -1,4 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::Expect;
@@ -34,27 +35,23 @@ impl Expect {
             return Ok(JSValue::UNDEFINED);
         }
 
-        let mut formatter = Formatter {
-            global_this: global,
-            quote_strings: true,
-            ..Default::default()
-        };
+        let mut formatter = super::make_formatter(global);
         // `defer formatter.deinit()` → dropped; Formatter: Drop handles cleanup.
         let received = value.to_fmt(&mut formatter);
 
         if not {
-            const SIGNATURE: &str = Expect::get_signature("toBeFinite", "", true);
+            let signature: &str = Expect::get_signature("toBeFinite", "", true);
             return this.throw(
                 global,
-                SIGNATURE,
+                signature,
                 format_args!("\n\nReceived: <red>{}<r>\n", received),
             );
         }
 
-        const SIGNATURE: &str = Expect::get_signature("toBeFinite", "", false);
+        let signature: &str = Expect::get_signature("toBeFinite", "", false);
         this.throw(
             global,
-            SIGNATURE,
+            signature,
             format_args!("\n\nReceived: <red>{}<r>\n", received),
         )
     }

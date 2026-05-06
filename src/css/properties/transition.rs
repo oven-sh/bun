@@ -184,7 +184,7 @@ impl TransitionHandler {
     }
 }
 
-#[cfg(any())] // blocked_on: Property variant payloads + SmallList::eql/deep_clone + masking::get_webkit_mask_property + VendorPrefix::FIELDS
+ // blocked_on: Property variant payloads + SmallList::eql/deep_clone + masking::get_webkit_mask_property + VendorPrefix::FIELDS
 mod transition_handler_body {
 use super::*;
 impl TransitionHandler {

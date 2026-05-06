@@ -58,7 +58,7 @@ impl FileRoute {
 // AnyResponse write surface (cycle-5-B), bun_aio::Closer, bun_io::FileType,
 // FileResponseStream, RangeRequest.
 // TODO(b2-blocked): bun_jsc + bun_uws response write surface.
-#[cfg(any())]
+
 mod _gated {
 use super::*;
 use bun_aio::Closer;

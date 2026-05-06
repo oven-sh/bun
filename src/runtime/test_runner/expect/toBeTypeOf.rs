@@ -1,4 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 use super::Expect;
 use super::get_signature;
@@ -14,7 +15,7 @@ static JS_TYPE_OF_MAP: phf::Map<&'static [u8], &'static [u8]> = phf::phf_map! {
     b"undefined" => b"undefined",
 };
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_be_type_of(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -25,7 +26,7 @@ pub fn to_be_type_of(
     let _post = scopeguard::guard((), |_| this.post_match(global));
 
     let this_value = frame.this();
-    let _arguments = frame.arguments_old(1);
+    let _arguments = frame.arguments_old::<1>();
     let arguments = &_arguments.ptr[0.._arguments.len];
 
     if arguments.len() < 1 {
@@ -86,11 +87,7 @@ pub fn to_be_type_of(
         return Ok(JSValue::UNDEFINED);
     }
 
-    let mut formatter = Formatter {
-        global_this: global,
-        quote_strings: true,
-        ..Default::default()
-    };
+    let mut formatter = super::make_formatter(global);
     // `defer formatter.deinit()` — handled by Drop.
     let received = value.to_fmt(&mut formatter);
     let expected_str = expected.to_fmt(&mut formatter);

@@ -236,10 +236,10 @@ impl HTMLRewriter {
 
         if kind != ResponseKind::Other {
             // TODO(b2-blocked): `webcore::body::extract` lives in Body.rs's
-            // `#[cfg(any())] mod _jsc_gated` block. Un-gate when that lands.
-            #[cfg(any())]
+            // ` mod _jsc_gated` block. Un-gate when that lands.
+            
             let body_value = webcore::body::extract(global, response_value)?;
-            #[cfg(not(any()))]
+            #[cfg(any())]
             let body_value: Body = todo!("blocked_on: webcore::body::extract");
             let resp = Box::into_raw(Box::new(Response::init(
                 webcore::response::Init { status_code: 200, ..Default::default() },
@@ -511,9 +511,9 @@ pub struct BufferOutputSink {
     pub response: *mut Response, // BORROW_FIELD: kept alive by response_value Strong
     pub response_value: Strong,
     // TODO(b2-blocked): `webcore::body::ValueBufferer` is defined inside
-    // Body.rs's `#[cfg(any())] mod _jsc_gated` block. Field gated until that
+    // Body.rs's ` mod _jsc_gated` block. Field gated until that
     // un-gates; downstream usages are gated alongside.
-    #[cfg(any())]
+    
     pub body_value_bufferer: Option<webcore::body::ValueBufferer<'static>>,
     pub tmp_sync_error: Option<NonNull<JSValue>>, // TODO(port): lifetime — points at a stack local in init()
 }
@@ -554,7 +554,7 @@ impl BufferOutputSink {
             context,
             response: core::ptr::null_mut(),
             response_value: Strong::empty(),
-            #[cfg(any())] // TODO(b2-blocked): un-gate with webcore::body::ValueBufferer
+             // TODO(b2-blocked): un-gate with webcore::body::ValueBufferer
             body_value_bufferer: None,
             tmp_sync_error: None,
         }));
@@ -666,7 +666,7 @@ impl BufferOutputSink {
             (*sink).ref_();
             // TODO(b2-blocked): `webcore::body::ValueBufferer` is gated upstream
             // (Body.rs `_jsc_gated`). Un-gate this initialization with the field.
-            #[cfg(any())]
+            
             {
                 (*sink).body_value_bufferer = Some(webcore::body::ValueBufferer::init(
                     sink as *mut core::ffi::c_void,
@@ -724,7 +724,7 @@ impl BufferOutputSink {
         Ok(response_js_value)
     }
 
-    #[cfg(any())] // TODO(b2-blocked): un-gate with webcore::body::ValueBufferer
+     // TODO(b2-blocked): un-gate with webcore::body::ValueBufferer
     fn on_finished_buffering_trampoline(
         ctx: *mut core::ffi::c_void,
         bytes: &[u8],

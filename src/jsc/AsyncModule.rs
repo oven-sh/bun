@@ -7,7 +7,7 @@
 //! `RuntimeTranspilerStore::run_from_js_thread`). The package-manager-driven
 //! bodies (`Queue::poll_modules` / `resolve_error` / `download_error` /
 //! `resume_loading_module`) are preserved verbatim from the Phase-A draft
-//! inside `#[cfg(any())]` blocks below — every body reaches into
+//! inside `` blocks below — every body reaches into
 //! `bun_install::PackageManager` runTasks / `MultiArrayList` column accessors /
 //! `bun_bundler::linker` that aren't wired yet (see PORT STATUS).
 
@@ -115,7 +115,7 @@ impl Queue {
     /// SAFETY: `self` must point to `VirtualMachine.modules`; Queue is only
     /// ever constructed in place as that field. Gated until
     /// `VirtualMachine.modules` widens from `()` → `Queue`.
-    #[cfg(any())]
+    
     pub fn vm(&mut self) -> &mut VirtualMachine {
         unsafe {
             &mut *((self as *mut Self as *mut u8)
@@ -243,7 +243,7 @@ unsafe extern "C" {
 // sound, (d) `KeepAlive::ref_/unref` get a `&mut VirtualMachine` overload (or
 // the `EventLoopCtx` vtable for VM is installed).
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
+
 mod _gated_impl {
     use super::*;
     use core::sync::atomic::Ordering;

@@ -1100,11 +1100,11 @@ impl<'a> Drop for BunTest<'a> {
 // `#[bun_jsc::host_fn]` proc-macro already emits the extern-"C" wrapper for
 // `bun_test_then`/`bun_test_catch`, but its mangled name isn't stable yet.
 // Gate the C++-linked statics until the proc-macro exposes a named symbol.
-#[cfg(any())]
+
 #[unsafe(no_mangle)]
 pub static Bun__TestScope__Describe2__bunTestThen: jsc::host_fn::JSHostFn =
     jsc::host_fn::to_js_host_fn(BunTest::bun_test_then);
-#[cfg(any())]
+
 #[unsafe(no_mangle)]
 pub static Bun__TestScope__Describe2__bunTestCatch: jsc::host_fn::JSHostFn =
     jsc::host_fn::to_js_host_fn(BunTest::bun_test_catch);

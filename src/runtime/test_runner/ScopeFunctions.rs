@@ -1,4 +1,5 @@
 use core::fmt;
+#[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 use core::sync::atomic::{AtomicI32, Ordering};
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, VirtualMachine};
@@ -493,7 +494,7 @@ impl ScopeFunctions {
 
 fn error_in_ci(global: &JSGlobalObject, signature: &[u8]) -> JsResult<()> {
     if crate::cli::ci_info::is_ci() {
-        return global.throw_pretty(format_args!(
+        return global.throw(format_args!(
             "{} is disabled in CI environments to prevent accidentally skipping tests. To override, set the environment variable CI=false.",
             bstr::BStr::new(signature)
         ));
@@ -571,7 +572,7 @@ fn get_description(
         return Ok(slice.into_owned_slice());
     }
 
-    global.throw_pretty(format_args!(
+    global.throw(format_args!(
         "{}() expects first argument to be a named class, named function, number, or string",
         signature
     ))
@@ -673,23 +674,23 @@ pub fn parse_arguments(
     } else if options.is_object() {
         if let Some(timeout) = options.get(global, "timeout")? {
             if !timeout.is_number() {
-                return global.throw_pretty(format_args!("{}() expects timeout to be a number", signature));
+                return global.throw(format_args!("{}() expects timeout to be a number", signature));
             }
             timeout_option = Some(timeout.as_number());
         }
         if let Some(retries) = options.get(global, "retry")? {
             if !retries.is_number() {
-                return global.throw_pretty(format_args!("{}() expects retry to be a number", signature));
+                return global.throw(format_args!("{}() expects retry to be a number", signature));
             }
             // std.math.lossyCast(u32, f64) — Rust `as` saturates on overflow/NaN.
             result.options.retry = Some(retries.as_number() as u32);
         }
         if let Some(repeats) = options.get(global, "repeats")? {
             if !repeats.is_number() {
-                return global.throw_pretty(format_args!("{}() expects repeats to be a number", signature));
+                return global.throw(format_args!("{}() expects repeats to be a number", signature));
             }
             if result.options.retry.is_some() && result.options.retry.unwrap() != 0 {
-                return global.throw_pretty(format_args!("{}(): Cannot set both retry and repeats", signature));
+                return global.throw(format_args!("{}(): Cannot set both retry and repeats", signature));
             }
             result.options.repeats = repeats.as_number() as u32;
         }
@@ -714,7 +715,7 @@ pub fn parse_arguments(
         }
     }
     if result.options.retry.unwrap_or(0) != 0 && result.options.repeats != 0 {
-        return global.throw_pretty(format_args!("{}(): Cannot set both retry and repeats", signature));
+        return global.throw(format_args!("{}(): Cannot set both retry and repeats", signature));
     }
 
     let default_timeout_ms: Option<u32> = jest::Jest::runner().and_then(|runner| {

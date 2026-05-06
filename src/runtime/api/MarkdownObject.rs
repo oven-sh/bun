@@ -32,7 +32,7 @@ pub enum TagIndex {
 // `bun_md` (not a `bun_runtime` dependency). Preserved verbatim; the two
 // pure pieces (`extract_language`, `TagIndex`) are duplicated above.
 // TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn] proc-macro + bun_md dep
-#[cfg(any())]
+
 mod _jsc_gated {
 use core::ffi::c_void;
 

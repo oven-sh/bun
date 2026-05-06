@@ -87,7 +87,7 @@ impl OutKind {
 
 // The full body (to_subproc_stdio, memory_cost, enqueue, etc.) is preserved
 // gated — depends on subproc::Stdio and IOWriter::enqueue.
-#[cfg(any())]
+
 mod io_body {
     include!("IO_body_gated.rs");
 }

@@ -120,7 +120,7 @@ pub mod features {
     // for use in `EnumSet<HardcodedModule>` here. Until the move-in lands,
     // re-gate just this static and the formatter's builtins iterator below,
     // and add `bun_options_types.workspace = true` to Cargo.toml when un-gating.
-    #[cfg(any())]
+    
     pub static BUILTIN_MODULES: parking_lot::Mutex<
         enumset::EnumSet<bun_options_types::module_loader::HardcodedModule>,
     > = parking_lot::const_mutex(enumset::EnumSet::empty());
@@ -216,7 +216,7 @@ pub mod features {
 
                     // TODO(b2-blocked): bun_options_types::module_loader::HardcodedModule
                     // (see BUILTIN_MODULES above)
-                    #[cfg(any())]
+                    
                     {
                         let builtins = BUILTIN_MODULES.lock();
                         let mut iter = builtins.iter();

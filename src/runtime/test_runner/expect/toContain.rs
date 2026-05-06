@@ -1,4 +1,5 @@
 use core::ffi::c_void;
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
 use bun_jsc::console_object::Formatter;
@@ -20,7 +21,7 @@ impl Expect {
         scopeguard::defer! { this.post_match(global); }
 
         let this_value = frame.this();
-        let arguments_ = frame.arguments_old(1);
+        let arguments_ = frame.arguments_old::<1>();
         let arguments = arguments_.slice();
 
         if arguments.len() < 1 {
@@ -44,7 +45,7 @@ impl Expect {
             pass: *mut bool,
         }
 
-        if value.js_type_loose().is_array_like() {
+        if value.js_type().is_array_like() {
             let mut itr = value.array_iterator(global)?;
             while let Some(item) = itr.next()? {
                 if item.is_same_value(expected, global)? {
@@ -52,7 +53,7 @@ impl Expect {
                     break;
                 }
             }
-        } else if value.is_string_literal() && expected.is_string_literal() {
+        } else if value.is_string() && expected.is_string() {
             let value_string = value.to_slice(global)?;
             let expected_string = expected.to_slice(global)?;
 
@@ -111,11 +112,7 @@ impl Expect {
         }
 
         // handle failure
-        let mut formatter = Formatter {
-            global,
-            quote_strings: true,
-            ..Default::default()
-        };
+        let mut formatter = super::make_formatter(global);
         let value_fmt = value.to_fmt(&mut formatter);
         let expected_fmt = expected.to_fmt(&mut formatter);
         if not {

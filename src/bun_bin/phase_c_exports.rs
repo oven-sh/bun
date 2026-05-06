@@ -6,7 +6,7 @@
 //! revision `bun_runtime` (and transitively `bun_jsc`) is a real dependency of
 //! this binary crate, so any `#[no_mangle]` definition that compiles in either
 //! of those crates is now visible to the linker. Stubs that would collide have
-//! been removed; what remains is either (a) still inside a `#[cfg(any())]`
+//! been removed; what remains is either (a) still inside a ``
 //! gate upstream, or (b) defined only in C++ object files not yet in the
 //! Phase-C link set.
 //!
@@ -140,14 +140,14 @@ pub extern "C" fn Bun__isNoProxy(
 }
 
 // PHASE-C: C++ callback — Zig: `export fn napi_internal_suppress_crash_on_abort_if_desired() void`
-// REAL: src/runtime/napi/napi_body.rs (gated under `#[cfg(any())] mod napi_body`)
+// REAL: src/runtime/napi/napi_body.rs (gated under ` mod napi_body`)
 #[unsafe(no_mangle)]
 pub extern "C" fn napi_internal_suppress_crash_on_abort_if_desired() {
     // No-op until crash_handler exposes the suppression hook.
 }
 
 // PHASE-C: C++ callback — Zig: `export fn bun_ssl_ctx_cache_on_free(...) void`
-// REAL: src/runtime/api/bun/SSLContextCache.rs (gated `#[cfg(any())] mod bun_ssl_context_cache`)
+// REAL: src/runtime/api/bun/SSLContextCache.rs (gated ` mod bun_ssl_context_cache`)
 // CRYPTO_EX_free signature; safe no-op until SSLContextCache is wired.
 #[unsafe(no_mangle)]
 pub extern "C" fn bun_ssl_ctx_cache_on_free(
@@ -187,7 +187,7 @@ macro_rules! phase_c_todo {
 // ── VM bridge ───────────────────────────────────────────────────────────────
 // REAL: src/jsc/virtual_machine_exports.rs, src/jsc/JSCScheduler.rs,
 //       src/runtime/api/BunObject.rs, src/runtime/timer/DateHeaderTimer.rs
-//       — all still inside `#[cfg(any())] mod _gated` in bun_jsc/lib.rs (or
+//       — all still inside ` mod _gated` in bun_jsc/lib.rs (or
 //       equivalent draft gates).
 
 #[unsafe(no_mangle)]
@@ -313,7 +313,7 @@ pub extern "C" fn AbortSignal__Timeout__deinit(this: *mut Timeout) {
 
 // ── Host fns: `(global, callframe) -> JSValue` ──────────────────────────────
 // REAL: src/runtime/webcore/{fetch,ObjectURLRegistry,prompt,FormData}.rs
-//       — all still inside `#[cfg(any())] mod _gated` in their files (or the
+//       — all still inside ` mod _gated` in their files (or the
 //       containing webcore submod is gated in src/runtime/webcore.rs).
 
 #[unsafe(no_mangle)]
@@ -384,7 +384,7 @@ pub extern "C" fn Bun__WebSocket__freeSSLConfig(config: *mut SSLConfig) {
 // Bun__encoding__toString
 
 // ── TextEncoder ─────────────────────────────────────────────────────────────
-// REAL: src/runtime/webcore/TextEncoder.rs (gated `#[cfg(any())] mod text_encoder`
+// REAL: src/runtime/webcore/TextEncoder.rs (gated ` mod text_encoder`
 // in src/runtime/webcore.rs `_gated_submods`).
 
 #[unsafe(no_mangle)]
@@ -435,7 +435,7 @@ pub extern "C" fn TextEncoder__encodeInto8(
 
 // ── Blob ────────────────────────────────────────────────────────────────────
 // REAL: src/runtime/webcore/Blob.rs (+ generated .classes.ts hooks)
-//       C-export bodies still inside `#[cfg(any())] mod _jsc_gated` in Blob.rs.
+//       C-export bodies still inside ` mod _jsc_gated` in Blob.rs.
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__dupeFromJS(value: JSValue) -> *mut Blob {
@@ -550,7 +550,7 @@ pub extern "C" fn Bun__Chrome__kill() {}
 pub extern "C" fn Bun__WebViewHost__kill() {}
 
 // ── napi ────────────────────────────────────────────────────────────────────
-// REAL: src/runtime/napi/napi_body.rs (gated `#[cfg(any())] mod napi_body`)
+// REAL: src/runtime/napi/napi_body.rs (gated ` mod napi_body`)
 
 type NapiEnv = *mut c_void;
 type NapiValue = *mut c_void;
@@ -597,7 +597,7 @@ pub extern "C" fn napi_internal_enqueue_finalizer(
 }
 
 // ── usockets dispatch ───────────────────────────────────────────────────────
-// REAL: src/runtime/socket/uws_dispatch.rs (gated `#[cfg(any())] pub mod uws_dispatch`)
+// REAL: src/runtime/socket/uws_dispatch.rs (gated ` pub mod uws_dispatch`)
 
 #[unsafe(no_mangle)]
 pub extern "C" fn us_dispatch_open(
@@ -673,7 +673,7 @@ pub extern "C" fn us_dispatch_ssl_raw_tap(
 }
 
 // ── DNS addrinfo (usockets → bun_runtime::dns_jsc) ──────────────────────────
-// REAL: src/runtime/dns_jsc/dns.rs (gated `#[cfg(any())] mod dns_body`)
+// REAL: src/runtime/dns_jsc/dns.rs (gated ` mod dns_body`)
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__addrinfo_get(

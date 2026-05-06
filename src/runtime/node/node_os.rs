@@ -35,7 +35,7 @@ pub fn freemem() -> u64 {
 // `bun_sys::c::sysinfo` / `crate::gen_::node_os` which are not yet exported.
 // CPUTimes struct + freemem() + trailing pure helpers hoisted above/below.
 // TODO(b2-blocked): un-gate once bun_jsc + bun_sys::posix syscall surface land.
-#[cfg(any())]
+
 mod _impl {
 use super::*;
 use std::io::Write as _;

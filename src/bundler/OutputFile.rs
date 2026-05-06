@@ -144,7 +144,7 @@ impl FileOperation {
     }
 
     pub fn get_pathname(&self) -> &[u8] {
-        #[cfg(any())]
+        
         if self.is_tmpdir {
             // TODO(port): `resolve_path.joinAbs` writes into a threadlocal buffer in
             // Zig; the Rust port returns a borrow into that TLS buffer. Verify lifetime.
@@ -264,7 +264,7 @@ pub struct SavedFile {
 }
 
 impl OutputFile {
-    #[cfg(any())]
+    
     // TODO(b2-blocked): bun_resolver::Result — see `Value::Pending`.
     pub fn init_pending(loader: Loader, pending: resolver::Result) -> OutputFile {
         let src_path = pending.path_const().expect("path").clone();
@@ -337,7 +337,7 @@ pub struct Options {
 }
 
 impl OutputFile {
-    #[cfg(any())]
+    
     // TODO(b2-blocked): bun_logger::fs::Path::init — current stub takes
     // `&'static [u8]`; `options.input_path: Box<[u8]>` is owned. Needs
     // `fs::Path` to own its `text` (see field comment on `src_path`). Per
@@ -378,7 +378,7 @@ impl OutputFile {
         }
     }
 
-    #[cfg(any())]
+    
     // TODO(b2-blocked): bun_sys::write_file_with_path_buffer / make_path /
     // move_file_z / openat / copy_file — high-level fs surface not yet exported.
     // TODO(port): narrow error set
@@ -432,7 +432,7 @@ impl OutputFile {
         Ok(())
     }
 
-    #[cfg(any())]
+    
     // TODO(b2-blocked): bun_sys::move_file_z / bun_string::ZStr::from_bytes
     // TODO(port): narrow error set
     pub fn move_to(&self, _: &[u8], rel_path: &[u8], dir: Fd) -> Result<(), Error> {
@@ -447,7 +447,7 @@ impl OutputFile {
         Ok(())
     }
 
-    #[cfg(any())]
+    
     // TODO(b2-blocked): bun_sys::openat / copy_file
     // TODO(port): narrow error set
     pub fn copy_to(&self, _: &[u8], rel_path: &[u8], dir: Fd) -> Result<(), Error> {

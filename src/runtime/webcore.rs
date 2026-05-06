@@ -7,7 +7,7 @@ use core::ptr::NonNull;
 
 // ─── submodules under ./webcore/ ─────────────────────────────────────────────
 // Remaining gated: depend on bun_jsc method surface (not yet a dep of bun_runtime).
-#[cfg(any())]
+
 mod _gated_submods {
     pub use bun_jsc::js_error_code::DOMExceptionCode;
     pub use bun_jsc::web_worker;
@@ -237,9 +237,9 @@ impl HasAutoFlusher for file_sink::FileSink {
 }
 
 // Gated alongside the `HTTPServerWritable` method bodies (see
-// `webcore/streams.rs` `#[cfg(any())] impl<...> HTTPServerWritable` block) —
+// `webcore/streams.rs` ` impl<...> HTTPServerWritable` block) —
 // the inherent `on_auto_flush` lives there. Un-gate together.
-#[cfg(any())]
+
 impl<const SSL: bool, const HTTP3: bool> HasAutoFlusher
     for streams::HTTPServerWritable<SSL, HTTP3>
 {

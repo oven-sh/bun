@@ -21,7 +21,7 @@ type ArrayList<T> = Vec<T>;
 // properties::custom::CustomProperty (both `gated_prop!`-stubbed in
 // properties/mod.rs). The enum body un-gates with the variant payloads
 // once those leaves un-gate.
-#[cfg(any())]
+
 pub enum FontFaceProperty {
     /// The `src` property.
     Source(ArrayList<Source>),
@@ -38,12 +38,12 @@ pub enum FontFaceProperty {
     /// An unknown or unsupported property.
     Custom(crate::css_properties::custom::CustomProperty),
 }
-#[cfg(not(any()))]
+#[cfg(any())]
 /// Data-only stub: real variant payloads land when `properties::{font,custom}`
 /// un-gate.
 pub struct FontFaceProperty;
 
-#[cfg(not(any()))]
+#[cfg(any())]
 impl FontFaceProperty {
     /// Unreachable in practice: while the enum body is gated, no parser path
     /// constructs a `FontFaceProperty`, so `FontFaceRule.properties` is always
@@ -57,7 +57,7 @@ impl FontFaceProperty {
     }
 }
 
-#[cfg(any())]
+
 impl FontFaceProperty {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // Local helpers mirroring the Zig `Helpers.writeProperty` with `comptime multi: bool`.
@@ -127,7 +127,7 @@ pub struct UnicodeRange {
 // slice_from,next_including_whitespace,state,reset,
 // new_basic_unexpected_token_error}, Token shape (Dimension/Number/Delim
 // payloads), bun_str::strings::{split_first,split_first_with_expected}.
-#[cfg(any())]
+
 impl UnicodeRange {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // Attempt to optimize the range to use question mark syntax.
@@ -359,7 +359,7 @@ pub enum FontStyle {
 
 // blocked_on: properties::font::FontStyle (gated_prop!), Angle::parse,
 // Size2D::{eql,to_css}.
-#[cfg(any())]
+
 impl FontStyle {
     pub fn parse(input: &mut css::Parser) -> css::Result<FontStyle> {
         use crate::css_properties::font::FontStyle as FontStyleProperty;
@@ -434,7 +434,7 @@ pub enum FontFormat {
 
 // blocked_on: Parser::expect_ident_or_string, bun_str ASCII-eq fn name,
 // DeepClone.
-#[cfg(any())]
+
 impl FontFormat {
     pub fn parse(input: &mut css::Parser) -> css::Result<FontFormat> {
         use bun_str::strings;
@@ -491,19 +491,19 @@ impl FontFormat {
 /// property in an `@font-face` rule.
 //
 // blocked_on: properties::font::FontFamily (gated_prop!).
-#[cfg(any())]
+
 pub enum Source {
     /// A `url()` with optional format metadata.
     Url(UrlSource),
     /// The `local()` function.
     Local(crate::css_properties::font::FontFamily),
 }
-#[cfg(not(any()))]
+#[cfg(any())]
 /// Data-only stub: real `Local(FontFamily)` payload lands when
 /// `properties::font` un-gates.
 pub struct Source;
 
-#[cfg(any())]
+
 impl Source {
     pub fn parse(input: &mut css::Parser) -> css::Result<Source> {
         use crate::css_properties::font as fontprops;
@@ -590,7 +590,7 @@ pub enum FontTechnology {
 }
 
 // blocked_on: css::enum_property_util EnumProperty derive bounds.
-#[cfg(any())]
+
 impl FontTechnology {
     pub fn as_str(&self) -> &'static [u8] {
         css::enum_property_util::as_str(self)
@@ -620,7 +620,7 @@ pub struct UrlSource {
 // FontTechnology::{parse,to_css}, Parser::{try_parse_with,
 // expect_function_matching,parse_nested_block,parse_list},
 // css::{void_wrap,to_css::from_list}, DeepClone.
-#[cfg(any())]
+
 impl UrlSource {
     pub fn parse(input: &mut css::Parser) -> css::Result<UrlSource> {
         let url = match Url::parse(input) {
@@ -738,7 +738,7 @@ pub struct FontFaceDeclarationParser;
 // RuleBodyItemParser} trait signatures, properties::font::* +
 // properties::custom::CustomProperty, Size2D::parse, Parser surface,
 // FontFaceProperty enum body.
-#[cfg(any())]
+
 const _: () = {
     use crate::css_properties::custom::{CustomProperty, CustomPropertyName};
     use crate::css_properties::font::{FontFamily, FontStretch, FontWeight};

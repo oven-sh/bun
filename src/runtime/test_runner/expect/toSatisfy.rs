@@ -1,11 +1,12 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 use bun_str::ZigString;
 
 use super::Expect;
 use super::get_signature;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_satisfy(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // TODO(port): `defer this.postMatch(globalThis)` — scopeguard capturing `&mut *this`
     // conflicts with later `this` uses under borrowck; Phase B reshape (e.g. RAII guard
@@ -15,8 +16,8 @@ pub fn to_satisfy(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame)
         unsafe { (*t).post_match(g) };
     });
 
-    let this_value = frame.this_value();
-    let arguments_ = frame.arguments_old(1);
+    let this_value = frame.this();
+    let arguments_ = frame.arguments_old::<1>();
     let arguments = arguments_.slice();
 
     if arguments.len() < 1 {
@@ -56,11 +57,7 @@ pub fn to_satisfy(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame)
     }
 
     // PORT NOTE: `defer formatter.deinit()` dropped — Formatter impls Drop.
-    let mut formatter = Formatter {
-        global_this: global,
-        quote_strings: true,
-        ..Default::default()
-    };
+    let mut formatter = super::make_formatter(global);
 
     if not {
         // PERF(port): was `comptime getSignature(...)` — profile in Phase B (const-eval signature)

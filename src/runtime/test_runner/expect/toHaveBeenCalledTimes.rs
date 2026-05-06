@@ -1,9 +1,10 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 use super::Expect;
 use super::get_signature;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_have_been_called_times(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -12,7 +13,7 @@ pub fn to_have_been_called_times(
     // jsc.markBinding(@src()) — debug-only tracing; dropped in port.
 
     let this_value = frame.this();
-    let arguments_ = frame.arguments_old(1);
+    let arguments_ = frame.arguments_old::<1>();
     let arguments: &[JSValue] = arguments_.slice();
     // TODO(port): `defer this.postMatch(globalThis)` — scopeguard here would hold &mut self
     // for the whole body and conflict with later uses. Phase B: reshape (RAII guard on Expect
@@ -27,11 +28,7 @@ pub fn to_have_been_called_times(
 
     let calls = super::mock::JSMockFunction__getCalls(global, value)?;
     if !calls.js_type().is_array() {
-        let mut formatter = Formatter {
-            global,
-            quote_strings: true,
-            ..Default::default()
-        };
+        let mut formatter = super::make_formatter(global);
         // `defer formatter.deinit()` — handled by Drop.
         return global.throw(format_args!(
             "Expected value must be a mock function: {}",
@@ -59,10 +56,10 @@ pub fn to_have_been_called_times(
 
     // handle failure
     if not {
-        const SIGNATURE: &str = get_signature("toHaveBeenCalledTimes", "<green>expected<r>", true);
-        return this.throw(
+        let signature: &str = get_signature("toHaveBeenCalledTimes", "<green>expected<r>", true);
+        return this.throw_fmt(
             global,
-            SIGNATURE,
+            signature,
             concat!(
                 "\n\n",
                 "Expected number of calls: not <green>{d}<r>\n",
@@ -74,10 +71,10 @@ pub fn to_have_been_called_times(
         // likely wants a single format_args!. Reconcile in Phase B.
     }
 
-    const SIGNATURE: &str = get_signature("toHaveBeenCalledTimes", "<green>expected<r>", false);
-    this.throw(
+    let signature: &str = get_signature("toHaveBeenCalledTimes", "<green>expected<r>", false);
+    this.throw_fmt(
         global,
-        SIGNATURE,
+        signature,
         concat!(
             "\n\n",
             "Expected number of calls: <green>{d}<r>\n",

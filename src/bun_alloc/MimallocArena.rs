@@ -1,3 +1,4 @@
+#![cfg(any())]
 //! This type is a `GenericAllocator`; see `src/allocators.zig`.
 
 use core::cell::RefCell;

@@ -7,7 +7,7 @@
 
 // ═══════════════════════════════════════════════════════════════════════
 // B-1 GATE-AND-STUB
-// All Phase-A draft bodies are preserved below behind `#[cfg(any())]`.
+// All Phase-A draft bodies are preserved below behind ``.
 // Un-gating happens in B-2.
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -1204,7 +1204,7 @@ impl HTTPClient {
 // dispatch + free helpers that write to sockets; un-gates once the bun_uws
 // method surface lands.
 // ═══════════════════════════════════════════════════════════════════════
-#[cfg(any())]
+
 mod _phase_a_draft {
 
 use core::ffi::{c_char, c_int, c_uint, c_void};
@@ -4876,7 +4876,7 @@ impl HTTPClient {
     }
 } // impl HTTPClient
 
-#[cfg(any())]
+
 mod _phase_a_draft_tail {
 use super::*;
 

@@ -1,10 +1,11 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::Expect;
 use super::get_signature;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_be_nan(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // `defer this.postMatch(globalThis)` — must run on every exit path including the `?` below.
     // scopeguard cannot hold `&mut Expect` across the body without a borrowck conflict, so we
@@ -39,15 +40,15 @@ pub fn to_be_nan(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame) 
     }
 
     // handle failure
-    let mut formatter = Formatter { global_this: global, quote_strings: true, ..Default::default() };
+    let mut formatter = super::make_formatter(global);
     let value_fmt = value.to_fmt(&mut formatter);
     if not {
-        const SIGNATURE: &str = get_signature("toBeNaN", "", true);
-        return this.throw(global, SIGNATURE, format_args!(concat!("\n\n", "Received: <red>{}<r>\n"), value_fmt));
+        let signature: &str = get_signature("toBeNaN", "", true);
+        return this.throw(global, signature, format_args!(concat!("\n\n", "Received: <red>{}<r>\n"), value_fmt));
     }
 
-    const SIGNATURE: &str = get_signature("toBeNaN", "", false);
-    this.throw(global, SIGNATURE, format_args!(concat!("\n\n", "Received: <red>{}<r>\n"), value_fmt))
+    let signature: &str = get_signature("toBeNaN", "", false);
+    this.throw(global, signature, format_args!(concat!("\n\n", "Received: <red>{}<r>\n"), value_fmt))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

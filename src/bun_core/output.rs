@@ -396,7 +396,7 @@ impl Source {
     pub fn init(out: &mut Source, stream: StreamType, err_stream: StreamType) {
         // TODO(b2-blocked): bun_alloc::USE_MIMALLOC + mimalloc::Option::ShowErrors
         // are gated in bun_alloc; re-enable once bun_alloc/basic.rs is un-gated.
-        #[cfg(any())]
+        
         if cfg!(debug_assertions) && bun_alloc::USE_MIMALLOC && !SOURCE_SET.get() {
             bun_alloc::mimalloc::mi_option_set(bun_alloc::mimalloc::Option::ShowErrors, 1);
         }
@@ -2330,7 +2330,7 @@ pub fn init_scoped_debug_writer_at_startup() {
                 )),
             };
             // TODO(b2-blocked): bun_sys::Fd::truncate (Windows-only); add to OutputSinkVTable.
-            #[cfg(any())]
+            
             let _ = fd.truncate(0); // windows
             // SAFETY: single-threaded startup.
             unsafe {

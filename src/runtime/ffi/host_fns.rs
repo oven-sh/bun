@@ -13,7 +13,7 @@
 //! gated; `Function::compile` therefore short-circuits with a `Step::Failed`
 //! when the `tinycc` feature is off (which it always is until
 //! `bun_tcc_sys::tcc` un-gates). The full TCC body is preserved in
-//! `ffi_body.rs` (`#[cfg(any())]`) for reference.
+//! `ffi_body.rs` (``) for reference.
 
 use core::ffi::c_void;
 use std::io::Write as _;

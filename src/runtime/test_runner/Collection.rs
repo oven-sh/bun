@@ -1,16 +1,17 @@
 //! for the collection phase of test execution where we discover all the test() calls
 
 use core::ptr::NonNull;
+#[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, Strong};
 
-use crate::bun_test::{
+use crate::test_runner::bun_test::{
     self, BunTest, BunTestPtr, BunTestRoot, DescribeScope, HandleUncaughtExceptionResult,
     StepResult,
 };
-use crate::bun_test::debug::group;
+use crate::test_runner::bun_test::debug::group;
 // TODO(port): jsc.Jest.Jest.runner / jsc.ConsoleObject live under bun_jsc::jest / bun_jsc::console_object — verify module paths in Phase B
-use bun_jsc::jest::Jest;
+use crate::test_runner::jest::Jest;
 use bun_jsc::console_object::Formatter as ConsoleFormatter;
 
 pub struct Collection {
@@ -130,7 +131,7 @@ impl Collection {
         group::begin();
         let _g = scopeguard::guard((), |_| group::end());
 
-        let _formatter = ConsoleFormatter { global_this, quote_strings: true, ..Default::default() };
+        let _formatter = super::make_formatter(global_this);
         // TODO(port): ConsoleObject.Formatter construction — Zig used struct-literal; verify Rust ctor shape.
 
         let prev_scope: &DescribeScope = match data {
@@ -170,7 +171,7 @@ impl Collection {
             this.run_one_completed(global_this, None, data)?;
         }
 
-        let _formatter = ConsoleFormatter { global_this, quote_strings: true, ..Default::default() };
+        let _formatter = super::make_formatter(global_this);
         // TODO(port): ConsoleObject.Formatter construction — verify Rust ctor shape.
 
         // append queued callbacks, in reverse order because items will be pop()ed from the end

@@ -1,4 +1,5 @@
 use bun_jsc::console_object::Formatter;
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Expect;
@@ -27,11 +28,7 @@ impl Expect {
             return Ok(JSValue::UNDEFINED);
         }
 
-        let mut formatter = Formatter {
-            global_this: global,
-            quote_strings: true,
-            ..Default::default()
-        };
+        let mut formatter = super::make_formatter(global);
         // `defer formatter.deinit()` — handled by Drop
         let received = value.to_fmt(&mut formatter);
 

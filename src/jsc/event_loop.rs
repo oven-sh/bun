@@ -2,7 +2,7 @@
 //!
 //! B-2 un-gate: real `EventLoop` struct + `enter`/`exit`/`tick`/`run_callback`/
 //! concurrent-queue plumbing compile against the `lib.rs` stub surface. Bodies
-//! that reach into `bun_runtime::api::Timer` (cycle) are `#[cfg(any())]`-gated
+//! that reach into `bun_runtime::api::Timer` (cycle) are ``-gated
 //! and replaced with `// TODO(b2-cycle)` stubs that the high-tier crate will
 //! override via the registered hook (see §Dispatch hot-path in PORTING.md).
 
@@ -750,7 +750,7 @@ impl EventLoop {
 
     /// `eventLoop().autoTick()` — bounces through `VirtualMachine::auto_tick`,
     /// which dispatches to the `bun_runtime` hook (needs `Timer::All` for the
-    /// poll timeout). The full body is preserved in the `#[cfg(any())]` block
+    /// poll timeout). The full body is preserved in the `` block
     /// below; the high-tier hook is expected to be ABI-equivalent.
     #[inline]
     pub fn auto_tick(&mut self) {
@@ -827,10 +827,10 @@ impl EventLoop {
 
 // ──────────────────────────────────────────────────────────────────────────
 // `bun_runtime`-dependent methods — bodies preserved verbatim from the Phase-A
-// draft, gated behind `#[cfg(any())]` until the cycle breaks (high tier owns
+// draft, gated behind `` until the cycle breaks (high tier owns
 // these via the dispatch hook). Un-gate piecewise in B-3.
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
+
 impl EventLoop {
     pub fn tick_while_paused(&mut self, done: &mut bool) {
         while !*done {

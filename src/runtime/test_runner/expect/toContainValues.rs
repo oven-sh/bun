@@ -1,4 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::Expect;
@@ -15,10 +16,10 @@ impl Expect {
         // raw-ptr guard or to restructure exits.
         scopeguard::defer! { this.post_match(global); }
 
-        let this_value = frame.this_value();
+        let this_value = frame.this();
         // TODO(port): arguments_old(1) API shape — confirm slice accessor on the Rust side.
-        let arguments_ = frame.arguments_old(1);
-        let arguments = arguments_.as_slice();
+        let arguments_ = frame.arguments_old::<1>();
+        let arguments = arguments_.slice();
 
         if arguments.len() < 1 {
             return global.throw_invalid_arguments(format_args!("toContainValues() takes 1 argument"));
@@ -70,7 +71,7 @@ impl Expect {
 
         // handle failure
         // TODO(port): Formatter struct-init shape — confirm field names / Default impl in bun_jsc.
-        let mut formatter = Formatter { global_this: global, quote_strings: true, ..Default::default() };
+        let mut formatter = super::make_formatter(global);
         // `defer formatter.deinit()` → dropped; Formatter impls Drop.
         let value_fmt = value.to_fmt(&mut formatter);
         let expected_fmt = expected.to_fmt(&mut formatter);
@@ -79,7 +80,7 @@ impl Expect {
             const EXPECTED_LINE: &str = "Expected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n";
             const FMT: &str = concat!("\n\n", "Expected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n");
             let _ = EXPECTED_LINE;
-            return this.throw(
+            return this.throw_fmt(
                 global,
                 Expect::get_signature("toContainValues", "<green>expected<r>", true),
                 format_args!("\n\nExpected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n", expected_fmt, received_fmt),
@@ -94,7 +95,7 @@ impl Expect {
         const RECEIVED_LINE: &str = "Received: <red>{}<r>\n";
         const FMT: &str = concat!("\n\n", "Expected to contain: <green>{}<r>\n", "Received: <red>{}<r>\n");
         let _ = (EXPECTED_LINE, RECEIVED_LINE, FMT);
-        this.throw(
+        this.throw_fmt(
             global,
             Expect::get_signature("toContainValues", "<green>expected<r>", false),
             format_args!("\n\nExpected to contain: <green>{}<r>\nReceived: <red>{}<r>\n", expected_fmt, value_fmt),

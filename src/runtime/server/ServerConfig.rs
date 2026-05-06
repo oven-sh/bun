@@ -15,9 +15,9 @@ use super::web_socket_server_context::WebSocketServerContext;
 use super::{AnyRoute, AnyServer};
 
 // `pub const SSLConfig = @import("../socket/SSLConfig.zig");`
-// TODO(b2-blocked): crate::socket::ssl_config is `#[cfg(any())]`-gated.
+// TODO(b2-blocked): crate::socket::ssl_config is ``-gated.
 // Re-enable the re-export once that un-gates; opaque placeholder until then.
-#[cfg(any())]
+
 pub use crate::socket::ssl_config::SSLConfig;
 #[derive(Default)]
 pub struct SSLConfig(());
@@ -211,7 +211,7 @@ impl Drop for StaticRouteEntry {
 impl ServerConfig {
     // TODO(b2-blocked): bun_wyhash::Wyhash (std seed-0 flavor not yet ported;
     // only Wyhash11 exists) + http_method::Set iterator. Body preserved.
-    #[cfg(any())]
+    
     fn normalize_static_routes_list(&mut self) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         fn hash(route: &StaticRouteEntry) -> u64 {
@@ -267,7 +267,7 @@ impl ServerConfig {
         Ok(())
     }
 
-    #[cfg(any())] // gated alongside normalize_static_routes_list (its only callee).
+     // gated alongside normalize_static_routes_list (its only callee).
     pub fn clone_for_reloading_static_routes(&mut self) -> Result<ServerConfig, bun_core::Error> {
         // TODO(port): narrow error set
         // TODO(port): Zig did `var that = this.*;` (bitwise struct copy) then nulled ONLY
@@ -309,7 +309,7 @@ impl ServerConfig {
 // `on_request` / `on_head_request` and generate the extern shims per (SSL, T).
 // TODO(b2-blocked): bun_uws_sys::App::{head, any, method} typed-handler overloads
 // (cycle-5-B). Gated until those land; struct/enum surface below is real.
-#[cfg(any())]
+
 pub fn apply_static_route<const SSL: bool, T>(
     server: AnyServer,
     app: &mut uws::NewApp<SSL>,
@@ -365,7 +365,7 @@ pub fn apply_static_route<const SSL: bool, T>(
     }
 }
 
-#[cfg(any())]
+
 pub fn apply_static_route_h3<T>(
     server: AnyServer,
     app: &mut uws::h3::App,
@@ -471,7 +471,7 @@ impl ServerConfig {
 // JSPropertyIterator, ArgumentsSlice). Preserved verbatim; un-gate once
 // `bun_jsc` is a dep of bun_runtime.
 // TODO(b2-blocked): bun_jsc method surface.
-#[cfg(any())]
+
 mod _gated_from_js {
 use super::*;
 use crate::server::jsc::{CallFrame, JSPropertyIterator, JsError};

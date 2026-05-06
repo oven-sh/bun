@@ -19,19 +19,19 @@ use bun_valkey::valkey_protocol::RedisError;
 use crate::jsc::{JSGlobalObject, JSValue, JsRef};
 
 // ─── gated Phase-A drafts (preserved on disk, not compiled) ──────────────────
-#[cfg(any())]
+
 #[path = "valkey.rs"]
 pub mod valkey_body; // ValkeyClient methods, DeferredFailure::run, fail/reject paths
-#[cfg(any())]
+
 #[path = "js_valkey.rs"]
 pub mod js_valkey_body; // JSValkeyClient host fns, SocketHandler, constructor
-#[cfg(any())]
+
 #[path = "js_valkey_functions.rs"]
 pub mod js_valkey_functions; // 200+ prototype methods (get/set/hget/…)
-#[cfg(any())]
+
 #[path = "ValkeyCommand.rs"]
 pub mod valkey_command_body; // Command::serialize, Promise::resolve/reject
-#[cfg(any())]
+
 #[path = "index.rs"]
 pub mod index;
 

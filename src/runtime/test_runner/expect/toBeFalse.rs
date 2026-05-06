@@ -1,4 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter as ConsoleFormatter;
 
 use super::Expect;
@@ -29,26 +30,22 @@ impl Expect {
 
         // Zig: `var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };`
         // Zig: `defer formatter.deinit();` — dropped; `impl Drop for ConsoleFormatter` handles cleanup.
-        let mut formatter = ConsoleFormatter {
-            global_this: global,
-            quote_strings: true,
-            ..Default::default()
-        };
+        let mut formatter = super::make_formatter(global);
         let received = value.to_fmt(&mut formatter);
 
         if not {
-            const SIGNATURE: &'static str = Expect::get_signature("toBeFalse", "", true);
+            let signature: &str = Expect::get_signature("toBeFalse", "", true);
             return this.throw(
                 global,
-                SIGNATURE,
+                signature,
                 format_args!(concat!("\n\n", "Received: <red>{}<r>\n"), received),
             );
         }
 
-        const SIGNATURE: &'static str = Expect::get_signature("toBeFalse", "", false);
+        let signature: &str = Expect::get_signature("toBeFalse", "", false);
         this.throw(
             global,
-            SIGNATURE,
+            signature,
             format_args!(concat!("\n\n", "Received: <red>{}<r>\n"), received),
         )
     }

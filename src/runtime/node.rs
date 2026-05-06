@@ -73,14 +73,14 @@ pub mod dirent {
 
 // node_fs.rs (~4.7kL): async task machinery (AsyncFSTask/UVFSRequest/cp/
 // readdir-recursive) is JSC-dense and re-gated *inside* the file with
-// `#[cfg(any())]`. Sync `impl NodeFS` (read_file/write_file/stat/mkdir et al.),
+// ``. Sync `impl NodeFS` (read_file/write_file/stat/mkdir et al.),
 // `args::*`, `ret::*` are live.
 #[path = "node/node_fs.rs"]
 pub mod fs;
 
 // ─── un-gated in B-2 round 3 (net/zlib/buffer; JSC bodies re-gated inside) ───
 // Type defs + non-JSC FFI bodies are live; every `#[bun_jsc::host_fn]` /
-// `#[bun_jsc::JsClass]` item is wrapped in `#[cfg(any())] mod _impl` inside
+// `#[bun_jsc::JsClass]` item is wrapped in ` mod _impl` inside
 // each file. dgram/tls/tty have no `.rs` ports yet — nothing to wire.
 #[path = "node/buffer.rs"]
 pub mod buffer;
@@ -114,8 +114,8 @@ pub mod zlib {
 // ─── submodule re-exports ─────────────────────────────────────────────────
 // All `node/` subdir modules depend heavily on `bun_jsc` (currently broken
 // under concurrent B-2 work) — gated until the lower tier is green.
-// Phase-A drafts remain on disk; see #[cfg(any())] block below.
-#[cfg(any())]
+// Phase-A drafts remain on disk; see  block below.
+
 mod _gated_submods {
     /// node:fs
     pub use crate::node::node_fs as fs;
@@ -362,7 +362,7 @@ impl<R> Maybe<R, bun_sys::Error> {
     where
         R: Into<Vec<u8>>,
     {
-        #[cfg(any())]
+        
         {
             // TODO(b2-blocked): bun_jsc::ArrayBuffer::from_bytes
             // TODO(b2-blocked): bun_jsc::TypedArrayType
@@ -547,7 +547,7 @@ impl<R> Maybe<R, bun_css::BasicParseError> {
 
 // ─── to_js: comptime @typeInfo dispatch → trait ───────────────────────────
 // Gated: bun_jsc broken; JSValue/ArrayBuffer have no methods on stub.
-#[cfg(any())]
+
 mod _gated_to_js {
     use super::*;
     use bun_jsc::{ArrayBuffer, JSGlobalObject, JSValue, JsResult};
@@ -658,7 +658,7 @@ impl IntoErrInt for bun_sys::posix::E {
 #[cfg(windows)]
 impl IntoErrInt for bun_sys::windows::NTSTATUS {
     fn into_err_int(self) -> bun_sys::ErrorInt {
-        #[cfg(any())]
+        
         {
             // TODO(b2-blocked): bun_sys::windows::translate_ntstatus_to_errno
             return bun_sys::windows::translate_ntstatus_to_errno(self) as bun_sys::ErrorInt;

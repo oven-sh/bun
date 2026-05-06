@@ -11,7 +11,7 @@
 // by `properties_generated.rs`, `declaration.rs`, and
 // `rules/{font_face,font_palette_values}.rs`.
 //
-// Most `parse` / `to_css` *bodies* remain `#[cfg(any())]`-gated below
+// Most `parse` / `to_css` *bodies* remain ``-gated below
 // because they bottom out on still-unported leaf surface (DeriveParse /
 // DeriveToCss proc-macros, EnumProperty derive over strum, BabyList::parse,
 // parse_utility::parse_string, generics::is_compatible blanket). Each gate
@@ -362,7 +362,7 @@ pub enum FontFamily {
 
 // TODO(port): Zig defined `pub fn HashMap(comptime V: type) type` wrapping std.ArrayHashMapUnmanaged
 // with a custom Wyhash hasher over the family-name bytes. Module-level alias (inherent assoc types are nightly-only).
-#[cfg(any())] // blocked_on: ArrayHashMap key trait bounds for FontFamily
+ // blocked_on: ArrayHashMap key trait bounds for FontFamily
 pub type FontFamilyHashMap<V> = bun_collections::ArrayHashMap<FontFamily, V>;
 
 impl FontFamily {
@@ -963,7 +963,7 @@ impl FontHandler {
     // PORT NOTE: real `handle_property`/`finalize` bodies remain gated below.
     // The handler stub surface here matches `handler_stub!` so
     // `DeclarationHandler` (declaration.rs) compiles unchanged.
-    #[cfg(not(any()))]
+    #[cfg(any())]
     #[inline]
     pub fn handle_property(
         &mut self,
@@ -973,7 +973,7 @@ impl FontHandler {
     ) -> bool {
         false
     }
-    #[cfg(not(any()))]
+    #[cfg(any())]
     #[inline]
     pub fn finalize(
         &mut self,
@@ -982,7 +982,7 @@ impl FontHandler {
     ) {
     }
 
-    #[cfg(any())]
+    
     // blocked_on: generics::is_compatible/eql/deepClone blankets,
     // PropertyHandlerContext::allocator(), DeclarationList::push,
     // Property::Font*/Unparsed payloads, FontFamilyHashMap.
@@ -1063,7 +1063,7 @@ impl FontHandler {
         true
     }
 
-    #[cfg(any())]
+    
     pub fn finalize(
         &mut self,
         decls: &mut crate::DeclarationList<'_>,
@@ -1073,7 +1073,7 @@ impl FontHandler {
         self.flushed_properties = FontProperty::empty();
     }
 
-    #[cfg(any())]
+    
     // blocked_on: FontFamilyHashMap, PropertyHandlerContext::allocator(),
     // BabyList::ordered_remove/insert/at, generics::is_compatible.
     fn flush(
@@ -1223,7 +1223,7 @@ const DEFAULT_SYSTEM_FONTS: &[&[u8]] = &[
     b"Helvetica Neue",
 ];
 
-#[cfg(any())]
+
 // blocked_on: BabyList::insert allocator threading + arena Bump param.
 #[inline]
 fn compatible_font_family(

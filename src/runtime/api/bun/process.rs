@@ -33,7 +33,7 @@ mod uv {
 //       on_process_exit: |p, proc, st, ru| unsafe { &mut *p.cast::<Self>() }.on_process_exit(proc, st, ru),
 //   };
 // and constructs `ProcessExitHandler { owner, vtable: &EXIT_VTABLE }`.
-#[cfg(any())]
+
 mod _exit_handler_variants {
     // Preserved for diff-pass: the Zig union members. All un-declared in B-2.
     use crate::cli::filter_run::ProcessHandle;
@@ -668,16 +668,20 @@ impl Process {
     pub fn close(&mut self) {
         #[cfg(unix)]
         {
-            match core::mem::replace(&mut self.poller, Poller::Detached) {
+            // PORT NOTE: PollerPosix has Drop; match by &mut and disable in
+            // place, then assign Detached so the old value is dropped (which
+            // performs the same cleanup for Fd).
+            match &mut self.poller {
                 Poller::Fd(poll) => {
                     // SAFETY: poll is a live hive slot; deinit returns it to the Store.
                     unsafe { (*poll.as_ptr()).deinit() };
                 }
-                Poller::WaiterThread(mut waiter) => {
+                Poller::WaiterThread(waiter) => {
                     waiter.disable();
                 }
                 Poller::Detached => {}
             }
+            self.poller = Poller::Detached;
         }
         #[cfg(windows)]
         {
@@ -874,7 +878,7 @@ impl Status {
 }
 
 // TODO(b2-blocked): bun_core::SignalCode::to_exit_code + bun_sys::Error: Display.
-#[cfg(any())]
+
 impl core::fmt::Display for Status {
     fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if let Some(signal_code) = self.signal_code() {
@@ -1489,7 +1493,7 @@ pub mod waiter_thread_posix {
 
 }
 
-#[cfg(any())]
+
 mod waiter_thread_posix_body {
     // Preserved for diff-pass: the old gated draft. Dead — body merged into
     // `waiter_thread_posix` above.
@@ -1506,7 +1510,7 @@ mod waiter_thread_posix_body {
         /// The Zig spec flips a global so that subsequent `watch()` calls take
         /// the waiter-thread branch (process.zig:937-949). The body of that
         /// branch — `append()`/`init()`/`reload_handlers()` — is still
-        /// `#[cfg(any())]`-gated on `bun_threading::UnboundedQueue` +
+        /// ``-gated on `bun_threading::UnboundedQueue` +
         /// `bun_event_loop::ConcurrentTask`. If we let the flag flip now,
         /// `Process::watch()` would `self.ref_()` then call a stub `append()`,
         /// silently leaking the refcount and never reaping the child. Keeping
@@ -1702,7 +1706,7 @@ pub enum WindowsStdioResult {
 
 // TODO(b2-blocked): Process is intrusively ref-counted; wire RefPtr<Process>
 // once bun_ptr exposes a smart-pointer wrapper. For now process_ is *mut.
-#[cfg(any())]
+
 impl WindowsSpawnResult {
     pub fn to_process(&mut self, _event_loop: impl Sized, sync_: bool) -> *mut Process {
         let process = self.process_.take().unwrap();
@@ -1786,7 +1790,7 @@ pub enum WindowsStdio {
 }
 
 // TODO(b2-blocked): bun_libuv_sys::Pipe::close_and_destroy — Windows-only.
-#[cfg(any())]
+
 impl Drop for WindowsStdio {
     fn drop(&mut self) {
         // close_and_destroy consumes the pipe in Zig (frees the heap allocation).
@@ -2310,7 +2314,7 @@ pub fn spawn_process_posix(
     // we index spawned.{stdin,stdout,stderr} via a helper closure instead.
     let mut dup_stdout_to_stderr: bool = false;
 
-    for i in 0..3usize {
+    'stdio: for i in 0..3usize {
         let fileno = Fd::from_native(FdT::try_from(i).unwrap());
         let flag: u32 = (if i == 0 { bun_sys::O::RDONLY } else { bun_sys::O::WRONLY }) as u32;
 
@@ -2367,7 +2371,7 @@ pub fn spawn_process_posix(
                         actions.dup2(fd, fileno)?;
                         set_spawned_stdio(&mut spawned, i, fd);
                         spawned.memfds[i] = true;
-                        continue;
+                        continue 'stdio;
                     }
                 }
 
@@ -2935,7 +2939,7 @@ fn cleanup_uv_files(files: &[uv::uv_file], loop_: *mut uv::uv_loop_t) {
 // bun_crash_handler::reset_on_posix, ParentDeathWatchdog::push_sync_pgid,
 // posix_spawn::wait4 shape, and the JobControl tcsetpgrp dance — un-gate
 // alongside `bun.spawnSync` callers.
-#[cfg(any())]
+
 pub mod sync {
     use super::*;
 
@@ -4298,7 +4302,7 @@ pub use spawn_process_body::spawn_process;
 pub use spawn_process_body::spawn_process_posix;
 #[cfg(windows)]
 pub use spawn_process_body::spawn_process_windows;
-#[cfg(any())]
+
 pub use spawn_process_body::sync;
 
 // ──────────────────────────────────────────────────────────────────────────

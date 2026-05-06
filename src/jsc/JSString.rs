@@ -93,7 +93,7 @@ impl JSString {
     // callers a use-after-free once the cell is collected.
     // TODO(b2-blocked): un-gate once `bun_string::ZigString::to_slice_clone` is
     // ported; gated so wrong-semantics fallback cannot be called.
-    #[cfg(any())]
+    
     pub fn to_slice_clone(&self, global: &JSGlobalObject) -> JsResult<ZigStringSlice> {
         let mut str = ZigString::init(b"");
         self.to_zig_string(global, &mut str);
@@ -105,7 +105,7 @@ impl JSString {
     // expects one reads past the buffer end.
     // TODO(b2-blocked): un-gate once `bun_string::ZigString::to_slice_z` is
     // ported; gated so wrong-semantics fallback cannot be called.
-    #[cfg(any())]
+    
     pub fn to_slice_z(&self, global: &JSGlobalObject) -> ZigStringSlice {
         let mut str = ZigString::init(b"");
         self.to_zig_string(global, &mut str);

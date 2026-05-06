@@ -1,9 +1,10 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_str::ZigString;
 
 use super::Expect;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_throw_error_matching_inline_snapshot(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -14,8 +15,8 @@ pub fn to_throw_error_matching_inline_snapshot(
     let mut this = scopeguard::guard(this, |t| t.post_match(global));
 
     let this_value = frame.this();
-    let _arguments = frame.arguments_old(2);
-    let arguments: &[JSValue] = _arguments.as_slice();
+    let _arguments = frame.arguments_old::<2>();
+    let arguments: &[JSValue] = _arguments.slice();
 
     this.increment_expect_call_counter();
 

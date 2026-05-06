@@ -339,7 +339,7 @@ impl FileSystemPackageJsonExt for crate::fs::FileSystem {
 
 // TODO(b2-blocked): bun_bundler::options + bun_js_parser::Expr full API + bun_install + bun_schema
 // — framework/define loaders stay gated until bun_bundler::options lands.
-#[cfg(any())]
+
 impl PackageJSON {
     fn load_define_defaults(
         env: &mut options::Env,
@@ -691,7 +691,7 @@ impl PackageJSON {
             pair.framework.development = false;
         }
     }
-} // end #[cfg(any())] impl PackageJSON (framework loaders)
+} // end  impl PackageJSON (framework loaders)
 
 impl PackageJSON {
     pub fn parse_macros_json(
@@ -1191,7 +1191,7 @@ impl PackageJSON {
         // TODO(b2-blocked): bun_install::{Dependency, Architecture, OperatingSystem,
         // lockfile::Package::DependencyGroup, PackageManager}. The whole
         // dependencies/os/cpu block is install-tier.
-        #[cfg(any())]
+        
         if INCLUDE_DEPENDENCIES == IncludeDependencies::Main || INCLUDE_DEPENDENCIES == IncludeDependencies::Local {
             'update_dependencies: {
                 if let Some(pkg) = package_id {
@@ -1341,7 +1341,7 @@ impl PackageJSON {
 
         // used by `bun run`
         // TODO(b2-blocked): bun_js_parser `Expr::as_property_string_map` (gated round-C).
-        #[cfg(any())]
+        
         if include_scripts {
             if let Some(scripts) = json.as_property_string_map(b"scripts") {
                 package_json.scripts = Some(scripts);
@@ -1371,7 +1371,7 @@ impl PackageJSON {
 
 // TODO(b2-blocked): `self.hash` field referenced in Zig but not declared on
 // PackageJSON; gate until the field lands.
-#[cfg(any())]
+
 impl PackageJSON {
     pub fn hash_module(&self, module: &[u8]) -> u32 {
         let mut hasher = Wyhash::init(0);
@@ -1381,7 +1381,7 @@ impl PackageJSON {
 
         hasher.final_() as u32
     }
-} // end #[cfg(any())] impl PackageJSON
+} // end  impl PackageJSON
 
 #[inline]
 fn bytes_of<T>(v: &T) -> &[u8] {

@@ -4,7 +4,7 @@
 //! Phase B-2 un-gate round: module tree is real; matcher bodies are real
 //! (each `expect/to*.rs` carries its full ported logic). The whole subtree
 //! is JSC-dense (every matcher takes `&JSGlobalObject` + `&CallFrame` and
-//! calls `JSValue` methods), so it stays behind `#[cfg(any())]` until
+//! calls `JSValue` methods), so it stays behind `` until
 //! `bun_jsc` is re-enabled as a dep of `bun_runtime` (see Cargo.toml
 //! `TODO(b2-blocked)`). Flip the gate and 75 matchers + Expect compile
 //! together — no per-file stubs.
@@ -26,7 +26,7 @@ pub mod diff {
 }
 
 // ─── JSC-heavy core — gated as one unit on bun_jsc dep ───────────────────
-// TODO(b2-blocked): bun_jsc — drop every `#[cfg(any())]` below once
+// TODO(b2-blocked): bun_jsc — drop every `` below once
 // `bun_jsc.workspace = true` is uncommented in src/runtime/Cargo.toml.
 // Nothing inside is body-stubbed; the whole tree goes live at once.
 //
@@ -79,12 +79,101 @@ pub mod expect {
     /// which Rust does not allow for associated fns. Thin shim keeps the
     /// drafts unmodified.
     #[inline]
-    pub const fn get_signature(
+    pub fn get_signature(
         matcher_name: &'static str,
         args: &'static str,
         not: bool,
     ) -> &'static str {
         Expect::get_signature(matcher_name, args, not)
+    }
+
+    // ── shims over `bun_jsc` API gaps ─────────────────────────────────
+    // The Phase-A matcher drafts were written against a slightly newer
+    // `bun_jsc` surface (`JSValue::to_fmt`, `Formatter: Default`,
+    // `JSGlobalObject::throw_pretty`, `BigIntCompare`, etc.). Rather than
+    // touch 75 files we provide thin extension traits / aliases here so the
+    // drafts compile unchanged. Each shim is `// TODO(port)`-tagged for
+    // Phase B once the upstream method lands in `bun_jsc`.
+
+    use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult};
+    use bun_jsc::console_object::Formatter;
+    use bun_jsc::console_object::formatter::ZigFormatter;
+
+    /// `value.to_fmt(&mut formatter)` → `Display` adapter (Zig
+    /// `value.toFmt(&formatter)`). Returns the `ZigFormatter` wrapper.
+    pub trait JSValueTestExt {
+        fn to_fmt<'a, 'b>(self, f: &'a mut Formatter<'b>) -> ZigFormatter<'a, 'b>;
+        fn jest_deep_equals(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool>;
+        fn jest_strict_deep_equals(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool>;
+        fn jest_deep_match(self, other: JSValue, global: &JSGlobalObject, replace_props: bool) -> JsResult<bool>;
+        fn is_reg_exp(self) -> bool;
+        fn as_big_int_compare(self, other: JSValue, global: &JSGlobalObject) -> BigIntCompare;
+    }
+    impl JSValueTestExt for JSValue {
+        #[inline]
+        fn to_fmt<'a, 'b>(self, f: &'a mut Formatter<'b>) -> ZigFormatter<'a, 'b> {
+            ZigFormatter::new(f, self)
+        }
+        #[inline]
+        fn jest_deep_equals(self, _other: JSValue, _global: &JSGlobalObject) -> JsResult<bool> {
+            todo!("blocked_on: bun_jsc::JSValue::jest_deep_equals")
+        }
+        #[inline]
+        fn jest_strict_deep_equals(self, _other: JSValue, _global: &JSGlobalObject) -> JsResult<bool> {
+            todo!("blocked_on: bun_jsc::JSValue::jest_strict_deep_equals")
+        }
+        #[inline]
+        fn jest_deep_match(self, _other: JSValue, _global: &JSGlobalObject, _replace_props: bool) -> JsResult<bool> {
+            todo!("blocked_on: bun_jsc::JSValue::jest_deep_match")
+        }
+        #[inline]
+        fn is_reg_exp(self) -> bool {
+            self.is_cell() && self.js_type() == bun_jsc::JSType::RegExpObject
+        }
+        #[inline]
+        fn as_big_int_compare(self, _other: JSValue, _global: &JSGlobalObject) -> BigIntCompare {
+            // TODO(port): bind `JSBigInt::compareToDouble` / `compare`.
+            todo!("blocked_on: bun_jsc::JSValue::as_big_int_compare")
+        }
+    }
+
+    /// Result of `JSValue::as_big_int_compare` (Zig `JSBigInt.CompareResult`).
+    #[derive(Copy, Clone, PartialEq, Eq)]
+    pub enum BigIntCompare { LessThan, Equal, GreaterThan, Undefined }
+
+    /// `global.throw_pretty(fmt, args)` shim — `bun_jsc::JSGlobalObject` only
+    /// exposes `throw(args)` today; pretty-fmt rewriting happens in Phase B.
+    pub trait JSGlobalObjectTestExt {
+        fn throw_pretty(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError;
+        fn throw2(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError;
+        fn throw_invalid_arguments2(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError;
+    }
+    impl JSGlobalObjectTestExt for JSGlobalObject {
+        #[inline]
+        fn throw_pretty(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError {
+            // TODO(port): comptime <r>/<d> rewriting — for now forward as-is.
+            let _ = fmt;
+            self.throw(args)
+        }
+        #[inline]
+        fn throw2(&self, _fmt: &str, args: core::fmt::Arguments<'_>) -> JsError {
+            self.throw(args)
+        }
+        #[inline]
+        fn throw_invalid_arguments2(&self, _fmt: &str, args: core::fmt::Arguments<'_>) -> JsError {
+            self.throw_invalid_arguments(args)
+        }
+    }
+
+    /// `super::make_formatter(global_this)`
+    /// is the universal matcher pattern; `Formatter` has no `Default` (it
+    /// borrows `global_this`), so provide the constructor every matcher
+    /// expected.
+    #[inline]
+    pub fn make_formatter(global: &JSGlobalObject) -> Formatter<'_> {
+        let mut f = Formatter::new(global);
+        f.quote_strings = true;
+        f
     }
 
     // ── matcher modules (75) ──────────────────────────────────────────

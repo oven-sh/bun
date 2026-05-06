@@ -1,11 +1,12 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter as ConsoleFormatter;
 use bun_str::ZigString;
 
 use super::DiffFormatter;
 use super::Expect;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_have_property(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -15,8 +16,8 @@ pub fn to_have_property(
     let mut this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
-    let _arguments = frame.arguments_old(2);
-    let arguments: &[JSValue] = _arguments.as_slice();
+    let _arguments = frame.arguments_old::<2>();
+    let arguments: &[JSValue] = _arguments.slice();
 
     if arguments.len() < 1 {
         return global.throw_invalid_arguments(format_args!(
@@ -68,11 +69,7 @@ pub fn to_have_property(
     }
 
     // handle failure
-    let mut formatter = ConsoleFormatter {
-        global_this: global,
-        quote_strings: true,
-        ..Default::default()
-    };
+    let mut formatter = super::make_formatter(global);
     // `defer formatter.deinit()` — handled by Drop.
     if not {
         if expected_property.is_some() {

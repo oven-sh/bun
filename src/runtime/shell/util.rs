@@ -18,7 +18,7 @@ impl OutKind {
 
 // TODO(port): verify crate path for bun.spawn.Stdio in Phase B
 // TODO(b2-blocked): bun_spawn::Stdio (no such crate; bun.spawn lives in bun_runtime::api::bun)
-#[cfg(any())]
+
 pub use bun_spawn::Stdio;
 
 #[cfg(target_os = "linux")]

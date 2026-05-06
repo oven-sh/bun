@@ -9,7 +9,7 @@
 //! `BunFrontendDevServerAgent`) and into `VirtualMachine.debugger`'s real
 //! field type — those are dispatched through `RuntimeHooks` (see
 //! VirtualMachine.rs §Dispatch) by the high tier, so here they are gated
-//! behind `#[cfg(any())]` with `TODO(b2)` markers and the public fns delegate
+//! behind `` with `TODO(b2)` markers and the public fns delegate
 //! to the hook table.
 
 use core::ffi::{c_int, c_void};
@@ -159,7 +159,7 @@ impl Debugger {
     pub fn wait_for_debugger_if_necessary(this: &mut VirtualMachine) {
         let _ = this;
         // TODO(b2): RuntimeHooks dispatch — `ensure_debugger` covers this path.
-        // Full body preserved below under `#[cfg(any())]`.
+        // Full body preserved below under ``.
     }
 
     /// `Debugger.create(vm, global)` — first-time debugger setup: create the
@@ -206,9 +206,9 @@ pub extern "C" fn Debugger__didConnect() {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Phase-A draft body (forward-dep heavy). Preserved verbatim for B-2 so the
-// port history isn't lost; never compiled (`#[cfg(any())]`).
+// port history isn't lost; never compiled (``).
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
+
 mod __phase_a_body {
     use super::*;
     use bun_core::Output;

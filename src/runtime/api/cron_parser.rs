@@ -13,7 +13,7 @@
 //!   - Sunday as 7: weekday field accepts 7 as alias for 0
 //!   - Nicknames: @yearly, @annually, @monthly, @weekly, @daily, @midnight, @hourly
 
-#[cfg(any())]
+
 use bun_jsc::{JSGlobalObject, JsResult}; // TODO(b2-blocked): bun_jsc::JSGlobalObject::ms_to_gregorian_date_time_utc
 use bun_str::strings;
 use phf::phf_map;
@@ -128,7 +128,7 @@ impl CronExpression {
     /// Compute the next UTC time (in ms since epoch) that matches this
     /// expression, strictly after `from_ms`. Returns None if no match found
     /// within 8 years.
-    #[cfg(any())] // TODO(b2-blocked): bun_jsc::JSGlobalObject::ms_to_gregorian_date_time_utc
+     // TODO(b2-blocked): bun_jsc::JSGlobalObject::ms_to_gregorian_date_time_utc
     pub fn next(&self, global_object: &JSGlobalObject, from_ms: f64) -> JsResult<Option<f64>> {
         // TODO(port): GregorianDateTime field types assumed i32; verify in bun_jsc
         let mut dt = global_object.ms_to_gregorian_date_time_utc(from_ms);

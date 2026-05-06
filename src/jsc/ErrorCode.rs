@@ -1418,11 +1418,11 @@ impl<'a> ErrorBuilder<'a> {
 // NonZeroU16 anyerror interning (`err!("ParserError").as_u16()`) and these
 // constants can be derived from the same source as `from()`, keep the Zig-side
 // `@export` authoritative and do not let C++ link against bogus Rust statics.
-#[cfg(any())]
+
 #[unsafe(no_mangle)]
 pub static Zig_ErrorCodeParserError: ErrorCodeInt = ErrorCode::PARSER_ERROR;
 
-#[cfg(any())]
+
 #[unsafe(no_mangle)]
 pub static Zig_ErrorCodeJSErrorObject: ErrorCodeInt = ErrorCode::JS_ERROR_OBJECT;
 

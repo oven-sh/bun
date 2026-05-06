@@ -1,7 +1,7 @@
 use crate::jsc::{JSGlobalObject, JSValue};
 
 pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
-    #[cfg(any())]
+    
     {
         // TODO(b2-blocked): bun_jsc::JSValue::{create_empty_object_with_null_prototype,put}
         // TODO(b2-blocked): bun_jsc::JSFunction::create
@@ -30,7 +30,7 @@ pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
         );
         return binding;
     }
-    #[cfg(not(any()))]
+    #[cfg(any())]
     {
         let _ = global_object;
         unimplemented!("b2-blocked: bun_jsc::JSValue / JSFunction method surface")
@@ -39,7 +39,7 @@ pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Submodule tree (Phase-A draft files use PascalCase basenames; wired via
-// `#[path]`). Heavy modules remain `#[cfg(any())]`-gated until their lower-
+// `#[path]`). Heavy modules remain ``-gated until their lower-
 // tier deps land — see per-module `TODO(b2-blocked)` markers.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -54,12 +54,12 @@ pub mod my_sql_request_queue;
 
 // TODO(b2-blocked): bun_jsc::JsRef + JSValue method surface (.call, .ensure_still_alive)
 // TODO(b2-blocked): bun_jsc::host_fn proc-macro
-#[cfg(any())]
+
 #[path = "mysql/MySQLQuery.rs"]
 pub mod my_sql_query;
 
 // TODO(b2-blocked): bun_jsc::host_fn proc-macro + JSValue/CallFrame method surface
-#[cfg(any())]
+
 #[path = "mysql/JSMySQLQuery.rs"]
 pub mod js_my_sql_query;
 
@@ -69,7 +69,7 @@ pub mod my_sql_value;
 // TODO(b2-blocked): bun_jsc::host_fn proc-macro
 // TODO(b2-blocked): bun_uws::Socket method surface
 // TODO(b2-blocked): bun_jsc::VirtualMachine::get / RareData
-#[cfg(any())]
+
 #[path = "mysql/JSMySQLConnection.rs"]
 pub mod js_my_sql_connection;
 
@@ -219,12 +219,12 @@ pub mod protocol {
     pub mod any_mysql_error_jsc;
 
     // TODO(b2-blocked): bun_jsc::JSValue method surface (date/number/buffer constructors)
-    #[cfg(any())]
+    
     #[path = "DecodeBinaryValue.rs"]
     pub mod decode_binary_value;
 
     // TODO(b2-blocked): bun_jsc::JSValue / bun_jsc::JSObject method surface
-    #[cfg(any())]
+    
     #[path = "ResultSet.rs"]
     pub mod result_set;
 }

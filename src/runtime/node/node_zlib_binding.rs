@@ -58,7 +58,7 @@ impl Error {
 // surface in `bun_jsc` / `bun_threading` is still in flux. Type defs (Error,
 // CountedKeepAlive, CompressionStream<T> marker) hoisted above.
 // TODO(b2-blocked): un-gate once bun_jsc method surface + WorkPoolTask export land.
-#[cfg(any())]
+
 mod _impl {
 use super::*;
 use core::mem::offset_of;

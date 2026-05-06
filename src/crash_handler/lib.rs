@@ -22,7 +22,7 @@
 // B-2 UN-GATE
 // Phase-A draft compiles as `mod draft` and is re-exported. Function bodies
 // that depend on T0/T1 surface not yet available are individually re-gated
-// with `#[cfg(any())]` and a `// TODO(b2-blocked): bun_X::Y` marker.
+// with `` and a `// TODO(b2-blocked): bun_X::Y` marker.
 // ──────────────────────────────────────────────────────────────────────────
 #![feature(core_intrinsics)]
 #![allow(internal_features)]
@@ -1247,7 +1247,7 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
     writer.write_all(METADATA_VERSION_LINE.as_bytes())?;
     {
         let cpu_features = CPUFeatures::get();
-        #[cfg(any())]
+        
         // TODO(b2-blocked): bun_analytics::GenerateHeader::GeneratePlatform
         {
         let platform = bun_analytics::GenerateHeader::GeneratePlatform::for_os();
@@ -1290,7 +1290,7 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
             // TODO(port): std.zig.system.windows.detectRuntimeVersion()
             write!(writer, "Windows v{}\n", bun_sys::windows::detect_runtime_version())?;
         }
-        } // end #[cfg(any())] — bun_analytics platform block
+        } // end  — bun_analytics platform block
 
         #[cfg(target_arch = "x86_64")]
         {
@@ -1315,7 +1315,7 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
             }
         }
     }
-    #[cfg(any())]
+    
     // TODO(b2-blocked): bun_analytics::Features::formatter
     { write!(writer, "\n{}", bun_analytics::Features::formatter()).map_err(fmt_err)?; }
     writer.write_all(b"\n")?;

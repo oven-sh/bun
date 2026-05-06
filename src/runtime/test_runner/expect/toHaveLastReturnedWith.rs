@@ -1,4 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 // TODO(port): verify path for JSMockFunction__getReturns FFI binding
 use super::mock::JSMockFunction__getReturns;
@@ -6,7 +7,7 @@ use super::mock::JSMockFunction__getReturns;
 use super::DiffFormatter;
 use super::Expect;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_have_last_returned_with(
     this: &mut Expect,
     global_this: &JSGlobalObject,
@@ -14,7 +15,7 @@ pub fn to_have_last_returned_with(
 ) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
 
-    let this_value = callframe.this_value();
+    let this_value = callframe.this();
     // TODO(port): `defer this.postMatch(globalThis)` — scopeguard borrows `this` for the whole
     // body; may need borrowck reshaping in Phase B (e.g. inner fn + post_match in caller).
     let _post_match = scopeguard::guard((), |_| this.post_match(global_this));
@@ -74,7 +75,7 @@ pub fn to_have_last_returned_with(
     let signature = Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", false);
 
     if this.flags.not() {
-        return this.throw(
+        return this.throw_fmt(
             global_this,
             Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", true),
             format_args!(

@@ -9,7 +9,7 @@
 //! handles `--help`/`-v`/`--revision`, and populates `ctx.positionals` /
 //! `ctx.passthrough` / `ctx.filters`. The long tail (per-flag option plumbing
 //! into `api::TransformOptions`, bundler/test option blocks, `--cwd` chdir,
-//! Bunfig loading) is re-gated inline with `#[cfg(any())]` blocks pointing at
+//! Bunfig loading) is re-gated inline with `` blocks pointing at
 //! the still-unported lower-tier deps.
 
 use std::sync::LazyLock;
@@ -246,7 +246,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
     // stashes the result in `ctx.args.absolute_working_dir`. `api::TransformOptions`
     // is still an opaque stub (peechy codegen pending), so even if `bun_sys` were
     // wired we couldn't store the result. Re-gated; see phase_a_draft below.
-    #[cfg(any())]
+    
     {
         let cwd: Box<ZStr> = if let Some(cwd_arg) = args.option(b"--cwd") {
             let mut outbuf = bun_paths::PathBuffer::uninit();
@@ -321,7 +321,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
             // back-edge. Compile is deferred to the test-runner entry where
             // `bun_jsc` is in scope; until then we record only the source pattern.
             // TODO(b2-blocked): bun_jsc::RegularExpression::init — re-gated.
-            #[cfg(any())]
+            
             {
                 use bun_jsc::RegularExpression;
                 let regex = match RegularExpression::init(
@@ -379,7 +379,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
 // (bun_jsc, bun_bundler::options, bun_standalone, bun_clap proc-macros,
 // ConstParamTy on CommandTag::Tag) are green.
 // ─────────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
+
 mod phase_a_draft {
 use bun_core::{Global, Output, FeatureFlags, Environment};
 use bun_core::env_var;

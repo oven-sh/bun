@@ -3028,7 +3028,7 @@ impl core::fmt::Display for PrintHandle<Fd> {
 }
 // TODO(port): FmtHandleFnGenerator used @TypeOf reflection — replaced with per-type Display impls
 
-#[cfg(any())]
+
 #[path = "fs/stat_hash.rs"]
 pub mod stat_hash;
 // TODO(b2-blocked): src/resolver/fs/stat_hash.rs depends on bun_hash::XxHash64 +

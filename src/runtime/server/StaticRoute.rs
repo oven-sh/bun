@@ -61,7 +61,7 @@ impl StaticRoute {
 // on / on_head_request / on_response / send need: bun_uws AnyResponse
 // write/end/on_writable/on_aborted (cycle-5-B), HTTPStatusText, RangeRequest.
 // TODO(b2-blocked): bun_jsc + bun_uws response write surface.
-#[cfg(any())]
+
 mod _gated {
 use super::*;
 use bun_core::Error;

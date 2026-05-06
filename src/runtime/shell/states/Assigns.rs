@@ -61,7 +61,7 @@ impl Assigns {
         // TODO(b2-blocked): ast::Assign::{name, value} — full body (~130
         // lines) gated. Shape: for each assign, run an Expansion on the value,
         // then `shell.set_var(ctx, name, expanded)` and advance.
-        #[cfg(any())]
+        
         {
             include!("Assigns_next_body.rs");
         }

@@ -116,7 +116,7 @@ impl ArrayBuffer {
 // phase-b2+: `JSValue` / `JSGlobalObject` surface has landed (~83 methods).
 // RESOLVED: `mark_binding!()`, `jsc_c::JSTypedArrayType`, `JSValue::as_object_ref`,
 // `host_fn::from_js_host_call`, `JSType::to_typed_array_type`.
-// Per-item `#[cfg(any())]` gates remain on: `bun_sys::{pread,mmap,fstat}` paths,
+// Per-item `` gates remain on: `bun_sys::{pread,mmap,fstat}` paths,
 // `bun_runtime::webcore::blob::Store`, `bun_alloc::default_allocator_sentinel()`,
 // `BinaryType::from_js_value` (BunString::to_utf8 surface).
 // ──────────────────────────────────────────────────────────────────────────
@@ -126,7 +126,7 @@ impl ArrayBuffer {
     /// Only use this when reading from the file descriptor is _very_ cheap. Like, for example, an in-memory file descriptor.
     /// Do not use this for pipes, however tempting it may seem.
     // TODO(port): gated — `bun_sys::pread` Result shape + `Error::to_js`.
-    #[cfg(any())]
+    
     pub fn to_js_buffer_from_fd(fd: Fd, size: usize, global: &JSGlobalObject) -> JSValue {
         // SAFETY: FFI — global is a valid &JSGlobalObject; fn accepts null ptr with explicit size.
         let buffer_value = unsafe {
@@ -183,7 +183,7 @@ impl ArrayBuffer {
     }
 
     // TODO(port): gated — `bun_sys::{fstat,mmap,PROT,MapFlags}` + `Fd::close` + `Error::to_js`.
-    #[cfg(any())]
+    
     pub fn to_js_buffer_from_memfd(fd: Fd, global: &JSGlobalObject) -> JsResult<JSValue> {
         let stat = match bun_sys::fstat(fd) {
             bun_sys::Result::Err(err) => {
@@ -801,7 +801,7 @@ impl TypedArrayType {
 
     // TODO(port): `napi_typedarray_type` lives in `bun_runtime::api::napi`
     // (tier-6). Gated until cycle-break.
-    #[cfg(any())]
+    
     pub fn to_napi(self) -> Option<bun_runtime::api::napi::napi_typedarray_type> {
         use bun_runtime::api::napi::napi_typedarray_type::*;
         match self {
@@ -969,7 +969,7 @@ pub extern "C" fn MarkedArrayBuffer_deallocator(bytes: *mut c_void, _ctx: *mut c
 }
 
 // TODO(port): gated — `bun_runtime::webcore::blob::Store` is tier-6 (cycle).
-#[cfg(any())]
+
 #[unsafe(no_mangle)]
 pub extern "C" fn BlobArrayBuffer_deallocator(_bytes: *mut c_void, blob: *mut c_void) {
     // zig's memory allocator interface won't work here
@@ -1033,7 +1033,7 @@ pub struct JSCArrayBuffer {
 // TODO(port): bun.ptr.ExternalShared(Self) — externally-refcounted handle wrapper.
 // `bun_ptr::ExternalShared<T>` requires `T: ExternalSharedDescriptor`; impl that
 // trait for `JSCArrayBuffer` once the FFI ref/deref shims are in jsc_sys.
-#[cfg(any())]
+
 pub type JSCArrayBufferRef = bun_ptr::ExternalShared<JSCArrayBuffer>;
 
 impl JSCArrayBuffer {

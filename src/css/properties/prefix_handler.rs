@@ -100,7 +100,7 @@ impl FallbackHandler {
         );
         // PropertyIdTag::TextShadow has no vendor prefix.
         // PORT NOTE: `small_list::get_fallbacks_text_shadow` and `TextShadow::is_compatible`
-        // remain `#[cfg(any())]`-gated, so the fallbacks/is_compat closures hand-roll their
+        // remain ``-gated, so the fallbacks/is_compat closures hand-roll their
         // bodies inline against the public TextShadow fields. Spec: prefix_handler.zig:38-62
         // calls `val.getFallbacks` + `val.isCompatible` unconditionally — there is no
         // "skip when decl missing" path, so the previous no-op closures were silently wrong.
@@ -199,7 +199,7 @@ impl FallbackHandler {
 
             // TODO(port): re-enable once `PropertyHandlerContext::add_unparsed_fallbacks`
             // un-gates (blocked on `SupportsCondition::eql` in context.rs).
-            #[cfg(any())]
+            
             context.add_unparsed_fallbacks(&mut unparsed);
             let _ = &mut unparsed;
             if let Some(i) = *index {

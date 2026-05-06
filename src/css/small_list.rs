@@ -102,7 +102,7 @@ impl<T, const N: usize> SmallList<T, N> {
     // `Delimiters`, `Result<T>`, `generic::parse_for`). Re-enables when that
     // hub un-gates. `to_css` is un-gated below (B-2) — `Printer::delim` is
     // stubbed in the lib.rs printer shim until `printer.rs` un-gates.
-    #[cfg(any())]
+    
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
         // TODO(port): trait bound — T must implement css generic parse protocol
         let parse_fn = void_wrap::<T>(generic::parse_for::<T>());
@@ -846,7 +846,7 @@ pub trait GetFallbacks<const N: usize>: Sized {
 // `get_fallbacks_image` / `get_fallbacks_text_shadow` depend on still-gated
 // values::color, properties::text, css_parser::ImageFallback. Re-enable with
 // those modules.
-#[cfg(any())]
+
 mod fallbacks_gated {
 use super::*;
 use crate::css_parser as css;

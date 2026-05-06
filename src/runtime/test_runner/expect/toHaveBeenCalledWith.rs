@@ -1,10 +1,11 @@
 use bun_jsc::{CallFrame, ConsoleObject, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 
 use super::DiffFormatter;
 use super::mock;
 use super::Expect;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_have_been_called_with(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -24,8 +25,8 @@ pub fn to_have_been_called_with(
     // TODO(port): move to *_jsc — bun.cpp.JSMockFunction__getCalls is a C++ extern binding
     let calls = super::mock::JSMockFunction__getCalls(global, value)?;
     if !calls.js_type().is_array() {
-        let mut formatter = ConsoleObject::Formatter { global_this: global, quote_strings: true, ..Default::default() };
-        return this.throw(
+        let mut formatter = super::make_formatter(global);
+        return this.throw_fmt(
             global,
             Expect::get_signature("toHaveBeenCalledWith", "<green>...expected<r>", false),
             format_args!(
@@ -73,7 +74,7 @@ pub fn to_have_been_called_with(
     }
 
     // handle failure
-    let mut formatter = ConsoleObject::Formatter { global_this: global, quote_strings: true, ..Default::default() };
+    let mut formatter = super::make_formatter(global);
 
     let expected_args_js_array = JSValue::create_empty_array(global, arguments.len())?;
     for (i, arg) in arguments.iter().enumerate() {

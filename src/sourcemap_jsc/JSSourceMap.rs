@@ -91,7 +91,7 @@ fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     // lands, change `JSSourceMap.sourcemap` to `bun_ptr::RefPtr<ParsedSourceMap>`
     // and use `RefPtr::adopt_ref(source_map)` here + `RefPtr::new(mapping_list)`
     // in `constructor`.
-    #[cfg(any())]
+    
     {
         let this = Box::new(JSSourceMap {
             sourcemap: source_map,

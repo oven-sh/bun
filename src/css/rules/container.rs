@@ -78,7 +78,7 @@ pub enum ContainerSizeFeatureId {
 // `value_type` is real (Zig DeriveValueType inlined); `to_css`/`from_str`
 // delegate to enum_property_util which needs an EnumProperty derive (Phase B)
 // — until then they `unimplemented!()`. All callers of those two methods are
-// in the `#[cfg(any())]`-gated behavior bodies below.
+// in the ``-gated behavior bodies below.
 impl crate::media_query::FeatureIdTrait for ContainerSizeFeatureId {
     // Zig: pub const valueType = css.DeriveValueType(@This(), ValueTypeMap).valueType;
     // PORT NOTE: DeriveValueType is comptime reflection over ValueTypeMap; expanded inline.

@@ -1,3 +1,4 @@
+#![cfg(any())]
 //! A nullable allocator the same size as `std.mem.Allocator`.
 
 use core::ffi::c_void;

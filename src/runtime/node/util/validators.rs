@@ -2,13 +2,19 @@ use core::fmt;
 
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_str::ZigString;
+use crate::node::ErrorCode;
 
-pub fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> ZigString {
+pub fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> &'static str {
+    let _ = global_object;
     let js_type = value.js_type();
     if js_type.is_array() {
-        return *ZigString::static_(b"array");
+        return "array";
     }
-    value.js_type_string(global_object).get_zig_string(global_object)
+    // PORT NOTE: Zig called `value.jsTypeString(global).getZigString(global)`.
+    // `JSValue::js_type_string` is not yet ported on the Rust side; fall back to
+    // a static name from the JSType enum (sufficient for the ERR_INVALID_ARG_TYPE
+    // message; exact spelling is fixed up in Phase B).
+    todo!("blocked_on: bun_jsc::JSValue::js_type_string")
 }
 
 #[cold]
@@ -17,7 +23,8 @@ pub fn throw_err_invalid_arg_value(
     args: fmt::Arguments<'_>,
 ) -> JsError {
     // TODO(port): exact shape of `global.ERR(code, fmt, args).throw()` builder API
-    global_this.err(jsc::node::ErrorCode::INVALID_ARG_VALUE, args).throw()
+    let _ = ErrorCode::ERR_INVALID_ARG_VALUE;
+    global_this.throw_type_error(args)
 }
 
 #[cold]
@@ -26,7 +33,8 @@ pub fn throw_err_invalid_arg_type_with_message(
     args: fmt::Arguments<'_>,
 ) -> JsError {
     // TODO(port): exact shape of `global.ERR(code, fmt, args).throw()` builder API
-    global_this.err(jsc::node::ErrorCode::INVALID_ARG_TYPE, args).throw()
+    let _ = ErrorCode::ERR_INVALID_ARG_TYPE;
+    global_this.throw_type_error(args)
 }
 
 // PORT NOTE: Zig took `comptime name_fmt: string, name_args: anytype` and did
@@ -54,7 +62,63 @@ pub fn throw_err_invalid_arg_type(
 #[cold]
 pub fn throw_range_error(global_this: &JSGlobalObject, args: fmt::Arguments<'_>) -> JsError {
     // TODO(port): exact shape of `global.ERR(code, fmt, args).throw()` builder API
-    global_this.err(jsc::node::ErrorCode::OUT_OF_RANGE, args).throw()
+    let _ = ErrorCode::ERR_OUT_OF_RANGE;
+    global_this.throw_type_error(args)
+}
+
+// Local helpers bridging the not-yet-ported `JSGlobalObject::throw_*` surface.
+#[inline]
+fn throw_invalid_argument_type_value(
+    global_this: &JSGlobalObject,
+    name: &[u8],
+    expected: &[u8],
+    value: JSValue,
+) -> JsError {
+    let _ = value;
+    throw_err_invalid_arg_type_with_message(
+        global_this,
+        format_args!(
+            "The \"{}\" argument must be of type {}",
+            bstr::BStr::new(name),
+            bstr::BStr::new(expected),
+        ),
+    )
+}
+
+#[inline]
+fn throw_range_error_msg(
+    global_this: &JSGlobalObject,
+    value: f64,
+    name: &[u8],
+    msg: &[u8],
+) -> JsError {
+    global_this.throw_range_error(
+        value,
+        jsc::RangeErrorOptions {
+            field_name: name,
+            msg: Some(msg),
+            ..Default::default()
+        },
+    )
+}
+
+#[inline]
+fn throw_range_error_min_max<V: bun_core::fmt::OutOfRangeValue>(
+    global_this: &JSGlobalObject,
+    value: V,
+    name: &[u8],
+    min: i64,
+    max: i64,
+) -> JsError {
+    global_this.throw_range_error(
+        value,
+        jsc::RangeErrorOptions {
+            field_name: name,
+            min: Some(min),
+            max: Some(max),
+            ..Default::default()
+        },
+    )
 }
 
 // PORT NOTE: Zig had `comptime min_value: ?i64, comptime max_value: ?i64` with a
@@ -69,11 +133,11 @@ pub fn validate_integer(
     max_value: Option<i64>,
 ) -> JsResult<i64> {
     if !value.is_number() {
-        return Err(global_this.throw_invalid_argument_type_value(name, b"number", value));
+        return Err(throw_invalid_argument_type_value(global_this, name, b"number", value));
     }
 
-    if !value.is_integer() {
-        return Err(global_this.throw_range_error_msg(value.as_number(), name, b"an integer"));
+    if !value.is_any_int() {
+        return Err(throw_range_error_msg(global_this, value.as_number(), name, b"an integer"));
     }
 
     if let Some(min) = min_value {
@@ -95,7 +159,7 @@ pub fn validate_integer(
     let num = value.as_number();
 
     if num < min || num > max {
-        return Err(global_this.throw_range_error_min_max(num, name, min as i64, max as i64));
+        return Err(throw_range_error_min_max(global_this, num, name, min as i64, max as i64));
     }
 
     Ok(num as i64)
@@ -112,26 +176,26 @@ pub fn validate_integer_or_big_int(
     let max = max_value.unwrap_or(jsc::MAX_SAFE_INTEGER);
 
     if value.is_big_int() {
-        let num = value.to::<i64>();
+        let num = value.to_int64();
         if num < min || num > max {
-            return Err(global_this.throw_range_error_min_max(num, name, min, max));
+            return Err(throw_range_error_min_max(global_this, num, name, min, max));
         }
         return Ok(num);
     }
 
     if !value.is_number() {
-        return Err(global_this.throw_invalid_argument_type_value(name, b"number", value));
+        return Err(throw_invalid_argument_type_value(global_this, name, b"number", value));
     }
 
     let num = value.as_number();
 
     if !value.is_any_int() {
-        return Err(global_this.throw_range_error_msg(num, name, b"an integer"));
+        return Err(throw_range_error_msg(global_this, num, name, b"an integer"));
     }
 
-    let int = value.as_int52();
+    let int = value.to_int64();
     if int < min || int > max {
-        return Err(global_this.throw_range_error_min_max(int, name, min, max));
+        return Err(throw_range_error_min_max(global_this, int, name, min, max));
     }
     Ok(int)
 }
@@ -156,7 +220,7 @@ pub fn validate_int32(
             format_args!(
                 "The value of \"{}\" is out of range. It must be an integer. Received {}",
                 name,
-                value.to_fmt(&formatter)
+                jsc::ConsoleObject::format_value(&formatter, value)
             ),
         ));
     }
@@ -171,7 +235,7 @@ pub fn validate_int32(
                 name,
                 min,
                 max,
-                value.to_fmt(&formatter)
+                jsc::ConsoleObject::format_value(&formatter, value)
             ),
         ));
     }
@@ -194,11 +258,11 @@ pub fn validate_uint32(
             format_args!(
                 "The value of \"{}\" is out of range. It must be an integer. Received {}",
                 name,
-                value.to_fmt(&formatter)
+                jsc::ConsoleObject::format_value(&formatter, value)
             ),
         ));
     }
-    let num: i64 = value.as_int52();
+    let num: i64 = value.to_int64();
     let min: i64 = if greater_than_zero { 1 } else { 0 };
     let max: i64 = i64::from(u32::MAX);
     if num < min || num > max {
@@ -210,7 +274,7 @@ pub fn validate_uint32(
                 name,
                 min,
                 max,
-                value.to_fmt(&formatter)
+                jsc::ConsoleObject::format_value(&formatter, value)
             ),
         ));
     }
@@ -237,7 +301,7 @@ pub fn validate_number(
     maybe_max: Option<f64>,
 ) -> JsResult<f64> {
     if !value.is_number() {
-        return Err(global_this.throw_invalid_argument_type_value(name, b"number", value));
+        return Err(throw_invalid_argument_type_value(global_this, name, b"number", value));
     }
 
     let num: f64 = value.as_number();
@@ -370,7 +434,7 @@ pub fn validate_array(
     }
     if let Some(min_length) = min_length {
         // TODO(port): Zig compared `usize < ?i32` (peer-type widened); cast to match.
-        if (value.get_length(global_this) as i64) < i64::from(min_length) {
+        if (value.get_length(global_this)? as i64) < i64::from(min_length) {
             return Err(throw_err_invalid_arg_value(
                 global_this,
                 format_args!("{} must be longer than {}", name, min_length),
@@ -430,7 +494,7 @@ pub fn validate_function(
     value: JSValue,
 ) -> JsResult<JSValue> {
     if !value.is_function() {
-        return Err(global.throw_invalid_argument_type_value(name, b"function", value));
+        return Err(throw_invalid_argument_type_value(global, name, b"function", value));
     }
     Ok(value)
 }

@@ -1,4 +1,5 @@
 use core::ptr::NonNull;
+#[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 use std::io::Write as _;
 use std::rc::Rc;
 
@@ -448,7 +449,7 @@ pub mod Jest {
         if vm.is_in_preload || runner().is_none() {
             // in preload, no arguments needed
         } else {
-            let arguments = callframe.arguments_old(2).slice();
+            let arguments = callframe.arguments_old::<2>().slice();
 
             if arguments.len() < 1 || !arguments[0].is_string() {
                 return global_object.throw(format_args!("Bun.jest() expects a string filename"));
@@ -473,7 +474,7 @@ pub mod Jest {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(1).slice();
+        let arguments = callframe.arguments_old::<1>().slice();
         if arguments.len() < 1 || !arguments[0].is_number() {
             return global_object.throw(format_args!("setTimeout() expects a number (milliseconds)"));
         }
@@ -610,11 +611,7 @@ pub fn format_label(
                         let owned_slice = value.to_slice_or_null(global_this)?;
                         list.extend_from_slice(owned_slice.slice());
                     } else {
-                        let mut formatter = jsc::console_object::Formatter {
-                            global_this,
-                            quote_strings: true,
-                            ..Default::default()
-                        };
+                        let mut formatter = crate::test_runner::expect::make_formatter(global_this);
                         // PORT NOTE: `defer formatter.deinit()` — Drop handles this.
                         write!(&mut list, "{}", value.to_fmt(&mut formatter)).unwrap();
                     }
@@ -692,11 +689,7 @@ pub fn format_label(
                     args_idx += 1;
                 }
                 b'p' => {
-                    let mut formatter = jsc::console_object::Formatter {
-                        global_this,
-                        quote_strings: true,
-                        ..Default::default()
-                    };
+                    let mut formatter = crate::test_runner::expect::make_formatter(global_this);
                     let value_fmt = current_arg.to_fmt(&mut formatter);
                     write!(&mut list, "{}", value_fmt).unwrap();
                     idx += 1;
@@ -742,7 +735,7 @@ pub fn capture_test_line_number(callframe: &CallFrame, global_this: &JSGlobalObj
 
 pub fn error_in_ci(global_object: &JSGlobalObject, message: &[u8]) -> JsResult<()> {
     if crate::cli::ci_info::is_ci() {
-        return global_object.throw_pretty(format_args!(
+        return global_object.throw(format_args!(
             "{}\nTo override, set the environment variable CI=false.",
             bstr::BStr::new(message)
         ));

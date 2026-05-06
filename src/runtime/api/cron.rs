@@ -19,7 +19,7 @@ use super::cron_parser::{self, CronExpression};
 // the OS-level cron→{crontab,plist,schtasks-XML} translators below are pure
 // and compile today.
 // TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn] proc-macro + api::bun::spawn
-#[cfg(any())]
+
 mod _jsc_gated {
 use super::*;
 use core::ffi::c_char;
@@ -1865,7 +1865,7 @@ pub enum ClearMode {
 // No JSC dependencies — operate on `&[u8]` and `cron_parser::CronExpression`.
 // ============================================================================
 
-#[cfg(any())] // duplicate now lives inside _jsc_gated; keep gated to avoid double-def
+ // duplicate now lives inside _jsc_gated; keep gated to avoid double-def
 fn _find_crontab_dup() -> Option<*const core::ffi::c_char> {
     #[cfg(windows)]
     {
@@ -1937,7 +1937,7 @@ pub fn filter_crontab(
     Ok(())
 }
 
-#[cfg(any())] // moved into _jsc_gated above (uses JSGlobalObject/CallFrame)
+ // moved into _jsc_gated above (uses JSGlobalObject/CallFrame)
 fn resolve_path(
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -2540,7 +2540,7 @@ fn compute_step_interval<T: StepBits>(bits: T, _min: u8, max: u8) -> Option<u32>
     Some(step)
 }
 
-#[cfg(any())] // moved into _jsc_gated above (bun_str::ZString surface)
+ // moved into _jsc_gated above (bun_str::ZString surface)
 fn alloc_print_z(args: core::fmt::Arguments<'_>) -> Result<ZString, bun_alloc::AllocError> {
     let mut v = Vec::new();
     v.write_fmt(args).map_err(|_| bun_alloc::AllocError)?;
@@ -2559,7 +2559,7 @@ fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> Result<&'
 }
 
 /// Create a temp file path with a random suffix to avoid TOCTOU/symlink attacks.
-#[cfg(any())] // moved into _jsc_gated above (bun_fs::FileSystem + bun_str::ZString)
+ // moved into _jsc_gated above (bun_fs::FileSystem + bun_str::ZString)
 fn make_temp_path(prefix: &'static str) -> Result<ZString, bun_alloc::AllocError> {
     let mut name_buf = PathBuffer::uninit();
     // PORT NOTE: Zig used `prefix ++ "tmp"` at comptime; concat at runtime here.

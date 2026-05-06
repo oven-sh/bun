@@ -216,7 +216,7 @@ impl InternalState {
             // `LibdeflateState { decompressor, shared_buffer }` it returns live in the gated
             // HTTPThread cluster. Re-gated until HTTPThread un-gates (which itself blocks on
             // bun_uws::SocketHandler method bodies).
-            #[cfg(any())]
+            
             'libdeflate: {
                 use bun_libdeflate_sys::libdeflate as bun_libdeflate;
                 if !(is_final_chunk
@@ -306,7 +306,7 @@ impl InternalState {
             // TODO(b2-blocked): bun_zlib::ZlibReaderArrayList / bun_brotli::BrotliReaderArrayList /
             // bun_zstd::ZstdReaderArrayList — `Decompressor::update_buffers` is re-gated until
             // those reader types are reshaped to not carry an `'a` borrow of the output Vec.
-            #[cfg(any())]
+            
             if let Err(err) = self
                 .decompressor
                 .update_buffers(self.encoding, buffer, body_out_str)

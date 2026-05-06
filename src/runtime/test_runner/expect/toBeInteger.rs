@@ -1,9 +1,10 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::Expect;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_be_integer(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -31,24 +32,24 @@ pub fn to_be_integer(
         return Ok(JSValue::UNDEFINED);
     }
 
-    let mut formatter = Formatter { global_this: global, quote_strings: true, ..Default::default() };
+    let mut formatter = super::make_formatter(global);
     let received = value.to_fmt(&mut formatter);
 
     if not {
-        const SIGNATURE: &str = Expect::get_signature("toBeInteger", "", true);
+        let signature: &str = Expect::get_signature("toBeInteger", "", true);
         this.post_match(global);
         return this.throw(
             global,
-            SIGNATURE,
+            signature,
             format_args!(concat!("\n\n", "Received: <red>{}<r>\n"), received),
         );
     }
 
-    const SIGNATURE: &str = Expect::get_signature("toBeInteger", "", false);
+    let signature: &str = Expect::get_signature("toBeInteger", "", false);
     this.post_match(global);
     this.throw(
         global,
-        SIGNATURE,
+        signature,
         format_args!(concat!("\n\n", "Received: <red>{}<r>\n"), received),
     )
 }

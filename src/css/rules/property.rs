@@ -63,7 +63,7 @@ impl PropertyRule {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // PORT NOTE: `css.implementDeepClone` field-walk. `SyntaxString` has an
         // inherent `deep_clone(&self, &Arena)`. While `ParsedComponent` is
-        // `#[cfg(any())]`-gated to `()`, `Option<()>` is `Copy` → identity;
+        // ``-gated to `()`, `Option<()>` is `Copy` → identity;
         // once it un-gates, swap to `self.initial_value.as_ref().map(|v|
         // v.deep_clone(bump))` (values/syntax.rs already provides the
         // inherent impl).

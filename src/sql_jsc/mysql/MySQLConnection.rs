@@ -351,7 +351,7 @@ impl MySQLConnection {
         unimplemented!("b2-blocked: bun_uws SSL handle + boringssl identity check")
     }
 
-    #[cfg(any())]
+    
     fn _do_handshake_gated(
         &mut self,
         success: i32,
@@ -539,12 +539,12 @@ impl MySQLConnection {
         // SSLRequest::write, Capabilities::CLIENT_SSL field-style, AuthMethod
         // IntoStaticStr, Data::to_owned err-type}. Body gated until those
         // surfaces stabilize. The Zig body is preserved below under
-        // `#[cfg(any())]` so a search still hits this module.
+        // `` so a search still hits this module.
         let _ = reader;
         unimplemented!("b2-blocked: bun_sql mysql HandshakeV10 decode surface")
     }
 
-    #[cfg(any())]
+    
     fn _handle_handshake_gated<C: ReaderContext>(
         &mut self,
         reader: NewReader<C>,
@@ -639,7 +639,7 @@ impl MySQLConnection {
         self.send_handshake_response()
     }
 
-    #[cfg(any())]
+    
     fn handle_handshake_decode_public_key<C: ReaderContext>(
         &mut self,
         reader: NewReader<C>,
@@ -690,7 +690,7 @@ impl MySQLConnection {
         unimplemented!("b2-blocked: bun_sql mysql auth packet decode surface")
     }
 
-    #[cfg(any())]
+    
     fn _handle_auth_gated<C: ReaderContext>(
         &mut self,
         reader: NewReader<C>,
@@ -843,7 +843,7 @@ impl MySQLConnection {
         unimplemented!("b2-blocked: bun_sql mysql result-set decode surface")
     }
 
-    #[cfg(any())]
+    
     fn _handle_command_gated<C: ReaderContext>(
         &mut self,
         reader: NewReader<C>,
@@ -918,11 +918,11 @@ impl MySQLConnection {
         // TODO(b2-blocked): bun_sql::mysql::protocol::HandshakeResponse41 lacks
         // Default + write() (writeWrap not yet expressed); AuthMethod::scramble
         // err-type; bun_core::Global::PACKAGE_JSON_VERSION_WITH_REVISION path.
-        // Body gated; preserved below under `#[cfg(any())]`.
+        // Body gated; preserved below under ``.
         unimplemented!("b2-blocked: bun_sql mysql HandshakeResponse41 write surface")
     }
 
-    #[cfg(any())]
+    
     fn _send_handshake_response_gated(&mut self) -> Result<(), AnyMySQLError> {
         debug!("sendHandshakeResponse");
         // Only require password for caching_sha2_password when connecting for the first time
@@ -996,7 +996,7 @@ impl MySQLConnection {
         unimplemented!("b2-blocked: bun_sql mysql AuthSwitchResponse write surface")
     }
 
-    #[cfg(any())]
+    
     fn _send_auth_switch_response_gated(
         &mut self,
         auth_method: AuthMethod,
@@ -1029,7 +1029,7 @@ impl MySQLConnection {
         }
     }
 
-    #[cfg(any())]
+    
     fn check_if_prepared_statement_is_done(&mut self, statement: &mut MySQLStatement) {
         bun_core::scoped_log!(
             MySQLConnection,
@@ -1052,7 +1052,7 @@ impl MySQLConnection {
         }
     }
 
-    #[cfg(any())]
+    
     pub fn handle_prepared_statement<C: ReaderContext>(
         &mut self,
         reader: NewReader<C>,
@@ -1191,7 +1191,7 @@ impl MySQLConnection {
     // `self.queue` so passing `&mut self` alongside `&mut JSMySQLQuery` would
     // alias. Take raw pointers (Zig's `*JSMySQLQuery` / `*MySQLStatement`) and
     // deref locally; the queue's intrusive ref keeps them alive.
-    #[cfg(any())]
+    
     fn handle_result_set_ok(
         &mut self,
         request: *mut JSMySQLQuery,
@@ -1246,7 +1246,7 @@ impl MySQLConnection {
         // TODO(port): JSMySQLConnection field name was `#connection` (private) in Zig; confirm Rust field name
     }
 
-    #[cfg(any())]
+    
     fn handle_result_set<C: ReaderContext>(
         &mut self,
         reader: NewReader<C>,
@@ -1616,7 +1616,7 @@ const MAX_PIPELINE_SIZE: usize = u16::MAX as usize; // about 64KB per connection
 //               field-style accessors, Auth::caching_sha2_password::Status,
 //               OKPacket/HandshakeResponse41 Default) + bun_uws TLS-adopt +
 //               bun_boringssl identity check. Bodies preserved verbatim under
-//               `#[cfg(any())]` so a search still hits this module.
+//               `` so a search still hits this module.
 //   un-gated:   struct + Default + init / can_pipeline / can_prepare_query /
 //               can_execute_query / is_able_to_write / is_processing_data /
 //               has_backpressure / reset_backpressure / can_flush / is_idle /

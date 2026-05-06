@@ -1,7 +1,7 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-2: top-level `#[cfg(any())]` gates removed; module tree wired with
+// B-2: top-level `` gates removed; module tree wired with
 // explicit `#[path]` attrs (Phase-A draft files use PascalCase basenames).
 // Heavy leaf modules remain individually gated with `// TODO(b2-blocked):`
 // markers naming the lower-tier symbol they need. Un-gate one-by-one as

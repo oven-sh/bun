@@ -84,7 +84,7 @@ pub use crate::selectors::{
 };
 pub use crate::context::PropertyHandlerContext;
 
-#[cfg(any())]
+
 pub use crate::values::{
     color::ColorFallbackKind,
     number::{CSSInteger, CSSIntegerFns, CSSNumber, CSSNumberFns},
@@ -1223,7 +1223,7 @@ where
 // `SupportsCondition`, `KeyframesName`, `PageSelector`, `ContainerName`,
 // `ContainerCondition`, `FontPaletteValuesRule`, `PageRule`, `PropertyRule`
 // have un-gated). Only `@font-face`/`@keyframes` block bodies remain
-// inline-`#[cfg(any())]`-gated on their `RuleBodyItemParser` trait impls.
+// inline-``-gated on their `RuleBodyItemParser` trait impls.
 mod rule_parsers { use super::*;
 use crate::selectors::parser as selector_parser;
 
@@ -1247,9 +1247,9 @@ impl<'a> ComposesCtx for NestedComposesCtx<'a> {
             // threads `input.allocator()` here. The `ComposesCtx` trait has no
             // arena param yet (declaration.rs callers); until `'bump` threads,
             // the arena-backed deep clone stays gated and we todo-stub.
-            #[cfg(any())]
+            
             { let _ = entry.composes.append(composes.deep_clone()); }
-            #[cfg(not(any()))]
+            #[cfg(any())]
             { let _ = (entry, &composes); todo("record_composes: Composes::deep_clone arena threading"); }
         }
     }
@@ -1769,7 +1769,7 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
             AtRulePrelude::FontFace => {
                 // blocked_on: `FontFaceDeclarationParser: RuleBodyItemParser`
                 // trait impls (rules/font_face.rs gated const block).
-                #[cfg(any())] {
+                 {
                 let mut decl_parser = css_rules::font_face::FontFaceDeclarationParser;
                 let mut parser = RuleBodyParser::new(input, &mut decl_parser);
                 // todo_stuff.think_mem_mgmt
@@ -1785,7 +1785,7 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 ));
                 return Ok(());
                 }
-                #[cfg(not(any()))] {
+                #[cfg(any())] {
                 let _ = (input, loc);
                 todo("@font-face block — FontFaceDeclarationParser trait impls gated");
                 }
@@ -1855,7 +1855,7 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
             AtRulePrelude::Keyframes { name, prefix } => {
                 // blocked_on: `KeyframesListParser: RuleBodyItemParser` trait
                 // impls (rules/keyframes.rs gated const block).
-                #[cfg(any())] {
+                 {
                 let mut parser = css_rules::keyframes::KeyframesListParser;
                 let mut iter = RuleBodyParser::new(input, &mut parser);
                 // todo_stuff.think_mem_mgmt
@@ -1874,7 +1874,7 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 }));
                 return Ok(());
                 }
-                #[cfg(not(any()))] {
+                #[cfg(any())] {
                 let _ = (name, prefix, input, loc);
                 todo("@keyframes block — KeyframesListParser trait impls gated");
                 }
@@ -2130,7 +2130,7 @@ impl<'a, T: CustomAtRuleParser> QualifiedRuleParser for NestedRuleParser<'a, T> 
             // blocked_on: `fill_property_bit_set` (Property variant reflection
             // — properties_generated PropertyIdTag conversions). The type
             // structure is real; only the bitset population stays gated.
-            #[cfg(any())] {
+             {
             let len = input.position() - location;
             let mut usage = PropertyBitset::default();
             let mut custom_properties: BabyList<&[u8]> = BabyList::default();
@@ -2151,7 +2151,7 @@ impl<'a, T: CustomAtRuleParser> QualifiedRuleParser for NestedRuleParser<'a, T> 
                 entry.fill(&usage, custom_properties_slice);
             }
             }
-            #[cfg(not(any()))] { let _ = location; }
+            #[cfg(any())] { let _ = location; }
         }
 
         this.rules.v.push(CssRule::Style(StyleRule {
@@ -2203,7 +2203,7 @@ impl<'a, T: CustomAtRuleParser> DeclarationParser for NestedRuleParser<'a, T> {
 // blocked_on: media_query::{MediaList,MediaQuery}::parse
 #[inline]
 fn parse_media_list(input: &mut Parser, options: &ParserOptions) -> CssResult<MediaList> {
-    #[cfg(any())]
+    
     { return MediaList::parse(input, options); }
     let _ = (input, options);
     todo("MediaList::parse — media_query.rs parse surface gated")
@@ -2255,7 +2255,7 @@ pub type BundlerCssRule = CssRule<BundlerAtRule>;
 pub type BundlerLayerBlockRule = css_rules::layer::LayerBlockRule<BundlerAtRule>;
 pub type BundlerSupportsRule = css_rules::supports::SupportsRule<BundlerAtRule>;
 pub type BundlerMediaRule = css_rules::media::MediaRule<BundlerAtRule>;
-#[cfg(any())] // blocked_on: printer.rs PrintResult<R> generic
+ // blocked_on: printer.rs PrintResult<R> generic
 pub type BundlerPrintResult = css_printer::PrintResult<BundlerAtRule>;
 
 pub struct BundlerTailwindState {
@@ -2401,7 +2401,7 @@ impl PropertyUsage {
 // Phase B computes the variant count via `strum::EnumCount`.
 pub type PropertyBitset = StaticBitSet<{ 1024 }>;
 
-#[cfg(any())] // blocked_on: properties/ (Property variants, PropertyIdTag)
+ // blocked_on: properties/ (Property variants, PropertyIdTag)
 pub fn fill_property_bit_set(
     bitset: &mut PropertyBitset,
     block: &DeclarationBlock,
@@ -2487,7 +2487,7 @@ impl<AtRule> StyleSheet<AtRule> {
 // ── StyleSheet behavior (parse/minify/to_css) ────────────────────────────────
 // B-2 round 6: un-gated. Method *signatures* are real so cross-crate dependents
 // (`bun_css_jsc::testing_impl`) type-check; method *bodies* that bottom out on
-// still-gated leaves are inline-`#[cfg(any())]`-gated with a `todo!()` fallback
+// still-gated leaves are inline-``-gated with a `todo!()` fallback
 // noting the blocking module. Un-gate each body as its leaf lands.
 mod stylesheet_impl { use super::*;
 
@@ -2502,7 +2502,7 @@ impl<AtRule> StyleSheet<AtRule> {
         // (rules/mod.rs), PropertyHandlerContext::new unused_symbols arg type
         // (`&HashSet<String>` vs `&ArrayHashMap<Box<[u8]>,()>`), CustomMediaRule::deep_clone
         // arena arg.
-        #[cfg(any())] {
+         {
         let ctx = PropertyHandlerContext::new(options.targets, &options.unused_symbols);
         let mut handler = DeclarationHandler::default();
         let mut important_handler = DeclarationHandler::default();
@@ -2542,7 +2542,7 @@ impl<AtRule> StyleSheet<AtRule> {
 
         return Ok(());
         }
-        #[cfg(not(any()))] {
+        #[cfg(any())] {
         let _ = (options, extra);
         todo!("StyleSheet::minify — gated on rules::CssRuleList::minify + MinifyContext field set")
         }
@@ -2559,7 +2559,7 @@ impl<AtRule> StyleSheet<AtRule> {
     ) -> PrintResult<ToCssResultInternal> {
         // blocked_on: PrinterOptions: Copy (printer.rs) — Zig passed by value
         // twice; here `options` is moved into Printer::new then re-read.
-        #[cfg(any())] {
+         {
         let mut printer = Printer::new(
             allocator,
             bun_alloc::BumpVec::new_in(allocator),
@@ -2577,7 +2577,7 @@ impl<AtRule> StyleSheet<AtRule> {
             }
         };
         }
-        #[cfg(not(any()))] {
+        #[cfg(any())] {
         let _ = (allocator, writer, options, import_info, local_names, symbols);
         todo!("StyleSheet::to_css_with_writer — gated on PrinterOptions: Copy + to_css_with_writer_impl")
         }
@@ -2603,7 +2603,7 @@ impl<AtRule> StyleSheet<AtRule> {
         // blocked_on: CssRuleList::to_css (rules/mod.rs), CssModule::new sources
         // arg type (`&Vec<String>` vs `&Vec<Box<[u8]>>`), printer.dependencies
         // BumpVec→Vec conversion / 'bump threading.
-        #[cfg(any())] {
+         {
         if let Some(config) = &self.options.css_modules {
             let mut references = CssModuleReferences::default();
             printer.css_module = Some(CssModule::new(config, &self.sources, _project_root, &mut references));
@@ -2631,7 +2631,7 @@ impl<AtRule> StyleSheet<AtRule> {
             });
         }
         }
-        #[cfg(not(any()))] {
+        #[cfg(any())] {
         let _ = printer;
         todo!("StyleSheet::to_css_with_writer_impl — gated on rules::CssRuleList::to_css")
         }
@@ -2650,7 +2650,7 @@ impl<AtRule> StyleSheet<AtRule> {
         // TODO(port): writer adapter — Zig used std.Io.Writer.Allocating; here we
         // route through bun_io::Write over Vec<u8> until 'bump dest threads.
         // blocked_on: bun_io::Write impl for Vec<u8> / dest ownership reshape.
-        #[cfg(any())] {
+         {
         let mut dest: Vec<u8> = Vec::with_capacity(1);
         let result = self.to_css_with_writer(allocator, &mut dest, options, import_info, local_names, symbols)?;
         return Ok(ToCssResult {
@@ -2660,7 +2660,7 @@ impl<AtRule> StyleSheet<AtRule> {
             references: result.references,
         });
         }
-        #[cfg(not(any()))] {
+        #[cfg(any())] {
         let _ = (allocator, options, import_info, local_names, symbols);
         todo!("StyleSheet::to_css — gated on to_css_with_writer dest adapter")
         }
@@ -2713,10 +2713,10 @@ impl<AtRule> StyleSheet<AtRule> {
         // blocked_on: `options` is borrowed by `at_rule_parser` above and
         // moved into `parse_with` here — Zig aliased; Rust needs the Phase-B
         // borrow reshape (see TODO above) before this can be enabled.
-        #[cfg(any())] {
+         {
         return Self::parse_with(allocator, code, options, &mut at_rule_parser, None, source_index);
         }
-        #[cfg(not(any()))] {
+        #[cfg(any())] {
         let _ = (allocator, code, source_index, &mut at_rule_parser);
         todo!("StyleSheet::parse_bundler — gated on BundlerAtRuleParser: CustomAtRuleParser")
         }
@@ -2917,7 +2917,7 @@ impl<AtRule> StyleSheet<AtRule> {
         // blocked_on: CssRule<R>: Clone (rules/mod.rs leaf payloads), BabyList::push,
         // ImportRecord: Default (bun_options_types). The count-pass above is real;
         // exec-pass gated.
-        #[cfg(any())] {
+         {
         let mut saw_imports = false;
         // SAFETY: Phase A draft — Zig mutated through const ptr.
         let rules_mut = unsafe {
@@ -2958,7 +2958,7 @@ impl<AtRule> StyleSheet<AtRule> {
             }
         }
         }
-        #[cfg(not(any()))] {
+        #[cfg(any())] {
         let _ = (count, new_import_records);
         todo!("pluck_imports exec pass");
         }
@@ -2975,7 +2975,7 @@ impl StyleAttribute {
         // blocked_on: DeclarationBlock::parse (declaration.rs gated body),
         // 'bump lifetime threading (DeclarationBlock<'static> in StyleAttribute
         // vs Parser<'a> here).
-        #[cfg(any())] {
+         {
         let mut parser_extra = ParserExtra {
             local_scope: LocalScope::default(),
             symbols: SymbolList::default(),
@@ -3000,7 +3000,7 @@ impl StyleAttribute {
             sources,
         });
         }
-        #[cfg(not(any()))] {
+        #[cfg(any())] {
         let _ = (code, options, import_records, source_index);
         todo!("StyleAttribute::parse — gated on DeclarationBlock::parse")
         }
@@ -3015,7 +3015,7 @@ impl StyleAttribute {
         // blocked_on: DeclarationBlock::to_css (declaration.rs gated body),
         // Printer::new dest-ownership / 'bump arena threading,
         // printer.sources type (`&Vec<&[u8]>` vs `&Vec<Box<[u8]>>`).
-        #[cfg(any())] {
+         {
         let symbols = bun_logger::symbol::Map::default();
         let mut dest: Vec<u8> = Vec::new();
         // TODO(port): writer adapter
@@ -3031,7 +3031,7 @@ impl StyleAttribute {
             references: None,
         });
         }
-        #[cfg(not(any()))] {
+        #[cfg(any())] {
         let _ = (options, import_info);
         todo!("StyleAttribute::to_css — gated on DeclarationBlock::to_css")
         }
@@ -3212,7 +3212,7 @@ impl<'a> ParserOptions<'a> {
         }
     }
 
-    #[cfg(any())] // blocked_on: bun_logger::Log API shape (notes ownership)
+     // blocked_on: bun_logger::Log API shape (notes ownership)
     pub fn warn_fmt_with_notes(
         &self,
         args: fmt::Arguments<'_>,
@@ -3228,7 +3228,7 @@ impl<'a> ParserOptions<'a> {
         }
     }
 
-    #[cfg(any())] // blocked_on: bun_logger::Log API shape (range note)
+     // blocked_on: bun_logger::Log API shape (range note)
     pub fn warn_fmt_with_note(
         &self,
         args: fmt::Arguments<'_>,
@@ -5486,14 +5486,14 @@ impl TokenKind {
 pub use crate::Token;
 
 impl Token {
-    #[cfg(any())] // blocked_on: generics::CssEql/CssHash blanket impls for Token payload set
+     // blocked_on: generics::CssEql/CssHash blanket impls for Token payload set
     pub fn eql(lhs: &Token, rhs: &Token) -> bool {
         // TODO(port): Zig used implementEql (comptime field-walk).
         // Phase B: derive PartialEq once payload lifetimes settle.
         generic::implement_eql(lhs, rhs)
     }
 
-    #[cfg(any())] // blocked_on: generics::CssHash
+     // blocked_on: generics::CssHash
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         generic::implement_hash(self, hasher)
     }
@@ -5775,12 +5775,12 @@ pub use crate::{Num, Dimension};
 
 // Num/Dimension eql/hash gated until generics::CssEql/CssHash blanket impls
 // cover the float/slice payloads.
-#[cfg(any())]
+
 impl Num {
     pub fn eql(lhs: &Num, rhs: &Num) -> bool { generic::implement_eql(lhs, rhs) }
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) { generic::implement_hash(self, hasher) }
 }
-#[cfg(any())]
+
 impl Dimension {
     pub fn eql(lhs: &Self, rhs: &Self) -> bool { generic::implement_eql(lhs, rhs) }
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) { generic::implement_hash(self, hasher) }

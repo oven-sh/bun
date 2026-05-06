@@ -7,7 +7,7 @@ pub mod GlobalCache;
 pub mod CommandTag;
 
 // ─── B-2 un-gated ─────────────────────────────────────────────────────────
-// Phase-A draft bodies now compile. Remaining `#[cfg(any())]` gates are
+// Phase-A draft bodies now compile. Remaining `` gates are
 // fn-body re-gates blocked on lower-tier symbols (see TODO(b2-blocked)).
 
 #[path = "BundleEnums.rs"]

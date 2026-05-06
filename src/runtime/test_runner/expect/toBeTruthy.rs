@@ -1,9 +1,10 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::Expect;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_be_truthy(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -14,7 +15,7 @@ pub fn to_be_truthy(
     // (e.g. raw-ptr guard or call post_match before each return).
     let _post = scopeguard::guard((), |_| this.post_match(global));
 
-    let this_value = frame.this_value();
+    let this_value = frame.this();
     let value: JSValue = this.get_value(global, this_value, "toBeTruthy", "")?;
 
     this.increment_expect_call_counter();
@@ -35,26 +36,22 @@ pub fn to_be_truthy(
     }
 
     // handle failure
-    let mut formatter = Formatter {
-        global_this: global,
-        quote_strings: true,
-        ..Default::default()
-    };
+    let mut formatter = super::make_formatter(global);
     // `defer formatter.deinit()` → handled by Drop
     let value_fmt = value.to_fmt(&mut formatter);
     if not {
-        const SIGNATURE: &str = Expect::get_signature("toBeTruthy", "", true);
+        let signature: &str = Expect::get_signature("toBeTruthy", "", true);
         return this.throw(
             global,
-            SIGNATURE,
+            signature,
             format_args!("\n\nReceived: <red>{}<r>\n", value_fmt),
         );
     }
 
-    const SIGNATURE: &str = Expect::get_signature("toBeTruthy", "", false);
+    let signature: &str = Expect::get_signature("toBeTruthy", "", false);
     this.throw(
         global,
-        SIGNATURE,
+        signature,
         format_args!("\n\nReceived: <red>{}<r>\n", value_fmt),
     )
 }

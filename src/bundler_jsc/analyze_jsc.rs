@@ -18,7 +18,7 @@ pub extern "C" fn zig__renderDiff(
     received_len: usize,
     global_this: &JSGlobalObject,
 ) {
-    #[cfg(any())]
+    
     {
         // TODO(b2-blocked): bun_runtime::test_runner::diff_format::DiffFormatter (higher-tier crate)
         use bun_runtime::test_runner::diff_format::DiffFormatter;

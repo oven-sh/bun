@@ -889,7 +889,7 @@ pub mod fs_ext {
     }
 }
 pub use fs_ext::PathContentsPair;
-// TODO(b2-blocked): bun_schema::api — `to_api` methods gated behind #[cfg(any())].
+// TODO(b2-blocked): bun_schema::api — `to_api` methods gated behind .
 #[allow(unused_imports)]
 use bun_core::strings;
 
@@ -934,7 +934,7 @@ impl Kind {
         }
     }
 
-    #[cfg(any())] // TODO(b2-blocked): bun_schema::api
+     // TODO(b2-blocked): bun_schema::api
     #[inline]
     pub fn to_api(self) -> api::MessageLevel {
         match self {
@@ -1095,7 +1095,7 @@ impl Location {
         }
     }
 
-    #[cfg(any())] // TODO(b2-blocked): bun_schema::api
+     // TODO(b2-blocked): bun_schema::api
     pub fn to_api(&self) -> api::Location {
         api::Location {
             file: self.file,
@@ -1252,7 +1252,7 @@ impl Data {
         }
     }
 
-    #[cfg(any())] // TODO(b2-blocked): bun_schema::api
+     // TODO(b2-blocked): bun_schema::api
     pub fn to_api(&self) -> api::MessageData {
         api::MessageData {
             text: self.text,
@@ -1551,7 +1551,7 @@ impl Msg {
         }
     }
 
-    #[cfg(any())] // TODO(b2-blocked): bun_schema::api
+     // TODO(b2-blocked): bun_schema::api
     pub fn to_api(&self) -> Result<api::Message, AllocError> {
         let mut notes = vec![api::MessageData::default(); self.notes.len()].into_boxed_slice();
         let msg = api::Message {
@@ -1576,7 +1576,7 @@ impl Msg {
         Ok(api::Message { notes, ..msg })
     }
 
-    #[cfg(any())] // TODO(b2-blocked): bun_schema::api
+     // TODO(b2-blocked): bun_schema::api
     pub fn to_api_from_list(list: &[Msg]) -> Result<Box<[api::Message]>, AllocError> {
         // PORT NOTE: Zig took `comptime ListType: type, list: ListType` and read
         // `list.items`; collapsed to `&[Msg]`.
@@ -1853,7 +1853,7 @@ impl Log {
         (self.warnings + self.errors) > 0
     }
 
-    #[cfg(any())] // TODO(b2-blocked): bun_schema::api
+     // TODO(b2-blocked): bun_schema::api
     pub fn to_api(&self) -> Result<api::Log, AllocError> {
         let mut warnings: u32 = 0;
         let mut errors: u32 = 0;
@@ -3129,7 +3129,7 @@ pub fn source_from_file(
     todo!("source_from_file — gated on bun_sys::file + Source.contents ownership rework")
 }
 
-#[cfg(any())]
+
 mod file_source_ext_draft {
 use super::*;
 pub use bun_sys::file::ToSourceOptions;
@@ -3188,7 +3188,7 @@ impl FileSourceExt for bun_sys::file::File {
         to_source(path, opts)
     }
 }
-} // end #[cfg(any())] mod file_source_ext_draft
+} // end  mod file_source_ext_draft
 
 // ───────────────────────────────────────────────────────────────────────────
 // js_ast — MOVE_DOWN from bun_js_parser::ast (T4→T2, CYCLEBREAK §interchange).

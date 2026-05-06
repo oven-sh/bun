@@ -544,7 +544,7 @@ impl Builtin {
 // Remaining body (~700 lines: redirect handling, stdin/stdout/stderr open,
 // write_failing_error_fmt, OutputSrc) is preserved gated — depends on
 // IOWriter::enqueue, bun_sys open flags.
-#[cfg(any())]
+
 mod builtin_body {
     include!("Builtin_body_gated.rs");
 }

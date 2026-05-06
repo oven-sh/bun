@@ -4,7 +4,7 @@
 //! real `bun_interchange::{toml,json}` parsers (which produce the value-shaped
 //! `bun_logger::js_ast::Expr` tree). Field-writes that target the still-opaque
 //! peechy-generated `api::TransformOptions` / `api::BunInstall` structs are
-//! re-gated at statement granularity with `#[cfg(any())]` and
+//! re-gated at statement granularity with `` and
 //! `// TODO(b2-blocked): api::… (peechy codegen)` markers so the surrounding
 //! control flow, error reporting, and `ctx.*` writes are live.
 
@@ -65,7 +65,9 @@ fn tag_name(t: ExprTag) -> &'static str {
 #[inline]
 fn expr_get(expr: &Expr, name: &[u8]) -> Option<Expr> {
     match &expr.data {
-        ExprData::EObject(obj) => obj.get(name),
+        // `obj` is `&StoreRef<E::Object>`; inherent `StoreRef::get()` shadows
+        // `E::Object::get(key)`, so deref through the StoreRef first.
+        ExprData::EObject(obj) => obj.get().get(name),
         _ => None,
     }
 }
@@ -219,7 +221,7 @@ impl<'a> Parser<'a> {
             }
         };
         // TODO(b2-blocked): api::TransformOptions.log_level / api::MessageLevel (peechy codegen)
-        #[cfg(any())]
+        
         {
             self.ctx.args.log_level = Some(match expr_as_string(expr, self.bump).unwrap() {
                 b"debug" => api::MessageLevel::Debug,
@@ -266,7 +268,7 @@ impl<'a> Parser<'a> {
     // TODO(b2-blocked): api::NpmRegistry (peechy codegen) — parse_registry,
     // parse_registry_url_string, parse_registry_object bodies preserved in the
     // gated draft below until the schema fields land.
-    #[cfg(any())]
+    
     fn parse_registry(&mut self, _expr: &Expr) -> Result<api::NpmRegistry, bun_core::Error> {
         unreachable!()
     }
@@ -276,28 +278,28 @@ impl<'a> Parser<'a> {
             ExprData::ENull(_) => {
                 // env = null -> disable default .env files
                 // TODO(b2-blocked): api::TransformOptions.disable_default_env_files (peechy codegen)
-                #[cfg(any())]
+                
                 { self.ctx.args.disable_default_env_files = true; }
             }
             ExprData::EBoolean(boolean) => {
                 if !boolean.value {
                     // TODO(b2-blocked): api::TransformOptions.disable_default_env_files (peechy codegen)
-                    #[cfg(any())]
+                    
                     { self.ctx.args.disable_default_env_files = true; }
                 }
             }
             ExprData::EObject(obj) => {
-                if let Some(file_expr) = obj.get(b"file") {
+                if let Some(file_expr) = obj.get().get(b"file") {
                     match &file_expr.data {
                         ExprData::ENull(_) => {
                             // TODO(b2-blocked): api::TransformOptions.disable_default_env_files (peechy codegen)
-                            #[cfg(any())]
+                            
                             { self.ctx.args.disable_default_env_files = true; }
                         }
                         ExprData::EBoolean(boolean) => {
                             if !boolean.value {
                                 // TODO(b2-blocked): api::TransformOptions.disable_default_env_files (peechy codegen)
-                                #[cfg(any())]
+                                
                                 { self.ctx.args.disable_default_env_files = true; }
                             }
                         }
@@ -341,7 +343,7 @@ impl<'a> Parser<'a> {
         if let Some(expr) = expr_get(&json, b"define") {
             self.expect(&expr, ExprTag::EObject)?;
             // TODO(b2-blocked): api::TransformOptions.define / api::StringMap (peechy codegen)
-            #[cfg(any())]
+            
             {
                 let properties = expr.data.e_object().unwrap().properties.slice();
                 let mut valid_count: usize = 0;
@@ -366,7 +368,7 @@ impl<'a> Parser<'a> {
         if let Some(expr) = expr_get(&json, b"origin") {
             self.expect_string(&expr)?;
             // TODO(b2-blocked): api::TransformOptions.origin (peechy codegen)
-            #[cfg(any())]
+            
             { self.ctx.args.origin = Some(estring_to_owned(expr.data.e_string().unwrap().get(), self.bump)); }
         }
 
@@ -379,7 +381,7 @@ impl<'a> Parser<'a> {
                 if let Some(port) = expr_get(&expr, b"port") {
                     self.expect(&port, ExprTag::ENumber)?;
                     // TODO(b2-blocked): api::TransformOptions.port (peechy codegen)
-                    #[cfg(any())]
+                    
                     {
                         let p = expr_as_number(&port).unwrap() as u16;
                         self.ctx.args.port = Some(if p == 0 { 3000 } else { p });
@@ -504,7 +506,7 @@ impl<'a> Parser<'a> {
                     // TODO(b2-blocked): CodeCoverageOptions.reports_directory is `&'static [u8]`
                     // (proc-lifetime CLI string); needs retype to Box<[u8]> before this can
                     // accept a parsed value.
-                    #[cfg(any())]
+                    
                     {
                         self.ctx.test_options.coverage.reports_directory =
                             estring_to_owned(expr.data.e_string().unwrap().get(), self.bump);
@@ -655,7 +657,7 @@ impl<'a> Parser<'a> {
                     // `&'static [&'static [u8]]`; retype to Vec<Box<[u8]>> before un-gating.
                     match &expr.data {
                         ExprData::EString(_) => {
-                            #[cfg(any())]
+                            
                             { /* see phase_a_draft */ }
                         }
                         ExprData::EArray(arr) => {
@@ -668,7 +670,7 @@ impl<'a> Parser<'a> {
                                     return Ok(());
                                 }
                             }
-                            #[cfg(any())]
+                            
                             { /* see phase_a_draft */ }
                         }
                         _ => {
@@ -785,7 +787,7 @@ impl<'a> Parser<'a> {
                 // linkWorkspacePackages, security.scanner, minimumReleaseAge,
                 // minimumReleaseAgeExcludes, publicHoistPattern, hoistPattern.
                 // Full body preserved in the gated `phase_a_install` block below.
-                #[cfg(any())]
+                
                 { self.phase_a_install(&install_obj)?; }
 
                 if let Some(expr) = expr_get(&install_obj, b"logLevel") {
@@ -840,7 +842,7 @@ impl<'a> Parser<'a> {
                     if let Some(value) = expr_as_bool(&no_orphans) {
                         if value {
                             // TODO(b2-blocked): bun_core::ParentDeathWatchdog::enable()
-                            #[cfg(any())]
+                            
                             { bun_core::ParentDeathWatchdog::enable(); }
                         }
                     } else {
@@ -869,7 +871,7 @@ impl<'a> Parser<'a> {
         // TODO(b2-blocked): api::TransformOptions.serve_* fields (peechy codegen)
         // — `[serve.static]` plugins/hmr/minify/define/publicPath/env handled in
         // the gated `phase_a_serve_static` block.
-        #[cfg(any())]
+        
         if let Some(serve_obj2) = expr_get_object(&json, b"serve") {
             if let Some(serve_obj) = expr_get_object(&serve_obj2, b"static") {
                 self.phase_a_serve_static(&serve_obj)?;
@@ -884,7 +886,7 @@ impl<'a> Parser<'a> {
                 if let Some(dir) = expr_get(&_bun, b"outdir") {
                     self.expect_string(&dir)?;
                     // TODO(b2-blocked): api::TransformOptions.output_dir (peechy codegen)
-                    #[cfg(any())]
+                    
                     { self.ctx.args.output_dir = Some(estring_to_owned(dir.data.e_string().unwrap().get(), self.bump)); }
                 }
             }
@@ -896,12 +898,13 @@ impl<'a> Parser<'a> {
 
                 if let Some(entry_points) = expr_get(&_bun, b"entryPoints") {
                     self.expect(&entry_points, ExprTag::EArray)?;
-                    let items = entry_points.data.e_array().unwrap().items.slice();
+                    let arr = entry_points.data.e_array().unwrap();
+                    let items = arr.items.slice();
                     for item in items {
                         self.expect_string(item)?;
                     }
                     // TODO(b2-blocked): api::TransformOptions.entry_points (peechy codegen)
-                    #[cfg(any())]
+                    
                     {
                         let mut names: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
                         for item in items {
@@ -998,7 +1001,7 @@ impl<'a> Parser<'a> {
             }
         }
         // TODO(b2-blocked): api::TransformOptions.jsx (peechy codegen)
-        #[cfg(any())]
+        
         {
             if self.ctx.args.jsx.is_none() {
                 self.ctx.args.jsx = Some(api::Jsx {
@@ -1037,7 +1040,7 @@ impl<'a> Parser<'a> {
                 // TODO(b2-blocked): bun_resolver::package_json::PackageJSON::parse_macros_json
                 // takes `bun_js_parser::ast::Expr`; the value-shaped T2 tree must be
                 // lifted via `Expr::from` first. Gate until the From-bridge is verified.
-                #[cfg(any())]
+                
                 {
                     self.ctx.debug.macros = MacroOptions::Map(
                         bun_resolver::package_json::PackageJSON::parse_macros_json(
@@ -1055,7 +1058,7 @@ impl<'a> Parser<'a> {
             match &expr.data {
                 ExprData::EString(_) => {
                     // TODO(b2-blocked): api::TransformOptions.external (peechy codegen)
-                    #[cfg(any())]
+                    
                     { /* see phase_a_draft */ }
                 }
                 ExprData::EArray(array) => {
@@ -1063,7 +1066,7 @@ impl<'a> Parser<'a> {
                         self.expect_string(item)?;
                     }
                     // TODO(b2-blocked): api::TransformOptions.external (peechy codegen)
-                    #[cfg(any())]
+                    
                     { /* see phase_a_draft */ }
                 }
                 _ => self.add_error(expr.loc, b"Expected string or array")?,
@@ -1072,7 +1075,8 @@ impl<'a> Parser<'a> {
 
         if let Some(expr) = expr_get(&json, b"loader") {
             self.expect(&expr, ExprTag::EObject)?;
-            let properties = expr.data.e_object().unwrap().properties.slice();
+            let obj = expr.data.e_object().unwrap();
+            let properties = obj.properties.slice();
             for item in properties {
                 let key_expr = item.key.as_ref().unwrap();
                 let key = expr_as_string(key_expr, self.bump).unwrap();
@@ -1097,7 +1101,7 @@ impl<'a> Parser<'a> {
             }
             // TODO(b2-blocked): api::TransformOptions.loaders (peechy codegen) — only the
             // `self.ctx.args.loaders = api::LoaderMap{…}` write is gated; validation above is live.
-            #[cfg(any())]
+            
             { /* see phase_a_draft */ }
         }
 
@@ -1184,7 +1188,7 @@ impl Bunfig {
 // until `api::BunInstall` / `api::TransformOptions` peechy fields land. These
 // reference fields that do not yet exist on the opaque schema structs.
 // ─────────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
+
 mod phase_a_draft {
     use super::*;
     use bun_install::{self, PackageManager, PnpmMatcher};

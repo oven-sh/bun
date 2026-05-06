@@ -1,4 +1,5 @@
 use bstr::ByteSlice;
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter;
 
@@ -17,7 +18,7 @@ impl Expect {
         // PORT NOTE: reshaped for borrowck (see above)
 
         let this_value = frame.this();
-        let arguments_ = frame.arguments_old(2);
+        let arguments_ = frame.arguments_old::<2>();
         let arguments = arguments_.slice();
 
         if arguments.len() < 2 {
@@ -87,11 +88,7 @@ impl Expect {
             return Ok(JSValue::UNDEFINED);
         }
 
-        let mut formatter = Formatter {
-            global_this: global,
-            quote_strings: true,
-            ..Default::default()
-        };
+        let mut formatter = super::make_formatter(global);
         // defer formatter.deinit() → handled by Drop
         // PORT NOTE: to_fmt borrows the formatter; three live borrows below would alias under
         // &mut. Using shared & here; Phase B may need interior mutability on Formatter.
@@ -104,10 +101,10 @@ impl Expect {
         // inlined directly below instead of bound to RECEIVED_LINE/EXPECTED_LINE locals.
         if not {
             if count_as_num == 0 {
-                const SIGNATURE: &str = get_signature("toIncludeRepeated", "<green>expected<r>", true);
+                let signature: &str = get_signature("toIncludeRepeated", "<green>expected<r>", true);
                 return this.throw(
                     global,
-                    SIGNATURE,
+                    signature,
                     format_args!(
                         concat!("\n\n", "Expected to include: <green>{}<r> \n", "Received: <red>{}<r>\n"),
                         substring_fmt,
@@ -115,10 +112,10 @@ impl Expect {
                     ),
                 );
             } else if count_as_num == 1 {
-                const SIGNATURE: &str = get_signature("toIncludeRepeated", "<green>expected<r>", true);
+                let signature: &str = get_signature("toIncludeRepeated", "<green>expected<r>", true);
                 return this.throw(
                     global,
-                    SIGNATURE,
+                    signature,
                     format_args!(
                         concat!("\n\n", "Expected not to include: <green>{}<r> \n", "Received: <red>{}<r>\n"),
                         substring_fmt,
@@ -126,10 +123,10 @@ impl Expect {
                     ),
                 );
             } else {
-                const SIGNATURE: &str = get_signature("toIncludeRepeated", "<green>expected<r>", true);
+                let signature: &str = get_signature("toIncludeRepeated", "<green>expected<r>", true);
                 return this.throw(
                     global,
-                    SIGNATURE,
+                    signature,
                     format_args!(
                         concat!("\n\n", "Expected not to include: <green>{}<r> <green>{}<r> times \n", "Received: <red>{}<r>\n"),
                         substring_fmt,
@@ -141,10 +138,10 @@ impl Expect {
         }
 
         if count_as_num == 0 {
-            const SIGNATURE: &str = get_signature("toIncludeRepeated", "<green>expected<r>", false);
+            let signature: &str = get_signature("toIncludeRepeated", "<green>expected<r>", false);
             this.throw(
                 global,
-                SIGNATURE,
+                signature,
                 format_args!(
                     concat!("\n\n", "Expected to not include: <green>{}<r>\n", "Received: <red>{}<r>\n"),
                     substring_fmt,
@@ -152,10 +149,10 @@ impl Expect {
                 ),
             )
         } else if count_as_num == 1 {
-            const SIGNATURE: &str = get_signature("toIncludeRepeated", "<green>expected<r>", false);
+            let signature: &str = get_signature("toIncludeRepeated", "<green>expected<r>", false);
             this.throw(
                 global,
-                SIGNATURE,
+                signature,
                 format_args!(
                     concat!("\n\n", "Expected to include: <green>{}<r>\n", "Received: <red>{}<r>\n"),
                     substring_fmt,
@@ -163,10 +160,10 @@ impl Expect {
                 ),
             )
         } else {
-            const SIGNATURE: &str = get_signature("toIncludeRepeated", "<green>expected<r>", false);
+            let signature: &str = get_signature("toIncludeRepeated", "<green>expected<r>", false);
             this.throw(
                 global,
-                SIGNATURE,
+                signature,
                 format_args!(
                     concat!("\n\n", "Expected to include: <green>{}<r> <green>{}<r> times \n", "Received: <red>{}<r>\n"),
                     substring_fmt,

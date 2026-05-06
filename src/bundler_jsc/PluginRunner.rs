@@ -65,7 +65,7 @@ impl<'a> PluginRunner<'a> {
         loc: Loc,
         target: BunPluginTarget,
     ) -> JsResult<Option<FsPath<'static>>> {
-        #[cfg(any())]
+        
         {
             let global = self.global_object;
             let namespace_slice = Self::extract_namespace(specifier);

@@ -52,7 +52,7 @@ impl Default for Context {
 // `bun_brotli_sys` (e.g. `BrotliDecoderResult::Error` vs `::err`). Unblocking
 // requires aligning those signatures — Phase B.
 // TODO(b2-blocked): un-gate once bun_jsc JsClass + Error::init str overload + brotli_c variant names settle.
-#[cfg(any())]
+
 mod _impl {
 use super::*;
 use core::cell::Cell;

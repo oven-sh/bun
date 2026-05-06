@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use bun_core::Environment;
 use bun_core::Timespec;
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
-use bun_runtime::api::timer::{self, EventLoopTimer, TimerHeap};
+use crate::api::timer::{self, EventLoopTimer, TimerHeap};
 use bun_str::ZigString;
 
 // TODO(port): move to test_runner_sys / jsc_sys

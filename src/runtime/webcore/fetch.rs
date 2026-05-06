@@ -43,7 +43,7 @@ pub const FETCH_TYPE_ERROR_STRINGS: [&str; 8] = FETCH_TYPE_ERROR_STRING_VALUES;
 
 // TODO(b2-blocked): module wiring — fetch.rs + fetch/ subdir (Rust 2018 path).
 // `fetch/FetchTasklet.rs` is itself a heavy gated draft.
-#[cfg(any())]
+
 #[path = "fetch/FetchTasklet.rs"]
 pub mod fetch_tasklet;
 
@@ -60,9 +60,9 @@ pub mod fetch_tasklet;
 //   - `jsc::URL::href_from_js`, `JSPromise::Strong`, `jsc::mark_binding`
 //   - `fetch_tasklet::{FetchTasklet, HTTPRequestBody}`
 //   - `bun_paths::PosixToWinNormalizer` (gated on Windows-only build)
-// Un-gate by deleting `#[cfg(any())]` once the above type-check.
+// Un-gate by deleting `` once the above type-check.
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
+
 mod _gated {
 use super::*;
 

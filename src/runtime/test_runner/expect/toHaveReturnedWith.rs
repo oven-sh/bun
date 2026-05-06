@@ -1,4 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter as ConsoleFormatter;
 use bun_core::Output;
 
@@ -6,7 +7,7 @@ use super::DiffFormatter;
 use super::mock;
 use super::Expect;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_have_returned_with(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -27,7 +28,7 @@ pub fn to_have_returned_with(
     // TODO(port): bun.cpp.JSMockFunction__getReturns — extern C++ shim; confirm crate path.
     let returns = super::mock::JSMockFunction__getReturns(global, value)?;
     if !returns.js_type().is_array() {
-        let mut formatter = ConsoleFormatter { global, quote_strings: true, ..Default::default() };
+        let mut formatter = super::make_formatter(global);
         return global.throw(format_args!(
             "Expected value must be a mock function: {}",
             value.to_fmt(&mut formatter),
@@ -75,13 +76,13 @@ pub fn to_have_returned_with(
     }
 
     // Handle failure
-    let mut formatter = ConsoleFormatter { global, quote_strings: true, ..Default::default() };
+    let mut formatter = super::make_formatter(global);
 
-    const SIGNATURE: &str = Expect::get_signature("toHaveReturnedWith", "<green>expected<r>", false);
+    let signature: &str = Expect::get_signature("toHaveReturnedWith", "<green>expected<r>", false);
 
     if this.flags.not() {
         const NOT_SIGNATURE: &str = Expect::get_signature("toHaveReturnedWith", "<green>expected<r>", true);
-        return this.throw(
+        return this.throw_fmt(
             global,
             NOT_SIGNATURE,
             concat!("\n\n", "Expected mock function not to have returned: <green>{}<r>\n"),
@@ -102,12 +103,12 @@ pub fn to_have_returned_with(
                 global,
                 not: false,
             };
-            return this.throw(global, SIGNATURE, "\n\n{}\n", format_args!("{}", diff_format));
+            return this.throw_fmt(global, signature, "\n\n{}\n", format_args!("{}", diff_format));
         }
 
         return this.throw(
             global,
-            SIGNATURE,
+            signature,
             "\n\nExpected: <green>{}<r>\nReceived: <red>{}<r>",
             // TODO(port): Expect::throw fmt-arg plumbing — Zig passes (template, .{arg1, arg2});
             // Rust signature TBD. Placeholder concatenation below does NOT line up with template `{}`s.
@@ -139,8 +140,8 @@ pub fn to_have_returned_with(
         if Output::enable_ansi_colors_stderr() {
             return this.throw(
                 global,
-                SIGNATURE,
-                Output::pretty_fmt::<true>(const_format::concatcp!("\n\n", FMT, "\n")),
+                signature,
+                Output::pretty_fmt_true(const_format::concatcp!("\n\n", FMT, "\n")),
                 // TODO(port): pretty_fmt is comptime ANSI-tag expansion in Zig; Rust needs a macro (`bun_core::pretty_fmt!`).
                 // TODO(port): Expect::throw fmt-arg plumbing — args below must map to template `{}`s, not concatenate.
                 format_args!(
@@ -154,8 +155,8 @@ pub fn to_have_returned_with(
         } else {
             return this.throw(
                 global,
-                SIGNATURE,
-                Output::pretty_fmt::<false>(const_format::concatcp!("\n\n", FMT, "\n")),
+                signature,
+                Output::pretty_fmt_false(const_format::concatcp!("\n\n", FMT, "\n")),
                 // TODO(port): Expect::throw fmt-arg plumbing — args below must map to template `{}`s, not concatenate.
                 format_args!(
                     "{}{}{}{}",
@@ -170,7 +171,7 @@ pub fn to_have_returned_with(
         // Case: No errors, but no match (and multiple returns)
         let list_formatter = mock::SuccessfulReturnsFormatter {
             global,
-            successful_returns: successful_returns.as_slice(),
+            successful_returns: successful_returns.slice(),
             formatter: &mut formatter,
         };
         const FMT: &str = "    <green>Expected<r>: {}\n\
@@ -182,8 +183,8 @@ pub fn to_have_returned_with(
         if Output::enable_ansi_colors_stderr() {
             return this.throw(
                 global,
-                SIGNATURE,
-                Output::pretty_fmt::<true>(const_format::concatcp!("\n\n", FMT, "\n")),
+                signature,
+                Output::pretty_fmt_true(const_format::concatcp!("\n\n", FMT, "\n")),
                 // TODO(port): pretty_fmt is comptime ANSI-tag expansion in Zig; Rust needs a macro (`bun_core::pretty_fmt!`).
                 // TODO(port): Expect::throw fmt-arg plumbing — args below must map to template `{}`s, not concatenate.
                 format_args!(
@@ -196,8 +197,8 @@ pub fn to_have_returned_with(
         } else {
             return this.throw(
                 global,
-                SIGNATURE,
-                Output::pretty_fmt::<false>(const_format::concatcp!("\n\n", FMT, "\n")),
+                signature,
+                Output::pretty_fmt_false(const_format::concatcp!("\n\n", FMT, "\n")),
                 // TODO(port): Expect::throw fmt-arg plumbing — args below must map to template `{}`s, not concatenate.
                 format_args!(
                     "{}{}{}",

@@ -1,16 +1,17 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::Expect;
 use super::get_signature;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_be_date(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // TODO(port): `defer this.postMatch(global)` — scopeguard captures &mut *this for the whole
     // scope and conflicts with later uses; Phase B may need to reshape (call before each return).
     let _post = scopeguard::guard((), |_| this.post_match(global));
 
-    let this_value = frame.this_value();
+    let this_value = frame.this();
     let value: JSValue = this.get_value(global, this_value, "toBeDate", "")?;
 
     this.increment_expect_call_counter();
@@ -22,7 +23,7 @@ pub fn to_be_date(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame)
         return Ok(JSValue::UNDEFINED);
     }
 
-    let mut formatter = Formatter { global_this: global, quote_strings: true, ..Default::default() };
+    let mut formatter = super::make_formatter(global);
     // `defer formatter.deinit()` — handled by Drop.
     let received = value.to_fmt(&mut formatter);
 

@@ -107,7 +107,7 @@ impl LinkerGraph {
 // TODO(b2-blocked): `init` constructs the SoA columns; gated alongside the
 // rest of the impl so the un-gated surface is purely the struct shape +
 // `allocator()` (what `LinkerContext.rs` actually reaches today).
-#[cfg(any())]
+
 impl LinkerGraph {
     pub fn init(bump: &Arena, file_count: usize) -> Result<Self, bun_core::Error> {
         // TODO(port): narrow error set
@@ -380,7 +380,7 @@ impl LinkerGraph {
 // still index `MultiArrayList` via the Phase-A `.items().field` shape and
 // touch APIs not yet ported (`BitSet::init_empty(len)`, `BabyList::clone_in`,
 // `transfer_ownership(heap)`). Kept gated; un-gate alongside `LinkerGraph::init`.
-#[cfg(any())]
+
 impl LinkerGraph {
     pub fn load(
         &mut self,

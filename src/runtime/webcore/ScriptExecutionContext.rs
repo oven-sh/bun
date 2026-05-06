@@ -21,7 +21,7 @@ impl Identifier {
 
     /// Returns `None` if the context referred to by `self` no longer exists
     pub fn bun_vm(self) -> Option<&'static VirtualMachine> {
-        #[cfg(any())]
+        
         {
             // concurrently because we expect these identifiers are mostly used by off-thread tasks
             return self.global_object()?.bun_vm_concurrently();

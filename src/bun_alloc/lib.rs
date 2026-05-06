@@ -74,14 +74,14 @@ pub const USE_MIMALLOC: bool = true;
 //   heap_breakdown           → DEBUG-ONLY (macOS malloc_zone_*); keep gated
 //   basic                    → SUPERSEDED: `impl GlobalAlloc for Mimalloc` above is the real impl
 //
-#[cfg(any())] #[path = "MimallocArena.rs"]           pub mod mimalloc_arena;
-#[cfg(any())]                                        pub mod allocation_scope;
-#[cfg(any())] #[path = "NullableAllocator.rs"]       pub mod nullable_allocator;
-#[cfg(any())] #[path = "LinuxMemFdAllocator.rs"]     pub mod linux_mem_fd_allocator;
-#[cfg(any())]                                        pub mod maybe_owned;
-#[cfg(any())] #[path = "MaxHeapAllocator.rs"]        pub mod max_heap_allocator;
-#[cfg(any())] #[path = "BufferFallbackAllocator.rs"] pub mod buffer_fallback_allocator;
-#[cfg(any())]                                        pub mod fallback;
+ #[path = "MimallocArena.rs"]           pub mod mimalloc_arena;
+                                        pub mod allocation_scope;
+ #[path = "NullableAllocator.rs"]       pub mod nullable_allocator;
+ #[path = "LinuxMemFdAllocator.rs"]     pub mod linux_mem_fd_allocator;
+                                        pub mod maybe_owned;
+ #[path = "MaxHeapAllocator.rs"]        pub mod max_heap_allocator;
+ #[path = "BufferFallbackAllocator.rs"] pub mod buffer_fallback_allocator;
+                                        pub mod fallback;
 
 // Stub types so re-exports / downstream `use` resolve.
 pub struct AllocationScope;
@@ -2034,7 +2034,7 @@ impl Allocator for DefaultAlloc {}
 // `GenericAllocator` / `Borrowed<A>` / `Nullable<A>` are dropped — they modelled
 // Zig's allocator-borrowing discipline (avoid double-deinit), which Rust's
 // ownership already enforces. Drafts that referenced them are gated under
-// `#[cfg(any())]` and will be rewritten to drop the param when un-gated.
+// `` and will be rewritten to drop the param when un-gated.
 
 // ──────────────────────────────────────────────────────────────────────────
 // `basic` module selection
@@ -2042,8 +2042,8 @@ impl Allocator for DefaultAlloc {}
 
 // `basic.zig` ported as `impl GlobalAlloc for Mimalloc` above (the real impl).
 // Draft kept for diff-pass only.
-#[cfg(any())] #[path = "basic.rs"] pub mod basic;
-#[cfg(any())] #[path = "heap_breakdown.rs"] mod heap_breakdown_full; // DEBUG-ONLY draft; superseded by inline `heap_breakdown` above
+ #[path = "basic.rs"] pub mod basic;
+ #[path = "heap_breakdown.rs"] mod heap_breakdown_full; // DEBUG-ONLY draft; superseded by inline `heap_breakdown` above
 pub mod memory;
 
 // ──────────────────────────────────────────────────────────────────────────

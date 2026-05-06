@@ -110,7 +110,7 @@ impl Echo {
 
 // Full body (~200 lines: -e escape processing, incremental chunked write) is
 // preserved gated until IOWriter::enqueue is real.
-#[cfg(any())]
+
 mod echo_body {
     include!("echo_body_gated.rs");
 }

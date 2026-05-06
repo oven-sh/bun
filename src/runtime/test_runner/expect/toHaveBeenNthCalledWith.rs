@@ -1,9 +1,10 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 use super::DiffFormatter;
 use super::Expect;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_have_been_nth_called_with(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -27,8 +28,8 @@ pub fn to_have_been_nth_called_with(
 
     let calls = super::mock::JSMockFunction__getCalls(global, value)?;
     if !calls.js_type().is_array() {
-        let mut formatter = Formatter { global_this: global, quote_strings: true, ..Default::default() };
-        return this.throw(
+        let mut formatter = super::make_formatter(global);
+        return this.throw_fmt(
             global,
             Expect::get_signature("toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>", false),
             format_args!(
@@ -84,7 +85,7 @@ pub fn to_have_been_nth_called_with(
     }
 
     // handle failure
-    let mut formatter = Formatter { global_this: global, quote_strings: true, ..Default::default() };
+    let mut formatter = super::make_formatter(global);
 
     let expected_args_slice = &arguments[1..];
     let expected_args_js_array = JSValue::create_empty_array(global, expected_args_slice.len())?;

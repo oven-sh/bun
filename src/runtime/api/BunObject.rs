@@ -60,7 +60,7 @@ pub fn get_public_path_with_asset_prefix<W: core::fmt::Write>(
             } else {
                 // SAFETY: `transpiler.fs` is the process-lifetime resolver FileSystem
                 // singleton, set during VM init and never freed.
-                let fs = unsafe { &*VirtualMachine::get().transpiler.fs };
+                let fs = unsafe { &*(*VirtualMachine::get()).transpiler.fs };
                 let _ = write_bytes(writer, fs.abs(&[to]));
             }
         } else {
@@ -91,7 +91,9 @@ pub fn sleep_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     // Expect at least one argument.  We allow more than one but ignore them; this
     //  is useful for supporting things like `[1, 2].map(sleepSync)`
     if arguments.is_empty() {
-        return Err(global_object.throw_not_enough_arguments("sleepSync", 1, 0));
+        return Err(global_object.throw_invalid_arguments(format_args!(
+            "sleepSync expects 1 argument but received 0"
+        )));
     }
     let arg = arguments[0];
 
@@ -121,14 +123,15 @@ pub fn sleep_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsRe
 #[bun_jsc::host_fn(export = "BunObject_callback_nanoseconds")]
 pub fn nanoseconds(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
     // PORT NOTE: Zig's `std.time.Timer.read()` → `Instant::elapsed().as_nanos()`.
-    let ns = global_this.bun_vm().origin_timer.elapsed().as_nanos() as u64;
+    // SAFETY: bun_vm() returns a live VirtualMachine pointer for a Bun-owned global.
+    let ns = unsafe { (*global_this.bun_vm()).origin_timer.elapsed().as_nanos() as u64 };
     Ok(JSValue::js_number_from_uint64(ns))
 }
 
 #[bun_jsc::host_fn(export = "BunObject_callback_shrink")]
 pub fn shrink(global_object: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-    global_object.vm().shrink_footprint();
-    Ok(JSValue::UNDEFINED)
+    let _ = global_object;
+    todo!("blocked_on: bun_jsc::VM::shrink_footprint")
 }
 
 pub use Bun__gc as gc;
@@ -140,8 +143,8 @@ pub extern "C" fn Bun__gc(vm: *mut VirtualMachine, sync: bool) -> usize {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__reportError(global_object: *mut JSGlobalObject, err: JSValue) {
-    // SAFETY: caller is C++ with a live global.
-    let _ = VirtualMachine::get().uncaught_exception(unsafe { &*global_object }, err, false);
+    // SAFETY: caller is C++ with a live global; VirtualMachine::get() is the singleton.
+    let _ = unsafe { (*VirtualMachine::get()).uncaught_exception(&*global_object, err, false) };
 }
 
 // ─── un-gated host-fn bodies (B-2, round 3) ─────────────────────────────────
@@ -274,11 +277,13 @@ pub fn get_hash_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 }
 
 pub fn get_jsonc_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    crate::api::jsonc_object::create(global_this)
+    let _ = global_this;
+    todo!("blocked_on: crate::api::jsonc_object::create (cfg-gated)")
 }
 
 pub fn get_markdown_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    crate::api::markdown_object::create(global_this)
+    let _ = global_this;
+    todo!("blocked_on: crate::api::markdown_object::create (cfg-gated)")
 }
 
 pub fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -289,7 +294,7 @@ pub fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValu
 pub fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     // SAFETY: `transpiler.fs` is the process-lifetime resolver FileSystem
     // singleton (set during VM init, never freed); see get_public_path_* above.
-    let fs = unsafe { &*VirtualMachine::get().transpiler.fs };
+    let fs = unsafe { &*(*VirtualMachine::get()).transpiler.fs };
     // PORT NOTE: Zig used `ZigString.init(..).toJS()`; that helper is gated in
     // bun_jsc, so route through the un-gated `BunString__createUTF8ForJS` FFI.
     bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, &fs.top_level_dir)
@@ -297,7 +302,9 @@ pub fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 }
 
 pub fn get_origin(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, VirtualMachine::get().origin.origin)
+    // SAFETY: VirtualMachine::get() returns the live singleton.
+    let origin = unsafe { (*VirtualMachine::get()).origin.origin };
+    bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, origin)
         .unwrap_or(JSValue::ZERO)
 }
 
@@ -328,7 +335,8 @@ fn get_main(global_this: &JSGlobalObject) -> JSValue {
     use bun_jsc::StringJsc as _;
     use bun_str::String as BunString;
 
-    let vm = global_this.bun_vm();
+    // SAFETY: bun_vm() returns the live singleton VirtualMachine for a Bun-owned global.
+    let vm = unsafe { &mut *global_this.bun_vm() };
     // If JS has set it to a custom value, use that one
     if let Some(overridden_main) = vm.overridden_main.get() {
         return overridden_main;
@@ -403,10 +411,8 @@ fn get_main(global_this: &JSGlobalObject) -> JSValue {
 }
 
 fn set_main(global_this: &JSGlobalObject, new_value: JSValue) -> bool {
-    global_this
-        .bun_vm()
-        .overridden_main
-        .set(global_this, new_value);
+    // SAFETY: bun_vm() returns the live singleton VirtualMachine for a Bun-owned global.
+    unsafe { (*global_this.bun_vm()).overridden_main.set(global_this, new_value) };
     true
 }
 
@@ -429,7 +435,7 @@ pub extern "C" fn BunObject_setter_main(g: *mut JSGlobalObject, v: JSValue) -> b
 // TODO(b2-blocked): bun_gen codegen crate + sibling api/* mod declarations
 // (FFIObject/Subprocess/webcore::Blob/jsc::api::*). bun_jsc itself is
 // un-gated now — remaining blockers are the fan-out targets.
-#[cfg(any())]
+
 #[allow(dead_code)]
 mod _jsc_gated {
 use core::ffi::{c_char, c_int, c_void};
@@ -1071,7 +1077,8 @@ pub fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValu
 
 // callconv(jsc.conv) — emitted by #[bun_jsc::host_call]; see PORTING.md §FFI.
 fn get_main(global_this: &JSGlobalObject) -> JSValue {
-    let vm = global_this.bun_vm();
+    // SAFETY: bun_vm() returns the live singleton VirtualMachine for a Bun-owned global.
+    let vm = unsafe { &mut *global_this.bun_vm() };
     // If JS has set it to a custom value, use that one
     if let Some(overridden_main) = vm.overridden_main.get() {
         return overridden_main;

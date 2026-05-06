@@ -1,10 +1,11 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_str::ZigString;
 
 use super::Expect;
 use super::get_signature;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_throw_error_matching_snapshot(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -15,16 +16,16 @@ pub fn to_throw_error_matching_snapshot(
     // is invoked only on the fall-through success path below; restructure in Phase B so it
     // also runs on the early-return error paths.
 
-    let this_value = frame.this_value();
+    let this_value = frame.this();
     let _arguments = frame.arguments_old::<2>();
-    let arguments: &[JSValue] = _arguments.as_slice();
+    let arguments: &[JSValue] = _arguments.slice();
 
     this.increment_expect_call_counter();
 
     let not = this.flags.not();
     if not {
         let signature = get_signature("toThrowErrorMatchingSnapshot", "", true);
-        return this.throw(
+        return this.throw_fmt(
             global,
             signature,
             "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n",
@@ -34,7 +35,7 @@ pub fn to_throw_error_matching_snapshot(
 
     let Some(bun_test_strong) = this.bun_test() else {
         let signature = get_signature("toThrowErrorMatchingSnapshot", "", true);
-        return this.throw(
+        return this.throw_fmt(
             global,
             signature,
             "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n",
@@ -51,7 +52,7 @@ pub fn to_throw_error_matching_snapshot(
             if arguments[0].is_string() {
                 arguments[0].to_zig_string(&mut hint_string, global)?;
             } else {
-                return this.throw(
+                return this.throw_fmt(
                     global,
                     "",
                     "\n\nMatcher error: Expected first argument to be a string\n",
@@ -60,7 +61,7 @@ pub fn to_throw_error_matching_snapshot(
             }
         }
         _ => {
-            return this.throw(
+            return this.throw_fmt(
                 global,
                 "",
                 "\n\nMatcher error: Expected zero or one arguments\n",
@@ -83,7 +84,7 @@ pub fn to_throw_error_matching_snapshot(
     )?
     else {
         let signature = get_signature("toThrowErrorMatchingSnapshot", "", false);
-        return this.throw(
+        return this.throw_fmt(
             global,
             signature,
             "\n\n<b>Matcher error<r>: Received function did not throw\n",

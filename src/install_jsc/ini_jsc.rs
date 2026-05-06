@@ -10,7 +10,7 @@ impl IniTestingAPIs {
     // TODO(b2-blocked): bun_ini::load_npmrc (real signature — currently shadow stub `fn()`)
     // TODO(b2-blocked): bun_api::BunInstall
     // TODO(b2-blocked): bun_dotenv::Loader / Map (init + HashTable surface)
-    #[cfg(any())]
+    
     pub fn load_npmrc_from_js(
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -141,7 +141,7 @@ impl IniTestingAPIs {
 
     // TODO(b2-blocked): bun_bundler::Transpiler — opaque `Transpiler(())`; needs `.env`
     // TODO(b2-blocked): bun_js_parser_jsc::ExprJsc::to_js (parser.out is js_parser::Expr)
-    #[cfg(any())]
+    
     pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> bun_jsc::JsResult<JSValue> {
         use bun_ini::Parser;
 

@@ -19,9 +19,9 @@ use bun_options_types::schema::api;
 // TODO(b2-blocked): bun_analytics — Cargo.toml does not yet list the dep
 // (adding it triggers upstream rebuilds with in-progress breakage). The
 // `analytics::features::*` counters are pure telemetry side effects; the
-// increment call-sites below are `#[cfg(any())]`-gated until the dep is wired
+// increment call-sites below are ``-gated until the dep is wired
 // so the no-op is explicit (PORTING.md §Forbidden patterns: silent no-ops).
-#[cfg(any())]
+
 mod analytics {
     #[allow(non_upper_case_globals)]
     pub mod features {
@@ -119,7 +119,7 @@ pub fn validate_path(
     Box::from(out)
 }
 
-#[cfg(any())]
+
 // TODO(port): both Zig call sites (defines/loaders from transform options) inline
 // the map construction directly; this generic helper is dead until a concrete
 // map trait (`reserve`/`insert`) is available. Gated to avoid a silent no-op
@@ -216,7 +216,7 @@ pub struct WildcardPattern {
 }
 
 impl ExternalModules {
-    #[cfg(any())]
+    
     // TODO(b2-blocked): bun_resolve_builtins — adding the dep triggers upstream
     // rebuilds that expose in-progress breakage in css/logger.
     pub fn is_node_builtin(str: &[u8]) -> bool {
@@ -893,7 +893,7 @@ pub struct LoaderResult<'a> {
     pub package_json: Option<&'a PackageJSON>,
 }
 
-#[cfg(any())]
+
 // TODO(b2-blocked): bun_paths::path_literal! + Fs::Path::loader + strings::eql_long
 // arity — body touches VmLoaderCtx vtable which is real but the helper APIs are not.
 pub fn get_loader_and_virtual_source<'a>(
@@ -1416,7 +1416,7 @@ pub mod default_user_defines {
 
 pub use default_user_defines as DefaultUserDefines;
 
-#[cfg(any())]
+
 // TODO(b2-blocked): defines::{DefineDataInit, DefineValue} (names not yet
 // surfaced by bundler/defines.rs) + DotEnv::Loader::copy_for_define.
 pub fn defines_from_transform_options(
@@ -1958,7 +1958,7 @@ impl<'a> BundleOptions<'a> {
         !self.defines_loaded
     }
 
-    #[cfg(any())]
+    
     // TODO(b2-blocked): defines_from_transform_options (see above) +
     // api::TransformOptions.define field (peechy `TransformOptions` body still
     // opaque).
@@ -2012,7 +2012,7 @@ impl<'a> BundleOptions<'a> {
         log: &'a mut logger::Log,
         transform: api::TransformOptions,
     ) -> Result<BundleOptions<'a>, bun_core::Error> {
-        #[cfg(any())]
+        
         use core::sync::atomic::Ordering;
 
         let target = Target::from(transform.target);
@@ -2136,7 +2136,7 @@ impl<'a> BundleOptions<'a> {
             optimize_imports: None,
         };
 
-        #[cfg(any())] // TODO(b2-blocked): bun_analytics dep not yet wired in bundler/Cargo.toml
+         // TODO(b2-blocked): bun_analytics dep not yet wired in bundler/Cargo.toml
         {
             analytics::features::define
                 .fetch_add(usize::from(transform.define.is_some()), Ordering::Relaxed);
@@ -2282,7 +2282,7 @@ impl<'a> BundleOptions<'a> {
             opts.tsconfig_override = Some(tsconfig.clone());
         }
 
-        #[cfg(any())] // TODO(b2-blocked): bun_analytics dep not yet wired in bundler/Cargo.toml
+         // TODO(b2-blocked): bun_analytics dep not yet wired in bundler/Cargo.toml
         {
             analytics::features::macros
                 .fetch_add(usize::from(opts.target == Target::BunMacro), Ordering::Relaxed);
@@ -2392,7 +2392,7 @@ pub struct TransformOptions {
     pub preserve_symlinks: bool,
     // TODO(b2-blocked): bun_resolver::fs::File — `bun_logger::fs` does not
     // expose a `File` type. Field gated until resolver fs is real.
-    #[cfg(any())]
+    
     pub entry_point: Fs::File,
     pub resolve_paths: bool,
     pub tsconfig_override: Option<Box<[u8]>>,
@@ -2402,7 +2402,7 @@ pub struct TransformOptions {
 }
 
 impl TransformOptions {
-    #[cfg(any())]
+    
     // TODO(b2-blocked): bun_resolver::fs::File — see `entry_point` field.
     pub fn init_uncached(entry_point_name: &[u8], code: &[u8]) -> Result<TransformOptions, bun_core::Error> {
         debug_assert!(!entry_point_name.is_empty());
@@ -2463,7 +2463,7 @@ pub struct TransformResult {
 }
 
 impl TransformResult {
-    #[cfg(any())]
+    
     // TODO(b2-blocked): bun_logger::Msg::clone signature (returns Result) +
     // log.errors/warnings are u32 — body needs reshaping.
     pub fn init(

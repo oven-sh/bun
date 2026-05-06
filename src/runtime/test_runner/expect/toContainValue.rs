@@ -1,4 +1,5 @@
 use bun_jsc::{CallFrame, ConsoleObject, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 
 use super::Expect;
 
@@ -15,7 +16,7 @@ impl Expect {
 
         let this_value = frame.this();
         let arguments_ = frame.arguments_old::<1>();
-        let arguments = arguments_.as_slice();
+        let arguments = arguments_.slice();
 
         if arguments.len() < 1 {
             return global
@@ -52,16 +53,12 @@ impl Expect {
 
         // handle failure
         // TODO(port): ConsoleObject::Formatter field init — other fields rely on Zig defaults
-        let mut formatter = ConsoleObject::Formatter {
-            global_this: global,
-            quote_strings: true,
-            ..Default::default()
-        };
+        let mut formatter = super::make_formatter(global);
         let value_fmt = value.to_fmt(&mut formatter);
         let expected_fmt = expected.to_fmt(&mut formatter);
         if not {
             let received_fmt = value.to_fmt(&mut formatter);
-            return this.throw(
+            return this.throw_fmt(
                 global,
                 Expect::get_signature("toContainValue", "<green>expected<r>", true),
                 format_args!(
@@ -71,7 +68,7 @@ impl Expect {
             );
         }
 
-        this.throw(
+        this.throw_fmt(
             global,
             Expect::get_signature("toContainValue", "<green>expected<r>", false),
             format_args!(

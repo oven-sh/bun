@@ -300,7 +300,7 @@ impl Accessor for SyscallAccessor {
 // `DirEntryAccessor` should be re-homed under `bun_resolver` as
 // `impl bun_glob::Accessor for DirEntryAccessor`. Gated until that crate
 // picks it up; cannot un-gate in `bun_glob` without an upward edge.
-#[cfg(any())]
+
 mod dir_entry_accessor {
 use super::*;
 use bun_fs::FileSystem as FS;

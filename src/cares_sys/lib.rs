@@ -1,6 +1,6 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
 // B-1: gate Phase-A draft module; expose opaque FFI handles only. Body preserved for B-2.
-#[cfg(any())]
+
 #[path = "c_ares.rs"]
 pub mod c_ares_draft;
 

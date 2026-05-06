@@ -66,7 +66,7 @@ impl ImportDependency {
         symbols: &bun_logger::symbol::Map,
     ) -> ImportDependency {
         // PORT NOTE: Zig routed through `css.to_css.string(allocator, T, ...)`;
-        // that free function is still `#[cfg(any())]`-gated on the
+        // that free function is still ``-gated on the
         // `Printer::new` arena reshape, so its body (sub-printer +
         // `T::to_css` + buffer) is inlined here. Swap back to
         // `crate::to_css::string` once that un-gates.

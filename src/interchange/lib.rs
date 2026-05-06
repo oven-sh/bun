@@ -2,7 +2,7 @@
 // B-2 UN-GATE
 //   Phase-A draft bodies are progressively un-gated and made to compile.
 //   Modules that remain blocked on lower-tier MOVE_DOWN symbols (chiefly
-//   `bun_logger::js_ast`) keep a `#[cfg(any())]` gate on the affected items
+//   `bun_logger::js_ast`) keep a `` gate on the affected items
 //   only, with `// TODO(b2-blocked): bun_X::Y` markers.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -24,7 +24,7 @@ extern crate bun_string as bun_str;
 // exposes the public free-fn surface (parse / parse_utf8_impl / parse_for_macro
 // / parse_env_json / parse_ts_config) as signature-correct `todo!()` stubs so
 // downstream crates can resolve the symbols and un-gate their own bodies.
-#[cfg(any())]
+
 #[path = "json.rs"]
 pub mod json_draft;
 

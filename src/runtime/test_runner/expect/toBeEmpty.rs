@@ -1,10 +1,11 @@
 use core::ffi::c_void;
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
 
 use super::Expect;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_be_empty(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -26,17 +27,13 @@ pub fn to_be_empty(
     let not = this.flags.not();
     let mut pass = false;
     // TODO(port): ConsoleObject.Formatter field init — assumes remaining fields are Default.
-    let mut formatter = bun_jsc::console_object::Formatter {
-        global_this: global,
-        quote_strings: true,
-        ..Default::default()
-    };
+    let mut formatter = super::make_formatter(global);
     // `defer formatter.deinit()` — handled by Drop.
 
     let actual_length = value.get_length_if_property_exists_internal(global)?;
 
     if actual_length == f64::INFINITY {
-        if value.js_type_loose().is_object() {
+        if value.js_type().is_object() {
             if value.is_iterable(global)? {
                 let mut any_properties_in_iterator = false;
 

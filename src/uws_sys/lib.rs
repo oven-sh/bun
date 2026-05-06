@@ -126,10 +126,10 @@ opaque!(
 // dispatches to `UpgradedDuplex` / `WindowsNamedPipe` instance methods that
 // live in higher-tier crates. Stubbed here so downstream `bun_uws` paths
 // resolve; bodies un-gate once those wrappers move down.
-#[cfg(any())]
+
 #[path = "socket.rs"]
 pub mod socket;
-#[cfg(not(any()))]
+#[cfg(any())]
 pub mod socket {
     use crate::{us_socket_t, ConnectingSocket, UpgradedDuplex};
     pub enum InternalSocket<'a> {

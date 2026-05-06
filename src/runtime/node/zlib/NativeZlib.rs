@@ -11,7 +11,7 @@ use crate::node::node_zlib_binding::Error;
 // exported with the expected shapes. The pure-FFI `Context` (zlib state
 // machine) is hoisted below as the non-JSC body.
 // TODO(b2-blocked): un-gate once bun_jsc Strong/JsClass + bun_threading::WorkPoolTask land.
-#[cfg(any())]
+
 mod _impl {
 use super::*;
 use core::cell::Cell;
@@ -297,25 +297,30 @@ impl Context {
 
     pub fn set_dictionary(&mut self) -> Error {
         use c::NodeMode::*;
-        let dict = self.dictionary();
-        if dict.is_empty() {
-            return Error::ok();
-        }
+        // PORT NOTE: reshaped for borrowck — capture raw ptr/len before
+        // re-borrowing `self.state` mutably.
+        let (dict_ptr, dict_len) = {
+            let dict = self.dictionary();
+            if dict.is_empty() {
+                return Error::ok();
+            }
+            (dict.as_ptr(), u32::try_from(dict.len()).unwrap())
+        };
         self.err = c::ReturnCode::Ok;
         // SAFETY: FFI — state is initialized; dict points into a rooted ArrayBuffer.
         match self.mode {
             DEFLATE | DEFLATERAW => unsafe {
                 self.err = c::deflateSetDictionary(
                     &mut self.state,
-                    dict.as_ptr(),
-                    u32::try_from(dict.len()).unwrap(),
+                    dict_ptr,
+                    dict_len,
                 );
             },
             INFLATERAW => unsafe {
                 self.err = c::inflateSetDictionary(
                     &mut self.state,
-                    dict.as_ptr(),
-                    u32::try_from(dict.len()).unwrap(),
+                    dict_ptr,
+                    dict_len,
                 );
             },
             _ => {}
@@ -490,13 +495,18 @@ impl Context {
             && self.err == c::ReturnCode::NeedDict
             && !self.dictionary().is_empty()
         {
-            let dict = self.dictionary();
+            // PORT NOTE: reshaped for borrowck — capture raw ptr/len before
+            // re-borrowing `self.state` mutably.
+            let (dict_ptr, dict_len) = {
+                let dict = self.dictionary();
+                (dict.as_ptr(), u32::try_from(dict.len()).unwrap())
+            };
             // SAFETY: FFI — state is an initialized inflate stream; dict is rooted.
             self.err = unsafe {
                 c::inflateSetDictionary(
                     &mut self.state,
-                    dict.as_ptr(),
-                    u32::try_from(dict.len()).unwrap(),
+                    dict_ptr,
+                    dict_len,
                 )
             };
 

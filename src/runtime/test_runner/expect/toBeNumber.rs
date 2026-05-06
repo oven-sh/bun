@@ -1,10 +1,11 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::Expect;
 use super::get_signature;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_be_number(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -26,11 +27,7 @@ pub fn to_be_number(
         return Ok(JSValue::UNDEFINED);
     }
 
-    let formatter = Formatter {
-        global_this: global,
-        quote_strings: true,
-        ..Default::default()
-    };
+    let formatter = super::make_formatter(global);
     // `defer formatter.deinit()` → dropped implicitly (impl Drop for Formatter).
     let received = value.to_fmt(&formatter);
 

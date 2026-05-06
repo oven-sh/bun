@@ -44,7 +44,7 @@ impl From<AllocError> for WhoamiError {
 }
 
 // TODO(b2): body gated — bun_http::AsyncHTTP::init_sync / Redirect / ci surface drift
-#[cfg(any())]
+
 pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     let registry = &manager.options.scope;
 
@@ -195,7 +195,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 }
 
 // TODO(b2): body gated — picohttp::Response field shape drift
-#[cfg(any())]
+
 pub fn response_error<const OTP_RESPONSE: bool>(
     req: &AsyncHTTP,
     res: &picohttp::Response,
@@ -266,7 +266,7 @@ pub mod registry {
     // type-level param; Rust ObjectPool routes init via `ObjectPoolType` trait.
     // Wire `MutableString: ObjectPoolType` (init = MutableString::init2048) then
     // drop the `S = UnwiredStorage` default. Gated until that lands.
-    #[cfg(any())]
+    
     pub type BodyPool = ObjectPool<MutableString, true, 8>;
 
     #[derive(Default)]
@@ -308,7 +308,7 @@ pub mod registry {
         }
 
         // TODO(b2): body gated — api::NpmRegistry field set + URL<'a> ownership rework
-        #[cfg(any())]
+        
         pub fn from_api(
             name: &[u8],
             registry_: api::NpmRegistry,
@@ -1151,7 +1151,7 @@ impl PackageVersion {
 }
 
 // TODO(b2): re-enable once Bin is the real #[repr(C)] layout (currently stub)
-#[cfg(any())]
+
 const _: () = assert!(
     core::mem::size_of::<PackageVersion>() == 240,
     "Npm.PackageVersion has unexpected size"
@@ -1206,7 +1206,7 @@ impl PackageManifest {
     }
 
     // TODO(b2): bun_io::DiscardingWriter — counting writer not exposed yet
-    #[cfg(any())]
+    
     pub fn byte_length(&self, scope: &registry::Scope) -> usize {
         let mut counter = bun_io::DiscardingWriter::new();
         match package_manifest::Serializer::write(self, scope, &mut counter) {
@@ -1253,7 +1253,7 @@ pub mod package_manifest {
             _cache_dir: bun_sys::Fd,
             _file_id: u64,
         ) -> Result<Option<PackageManifest>, bun_core::Error> {
-            // Real body lives in the `#[cfg(any())]`-gated impl below. Blocked on
+            // Real body lives in the ``-gated impl below. Blocked on
             // bun_io::FixedBufferStream — fail loudly instead of silently treating
             // every on-disk manifest as a cache miss (PORTING.md §Forbidden: silent no-op).
             todo!("npm::PackageManifest::Serializer::load_by_file_id — blocked on bun_io::FixedBufferStream")
@@ -1268,7 +1268,7 @@ pub mod package_manifest {
             _tmpdir_fd: bun_sys::Fd,
             _cache_dir: bun_sys::Fd,
         ) {
-            // Real body lives in the `#[cfg(any())]`-gated impl below. Blocked on
+            // Real body lives in the ``-gated impl below. Blocked on
             // bun_sys::renameat2 / bun_io::FixedBufferStream — fail loudly instead of
             // silently dropping the cache write (PORTING.md §Forbidden: silent no-op).
             todo!("npm::PackageManifest::Serializer::save_async — blocked on bun_sys::renameat2")
@@ -1283,7 +1283,7 @@ pub mod package_manifest {
     // TODO(b2): bodies gated — bun_io::FixedBufferStream / bun_sys::renameat2 /
     // bun_core::{perf,mem} / bun_str::buf_print_z surface drift. Keep types
     // visible above; un-gate once those land.
-    #[cfg(any())]
+    
     impl Serializer {
         pub fn write_array<W: bun_io::Write, T: Copy>(
             writer: &mut W,

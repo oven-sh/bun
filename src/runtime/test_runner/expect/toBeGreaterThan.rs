@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
-use bun_jsc::BigIntCompare;
+use crate::test_runner::expect::BigIntCompare;
 
 use super::Expect;
 
@@ -17,7 +18,7 @@ impl Expect {
         let _post = scopeguard::guard((), |_| this.post_match(global));
 
         let this_value = frame.this();
-        let _arguments = frame.arguments_old(1);
+        let _arguments = frame.arguments_old::<1>();
         let arguments: &[JSValue] = &_arguments.ptr[0.._arguments.len];
 
         if arguments.len() < 1 {
@@ -47,12 +48,12 @@ impl Expect {
         if !value.is_big_int() && !other_value.is_big_int() {
             pass = value.as_number() > other_value.as_number();
         } else if value.is_big_int() {
-            pass = match value.as_big_int_compare(global, other_value) {
+            pass = match value.as_big_int_compare(other_value, global) {
                 BigIntCompare::GreaterThan => true,
                 _ => pass,
             };
         } else {
-            pass = match other_value.as_big_int_compare(global, value) {
+            pass = match other_value.as_big_int_compare(value, global) {
                 BigIntCompare::LessThan => true,
                 _ => pass,
             };
@@ -69,21 +70,17 @@ impl Expect {
         // PORT NOTE: reshaped for borrowck — Zig held two `*Formatter` aliases via `toFmt`;
         // Rust `to_fmt(&mut formatter)` cannot be borrowed twice concurrently. Phase B may
         // need `Formatter` to use interior mutability or take `&self`.
-        let mut formatter = Formatter {
-            global_this: global,
-            quote_strings: true,
-            ..Default::default()
-        };
+        let mut formatter = super::make_formatter(global);
         let value_fmt = value.to_fmt(&mut formatter);
         let expected_fmt = other_value.to_fmt(&mut formatter);
         if not {
             // Zig: const expected_line = "Expected: not \\> <green>{f}<r>\n";
             // Zig: const received_line = "Received: <red>{f}<r>\n";
-            const SIGNATURE: &str =
+            let signature: &str =
                 Expect::get_signature("toBeGreaterThan", "<green>expected<r>", true);
             return this.throw(
                 global,
-                SIGNATURE,
+                signature,
                 format_args!(
                     concat!(
                         "\n\n",
@@ -97,11 +94,11 @@ impl Expect {
 
         // Zig: const expected_line = "Expected: \\> <green>{f}<r>\n";
         // Zig: const received_line = "Received: <red>{f}<r>\n";
-        const SIGNATURE: &str =
+        let signature: &str =
             Expect::get_signature("toBeGreaterThan", "<green>expected<r>", false);
         this.throw(
             global,
-            SIGNATURE,
+            signature,
             format_args!(
                 concat!(
                     "\n\n",

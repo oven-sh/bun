@@ -1,4 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::DiffFormatter;
@@ -18,7 +19,7 @@ impl Expect {
         scopeguard::defer! { this.post_match(global_this); }
 
         let this_value = callframe.this();
-        let arguments_ = callframe.arguments_old(2);
+        let arguments_ = callframe.arguments_old::<2>();
         let arguments = arguments_.slice();
 
         if arguments.len() < 1 {
@@ -42,11 +43,7 @@ impl Expect {
         }
 
         // handle failure
-        let mut formatter = Formatter {
-            global_this,
-            quote_strings: true,
-            ..Default::default()
-        };
+        let mut formatter = super::make_formatter(global_this);
         // `defer formatter.deinit()` — handled by Drop
 
         // Zig: `switch (this.custom_label.isEmpty()) { inline else => |has_custom_label| { ... } }`

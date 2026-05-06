@@ -6,7 +6,7 @@
 // (`msg: Option<_>`, `code: &str`) also diverge from `node_zlib_binding::Error`.
 // No JSC-free body is currently compilable here.
 // TODO(b2-blocked): un-gate once bun_zstd surfaces the streaming-compress C API + Error shape unified.
-#[cfg(any())]
+
 mod _impl {
 use core::cell::Cell;
 use core::ffi::{c_int, c_uint, c_void, CStr};

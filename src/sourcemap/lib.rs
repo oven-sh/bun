@@ -2,13 +2,13 @@
 //! `bun_sourcemap` — B-2 un-gated.
 //!
 //! All sibling modules (`Chunk.rs`, `InternalSourceMap.rs`, `LineOffsetTable.rs`,
-//! `Mapping.rs`, `ParsedSourceMap.rs`, `VLQ.rs`) compile with no `#[cfg(any())]`
+//! `Mapping.rs`, `ParsedSourceMap.rs`, `VLQ.rs`) compile with no ``
 //! gates. `SerializedSourceMap`, `SourceMapPieces::finalize`,
 //! `append_source_mapping_url_remote`, `Chunk::print_source_map_contents*`,
 //! `ParsedSourceMap::write_vlqs`/`format_vlqs`, and `VLQ::write_to` are live.
 //! `get_source_map_impl`, `find_source_mapping_url_{u8,u16}`, and the
 //! `SourceProvider` impls for `SourceProviderMap` / `DevServerSourceProvider`
-//! are now live. Remaining `#[cfg(any())]` fn-body gates are tagged
+//! are now live. Remaining `` fn-body gates are tagged
 //! `TODO(b2-blocked)` on missing lower-tier surface (bun_logger::fs::Path::pretty,
 //! bun_logger::Source `'static` contents lifetime).
 //!
@@ -1196,7 +1196,7 @@ pub fn append_source_mapping_url_remote<W: bun_io::Write + ?Sized>(
 ) -> bun_io::Result<()> {
     // TODO(b2-blocked): bun_logger::fs::Path::pretty — minimal `fs::Path` shim
     // in bun_logger lacks the `pretty` field (Zig `bun.fs.Path.pretty`).
-    #[cfg(any())]
+    
     {
         writer.write_all(b"\n//# sourceMappingURL=")?;
         writer.write_all(bun_str::strings::without_trailing_slash(origin.href))?;
@@ -1210,7 +1210,7 @@ pub fn append_source_mapping_url_remote<W: bun_io::Write + ?Sized>(
         writer.write_all(b".map")?;
         return Ok(());
     }
-    #[cfg(not(any()))]
+    #[cfg(any())]
     {
         let _ = (origin, source, asset_prefix_path, writer);
         todo!("B-2: append_source_mapping_url_remote — blocked on bun_logger::fs::Path::pretty")
@@ -1226,7 +1226,7 @@ pub fn append_source_mapping_url_remote<W: bun_io::Write + ?Sized>(
 //   (bun_interchange::json::parse and bun_logger::js_ast::Expr accessors are
 //    now available — body below targets that surface.)
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
+
 mod _phase_a_draft {
 use super::*;
 use bun_alloc::Arena;

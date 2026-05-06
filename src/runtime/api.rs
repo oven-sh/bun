@@ -98,34 +98,34 @@ pub mod bun_process;
 pub mod bun_spawn;
 
 // JS-facing `Bun.Subprocess` payload (.classes.ts m_ctx).
-#[cfg(any())]
+
 #[path = "api/bun/subprocess.rs"]
 pub mod bun_subprocess;
 
 // Bun.spawn() / Bun.spawnSync() host fns. Entirely JSC (~75 jsc refs).
-#[cfg(any())]
+
 #[path = "api/bun/js_bun_spawn_bindings.rs"]
 pub mod js_bun_spawn_bindings;
 
 // Bun.Terminal — PTY/ConPTY. JsRef lifecycle + BufferedReader/StreamingWriter
 // generic owner wiring (~120 jsc refs).
-#[cfg(any())]
+
 #[path = "api/bun/Terminal.rs"]
 pub mod bun_terminal_body;
 
 // H2FrameParser — ~338 jsc refs (Strong, JsRef, host_fn getters, AbortSignal).
-#[cfg(any())]
+
 #[path = "api/bun/h2_frame_parser.rs"]
 pub mod h2_frame_parser_body;
 
 // SSL siblings — gated (boringssl_sys bindgen surface).
-#[cfg(any())]
+
 #[path = "api/bun/SSLContextCache.rs"]
 pub mod bun_ssl_context_cache;
-#[cfg(any())]
+
 #[path = "api/bun/SecureContext.rs"]
 pub mod bun_secure_context;
-#[cfg(any())]
+
 #[path = "api/bun/x509.rs"]
 pub mod bun_x509;
 
@@ -222,7 +222,7 @@ pub use crate::api::hash_object as HashObject;
 pub use crate::api::bun::h2_frame_parser::H2FrameParser;
 
 // ─── gated re-exports (target modules not yet declared / lower-tier missing) ─
-#[cfg(any())]
+
 mod _gated_reexports {
     pub use crate::api::native_promise_context as NativePromiseContext;
     pub use crate::api::bun::secure_context as SecureContext;

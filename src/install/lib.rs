@@ -92,14 +92,14 @@ use core::fmt;
 
 // ──────────────────────────────────────────────────────────────────────────
 // B-1 gate-and-stub: Phase-A draft modules are preserved on disk but gated
-// behind `#[cfg(any())]` so the crate type-checks. Un-gating happens in B-2.
+// behind `` so the crate type-checks. Un-gating happens in B-2.
 // Each gated module has a sibling stub mod exposing the minimal surface other
 // crates / this crate's lib.rs re-exports.
 // ──────────────────────────────────────────────────────────────────────────
 
 macro_rules! gated_mod {
     ($vis:vis mod $name:ident = $path:literal ;) => {
-        #[cfg(any())]
+        
         #[path = $path]
         $vis mod $name;
     };
@@ -111,9 +111,9 @@ macro_rules! gated_mod {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub mod npm;
-#[cfg(any())] #[path = "PackageManifestMap.rs"]
+ #[path = "PackageManifestMap.rs"]
 pub mod package_manifest_map;
-#[cfg(any())] #[path = "resolution.rs"]
+ #[path = "resolution.rs"]
 pub mod resolution_real;
 /// Stub: `resolution.rs` — `Resolution` struct only (used as opaque field in
 /// `bun_jsc::AsyncModule::PendingResolution`). Full impl re-gated above
@@ -151,7 +151,7 @@ pub mod resolution {
 }
 #[path = "PnpmMatcher.rs"]
 pub mod pnpm_matcher;
-#[cfg(any())] pub mod postinstall_optimizer;
+ pub mod postinstall_optimizer;
 #[path = "ExternalSlice.rs"]
 pub mod external_slice;
 pub mod integrity;
@@ -164,26 +164,26 @@ pub mod versioned_url;
 
 // ─── reconciler-6: heavy modules re-gated wholesale ────────────────────────
 // File bodies preserved on disk under `#![cfg(any())]` (1200+ port errors).
-// Declared here under `#[cfg(any())]` so the crate tree is addressable for
+// Declared here under `` so the crate tree is addressable for
 // diff-pass; sibling inline stubs below expose the minimal surface that
 // `npm.rs`/`resolution.rs`/`dependency.rs` and downstream `bun_jsc` need.
-#[cfg(any())] pub mod extract_tarball;
-#[cfg(any())] #[path = "NetworkTask.rs"] pub mod network_task;
-#[cfg(any())] #[path = "TarballStream.rs"] pub mod tarball_stream;
-#[cfg(any())] #[path = "PackageManager.rs"] pub mod package_manager_real;
-#[cfg(any())] #[path = "PackageManagerTask.rs"] pub mod package_manager_task;
-#[cfg(any())] pub mod lockfile_real;
-#[cfg(any())] pub mod bin_real;
-#[cfg(any())] pub mod lifecycle_script_runner;
-#[cfg(any())] #[path = "PackageInstall.rs"] pub mod package_install;
-#[cfg(any())] #[path = "PackageInstaller.rs"] pub mod package_installer;
-#[cfg(any())] pub mod repository_real;
-#[cfg(any())] pub mod isolated_install;
-#[cfg(any())] pub mod patch_install;
-#[cfg(any())] pub mod hoisted_install;
-#[cfg(any())] pub mod migration;
-#[cfg(any())] pub mod pnpm;
-#[cfg(any())] pub mod yarn;
+ pub mod extract_tarball;
+ #[path = "NetworkTask.rs"] pub mod network_task;
+ #[path = "TarballStream.rs"] pub mod tarball_stream;
+ #[path = "PackageManager.rs"] pub mod package_manager_real;
+ #[path = "PackageManagerTask.rs"] pub mod package_manager_task;
+ pub mod lockfile_real;
+ pub mod bin_real;
+ pub mod lifecycle_script_runner;
+ #[path = "PackageInstall.rs"] pub mod package_install;
+ #[path = "PackageInstaller.rs"] pub mod package_installer;
+ pub mod repository_real;
+ pub mod isolated_install;
+ pub mod patch_install;
+ pub mod hoisted_install;
+ pub mod migration;
+ pub mod pnpm;
+ pub mod yarn;
 
 /// Stub: `repository.rs` — `Repository` struct shape + method stubs read by
 /// `resolution.rs` / `dependency.rs`.
@@ -298,14 +298,14 @@ pub(crate) mod install {
 // synthetic `windows_shim/` directory, which doesn't exist on disk. Hoist the
 // file-backed module to crate level with an absolute-ish path and re-export
 // through the inline mod so `windows_shim::bin_linking_shim` keeps resolving.
-#[cfg(any())] #[path = "windows-shim/BinLinkingShim.rs"]
+ #[path = "windows-shim/BinLinkingShim.rs"]
 mod _bin_linking_shim;
 pub mod windows_shim {
     pub mod bin_linking_shim { #[derive(Default)] pub struct BinLinkingShim; }
     pub use bin_linking_shim::BinLinkingShim;
 }
 
-#[cfg(any())] #[path = "resolvers/folder_resolver.rs"]
+ #[path = "resolvers/folder_resolver.rs"]
 mod _folder_resolver;
 pub mod resolvers {
     pub mod folder_resolver { pub use crate::FolderResolution; }
@@ -313,10 +313,10 @@ pub mod resolvers {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Stub surface (B-1): retired. Real impls live in the file-backed modules
-// above. Disabled stubs are kept as `#[cfg(any())]` reference shapes only.
+// above. Disabled stubs are kept as `` reference shapes only.
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(any())] // un-gated: real impl in npm.rs
+ // un-gated: real impl in npm.rs
 pub mod npm {
     /// Stub for `npm.PackageManifest` (src/install/npm.zig). Only the fields
     /// read by `PackageManifestMap` are exposed; full layout lives in the
@@ -570,7 +570,7 @@ pub mod npm {
     }
 }
 
-#[cfg(any())] // B-2: replaced by real module above
+ // B-2: replaced by real module above
 pub mod hosted_git_info_stub {
     /// Port of `HostedGitInfo` (src/install/hosted_git_info.zig). Owned-buffer
     /// fields collapse to `Box<[u8]>`; the Zig `_memory_buffer`/`_allocator`
@@ -971,7 +971,7 @@ impl RunCommand {
         }
 
         #[cfg(windows)]
-        #[cfg(any())]
+        
         {
             use bun_str::strings;
 
@@ -1057,7 +1057,7 @@ impl RunCommand {
             Ok(())
         }
         #[cfg(windows)]
-        #[cfg(not(any()))]
+        #[cfg(any())]
         {
             // TODO(b2-blocked): bun_windows::{GetTempPathW,CreateHardLinkW,exe_path_w}
             // TODO(b2-blocked): bun_string::strings::w / to_utf8_append_to_list
@@ -1071,7 +1071,7 @@ impl RunCommand {
 // TODO(b2-blocked): bun_resolver::DirInfo
 // TODO(b2-blocked): bun_bunfig::Command::Context
 // TODO(b2-blocked): bun_schema::api::DotEnvBehavior
-#[cfg(any())]
+
 impl RunCommand {
     /// Port of `RunCommand.configureEnvForRun` (src/cli/run_command.zig).
     /// Initializes a fresh `Transpiler` via out-param, loads `.env`, and seeds

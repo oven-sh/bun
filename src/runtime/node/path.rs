@@ -135,7 +135,7 @@ pub struct PathParsed<'a, T: PathChar> {
 
 // Gated: calls `BunString::create_utf8_for_js` + FFI (bun_jsc method surface).
 // TODO(b2-blocked): un-gate once bun_jsc is a dep.
-#[cfg(any())]
+
 impl<'a, T: PathChar> PathParsed<'a, T> {
     pub fn to_js_object(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let root = BunString::create_utf8_for_js(global_object, self.root)?;
@@ -207,7 +207,7 @@ fn format_ext_t<'a, T: PathChar>(ext: &'a [T], buf: &'a mut [T]) -> &'a [T] {
 #[inline]
 // ─── gated: cwd helpers (bun_fs::FileSystem not yet a crate) ──────────────
 // TODO(b2-blocked): un-gate once bun_fs::FileSystem + strings::convert_utf8_to_utf16_in_buffer land.
-#[cfg(any())]
+
 mod _cwd {
 use super::*;
 
@@ -518,7 +518,7 @@ pub fn basename_windows_t<'a, T: PathChar>(path: &'a [T], suffix: Option<&[T]>) 
 
 // ─── gated: JSC bindings (basename) ─────────────────────────────────────────
 // TODO(b2-blocked): un-gate once bun_jsc method surface lands.
-#[cfg(any())]
+
 mod _basename_js {
 use super::*;
 pub fn basename_posix_js_t<T: PathChar>(
@@ -748,7 +748,7 @@ pub fn dirname_windows_t<T: PathChar>(path: &[T]) -> &[T] {
 }
 
 // ─── gated: JSC bindings (dirname) ──────────────────────────────────────────
-#[cfg(any())]
+
 mod _dirname_js {
 use super::*;
 pub fn dirname_posix_js_t<T: PathChar>(
@@ -1010,7 +1010,7 @@ pub fn is_absolute_windows_t<T: PathChar>(path: &[T]) -> bool {
 // `normalize_string_t` below uses the const-generic form directly.
 // is_sep_*_t / is_absolute_*_t / is_windows_device_root_t hoisted above.
 // TODO(b2-blocked): un-gate once bun_jsc + bun_fs land.
-#[cfg(any())]
+
 mod _rest {
 use super::*;
 pub fn extname_posix_js_t<T: PathChar>(

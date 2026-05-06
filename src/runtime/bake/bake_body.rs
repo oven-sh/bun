@@ -19,7 +19,7 @@ use bun_str::{strings, ZStr};
 
 // `jsc.API.JSBundler.Plugin` — the real struct lives in
 // `crate::api::js_bundler::_jsc_gated::js_bundler::Plugin` which is still
-// `#[cfg(any())]`-gated. Use an opaque local so the field type-checks; the
+// ``-gated. Use an opaque local so the field type-checks; the
 // only call sites (`parse_plugin_array`, `Drop`) are `todo!()`-blocked below.
 // TODO(b2-blocked): crate::api::js_bundler::Plugin — un-gate _jsc_gated.
 #[repr(C)]
@@ -33,8 +33,34 @@ pub struct Plugin {
 // matching filename).
 use super::{dev_server, framework_router};
 
-pub use dev_server as DevServer;
-pub use framework_router as FrameworkRouter;
+// PORT NOTE: `pub use dev_server as DevServer` / `framework_router as
+// FrameworkRouter` are already provided by the parent `mod.rs` (lines 349/369);
+// re-exporting here triggers E0365 because `bake_body` is a private module.
+
+/// `JSValue.getOptional(ZigString.Slice, ..)` — local shim until `bun_jsc`
+/// grows a typed `get_optional`. Returns `None` for missing/null/undefined.
+fn get_optional_slice(
+    target: JSValue,
+    global: &JSGlobalObject,
+    property: &[u8],
+) -> JsResult<Option<ZigStringSlice>> {
+    match target.get(global, property)? {
+        Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_slice(global)?)),
+        _ => Ok(None),
+    }
+}
+
+/// `JSValue.getBooleanStrict` — local shim.
+fn get_boolean_strict(
+    target: JSValue,
+    global: &JSGlobalObject,
+    property: &[u8],
+) -> JsResult<Option<bool>> {
+    match target.get(global, property)? {
+        Some(v) if v.is_boolean() => Ok(Some(v.as_boolean())),
+        _ => Ok(None),
+    }
+}
 
 /// Erase the `'bump` lifetime of an arena-backed slice. Phase-A convention
 /// (see file-level TODO(port)): `UserOptions.arena` outlives every borrower,
@@ -247,7 +273,7 @@ impl SplitBundlerOptions {
     ) -> JsResult<()> {
         // The real `Plugin::create` / `add_plugin` live in
         // `crate::api::js_bundler::_jsc_gated`, which is still
-        // `#[cfg(any())]`-gated. The validation walk below mirrors the spec
+        // ``-gated. The validation walk below mirrors the spec
         // (bake.zig:152-196) so error paths are exercised; the FFI calls are
         // stubbed until the upstream module un-gates.
         //
@@ -1251,7 +1277,7 @@ fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<&'stat
 /// `FrameworkRouter.Style.fromJS` (FrameworkRouter.zig:159-181). Free function
 /// here because the `Style` enum is owned by the parent's inline
 /// `framework_router` mod (which has no inherent impl for it) and the full
-/// `FrameworkRouter.rs` draft is still `#[cfg(any())]`-gated.
+/// `FrameworkRouter.rs` draft is still ``-gated.
 fn style_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<framework_router::Style> {
     if value.is_string() {
         let str = value.to_bun_string(global)?;
@@ -1523,7 +1549,7 @@ impl PatternBuffer {
     // index newtypes). Gate `prepend_part` until `Part` un-gates; the only
     // caller is `DevServer::finalize_bundle`, also gated.
     // TODO(b2-blocked): super::framework_router::Part — un-gate FrameworkRouter.rs
-    #[cfg(any())]
+    
     pub fn prepend_part(&mut self, part: framework_router::Part) {
         match part {
             framework_router::Part::Text(text) => {

@@ -41,7 +41,7 @@ impl<R> StyleRule<R> {
         let mut hasher = bun_wyhash::Wyhash::init(0);
         self.selectors.hash(&mut hasher);
         // PORT NOTE: `DeclarationBlock::hash_property_ids` is still
-        // `#[cfg(any())]`-gated in declaration.rs; inline its body here. The
+        // ``-gated in declaration.rs; inline its body here. The
         // Zig `PropertyId.hash` is `hasher.update(asBytes(&@intFromEnum(self)))`
         // — i.e. just the u16 tag bytes.
         for decl in self.declarations.declarations.iter() {
@@ -160,10 +160,10 @@ impl<R> StyleRule<R> {
 
                         if dest.css_module.is_some() {
                             // TODO(port): blocked_on CssModule::handle_composes
-                            // (#[cfg(any())] in css_modules.rs) — until that
+                            // ( in css_modules.rs) — until that
                             // un-gates, just honor the "omitted during printing"
                             // contract and skip the declaration.
-                            #[cfg(any())]
+                            
                             if let Some(css_module) = &mut dest.css_module {
                                 if let Some(error_kind) = css_module
                                     .handle_composes(
@@ -253,7 +253,7 @@ impl<R> StyleRule<R> {
         // style.rs::minify un-gates — single key type, Borrow<[u8]> lookup").
         // The reconciliation lives in rules/mod.rs + selectors/selector.rs, not
         // here; gate the body until those agree.
-        #[cfg(any())]
+        
         if context.unused_symbols.count() > 0 {
             if selector::is_unused(
                 self.selectors.v.slice(),
@@ -270,7 +270,7 @@ impl<R> StyleRule<R> {
                 unused = true;
             }
         }
-        #[cfg(not(any()))]
+        #[cfg(any())]
         let _ = parent_is_unused;
 
         // TODO: this

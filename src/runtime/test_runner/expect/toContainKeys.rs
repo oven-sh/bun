@@ -1,9 +1,10 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::{get_signature, Expect};
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_contain_keys(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -13,8 +14,8 @@ pub fn to_contain_keys(
     // PORT NOTE: reshaped for borrowck — move `this` into the guard and access via DerefMut.
     let mut this = scopeguard::guard(this, |t| t.post_match(global));
 
-    let this_value = frame.this_value();
-    let arguments_ = frame.arguments_old(1);
+    let this_value = frame.this();
+    let arguments_ = frame.arguments_old::<1>();
     let arguments = arguments_.slice();
 
     if arguments.len() < 1 {
@@ -63,11 +64,7 @@ pub fn to_contain_keys(
     }
 
     // handle failure
-    let mut formatter = Formatter {
-        global_this: global,
-        quote_strings: true,
-        ..Default::default()
-    };
+    let mut formatter = super::make_formatter(global);
     // defer formatter.deinit(); — handled by Drop
     let value_fmt = value.to_fmt(&mut formatter);
     let expected_fmt = expected.to_fmt(&mut formatter);

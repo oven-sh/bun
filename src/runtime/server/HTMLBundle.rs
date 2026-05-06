@@ -31,7 +31,7 @@ pub struct HTMLBundle {
 
 // `pub const ref/deref = RefCount.ref/deref` — provided by IntrusiveRc<HTMLBundle>.
 
-#[cfg(any())] // TODO(b2-blocked): bun_jsc::host_fn + bun_str::create_utf8_for_js
+ // TODO(b2-blocked): bun_jsc::host_fn + bun_str::create_utf8_for_js
 impl HTMLBundle {
     /// Initialize an HTMLBundle given a path.
     pub fn init(global: &'static JSGlobalObject, path: &[u8]) -> IntrusiveRc<HTMLBundle> {
@@ -131,7 +131,7 @@ pub enum State {
     Html(Rc<StaticRoute>),
 }
 
-#[cfg(any())] // TODO(b2-blocked): JSBundleCompletionTask.cancelled interior-mutable write.
+ // TODO(b2-blocked): JSBundleCompletionTask.cancelled interior-mutable write.
 impl Drop for State {
     fn drop(&mut self) {
         match self {
@@ -169,7 +169,7 @@ impl State {
 // bun_uws AnyResponse write/on_aborted (cycle-5-B), bun_bundler::bundle_v2,
 // bun_jsc JSBundler, IntrusiveRc<Route>.
 // TODO(b2-blocked): bun_jsc + bun_bundler + bun_uws response surface.
-#[cfg(any())]
+
 mod _gated {
 use super::*;
 use bun_ptr::IntrusiveRc;

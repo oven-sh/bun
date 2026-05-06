@@ -1,4 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 
 use super::DiffFormatter;
 use super::Expect;
@@ -16,8 +17,8 @@ impl Expect {
         let _post_match = scopeguard::guard((), |_| this.post_match(global));
 
         let this_value = frame.this();
-        let _arguments = frame.arguments_old(1);
-        let arguments: &[JSValue] = _arguments.as_slice();
+        let _arguments = frame.arguments_old::<1>();
+        let arguments: &[JSValue] = _arguments.slice();
 
         if arguments.len() < 1 {
             return global.throw_invalid_arguments(format_args!("toEqual() requires 1 argument"));
@@ -47,12 +48,12 @@ impl Expect {
         };
 
         if not {
-            const SIGNATURE: &str = Expect::get_signature("toEqual", "<green>expected<r>", true);
-            return this.throw(global, SIGNATURE, format_args!("\n\n{}\n", diff_formatter));
+            let signature: &str = Expect::get_signature("toEqual", "<green>expected<r>", true);
+            return this.throw(global, signature, format_args!("\n\n{}\n", diff_formatter));
         }
 
-        const SIGNATURE: &str = Expect::get_signature("toEqual", "<green>expected<r>", false);
-        this.throw(global, SIGNATURE, format_args!("\n\n{}\n", diff_formatter))
+        let signature: &str = Expect::get_signature("toEqual", "<green>expected<r>", false);
+        this.throw(global, signature, format_args!("\n\n{}\n", diff_formatter))
     }
 }
 

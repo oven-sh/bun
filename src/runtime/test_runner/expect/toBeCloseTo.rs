@@ -1,4 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 
 use super::Expect;
 use super::get_signature;
@@ -15,8 +16,8 @@ impl Expect {
         // later borrows, and per PORTING.md scopeguard maps `errdefer {side-effects}`, not `defer`.
 
         let this_value = call_frame.this();
-        let this_arguments = call_frame.arguments_old(2);
-        let arguments = this_arguments.as_slice();
+        let this_arguments = call_frame.arguments_old::<2>();
+        let arguments = this_arguments.slice();
 
         this.increment_expect_call_counter();
 
@@ -75,11 +76,7 @@ impl Expect {
             return Ok(JSValue::UNDEFINED);
         }
 
-        let mut formatter = bun_jsc::console_object::Formatter {
-            global_this: global,
-            quote_strings: true,
-            ..Default::default()
-        };
+        let mut formatter = super::make_formatter(global);
         // `defer formatter.deinit()` — handled by Drop.
 
         let expected_fmt = expected_.to_fmt(&mut formatter);

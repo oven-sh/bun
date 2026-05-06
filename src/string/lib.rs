@@ -23,7 +23,7 @@ pub mod wtf;
 // `bun_cpp` (BunString FFI shim crate, not yet wired) plus ~30 ZigString
 // methods that haven't been split out from `string.zig` yet. Re-gated until
 // `bun_cpp` lands; the 6 sub-gates below are now live.
-#[cfg(any())] #[path = "lib_draft_b1.rs"] mod draft;
+ #[path = "lib_draft_b1.rs"] mod draft;
 
 use core::sync::atomic::{AtomicPtr, Ordering};
 pub use wtf::{WTFStringImpl, WTFStringImplStruct};

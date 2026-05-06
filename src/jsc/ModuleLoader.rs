@@ -4,7 +4,7 @@
 //! `HardcodedModule` re-export compile against the `lib.rs` stub surface.
 //! `transpile_source_code` / `fetch_builtin_module` / `resolve_embedded_file`
 //! and the `Bun__*` extern entry points are preserved verbatim from the
-//! Phase-A draft inside `#[cfg(any())]` blocks below — every body reaches into
+//! Phase-A draft inside `` blocks below — every body reaches into
 //! `bun_runtime::node::fs` / `bun_transpiler` internals / gated bundler types
 //! (forward-dep cycle on `bun_jsc`).
 
@@ -519,7 +519,7 @@ pub extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
 // preserved verbatim from the Phase-A draft. Un-gate piecewise once the
 // cycle breaks.
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
+
 mod _gated_impl {
     use super::*;
     use bun_bundler::analyze_transpiled_module;

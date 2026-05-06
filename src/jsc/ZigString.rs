@@ -15,7 +15,7 @@ use crate::{c_api, JSGlobalObject, JSValue, VM};
 use bun_string::encoding::Encoding;
 // `webcore::encoding::{construct_from_u8,u16, byte_length_u8}` live in
 // `src/runtime/webcore/encoding.rs` (forward-dep on bun_jsc) — gate callers.
-#[cfg(any())] use crate::webcore::encoding;
+ use crate::webcore::encoding;
 use bun_paths::PathBuffer;
 use bun_simdutf_sys::simdutf;
 use bun_string::{strings, String as BunString, ZStr};
@@ -126,10 +126,10 @@ pub fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> 
 // `bun_string::encoding::Encoding` + simdutf now in the dep graph. The
 // `Slice` ownership model uses the enum-based `bun_string::ZigStringSlice`
 // (re-exported above) instead of the original `NullableAllocator`-backed
-// struct — that struct is preserved below behind `#[cfg(any())]` for
+// struct — that struct is preserved below behind `` for
 // reference until `bun_alloc::NullableAllocator` grows real methods.
 //
-// STILL GATED inside (per-item `#[cfg(any())]`):
+// STILL GATED inside (per-item ``):
 //   - `encode`/`encode_with_allocator` — need `webcore::encoding::construct_from_*`
 //      (forward-dep cycle: bun_runtime → bun_jsc)
 //   - `to_js_string_ref` — `c_api::{JSStringRef, JSStringCreateWithCharactersNoCopy,
@@ -164,7 +164,7 @@ impl ZigString {
     // `src/runtime/webcore/encoding.rs` (bun_runtime crate, forward-dep on
     // bun_jsc). Gated until the dep cycle is broken or the encoder is
     // hoisted into a leaf crate.
-    #[cfg(any())]
+    
     pub fn encode(&self, encoding: Encoding) -> Vec<u8> {
         // PERF(port): was inline-else monomorphization over ByteString × Encoding — profile in Phase B
         match self.as_() {
@@ -174,7 +174,7 @@ impl ZigString {
     }
 
     // Zig: encodeWithAllocator — allocator param dropped (global mimalloc)
-    #[cfg(any())]
+    
     pub fn encode_with_allocator(&self, encoding: Encoding) -> Vec<u8> {
         self.encode(encoding)
     }
@@ -226,7 +226,7 @@ impl ZigString {
     // TODO(port): `index_of_any16` takes `&'static [u16]` but Zig callers pass
     // ASCII char sets as `[]const u8`. Needs a widening adapter (or comptime
     // string-to-u16-array as in Zig). Gated until adapter lands.
-    #[cfg(any())]
+    
     pub fn index_of_any(&self, chars: &'static [u8]) -> Option<strings::OptionalUsize> {
         if self.is_16bit() {
             strings::index_of_any16(self.utf16_slice_aligned(), chars)
@@ -579,7 +579,7 @@ impl ZigString {
     }
 
     // TODO(port): `bun_core::base64` module not yet exported. Gated.
-    #[cfg(any())]
+    
     pub fn to_base64_data_url(&self) -> Result<Vec<u8>, bun_core::Error> {
         // TODO(port): narrow error set
         let slice_ = self.slice();
@@ -643,7 +643,7 @@ impl ZigString {
     }
 
     // TODO(port): `JSValue::as_ref_()` (JSValueRef cast) not in JSValue.rs yet.
-    #[cfg(any())]
+    
     #[inline]
     pub fn to_ref(slice_: &[u8], global: &JSGlobalObject) -> c_api::JSValueRef {
         Self::init(slice_).to_js(global).as_ref_()
@@ -824,7 +824,7 @@ impl ZigString {
 
     // TODO(port): `c_api::{JSStringRef, JSStringCreateWithCharactersNoCopy,
     // JSStringCreateStatic}` not yet declared in javascript_core_c_api.rs.
-    #[cfg(any())]
+    
     pub fn to_js_string_ref(&self) -> c_api::JSStringRef {
         // TODO(port): Zig had `if @hasDecl(bun, "bindgen") return undefined` — bindgen-mode stub dropped
         if self.is_16bit() {
@@ -897,7 +897,7 @@ impl fmt::Display for GithubActionFormatter {
 // Kept gated for reference until `bun_alloc::NullableAllocator` grows real
 // `{default_alloc, null, NULL, get, is_null, free, is_default}` methods.
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
+
 mod _slice_struct {
 use super::*;
 use bun_alloc::NullableAllocator;

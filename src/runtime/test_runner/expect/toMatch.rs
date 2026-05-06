@@ -1,9 +1,10 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::ConsoleObject;
 
 use super::Expect;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_match(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -17,7 +18,7 @@ pub fn to_match(
     // `Expect::post_match_guard(global)` as an RAII type instead.
     let _post_match = scopeguard::guard((), |_| this.post_match(global));
 
-    let this_value = frame.this_value();
+    let this_value = frame.this();
     let arguments: &[JSValue] = frame.arguments();
 
     if arguments.len() < 1 {
@@ -28,11 +29,7 @@ pub fn to_match(
 
     // Zig: `var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };`
     //      `defer formatter.deinit();` — handled by Drop.
-    let mut formatter = ConsoleObject::Formatter {
-        global,
-        quote_strings: true,
-        ..Default::default()
-    };
+    let mut formatter = super::make_formatter(global);
 
     let expected_value = arguments[0];
     if !expected_value.is_string() && !expected_value.is_reg_exp() {

@@ -1284,7 +1284,7 @@ impl From<CompressError> for WriteError {
 
 // TODO(b2-blocked): `bun_libdeflate_sys` is not a `bun_runtime` dep yet — body
 // gated until Cargo.toml gains the dep. Signature kept so callers type-check.
-#[cfg(any())]
+
 fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
     use bun_libdeflate_sys as libdeflate;
     libdeflate::load();
@@ -1324,7 +1324,7 @@ fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
     // Zig: realloc(output, written) catch output[0..written] — truncate is the moral equivalent.
     Ok(output)
 }
-#[cfg(not(any()))]
+#[cfg(any())]
 fn compress_gzip(_data: &[u8], _level: u8) -> Result<Vec<u8>, CompressError> {
     // TODO(b2-blocked): bun_libdeflate_sys dep — see gated body above.
     Err(CompressError::GzipInitFailed)

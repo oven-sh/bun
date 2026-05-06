@@ -59,11 +59,13 @@ unsafe extern "C" {
 }
 
 impl HTMLRewriter {
-    pub fn write(&mut self, chunk: &[u8]) -> Result<(), Error> {
+    /// # Safety
+    /// `this` must be a valid `*mut HTMLRewriter` returned from FFI and not yet freed.
+    pub unsafe fn write(this: *mut HTMLRewriter, chunk: &[u8]) -> Result<(), Error> {
         auto_disable();
         let ptr = ptr_without_panic(chunk);
-        // SAFETY: self is a valid *mut HTMLRewriter from FFI; ptr/len describe a valid slice
-        let rc = unsafe { lol_html_rewriter_write(self, ptr, chunk.len()) };
+        // SAFETY: caller guarantees `this` is valid; ptr/len describe a valid slice
+        let rc = unsafe { lol_html_rewriter_write(this, ptr, chunk.len()) };
         if rc < 0 {
             return Err(Error::Fail);
         }
@@ -77,11 +79,14 @@ impl HTMLRewriter {
     ///
     /// WARNING: after calling this function, further attempts to use the rewriter
     /// (other than `lol_html_rewriter_free`) will cause a thread panic.
-    pub fn end(&mut self) -> Result<(), Error> {
+    ///
+    /// # Safety
+    /// `this` must be a valid `*mut HTMLRewriter` returned from FFI and not yet freed.
+    pub unsafe fn end(this: *mut HTMLRewriter) -> Result<(), Error> {
         auto_disable();
 
-        // SAFETY: self is a valid *mut HTMLRewriter from FFI
-        if unsafe { lol_html_rewriter_end(self) } < 0 {
+        // SAFETY: caller guarantees `this` is valid
+        if unsafe { lol_html_rewriter_end(this) } < 0 {
             return Err(Error::Fail);
         }
         Ok(())
@@ -433,15 +438,19 @@ unsafe extern "C" {
 }
 
 impl TextChunk {
-    pub fn get_content(&self) -> TextChunkContent {
+    /// # Safety
+    /// `this` must be a valid `*mut TextChunk` passed to a handler.
+    pub unsafe fn get_content(this: *mut TextChunk) -> TextChunkContent {
         auto_disable();
-        // SAFETY: self is a valid *const TextChunk passed to a handler
-        unsafe { lol_html_text_chunk_content_get(self) }
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_text_chunk_content_get(this) }
     }
-    pub fn is_last_in_text_node(&self) -> bool {
+    /// # Safety
+    /// `this` must be a valid `*mut TextChunk` passed to a handler.
+    pub unsafe fn is_last_in_text_node(this: *mut TextChunk) -> bool {
         auto_disable();
-        // SAFETY: self is a valid *const TextChunk
-        unsafe { lol_html_text_chunk_is_last_in_text_node(self) }
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_text_chunk_is_last_in_text_node(this) }
     }
     /// Inserts the content string before the text chunk either as raw text or as HTML.
     ///
@@ -449,10 +458,13 @@ impl TextChunk {
     ///
     /// Returns 0 in case of success and -1 otherwise. The actual error message
     /// can be obtained using `lol_html_take_last_error` function.
-    pub fn before(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
+    ///
+    /// # Safety
+    /// `this` must be a valid `*mut TextChunk` passed to a handler.
+    pub unsafe fn before(this: *mut TextChunk, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
-        // SAFETY: self is valid; content ptr/len describe a valid slice
-        if unsafe { lol_html_text_chunk_before(self, ptr_without_panic(content), content.len(), is_html) } < 0 {
+        // SAFETY: caller guarantees `this` is valid; content ptr/len describe a valid slice
+        if unsafe { lol_html_text_chunk_before(this, ptr_without_panic(content), content.len(), is_html) } < 0 {
             return Err(Error::Fail);
         }
         Ok(())
@@ -463,10 +475,13 @@ impl TextChunk {
     ///
     /// Returns 0 in case of success and -1 otherwise. The actual error message
     /// can be obtained using `lol_html_take_last_error` function.
-    pub fn after(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
+    ///
+    /// # Safety
+    /// `this` must be a valid `*mut TextChunk` passed to a handler.
+    pub unsafe fn after(this: *mut TextChunk, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
-        // SAFETY: self is valid; content ptr/len describe a valid slice
-        if unsafe { lol_html_text_chunk_after(self, ptr_without_panic(content), content.len(), is_html) } < 0 {
+        // SAFETY: caller guarantees `this` is valid; content ptr/len describe a valid slice
+        if unsafe { lol_html_text_chunk_after(this, ptr_without_panic(content), content.len(), is_html) } < 0 {
             return Err(Error::Fail);
         }
         Ok(())
@@ -478,40 +493,52 @@ impl TextChunk {
     //
     // Returns 0 in case of success and -1 otherwise. The actual error message
     // can be obtained using `lol_html_take_last_error` function.
-    pub fn replace(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
+    /// # Safety
+    /// `this` must be a valid `*mut TextChunk` passed to a handler.
+    pub unsafe fn replace(this: *mut TextChunk, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
-        // SAFETY: self is valid; content ptr/len describe a valid slice
-        if unsafe { lol_html_text_chunk_replace(self, ptr_without_panic(content), content.len(), is_html) } < 0 {
+        // SAFETY: caller guarantees `this` is valid; content ptr/len describe a valid slice
+        if unsafe { lol_html_text_chunk_replace(this, ptr_without_panic(content), content.len(), is_html) } < 0 {
             return Err(Error::Fail);
         }
         Ok(())
     }
     /// Removes the text chunk.
-    pub fn remove(&mut self) {
+    /// # Safety
+    /// `this` must be a valid `*mut TextChunk` passed to a handler.
+    pub unsafe fn remove(this: *mut TextChunk) {
         auto_disable();
-        // SAFETY: self is a valid *mut TextChunk
-        unsafe { lol_html_text_chunk_remove(self) }
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_text_chunk_remove(this) }
     }
-    pub fn is_removed(&self) -> bool {
+    /// # Safety
+    /// `this` must be a valid `*mut TextChunk` passed to a handler.
+    pub unsafe fn is_removed(this: *mut TextChunk) -> bool {
         auto_disable();
-        // SAFETY: self is a valid *const TextChunk
-        unsafe { lol_html_text_chunk_is_removed(self) }
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_text_chunk_is_removed(this) }
     }
-    pub fn set_user_data<T>(&self, value: Option<&mut T>) {
+    /// # Safety
+    /// `this` must be a valid `*mut TextChunk` passed to a handler.
+    pub unsafe fn set_user_data<T>(this: *mut TextChunk, value: Option<&mut T>) {
         auto_disable();
-        // SAFETY: self is valid; value ptr or null
-        unsafe { lol_html_text_chunk_user_data_set(self, value.map_or(core::ptr::null_mut(), |v| v as *mut T as *mut c_void)) }
+        // SAFETY: caller guarantees `this` is valid; value ptr or null
+        unsafe { lol_html_text_chunk_user_data_set(this, value.map_or(core::ptr::null_mut(), |v| v as *mut T as *mut c_void)) }
     }
-    pub fn get_user_data<T>(&self) -> Option<*mut T> {
+    /// # Safety
+    /// `this` must be a valid `*mut TextChunk` passed to a handler.
+    pub unsafe fn get_user_data<T>(this: *mut TextChunk) -> Option<*mut T> {
         auto_disable();
-        // SAFETY: self is valid
-        let p = unsafe { lol_html_text_chunk_user_data_get(self) };
+        // SAFETY: caller guarantees `this` is valid
+        let p = unsafe { lol_html_text_chunk_user_data_get(this) };
         if p.is_null() { None } else { Some(p as *mut T) }
     }
-    pub fn get_source_location_bytes(&self) -> SourceLocationBytes {
+    /// # Safety
+    /// `this` must be a valid `*mut TextChunk` passed to a handler.
+    pub unsafe fn get_source_location_bytes(this: *mut TextChunk) -> SourceLocationBytes {
         auto_disable();
-        // SAFETY: self is valid
-        unsafe { lol_html_text_chunk_source_location_bytes(self) }
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_text_chunk_source_location_bytes(this) }
     }
 }
 
@@ -552,80 +579,98 @@ unsafe extern "C" {
 }
 
 impl Element {
-    pub fn get_attribute(&self, name: &[u8]) -> HTMLString {
+    /// # Safety
+    /// `this` must be a valid `*mut Element` passed to a handler.
+    pub unsafe fn get_attribute(this: *mut Element, name: &[u8]) -> HTMLString {
         auto_disable();
-        // SAFETY: self valid; name ptr/len valid
-        unsafe { lol_html_element_get_attribute(self, ptr_without_panic(name), name.len()) }
+        // SAFETY: caller guarantees `this` is valid; name ptr/len valid
+        unsafe { lol_html_element_get_attribute(this, ptr_without_panic(name), name.len()) }
     }
-    pub fn has_attribute(&self, name: &[u8]) -> Result<bool, Error> {
+    /// # Safety
+    /// `this` must be a valid `*mut Element` passed to a handler.
+    pub unsafe fn has_attribute(this: *mut Element, name: &[u8]) -> Result<bool, Error> {
         auto_disable();
-        // SAFETY: self valid; name ptr/len valid
-        match unsafe { lol_html_element_has_attribute(self, ptr_without_panic(name), name.len()) } {
+        // SAFETY: caller guarantees `this` is valid; name ptr/len valid
+        match unsafe { lol_html_element_has_attribute(this, ptr_without_panic(name), name.len()) } {
             0 => Ok(false),
             1 => Ok(true),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
         }
     }
-    pub fn set_attribute(&mut self, name: &[u8], value: &[u8]) -> Result<(), Error> {
+    /// # Safety
+    /// `this` must be a valid `*mut Element` passed to a handler.
+    pub unsafe fn set_attribute(this: *mut Element, name: &[u8], value: &[u8]) -> Result<(), Error> {
         auto_disable();
-        // SAFETY: self valid; name/value ptr/len valid
-        match unsafe { lol_html_element_set_attribute(self, ptr_without_panic(name), name.len(), ptr_without_panic(value), value.len()) } {
+        // SAFETY: caller guarantees `this` is valid; name/value ptr/len valid
+        match unsafe { lol_html_element_set_attribute(this, ptr_without_panic(name), name.len(), ptr_without_panic(value), value.len()) } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
         }
     }
-    pub fn remove_attribute(&mut self, name: &[u8]) -> Result<(), Error> {
+    /// # Safety
+    /// `this` must be a valid `*mut Element` passed to a handler.
+    pub unsafe fn remove_attribute(this: *mut Element, name: &[u8]) -> Result<(), Error> {
         auto_disable();
-        // SAFETY: self valid; name ptr/len valid
-        match unsafe { lol_html_element_remove_attribute(self, ptr_without_panic(name), name.len()) } {
+        // SAFETY: caller guarantees `this` is valid; name ptr/len valid
+        match unsafe { lol_html_element_remove_attribute(this, ptr_without_panic(name), name.len()) } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
         }
     }
-    pub fn before(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
+    /// # Safety
+    /// `this` must be a valid `*mut Element` passed to a handler.
+    pub unsafe fn before(this: *mut Element, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
-        // SAFETY: self valid; content ptr/len valid
-        match unsafe { lol_html_element_before(self, ptr_without_panic(content), content.len(), is_html) } {
+        // SAFETY: caller guarantees `this` is valid; content ptr/len valid
+        match unsafe { lol_html_element_before(this, ptr_without_panic(content), content.len(), is_html) } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
         }
     }
-    pub fn prepend(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
+    /// # Safety
+    /// `this` must be a valid `*mut Element` passed to a handler.
+    pub unsafe fn prepend(this: *mut Element, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
-        // SAFETY: self valid; content ptr/len valid
-        match unsafe { lol_html_element_prepend(self, ptr_without_panic(content), content.len(), is_html) } {
+        // SAFETY: caller guarantees `this` is valid; content ptr/len valid
+        match unsafe { lol_html_element_prepend(this, ptr_without_panic(content), content.len(), is_html) } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
         }
     }
-    pub fn append(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
+    /// # Safety
+    /// `this` must be a valid `*mut Element` passed to a handler.
+    pub unsafe fn append(this: *mut Element, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
-        // SAFETY: self valid; content ptr/len valid
-        match unsafe { lol_html_element_append(self, ptr_without_panic(content), content.len(), is_html) } {
+        // SAFETY: caller guarantees `this` is valid; content ptr/len valid
+        match unsafe { lol_html_element_append(this, ptr_without_panic(content), content.len(), is_html) } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
         }
     }
-    pub fn after(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
+    /// # Safety
+    /// `this` must be a valid `*mut Element` passed to a handler.
+    pub unsafe fn after(this: *mut Element, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
-        // SAFETY: self valid; content ptr/len valid
-        match unsafe { lol_html_element_after(self, ptr_without_panic(content), content.len(), is_html) } {
+        // SAFETY: caller guarantees `this` is valid; content ptr/len valid
+        match unsafe { lol_html_element_after(this, ptr_without_panic(content), content.len(), is_html) } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
         }
     }
-    pub fn set_inner_content(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
+    /// # Safety
+    /// `this` must be a valid `*mut Element` passed to a handler.
+    pub unsafe fn set_inner_content(this: *mut Element, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
 
-        // SAFETY: self valid; content ptr/len valid
-        match unsafe { lol_html_element_set_inner_content(self, ptr_without_panic(content), content.len(), is_html) } {
+        // SAFETY: caller guarantees `this` is valid; content ptr/len valid
+        match unsafe { lol_html_element_set_inner_content(this, ptr_without_panic(content), content.len(), is_html) } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
@@ -637,95 +682,124 @@ impl Element {
     ///
     /// Returns 0 in case of success and -1 otherwise. The actual error message
     /// can be obtained using `lol_html_take_last_error` function.
-    pub fn replace(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
+    ///
+    /// # Safety
+    /// `this` must be a valid `*mut Element` passed to a handler.
+    pub unsafe fn replace(this: *mut Element, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
-        // SAFETY: self valid; content ptr/len valid
-        match unsafe { lol_html_element_replace(self, ptr_without_panic(content), content.len(), is_html) } {
+        // SAFETY: caller guarantees `this` is valid; content ptr/len valid
+        match unsafe { lol_html_element_replace(this, ptr_without_panic(content), content.len(), is_html) } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
         }
     }
-    pub fn remove(&self) {
+    /// # Safety
+    /// `this` must be a valid `*mut Element` passed to a handler.
+    pub unsafe fn remove(this: *mut Element) {
         auto_disable();
-        // SAFETY: self valid
-        unsafe { lol_html_element_remove(self) }
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_element_remove(this) }
     }
     // Removes the element, but leaves its inner content intact.
-    pub fn remove_and_keep_content(&self) {
+    /// # Safety
+    /// `this` must be a valid `*mut Element` passed to a handler.
+    pub unsafe fn remove_and_keep_content(this: *mut Element) {
         auto_disable();
-        // SAFETY: self valid
-        unsafe { lol_html_element_remove_and_keep_content(self) }
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_element_remove_and_keep_content(this) }
     }
-    pub fn is_removed(&self) -> bool {
+    /// # Safety
+    /// `this` must be a valid `*mut Element` passed to a handler.
+    pub unsafe fn is_removed(this: *mut Element) -> bool {
         auto_disable();
-        // SAFETY: self valid
-        unsafe { lol_html_element_is_removed(self) }
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_element_is_removed(this) }
     }
-    pub fn is_self_closing(&self) -> bool {
+    /// # Safety
+    /// `this` must be a valid `*mut Element` passed to a handler.
+    pub unsafe fn is_self_closing(this: *mut Element) -> bool {
         auto_disable();
-        // SAFETY: self valid
-        unsafe { lol_html_element_is_self_closing(self) }
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_element_is_self_closing(this) }
     }
-    pub fn can_have_content(&self) -> bool {
+    /// # Safety
+    /// `this` must be a valid `*mut Element` passed to a handler.
+    pub unsafe fn can_have_content(this: *mut Element) -> bool {
         auto_disable();
-        // SAFETY: self valid
-        unsafe { lol_html_element_can_have_content(self) }
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_element_can_have_content(this) }
     }
-    pub fn set_user_data(&self, user_data: *mut c_void) {
+    /// # Safety
+    /// `this` must be a valid `*mut Element` passed to a handler.
+    pub unsafe fn set_user_data(this: *mut Element, user_data: *mut c_void) {
         auto_disable();
-        // SAFETY: self valid
-        unsafe { lol_html_element_user_data_set(self, user_data) }
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_element_user_data_set(this, user_data) }
     }
-    pub fn get_user_data<T>(&self) -> Option<*mut T> {
+    /// # Safety
+    /// `this` must be a valid `*mut Element` passed to a handler.
+    pub unsafe fn get_user_data<T>(this: *mut Element) -> Option<*mut T> {
         auto_disable();
-        // SAFETY: self valid
-        let p = unsafe { lol_html_element_user_data_get(self) };
+        // SAFETY: caller guarantees `this` is valid
+        let p = unsafe { lol_html_element_user_data_get(this) };
         if p.is_null() { None } else { Some(p as *mut T) }
     }
-    pub fn on_end_tag(&mut self, end_tag_handler: lol_html_end_tag_handler_t, user_data: *mut c_void) -> Result<(), Error> {
+    /// # Safety
+    /// `this` must be a valid `*mut Element` passed to a handler.
+    pub unsafe fn on_end_tag(this: *mut Element, end_tag_handler: lol_html_end_tag_handler_t, user_data: *mut c_void) -> Result<(), Error> {
         auto_disable();
 
-        // SAFETY: self valid
-        unsafe { lol_html_element_clear_end_tag_handlers(self) };
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_element_clear_end_tag_handlers(this) };
 
-        // SAFETY: self valid; handler is a valid extern "C" fn pointer
-        match unsafe { lol_html_element_add_end_tag_handler(self, end_tag_handler, user_data) } {
+        // SAFETY: caller guarantees `this` is valid; handler is a valid extern "C" fn pointer
+        match unsafe { lol_html_element_add_end_tag_handler(this, end_tag_handler, user_data) } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
         }
     }
 
-    pub fn tag_name(&self) -> HTMLString {
-        // SAFETY: self valid
-        unsafe { lol_html_element_tag_name_get(self) }
+    /// # Safety
+    /// `this` must be a valid `*mut Element` passed to a handler.
+    pub unsafe fn tag_name(this: *mut Element) -> HTMLString {
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_element_tag_name_get(this) }
     }
 
-    pub fn set_tag_name(&mut self, name: &[u8]) -> Result<(), Error> {
-        // SAFETY: self valid; name ptr/len valid
-        match unsafe { lol_html_element_tag_name_set(self, ptr_without_panic(name), name.len()) } {
+    /// # Safety
+    /// `this` must be a valid `*mut Element` passed to a handler.
+    pub unsafe fn set_tag_name(this: *mut Element, name: &[u8]) -> Result<(), Error> {
+        // SAFETY: caller guarantees `this` is valid; name ptr/len valid
+        match unsafe { lol_html_element_tag_name_set(this, ptr_without_panic(name), name.len()) } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
         }
     }
 
-    pub fn namespace_uri(&self) -> &core::ffi::CStr {
-        // SAFETY: self valid; lol-html returns a valid NUL-terminated static string
-        unsafe { core::ffi::CStr::from_ptr(lol_html_element_namespace_uri_get(self)) }
+    /// # Safety
+    /// `this` must be a valid `*mut Element` passed to a handler.
+    pub unsafe fn namespace_uri(this: *mut Element) -> *const c_char {
+        // SAFETY: caller guarantees `this` is valid; lol-html returns a valid NUL-terminated static string
+        unsafe { lol_html_element_namespace_uri_get(this) }
     }
 
-    pub fn attributes(&self) -> Option<*mut AttributeIterator> {
-        // SAFETY: self valid
-        let p = unsafe { lol_html_attributes_iterator_get(self) };
+    /// # Safety
+    /// `this` must be a valid `*mut Element` passed to a handler.
+    pub unsafe fn attributes(this: *mut Element) -> Option<*mut AttributeIterator> {
+        // SAFETY: caller guarantees `this` is valid
+        let p = unsafe { lol_html_attributes_iterator_get(this) };
         if p.is_null() { None } else { Some(p) }
     }
 
-    pub fn get_source_location_bytes(&self) -> SourceLocationBytes {
+    /// # Safety
+    /// `this` must be a valid `*mut Element` passed to a handler.
+    pub unsafe fn get_source_location_bytes(this: *mut Element) -> SourceLocationBytes {
         auto_disable();
-        // SAFETY: self valid
-        unsafe { lol_html_element_source_location_bytes(self) }
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_element_source_location_bytes(this) }
     }
 }
 
@@ -819,51 +893,63 @@ unsafe extern "C" {
 }
 
 impl EndTag {
-    pub fn before(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
+    /// # Safety
+    /// `this` must be a valid `*mut EndTag` passed to a handler.
+    pub unsafe fn before(this: *mut EndTag, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
-        // SAFETY: self valid; content ptr/len valid
-        match unsafe { lol_html_end_tag_before(self, ptr_without_panic(content), content.len(), is_html) } {
+        // SAFETY: caller guarantees `this` is valid; content ptr/len valid
+        match unsafe { lol_html_end_tag_before(this, ptr_without_panic(content), content.len(), is_html) } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
         }
     }
 
-    pub fn after(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
+    /// # Safety
+    /// `this` must be a valid `*mut EndTag` passed to a handler.
+    pub unsafe fn after(this: *mut EndTag, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
-        // SAFETY: self valid; content ptr/len valid
-        match unsafe { lol_html_end_tag_after(self, ptr_without_panic(content), content.len(), is_html) } {
+        // SAFETY: caller guarantees `this` is valid; content ptr/len valid
+        match unsafe { lol_html_end_tag_after(this, ptr_without_panic(content), content.len(), is_html) } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
         }
     }
-    pub fn remove(&mut self) {
+    /// # Safety
+    /// `this` must be a valid `*mut EndTag` passed to a handler.
+    pub unsafe fn remove(this: *mut EndTag) {
         auto_disable();
-        // SAFETY: self valid
-        unsafe { lol_html_end_tag_remove(self) }
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_end_tag_remove(this) }
     }
 
-    pub fn get_name(&self) -> HTMLString {
+    /// # Safety
+    /// `this` must be a valid `*mut EndTag` passed to a handler.
+    pub unsafe fn get_name(this: *mut EndTag) -> HTMLString {
         auto_disable();
-        // SAFETY: self valid
-        unsafe { lol_html_end_tag_name_get(self) }
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_end_tag_name_get(this) }
     }
 
-    pub fn set_name(&mut self, name: &[u8]) -> Result<(), Error> {
+    /// # Safety
+    /// `this` must be a valid `*mut EndTag` passed to a handler.
+    pub unsafe fn set_name(this: *mut EndTag, name: &[u8]) -> Result<(), Error> {
         auto_disable();
-        // SAFETY: self valid; name ptr/len valid
-        match unsafe { lol_html_end_tag_name_set(self, ptr_without_panic(name), name.len()) } {
+        // SAFETY: caller guarantees `this` is valid; name ptr/len valid
+        match unsafe { lol_html_end_tag_name_set(this, ptr_without_panic(name), name.len()) } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
         }
     }
 
-    pub fn get_source_location_bytes(&self) -> SourceLocationBytes {
+    /// # Safety
+    /// `this` must be a valid `*mut EndTag` passed to a handler.
+    pub unsafe fn get_source_location_bytes(this: *mut EndTag) -> SourceLocationBytes {
         auto_disable();
-        // SAFETY: self valid
-        unsafe { lol_html_end_tag_source_location_bytes(self) }
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_end_tag_source_location_bytes(this) }
     }
 }
 
@@ -905,10 +991,13 @@ unsafe extern "C" {
 }
 
 impl AttributeIterator {
-    pub fn next(&mut self) -> Option<&Attribute> {
+    /// # Safety
+    /// `this` must be a valid `*mut AttributeIterator` from `Element::attributes` and not yet freed.
+    /// The returned reference is valid until the next call to `next` or until the iterator is freed.
+    pub unsafe fn next<'a>(this: *mut AttributeIterator) -> Option<&'a Attribute> {
         auto_disable();
-        // SAFETY: self valid; returned ptr valid until next call or free
-        let p = unsafe { lol_html_attributes_iterator_next(self) };
+        // SAFETY: caller guarantees `this` is valid; returned ptr valid until next call or free
+        let p = unsafe { lol_html_attributes_iterator_next(this) };
         if p.is_null() { None } else { Some(unsafe { &*p }) }
     }
 
@@ -942,66 +1031,82 @@ unsafe extern "C" {
 }
 
 impl Comment {
-    pub fn get_text(&self) -> HTMLString {
+    /// # Safety
+    /// `this` must be a valid `*mut Comment` passed to a handler.
+    pub unsafe fn get_text(this: *mut Comment) -> HTMLString {
         auto_disable();
-        // SAFETY: self valid
-        unsafe { lol_html_comment_text_get(self) }
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_comment_text_get(this) }
     }
 
-    pub fn set_text(&mut self, text: &[u8]) -> Result<(), Error> {
+    /// # Safety
+    /// `this` must be a valid `*mut Comment` passed to a handler.
+    pub unsafe fn set_text(this: *mut Comment, text: &[u8]) -> Result<(), Error> {
         auto_disable();
-        // SAFETY: self valid; text ptr/len valid
-        match unsafe { lol_html_comment_text_set(self, ptr_without_panic(text), text.len()) } {
+        // SAFETY: caller guarantees `this` is valid; text ptr/len valid
+        match unsafe { lol_html_comment_text_set(this, ptr_without_panic(text), text.len()) } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
         }
     }
 
-    pub fn before(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
+    /// # Safety
+    /// `this` must be a valid `*mut Comment` passed to a handler.
+    pub unsafe fn before(this: *mut Comment, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
-        // SAFETY: self valid; content ptr/len valid
-        match unsafe { lol_html_comment_before(self, ptr_without_panic(content), content.len(), is_html) } {
+        // SAFETY: caller guarantees `this` is valid; content ptr/len valid
+        match unsafe { lol_html_comment_before(this, ptr_without_panic(content), content.len(), is_html) } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
         }
     }
 
-    pub fn replace(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
+    /// # Safety
+    /// `this` must be a valid `*mut Comment` passed to a handler.
+    pub unsafe fn replace(this: *mut Comment, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // PORT NOTE: Zig source calls lol_html_comment_before here (likely an upstream bug); ported faithfully
-        // SAFETY: self valid; content ptr/len valid
-        match unsafe { lol_html_comment_before(self, ptr_without_panic(content), content.len(), is_html) } {
+        // SAFETY: caller guarantees `this` is valid; content ptr/len valid
+        match unsafe { lol_html_comment_before(this, ptr_without_panic(content), content.len(), is_html) } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
         }
     }
 
-    pub fn after(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
+    /// # Safety
+    /// `this` must be a valid `*mut Comment` passed to a handler.
+    pub unsafe fn after(this: *mut Comment, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
-        // SAFETY: self valid; content ptr/len valid
-        match unsafe { lol_html_comment_after(self, ptr_without_panic(content), content.len(), is_html) } {
+        // SAFETY: caller guarantees `this` is valid; content ptr/len valid
+        match unsafe { lol_html_comment_after(this, ptr_without_panic(content), content.len(), is_html) } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
         }
     }
 
-    pub fn is_removed(&self) -> bool {
-        // SAFETY: self valid
-        unsafe { lol_html_comment_is_removed(self) }
+    /// # Safety
+    /// `this` must be a valid `*mut Comment` passed to a handler.
+    pub unsafe fn is_removed(this: *mut Comment) -> bool {
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_comment_is_removed(this) }
     }
-    pub fn remove(&mut self) {
-        // SAFETY: self valid
-        unsafe { lol_html_comment_remove(self) }
+    /// # Safety
+    /// `this` must be a valid `*mut Comment` passed to a handler.
+    pub unsafe fn remove(this: *mut Comment) {
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_comment_remove(this) }
     }
 
-    pub fn get_source_location_bytes(&self) -> SourceLocationBytes {
+    /// # Safety
+    /// `this` must be a valid `*mut Comment` passed to a handler.
+    pub unsafe fn get_source_location_bytes(this: *mut Comment) -> SourceLocationBytes {
         auto_disable();
-        // SAFETY: self valid
-        unsafe { lol_html_comment_source_location_bytes(self) }
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_comment_source_location_bytes(this) }
     }
 }
 
@@ -1038,10 +1143,12 @@ unsafe extern "C" {
 }
 
 impl DocEnd {
-    pub fn append(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
+    /// # Safety
+    /// `this` must be a valid `*mut DocEnd` passed to a handler.
+    pub unsafe fn append(this: *mut DocEnd, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
-        // SAFETY: self valid; content ptr/len valid
-        match unsafe { lol_html_doc_end_append(self, ptr_without_panic(content), content.len(), is_html) } {
+        // SAFETY: caller guarantees `this` is valid; content ptr/len valid
+        match unsafe { lol_html_doc_end_append(this, ptr_without_panic(content), content.len(), is_html) } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),

@@ -8,7 +8,7 @@
 //     exported by `bun_http`). Same shape as `node_process.rs`.
 // TODO(b2-blocked): un-gate once `bun_http::{max_http_header_size,set_max_http_header_size}`
 // land and `crate::server::*Server::get_all_closed_promise` is real.
-#[cfg(any())]
+
 mod _impl {
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 

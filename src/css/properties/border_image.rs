@@ -545,8 +545,8 @@ impl BorderImageHandler {
 
                     // TODO(port): re-enable once `PropertyHandlerContext::add_unparsed_fallbacks`
                     // un-gates (blocked on `SupportsCondition::eql` in context.rs).
-                    #[cfg(any())]
-                    #[cfg(any())] // blocked_on: PropertyHandlerContext::add_unparsed_fallbacks (gated in context.rs)
+                    
+                     // blocked_on: PropertyHandlerContext::add_unparsed_fallbacks (gated in context.rs)
                     context.add_unparsed_fallbacks(&mut unparsed_clone);
                     let _ = &mut unparsed_clone;
                     self.flushed_properties.insert(

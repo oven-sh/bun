@@ -1,4 +1,5 @@
 use bun_jsc::console_object::Formatter;
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Expect;
@@ -15,7 +16,7 @@ impl Expect {
         let _post = scopeguard::guard((), |_| this.post_match(global));
 
         let this_value = frame.this();
-        let arguments_ = frame.arguments_old(1);
+        let arguments_ = frame.arguments_old::<1>();
         let arguments = arguments_.slice();
 
         if arguments.len() < 1 {
@@ -28,11 +29,7 @@ impl Expect {
         expected.ensure_still_alive();
         let value: JSValue =
             this.get_value(global, this_value, "toContainKey", "<green>expected<r>")?;
-        let mut formatter = Formatter {
-            global,
-            quote_strings: true,
-            ..Default::default()
-        };
+        let mut formatter = super::make_formatter(global);
         // `defer formatter.deinit()` — handled by Drop.
 
         let not = this.flags.not();

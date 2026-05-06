@@ -1,11 +1,12 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
-use bun_jsc::BigIntCompare;
+use crate::test_runner::expect::BigIntCompare;
 
 use super::Expect;
 use super::get_signature;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_be_greater_than_or_equal(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -16,8 +17,8 @@ pub fn to_be_greater_than_or_equal(
     // TODO(port): errdefer — scopeguard borrows `this`/`global`; Phase B may need to
     // restructure if borrowck rejects the overlapping &mut on `this` below.
 
-    let this_value = frame.this_value();
-    let arguments: &[JSValue] = frame.arguments_old(1);
+    let this_value = frame.this();
+    let arguments: &[JSValue] = frame.arguments_old::<1>();
 
     if arguments.len() < 1 {
         return global.throw_invalid_arguments(format_args!(
@@ -47,12 +48,12 @@ pub fn to_be_greater_than_or_equal(
     if !value.is_big_int() && !other_value.is_big_int() {
         pass = value.as_number() >= other_value.as_number();
     } else if value.is_big_int() {
-        pass = match value.as_big_int_compare(global, other_value) {
+        pass = match value.as_big_int_compare(other_value, global) {
             BigIntCompare::GreaterThan | BigIntCompare::Equal => true,
             _ => pass,
         };
     } else {
-        pass = match other_value.as_big_int_compare(global, value) {
+        pass = match other_value.as_big_int_compare(value, global) {
             BigIntCompare::LessThan | BigIntCompare::Equal => true,
             _ => pass,
         };
@@ -66,11 +67,7 @@ pub fn to_be_greater_than_or_equal(
     }
 
     // handle failure
-    let mut formatter = Formatter {
-        global_this: global,
-        quote_strings: true,
-        ..Default::default()
-    };
+    let mut formatter = super::make_formatter(global);
     // Zig: `defer formatter.deinit();` — handled by Drop.
     let value_fmt = value.to_fmt(&mut formatter);
     let expected_fmt = other_value.to_fmt(&mut formatter);
@@ -78,7 +75,7 @@ pub fn to_be_greater_than_or_equal(
         const EXPECTED_LINE: &str = "Expected: not \\>= <green>{}<r>\n";
         const RECEIVED_LINE: &str = "Received: <red>{}<r>\n";
         let signature = const { get_signature("toBeGreaterThanOrEqual", "<green>expected<r>", true) };
-        return this.throw(
+        return this.throw_fmt(
             global,
             signature,
             concat!("\n\n", "Expected: not \\>= <green>{}<r>\n", "Received: <red>{}<r>\n"),
@@ -96,7 +93,7 @@ pub fn to_be_greater_than_or_equal(
     const EXPECTED_LINE: &str = "Expected: \\>= <green>{}<r>\n";
     const RECEIVED_LINE: &str = "Received: <red>{}<r>\n";
     let signature = const { get_signature("toBeGreaterThanOrEqual", "<green>expected<r>", false) };
-    this.throw(
+    this.throw_fmt(
         global,
         signature,
         concat!("\n\n", "Expected: \\>= <green>{}<r>\n", "Received: <red>{}<r>\n"),

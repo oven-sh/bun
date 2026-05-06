@@ -1,9 +1,10 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::Expect;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_be_defined(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -30,11 +31,7 @@ pub fn to_be_defined(
     // handle failure
     // TODO(port): Formatter likely needs a constructor (global_this field can't Default);
     // adjust once bun_jsc::console_object::Formatter is ported.
-    let mut formatter = Formatter {
-        global_this: global,
-        quote_strings: true,
-        ..Default::default()
-    };
+    let mut formatter = super::make_formatter(global);
     let value_fmt = value.to_fmt(&mut formatter);
     if not {
         // `received_line` const inlined: format_args! requires a literal first arg.

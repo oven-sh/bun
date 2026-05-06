@@ -1,4 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 use super::Expect;
 
@@ -9,7 +10,7 @@ fn is_zig_whitespace(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\n' | 0x0B | 0x0C | b'\r')
 }
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_equal_ignoring_whitespace(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -22,7 +23,7 @@ pub fn to_equal_ignoring_whitespace(
 
     let this_value = frame.this();
     // TODO(port): arguments_old(1) returned a struct with ptr/len; assume &[JSValue] here.
-    let arguments: &[JSValue] = frame.arguments_old(1);
+    let arguments: &[JSValue] = frame.arguments_old::<1>();
 
     if arguments.len() < 1 {
         return global.throw_invalid_arguments(format_args!(
@@ -99,11 +100,7 @@ pub fn to_equal_ignoring_whitespace(
     }
 
     // handle failure
-    let mut formatter = Formatter {
-        global_this: global,
-        quote_strings: true,
-        ..Default::default()
-    };
+    let mut formatter = super::make_formatter(global);
     // `defer formatter.deinit()` deleted — Drop handles it.
     let expected_fmt = expected.to_fmt(&mut formatter);
     let value_fmt = value.to_fmt(&mut formatter);

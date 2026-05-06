@@ -252,10 +252,10 @@ use crate::webcore::{body as Body, s3 as S3, Blob, ReadableStream};
 // `Api::FallbackMessageContainer`/`JsException`/`Problems`/`Fallback::render_backend`
 // live in `bun_options_types::schema::api` + `bun_js_parser::runtime`; both are
 // still being filled in by concurrent ports. The DEBUG_MODE error-page paths
-// that use them stay `#[cfg(any())]`-gated below.
-#[cfg(any())]
+// that use them stay ``-gated below.
+
 use bun_options_types::schema::api as Api;
-#[cfg(any())]
+
 use bun_js_parser::runtime::Fallback;
 
 bun_core::declare_scope!(RequestContext, visible);
@@ -637,7 +637,7 @@ where
     // TODO(b2-blocked): `Api::FallbackMessageContainer` + `Fallback::render_backend`
     // (bun_options_types::schema::api / bun_js_parser::runtime) — debug-only HTML
     // error page. Production hits `render_production_error` instead.
-    #[cfg(any())]
+    
     pub fn render_default_error(
         &mut self,
         // TODO(port): arena_allocator param dropped; this is a non-AST crate, allocations use global mimalloc.
@@ -1521,7 +1521,7 @@ where
         this.end_stream(this.should_close_connection());
     }
 
-    #[cfg(any())]
+    
     fn _gated_do_render_stream(pair: *mut StreamPair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>) {
         ctx_log!("doRenderStream");
         // SAFETY: pair is a stack local threaded through cork user-data.
@@ -2285,7 +2285,7 @@ where
 
         // TODO(b2-blocked): DEBUG_MODE dev-server HTML fallback page — gated on
         // `Api::FallbackMessageContainer`/`Fallback::render_backend`.
-        #[cfg(any())]
+        
         if DEBUG_MODE {
             if let Some(server) = req.server {
                 if !err.is_empty_or_undefined_or_null() {
@@ -2656,7 +2656,7 @@ where
         // TODO(b2-blocked): DEBUG_MODE branch renders the HTML fallback page via
         // `Api::JsException` + `render_default_error`; gated until bun_schema/
         // bun_js_parser surfaces are in. Falls through to the production path.
-        #[cfg(any())]
+        
         if DEBUG_MODE {
             // PERF(port): was arena bulk-free — profile in Phase B
             let mut exception_list: Vec<Api::JsException> = Vec::new();
@@ -3440,7 +3440,7 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
     }
 }
 
-#[cfg(any())] // TODO(b2-blocked): FetchHeaders::fast_get + MimeType::init/sniff/by_name.
+ // TODO(b2-blocked): FetchHeaders::fast_get + MimeType::init/sniff/by_name.
 fn get_content_type(
     headers: Option<&FetchHeaders>,
     blob: &AnyBlob,

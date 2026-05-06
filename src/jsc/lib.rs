@@ -7,7 +7,7 @@
 //!
 //! ──────────────────────────────────────────────────────────────────────────
 //! B-1 GATE-AND-STUB STATUS
-//!   All Phase-A draft modules are gated behind `#[cfg(any())]` (with correct
+//!   All Phase-A draft modules are gated behind `` (with correct
 //!   `#[path]` attrs so the drafts remain on disk and addressable). A minimal
 //!   opaque stub surface is exposed so downstream crates type-check. Un-gating
 //!   happens in B-2.
@@ -1532,13 +1532,13 @@ pub use self::runtime_transpiler_store::RuntimeTranspilerStore;
 pub use self::web_worker::WebWorker;
 
 // TODO(b1): bun_runtime crate not in dep-graph at this tier; gate re-exports.
-#[cfg(any())]
+
 pub use bun_runtime::test_runner::jest as Jest;
-#[cfg(any())]
+
 pub use bun_runtime::test_runner::jest::TestScope;
-#[cfg(any())]
+
 pub use bun_runtime::test_runner::expect as Expect;
-#[cfg(any())]
+
 pub use bun_runtime::test_runner::snapshot as Snapshot;
 pub mod Jest {}
 pub mod Expect {}
@@ -1735,7 +1735,7 @@ pub type ZigString = bun_string::ZigString;
 pub type ZigStringSlice = bun_string::ZigStringSlice;
 /// Deprecated: Use `bun_webcore`
 // TODO(b1): bun_webcore crate not available at this tier.
-#[cfg(any())]
+
 #[deprecated]
 pub use bun_webcore as WebCore;
 #[allow(non_snake_case)]
@@ -1795,7 +1795,7 @@ pub mod api {
 }
 /// Deprecated: Use `bun_api::node`
 // TODO(b1): bun_api::node missing from stub surface
-#[cfg(any())]
+
 #[deprecated]
 pub use bun_api::node as Node;
 #[allow(non_snake_case)]
@@ -1820,7 +1820,7 @@ pub fn mark_member_binding(_class: &'static str, _src: &core::panic::Location<'s
 }
 
 // TODO(b1): bun_api::Subprocess missing from stub surface
-#[cfg(any())]
+
 pub use bun_api::Subprocess;
 stub_ty!(Subprocess);
 

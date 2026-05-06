@@ -1,10 +1,11 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::Expect;
 use super::get_signature;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_be_instance_of(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -14,9 +15,9 @@ pub fn to_be_instance_of(
     // Run the matcher body in an inner closure so `this` is released when it returns,
     // then call `post_match` exactly once on every exit path (success or throw).
     let res = (|| -> JsResult<JSValue> {
-    let this_value = frame.this_value();
+    let this_value = frame.this();
     // PORT NOTE: collapsed `arguments_old(1)` + ptr/len slice into a single &[JSValue].
-    let arguments: &[JSValue] = frame.arguments_old(1);
+    let arguments: &[JSValue] = frame.arguments_old::<1>();
 
     if arguments.len() < 1 {
         return global.throw_invalid_arguments(format_args!(
@@ -25,11 +26,7 @@ pub fn to_be_instance_of(
     }
 
     this.increment_expect_call_counter();
-    let mut formatter = Formatter {
-        global,
-        quote_strings: true,
-        ..Default::default()
-    };
+    let mut formatter = super::make_formatter(global);
     // `defer formatter.deinit()` → handled by Drop.
 
     let expected_value = arguments[0];

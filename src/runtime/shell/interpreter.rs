@@ -409,7 +409,7 @@ impl Interpreter {
         out_lex_err: &mut Option<Box<[u8]>>,
         out_parse_err: &mut Option<Box<[u8]>>,
     ) -> Result<ast::Script, bun_core::Error> {
-        #[cfg(any())]
+        
         {
             use crate::shell::shell_body::{LexerAscii, LexerUnicode, ParseError, Parser};
             let jsobjs_len = jsobjs.len() as u32;
@@ -435,7 +435,7 @@ impl Interpreter {
                 }
             }
         }
-        #[cfg(not(any()))]
+        #[cfg(any())]
         Err(bun_core::err!("ParseUnavailable"))
     }
 
@@ -2065,7 +2065,7 @@ pub fn unreachable_state(context: &str, state: &str) -> ! {
 // surface, `IOWriter::init`, `bun_aio::FilePoll`, and `bun_glob`. Preserved
 // here verbatim until those crates are green; the NodeId-arena dispatch above
 // supersedes `StatePtrUnion`.
-#[cfg(any())]
+
 mod interpreter_body {
     include!("interpreter_body_gated.rs"); // TODO(port): preserved Phase-A draft
 }

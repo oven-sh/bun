@@ -3,11 +3,11 @@
 //! B-2 round 2: un-gate the help path. `Command::which()` + `HelpCommand`
 //! + `print_version_and_exit` are real and compile against lower-tier crates.
 //! `Command::start()` (full dispatch) and per-command exec bodies stay gated
-//! behind `#[cfg(any())]` — they need `bun_jsc`, `bun_bun_js`, transpiler,
+//! behind `` — they need `bun_jsc`, `bun_bun_js`, transpiler,
 //! and the not-yet-un-gated sibling `*_command.rs` modules.
 //!
 //! The full Phase-A draft is preserved verbatim in `cli_body.rs` (still
-//! `#[cfg(any())]`-gated as a reference for the next un-gate round).
+//! ``-gated as a reference for the next un-gate round).
 
 use core::cell::Cell;
 
@@ -17,7 +17,7 @@ use bun_logger as logger;
 use bun_str::strings;
 
 // ─── gated Phase-A drafts (preserved, not compiled) ──────────────────────────
-#[cfg(any())]
+
 #[path = "cli_body.rs"]
 mod cli_body;
 
@@ -44,7 +44,7 @@ pub mod colon_list_type;
 #[path = "shell_completions.rs"]
 pub mod shell_completions;
 // TODO(b2-blocked): list-of-yarn-commands.rs has duplicate phf_set! keys.
-#[cfg(any())] #[path = "list-of-yarn-commands.rs"]
+ #[path = "list-of-yarn-commands.rs"]
 pub mod list_of_yarn_commands;
 #[path = "discord_command.rs"]
 pub mod discord_command;
@@ -55,7 +55,7 @@ pub mod discord_command;
 // `bun_resolver::fs::FileSystem` — none of which are wired on this path yet.
 // `bun discord` only needs `open_url`, so provide a thin print-fallback impl
 // here until the heavy half compiles.
-#[cfg(any())] #[path = "open.rs"]
+ #[path = "open.rs"]
 mod open_full;
 pub mod open {
     use bun_core::Output;
@@ -90,17 +90,17 @@ pub mod open {
 // and `package_manager_command.rs` need bun_install::PackageManager + a real
 // `Command::Context` (blocked on `create_context_data`). Help/print-only paths
 // are handled inline in `Command::start()` below; full bodies stay gated.
-#[cfg(any())] #[path = "init_command.rs"]
+ #[path = "init_command.rs"]
 pub mod init_command;
-#[cfg(any())] #[path = "install_completions_command.rs"]
+ #[path = "install_completions_command.rs"]
 pub mod install_completions_command;
-#[cfg(any())] #[path = "package_manager_command.rs"]
+ #[path = "package_manager_command.rs"]
 pub mod package_manager_command;
 
 // ─── B-2 round 2: newly un-gated (thin surface, heavy bodies re-gated inside) ─
 // phase-d: surfaced for `crate::test_runner::{bun_test,jest,Execution}` which
 // need `CommandLineReporter`. `cli_body`'s private `mod test_command;` is
-// `#[cfg(any())]`-gated, so this is the sole live mount of the file.
+// ``-gated, so this is the sole live mount of the file.
 #[path = "test_command.rs"]
 pub mod test_command;
 #[path = "Arguments.rs"]
@@ -590,7 +590,7 @@ pub mod command {
             if ctx.debug.hot_reload == HotReload::Watch {
                 // TODO(b2-blocked): bun_sys::windows::is_watcher_child /
                 // become_watcher_manager — Windows watcher hand-off path.
-                #[cfg(any())]
+                
                 {
                     if !bun_sys::windows::is_watcher_child() {
                         bun_sys::windows::become_watcher_manager();
@@ -646,7 +646,7 @@ pub mod command {
                         Global::exit(0);
                     }
                 }
-                #[cfg(any())]
+                
                 {
                     return super::init_command::InitCommand::exec(
                         &bun::argv()[2.min(bun::argv().len())..],
@@ -693,7 +693,7 @@ pub mod command {
                         Global::exit(0);
                     }
                 }
-                #[cfg(any())]
+                
                 {
                     let ctx = init(Tag::PackageManagerCommand, log)?;
                     return super::package_manager_command::PackageManagerCommand::exec(ctx);
@@ -725,11 +725,11 @@ pub mod command {
                 // TODO(b2-blocked): MultiRun / FilterRun (`--parallel`,
                 // `--filter`, `--workspaces`) — needs `multi_run.rs` /
                 // `filter_run.rs` un-gated.
-                #[cfg(any())]
+                
                 if ctx.parallel || ctx.sequential {
                     return MultiRun::run(ctx);
                 }
-                #[cfg(any())]
+                
                 if !ctx.filters.is_empty() || ctx.workspaces {
                     return FilterRun::run_scripts_with_filter(ctx);
                 }

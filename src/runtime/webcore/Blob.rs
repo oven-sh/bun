@@ -37,7 +37,7 @@ pub use store as Store_;
 // generics + node_fs/NodeFS surface not yet wired.
 #[path = "blob/read_file.rs"]  pub mod read_file;
 #[path = "blob/write_file.rs"] pub mod write_file;
-#[cfg(any())] #[path = "blob/copy_file.rs"]  pub mod copy_file;
+ #[path = "blob/copy_file.rs"]  pub mod copy_file;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Blob struct
@@ -156,7 +156,7 @@ impl Blob {
     }
 
     // TODO(b2-blocked): bun_core::FormData (gated module)
-    #[cfg(any())]
+    
     pub fn get_form_data_encoding(&mut self) -> Option<Box<bun_core::FormData::AsyncFormData>> {
         let content_type_slice = self.get_content_type()?;
         let encoding = bun_core::FormData::Encoding::get(content_type_slice.slice())?;
@@ -275,7 +275,7 @@ impl Blob {
 // `read_file`/`write_file`). Struct/enum payloads referenced by Body/Request/
 // Response are defined outside this gate; un-gate progressively as bun_jsc
 // becomes a dep of bun_runtime.
-#[cfg(any())]
+
 mod _jsc_gated {
 use super::*;
 use crate::node as node;
@@ -2277,7 +2277,7 @@ pub fn construct_bun_file(
     let vm = global_object.bun_vm();
     let arguments = callframe.arguments_old(2);
     let arguments_slice = arguments.slice();
-    let mut args = jsc::ArgumentsSlice::init(vm, arguments_slice);
+    let mut args = jsc::ArgumentsSlice::init(unsafe { &*vm }, arguments_slice);
 
     let mut path = PathOrFileDescriptor::from_js(global_object, &mut args)?.ok_or_else(|| {
         global_object
@@ -4692,7 +4692,7 @@ impl Blob {
         // in `blob/Store.rs` and `transpiler.env.get_s3_credentials()` is not
         // yet on the VM surface. Re-gated until both land; this only short-
         // circuits the `s3://` prefix, the file path below is unaffected.
-        #[cfg(any())]
+        
         if check_s3 {
             if let PathOrFileDescriptor::Path(ref p) = path_or_fd {
                 if p.slice().starts_with(b"s3://") {
@@ -4730,7 +4730,7 @@ impl Blob {
                 // TODO(b2-blocked): standalone_module_graph — VM field is an
                 // opaque `Option<NonNull<c_void>>` until the graph type is
                 // ported; cannot `.find(slice)` on it yet. Re-gated.
-                #[cfg(any())]
+                
                 if let Some(graph) = global_this.bun_vm().standalone_module_graph {
                     if let Some(file) = graph.find(slice) {
                         return file.blob(global_this).dupe();
@@ -4754,7 +4754,7 @@ impl Blob {
                 // webcore.rs); re-gated until that lands. Falls through to a
                 // plain fd-backed `Store::File` below, which is behaviourally
                 // correct (just misses the cached-store fast path).
-                #[cfg(any())]
+                
                 if let Some(tag) = fd.stdio_tag() {
                     let vm = global_this.bun_vm();
                     let store = match tag {
@@ -4768,7 +4768,7 @@ impl Blob {
             }
         };
 
-        // PORT NOTE: `Store::init_file` is `#[cfg(any())]`-gated in
+        // PORT NOTE: `Store::init_file` is ``-gated in
         // `blob/Store.rs`; inline its body here so the file-backed path works
         // without touching that file.
         let mime_type = if let PathOrFileDescriptor::Path(ref p) = path {
@@ -4826,7 +4826,7 @@ pub fn construct_bun_file(
     let vm = global_object.bun_vm();
     let arguments = callframe.arguments_old::<2>();
     let arguments_slice = arguments.slice();
-    let mut args = jsc::ArgumentsSlice::init(vm, arguments_slice);
+    let mut args = jsc::ArgumentsSlice::init(unsafe { &*vm }, arguments_slice);
 
     // TODO(b2-blocked): node_types unification — `PathOrFileDescriptor::from_js`
     // exists on `crate::node::PathOrFileDescriptor` but Store::File::pathlike is
@@ -4835,7 +4835,7 @@ pub fn construct_bun_file(
     // variant the stub lacks), so a `From` impl can't be written from this file
     // alone. Un-gate once webcore.rs swaps `node_types` to a re-export of
     // `crate::node::types`.
-    #[cfg(any())]
+    
     {
         let mut path = PathOrFileDescriptor::from_js(global_object, &mut args)?.ok_or_else(|| {
             global_object.throw_invalid_arguments(format_args!(
@@ -4908,7 +4908,7 @@ pub fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
     // `blob/write_file.rs`, un-gated), but the glue that threads a JSPromise
     // through them is not. Un-gate by lifting `write_file_internal` +
     // `write_file_with_source_destination` once those land.
-    #[cfg(any())]
+    
     {
         let arguments = callframe.arguments_old::<3>();
         let arguments_slice = arguments.slice();
@@ -4997,7 +4997,7 @@ impl Any {
 // TODO(b2-blocked): bun_jsc::* — Any::{to_action_value,to_promise,wrap,
 // to_json,to_string,to_array_buffer*,to_blob,to_uint8_array*} call into
 // JSValue/ZigString JSC methods and Blob JSC impls gated above.
-#[cfg(any())]
+
 impl Any {
     fn to_internal_blob_if_possible(&mut self) {
         if let Any::Blob(blob) = self {
@@ -5282,7 +5282,7 @@ impl Internal {
     }
 
     // TODO(b2-blocked): bun_jsc::* — ZigString::to_external_u16/to_js_object.
-    #[cfg(any())]
+    
     pub fn to_string_owned(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let bytes_without_bom = strings::without_utf8_bom(&self.bytes);
         if let Some(out) = strings::to_utf16_alloc(bytes_without_bom, false, false).unwrap_or(Some(Vec::new())) {
@@ -5304,7 +5304,7 @@ impl Internal {
     }
 
     // TODO(b2-blocked): bun_jsc::* — ZigString::to_json_object.
-    #[cfg(any())]
+    
     pub fn to_json(&mut self, global_this: &JSGlobalObject) -> JSValue {
         let str_bytes = ZigString::init(strings::without_utf8_bom(&self.bytes)).with_encoding();
         let json = str_bytes.to_json_object(global_this);
@@ -5403,7 +5403,7 @@ impl Inline {
     }
 
     // TODO(b2-blocked): bun_jsc::* — ZigString::to_js.
-    #[cfg(any())]
+    
     pub fn to_string_owned(&mut self, global_this: &JSGlobalObject) -> JSValue {
         if self.len == 0 {
             return ZigString::EMPTY.to_js(global_this);
@@ -5458,7 +5458,7 @@ impl Default for Inline {
 // JSValue::as_<Blob>(), bun_sys::open/INVALID_FD/E, bun_io::{Tag,Request,
 // Action,Loop}, bun_aio::{FilePoll,PollFlags,Closer}.
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
+
 mod _io_gated {
 use super::*;
 

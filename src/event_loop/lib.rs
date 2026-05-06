@@ -10,7 +10,7 @@ pub mod EventLoopTimer;
 
 // ────────────────────────────────────────────────────────────────────────────
 // B-2 un-gated: AnyEventLoop / SpawnSyncEventLoop / MiniEventLoop compile.
-// All `#[cfg(any())]` gates removed this pass — bun_uws_sys::Loop and
+// All `` gates removed this pass — bun_uws_sys::Loop and
 // bun_core::Timespec are now real types. `InternalLoopData::set_parent_event_loop`
 // is reached via the lower-tier `set_parent_raw(tag, ptr)` +
 // `EventLoopHandle::into_tag_ptr()`. Windows-only `MiniVM::platform_event_loop`

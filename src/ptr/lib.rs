@@ -16,8 +16,8 @@ pub type CowString<'a> = Cow<'a, [u8]>;
 
 // owned/shared — OBSOLETE per PORTING.md §Pointers: callers
 // use std `Box`/`Rc`/`Arc` directly. Draft modules kept for diff-pass only.
-#[cfg(any())] pub mod owned;
-#[cfg(any())] pub mod shared;
+ pub mod owned;
+ pub mod shared;
 pub type Owned<T> = Box<T>;
 pub type OwnedIn<T> = Box<T>;
 pub type DynamicOwned<T> = Box<T>;

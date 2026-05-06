@@ -1,15 +1,16 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 use super::Expect;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_have_been_called(
     this: &mut Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
-    let this_value = frame.this_value();
+    let this_value = frame.this();
     let first_argument = frame.arguments_as_array::<1>()[0];
     // TODO(port): `defer this.postMatch(globalThis)` — scopeguard captures &mut this and conflicts
     // with subsequent &mut uses below; Phase B may need to reshape (call post_match before each
@@ -28,11 +29,7 @@ pub fn to_have_been_called(
     let calls = super::mock::JSMockFunction__getCalls(global, value)?;
     this.increment_expect_call_counter();
     if !calls.js_type().is_array() {
-        let formatter = Formatter {
-            global_this: global,
-            quote_strings: true,
-            ..Default::default()
-        };
+        let formatter = super::make_formatter(global);
         // `defer formatter.deinit()` → Drop
         return global.throw(format_args!(
             "Expected value must be a mock function: {}",

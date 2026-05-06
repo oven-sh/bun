@@ -56,7 +56,7 @@ impl UnknownAtRule {
     }
 }
 
-// blocked_on: properties::custom::TokenList::to_css — its body is `#[cfg(any())]`
+// blocked_on: properties::custom::TokenList::to_css — its body is ``
 // gated on Token::to_css + TokenOrValue payload serializers. Thin wrapper here
 // so the blocker is named at the actual choke point instead of a generic
 // "un-gate rules/unknown.rs" shim; once `TokenList::to_css` un-gates, the
@@ -67,9 +67,9 @@ fn token_list_to_css(
     dest: &mut Printer,
     is_custom_property: bool,
 ) -> Result<(), PrintErr> {
-    #[cfg(any())]
+    
     return list.to_css(dest, is_custom_property);
-    #[cfg(not(any()))]
+    #[cfg(any())]
     {
         let _ = (list, dest, is_custom_property);
         todo!("blocked_on: properties::custom::TokenList::to_css — Token::to_css un-gate")

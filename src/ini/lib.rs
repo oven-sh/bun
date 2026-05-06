@@ -1288,7 +1288,7 @@ impl<'a> ScopeIterator<'a> {
 pub fn load_npmrc_config() { todo!("b2-blocked: bun_api::BunInstall") }
 pub fn load_npmrc() { todo!("b2-blocked: bun_api::BunInstall / bun_js_parser::Expr accessors") }
 
-#[cfg(any())]
+
 pub fn load_npmrc_config(
     install: &mut BunInstall,
     env: &mut DotEnvLoader<'_>,
@@ -1344,7 +1344,7 @@ pub fn load_npmrc_config(
     }
 }
 
-#[cfg(any())]
+
 pub fn load_npmrc(
     install: &mut BunInstall,
     env: &mut DotEnvLoader<'_>,

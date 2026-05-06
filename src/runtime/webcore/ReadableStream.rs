@@ -166,7 +166,7 @@ impl ReadableStream {
     // TODO(b2-blocked): ByteBlobLoader/ByteStream method bodies (`to_any_blob`,
     // `parent`) gated until those modules are un-stubbed. FileReader path
     // additionally needs `Blob::init_with_store`.
-    #[cfg(any())]
+    
     pub fn to_any_blob(&mut self, global_this: &JSGlobalObject) -> Option<webcore::blob::Any> {
         if self.is_disturbed(global_this) {
             return None;
@@ -220,10 +220,10 @@ impl ReadableStream {
         match self.ptr {
             // SAFETY: ptrs came from ReadableStreamTag__tagged; valid while stream alive.
             // TODO(b2-blocked): ByteBlobLoader/ByteStream are stubbed; un-gate once `parent()` lands.
-            #[cfg(any())]
+            
             Source::Blob(source) => unsafe { (*source).parent().cancel() },
             Source::File(source) => unsafe { (*(*source).parent()).cancel() },
-            #[cfg(any())]
+            
             Source::Bytes(source) => unsafe { (*source).parent().cancel() },
             _ => {}
         }
@@ -320,7 +320,7 @@ impl ReadableStream {
     // and the helpers below build a `NewSource<FileReader>` with field-level inits
     // (`event_loop`, `lazy`, `reader.from`) and reach into `blob::StoreData::S3`.
     // FileReader's body is still being ported; un-gate together.
-    #[cfg(any())]
+    
     pub fn from_owned_slice(
         global_this: &JSGlobalObject,
         bytes: Box<[u8]>,
@@ -331,7 +331,7 @@ impl ReadableStream {
         Self::from_blob_copy_ref(global_this, &blob, recommended_chunk_size)
     }
 
-    #[cfg(any())]
+    
     pub fn from_blob_copy_ref(
         global_this: &JSGlobalObject,
         blob: &Blob,
@@ -383,7 +383,7 @@ impl ReadableStream {
         }
     }
 
-    #[cfg(any())]
+    
     pub fn from_file_blob_with_offset(
         global_this: &JSGlobalObject,
         blob: &Blob,
@@ -411,7 +411,7 @@ impl ReadableStream {
         }
     }
 
-    #[cfg(any())]
+    
     pub fn from_pipe<P, R>(
         global_this: &JSGlobalObject,
         _parent: P,
@@ -798,7 +798,7 @@ impl<C: SourceContext> NewSource<C> {
 // `ArrayBuffer::slice_mut` on the inline `bun_jsc` shim (not yet re-exported there).
 // Nothing in Rust calls into this mod directly — it's the codegen entry point — so
 // gating it doesn't block the `NewSource<C>`/`SourceContext` consumers.
-#[cfg(any())]
+
 pub mod js_readable_stream_source {
     use super::*;
 

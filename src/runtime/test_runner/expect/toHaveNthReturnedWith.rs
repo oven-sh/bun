@@ -1,10 +1,11 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::DiffFormatter;
 use super::{Expect, get_signature};
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_have_nth_returned_with(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -36,7 +37,7 @@ pub fn to_have_nth_returned_with(
     this.increment_expect_call_counter();
     let returns = super::mock::JSMockFunction__getReturns(global, value)?;
     if !returns.js_type().is_array() {
-        let mut formatter = Formatter { global, quote_strings: true, ..Default::default() };
+        let mut formatter = super::make_formatter(global);
         return global.throw(format_args!(
             "Expected value must be a mock function: {}",
             value.to_fmt(&mut formatter),
@@ -78,14 +79,14 @@ pub fn to_have_nth_returned_with(
     }
 
     // Handle failure
-    let mut formatter = Formatter { global, quote_strings: true, ..Default::default() };
+    let mut formatter = super::make_formatter(global);
     // defer formatter.deinit() — handled by Drop
 
     // TODO(port): get_signature should be a const fn returning &'static str (was `comptime getSignature(...)`)
     let signature = get_signature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", false);
 
     if this.flags.not() {
-        return this.throw(
+        return this.throw_fmt(
             global,
             get_signature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", true),
             format_args!(

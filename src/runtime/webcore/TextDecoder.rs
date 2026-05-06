@@ -186,7 +186,7 @@ impl TextDecoder {
 // ERR_ENCODING_NOT_SUPPORTED, JSGlobalObject::err(ErrorCode, fmt),
 // strings::to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool>,
 // jsc::ZigString::to_external_u16, TextCodec::create() returning a Drop-guard.
-#[cfg(any())]
+
 mod _gated {
 use super::*;
 use jsc::text_codec::TextCodec;
@@ -514,5 +514,5 @@ impl TextDecoder {
 //   source:     src/runtime/webcore/TextDecoder.zig (376 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      ZigString::to_external_u16 ownership-transfer + to_utf16_alloc_maybe_buffered error type need Phase B verification; UTF-8 joined-buffer path reshaped for borrowck. JS-facing impl gated under #[cfg(any())] until ErrorCode/ZigStringJsc surface lands.
+//   notes:      ZigString::to_external_u16 ownership-transfer + to_utf16_alloc_maybe_buffered error type need Phase B verification; UTF-8 joined-buffer path reshaped for borrowck. JS-facing impl gated under  until ErrorCode/ZigStringJsc surface lands.
 // ──────────────────────────────────────────────────────────────────────────

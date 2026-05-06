@@ -1221,7 +1221,7 @@ pub fn parse_with_tag(
                 input = &input[1..];
             }
 
-            #[cfg(any())]
+            
             {
                 // TODO(b2-blocked): bun_semver::query::Group — Rust port carries
                 // a `'a` borrow on `input`; storing it in `NpmInfo` (no lifetime
@@ -1258,7 +1258,7 @@ pub fn parse_with_tag(
 
                 Some(result)
             }
-            #[cfg(not(any()))]
+            #[cfg(any())]
             {
                 let _ = (input, sliced, is_alias, name, alias_hash, package_manager);
                 todo!("b2-blocked: bun_semver::query::Group lifetime")

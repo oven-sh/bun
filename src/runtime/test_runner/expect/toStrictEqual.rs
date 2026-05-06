@@ -1,4 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 
 use super::DiffFormatter;
 use super::Expect;
@@ -16,7 +17,7 @@ impl Expect {
         let _post = scopeguard::guard((), |_| this.post_match(global));
 
         let this_value = frame.this();
-        let _arguments = frame.arguments_old(1);
+        let _arguments = frame.arguments_old::<1>();
         // TODO(port): arguments_old returns a {ptr,len} struct in Zig; Phase B exposes a slice accessor.
         let arguments: &[JSValue] = &_arguments.ptr[0.._arguments.len];
 

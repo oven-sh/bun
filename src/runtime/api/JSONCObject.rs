@@ -1,7 +1,7 @@
 //! `Bun.JSONC` — `parse()` host function. Entirely JSC surface; body gated
 //! until `bun_jsc` dep is green and `#[bun_jsc::host_fn]` proc-macro lands.
 
-#[cfg(any())] // TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn] proc-macro
+ // TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn] proc-macro
 mod _jsc_gated {
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_core::err;

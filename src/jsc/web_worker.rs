@@ -69,7 +69,7 @@
 //! `RareData::ProxyEnvStorage` clone path) and into `VirtualMachine` fields
 //! that are still `todo!()` stubs (`init_worker`, `load_entry_point_for_web_worker`,
 //! `arena`, `proxy_env_storage`). Per VirtualMachine.rs §Dispatch those paths
-//! belong to the high tier; here they are preserved under `#[cfg(any())]` and
+//! belong to the high tier; here they are preserved under `` and
 //! the FFI exports route through `RuntimeHooks` / `todo!()`.
 //! ──────────────────────────────────────────────────────────────────────────
 
@@ -533,9 +533,9 @@ impl WebWorker {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Phase-A draft body (forward-dep heavy). Preserved for B-2 so the port
-// history isn't lost; never compiled (`#[cfg(any())]`).
+// history isn't lost; never compiled (``).
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
+
 mod __phase_a_body {
     use super::*;
     use bun_logger as logger;

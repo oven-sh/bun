@@ -124,7 +124,7 @@ pub fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSValue {
     let len = b.len;
     let error_message: &[u8] = if len > 0 { &b.allocated_slice()[..len] } else { b"" };
 
-    #[cfg(any())]
+    
     {
         // TODO(b2-blocked): bun_sql::postgres::PostgresErrorOptions<'a> —
         // currently every slice field is `&'static [u8]` (Phase-A placeholder),
@@ -156,7 +156,7 @@ pub fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSValue {
         )
         .unwrap_or_else(|e| global_object.take_error(e));
     }
-    #[cfg(not(any()))]
+    #[cfg(any())]
     {
         let _ = (
             errno, detail_slice, hint_slice, severity_slice, position_slice,

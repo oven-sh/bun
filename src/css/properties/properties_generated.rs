@@ -5488,7 +5488,7 @@ impl Property {
     }
 
     /// Returns the given longhand property for a shorthand.
-    #[cfg(any())] // blocked_on: shorthand_handler_port — leaf shorthand types lack `.longhand()` (Zig body is `@compileError(todo_stuff.depth)`, .zig:7087-7160)
+     // blocked_on: shorthand_handler_port — leaf shorthand types lack `.longhand()` (Zig body is `@compileError(todo_stuff.depth)`, .zig:7087-7160)
     pub fn longhand(&self, property_id: &PropertyId) -> Option<Property> {
         match self {
             Property::BackgroundPosition(v) => v.longhand(property_id),
@@ -5563,7 +5563,7 @@ impl Property {
         }
     }
 
-    #[cfg(any())] // blocked_on: leaf_value_traits — un-gate once every payload type impls `generics::DeepClone` (.zig:6307-6558)
+     // blocked_on: leaf_value_traits — un-gate once every payload type impls `generics::DeepClone` (.zig:6307-6558)
     pub fn deep_clone(&self, allocator: &bun_alloc::Arena) -> Property {
         match self {
             Property::BackgroundColor(v) => Property::BackgroundColor(css::generic::deep_clone(v, allocator)),
@@ -5818,7 +5818,7 @@ impl Property {
         }
     }
 
-    #[cfg(any())] // blocked_on: leaf_value_traits — un-gate once every payload type impls `generics::CssEql` (.zig:7162-7415)
+     // blocked_on: leaf_value_traits — un-gate once every payload type impls `generics::CssEql` (.zig:7162-7415)
     pub fn eql(&self, other: &Property) -> bool {
         match (self, other) {
             (Property::BackgroundColor(a), Property::BackgroundColor(b)) => css::generic::eql(a, b),
@@ -6074,7 +6074,7 @@ impl Property {
         }
     }
 
-    #[cfg(any())] // blocked_on: generics::deinit_dispatch — Property::deinit (.zig:6566)
+     // blocked_on: generics::deinit_dispatch — Property::deinit (.zig:6566)
     pub fn deinit(&mut self, allocator: &bun_alloc::Arena) {
         let _ = allocator;
         todo!("blocked_on: generics::deinit_dispatch — Property::deinit")
@@ -6357,5 +6357,5 @@ impl PropertyId {
 //               Property::parse from sibling modules); deep_clone stubbed until
 //               every leaf value type implements Parse/ToCss/DeepClone;
 //               from_name_and_prefix is a linear scan (Zig used a comptime
-//               perfect-hash map). Module is #[cfg(any())]-gated in mod.rs.
+//               perfect-hash map). Module is -gated in mod.rs.
 // ──────────────────────────────────────────────────────────────────────────

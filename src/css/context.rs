@@ -3,9 +3,9 @@ use crate::css_parser as css;
 // blocked_on: rules/media + media_query::{MediaCondition,MediaFeature,...} +
 // properties/custom — only the gated `get_*_rules` / `add_unparsed_fallbacks`
 // bodies below reference these.
-#[cfg(any())]
+
 use css::css_rules::media::MediaRule;
-#[cfg(any())]
+
 use css::media_query::{MediaCondition, MediaFeature, MediaFeatureId, MediaList, MediaQuery};
 use css::css_properties::custom::UnparsedProperty;
 
@@ -104,7 +104,7 @@ impl<'a> PropertyHandlerContext<'a> {
 // construction with bump-allocated lists, properties/custom::UnparsedProperty.
 // These build whole rule subtrees and are only called from the (still-gated)
 // minify path; un-gate alongside `rules/style.rs`.
-#[cfg(any())]
+
 impl<'a> PropertyHandlerContext<'a> {
     pub fn get_supports_rules<T>(&self, style_rule: &css::StyleRule<T>) -> Vec<css::CssRule<T>> {
         if self.supports.is_empty() {
@@ -310,7 +310,7 @@ impl<'a> PropertyHandlerContext<'a> {
         // ColorFallbackKind::supports_condition + TokenList::get_fallback in
         // values/color.rs). Body is otherwise complete; un-gate this block when
         // `get_fallbacks` lands and the loop will type-check as-is.
-        #[cfg(any())]
+        
         {
             let mut fallbacks = unparsed.value.get_fallbacks(self.targets);
             // PORT NOTE: Zig `for (fallbacks.slice()) |c|` copies by value;
@@ -326,7 +326,7 @@ impl<'a> PropertyHandlerContext<'a> {
                 );
             }
         }
-        #[cfg(not(any()))]
+        #[cfg(any())]
         {
             let _ = unparsed;
             todo!("add_unparsed_fallbacks: blocked on TokenList::get_fallbacks")

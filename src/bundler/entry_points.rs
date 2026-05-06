@@ -40,7 +40,7 @@ impl Default for FallbackEntryPoint {
 }
 
 impl FallbackEntryPoint {
-    #[cfg(any())]
+    
     // TODO(b2-blocked): crate::options::Framework / ClientCssInJs — `options`
     // module is still gated; body also touched `bun_resolver::fs` and used a
     // forbidden `Box::leak` fallback that must be retyped to `Cow<'static,[u8]>`
@@ -153,7 +153,7 @@ impl ClientEntryPoint {
         strings::starts_with(b"entry.", extname)
     }
 
-    #[cfg(any())]
+    
     // TODO(b2-blocked): bun_resolver::fs::FileSystem::instance / PathName field
     // shape (`dir`/`base`/`ext` are `&[u8]` in resolver, `&str` in the local
     // stub).
@@ -175,7 +175,7 @@ impl ClientEntryPoint {
         &outbuffer[..len + original_path.ext.len()]
     }
 
-    #[cfg(any())]
+    
     // TODO(b2-blocked): bun_resolver::fs::FileSystem::instance — see
     // `generate_entry_point_path`.
     pub fn decode_entry_point_path<'a>(
@@ -196,7 +196,7 @@ impl ClientEntryPoint {
         &outbuffer[..len + original_ext.len()]
     }
 
-    #[cfg(any())]
+    
     // TODO(b2-blocked): crate::options::Framework / ClientCssInJs — `options`
     // module is still gated; body also depends on `bun_resolver::fs::PathName`
     // accessor `dir_with_trailing_slash`.
@@ -428,7 +428,7 @@ impl MacroEntryPoint {
         unsafe { core::mem::transmute::<u32, i32>(bun_wyhash::hash(specifier) as u32) }
     }
 
-    #[cfg(any())]
+    
     // TODO(b2-blocked): bun_js_parser::Macro + bun_resolver::fs::PathName —
     // see `generate_id`.
     pub fn generate(

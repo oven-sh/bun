@@ -12,7 +12,7 @@ use crate::css_values::position::Position;
 
 use crate::css_properties::border_radius::BorderRadius;
 // `shape` is still gated; FillRule referenced only by the (gated) BasicShape::Polygon body.
-#[cfg(any())]
+
 use crate::css_properties::shape::FillRule;
 
 use crate::css_properties::background::BackgroundSize;
@@ -130,9 +130,9 @@ pub struct Polygon {
     /// The fill rule used to determine the interior of the polygon.
     // blocked_on: properties::shape::FillRule (shape module gated). Field kept
     // private + typed `()` so the struct shape is preserved without the dep.
-    #[cfg(any())]
+    
     pub fill_rule: FillRule,
-    #[cfg(not(any()))]
+    #[cfg(any())]
     fill_rule: (),
     /// The points of each vertex of the polygon.
     // TODO(port): css is an AST crate (§Allocators) — if Polygon is arena-fed this must become
@@ -574,7 +574,7 @@ pub enum WebKitMaskSourceType {
     Alpha,
 }
 
-#[cfg(any())] // blocked_on: PropertyId::WebkitMaskComposite variant name (codegen spelling is `WebKitMaskComposite`)
+ // blocked_on: PropertyId::WebkitMaskComposite variant name (codegen spelling is `WebKitMaskComposite`)
 pub fn get_webkit_mask_property(property_id: &PropertyId) -> Option<PropertyId> {
     // TODO(port): PropertyId variant naming — Zig uses kebab-case @"mask-border-source" etc.
     // Mapping to PascalCase variants here; Phase B should verify exact PropertyId enum shape.

@@ -14,7 +14,7 @@ use super::diff_format::DiffFormatter;
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
 
-// `bun_core::deprecated::js_error_to_write_error` is `#[cfg(any())]`-gated
+// `bun_core::deprecated::js_error_to_write_error` is ``-gated
 // (tier-0 cannot depend on bun_jsc). Inlined here at the use-site tier instead.
 // Display impls return `fmt::Error`; the JS exception, if any, remains on the VM.
 #[inline]
@@ -304,7 +304,7 @@ impl Expect {
         match this.flags.promise() {
             Promise::Resolves | Promise::None => this.flags.set_promise(Promise::Resolves),
             Promise::Rejects => {
-                return Err(global_this.throw("Cannot chain .resolves() after .rejects()", format_args!("")));
+                return Err(global_this.throw(format_args!("Cannot chain .resolves() after .rejects()")));
             }
         }
         Ok(this_value)
@@ -319,7 +319,7 @@ impl Expect {
         match this.flags.promise() {
             Promise::None | Promise::Rejects => this.flags.set_promise(Promise::Rejects),
             Promise::Resolves => {
-                return Err(global_this.throw("Cannot chain .rejects() after .resolves()", format_args!("")));
+                return Err(global_this.throw(format_args!("Cannot chain .rejects() after .resolves()")));
             }
         }
         Ok(this_value)
@@ -579,7 +579,7 @@ impl Expect {
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(2).slice();
+        let arguments = callframe.arguments_old::<2>().slice();
         let value = if arguments.len() < 1 { JSValue::UNDEFINED } else { arguments[0] };
 
         let mut custom_label = bun_str::String::empty();
@@ -667,7 +667,7 @@ impl Expect {
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn constructor(global_this: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Expect> {
-        Err(global_this.throw("expect() cannot be called with new", format_args!("")))
+        Err(global_this.throw(format_args!("expect() cannot be called with new")))
     }
 
     // pass here has a leading underscore to avoid name collision with the pass variable in other functions
@@ -680,7 +680,7 @@ impl Expect {
         let _post = scopeguard::guard((), |_| this.post_match(global_this));
         // TODO(port): defer this.postMatch — borrowck reshape needed; see PORT NOTE below
 
-        let arguments_ = call_frame.arguments_old(1);
+        let arguments_ = call_frame.arguments_old::<1>();
         let arguments = arguments_.slice();
 
         let mut _msg: ZigString = ZigString::EMPTY;
@@ -726,7 +726,7 @@ impl Expect {
         let _post = scopeguard::guard((), |_| this.post_match(global_this));
         // TODO(port): defer this.postMatch — borrowck reshape
 
-        let arguments_ = call_frame.arguments_old(1);
+        let arguments_ = call_frame.arguments_old::<1>();
         let arguments = arguments_.slice();
 
         let mut _msg: ZigString = ZigString::EMPTY;
@@ -780,7 +780,7 @@ impl Expect {
             if self.flags.promise() != Promise::None {
                 return Ok((Some(value), return_value_from_function));
             }
-            return Err(global_this.throw("Expected value must be a function", format_args!("")));
+            return Err(global_this.throw(format_args!("Expected value must be a function")));
         }
 
         let mut return_value: JSValue = JSValue::ZERO;
@@ -1130,7 +1130,7 @@ impl Expect {
             Ok(v) => v,
             Err(err) => {
                 let Some(mut buntest_strong) = this.bun_test() else {
-                    return Err(global_this.throw("Snapshot matchers cannot be used outside of a test", format_args!("")));
+                    return Err(global_this.throw(format_args!("Snapshot matchers cannot be used outside of a test")));
                 };
                 let buntest = buntest_strong.get();
                 let test_file_path = runner.files.get(buntest.file_id).source.path.text;
@@ -1162,10 +1162,10 @@ impl Expect {
                         }
                     }
                     e if e == bun_core::err!("SnapshotInConcurrentGroup") => {
-                        global_this.throw("Snapshot matchers are not supported in concurrent tests", format_args!(""))
+                        global_this.throw(format_args!("Snapshot matchers are not supported in concurrent tests"))
                     }
                     e if e == bun_core::err!("TestNotActive") => {
-                        global_this.throw("Snapshot matchers are not supported after the test has finished executing", format_args!(""))
+                        global_this.throw(format_args!("Snapshot matchers are not supported after the test has finished executing"))
                     }
                     _ => {
                         let mut formatter = ConsoleObject::Formatter::new(global_this);
@@ -1255,7 +1255,7 @@ impl Expect {
     /// Implements `expect.extend({ ... })`
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn extend(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let args = call_frame.arguments_old(1).slice();
+        let args = call_frame.arguments_old::<1>().slice();
 
         if args.is_empty() || !args[0].is_object() {
             return Err(global_this.throw_pretty(
@@ -1529,7 +1529,7 @@ impl Expect {
             matcher_args.append(*arg);
         }
 
-        let _ = Self::execute_custom_matcher(global_this, matcher_name, matcher_fn, matcher_args.as_slice(), expect.flags, false)?;
+        let _ = Self::execute_custom_matcher(global_this, matcher_name, matcher_fn, matcher_args.slice(), expect.flags, false)?;
 
         Ok(this_value)
     }
@@ -1541,12 +1541,12 @@ impl Expect {
         let _gc = scopeguard::guard((), |_| global_this.bun_vm().auto_garbage_collect());
 
         let Some(mut buntest_strong) = bun_test::clone_active_strong() else {
-            return Err(global_this.throw("expect.assertions() must be called within a test", format_args!("")));
+            return Err(global_this.throw(format_args!("expect.assertions() must be called within a test")));
         };
         let buntest = buntest_strong.get();
         let state_data = buntest.get_current_state_data();
         let Some(execution) = state_data.sequence(buntest) else {
-            return Err(global_this.throw("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed", format_args!("")));
+            return Err(global_this.throw(format_args!("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed")));
         };
         if !matches!(execution.expect_assertions, ExpectAssertions::Exact(_)) {
             execution.expect_assertions = ExpectAssertions::AtLeastOne;
@@ -1559,11 +1559,11 @@ impl Expect {
     pub fn assertions(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let _gc = scopeguard::guard((), |_| global_this.bun_vm().auto_garbage_collect());
 
-        let arguments_ = call_frame.arguments_old(1);
+        let arguments_ = call_frame.arguments_old::<1>();
         let arguments = arguments_.slice();
 
         if arguments.is_empty() {
-            return Err(global_this.throw_invalid_arguments("expect.assertions() takes 1 argument", format_args!("")));
+            return Err(global_this.throw_invalid_arguments(format_args!("expect.assertions() takes 1 argument")));
         }
 
         let expected: JSValue = arguments[0];
@@ -1593,12 +1593,12 @@ impl Expect {
         let unsigned_expected_assertions: u32 = expected_assertions as u32;
 
         let Some(mut buntest_strong) = bun_test::clone_active_strong() else {
-            return Err(global_this.throw("expect.assertions() must be called within a test", format_args!("")));
+            return Err(global_this.throw(format_args!("expect.assertions() must be called within a test")));
         };
         let buntest = buntest_strong.get();
         let state_data = buntest.get_current_state_data();
         let Some(execution) = state_data.sequence(buntest) else {
-            return Err(global_this.throw("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed", format_args!("")));
+            return Err(global_this.throw(format_args!("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed")));
         };
         execution.expect_assertions = ExpectAssertions::Exact(unsigned_expected_assertions);
 
@@ -1607,22 +1607,22 @@ impl Expect {
 
     #[bun_jsc::host_fn(method)]
     pub fn not_implemented_jsc_fn(_this: &mut Self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        Err(global_this.throw("Not implemented", format_args!("")))
+        Err(global_this.throw(format_args!("Not implemented")))
     }
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn not_implemented_static_fn(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        Err(global_this.throw("Not implemented", format_args!("")))
+        Err(global_this.throw(format_args!("Not implemented")))
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn not_implemented_jsc_prop(_this: &Self, _: JSValue, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Err(global_this.throw("Not implemented", format_args!("")))
+        Err(global_this.throw(format_args!("Not implemented")))
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn not_implemented_static_prop(global_this: &JSGlobalObject, _: JSValue, _: JSValue) -> JsResult<JSValue> {
-        Err(global_this.throw("Not implemented", format_args!("")))
+        Err(global_this.throw(format_args!("Not implemented")))
     }
 
     pub fn post_match(&self, global_this: &JSGlobalObject) {
@@ -1632,7 +1632,7 @@ impl Expect {
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn do_unreachable(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arg = callframe.arguments_old(1).ptr[0];
+        let arg = callframe.arguments_old::<1>().ptr[0];
 
         if arg.is_empty_or_undefined_or_null() {
             let error_value = bun_str::String::init("reached unreachable code").to_error_instance(global_this);
@@ -1896,7 +1896,7 @@ impl ExpectCloseTo {
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let args = call_frame.arguments_old(2).slice();
+        let args = call_frame.arguments_old::<2>().slice();
 
         if args.is_empty() || !args[0].is_number() {
             return Err(global_this.throw_pretty(
@@ -1945,7 +1945,7 @@ impl ExpectObjectContaining {
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let args = call_frame.arguments_old(1).slice();
+        let args = call_frame.arguments_old::<1>().slice();
 
         if args.is_empty() || !args[0].is_object() {
             const FMT: &str = "<d>expect.<r>objectContaining<d>(<r>object<d>)<r>\n\nExpected an object\n";
@@ -1979,7 +1979,7 @@ impl ExpectStringContaining {
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let args = call_frame.arguments_old(1).slice();
+        let args = call_frame.arguments_old::<1>().slice();
 
         if args.is_empty() || !args[0].is_string() {
             const FMT: &str = "<d>expect.<r>stringContaining<d>(<r>string<d>)<r>\n\nExpected a string\n";
@@ -2013,7 +2013,7 @@ impl ExpectAny {
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let _arguments = call_frame.arguments_old(1);
+        let _arguments = call_frame.arguments_old::<1>();
         let arguments: &[JSValue] = &_arguments.ptr[.._arguments.len];
 
         if arguments.is_empty() {
@@ -2067,7 +2067,7 @@ impl ExpectArrayContaining {
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let args = call_frame.arguments_old(1).slice();
+        let args = call_frame.arguments_old::<1>().slice();
 
         if args.is_empty() || !args[0].js_type().is_array() {
             const FMT: &str = "<d>expect.<r>arrayContaining<d>(<r>array<d>)<r>\n\nExpected a array\n";
@@ -2188,7 +2188,7 @@ impl ExpectCustomAsymmetricMatcher {
             matcher_args.append(captured_args.get_index(global_this, i as u32)?);
         }
 
-        Expect::execute_custom_matcher(global_this, matcher_name, matcher_fn, matcher_args.as_slice(), this.flags, true)
+        Expect::execute_custom_matcher(global_this, matcher_name, matcher_fn, matcher_args.slice(), this.flags, true)
     }
 
     /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue
@@ -2205,7 +2205,7 @@ impl ExpectCustomAsymmetricMatcher {
 
     #[bun_jsc::host_fn(method)]
     pub fn asymmetric_match(this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(1).slice();
+        let arguments = callframe.arguments_old::<1>().slice();
         let received_value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
         let matched = Self::execute_impl(this, callframe.this(), global_this, received_value)?;
         Ok(JSValue::from(matched))
@@ -2322,7 +2322,7 @@ impl ExpectMatcherContext {
 
     #[bun_jsc::host_fn(method)]
     pub fn equals(_this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(3);
+        let arguments = callframe.arguments_old::<3>();
         if arguments.len < 2 {
             return Err(global_this.throw(
                 "expect.extends matcher: this.util.equals expects at least 2 arguments",
@@ -2397,28 +2397,28 @@ impl ExpectMatcherUtils {
 
     #[bun_jsc::host_fn(method)]
     pub fn stringify(_this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(1).slice();
+        let arguments = callframe.arguments_old::<1>().slice();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
         Ok(Self::print_value_catched(global_this, value, None))
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn print_expected(_this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(1).slice();
+        let arguments = callframe.arguments_old::<1>().slice();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
         Ok(Self::print_value_catched(global_this, value, Some("<green>")))
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn print_received(_this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(1).slice();
+        let arguments = callframe.arguments_old::<1>().slice();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
         Ok(Self::print_value_catched(global_this, value, Some("<red>")))
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn matcher_hint(_this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(4).slice();
+        let arguments = callframe.arguments_old::<4>().slice();
 
         if arguments.is_empty() || !arguments[0].is_string() {
             return Err(global_this.throw(
@@ -2514,7 +2514,7 @@ impl ExpectTypeOf {
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn constructor(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<*mut ExpectTypeOf> {
-        Err(global_this.throw("expectTypeOf() cannot be called with new", format_args!("")))
+        Err(global_this.throw(format_args!("expectTypeOf() cannot be called with new")))
     }
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {

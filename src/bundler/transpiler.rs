@@ -373,7 +373,7 @@ impl<'a> Transpiler<'a> {
 // (jsc_hooks.rs) and `AsyncModule` / `JSTranspiler` can name them. The body
 // of `parse_maybe_return_file_only_allow_shared_buffer` does the source-load
 // step (virtual / client-entry / `node:` fallback) for real and gates the
-// per-loader transpile branches behind `#[cfg(any())]` until the lower-tier
+// per-loader transpile branches behind `` until the lower-tier
 // surfaces (`cache::Fs::read_file*`, `js_parser::Options::init`,
 // `cache::JavaScript::parse`) un-gate.
 // ══════════════════════════════════════════════════════════════════════════
@@ -1374,7 +1374,7 @@ impl<'a> Transpiler<'a> {
                 // `self.resolver.caches.js.parse()` — lives in
                 // `__phase_a_draft` below; un-gate once `Options::init` and
                 // `cache::JavaScript::parse` surface.
-                #[cfg(any())]
+                
                 {
                     let mut opts = js_ast::ParserOptions::init(jsx, loader);
                     opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
@@ -1462,7 +1462,7 @@ impl<'a> Transpiler<'a> {
                         },
                     });
                 }
-                #[cfg(not(any()))]
+                #[cfg(any())]
                 {
                     // PORTING.md §Forbidden: silent no-op. Spec
                     // transpiler.zig:866-991 returns a populated `ParseResult`
@@ -2179,7 +2179,7 @@ impl<'a> Transpiler<'a> {
 // (`bun_fs`/`bun_str`/`bun_data_url`/`bun_node_fallbacks` crate aliases,
 // `crate::linker`, `resolver::PendingResolution::List`, parser FFI.)
 // ══════════════════════════════════════════════════════════════════════════
-#[cfg(any())]
+
 mod __phase_a_draft {
 use bun_alloc::Arena;
 use bun_collections::{HashMap, LinearFifo, StringHashMap};

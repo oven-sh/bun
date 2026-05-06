@@ -90,7 +90,7 @@ impl SupportsCondition {
     // `implement_hash` need every field type to provide `.hash(&mut Wyhash)`.
     // `PropertyId` only impls `core::hash::Hash` today. Phase B: add
     // `impl CssHash for PropertyId` then swap to `#[derive(CssHash)]`.
-    #[cfg(any())]
+    
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         css::implement_hash(self, hasher)
     }
@@ -194,7 +194,7 @@ impl SupportsCondition {
 
     // blocked_on: properties::PropertyId::{prefix,name,with_prefix,add_prefix} —
     // PropertyId is the data-only `()` stub until properties_generated.rs un-gates.
-    #[cfg(any())]
+    
     fn declaration_to_css(decl: &Declaration, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         let property_id = &decl.property_id;
         let value = decl.value;
@@ -238,7 +238,7 @@ impl SupportsCondition {
         dest.write_char(b')')?;
         Ok(())
     }
-    #[cfg(not(any()))]
+    #[cfg(any())]
     fn declaration_to_css(_decl: &Declaration, _dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // unreachable until properties_generated un-gates and the parse() body
         // below starts producing Declaration variants.

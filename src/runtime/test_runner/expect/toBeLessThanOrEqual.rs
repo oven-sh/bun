@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter as ConsoleFormatter;
-use bun_jsc::BigIntCompare;
+use crate::test_runner::expect::BigIntCompare;
 
 use super::Expect;
 
@@ -15,7 +16,7 @@ impl Expect {
         // TODO(port): errdefer — scopeguard above borrows `this` and `global` for the whole scope; Phase B may need to reshape if borrowck rejects.
 
         let this_value = frame.this();
-        let _arguments = frame.arguments_old(1);
+        let _arguments = frame.arguments_old::<1>();
         let arguments: &[JSValue] = &_arguments.ptr[0.._arguments.len];
 
         if arguments.len() < 1 {
@@ -46,12 +47,12 @@ impl Expect {
         if !value.is_big_int() && !other_value.is_big_int() {
             pass = value.as_number() <= other_value.as_number();
         } else if value.is_big_int() {
-            pass = match value.as_big_int_compare(global, other_value) {
+            pass = match value.as_big_int_compare(other_value, global) {
                 BigIntCompare::LessThan | BigIntCompare::Equal => true,
                 _ => pass,
             };
         } else {
-            pass = match other_value.as_big_int_compare(global, value) {
+            pass = match other_value.as_big_int_compare(value, global) {
                 BigIntCompare::GreaterThan | BigIntCompare::Equal => true,
                 _ => pass,
             };
@@ -65,18 +66,14 @@ impl Expect {
         }
 
         // handle failure
-        let mut formatter = ConsoleFormatter {
-            global_this: global,
-            quote_strings: true,
-            ..Default::default()
-        };
+        let mut formatter = super::make_formatter(global);
         let value_fmt = value.to_fmt(&mut formatter);
         let expected_fmt = other_value.to_fmt(&mut formatter);
         if not {
             const EXPECTED_LINE: &str = "Expected: not \\<= <green>{}<r>\n";
             const RECEIVED_LINE: &str = "Received: <red>{}<r>\n";
             let signature = const { Expect::get_signature("toBeLessThanOrEqual", "<green>expected<r>", true) };
-            return this.throw(
+            return this.throw_fmt(
                 global,
                 signature,
                 concat!("\n\n", "Expected: not \\<= <green>{}<r>\n", "Received: <red>{}<r>\n"),
@@ -91,7 +88,7 @@ impl Expect {
         const EXPECTED_LINE: &str = "Expected: \\<= <green>{}<r>\n";
         const RECEIVED_LINE: &str = "Received: <red>{}<r>\n";
         let signature = const { Expect::get_signature("toBeLessThanOrEqual", "<green>expected<r>", false) };
-        this.throw(
+        this.throw_fmt(
             global,
             signature,
             concat!("\n\n", "Expected: \\<= <green>{}<r>\n", "Received: <red>{}<r>\n"),

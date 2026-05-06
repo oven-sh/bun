@@ -6,7 +6,7 @@
 //! dependency / update_request / npm / install_binding now compile against the
 //! real `bun_jsc` + `bun_install` stub surface. `npm_jsc::js_parse_manifest`
 //! body is fully un-gated (`PackageManifest::{name, versions, string_buf}` now
-//! live in `bun_install::npm`). Remaining `#[cfg(any())]` gates are narrowed to
+//! live in `bun_install::npm`). Remaining `` gates are narrowed to
 //! the exact missing lower-tier symbols (`JSFunction::create` ↔
 //! `#[bun_jsc::host_fn]` shim-name bridge for associated fns,
 //! `bun_bundler::Transpiler` mutable field access via `bun_vm()`,

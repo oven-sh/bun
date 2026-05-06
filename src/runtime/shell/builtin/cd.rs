@@ -44,7 +44,7 @@ impl Cd {
 
         // TODO(b2-blocked): ShellExecEnv::change_cwd(target) — resolve relative
         // to current cwd, openat(O_DIRECTORY), swap cwd_fd. Body gated.
-        #[cfg(any())]
+        
         {
             include!("cd_change_cwd_body.rs");
         }

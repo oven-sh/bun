@@ -15,7 +15,7 @@ pub struct AllocScope {
 
 impl AllocScope {
     pub fn begin_scope(alloc: &dyn Allocator) -> AllocScope {
-        #[cfg(any())]
+        
         #[cfg(debug_assertions)]
         {
             // TODO(b2-blocked): bun_alloc::AllocationScope::init
@@ -41,7 +41,7 @@ impl AllocScope {
     pub fn leak_slice<T>(&mut self, memory: &[T]) {
         // Zig: `_ = @typeInfo(@TypeOf(memory)).pointer;` — compile-time assert that
         // `memory` is a pointer/slice. Enforced here by the `&[T]` parameter type.
-        #[cfg(any())]
+        
         #[cfg(debug_assertions)]
         {
             // TODO(b2-blocked): bun_alloc::AllocationScope::track_external_free
@@ -53,7 +53,7 @@ impl AllocScope {
     }
 
     pub fn assert_in_scope<T>(&mut self, memory: &[T]) {
-        #[cfg(any())]
+        
         #[cfg(debug_assertions)]
         {
             // TODO(b2-blocked): bun_alloc::AllocationScope::assert_owned
@@ -67,7 +67,7 @@ impl AllocScope {
         // TODO(port): under the global-mimalloc model (`#[global_allocator]`), callers
         // use `Box`/`Vec` directly and this accessor may be obsolete. Kept for structural
         // parity; Phase B should decide whether `AllocScope` survives at all.
-        #[cfg(any())]
+        
         {
             #[cfg(debug_assertions)]
             {

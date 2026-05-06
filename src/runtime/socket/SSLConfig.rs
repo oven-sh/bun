@@ -446,7 +446,7 @@ pub mod GlobalRegistry {
         // TODO(port): wire to ArrayHashMap once content-hash context is available.
     }
 
-    #[cfg(any())]
+    
     mod _gated_intern {
         use super::*;
         use bun_collections::ArrayHashMap;
@@ -588,7 +588,7 @@ impl SSLConfig {
 // readFile-with-NullTerminated variant, and `bun_jsc::generated::SSLConfig*`
 // GenVal/GenOpt accessor shapes (`.get()` returning WTFStringImpl). Re-enable
 // once those tier-6 surfaces stabilise.
-#[cfg(any())]
+
 mod _gated_from_js {
     use super::*;
     use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};

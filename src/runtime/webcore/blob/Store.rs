@@ -119,7 +119,7 @@ impl Store {
     // TODO(b2-blocked): S3/file constructors call PathLike::to_thread_safe/clone,
     // bun_paths::extension, bun_http_types::MimeType::by_extension_no_default — un-gate once
     // node_types::PathLike is the real `crate::node::PathLike`.
-    #[cfg(any())]
+    
     pub fn init_s3_with_referenced_credentials(
         pathlike: PathLike,
         mime_type: Option<MimeType>,
@@ -152,7 +152,7 @@ impl Store {
         Ok(store)
     }
 
-    #[cfg(any())]
+    
     pub fn init_s3(
         pathlike: PathLike,
         mime_type: Option<MimeType>,
@@ -185,7 +185,7 @@ impl Store {
         Ok(store)
     }
 
-    #[cfg(any())]
+    
     pub fn init_file(
         pathlike: PathOrFileDescriptor,
         mime_type: Option<MimeType>,
@@ -250,7 +250,7 @@ impl Store {
     // now handled by the owned types' own `Drop` impls.
 
     // TODO(b2-blocked): node::PathOrFileDescriptorSerializeTag (gated in crate::node).
-    #[cfg(any())]
+    
     pub fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         match &self.data {
@@ -460,7 +460,7 @@ impl Default for File {
 
 impl File {
     // TODO(b2-blocked): bun_jsc::* + crate::node::fs (gated).
-    #[cfg(any())]
+    
     pub fn unlink(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match &self.pathlike {
             PathOrFileDescriptor::Path(path_like) => {
@@ -554,7 +554,7 @@ impl S3 {
 // TODO(b2-blocked): bun_jsc::* + bun_s3 — S3 JSC integration (presign/stat/unlink/
 // list_objects/get_credentials_with_options/upload). All depend on JSPromise
 // resolved_promise_value, JSValue methods, and the real `bun_s3` crate.
-#[cfg(any())]
+
 impl S3 {
 
     pub fn get_credentials_with_options(

@@ -10,8 +10,8 @@ use bun_str::ZigString;
 // so the host-fn bodies are gated until that surface lands. The
 // `#[bun_jsc::host_fn(export = "...")]` shim is verified working (see
 // bun_jsc::__macro_smoke), so once the reader API exists this block can be
-// un-gated by deleting the `#[cfg(any())]`.
-#[cfg(any())]
+// un-gated by deleting the ``.
+
 mod _gated {
 use super::*;
 
@@ -238,7 +238,7 @@ pub mod prompt {
 
     // TODO(b2-blocked): `Output::buffered_stdin_reader()` + `output.print()` not
     // yet on the bun_core::output surface. Gate the body; logic is 1:1 with Zig.
-    #[cfg(any())]
+    
     /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-prompt
     #[bun_jsc::host_fn(export = "WebCore__prompt")]
     pub fn call(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
@@ -415,5 +415,5 @@ pub mod prompt {
 //   source:     src/runtime/webcore/prompt.zig (353 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      stdin reader API (Output::stdin_reader/buffered_stdin_reader) and host_fn export-name attr need Phase B wiring; logic 1:1. Host-fn bodies gated under #[cfg(any())] until bun_core stdin surface lands.
+//   notes:      stdin reader API (Output::stdin_reader/buffered_stdin_reader) and host_fn export-name attr need Phase B wiring; logic 1:1. Host-fn bodies gated under  until bun_core stdin surface lands.
 // ──────────────────────────────────────────────────────────────────────────

@@ -31,7 +31,7 @@ pub struct BuildArtifact(());
 pub struct JSBundler(());
 
 // TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn]/JsClass proc-macros
-#[cfg(any())]
+
 mod _jsc_gated {
 use core::ffi::c_void;
 

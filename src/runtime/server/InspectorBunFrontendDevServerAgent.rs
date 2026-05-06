@@ -246,7 +246,7 @@ impl BunFrontendDevServerAgent {
 pub extern "C" fn Bun__InspectorBunFrontendDevServerAgent__setEnabled(
     agent: *mut InspectorBunFrontendDevServerAgentHandle,
 ) {
-    #[cfg(any())]
+    
     {
         // TODO(port): VirtualMachine::get() / debugger field shape — verify in Phase B.
         if let Some(debugger) = jsc::VirtualMachine::get().debugger.as_mut() {

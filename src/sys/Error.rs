@@ -179,7 +179,7 @@ impl Error {
     }
 
     #[inline]
-    #[cfg(any())] // TODO(b2-blocked): PathLike lives in bun_runtime::node (tier-6)
+     // TODO(b2-blocked): PathLike lives in bun_runtime::node (tier-6)
     pub fn with_path_like(&self, pathlike: &crate::PathLike) -> Error {
         // TODO(port): exact PathLike enum shape lives elsewhere in bun_sys / bun_runtime::node.
         match pathlike {

@@ -3,7 +3,7 @@
 //! cycle-5: un-gated `NewServer` struct + lifecycle skeleton (start/stop/listen),
 //! `AnyServer` dispatch, `AnyRoute`, and the per-file submodules. JS callback
 //! bodies (`on_request`, `on_upgrade`, `from_js`, …) and methods that need
-//! `bun_uws` write/close surface stay `#[cfg(any())]`-gated inside each file.
+//! `bun_uws` write/close surface stay ``-gated inside each file.
 //! The full Phase-A draft of every gated body is preserved in `server_body.rs`.
 
 use core::ffi::{c_char, c_int, c_void};
@@ -89,7 +89,7 @@ pub mod inspector_bun_frontend_dev_server_agent;
 
 // Full Phase-A draft (4.3kL) — kept gated; bodies are pulled into the
 // `_gated` blocks below as they are made to compile.
-#[cfg(any())]
+
 #[path = "server_body.rs"]
 mod server_body;
 
@@ -589,7 +589,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// cycle-7: user-route registration, negative routes, websocket fallback,
     /// and the consolidated `/*` fallback are real. Static-route / DevServer /
     /// plugins / chrome-devtools paths stay narrowly gated where they touch
-    /// not-yet-real surface (see inline `#[cfg(any())]` blocks below); the
+    /// not-yet-real surface (see inline `` blocks below); the
     /// bodies are preserved in `server_body.rs::set_routes`.
     fn set_routes(&mut self) -> JSValue {
         let mut route_list_value = JSValue::ZERO;
@@ -662,7 +662,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // StaticRoute/FileRoute/HTMLBundle on_request bodies and DevServer
         // route surface; the per-route uws registration shape is identical to
         // the user-route loop above and slots in here once those land.
-        #[cfg(any())]
+        
         {
             compile_error!("see server_body.rs::set_routes §5-8");
         }
@@ -921,7 +921,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // typed wrapper currently has an `unimplemented!()` trampoline and
                 // its `c::` module is private, so the raw FFI cannot be reached
                 // from here. Un-gate once h3.rs exposes a working listen path.
-                #[cfg(any())]
+                
                 if Self::HAS_H3 {
                     if let Some(_h3_app) = self_.h3_app {
                         compile_error!("see server_body.rs::listen — h3 listen_with_config")

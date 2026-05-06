@@ -105,7 +105,7 @@ impl Start {
                 ab.to_js(global_this)
             }
             Start::Done(list) => {
-                ArrayBuffer::create(global_this, JSType::Uint8Array, list.slice())
+                ArrayBuffer::create::<{ JSType::Uint8Array }>(global_this, list.slice())
             }
             _ => Ok(JSValue::UNDEFINED),
         }
@@ -425,14 +425,14 @@ impl WritablePending {
         self.state = PendingState::Pending;
 
         match &self.future {
-            WritableFuture::Promise { strong, .. } => strong.get() as *mut JSPromise,
+            WritableFuture::Promise { strong, .. } => (unsafe { strong.get() }) as *mut JSPromise,
             _ => {
                 self.future = WritableFuture::Promise {
                     strong: JSPromiseStrong::init(global_this),
                     global: global_this as *const _,
                 };
                 match &self.future {
-                    WritableFuture::Promise { strong, .. } => strong.get() as *mut JSPromise,
+                    WritableFuture::Promise { strong, .. } => (unsafe { strong.get() }) as *mut JSPromise,
                     _ => unreachable!(),
                 }
             }
@@ -519,7 +519,7 @@ impl Writable {
         // PORT NOTE: defer promise.toJS().unprotect() — runs on all paths
         match result {
             Writable::Err(err) => {
-                let _ = promise.reject_with_async_stack(global_this, err.to_js(global_this));
+                let _ = promise.reject_with_async_stack(global_this, Ok(err.to_js(global_this)));
                 // TODO: properly propagate exception upwards
             }
             Writable::Done => {
@@ -622,7 +622,7 @@ impl Pending {
         if self.state != PendingState::Pending {
             return;
         }
-        let vm = VirtualMachine::get();
+        let vm = unsafe { &*VirtualMachine::get() };
         if vm.is_shutting_down() {
             return;
         }
@@ -632,7 +632,7 @@ impl Pending {
         // self.future to Default (Zig left it untouched — no reader observes it after this).
         self.state = PendingState::None;
         self.result = StreamResult::Done;
-        vm.event_loop()
+        unsafe { &mut *vm.event_loop() }
             .enqueue_task(bun_event_loop::Task::init(Box::into_raw(clone)));
     }
 
@@ -737,8 +737,8 @@ impl StreamResult {
         promise: *mut JSPromise,
         global_this: &JSGlobalObject,
     ) {
-        let vm = global_this.bun_vm();
-        let event_loop = vm.event_loop();
+        let vm = unsafe { &*global_this.bun_vm() };
+        let event_loop = unsafe { &mut *vm.event_loop() };
         // SAFETY: promise is GC-rooted via protect()
         let promise = unsafe { &mut *promise };
         let promise_value = promise.to_js();
@@ -759,7 +759,7 @@ impl StreamResult {
                     break 'brk js_err;
                 };
                 *result = StreamResult::Temporary(ByteList::default());
-                let _ = promise.reject_with_async_stack(global_this, value);
+                let _ = promise.reject_with_async_stack(global_this, Ok(value));
                 // TODO: properly propagate exception upwards
             }
             StreamResult::Done => {
@@ -788,7 +788,7 @@ impl StreamResult {
     }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        if VirtualMachine::get().is_shutting_down() {
+        if unsafe { &*VirtualMachine::get() }.is_shutting_down() {
             // Zig copies `*this` to `that` and calls `that.deinit()` — a bitwise move of
             // ownership out of `*this` followed by free. `release()` is the port of `deinit`;
             // call it on `self` so `.owned`/`.owned_and_done` ByteLists are freed and
@@ -817,17 +817,13 @@ impl StreamResult {
                 ab.to_js(global_this)
             }
             StreamResult::Temporary(temp) | StreamResult::TemporaryAndDone(temp) => {
-                let array =
-                    JSValue::create_uninitialized_uint8_array(global_this, temp.len as usize)?;
-                let mut buf = array.as_array_buffer(global_this).unwrap();
-                let slice_ = buf.slice_mut();
-                let temp_slice = temp.slice();
-                slice_[..temp_slice.len()].copy_from_slice(temp_slice);
-                Ok(array)
+                // TODO(b2-blocked): JSValue::create_uninitialized_uint8_array — falls
+                // back to ArrayBuffer::create (copies) until the no-init path lands.
+                ArrayBuffer::create::<{ JSType::Uint8Array }>(global_this, temp.slice())
             }
-            StreamResult::IntoArray(array) => Ok(JSValue::js_number_from_int64(array.len as i64)),
+            StreamResult::IntoArray(array) => Ok(JSValue::js_number_from_uint64(array.len as u64)),
             StreamResult::IntoArrayAndDone(array) => {
-                Ok(JSValue::js_number_from_int64(array.len as i64))
+                Ok(JSValue::js_number_from_uint64(array.len as u64))
             }
             StreamResult::Pending(pending) => {
                 // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM classification
@@ -1070,7 +1066,7 @@ pub type HTTPServerWritableJSSink<const SSL: bool, const HTTP3: bool> =
 // the SSL/H3 parameter), `bun_event_loop::AutoFlusher` free-fns (the local
 // `crate::webcore::AutoFlusher` is a fieldless stub), and `ByteListPool::Node`
 // data access. Un-gate once the UwsResponse type-dispatch trait lands.
-#[cfg(any())]
+
 impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     /// Don't include @sizeOf(This) because it's already included in the memoryCost of the sink
     pub fn memory_cost(&self) -> usize {
@@ -1885,7 +1881,7 @@ impl NetworkSink {
     // `detach_writable` here did `self.task.take()` without calling the
     // intrusive `deref()` on the `MultiPartUpload`, leaking one refcount per
     // teardown (PORTING.md §Forbidden: silent no-op for real Zig logic). The
-    // correct implementations live in the `#[cfg(any())]` block below and are
+    // correct implementations live in the `` block below and are
     // un-gated together with `bun_s3::MultiPartUpload`.
 
     pub fn flush(&mut self) -> bun_sys::Result<()> {
@@ -1920,7 +1916,7 @@ impl NetworkSink {
 // `write_bytes()` / `is_queue_empty()` on it. `bun_s3::MultiPartUpload` is
 // currently an opaque `c_void` stub (see top of file); un-gate once
 // `crate::webcore::s3::multipart::MultiPartUpload` is wired.
-#[cfg(any())]
+
 impl NetworkSink {
     fn get_high_water_mark(&self) -> BlobSizeType {
         if let Some(task) = self.task {
@@ -2205,7 +2201,7 @@ impl BufferAction {
     // TODO(b2-blocked): `AnyBlob::wrap` takes `(jsc::AnyPromise, &JSGlobalObject,
     // BufferActionTag)`; `swap()` here yields `*mut JSPromise`. Un-gate once an
     // `AnyPromise::from(*mut JSPromise)` adapter exists.
-    #[cfg(any())]
+    
     pub fn fulfill(&mut self, global: &JSGlobalObject, blob: &mut AnyBlob) -> JsResult<()> {
         // TODO(port): narrow error set — Zig: bun.JSTerminated!void
         blob.wrap(
@@ -2248,7 +2244,7 @@ impl BufferAction {
             | BufferAction::ArrayBuffer(p)
             | BufferAction::Blob(p)
             | BufferAction::Bytes(p)
-            | BufferAction::Json(p) => p.get() as *mut JSPromise,
+            | BufferAction::Json(p) => (unsafe { p.get() }) as *mut JSPromise,
         }
     }
 

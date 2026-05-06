@@ -44,7 +44,7 @@ pub struct NodeHTTPResponse {
     pub auto_flusher: AutoFlusher,
 }
 
-#[cfg(any())]
+
 mod _orig_imports {
 use bun_http::Method as HttpMethod;
 use bun_jsc::{
@@ -130,7 +130,7 @@ impl UpgradeCTX {
         *self = UpgradeCTX::default();
     }
 
-    #[cfg(any())] // TODO(b2-blocked): bun_uws_sys::Request::header (cycle-5-B).
+     // TODO(b2-blocked): bun_uws_sys::Request::header (cycle-5-B).
     pub fn preserve_web_socket_headers_if_needed(&mut self) {
         if !self.request.is_null() {
             // SAFETY: `request` is a live uws Request handed to us by the C callback;
@@ -198,7 +198,7 @@ unsafe extern "C" {
 // on_data/on_abort/write_head/end which call bun_uws AnyResponse write/end/
 // on_aborted/on_writable (cycle-5-B) and bun_jsc JSValue/CallFrame methods.
 // TODO(b2-blocked): bun_jsc + bun_uws response surface.
-#[cfg(any())]
+
 mod _gated {
 use super::*;
 use bstr::BStr;

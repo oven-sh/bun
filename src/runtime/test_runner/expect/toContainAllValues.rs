@@ -1,9 +1,10 @@
 use bun_jsc::console_object::Formatter;
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Expect;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_contain_all_values(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -12,7 +13,7 @@ pub fn to_contain_all_values(
     // TODO(port): `defer this.postMatch(globalObject)` — needs an RAII PostMatch guard;
     // a scopeguard capturing `&mut Expect` conflicts with the uses of `this` below.
     let this_value = frame.this();
-    let arguments_ = frame.arguments_old(1);
+    let arguments_ = frame.arguments_old::<1>();
     let arguments = arguments_.slice();
 
     if arguments.len() < 1 {
@@ -70,11 +71,7 @@ pub fn to_contain_all_values(
     }
 
     // handle failure
-    let mut formatter = Formatter {
-        global_this: global,
-        quote_strings: true,
-        ..Default::default()
-    };
+    let mut formatter = super::make_formatter(global);
     // `defer formatter.deinit()` — handled by Drop.
     // TODO(port): `to_fmt(&mut formatter)` below yields overlapping &mut borrows of `formatter`;
     // Phase B may need interior mutability on Formatter or to inline the Display wrappers.
@@ -82,7 +79,7 @@ pub fn to_contain_all_values(
     let expected_fmt = expected.to_fmt(&mut formatter);
     if not {
         let received_fmt = value.to_fmt(&mut formatter);
-        return this.throw(
+        return this.throw_fmt(
             global,
             Expect::get_signature("toContainAllValues", "<green>expected<r>", true),
             format_args!(
@@ -92,7 +89,7 @@ pub fn to_contain_all_values(
         );
     }
 
-    return this.throw(
+    return this.throw_fmt(
         global,
         Expect::get_signature("toContainAllValues", "<green>expected<r>", false),
         format_args!(

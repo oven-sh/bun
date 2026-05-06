@@ -191,7 +191,7 @@ impl WindowsWatcher {
     // The `to_nt_path` / `char_is_any_slash` blockers are resolved — now reached
     // via `bun_string::strings::paths`.
     pub fn init(&mut self, root: &[u8]) -> Result<(), bun_core::Error> {
-        #[cfg(any())]
+        
         {
             use bun_string::strings::paths;
             let mut pathbuf = WPathBuffer::uninit();

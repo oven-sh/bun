@@ -4,7 +4,7 @@ use std::io::Write as _;
 
 use bun_jsc::JsResult;
 
-use crate::bun_test::{DescribeScope, Execution, ExecutionEntry, TestScheduleEntry};
+use crate::test_runner::bun_test::{DescribeScope, Execution, ExecutionEntry, TestScheduleEntry};
 
 pub fn dump_sub(current: &TestScheduleEntry) -> JsResult<()> {
     if !group::get_log_enabled() {

@@ -1,10 +1,11 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::Expect;
 use super::get_signature;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_have_length(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -15,7 +16,7 @@ pub fn to_have_length(
     scopeguard::defer! { this.post_match(global); }
 
     let this_value = frame.this();
-    let arguments_ = frame.arguments_old(1);
+    let arguments_ = frame.arguments_old::<1>();
     let arguments = arguments_.slice();
 
     if arguments.len() < 1 {
@@ -28,7 +29,7 @@ pub fn to_have_length(
     let value: JSValue = this.get_value(global, this_value, "toHaveLength", "<green>expected<r>")?;
 
     if !value.is_object() && !value.is_string() {
-        let mut fmt = Formatter { global_this: global, quote_strings: true, ..Default::default() };
+        let mut fmt = super::make_formatter(global);
         return global.throw(format_args!(
             "Received value does not have a length property: {}",
             value.to_fmt(&mut fmt),
@@ -36,7 +37,7 @@ pub fn to_have_length(
     }
 
     if !expected.is_number() {
-        let mut fmt = Formatter { global_this: global, quote_strings: true, ..Default::default() };
+        let mut fmt = super::make_formatter(global);
         return global.throw(format_args!(
             "Expected value must be a non-negative integer: {}",
             expected.to_fmt(&mut fmt),
@@ -49,7 +50,7 @@ pub fn to_have_length(
         || expected_length.is_nan()
         || expected_length < 0.0
     {
-        let mut fmt = Formatter { global_this: global, quote_strings: true, ..Default::default() };
+        let mut fmt = super::make_formatter(global);
         return global.throw(format_args!(
             "Expected value must be a non-negative integer: {}",
             expected.to_fmt(&mut fmt),
@@ -62,7 +63,7 @@ pub fn to_have_length(
     let actual_length = value.get_length_if_property_exists_internal(global)?;
 
     if actual_length == f64::INFINITY {
-        let mut fmt = Formatter { global_this: global, quote_strings: true, ..Default::default() };
+        let mut fmt = super::make_formatter(global);
         return global.throw(format_args!(
             "Received value does not have a length property: {}",
             value.to_fmt(&mut fmt),
@@ -89,11 +90,11 @@ pub fn to_have_length(
     if not {
         const EXPECTED_LINE: &str = "Expected length: not <green>{d}<r>\n";
         // PERF(port): was comptime getSignature — const fn evaluated at compile time
-        const SIGNATURE: &str = get_signature("toHaveLength", "<green>expected<r>", true);
+        let signature: &str = get_signature("toHaveLength", "<green>expected<r>", true);
         // TODO(port): Expect.throw fmt — Zig {d} placeholders vs Rust format_args; revisit arg-packing once Expect.throw signature is fixed
         return this.throw(
             global,
-            SIGNATURE,
+            signature,
             const_format::concatcp!("\n\n", EXPECTED_LINE),
             format_args!("{}", expected_length),
         );
@@ -102,11 +103,11 @@ pub fn to_have_length(
     const EXPECTED_LINE: &str = "Expected length: <green>{d}<r>\n";
     const RECEIVED_LINE: &str = "Received length: <red>{d}<r>\n";
     // PERF(port): was comptime getSignature — const fn evaluated at compile time
-    const SIGNATURE: &str = get_signature("toHaveLength", "<green>expected<r>", false);
+    let signature: &str = get_signature("toHaveLength", "<green>expected<r>", false);
     // TODO(port): Expect.throw fmt — Zig {d} placeholders vs Rust format_args; revisit arg-packing once Expect.throw signature is fixed
     this.throw(
         global,
-        SIGNATURE,
+        signature,
         const_format::concatcp!("\n\n", EXPECTED_LINE, RECEIVED_LINE),
         format_args!("{} {}", expected_length, actual_length),
     )

@@ -61,9 +61,9 @@ pub fn _test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 }
 
 // blocked_on: bun_css::stylesheet_impl (StyleSheet::parse/minify/to_css are
-// `#[cfg(any())]`-gated). Un-gate together with `src/css/css_parser.rs`
+// ``-gated). Un-gate together with `src/css/css_parser.rs`
 // `mod stylesheet_impl`.
-#[cfg(not(any()))]
+#[cfg(any())]
 pub fn testing_impl(
     _global: &JSGlobalObject,
     _frame: &CallFrame,
@@ -73,7 +73,7 @@ pub fn testing_impl(
     todo!("b2-blocked: css_internals::testing_impl — gated on bun_css::stylesheet_impl")
 }
 
-#[cfg(any())]
+
 pub fn testing_impl(
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -319,14 +319,14 @@ fn targets_from_js(global: &JSGlobalObject, jsobj: JSValue) -> JsResult<Browsers
 }
 
 // blocked_on: bun_css::stylesheet_impl (StyleAttribute::parse is
-// `#[cfg(any())]`-gated). Un-gate together with `src/css/css_parser.rs`
+// ``-gated). Un-gate together with `src/css/css_parser.rs`
 // `mod stylesheet_impl`.
-#[cfg(not(any()))]
+#[cfg(any())]
 pub fn attr_test(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     todo!("b2-blocked: css_internals::attr_test — gated on bun_css::stylesheet_impl")
 }
 
-#[cfg(any())]
+
 pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_css::{
         ImportRecordHandler, MinifyOptions, ParserOptions, PrinterOptions, SrcIndex, StyleAttribute,

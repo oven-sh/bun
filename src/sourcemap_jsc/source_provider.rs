@@ -63,7 +63,7 @@ impl BakeSourceProvider {
         if !unsafe { BakeGlobalObject__isBakeGlobalObject(global) } {
             return None;
         }
-        #[cfg(any())]
+        
         {
             // TODO(b2-blocked): bun_runtime::bake::production::PerThread — stub
             // `PerThread(())` has no `source_maps` / `bundled_outputs` fields,

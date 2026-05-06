@@ -35,7 +35,7 @@ pub mod analyze_jsc;
 // gate every fn in the 888-line file; the module gate is equivalent and keeps
 // the draft addressable on disk.
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
+
 #[path = "JSBundleCompletionTask.rs"]
 pub mod JSBundleCompletionTask_draft;
 pub mod JSBundleCompletionTask {

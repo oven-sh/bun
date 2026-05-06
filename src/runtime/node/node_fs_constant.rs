@@ -8,13 +8,13 @@ use bun_sys::{posix, O};
 
 // File Access Constants
 /// Constant for fs.access(). File is visible to the calling process.
-pub const F_OK: i32 = posix::F_OK;
+pub const F_OK: i32 = libc::F_OK;
 /// Constant for fs.access(). File can be read by the calling process.
-pub const R_OK: i32 = posix::R_OK;
+pub const R_OK: i32 = libc::R_OK;
 /// Constant for fs.access(). File can be written by the calling process.
-pub const W_OK: i32 = posix::W_OK;
+pub const W_OK: i32 = libc::W_OK;
 /// Constant for fs.access(). File can be executed by the calling process.
-pub const X_OK: i32 = posix::X_OK;
+pub const X_OK: i32 = libc::X_OK;
 
 // File Copy Constants
 // PORT NOTE: Zig `enum(i32) { _ }` (non-exhaustive, no variants) is a newtype
@@ -24,6 +24,10 @@ pub const X_OK: i32 = posix::X_OK;
 pub struct Copyfile(pub i32);
 
 impl Copyfile {
+    /// Zig: `@enumFromInt(raw)` — wrap a raw flags value.
+    #[inline]
+    pub const fn from_raw(raw: i32) -> Self { Self(raw) }
+
     pub const EXCLUSIVE: i32 = 1;
     pub const CLONE: i32 = 2;
     pub const FORCE: i32 = 4;
@@ -96,53 +100,56 @@ pub const O_DSYNC: i32 = O::DSYNC;
 /// Constant for fs.open(). Flag indicating to open the symbolic link itself rather than the resource it is pointing to.
 pub const O_SYMLINK: i32 = O::SYMLINK;
 /// Constant for fs.open(). When set, an attempt will be made to minimize caching effects of file I/O.
-pub const O_DIRECT: i32 = O::DIRECT;
+#[cfg(target_os = "linux")]
+pub const O_DIRECT: i32 = libc::O_DIRECT;
+#[cfg(not(target_os = "linux"))]
+pub const O_DIRECT: i32 = 0;
 /// Constant for fs.open(). Flag indicating to open the file in nonblocking mode when possible.
 pub const O_NONBLOCK: i32 = O::NONBLOCK;
 
 // File Type Constants
 /// Constant for fs.Stats mode property for determining a file's type. Bit mask used to extract the file type code.
-pub const S_IFMT: i32 = posix::S::IFMT;
+pub const S_IFMT: i32 = posix::S::IFMT as i32;
 /// Constant for fs.Stats mode property for determining a file's type. File type constant for a regular file.
-pub const S_IFREG: i32 = posix::S::IFREG;
+pub const S_IFREG: i32 = posix::S::IFREG as i32;
 /// Constant for fs.Stats mode property for determining a file's type. File type constant for a directory.
-pub const S_IFDIR: i32 = posix::S::IFDIR;
+pub const S_IFDIR: i32 = posix::S::IFDIR as i32;
 /// Constant for fs.Stats mode property for determining a file's type. File type constant for a character-oriented device file.
-pub const S_IFCHR: i32 = posix::S::IFCHR;
+pub const S_IFCHR: i32 = posix::S::IFCHR as i32;
 /// Constant for fs.Stats mode property for determining a file's type. File type constant for a block-oriented device file.
-pub const S_IFBLK: i32 = posix::S::IFBLK;
+pub const S_IFBLK: i32 = posix::S::IFBLK as i32;
 /// Constant for fs.Stats mode property for determining a file's type. File type constant for a FIFO/pipe.
-pub const S_IFIFO: i32 = posix::S::IFIFO;
+pub const S_IFIFO: i32 = posix::S::IFIFO as i32;
 /// Constant for fs.Stats mode property for determining a file's type. File type constant for a symbolic link.
-pub const S_IFLNK: i32 = posix::S::IFLNK;
+pub const S_IFLNK: i32 = posix::S::IFLNK as i32;
 /// Constant for fs.Stats mode property for determining a file's type. File type constant for a socket.
-pub const S_IFSOCK: i32 = posix::S::IFSOCK;
+pub const S_IFSOCK: i32 = posix::S::IFSOCK as i32;
 
 // File Mode Constants
 /// Constant for fs.Stats mode property for determining access permissions for a file. File mode indicating readable, writable and executable by owner.
-pub const S_IRWXU: i32 = posix::S::IRWXU;
+pub const S_IRWXU: i32 = posix::S::IRWXU as i32;
 /// Constant for fs.Stats mode property for determining access permissions for a file. File mode indicating readable by owner.
-pub const S_IRUSR: i32 = posix::S::IRUSR;
+pub const S_IRUSR: i32 = posix::S::IRUSR as i32;
 /// Constant for fs.Stats mode property for determining access permissions for a file. File mode indicating writable by owner.
-pub const S_IWUSR: i32 = posix::S::IWUSR;
+pub const S_IWUSR: i32 = posix::S::IWUSR as i32;
 /// Constant for fs.Stats mode property for determining access permissions for a file. File mode indicating executable by owner.
-pub const S_IXUSR: i32 = posix::S::IXUSR;
+pub const S_IXUSR: i32 = posix::S::IXUSR as i32;
 /// Constant for fs.Stats mode property for determining access permissions for a file. File mode indicating readable, writable and executable by group.
-pub const S_IRWXG: i32 = posix::S::IRWXG;
+pub const S_IRWXG: i32 = posix::S::IRWXG as i32;
 /// Constant for fs.Stats mode property for determining access permissions for a file. File mode indicating readable by group.
-pub const S_IRGRP: i32 = posix::S::IRGRP;
+pub const S_IRGRP: i32 = posix::S::IRGRP as i32;
 /// Constant for fs.Stats mode property for determining access permissions for a file. File mode indicating writable by group.
-pub const S_IWGRP: i32 = posix::S::IWGRP;
+pub const S_IWGRP: i32 = posix::S::IWGRP as i32;
 /// Constant for fs.Stats mode property for determining access permissions for a file. File mode indicating executable by group.
-pub const S_IXGRP: i32 = posix::S::IXGRP;
+pub const S_IXGRP: i32 = posix::S::IXGRP as i32;
 /// Constant for fs.Stats mode property for determining access permissions for a file. File mode indicating readable, writable and executable by others.
-pub const S_IRWXO: i32 = posix::S::IRWXO;
+pub const S_IRWXO: i32 = posix::S::IRWXO as i32;
 /// Constant for fs.Stats mode property for determining access permissions for a file. File mode indicating readable by others.
-pub const S_IROTH: i32 = posix::S::IROTH;
+pub const S_IROTH: i32 = posix::S::IROTH as i32;
 /// Constant for fs.Stats mode property for determining access permissions for a file. File mode indicating writable by others.
-pub const S_IWOTH: i32 = posix::S::IWOTH;
+pub const S_IWOTH: i32 = posix::S::IWOTH as i32;
 /// Constant for fs.Stats mode property for determining access permissions for a file. File mode indicating executable by others.
-pub const S_IXOTH: i32 = posix::S::IXOTH;
+pub const S_IXOTH: i32 = posix::S::IXOTH as i32;
 
 ///
 /// When set, a memory file mapping is used to access the file. This flag

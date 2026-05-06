@@ -3,7 +3,7 @@
 //!
 //! B-2 keystone L: struct + lifecycle un-gated. The 4.8 kL of request
 //! handling, hot-update tracing, and `finalize_bundle` remain in the gated
-//! Phase-A draft `../DevServer.rs` (preserved on disk via `#[cfg(any())]`).
+//! Phase-A draft `../DevServer.rs` (preserved on disk via ``).
 //! What is real here:
 //!   - `DevServer` struct with all LIFETIMES.tsv-classified fields
 //!   - leaf enums/newtypes (`FileKind`, `ChunkKind`, `Magic`, `MessageId`, …)
@@ -29,18 +29,18 @@ use crate::server::{html_bundle::HTMLBundleRoute, AnyServer, SavedRequest, Stati
 // ─── gated Phase-A submodule drafts (full bodies preserved) ──────────────────
 // Each draft is a faithful port of the `.zig` sibling but depends on
 // `bun_jsc` method surface and/or `bun_bundler::BundleV2` field access.
-#[cfg(any())] #[path = "../DevServer/Assets.rs"]              mod assets_body;
-#[cfg(any())] #[path = "../DevServer/DirectoryWatchStore.rs"] mod directory_watch_store_body;
-#[cfg(any())] #[path = "../DevServer/ErrorReportRequest.rs"]  mod error_report_request_body;
-#[cfg(any())] #[path = "../DevServer/HmrSocket.rs"]           mod hmr_socket_body;
-#[cfg(any())] #[path = "../DevServer/HotReloadEvent.rs"]      mod hot_reload_event_body;
-#[cfg(any())] #[path = "../DevServer/IncrementalGraph.rs"]    mod incremental_graph_body;
-#[cfg(any())] #[path = "../DevServer/PackedMap.rs"]           mod packed_map_body;
-#[cfg(any())] #[path = "../DevServer/RouteBundle.rs"]         mod route_bundle_body;
-#[cfg(any())] #[path = "../DevServer/SerializedFailure.rs"]   mod serialized_failure_body;
-#[cfg(any())] #[path = "../DevServer/SourceMapStore.rs"]      mod source_map_store_body;
-#[cfg(any())] #[path = "../DevServer/WatcherAtomics.rs"]      mod watcher_atomics_body;
-#[cfg(any())] #[path = "../DevServer/memory_cost.rs"]         mod memory_cost_body;
+ #[path = "../DevServer/Assets.rs"]              mod assets_body;
+ #[path = "../DevServer/DirectoryWatchStore.rs"] mod directory_watch_store_body;
+ #[path = "../DevServer/ErrorReportRequest.rs"]  mod error_report_request_body;
+ #[path = "../DevServer/HmrSocket.rs"]           mod hmr_socket_body;
+ #[path = "../DevServer/HotReloadEvent.rs"]      mod hot_reload_event_body;
+ #[path = "../DevServer/IncrementalGraph.rs"]    mod incremental_graph_body;
+ #[path = "../DevServer/PackedMap.rs"]           mod packed_map_body;
+ #[path = "../DevServer/RouteBundle.rs"]         mod route_bundle_body;
+ #[path = "../DevServer/SerializedFailure.rs"]   mod serialized_failure_body;
+ #[path = "../DevServer/SourceMapStore.rs"]      mod source_map_store_body;
+ #[path = "../DevServer/WatcherAtomics.rs"]      mod watcher_atomics_body;
+ #[path = "../DevServer/memory_cost.rs"]         mod memory_cost_body;
 
 bun_core::declare_scope!(DevServer, visible);
 

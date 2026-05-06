@@ -9,18 +9,18 @@ use css::error::MinifyErr;
 // `CssRuleList::{to_css,minify}` now compile so `StyleSheet::{minify,to_css}`
 // can call through. All leaf-rule `to_css` impls are now real — the
 // `to_css_shim!` ladder is gone. The heavy `.style` minify arm and
-// `merge_style_rules` body stay `#[cfg(any())]` internally on
+// `merge_style_rules` body stay `` internally on
 // `StyleRule::{minify,is_compatible,update_prefix,hash_key,is_duplicate}` +
 // selector helpers.
 
 macro_rules! gated_rule {
     ($name:ident) => {
-        #[cfg(any())] pub mod $name;
-        #[cfg(not(any()))] pub mod $name {}
+         pub mod $name;
+        #[cfg(any())] pub mod $name {}
     };
     ($name:ident, { $($body:tt)* }) => {
-        #[cfg(any())] pub mod $name;
-        #[cfg(not(any()))] pub mod $name { $($body)* }
+         pub mod $name;
+        #[cfg(any())] pub mod $name { $($body)* }
     };
 }
 
@@ -265,15 +265,15 @@ pub(super) mod dc {
 
     /// `Property::deep_clone` — routes to the real inherent
     /// `Property::deep_clone` in properties_generated.rs. That body is the
-    /// faithful per-variant port (.zig:6307-6558) but is `#[cfg(any())]`-gated
+    /// faithful per-variant port (.zig:6307-6558) but is ``-gated
     /// on `leaf_value_traits`; the `todo!()` arm below names the blocker so
     /// callers fail loudly until it un-gates (PORTING.md §Forbidden: silent
     /// no-op).
     #[inline]
     pub fn property(this: &crate::properties::Property, bump: &Arena) -> crate::properties::Property {
-        #[cfg(any())]
+        
         return this.deep_clone(bump);
-        #[cfg(not(any()))]
+        #[cfg(any())]
         {
             let _ = (this, bump);
             todo!("blocked_on: Property::deep_clone — leaf_value_traits (properties_generated.rs)")
@@ -288,7 +288,7 @@ pub(super) mod dc {
 
 // ─── shared serialization helpers for leaf rules ──────────────────────────
 // Several leaf-rule `to_css` bodies bottom out on helpers whose canonical
-// homes are still `#[cfg(any())]`-gated outside `rules/` (DeclarationBlock::
+// homes are still ``-gated outside `rules/` (DeclarationBlock::
 // to_css_block, VendorPrefix::toCss, CustomIdent/DashedIdent ::toCss). The
 // bodies are tiny and have no further blockers, so they're inlined here so the
 // 12 leaf rules can serialize for real. Once the upstream gates drop, callers
@@ -361,7 +361,7 @@ pub(super) fn custom_ident_to_css(
     let v = unsafe { &*ident.v };
     // blocked_on: Printer::write_ident — css-module custom-ident scoping path
     // is gated; fall through to its unscoped tail.
-    #[cfg(any())]
+    
     {
         let enabled = dest.css_module.as_ref().is_some_and(|m| m.config.custom_idents);
         return dest.write_ident(v, enabled);
@@ -473,7 +473,7 @@ impl<R> CssRuleList<R> {
             {
                 // blocked_on: ImportDependency::new (gated in dependencies.rs
                 // on rules::import + css_modules::hash + to_css::string).
-                #[cfg(any())]
+                
                 let dep = if dest.dependencies.is_some() {
                     Some(css::dependencies::Dependency::Import(
                         css::dependencies::ImportDependency::new(
@@ -487,7 +487,7 @@ impl<R> CssRuleList<R> {
                 } else {
                     None
                 };
-                #[cfg(not(any()))]
+                #[cfg(any())]
                 let dep: Option<css::dependencies::Dependency> = if dest.dependencies.is_some() {
                     // Spec rules.zig:482-489 unconditionally constructs and
                     // appends `Dependency{.import = ImportDependency.new(...)}`
@@ -541,8 +541,8 @@ impl<R> CssRuleList<R> {
         // blocked_on (style arm only): StyleRule::{minify,is_compatible,
         // update_prefix,hash_key,is_duplicate}, selector::{is_compatible,
         // is_equivalent,Selector::from_component}, SelectorList::deep_clone,
-        // DeclarationBlock::deep_clone — all `#[cfg(any())]` in their leaves.
-        #[cfg(any())]
+        // DeclarationBlock::deep_clone — all `` in their leaves.
+        
         let mut style_rules: std::collections::HashMap<StyleRuleKey<R>, usize> =
             std::collections::HashMap::new();
         let mut rules: Vec<CssRule<R>> = Vec::new();
@@ -567,7 +567,7 @@ impl<R> CssRuleList<R> {
                     }
                     CssRule::Media(med) => {
                         // blocked_on: MediaList::eql — merge-with-previous-@media.
-                        #[cfg(any())]
+                        
                         if let Some(CssRule::Media(last_rule)) = rules.last_mut()
                             && last_rule.query.eql(&med.query)
                         {
@@ -581,7 +581,7 @@ impl<R> CssRuleList<R> {
                     }
                     CssRule::Supports(supp) => {
                         // blocked_on: SupportsCondition::eql (gated in supports.rs).
-                        #[cfg(any())]
+                        
                         if let Some(CssRule::Supports(last_rule)) = rules.last_mut()
                             && last_rule.condition.eql(&supp.condition)
                         {
@@ -614,7 +614,7 @@ impl<R> CssRuleList<R> {
                         // dedup via StyleRuleKey, nested-rule split) bottoms
                         // out on the gated StyleRule behavior surface. Until
                         // that un-gates, fall through and keep the rule as-is.
-                        #[cfg(any())]
+                        
                         {
                             minify_style_arm(rule, &mut rules, &mut style_rules, context, parent_is_unused)?;
                             break 'arm;
@@ -636,7 +636,7 @@ impl<R> CssRuleList<R> {
                 // an intervening at-rule may change how declarations are
                 // interpreted, so identical selectors on either side aren't
                 // safely mergeable.
-                #[cfg(any())]
+                
                 style_rules.clear();
             }
 
@@ -704,7 +704,7 @@ impl<R> CssRule<R> {
 
 // ── `.style` arm body — preserved verbatim port, gated on StyleRule
 // behavior + selector helpers + DeclarationBlock::deep_clone. ──
-#[cfg(any())]
+
 fn minify_style_arm<R>(
     rule: &mut CssRule<R>,
     rules: &mut Vec<CssRule<R>>,
@@ -892,13 +892,13 @@ pub struct StyleRuleKey<R> {
 
 impl<R> StyleRuleKey<R> {
     pub fn new(list: &Vec<CssRule<R>>, index: usize) -> Self {
-        #[cfg(any())]
+        
         let hash = match &list[index] {
             CssRule::Style(rule) => rule.hash_key(),
             _ => 0,
         };
         // blocked_on: StyleRule::hash_key (gated in style.rs).
-        #[cfg(not(any()))]
+        #[cfg(any())]
         let hash = index as u64;
         Self { list: list as *const _, index, hash }
     }
@@ -913,7 +913,7 @@ impl<R> core::hash::Hash for StyleRuleKey<R> {
 impl<R> PartialEq for StyleRuleKey<R> {
     fn eq(&self, other: &Self) -> bool {
         // blocked_on: StyleRule::is_duplicate (gated in style.rs).
-        #[cfg(any())]
+        
         {
             // SAFETY: keys are only compared while the backing Vec is alive
             // (scoped to a single `CssRuleList::minify` frame).
@@ -928,7 +928,7 @@ impl<R> PartialEq for StyleRuleKey<R> {
             };
             return rule.is_duplicate(other_rule);
         }
-        #[cfg(not(any()))]
+        #[cfg(any())]
         {
             core::ptr::eq(self.list, other.list) && self.index == other.index
         }
@@ -948,7 +948,7 @@ pub fn merge_style_rules<R>(
     // blocked_on: StyleRule::is_compatible, SelectorList::eql,
     // selector::is_equivalent, DeclarationBlock::{eql,minify},
     // DeclarationList::extend_from_slice — all gated.
-    #[cfg(any())]
+    
     {
         use css::VendorPrefix;
         // Merge declarations if the selectors are equivalent, and both are compatible with all targets.
@@ -1018,7 +1018,7 @@ pub fn merge_style_rules<R>(
         }
         false
     }
-    #[cfg(not(any()))]
+    #[cfg(any())]
     {
         let _ = (sty, last_style_rule, context);
         false

@@ -6,7 +6,7 @@
 //! `random::JobCtx`, the per-name `Ctx`/`Job` pairs from `extern_crypto_job!`)
 //! compiles against the current `bun_jsc` stub surface. Method bodies that
 //! call JSC accessors / BoringSSL FFI not yet exported / `crate::crypto::PBKDF2`
-//! (still gated in `crypto/mod.rs`) stay `#[cfg(any())]` *inside* this file.
+//! (still gated in `crypto/mod.rs`) stay `` *inside* this file.
 
 use core::ffi::{c_char, c_void};
 use core::mem::offset_of;
@@ -57,7 +57,7 @@ macro_rules! extern_crypto_job {
             // TODO(b2-blocked): `#[link_name = concat!(..)]` / `#[export_name = concat!(..)]`
             // are rejected in attribute position — switch to `paste!` or a small proc-macro.
             // Bodies also need `bun_jsc` method surface (`.bun_vm()`, `.enqueue_task_concurrent()`).
-            #[cfg(any())]
+            
             const _: () = {
                 unsafe extern "C" {
                     #[link_name = concat!("Bun__", $name_str, "Ctx__runTask")]
@@ -239,7 +239,7 @@ pub struct CryptoJob<Ctx> {
 // TODO(b2-blocked): bodies need `bun_jsc` method surface (`.bun_vm()`,
 // `.with_async_context_if_needed()`, `AnyTask::new`, `ConcurrentTask::create`,
 // `KeepAlive::{ref,unref}` over `&VirtualMachine`).
-#[cfg(any())]
+
 impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
     pub fn init(global: &JSGlobalObject, callback: JSValue, ctx: &Ctx) -> JsResult<*mut Self>
     where
@@ -359,7 +359,7 @@ pub mod random {
 
     // TODO(b2-blocked): `JSValue::{protect,unprotect}` + `EventLoop::run_callback`
     // not yet on the stub surface.
-    #[cfg(any())]
+    
     impl CryptoJobCtx for JobCtx {
         fn init(&mut self, _: &JSGlobalObject) -> JsResult<()> {
             self.value.protect();
@@ -387,7 +387,7 @@ pub mod random {
     }
 
     // ─── host fns: gated on `bun_jsc` method surface + `validators` arity ──
-    #[cfg(any())]
+    
     mod _hostfns {
     use super::*;
     use crate::node::util::validators;
@@ -676,7 +676,7 @@ pub mod random {
         Ok(JSValue::UNDEFINED)
     }
     } // mod _hostfns
-    #[cfg(any())]
+    
     pub use _hostfns::*;
 }
 
@@ -706,10 +706,10 @@ pub type ScryptJob = CryptoJob<Scrypt>;
 // `ArrayBuffer::alloc`, `JSFunction::create`, `JSValue::create_*`),
 // `bun_boringssl::{EVP_PBE_scrypt,EVP_PBE_validate_scrypt_params,EVP_MD_do_all_sorted,
 // ERR_get_error,ERR_peek_last_error}` (not yet in boringssl_sys),
-// `crate::crypto::pbkdf2::{PBKDF2,Job}` (still `#[cfg(any())]` in crypto/mod.rs),
+// `crate::crypto::pbkdf2::{PBKDF2,Job}` (still `` in crypto/mod.rs),
 // `StringOrBuffer::{from_js_maybe_async,deinit_and_unprotect}` (gated in types.rs).
 // TODO(b2-blocked): un-gate piecewise as the lower-tier surface lands.
-#[cfg(any())]
+
 mod _impl {
 use super::*;
 use bun_core::UUID;

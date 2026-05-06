@@ -52,7 +52,7 @@ impl SavedSourceMap {
             last_ism: None,
         });
 
-        #[cfg(any())] // TODO(b2-blocked): bun_collections::HashMap::lock_pointers
+         // TODO(b2-blocked): bun_collections::HashMap::lock_pointers
         {
             // SAFETY: `map` is a valid pointer to the sibling HashTable on VirtualMachine.
             unsafe { (*map).lock_pointers() };
@@ -62,7 +62,7 @@ impl SavedSourceMap {
     #[inline]
     pub fn lock(&mut self) {
         self.mutex.lock();
-        #[cfg(any())] // TODO(b2-blocked): bun_collections::HashMap::unlock_pointers
+         // TODO(b2-blocked): bun_collections::HashMap::unlock_pointers
         {
             // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
             unsafe { (*self.map).unlock_pointers() };
@@ -71,7 +71,7 @@ impl SavedSourceMap {
 
     #[inline]
     pub fn unlock(&mut self) {
-        #[cfg(any())] // TODO(b2-blocked): bun_collections::HashMap::lock_pointers
+         // TODO(b2-blocked): bun_collections::HashMap::lock_pointers
         {
             // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
             unsafe { (*self.map).lock_pointers() };
@@ -178,7 +178,7 @@ impl SavedSourceMap {
         opaque_source_provider: *mut c_void,
         path: &[u8],
     ) {
-        #[cfg(any())] // TODO(b2-blocked): bun_collections::HashMap::{get_entry, remove_by_ptr}, bun_sourcemap::ParsedSourceMap::{underlying_provider, deref_}
+         // TODO(b2-blocked): bun_collections::HashMap::{get_entry, remove_by_ptr}, bun_sourcemap::ParsedSourceMap::{underlying_provider, deref_}
         {
         self.lock();
         // PORT NOTE: reshaped for borrowck — explicit unlock paired manually.
@@ -203,7 +203,7 @@ impl SavedSourceMap {
             }
         }
         self.unlock();
-        } // end #[cfg(any())]
+        } // end 
         let _ = (opaque_source_provider, path);
     }
 
@@ -221,7 +221,7 @@ impl SavedSourceMap {
         opaque_source_provider: *mut c_void,
         path: &[u8],
     ) {
-        #[cfg(any())] // TODO(b2-blocked): bun_collections::HashMap::{get_entry, remove_by_ptr}, bun_sourcemap::ParsedSourceMap::{underlying_provider, deref_}
+         // TODO(b2-blocked): bun_collections::HashMap::{get_entry, remove_by_ptr}, bun_sourcemap::ParsedSourceMap::{underlying_provider, deref_}
         {
         self.lock();
         // PORT NOTE: reshaped for borrowck — explicit unlock paired manually.
@@ -246,7 +246,7 @@ impl SavedSourceMap {
             }
         }
         self.unlock();
-        } // end #[cfg(any())]
+        } // end 
         let _ = (opaque_source_provider, path);
     }
 }
@@ -272,7 +272,7 @@ pub type SourceMapHandler<'a> = bun_js_printer::SourceMapHandler<'a>;
 
 impl Drop for SavedSourceMap {
     fn drop(&mut self) {
-        #[cfg(any())] // TODO(b2-blocked): bun_collections::HashMap::{value_iterator, unlock_pointers, deinit}, bun_sourcemap::{ParsedSourceMap::deref_, InternalSourceMap::deinit}
+         // TODO(b2-blocked): bun_collections::HashMap::{value_iterator, unlock_pointers, deinit}, bun_sourcemap::{ParsedSourceMap::deref_, InternalSourceMap::deinit}
         {
         {
             self.lock();
@@ -301,7 +301,7 @@ impl Drop for SavedSourceMap {
             (*self.map).deinit();
             // TODO(port): deinit() on a backref-owned HashMap — ownership lives on VirtualMachine; verify Phase B.
         }
-        } // end #[cfg(any())]
+        } // end 
     }
 }
 
@@ -377,7 +377,7 @@ impl SavedSourceMap {
             Entry::Occupied(mut o) => {
                 let old_value = Value::from(Some(*o.get()));
                 if let Some(parsed_source_map) = old_value.get::<ParsedSourceMap>() {
-                    #[cfg(any())] // TODO(b2-blocked): `ParsedSourceMap: ThreadSafeRefCounted` — wire `ThreadSafeRefCount::deref` once the trait impl lands in bun_sourcemap.
+                     // TODO(b2-blocked): `ParsedSourceMap: ThreadSafeRefCounted` — wire `ThreadSafeRefCount::deref` once the trait impl lands in bun_sourcemap.
                     {
                         // SAFETY: pointer was stored by us and is live until replaced.
                         unsafe {
@@ -411,7 +411,7 @@ impl SavedSourceMap {
         path: &[u8],
         hint: SourceMap::ParseUrlResultHint,
     ) -> SourceMap::ParseUrl {
-        #[cfg(any())] // TODO(b2-blocked): bun_collections::TaggedPtrUnion::{tag, tag_of, as_, init, from}, bun_sourcemap::ParsedSourceMap field shape, ParseUrl field shape
+         // TODO(b2-blocked): bun_collections::TaggedPtrUnion::{tag, tag_of, as_, init, from}, bun_sourcemap::ParsedSourceMap field shape, ParseUrl field shape
         {
         let h = hash(path);
 
@@ -568,7 +568,7 @@ impl SavedSourceMap {
 
             return SourceMap::ParseUrl::default();
         }
-        } // end #[cfg(any())]
+        } // end 
         let _ = (path, hint);
         SourceMap::ParseUrl::default()
     }
@@ -580,7 +580,7 @@ impl SavedSourceMap {
 
     /// Mutex must already be held. Returns the raw table value for `hash` if any.
     pub fn get_value_locked(&mut self, h: u64) -> Option<Value> {
-        #[cfg(any())] // TODO(b2-blocked): bun_collections::HashMap::get, TaggedPtrUnion::from(*mut c_void)
+         // TODO(b2-blocked): bun_collections::HashMap::get, TaggedPtrUnion::from(*mut c_void)
         {
             // SAFETY: `map` points at the live sibling HashTable on VirtualMachine; caller holds mutex.
             let raw = unsafe { (*self.map).get(h)? };
@@ -597,7 +597,7 @@ impl SavedSourceMap {
         column: Ordinal,
         source_handling: SourceMap::SourceContentHandling,
     ) -> Option<SourceMap::mapping::Lookup> {
-        #[cfg(any())] // TODO(b2-blocked): bun_sourcemap::{ParseUrl fields, ParsedSourceMap::find_mapping, mapping::Lookup fields}
+         // TODO(b2-blocked): bun_sourcemap::{ParseUrl fields, ParsedSourceMap::find_mapping, mapping::Lookup fields}
         {
         let parse = self.get_with_content(
             path,
@@ -626,7 +626,7 @@ impl SavedSourceMap {
             source_map: map,
             prefetched_source_code: parse.source_contents,
         })
-        } // end #[cfg(any())]
+        } // end 
         let _ = (path, line, column, source_handling);
         None
     }

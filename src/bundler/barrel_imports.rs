@@ -30,7 +30,7 @@ pub enum RequestedExports {
 // Re-gated as a unit; `RequestedExports` is the only public surface needed by
 // other un-gated modules.
 // ───────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
+
 mod gated {
 use super::*;
 use crate::ParseTask;

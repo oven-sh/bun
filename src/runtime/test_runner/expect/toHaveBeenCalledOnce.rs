@@ -1,9 +1,10 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 use super::Expect;
 use super::get_signature;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_have_been_called_once(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -23,11 +24,7 @@ pub fn to_have_been_called_once(
     // TODO(port): bun.cpp.* FFI shim location — assuming bun_jsc::cpp re-exports generated bindings
     let calls = super::mock::JSMockFunction__getCalls(global, value)?;
     if !calls.js_type().is_array() {
-        let mut formatter = Formatter {
-            global,
-            quote_strings: true,
-            ..Default::default()
-        };
+        let mut formatter = super::make_formatter(global);
         return global.throw(format_args!(
             "Expected value must be a mock function: {}",
             value.to_fmt(&mut formatter),

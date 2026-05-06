@@ -56,7 +56,7 @@ impl DeferredBatchTask {
             task_tag::BundleV2DeferredBatchTask,
             self as *mut Self as *mut (),
         ));
-        #[cfg(any())]
+        
         {
             self.get_bundle_v2()
                 .js_loop_for_plugins()
@@ -71,7 +71,7 @@ impl DeferredBatchTask {
         // PORT NOTE: reshaped for borrowck — Zig's `defer this.deinit()` only resets
         // the debug `running` flag; since nothing follows `drainDeferred`, ignoring
         // its error and resetting the flag afterwards is equivalent on both paths.
-        #[cfg(any())]
+        
         {
             let bv2 = self.get_bundle_v2();
             let rejected = match &bv2.completion {

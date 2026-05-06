@@ -7,7 +7,7 @@
 //! types. The top-level `print` / `print_with_writer{,_and_platform}` /
 //! `print_common_js` / `get_source_map_builder` driver fns are live at crate
 //! root (the `__gated_entry_points` wrapper has been flattened). Remaining
-//! `#[cfg(any())]` islands are leaf optimizations blocked on lower-tier surface
+//! `` islands are leaf optimizations blocked on lower-tier surface
 //! (see TODO(b2-blocked) markers below): the template-inlining fold, the
 //! ESM-to-CJS __export emission path, `print_dev_server_module`, the source-map
 //! self-borrow in `init`, and the `print_ast` minify-renamer driver / `print_json`.
@@ -1223,14 +1223,14 @@ pub mod options {
 }
 
 /// Downstream-compat: `print_json` callers pass this. The real fn body (still
-/// `#[cfg(any())]`-gated below) ignores everything but `indent`/`mangled_props`.
+/// ``-gated below) ignores everything but `indent`/`mangled_props`.
 #[derive(Default)]
 pub struct PrintJsonOptions<'a> {
     pub indent: Indentation,
     pub mangled_props: Option<&'a MangledProps>,
 }
 
-/// B-2 shadow stub — real body is the `#[cfg(any())]`-gated `print_json` below.
+/// B-2 shadow stub — real body is the ``-gated `print_json` below.
 // TODO(b2-blocked): bun_js_parser::Ast::init_test / Symbol::List::from_borrowed_slice_dangerous
 pub fn print_json<W: WriterTrait>(
     _writer: W,
@@ -2648,7 +2648,7 @@ where
                 // prints `path.pretty`, not `path.text`. Emitting `path.text` would produce
                 // the wrong HMR module specifier, so this branch is gated until the field
                 // lands rather than silently emitting incorrect output.
-                #[cfg(any())]
+                
                 {
                     self.print_space_before_identifier();
                     self.print_symbol(self.options.hmr_ref);
@@ -3657,10 +3657,10 @@ where
             ExprData::ETemplate(e) => {
                 // TODO(b2-blocked): bun_js_parser::ast::e::Template::fold — the
                 // `impl Template { fn fold(&mut self, &Bump, Loc) -> Expr }` block
-                // is itself `#[cfg(any())]`-gated in E.rs (and `TemplatePart` is
+                // is itself ``-gated in E.rs (and `TemplatePart` is
                 // not `Copy`/`Clone`). Re-gate the inlining-rewrite path until
                 // those land.
-                #[cfg(any())]
+                
                 if e.tag.is_none() && (self.options.minify_syntax || self.was_lazy_export) {
                     let mut replaced: Vec<E::TemplatePart> = Vec::new();
                     for (i, _part) in e.parts.iter().enumerate() {
@@ -5926,9 +5926,9 @@ where
         self.print_decls(keyword, decls, ExprFlag::none(), tlm);
         self.print_semicolon_after_statement();
         // TODO(b2-blocked): bun_js_parser::runtime::Imports::__export — the
-        // full `runtime.rs` is `#[cfg(any())]`-gated upstream; the active
+        // full `runtime.rs` is ``-gated upstream; the active
         // `parser.rs::Runtime::Imports` stub is a fieldless unit struct.
-        #[cfg(any())]
+        
         if REWRITE_ESM_TO_CJS && is_export && !decls.is_empty() {
             // PORT NOTE: Zig stored `?GeneratedSymbol`; the Rust `runtime::Imports`
             // flattens this to `Option<Ref>`, so no `.ref_` projection.
@@ -6193,7 +6193,7 @@ where
     // — `print_dev_server_module` walks `source.path.pretty` (not yet ported on
     // bun_logger's Path) and indexes `part.stmts: *mut [Stmt]` for ESM bake-dev
     // output. Re-gated until those land.
-    #[cfg(any())]
+    
     fn print_dev_server_module(&mut self, source: &logger::Source, ast: &js_ast::Ast, part: &js_ast::Part) {
         self.indent();
         self.print_indent();
@@ -6964,7 +6964,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
 
 // TODO(b2-blocked): bun_js_parser::Ast::init_test (re-gated upstream in Ast.rs)
 // TODO(b2-blocked): bun_js_parser::Symbol::{List,NestedList}::from_borrowed_slice_dangerous
-#[cfg(any())]
+
 pub fn print_json<W: WriterTrait>(
     _writer: W,
     expr: Expr,
@@ -7093,9 +7093,9 @@ pub fn print_with_writer_and_platform<'a, W: WriterTrait, const IS_BUN_PLATFORM:
     if module_type == bundle_opts::Format::InternalBakeDev && source.index.0 != 0 {
         // TODO(b2-blocked): bun_js_printer::__gated_printer::Printer::print_dev_server_module
         // (re-gated above on bun_logger::fs::Path::pretty + Part::stmts shape).
-        #[cfg(any())]
+        
         printer.print_dev_server_module(source, ast, &parts[0]);
-        #[cfg(not(any()))]
+        #[cfg(any())]
         { let _ = (&ast, &parts); todo!("b2 stub: print_dev_server_module") }
     } else {
         // The IIFE wrapper is done in `postProcessJSChunk`, so we just manually

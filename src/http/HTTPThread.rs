@@ -682,7 +682,7 @@ impl HttpThread {
         self.drain_queued_http_response_body_drains();
         self.drain_queued_writes();
         self.drain_queued_shutdowns();
-        // TODO(b2-blocked): h3::PendingConnect::drain_resolved is `#[cfg(any())]`-
+        // TODO(b2-blocked): h3::PendingConnect::drain_resolved is ``-
         // gated in h3_client/PendingConnect.rs (the RESOLVED_HEAD list and
         // on_dns_resolved are in the same gated impl). Spec HTTPThread.zig
         // calls `bun.http.H3.PendingConnect.drainResolved()` here so DNS-
@@ -905,7 +905,7 @@ use core::cell::Cell;
 // boundary is resolved.
 // TODO(b2-blocked): MiniEventLoop is in bun_event_loop (not in bun_http deps).
 // ═══════════════════════════════════════════════════════════════════════════
-#[cfg(any())]
+
 mod _event_loop_draft {
     use super::*;
     use bun_core::Global;

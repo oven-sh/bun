@@ -102,7 +102,7 @@ pub struct StartOptions {
 // (cycle-5-B), bun_aio::Closer, bun_io::ReadState/BufferedReader callbacks,
 // bun_jsc::Task/EventLoopHandle.
 // TODO(b2-blocked): bun_uws response surface + bun_jsc event-loop.
-#[cfg(any())]
+
 mod _gated {
 use super::*;
 use bun_aio::{self as aio, Closer};

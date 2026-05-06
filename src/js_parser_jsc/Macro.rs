@@ -59,7 +59,7 @@ impl<'a> MacroContext<'a> {
 
 impl<'a> MacroContext<'a> {
     // TODO(b2-blocked): bun_bundler::Transpiler (real fields — currently opaque stub)
-    #[cfg(any())]
+    
     pub fn init(transpiler: &'a mut Transpiler) -> MacroContext<'a> {
         MacroContext {
             macros: MacroMap::new(),
@@ -84,7 +84,7 @@ impl<'a> MacroContext<'a> {
         // TODO(b2-blocked): bun_resolver::Resolver::resolve (opaque stub)
         // TODO(b2-blocked): bun_resolver::Result (path_pair field — opaque stub)
         // TODO(b2-blocked): bun_jsc::VirtualMachine::VirtualMachine (run_with_api_lock ctx-ptr form / event_loop().ensure_waker)
-        #[cfg(any())]
+        
         {
         Expr::Data::Store::set_disable_reset(true);
         Stmt::Data::Store::set_disable_reset(true);
@@ -282,7 +282,7 @@ impl<'a> Macro<'a> {
         // TODO(b2-blocked): bun_jsc::VirtualMachine::VirtualMachine (init / jsc_vm / load_macro_entry_point byte-slice sig)
         // TODO(b2-blocked): bun_jsc::PromiseResult
         // TODO(b2-blocked): bun_resolver::Resolver (real `opts` field — currently opaque stub)
-        #[cfg(any())]
+        
         {
         // TODO(port): narrow error set
         let vm: &'static VirtualMachine = if VirtualMachine::is_loaded() {
@@ -428,7 +428,7 @@ impl<'a> Run<'a> {
     ) -> Result<Expr, MacroError> {
         // TODO(b2-blocked): bun_jsc::VirtualMachine::VirtualMachine (macros / global fields)
         // TODO(b2-blocked): bun_jsc::MarkedArgumentBuffer (len / as_ptr — opaque FFI handle)
-        #[cfg(any())]
+        
         {
         let Some(macro_callback) = macro_.vm.macros.get(id) else {
             return Ok(caller);
@@ -523,7 +523,7 @@ impl<'a> Run<'a> {
         // TODO(b2-blocked): bun_jsc::PromiseStatus (no crate-root re-export of `js_promise::Status`)
         // TODO(b2-blocked): bun_js_parser::Expr::from_blob (live shadow stub takes `&[u8]` mime, not `MimeType`)
         // TODO(b2-blocked): bun_jsc::JSPropertyIterator (const-generic shape changed: 3×bool, init takes JSValue not *mut JSObject)
-        #[cfg(any())]
+        
         {
         use ConsoleObject::formatter::Tag as T;
         match tag {

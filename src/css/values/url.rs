@@ -14,7 +14,7 @@ pub struct Url {
 }
 
 impl Url {
-    #[cfg(any())] // blocked_on: Parser::add_import_record (BabyList push/len + ImportRecord Default)
+     // blocked_on: Parser::add_import_record (BabyList push/len + ImportRecord Default)
     pub fn parse(input: &mut css::Parser) -> CssResult<Url> {
         let start_pos = input.position();
         let loc = input.current_source_location();
@@ -75,7 +75,7 @@ impl Url {
     // tag/flags shape (`is_internal` lives on Tag, not Flags); UrlDependency
     // .placeholder deref. The non-minify path is straight-line and could
     // un-gate sooner once `serialize_string` accepts a non-Printer writer.
-    #[cfg(any())]
+    
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         use crate::dependencies::UrlDependency;
         let dep: Option<UrlDependency> = if dest.dependencies.is_some() {

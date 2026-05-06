@@ -1,3 +1,4 @@
+#![cfg(any())]
 //! Basic utilities for working with memory and objects.
 
 use crate::AllocError;

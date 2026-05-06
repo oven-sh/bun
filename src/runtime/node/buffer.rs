@@ -5,7 +5,7 @@ pub struct BufferVectorized;
 // `Encoding` enum and calls `web_core::encoding::write_u8/write_u16`, neither
 // of which are stable in the current bun_jsc surface.
 // TODO(b2-blocked): un-gate once bun_jsc::{node::Encoding, web_core::encoding} land.
-#[cfg(any())]
+
 mod _impl {
 use super::*;
 use core::ffi::c_void;

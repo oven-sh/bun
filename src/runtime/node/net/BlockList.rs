@@ -41,7 +41,7 @@ fn read_int_le_usize(buf: &[u8], pos: &mut usize) -> Option<usize> {
 // `Rule`/`_compare` further depend on `socket_address::sockaddr` which lives
 // in `crate::socket` (not yet wired as a sibling of this module).
 // TODO(b2-blocked): un-gate once bun_jsc JsClass derive + crate::socket::SocketAddress are reachable.
-#[cfg(any())]
+
 mod _impl {
 use super::*;
 use core::cmp::Ordering;

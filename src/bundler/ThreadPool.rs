@@ -516,7 +516,7 @@ impl Worker {
             // mimalloc's deferred frees + zero-filled freed pages. The Rust
             // arena is `bumpalo::Bump`, which has no equivalent — calls
             // dropped, gated on the real `MimallocArena` un-gate
-            // (`bun_alloc/MimallocArena.rs` is `#[cfg(any())]`).
+            // (`bun_alloc/MimallocArena.rs` is ``).
         }
 
         worker

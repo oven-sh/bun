@@ -136,7 +136,7 @@ impl AnyRequestContext {
 // on_abort / ref_ / deref / set_signal_aborted forward to RequestContext
 // methods that live in `_gated_state_machine`. Un-gate alongside.
 // TODO(b2-blocked): RequestContext state-machine bodies.
-#[cfg(any())]
+
 impl AnyRequestContext {
     pub fn set_additional_on_abort_callback_(self, cb: Option<AdditionalOnAbortCallback>) {
         dispatch!(self, (), |_T, ctx| {

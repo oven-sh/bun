@@ -50,7 +50,7 @@ impl CondExpr {
         // TODO(b2-blocked): ast::CondExpr::{op, args} + bun_sys stat/lstat —
         // full body (~250 lines) gated. Shape: expand each arg via Expansion,
         // then evaluate the operator (-e/-f/-d/-z/-n/==/!= etc.).
-        #[cfg(any())]
+        
         {
             include!("CondExpr_next_body.rs");
         }

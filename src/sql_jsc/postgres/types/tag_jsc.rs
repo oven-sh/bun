@@ -32,7 +32,7 @@ pub fn to_js_with_type<T>(
     global: &JSGlobalObject,
     value: T,
 ) -> Result<JSValue, AnyPostgresError> {
-    #[cfg(any())]
+    
     {
         // TODO(b2-blocked): per-arm dispatch trait (DataCell is the only caller
         // and it always passes `*Data`, so a single concrete impl may suffice).
@@ -48,7 +48,7 @@ pub fn to_js_with_type<T>(
             _ => super::postgres_string::to_js(global, value),
         }
     }
-    #[cfg(not(any()))]
+    #[cfg(any())]
     {
         let _ = (tag, global, value);
         unimplemented!("b2-blocked: per-arm anytype dispatch trait")

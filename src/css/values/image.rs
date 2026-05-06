@@ -223,7 +223,7 @@ impl Image {
     // variant in Zig field order (none/url/gradient/image-set).
     // blocked_on: `Url::parse` (gated on `Parser::add_import_record`). The
     // gradient/image-set arms are real; the url arm un-gates with url.rs.
-    #[cfg(any())]
+    
     pub fn parse(input: &mut css::Parser) -> Result<Image> {
         if input.try_parse(|i| i.expect_ident_matching(b"none")).is_ok() {
             return Ok(Image::None);
@@ -236,7 +236,7 @@ impl Image {
         }
         ImageSet::parse(input).map(Image::ImageSet)
     }
-    #[cfg(not(any()))]
+    #[cfg(any())]
     pub fn parse(input: &mut css::Parser) -> Result<Image> {
         if input.try_parse(|i| i.expect_ident_matching(b"none")).is_ok() {
             return Ok(Image::None);
@@ -250,7 +250,7 @@ impl Image {
 
     // TODO(port): `css.DeriveToCss(@This()).toCss` — hand-expanded.
     // blocked_on: `Url::to_css` (gated on Printer::print_import_record path).
-    #[cfg(any())]
+    
     pub fn to_css(&self, dest: &mut css::Printer) -> core::result::Result<(), css::PrintErr> {
         match self {
             Image::None => dest.write_str(b"none"),
@@ -259,7 +259,7 @@ impl Image {
             Image::ImageSet(s) => s.to_css(dest),
         }
     }
-    #[cfg(not(any()))]
+    #[cfg(any())]
     pub fn to_css(&self, dest: &mut css::Printer) -> core::result::Result<(), css::PrintErr> {
         match self {
             Image::None => dest.write_str(b"none"),
@@ -391,7 +391,7 @@ pub struct ImageSetOption {
 impl ImageSetOption {
     // blocked_on: `Parser::add_import_record` (gated in css_parser.rs on
     // BabyList push API). Body preserved verbatim; un-gates with that method.
-    #[cfg(any())]
+    
     pub fn parse(input: &mut css::Parser) -> Result<ImageSetOption> {
         let start_position = input.input.tokenizer.get_position();
         let loc = input.current_source_location();
@@ -427,7 +427,7 @@ impl ImageSetOption {
             file_type,
         })
     }
-    #[cfg(not(any()))]
+    #[cfg(any())]
     pub fn parse(input: &mut css::Parser) -> Result<ImageSetOption> {
         let _ = input;
         // blocked_on: Parser::add_import_record un-gate (css_parser.rs:3095)
@@ -437,7 +437,7 @@ impl ImageSetOption {
     // blocked_on: `dependencies::UrlDependency::new` taking the now-real
     // `values::url::Url` + `serializer::serialize_string` accepting
     // `&mut Printer` (currently `&mut impl WriteAll`). Body preserved.
-    #[cfg(any())]
+    
     pub fn to_css(
         &self,
         dest: &mut css::Printer,
@@ -504,7 +504,7 @@ impl ImageSetOption {
 
         Ok(())
     }
-    #[cfg(not(any()))]
+    #[cfg(any())]
     pub fn to_css(
         &self,
         dest: &mut css::Printer,

@@ -1,9 +1,10 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::Expect;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_contain_any_keys(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -13,7 +14,7 @@ pub fn to_contain_any_keys(
     let _post = scopeguard::guard((), |_| this.post_match(global));
 
     let this_value = frame.this();
-    let arguments_ = frame.arguments_old(1);
+    let arguments_ = frame.arguments_old::<1>();
     let arguments = arguments_.slice();
 
     if arguments.len() < 1 {
@@ -57,7 +58,7 @@ pub fn to_contain_any_keys(
     }
 
     // handle failure
-    let mut formatter = Formatter { global_this: global, quote_strings: true, ..Default::default() };
+    let mut formatter = super::make_formatter(global);
     let value_fmt = value.to_fmt(&mut formatter);
     let expected_fmt = expected.to_fmt(&mut formatter);
     if not {
@@ -65,7 +66,7 @@ pub fn to_contain_any_keys(
         const EXPECTED_LINE: &str = "Expected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n";
         // TODO(port): get_signature should be a const fn / macro to match Zig `comptime`
         let signature = Expect::get_signature("toContainAnyKeys", "<green>expected<r>", true);
-        return this.throw(
+        return this.throw_fmt(
             global,
             signature,
             concat!("\n\n", "Expected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n"),
@@ -81,7 +82,7 @@ pub fn to_contain_any_keys(
     let _ = (EXPECTED_LINE, RECEIVED_LINE);
     // TODO(port): get_signature should be a const fn / macro to match Zig `comptime`
     let signature = Expect::get_signature("toContainAnyKeys", "<green>expected<r>", false);
-    this.throw(
+    this.throw_fmt(
         global,
         signature,
         concat!("\n\n", "Expected to contain: <green>{}<r>\n", "Received: <red>{}<r>\n"),

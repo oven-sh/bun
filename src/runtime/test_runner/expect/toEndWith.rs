@@ -1,9 +1,10 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_str::strings;
 
 use super::{get_signature, Expect};
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_end_with(
     this: &mut Expect,
     global: &JSGlobalObject,
@@ -13,9 +14,9 @@ pub fn to_end_with(
     // PORT NOTE: reshaped for borrowck (scopeguard owns the &mut Expect; access via DerefMut).
     let mut this = scopeguard::guard(this, |t| t.post_match(global));
 
-    let this_value = frame.this_value();
-    let arguments_ = frame.arguments_old(1);
-    let arguments = arguments_.as_slice();
+    let this_value = frame.this();
+    let arguments_ = frame.arguments_old::<1>();
+    let arguments = arguments_.slice();
 
     if arguments.len() < 1 {
         return global.throw_invalid_arguments(format_args!("toEndWith() requires 1 argument"));
@@ -54,11 +55,7 @@ pub fn to_end_with(
     }
 
     // TODO(port): ConsoleObject.Formatter construction — Zig used struct-literal defaults.
-    let mut formatter = bun_jsc::console_object::Formatter {
-        global_this: global,
-        quote_strings: true,
-        ..Default::default()
-    };
+    let mut formatter = super::make_formatter(global);
     // TODO(port): borrowck — Zig holds two `*Formatter` simultaneously via toFmt; Rust can't
     // hand out two `&mut formatter`. Phase B: make `to_fmt` take `&Formatter` (interior mut)
     // or inline the format calls.
@@ -70,7 +67,7 @@ pub fn to_end_with(
         const RECEIVED_LINE: &str = "Received: <red>{}<r>\n";
         // PERF(port): was `comptime getSignature(...)` — ensure get_signature is `const fn`
         // (or a macro) so this stays a compile-time &'static str in Phase B.
-        let signature = get_signature::<true>("toEndWith", "<green>expected<r>");
+        let signature = get_signature("toEndWith", "<green>expected<r>", true);
         return this.throw(
             global,
             signature,
@@ -88,7 +85,7 @@ pub fn to_end_with(
 
     const EXPECTED_LINE: &str = "Expected to end with: <green>{}<r>\n";
     const RECEIVED_LINE: &str = "Received: <red>{}<r>\n";
-    let signature = get_signature::<false>("toEndWith", "<green>expected<r>");
+    let signature = get_signature("toEndWith", "<green>expected<r>", false);
     this.throw(
         global,
         signature,

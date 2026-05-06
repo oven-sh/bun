@@ -467,7 +467,7 @@ impl ProxyEnvStorage {
     /// clone captured a snapshot the storage doesn't hold a ref on (e.g. an
     /// initial-environ value later overwritten by the setter).
     // TODO(port): `bun_dotenv::Map` not in dep graph at this tier — gated.
-    #[cfg(any())]
+    
     pub fn sync_into(&self, map: &mut bun_dotenv::Map) {
         macro_rules! sync_one {
             ($name:literal, $field:ident) => {
@@ -541,7 +541,7 @@ impl Default for AWSSignatureCache {
 //   - TLS-ciphers JS host fns            (#[crate::host_fn])
 //   - default_client_ssl_ctx / dns / s3  (high-tier ctors)
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
+
 mod _accessor_body {
 use super::*;
 
@@ -660,7 +660,7 @@ impl RareData {
     pub fn close_all_watchers_for_isolation(&mut self) {
         // TODO(port): high-tier — FSWatcher::detach / StatWatcher::close live in
         // bun_runtime::node. Gated until cycle-break vtable lands.
-        #[cfg(any())]
+        
         {
             while let Some(watcher) = self.fs_watchers_for_isolation.pop() {
                 // SAFETY: watcher was registered via add_fs_watcher_for_isolation and is still live
@@ -718,7 +718,7 @@ pub struct HotMapEntry {
     pub tag: u8,
     pub ptr: *mut (),
 }
-#[cfg(any())]
+
 pub type HotMapEntry = TaggedPtrUnion<(
     HTTPServer,
     HTTPSServer,
@@ -743,7 +743,7 @@ impl HotMap {
     // TODO(port): typed `get<T>`/`insert<T>` need `TaggedPtrUnion`'s
     // `TaggedPtrGet`/`TaggedPtrInit` traits — gated until the high-tier
     // type list is wired (see HotMapEntry note).
-    #[cfg(any())]
+    
     pub fn get<T>(&mut self, key: &[u8]) -> Option<*mut T>
     where
         HotMapEntry: bun_collections::TaggedPtrGet<T>,
@@ -752,7 +752,7 @@ impl HotMap {
         entry.get::<T>()
     }
 
-    #[cfg(any())]
+    
     pub fn insert<T>(&mut self, key: &[u8], ptr: *mut T)
     where
         HotMapEntry: bun_collections::TaggedPtrInit<T>,
@@ -919,7 +919,7 @@ impl RareData {
             Some(e) => e,
             None => {
                 // TODO(port): bun_boringssl_sys not in bun_jsc dep graph.
-                #[cfg(any())]
+                
                 { let e = unsafe { boring_sys::ENGINE_new() }; }
                 let e = core::ptr::null_mut();
                 self.boring_ssl_engine = Some(e);
@@ -937,7 +937,7 @@ impl RareData {
 // constructor hook (or `BlobStore` moves to `bun_webcore` at this tier).
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(any())]
+
 impl RareData {
     pub fn stderr(&mut self) -> &Arc<BlobStore> {
         bun_core::analytics::Features::bun_stderr_inc();
@@ -1036,7 +1036,7 @@ pub enum StdinFdType {
 }
 
 // TODO(port): depends on gated stderr()/stdout()/stdin() above.
-#[cfg(any())]
+
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Process__getStdinFdType(vm: *mut VirtualMachine, fd: i32) -> StdinFdType {
     // SAFETY: vm is a valid VirtualMachine pointer passed from C++
@@ -1061,7 +1061,7 @@ pub extern "C" fn Bun__Process__getStdinFdType(vm: *mut VirtualMachine, fd: i32)
 // TODO(port): `#[crate::host_fn]` proc-macro not yet implemented; gated.
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(any())]
+
 #[crate::host_fn]
 #[unsafe(export_name = "Bun__setTLSDefaultCiphers")]
 fn set_tls_default_ciphers_from_js(
@@ -1079,7 +1079,7 @@ fn set_tls_default_ciphers_from_js(
     Ok(JSValue::UNDEFINED)
 }
 
-#[cfg(any())]
+
 #[crate::host_fn]
 #[unsafe(export_name = "Bun__getTLSDefaultCiphers")]
 fn get_tls_default_ciphers_from_js(
@@ -1185,7 +1185,7 @@ impl RareData {
 // (`SSLContextCache::get_or_create_opts`, `dns::GlobalData::init`,
 // `StatWatcherScheduler::init`, `s3::S3Credentials`, `S3Client::new`).
 // Gated until cycle-break vtable lands.
-#[cfg(any())]
+
 impl RareData {
     /// Shared `SSL_CTX*` for client connects that didn't supply a custom CA
     /// (`Valkey({tls: true})`, `new WebSocket("wss://…")`). The old code allocated
@@ -1301,7 +1301,7 @@ impl Drop for RareData {
         // s3_default_client: Strong has Drop
 
         // TODO(port): bun_boringssl_sys not in dep graph — gated.
-        #[cfg(any())]
+        
         if let Some(engine) = self.boring_ssl_engine.take() {
             // SAFETY: engine was created by ENGINE_new
             unsafe { boring_sys::ENGINE_free(engine) };
@@ -1315,7 +1315,7 @@ impl Drop for RareData {
         // tls_default_ciphers: Option<Box<ZStr>> drops automatically
         // valkey_context: has Drop
 
-        #[cfg(any())]
+        
         if let Some(s) = self.default_client_ssl_ctx.take() {
             // SAFETY: s was returned by ssl_ctx_cache.get_or_create_opts with +1 ref
             unsafe { boring_sys::SSL_CTX_free(s) };
@@ -1589,7 +1589,7 @@ impl RareData {
     pub fn close_all_watchers_for_isolation(&mut self) {
         // TODO(port): high-tier — FSWatcher::detach / StatWatcher::close live in
         // bun_runtime::node. Gated until cycle-break vtable lands.
-        #[cfg(any())]
+        
         {
             while let Some(w) = self.fs_watchers_for_isolation.pop() {
                 // SAFETY: registered via add_fs_watcher_for_isolation; still live.
@@ -1715,14 +1715,14 @@ impl Drop for RareData {
         // all dropped automatically via field Drop.
 
         // TODO(port): bun_boringssl_sys not in dep graph — gated.
-        #[cfg(any())]
+        
         if let Some(engine) = self.boring_ssl_engine.take() {
             // SAFETY: engine was created by ENGINE_new.
             unsafe { boring_sys::ENGINE_free(engine) };
         }
         debug_assert!(self.cron_jobs.is_empty());
 
-        #[cfg(any())]
+        
         if let Some(s) = self.default_client_ssl_ctx.take() {
             // SAFETY: returned by ssl_ctx_cache.get_or_create_opts with +1 ref.
             unsafe { boring_sys::SSL_CTX_free(s) };

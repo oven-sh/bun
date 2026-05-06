@@ -1,7 +1,9 @@
 //! StatFS and BigIntStatFS classes from node:fs
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
-use bun_sys::StatFS as RawStatFS;
+// TODO(b2-blocked): swap to `bun_sys::StatFS` once exported.
+#[allow(dead_code)]
+type RawStatFS = bun_sys::Stat;
 
 // PORT NOTE: Zig `pub fn StatFSType(comptime big: bool) type` picks the field
 // integer type via `const Int = if (big) i64 else i32;`. Stable Rust const

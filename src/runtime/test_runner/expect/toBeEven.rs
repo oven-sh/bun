@@ -1,9 +1,10 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::Expect;
 
-#[bun_jsc::host_fn(method)]
+// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_be_even(
     this: &mut Expect,
     global_this: &JSGlobalObject,
@@ -57,11 +58,7 @@ pub fn to_be_even(
     }
 
     // handle failure
-    let mut formatter = Formatter {
-        global_this,
-        quote_strings: true,
-        ..Default::default()
-    };
+    let mut formatter = super::make_formatter(global_this);
     // `defer formatter.deinit()` — handled by Drop
     let value_fmt = value.to_fmt(&mut formatter);
     if not {

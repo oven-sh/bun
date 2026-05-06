@@ -8,28 +8,28 @@
 //! are wired as they become compilable; the rest remain gated.
 
 // ─── gated Phase-A drafts (preserved, not compiled) ──────────────────────────
-#[cfg(any())]
+
 #[path = "socket_body.rs"]
 mod socket_body; // full Phase-A draft of socket.zig
-#[cfg(any())]
+
 #[path = "SocketAddress.rs"]
 pub mod socket_address;
-#[cfg(any())]
+
 #[path = "Handlers.rs"]
 pub mod handlers;
-#[cfg(any())]
+
 #[path = "Listener.rs"]
 pub mod listener;
-#[cfg(any())]
+
 #[path = "UpgradedDuplex.rs"]
 pub mod upgraded_duplex;
-#[cfg(any())]
+
 #[path = "WindowsNamedPipe.rs"]
 pub mod windows_named_pipe;
-#[cfg(any())]
+
 #[path = "WindowsNamedPipeContext.rs"]
 pub mod windows_named_pipe_context;
-#[cfg(any())]
+
 #[path = "ssl_wrapper.rs"]
 pub mod ssl_wrapper;
 // tls_socket_functions: BoringSSL FFI now declared locally (ffi mod inside the
@@ -38,19 +38,19 @@ pub mod ssl_wrapper;
 //   TODO(b2-blocked): bun_jsc::node::StringOrBuffer (stub-only)
 //   TODO(b2-blocked): crate::api::bun::x509 (module gated in api.rs)
 //   TODO(b2-blocked): JSGlobalObject::throw(&str) shape mismatch (takes Arguments)
-#[cfg(any())]
+
 #[path = "tls_socket_functions.rs"]
 mod tls_socket_functions;
-#[cfg(any())]
+
 #[path = "udp_socket.rs"]
 pub mod udp_socket_draft;
-#[cfg(any())]
+
 #[path = "uws_dispatch.rs"]
 pub mod uws_dispatch;
-#[cfg(any())]
+
 #[path = "uws_handlers.rs"]
 pub mod uws_handlers;
-#[cfg(any())]
+
 #[path = "uws_jsc.rs"]
 pub mod uws_jsc;
 

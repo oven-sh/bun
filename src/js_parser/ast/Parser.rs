@@ -968,10 +968,11 @@ impl<'a> Parser<'a> {
                             .expect("enum scope-order entry");
                         let enum_scope_count =
                             p.scopes_in_order_for_enum.values()[idx].len();
-                        // SAFETY: re-slice the `&'a mut [_]` we own.
-                        let rest: *mut [_] =
-                            &mut p.scope_order_to_visit[enum_scope_count..];
-                        p.scope_order_to_visit = unsafe { &mut *rest };
+                        // Re-slice the `&'a mut [_]` we own — move out, split,
+                        // move the tail back in (no unsafe needed).
+                        let taken: &'a mut [_] =
+                            core::mem::replace(&mut p.scope_order_to_visit, &mut []);
+                        p.scope_order_to_visit = &mut taken[enum_scope_count..];
                     }
                     _ => {
                         let sliced = allocator.alloc_slice_copy(&[*stmt]);

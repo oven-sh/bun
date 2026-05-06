@@ -91,8 +91,7 @@ impl JSMySQLQuery {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
-        // SAFETY: JS-thread only; sole `&mut VirtualMachine` borrow in this scope.
-        let mut args = jsc::call_frame::ArgumentsSlice::init(unsafe { global_this.bun_vm() }, arguments);
+        let mut args = jsc::call_frame::ArgumentsSlice::init(global_this.bun_vm(), arguments);
         // defer args.deinit() — handled by Drop
         let Some(query) = args.next_eat() else {
             return global_this.throw("query must be a string", &[]);

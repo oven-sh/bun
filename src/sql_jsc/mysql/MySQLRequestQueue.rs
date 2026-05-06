@@ -209,7 +209,9 @@ impl MySQLRequestQueue {
                     if req.is_pipelined() {
                         unsafe { (*this).pipelined_requests += 1 };
                         // SAFETY: `can_pipeline` takes `&self` + `&MySQLConnection`;
-                        // two overlapping shared borrows are sound.
+                        // both shared reborrows are children of the same raw
+                        // tag (`this` was projected from `connection`), so
+                        // overlapping shared reads are sound.
                         if unsafe { (*this).can_pipeline(&*connection) } {
                             debug!("pipelined requests");
                             offset += 1;

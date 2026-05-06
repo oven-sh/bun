@@ -307,8 +307,7 @@ impl PostgresSQLQuery {
     // TODO(b2-blocked): #[crate::jsc::host_fn(export = "PostgresSQLQuery__createInstance")] proc-macro attr
     pub fn call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
-        // SAFETY: JS-thread only; sole `&mut VirtualMachine` borrow in this scope.
-        let mut args = crate::jsc::call_frame::ArgumentsSlice::init(unsafe { global_this.bun_vm() }, arguments);
+        let mut args = crate::jsc::call_frame::ArgumentsSlice::init(global_this.bun_vm(), arguments);
         // ArgumentsSlice has Drop.
         let Some(query) = args.next_eat() else {
             return global_this.throw("query must be a string", &[]);
@@ -419,8 +418,7 @@ impl PostgresSQLQuery {
             return global_object.throw("connection must be a PostgresSQLConnection", &[]);
         };
 
-        // SAFETY: JS-thread only; sole `&mut VirtualMachine` borrow in this scope.
-        connection.poll_ref.ref_(unsafe { global_object.bun_vm() });
+        connection.poll_ref.ref_(global_object.bun_vm());
         let query = arguments[1];
 
         if !query.is_object() {

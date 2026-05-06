@@ -2486,31 +2486,41 @@ impl<'a> BundleV2<'a> {
     /// `source_without_index` is copied and assigned a new source index. That index is returned.
     pub fn enqueue_server_component_generated_file(
         &mut self,
-        data: ServerComponentParseTask::Data,
+        data: crate::ServerComponentParseTask::Data,
         source_without_index: Logger::Source,
     ) -> Result<IndexInt, AllocError> {
         let mut new_source = source_without_index;
         let source_index = self.graph.input_files.len();
-        new_source.index = Index::init(source_index);
+        new_source.index = bun_logger::Index(source_index as u32);
+        // PORT NOTE: `Logger::Source: !Clone` — manually dup the (all-Clone) fields.
+        let task_source = Logger::Source {
+            path: new_source.path.clone(),
+            contents: new_source.contents.clone(),
+            contents_is_recycled: new_source.contents_is_recycled,
+            identifier_name: new_source.identifier_name.clone(),
+            index: new_source.index,
+        };
         self.graph.input_files.append(crate::Graph::InputFile {
-            source: new_source.clone(),
+            source: new_source,
             loader: Loader::Js,
             side_effects: _resolver::SideEffects::HasSideEffects,
             ..Default::default()
         })?;
         self.graph.ast.append(JSAst::empty());
 
-        let task = Box::new(ServerComponentParseTask {
+        #[allow(unreachable_code)]
+        let task = Box::leak(Box::new(ServerComponentParseTask {
             data,
-            ctx: self,
-            source: new_source,
-            ..Default::default()
-        });
+            // SAFETY: lifetime-erase `'a` → `'static` for the BACKREF (matches Zig `*BundleV2`).
+            ctx: (self as *mut Self).cast::<BundleV2<'static>>(),
+            source: task_source,
+            ..todo!("blocked_on: ServerComponentParseTask task field init (private callback)")
+        }));
 
         self.increment_scan_counter();
 
         // SAFETY: `pool` and its `worker_pool` are live for the bundle lifetime.
-        unsafe { (*(*self.graph.pool.as_ptr()).worker_pool).schedule(ThreadPoolLib::Batch::from(&task.task)) };
+        unsafe { (*(*self.graph.pool.as_ptr()).worker_pool).schedule(bun_threading::thread_pool::Batch::from(core::ptr::addr_of_mut!(task.task))) };
 
         Ok(u32::try_from(source_index).unwrap())
     }
@@ -2522,10 +2532,10 @@ pub struct DependenciesScanner {
     pub on_fetch: fn(ctx: *mut (), result: &mut DependenciesScannerResult) -> Result<(), Error>,
 }
 
-pub struct DependenciesScannerResult<'a> {
+pub struct DependenciesScannerResult<'r, 'a> {
     pub dependencies: bun_collections::StringSet,
-    pub reachable_files: &'a [Index],
-    pub bundle_v2: &'a mut BundleV2<'a>,
+    pub reachable_files: &'r [Index],
+    pub bundle_v2: &'r mut BundleV2<'a>,
 }
 
 impl<'a> BundleV2<'a> {
@@ -2564,7 +2574,7 @@ impl<'a> BundleV2<'a> {
     }
 
     pub fn generate_from_cli(
-        transpiler: &'a mut Transpiler,
+        transpiler: &'a mut Transpiler<'a>,
         alloc: &bun_alloc::Arena,
         event_loop: EventLoop,
         enable_reloading: bool,
@@ -2669,7 +2679,7 @@ impl<'a> BundleV2<'a> {
     /// is bounded. Dupe anything you need out of the graph before returning
     /// to the caller.
     pub fn scan_module_graph_from_cli(
-        transpiler: &'a mut Transpiler,
+        transpiler: &'a mut Transpiler<'a>,
         alloc: &bun_alloc::Arena,
         event_loop: EventLoop,
         entry_points: &[&[u8]],
@@ -4641,9 +4651,9 @@ impl<'a> BundleV2<'a> {
         // 3. Add it to the graph
         let graph = &mut self.graph;
         let empty_html_file_source = Logger::Source {
-            path: path.dupe_alloc().expect("oom"),
+            path: logger_path_from_fs(path),
             index: bun_logger::Index(graph.input_files.len() as u32),
-            contents: &b""[..],
+            contents: std::borrow::Cow::Borrowed(&b""[..]),
             ..Default::default()
         };
         let mut js_parser_options = bun_js_parser::ast::ParserOptions::init(self.transpiler_for_target(target).options.jsx.clone(), Loader::Html);

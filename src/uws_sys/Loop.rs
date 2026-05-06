@@ -237,11 +237,11 @@ impl PosixLoop {
 
     // TODO(port): same trampoline-synthesis limitation as `next_tick` — callers pass the
     // C-ABI callback directly. The returned `Handler` stores it for later removal.
-    pub fn add_post_handler<'a>(
-        &'a mut self,
+    pub fn add_post_handler(
+        &mut self,
         ctx: *mut c_void,
         callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
-    ) -> Handler<'a> {
+    ) -> Handler {
         // SAFETY: self is a valid loop pointer
         unsafe { c::uws_loop_addPostHandler(self, ctx, callback) };
         Handler {
@@ -251,11 +251,11 @@ impl PosixLoop {
         }
     }
 
-    pub fn add_pre_handler<'a>(
-        &'a mut self,
+    pub fn add_pre_handler(
+        &mut self,
         ctx: *mut c_void,
         callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
-    ) -> Handler<'a> {
+    ) -> Handler {
         // SAFETY: self is a valid loop pointer
         unsafe { c::uws_loop_addPreHandler(self, ctx, callback) };
         Handler {

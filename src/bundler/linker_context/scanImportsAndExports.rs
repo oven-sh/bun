@@ -1407,6 +1407,9 @@ mod __css_validation {
                 if !record.source_index.is_valid() {
                     continue;
                 }
+                // SAFETY: column ptr valid per `col_ptr!` invariants; element is a
+                // `Box<BundlerStyleSheet>` raw ptr (see `BundledAst.css`). Read-only;
+                // may alias `css_ast` if a file composes from itself (both `&`).
                 let Some(other_css_ast) =
                     col_ref!(css_asts)[record.source_index.get() as usize].map(|p| unsafe {
                         &*(p as *const BundlerStyleSheet)

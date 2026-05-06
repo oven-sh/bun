@@ -9,7 +9,6 @@ use bun_string as strings;
 use bun_core::Output;
 use bun_alloc::mimalloc;
 
-#[allow(non_upper_case_globals)]
 bun_core::declare_scope!(ArrayBuffer, visible);
 
 // ──────────────────────────────────────────────────────────────────────────

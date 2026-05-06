@@ -61,7 +61,7 @@ impl From<InsertError> for bun_core::Error {
     fn from(e: InsertError) -> Self {
         // Private enum, fully consumed in track_resolution_failure; provided
         // for the PORTING.md `error{A,B}!T` contract.
-        bun_core::err!(<&'static str>::from(e))
+        bun_core::err!(from e)
     }
 }
 

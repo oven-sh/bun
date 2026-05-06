@@ -2862,30 +2862,85 @@ impl Lockfile {
 
 const MAX_DEFAULT_TRUSTED_DEPENDENCIES: usize = 512;
 
-// TODO(port): Zig builds this list at comptime from default-trusted-dependencies.txt via
-// @embedFile + tokenize + sort. Rust cannot tokenize/sort at const time without a build
-// script or proc-macro. Phase B: generate via build.rs into an `include!`-ed const slice.
+/// Sorted list of default trusted dependency names.
+///
+/// Zig builds this at comptime from `default-trusted-dependencies.txt` via
+/// `@embedFile` + tokenize + sort. Rust generates the same slice via `build.rs`.
 pub static DEFAULT_TRUSTED_DEPENDENCIES_LIST: &[&[u8]] =
     include!(concat!(env!("OUT_DIR"), "/default_trusted_dependencies_list.rs"));
-// TODO(port): placeholder include path; wire up in Phase B.
 
-/// The default list of trusted dependencies is a static hashmap
-// TODO(port): Zig builds a comptime StaticHashMap keyed by truncated u32 string-hash.
-// Phase B: generate a phf::Map<u32, ()> (or StaticHashMap) via build.rs from the same
-// .txt source. The hash MUST be `String.Builder.stringHash(s) as u32` to match
-// `Lockfile.trusted_dependencies` keys.
-pub static DEFAULT_TRUSTED_DEPENDENCIES: &StaticHashMap<&'static [u8], (), TrustedDepHashCtx, MAX_DEFAULT_TRUSTED_DEPENDENCIES> =
-    &include!(concat!(env!("OUT_DIR"), "/default_trusted_dependencies_map.rs"));
-// TODO(port): placeholder; build.rs must enforce no duplicates and ≤512 entries.
+/// The default list of trusted dependencies is a static hashmap.
+///
+/// Zig builds a comptime `StaticHashMap` keyed by truncated-u32 string-hash.
+/// Rust populates the same `StaticHashMap` lazily on first access from the
+/// build.rs-generated list. The hash is `String.Builder.stringHash(s) as u32`
+/// so entries match `Lockfile.trusted_dependencies` keys.
+pub mod default_trusted_dependencies {
+    use super::{SemverString, DEFAULT_TRUSTED_DEPENDENCIES_LIST, MAX_DEFAULT_TRUSTED_DEPENDENCIES};
+    use bun_collections::static_hash_map::{
+        static_slots, Entry, HashContext, HashMapMixin, StaticHashMap,
+    };
+    use std::sync::LazyLock;
 
-pub struct TrustedDepHashCtx;
-impl TrustedDepHashCtx {
-    pub fn hash(s: &[u8]) -> u64 {
-        // truncate to u32 because Lockfile.trustedDependencies uses the same u32 string hash
-        (SemverString::Builder::string_hash(s) as u32) as u64
+    const SLOTS: usize = static_slots(MAX_DEFAULT_TRUSTED_DEPENDENCIES);
+
+    #[derive(Default)]
+    pub struct TrustedDepHashCtx;
+    impl HashContext<&'static [u8]> for TrustedDepHashCtx {
+        #[inline]
+        fn hash(&self, s: &&'static [u8]) -> u64 {
+            // truncate to u32 because Lockfile.trustedDependencies uses the same u32 string hash
+            (SemverString::Builder::string_hash(s) as u32) as u64
+        }
+        #[inline]
+        fn eql(&self, a: &&'static [u8], b: &&'static [u8]) -> bool {
+            *a == *b
+        }
     }
-    pub fn eql(a: &[u8], b: &[u8]) -> bool {
-        a == b
+
+    type Map = StaticHashMap<
+        &'static [u8],
+        (),
+        TrustedDepHashCtx,
+        MAX_DEFAULT_TRUSTED_DEPENDENCIES,
+        SLOTS,
+    >;
+
+    static MAP: LazyLock<Box<Map>> = LazyLock::new(|| {
+        let mut map = Box::<Map>::default();
+        for &dep in DEFAULT_TRUSTED_DEPENDENCIES_LIST {
+            // build.rs already enforces ≤512 entries and no duplicates.
+            debug_assert!(map.len < MAX_DEFAULT_TRUSTED_DEPENDENCIES);
+            let entry = map.get_or_put_assume_capacity(dep);
+            debug_assert!(!entry.found_existing);
+            *entry.value_ptr = ();
+        }
+        map
+    });
+
+    /// Iterate populated entries (Zig: `default_trusted_dependencies.entries`).
+    pub fn entries() -> impl Iterator<Item = &'static Entry<&'static [u8], ()>> {
+        MAP.entries.iter().filter(|e| !e.is_empty())
+    }
+
+    /// Zig: `default_trusted_dependencies.hasWithHash`.
+    #[inline]
+    pub fn has_with_hash(hash: u64) -> bool {
+        MAP.has_with_hash(hash)
+    }
+
+    /// Zig: `default_trusted_dependencies.has(name)`.
+    ///
+    /// Open-coded `hasContext` so the lookup key can borrow with any lifetime,
+    /// not just `'static`.
+    pub fn has(name: &[u8]) -> bool {
+        let hash = (SemverString::Builder::string_hash(name) as u32) as u64;
+        for entry in &MAP.entries[(hash >> MAP.shift) as usize..] {
+            if entry.hash >= hash {
+                return entry.hash == hash && entry.key == name;
+            }
+        }
+        unreachable!()
     }
 }
 
@@ -2897,7 +2952,7 @@ impl Lockfile {
         }
 
         // Only allow default trusted dependencies for npm packages
-        resolution.tag == Resolution::Tag::Npm && DEFAULT_TRUSTED_DEPENDENCIES.has(name)
+        resolution.tag == Resolution::Tag::Npm && default_trusted_dependencies::has(name)
     }
 }
 

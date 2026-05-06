@@ -1543,9 +1543,10 @@ pub fn install_isolated_packages(
     // setup node_modules/.bun
     let is_new_bun_modules: bool = 'is_new_bun_modules: {
         let node_modules_path = paths::os_path_literal!("node_modules");
-        let bun_modules_path =
-            paths::os_path_literal!(concat!("node_modules/", Store::MODULES_DIR_NAME));
-        // TODO(port): bun.OSPathLiteral compile-time concat — verify Store::MODULES_DIR_NAME is const &str
+        // Zig: `bun.OSPathLiteral("node_modules/" ++ Store.modules_dir_name)`.
+        // Rust `concat!` can't take a `&[u8]` const, so spell the literal —
+        // matches `Installer::NODE_MODULES_BUN`.
+        let bun_modules_path = paths::os_path_literal!("node_modules/.bun");
 
         match sys::mkdirat(Fd::cwd(), node_modules_path, 0o755).unwrap() {
             Ok(()) => {

@@ -977,7 +977,7 @@ impl Task {
                     // .monotonic access of `supported_backend` is okay because it's an
                     // optimization. It's okay if another thread doesn't see an update to this
                     // value "in time".
-                    let mut backend = installer.supported_backend.load(Ordering::Relaxed);
+                    let mut backend = unsafe { core::mem::transmute::<u8, InstallMethod>(installer.supported_backend.load(Ordering::Relaxed)) };
                     'backend: loop {
                         match backend {
                             InstallMethod::Clonefile => {

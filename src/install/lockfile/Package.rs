@@ -23,9 +23,17 @@ use bun_install::lockfile::{
 };
 use bun_install::resolution::ResolutionType;
 
-pub use super::package::scripts::Scripts;
-pub use super::package::meta::Meta;
-pub use super::package::workspace_map as WorkspaceMap;
+#[path = "Package/Scripts.rs"]
+pub mod scripts;
+#[path = "Package/Meta.rs"]
+pub mod meta;
+#[path = "Package/WorkspaceMap.rs"]
+pub mod workspace_map;
+
+pub use scripts::Scripts;
+pub use meta::Meta;
+#[allow(non_snake_case)]
+pub use workspace_map as WorkspaceMap;
 
 bun_output::declare_scope!(Lockfile, hidden);
 

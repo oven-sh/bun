@@ -713,7 +713,14 @@ pub mod lockfile {
             pub arch: crate::npm::Architecture,
             pub os: crate::npm::OperatingSystem,
         }
+        /// Port: `Lockfile.Package` (src/install/lockfile/Package.zig) — the
+        /// real generic instantiated at `u64` (matches Zig `Package(u64)`).
+        /// Re-exported from the file-backed module so callers in
+        /// `package_manager_real` (runTasks / Enqueue) can name
+        /// `bun_install::lockfile::Package` until `lockfile_real` un-gates.
+        pub type Package = crate::lockfile_real::package::Package<u64>;
     }
+    pub use package::Package;
     pub mod tree {
         pub type Id = u32;
     }

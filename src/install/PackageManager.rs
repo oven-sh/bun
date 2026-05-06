@@ -432,7 +432,7 @@ pub struct PackageManager {
     pub finished_installing: AtomicBool,
     pub total_scripts: usize,
 
-    pub root_lifecycle_scripts: Option<Package::Scripts::List>,
+    pub root_lifecycle_scripts: Option<Package::scripts::List>,
 
     pub node_gyp_tempdir_name: Box<[u8]>,
 
@@ -442,21 +442,21 @@ pub struct PackageManager {
 
     pub options: Options,
     pub preinstall_state: Vec<PreinstallState>,
-    pub postinstall_optimizer: PostinstallOptimizer::List,
+    pub postinstall_optimizer: crate::postinstall_optimizer::List,
 
     pub global_link_dir: Option<bun_sys::Dir>, // TODO(port): std.fs.Dir
     pub global_dir: Option<bun_sys::Dir>,      // TODO(port): std.fs.Dir
     pub global_link_dir_path: Box<[u8]>,
 
     pub on_wake: WakeHandler,
-    pub ci_mode: LazyBool<fn(&mut PackageManager) -> bool>, // TODO(port): bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode")
+    pub ci_mode: LazyBool<fn(&PackageManager) -> bool>, // TODO(port): bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode")
 
-    pub peer_dependencies: LinearFifo<DependencyID, /* .Dynamic */ 0>, // TODO(port): LinearFifo dynamic variant
+    pub peer_dependencies: LinearFifo<DependencyID, DynamicBuffer<DependencyID>>,
 
     // name hash from alias package name -> aliased package dependency version info
     pub known_npm_aliases: NpmAliasMap,
 
-    pub event_loop: AnyEventLoop,
+    pub event_loop: AnyEventLoop<'static>,
 
     // During `installPackages` we learn exactly what dependencies from --trust
     // actually have scripts to run, and we add them to this list

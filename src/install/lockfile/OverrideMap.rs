@@ -136,11 +136,11 @@ impl OverrideMap {
 
     /// Given a package json expression, detect and parse override configuration into the given override map.
     /// It is assumed the input map is uninitialized (zero entries)
-    pub fn parse_append(
+    pub fn parse_append<I>(
         &mut self,
         pm: &mut PackageManager,
         lockfile: &mut Lockfile,
-        root_package: &mut Package,
+        root_package: &mut Package<I>,
         log: &mut logger::Log,
         json_source: &logger::Source,
         expr: Expr,
@@ -160,11 +160,11 @@ impl OverrideMap {
     }
 
     /// https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides
-    pub fn parse_from_overrides(
+    pub fn parse_from_overrides<I>(
         &mut self,
         pm: &mut PackageManager,
         lockfile: &mut Lockfile,
-        root_package: &mut Package,
+        root_package: &mut Package<I>,
         source: &logger::Source,
         log: &mut logger::Log,
         expr: Expr,
@@ -242,11 +242,11 @@ impl OverrideMap {
 
     /// yarn classic: https://classic.yarnpkg.com/lang/en/docs/selective-version-resolutions/
     /// yarn berry: https://yarnpkg.com/configuration/manifest#resolutions
-    pub fn parse_from_resolutions(
+    pub fn parse_from_resolutions<I>(
         &mut self,
         pm: &mut PackageManager,
         lockfile: &mut Lockfile,
-        root_package: &mut Package,
+        root_package: &mut Package<I>,
         source: &logger::Source,
         log: &mut logger::Log,
         expr: Expr,
@@ -320,11 +320,11 @@ impl OverrideMap {
 
 // PERF(port): was comptime monomorphization (`comptime field: []const u8`) — profile in Phase B.
 // Only used in warning-message formatting, so runtime &'static str is fine.
-pub fn parse_override_value(
+pub fn parse_override_value<I>(
     field: &'static str,
     lockfile: &mut Lockfile,
     package_manager: &mut PackageManager,
-    root_package: &mut Package,
+    root_package: &mut Package<I>,
     source: &logger::Source,
     loc: logger::Loc,
     log: &mut logger::Log,

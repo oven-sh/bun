@@ -1152,5 +1152,5 @@ unsafe extern "C" {
 //   source:     src/runtime/webcore/ReadableStream.zig (853 lines)
 //   confidence: medium
 //   todos:      15
-//   notes:      NewSource comptime fn-bundle → SourceContext trait; .classes.ts codegen accessors (js.*, toJS/fromJS, cached props) need // TODO(b2-blocked): #[bun_jsc::JsClass] proc-macro; global_this field lifetime needs Phase B decision; from_blob_copy_ref Bytes arm stubbed with todo!() pending ByteBlobLoader constructor reshape.
+//   notes:      NewSource comptime fn-bundle → SourceContext trait; .classes.ts codegen accessors (js.*, toJS/fromJS, cached props) bound via SourceContext::JS_* consts + source_context_codegen! macro; global_this field lifetime needs Phase B decision.
 // ──────────────────────────────────────────────────────────────────────────

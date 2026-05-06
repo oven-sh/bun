@@ -505,12 +505,6 @@ impl Linker {
         if !import_record.path.text.is_empty()
             && resolver::is_package_path(import_record.path.text)
         {
-            // TODO(b2-blocked): bun_resolve_builtins — the browser-target
-            // node-builtin diagnostic (linker.zig:229) is ``-gated
-            // until `is_node_builtin` is wired. Until then, fall through to the
-            // generic "bun install" message rather than panicking on common
-            // input (`import 'node:fs'` with `--target=browser`).
-            
             if opts.target == BundleTarget::Browser
                 && is_node_builtin(import_record.path.text)
             {

@@ -615,11 +615,11 @@ impl Expr {
         None
     }
 
-    pub fn get_string(
+    pub fn get_string<'b>(
         expr: &Expr,
-        bump: &Bump,
+        bump: &'b Bump,
         name: &[u8],
-    ) -> Result<Option<(*const [u8], Loc)>, AllocError> {
+    ) -> Result<Option<(&'b [u8], Loc)>, AllocError> {
         if let Some(q) = expr.as_property(name) {
             if let Some(str) = q.expr.as_string(bump) {
                 return Ok(Some((str, q.expr.loc)));

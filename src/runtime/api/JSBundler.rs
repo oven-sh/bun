@@ -66,13 +66,12 @@ bun_output::declare_scope!(Transpiler, visible);
 fn compile_target_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<CompileTarget> {
     let slice = value.to_slice(global)?;
     if !slice.slice().starts_with(b"bun-") {
-        return global.throw_invalid_arguments(
-            &format!(
+        return Err(global.throw_invalid_arguments(
+            format_args!(
                 "Expected compile target to start with 'bun-', got {}",
                 bstr::BStr::new(slice.slice())
             ),
-            &[],
-        );
+        ));
     }
     compile_target_from_slice(global, slice.slice())
 }

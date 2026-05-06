@@ -698,6 +698,24 @@ fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a mut [
     unsafe { core::slice::from_raw_parts_mut(buf.as_mut_ptr(), written) }
 }
 
+/// Like [`buf_print`] but appends a NUL terminator and returns a `&ZStr`.
+/// Mirrors `std.fmt.bufPrintZ(buf, fmt, args) catch unreachable`.
+fn buf_print_z<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a ZStr {
+    let total = buf.len();
+    let mut cursor: &mut [u8] = buf;
+    cursor.write_fmt(args).expect("unreachable");
+    let remaining = cursor.len();
+    let written = total - remaining;
+    debug_assert!(written < total, "buf_print_z overflow");
+    // SAFETY: `written` bytes were just written contiguously from buf[0]; we
+    // place a NUL at buf[written] (in bounds: written < total) and reinterpret
+    // as a length-carrying NUL-terminated slice.
+    unsafe {
+        *buf.as_mut_ptr().add(written) = 0;
+        ZStr::from_raw(buf.as_ptr(), written)
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/cli/install_completions_command.zig (550 lines)

@@ -1756,7 +1756,7 @@ impl PublishCommand {
                 ",\"_attachments\":{{\"{}\":{{\"content_type\":\"{}\",\"data\":\"",
                 pack::fmt_tarball_filename(&ctx.package_name, &ctx.package_version, pack::TarballNameStyle::Raw),
                 "application/octet-stream",
-            )?;
+            ).ok();
 
             buf.reserve(encoded_tarball_len);
             let old_len = buf.len();

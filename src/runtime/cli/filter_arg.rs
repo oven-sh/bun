@@ -195,7 +195,7 @@ impl FilterSet {
         self.matches_path(path)
     }
 
-    pub fn init(filters: &[&[u8]], cwd_: &[u8]) -> Result<FilterSet, bun_core::Error> {
+    pub fn init<F: AsRef<[u8]>>(filters: &[F], cwd_: &[u8]) -> Result<FilterSet, bun_core::Error> {
         // TODO(port): narrow error set
         let cwd = cwd_;
 
@@ -207,7 +207,8 @@ impl FilterSet {
             has_name_filters: false,
             match_all: false,
         };
-        for &filter_utf8_ in filters {
+        for filter_utf8_ in filters {
+            let filter_utf8_: &[u8] = filter_utf8_.as_ref();
             if filter_utf8_ == b"*" || filter_utf8_ == b"**" {
                 self_.match_all = true;
                 continue;

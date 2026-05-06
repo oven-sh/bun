@@ -32,6 +32,25 @@ bun_output::declare_scope!(processChunkDependencies, visible);
 bun_output::declare_scope!(processEdgeAttachment, visible);
 bun_output::declare_scope!(disconnectEdgeFromDependencyList, hidden);
 
+// PORT NOTE: `bun_bundler::bake_types::Side` does not implement `From<_> for &str`;
+// local helper for logging.
+#[inline]
+fn side_name(side: Side) -> &'static str {
+    match side {
+        Side::Client => "client",
+        Side::Server => "server",
+    }
+}
+
+#[inline]
+fn trace_import_goal_name(goal: TraceImportGoal) -> &'static str {
+    match goal {
+        TraceImportGoal::FindCss => "find_css",
+        TraceImportGoal::FindClientModules => "find_client_modules",
+        TraceImportGoal::FindErrors => "find_errors",
+    }
+}
+
 type JsCode = Box<[u8]>;
 type CssAssetId = u64;
 

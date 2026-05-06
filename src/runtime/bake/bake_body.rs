@@ -968,7 +968,7 @@ impl Framework {
                 )));
             }
             // PORT NOTE: reshaped alloc+index → Vec::push (owned; deep-cloned with Framework)
-            let mut file_system_router_types = Vec::with_capacity(len);
+            let mut file_system_router_types = Vec::with_capacity(len as usize);
 
             let mut it = array.array_iterator(global)?;
             let mut i: usize = 0;

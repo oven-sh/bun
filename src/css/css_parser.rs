@@ -2156,7 +2156,7 @@ impl<'a, T: CustomAtRuleParser> QualifiedRuleParser for NestedRuleParser<'a, T> 
              {
             let len = input.position() - location;
             let mut usage = PropertyBitset::init_empty();
-            let mut custom_properties: BabyList<&[u8]> = BabyList::default();
+            let mut custom_properties: BabyList<&'static [u8]> = BabyList::default();
             fill_property_bit_set(&mut usage, &declarations, &mut custom_properties);
 
             let custom_properties_slice = custom_properties.slice();
@@ -2428,15 +2428,20 @@ impl PropertyUsage {
 // Phase B computes the variant count via `strum::EnumCount`.
 pub type PropertyBitset = StaticBitSet<{ 1024 }>;
 
-pub fn fill_property_bit_set<'a>(
+pub fn fill_property_bit_set(
     bitset: &mut PropertyBitset,
-    block: &'a DeclarationBlock<'a>,
-    custom_properties: &mut BabyList<&'a [u8]>,
+    block: &DeclarationBlock<'_>,
+    custom_properties: &mut BabyList<&'static [u8]>,
 ) {
     for prop in block.declarations.iter() {
         let tag = match prop {
             Property::Custom(c) => {
-                let _ = custom_properties.append(c.name.as_str());
+                // SAFETY: `'bump`-erasure — `CustomPropertyName` stores an
+                // arena-owned `*const [u8]`; detach from `block`'s borrow so
+                // callers can move `block` afterwards. Re-thread once
+                // `PropertyUsage` carries the arena lifetime (TODO at field def).
+                let name: &'static [u8] = unsafe { &*(c.name.as_str() as *const [u8]) };
+                let _ = custom_properties.append(name);
                 continue;
             }
             Property::Unparsed(u) => u.property_id.tag(),
@@ -2449,7 +2454,9 @@ pub fn fill_property_bit_set<'a>(
     for prop in block.important_declarations.iter() {
         let tag = match prop {
             Property::Custom(c) => {
-                let _ = custom_properties.append(c.name.as_str());
+                // SAFETY: see above.
+                let name: &'static [u8] = unsafe { &*(c.name.as_str() as *const [u8]) };
+                let _ = custom_properties.append(name);
                 continue;
             }
             Property::Unparsed(u) => u.property_id.tag(),
@@ -2605,9 +2612,9 @@ impl<AtRule> StyleSheet<AtRule> {
         }
     }
 
-    pub fn to_css_with_writer_impl(
-        &self,
-        printer: &mut Printer,
+    pub fn to_css_with_writer_impl<'a>(
+        &'a self,
+        printer: &mut Printer<'a>,
         project_root: Option<&[u8]>,
     ) -> Result<ToCssResultInternal, PrintErr> {
         // #[cfg(feature = "sourcemap")] { printer.sources = Some(&self.sources); }

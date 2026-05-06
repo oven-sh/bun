@@ -209,7 +209,11 @@ impl KeyframeSelector {
         } else if bun_string::strings::eql_case_insensitive_ascii_check_length(ident, b"to") {
             Ok(KeyframeSelector::To)
         } else {
-            Err(location.new_unexpected_token_error(css::Token::Ident(ident)))
+            // SAFETY: `ident` is a sub-slice of the parser input arena which
+            // outlives the AST; see `src_str` in css_parser.rs.
+            Err(location.new_unexpected_token_error(css::Token::Ident(unsafe {
+                css::css_parser::src_str(ident)
+            })))
         }
     }
 }

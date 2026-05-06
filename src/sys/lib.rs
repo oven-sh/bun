@@ -2150,16 +2150,20 @@ mod windows_impl {
         unsafe { _umask(mode as core::ffi::c_int) as Mode }
     }
     pub fn recv(fd: Fd, buf: &mut [u8], flags: i32) -> Maybe<usize> {
-        // sys.zig:2243 — windows: winsock `recv`.
-        let rc = unsafe { w::ws2_32::recv(fd.native() as _, buf.as_mut_ptr() as *mut _, buf.len() as i32, flags) };
+        // sys.zig:2243-2244 — windows: winsock `recv` with `adjusted_len =
+        // @min(buf.len, max_count)` so the `usize → i32` cast can't wrap.
+        let len = buf.len().min(MAX_COUNT) as i32;
+        let rc = unsafe { w::ws2_32::recv(fd.native() as _, buf.as_mut_ptr() as *mut _, len, flags) };
         if rc < 0 {
             return Err(Error::new(w::WSAGetLastError().unwrap_or(E::EUNKNOWN), Tag::recv).with_fd(fd));
         }
         Ok(rc as usize)
     }
     pub fn send(fd: Fd, buf: &[u8], flags: i32) -> Maybe<usize> {
-        // sys.zig:2294 — windows: winsock `send`.
-        let rc = unsafe { w::ws2_32::send(fd.native() as _, buf.as_ptr() as *const _, buf.len() as i32, flags) };
+        // sys.zig:2294 — windows: winsock `send`. Clamp to `i32::MAX` so the
+        // `usize → i32` cast can't wrap to a negative length on huge buffers.
+        let len = buf.len().min(MAX_COUNT) as i32;
+        let rc = unsafe { w::ws2_32::send(fd.native() as _, buf.as_ptr() as *const _, len, flags) };
         if rc < 0 {
             return Err(Error::new(w::WSAGetLastError().unwrap_or(E::EUNKNOWN), Tag::send).with_fd(fd));
         }

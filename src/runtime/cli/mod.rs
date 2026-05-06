@@ -145,22 +145,25 @@ pub mod cli {
 
     pub use bun_options_types::CompileTarget::CompileTarget;
 
+    // Zig `var log_: logger.Log = undefined;` — process-global, init in start().
+    pub static mut LOG_: core::mem::MaybeUninit<logger::Log> = core::mem::MaybeUninit::uninit();
+
     pub fn start() {
         IS_MAIN_THREAD.with(|c| c.set(true));
         // SAFETY: single-threaded process startup; no other reader yet
         unsafe { START_TIME = bun_core::time::nano_timestamp() };
+        // SAFETY: single-threaded process startup
+        unsafe { (*(&raw mut LOG_)).write(logger::Log::init()) };
 
-        // TODO(b2-blocked): logger::Log::init() global storage + MainPanicHandler
-        // wiring. The full body lives in cli_body.rs::cli::start.
-        #[cfg(any())]
-        {
-            let log = unsafe { LOG_.assume_init_mut() };
-            if let Err(err) = Command::start(log) {
-                let _ = log.print(Output::error_writer());
-                bun_crash_handler::handle_root_error(err, None);
-            }
+        // TODO(b2-blocked): MainPanicHandler wiring. Full body in cli_body.rs.
+        // SAFETY: just initialized above; single-threaded for the lifetime of `log`.
+        let log = unsafe { (*(&raw mut LOG_)).assume_init_mut() };
+        if let Err(err) = Command::start(log) {
+            // TODO(b2): `Log::print` wants `&mut impl fmt::Write`;
+            // `Output::error_writer()` is `*mut io::Writer`. Route through a
+            // shim once io::Writer implements fmt::Write.
+            bun_crash_handler::handle_root_error(err, None);
         }
-        todo!("Cli::start — blocked on Command::start dispatch (cli_body.rs)")
     }
 }
 pub use cli as Cli;
@@ -500,6 +503,25 @@ pub mod command {
     pub fn start(log: &mut logger::Log) -> Result<(), bun_core::Error> {
         let _ = log;
         let tag = which();
+
+        // Phase-C: `Arguments::parse` (which normally handles `--help`/`-v`
+        // for AutoCommand via clap) is still gated. Short-circuit the common
+        // global flags here so `bun --help` / `bun -v` work end-to-end.
+        // TODO(b2-blocked): remove once Arguments::parse is un-gated.
+        if matches!(tag, Tag::AutoCommand) {
+            for a in bun::argv().iter().skip(1) {
+                match a {
+                    b"--help" | b"-h" => {
+                        tag_print_help(Tag::AutoCommand, true);
+                        Global::exit(0);
+                    }
+                    b"-v" | b"--version" => super::print_version_and_exit(),
+                    b"--revision" => super::print_revision_and_exit(),
+                    _ => {}
+                }
+            }
+        }
+
         match tag {
             Tag::HelpCommand => return HelpCommand::exec(),
             Tag::ReservedCommand => return ReservedCommand::exec(),

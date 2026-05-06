@@ -1,3 +1,33 @@
+//! `Bun.Transpiler` — single-file transform/scan over the JS parser.
+
+/// Opaque surface — full `.classes.ts` payload (Arena + Transpiler + Config)
+/// lives in `_jsc_gated`.
+// TODO(b2-blocked): bun_jsc::JsClass — replace with _jsc_gated::JSTranspiler.
+pub struct JSTranspiler(());
+
+/// Heuristic used by the REPL: returns true if `code` starts with `{` (after
+/// whitespace) and doesn't end with `;` — i.e. should be wrapped in `()` to
+/// parse as an object literal rather than a block statement. Mirrors Node.js.
+pub fn is_likely_object_literal(code: &[u8]) -> bool {
+    let mut start: usize = 0;
+    while start < code.len()
+        && matches!(code[start], b' ' | b'\t' | b'\n' | b'\r')
+    {
+        start += 1;
+    }
+    if start >= code.len() || code[start] != b'{' {
+        return false;
+    }
+    let mut end: usize = code.len();
+    while end > 0 && matches!(code[end - 1], b' ' | b'\t' | b'\n' | b'\r') {
+        end -= 1;
+    }
+    !(end > 0 && code[end - 1] == b';')
+}
+
+// TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn]/JsClass + bun_schema::api
+#[cfg(any())]
+mod _jsc_gated {
 use std::cell::Cell;
 use std::io::Write as _;
 
@@ -1538,6 +1568,8 @@ impl JSTranspiler {
 enum JsonMode {
     Json,
 }
+
+} // mod _jsc_gated
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

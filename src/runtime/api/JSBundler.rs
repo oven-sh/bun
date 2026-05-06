@@ -1,3 +1,38 @@
+//! `Bun.build()` plugin host + `BuildArtifact` JS wrapper.
+
+/// `BuildArtifact.kind` — what role an output file plays.
+#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
+pub enum OutputKind {
+    #[strum(serialize = "chunk")] Chunk,
+    #[strum(serialize = "asset")] Asset,
+    #[strum(serialize = "entry-point")] EntryPoint,
+    #[strum(serialize = "sourcemap")] Sourcemap,
+    #[strum(serialize = "bytecode")] Bytecode,
+    #[strum(serialize = "module_info")] ModuleInfo,
+    #[strum(serialize = "metafile-json")] MetafileJson,
+    #[strum(serialize = "metafile-markdown")] MetafileMarkdown,
+}
+
+impl OutputKind {
+    pub fn is_file_in_standalone_mode(self) -> bool {
+        !matches!(
+            self,
+            Self::Sourcemap | Self::Bytecode | Self::ModuleInfo
+                | Self::MetafileJson | Self::MetafileMarkdown
+        )
+    }
+}
+
+/// Opaque surface — full `.classes.ts` payload wraps a `webcore::Blob` plus
+/// `loader/path/hash/output_kind/sourcemap` and lives in `_jsc_gated`.
+// TODO(b2-blocked): bun_jsc::JsClass + crate::webcore::Blob — replace with _jsc_gated::BuildArtifact.
+pub struct BuildArtifact(());
+/// Opaque surface — `JSBundler::Config` + plugin pipeline.
+pub struct JSBundler(());
+
+// TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn]/JsClass proc-macros
+#[cfg(any())]
+mod _jsc_gated {
 use core::ffi::c_void;
 
 use bun_core::Output;
@@ -2411,6 +2446,8 @@ impl BuildArtifact {
         Ok(())
     }
 }
+
+} // mod _jsc_gated
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

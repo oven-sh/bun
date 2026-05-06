@@ -54,6 +54,24 @@ pub struct ResolveMessage {
 // ─── compiling submodules (api/ dir) ─────────────────────────────────────────
 #[path = "api/cron_parser.rs"]
 pub mod cron_parser;
+#[path = "api/cron.rs"]
+pub mod cron;
+#[path = "api/JSONCObject.rs"]
+pub mod jsonc_object;
+#[path = "api/MarkdownObject.rs"]
+pub mod markdown_object;
+#[path = "api/Archive.rs"]
+pub mod archive;
+#[path = "api/filesystem_router.rs"]
+pub mod filesystem_router;
+#[path = "api/html_rewriter.rs"]
+pub mod html_rewriter;
+#[path = "api/JSTranspiler.rs"]
+pub mod js_transpiler;
+#[path = "api/JSBundler.rs"]
+pub mod js_bundler;
+#[path = "api/BunObject.rs"]
+pub mod bun_object;
 
 // ─── api/bun/ core (process / spawn / pty / h2) ──────────────────────────────
 // `#[path]` is relative to the dir containing this file (`src/runtime/`); the
@@ -183,40 +201,42 @@ pub use bun::process::Process as SpawnProcess;
 pub use crate::image as Image;
 pub use crate::shell as Shell;
 
+// ─── un-gated re-exports (opaque structs / pure helpers compiling) ───────────
+/// `globalThis.Bun`
+pub use crate::api::bun_object as Bun;
+pub use crate::api::jsonc_object as JSONCObject;
+pub use crate::api::markdown_object as MarkdownObject;
+pub use crate::api::js_bundler::BuildArtifact;
+pub use crate::api::js_bundler::JSBundler;
+pub use crate::api::js_bundler::OutputKind;
+pub use crate::api::html_rewriter as HTMLRewriter;
+pub use crate::api::filesystem_router::FileSystemRouter;
+pub use crate::api::filesystem_router::MatchedRoute;
+pub use crate::api::archive as Archive;
+pub use crate::api::js_transpiler as JSTranspiler;
+pub use crate::api::bun::h2_frame_parser::H2FrameParser;
+
 // ─── gated re-exports (target modules not yet declared / lower-tier missing) ─
 #[cfg(any())]
 mod _gated_reexports {
-    /// `globalThis.Bun`
-    pub use crate::api::bun_object as Bun;
     pub use crate::api::native_promise_context as NativePromiseContext;
     pub use crate::api::bun::secure_context as SecureContext;
     pub use crate::api::bun::ssl_context_cache as SSLContextCache;
     pub use crate::api::bun::subprocess as Subprocess;
-    pub use crate::api::cron;
     pub use crate::api::bun::terminal as Terminal;
     // TODO(b2-blocked): crate::webview (module not declared)
     pub use crate::webview::host_process as WebViewHostProcess;
     pub use crate::webview::chrome_process as ChromeProcess;
     pub use crate::api::hash_object as HashObject;
-    pub use crate::api::jsonc_object as JSONCObject;
-    pub use crate::api::markdown_object as MarkdownObject;
     pub use crate::api::toml_object as TOMLObject;
     pub use crate::api::unsafe_object as UnsafeObject;
     pub use crate::api::json5_object as JSON5Object;
     pub use crate::api::yaml_object as YAMLObject;
     // TODO(b2-blocked): crate::timer (module not declared)
     pub use crate::timer as Timer;
-    pub use crate::api::js_bundler::BuildArtifact;
     // TODO(b2-blocked): crate::dns_jsc (module not declared)
     pub use crate::dns_jsc::dns;
-    pub use crate::api::html_rewriter as HTMLRewriter;
-    pub use crate::api::filesystem_router::FileSystemRouter;
-    pub use crate::api::archive as Archive;
     pub use crate::api::glob as Glob;
-    pub use crate::api::bun::h2_frame_parser::H2FrameParser;
-    pub use crate::api::js_bundler::JSBundler;
-    pub use crate::api::js_transpiler as JSTranspiler;
-    pub use crate::api::filesystem_router::MatchedRoute;
     pub use crate::node::zlib::native_brotli as NativeBrotli;
     pub use crate::node::zlib::native_zlib as NativeZlib;
     // TODO(b2-blocked): bun_sql_jsc (not in deps)

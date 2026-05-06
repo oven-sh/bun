@@ -16,6 +16,10 @@
 
 mod phase_c_exports;
 
+// Force-link `bun_platform` so its `#[no_mangle]` C exports
+// (`sys_epoll_pwait2`, `ioctl_ficlone`, …) reach the linker.
+use bun_platform as _;
+
 use bun_core::output;
 use bun_core::Global;
 use bun_core::StackCheck;
@@ -72,12 +76,6 @@ fn main() {
     // wire once that crate is in the dep graph.
 
     // 6. CLI dispatch.
-    #[cfg(any())] // TODO(phase-c): flip on when bun_runtime compiles.
-    {
-        bun_runtime::cli::Cli::start();
-        Global::exit(0);
-    }
-
-    eprintln!("bun-rs: link-only stub — bun_runtime::cli not yet enabled (Phase C)");
+    bun_runtime::cli::Cli::start();
     Global::exit(0);
 }

@@ -1,3 +1,46 @@
+//! `globalThis.Bun` — top-level host functions and lazy-property getters.
+
+/// Build a public-path string from `to` against `origin` using `comptime_separator`
+/// for joining. Called by both the bundler dev-server and `BunObject` getters.
+pub fn get_public_path_with_asset_prefix<W: core::fmt::Write>(
+    to: &[u8],
+    dir: &[u8],
+    origin: &bun_url::URL,
+    asset_prefix: &[u8],
+    writer: &mut W,
+    comptime_separator: u8,
+) {
+    use bun_str::strings;
+    if to.is_empty() {
+        return;
+    }
+    let to = if strings::has_prefix(to, dir) { &to[dir.len()..] } else { to };
+    let to = strings::remove_leading_dot_slash(to);
+    if !origin.is_absolute() {
+        if !asset_prefix.is_empty() {
+            let _ = writer.write_str(core::str::from_utf8(asset_prefix).unwrap_or(""));
+        }
+        let to = strings::remove_leading_dot_slash(to);
+        let _ = writer.write_str(core::str::from_utf8(to).unwrap_or(""));
+        return;
+    }
+    // TODO(b2): Zig `joinWrite` takes a separator arg; bun_url::URL::join_write
+    // currently does not. Ignore `comptime_separator` until that lands.
+    // PERF(port): bun_url::bun_io::Write is crate-private; route through a
+    // Vec<u8> (which it impls) then forward to the caller's fmt::Write.
+    let _ = comptime_separator;
+    let mut buf: Vec<u8> = Vec::new();
+    let _ = origin.join_write(&mut buf, asset_prefix, b"", to, b"");
+    let _ = writer.write_str(core::str::from_utf8(&buf).unwrap_or(""));
+}
+
+// ─── host-fn bodies (the `Bun.*` surface proper) ────────────────────────────
+// ~60 `#[bun_jsc::host_fn]` entry points + lazy-getter shims. Every body
+// touches `JSGlobalObject`/`CallFrame` and most fan out to sibling api/*
+// modules that are themselves gated. Preserved verbatim.
+// TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn] proc-macro + bun_gen codegen crate
+#[cfg(any())]
+mod _jsc_gated {
 use core::ffi::{c_char, c_int, c_void};
 use std::io::Write as _;
 
@@ -19,7 +62,7 @@ use bun_zlib as zlib;
 use crate::cli::open::Editor;
 use bun_url::URL;
 use bun_semver::SemverObject;
-use bun_gen::bun_object as gen;
+use bun_gen::bun_object as r#gen;
 
 use bun_runtime::api::{
     self, FFIObject, HashObject, JSON5Object, JSONCObject, MarkdownObject, TOMLObject,
@@ -253,7 +296,7 @@ pub fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
 pub fn braces(
     global: &JSGlobalObject,
     brace_str: BunString,
-    opts: gen::BracesOptions,
+    opts: r#gen::BracesOptions,
 ) -> JsResult<JSValue> {
     let brace_slice = brace_str.to_utf8();
 
@@ -1881,13 +1924,11 @@ pub mod JSZlib {
         Libdeflate,
     }
 
-    impl Library {
-        // bun.ComptimeEnumMap(Library)
-        pub static MAP: phf::Map<&'static [u8], Library> = phf::phf_map! {
-            b"zlib" => Library::Zlib,
-            b"libdeflate" => Library::Libdeflate,
-        };
-    }
+    // bun.ComptimeEnumMap(Library)
+    pub static LIBRARY_MAP: phf::Map<&'static [u8], Library> = phf::phf_map! {
+        b"zlib" => Library::Zlib,
+        b"libdeflate" => Library::Libdeflate,
+    };
 
     // This has to be `inline` due to the callframe.
     #[inline]
@@ -2675,6 +2716,8 @@ pub fn create_bun_stdout(global_this: &JSGlobalObject) -> JSValue {
     let blob = WebCore::Blob::new(WebCore::Blob::init_with_store(store, global_this));
     blob.to_js(global_this)
 }
+
+} // mod _jsc_gated
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

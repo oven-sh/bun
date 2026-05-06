@@ -19,12 +19,11 @@ bun_core.workspace = true
 bun_sys.workspace = true
 bun_crash_handler.workspace = true
 bun_mimalloc_sys.workspace = true
+bun_platform.workspace = true
 
-# TODO(phase-c): re-enable once their B-2 compile errors are fixed. The
-# `main()` body wants `bun_runtime::cli::Cli::start()` and the JSC bridge,
-# but pulling them in today aborts the build before the link step we are
-# trying to exercise here.
-# bun_runtime.workspace = true
+# Phase-C: bun_runtime now compiles green; pulled in for `Cli::start()`.
+# bun_jsc remains gated until the JSC bridge links.
+bun_runtime.workspace = true
 # bun_jsc.workspace = true
 
 [build-dependencies]

@@ -1899,7 +1899,7 @@ pub fn get_uid() -> u32 {
 }
 
 /// Validate title: only [a-zA-Z0-9_-], non-empty.
-fn validate_title(title: &[u8]) -> bool {
+pub fn validate_title(title: &[u8]) -> bool {
     if title.is_empty() {
         return false;
     }
@@ -1912,7 +1912,7 @@ fn validate_title(title: &[u8]) -> bool {
 }
 
 /// Filter crontab content, removing any entry with matching title marker.
-fn filter_crontab(
+pub fn filter_crontab(
     content: &[u8],
     title: &[u8],
     result: &mut Vec<u8>,
@@ -1958,7 +1958,7 @@ fn resolve_path(
 }
 
 /// XML-escape a string for safe embedding in plist XML.
-fn xml_escape(input: &[u8]) -> Result<Vec<u8>, bun_alloc::AllocError> {
+pub fn xml_escape(input: &[u8]) -> Result<Vec<u8>, bun_alloc::AllocError> {
     let mut needs_escape = false;
     for &c in input {
         if c == b'&' || c == b'<' || c == b'>' || c == b'"' || c == b'\'' {
@@ -1985,8 +1985,10 @@ fn xml_escape(input: &[u8]) -> Result<Vec<u8>, bun_alloc::AllocError> {
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, PartialEq, Eq)]
-enum CalendarError {
+pub enum CalendarError {
+    #[error("InvalidCron")]
     InvalidCron,
+    #[error("OutOfMemory")]
     OutOfMemory,
 }
 // TODO(port): narrow error set
@@ -1997,7 +1999,7 @@ impl From<CalendarError> for bun_core::Error {
     }
 }
 
-fn cron_to_calendar_interval(schedule: &[u8]) -> Result<Vec<u8>, CalendarError> {
+pub fn cron_to_calendar_interval(schedule: &[u8]) -> Result<Vec<u8>, CalendarError> {
     let mut fields: [&[u8]; 5] = [b""; 5];
     let mut count: usize = 0;
     for field in schedule.split(|&b| b == b' ').filter(|s| !s.is_empty()) {
@@ -2162,9 +2164,12 @@ fn emit_calendar_dicts(
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, PartialEq, Eq)]
-enum TaskXmlError {
+pub enum TaskXmlError {
+    #[error("InvalidCron")]
     InvalidCron,
+    #[error("TooManyTriggers")]
     TooManyTriggers,
+    #[error("OutOfMemory")]
     OutOfMemory,
 }
 
@@ -2176,7 +2181,7 @@ impl From<TaskXmlError> for bun_core::Error {
 
 /// Build a Windows Task Scheduler XML definition from a parsed cron expression.
 /// Uses TimeTrigger+Repetition for simple intervals, CalendarTrigger for complex schedules.
-fn cron_to_task_xml(
+pub fn cron_to_task_xml(
     cron: &CronExpression,
     bun_exe: &[u8],
     title: &[u8],
@@ -2535,6 +2540,7 @@ fn compute_step_interval<T: StepBits>(bits: T, _min: u8, max: u8) -> Option<u32>
     Some(step)
 }
 
+#[cfg(any())] // moved into _jsc_gated above (bun_str::ZString surface)
 fn alloc_print_z(args: core::fmt::Arguments<'_>) -> Result<ZString, bun_alloc::AllocError> {
     let mut v = Vec::new();
     v.write_fmt(args).map_err(|_| bun_alloc::AllocError)?;
@@ -2553,6 +2559,7 @@ fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> Result<&'
 }
 
 /// Create a temp file path with a random suffix to avoid TOCTOU/symlink attacks.
+#[cfg(any())] // moved into _jsc_gated above (bun_fs::FileSystem + bun_str::ZString)
 fn make_temp_path(prefix: &'static str) -> Result<ZString, bun_alloc::AllocError> {
     let mut name_buf = PathBuffer::uninit();
     // PORT NOTE: Zig used `prefix ++ "tmp"` at comptime; concat at runtime here.

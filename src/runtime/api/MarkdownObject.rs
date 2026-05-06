@@ -1,3 +1,39 @@
+//! `Bun.markdown` — html/ansi/react/render host fns over `bun_md`.
+
+/// Slice the language token out of a fenced-code info string.
+pub fn extract_language(src_text: &[u8], info_beg: u32) -> &[u8] {
+    let mut lang_end = info_beg;
+    while (lang_end as usize) < src_text.len() {
+        let c = src_text[lang_end as usize];
+        if c == b' ' || c == b'\t' || c == b'\n' || c == b'\r' {
+            break;
+        }
+        lang_end += 1;
+    }
+    if lang_end > info_beg {
+        return &src_text[info_beg as usize..lang_end as usize];
+    }
+    b""
+}
+
+/// Cached tag string indices — must match `BunMarkdownTagStrings.h`.
+#[repr(u8)]
+#[derive(Copy, Clone)]
+pub enum TagIndex {
+    H1 = 0, H2 = 1, H3 = 2, H4 = 3, H5 = 4, H6 = 5,
+    P = 6, Blockquote = 7, Ul = 8, Ol = 9, Li = 10, Pre = 11,
+    Hr = 12, Html = 13, Table = 14, Thead = 15, Tbody = 16,
+    Tr = 17, Th = 18, Td = 19, Div = 20, Em = 21, Strong = 22,
+    A = 23, Img = 24, Code = 25, Del = 26, Math = 27, U = 28, Br = 29,
+}
+
+// ─── JSC + bun_md host-fn bodies ────────────────────────────────────────────
+// Every render path takes (&JSGlobalObject, &CallFrame) and calls into
+// `bun_md` (not a `bun_runtime` dependency). Preserved verbatim; the two
+// pure pieces (`extract_language`, `TagIndex`) are duplicated above.
+// TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn] proc-macro + bun_md dep
+#[cfg(any())]
+mod _jsc_gated {
 use core::ffi::c_void;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer};
@@ -1511,6 +1547,8 @@ fn get_span_type_tag(span_type: md::SpanType) -> TagIndex {
         md::SpanType::U => TagIndex::U,
     }
 }
+
+} // mod _jsc_gated
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

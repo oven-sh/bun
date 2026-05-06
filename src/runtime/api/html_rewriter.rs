@@ -2,6 +2,27 @@
 //!
 //! Ported from src/runtime/api/html_rewriter.zig.
 
+/// `{ html?: bool }` option bag for `before/after/replace/append/prepend`.
+#[derive(Default, Clone, Copy)]
+pub struct ContentOptions {
+    pub html: bool,
+}
+
+/// Opaque surfaces for the eight `.classes.ts` wrapper types. Full structs
+/// hold raw `*mut lolhtml::*` plus `JsRef`/`Strong` and live in `_jsc_gated`.
+// TODO(b2-blocked): bun_jsc::JsClass + bun_lolhtml safe wrapper crate
+pub struct HTMLRewriter(());
+pub struct TextChunk(());
+pub struct DocType(());
+pub struct DocEnd(());
+pub struct Comment(());
+pub struct EndTag(());
+pub struct AttributeIterator(());
+pub struct Element(());
+
+// TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn]/JsClass + bun_lolhtml (only _sys exists)
+#[cfg(any())]
+mod _jsc_gated {
 use core::cell::Cell;
 use core::ptr::NonNull;
 use std::io::Write as _;
@@ -2297,6 +2318,8 @@ impl WrapperLike for Element {
     fn invalidate(&mut self) { self.invalidate() }
     const HAS_INVALIDATE: bool = true;
 }
+
+} // mod _jsc_gated
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

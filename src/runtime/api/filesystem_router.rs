@@ -1,3 +1,39 @@
+//! `Bun.FileSystemRouter` / `MatchedRoute` — Next.js-style file router.
+
+pub const DEFAULT_EXTENSIONS: &[&[u8]] = &[
+    b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"js",
+];
+
+/// Opaque surface — full `.classes.ts` payload (Arena + Router + origin/asset
+/// RefStrings) lives in `_jsc_gated`.
+// TODO(b2-blocked): bun_jsc::JsClass — replace with _jsc_gated::FileSystemRouter.
+pub struct FileSystemRouter(());
+/// Opaque surface — full struct stores a borrowed `*const RouterMatch`.
+// TODO(b2-blocked): bun_jsc::JsClass — replace with _jsc_gated::MatchedRoute.
+pub struct MatchedRoute(());
+
+pub mod kind_enum {
+    pub const EXACT: &[u8] = b"exact";
+    pub const CATCH_ALL: &[u8] = b"catch-all";
+    pub const OPTIONAL_CATCH_ALL: &[u8] = b"optional-catch-all";
+    pub const DYNAMIC: &[u8] = b"dynamic";
+
+    pub fn classify(name: &[u8]) -> &'static [u8] {
+        if bun_str::strings::contains(name, b"[[...") {
+            OPTIONAL_CATCH_ALL
+        } else if bun_str::strings::contains(name, b"[...") {
+            CATCH_ALL
+        } else if bun_str::strings::contains(name, b"[") {
+            DYNAMIC
+        } else {
+            EXACT
+        }
+    }
+}
+
+// TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn]/JsClass proc-macros
+#[cfg(any())]
+mod _jsc_gated {
 use core::cell::RefCell;
 use std::sync::Arc;
 
@@ -834,6 +870,8 @@ thread_local! {
         // TODO(port): needs `ZigString: Copy` + const ZEROED for the const initializer.
         const { RefCell::new([ZigString::EMPTY; 256]) };
 }
+
+} // mod _jsc_gated
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

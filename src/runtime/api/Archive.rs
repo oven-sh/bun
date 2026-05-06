@@ -1,3 +1,87 @@
+//! `Bun.Archive` — tar/tgz pack + extract over libarchive.
+
+use bun_glob as glob;
+
+#[derive(Clone, Copy)]
+pub struct GzipOptions {
+    pub level: u8,
+}
+impl Default for GzipOptions {
+    fn default() -> Self { Self { level: 6 } }
+}
+
+pub enum Compression {
+    None,
+    Gzip(GzipOptions),
+}
+impl Default for Compression {
+    fn default() -> Self { Self::None }
+}
+impl Compression {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::None => "tar",
+            Self::Gzip(_) => "tgz",
+        }
+    }
+}
+
+/// Opaque surface — full `.classes.ts` payload is `{ data, count, compress }`.
+// TODO(b2-blocked): bun_jsc::JsClass — replace with _jsc_gated::Archive.
+pub struct Archive(());
+
+/// Reject empty paths, absolute paths, Windows drive letters, and any `..` component.
+pub fn is_safe_path(pathname: &[u8]) -> bool {
+    if pathname.is_empty() {
+        return false;
+    }
+    if pathname[0] == b'/' || pathname[0] == b'\\' {
+        return false;
+    }
+    if pathname.len() >= 2 && pathname[1] == b':' {
+        return false;
+    }
+    for component in pathname.split(|b| *b == b'/') {
+        if component == b".." {
+            return false;
+        }
+        for win_component in component.split(|b| *b == b'\\') {
+            if win_component == b".." {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// `!`-prefixed negative globs exclude; if any positive globs are present at
+/// least one must match. Empty pattern set includes everything.
+pub fn match_glob_patterns(patterns: &[Box<[u8]>], pathname: &[u8]) -> bool {
+    let mut has_positive_patterns = false;
+    let mut matches_positive = false;
+    for pattern in patterns {
+        if !pattern.is_empty() && pattern[0] == b'!' {
+            let neg_pattern = &pattern[1..];
+            if !neg_pattern.is_empty() && glob::r#match(neg_pattern, pathname).matches() {
+                return false;
+            }
+        } else {
+            has_positive_patterns = true;
+            if glob::r#match(pattern, pathname).matches() {
+                matches_positive = true;
+            }
+        }
+    }
+    !has_positive_patterns || matches_positive
+}
+
+// ─── JSC host-fns + AsyncTask<Ctx> work-pool machinery ──────────────────────
+// All task contexts hold `JSPromise`/`KeepAlive`, all start_* fns take
+// `&JSGlobalObject`, and `compress_gzip` needs `bun_libdeflate_sys` (not a
+// `bun_runtime` dep). The pure helpers above are duplicated out.
+// TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn]/JsClass + bun_libdeflate_sys dep
+#[cfg(any())]
+mod _jsc_gated {
 use core::ffi::{c_char, CStr};
 use core::mem::offset_of;
 use std::ffi::CString;
@@ -1265,13 +1349,13 @@ fn match_glob_patterns(patterns: &[Box<[u8]>], pathname: &[u8]) -> bool {
         if !pattern.is_empty() && pattern[0] == b'!' {
             // Negative pattern - if it matches, exclude the file
             let neg_pattern = &pattern[1..];
-            if !neg_pattern.is_empty() && glob::match_(neg_pattern, pathname).matches() {
+            if !neg_pattern.is_empty() && glob::r#match(neg_pattern, pathname).matches() {
                 return false;
             }
         } else {
             // Positive pattern - at least one must match
             has_positive_patterns = true;
-            if glob::match_(pattern, pathname).matches() {
+            if glob::r#match(pattern, pathname).matches() {
                 matches_positive = true;
             }
         }
@@ -1473,6 +1557,8 @@ fn extract_to_disk_filtered(
 
     Ok(count)
 }
+
+} // mod _jsc_gated
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

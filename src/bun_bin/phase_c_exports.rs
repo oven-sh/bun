@@ -79,17 +79,10 @@ type NapiFinalize = unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void);
 #[unsafe(no_mangle)]
 pub static mut isBunTest: bool = false;
 
-// PHASE-C: C++ callback — Zig: `export var Bun__Node__ProcessNoDeprecation = false;`
-#[unsafe(no_mangle)]
-pub static mut Bun__Node__ProcessNoDeprecation: bool = false;
-
-// PHASE-C: C++ callback — Zig: `export var Bun__Node__ProcessThrowDeprecation = false;`
-#[unsafe(no_mangle)]
-pub static mut Bun__Node__ProcessThrowDeprecation: bool = false;
-
-// PHASE-C: C++ callback — Zig: `pub export var Bun__Node__UseSystemCA = false;`
-#[unsafe(no_mangle)]
-pub static mut Bun__Node__UseSystemCA: bool = false;
+// REAL: now provided by bun_runtime (src/runtime/cli/Arguments.rs).
+// Bun__Node__ProcessNoDeprecation
+// Bun__Node__ProcessThrowDeprecation
+// Bun__Node__UseSystemCA
 
 // PHASE-C: C++ callback — Zig: `@export(&string_allocation_limit, …)` (= u32::MAX)
 #[unsafe(no_mangle)]
@@ -532,10 +525,8 @@ pub extern "C" fn Blob__dupe(this: *mut Blob) -> *mut Blob {
     phase_c_todo!("Blob__dupe")
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Blob__deref(this: *mut Blob) {
-    phase_c_todo!("Blob__deref")
-}
+// REAL: now provided by bun_runtime (src/runtime/webcore/Blob.rs).
+// Blob__deref
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__setAsFile(this: *mut Blob, path_str: *mut BunString) {
@@ -703,13 +694,73 @@ pub extern "C" fn us_dispatch_handshake(s: *mut UsSocket, ok: c_int, err: UsBunV
     phase_c_todo!("us_dispatch_handshake")
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn us_dispatch_data(s: *mut UsSocket, data: *mut u8, len: c_int) -> *mut UsSocket {
+    phase_c_todo!("us_dispatch_data")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn us_dispatch_fd(s: *mut UsSocket, fd: c_int) -> *mut UsSocket {
+    phase_c_todo!("us_dispatch_fd")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn us_dispatch_writable(s: *mut UsSocket) -> *mut UsSocket {
+    phase_c_todo!("us_dispatch_writable")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn us_dispatch_end(s: *mut UsSocket) -> *mut UsSocket {
+    phase_c_todo!("us_dispatch_end")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn us_dispatch_connect_error(s: *mut UsSocket, code: c_int) -> *mut UsSocket {
+    phase_c_todo!("us_dispatch_connect_error")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn us_dispatch_connecting_error(c: *mut c_void, code: c_int) -> *mut c_void {
+    phase_c_todo!("us_dispatch_connecting_error")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn us_dispatch_ssl_raw_tap(
+    s: *mut UsSocket,
+    data: *mut u8,
+    len: c_int,
+) -> *mut UsSocket {
+    phase_c_todo!("us_dispatch_ssl_raw_tap")
+}
+
+// ── DNS addrinfo (usockets → bun_runtime::dns_jsc) ──────────────────────────
+// REAL: src/runtime/dns_jsc/dns.rs (gated until bun_jsc compiles)
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__addrinfo_cancel(request: *mut c_void, socket: *mut c_void) -> c_int {
+    phase_c_todo!("Bun__addrinfo_cancel")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__addrinfo_freeRequest(req: *mut c_void, err: c_int) {
+    phase_c_todo!("Bun__addrinfo_freeRequest")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__addrinfo_getRequestResult(req: *mut c_void) -> *mut c_void {
+    phase_c_todo!("Bun__addrinfo_getRequestResult")
+}
+
+// ── JSC GC controller knob ──────────────────────────────────────────────────
+// REAL: src/jsc/VirtualMachine.rs::Bun__defaultRemainingRunsUntilSkipReleaseAccess
+#[unsafe(no_mangle)]
+pub static mut Bun__defaultRemainingRunsUntilSkipReleaseAccess: c_int = 10;
+
 // ── bundler analyze ─────────────────────────────────────────────────────────
 // REAL: src/bundler/analyze_transpiled_module.rs, src/bundler_jsc/analyze_jsc.rs
 
-#[unsafe(no_mangle)]
-pub extern "C" fn zig__ModuleInfoDeserialized__deinit(info: *mut ModuleInfoDeserialized) {
-    phase_c_todo!("zig__ModuleInfoDeserialized__deinit")
-}
+// REAL: now provided by bun_bundler (src/bundler/analyze_transpiled_module.rs).
+// zig__ModuleInfoDeserialized__deinit
 
 #[unsafe(no_mangle)]
 pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(

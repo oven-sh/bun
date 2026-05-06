@@ -95,7 +95,10 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
     // TODO(port): Zig: `pub const ShiftInt = std.math.Log2Int(MaskInt);`
     // type ShiftInt = u32 (inherent assoc → inline u32)
 
-    const FULL_MASK: usize = if SIZE as u32 == usize::BITS {
+    const FULL_MASK: usize = if SIZE as u32 >= usize::BITS {
+        // SIZE > usize::BITS is a caller error (use ArrayBitSet); saturating
+        // here avoids a const-eval shift-overflow at monomorphization time so
+        // the misuse surfaces as a runtime debug_assert instead.
         usize::MAX
     } else {
         (1usize << (SIZE as u32)) - 1

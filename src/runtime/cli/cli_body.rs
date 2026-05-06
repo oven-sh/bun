@@ -1442,7 +1442,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
     fn bun_getcompletes(log: &mut logger::Log) -> Result<(), bun_core::Error> {
         use run_command::Filter as CompletionKind;
         let ctx = init::<{ Tag::GetCompletionsCommand }>(log)?;
-        let mut filter: &[Box<[u8]>] = &ctx.positionals;
+        // Clone positionals up front so the `&mut *ctx` reborrows passed to
+        // `RunCommand::completions` below don't conflict with this slice
+        // borrow (Zig freely aliases here; Rust can't).
+        let positionals: Vec<Box<[u8]>> = ctx.positionals.clone();
+        let mut filter: &[Box<[u8]>] = &positionals;
 
         for (i, item) in filter.iter().enumerate() {
             if &**item == b"getcompletes" {

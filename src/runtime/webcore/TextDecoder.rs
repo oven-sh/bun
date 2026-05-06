@@ -182,6 +182,7 @@ impl TextDecoder {
 
 mod _gated {
 use super::*;
+use bun_jsc::StringJsc;
 use jsc::text_codec::TextCodec;
 use jsc::zig_string::ZigString;
 

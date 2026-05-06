@@ -950,7 +950,7 @@ impl Slice {
         if !self.allocator.is_null() && !self.allocator.is_wtf_allocator() {
             // PORT NOTE: `VM::deprecated_report_extra_memory` lives in the
             // gated `VM.rs`; inline the FFI call against the opaque `crate::VM`.
-            extern "C" {
+            unsafe extern "C" {
                 fn JSC__VM__reportExtraMemory(vm: *mut VM, size: usize);
             }
             // SAFETY: `vm` is a live opaque JSC VM handle (interior-mutable).

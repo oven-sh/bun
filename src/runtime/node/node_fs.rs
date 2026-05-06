@@ -1794,7 +1794,7 @@ impl AsyncReaddirRecursiveTask {
         if success {
             promise.resolve(global_object, result)?;
         } else {
-            promise.reject(global_object, result)?;
+            promise.reject(global_object, Ok(result))?;
         }
         Ok(())
     }

@@ -611,7 +611,7 @@ pub struct BufferOutputSink {
     pub rewriter: *mut lolhtml_sys::HTMLRewriter, // null when unset
     pub context: Rc<RefCell<LOLHTMLContext>>,
     pub response: *mut Response, // BORROW_FIELD: kept alive by response_value Strong
-    pub response_value: Strong,
+    pub response_value: StrongOptional,
     // TODO(b2-blocked): `webcore::body::ValueBufferer` is defined inside
     // Body.rs's ` mod _jsc_gated` block. Field gated until that
     // un-gates; downstream usages are gated alongside.
@@ -655,7 +655,7 @@ impl BufferOutputSink {
             rewriter: core::ptr::null_mut(),
             context,
             response: core::ptr::null_mut(),
-            response_value: Strong::empty(),
+            response_value: StrongOptional::empty(),
              // TODO(b2-blocked): un-gate with webcore::body::ValueBufferer
             body_value_bufferer: None,
             tmp_sync_error: None,

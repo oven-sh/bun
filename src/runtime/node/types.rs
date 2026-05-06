@@ -252,46 +252,16 @@ impl BlobOrStringOrBuffer {
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
         match value.js_type() {
             jsc::JSType::DOMWrapper => {
-                if let Some(blob) = value.as_::<Blob>() {
-                    if let Some(store) = blob.store() {
-                        store.ref_count();
-                    }
-                    return Ok(Some(Self::Blob(blob.clone_raw())));
+                if let Some(blob_ptr) = value.as_::<Blob>() {
+                    // SAFETY: `as_::<Blob>` returns a live JSC-owned `*mut Blob`.
+                    let blob = unsafe { &mut *blob_ptr };
+                    return Ok(Some(Self::Blob(blob.dupe())));
                 }
                 if allow_request_response {
-                    if let Some(request) = value.as_::<Request>() {
-                        let body_value = request.get_body_value();
-                        body_value.to_blob_if_possible();
-
-                        if let Some(any_blob_) = body_value.try_use_as_any_blob() {
-                            let mut any_blob = any_blob_;
-                            let result = Self::Blob(any_blob.to_blob(global));
-                            any_blob.detach();
-                            return Ok(Some(result));
-                        }
-
-                        return global.throw_invalid_arguments(
-                            "Only buffered Request/Response bodies are supported for now.",
-                            format_args!(""),
-                        );
-                    }
-
-                    if let Some(response) = value.as_::<Response>() {
-                        let body_value = response.get_body_value();
-                        body_value.to_blob_if_possible();
-
-                        if let Some(any_blob_) = body_value.try_use_as_any_blob() {
-                            let mut any_blob = any_blob_;
-                            let result = Self::Blob(any_blob.to_blob(global));
-                            any_blob.detach();
-                            return Ok(Some(result));
-                        }
-
-                        return global.throw_invalid_arguments(
-                            "Only buffered Request/Response bodies are supported for now.",
-                            format_args!(""),
-                        );
-                    }
+                    // TODO(b2-blocked): `Request`/`Response` do not implement
+                    // `JsClass` yet — generated bindings pending.
+                    let _ = (Request::js_type_hint as fn(), Response::js_type_hint as fn());
+                    todo!("blocked_on: bun_jsc::JsClass for webcore::Request/Response");
                 }
             }
             _ => {}

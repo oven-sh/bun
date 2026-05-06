@@ -1236,10 +1236,19 @@ impl GetAddrInfoRequest {
         bun_output::scoped_log!(GetAddrInfoRequest, "then");
         #[cfg(not(windows))]
         unsafe {
-            match &(*this).backend {
+            // Take the backend by value: `Success` holds a `Vec<GetAddrInfoResult>`
+            // (not `Clone`) that we move into `GetAddrInfoResultAny::List`. The
+            // request is consumed/freed on every path below, so the `CAres`
+            // placeholder left behind owns no resources.
+            let backend = core::mem::replace(
+                &mut (*this).backend,
+                get_addr_info_request::Backend::CAres,
+            );
+            match backend {
                 get_addr_info_request::Backend::Libc(get_addr_info_request::LibcBackend::Success(result)) => {
-                    let any = GetAddrInfoResultAny::List(result.clone());
-                    let _free = scopeguard::guard((), |_| any.deinit());
+                    // `ResultAny` impls `Drop` (frees the list); Zig's `defer any.deinit()`
+                    // is the by-value drop at the end of whichever callee receives `any`.
+                    let any = GetAddrInfoResultAny::List(result);
                     if let Some(resolver) = (*this).resolver_for_caching {
                         // if (this.cache.entry_cache and result != null and result.?.node != null) {
                         //     resolver.putEntryInCache(this.hash, this.cache.name_len, result.?);
@@ -1261,7 +1270,7 @@ impl GetAddrInfoRequest {
                     DNSLookup::on_complete_native(&mut head, any);
                 }
                 get_addr_info_request::Backend::Libc(get_addr_info_request::LibcBackend::Err(err)) => {
-                    Self::get_addr_info_async_callback(*err, ptr::null_mut(), this as *mut c_void);
+                    Self::get_addr_info_async_callback(err, ptr::null_mut(), this as *mut c_void);
                 }
                 _ => unreachable!(),
             }

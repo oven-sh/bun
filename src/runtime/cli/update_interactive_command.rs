@@ -1,3 +1,5 @@
+#![allow(dead_code, unused_imports, unused_variables)]
+
 use core::fmt;
 use std::io::Write as _;
 

@@ -1290,7 +1290,7 @@ Full documentation is available at <magenta>https://bun.com/docs/installation#up
             }
 
             Tag::GetCompletionsCommand => {
-                Output::pretty("<b>Usage<r>: <b><green>bun getcompletes<r>", format_args!(""));
+                Output::pretty(format_args!("<b>Usage<r>: <b><green>bun getcompletes<r>"));
                 Output::flush();
             }
             Tag::InstallCompletionsCommand => {

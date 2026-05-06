@@ -204,19 +204,26 @@ pub extern "C" fn set_title(global_object: *const JSGlobalObject, newvalue: *mut
 
 #[bun_jsc::host_fn]
 #[unsafe(export_name = "Bun__Process__createExecArgv")]
-pub fn create_exec_argv(global_object: &JSGlobalObject) -> JsResult<JSValue> {
+pub fn create_exec_argv(global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     // PERF(port): was stack-fallback alloc (4096 bytes) — profile in Phase B
-    let vm = global_object.bun_vm();
+    // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
+    let vm = unsafe { &*global_object.bun_vm() };
 
-    if let Some(worker) = vm.worker() {
+    if let Some(_worker) = vm.worker {
         // was explicitly overridden for the worker?
-        if let Some(exec_argv) = worker.exec_argv() {
+        // TODO(port): WebWorker.exec_argv / inherit_exec_argv are private fields on
+        // bun_jsc::WebWorker with no accessor yet. Until those land the worker
+        // override path falls through to the parent's argv re-parse below.
+        let _ = _worker;
+        #[cfg(any())]
+        if let Some(exec_argv) = todo!("blocked_on: bun_jsc::WebWorker::exec_argv") {
+            let exec_argv: &[BunString] = exec_argv;
             let array = JSValue::create_empty_array(global_object, exec_argv.len())?;
             for i in 0..exec_argv.len() {
                 array.put_index(
                     global_object,
                     u32::try_from(i).unwrap(),
-                    BunString::init(&exec_argv[i]).to_js(global_object)?,
+                    exec_argv[i].to_js(global_object)?,
                 )?;
             }
             return Ok(array);
@@ -225,7 +232,10 @@ pub fn create_exec_argv(global_object: &JSGlobalObject) -> JsResult<JSValue> {
 
     // For compiled/standalone executables, execArgv should contain compile_exec_argv and BUN_OPTIONS.
     // Use append_options_env for BUN_OPTIONS to correctly handle quoted values.
-    if let Some(graph) = vm.standalone_module_graph() {
+    if let Some(graph) = vm.standalone_module_graph {
+        // SAFETY: `standalone_module_graph` is `NonNull<c_void>` pointing at a
+        // process-lifetime `bun_standalone_graph::Graph` (BACKREF — set during init).
+        let graph = unsafe { graph.cast::<bun_standalone_graph::Graph>().as_ref() };
         // TODO(blocked_on): `bun_options_argc` / `append_options_env` live in
         // src/bun.rs which is not yet mounted in any reachable crate (mirrors
         // the same stub in cli_body.rs). Treat the BUN_OPTIONS-injected count

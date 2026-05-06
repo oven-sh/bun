@@ -1430,26 +1430,26 @@ impl<'a> PipelineTask<'a> {
                     return;
                 }
             };
-            if !sys::S::ISREG(u32::try_from(st.mode).unwrap() as _) {
+            if !sys::S::ISREG(u32::try_from(st.st_mode).unwrap() as _) {
                 self.result = TaskResult::IoErr(sys::Error {
-                    errno: sys::E::NODEV as _,
+                    errno: sys::E::ENODEV as _,
                     syscall: sys::Tag::read,
-                    path: p.into(),
+                    path: p.as_bytes().to_vec().into_boxed_slice(),
                     ..Default::default()
                 });
                 return;
             }
-            if u64::try_from(st.size.max(0)).unwrap() > MAX_INPUT_FILE_BYTES {
+            if u64::try_from(st.st_size.max(0)).unwrap() > MAX_INPUT_FILE_BYTES {
                 self.result = TaskResult::Err(codecs::Error::TooManyPixels);
                 return;
             }
-            let r = file.read_to_end();
-            if let Some(e) = r.err {
-                drop(r.bytes);
-                self.result = TaskResult::IoErr(e.with_path(p));
-                return;
+            match file.read_to_end() {
+                Ok(bytes) => owned_file = Some(bytes),
+                Err(e) => {
+                    self.result = TaskResult::IoErr(e.with_path(p.as_bytes()));
+                    return;
+                }
             }
-            owned_file = Some(r.bytes);
             owned_file.as_deref().unwrap()
         } else {
             self.input.slice()

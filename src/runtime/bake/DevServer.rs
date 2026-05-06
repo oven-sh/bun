@@ -3879,7 +3879,7 @@ impl DevServer<'_> {
     ) -> Result<(), bun_core::Error> {
         // TODO(port): Zig used `anytype` and matched on @TypeOf; using From/Into.
         let file = match optional_id.into() {
-            OpaqueFileIdOrOptional::Optional(o) => match o.unwrap_() {
+            OpaqueFileIdOrOptional::Optional(o) => match o {
                 Some(f) => f,
                 None => return Ok(()),
             },
@@ -3906,6 +3906,12 @@ impl DevServer<'_> {
 pub enum OpaqueFileIdOrOptional {
     Id(OpaqueFileId),
     Optional(framework_router::OpaqueFileIdOptional),
+}
+impl From<OpaqueFileId> for OpaqueFileIdOrOptional {
+    fn from(v: OpaqueFileId) -> Self { Self::Id(v) }
+}
+impl From<framework_router::OpaqueFileIdOptional> for OpaqueFileIdOrOptional {
+    fn from(v: framework_router::OpaqueFileIdOptional) -> Self { Self::Optional(v) }
 }
 
 fn on_request<R>(dev: &mut DevServer, req: &mut Request, resp: &mut R)

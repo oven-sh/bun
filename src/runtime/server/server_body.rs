@@ -1357,11 +1357,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     }
                 }
             }
-            return Ok(JSValue::from(node_http_response.upgrade(
+            // SAFETY: `JSValue::as_` returns `Option<*mut T>`; the `if let Some` arm
+            // guarantees a live `*mut NodeHTTPResponse` for the call.
+            return Ok(JSValue::from(unsafe { (*node_http_response).upgrade(
                 data_value,
                 sec_websocket_protocol,
                 sec_websocket_extensions,
-            )));
+            ) }));
         }
 
         let Some(request) = object.as_::<Request>() else {
@@ -3138,8 +3140,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // header field is malformed.
         if Ctx::IS_H3 {
             if req.header(b"transfer-encoding").is_some() {
-                resp.write_status(b"400 Bad Request");
-                resp.end_without_body(false);
+                // SAFETY: when `Ctx::IS_H3`, `Ctx::Resp` is the H3 response struct;
+                // the trait associated type erases this so cast through raw ptr.
+                let h3 = resp as *mut Ctx::Resp as *mut bun_uws_sys::h3::Response;
+                unsafe {
+                    (*h3).write_status(b"400 Bad Request");
+                    (*h3).end_without_body(false);
+                }
                 return None;
             }
         }
@@ -3159,8 +3166,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // is a stream error (RFC 9114 §4.1.2); close_connection
                 // would CONNECTION_CLOSE every sibling stream on the conn.
                 if len > self.config.max_request_body_size {
-                    resp.write_status(b"413 Request Entity Too Large");
-                    resp.end_without_body(!Ctx::IS_H3);
+                    // TODO(port): `RequestCtx::Resp` does not yet expose a uniform
+                    // `write_status`/`end_without_body` surface across SSL/TCP/H3;
+                    // dispatch on the H3 fast-path here and stub the rest.
+                    if Ctx::IS_H3 {
+                        // SAFETY: see IS_H3 transfer-encoding cast above.
+                        let h3 = resp as *mut Ctx::Resp as *mut bun_uws_sys::h3::Response;
+                        unsafe {
+                            (*h3).write_status(b"413 Request Entity Too Large");
+                            (*h3).end_without_body(false);
+                        }
+                    } else {
+                        todo!("blocked_on: RequestCtx::Resp write_status/end_without_body for non-H3");
+                    }
                     return None;
                 }
 

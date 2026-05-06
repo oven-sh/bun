@@ -1722,11 +1722,15 @@ fn on_promise_reject(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
 // ============================================================================
 
 pub fn get_cron_object(global_this: &JSGlobalObject, _obj: &JSObject) -> JSValue {
-    let cron_fn = JSFunction::create(global_this, "cron", cron_register, 3, Default::default());
-    let remove_fn = JSFunction::create(global_this, "remove", cron_remove, 1, Default::default());
-    let parse_fn = JSFunction::create(global_this, "parse", cron_parse, 1, Default::default());
-    cron_fn.put(global_this, bun_str::String::static_("remove"), remove_fn);
-    cron_fn.put(global_this, bun_str::String::static_("parse"), parse_fn);
+    // `#[bun_jsc::host_fn]` emits the C-ABI shim as `__jsc_host_<name>`.
+    let cron_fn =
+        JSFunction::create(global_this, "cron", __jsc_host_cron_register, 3, Default::default());
+    let remove_fn =
+        JSFunction::create(global_this, "remove", __jsc_host_cron_remove, 1, Default::default());
+    let parse_fn =
+        JSFunction::create(global_this, "parse", __jsc_host_cron_parse, 1, Default::default());
+    cron_fn.put(global_this, b"remove", remove_fn);
+    cron_fn.put(global_this, b"parse", parse_fn);
     cron_fn
 }
 

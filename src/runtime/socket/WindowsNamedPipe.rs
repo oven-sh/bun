@@ -37,13 +37,8 @@ use crate::socket::ssl_wrapper::SSLWrapper;
 
 bun_output::declare_scope!(WindowsNamedPipe, visible);
 
-pub type CertError = <UpgradedDuplex as UpgradedDuplexCertError>::CertError;
-// TODO(port): Zig `pub const CertError = UpgradedDuplex.CertError;` — assumes UpgradedDuplex re-exports CertError as an associated type/alias.
-// Phase B: replace the trait-projection above with the concrete `bun_uws::upgraded_duplex::CertError` path once ported.
-#[doc(hidden)]
-pub trait UpgradedDuplexCertError {
-    type CertError;
-}
+// Zig `pub const CertError = UpgradedDuplex.CertError;`
+pub type CertError = crate::socket::upgraded_duplex::CertError;
 
 type WrapperType = SSLWrapper<*mut WindowsNamedPipe>;
 
@@ -193,7 +188,7 @@ impl WindowsNamedPipe {
             // we received FIN but we dont allow half-closed connections right now
             (self.handlers.on_end)(self.handlers.ctx);
         } else {
-            self.on_error(bun_sys::Error::from_code(err, bun_sys::Syscall::Read));
+            self.on_error(bun_sys::Error::from_code(err, bun_sys::Tag::read));
         }
         self.writer.close();
     }
@@ -662,7 +657,7 @@ impl WindowsNamedPipe {
             let Some(stream) = self.writer.get_stream() else {
                 self.on_error(bun_sys::Error::from_code(
                     bun_sys::E::PIPE,
-                    bun_sys::Syscall::Read,
+                    bun_sys::Tag::read,
                 ));
                 return false;
             };

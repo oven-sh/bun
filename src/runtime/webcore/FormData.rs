@@ -13,17 +13,6 @@ use crate::webcore::Blob;
 
 declare_scope!(FormData, visible);
 
-// PORT NOTE: `bun.strings.withoutUTF8BOM` lives in `immutable/unicode.rs` but
-// is not re-exported through `bun_str::strings` yet. Tiny enough to inline.
-#[inline]
-fn without_utf8_bom(bytes: &[u8]) -> &[u8] {
-    if bytes.len() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF {
-        &bytes[3..]
-    } else {
-        bytes
-    }
-}
-
 // PORT NOTE: `bun_jsc::AnyPromise` (the pointer-variant exported from lib.rs)
 // has no `resolve`/`reject` yet; thin local helpers dispatch to the underlying
 // `JSPromise` / `JSInternalPromise`.

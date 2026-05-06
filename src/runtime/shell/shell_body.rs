@@ -99,7 +99,7 @@ impl ShellErr {
         let result = match self {
             ShellErr::Sys(sys) => {
                 // sys.toErrorInstance handles decrementing the ref count
-                let err = sys.to_error_instance(global);
+                let err = sys_error_to_jsc(sys).to_error_instance(global);
                 global.throw_value(err)
             }
             ShellErr::Custom(custom) => {
@@ -113,7 +113,9 @@ impl ShellErr {
                     bstr::BStr::new(val)
                 ))
             }
-            ShellErr::Todo(todo) => global.throw_todo(todo),
+            ShellErr::Todo(todo) => {
+                global.throw_todo(&std::string::String::from_utf8_lossy(todo))
+            }
         };
         match self {
             ShellErr::Sys(_) => {}

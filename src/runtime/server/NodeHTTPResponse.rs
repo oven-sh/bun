@@ -625,7 +625,7 @@ impl NodeHTTPResponse {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_flags(&self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(self.flags.bits() as i32)
+        JSValue::js_number_from_int32(self.flags.bits() as i32)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -641,14 +641,14 @@ impl NodeHTTPResponse {
             BodyReadState::Pending => result |= 1 << 1,
             BodyReadState::Done => result |= 1 << 2,
         }
-        if self.buffered_request_body_data_during_pause.len() > 0 {
+        if self.buffered_request_body_data_during_pause.len > 0 {
             result |= 1 << 3;
         }
         if self.flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST) {
             result |= 1 << 2;
         }
 
-        JSValue::js_number(result)
+        JSValue::js_number_from_int32(result)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -656,12 +656,12 @@ impl NodeHTTPResponse {
         if self.flags.contains(Flags::REQUEST_HAS_COMPLETED)
             || self.flags.contains(Flags::SOCKET_CLOSED)
         {
-            return JSValue::js_number(0);
+            return JSValue::js_number_from_int32(0);
         }
         if let Some(raw_response) = &self.raw_response {
-            return JSValue::js_number(raw_response.get_buffered_amount());
+            return JSValue::js_number_from_uint64(raw_response.get_buffered_amount());
         }
-        JSValue::js_number(0)
+        JSValue::js_number_from_int32(0)
     }
 
     #[bun_jsc::host_fn(method)]

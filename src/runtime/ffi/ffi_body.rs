@@ -1615,7 +1615,7 @@ impl FFI {
 
         let mut symbols = StringArrayHashMap::<Function>::default();
         if let Some(val) =
-            generate_symbols(global, &mut symbols, object).unwrap_or(Some(JSValue::ZERO))
+            generate_symbols(global, &mut symbols, unsafe { &*object }).unwrap_or(Some(JSValue::ZERO))
         {
             // an error while validating symbols
             return val;
@@ -1652,7 +1652,11 @@ impl FFI {
                                 code: bun_str::String::clone_utf8(b"ERR_DLOPEN_FAILED"),
                                 message: bun_str::String::clone_utf8(&msg),
                                 syscall: bun_str::String::clone_utf8(b"dlopen"),
-                                ..Default::default()
+                                errno: 0,
+                                path: bun_str::String::EMPTY,
+                                hostname: bun_str::String::EMPTY,
+                                fd: -1,
+                                dest: bun_str::String::EMPTY,
                             };
                             return system_error.to_error_instance(global);
                         }

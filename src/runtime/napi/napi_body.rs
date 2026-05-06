@@ -2039,16 +2039,14 @@ impl Finalizer {
         unsafe { napi_internal_remove_finalizer(env, Some(self.fun), self.hint, self.data) };
 
         if let Some(exception) = env_ref.to_js().try_take_exception() {
-            let _ = env_ref
-                .to_js()
-                .bun_vm()
+            // SAFETY: bun_vm() never null; uncaught_exception needs `&mut`.
+            let _ = unsafe { &mut *env_ref.to_js().bun_vm() }
                 .uncaught_exception(env_ref.to_js(), exception, false);
         }
 
         if let Some(exception) = env_ref.get_and_clear_pending_exception() {
-            let _ = env_ref
-                .to_js()
-                .bun_vm()
+            // SAFETY: bun_vm() never null; uncaught_exception needs `&mut`.
+            let _ = unsafe { &mut *env_ref.to_js().bun_vm() }
                 .uncaught_exception(env_ref.to_js(), exception, false);
         }
     }
@@ -2076,7 +2074,8 @@ pub extern "C" fn napi_internal_enqueue_finalizer(
     let Some(env_ref) = (unsafe { env.as_ref() }) else { return };
     let this = Finalizer {
         fun,
-        env: NapiEnvRef::clone_from_raw(env_ref),
+        // SAFETY: env_ref points to a live C++-owned napi_env.
+        env: unsafe { NapiEnvRef::clone_from_raw(env_ref.as_mut_ptr()) },
         data,
         hint,
     };

@@ -380,8 +380,13 @@ where
             return;
         }
         if let Some(server) = self.server {
-            // SAFETY: BACKREF
-            unsafe { (*(server as *mut ThisServer)).vm() }.drain_microtasks();
+            // SAFETY: BACKREF. `ServerLike::vm()` returns `&VirtualMachine`
+            // but `drain_microtasks` needs `&mut`; cast through the raw
+            // pointer (Zig held a `*VirtualMachine`).
+            unsafe {
+                let vm = (*server).vm() as *const VirtualMachine as *mut VirtualMachine;
+                (*vm).drain_microtasks();
+            }
         }
     }
 
@@ -1882,8 +1887,11 @@ where
 
         if self.end_request_streaming().unwrap_or(true) {
             // TODO: properly propagate exception upwards
-            // SAFETY: BACKREF
-            unsafe { (*self.server.unwrap()).vm() }.drain_microtasks();
+            // SAFETY: BACKREF; see drain_microtasks() re: const→mut cast.
+            unsafe {
+                let vm = (*self.server.unwrap()).vm() as *const VirtualMachine as *mut VirtualMachine;
+                (*vm).drain_microtasks();
+            }
         }
     }
 

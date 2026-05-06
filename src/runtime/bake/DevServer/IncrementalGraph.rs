@@ -985,15 +985,21 @@ impl IncrementalGraph<Client> {
 
         let key_boxed: Box<[u8]> = Box::from(key);
         let gop = self.bundled_files.get_or_put(key_boxed)?;
-        let file_index = FileIndex::init(u32::try_from(gop.index).unwrap());
+        let gop_index = gop.index;
+        let found_existing = gop.found_existing;
+        let file_index = FileIndex::init(u32::try_from(gop_index).unwrap());
+        // PORT NOTE: reshaped for borrowck — drop `gop` (which borrows
+        // `self.bundled_files`) before touching other `self` fields; re-index
+        // via `gop_index` where needed.
+        drop(gop);
 
-        if !gop.found_existing {
+        if !found_existing {
             self.first_dep.push(OptionalEdgeIndex::NONE);
             self.first_import.push(OptionalEdgeIndex::NONE);
         }
 
-        if self.stale_files.unmanaged.bit_length > gop.index {
-            self.stale_files.unset(gop.index);
+        if self.stale_files.unmanaged.bit_length > gop_index {
+            self.stale_files.unset(gop_index);
         }
 
         *ctx.get_cached_index(Side::Client, index) = CachedFileIndex(file_index.get());
@@ -1001,8 +1007,8 @@ impl IncrementalGraph<Client> {
         let mut html_route_bundle_index: Option<RouteBundleIndex> = None;
         let mut is_special_framework_file = false;
 
-        if gop.found_existing {
-            let mut existing = core::mem::take(gop.value_ptr).unpack();
+        if found_existing {
+            let mut existing = core::mem::take(&mut self.bundled_files.values_mut()[gop_index]).unpack();
 
             // Free the original content + old source map
             // PORT NOTE: reshaped for borrowck — `gop` borrows `self.bundled_files` mutably;
@@ -1019,7 +1025,6 @@ impl IncrementalGraph<Client> {
 
             // Free a failure if it exists
             if existing.failed {
-                let _dev = self.owner();
                 let _ = (file_index,);
                 // TODO(port): blocked_on: bun_collections::ArrayHashMap::fetch_swap_remove_adapted
                 todo!("blocked_on: bun_collections::ArrayHashMap::fetch_swap_remove_adapted");

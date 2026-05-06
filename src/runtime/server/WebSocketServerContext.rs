@@ -297,15 +297,15 @@ pub fn on_create(
                 } else if compression.is_string() {
                     let key = compression.get_zig_string(global_object)?;
                     let Some(v) = lookup_zig_string(&COMPRESS_TABLE, &key) else {
-                        return global_object.throw_invalid_arguments(format_args!(
+                        return Err(global_object.throw_invalid_arguments(format_args!(
                             "WebSocketServerContext expects a valid compress option, either disable \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\""
-                        ));
+                        )));
                     };
                     server.compression |= v;
                 } else {
-                    return global_object.throw_invalid_arguments(format_args!(
+                    return Err(global_object.throw_invalid_arguments(format_args!(
                         "websocket expects a valid compress option, either disable \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\""
-                    ));
+                    )));
                 }
             }
 
@@ -319,15 +319,15 @@ pub fn on_create(
                 } else if compression.is_string() {
                     let key = compression.get_zig_string(global_object)?;
                     let Some(v) = lookup_zig_string(&DECOMPRESS_TABLE, &key) else {
-                        return global_object.throw_invalid_arguments(format_args!(
+                        return Err(global_object.throw_invalid_arguments(format_args!(
                             "websocket expects a valid decompress option, either \"disable\" \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\""
-                        ));
+                        )));
                     };
                     server.compression |= v;
                 } else {
-                    return global_object.throw_invalid_arguments(format_args!(
+                    return Err(global_object.throw_invalid_arguments(format_args!(
                         "websocket expects a valid decompress option, either \"disable\" \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\""
-                    ));
+                    )));
                 }
             }
         }
@@ -336,9 +336,9 @@ pub fn on_create(
     if let Some(value) = object.get(global_object, "maxPayloadLength")? {
         if !value.is_undefined_or_null() {
             if !value.is_any_int() {
-                return global_object.throw_invalid_arguments(format_args!(
+                return Err(global_object.throw_invalid_arguments(format_args!(
                     "websocket expects maxPayloadLength to be an integer"
-                ));
+                )));
             }
             server.max_payload_length = value.to_int64().max(0) as u32;
         }

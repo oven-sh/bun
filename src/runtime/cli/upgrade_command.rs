@@ -20,6 +20,7 @@ use bun_js_parser as js_ast;
 use bun_interchange::json as JSON;
 use bun_http::{self as HTTP, headers};
 use bun_jsc::{self as jsc, JSGlobalObject, CallFrame, JSValue, JsResult};
+#[allow(unused_imports)]
 use bun_string::ZigString;
 
 use crate::cli::Command;
@@ -796,7 +797,7 @@ impl UpgradeCommand {
                     ));
                     Global::exit(1);
                 }
-                zip_file.close();
+                let _ = zip_file.close();
             }
 
             {

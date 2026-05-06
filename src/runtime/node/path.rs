@@ -3513,7 +3513,7 @@ pub fn resolve(
         }
 
         paths_offset -= 1;
-        paths_buf[paths_offset] = path_str.to_owned_slice()?;
+        paths_buf[paths_offset] = path_str.to_owned_slice().into_boxed_slice();
 
         if !is_windows {
             if path_str.char_at(0) == CHAR_FORWARD_SLASH as u32 {

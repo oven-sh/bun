@@ -348,35 +348,9 @@ pub extern "C" fn Request__clone(
 
 // `comptime { _ = Request__clone; ... }` force-reference block → drop. Rust links what's pub.
 
-pub type EventType = crate::server::node_http_response::AbortEvent;
-// TODO(port): `jsc.API.NodeHTTPResponse.AbortEvent` — direct path is
-// `crate::server::node_http_response::AbortEvent`; adjust in Phase B.
-
-impl InternalJSEventCallback {
-    pub fn init(function: JSValue, global_this: &JSGlobalObject) -> InternalJSEventCallback {
-        InternalJSEventCallback {
-            function: Strong::create(function, global_this),
-        }
-    }
-
-    pub fn has_callback(&self) -> bool {
-        self.function.has()
-    }
-
-    pub fn trigger(&mut self, event_type: EventType, global_this: &JSGlobalObject) -> bool {
-        if let Some(callback) = self.function.get() {
-            let _ = callback
-                .call(
-                    global_this,
-                    JSValue::UNDEFINED,
-                    &[JSValue::js_number(event_type as i32)],
-                )
-                .map_err(|err| global_this.report_active_exception_as_unhandled(err));
-            return true;
-        }
-        false
-    }
-}
+// NOTE: `EventType` and `impl InternalJSEventCallback` are defined once below
+// (near the struct decl); the duplicate block that used to live here was
+// removed to resolve E0034 ambiguity.
 
 impl Request {
     pub fn init(

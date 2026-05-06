@@ -134,11 +134,11 @@ impl<'a> ProcessHandle<'a> {
 
         #[cfg(unix)]
         {
-            if let Some(stdout) = spawned.stdout {
+            if let Some(stdout) = stdout_fd {
                 let _ = sys::set_nonblocking(stdout);
                 handle.stdout.start(stdout, true).unwrap()?;
             }
-            if let Some(stderr) = spawned.stderr {
+            if let Some(stderr) = stderr_fd {
                 let _ = sys::set_nonblocking(stderr);
                 handle.stderr.start(stderr, true).unwrap()?;
             }
@@ -149,12 +149,18 @@ impl<'a> ProcessHandle<'a> {
             handle.stderr.start_with_current_pipe().unwrap()?;
         }
 
-        handle.process = Some(ProcessInfo { ptr: process.clone(), status: Status::Running });
-        process.set_exit_handler(handle);
+        handle.process = Some(ProcessInfo { ptr: process, status: Status::Running });
+        // SAFETY: `process` was just allocated by `to_process` (Box::into_raw);
+        // sole owner until reaped, owner backref set before reap callback can fire.
+        let process = unsafe { &mut *process };
+        process.set_exit_handler(
+            (handle as *mut ProcessHandle<'a>).cast::<()>(),
+            &PROCESS_HANDLE_EXIT_VTABLE,
+        );
 
         match process.watch_or_reap() {
-            sys::Result::Ok(()) => {}
-            sys::Result::Err(err) => {
+            Ok(_) => {}
+            Err(err) => {
                 if !process.has_exited() {
                     // SAFETY: all-zero is a valid Rusage (POD C struct)
                     let rusage = unsafe { core::mem::zeroed::<Rusage>() };

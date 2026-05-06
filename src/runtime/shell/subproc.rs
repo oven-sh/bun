@@ -1590,6 +1590,10 @@ impl PipeReader {
             state: PipeReaderState::Pending,
             captured_writer: CapturedWriter::default(),
             buffered_output: BufferedOutput::default(),
+            // TODO(port): wire `interp` from the spawning Cmd (Zig threaded it
+            // implicitly via Base.interpreter). Null until Readable::init/Cmd
+            // pass it through.
+            interp: core::ptr::null_mut(),
         });
         log!(
             "PipeReader(0x{:x}, {}) create()",

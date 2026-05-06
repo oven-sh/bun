@@ -800,7 +800,8 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
     // SAFETY: valid out-pointer
     let rc = unsafe { libc::getifaddrs(&mut interface_start) };
     if rc != 0 {
-        let errno = bun_sys::posix::errno(rc);
+        let _ = rc;
+        let errno = bun_sys::posix::errno();
         // Android API 30+: SELinux denies the netlink socket getifaddrs uses.
         // Node returns {} rather than throwing.
         #[cfg(target_os = "android")]
@@ -814,10 +815,10 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
             code: BunString::static_("ERR_SYSTEM_ERROR"),
             errno: errno as c_int,
             syscall: BunString::static_("getifaddrs"),
-            ..Default::default()
+            ..system_error_default()
         };
 
-        return global_this.throw_value(err.to_error_instance(global_this));
+        return Err(global_this.throw_value(err.to_error_instance(global_this)));
     }
     let _free = scopeguard::guard((), |_| {
         // SAFETY: returned by getifaddrs

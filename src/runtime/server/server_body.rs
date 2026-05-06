@@ -4201,10 +4201,15 @@ pub struct ServerAllConnectionsClosedTask {
     pub tracker: AsyncTaskTracker,
 }
 
+impl bun_event_loop::Taskable for ServerAllConnectionsClosedTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ServerAllConnectionsClosedTask;
+}
+
 impl ServerAllConnectionsClosedTask {
     pub fn schedule(this: ServerAllConnectionsClosedTask, vm: &jsc::virtual_machine::VirtualMachine) {
         let ptr = Box::into_raw(Box::new(this));
-        vm.event_loop().enqueue_task(jsc::Task::init(ptr));
+        // SAFETY: event_loop() returns a live *mut EventLoop owned by the VM.
+        unsafe { (*vm.event_loop()).enqueue_task(jsc::Task::init(ptr)) };
     }
 
     pub fn run_from_js_thread(this: *mut Self, vm: &jsc::virtual_machine::VirtualMachine) -> Result<(), jsc::JsTerminated> {

@@ -18,7 +18,8 @@
 //! with µWebSockets, bridging the gap between libuv's pipe handling and uSockets'
 //! unified socket interface.
 
-use core::ffi::{c_uint, c_void};
+use core::ffi::{c_uint, c_void, CStr};
+use core::ptr::NonNull;
 
 use bun_aio::Loop as AsyncLoop;
 use bun_boringssl_sys as boringssl;
@@ -31,9 +32,9 @@ use bun_sys::windows::libuv as uv;
 use bun_sys::{self, Fd};
 use bun_uws_sys::us_bun_verify_error_t;
 
-use crate::timer::EventLoopTimer;
+use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState};
 use crate::socket::SSLConfig;
-use crate::socket::ssl_wrapper::SSLWrapper;
+use crate::socket::ssl_wrapper::{self, SSLWrapper};
 
 bun_output::declare_scope!(WindowsNamedPipe, visible);
 

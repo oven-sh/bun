@@ -1691,7 +1691,7 @@ impl WrapperLike for DocType {
 
 // ──────────────────────────── DocEnd ─────────────────────────────────────
 
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(no_construct, no_finalize)]
 pub struct DocEnd {
     // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
     // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).
@@ -1720,7 +1720,7 @@ impl DocEnd {
 
     fn content_handler(
         &mut self,
-        callback: fn(*mut lolhtml::DocEnd, &[u8], bool) -> Result<(), lolhtml::Error>,
+        callback: unsafe fn(*mut lolhtml::DocEnd, &[u8], bool) -> Result<(), lolhtml::Error>,
         this_object: JSValue,
         global_object: &JSGlobalObject,
         content: ZigString,
@@ -1731,11 +1731,13 @@ impl DocEnd {
         }
         let content_slice = content.to_slice();
 
-        if callback(
+        // SAFETY: self.doc_end is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
+        if unsafe { callback(
             self.doc_end,
             content_slice.slice(),
             content_options.map_or(false, |o| o.html),
-        )
+        ) }
         .is_err()
         {
             return create_lolhtml_error(global_object);
@@ -1766,7 +1768,9 @@ impl WrapperLike for DocEnd {
     fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
     fn ref_(&self) { self.ref_() }
     fn deref(this: *mut Self) { Self::deref(this) }
-    fn to_js(&self, g: &JSGlobalObject) -> JSValue { self.to_js(g) }
+    fn to_js(&self, _g: &JSGlobalObject) -> JSValue {
+        todo!("blocked_on: bun_jsc::JsClass to_js for *mut Self (intrusive-rc wrapper)")
+    }
 }
 
 // ──────────────────────────── Comment ────────────────────────────────────

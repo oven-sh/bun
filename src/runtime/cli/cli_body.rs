@@ -1657,31 +1657,39 @@ To create a project with the official Next.js scaffolding tool, run
         let use_bunx = !HARDCODED_NON_BUN_X_LIST.contains(template_name)
             && (!strings::contains(template_name, b"/")
                 || strings::starts_with_char(template_name, b'@'))
-            && example_tag != CreateCommandExample::Tag::LocalFolder;
+            && example_tag != crate::cli::create_command::ExampleTag::LocalFolder;
 
         if use_bunx {
-            let mut bunx_args: Vec<&ZStr> = Vec::with_capacity(
+            let mut bunx_args: Vec<&'static ZStr> = Vec::with_capacity(
                 2 + args.len() - template_name_start + (dash_dash_bun as usize),
             );
             // TODO(port): Zig allocs `[:0]const u8` slice and indexes; use Vec push for clarity
-            bunx_args.push(ZStr::from_static(b"bunx\0"));
+            bunx_args.push(bun_core::zstr!("bunx"));
             if dash_dash_bun {
-                bunx_args.push(ZStr::from_static(b"--bun\0"));
+                bunx_args.push(bun_core::zstr!("--bun"));
             }
-            bunx_args.push(BunxCommand::add_create_prefix(template_name)?);
+            // `add_create_prefix` returns an owned NUL-terminated buffer; leak it
+            // for the process lifetime so the &ZStr stays valid through exec().
+            let prefixed = BunxCommand::add_create_prefix(template_name)?;
+            let prefixed: &'static ZStr =
+                Box::leak(Box::new(bun_core::ZBox::from_vec(prefixed))).as_zstr();
+            // SAFETY: backing ZBox was leaked; storage is process-static.
+            let prefixed: &'static ZStr =
+                unsafe { core::mem::transmute::<&ZStr, &'static ZStr>(prefixed) };
+            bunx_args.push(prefixed);
             debug_assert_eq!(
                 bunx_args.capacity() - bunx_args.len(),
-                args[template_name_start..].len()
+                args.len() - template_name_start
             );
-            for src in &args[template_name_start..] {
-                bunx_args.push(src);
+            for i in template_name_start..args.len() {
+                bunx_args.push(args.get(i).unwrap());
             }
 
-            BunxCommand::exec(ctx, &bunx_args)?;
+            BunxCommand::exec(&mut ctx, &bunx_args)?;
             return Ok(());
         }
 
-        CreateCommand::exec(ctx, example_tag, template)?;
+        CreateCommand::exec(&ctx, example_tag, template)?;
         Ok(())
     }
 

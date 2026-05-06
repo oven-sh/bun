@@ -1335,6 +1335,25 @@ impl RunCommand {
         todo!("blocked_on: RunCommand::configure_path_for_run (phase_a_draft)")
     }
 
+    /// Port of `configurePathForRunWithPackageJsonDir` (run_command.zig).
+    /// Builds a new PATH with `node_modules/.bin` for each ancestor of `cwd`
+    /// (plus `package_json_dir` and the bun-node shim dir) prepended, returns
+    /// it as an owned buffer, and writes the original PATH out via
+    /// `original_path`.
+    ///
+    /// Real body lives in `phase_a_draft::configure_path_for_run_with_package_json_dir`.
+    #[allow(unused_variables)]
+    pub fn configure_path_for_run_with_package_json_dir(
+        ctx: &mut ContextData,
+        package_json_dir: &[u8],
+        this_transpiler: &mut Transpiler<'static>,
+        original_path: Option<&mut &[u8]>,
+        cwd: &[u8],
+        force_using_bun: bool,
+    ) -> Result<Vec<u8>, bun_core::Error> {
+        todo!("blocked_on: RunCommand::configure_path_for_run_with_package_json_dir (phase_a_draft)")
+    }
+
     /// Dispatch `bun run <target>`: classify as file path vs. package.json
     /// script, then either boot the VM or spawn the script.
     ///

@@ -585,25 +585,24 @@ impl CryptoHasher {
         output: Option<StringOrBuffer>,
     ) -> JsResult<JSValue> {
         if let Some(string_or_buffer) = output {
-            match string_or_buffer {
-                StringOrBuffer::Buffer(buffer) => this.digest_to_bytes(global, Some(buffer.buffer)),
-                other => {
-                    // `defer str.deinit()` — handled by Drop.
-                    let Some(encoding) = Encoding::from(other.slice()) else {
-                        return Err(global
-                            .err(
-                                ErrorCode::INVALID_ARG_VALUE,
-                                format_args!(
-                                    "Unknown encoding: {}",
-                                    bstr::BStr::new(other.slice())
-                                ),
-                            )
-                            .throw());
-                    };
-
-                    this.digest_to_encoding(global, encoding)
-                }
+            if let StringOrBuffer::Buffer(buffer) = &string_or_buffer {
+                let ab = buffer.buffer;
+                return this.digest_to_bytes(global, Some(ab));
             }
+            // `defer str.deinit()` — handled by Drop.
+            let Some(encoding) = Encoding::from(string_or_buffer.slice()) else {
+                return Err(global
+                    .err(
+                        ErrorCode::INVALID_ARG_VALUE,
+                        format_args!(
+                            "Unknown encoding: {}",
+                            bstr::BStr::new(string_or_buffer.slice())
+                        ),
+                    )
+                    .throw());
+            };
+
+            this.digest_to_encoding(global, encoding)
         } else {
             this.digest_to_bytes(global, None)
         }

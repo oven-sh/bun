@@ -1292,9 +1292,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     }
                 }
                 len if len == b"Sec-WebSocket-Accept".len() => {
-                    if websocket_accept_header.name.is_empty()
+                    if websocket_accept_header.name().is_empty()
                         && strings::eql_case_insensitive_ascii(
-                            header.name,
+                            header.name(),
                             b"Sec-WebSocket-Accept",
                             false,
                         )
@@ -1304,7 +1304,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 }
                 len if len == b"Sec-WebSocket-Protocol".len() => {
                     if strings::eql_case_insensitive_ascii(
-                        header.name,
+                        header.name(),
                         b"Sec-WebSocket-Protocol",
                         false,
                     ) {
@@ -1316,7 +1316,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
                             protocol_header_seen = true;
 
-                            let mut iterator = HeaderValueIterator::init(header.value);
+                            let mut iterator = HeaderValueIterator::init(header.value());
 
                             let Some(protocol) = iterator.next() else {
                                 // Can't be empty.
@@ -1336,9 +1336,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
                             // SAFETY: short-lived read of `outgoing_websocket`.
                             if let Some(ws) = unsafe { (*this).outgoing_websocket } {
-                                let protocol_str = BunString::clone_latin1(protocol);
+                                let mut protocol_str = BunString::clone_latin1(protocol);
                                 // SAFETY: live C++ back-reference.
-                                unsafe { (*ws).set_protocol(&protocol_str) };
+                                unsafe { (*ws).set_protocol(&mut protocol_str) };
                                 drop(protocol_str);
                             }
                             true
@@ -1447,7 +1447,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         //     return;
         // }
 
-        if upgrade_header.name.len().min(upgrade_header.value.len()) == 0 {
+        if upgrade_header.name().len().min(upgrade_header.value().len()) == 0 {
             // SAFETY: no `&mut Self` is live across this call.
             unsafe { Self::terminate(this, ErrorCode::MissingUpgradeHeader) };
             return;

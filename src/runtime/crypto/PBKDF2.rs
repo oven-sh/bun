@@ -24,8 +24,8 @@ pub struct PBKDF2 {
 impl Default for PBKDF2 {
     fn default() -> Self {
         Self {
-            password: StringOrBuffer::empty(),
-            salt: StringOrBuffer::empty(),
+            password: StringOrBuffer::default(),
+            salt: StringOrBuffer::default(),
             iteration_count: 1,
             length: 0,
             // TODO(port): Zig had no default for `algorithm`; callers always set it.
@@ -175,8 +175,8 @@ impl PBKDF2 {
         };
 
         let mut out = PBKDF2 {
-            password: StringOrBuffer::empty(),
-            salt: StringOrBuffer::empty(),
+            password: StringOrBuffer::default(),
+            salt: StringOrBuffer::default(),
             iteration_count: u32::try_from(iteration_count).unwrap(),
             length: keylen,
             algorithm,
@@ -245,7 +245,7 @@ pub struct Job {
     pub pbkdf2: PBKDF2,
     pub output: Vec<u8>,
     pub task: WorkPoolTask,
-    pub promise: JsPromiseStrong,
+    pub promise: JSPromiseStrong,
     pub vm: &'static VirtualMachine,
     pub err: Option<u32>,
     pub any_task: AnyTask,
@@ -326,7 +326,7 @@ impl Job {
             task: WorkPoolTask {
                 callback: Job::run_task,
             },
-            promise: JsPromiseStrong::default(),
+            promise: JSPromiseStrong::default(),
             vm,
             err: None,
             // TODO(port): Zig used `undefined` then assigned below; need MaybeUninit or two-phase init.
@@ -336,7 +336,7 @@ impl Job {
 
         // SAFETY: `job` was just allocated and is uniquely owned here.
         let job_ref = unsafe { &mut *job };
-        job_ref.promise = JsPromiseStrong::init(global_this);
+        job_ref.promise = JSPromiseStrong::init(global_this);
         job_ref.any_task = AnyTask::new::<Job>(Job::run_from_js).init(job);
         job_ref.poll.ref_(vm);
         WorkPool::schedule(&mut job_ref.task);
@@ -349,7 +349,7 @@ impl Drop for Job {
     fn drop(&mut self) {
         self.poll.unref(self.vm);
         self.pbkdf2.deinit_and_unprotect();
-        // `promise` (JsPromiseStrong) and `output` (Vec) drop via their own `Drop` impls.
+        // `promise` (JSPromiseStrong) and `output` (Vec) drop via their own `Drop` impls.
     }
 }
 

@@ -597,16 +597,16 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(executable_path) = object.get_own(global_this, "executablePath")? {
+            if let Some(executable_path) = get_own_str(object, global_this, "executablePath")? {
                 let slice = executable_path.to_slice(global_this)?;
-                if bun_sys::exists_at_type(bun_sys::Fd::cwd(), slice.slice())
+                let path_z = bun_core::ZBox::from_bytes(slice.slice());
+                if bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
                     .unwrap_or(bun_sys::ExistsAtType::Directory)
                     != bun_sys::ExistsAtType::File
                 {
-                    return global_this.throw_invalid_arguments(
+                    return Err(global_this.throw_invalid_arguments(
                         "executablePath must be a valid path to a Bun executable",
-                        &[],
-                    );
+                    ));
                 }
 
                 this.executable_path.append_slice_exact(slice.slice())?;
@@ -614,55 +614,55 @@ pub mod js_bundler {
 
             if let Some(windows) = object.get_own_truthy(global_this, "windows")? {
                 if !windows.is_object() {
-                    return global_this.throw_invalid_arguments("windows must be an object", &[]);
+                    return Err(global_this.throw_invalid_arguments("windows must be an object"));
                 }
 
-                if let Some(hide_console) = windows.get_own(global_this, "hideConsole")? {
+                if let Some(hide_console) = get_own_str(windows, global_this, "hideConsole")? {
                     this.windows_hide_console = hide_console.to_boolean();
                 }
 
-                if let Some(windows_icon_path) = windows.get_own(global_this, "icon")? {
+                if let Some(windows_icon_path) = get_own_str(windows, global_this, "icon")? {
                     let slice = windows_icon_path.to_slice(global_this)?;
-                    if bun_sys::exists_at_type(bun_sys::Fd::cwd(), slice.slice())
+                    let path_z = bun_core::ZBox::from_bytes(slice.slice());
+                    if bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
                         .unwrap_or(bun_sys::ExistsAtType::Directory)
                         != bun_sys::ExistsAtType::File
                     {
-                        return global_this.throw_invalid_arguments(
+                        return Err(global_this.throw_invalid_arguments(
                             "windows.icon must be a valid path to an ico file",
-                            &[],
-                        );
+                        ));
                     }
 
                     this.windows_icon_path.append_slice_exact(slice.slice())?;
                 }
 
-                if let Some(windows_title) = windows.get_own(global_this, "title")? {
+                if let Some(windows_title) = get_own_str(windows, global_this, "title")? {
                     let slice = windows_title.to_slice(global_this)?;
                     this.windows_title.append_slice_exact(slice.slice())?;
                 }
 
-                if let Some(windows_publisher) = windows.get_own(global_this, "publisher")? {
+                if let Some(windows_publisher) = get_own_str(windows, global_this, "publisher")? {
                     let slice = windows_publisher.to_slice(global_this)?;
                     this.windows_publisher.append_slice_exact(slice.slice())?;
                 }
 
-                if let Some(windows_version) = windows.get_own(global_this, "version")? {
+                if let Some(windows_version) = get_own_str(windows, global_this, "version")? {
                     let slice = windows_version.to_slice(global_this)?;
                     this.windows_version.append_slice_exact(slice.slice())?;
                 }
 
-                if let Some(windows_description) = windows.get_own(global_this, "description")? {
+                if let Some(windows_description) = get_own_str(windows, global_this, "description")? {
                     let slice = windows_description.to_slice(global_this)?;
                     this.windows_description.append_slice_exact(slice.slice())?;
                 }
 
-                if let Some(windows_copyright) = windows.get_own(global_this, "copyright")? {
+                if let Some(windows_copyright) = get_own_str(windows, global_this, "copyright")? {
                     let slice = windows_copyright.to_slice(global_this)?;
                     this.windows_copyright.append_slice_exact(slice.slice())?;
                 }
             }
 
-            if let Some(outfile) = object.get_own(global_this, "outfile")? {
+            if let Some(outfile) = get_own_str(object, global_this, "outfile")? {
                 let slice = outfile.to_slice(global_this)?;
                 this.outfile.append_slice_exact(slice.slice())?;
             }

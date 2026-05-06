@@ -489,6 +489,16 @@ pub struct WatcherAtomics {
     pub pending_event: Option<u8>,
 }
 
+impl WatcherAtomics {
+    /// Full body in gated `../DevServer/WatcherAtomics.rs` draft.
+    pub fn recycle_event_from_dev_server(
+        &mut self,
+        _old_event: *mut HotReloadEvent,
+    ) -> Option<*mut HotReloadEvent> {
+        todo!("blocked_on: dev_server::WatcherAtomics body un-gate")
+    }
+}
+
 /// `DevServer.DirectoryWatchStore` — sparse map of directories under watch
 /// for resolution-failure recovery. Full body gated in `DirectoryWatchStore.rs`.
 #[derive(Default)]
@@ -497,6 +507,22 @@ pub struct DirectoryWatchStore {
     pub dependencies: Vec<directory_watch_store::Dep>,
     /// Dependencies cannot be re-ordered. This list tracks what indexes are free.
     pub dependencies_free_list: Vec<u32>,
+}
+impl DirectoryWatchStore {
+    /// Full body in gated `../DevServer/DirectoryWatchStore.rs` draft.
+    pub fn free_dependency_index(&mut self, index: u32) {
+        // PORT NOTE: minimal port of DirectoryWatchStore.zig:freeDependencyIndex.
+        self.dependencies[index as usize] = directory_watch_store::Dep::default();
+        if index as usize == self.dependencies.len() - 1 {
+            self.dependencies.truncate(self.dependencies.len() - 1);
+        } else {
+            self.dependencies_free_list.push(index);
+        }
+    }
+    /// Full body in gated `../DevServer/DirectoryWatchStore.rs` draft.
+    pub fn free_entry(&mut self, _entry_index: usize) {
+        todo!("blocked_on: dev_server::DirectoryWatchStore::free_entry body un-gate")
+    }
 }
 pub mod directory_watch_store {
     /// `DirectoryWatchStore.Entry` — per-watched-directory state.

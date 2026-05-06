@@ -482,13 +482,13 @@ impl<'a> Coordinator<'a> {
             // drops the old values now (pipe FDs, capture buffer) to match the
             // Zig's explicit deinit() calls.
             w.ipc = Default::default();
-            w.out = Default::default();
-            w.err = Default::default();
+            w.out = WorkerPipe::new(PipeRole::Stdout, core::ptr::null());
+            w.err = WorkerPipe::new(PipeRole::Stderr, core::ptr::null());
             let _ = core::mem::take(&mut w.captured);
         }
     }
 
-    fn account_crash(&mut self, file_idx: u32, status: SpawnStatus) {
+    fn account_crash(&mut self, file_idx: u32, status: &SpawnStatus) {
         self.break_dots();
         let mut buf = [0u8; 32];
         Output::pretty_error(format_args!(
@@ -511,7 +511,7 @@ impl<'a> Coordinator<'a> {
     /// files as aborted so the run ends immediately with a non-zero exit
     /// and the panic's stderr (already flushed via flushCaptured) is the
     /// last meaningful output, not buried under hundreds of later passes.
-    fn abort_on_worker_panic(&mut self, file_idx: u32, status: SpawnStatus) {
+    fn abort_on_worker_panic(&mut self, file_idx: u32, status: &SpawnStatus) {
         self.break_dots();
         let mut buf = [0u8; 32];
         Output::pretty_error(format_args!(

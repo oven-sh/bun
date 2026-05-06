@@ -2531,23 +2531,79 @@ impl Payload {
         if self.data_len == 0 {
             return &[];
         }
-        core::slice::from_raw_parts(self.data_ptr, self.data_len)
+        // SAFETY: caller contract — see doc comment above.
+        unsafe { core::slice::from_raw_parts(self.data_ptr, self.data_len) }
     }
 }
 
 /// Trait to abstract over TLSSocket / TCPSocket for `_generic_flush`/`_generic_write`.
 pub trait NativeSocketWrite {
-    fn write_maybe_corked(&self, buf: &[u8]) -> i32;
+    fn write_maybe_corked(&mut self, buf: &[u8]) -> i32;
 }
 impl NativeSocketWrite for &mut TLSSocket {
-    fn write_maybe_corked(&self, buf: &[u8]) -> i32 {
-        // TODO(port): forward to TLSSocket.writeMaybeCorked
-        TLSSocket::write_maybe_corked(self, buf)
+    fn write_maybe_corked(&mut self, buf: &[u8]) -> i32 {
+        // Forward to the inherent NewSocket<true>::write_maybe_corked. UFCS to avoid
+        // resolving back to this trait impl (the trait is implemented on `&mut TLSSocket`,
+        // the inherent method is on `TLSSocket`).
+        TLSSocket::write_maybe_corked(&mut **self, buf)
     }
 }
 impl NativeSocketWrite for &mut TCPSocket {
-    fn write_maybe_corked(&self, buf: &[u8]) -> i32 {
-        TCPSocket::write_maybe_corked(self, buf)
+    fn write_maybe_corked(&mut self, buf: &[u8]) -> i32 {
+        TCPSocket::write_maybe_corked(&mut **self, buf)
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// HasAutoFlusher — wires H2FrameParser into webcore::AutoFlusher's deferred
+// microtask queue (Zig duck-types on `auto_flusher` field + `onAutoFlush`).
+// ──────────────────────────────────────────────────────────────────────────
+impl HasAutoFlusher for H2FrameParser {
+    #[inline]
+    fn auto_flusher(&mut self) -> &mut AutoFlusher {
+        &mut self.auto_flusher
+    }
+    fn on_auto_flush(this: *mut Self) -> bool {
+        // SAFETY: `this` was registered as `&mut H2FrameParser` cast to `*mut c_void`;
+        // DeferredTaskQueue::run is single-threaded (drained on the JS thread after
+        // microtasks), so no aliasing across the call.
+        unsafe { (*this).on_auto_flush() }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Local extension shims for upstream methods missing on `bun_jsc` types.
+// PORT NOTE: `JSValue::push` and `VM::deprecated_report_extra_memory` exist in
+// the Zig spec but the Rust `bun_jsc::JSValue` / `bun_jsc::VM` impls have not
+// landed them yet. Shim via FFI here (orphan-safe: traits are local).
+// ──────────────────────────────────────────────────────────────────────────
+trait JsValueArrayPush {
+    fn push(self, global: &JSGlobalObject, item: JSValue) -> JsResult<()>;
+}
+impl JsValueArrayPush for JSValue {
+    fn push(self, global: &JSGlobalObject, item: JSValue) -> JsResult<()> {
+        unsafe extern "C" {
+            fn JSC__JSValue__push(value: JSValue, global: *const JSGlobalObject, out: JSValue);
+        }
+        // SAFETY: `self` is a JSArray (caller-created via create_empty_array); `global` is live.
+        unsafe { JSC__JSValue__push(self, global, item) };
+        if global.has_exception() {
+            return Err(bun_jsc::JsError::Thrown);
+        }
+        Ok(())
+    }
+}
+
+trait VmReportExtraMemory {
+    fn deprecated_report_extra_memory(&self, size: usize);
+}
+impl VmReportExtraMemory for bun_jsc::VM {
+    fn deprecated_report_extra_memory(&self, size: usize) {
+        unsafe extern "C" {
+            fn JSC__VM__reportExtraMemory(vm: *mut bun_jsc::VM, size: usize);
+        }
+        // SAFETY: `self` is a live VM; `as_mut_ptr` yields write-provenance `*mut`.
+        unsafe { JSC__VM__reportExtraMemory(self.as_mut_ptr(), size) }
     }
 }
 

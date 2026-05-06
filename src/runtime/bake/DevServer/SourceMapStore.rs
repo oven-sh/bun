@@ -54,12 +54,19 @@ pub struct SourceMapStore {
     pub weak_ref_sweep_timer: EventLoopTimer,
 }
 
+impl Default for SourceMapStore {
+    fn default() -> Self {
+        Self {
+            entries: ArrayHashMap::new(),
+            weak_ref_sweep_timer: EventLoopTimer::init_paused(EventLoopTimerTag::DevServerSweepSourceMaps),
+            weak_refs: bun_collections::LinearFifo::init(),
+        }
+    }
+}
 impl SourceMapStore {
-    pub const EMPTY: Self = Self {
-        entries: ArrayHashMap::EMPTY,
-        weak_ref_sweep_timer: EventLoopTimer::init_paused(EventLoopTimer::Tag::DevServerSweepSourceMaps),
-        weak_refs: bun_collections::LinearFifo::INIT,
-    };
+    // PORT NOTE: Zig `pub const empty` was a comptime aggregate; ArrayHashMap/LinearFifo
+    // have no `const fn` ctors in Rust, so callers use `SourceMapStore::default()`.
+    pub fn empty() -> Self { Self::default() }
 }
 
 const WEAK_REF_EXPIRY_SECONDS: i64 = 10;

@@ -843,9 +843,11 @@ impl InitCommand {
             // TODO(port): bun.FD.fromStdFile(package_json_file orelse try std.fs.cwd().createFileZ(...))
             let fd: Fd = match package_json_file.as_ref() {
                 Some(f) => f.handle(),
-                None => bun_sys::File::create_z(Fd::cwd(), b"package.json\0")?.handle(),
+                None => bun_sys::File::create(Fd::cwd(), b"package.json", true)?.handle(),
             };
-            let _close = scopeguard::guard(fd, |fd| fd.close());
+            let _close = scopeguard::guard(fd, |fd: Fd| {
+                let _ = fd.close();
+            });
             let mut buffer_writer = js_printer::BufferWriter::init();
             buffer_writer.append_newline = true;
             let mut package_json_writer = js_printer::BufferPrinter::init(buffer_writer);
@@ -853,38 +855,40 @@ impl InitCommand {
             let print_result = js_printer::print_json(
                 &mut package_json_writer,
                 js_ast::Expr {
-                    data: js_ast::ExprData::EObject(fields.object),
+                    // SAFETY: fields.object is non-null (set above from arena/store).
+                    data: js_ast::ExprData::EObject(unsafe {
+                        js_ast::StoreRef::from_raw(fields.object)
+                    }),
                     loc: logger::Loc::EMPTY,
                 },
                 &logger::Source::init_empty_file(b"package.json"),
                 js_printer::PrintJsonOptions {
+                    indent: Default::default(),
                     mangled_props: None,
                 },
             );
             if let Err(err) = print_result {
-                Output::pretty_errorln(
-                    "package.json failed to write due to error {s}",
-                    format_args!("{}", err.name()),
-                );
+                Output::pretty_errorln(format_args!(
+                    "package.json failed to write due to error {}",
+                    err.name(),
+                ));
                 package_json_file = None;
                 break 'write_package_json;
             }
             let written = package_json_writer.ctx.get_written();
-            if let Err(err) = bun_sys::File::from(fd).write_all(written).unwrap_result() {
-                Output::pretty_errorln(
-                    "package.json failed to write due to error {s}",
-                    format_args!("{}", err.name()),
-                );
+            if let Err(err) = bun_sys::File::from(fd).write_all(written) {
+                Output::pretty_errorln(format_args!(
+                    "package.json failed to write due to error {}",
+                    err.name(),
+                ));
                 package_json_file = None;
                 break 'write_package_json;
             }
-            if let Err(err) =
-                bun_sys::ftruncate(fd, i64::try_from(written.len()).unwrap()).unwrap_result()
-            {
-                Output::pretty_errorln(
-                    "package.json failed to write due to error {s}",
-                    format_args!("{}", err.name()),
-                );
+            if let Err(err) = bun_sys::ftruncate(fd, i64::try_from(written.len()).unwrap()) {
+                Output::pretty_errorln(format_args!(
+                    "package.json failed to write due to error {}",
+                    err.name(),
+                ));
                 package_json_file = None;
                 break 'write_package_json;
             }
@@ -902,14 +906,14 @@ impl InitCommand {
                 }
 
                 if package_json_file.is_some() && !did_load_package_json {
-                    Output::prettyln(" + <r><d>package.json<r>", format_args!(""));
+                    Output::prettyln(format_args!(" + <r><d>package.json<r>"));
                     Output::flush();
                 }
 
                 if !fields.entry_point.is_empty() && !exists(&fields.entry_point) {
                     if let Some(dirname) = bun_core::dirname(&fields.entry_point) {
                         if dirname != b"." {
-                            let _ = bun_sys::make_path(Fd::cwd(), dirname);
+                            let _ = bun_sys::make_path(bun_sys::Dir::cwd(), dirname);
                         }
                     }
 

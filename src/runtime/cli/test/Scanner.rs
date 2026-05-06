@@ -208,7 +208,11 @@ impl<'a> Scanner<'a> {
                 else {
                     continue;
                 };
-                let stored = self.fs.dirname_store.append(path2.as_bytes())?;
+                let stored = self
+                    .fs
+                    .dirname_store
+                    .append_slice(path2.as_bytes())
+                    .map_err(|_| ScanError::OutOfMemory)?;
                 let _ = self
                     .read_dir_with_name(stored, Some(child_dir))
                     .map_err(|_| ScanError::OutOfMemory)?;

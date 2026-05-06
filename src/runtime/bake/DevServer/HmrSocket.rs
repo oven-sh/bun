@@ -53,7 +53,7 @@ impl HmrSocket {
             dev: NonNull::from(dev),
             is_from_localhost,
             subscriptions: HmrTopicBits::empty(),
-            active_route: super::route_bundle::IndexOptional::NONE,
+            active_route: None,
             referenced_source_maps: HashMap::default(),
             underlying: None,
             inspector_connection_id: -1,
@@ -78,7 +78,7 @@ impl HmrSocket {
         let send_status = ws.send(&header, Opcode::Binary, false, true);
         self.underlying = Some(ws);
 
-        if send_status != bun_uws::SendStatus::Dropped {
+        if send_status != SendStatus::Dropped {
             // Notify inspector about client connection
             // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
             if let Some(agent) = unsafe { dev.inspector() } {
@@ -111,7 +111,7 @@ impl HmrSocket {
                 let dev = unsafe { self.dev() };
                 if dev
                     .source_maps
-                    .remove_or_upgrade_weak_ref(source_map_id, SourceMapStore::WeakRefOp::Upgrade)
+                    .remove_or_upgrade_weak_ref(source_map_id, RemoveOrUpgradeMode::Upgrade)
                 {
                     self.referenced_source_maps
                         .insert(source_map_id, ())

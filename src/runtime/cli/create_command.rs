@@ -203,12 +203,14 @@ impl ProgressBuf {
         })
     }
 
-    pub fn pretty(fmt: &'static str, args: core::fmt::Arguments<'_>) -> Result<&'static [u8], bun_core::Error> {
-        // TODO(port): Output.prettyFmt is a comptime fmt-string transform; emulate via runtime branch
+    pub fn pretty(_fmt: &'static str, args: core::fmt::Arguments<'_>) -> Result<&'static [u8], bun_core::Error> {
+        // TODO(port): Output.prettyFmt is a comptime fmt-string transform; the Rust
+        // `pretty_fmt` takes a single rendered payload, so callers should pre-render
+        // `args` with the color template baked in. `_fmt` is retained for API parity.
         if Output::enable_ansi_colors_stdout() {
-            ProgressBuf::print(format_args!("{}", Output::pretty_fmt::<true>(fmt, args)))
+            ProgressBuf::print(format_args!("{}", Output::pretty_fmt::<true>(args)))
         } else {
-            ProgressBuf::print(format_args!("{}", Output::pretty_fmt::<false>(fmt, args)))
+            ProgressBuf::print(format_args!("{}", Output::pretty_fmt::<false>(args)))
         }
     }
 }

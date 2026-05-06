@@ -1,7 +1,7 @@
 //! libspng decode/encode for `Bun.Image`. Indexed-PNG encode quantises via
 //! `quantize.rs`. Dispatch lives in codecs.rs; this file is the codec body.
 
-use core::ffi::{c_int, c_void};
+use core::ffi::c_int;
 use core::ptr::NonNull;
 
 use super::codecs;

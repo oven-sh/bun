@@ -2431,13 +2431,11 @@ impl RunCommand {
             SpawnStatus::Signaled(_) => {
                 if let Some(sig) = spawn_result.status.signal_code() {
                     if sig != bun_core::SignalCode::SIGINT && !silent {
-                        Output::pretty_errorln(
+                        pretty_errorln!(
                             "<r><red>error<r><d>:<r> script <b>\"{}\"<r> was terminated by signal {}<r>",
-                            (
-                                bstr::BStr::new(name),
-                                bun_sys::SignalCode(sig as u8)
-                                    .fmt(Output::enable_ansi_colors_stderr()),
-                            ),
+                            bstr::BStr::new(name),
+                            bun_sys::SignalCode(sig as u8)
+                                .fmt(Output::enable_ansi_colors_stderr()),
                         );
                         Output::flush();
                     }
@@ -2452,9 +2450,10 @@ impl RunCommand {
 
             SpawnStatus::Err(ref err) => {
                 if !silent {
-                    Output::pretty_errorln(
+                    pretty_errorln!(
                         "<r><red>error<r>: Failed to run script <b>{}<r> due to error:\n{}",
-                        (bstr::BStr::new(name), err),
+                        bstr::BStr::new(name),
+                        err,
                     );
                 }
 
@@ -2543,12 +2542,10 @@ impl RunCommand {
 
     fn run_binary_generic_error(executable: &[u8], silent: bool, err: sys::Error) -> ! {
         if !silent {
-            Output::pretty_errorln(
+            pretty_errorln!(
                 "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to:\n{}",
-                (
-                    bstr::BStr::new(Self::basename_or_bun(executable)),
-                    err.with_path(executable),
-                ),
+                bstr::BStr::new(Self::basename_or_bun(executable)),
+                err.with_path(executable),
             );
         }
 
@@ -2612,19 +2609,20 @@ impl RunCommand {
                             let exec_z = unsafe { ZStr::from_raw(executable.as_ptr(), executable.len()) };
                             match sys::stat(exec_z) {
                                 sys::Result::Ok(stat) => {
-                                    if sys::S::ISDIR(stat.mode) {
-                                        Output::pretty_errorln(
+                                    if sys::S::ISDIR(stat.st_mode) {
+                                        pretty_errorln!(
                                             "<r><red>error<r>: Failed to run directory \"<b>{}<r>\"\n",
-                                            (bstr::BStr::new(Self::basename_or_bun(executable)),),
+                                            bstr::BStr::new(Self::basename_or_bun(executable)),
                                         );
                                         break 'print_error;
                                     }
                                 }
                                 sys::Result::Err(err2) => match err2.get_errno() {
-                                    sys::Errno::NOENT | sys::Errno::PERM | sys::Errno::NOTDIR => {
-                                        Output::pretty_errorln(
+                                    sys::Errno::ENOENT | sys::Errno::EPERM | sys::Errno::ENOTDIR => {
+                                        pretty_errorln!(
                                             "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to error:\n{}",
-                                            (bstr::BStr::new(Self::basename_or_bun(executable)), err2),
+                                            bstr::BStr::new(Self::basename_or_bun(executable)),
+                                            err2,
                                         );
                                         break 'print_error;
                                     }
@@ -2633,9 +2631,10 @@ impl RunCommand {
                             }
                         }
 
-                        Output::pretty_errorln(
+                        pretty_errorln!(
                             "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to <r><red>{}<r>",
-                            (bstr::BStr::new(Self::basename_or_bun(executable)), err.name()),
+                            bstr::BStr::new(Self::basename_or_bun(executable)),
+                            err.name(),
                         );
                     }
                 }
@@ -2659,12 +2658,10 @@ impl RunCommand {
                     SpawnStatus::Signaled(signal) => {
                         let signal = bun_sys::SignalCode(signal);
                         if signal.valid() && signal != bun_sys::SignalCode::SIGINT && !silent {
-                            Output::pretty_errorln(
+                            pretty_errorln!(
                                 "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to signal <b>{}<r>",
-                                (
-                                    bstr::BStr::new(Self::basename_or_bun(executable)),
-                                    signal.name().unwrap_or("unknown"),
-                                ),
+                                bstr::BStr::new(Self::basename_or_bun(executable)),
+                                signal.name().unwrap_or("unknown"),
                             );
                         }
 
@@ -2683,12 +2680,10 @@ impl RunCommand {
                         let exit_signal = bun_sys::SignalCode(exit_code.signal);
                         if exit_signal.valid() {
                             if !silent {
-                                Output::pretty_errorln(
+                                pretty_errorln!(
                                     "<r><red>error<r>: \"<b>{}<r>\" exited with signal <b>{}<r>",
-                                    (
-                                        bstr::BStr::new(Self::basename_or_bun(executable)),
-                                        exit_signal.name().unwrap_or("unknown"),
-                                    ),
+                                    bstr::BStr::new(Self::basename_or_bun(executable)),
+                                    exit_signal.name().unwrap_or("unknown"),
                                 );
                             }
 
@@ -2726,9 +2721,9 @@ impl RunCommand {
                                         "\"<b>{}<r>\" exited with code {}",
                                         (bstr::BStr::new(executable), code),
                                     );
-                                    Output::note(
+                                    bun_core::note!(
                                         "a package.json script \"{}\" was not found",
-                                        (bstr::BStr::new(original_script_for_bun_run.unwrap()),),
+                                        bstr::BStr::new(original_script_for_bun_run.unwrap()),
                                     );
                                 }
                                 // 128 + 2 is the exit code of a process killed by SIGINT, which is caused by CTRL + C
@@ -2738,15 +2733,16 @@ impl RunCommand {
                                         (bstr::BStr::new(Self::basename_or_bun(executable)), code),
                                     );
                                 } else {
-                                    Output::pretty_errorln(
+                                    pretty_errorln!(
                                         "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to exit code <b>{}<r>",
-                                        (bstr::BStr::new(Self::basename_or_bun(executable)), code),
+                                        bstr::BStr::new(Self::basename_or_bun(executable)),
+                                        code,
                                     );
                                 }
                             }
                         }
 
-                        Global::exit(code);
+                        Global::exit(code as u32);
                     }
                     SpawnStatus::Running => panic!("Unexpected state: process is running"),
                 }
@@ -2757,9 +2753,10 @@ impl RunCommand {
     pub fn ls(ctx: &Command::Context) -> Result<(), bun_core::Error> {
         let args = ctx.args.clone();
 
-        let mut this_transpiler = Transpiler::init(ctx.log, args, None)?;
+        let arena: &'static bun_alloc::Arena = runner_arena();
+        let mut this_transpiler = Transpiler::init(arena, ctx.log, args, None)?;
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
-        this_transpiler.options.env.prefix = b"";
+        this_transpiler.options.env.prefix = Box::default();
 
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;
@@ -2803,9 +2800,11 @@ impl RunCommand {
         #[cfg(not(windows))]
         {
             // TODO(port): Zig returned BUN_NODE_DIR (no NUL); we need a ZStr.
-            return Ok(ZStr::from_static(
-                const_format::concatcp!(RunCommand::BUN_NODE_DIR, "\0").as_bytes(),
-            ));
+            const BUN_NODE_DIR_Z: &str = const_format::concatcp!(RunCommand::BUN_NODE_DIR, "\0");
+            // SAFETY: BUN_NODE_DIR_Z is a NUL-terminated &'static str literal.
+            return Ok(unsafe {
+                ZStr::from_raw(BUN_NODE_DIR_Z.as_ptr(), BUN_NODE_DIR_Z.len() - 1)
+            });
         }
         #[cfg(windows)]
         {
@@ -2851,7 +2850,8 @@ impl RunCommand {
     ) -> Result<(), bun_core::Error> {
         // TODO(port): error set was OOM || std.fs.SelfExePathError
         // If we are already running as "node", the path should exist
-        if cli::PRETEND_TO_BE_NODE.get() {
+        // SAFETY: PRETEND_TO_BE_NODE is a process-startup flag (single-threaded write).
+        if unsafe { cli::PRETEND_TO_BE_NODE } {
             return Ok(());
         }
 
@@ -2861,21 +2861,23 @@ impl RunCommand {
 
             // if we are already an absolute path, use that
             // if the user started the application via a shebang, it's likely that the path is absolute already
-            if bun_core::argv()[0][0] == b'/' {
-                *optional_bun_path = bun_core::argv()[0];
-                argv0 = bun_core::argv()[0].as_ptr() as *const c_char;
-                // TODO(port): bun.argv[0] is [:0]const u8 in Zig; assume null-terminated here
+            // PORT NOTE: `bun_core::argv()` returns an `Argv` wrapper; `.get(0)` yields
+            // `&'static ZStr` (NUL-terminated, process-lifetime).
+            let argv0_slice = bun_core::argv().get(0).map(|z| z.as_bytes()).unwrap_or(b"");
+            if argv0_slice.first() == Some(&b'/') {
+                *optional_bun_path = argv0_slice;
+                argv0 = argv0_slice.as_ptr() as *const c_char;
             } else if optional_bun_path.is_empty() {
                 // otherwise, ask the OS for the absolute path
                 let self_ = bun_core::self_exe_path()?;
                 if !self_.is_empty() {
                     argv0 = self_.as_ptr() as *const c_char;
-                    *optional_bun_path = self_;
+                    *optional_bun_path = self_.as_bytes();
                 }
             }
 
             if optional_bun_path.is_empty() {
-                argv0 = bun_core::argv()[0].as_ptr() as *const c_char;
+                argv0 = argv0_slice.as_ptr() as *const c_char;
             }
 
             #[cfg(debug_assertions)]
@@ -2891,7 +2893,7 @@ impl RunCommand {
                 const_format::concatcp!(RunCommand::BUN_NODE_DIR, "\0");
             for p in PATHS {
                 let mut retried = false;
-                loop {
+                'retry: loop {
                     'inner: {
                         // SAFETY: argv0 is a valid NUL-terminated C string.
                         let target = unsafe {
@@ -2901,7 +2903,7 @@ impl RunCommand {
                         // SAFETY: PATHS entries are NUL-terminated string literals.
                         let link = unsafe { ZStr::from_raw(p.as_ptr(), p.len() - 1) };
                         if let sys::Result::Err(err) = sys::symlink(target, link) {
-                            if err.get_errno() == sys::Errno::EXIST {
+                            if err.get_errno() == sys::Errno::EEXIST {
                                 break 'inner;
                             }
                             if retried {
@@ -2919,7 +2921,7 @@ impl RunCommand {
                             let _ = sys::mkdir(dir_z, 0o755);
 
                             retried = true;
-                            continue;
+                            continue 'retry;
                         }
                     }
                     break;

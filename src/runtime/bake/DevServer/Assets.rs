@@ -257,15 +257,19 @@ impl Assets {
     }
 
     pub fn unref_by_path(&mut self, path: &[u8]) {
-        let Some(entry) = self.path_map.fetch_swap_remove(path) else {
+        // PORT NOTE: Zig `fetchSwapRemove` returned the removed entry; the Rust
+        // `StringArrayHashMap` only exposes `swap_remove(key) -> bool`, so look up the
+        // value first (EntryIndex is Copy) and then remove.
+        let Some(&entry) = self.path_map.get(path) else {
             return;
         };
-        self.unref_by_index(entry.value, 1);
+        self.path_map.swap_remove(path);
+        self.unref_by_index(entry, 1);
     }
 
     pub fn reindex_if_needed(&mut self) -> Result<(), bun_alloc::AllocError> {
         if self.needs_reindex {
-            self.files.reindex()?;
+            self.files.re_index()?;
             self.needs_reindex = false;
         }
         Ok(())

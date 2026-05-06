@@ -1514,40 +1514,15 @@ pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Mode {
-    Development,
-    ProductionDynamic,
-    ProductionStatic,
-}
-
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Side {
-    Client = 0,
-    Server = 1,
-}
-
-impl Side {
-    pub fn graph(self) -> Graph {
-        match self {
-            Side::Client => Graph::Client,
-            Side::Server => Graph::Server,
-        }
-    }
-}
-
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Graph {
-    Client = 0,
-    Server = 1,
-    /// Only used when Framework has .server_components.separate_ssr_graph set
-    Ssr = 2,
-}
+// PORT NOTE: `Mode`/`Side`/`Graph` are defined canonically in the parent
+// `bake/mod.rs` (which itself re-exports `Side`/`Graph` from
+// `bun_bundler::bake_types`). Re-export here so `bake_body::Mode` ≡
+// `crate::bake::Mode` and downstream callers (production.rs, build_command.rs,
+// IncrementalGraph.rs) see one nominal type.
+pub use super::Mode;
+pub use bun_bundler::bake_types::{Graph, Side};
 
 pub fn add_import_meta_defines(
-    arena: &Arena,
     define: &mut bun_bundler::options::Define,
     mode: Mode,
     side: Side,

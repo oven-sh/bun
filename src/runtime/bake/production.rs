@@ -372,7 +372,7 @@ pub fn build_with_vm(
             let default = unsafe {
                 BakeGetDefaultExportFromModule(
                     vm.global,
-                    config_entry_point_string.to_js(global)?,
+                    config_entry_point_string.to_js(global).map_err(js_err)?,
                 )
             };
 
@@ -390,11 +390,11 @@ pub fn build_with_vm(
                          \n\
                          Learn more at https://bun.com/docs/ssg",
                         "  ", "  ", "  ", "  ", "  ", "  ", "  ", "  ", "  "
-                    ))
-                    .into());
+                    )));
+                return Err(bun_core::err!("JSError"));
             }
 
-            let Some(app) = default.get(global, "app")? else {
+            let Some(app) = default.get(global, "app").map_err(js_err)? else {
                 return Err(global
                     .throw_invalid_arguments(format_args!(
                         "Your config file's default export must contain an \"app\" property.\n\

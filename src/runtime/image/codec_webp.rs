@@ -128,7 +128,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     }
     let len: usize = (w as usize) * (h as usize) * 4;
     // SAFETY: WebPDecodeRGBA returns a buffer of w*h*4 bytes on success.
-    let out: Box<[u8]> = Box::from(unsafe { core::slice::from_raw_parts(ptr, len) });
+    let out: Vec<u8> = unsafe { core::slice::from_raw_parts(ptr, len) }.to_vec();
 
     // Extract the ICCP chunk (if any) from the RIFF container. A plain
     // VP8/VP8L WebP with no VP8X wrapper has no ICCP — `WebPDemux` still
@@ -142,7 +142,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     // about. A failed demux (malformed container) falls through with
     // `icc_profile = None`; the pixels decoded fine so the image is still
     // usable.
-    let icc: Option<Box<[u8]>> = 'blk: {
+    let icc: Option<Vec<u8>> = 'blk: {
         let data = WebPData { bytes: bytes.as_ptr(), size: bytes.len() };
         // SAFETY: `data` points to a valid WebPData; null state ptr is allowed.
         let dmux = unsafe { WebPDemuxInternal(&data, 0, core::ptr::null_mut(), WEBP_DEMUX_ABI_VERSION) };
@@ -174,7 +174,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
             break 'blk None;
         }
         // SAFETY: chunk.bytes points into `bytes` for chunk.size bytes per libwebp contract.
-        break 'blk Some(Box::from(unsafe { core::slice::from_raw_parts(iter.chunk.bytes, iter.chunk.size) }));
+        break 'blk Some(unsafe { core::slice::from_raw_parts(iter.chunk.bytes, iter.chunk.size) }.to_vec());
     };
     Ok(codecs::Decoded { rgba: out, width: w, height: h, icc_profile: icc })
 }

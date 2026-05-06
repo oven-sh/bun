@@ -2440,8 +2440,8 @@ pub mod JSZlib {
         let options_val: Option<JSValue> = if arguments.len() > 1 && arguments[1].is_object() {
             Some(arguments[1])
         } else if arguments.len() > 1 && !arguments[1].is_undefined() {
-            return global_this
-                .throw_invalid_arguments("Expected options to be an object", format_args!(""));
+            return Err(global_this
+                .throw_invalid_arguments("Expected options to be an object"));
         } else {
             None
         };
@@ -2450,8 +2450,8 @@ pub mod JSZlib {
             return Ok((buffer, options_val));
         }
 
-        global_this
-            .throw_invalid_arguments("Expected buffer to be a string or buffer", format_args!(""))
+        Err(global_this
+            .throw_invalid_arguments("Expected buffer to be a string or buffer"))
     }
 
     #[bun_jsc::host_fn]

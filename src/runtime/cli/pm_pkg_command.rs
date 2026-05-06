@@ -17,9 +17,9 @@ pub struct PmPkgCommand;
 /// Process-lifetime bump arena for E::Object::put() / json::parse calls.
 /// `bumpalo::Bump` is `!Sync`, so a `static OnceLock` is out; the CLI is
 /// single-threaded one-shot, so we cache a leaked arena per thread instead.
-fn dummy_bump() -> &'static bumpalo::Bump {
+fn dummy_bump() -> &'static bun_alloc::Arena {
     thread_local! {
-        static BUMP: &'static bumpalo::Bump = Box::leak(Box::new(bumpalo::Bump::new()));
+        static BUMP: &'static bun_alloc::Arena = Box::leak(Box::new(bun_alloc::Arena::new()));
     }
     BUMP.with(|b| *b)
 }

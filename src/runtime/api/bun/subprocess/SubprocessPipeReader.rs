@@ -411,6 +411,42 @@ impl PipeReader {
     }
 }
 
+// `bun.io.BufferedReader.init(@This())` — vtable parent. The Zig spec declares
+// `onReaderDone`/`onReaderError`/`loop`/`eventLoop` (no `onReadChunk`).
+impl BufferedReaderParent for PipeReader {
+    const HAS_ON_READ_CHUNK: bool = false;
+
+    unsafe fn on_read_chunk(_this: *mut Self, _chunk: &[u8], _has_more: ReadState) -> bool {
+        // Never called when HAS_ON_READ_CHUNK == false.
+        true
+    }
+
+    // SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
+    // `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader
+    // may be live on the caller's stack. `on_reader_done`/`on_reader_error` are
+    // tail-position (the reader is finished with `self`), so `&mut *this` is OK.
+    unsafe fn on_reader_done(this: *mut Self) {
+        unsafe { (*this).on_reader_done() };
+    }
+    unsafe fn on_reader_error(this: *mut Self, err: bun_sys::Error) {
+        unsafe { (*this).on_reader_error(err) };
+    }
+    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+        // Raw `addr_of!` projection — no `&Self` materialized (reader field may
+        // be borrowed mutably by the caller).
+        unsafe { (*this).loop_().cast() }
+    }
+    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
+        // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void`; pass
+        // the raw `*mut jsc::EventLoop` through. The FilePoll vtable (registered
+        // by bun_runtime::init) knows how to interpret it.
+        // SAFETY: `this` is non-null/live per trait contract; `event_loop` is
+        // `Copy` and disjoint from the reader field.
+        let ev = unsafe { *core::ptr::addr_of!((*this).event_loop) };
+        bun_io::EventLoopHandle(ev.as_ptr() as *mut core::ffi::c_void)
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/api/bun/subprocess/SubprocessPipeReader.zig (251 lines)

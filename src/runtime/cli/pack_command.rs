@@ -141,135 +141,19 @@ pub struct BundledDep {
 
 impl PackCommand {
     pub fn exec_with_manager(ctx: Command::Context<'_>, manager: &mut PackageManager) -> Result<(), bun_core::Error> {
-        if manager.options.log_level != LogLevel::Silent && manager.options.log_level != LogLevel::Quiet {
-            Output::prettyln(format_args!(
-                "<r><b>bun pack <r><d>v{}<r>",
-                Global::package_json_version_with_sha,
-            ));
-            Output::flush();
-        }
-
-        let mut lockfile = Lockfile::default(); // TODO(port): `undefined` initialization
-        let load_from_disk_result = lockfile.load_from_cwd(manager, &manager.log, false);
-
-        let lockfile_ref: Option<&Lockfile> = match load_from_disk_result {
-            bun_install::LoadResult::Ok(ok) => Some(ok.lockfile),
-            bun_install::LoadResult::Err(cause) => 'err: {
-                use bun_install::LoadStep;
-                match cause.step {
-                    LoadStep::OpenFile => {
-                        if cause.value == bun_core::err!("ENOENT") {
-                            break 'err None;
-                        }
-                        Output::err_generic(
-                            "failed to open lockfile: {}",
-                            format_args!("{}", cause.value.name()),
-                        );
-                    }
-                    LoadStep::ParseFile => Output::err_generic(
-                        "failed to parse lockfile: {}",
-                        format_args!("{}", cause.value.name()),
-                    ),
-                    LoadStep::ReadFile => Output::err_generic(
-                        "failed to read lockfile: {}",
-                        format_args!("{}", cause.value.name()),
-                    ),
-                    LoadStep::Migrating => Output::err_generic(
-                        "failed to migrate lockfile: {}",
-                        format_args!("{}", cause.value.name()),
-                    ),
-                }
-
-                if manager.log.has_errors() {
-                    manager.log.print(Output::error_writer())?;
-                }
-
-                Global::crash();
-            }
-            _ => None,
-        };
-
-        let mut pack_ctx = Context {
-            manager,
-            command_ctx: ctx,
-            lockfile: lockfile_ref,
-            bundled_deps: Vec::new(),
-            stats: Stats::default(),
-        };
-
-        // var arena = std.heap.ArenaAllocator.init(ctx.allocator);
-        // defer arena.deinit();
-
-        // if (manager.options.filter_patterns.len > 0) {
-        //     // TODO: --filter
-        //     // loop, convert, find matching workspaces, then pack each
-        //     return;
-        // }
-
-        // just pack the current workspace
-        let original_path = pack_ctx.manager.original_package_json_path.clone();
-        // PORT NOTE: reshaped for borrowck — cloned path before passing &mut pack_ctx
-        if let Err(err) = pack::<false>(&mut pack_ctx, &original_path) {
-            match err {
-                PackError::OutOfMemory => bun_core::out_of_memory(),
-                PackError::MissingPackageName | PackError::MissingPackageVersion => {
-                    Output::err_generic("package.json must have `name` and `version` fields", format_args!(""));
-                    Global::crash();
-                }
-                PackError::InvalidPackageName | PackError::InvalidPackageVersion => {
-                    Output::err_generic(
-                        "package.json `name` and `version` fields must be non-empty strings",
-                        format_args!(""),
-                    );
-                    Global::crash();
-                }
-                PackError::MissingPackageJSON => {
-                    Output::err_generic(
-                        "failed to find a package.json in: \"{}\"",
-                        format_args!("{}", bstr::BStr::new(&pack_ctx.manager.original_package_json_path)),
-                    );
-                    Global::crash();
-                }
-                #[allow(unreachable_patterns)]
-                _ => unreachable!(),
-            }
-        }
-        Ok(())
+        let _ = (ctx, manager);
+        // Upstream `bun_install::PackageManager` stub lacks `.log`,
+        // `.original_package_json_path`, and `Lockfile::load_from_cwd`;
+        // `bun_install::{LoadResult,LoadStep}` are unit structs (real enums
+        // gated behind `package_manager_real`, reconciler-6).
+        todo!("blocked_on: bun_install::Lockfile::load_from_cwd / PackageManager.{{log,original_package_json_path}} (package_manager_real un-gate)")
     }
 
     pub fn exec(ctx: Command::Context<'_>) -> Result<(), bun_core::Error> {
-        let cli = PackageManager::CommandLineArguments::parse(PackageManager::Subcommand::Pack)?;
-
-        let (manager, original_cwd) = match PackageManager::init(&ctx, cli, PackageManager::Subcommand::Pack) {
-            Ok(v) => v,
-            Err(err) => {
-                if !cli.silent {
-                    if err == bun_core::err!("MissingPackageJSON") {
-                        let mut cwd_buf = PathBuffer::uninit();
-                        match bun_sys::getcwd(&mut cwd_buf) {
-                            Ok(cwd) => Output::err_generic(
-                                "failed to find project package.json from: \"{}\"",
-                                format_args!("{}", bstr::BStr::new(cwd)),
-                            ),
-                            Err(_) => {
-                                Output::err_generic("failed to find project package.json", format_args!(""));
-                                Global::crash();
-                            }
-                        }
-                    } else {
-                        Output::err_generic(
-                            "failed to initialize bun install: {}",
-                            format_args!("{}", err.name()),
-                        );
-                    }
-                }
-
-                Global::crash();
-            }
-        };
-        let _ = original_cwd; // freed by Drop
-
-        Self::exec_with_manager(ctx, manager)
+        let _ = ctx;
+        // Upstream stub has no `PackageManager::init`, no
+        // `CommandLineArguments::parse`, and `Subcommand` lacks a `Pack` variant.
+        todo!("blocked_on: bun_install::PackageManager::{{init,CommandLineArguments::parse}} / Subcommand::Pack (package_manager_real un-gate)")
     }
 }
 

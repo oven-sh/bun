@@ -834,7 +834,7 @@ impl CommandLineReporter {
         let initial_repeat_count = test_entry.repeat_count;
         let repeats = (initial_repeat_count - sequence.remaining_repeat_count) + 1;
         let mut scopes_stack: BoundedArray<*const bun_test::DescribeScope, 64> = BoundedArray::default();
-        let mut parent_: Option<*const bun_test::DescribeScope> = test_entry.base.parent;
+        let mut parent_: Option<*const bun_test::DescribeScope> = test_entry.base.parent.map(|p| p as *const _);
 
         while let Some(scope) = parent_ {
             if scopes_stack.push(scope).is_err() {
@@ -979,7 +979,7 @@ impl CommandLineReporter {
         let Some(junit) = cmd_reporter.reporters.junit.as_mut() else { return; };
 
         let mut scopes_stack: BoundedArray<*const bun_test::DescribeScope, 64> = BoundedArray::default();
-        let mut parent_: Option<*const bun_test::DescribeScope> = test_entry.base.parent;
+        let mut parent_: Option<*const bun_test::DescribeScope> = test_entry.base.parent.map(|p| p as *const _);
         let assertions = sequence.expect_call_count;
         let line_number = test_entry.base.line_no;
 

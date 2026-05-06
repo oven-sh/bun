@@ -883,7 +883,7 @@ impl IncrementalGraph<Client> {
         graph += memory_cost_array_list(&self.current_chunk_parts);
         graph += memory_cost_array_list(&self.current_css_files);
         for packed_file in self.bundled_files.values() {
-            let file = packed_file.unpack();
+            let file = &packed_file.unsafe_packed_data;
             match &file.content {
                 Content::Js(code_slice) | Content::Asset(code_slice) => code += code_slice.len(),
                 _ => {}

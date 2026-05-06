@@ -49,7 +49,9 @@ pub fn post_process_js_chunk(
     let _trace = perf::trace("Bundler.postProcessJSChunk");
 
     let _ = chunk_index;
-    let c = ctx.c;
+    // SAFETY: `ctx.c` is a non-null backref into `BundleV2.linker`, valid for the
+    // duration of chunk post-processing (single-threaded per chunk).
+    let c: &mut LinkerContext = unsafe { &mut *ctx.c };
     debug_assert!(matches!(chunk.content, crate::chunk::Content::Javascript(_)));
 
     js_ast::expr::data::Store::create();

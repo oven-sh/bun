@@ -80,15 +80,22 @@ impl Default for ContextData {
 impl ContextData {
     /// Deref the process-lifetime `*mut Log` set in `create_context_data()`.
     ///
+    /// Takes `&mut self` (not `&self`) so the borrow checker ties the returned
+    /// `&mut Log` to an exclusive borrow of the `ContextData` — Zig's `*Log`
+    /// freely aliases, but in Rust a `&self -> &mut Log` accessor would let two
+    /// live `&mut Log` overlap (UB). The `Log` is only reachable via this
+    /// struct, so exclusive `self` ⇒ exclusive `Log`.
+    ///
     /// # Safety
     /// `self.log` must have been populated by `create_context_data()` (i.e. this
-    /// `ContextData` is the global CLI context), and no other `&mut` to the same
-    /// `Log` may be live.
+    /// `ContextData` is the global CLI context) and remain valid for the
+    /// lifetime of the returned reference.
     #[inline]
-    pub unsafe fn log(&self) -> &mut logger::Log {
+    pub unsafe fn log(&mut self) -> &mut logger::Log {
         debug_assert!(!self.log.is_null());
-        // SAFETY: invariant documented above; single-threaded CLI startup writes
-        // a process-lifetime `&mut Log` and never invalidates it.
+        // SAFETY: single-threaded CLI startup writes a process-lifetime pointer
+        // and never invalidates it; `&mut self` guarantees no other borrow of
+        // the Log (only reachable via this field) overlaps the returned `&mut`.
         unsafe { &mut *self.log }
     }
 

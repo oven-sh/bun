@@ -675,7 +675,7 @@ pub fn build_with_vm(
             "src_index={:?} side={} src={} dest={} - {:?}\n",
             file.source_index,
             file.side
-                .map(|s| <&'static str>::from(s))
+                .map(side_name)
                 .unwrap_or("null"),
             BStr::new(&file.src_path.text),
             BStr::new(&file.dest_path),
@@ -713,9 +713,9 @@ pub fn build_with_vm(
         // TODO: Maybe not do all the disk-writing in 1 thread?
         let Some(side) = file.side else { continue };
         match side {
-            bake::Side::Client => {
+            bun_bundler::options::Side::Client => {
                 // Client-side resources will be written to disk for usage on the client side
-                if let Err(err) = file.write_to_disk(root_dir, b".") {
+                if let Err(err) = file.write_to_disk(root_dir.fd(), b".") {
                     bun_crash_handler::handle_error_return_trace(err, None);
                     Output::err(
                         err,
@@ -724,9 +724,9 @@ pub fn build_with_vm(
                     );
                 }
             }
-            bake::Side::Server => {
+            bun_bundler::options::Side::Server => {
                 if ctx.bundler_options.bake_debug_dump_server {
-                    if let Err(err) = file.write_to_disk(root_dir, b".") {
+                    if let Err(err) = file.write_to_disk(root_dir.fd(), b".") {
                         bun_crash_handler::handle_error_return_trace(err, None);
                         Output::err(
                             err,
@@ -773,7 +773,7 @@ pub fn build_with_vm(
                         let mut key = Vec::with_capacity(6 + without_prefix.len());
                         write!(&mut key, "bake:/{}", BStr::new(without_prefix)).unwrap();
                         output_module_map.put(
-                            key.into_boxed_slice(),
+                            &key,
                             OutputFileIndex(u32::try_from(i).unwrap()),
                         )?;
                     }

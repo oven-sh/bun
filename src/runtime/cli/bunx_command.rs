@@ -372,6 +372,7 @@ impl BunxCommand {
         let mut subpath = PathBuffer::uninit();
         // TODO(port): bun.pathLiteral() rewrites '/' to the platform separator at comptime.
         let len = {
+            let total = subpath.len();
             let mut cursor: &mut [u8] = &mut subpath[..];
             write!(
                 cursor,
@@ -383,7 +384,7 @@ impl BunxCommand {
                 ),
             )
             .expect("unreachable");
-            subpath.len() - cursor.len()
+            total - cursor.len()
         };
         subpath[len] = 0;
         // SAFETY: subpath[len] == 0 written above

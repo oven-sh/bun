@@ -167,16 +167,18 @@ impl FileResponseStream {
 
         // BufferedReader path
         this.max_size = opts.length;
-        this.reader.flags.close_handle = false; // we own fd via auto_close
-        this.reader.flags.pollable = opts.pollable;
-        this.reader.flags.nonblocking = opts.file_type != FileType::File;
+        this.reader.flags.remove(PosixFlags::CLOSE_HANDLE); // we own fd via auto_close
+        this.reader.flags.set(PosixFlags::POLLABLE, opts.pollable);
+        this.reader
+            .flags
+            .set(PosixFlags::NONBLOCKING, opts.file_type != FileType::File);
         #[cfg(unix)]
         {
             if opts.file_type == FileType::Socket {
-                this.reader.flags.socket = true;
+                this.reader.flags.insert(PosixFlags::SOCKET);
             }
         }
-        this.reader.set_parent(this);
+        this.reader.set_parent(this as *mut FileResponseStream as *mut c_void);
 
         this.r#ref();
         let this_ptr: *mut FileResponseStream = this;
@@ -184,7 +186,7 @@ impl FileResponseStream {
 
         let start_result = if opts.offset > 0 {
             this.reader
-                .start_file_offset(this.fd, opts.pollable, opts.offset)
+                .start_file_offset(this.fd, opts.pollable, opts.offset as usize)
         } else {
             this.reader.start(this.fd, opts.pollable)
         };

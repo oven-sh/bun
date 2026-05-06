@@ -444,16 +444,14 @@ impl CronRegisterJob {
             self.tmp_path.as_ref().unwrap(),
             sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
             0o600,
-        )
-        .unwrap_result()
-        {
+        ) {
             Ok(f) => f,
             Err(_) => {
                 self.set_err(format_args!("Failed to create temp file"));
                 return Self::finish(self);
             }
         };
-        if file.write_all(&result).unwrap_result().is_err() {
+        if file.write_all(&result).is_err() {
             file.close();
             self.set_err(format_args!("Failed to write temp file"));
             return Self::finish(self);
@@ -491,7 +489,7 @@ impl CronRegisterJob {
 
         let mut launch_agents_dir = Vec::new();
         let _ = write!(&mut launch_agents_dir, "{}/Library/LaunchAgents", bstr::BStr::new(home));
-        if Fd::cwd().make_path::<u8>(&launch_agents_dir).is_err() {
+        if Fd::cwd().make_path(&launch_agents_dir).is_err() {
             self.set_err(format_args!("Failed to create ~/Library/LaunchAgents directory"));
             return Self::finish(self);
         }

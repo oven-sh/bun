@@ -2363,11 +2363,11 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
     }
 
     if opts.entry_points.is_empty() {
-        let mut entry_points = ctx.positionals;
+        let mut entry_points: &[Box<[u8]>] = &ctx.positionals;
 
         match CMD {
             Command::Tag::BuildCommand => {
-                if !entry_points.is_empty() && (entry_points[0] == b"build" || entry_points[0] == b"bun") {
+                if !entry_points.is_empty() && (&*entry_points[0] == b"build" || &*entry_points[0] == b"bun") {
                     let mut out_entry = &entry_points[1..];
                     for (i, entry) in entry_points.iter().enumerate() {
                         if !entry.is_empty() {
@@ -2379,14 +2379,14 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 }
             }
             Command::Tag::RunCommand => {
-                if !entry_points.is_empty() && (entry_points[0] == b"run" || entry_points[0] == b"r") {
+                if !entry_points.is_empty() && (&*entry_points[0] == b"run" || &*entry_points[0] == b"r") {
                     entry_points = &entry_points[1..];
                 }
             }
             _ => {}
         }
 
-        opts.entry_points = entry_points;
+        opts.entry_points = entry_points.to_vec();
     }
 
     let jsx_factory = args.option(b"--jsx-factory");

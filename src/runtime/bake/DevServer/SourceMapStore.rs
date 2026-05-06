@@ -370,10 +370,10 @@ impl Entry {
 
         // Join all of the mappings together.
         for i in 0..map_files.len() {
-            match map_files.get(i) {
+            match &map_files[i] {
                 packed_map::Shared::Some(source_map) => {
                     let source_index = i + 1;
-                    let content = source_map.get();
+                    let content: &packed_map::PackedMap = source_map;
                     let start_state = SourceMapState {
                         source_index: i32::try_from(source_index).unwrap(),
                         generated_line: i32::try_from(lines_between).unwrap(),
@@ -385,7 +385,6 @@ impl Entry {
 
                     source_map::append_source_map_chunk(
                         j,
-                        arena,
                         prev_end_state,
                         start_state,
                         content.vlq(),
@@ -400,7 +399,7 @@ impl Entry {
                     };
                 }
                 packed_map::Shared::LineCount(count) => {
-                    lines_between += count.get();
+                    lines_between += count.0;
                     // - Empty file has no breakpoints that could remap.
                     // - Codegen of HTML files cannot throw.
                 }

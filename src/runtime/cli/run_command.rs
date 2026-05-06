@@ -1937,7 +1937,7 @@ use bun_resolver::dir_info::DirInfo;
 use bun_resolver::package_json::PackageJSON;
 use bun_options_types::schema::api;
 use bun_str::{strings, ZStr};
-use bun_sys::{self as sys, Fd};
+use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_threading::Channel;
 use bun_which::which;
 

@@ -209,9 +209,9 @@ pub struct EntryPointList {
     pub set: StringArrayHashMap<entry_point_list::Flags>,
 }
 impl EntryPointList {
-    /// `EntryPointList.appendCss` — DevServer.zig. Full body in gated draft.
+    /// `EntryPointList.appendCss` — DevServer.zig.
     pub fn append_css(&mut self, abs_path: &[u8]) {
-        let gop = self.set.get_or_put(abs_path);
+        let gop = bun_core::handle_oom(self.set.get_or_put(abs_path));
         if gop.found_existing {
             *gop.value_ptr |= entry_point_list::Flags::CLIENT | entry_point_list::Flags::CSS;
         } else {

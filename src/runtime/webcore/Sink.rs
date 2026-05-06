@@ -1126,6 +1126,20 @@ pub struct Detached {
 // body below restores the real second variant.
 pub type DestructorPtr = TaggedPtrUnion<(Detached, Detached)>;
 
+/// Encode a `*Subprocess` as the second `DestructorPtr` tag (1023). Manual
+/// re-encoding of `TaggedPtr::init(ptr, 1023)` because `Subprocess<'_>` carries
+/// a lifetime and so cannot implement `UnionMember`, and `TaggedPtr`'s raw repr
+/// is private. Consumed by `to_js_with_destructor` (which takes the encoded
+/// `usize` directly) and round-tripped through C++ back to
+/// `Bun__onSinkDestroyed`.
+#[inline]
+pub fn destructor_ptr_subprocess(ptr: *const c_void) -> usize {
+    const ADDR_BITS: u32 = 49;
+    const ADDR_MASK: u64 = (1u64 << ADDR_BITS) - 1;
+    const SUBPROCESS_TAG: u64 = 1023; // second variant: 1024 - 1
+    ((ptr as usize as u64 & ADDR_MASK) | (SUBPROCESS_TAG << ADDR_BITS)) as usize
+}
+
 // TODO(b2-blocked): `Subprocess::on_stdin_destroyed` + `Output::debug_warn`.
 
 #[unsafe(no_mangle)]

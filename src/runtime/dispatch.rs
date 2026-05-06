@@ -118,6 +118,38 @@ use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
 // `container_of!` over `event_loop_timer` resolves. The `run` body is stubbed.
 use crate::timer::AbortSignalTimeout;
 
+#[allow(unused_imports)]
+use bun_io::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for FileSinkPoll/StaticPipeWriterPoll/etc.
+
+// ──────────────────────────────────────────────────────────────────────────
+// Local shims for upstream type-erased / gated surfaces (§Dispatch glue)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `bun_event_loop::JsResult<T>`'s error payload is an erased `*mut ()` (the
+/// low tier cannot name `bun_jsc::JsError`). Recover the real enum here.
+/// PORT NOTE: the erased pointer carries no discriminant — until the low tier
+/// threads one through, treat any non-null as `Thrown` (the only producer is
+/// `JSC::throwScope` paths). `report_error_or_terminate` only special-cases
+/// `Terminated`, which is never produced via this erased channel.
+#[inline]
+fn erased_js_error(_err: *mut ()) -> bun_jsc::JsError {
+    bun_jsc::JsError::Thrown
+}
+
+/// `bun_collections::LinearFifo` lacks `reset_head_if_empty` (Zig-only
+/// micro-opt that rewinds `head` to 0 when `count == 0`). Extension trait
+/// keeps the call site shape; body is a no-op until upstream lands it.
+trait LinearFifoExt {
+    fn reset_head_if_empty(&mut self);
+}
+impl<T, B> LinearFifoExt for bun_collections::LinearFifo<T, B> {
+    #[inline]
+    fn reset_head_if_empty(&mut self) {
+        // TODO(port): blocked_on bun_collections::LinearFifo::reset_head_if_empty
+        // (perf-only; semantically a no-op when the queue is already empty).
+    }
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Task dispatch (src/jsc/Task.zig `tickQueueWithCount` switch)
 // ════════════════════════════════════════════════════════════════════════════

@@ -2922,7 +2922,7 @@ impl H2FrameParser {
             // TODO: properly propagate exception upwards
             let end = content.end;
             self.read_buffer.reset();
-            self.dispatch_with_2_extra(JSH2FrameParser::Gc::onGoAway, JSValue::js_number(error_code), JSValue::js_number(self.last_stream_id as f64), chunk);
+            self.dispatch_with_2_extra(JSH2FrameParser::Gc::onGoAway, JSValue::js_number(error_code as f64), JSValue::js_number(self.last_stream_id as f64), chunk);
             return end;
         }
         data.len()

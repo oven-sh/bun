@@ -89,8 +89,10 @@ impl AuditCommand {
         ));
         Output::flush();
 
-        let load_lockfile = pm.lockfile.load_from_cwd(pm, ctx.log, true);
-        PackageManagerCommand::handle_load_lockfile_errors(load_lockfile, pm);
+        // TODO(port): blocked_on bun_install::PackageManager::lockfile (stub gated).
+        // let load_lockfile = pm.lockfile.load_from_cwd(pm, ctx.log, true);
+        // PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, pm);
+        let _ = ctx;
 
         let dependency_tree = build_dependency_tree(pm)?;
 
@@ -103,7 +105,8 @@ impl AuditCommand {
             let _ = Output::writer().write_all(b"\n");
 
             if !response_text.is_empty() {
-                let source = logger::Source::init_path_string(b"audit-response.json", &response_text);
+                let source =
+                    logger::Source::init_path_string(b"audit-response.json", &response_text[..]);
                 let mut log = logger::Log::init();
                 let bump = bun_alloc::Arena::new();
 
@@ -118,9 +121,8 @@ impl AuditCommand {
                 };
 
                 // If the response is an empty object, no vulnerabilities
-                // TODO(port): `expr.data` tagged-union access; assumes Rust enum `ExprData::EObject(..)`.
-                if let bun_js_parser::ExprData::EObject(obj) = &expr.data {
-                    if obj.properties.len() == 0 {
+                if let ExprData::EObject(obj) = &expr.data {
+                    if obj.properties.len == 0 {
                         return Ok(0);
                     }
                 }

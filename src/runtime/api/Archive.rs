@@ -753,6 +753,8 @@ impl PromiseResult {
 ///   - `run_from_js` — returns value to resolve/reject
 ///   - `Drop` — cleanup
 trait TaskContext: Send {
+    /// Dispatch tag for this context's `AsyncTask<Self>` variant.
+    const TAG: TaskTag;
     /// Runs on thread pool. Stores its result on `self`.
     // TODO(port): Zig's `AsyncTask.run` used `@typeInfo(@TypeOf(result)) == .error_union`
     // to generically catch and store `.err`. Rust has no reflection; each impl handles
@@ -765,16 +767,20 @@ trait TaskContext: Send {
 pub struct AsyncTask<C: TaskContext> {
     ctx: C,
     promise: JSPromiseStrong,
-    vm: &'static VirtualMachine,
+    vm: *mut VirtualMachine,
     task: WorkPoolTask,
     concurrent_task: ConcurrentTask,
     keep_alive: KeepAlive,
 }
 
+impl<C: TaskContext> Taskable for AsyncTask<C> {
+    const TAG: TaskTag = C::TAG;
+}
+
 impl<C: TaskContext> AsyncTask<C> {
     fn create(global: &JSGlobalObject, ctx: C) -> Result<*mut Self, bun_alloc::AllocError> {
         // SAFETY: bun_vm() returns the live owning VM for this global; valid for process lifetime.
-        let vm: &'static VirtualMachine = unsafe { &*global.bun_vm() };
+        let vm: *mut VirtualMachine = global.bun_vm() as *const VirtualMachine as *mut VirtualMachine;
         let this = Box::new(AsyncTask {
             ctx,
             promise: JSPromiseStrong::init(global),
@@ -806,33 +812,38 @@ impl<C: TaskContext> AsyncTask<C> {
         };
         // SAFETY: thread-pool has exclusive access to ctx until it enqueues the concurrent task.
         unsafe { (*this).ctx.run() };
-        // SAFETY: vm is &'static; concurrent_task is intrusive on the same allocation.
+        // SAFETY: vm points to the live owning VM; concurrent_task is intrusive on the same allocation.
         unsafe {
-            (*this)
-                .vm
-                .enqueue_task_concurrent((*this).concurrent_task.from(this, AutoDeinit::ManualDeinit));
+            let ct: *mut ConcurrentTask =
+                (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit);
+            (*(*this).vm).enqueue_task_concurrent(ct);
         }
     }
 
     pub fn run_from_js(this: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: called once on the JS thread after run_callback enqueued us; reclaim ownership.
         let mut owned = unsafe { Box::from_raw(this) };
-        owned.keep_alive.unref(owned.vm);
+        // TODO(port): `KeepAlive::unref` now takes `EventLoopCtx`; the VM→ctx
+        // bridge is not wired yet (see matching TODO in `create`). The ref was
+        // never taken above, so skipping the unref is a no-op for now.
+        let _ = &mut owned.keep_alive;
 
         // `defer { ctx.deinit; destroy(this) }` — handled by `owned: Box<Self>` dropping at scope
         // exit (ctx implements Drop).
 
-        if owned.vm.is_shutting_down() {
+        // SAFETY: vm points to the live owning VM for this global's lifetime.
+        let vm = unsafe { &mut *owned.vm };
+        if vm.is_shutting_down() {
             return Ok(());
         }
 
-        let global = owned.vm.global();
+        let global = vm.global();
         let mut promise = owned.promise.swap();
         let result = match owned.ctx.run_from_js(global) {
             Ok(r) => r,
             Err(e) => {
                 // JSError means exception is already pending
-                return promise.reject(global, global.take_exception(e));
+                return promise.reject(global, Ok(global.take_exception(e)));
             }
         };
         result.fulfill(global, &mut promise)

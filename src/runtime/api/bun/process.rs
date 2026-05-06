@@ -942,7 +942,19 @@ impl Status {
     }
 }
 
-// TODO(b2-blocked): bun_core::SignalCode::to_exit_code + bun_sys::Error: Display.
+/// Local shim for `bun.SignalCode.toExitCode` (lives in `src/sys/SignalCode.zig`).
+/// Upstream `bun_core::SignalCode` does not yet expose this — see SignalCode.zig:53.
+/// Shell-convention: 128 + signal number for signals 1..=31, else `None`.
+pub trait SignalCodeExt {
+    fn to_exit_code(self) -> Option<u8>;
+}
+impl SignalCodeExt for bun_core::SignalCode {
+    #[inline]
+    fn to_exit_code(self) -> Option<u8> {
+        let n = self as u8;
+        if (1..=31).contains(&n) { Some(128u8.wrapping_add(n)) } else { None }
+    }
+}
 
 impl core::fmt::Display for Status {
     fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -1788,7 +1800,7 @@ impl WindowsSpawnResult {
             unsafe {
                 (*proc).close();
                 (*proc).detach();
-                bun_ptr::ThreadSafeRefCount::<Process>::deref_(proc);
+                bun_ptr::ThreadSafeRefCount::<Process>::deref(proc);
             }
         }
     }

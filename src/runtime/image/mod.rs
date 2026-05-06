@@ -58,15 +58,18 @@ pub mod exif;
 //   TODO(b2-blocked): bun_str::{zstr!, ZString owned-NUL type}
 //   TODO(b2-blocked): bun_alloc::mimalloc::mi_free (Encoded::from_owned)
 
-use core::ffi::c_void;
-use core::ptr::NonNull;
-
 use crate::jsc::{JsRef, JSValue, Strong};
 
-/// Dispatch surface re-exported with type-only stand-ins until `codecs.rs`
-/// is un-gated. Layout matches the draft so `Image`/`Pipeline` below are real.
-pub mod codecs {
+/// Dispatch surface — re-export of the real `codecs.rs` body so that
+/// `super::codecs::T` and `super::codecs_body::T` resolve to the SAME types.
+/// (The Phase-A type-only stand-ins were removed once `codecs.rs` un-gated.)
+pub use codecs_body as codecs;
+
+#[cfg(any())]
+mod codecs_stub {
     use super::*;
+    use core::ffi::c_void;
+    use core::ptr::NonNull;
 
     pub const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
     /// Sharp's default: 0x3FFF * 0x3FFF ≈ 268 MP.

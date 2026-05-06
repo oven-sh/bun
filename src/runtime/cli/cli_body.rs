@@ -297,46 +297,45 @@ Join our Discord community:      <blue>https://bun.com/discord<r>
                     }
                 }
 
-                Output::pretty(
+                // TODO(port): Output::pretty is a printf-style fn; Phase B wires the
+                // 7-arg substitution into CLI_HELPTEXT_FMT properly.
+                let _ = &args;
+                Output::pretty(format_args!(
+                    "{}",
                     const_format::concatcp!(
                         "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>(",
                         Global::package_json_version_with_revision,
                         ")<r>\n\n",
                         CLI_HELPTEXT_FMT,
                     ),
-                    format_args!(
-                        "{}{}{}{}{}{}{}",
-                        // TODO(port): Output::pretty is a printf-style fn; Phase B wires the
-                        // 7-arg substitution into CLI_HELPTEXT_FMT properly.
-                        args.0, args.1, args.2, args.3, args.4, args.5, args.6
-                    ),
-                );
+                ));
                 if show_all_flags {
-                    Output::pretty("\n<b>Flags:<r>", format_args!(""));
+                    Output::pretty(format_args!("\n<b>Flags:<r>"));
 
                     // TODO(port): comptime concat of param arrays — Phase B may expose a const slice from Arguments
-                    let flags = arguments::RUNTIME_PARAMS_
+                    let flags: Vec<arguments::ParamType> = arguments::RUNTIME_PARAMS_
                         .iter()
                         .chain(arguments::AUTO_ONLY_PARAMS.iter())
-                        .chain(arguments::BASE_PARAMS_.iter());
-                    clap::simple_help_bun_top_level(flags);
-                    Output::pretty(
+                        .chain(arguments::BASE_PARAMS_.iter())
+                        .cloned()
+                        .collect();
+                    clap::simple_help_bun_top_level(&flags);
+                    Output::pretty(format_args!(
                         "\n\n(more flags in <b>bun install --help<r>, <b>bun test --help<r>, and <b>bun build --help<r>)\n",
-                        format_args!(""),
-                    );
+                    ));
                 }
-                Output::pretty(CLI_HELPTEXT_FOOTER, format_args!(""));
+                Output::pretty(format_args!("{}", CLI_HELPTEXT_FOOTER));
             }
-            Reason::InvalidCommand => Output::pretty_error(
-                const_format::concatcp!(
-                    "<r><red>Uh-oh<r> not sure what to do with that command.\n\n",
-                    CLI_HELPTEXT_FMT,
-                ),
-                format_args!(
-                    "{}{}{}{}{}{}{}",
-                    args.0, args.1, args.2, args.3, args.4, args.5, args.6
-                ),
-            ),
+            Reason::InvalidCommand => {
+                // TODO(port): Output::pretty_error positional substitution (7 args)
+                let _ = &args;
+                Output::pretty_error(
+                    const_format::concatcp!(
+                        "<r><red>Uh-oh<r> not sure what to do with that command.\n\n",
+                        CLI_HELPTEXT_FMT,
+                    ),
+                );
+            }
         }
 
         Output::flush();

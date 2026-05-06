@@ -169,20 +169,20 @@ fn get_argv0(
     };
 
     if path_to_use.is_empty() {
-        actual_argv0 = ZStr::from_bytes(argv0_to_use);
+        actual_argv0 = ZBox::from_bytes(argv0_to_use);
     } else {
-        let Some(resolved) = bun_core::which(&path_buf, path_to_use, cwd, argv0_to_use) else {
+        let Some(resolved) = bun_core::which(&mut path_buf, path_to_use, cwd, argv0_to_use) else {
             return Err(throw_command_not_found(global_this, argv0_to_use));
         };
-        actual_argv0 = ZStr::from_bytes(resolved);
+        actual_argv0 = ZBox::from_bytes(resolved.as_bytes());
     }
 
     Ok(Argv0Result {
         argv0: actual_argv0,
         arg0: if let Some(p) = pretend_argv0 {
-            ZStr::from_bytes(p.to_bytes())
+            ZBox::from_bytes(p.to_bytes())
         } else {
-            ZStr::from_bytes(arg0.slice())
+            ZBox::from_bytes(arg0.slice())
         },
     })
 }

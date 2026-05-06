@@ -1240,7 +1240,7 @@ impl<'a> Repl<'a> {
         let Some(global) = self.global else { return true; };
         let Some(vm) = self.vm else { return true; };
 
-        let no_color = env_var::NO_COLOR.get();
+        let no_color = env_var::NO_COLOR.get().unwrap_or(false);
         self.use_colors = Output::enable_ansi_colors_stdout() && !no_color;
         let stderr_colors = Output::enable_ansi_colors_stderr() && !no_color;
 

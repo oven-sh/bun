@@ -1726,7 +1726,7 @@ pub mod internal {
     // `.as_mut_ptr()` here; do NOT free via this field.
 
     pub struct MacAsyncDNS {
-        pub file_poll: Option<Box<FilePoll>>, // OWNED
+        pub file_poll: Option<NonNull<FilePoll>>, // OWNED hive slot (FilePoll::init)
         pub machport: mach_port,
     }
 
@@ -2256,24 +2256,28 @@ pub mod internal {
         }
 
         let poll = FilePoll::init(
-            loop_,
+            crate::api::bun::process::event_loop_handle_to_ctx(loop_),
             // SAFETY: bitcast u32 mach_port → i32 fd, matches Zig @bitCast
             sys::Fd::from_native(unsafe { core::mem::transmute::<u32, i32>(machport) }),
             Default::default(),
             // TODO(port): FilePoll generic owner type InternalDNSRequest
-            req,
+            Async::Owner::new(Async::poll_tag::REQUEST, req as *mut ()),
         );
-        let rc = poll.register(loop_.loop_(), Async::PollKind::Machport, true);
+        // SAFETY: `poll` is a freshly-allocated hive slot; `loop_.r#loop()` is the live uws loop.
+        let rc = unsafe { (*poll).register(&mut *loop_.r#loop(), Async::Flags::Machport, true) };
 
-        if matches!(rc, sys::Result::Err(_)) {
-            drop(poll);
+        if rc.is_err() {
+            // TODO(port): FilePoll::deinit(poll, ctx) — hive slot leak until then.
+            let _ = poll;
             return false;
         }
 
         #[cfg(target_os = "macos")]
         unsafe {
-            (*req).libinfo = MacAsyncDNS { file_poll: Some(poll), machport };
+            (*req).libinfo = MacAsyncDNS { file_poll: NonNull::new(poll), machport };
         }
+        #[cfg(not(target_os = "macos"))]
+        let _ = poll;
 
         true
     }

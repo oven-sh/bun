@@ -177,105 +177,11 @@ impl UpdateInteractiveCommand {
         updates: &[PackageUpdate],
     ) -> Result<(), bun_core::Error> {
         let _ = (manager, updates);
-        // Real body needs `manager.workspace_package_json_cache`, `manager.log`,
-        // and `E::Object::put(&Bump, ...)` — all gated behind
-        // `package_manager_real` / settling AST allocator API.
-        return Err(todo!("blocked_on: bun_install::PackageManager::workspace_package_json_cache (package_manager_real un-gate)"));
-        #[allow(unreachable_code)]
-        {
-        // Group updates by workspace
-        let mut workspace_groups: StringHashMap<Vec<&PackageUpdate>> = StringHashMap::default();
-
-        // Group updates by workspace path
-        for update in updates {
-            let result = workspace_groups.get_or_put(&update.workspace_path);
-            if !result.found_existing {
-                *result.value_ptr = Vec::new();
-            }
-            result.value_ptr.push(update);
-        }
-
-        // Process each workspace
-        let mut it = workspace_groups.iter();
-        while let Some(entry) = it.next() {
-            let workspace_path = entry.key();
-            let workspace_updates = entry.value().as_slice();
-
-            // Build the package.json path for this workspace
-            let root_dir = FileSystem::instance().top_level_dir;
-            let mut path_buf = PathBuffer::uninit();
-            let package_json_path =
-                Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
-
-            // Load and parse the package.json
-            let mut package_json = match manager.workspace_package_json_cache.get_with_path(
-                manager.log,
-                package_json_path,
-                bun_install::GetJsonOptions { guess_indentation: true },
-            ) {
-                bun_install::GetJsonResult::ParseErr(err) => {
-                    Output::err_generic(format_args!(
-                        "Failed to parse package.json at {}: {}",
-                        BStr::new(package_json_path),
-                        err.name()
-                    ));
-                    continue;
-                }
-                bun_install::GetJsonResult::ReadErr(err) => {
-                    Output::err_generic(format_args!(
-                        "Failed to read package.json at {}: {}",
-                        BStr::new(package_json_path),
-                        err.name()
-                    ));
-                    continue;
-                }
-                bun_install::GetJsonResult::Entry(package_entry) => package_entry,
-            };
-
-            let mut modified = false;
-
-            // Update each package in this workspace's package.json
-            for update in workspace_updates {
-                // Find the package in the correct dependency section
-                if let bun_js_parser::ast::ExprData::EObject(_) = &package_json.root.data {
-                    if let Some(section_query) = package_json.root.as_property(&update.dep_type) {
-                        if let bun_js_parser::ast::ExprData::EObject(dep_obj) =
-                            &mut section_query.expr.data
-                        {
-                            if let Some(version_query) = section_query.expr.as_property(&update.name) {
-                                if let bun_js_parser::ast::ExprData::EString(e_string) =
-                                    &version_query.expr.data
-                                {
-                                    // Get the original version to preserve prefix
-                                    let original_version = &e_string.data;
-
-                                    // Preserve the version prefix from the original
-                                    let version_with_prefix = preserve_version_prefix(
-                                        original_version,
-                                        &update.target_version,
-                                    )?;
-
-                                    // Update the version using hash map put
-                                    let new_expr = Expr::init(
-                                        E::String { data: version_with_prefix },
-                                        version_query.expr.loc,
-                                    )
-                                    .clone_expr()?;
-                                    dep_obj.put(&update.name, new_expr)?;
-                                    modified = true;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Write the updated package.json if modified
-            if modified {
-                Self::save_package_json(manager, &mut package_json, package_json_path)?;
-            }
-        }
-        Ok(())
+        // Real body needs `manager.workspace_package_json_cache` / `manager.log`
+        // (absent on the stub `PackageManager`) and `E::Object::put(&Bump, …)`.
+        // Body preserved in update_interactive_command.zig; re-port once
+        // `package_manager_real` un-gates.
+        todo!("blocked_on: bun_install::PackageManager::workspace_package_json_cache (package_manager_real un-gate)")
     }
 
     fn update_catalog_definitions(

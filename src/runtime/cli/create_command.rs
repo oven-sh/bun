@@ -548,9 +548,10 @@ impl CreateCommand {
                         node.end();
                         progress.refresh();
 
-                        Output::pretty_errorln(
+                        pretty_errorln!(
                             "<r><red>{}<r>: opening dir {}",
-                            format_args!("{} {}", err.name(), bstr::BStr::new(template)),
+                            bstr::BStr::new(err.name()),
+                            bstr::BStr::new(template),
                         );
                         Global::exit(1);
                     }
@@ -565,9 +566,10 @@ impl CreateCommand {
                         node.end();
                         progress.refresh();
 
-                        Output::pretty_errorln(
+                        pretty_errorln!(
                             "<r><red>{}<r>: creating dir {}",
-                            format_args!("{} {}", err.name(), bstr::BStr::new(destination)),
+                            err.name(),
+                            bstr::BStr::new(destination),
                         );
                         Global::exit(1);
                     }

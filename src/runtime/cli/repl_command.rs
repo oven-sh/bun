@@ -9,7 +9,8 @@
 //! - Multi-line input support
 //! - REPL commands (.help, .exit, .clear, .load, .save, .editor)
 
-use core::ffi::c_char;
+use core::ffi::{c_char, c_void};
+use core::ptr::NonNull;
 
 use bun_alloc::Arena;
 use bun_core::{Global, Output};
@@ -32,7 +33,7 @@ pub struct ReplCommand;
 
 impl ReplCommand {
     #[cold]
-    pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
+    pub fn exec(ctx: Command::Context<'_>) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
 
         // Initialize the REPL
@@ -43,51 +44,59 @@ impl ReplCommand {
         Self::boot_repl_vm(ctx, &mut repl)
     }
 
-    fn boot_repl_vm(ctx: Command::Context, repl: &mut Repl<'_>) -> Result<(), bun_core::Error> {
+    fn boot_repl_vm(ctx: Command::Context<'_>, repl: &mut Repl<'_>) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         // Load bunfig if not already loaded
         if !ctx.debug.loaded_bunfig {
-            Arguments::load_config_path(Command::Tag::RunCommand, true, bun_core::zstr!("bunfig.toml"), ctx)?;
+            Arguments::load_config_path(
+                Command::Tag::RunCommand,
+                true,
+                bun_core::zstr!("bunfig.toml"),
+                ctx,
+            )?;
         }
 
         // Initialize JSC
         jsc::initialize(true); // true for eval mode
 
-        js_ast::Expr::Data::Store::create();
-        js_ast::Stmt::Data::Store::create();
+        js_ast::ast::expr::data::Store::create();
+        js_ast::ast::stmt::data::Store::create();
         // TODO(port): arena is threaded into VirtualMachine (vm.arena / vm.allocator). Non-AST
         // crate would normally drop MimallocArena, but VM init protocol requires it. Note
         // `bun_alloc::Arena` is bumpalo-backed and NOT semantically `bun.allocators.MimallocArena`
         // (mi_heap wrapper) — Phase B should either have bun_jsc::VirtualMachine own its arena
         // internally (drop the param) or expose a distinct `bun_alloc::MimallocArena` type.
-        let arena = Arena::init();
+        let arena = Arena::new();
 
         // Create a virtual path for REPL evaluation
         let repl_path: &'static [u8] = b"[repl]";
 
+        // Validate DNS result order (InitOptions doesn't carry it yet — see TODO below).
+        let _dns_order = DnsOrder::from_string(&ctx.runtime_options.dns_result_order)
+            .unwrap_or_else(|| {
+                Output::pretty_errorln("<r><red>error<r><d>:<r> Invalid DNS result order.");
+                Global::exit(1);
+            });
+
         // Initialize the VM
-        let vm = VirtualMachine::init(jsc::VirtualMachineInitOptions {
+        // TODO(port): `jsc::VirtualMachineInitOptions` is currently a stub missing
+        // `log` / `args: TransformOptions` / `store_fd` / `eval` / `debugger` /
+        // `dns_result_order` — wire these once the upstream struct grows them.
+        let vm: *mut VirtualMachine = VirtualMachine::init(jsc::VirtualMachineInitOptions {
             // TODO(port): allocator field — VM owns arena allocator; see note above
-            log: ctx.log,
-            args: ctx.args,
-            store_fd: false,
+            args: Vec::new(), // TODO(port): ctx.args is TransformOptions; InitOptions wants Vec<String>
+            graph: core::ptr::null_mut(),
             smol: ctx.runtime_options.smol,
-            eval: true,
-            debugger: ctx.runtime_options.debugger,
-            dns_result_order: DnsOrder::from_string(&ctx.runtime_options.dns_result_order)
-                .unwrap_or_else(|| {
-                    Output::pretty_errorln(
-                        "<r><red>error<r><d>:<r> Invalid DNS result order.",
-                        &[],
-                    );
-                    Global::exit(1);
-                }),
+            eval_mode: true,
             is_main_thread: true,
         })?;
 
-        let b = &mut vm.transpiler;
-        vm.preload = ctx.preloads;
-        vm.argv = ctx.passthrough;
+        // SAFETY: vm is a freshly heap-allocated VirtualMachine valid for process lifetime.
+        let b = unsafe { &mut (*vm).transpiler };
+        unsafe {
+            (*vm).preload = core::mem::take(&mut ctx.preloads);
+            (*vm).argv = core::mem::take(&mut ctx.passthrough);
+        }
         // TODO(port): vm.allocator = vm.arena.allocator(); — allocator threading dropped in Rust
         // (vm.arena assignment moved below ReplRunner construction to avoid move-after-borrow)
 
@@ -107,19 +116,24 @@ impl ReplCommand {
         b.options.dead_code_elimination = false; // REPL needs all code
 
         if let Err(_) = b.configure_defines() {
-            Self::dump_build_error(vm);
+            Self::dump_build_error(unsafe { &*vm });
             Global::exit(1);
         }
 
-        bun_http::AsyncHTTP::load_env(vm.log, b.env);
-        vm.load_extra_env_and_source_code_printer();
+        // SAFETY: vm.log is set by VirtualMachine::init; b.env is a valid Loader.
+        bun_http::async_http::load_env(
+            unsafe { (*vm).log.unwrap().as_mut() },
+            unsafe { &*b.env },
+        );
+        unsafe { (&mut *vm).load_extra_env_and_source_code_printer() };
 
-        vm.is_main_thread = true;
+        unsafe { (*vm).is_main_thread = true };
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.with(|c| c.set(true));
 
         // Store VM reference in REPL (safe - no JS allocation)
-        repl.vm = vm;
-        repl.global = vm.global;
+        // SAFETY: vm/global outlive the REPL (process-lifetime).
+        repl.vm = Some(unsafe { &*vm });
+        repl.global = Some(unsafe { &*(*vm).global });
 
         // Create the ReplRunner and execute within the API lock
         // NOTE: JS-allocating operations like ExposeNodeModuleGlobals must
@@ -129,20 +143,31 @@ impl ReplCommand {
             vm,
             arena,
             entry_path: repl_path,
-            eval_script: ctx.runtime_options.eval.script,
+            eval_script: &ctx.runtime_options.eval.script,
             eval_and_print: ctx.runtime_options.eval.eval_and_print,
         };
         // TODO(port): @constCast(&arena) — vm.arena stores a *mut Arena pointing at runner.arena;
         // lifetime is the holdAPILock scope (globalExit() never returns so the frame never unwinds).
         // Assigned AFTER moving `arena` into `runner` — assigning from the pre-move local would
         // dangle. Model as raw ptr until VM arena ownership is decided in Phase B.
-        vm.arena = &mut runner.arena as *mut Arena;
+        unsafe { (*vm).arena = NonNull::new(&mut runner.arena) };
 
-        // TODO(port): jsc.OpaqueWrap(ReplRunner, ReplRunner.start) — comptime fn-ptr wrapper that
-        // produces an `extern "C" fn(*mut c_void)` thunk. Needs a Rust equivalent macro/generic
-        // in bun_jsc (e.g. `opaque_wrap::<T>(T::start)`).
-        let callback = jsc::opaque_wrap::<ReplRunner>(ReplRunner::start);
-        vm.global.vm().hold_api_lock(&mut runner, callback);
+        // PORT NOTE: jsc.OpaqueWrap(ReplRunner, ReplRunner.start) — comptime fn-ptr wrapper that
+        // produces an `extern "C" fn(*mut c_void)` thunk. `bun_jsc::opaque_wrap` requires a
+        // type implementing `FnTyped<Ctx>`; rather than depend on that upstream trait, write
+        // the trivial thunk locally.
+        extern "C" fn repl_runner_thunk(ctx: *mut c_void) {
+            // SAFETY: caller passes `&mut ReplRunner` cast to *mut c_void.
+            let runner = unsafe { &mut *(ctx as *mut ReplRunner<'_>) };
+            ReplRunner::start(runner);
+        }
+        // SAFETY: vm.global is valid; runner is pinned on stack for the lock duration.
+        #[allow(deprecated)]
+        unsafe {
+            (&*(*vm).global)
+                .vm()
+                .hold_api_lock((&mut runner) as *mut ReplRunner<'_> as *mut c_void, repl_runner_thunk);
+        }
         Ok(())
     }
 
@@ -151,14 +176,17 @@ impl ReplCommand {
         let writer = Output::error_writer_buffered();
         // defer Output.flush() → scopeguard
         let _flush = scopeguard::guard((), |_| Output::flush());
-        let _ = vm.log.print(writer);
+        if let Some(log) = vm.log {
+            // SAFETY: log is a valid NonNull<Log> for the VM lifetime.
+            let _ = unsafe { (*log.as_ptr()).print(writer) };
+        }
     }
 }
 
 /// Runs the REPL within the VM's API lock
 struct ReplRunner<'a> {
     repl: &'a mut Repl<'a>,
-    vm: &'a VirtualMachine,
+    vm: *mut VirtualMachine,
     arena: Arena,
     entry_path: &'static [u8],
     eval_script: &'a [u8],
@@ -167,12 +195,15 @@ struct ReplRunner<'a> {
 
 impl<'a> ReplRunner<'a> {
     pub fn start(this: &mut ReplRunner<'a>) {
-        let vm = this.vm;
+        let vm_ptr = this.vm;
+        // SAFETY: vm_ptr is a valid heap-allocated VirtualMachine for the API-lock scope.
+        let vm = unsafe { &mut *vm_ptr };
 
         // Set up the REPL environment (now inside API lock)
         if let Err(_) = this.setup_repl_environment() {
             // setupGlobalRequire threw a JS exception — surface it and exit
-            if let Some(exception) = vm.global.try_take_exception() {
+            // SAFETY: vm.global is valid for the API-lock scope.
+            if let Some(exception) = unsafe { (*vm.global).try_take_exception() } {
                 vm.print_error_like_object_to_console(exception);
             }
             vm.exit_handler.exit_code = 1;
@@ -196,7 +227,7 @@ impl<'a> ReplRunner<'a> {
             }
         } else {
             // Interactive: run the REPL loop
-            if let Err(err) = this.repl.run_with_vm(vm) {
+            if let Err(err) = this.repl.run_with_vm(Some(unsafe { &*vm_ptr })) {
                 // TODO(port): Output.prettyErrorln color-tag formatting macro
                 Output::pretty_errorln(format_args!("<r><red>REPL error: {}<r>", err.name()));
             }
@@ -207,8 +238,9 @@ impl<'a> ReplRunner<'a> {
         vm.global_exit();
     }
 
-    fn setup_repl_environment(this: &mut ReplRunner<'a>) -> bun_jsc::JsResult<()> {
-        let vm = this.vm;
+    fn setup_repl_environment(&mut self) -> bun_jsc::JsResult<()> {
+        // SAFETY: self.vm is valid for the API-lock scope.
+        let vm = unsafe { &mut *self.vm };
 
         // Expose Node.js module globals (__dirname, __filename, require, etc.)
         // This must be done inside the API lock as it allocates JS objects
@@ -218,20 +250,24 @@ impl<'a> ReplRunner<'a> {
         }
 
         // Set up require(), module, __filename, __dirname relative to cwd
-        let cwd = vm.transpiler.fs.top_level_dir_without_trailing_slash();
+        // SAFETY: transpiler.fs is a valid *mut FileSystem set during VM init.
+        let cwd = unsafe { (*vm.transpiler.fs).top_level_dir_without_trailing_slash() };
         // SAFETY: cwd is a valid byte slice; FFI fn reads exactly `len` bytes.
         unsafe {
             Bun__REPL__setupGlobalRequire(vm.global, cwd.as_ptr() as *const c_char, cwd.len())?;
         }
 
         // Set timezone if specified
-        if let Some(tz) = vm.transpiler.env.get(b"TZ") {
+        // SAFETY: transpiler.env is a valid *mut Loader set during VM init.
+        if let Some(tz) = unsafe { (*vm.transpiler.env).get(b"TZ") } {
             if !tz.is_empty() {
-                let _ = vm.global.set_time_zone(&ZigString::init(tz));
+                // SAFETY: vm.global is valid.
+                let _ = unsafe { (*vm.global).set_time_zone(&ZigString::init(tz)) };
             }
         }
 
-        vm.transpiler.env.load_tracy();
+        // SAFETY: transpiler.env is valid.
+        unsafe { (*vm.transpiler.env).load_tracy() };
         Ok(())
     }
 }

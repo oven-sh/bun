@@ -1895,8 +1895,11 @@ pub extern "C" fn Bun__escapeHTML16(
         Escaped::Static(val) => ZigString::init(val).to_js(global_object),
         Escaped::Original => input_value,
         Escaped::Allocated(escaped_html) => {
-            ZigString::from16(escaped_html.as_ptr(), escaped_html.len())
-                .to_external_value(global_object)
+            // SAFETY: ownership of `escaped_html`'s buffer transfers to JSC via
+            // the external-string finalizer; do not drop it here.
+            let (ptr, len) = (escaped_html.as_ptr(), escaped_html.len());
+            core::mem::forget(escaped_html);
+            unsafe { ZigString__toExternalU16(ptr, len, global_object) }
         }
     }
 }

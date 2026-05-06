@@ -1486,7 +1486,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
                 EdgeAttachmentMode::Css => return Ok(EdgeAttachmentResult::Stop),
                 // Check IncrementalGraph to find an file from a prior build.
                 EdgeAttachmentMode::JsOrHtml => {
-                    let Some(idx) = self.bundled_files.get_index(key) else {
+                    let Some(idx) = self.get_index_by_slice(key) else {
                         // Not tracked in IncrementalGraph. This can be hit for
                         // certain external files.
                         return Ok(EdgeAttachmentResult::Continue);

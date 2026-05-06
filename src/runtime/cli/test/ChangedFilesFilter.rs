@@ -468,7 +468,7 @@ pub enum GitError {
 
 impl From<GitError> for bun_core::Error {
     fn from(e: GitError) -> Self {
-        bun_core::Error::from_static_str(<&'static str>::from(&e))
+        bun_core::Error::from_name(<&'static str>::from(&e))
         // TODO(port): confirm bun_core::Error construction from error-set tag
     }
 }
@@ -484,7 +484,7 @@ fn get_changed_files(
     top_level_dir: &[u8],
     since: &[u8],
 ) -> core::result::Result<StringSet, GitError> {
-    let mut which_buf = PathBuffer::uninit();
+    let mut which_buf = CorePathBuffer([0u8; bun_core::MAX_PATH_BYTES]);
     let Some(git_path) = which(
         &mut which_buf,
         env_var::PATH.get().unwrap_or(b""),

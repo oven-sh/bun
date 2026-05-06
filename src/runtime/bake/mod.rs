@@ -298,6 +298,21 @@ pub mod framework_router {
         // `Resolver` walk; un-gate from `FrameworkRouter.rs` once
         // `bun_resolver::DirInfo` is real.
 
+        #[inline]
+        pub fn route_ptr(&self, i: RouteIndex) -> &Route {
+            &self.routes[i.get() as usize]
+        }
+
+        #[inline]
+        pub fn route_ptr_mut(&mut self, i: RouteIndex) -> &mut Route {
+            &mut self.routes[i.get() as usize]
+        }
+
+        #[inline]
+        pub fn type_ptr(&mut self, i: TypeIndex) -> &mut Type {
+            &mut self.types[i.get() as usize]
+        }
+
         /// `FrameworkRouter.matchSlow` — keystone shim. Real body lives in
         /// `framework_router_body::FrameworkRouter::match_slow`; this struct
         /// is a separate keystone type so we forward-declare the API and

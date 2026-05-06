@@ -1037,6 +1037,8 @@ unsafe extern "C" {
         object: *mut c_void,
         destructor: usize,
     ) -> JSValue;
+    #[link_name = "FileSink__setDestroyCallback"]
+    fn FileSink__setDestroyCallback(value: JSValue, callback: usize);
     #[link_name = "FileSink__assignToStream"]
     fn FileSink__assignToStream(
         global: *mut JSGlobalObject,
@@ -1060,6 +1062,9 @@ impl crate::webcore::sink::JsSinkAbi for FileSink {
         destructor: usize,
     ) -> JSValue {
         unsafe { FileSink__createObject(global, object, destructor) }
+    }
+    unsafe fn set_destroy_callback_extern(value: JSValue, callback: usize) {
+        unsafe { FileSink__setDestroyCallback(value, callback) }
     }
     unsafe fn assign_to_stream_extern(
         global: *mut JSGlobalObject,

@@ -193,8 +193,13 @@ impl AnyRequestContext {
         dispatch!(self, (), |_T, ctx| ctx.set_signal_aborted(reason))
     }
 
-    pub fn dev_server(self) -> Option<&mut crate::bake::DevServer> {
-        dispatch!(self, None, |_T, ctx| ctx.dev_server())
+    pub fn dev_server(self) -> Option<&'static crate::bake::DevServer::DevServer> {
+        // SAFETY: server backref outlives any AnyRequestContext (held only for
+        // the duration of a request callback). `self` is a by-value tagged
+        // pointer, so there is no input lifetime to tie the borrow to.
+        dispatch!(self, None, |_T, ctx| unsafe {
+            core::mem::transmute::<Option<&_>, Option<&'static _>>(ctx.dev_server())
+        })
     }
 
     pub fn deref(self) {

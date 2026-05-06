@@ -48,7 +48,7 @@ use bun_bundler::options::{self, Loader, Target};
 use bun_bundler::BundleV2;
 use bun_options_types::{CompileTarget, ImportKind};
 use bun_js_parser::ast::Index;
-use bun_interchange::api; // bun.schema.api
+use bun_options_types::schema::api; // bun.schema.api
 use crate::webcore::Blob;
 use bun_collections::{StringHashMap, StringSet, StringMap, StringArrayHashMap};
 use bun_core::MutableString;

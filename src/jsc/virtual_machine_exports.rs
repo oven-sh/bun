@@ -361,6 +361,150 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(
     Ok(JSValue::js_number_from_int32(0))
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// `Bun__VM__*` field accessors — opaque-handle bridge for crates that hold an
+// untyped `*mut VirtualMachine` (notably `bun_sql_jsc`, which keeps its own
+// view struct to avoid a crate cycle). Each is the trivial `&vm.field` Zig
+// would have generated; declared here so the link names live in `bun_jsc`.
+// ════════════════════════════════════════════════════════════════════════════
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VM__global(vm: *mut VirtualMachine) -> *mut JSGlobalObject {
+    // SAFETY: `vm` is the live per-thread VM.
+    unsafe { (*vm).global }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VM__eventLoop(vm: *mut VirtualMachine) -> *mut EventLoop {
+    // SAFETY: `vm` is the live per-thread VM.
+    unsafe { (*vm).event_loop() }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VM__loopRef(vm: *mut c_void) {
+    // SAFETY: `vm` is the live per-thread VM (cast from sql_jsc's opaque view).
+    let vm = unsafe { &*(vm as *mut VirtualMachine) };
+    // SAFETY: uws loop is process-lifetime; sole `&mut` in this scope.
+    unsafe { (*vm.uws_loop()).ref_() };
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VM__loopUnref(vm: *mut c_void) {
+    // SAFETY: `vm` is the live per-thread VM.
+    let vm = unsafe { &*(vm as *mut VirtualMachine) };
+    // SAFETY: uws loop is process-lifetime; sole `&mut` in this scope.
+    unsafe { (*vm.uws_loop()).unref() };
+}
+
+/// `vm.eventLoop().deferred_tasks.postTask(ctx, cb)` — Zig
+/// `AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked`.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VM__postDeferredTask(
+    vm: *mut VirtualMachine,
+    ctx: *mut c_void,
+    cb: Option<unsafe extern "C" fn(*mut c_void) -> bool>,
+) {
+    // SAFETY: `vm` / `event_loop` are live for the JS thread.
+    let el = unsafe { &mut *(*vm).event_loop() };
+    // SAFETY: `extern "C" fn(*mut c_void) -> bool` and the Rust-ABI
+    // `fn(*mut c_void) -> bool` (`DeferredRepeatingTask`) have identical
+    // layout (one pointer arg, bool return). `None` only occurs from sql_jsc's
+    // current placeholder call site, where the deferred-task path is unreached;
+    // map it to a no-op task that immediately unregisters itself.
+    let task: bun_event_loop::DeferredTaskQueue::DeferredRepeatingTask = match cb {
+        Some(f) => unsafe { core::mem::transmute(f) },
+        None => |_| false,
+    };
+    el.deferred_tasks.post_task(NonNull::new(ctx), task);
+}
+
+/// `vm.eventLoop().deferred_tasks.unregisterTask(ctx)` — Zig
+/// `AutoFlusher.unregisterDeferredMicrotaskWithType`.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VM__unregisterDeferredTask(vm: *mut VirtualMachine, ctx: *mut c_void) -> bool {
+    // SAFETY: `vm` / `event_loop` are live for the JS thread.
+    unsafe { (*(*vm).event_loop()).deferred_tasks.unregister_task(NonNull::new(ctx)) }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__EventLoop__enterLoop(el: *mut EventLoop) {
+    // SAFETY: `el` is `&vm.event_loop` — live for the JS thread.
+    unsafe { (*el).enter() };
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__EventLoop__exitLoop(el: *mut EventLoop) {
+    // SAFETY: `el` is `&vm.event_loop` — live for the JS thread.
+    unsafe { (*el).exit() };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// JSCScheduler.zig — un-gated bodies (the full `JSCScheduler.rs` draft is
+// `#[cfg(any())]`-gated; only the two C++→Zig exports are needed here).
+// ════════════════════════════════════════════════════════════════════════════
+
+/// `export fn Bun__eventLoop__incrementRefConcurrently(vm, delta)` — bumps the
+/// event loop's `concurrent_ref` (called from off-thread JSC scheduler).
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__eventLoop__incrementRefConcurrently(
+    jsc_vm: *mut VirtualMachine,
+    delta: core::ffi::c_int,
+) {
+    crate::mark_binding!();
+    // SAFETY: `jsc_vm` is the live VM (passed from C++ BunScheduler).
+    let el = unsafe { &*(*jsc_vm).event_loop() };
+    if delta > 0 { el.ref_concurrently() } else { el.unref_concurrently() };
+}
+
+/// `export fn Bun__queueJSCDeferredWorkTaskConcurrently(vm, task)` — enqueue an
+/// opaque `JSC::DeferredWorkTimer::Ticket` (BunVMScheduler.cpp).
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
+    jsc_vm: *mut VirtualMachine,
+    task: *mut c_void,
+) {
+    crate::mark_binding!();
+    // SAFETY: `jsc_vm` is the live VM; called off-thread (concurrent enqueue is
+    // thread-safe via `ConcurrentTask` MPSC + loop wakeup).
+    unsafe {
+        (*(*jsc_vm).event_loop()).enqueue_task_concurrent(ConcurrentTask::create(Task {
+            tag: bun_event_loop::task_tag::JSCDeferredWorkTask,
+            ptr: task.cast(),
+        }));
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// RareData socket-group accessors — exported for `bun_sql_jsc`, which holds
+// an opaque `*mut VirtualMachine` and cannot name `bun_jsc::rare_data` types
+// directly. Real bodies (lazy `SocketGroup::init`) live in
+// `rare_data::RareData::{postgres,mysql}_group`.
+// ════════════════════════════════════════════════════════════════════════════
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__RareData__postgresGroup(vm: *mut c_void, ssl: bool) -> *mut bun_uws::SocketGroup {
+    // SAFETY: `vm` is the live per-thread VM; `rare_data()` lazy-inits.
+    let vm = unsafe { &mut *(vm as *mut VirtualMachine) };
+    let rare = vm.rare_data() as *mut RareData;
+    // SAFETY: disjoint borrow — `postgres_group` only touches the embedded
+    // `SocketGroup` field + `vm.uws_loop()`.
+    unsafe {
+        if ssl { (*rare).postgres_group::<true>(vm) } else { (*rare).postgres_group::<false>(vm) }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__RareData__mysqlGroup(vm: *mut c_void, ssl: bool) -> *mut bun_uws::SocketGroup {
+    // SAFETY: `vm` is the live per-thread VM; `rare_data()` lazy-inits.
+    let vm = unsafe { &mut *(vm as *mut VirtualMachine) };
+    let rare = vm.rare_data() as *mut RareData;
+    // SAFETY: disjoint borrow — `mysql_group` only touches the embedded
+    // `SocketGroup` field + `vm.uws_loop()`.
+    unsafe {
+        if ssl { (*rare).mysql_group::<true>(vm) } else { (*rare).mysql_group::<false>(vm) }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/virtual_machine_exports.zig (244 lines)

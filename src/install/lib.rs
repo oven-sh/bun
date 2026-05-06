@@ -588,6 +588,16 @@ pub mod package_manager {
     pub mod security_scanner {
         pub use crate::SecurityScanSubprocess;
     }
+    /// Stub: real body lives in `PackageManager/updatePackageJSONAndInstall.rs`,
+    /// gated behind `package_manager_real` (`#![cfg(any())]` reconciler-6).
+    /// Generic over `Ctx` because `bun_runtime::command::Context` isn't visible
+    /// from this crate (would be a circular dep).
+    pub fn update_package_json_and_install_catch_error<Ctx>(
+        _ctx: Ctx,
+        _subcommand: Subcommand,
+    ) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6)")
+    }
 }
 pub mod extract_tarball { pub use super::ExtractTarball; }
 pub mod network_task { pub use super::NetworkTask; }

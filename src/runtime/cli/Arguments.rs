@@ -696,7 +696,7 @@ pub static BASE_PARAMS_: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_para
     [
         clap::parse_param!("<POS>..."),
     ],
-);
+));
 
 static DEBUG_PARAMS: &[ParamType] = &[
     clap::parse_param!("--breakpoint-resolve <STR>...     DEBUG MODE: breakpoint when resolving something that includes this string"),

@@ -13,16 +13,16 @@ use bun_spawn::Stdio;
 
 use super::{js, StaticPipeWriter, StdioResult, Subprocess};
 
-pub enum Writable {
+pub enum Writable<'a> {
     Pipe(Arc<FileSink>),
     Fd(Fd),
-    Buffer(Arc<StaticPipeWriter>),
+    Buffer(Arc<StaticPipeWriter<'a>>),
     Memfd(Fd),
     Inherit,
     Ignore,
 }
 
-impl Writable {
+impl<'a> Writable<'a> {
     pub fn memory_cost(&self) -> usize {
         match self {
             Writable::Pipe(pipe) => pipe.memory_cost(),

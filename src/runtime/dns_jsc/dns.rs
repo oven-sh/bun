@@ -3631,8 +3631,8 @@ impl Resolver {
             // kqueue: two filters on the same ident, both EV_DELETEd on
             // unregister).
             let loop_ = vm.event_loop_handle.unwrap();
-            let have_readable = poll.flags.contains(Async::PollFlags::POLL_READABLE);
-            let have_writable = poll.flags.contains(Async::PollFlags::POLL_WRITABLE);
+            let have_readable = poll.flags.contains(Async::PollFlag::PollReadable);
+            let have_writable = poll.flags.contains(Async::PollFlag::PollWritable);
 
             if (have_readable && !readable) || (have_writable && !writable) {
                 // Dropping a direction. FilePoll has no per-direction

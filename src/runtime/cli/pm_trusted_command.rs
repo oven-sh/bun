@@ -51,7 +51,7 @@ impl UntrustedCommand {
         pm.update_lockfile_if_needed(&load_lockfile)?;
 
         let packages = pm.lockfile.packages.slice();
-        let scripts: &[Lockfile::Package::Scripts] = packages.items_scripts();
+        let scripts: &[lockfile::package::scripts::Scripts] = packages.items_scripts();
         let resolutions: &[Resolution] = packages.items_resolution();
         let buf = pm.lockfile.buffers.string_bytes.as_slice();
 

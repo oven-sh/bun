@@ -355,26 +355,177 @@ pub mod dir_iterator {
     }
 
     // ── Windows ──────────────────────────────────────────────────────────
+    // dir_iterator.zig:233-417 — `NtQueryDirectoryFile` +
+    // `FILE_DIRECTORY_INFORMATION` walk.
     #[cfg(windows)]
     struct State {
-        // PORT NOTE: `NtQueryDirectoryFile` + `FILE_DIRECTORY_INFORMATION`
-        // walk. Full impl lands with the NT/kernel32/libuv triad in
-        // `lib_draft_b1.rs` (b2-windows); see dir_iterator.zig:233-417.
-        _buf: Box<AlignedBuf>,
-        _index: usize,
-        _end_index: usize,
-        _first: bool,
+        // > This structure must be aligned on a LONGLONG (8-byte) boundary. If
+        // > a buffer contains two or more of these structures, the
+        // > NextEntryOffset value in each entry, except the last, falls on an
+        // > 8-byte boundary.
+        // https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_directory_information
+        buf: Box<AlignedBuf>,
+        index: usize,
+        end_index: usize,
+        first: bool,
+        /// Optional kernel-side wildcard filter passed to NtQueryDirectoryFile.
+        /// Evaluated by `FsRtlIsNameInExpression` (case-insensitive, supports
+        /// `*` and `?`). Only honored on the first call (RestartScan=TRUE);
+        /// sticky for the handle lifetime.
+        name_filter: Option<Vec<u16>>,
     }
     #[cfg(windows)]
     impl State {
         #[inline] fn new() -> State {
             State {
-                _buf: Box::new(AlignedBuf([0u8; BUF_SIZE])),
-                _index: 0, _end_index: 0, _first: true,
+                buf: Box::new(AlignedBuf([0u8; BUF_SIZE])),
+                index: 0, end_index: 0, first: true,
+                name_filter: None,
             }
         }
-        fn next(&mut self, _dir: Fd) -> Result<Option<IteratorResult>> {
-            todo!("b2-windows: NtQueryDirectoryFile loop (lib_draft_b1.rs)")
+        fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
+            use bun_windows_sys::externs as w;
+            use crate::windows::Win32Error;
+            // `offset_of!(FILE_DIRECTORY_INFORMATION, FileName)` — fixed by the
+            // Win32 layout (4+4 + 6×8 + 4+4 = 64).
+            const NAME_OFFSET: usize = 64;
+            loop {
+                if self.index >= self.end_index {
+                    // The I/O manager only fills the IO_STATUS_BLOCK on IRP
+                    // completion. When NtQueryDirectoryFile fails with an
+                    // NT_ERROR status (e.g. parameter validation), the block
+                    // is left untouched, so zero-initialize it rather than
+                    // reading uninitialized stack if the call fails.
+                    // SAFETY: all-zero is a valid IO_STATUS_BLOCK.
+                    let mut io: w::IO_STATUS_BLOCK = unsafe { core::mem::zeroed() };
+                    if self.first {
+                        // > Any bytes inserted for alignment SHOULD be set to
+                        // > zero, and the receiver MUST ignore them.
+                        self.buf.0.fill(0);
+                    }
+                    let mut filter_us = w::UNICODE_STRING {
+                        Length: 0, MaximumLength: 0, Buffer: core::ptr::null_mut(),
+                    };
+                    let filter_ptr: *mut w::UNICODE_STRING = match &self.name_filter {
+                        Some(f) => {
+                            let len_bytes = (f.len() * 2) as u16;
+                            filter_us.Length = len_bytes;
+                            filter_us.MaximumLength = len_bytes;
+                            filter_us.Buffer = f.as_ptr() as *mut u16;
+                            &mut filter_us
+                        }
+                        None => core::ptr::null_mut(),
+                    };
+                    // SAFETY: FFI; all pointer args are valid for the call.
+                    let rc = unsafe {
+                        w::ntdll::NtQueryDirectoryFile(
+                            dir.cast(),
+                            core::ptr::null_mut(),
+                            core::ptr::null_mut(),
+                            core::ptr::null_mut(),
+                            &mut io,
+                            self.buf.0.as_mut_ptr().cast(),
+                            BUF_SIZE as u32,
+                            w::FILE_INFORMATION_CLASS::FileDirectoryInformation,
+                            0, // FALSE — return many entries per call
+                            filter_ptr,
+                            if self.first { 1 } else { 0 },
+                        )
+                    };
+                    self.first = false;
+
+                    // If the handle is not a directory, we'll get
+                    // STATUS_INVALID_PARAMETER.
+                    if rc == w::NTSTATUS::INVALID_PARAMETER {
+                        return Err(Error::from_code(
+                            super::E::ENOTDIR, Tag::NtQueryDirectoryFile,
+                        ));
+                    }
+                    // NO_SUCH_FILE is returned on the first call when a
+                    // FileName filter matches nothing; NO_MORE_FILES on
+                    // subsequent calls. Both mean "done".
+                    if rc == w::NTSTATUS::NO_MORE_FILES || rc == w::NTSTATUS::NO_SUCH_FILE {
+                        return Ok(None);
+                    }
+                    if rc != w::NTSTATUS::SUCCESS {
+                        let errno = Win32Error::from_nt_status(rc)
+                            .to_system_errno()
+                            .unwrap_or(super::E::EUNKNOWN);
+                        return Err(Error::from_code(errno, Tag::NtQueryDirectoryFile));
+                    }
+                    if io.Information == 0 {
+                        return Ok(None);
+                    }
+                    self.index = 0;
+                    self.end_index = io.Information;
+                }
+
+                let entry_offset = self.index;
+                let p = self.buf.0.as_ptr();
+                // While the official api docs guarantee FILE_DIRECTORY_INFORMATION
+                // to be aligned properly, this may not always be the case (e.g.
+                // due to faulty VM/Sandboxing tools) — read fields unaligned.
+                // SAFETY: entry_offset < end_index ≤ BUF_SIZE; struct header
+                // (NAME_OFFSET = 64 bytes) is fully within the buffer per the
+                // NtQueryDirectoryFile contract on STATUS_SUCCESS.
+                let next_off = unsafe {
+                    core::ptr::read_unaligned(p.add(entry_offset) as *const u32)
+                } as usize;
+                let file_attrs = unsafe {
+                    core::ptr::read_unaligned(p.add(entry_offset + 56) as *const u32)
+                };
+                let name_len_bytes = unsafe {
+                    core::ptr::read_unaligned(p.add(entry_offset + 60) as *const u32)
+                } as usize;
+                self.index = if next_off != 0 {
+                    entry_offset + next_off
+                } else {
+                    BUF_SIZE
+                };
+
+                // Some filesystem / filter drivers have been observed
+                // returning FILE_DIRECTORY_INFORMATION entries with an
+                // out-of-range FileNameLength (well beyond the 255-WCHAR NTFS
+                // component limit). Clamp to what remains in `buf` so a
+                // misbehaving driver cannot walk us past the end of the buffer.
+                let name_byte_offset = entry_offset + NAME_OFFSET;
+                let buf_remaining_u16 = BUF_SIZE.saturating_sub(name_byte_offset) / 2;
+                let name_len_u16 = (name_len_bytes / 2).min(buf_remaining_u16);
+                // SAFETY: name_byte_offset + name_len_u16*2 ≤ BUF_SIZE by clamp.
+                let dir_info_name = unsafe {
+                    core::slice::from_raw_parts(
+                        p.add(name_byte_offset) as *const u16,
+                        name_len_u16,
+                    )
+                };
+
+                if dir_info_name == [b'.' as u16]
+                    || dir_info_name == [b'.' as u16, b'.' as u16]
+                {
+                    continue;
+                }
+
+                let kind = {
+                    let isdir = (file_attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0;
+                    let islink = (file_attrs & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+                    // On Windows, symlinks can be directories too. We
+                    // prioritize the "sym_link" kind over the "directory"
+                    // kind; this will coerce into either .file or .directory
+                    // later once the symlink is read.
+                    if islink {
+                        EntryKind::SymLink
+                    } else if isdir {
+                        EntryKind::Directory
+                    } else {
+                        EntryKind::File
+                    }
+                };
+
+                return Ok(Some(IteratorResult {
+                    name: Name::from_slice(dir_info_name),
+                    kind,
+                }));
+            }
         }
     }
 
@@ -383,6 +534,8 @@ pub mod dir_iterator {
         dir: Fd,
         // Windows: NtQueryDirectoryFile filter (UNICODE_STRING). On POSIX,
         // ignored (kernel readdir has no name filter; callers post-filter).
+        // PORT NOTE: stored on `State` on Windows so `next()` can pass it.
+        #[cfg(not(windows))]
         #[allow(dead_code)]
         name_filter: Option<Vec<u16>>,
         state: State,
@@ -393,7 +546,8 @@ pub mod dir_iterator {
         /// On POSIX this is a no-op; callers must filter themselves.
         #[inline]
         pub fn set_name_filter(&mut self, filter: Option<&[u16]>) {
-            self.name_filter = filter.map(|f| f.to_vec());
+            #[cfg(windows)] { self.state.name_filter = filter.map(|f| f.to_vec()); }
+            #[cfg(not(windows))] { self.name_filter = filter.map(|f| f.to_vec()); }
         }
         /// Memory such as file names referenced in this returned entry becomes
         /// invalid with subsequent calls to `next`, as well as when this `Dir`

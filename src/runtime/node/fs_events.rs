@@ -434,7 +434,7 @@ impl ConcurrentTask {
 
 impl FSEventsLoop {
     pub fn cf_thread_loop(&mut self) {
-        bun_core::Output::Source::configure_named_thread("CFThreadLoop");
+        bun_core::Output::Source::configure_named_thread(zstr!("CFThreadLoop"));
 
         let cf = CoreFoundation::get();
 

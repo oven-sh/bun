@@ -7,10 +7,8 @@ use bstr::BStr;
 use super::diff_match_patch;
 use bun_str::strings;
 
-// TODO(port): verify diff_match_patch::Dmp<T> API surface (default(), config.diff_timeout,
-// diff(), diff_lines_to_chars(), diff_chars_to_lines(), diff_cleanup_semantic(), Diff{operation,text}, Operation::{Delete,Insert,Equal})
-type Dmp = diff_match_patch::Dmp<u8>;
-type DmpUsize = diff_match_patch::Dmp<usize>;
+type Dmp = diff_match_patch::DiffMatchPatch<u8>;
+type DmpUsize = diff_match_patch::DiffMatchPatch<usize>;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {

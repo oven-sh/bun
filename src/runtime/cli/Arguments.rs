@@ -2453,7 +2453,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         }
 
         if args.flag("--production") {
-            let any_html = opts.entry_points.iter().any(|entry_point| strings::has_suffix(entry_point, b".html"));
+            let any_html = opts.entry_points.iter().any(|entry_point| strings::has_suffix_comptime(entry_point, b".html"));
             if any_html {
                 ctx.bundler_options.css_chunking = true;
             }

@@ -892,13 +892,10 @@ impl BunxCommand {
                             }
                             #[cfg(not(windows))]
                             {
-                                // SAFETY: all-zero is a valid posix Stat (repr(C) POD)
-                                let mut stat: bun_sys::posix::Stat = unsafe { core::mem::zeroed() };
-                                // SAFETY: destination is NUL-terminated, stat is a valid out-param
-                                let rc = unsafe { bun_sys::c::stat(destination.as_ptr().cast(), &mut stat) };
-                                if rc != 0 {
-                                    break 'is_stale true;
-                                }
+                                let stat = match bun_sys::stat(destination).unwrap_result() {
+                                    Ok(s) => s,
+                                    Err(_) => break 'is_stale true,
+                                };
                                 break 'is_stale bun_core::time::timestamp() - stat.mtime().sec > Self::SECONDS_CACHE_VALID;
                             }
                         };

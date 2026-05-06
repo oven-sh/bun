@@ -109,11 +109,10 @@ pub struct BundledDep {
 impl PackCommand {
     pub fn exec_with_manager(ctx: Command::Context, manager: &mut PackageManager) -> Result<(), bun_core::Error> {
         if manager.options.log_level != LogLevel::Silent && manager.options.log_level != LogLevel::Quiet {
-            Output::prettyln(
-                concat!("<r><b>bun pack <r><d>v", env!("BUN_PACKAGE_JSON_VERSION_WITH_SHA"), "<r>"),
-                format_args!(""),
-            );
-            // TODO(port): Global::package_json_version_with_sha as compile-time constant
+            Output::prettyln(format_args!(
+                "<r><b>bun pack <r><d>v{}<r>",
+                Global::package_json_version_with_sha,
+            ));
             Output::flush();
         }
 

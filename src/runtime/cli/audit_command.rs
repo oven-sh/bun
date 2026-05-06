@@ -112,11 +112,10 @@ impl AuditCommand {
         ignore_list: &[&[u8]],
     ) -> Result<u32, bun_alloc::AllocError> {
         // TODO(port): comptime `Output.prettyFmt(..., true)` pre-expands ANSI tags at compile time.
-        Output::pretty_error(format_args!(const_format::concatcp!(
-            "<r><b>bun audit <r><d>v",
-            Global::PACKAGE_JSON_VERSION_WITH_SHA,
-            "<r>\n"
-        )));
+        Output::pretty_error(format_args!(
+            "<r><b>bun audit <r><d>v{}<r>\n",
+            Global::package_json_version_with_sha,
+        ));
         Output::flush();
 
         let load_lockfile = pm.lockfile.load_from_cwd(pm, ctx.log, true);

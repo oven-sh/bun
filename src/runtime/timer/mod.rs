@@ -698,9 +698,10 @@ impl All {
 // `JSValue::to_number()`, `bun_str::String::transfer_to_js()`, etc.
 // Kept gated until `bun_jsc.workspace = true` is re-enabled.
 
-impl All {
-    include!("Timer.rs"); // not literally — see timer_draft above
-}
+// TODO(port): JS-facing surface (`set_timeout`/`set_interval`/...) lives in
+// `Timer.rs` and is wired via `#[cfg(feature = "jsc")]` once `bun_jsc` is
+// re-enabled. The placeholder `include!` was non-compilable; removed.
+impl All {}
 
 // ─── enums / value types ─────────────────────────────────────────────────────
 

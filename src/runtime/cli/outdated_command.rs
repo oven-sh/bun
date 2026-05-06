@@ -27,12 +27,8 @@ struct OutdatedInfo {
 impl OutdatedCommand {
     pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
         Output::prettyln(format_args!(
-            concat!(
-                "<r><b>bun outdated <r><d>v",
-                // TODO(port): Global.package_json_version_with_sha is a comptime string concat
-                env!("BUN_PACKAGE_JSON_VERSION_WITH_SHA"),
-                "<r>"
-            )
+            "<r><b>bun outdated <r><d>v{}<r>",
+            Global::package_json_version_with_sha,
         ));
         Output::flush();
 

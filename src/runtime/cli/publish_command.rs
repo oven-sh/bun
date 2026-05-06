@@ -385,9 +385,9 @@ impl PublishCommand {
     pub fn exec(ctx: Command::Context) -> Result<(), Error> {
         // TODO(port): narrow error set
         Output::prettyln(format_args!(
-            concat!("<r><b>bun publish <r><d>v", env!("BUN_PACKAGE_JSON_VERSION_WITH_SHA"), "<r>"),
+            "<r><b>bun publish <r><d>v{}<r>",
+            Global::package_json_version_with_sha,
         ));
-        // TODO(port): Global.package_json_version_with_sha — using env! placeholder above
         Output::flush();
 
         let cli = PackageManager::CommandLineArguments::parse(PackageManager::Subcommand::Publish)?;

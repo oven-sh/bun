@@ -4478,8 +4478,8 @@ impl RunCommand {
         let cwd_len = cwd.len();
         entry_point_buf[cwd_len..cwd_len + TRIGGER.len()].copy_from_slice(TRIGGER);
         ctx.runtime_options.eval.script = if Environment::CODEGEN_EMBED {
-            // TODO(port): @embedFile → include_bytes!
-            include_bytes!("eval/feedback.ts")
+            // TODO(port): @embedFile → include_str! (path relative to this .rs)
+            include_str!("../../js/eval/feedback.ts")
         } else {
             bun_core::runtime_embed_file(bun_core::EmbedKind::Codegen, "eval/feedback.ts")
         };

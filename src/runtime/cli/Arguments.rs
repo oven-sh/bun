@@ -2426,7 +2426,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
     if CMD == Command::Tag::BuildCommand {
         if opts.entry_points.is_empty() && !ctx.bundler_options.bake {
-            Output::prettyln(format_args!(const_format::concatcp!("<r><b>bun build <r><d>v", bun_core::Global::PACKAGE_JSON_VERSION_WITH_SHA, "<r>")));
+            Output::prettyln(format_args!("<r><b>bun build <r><d>v{}<r>", bun_core::Global::package_json_version_with_sha));
             Output::pretty(format_args!("<r><red>error: Missing entrypoints. What would you like to bundle?<r>\n\n"));
             Output::flush();
             Output::pretty(format_args!("Usage:\n  <d>$<r> <b><green>bun build<r> \\<entrypoint\\> [...\\<entrypoints\\>] <cyan>[...flags]<r>  \n"));

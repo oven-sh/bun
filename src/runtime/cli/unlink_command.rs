@@ -41,11 +41,8 @@ fn unlink(ctx: Command::Context) -> Result<(), bun_core::Error> {
 
     if manager.options.should_print_command_name() {
         Output::prettyln(format_args!(
-            const_format::concatcp!(
-                "<r><b>bun unlink <r><d>v",
-                Global::PACKAGE_JSON_VERSION_WITH_SHA,
-                "<r>\n"
-            )
+            "<r><b>bun unlink <r><d>v{}<r>\n",
+            Global::package_json_version_with_sha,
         ));
         Output::flush();
     }

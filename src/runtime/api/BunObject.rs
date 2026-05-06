@@ -496,7 +496,7 @@ pub mod bun_object {
     // export symbol is supplied verbatim by the caller (same pattern as
     // `lazy_prop!` above).
     macro_rules! export_callbacks {
-        ($( $(#[$attr:meta])* $sym:ident => $target:path ),* $(,)?) => {
+        ($( $(#[$attr:meta])* $sym:ident => $target:expr ),* $(,)?) => {
             $(
                 $(#[$attr])*
                 #[unsafe(no_mangle)]
@@ -671,7 +671,7 @@ pub mod bun_object {
 pub fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_old(1);
     if arguments.len() < 1 {
-        return global_this.throw("shell escape expected at least 1 argument", format_args!());
+        return global_this.throw("shell escape expected at least 1 argument", format_args!(""));
     }
 
     let jsval = arguments.ptr[0];
@@ -764,7 +764,7 @@ pub fn braces(
         Ok(()) => {}
         Err(e) if e == bun_core::err!("OutOfMemory") => return Err(e.into()),
         Err(_) => {
-            return global.throw_pretty("Unexpected token while expanding braces", format_args!())
+            return global.throw_pretty("Unexpected token while expanding braces", format_args!(""))
         }
     }
 
@@ -782,7 +782,7 @@ pub fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     let path_buf = bun_paths::path_buffer_pool().get();
     let mut arguments = CallFrame::ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
     let Some(path_arg) = arguments.next_eat() else {
-        return global_this.throw("which: expected 1 argument, got 0", format_args!());
+        return global_this.throw("which: expected 1 argument, got 0", format_args!(""));
     };
 
     let mut path_str = ZigString::Slice::empty();
@@ -800,7 +800,7 @@ pub fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     }
 
     if bin_str.len() >= MAX_PATH_BYTES {
-        return global_this.throw("bin path is too long", format_args!());
+        return global_this.throw("bin path is too long", format_args!(""));
     }
 
     if bin_str.len() == 0 {
@@ -1033,17 +1033,17 @@ pub fn register_macro(global_object: &JSGlobalObject, callframe: &CallFrame) -> 
     let arguments = arguments_.slice();
     if arguments.len() != 2 || !arguments[0].is_number() {
         return global_object
-            .throw_invalid_arguments("Internal error registering macros: invalid args", format_args!());
+            .throw_invalid_arguments("Internal error registering macros: invalid args", format_args!(""));
     }
     let id = arguments[0].to_int32();
     if id == -1 || id == 0 {
         return global_object
-            .throw_invalid_arguments("Internal error registering macros: invalid id", format_args!());
+            .throw_invalid_arguments("Internal error registering macros: invalid id", format_args!(""));
     }
 
     if !arguments[1].is_cell() || !arguments[1].is_callable() {
         // TODO: add "toTypeOf" helper
-        return global_object.throw("Macro must be a function", format_args!());
+        return global_object.throw("Macro must be a function", format_args!(""));
     }
 
     let get_or_put_result = VirtualMachine::get()
@@ -1218,14 +1218,14 @@ pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
             match edit.editor {
                 Some(e) => break 'brk e,
                 None => {
-                    return global_this.throw("Failed to auto-detect editor", format_args!());
+                    return global_this.throw("Failed to auto-detect editor", format_args!(""));
                 }
             }
         }
     };
 
     if path.is_empty() {
-        return global_this.throw("No file path specified", format_args!());
+        return global_this.throw("No file path specified", format_args!(""));
     }
 
     if let Err(err) = editor.open(edit.path, path, line, column, &arguments.arena) {
@@ -1338,19 +1338,19 @@ fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<J
     let mut args = CallFrame::ArgumentsSlice::init(global_this.bun_vm(), arguments);
     let Some(specifier) = args.protect_eat_next() else {
         return global_this
-            .throw_invalid_arguments("Expected a specifier and a from path", format_args!());
+            .throw_invalid_arguments("Expected a specifier and a from path", format_args!(""));
     };
 
     if specifier.is_undefined_or_null() {
-        return global_this.throw_invalid_arguments("specifier must be a string", format_args!());
+        return global_this.throw_invalid_arguments("specifier must be a string", format_args!(""));
     }
 
     let Some(from) = args.protect_eat_next() else {
-        return global_this.throw_invalid_arguments("Expected a from path", format_args!());
+        return global_this.throw_invalid_arguments("Expected a from path", format_args!(""));
     };
 
     if from.is_undefined_or_null() {
-        return global_this.throw_invalid_arguments("from must be a string", format_args!());
+        return global_this.throw_invalid_arguments("from must be a string", format_args!(""));
     }
 
     let mut is_esm = true;
@@ -1358,7 +1358,7 @@ fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<J
         if next.is_boolean() {
             is_esm = next.to_boolean();
         } else {
-            return global_this.throw_invalid_arguments("esm must be a boolean", format_args!());
+            return global_this.throw_invalid_arguments("esm must be a boolean", format_args!(""));
         }
     }
 
@@ -1486,7 +1486,7 @@ pub extern "C" fn Bun__resolveSync(
 
     if specifier_str.length() == 0 {
         let _ = global
-            .err(jsc::ErrCode::INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", format_args!())
+            .err(jsc::ErrCode::INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", format_args!(""))
             .throw();
         return JSValue::ZERO;
     }
@@ -1526,7 +1526,7 @@ pub extern "C" fn Bun__resolveSyncWithPaths(
 
     if specifier_str.length() == 0 {
         let _ = global
-            .err(jsc::ErrCode::INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", format_args!())
+            .err(jsc::ErrCode::INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", format_args!(""))
             .throw();
         return JSValue::ZERO;
     }
@@ -1586,7 +1586,7 @@ pub extern "C" fn Bun__resolveSyncWithSource(
     };
     if specifier_str.length() == 0 {
         let _ = global
-            .err(jsc::ErrCode::INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", format_args!())
+            .err(jsc::ErrCode::INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", format_args!(""))
             .throw();
         return JSValue::ZERO;
     }
@@ -1847,7 +1847,7 @@ pub fn alloc_unsafe(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     let arguments = callframe.arguments_old(1);
     let size = arguments.ptr[0];
     if !size.is_uint32_as_any_int() {
-        return global_this.throw_invalid_arguments("Expected a positive number", format_args!());
+        return global_this.throw_invalid_arguments("Expected a positive number", format_args!(""));
     }
     Ok(JSValue::create_uninitialized_uint8_array(
         global_this,
@@ -1874,7 +1874,7 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
                     let path_str = path.to_slice(global_this)?;
                     if path_str.len() > MAX_PATH_BYTES {
                         return global_this
-                            .throw_invalid_arguments("Path too long", format_args!());
+                            .throw_invalid_arguments("Path too long", format_args!(""));
                     }
                     let paths = &[path_str.slice()];
                     break 'brk bun_paths::join_abs_string_buf(
@@ -1885,7 +1885,7 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
                     );
                 }
             }
-            return global_this.throw_invalid_arguments("Expected a path", format_args!());
+            return global_this.throw_invalid_arguments("Expected a path", format_args!(""));
         };
 
         let path_len = path.len();
@@ -1922,7 +1922,7 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
                 if size_value < 0 {
                     return global_this.throw_invalid_arguments(
                         "size must be a non-negative integer",
-                        format_args!(),
+                        format_args!(""),
                     );
                 }
                 map_size = Some(usize::try_from(size_value).unwrap());
@@ -1933,7 +1933,7 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
                 if offset_value < 0 {
                     return global_this.throw_invalid_arguments(
                         "offset must be a non-negative integer",
-                        format_args!(),
+                        format_args!(""),
                     );
                 }
                 offset = usize::try_from(offset_value).unwrap();
@@ -2352,7 +2352,7 @@ pub mod JSZlib {
             Some(arguments[1])
         } else if arguments.len() > 1 && !arguments[1].is_undefined() {
             return global_this
-                .throw_invalid_arguments("Expected options to be an object", format_args!());
+                .throw_invalid_arguments("Expected options to be an object", format_args!(""));
         } else {
             None
         };
@@ -2362,7 +2362,7 @@ pub mod JSZlib {
         }
 
         global_this
-            .throw_invalid_arguments("Expected buffer to be a string or buffer", format_args!())
+            .throw_invalid_arguments("Expected buffer to be a string or buffer", format_args!(""))
     }
 
     #[bun_jsc::host_fn]
@@ -2425,7 +2425,7 @@ pub mod JSZlib {
             if let Some(library_value) = options_val.get_truthy(global_this, "library")? {
                 if !library_value.is_string() {
                     return global_this
-                        .throw_invalid_arguments("Expected library to be a string", format_args!());
+                        .throw_invalid_arguments("Expected library to be a string", format_args!(""));
                 }
 
                 library = match Library::MAP.from_js(global_this, library_value)? {
@@ -2433,7 +2433,7 @@ pub mod JSZlib {
                     None => {
                         return global_this.throw_invalid_arguments(
                             "Expected library to be one of 'zlib' or 'libdeflate'",
-                            format_args!(),
+                            format_args!(""),
                         )
                     }
                 };
@@ -2484,7 +2484,7 @@ pub mod JSZlib {
                         drop(list);
                         if err == bun_core::err!("InvalidArgument") {
                             return global_this
-                                .throw("Zlib error: Invalid argument", format_args!());
+                                .throw("Zlib error: Invalid argument", format_args!(""));
                         }
                         return global_this.throw_error(err, "Zlib error");
                     }
@@ -2597,7 +2597,7 @@ pub mod JSZlib {
             if let Some(library_value) = options_val.get_truthy(global_this, "library")? {
                 if !library_value.is_string() {
                     return global_this
-                        .throw_invalid_arguments("Expected library to be a string", format_args!());
+                        .throw_invalid_arguments("Expected library to be a string", format_args!(""));
                 }
 
                 library = match Library::MAP.from_js(global_this, library_value)? {
@@ -2605,7 +2605,7 @@ pub mod JSZlib {
                     None => {
                         return global_this.throw_invalid_arguments(
                             "Expected library to be one of 'zlib' or 'libdeflate'",
-                            format_args!(),
+                            format_args!(""),
                         )
                     }
                 };
@@ -2649,7 +2649,7 @@ pub mod JSZlib {
                         drop(list);
                         if err == bun_core::err!("InvalidArgument") {
                             return global_this
-                                .throw("Zlib error: Invalid argument", format_args!());
+                                .throw("Zlib error: Invalid argument", format_args!(""));
                         }
                         return global_this.throw_error(err, "Zlib error");
                     }
@@ -2754,7 +2754,7 @@ pub mod JSZstd {
             Some(arguments[1])
         } else if arguments.len() > 1 && !arguments[1].is_undefined() {
             return global_this
-                .throw_invalid_arguments("Expected options to be an object", format_args!());
+                .throw_invalid_arguments("Expected options to be an object", format_args!(""));
         } else {
             None
         };
@@ -2764,7 +2764,7 @@ pub mod JSZstd {
         }
 
         global_this
-            .throw_invalid_arguments("Expected buffer to be a string or buffer", format_args!())
+            .throw_invalid_arguments("Expected buffer to be a string or buffer", format_args!(""))
     }
 
     fn get_level(global_this: &JSGlobalObject, options_val: Option<JSValue>) -> JsResult<i32> {
@@ -2778,7 +2778,7 @@ pub mod JSZstd {
                 if value < 1 || value > 22 {
                     return global_this.throw_invalid_arguments(
                         "Compression level must be between 1 and 22",
-                        format_args!(),
+                        format_args!(""),
                     );
                 }
 
@@ -2804,7 +2804,7 @@ pub mod JSZstd {
             Some(arguments[1])
         } else if arguments.len() > 1 && !arguments[1].is_undefined() {
             return global_this
-                .throw_invalid_arguments("Expected options to be an object", format_args!());
+                .throw_invalid_arguments("Expected options to be an object", format_args!(""));
         } else {
             None
         };
@@ -2822,7 +2822,7 @@ pub mod JSZstd {
         }
 
         global_this
-            .throw_invalid_arguments("Expected buffer to be a string or buffer", format_args!())
+            .throw_invalid_arguments("Expected buffer to be a string or buffer", format_args!(""))
     }
 
     #[bun_jsc::host_fn]

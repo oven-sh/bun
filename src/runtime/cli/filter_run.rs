@@ -436,13 +436,13 @@ impl<'a> State<'a> {
                                 if ms > 1000.0 {
                                     write!(
                                         &mut self.draw_buf,
-                                        fmt!("<cyan>Done in {d:.2} s<r>\n"),
+                                        fmt!("<cyan>Done in {:.2} s<r>\n"),
                                         ms / 1_000.0,
                                     )?;
                                 } else {
                                     write!(
                                         &mut self.draw_buf,
-                                        fmt!("<cyan>Done in {d:.0} ms<r>\n"),
+                                        fmt!("<cyan>Done in {:.0} ms<r>\n"),
                                         ms,
                                     )?;
                                 }

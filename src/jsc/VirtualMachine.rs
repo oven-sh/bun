@@ -838,15 +838,24 @@ impl VirtualMachine {
         specifier: &str,
         hash: i32,
     ) -> Result<*mut JSInternalPromise, bun_core::Error> {
-        use bun_collections::map::Entry;
-        let entry_point: *mut bun_bundler::entry_points::MacroEntryPoint =
+        use bun_collections::hash_map::Entry;
+        use bun_bundler::entry_points::{Fs, MacroEntryPoint};
+        let entry_point: *mut MacroEntryPoint =
             match self.macro_entry_points.entry(hash) {
                 Entry::Occupied(e) => (*e.get()).cast(),
                 Entry::Vacant(v) => {
-                    let mut ep = Box::new(bun_bundler::entry_points::MacroEntryPoint::default());
-                    ep.generate(
+                    let mut ep = Box::new(MacroEntryPoint::default());
+                    // SAFETY: PathName stores slices with an artificial 'static
+                    // bound (Zig has no lifetimes); the generated entry point is
+                    // boxed into `macro_entry_points` and lives for the VM
+                    // lifetime, and `entry_path` is only borrowed for the
+                    // duration of `generate` (it copies into `code_buffer`).
+                    let entry_path_static: &'static [u8] =
+                        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(entry_path.as_bytes()) };
+                    MacroEntryPoint::generate(
+                        &mut *ep,
                         &mut self.transpiler,
-                        bun_fs::PathName::init(entry_path.as_bytes()),
+                        &Fs::PathName::init(entry_path_static),
                         function_name.as_bytes(),
                         hash,
                         specifier.as_bytes(),
@@ -1186,7 +1195,7 @@ impl VirtualMachine {
     /// not name those types directly. The hook receives the boxed VM after the
     /// JSC-tier fields are populated and finishes the rest.
     pub fn init(opts: InitOptions) -> Result<*mut VirtualMachine, bun_core::Error> {
-        jsc::mark_binding(core::panic::Location::caller());
+        jsc::mark_binding();
 
         let log: *mut logger::Log = Box::into_raw(Box::new(logger::Log::default()));
 

@@ -336,7 +336,7 @@ impl Debugger {
             // `VirtualMachine::init`; outlives the VM.
             let log = unsafe { log.as_ref() };
             if !log.msgs.is_empty() {
-                let _ = log.print(bun_core::Output::error_writer());
+                let _ = log.print(bun_core::Output::error_writer() as *mut bun_core::io::Writer);
                 bun_core::pretty_errorln!("\n");
                 bun_core::Output::flush();
             }

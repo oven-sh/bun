@@ -18,10 +18,10 @@ use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_core::Output;
 use bun_http::websocket::{Opcode, WebsocketHeader};
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, ZigString};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue};
 use bun_jsc::event_loop::EventLoop;
 use bun_ptr::IntrusiveRc;
-use bun_string::{self as bstr_mod, strings};
+use bun_string::{self as bstr_mod, strings, ZigString};
 use bun_uws::{self as uws, NewSocketHandler, SslCtx, us_bun_verify_error_t};
 use bun_uws_sys::us_socket_t;
 
